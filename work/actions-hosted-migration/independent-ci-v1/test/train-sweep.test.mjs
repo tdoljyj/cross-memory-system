@@ -17,6 +17,7 @@ import { closeGreenLedgerGroups, CLOSE_AFTER_MS } from '../src/independent-contr
 import { validateTrainFacts } from '../src/independent-control-checks-v2/train-facts.mjs';
 import { TRAIN_RUN_SHADOW_DEFAULTS, makeTrainRun } from '../src/resident-v2/train-run.mjs';
 import { tempDir } from './resident-v2-fixtures.mjs';
+import { s7Rules, scaffoldRules, mainRules, ACTIONS } from './s7-rules-fixture.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system', APP = 5368905, SLOT = 'kooyumi-merge-slot';
 const sha = n => n.toString(16).padStart(40, '0');
@@ -736,6 +737,50 @@ test('incremental sweep: a backlog advances run by run; the head bound counts on
   big.gh.pull(3001, { head: sha(0x80000 + 249), commits: Array.from({ length: 250 }, (_, i) => sha(0x80000 + i)),
     forcePushes: Array.from({ length: 200 }, (_, i) => ({ before: sha(0x90000 + i), after: sha(0x80000 + 249) })), updated: iso(NOW - 1000) });
   assert.equal((await big.run()).facts.sweep.complete, true);
+});
+
+// Task 04f9b91b (must-red 5): in S7 #292 (strict on) is enabled again next to the scaffold ruleset, which pins
+// kooyumi-admission-verified to App 5164952 as well. Stage 10 reads those rules, so a code-layer front behind main needs main
+// merged in under strict (the companion's front-merge dispatch acts on exactly this decision).
+test('stage 10: S7 rules read; a code-layer front behind main under strict needs main merged in', async t => {
+  const e = await setup(t);
+  e.gh.world.behindHeads = new Set([H]);
+  e.gh.readBranchRules = async () => { e.gh.world.calls.push('rules'); return { complete: true, branch: 'main', rules: s7Rules() }; };
+  e.gh.readChangedPaths = async () => { e.gh.world.calls.push('paths'); return { complete: true, paths: ['apps/x.ts'] }; };
+  const r = await runTrain({ job: jobOf(), github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
+    layerOfPaths: paths => (paths.some(p => p.startsWith('scripts/ci/')) ? 'protected' : 'code') });
+  assert.deepEqual([r.facts.decision, r.facts.rules, r.facts.rulesReason], ['FRONT_NEEDS_MAIN_MERGE', { strict: true, mergeOnly: false, appScans: ['gitleaks', 'trivy', 'contract-placement'] }, null]);
+});
+
+// Task 04f9b91b (admission p90, 修复前必红): in the scaffold phase main's only rules are the scaffold ruleset (27843120, as read back
+// live: kooyumi-work-admission pinned to this App, the three hosted-* scans pinned to GitHub Actions). The six are not all there, so the
+// rules stay unreadable (stage 8 publishes nothing), but no scan is pinned to this App: stage 10 says appScans [] and the resident runs none.
+// Rules that cannot be read (an incomplete reply, a failed read, a scan required from no App) carry no appScans: every scan runs.
+test('stage 10: the scaffold ruleset alone pins no scan to this App -> facts.appScans [] while the rules stay unreadable', async t => {
+  const run = async (reply, o = {}) => {
+    const e = await setup(t);
+    e.gh.readBranchRules = async () => { e.gh.world.calls.push('rules'); if (reply instanceof Error) throw reply; return reply; };
+    return (await runTrain({ job: jobOf(), github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep, ...o })).facts;
+  };
+  const scaffold = await run({ complete: true, branch: 'main', rules: scaffoldRules() });
+  assert.deepEqual([scaffold.rules, scaffold.rulesReason, scaffold.appScans], [null, 'RULESET_UNREADABLE', []]);
+  // #292 enabled (S7, or today): the six on this App, the scans run as before; the two fields agree.
+  for (const rules of [s7Rules(), mainRules()]) {
+    const f = await run({ complete: true, branch: 'main', rules });
+    assert.deepEqual([f.rules?.appScans, f.appScans, f.rulesReason], [['gitleaks', 'trivy', 'contract-placement'], ['gitleaks', 'trivy', 'contract-placement'], null]);
+  }
+  // only some scans pinned to this App (here the scaffold plus trivy pinned to this App): only those run.
+  const part = scaffoldRules().map(r => r.type !== 'required_status_checks' ? r
+    : { ...r, parameters: { ...r.parameters, required_status_checks: [...r.parameters.required_status_checks, { context: 'trivy', integration_id: 5368905 }, { context: 'gitleaks', integration_id: ACTIONS }] } });
+  assert.deepEqual((await run({ complete: true, branch: 'main', rules: part })).appScans, ['trivy']);
+  // not read: no appScans at all (every scan runs, the safe side)
+  const noScan = scaffoldRules().map(r => r.type !== 'required_status_checks' ? r
+    : { ...r, parameters: { ...r.parameters, required_status_checks: [...r.parameters.required_status_checks, { context: 'gitleaks' }] } });
+  for (const reply of [{ complete: false, branch: 'main', rules: scaffoldRules() }, new Error('rules read failed'), { complete: true, branch: 'main', rules: 'x' },
+    { complete: true, branch: 'main', rules: noScan }, { complete: true, branch: 'main', rules: [{ type: 'deletion' }] }]) {
+    const f = await run(reply);
+    assert.deepEqual([f.rules, f.rulesReason, Object.hasOwn(f, 'appScans')], [null, 'RULESET_UNREADABLE', false], JSON.stringify(reply));
+  }
 });
 
 test('the protected layer: a front whose H does not contain T needs main merged in first, in mode on only (review R2 M4)', async t => {

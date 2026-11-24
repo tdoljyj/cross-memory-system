@@ -1,7 +1,7 @@
 // The CI root's and formal-spool's ACL steps on real NTFS, in CI: windows/test-companion-relay-parent-acl.ps1 (the first install's two
 // steps, parent-acl then companion-relay-parent-acl, on folders made as first-install-host.ps1 makes them; the DACL is compared by shape)
 // and windows/test-verify-relay-parents-ensure.ps1 (verify-resident.ps1's ensure with install-resident.ps1's own rule). Until r8 no suite
-// ran either of them (Fable ruling 0e418483 section 2): they run here, in resident-node, as test/fleet-node.test.mjs runs the first-install
+// ran either of them (Fable ruling 0e418483 section 2): they run here, in resident-node, as test/fleet-node-powershell.test.mjs runs the first-install
 // scripts. Windows PowerShell 5.1 only, not elevated, a new scratch under the temporary directory; on Linux this file is skipped by name.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -16,7 +16,7 @@ const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.e
 const windows = process.platform === 'win32';
 const skip = windows ? false : 'the NTFS ACL steps run on the Windows host only';
 const tail = (s, n = 6000) => (String(s ?? '').length > n ? String(s).slice(-n) : String(s ?? ''));
-// a child of `node --test` must not think it reports to this runner, and carries the test marker itself (as test/fleet-node.test.mjs)
+// a child of `node --test` must not think it reports to this runner, and carries the test marker itself (as test/fleet-node-fixtures.mjs)
 const childEnv = () => { const e = { ...process.env }; delete e.NODE_TEST_CONTEXT; e.CLUED_UNDER_TEST = '1'; return e; };
 
 // The ensure script refuses an elevated administrator (NON_ELEVATED_TEST_REQUIRED, its line 8): it tests the ACL a standard

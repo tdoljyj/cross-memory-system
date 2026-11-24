@@ -85,7 +85,9 @@
 //   CLUED_RUNNER_HOOK_ENFORCE      "true" refuses; anything else only reports
 //   CLUED_RUNNER_HOOK_WAIT_SECONDS how long to wait for the Native admission, and
 //                                  separately for a re-run's admission-gate
-//                                  job (480 each). A heavy job of a re-run of a
+//                                  job (780 each: the longest wait the registered
+//                                  gate job holds, INDEPENDENT_GATE_WAIT_CEILING_SECONDS
+//                                  of clued-work-admission.mjs). A heavy job of a re-run of a
 //                                  pull request that changes a workflow can
 //                                  wait for both: up to twice this, plus at
 //                                  most READ_ALLOWANCE_MS of reads.
@@ -104,7 +106,7 @@
 // Native kooyumi-work-admission check or a re-run's
 // admission-gate job, a poll that still fails transiently is "not settled
 // yet", never a refusal, until the wait ends; then the last failure refuses.
-// Every wait ends by the clock (CLUED_RUNNER_HOOK_WAIT_SECONDS), however long
+// Every wait ends by the clock (CLUED_RUNNER_HOOK_WAIT_SECONDS, 780 by default), however long
 // its reads take, and all reads of one hook run end within twice that plus
 // READ_ALLOWANCE_MS. The Native check is judged at the time its pages were
 // read, never at a time taken before the retries. Fail closed is unchanged:
@@ -330,7 +332,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const HOOK_VERSION = "native-only-admission-v1";
-export const COMPONENT_VERSION = "1.0.7";
+export const COMPONENT_VERSION = "1.0.8";
 
 // Transient reads (see the header).
 export const READ_ATTEMPTS = 3;
@@ -346,10 +348,11 @@ const markTransient = (failure) => {
   error.transient = true;
   return error;
 };
-// CLUED_RUNNER_HOOK_WAIT_SECONDS (480 when unset or not a whole number of seconds).
+// CLUED_RUNNER_HOOK_WAIT_SECONDS (780 when unset or not a whole number of seconds; FABLE-scaffold-shadow-fix-20261122 §2 C:
+// a Native admission measured up to 9.5 minutes, so 480 refused heads whose admission was on its way, #1236).
 export function waitLimitSeconds(env) {
   const seconds = Number.parseInt(env.CLUED_RUNNER_HOOK_WAIT_SECONDS ?? "", 10);
-  return Number.isInteger(seconds) && seconds >= 0 ? seconds : 480;
+  return Number.isInteger(seconds) && seconds >= 0 ? seconds : 780;
 }
 // fetchImpl with bounded retries of transient read failures. A request is a read when its method is GET, or when its caller marks it
 // (init.retryRead, a POST that only reads). Each attempt gets its own time bound (init.attemptMs, else READ_ATTEMPT_MS, never past

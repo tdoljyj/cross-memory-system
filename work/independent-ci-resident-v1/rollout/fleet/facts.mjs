@@ -18,6 +18,8 @@ export const RESIDENT = 'work/independent-ci-resident-v1';
 export const CIV1 = 'work/actions-hosted-migration/independent-ci-v1';
 export const CLOSURE = `${CIV1}/src/resident-v2/source-closure.json`;
 export const PREPARE_RECORD = `${CIV1}/src/resident-v2/prepare-record.mjs`;
+// The nodes' capacity profiles, carried in the package at this repository path (wsl-capacity.mjs; Task 87d330d0).
+export const NODE_PROFILES = 'scripts/ci/self-hosted/node-profiles.json';
 // build-package.mjs RESIDENT_FILES, BRIDGE_DIR, BRIDGE_FILES (not exported there; the fleet test proves the copy against a real build)
 const RESIDENT_FILES = ['src', 'tools', 'windows'];
 const BRIDGE_DIR = `${CIV1}/worker/protected-job-bridge-v4`;

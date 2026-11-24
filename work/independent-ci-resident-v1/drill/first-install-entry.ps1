@@ -108,6 +108,11 @@ function Invoke-EntryStreamedChild([string]$Exe, [string[]]$Arguments, [int]$Lim
 function Test-EntryHostTakesKit([string]$HostScript) {
   return (Get-Command -Name $HostScript -ErrorAction Stop).Parameters.ContainsKey('Kit')
 }
+# A host preparation that takes -StepProgress writes each of its steps' start and end into the entry's stage record (item 7 of the fix
+# round of 87d330d0); an older one is called as before and its stage says only the last step it printed (drill-vm.ps1 timeline).
+function Test-EntryHostTakesStepProgress([string]$HostScript) {
+  return (Get-Command -Name $HostScript -ErrorAction Stop).Parameters.ContainsKey('StepProgress')
+}
 
 # The host preparation's own verdict carried as it is (Fable renew-key ruling, supplement "after the package branch" 3): a restart
 # Windows asks for, or a refusal, stops the entry with the package's code and the verdict's fields after ':', never a blanket failure.
@@ -174,12 +179,81 @@ function New-EntryMeasurements {
   [ordered]@{ assets = $null; prereq = $null; unpack = $null; check = $null; host = $null; prepare = $null; launcher = $null }
 }
 function New-EntryPhaseClock { @{ name = $null; watch = (New-Object Diagnostics.Stopwatch) } }
-# Ends the phase that is open (its seconds are added to its name) and opens $Name; an empty $Name only ends.
+# Ends the phase that is open (its seconds are added to its name) and opens $Name; an empty $Name only ends. Timing only: the stage
+# record (stage-progress.jsonl) is written by the entry itself, each stage ended after its own verdict (Start-EntryStage, Stop-EntryStage).
 function Enter-EntryPhase($Measurements, $Clock, [string]$Name) {
   if ($Clock.name) { $Measurements[$Clock.name] = [double]$Measurements[$Clock.name] + $Clock.watch.Elapsed.TotalSeconds }
   $Clock.name = $(if ($Name) { $Name } else { $null })
   $Clock.watch.Restart()
 }
+# Glass box (coordinator, Owner 11-23; Fable plan 87d330d0): each stage, as it starts and as it ends, is one line in stage-progress.jsonl in the
+# output directory, written there and then -- stage, startedAt, endedAt, result (running, ok, failed), code, and the last lines of the
+# stage's log when it has one. The drill host pulls the file every tick (drill-vm.ps1 Step-DrillGuestProgress), so a first install cut
+# off anywhere still says how far it got and what each stage concluded. An aid only: a line that cannot be written is not written.
+$script:EntryStageOutput = $null
+$script:EntryStageOpen = $null
+$script:EntryStageTailLines = 5
+$script:EntryStageTailChars = 300
+function Get-EntryStageTail([string]$Log) {
+  if (-not $Log) { return $null }
+  try {
+    if (-not [IO.File]::Exists($Log)) { return $null }
+    $lines = @((Read-EntrySharedText $Log) -split "`r?`n" | Where-Object { $_ -ne '' } | Select-Object -Last $script:EntryStageTailLines)
+    return @($lines | ForEach-Object { if ($_.Length -gt $script:EntryStageTailChars) { $_.Substring(0, $script:EntryStageTailChars) } else { $_ } })
+  } catch { return $null }
+}
+function Write-EntryStageLine($Line) {
+  if (-not $script:EntryStageOutput) { return }
+  try {
+    $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes((ConvertTo-Json -InputObject $Line -Compress -Depth 4) + "`n")
+    $fs = New-Object IO.FileStream -ArgumentList (Join-Path $script:EntryStageOutput 'stage-progress.jsonl'), ([IO.FileMode]::Append), ([IO.FileAccess]::Write), ([IO.FileShare]::ReadWrite)
+    try { $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Dispose() }
+  } catch { }
+}
+# The steps inside a stage (the prereq stage: each item's sha, copy, get, expand; the tools found last): one line as a step starts and one
+# as it ends -- stage, item, step, bytes (the item's size from the manifest), startedAt, endedAt, result, code -- so a stage cut off says
+# which item and which step it was in (coordinator, item 6 of the fix round of 87d330d0).
+$script:EntryStepOpen = $null
+function Start-EntryStep([string]$Item, [string]$Step, $Bytes = $null) {
+  Stop-EntryStep 'ok'
+  $stage = $(if ($null -ne $script:EntryStageOpen) { $script:EntryStageOpen.stage } else { $null })
+  $script:EntryStepOpen = @{ stage = $stage; item = $Item; step = $Step; bytes = $Bytes; startedAt = [DateTimeOffset]::UtcNow.ToString('o') }
+  Write-EntryStageLine ([ordered]@{ stage = $stage; event = 'step-start'; item = $Item; step = $Step; bytes = $Bytes; startedAt = $script:EntryStepOpen.startedAt
+    endedAt = $null; result = 'running'; code = $null })
+}
+# Ends the open step (nothing open: nothing written).
+function Stop-EntryStep([string]$Result, [string]$Code = $null) {
+  $open = $script:EntryStepOpen; $script:EntryStepOpen = $null
+  if ($null -eq $open) { return }
+  if ($Code -and $Code.Length -gt $script:EntryStageTailChars) { $Code = $Code.Substring(0, $script:EntryStageTailChars) }
+  Write-EntryStageLine ([ordered]@{ stage = $open.stage; event = 'step-end'; item = $open.item; step = $open.step; bytes = $open.bytes; startedAt = $open.startedAt
+    endedAt = [DateTimeOffset]::UtcNow.ToString('o'); result = $Result; code = $(if ($Code) { $Code } else { $null }) })
+}
+# Ends the open stage with $Result and $Code, its open step first with the same. Nothing open and a stop ($Result failed): the stop is
+# written on its own as 'between-stages', never lost; nothing open otherwise: nothing written.
+function Stop-EntryStage([string]$Result, [string]$Code = $null) {
+  Stop-EntryStep $Result $Code
+  $open = $script:EntryStageOpen; $script:EntryStageOpen = $null
+  if ($Code -and $Code.Length -gt $script:EntryStageTailChars) { $Code = $Code.Substring(0, $script:EntryStageTailChars) }
+  if ($null -eq $open) {
+    if ($Result -ceq 'failed') {
+      $at = [DateTimeOffset]::UtcNow.ToString('o')
+      Write-EntryStageLine ([ordered]@{ stage = 'between-stages'; event = 'end'; startedAt = $at; endedAt = $at; result = 'failed'; code = $(if ($Code) { $Code } else { $null }); tail = $null })
+    }
+    return
+  }
+  $lines = Get-EntryStageTail $open.log; $tail = $null
+  if ($null -ne $lines) { $tail = [string[]]@($lines) }   # a list even of one line
+  Write-EntryStageLine ([ordered]@{ stage = $open.stage; event = 'end'; startedAt = $open.startedAt; endedAt = [DateTimeOffset]::UtcNow.ToString('o')
+    result = $Result; code = $(if ($Code) { $Code } else { $null }); tail = $tail })
+}
+# Ends the open stage as ok (the next one started: it got through) and starts $Stage; $Log is the stage's own log, if it has one.
+function Start-EntryStage([string]$Stage, [string]$Log = $null) {
+  Stop-EntryStage 'ok'
+  $script:EntryStageOpen = @{ stage = $Stage; startedAt = [DateTimeOffset]::UtcNow.ToString('o'); log = $Log }
+  Write-EntryStageLine ([ordered]@{ stage = $Stage; event = 'start'; startedAt = $script:EntryStageOpen.startedAt; endedAt = $null; result = 'running'; code = $null; tail = $null })
+}
+
 function Write-EntryStageTimings([string]$Output, $Measurements) {
   [IO.File]::WriteAllText((Join-Path $Output 'stage-timings.json'), ($Measurements | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
 }
@@ -364,7 +438,10 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
   $measurements = New-EntryMeasurements; $phase = New-EntryPhaseClock
   $inputCredentials = Join-Path $Output 'credentials'
   $entryTree = ''; $entryNode = ''; $hostStage = $null
+  $script:EntryStageOutput = $Output; $script:EntryStageOpen = $null; $script:EntryStepOpen = $null
   try {
+    # Each stage is ended by the next one's start, after its own verdict; a stop ends the open one failed with its code (catch below).
+    Start-EntryStage 'assets'
     if ([IO.File]::Exists($ReceiptFile)) { throw 'DRILL_ENTRY_REQUIRES_FIRST_INSTALL' }
     Enter-EntryPhase $measurements $phase 'assets'
     $prefix = 'fleet-node-' + $ReleaseVersion
@@ -382,6 +459,7 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     }
     $pc = Test-PrereqManifest $manifest (Get-NeededPrereqs $true) $true; $pc = @($pc | ForEach-Object { $_ }); if ($pc.Count) { throw ('PREREQ_MANIFEST_REFUSED:' + ($pc -join ',')) }
     Enter-EntryPhase $measurements $phase 'prereq'
+    Start-EntryStage 'prereq'
     $script:Work = Join-Path $WorkParent ([guid]::NewGuid().ToString('N'))
     $script:EntryFailureRoots.work = $script:Work
     [void][IO.Directory]::CreateDirectory($script:Work)
@@ -390,28 +468,43 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     foreach ($item in $manifest['items']) {
       # Prefer the injected, release-pinned WSL/rootfs. Get-Prereq still verifies size and sha256.
       $injected = Join-Path $Payload $item['fileName']
+      $itemName = [string]$item['name']
+      # a download (not injected, and not one that must be): its own step
+      if (-not [IO.File]::Exists($injected) -and @('gh', 'git-for-windows') -cnotcontains $itemName) { Start-EntryStep $itemName 'get' $item['bytes'] }
       if ([IO.File]::Exists($injected)) {
+        Start-EntryStep $itemName 'sha' $item['bytes']
         if ((Sha256File $injected) -cne $item['sha256'] -or (Get-Item -LiteralPath $injected).Length -ne $item['bytes']) { throw 'DRILL_PREREQ_CHANGED' }
+        Start-EntryStep $itemName 'copy' $item['bytes']
         $file = Join-Path $pre $item['fileName']; [IO.File]::Copy($injected, $file, $false)
       } elseif (@('gh', 'git-for-windows') -ccontains [string]$item['name']) { throw ('DRILL_PREREQ_NOT_INJECTED:' + $item['name']) }
       else { $file = Get-Prereq $item $pre }
       # the package's own Expand-Cached, called as its bootstrap calls it (rollout/fleet/bootstrap.ps1): the zip's longest entry path from the
       # pinned manifest is its fourth argument, without which it refuses (PREREQ_ZIP_MAX_ENTRY_PATH_LENGTH)
-      if (@('node', 'python', 'git') -ccontains [string]$item['name']) { $tools[$item['name']] = Expand-Cached $file ([string]$item['name']) ([string]$item['sha256']) (Get-Key $item 'maxEntryPathLength') }
+      if (@('node', 'python', 'git') -ccontains $itemName) {
+        Start-EntryStep $itemName 'expand' $item['bytes']
+        $tools[$item['name']] = Expand-Cached $file $itemName ([string]$item['sha256']) (Get-Key $item 'maxEntryPathLength')
+      }
+      Stop-EntryStep 'ok'
     }
     $debDir = Join-Path $pre 'debs'; [void][IO.Directory]::CreateDirectory($debDir)
     foreach ($item in $manifest['debs']) {
       $file = Join-Path $Payload $item['fileName']
+      Start-EntryStep ([string]$item['fileName']) 'sha' $item['bytes']
       if ((Sha256File $file) -cne $item['sha256'] -or (Get-Item -LiteralPath $file).Length -ne $item['bytes']) { throw 'DRILL_PREREQ_CHANGED' }
+      Start-EntryStep ([string]$item['fileName']) 'copy' $item['bytes']
       [IO.File]::Copy($file, (Join-Path $debDir $item['fileName']), $false)
+      Stop-EntryStep 'ok'
     }
+    Start-EntryStep 'tools' 'find'
     $nodeFiles = @(Get-ChildItem -LiteralPath $tools['node'] -Recurse -Filter node.exe)
     $pyFiles = @(Get-ChildItem -LiteralPath $tools['python'] -Recurse -Filter python.exe)
     $gitFiles = @(Get-ChildItem -LiteralPath $tools['git'] -Recurse -Filter git.exe | Where-Object { $_.Directory.Name -ceq 'cmd' })
     if ($nodeFiles.Count -ne 1 -or $pyFiles.Count -ne 1 -or $gitFiles.Count -ne 1) { throw 'PREREQ_TOOL_NOT_ONE' }
+    Stop-EntryStep 'ok'
     $entryNode = $nodeFiles[0].FullName
     $childEnv = @{ PATH = $pyFiles[0].DirectoryName + ';' + $gitFiles[0].DirectoryName + ';' + $nodeFiles[0].DirectoryName + ';C:\Windows\System32;C:\Windows'; PSModulePath = $env:PSModulePath }
     Enter-EntryPhase $measurements $phase 'unpack'
+    Start-EntryStage 'unpack'
     $archive = Join-Path $Assets "$prefix.tar"; $archiveHash = $sums["$prefix.tar"]
     $unpack = Join-Path $script:Work 'x'; [void][IO.Directory]::CreateDirectory($unpack)
     & $TarExe -x -f $archive -C $unpack 'tree' 'universal-manifest.json' | Out-Null
@@ -420,10 +513,14 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     $fleet = Join-Path $entryTree 'work\independent-ci-resident-v1\rollout\fleet'
     $install = Join-Path $fleet 'install.mjs'; $acceptance = Join-Path $Assets "$prefix.acceptance.json"
     Enter-EntryPhase $measurements $phase 'check'
+    Start-EntryStage 'check'
     $check = Invoke-NonElevated $entryNode @($install, 'first-install-check', '--artifact', $archive, '--artifact-sha', $archiveHash, '--acceptance', $acceptance, '--from', $Assets) $childEnv
     Enter-EntryPhase $measurements $phase ''
     $pins = $check.last
     if ($check.exit -ne 0 -or (Test-FirstInstallCheck $pins $archiveHash $firstSums["$prefix.first-install-kit.json"] (Sha256File $entryNode)).Count) { throw 'FIRST_INSTALL_INPUTS_NOT_ACCEPTED' }
+    # the host stage's inputs (local copies, the credential directory, the host's own extraction of the accepted archive): a stage of its
+    # own, ended by the host stage's start after its last verdict, so a stop here is on it and a run cut off here says so
+    Start-EntryStage 'host-inputs'
     # Same local-copy boundary as bootstrap; host gets the accepted archive tree, never a repository tree.
     $hostDir = Join-Path $script:Work 'host-inputs'
     $localArchive = Copy-ToWork $archive $hostDir $archiveHash
@@ -478,6 +575,8 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
       if (-not (Test-UnderDirectory $localKit $script:Work)) { throw 'ELEVATED_INPUT_NOT_LOCAL' }
       $kitArgs = @('-Kit', $localKit)
     }
+    if (Test-EntryHostTakesStepProgress $hostScript) { $kitArgs += @('-StepProgress', (Join-Path $Output 'stage-progress.jsonl')) }
+    Start-EntryStage 'host' (Join-Path $Output 'host.stdout.log')
     $watch = [Diagnostics.Stopwatch]::StartNew()
     try {
       # its stdout line by line into host.stdout.log: the step record (drill-vm.ps1 Read-DrillFirstInstallSteps reads steps from the
@@ -490,6 +589,7 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     [IO.File]::WriteAllText((Join-Path $Output 'host-result.json'), (ConvertTo-JsonLine ([ordered]@{ exit = $hostRun.exit; terminal = $hostRun.last; stdoutTail = $(if ($hostRun.stdout) { $t = [string]$hostRun.stdout; $t.Substring([Math]::Max(0, $t.Length - 6000)) } else { $null }); stderrTail = $(if ($hostRun.stderr) { $t = [string]$hostRun.stderr; $t.Substring([Math]::Max(0, $t.Length - 3000)) } else { $null }) })), (New-Object Text.UTF8Encoding($false)))
     $hostStop = Get-EntryHostStopCode $hostRun
     if ($hostStop) { throw $hostStop }
+    Start-EntryStage 'prepare' (Join-Path $Output 'prepare.stdout.log')
     $watch.Restart()
     try { $prepared = Invoke-EntryStreamedChild $entryNode @($install, 'prepare', '--artifact', $archive, '--artifact-sha', $archiveHash, '--acceptance', $acceptance, '--work', (Join-Path $script:Work 'prepare'), '--from', $Assets) 0 (Join-Path $Output 'prepare.stdout.log') $childEnv -NoWindow }
     finally { $measurements.prepare = $watch.Elapsed.TotalSeconds }
@@ -497,12 +597,14 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     if ($prepared.exit -ne 0 -or @('FLEET_NODE_INSTALL_PREPARED', 'FLEET_NODE_FIRST_INSTALL_PREPARED') -cnotcontains [string](Get-Key $prepared.last 'status') -or
         -not (Test-SafePath ([string](Get-Key $drillLauncher 'path'))) -or [string](Get-Key $drillLauncher 'sha256') -cnotmatch '^[0-9a-f]{64}$') { throw 'PREPARE_REFUSED' }
     # the launcher stage meets a cold WSL, every run (Fable ruling 0e418483 4.2)
+    Start-EntryStage 'wsl-cold-start'
     Invoke-EntryWslColdStart $Output $script:Work
     # The launcher stage's output file (bootstrap.ps1 -Stage launcher -Result) is its whole printed output, and here it is launcher.stdout.log
     # itself: whatever it holds when the stage ends or is cut off is what the drill reads (Fable renew-key ruling, supplement "branch two,
     # two points" 1; the package will write it line by line).
     $launcherResult = Join-Path $Output 'launcher.stdout.log'
     # this run's file only (Codex review of c1497e0a1, medium 2): an earlier run's output is cleared before the stage and must be gone
+    Start-EntryStage 'launcher' $launcherResult
     Clear-EntryStageOutput $launcherResult
     $watch.Restart()
     try { $launch = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $bootstrap, '-Stage', 'launcher', '-Result', $launcherResult,
@@ -514,7 +616,13 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     if ($stageGaveNoVerdict) { $terminal = $null }
     [IO.File]::WriteAllText((Join-Path $Output 'launcher-result.json'), (ConvertTo-JsonLine ([ordered]@{ source = $launcherResult; exit = $launch.exit; terminal = $terminal; stageGaveNoVerdict = $stageGaveNoVerdict })), (New-Object Text.UTF8Encoding($false)))
     $verdict = Get-LauncherVerdict $true $terminal
-    return (ConvertTo-FirstInstallEntryResult $verdict $(if ($launch.timedOut -or $null -eq $launch.exit) { 1 } else { [int]$launch.exit }) $entryTree $entryNode)
+    $launchExit = $(if ($launch.timedOut -or $null -eq $launch.exit) { 1 } else { [int]$launch.exit })
+    $ended = ConvertTo-FirstInstallEntryResult $verdict $launchExit $entryTree $entryNode
+    Stop-EntryStage $(if ($ended.status -ceq 'FIRST_INSTALL_DONE') { 'ok' } else { 'failed' }) ([string]$ended.stopCode)
+    return (ConvertTo-FirstInstallEntryResult $verdict $launchExit $entryTree $entryNode)
+  } catch {
+    Stop-EntryStage 'failed' ([string]$_.Exception.Message)   # the stage it stopped in, with the code it stopped on
+    throw
   } finally {
     Enter-EntryPhase $measurements $phase ''   # a phase a stop cut off keeps the time it ran
     Write-EntryStageTimings $Output $measurements

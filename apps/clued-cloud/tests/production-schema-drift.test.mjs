@@ -4,7 +4,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { productionChain, catalogSqlPath, readSnapshot, SNAPSHOT_CONTRACT } from '../scripts/production-schema-chain.mjs';
@@ -284,5 +287,35 @@ test('the base migrations are read from the base commit tree, relative to the ap
   const names = await readBaseMigrations({ CI_BASE_SHA: head.stdout.trim() }, noTrusted);
   assert.ok(names instanceof Set && names.size > 100, 'the base tree lists the committed migrations');
   assert.equal(names.has('20261113151000_work_claim_terminal_admission_removed_v1.sql'), true);
-  assert.equal(await readBaseMigrations({}, noTrusted), undefined);
+});
+
+// S1b: migration-verify checks the trusted base out with only scripts/ci, config and .github (sparse, cone mode, as
+// actions/checkout does), so its migrations directory is not on disk; the names still come from its HEAD tree.
+test('a sparse trusted checkout gives the same base migration names as a full one', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'drift-sparse-trusted-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const trusted = path.join(root, 'trusted');
+  const git = (...args) => {
+    const run = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', '-C', trusted, ...args], { encoding: 'utf8' });
+    assert.equal(run.status, 0, `git ${args.join(' ')}: ${run.stderr}`);
+  };
+  const migrations = path.join(trusted, 'apps', 'clued-cloud', 'supabase', 'migrations');
+  await mkdir(migrations, { recursive: true });
+  await mkdir(path.join(trusted, 'scripts', 'ci'), { recursive: true });
+  for (const name of ['20260901120000_one.sql', '20260902120000_two.sql', '20261101000000_three.sql']) await writeFile(path.join(migrations, name), `-- ${name}` + String.fromCharCode(10));
+  await writeFile(path.join(trusted, 'scripts', 'ci', 'ci-required-selection.mjs'), String.fromCharCode(10));
+  spawnSync('git', ['init', '-q', trusted]);
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  const full = await readBaseMigrations({}, trusted);
+  assert.deepEqual([...full].sort(), ['20260901120000_one.sql', '20260902120000_two.sql', '20261101000000_three.sql']);
+  git('sparse-checkout', 'set', 'scripts/ci', 'config', '.github');
+  assert.equal(existsSync(migrations), false, 'the sparse checkout leaves the migrations directory off disk');
+  assert.deepEqual([...await readBaseMigrations({}, trusted)].sort(), [...full].sort());
+});
+
+test('unknown base migrations are an error, never an empty judgement', async () => {
+  const noTrusted = fileURLToPath(new URL('./no-trusted-checkout', import.meta.url));
+  await assert.rejects(readBaseMigrations({}, noTrusted), /base migrations are unknown/);
+  await assert.rejects(readBaseMigrations({ CI_BASE_SHA: '0'.repeat(40) }, noTrusted), /base migrations are unknown/);
 });

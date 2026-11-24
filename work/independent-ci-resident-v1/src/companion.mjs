@@ -449,7 +449,7 @@ export const CHECK_REFS_SECOND_TRY_MAX_MS = 3 * 60_000; // the refs gate: a seco
 export const timedOutGone = r => r?.timedOut === true && r.tree !== 'unconfirmed';
 export function readPullArgv(ghExe, repo, pr) {
   check(typeof ghExe === 'string' && /^[A-Z]:\\/.test(ghExe) && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '') && Number.isSafeInteger(pr) && pr > 0 && pr < 1e9, 'COMPANION_PR_HEAD_ARGS_INVALID');
-  return [ghExe, 'api', '--method', 'GET', `repos/${repo}/pulls/${pr}`, '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha, mergeSha: .merge_commit_sha}'];
+  return [ghExe, 'api', '--method', 'GET', `repos/${repo}/pulls/${pr}`, '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha, mergeSha: .merge_commit_sha, draft: .draft}'];
 }
 // GitHub's PR state/ref only. PR text carries no Task or claim authority.
 export function parsePull(stdout, pr) {
@@ -457,8 +457,11 @@ export function parsePull(stdout, pr) {
   if (!v || v.number !== pr || !['open', 'closed'].includes(v.state) || typeof v.merged !== 'boolean' || !/^[0-9a-f]{40}$/.test(v.head ?? '')) return null;
   // Advisory only: it may defer a qualification read, never authorize one.
   // Older companion answers have no mergeSha; absence is not ref movement.
+  // PLAN-resident-draft-batch-20261123 §2 item 2: GitHub's draft flag, kept only as a boolean (pr-candidate.mjs judges it). An older
+  // reply without it is no draft fact.
   return { number: pr, state: v.merged ? 'merged' : v.state, headSha: v.head,
-    ...(typeof v.mergeSha === 'string' && /^[0-9a-f]{40}$/.test(v.mergeSha) ? { mergeSha: v.mergeSha } : {}) };
+    ...(typeof v.mergeSha === 'string' && /^[0-9a-f]{40}$/.test(v.mergeSha) ? { mergeSha: v.mergeSha } : {}),
+    ...(typeof v.draft === 'boolean' ? { draft: v.draft } : {}) };
 }
 
 // DESIGN §24: the answer's jobTree from what the job host said about each child of one request that did not simply end

@@ -39,6 +39,9 @@ Every stop writes the raw values to W\launch (terminal.json detail and the *-rep
 param([switch]$RunApprovedInstall,[switch]$CompanionMaintenance)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+# The launcher's own monotonic clock (Windows PowerShell 5.1 has no TickCount64): every step line's ms is read from it, and a
+# duration only ever from two ms (at, the wall clock, lines a step up with other files; a suspended machine steps it).
+$LaunchClock = [Diagnostics.Stopwatch]::StartNew()
 if (-not $RunApprovedInstall) { '{"status":"DISABLED"}'; return }
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
 
@@ -75,7 +78,8 @@ $Done.add_CollectionChanged({ param($sender, $e)
       # recorded all the same (completed, the progress record): it ran, and what it found is in its own output.
       $lineReject = $Progress['rejectCode']; $Progress['rejectCode'] = $null
       $lineResult = if ($lineReject) { 'failed' } else { 'ok' }
-      try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = [string]$step; result = $lineResult; rejectCode = $lineReject; detail = $lineDetail }) -Depth 6 -Compress)) } catch { }   # the step line (see Write-StepLine)
+      $lineMs = try { $(if ($LaunchClock) { $LaunchClock.ElapsedMilliseconds } else { $null }) } catch { $null }
+      try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = [string]$step; result = $lineResult; rejectCode = $lineReject; detail = $lineDetail; at = [DateTimeOffset]::UtcNow.ToString('o'); ms = $lineMs }) -Depth 6 -Compress)) } catch { }   # the step line (see Write-StepLine)
       $Progress.count++
       if (-not $Progress.out) { continue }   # before the launch directory exists (Step-Output): nothing of this launch has changed anything yet
       $leaf = $Progress.count.ToString('000') + '-' + ([string]$step -replace '[^A-Za-z0-9-]', '_') + '.json'
@@ -150,11 +154,24 @@ function Restore-W1Pause {
   $W1Restore.result = $r
 }
 # The step lines (an aid; the shape windows/first-install-host.ps1 and rollout/fleet/bootstrap.ps1 print): {name, result: ok|failed,
-# rejectCode, detail}, one per completed step (the progress handler above) and one for a stop, written to stdout directly ([Console]::Out,
-# never the pipeline: no step function's return value carries them). Never throws.
+# rejectCode, detail, at, ms}, one per completed step (the progress handler above) and one for a stop, written to stdout directly
+# ([Console]::Out, never the pipeline: no step function's return value carries them). at: the UTC time the line was written (ISO 8601,
+# as the host preparation's lines); ms: $LaunchClock's milliseconds then, never going back (task 87d330d0, 1.4). Never throws.
 function Write-StepLine([string]$name, [string]$result, $rejectCode, $detail) {
-  try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = $name; result = $result; rejectCode = $rejectCode; detail = $detail }) -Depth 6 -Compress)) }
-  catch { try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = $name; result = $result; rejectCode = [string]$rejectCode; detail = '<not printable>' }) -Compress)) } catch { } }
+  $at = try { [DateTimeOffset]::UtcNow.ToString('o') } catch { $null }
+  $ms = try { $(if ($LaunchClock) { $LaunchClock.ElapsedMilliseconds } else { $null }) } catch { $null }
+  try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = $name; result = $result; rejectCode = $rejectCode; detail = $detail; at = $at; ms = $ms }) -Depth 6 -Compress)) }
+  catch { try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = $name; result = $result; rejectCode = [string]$rejectCode; detail = '<not printable>'; at = $at; ms = $ms }) -Compress)) } catch { } }
+}
+# A step's start, a line of its own before the step's work (task 87d330d0, FABLE-drill-role-probe-20261124 3.3): {started, at, ms}, the
+# calling Step- function's name. A step line is written only when a step ends, so a long step (the first-train wait, the companion account
+# switch) left nothing that said it was running. The line has no name and no result: no reader takes it for a step line (the drill counts
+# name+result lines as steps; continue.py reads the progress records, which a start never writes). Each step calls it when it is defined
+# (a harness that loads one step alone need not define it). Never throws.
+function Write-StepStart {
+  $name = try { [string]@(Get-PSCallStack)[1].FunctionName } catch { $null }
+  $ms = try { $(if ($LaunchClock) { $LaunchClock.ElapsedMilliseconds } else { $null }) } catch { $null }
+  try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ started = $name; at = [DateTimeOffset]::UtcNow.ToString('o'); ms = $ms }) -Compress)) } catch { }
 }
 function Stop-Launch([string]$code, $detail) {
   if (Test-Path -LiteralPath 'function:Write-StepLine') { Write-StepLine 'launcher' 'failed' $code $null }   # a harness that runs this function alone need not define it
@@ -200,18 +217,21 @@ function Assert-CiInstallBaseline([string]$ciRoot) {
 }
 
 function Step-Identity {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   if ($id.User.Value -cne $OperatorSid) { throw 'OWNER_ACCOUNT_REQUIRED' }   # M5-b (ADR 0023): the Owner; ownerSid is then the companion's account
   if ($env:COMPUTERNAME -cne $NodeHostname) { throw 'NODE_HOST_REQUIRED' }   # the node profile's hostname (pinned by the generator)
   if (-not (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED' }
 }
 function Step-HostHygiene {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $inject = @(Get-ChildItem Env: | Where-Object { $_.Name -match '^(COR_ENABLE_PROFILING|COR_PROFILER|COR_PROFILER_PATH(_32|_64)?|CORECLR_.*|COMPlus_.*|DOTNET_.*|NODE_OPTIONS)$' } | ForEach-Object { $_.Name })
   if ($inject.Count) { throw ('ENVIRONMENT_INJECTION_REFUSED:' + ($inject -join ',')) }
   $foreign = @(Get-Module | Where-Object { $b = ([string]$_.ModuleBase).TrimEnd('\') + '\'; -not ($b.StartsWith('C:\Windows\System32\WindowsPowerShell\v1.0\', [StringComparison]::OrdinalIgnoreCase) -or $b.StartsWith('C:\Program Files\WindowsPowerShell\Modules\', [StringComparison]::OrdinalIgnoreCase)) } | ForEach-Object { $_.Name + '@' + $_.ModuleBase })
   if ($foreign.Count) { throw ('ELEVATED_HOST_LOADED_USER_MODULE:' + ($foreign -join ',')) }
 }
 function Step-Output([switch]$ForBaselineRefusal) {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $id = (Sha256Bytes ($U8.GetBytes($Out.ToLowerInvariant()))).Substring(0, 32)
   $elevated = Join-Path $CarryParent ('reinstall-progress-' + $id)
   if ($ForBaselineRefusal -and ((Test-Path -LiteralPath $Out -ErrorAction Stop) -or (Test-Path -LiteralPath $elevated -ErrorAction Stop))) { return $false }
@@ -225,6 +245,7 @@ function Step-Output([switch]$ForBaselineRefusal) {
   if ($ForBaselineRefusal) { return $true }
 }
 function Step-Package {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $pkgBytes = [IO.File]::ReadAllBytes((Join-Path $PackageRoot 'package-manifest.json'))
   if ((Sha256Bytes $pkgBytes) -cne $PackageManifestSha256) { Stop-Launch 'REVIEWED_PACKAGE_CHANGED' $null }
   $pkg = $Js.DeserializeObject($Strict8.GetString($pkgBytes))
@@ -244,6 +265,7 @@ function Step-Package {
 # exactly that (a squatted or re-ACLed one refuses). Each run stages into its own new child directory, so a
 # stopped run never blocks a later one. Every staged file must be owned by BA (no implicit WRITE_DAC for the Owner).
 function Step-Stage($buffers, [string]$sddl, [string]$owner = 'S-1-5-32-544') {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($sddl)
   if ([IO.File]::Exists($StageParent)) { Stop-Launch 'STAGING_PARENT_IS_A_FILE' $StageParent }
   if (-not [IO.Directory]::Exists($StageParent)) { [void][IO.Directory]::CreateDirectory($StageParent, $ds) }
@@ -403,6 +425,7 @@ function Test-ControllerLogonRightRefused($dryRun) {
 }
 function Step-Preflight {
   if ($FleetFirstInstall -and $Done.Contains('preflight')) { return $script:FirstInstallPreflightResult }   # ran before Linux A (Step-FirstInstallWindowsPreflight)
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $report = [ordered]@{}; $codes = New-Object Collections.Generic.List[string]
   $runner = Get-RunnerState; $report['runner'] = $runner
   if (-not $runner.ok) { $codes.Add('RUNNER_SERVICE_NOT_AS_REVIEWED') }
@@ -457,6 +480,7 @@ function Step-Preflight {
   $found.Count -gt 0
 }
 function Step-Archive {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $a = Invoke-Child 'archive' (Join-Path $Stage 'archive-windows-spool.ps1') @('-BatchKey', $ArchiveBatchKey, '-Reason', $ArchiveReason)
   $av = Parse-LastLine $a.stdout; $dir = [string](Get-Key $av 'directory')
   if ($a.exit -ne 0 -or (Get-Key $av 'verified') -ne $true -or (Get-Key $av 'moved') -ne $Leftovers.Count -or (Get-Key $av 'halfPairs') -ne 0 -or (Get-Key $av 'remainderLeftInPlace') -ne 0 -or $dir -cnotmatch ('^failed-' + $ArchiveBatchKey.Substring(0, 12) + '-' + $ArchiveReason + '-[0-9a-f]{12}$')) { Stop-Launch 'V1_LEFTOVER_ARCHIVE_UNCONFIRMED' ([ordered]@{ exit = $a.exit; result = $av; stdout = (Tail $a.stdout); stderr = (Tail $a.stderr) }) }
@@ -468,6 +492,7 @@ function Step-Archive {
   [ordered]@{ directory = $dir; moved = $moved.Count; receiptSha256 = (Sha256Bytes $rb) }
 }
 function Step-Install {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $i = Invoke-Child 'install' (Join-Path $Stage 'install-resident.ps1') (Get-InstallArgs -Apply)
   $iv = Parse-Json $i.stdout
   if ($i.exit -ne 0 -or (Get-Key $iv 'status') -cne 'RESIDENT_INSTALLED') {
@@ -481,6 +506,7 @@ function Step-Install {
   [ordered]@{ status = 'RESIDENT_INSTALLED'; receiptSha256 = $sha; started = (Get-Key $iv 'started') }
 }
 function Step-Verify([string]$receiptSha) {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $script = Join-Path $ResidentRoot ('resident\' + $ResidentManifestSha256 + '\windows\verify-resident.ps1')
   $v = Invoke-Child 'verify' $script (@('-ExpectedInstallReceiptSha256', $receiptSha) + (Get-VerifyFactsArgs))   # r5c: -LinuxVersionFactsFile
   $vv = Parse-Json $v.stdout; $checks = Get-Key $vv 'checks'
@@ -631,6 +657,7 @@ function Test-OldRootQuiet {
 # (no delete/WRITE_DAC/WRITE_OWNER/write right). Idempotent: an ACL already equal to the pinned "after" is accepted unchanged.
 # Anything else (other than exactly before or exactly after) refuses before anything is written.
 function Step-ParentAcl {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   # r5 S2: READ-ONLY. The installer of 91288d28 appends the service SID's 0x120080 ACE itself (plan /7 parentAcl, step parent-acl; a
   # no-op when it is already there, as after r4.1). Here only: the CI root's DACL is still exactly the generation-time one.
   $r = [ordered]@{ path = $ParentAclPath; now = $null; pinned = $ParentSddlBefore; acePresent = $null; error = $null }
@@ -696,10 +723,25 @@ function Test-CurrentRootCarryShape {
 # runner service on the helper binary, so verify-resident.ps1 must never run while either is in progress.
 #   phase 1: up to $FirstTrainWaitSeconds for a finished train (status.json train.last set) or a HALT;
 #            a fresh, matching standby observation with no live work makes only this wait inapplicable;
+#            the same view, UNCERTAIN, a probe answered since the step started and the service's refusal of this node's token in the
+#            current run of probe failures (not before probe.failingSince), ends it as a failure (role unauthorized;
+#            FABLE-drill-role-probe-20261124 3.2, PLAN-launcher-role-review-m1m2-20261124 1). The step's role: unauthorized, not-held, held, else unconfirmed;
+#            a first install with a role other than held or not-held is not done (bootstrap.ps1 Get-LauncherVerdict);
 #   phase 2, ALWAYS (also after a phase-1 timeout): up to $RunnerQuietWaitSeconds for the runner on its original binary AND
 #            stopped AND the executor not RUNNING, seen on two consecutive polls 5 s apart.
 # runnerQuiet = false -> the launcher does NOT run verify (treated as not verified: pause request + resident stopped).
-function Test-FirstTrainNotApplicable($status, [DateTimeOffset]$notBefore = [DateTimeOffset]::MinValue) {
+# A time of status.json read as the not-applicable branch reads it (ISO 8601 with a zone, at most $maxAge seconds old, at most 30 s ahead,
+# and not before $notBefore).
+function Test-FirstTrainTime($text, [int]$maxAge, [DateTimeOffset]$notBefore = [DateTimeOffset]::MinValue) {
+  $at = [DateTimeOffset]::MinValue
+  if ($text -isnot [string] -or $text -cnotmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,7})?(?:Z|[+-][0-9]{2}:[0-9]{2})$' -or
+      -not [DateTimeOffset]::TryParse($text, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$at)) { return $false }
+  $age = ([DateTimeOffset]::UtcNow - $at).TotalSeconds
+  return ($age -ge -30) -and ($age -le $maxAge) -and ($at -ge $notBefore)
+}
+# What both early ends of phase 1 hold to (not-applicable, the refused token): this node's and this Source's status, written since the step
+# started, the executor IDLE, no halt, nothing current, no live queue row (only terminal history in pending). The role is not looked at.
+function Test-FirstTrainStatusFrame($status, [DateTimeOffset]$notBefore = [DateTimeOffset]::MinValue) {
   # status.json is an advisory view, not role authority. It can avoid a wait,
   # never start work or bypass the independent runner-quiet and verify gates.
   # Do not use Get-Key here: its pipeline output unwraps singleton JSON arrays.
@@ -720,18 +762,8 @@ function Test-FirstTrainNotApplicable($status, [DateTimeOffset]$notBefore = [Dat
   if ($executor.Keys -cnotcontains 'state' -or $executor['state'] -isnot [string] -or $executor['state'] -cne 'IDLE' -or
       $node['name'] -isnot [string] -or $node['name'] -cne $NodeName -or
       $node['source'] -isnot [string] -or $node['source'] -cne $CiSourceManifestSha256.Substring(0, 12) -or
-      $node['mode'] -isnot [string] -or $node['mode'] -cne 'STANDBY' -or
-      $probe['result'] -isnot [string] -or $probe['result'] -cne 'not-held' -or $null -ne $probe['failingSince'] -or
-      $probe['failures'] -isnot [int] -or $probe['failures'] -ne 0) { return $false }
-  $now = [DateTimeOffset]::UtcNow
-  foreach ($field in @(@($status, 'writtenAt', 300), @($probe, 'at', 900))) {
-    $text = $field[0][$field[1]]; $at = [DateTimeOffset]::MinValue
-    if ($text -isnot [string] -or $text -cnotmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,7})?(?:Z|[+-][0-9]{2}:[0-9]{2})$' -or
-        -not [DateTimeOffset]::TryParse($text, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$at)) { return $false }
-    $age = ($now - $at).TotalSeconds
-    if ($age -lt -30 -or $age -gt $field[2]) { return $false }
-    if ($field[1] -ceq 'writtenAt' -and $at -lt $notBefore) { return $false }
-  }
+      $node['mode'] -isnot [string]) { return $false }
+  if (-not (Test-FirstTrainTime $status['writtenAt'] 300 $notBefore)) { return $false }
   if ($null -ne $status['halt'] -or $null -ne $status['current'] -or
       $status['pending'] -isnot [Array] -or $status['pending'].Count -gt 100 -or
       $queue['generation'] -isnot [string] -or $queue['generation'] -cnotmatch '^[0-9a-f]{12}$' -or
@@ -748,10 +780,64 @@ function Test-FirstTrainNotApplicable($status, [DateTimeOffset]$notBefore = [Dat
   }
   return $true
 }
+# Not on duty (STANDBY, not-held, no failures, a probe at most 15 minutes old): only this wait is inapplicable.
+function Test-FirstTrainNotApplicable($status, [DateTimeOffset]$notBefore = [DateTimeOffset]::MinValue) {
+  if (-not (Test-FirstTrainStatusFrame $status $notBefore)) { return $false }
+  $node = $status['node']; $probe = $node['probe']
+  return ($node['mode'] -ceq 'STANDBY') -and ($probe['result'] -is [string]) -and ($probe['result'] -ceq 'not-held') -and ($null -eq $probe['failingSince']) -and
+    ($probe['failures'] -is [int]) -and ($probe['failures'] -eq 0) -and (Test-FirstTrainTime $probe['at'] 900)
+}
+# FABLE-drill-role-probe-20261124 3.2 (task 87d330d0): the service refused this node's token. The executor reports it once per run of
+# failures as a role-probe-connection notice, at the run's first refusal (role-probe.mjs observe: ROLE_PROBE_CONNECTION_UNAUTHORIZED;
+# executor.mjs puts it in status's notices). The notice of the current run of failures, or $null: at most 15 minutes old and not before the
+# same status's probe.failingSince (the run's first failure; a held or not-held answer clears it), which must be a valid time. The run may have
+# begun before this step did (PLAN-launcher-role-review-m1m2-20261124 1: the launcher's clock does not say which run a notice belongs to).
+function Get-FirstTrainRefusalNotice($status) {
+  if ($status -isnot [Collections.IDictionary] -or $status.Keys -cnotcontains 'notices' -or $status['notices'] -isnot [Array]) { return $null }
+  if ($status.Keys -cnotcontains 'node' -or $status['node'] -isnot [Collections.IDictionary] -or $status['node'].Keys -cnotcontains 'probe') { return $null }
+  $probe = $status['node']['probe']
+  if ($probe -isnot [Collections.IDictionary] -or $probe.Keys -cnotcontains 'failingSince') { return $null }
+  $since = $probe['failingSince']; $sinceAt = [DateTimeOffset]::MinValue
+  if (-not (Test-FirstTrainTime $since ([int]::MaxValue)) -or
+      -not [DateTimeOffset]::TryParse($since, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$sinceAt)) { return $null }
+  foreach ($n in $status['notices']) {
+    if ($n -is [Collections.IDictionary] -and $n['kind'] -is [string] -and $n['kind'] -ceq 'role-probe-connection' -and
+        $n['code'] -is [string] -and $n['code'] -ceq 'ROLE_PROBE_CONNECTION_UNAUTHORIZED' -and (Test-FirstTrainTime $n['at'] 900 $sinceAt)) { return $n }
+  }
+  return $null
+}
+# The refused token ends phase 1 (it is a definite answer: no train can start, ACTIVE comes only from held, executor.mjs, and the next probe
+# is at least a minute away and cannot answer held with this token). A plain uncertain answer (network, 5xx) never does: a minute later it may
+# be held and start a train, which is what the wait is for (review M1). The probe answered uncertain since the step started (the launcher
+# saw a new uncertain answer within the step); the refusal is of the current run of failures (Get-FirstTrainRefusalNotice).
+function Test-FirstTrainRoleUnauthorized($status, [DateTimeOffset]$notBefore) {
+  if (-not (Test-FirstTrainStatusFrame $status $notBefore)) { return $false }
+  $node = $status['node']; $probe = $node['probe']
+  return ($node['mode'] -ceq 'UNCERTAIN') -and ($probe['result'] -is [string]) -and ($probe['result'] -ceq 'uncertain') -and
+    (Test-FirstTrainTime $probe['at'] 900 $notBefore) -and ($null -ne (Get-FirstTrainRefusalNotice $status))
+}
+# The role a status shows (held: ACTIVE and held; not-held: STANDBY and not-held), from this node's and this Source's status written since
+# the step started (the new process starts UNCERTAIN: a mode other than that is its own probe's) and a probe at most 15 minutes old, as the
+# not-applicable branch reads them; else $null (unknown). The executor's state does not matter: an ACTIVE node may be running its train.
+function Get-FirstTrainRole($status, [DateTimeOffset]$notBefore) {
+  if ($status -isnot [Collections.IDictionary] -or $status['contract'] -isnot [string] -or
+      $status['contract'] -cnotin @('clued.independent-ci.resident-status/6', 'clued.independent-ci.resident-status/7', 'clued.independent-ci.resident-status/8') -or
+      -not (Test-FirstTrainTime $status['writtenAt'] 300 $notBefore)) { return $null }
+  $node = $status['node']
+  if ($node -isnot [Collections.IDictionary] -or $node['name'] -isnot [string] -or $node['name'] -cne $NodeName -or
+      $node['source'] -isnot [string] -or $node['source'] -cne $CiSourceManifestSha256.Substring(0, 12) -or $node['mode'] -isnot [string]) { return $null }
+  $probe = $node['probe']
+  if ($probe -isnot [Collections.IDictionary] -or $probe['result'] -isnot [string] -or -not (Test-FirstTrainTime $probe['at'] 900)) { return $null }
+  if ($node['mode'] -ceq 'ACTIVE' -and $probe['result'] -ceq 'held') { return 'held' }
+  if ($node['mode'] -ceq 'STANDBY' -and $probe['result'] -ceq 'not-held') { return 'not-held' }
+  return $null
+}
 function Step-WaitFirstTrain {
-  $r = [ordered]@{ observed = $false; notApplicable = $false; notApplicableObservation = $null; halted = $false; runnerQuiet = $false; seconds = $null; last = $null; error = $null }
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
+  $r = [ordered]@{ observed = $false; notApplicable = $false; notApplicableObservation = $null; halted = $false; runnerQuiet = $false; seconds = $null; last = $null; error = $null
+    role = $null; roleUnauthorized = $false; roleUnauthorizedObservation = $null }
   $sf = Join-Path $ResidentRoot 'state\status.json'
-  $script:FirstTrainSeen = $null
+  $script:FirstTrainSeen = $null; $script:FirstTrainRole = $null
   # Evidence for the next ruling ("package branch, two points" A; the wait itself is unchanged): what the new resident's status showed during phase 1,
   # each change once with the time it was first seen (executor state and reason, train, halt, node mode and role probe, live queue).
   $script:FirstTrainObservations = New-Object Collections.ArrayList; $script:FirstTrainObservedKey = $null
@@ -774,7 +860,15 @@ function Step-WaitFirstTrain {
           $script:FirstTrainObservedKey = $key; $o = [ordered]@{ at = (& $iso ([DateTime]::UtcNow)) }; foreach ($k in @($seen.Keys)) { $o[$k] = $seen[$k] }; [void]$script:FirstTrainObservations.Add($o)
         }
       } catch { }
+      $script:FirstTrainRole = try { Get-FirstTrainRole $s $t0 } catch { $null }   # the role this poll shows (the last poll's is the step's)
       if ($null -ne $script:FirstTrainSeen.halt -or [string]$script:FirstTrainSeen.state -ceq 'HALTED') { return $true }
+      if (Test-FirstTrainRoleUnauthorized $s $t0) {
+        $n = $s['node']; $p = $n['probe']; $refusal = Get-FirstTrainRefusalNotice $s
+        $r.roleUnauthorized = $true
+        $r.roleUnauthorizedObservation = [ordered]@{ writtenAt = $s['writtenAt']; nodeName = $n['name']; source = $n['source']; mode = $n['mode']
+          probeAt = $p['at']; probeResult = $p['result']; noticeAt = $refusal['at']; noticeCode = $refusal['code'] }
+        return $true
+      }
       if (Test-FirstTrainNotApplicable $s $t0) {
         $n = $s['node']; $p = $n['probe']
         $r.notApplicable = $true
@@ -785,7 +879,8 @@ function Step-WaitFirstTrain {
       ($null -ne $script:FirstTrainSeen.trainLast) -and ([string]$script:FirstTrainSeen.state -cne 'RUNNING') -and (& { $f = (Get-RunnerState).flags; $f.originalBinary -and $f.stoppedPid0 })
     } $FirstTrainWaitSeconds
   } catch { $r.error = $_.Exception.Message }
-  if ($r.notApplicable) { $r.observed = $false }
+  if ($r.notApplicable -or $r.roleUnauthorized) { $r.observed = $false }
+  $r.role = if ($r.roleUnauthorized) { 'unauthorized' } elseif ($r.notApplicable) { 'not-held' } elseif ($script:FirstTrainRole) { $script:FirstTrainRole } else { 'unconfirmed' }
   $r['phase1EndedAt'] = & $iso ([DateTime]::UtcNow)
   $r.last = $script:FirstTrainSeen
   if ($null -ne $r.last) { $r.halted = ($null -ne $r.last.halt -or [string]$r.last.state -ceq 'HALTED') }
@@ -804,8 +899,10 @@ function Step-WaitFirstTrain {
   $r['runnerAfter'] = (Get-RunnerState).flags
   Write-Json 'first-train-report.json' $r
   $Progress['detail'] = [ordered]@{ startedAt = $r['startedAt']; phase1EndedAt = $r['phase1EndedAt']; endedAt = $r['endedAt']; seconds = $r.seconds; observed = $r.observed
-    notApplicable = $r.notApplicable; halted = $r.halted; runnerQuiet = $r.runnerQuiet; observations = $r['observations'] }
-  $Done.Add($(if (-not $r.runnerQuiet) { 'runner-not-quiet-verify-skipped' } elseif ($r.notApplicable) { 'first-train-not-applicable' } elseif ($r.observed -and -not $r.halted) { 'first-train' } else { 'first-train-not-observed' }))
+    notApplicable = $r.notApplicable; halted = $r.halted; runnerQuiet = $r.runnerQuiet; role = $r.role; observations = $r['observations'] }
+  # the refused token: the step's line says failed, with the refusal's code (the step itself completed: verify and pause follow as always)
+  if ($r.runnerQuiet -and $r.roleUnauthorized) { $Progress['rejectCode'] = 'ROLE_PROBE_CONNECTION_UNAUTHORIZED' }
+  $Done.Add($(if (-not $r.runnerQuiet) { 'runner-not-quiet-verify-skipped' } elseif ($r.notApplicable) { 'first-train-not-applicable' } elseif ($r.roleUnauthorized) { 'first-train-role-unauthorized' } elseif ($r.observed -and -not $r.halted) { 'first-train' } else { 'first-train-not-observed' }))
   $r
 }
 # R5/F2 (from r3, unchanged): after install + verify and BEFORE the companion starts: one ordinary pause request,
@@ -826,6 +923,7 @@ function Find-PauseRequest([string]$name) {
   $f
 }
 function Step-PauseAfterInstall([bool]$verified) {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $r = [ordered]@{ verified = $verified; request = $null; requestSha256 = $null; staged = $null; daclReadback = $null; confirmed = $false; paused = $null; found = $null; residentStop = $null; residentStopped = $null; waitSeconds = $(if ($verified) { $PauseWaitSeconds } else { 0 }); error = $null }
   # Verify not passed (r9, task 0e418483): the ending is the same whether the pause is confirmed or not (the resident is stopped below), so
   # no request is posted and nothing is waited for: request stays null, waitSeconds 0, and the resident does not run on meanwhile.
@@ -927,6 +1025,7 @@ function Get-VerifyFactsArgs {
 # current state, and the parts of the install preflight that do not depend on the resident root already pass.
 function Step-UninstallPreflight {
   if ($FleetFirstInstall) { return }   # nothing installed: Step-FirstInstallPreflight checked that, Step-Preflight's dry run checks it again
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $report = [ordered]@{}; $codes = New-Object Collections.Generic.List[string]
   $report['installedReceiptSha256'] = Get-FileSha (Join-Path $ResidentRoot 'install\install-receipt.json')
   if ($report['installedReceiptSha256'] -cne $InstalledReceiptSha256) { $codes.Add('INSTALLED_RECEIPT_NOT_AS_REVIEWED') }
@@ -993,6 +1092,7 @@ function Step-UninstallPreflight {
 # process under the root (what an earlier stopped run leaves) count as quiesced: sc stop then only reports 1062.
 function Step-Quiesce {
   if ($FleetFirstInstall) { return $null }
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $report = [ordered]@{}
   # r7 r2: first the upgrader, through SCM (it runs under the root as LocalSystem and SCM restarts it after a failure, so it is never
   # killed): its host ends it at a step boundary, at most 60 s, as the installed uninstall does first; the uninstall deletes it stopped
@@ -1019,6 +1119,7 @@ function Step-Quiesce {
 # evidence is checked byte for byte and both service deletions and the rename are confirmed.
 function Step-Uninstall {
   if ($FleetFirstInstall) { return [ordered]@{ firstInstall = $true; keptAt = $null } }
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $report = [ordered]@{}
   $d = Invoke-Child 'uninstall.dry-run' $InstalledUninstall @()
   $dv = Parse-Json $d.stdout; $dp = Get-Key $dv 'plan'; $sha = [string](Get-Key $dv 'planSha256')
@@ -1060,6 +1161,7 @@ function Step-Uninstall {
 # install goes straight to the switch (Step-CompanionHeadless, on firstInstallSwitch); nothing is started first.
 function Step-StartCompanion {
   if ($FleetFirstInstall) { return [ordered]@{ started = $false; firstInstallSwitch = $true; error = $null } }
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\ScheduledTasks\ScheduledTasks.psd1'
   $r = [ordered]@{ started = $false; error = $null; state = $null }
   try { Start-CompanionTask; $r.started = $true } catch { $r.error = $_.Exception.Message }
@@ -1076,6 +1178,7 @@ function Step-StartCompanion {
 # half; the Windows half was archived above) and clears the HALT itself. Waits up to 6 minutes for the HALT to go.
 # A refusal or a timeout is recorded; it does not undo the install (the Owner can re-arm separately).
 function Step-Rearm {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $r = [ordered]@{ requested = $false; cleared = $false; exit = $null; stdout = $null; stderr = $null; error = $null; haltAfter = $null; notNeeded = $false }
   # Quota phase 1 reinstall: the installed resident is PAUSED, not halted, and the new install starts with a fresh
   # state (its executed heads are backfilled from the carried ledgers). No HALT was pinned: there is nothing to re-arm.
@@ -1104,6 +1207,7 @@ function Step-Rearm {
 # as they were, create-only. Without it the switch reads a record with no ownerRegistration and stops, and the roll-back loses the
 # owner's original registration (DESK 2026-11-13: companion-headless exit 1, the node fell back to the interactive definition).
 function Step-CarryCompanionWslRecord([string]$keptAt) {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $r = [ordered]@{ from = $keptAt; carried = @(); error = $null }
   if ($FleetFirstInstall) { $r.error = 'FIRST_INSTALL_NO_KEPT_ROOT_COMPANION_SWITCH_PENDING'; return $r }   # the distribution is still the operator's
   try {
@@ -1127,6 +1231,7 @@ function Step-CarryCompanionWslRecord([string]$keptAt) {
   $r
 }
 function Step-CompanionHeadless {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $r = [ordered]@{ ran = $false; exit = $null; status = $null; stdout = $null; error = $null }
   try {
     $rearm = Join-Path $ResidentRoot ('resident\' + $ResidentManifestSha256 + '\windows\rearm-resident.ps1')
@@ -1318,6 +1423,7 @@ function Read-FleetOutFile([string]$leaf, $run, [string]$registrar, [int]$max) {
 # is exactly x, the captured stderr is empty, and the owner and DACL of out\ and of both files are what they were. The directory is
 # removed either way; the record stays (linux-out-acl-probe-report.json). A failure stops before anything changed.
 function Step-LinuxOutAclProbe([string]$registrar) {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $run = New-FleetRunDirectory 'probe' -Probe
   $sd = { param($p) $(if ([IO.Directory]::Exists($p)) { [IO.Directory]::GetAccessControl($p) } else { [IO.File]::GetAccessControl($p) }).GetSecurityDescriptorSddlForm('All') }
   $watched = @($run.out, (Join-Path $run.out 'stdout.txt'), (Join-Path $run.out 'stderr.txt'))
@@ -1456,6 +1562,7 @@ function Remove-FleetRegistrar($build) {
 # can be carried. Nothing is written but this run's own reports (their own names: Step-UninstallPreflight runs in full afterwards).
 function Step-WindowsPreflightBeforeLinux {
   if ($FleetFirstInstall) { $W1Restore.armed = $false; Step-FirstInstallPreflight; return }   # no installed resident, no W1 pause to lift
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $report = [ordered]@{}; $codes = New-Object Collections.Generic.List[string]
   $report['installedReceiptSha256'] = Get-FileSha (Join-Path $ResidentRoot 'install\install-receipt.json')
   if ($report['installedReceiptSha256'] -cne $InstalledReceiptSha256) { $codes.Add('INSTALLED_RECEIPT_NOT_AS_REVIEWED') }
@@ -1525,6 +1632,7 @@ function Remove-FleetCarry {
 # entries, whether its ACL was still SYSTEM and Administrators only, whether every file had a token's shape, and whether it is gone. A
 # file's bytes are read into memory only to test the shape and are cleared; nothing of them is written anywhere. Never stops the launch.
 function Step-SweepCarry {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $found = @()
   if (-not [IO.Directory]::Exists($CarryParent)) { return , $found }
   foreach ($d in @([IO.Directory]::GetDirectories($CarryParent, 'reinstall-carry-*') | Sort-Object)) {
@@ -1622,6 +1730,7 @@ function Step-SweepCarry {
 # Returns the copies' paths. A token that is not there, not a plain file or not the pinned one stops the launch before anything changes,
 # and nothing is left behind then.
 function Step-CarryTokens {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $want = @(, @('upgradeToken', $UpgradeTokenTarget, 'ci-token', $FleetUpgradeTokenFingerprint, 'resident-upgrade.token'))
   if ($FleetHeartbeatTokenFingerprint) { $want += , @('heartbeatToken', $HeartbeatTokenTarget, 'heartbeat-token', $FleetHeartbeatTokenFingerprint, 'ci-node-heartbeat.token') }
   $dir = Join-Path $CarryParent ('reinstall-carry-' + [Guid]::NewGuid().ToString('N'))
@@ -1664,6 +1773,7 @@ function Step-FileLocks {
   # A first install has no installed binary to hold a lock. Its slot (after the tokens are carried, before Linux A) runs the first
   # install's Windows preflight instead: Linux B cannot be undone, so whatever the Windows side would refuse is refused before it.
   if ($FleetFirstInstall) { Step-FirstInstallWindowsPreflight; return $null }
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $b = [IO.File]::ReadAllBytes($FleetFileLocks)
   if ((Sha256Bytes $b) -cne $FleetFileLocksSha256) { Stop-Launch 'FILE_LOCKS_TOOL_CHANGED' $null }
   $tool = Join-Path $Stage 'file-locks.ps1'; Write-New $tool $b
@@ -1733,6 +1843,7 @@ function Get-NodeIdentityKeyCheck {
   } catch { [ordered]@{ keys = $null; missing = $null; code = 'NODE_IDENTITY_KEY_UNREADABLE'; error = [string]$_.Exception.Message } }
 }
 function Step-FirstInstallPreflight {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $residue = Get-FirstInstallResidue
   $report = [ordered]@{ root = $residue.root; services = $residue.services; directory = $FleetFirstInstallDirectory; directoryOk = $false; identityKeys = $null; codes = @() }
   if (Test-FirstInstallResiduePresent $residue) { $report.codes += 'FIRST_INSTALL_RESIDUE_PRESENT' }
@@ -1754,6 +1865,7 @@ function Step-FirstInstallPreflight {
 # the installer's dry runs with and without the carried tokens, the ACL migration plan, the spool). Its result is kept; the install
 # preflight after Linux (main region) returns it instead of running a second time into the same report names.
 function Step-FirstInstallWindowsPreflight {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $report = [ordered]@{}; $codes = New-Object Collections.Generic.List[string]
   $runner = Wait-RunnerState; $report['runner'] = $runner
   if (-not $runner.ok) { $codes.Add('RUNNER_SERVICE_NOT_AS_REVIEWED') }
@@ -1777,10 +1889,15 @@ function Remove-FirstInstallCredentials {
 # Linux A, then B (B-resume once after a failed B), then B's output by rule. A timeout stops the launch and kills nothing. Returns the
 # staged copy of the version facts (and its hash) for verify -LinuxVersionFactsFile.
 function Step-LinuxRoot {
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $report = [ordered]@{ companionAccount = [bool]$FleetCompanionAccount; distribution = $FleetDistribution; planSha256 = $FleetPlanSha256; registrar = $null; runs = @(); evidence = $null; versionFacts = $null; codes = @() }
   # B's final status: a first install's B (reinstall/linux/first-install.py --in-dir) names itself; the rules for its output are the same
   $bDone = $(if ($FleetFirstInstall) { 'LINUX_FIRST_INSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1' } else { 'LINUX_REINSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1' })
   $stop = { param([string]$code) $report.codes = @($code); Write-Json 'linux-report.json' $report; Stop-Launch $code $report }
+  # what a run leaves for its step line (task 87d330d0, 1.4): its seconds and the first {"dockerReady":...} line it printed, as printed
+  # (never parsed: a passing run's own readings of the cold boot), or null. An aid: it never stops the launch.
+  $stepDetail = { param($run) $ready = @(([string]$run.stdout) -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_.StartsWith('{"dockerReady":') })
+    [ordered]@{ seconds = $run.seconds; dockerReady = $(if ($ready.Count) { $ready[0] } else { $null }) } }
   if (Get-Variable -Name 'ResumeOriginalLauncherSha256' -ErrorAction SilentlyContinue) { & $stop 'FLEET_LAUNCH_RESUME_NOT_SUPPORTED' }
   Set-FleetLinuxDirectories
   $build = $null
@@ -1795,6 +1912,7 @@ function Step-LinuxRoot {
     if ($a.captureRefused) { & $stop 'LINUX_PHASE_A_OUTPUT_NOT_CAPTURED' }   # A ran and exited; what it printed is not readable yet (a continuation captures it)
     if ($a.outcome -ceq 'TIMEOUT') { & $stop 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED' }
     if (-not (Test-FleetRun $a 'PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED')) { & $stop 'LINUX_PHASE_A_NOT_COMPLETED' }
+    try { $Progress['detail'] = & $stepDetail $a } catch { }
     $Done.Add('linux-A')
     # r5 X1: a first install's B ends in the installer, which refuses a resident root that is there; whatever made one (or a service)
     # since the preflight, B does not start over it
@@ -1817,6 +1935,7 @@ function Step-LinuxRoot {
       if ($b.captureRefused) { & $stop 'LINUX_PHASE_B_OUTPUT_NOT_CAPTURED' }
       if (-not (Test-FleetRun $b $bDone)) { & $stop 'LINUX_PHASE_B_NOT_COMPLETED' }
     }
+    try { $Progress['detail'] = & $stepDetail $b } catch { }
     $Done.Add('linux-B')
     $last = Parse-LastLine $b.stdout
     $ef = Get-FleetOutFile ([string](Get-Key $last 'evidence')) '^linux-live-manifest\.[0-9]{8}T[0-9]{6}Z\.txt$'
@@ -1910,6 +2029,7 @@ try {
 }
 $terminal = [ordered]@{ contract = 'clued.independent-ci.source-v2-windows-launch-terminal/1'
   status = $(if ($verify.status -cne 'RESIDENT_VERIFIED') { 'R4_WINDOWS_REINSTALLED_VERIFY_NOT_PASSED_RESIDENT_STOPPED' } elseif (-not $pause.confirmed) { 'PAUSE_NOT_CONFIRMED' } else { 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' })
+  role = $train.role   # the first-train wait's (unauthorized, unconfirmed, not-held, held); a first install is done only with held or not-held
   sourceSha = $SourceSha; packageHead = $PackageHead; planSha256 = $PlanSha256; uninstall = $uninstall; archive = $archive; install = $install; parentAcl = $parentAcl; train = $train; verify = $verify; pause = $pause; companion = $companion; rearm = $rearm; companionHeadless = $companionHeadless; fileLocks = $fileLocks; linux = $linux; carriedTokens = $CarriedTokens
   completed = @($Done); at = [DateTimeOffset]::UtcNow.ToString('o') }
 Write-Json 'terminal.json' $terminal

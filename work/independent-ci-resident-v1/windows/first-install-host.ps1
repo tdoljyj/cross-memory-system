@@ -73,6 +73,8 @@
   -Reset (no resident on the host): removes what this host preparation made and nothing else: first-install\, the App key and the
   ci-admission token only where their fingerprints are the ones facts.json records, the distribution only when companion-wsl.json says
   this operator imported it (Get-ResetPlan). Prints FIRST_INSTALL_HOST_RESET with what it removed and what it kept.
+  -StepProgress <file> (the CLUED-DRILL entry only; bootstrap.ps1 does not pass it): each step's start and end also appended to that file
+  (the entry's stage-progress.jsonl), so a drill cut off mid-step says which step; stdout and the step lines are unchanged.
 
   The installer's needs on a new machine (install-resident.ps1 and its plan; the "v1 control base"), and where each comes from:
     CI root C:\ProgramData\CluedIndependentCI, protected, no other resident ACE (PARENT_ACL_*)       P1 ci-root (baseline DACL)
@@ -97,7 +99,7 @@
   Step-CompanionHeadless) moves it to the companion account and writes install\companion-wsl.json itself.
 #>
 param([string]$Tree, [string]$PrereqDirectory, [string]$PrereqManifest, [string]$PrereqManifestSha256, [string]$KitSha256, [string]$ToolchainNodeSha256,
-  [string]$RegistrarSha256, [string]$ExpectedOperatorSid, [string]$CredentialDirectory, [string]$Kit, [switch]$Reset)
+  [string]$RegistrarSha256, [string]$ExpectedOperatorSid, [string]$CredentialDirectory, [string]$Kit, [switch]$Reset, [string]$StepProgress)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions   # JavaScriptSerializer (Windows PowerShell 5.1 does not load it by itself)
@@ -453,16 +455,35 @@ function ConvertTo-JsonLine($value, [switch]$Progress) {
 # detail}. Enter-Step names the step that runs now: a refusal, a restart or an exception is printed as that step failed, before the
 # verdict. A step line never throws and never ends P1.
 # This stage's lines also carry at, the UTC time the step ended (Fable ruling 0e418483 section 4; ISO 8601, +00:00): two neighbouring lines
-# give a step's duration. bootstrap.ps1's and the launcher's lines do not carry it.
+# give a step's duration. bootstrap.ps1's lines do not carry it; the launcher's carry it and ms, its own monotonic milliseconds (task 87d330d0).
 function Get-StepLine([string]$name, [string]$result, $rejectCode, $detail) {
   $at = try { [DateTimeOffset]::UtcNow.ToString('o') } catch { $null }
   try { ConvertTo-JsonLine ([ordered]@{ name = $name; result = $result; rejectCode = $rejectCode; detail = $detail; at = $at }) -Progress }
   catch { ConvertTo-JsonLine ([ordered]@{ name = $name; result = $result; rejectCode = $(if ($rejectCode -is [string]) { $rejectCode } else { $null }); detail = '<not printable>'; at = $at }) -Progress }
 }
-function Enter-Step([string]$name) { $script:StepNow = $name }
-function Step([string]$name, $detail) { $script:StepNow = $null; Get-StepLine $name 'ok' $null $detail }
+# -StepProgress <file> (the CLUED-DRILL entry only; bootstrap.ps1 does not pass it): a step line printed only as a step ends says
+# nothing while a step runs (drill 20261123T125817Z: the host stage cut off 5 minutes after node-key-check, the step it was in unknown).
+# With it, each step is also one line in that file as it starts and one as it ends -- stage host, event step-start/step-end, step, startedAt,
+# endedAt, result, code -- the entry's stage record (drill/first-install-entry.ps1 stage-progress.jsonl, pulled by the drill host while
+# this runs). Appended with read-write sharing; an aid: a line that cannot be written is not, and stdout is unchanged.
+$script:StepProgressStartedAt = $null
+function Write-StepProgress([string]$event, [string]$name, [string]$result, $code) {
+  try {
+    $file = Get-Variable -Name StepProgress -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if (-not $file) { return }
+    $now = [DateTimeOffset]::UtcNow.ToString('o')
+    if ($event -ceq 'step-start') { $script:StepProgressStartedAt = $now }
+    $line = [ordered]@{ stage = 'host'; event = $event; item = $null; step = $name; bytes = $null; startedAt = $script:StepProgressStartedAt
+      endedAt = $(if ($event -ceq 'step-end') { $now } else { $null }); result = $result; code = $(if ($code -is [string]) { $code } else { $null }) }
+    $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes((ConvertTo-JsonLine $line -Progress) + "`n")   # the one JSON writer
+    $fs = New-Object IO.FileStream -ArgumentList $file, ([IO.FileMode]::Append), ([IO.FileAccess]::Write), ([IO.FileShare]::ReadWrite)
+    try { $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Dispose() }
+  } catch { }
+}
+function Enter-Step([string]$name) { $script:StepNow = $name; Write-StepProgress 'step-start' $name 'running' $null }
+function Step([string]$name, $detail) { $script:StepNow = $null; Write-StepProgress 'step-end' $name 'ok' $null; Get-StepLine $name 'ok' $null $detail }
 # A failed step's line carries its name and code only: the detail is the verdict's, once (a stage keeps only the tail of stdout).
-function Get-FailedStepLine($rejectCode) { $n = if ($script:StepNow) { [string]$script:StepNow } else { 'host' }; $script:StepNow = $null; Get-StepLine $n 'failed' $rejectCode $null }
+function Get-FailedStepLine($rejectCode) { $n = if ($script:StepNow) { [string]$script:StepNow } else { 'host' }; $script:StepNow = $null; Write-StepProgress 'step-end' $n 'failed' $rejectCode; Get-StepLine $n 'failed' $rejectCode $null }
 # A restart Windows asks for (exit 3): the step it ended, then the verdict; the same command is run again after the restart. The verdict
 # says which install step asked and each installer's own exit code ($installers: {installer, exit}; "heartbeat token and restart code" 2).
 function Exit-Restart([string]$why, $installers) {

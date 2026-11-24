@@ -117,6 +117,9 @@ export async function writeOutcome({ receiptsRoot = STATE_V2.receipts, nonce, pl
     // Rule 41ab823a (resident DESIGN §75): a front batch's settled admission names the scans H already carries (publisher.mjs headScans).
     // Only on stage 1's SETTLED ending and only in exactly that shape; anything else is left out (the front batch then scans as before).
     ...(status === 'SETTLED' && plan?.entryRole === 'work-admission' && validHeadScans(r.headScans)?.length ? { headScans: validHeadScans(r.headScans) } : {}),
+    // The admission settled on a PR that merged at this head meanwhile (formal-work-admission-check-v2/publisher.mjs settledMerged): the
+    // resident then reads the PR at its next safe point instead of counting stage 1 as a read of an open PR. Only the boolean.
+    ...(status === 'SETTLED' && plan?.entryRole === 'work-admission' && r.settledMerged === true ? { settledMerged: true } : {}),
     // Stage 8 (resident ADR 0018 §2 L2 item 7, Fable 2026-11-20 and 11-21 应修 2): on the current path a SETTLED pair carries the rehearsal
     // of push (S, what push lacks, this App's own bypass state of both rulesets; never S's checks); a park on main's rules carries the
     // missing items. Both from the publisher's own reads, validated (train-landing.mjs); anything else is left out.
