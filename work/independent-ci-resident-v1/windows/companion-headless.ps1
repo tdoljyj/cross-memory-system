@@ -300,7 +300,13 @@ function Register-CompanionFallbackTask([string]$root, [string]$residentSha) {
 # had gone, drill repro 2026-11-24), no input, no credential; IgnoreNew on the companion task drops the start while it runs. Registered with the password definition (both switches,
 # after the registrar, before the first start), deleted with it (Invoke-CompanionFallback; uninstall). No parameters, create or update;
 # any failure is COMPANION_START_TASK_REGISTER_FAILED.
+# Its DACL: SYSTEM and Administrators full, nothing else (verify-resident.ps1 Get-CompanionStartTaskProblems). Drill r14 A2 (guest,
+# 2026-11-25): registered with flags 6 the Task Scheduler drops P and appends (A;;FR;;;SY) (the principal's read, absent from this SDDL),
+# so verify read sddl; TASK_DONT_ADD_PRINCIPAL_ACE (0x10) keeps it (read back D:PAI). Updating an existing task ignores the SDDL passed,
+# so it is also set on the task itself with SetSecurityDescriptor(..., 0x10): that corrects a task registered the old way (verify's
+# SYSTEM repair calls this function on it).
 $CompanionStartTaskName = 'CluedCIResidentCompanionStart'
+$CompanionStartTaskSddl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)'
 $CompanionStartTaskAction = [ordered]@{ path = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
   arguments = '-NoProfile -NonInteractive -Command "$s = New-Object -ComObject ''Schedule.Service''; $s.Connect(); $null = $s.GetFolder(''\Clued'').GetTask(''CluedCIResidentCompanion'').RunEx($null, 2, 0, $null)"' }
 function Register-CompanionStartTask {
@@ -314,7 +320,8 @@ function Register-CompanionStartTask {
     $def.Settings.MultipleInstances = 2; $def.Settings.ExecutionTimeLimit = 'PT1M'; $def.Settings.StartWhenAvailable = $true
     $def.Settings.DisallowStartIfOnBatteries = $false; $def.Settings.StopIfGoingOnBatteries = $false
     $a = $def.Actions.Create(0); $a.Path = $CompanionStartTaskAction.path; $a.Arguments = $CompanionStartTaskAction.arguments
-    $null = $folder.RegisterTaskDefinition($CompanionStartTaskName, $def, 6, $null, $null, 5, 'D:P(A;;FA;;;SY)(A;;FA;;;BA)')
+    $task = $folder.RegisterTaskDefinition($CompanionStartTaskName, $def, 0x16, $null, $null, 5, $CompanionStartTaskSddl)
+    $task.SetSecurityDescriptor($CompanionStartTaskSddl, 0x10)
   } catch { throw 'COMPANION_START_TASK_REGISTER_FAILED' }
 }
 function Remove-CompanionStartTask {

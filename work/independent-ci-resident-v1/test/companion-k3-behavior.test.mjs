@@ -97,7 +97,8 @@ $script:folder | Add-Member -MemberType ScriptMethod -Name DeleteTask -Value { p
 $script:folder | Add-Member -MemberType ScriptMethod -Name RegisterTaskDefinition -Value { param($n, $d, $flags, $user, $password, $logonType, $sddl)
   if ($script:startRegisterFails -and $n -ceq 'CluedCIResidentCompanionStart') { throw (Microsoft.PowerShell.Utility\\New-Object Runtime.InteropServices.COMException 'access denied') }
   [void]$script:log.Add('register:' + $n)
-  $script:registered[$n] = [ordered]@{ principal = $d.Principal; settings = $d.Settings; triggers = @($d.TriggerList); actions = @($d.ActionList); flags = $flags; user = $user; password = $password; logonType = $logonType; sddl = $sddl } }
+  $script:registered[$n] = [ordered]@{ principal = $d.Principal; settings = $d.Settings; triggers = @($d.TriggerList); actions = @($d.ActionList); flags = $flags; user = $user; password = $password; logonType = $logonType; sddl = $sddl; setSecurity = @() }
+  $t = [pscustomobject]@{ Name = $n }; $t | Add-Member -MemberType ScriptMethod -Name SetSecurityDescriptor -Value { param($sd, $f) $script:registered[$this.Name].setSecurity += ,@($sd, $f) }; $t }
 $script:svc = [pscustomobject]@{}
 $script:svc | Add-Member -MemberType ScriptMethod -Name Connect -Value { }
 $script:svc | Add-Member -MemberType ScriptMethod -Name NewTask -Value { param($f)
@@ -364,7 +365,9 @@ test('K3 T4 start task: registered after the import and the Owner\'s key are don
   assert.ok(!got.log.some(l => l.startsWith('delete:' + START)), 'a qualified switch keeps it');
   const st = got.start;
   assert.deepEqual(st.principal, { UserId: 'S-1-5-18', LogonType: 5, RunLevel: 1 });
-  assert.deepEqual([st.flags, st.user, st.password, st.logonType, st.sddl], [6, null, null, 5, 'D:P(A;;FA;;;SY)(A;;FA;;;BA)']);
+  // create or update, TASK_DONT_ADD_PRINCIPAL_ACE (0x16), and the DACL set on the task too (an update ignores the SDDL passed; drill r14 A2)
+  assert.deepEqual([st.flags, st.user, st.password, st.logonType, st.sddl], [0x16, null, null, 5, 'D:P(A;;FA;;;SY)(A;;FA;;;BA)']);
+  assert.deepEqual(st.setSecurity, [['D:P(A;;FA;;;SY)(A;;FA;;;BA)', 0x10]]);
   assert.deepEqual(st.triggers, [{ Type: 8, Delay: 'PT30S', Repetition: {} }, { Type: 1, StartBoundary: '2026-01-01T00:00:00', Repetition: { Interval: 'PT15M' } }]);
   assert.deepEqual(st.settings, { MultipleInstances: 2, ExecutionTimeLimit: 'PT1M', StartWhenAvailable: true, DisallowStartIfOnBatteries: false, StopIfGoingOnBatteries: false });
   // the one fixed PowerShell line (repro 2026-11-24: schtasks /Run /I was not shown to start it while the constraint holds)

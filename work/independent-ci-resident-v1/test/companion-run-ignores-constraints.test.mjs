@@ -220,10 +220,12 @@ $r | ConvertTo-Json -Depth 4 -Compress`);
 
 // Review r1 item 2: the definition companion-headless.ps1 Register-CompanionStartTask (its real function) registers, read back by verify's
 // reader, has no problem: else every switched node fails verify, and the SYSTEM VERIFY re-registers it and still fails (STILL:action).
-test('T9: what Register-CompanionStartTask registers passes verify\'s start-task check', opts, () => {
-  const got = psLoad([{ script: HEADLESS, names: ['Register-CompanionStartTask'], vars: ['CompanionStartTaskName', 'CompanionStartTaskAction'] },
-    { script: VERIFY, names: ['Read-CompanionStartTaskFacts', 'Get-CompanionStartTaskProblems'] }], `
-$script:registered = $null
+// Drill r14 A2 (task 87d330d0, 2026-11-25): the fake Task Scheduler keeps a task's DACL as the guest's does. Registered without
+// TASK_DONT_ADD_PRINCIPAL_ACE (0x10), an SDDL lacking the principal's read (A;;FR;;;<principal>) is stored without P and with that ACE
+// appended (flags 6: D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;SY), verify read sddl); with 0x10 a protected one is stored as D:PAI(...). An update
+// of an existing task ignores the SDDL passed; SetSecurityDescriptor(sddl, flags) stores it by the same rule.
+const DACL_SCHEDULER = `
+$script:registered = $null; $script:tasks = @{}
 # A fresh task definition with the Task Scheduler's defaults; Triggers and Actions keep what Create made (Items).
 function New-FakeDefinition {
   $tr = [pscustomobject]@{ Items = [Collections.ArrayList]::new() }
@@ -234,30 +236,70 @@ function New-FakeDefinition {
     Settings = [pscustomobject]@{ Enabled = $true; StartWhenAvailable = $false; MultipleInstances = 2; DisallowStartIfOnBatteries = $true; StopIfGoingOnBatteries = $true; ExecutionTimeLimit = 'PT72H' }
     Triggers = $tr; Actions = $ac }
 }
+function Get-FakeStoredDacl([string]$sddl, [int]$flags, [string]$principal) {
+  $m = [regex]::Match($sddl, '^D:([A-Z]*)(\\(.*\\))$'); if (-not $m.Success) { throw ('FAKE_SDDL_UNEXPECTED:' + $sddl) }
+  $aces = $m.Groups[2].Value; $own = '(A;;FR;;;' + $principal + ')'
+  if (($flags -band 0x10) -or $aces.Contains($own)) { $(if ($m.Groups[1].Value.Contains('P')) { 'D:PAI' } else { 'D:AI' }) + $aces } else { 'D:' + $aces + $own }
+}
+function New-FakeTask([string]$name) {
+  $t = [pscustomobject]@{ Name = $name; Definition = $script:tasks[$name].definition; Enabled = $true }
+  $t | Add-Member -MemberType ScriptMethod -Name GetSecurityDescriptor -Value { param($i) 'O:BAG:SY' + [string]$script:tasks[$this.Name].dacl }
+  $t | Add-Member -MemberType ScriptMethod -Name SetSecurityDescriptor -Value { param($sddl, $flags) $e = $script:tasks[$this.Name]; $e.dacl = Get-FakeStoredDacl $sddl $flags $e.principal }
+  $t
+}
 $folder = [pscustomobject]@{}
 $folder | Add-Member -MemberType ScriptMethod -Name RegisterTaskDefinition -Value { param($name, $def, $flags, $user, $password, $logonType, $sddl)
   $read = [pscustomobject]@{ Principal = $def.Principal; Settings = $def.Settings; Triggers = @($def.Triggers.Items); Actions = @($def.Actions.Items) }
   $script:registered = [ordered]@{ name = $name; flags = $flags; logonType = $logonType; sddl = $sddl; definition = $read }
-  $null }
+  if ($script:tasks.ContainsKey($name)) { $script:tasks[$name].definition = $read }
+  else { $p = $(if ([string]$def.Principal.UserId -ceq 'S-1-5-18') { 'SY' } else { [string]$def.Principal.UserId })
+    $script:tasks[$name] = [ordered]@{ definition = $read; principal = $p; dacl = (Get-FakeStoredDacl $sddl $flags $p) } }
+  New-FakeTask $name }
 $folder | Add-Member -MemberType ScriptMethod -Name GetTask -Value { param($n)
-  if ($null -eq $script:registered -or $n -cne $script:registered.name) { throw ([Runtime.InteropServices.COMException]::new('not found', -2147024894)) }
-  $t = [pscustomobject]@{ Definition = $script:registered.definition; Enabled = $true }
-  $t | Add-Member -MemberType ScriptMethod -Name GetSecurityDescriptor -Value { param($i) [string]$script:registered.sddl }
-  $t }
+  if (-not $script:tasks.ContainsKey($n)) { throw ([Runtime.InteropServices.COMException]::new('not found', -2147024894)) }
+  New-FakeTask $n }
 $svc = [pscustomobject]@{}
 $svc | Add-Member -MemberType ScriptMethod -Name Connect -Value { }
 $svc | Add-Member -MemberType ScriptMethod -Name GetFolder -Value { param($p) if ($p -cne '\\Clued') { throw 'UNEXPECTED_FOLDER' }; $folder }
 $svc | Add-Member -MemberType ScriptMethod -Name NewTask -Value { param($f) New-FakeDefinition }
 function New-Object { $svc }
+`;
+const START_LOADS = [{ script: HEADLESS, names: ['Register-CompanionStartTask'], vars: ['CompanionStartTaskName', 'CompanionStartTaskSddl', 'CompanionStartTaskAction'] },
+  { script: VERIFY, names: ['Read-CompanionStartTaskFacts', 'Get-CompanionStartTaskProblems', 'Test-CompanionStartTask'] }];
+test('T9: what Register-CompanionStartTask registers passes verify\'s start-task check', opts, () => {
+  const got = psLoad(START_LOADS, DACL_SCHEDULER + `
 $before = @(Get-CompanionStartTaskProblems (Read-CompanionStartTaskFacts))
 Register-CompanionStartTask
 $after = @(Get-CompanionStartTaskProblems (Read-CompanionStartTaskFacts))
-[ordered]@{ before = $before; after = $after; name = $script:registered.name; logonType = $script:registered.logonType
+[ordered]@{ before = $before; after = $after; name = $script:registered.name; logonType = $script:registered.logonType; dacl = $script:tasks[$script:registered.name].dacl
   action = [ordered]@{ path = $script:registered.definition.Actions[0].Path; arguments = $script:registered.definition.Actions[0].Arguments } } | ConvertTo-Json -Depth 4 -Compress`);
   assert.deepEqual(got.before, ['absent']);
   assert.equal(got.name, 'CluedCIResidentCompanionStart');
   assert.equal(got.logonType, 5);
-  assert.deepEqual(got.after, [], `verify reads what the switch registered (action ${JSON.stringify(got.action)}) with no problem`);
+  assert.deepEqual(got.after, [], `verify reads what the switch registered (action ${JSON.stringify(got.action)}, DACL ${got.dacl}) with no problem`);
+});
+
+// Drill r14 A2: a start task registered the old way (flags 6) has D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;SY); the SYSTEM VERIFY's repair
+// (Test-CompanionStartTask calling Register-CompanionStartTask on the existing task) corrects it, not STILL:sddl.
+test('T9: a start task with the old DACL is corrected by verify\'s SYSTEM repair (drill r14 A2)', opts, () => {
+  const got = psLoad(START_LOADS, DACL_SCHEDULER + `
+$seed = New-FakeDefinition
+$seed.Principal.UserId = 'S-1-5-18'; $seed.Principal.LogonType = 5; $seed.Principal.RunLevel = 1
+$b = $seed.Triggers.Create(8); $b.Delay = 'PT30S'
+$t = $seed.Triggers.Create(1); $t.StartBoundary = '2026-01-01T00:00:00'; $t.Repetition.Interval = 'PT15M'
+$seed.Settings.MultipleInstances = 2; $seed.Settings.ExecutionTimeLimit = 'PT1M'; $seed.Settings.StartWhenAvailable = $true
+$seed.Settings.DisallowStartIfOnBatteries = $false; $seed.Settings.StopIfGoingOnBatteries = $false
+$a = $seed.Actions.Create(0); $a.Path = $CompanionStartTaskAction.path; $a.Arguments = $CompanionStartTaskAction.arguments
+$null = $folder.RegisterTaskDefinition('CluedCIResidentCompanionStart', $seed, 6, $null, $null, 5, 'D:P(A;;FA;;;SY)(A;;FA;;;BA)')
+$r = [ordered]@{ seeded = $script:tasks['CluedCIResidentCompanionStart'].dacl; before = @(Get-CompanionStartTaskProblems (Read-CompanionStartTaskFacts)) }
+$r.check = Test-CompanionStartTask 'password' $true
+$r.dacl = $script:tasks['CluedCIResidentCompanionStart'].dacl
+$r.after = @(Get-CompanionStartTaskProblems (Read-CompanionStartTaskFacts))
+$r | ConvertTo-Json -Depth 4 -Compress`);
+  assert.equal(got.seeded, 'D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;SY)', 'the fake stores the old way as the guest did');
+  assert.deepEqual(got.before, ['sddl']);
+  assert.deepEqual(got.check, { ok: true, detail: 'ADDED:sddl' }, `the repair leaves the DACL ${got.dacl}`);
+  assert.deepEqual(got.after, []);
 });
 
 test('T9: verify requires the start task only under the password definition; as SYSTEM it adds a missing or wrong one first, by hand it only reports', opts, () => {
