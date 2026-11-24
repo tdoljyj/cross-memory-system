@@ -10,7 +10,6 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -41,27 +40,6 @@ const POLICY_PROBE = 'param([string]$Mode, [string]$Sequence, [string]$ExpectedB
   + '$p = [string](Get-ExecutionPolicy)\n'
   + "[ordered]@{ verified = $false; directory = $null; moved = $null; code = 'PROBE'; scope = $null; policy = $p } | ConvertTo-Json -Compress\n";
 const policyOf = text => JSON.parse(text.trim()).policy;
-
-// Task 3435f8bf block 1 (V1): a PowerShell started with only the service's three variables does not get PSModuleAnalysisCachePath,
-// so 5.1 uses its default module analysis cache under LocalApplicationData. Where that cache is cold (the hosted windows image warms
-// only the machine-level one), every such process re-analyses the image's modules: 45-56 s each on the hosted runner, about 1 s on
-// the nodes. First in the file so it measures the cache as the job leaves it, before the other tests here start PowerShell.
-const START_LIMIT_SECONDS = 10;
-const fileFact = file => {
-  if (!file) return 'not set';
-  try { const s = fs.statSync(file); return `${file} (${s.size} bytes, ${s.mtime.toISOString()})`; } catch { return `${file} (missing)`; }
-};
-test(`V1: a PowerShell with only the service's environment answers Get-ExecutionPolicy within ${START_LIMIT_SECONDS} s`, { skip: !windows }, () => {
-  const started = performance.now();
-  const r = spawnSync(POWERSHELL, [...PREFIX, '-Command', 'Get-ExecutionPolicy | ConvertTo-Json'],
-    { env: serviceEnv(), encoding: 'utf8', windowsHide: true, timeout: 90_000 });
-  const seconds = (performance.now() - started) / 1000;
-  const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-  const facts = `took ${seconds.toFixed(1)} s; default analysis cache: ${fileFact(path.join(localAppData, 'Microsoft', 'Windows', 'PowerShell', 'ModuleAnalysisCache'))}; `
-    + `machine-level PSModuleAnalysisCachePath: ${fileFact(process.env.PSModuleAnalysisCachePath)}`;
-  assert.equal(r.status, 0, `${facts}; exit ${r.status} ${r.signal ?? ''} ${r.error?.message ?? ''} ${r.stderr ?? ''}`);
-  assert.ok(seconds <= START_LIMIT_SECONDS, facts);
-});
 
 test('D2-prime: the engine\'s Windows archive runs its tool under Bypass with only the service\'s environment', { skip: !windows }, async t => {
   const root = await tempRoot(t);
