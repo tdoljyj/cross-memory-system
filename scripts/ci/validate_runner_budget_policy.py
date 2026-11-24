@@ -118,7 +118,7 @@ LEGACY_HOSTED_DEBT = {
             # and no rollback before the first deploy step ran.
             # Task 87d330d0 (FABLE-drill-test-project-sync-20261124 §2.1): two last steps export production's
             # applied migration list read-only as its own artifact; routing, triggers and permissions unchanged.
-            "release": "74d0ac38f0686ce090dba6eb8f1281934cf14950cfb3b55490f037beb206281f"
+            "release": "6f2fbcedbb5367815bfd034847f7e918882b9cdf6ef9cbeec4e32b6bc0dd365c"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {

@@ -1995,26 +1995,6 @@
           "persistent_action_caches": []
         }
       }
-    },
-    "clued-drill-test-sync.yml": {
-      "jobs": {
-        "sync": {
-          "mode": "job-temp",
-          "purpose": "drill test project sync (applies production's applied migration list to the hosted test project); default-branch code only",
-          "action": "./.github/actions/ci-temporary-storage",
-          "checkout_sources": [
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "",
-              "ref": "${{ github.event.repository.default_branch || 'main' }}",
-              "repository": null
-            }
-          ],
-          "retained_artifacts": [],
-          "persistent_action_caches": []
-        }
-      }
     }
   }
 }

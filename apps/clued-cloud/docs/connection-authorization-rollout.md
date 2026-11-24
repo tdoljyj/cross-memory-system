@@ -124,11 +124,11 @@ Supabase project `uscrdifznmlvczcekqpw` (clued-auth-test) and Worker
 `clued-auth-test` at `https://clued-auth-test.tdoljef.workers.dev`, with 19
 reviewed migrations and separate Auth, OAuth KV, issuer and callback
 configuration. That is no longer its state. The Supabase project is now the
-node drill's test project: `.github/workflows/clued-drill-test-sync.yml`
-(`scripts/drill-test-sync.mjs`) rebuilds its application schema from
-production's applied migration list and brings it up to date after every
-production release run; its accounts in `auth` are kept, everything the
-September migrations created is not. The Worker `clued-auth-test` still holds
+node drill's test project: the drill host runs `scripts/drill-test-sync.mjs`
+before a drill, which rebuilds its application schema from production's
+applied migration list (exported by every production release run) and brings
+it up to date; its accounts in `auth` are kept, everything the September
+migrations created is not. The Worker `clued-auth-test` still holds
 its September version, is not used by anything and does not match the rebuilt
 database.
 The inactive restore project remains a separate resource; it was not resumed

@@ -207,8 +207,7 @@ export const SUITES = {
     'production-schema': ['apps/clued-cloud/supabase/**', 'apps/clued-cloud/scripts/production-schema-*.mjs',
       'apps/clued-cloud/scripts/migration-ledger.mjs', 'apps/clued-cloud/scripts/production-release-baseline.json',
       // The drill test project sync and what its database test reaches (the drift module imports the compatibility check).
-      'apps/clued-cloud/scripts/drill-test-sync.mjs', '.github/workflows/clued-drill-test-sync.yml',
-      'apps/clued-cloud/scripts/release-migration-compat.mjs',
+      'apps/clued-cloud/scripts/drill-test-sync.mjs', 'apps/clued-cloud/scripts/release-migration-compat.mjs',
       // The release door flow test runs the release workflow steps and the grant script (FABLE-release-identity-autonomous §3.1).
       '.github/workflows/clued-cloud-production-release.yml', 'scripts/ci/clued-release-door.mjs',
       'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...MIGRATION_DB_TESTS, ...AUTHORIZATION_DB_TESTS, ...MIGRATION_DB_TEST_INPUTS, 'apps/clued-cloud/package.json',

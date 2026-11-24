@@ -663,13 +663,14 @@ jobs:
             apps/clued-cloud/.sites-runtime/storage-client-source/registration.json
           if-no-files-found: ignore
           retention-days: ${{ inputs.mode == 'source-capture' && 1 || 30 }}
-      # Drill test project sync (Task 87d330d0; FABLE-drill-test-project-sync-20261124 §2.1).
+      # Drill test project sync (Task 87d330d0; FABLE-drill-test-project-sync-20261124 §2.1 and its ruling).
       # After a run that succeeded, in every mode: production's applied
       # migration list (names, md5, order; the facts the committed ledger
       # holds, no statement text, no secret), read in one read-only transaction
-      # with the attestation login. clued-drill-test-sync.yml brings the test
-      # project clued-auth-test to this list. Both steps continue on error: the
-      # export never fails a release; a missed one is caught up by the next.
+      # with the attestation login. The drill host brings the test project
+      # clued-auth-test to this list before a drill (scripts/drill-test-sync.mjs);
+      # no workflow does. Both steps continue on error: the export never fails a
+      # release; a missed one is caught up by the next.
       # Its own artifact, apart from the release evidence and the encrypted backup.
       - name: Export the applied production history
         timeout-minutes: 3

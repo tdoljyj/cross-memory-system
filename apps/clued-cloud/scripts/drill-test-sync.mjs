@@ -1,49 +1,96 @@
-// Drill test project sync (Task 87d330d0; design FABLE-drill-test-project-sync-20261124 §1, §2).
+// Drill test project sync (Task 87d330d0; design FABLE-drill-test-project-sync-20261124, the ruling at its end).
 //
-//   node scripts/drill-test-sync.mjs --applied <production-applied.json> [--rebuild]
+//   node scripts/drill-test-sync.mjs --applied <production-applied.json> (--kit <first-install-kit.json> | --scope <scope>)
+//        [--server <drill-server.json>] [--rebuild]          the database password: standard input
 //
 // Brings the hosted test project clued-auth-test to production's applied
 // migration list: the same schema_migrations rows, in production's order, each
 // applied from the text production ran (scripts/production-schema-chain.mjs).
 // The migration directory in file-name order is not production's database, so
-// it is never the target.
+// it is never the target. It runs on the drill host, before a drill boots a
+// guest (drill-vm.ps1); no workflow runs it.
 //
 //   1. production's list: the file the release workflow exports with
 //      supabase/production-schema/applied.sql (read-only; names, md5, order);
 //   2. the test project's own schema_migrations;
 //   3. the test list is a prefix of production's: the missing rows are applied
 //      one by one, each in one transaction with its schema_migrations row.
-//      Anything else is `diverged`: nothing is applied. --rebuild first drops
+//      Anything else is diverged: nothing is applied. --rebuild first drops
 //      the application objects (the snapshot's schemas, the roles the
 //      migrations create, the history rows) and starts from empty; auth stays;
-//   4. fixtures (one ci-admission parking spot per account) and the receipt
-//      public.clued_drill_sync_receipt_v1(), which the drill host reads before
-//      it starts a guest. The receipt does not exist while rows are applied.
+//   4. fixtures: one ci-admission parking spot per account, and the project the
+//      first-install kit's scope names (the drill's token is issued for it).
 //
-// The connection is built from constants. The only input that reaches it is
-// the password (environment clued-drill-test) and the session pooler's host
-// name; neither can name another project: the tenant is the user name's
-// suffix, which is fixed here. The password is never printed, written or put
-// into the receipt. Production is never connected to from here.
-import { randomBytes, randomUUID } from 'node:crypto';
-import { appendFile, readFile } from 'node:fs/promises';
-import { applyTransform, matchTransform } from './migration-ledger.mjs';
+// Nothing is left in the database to say how the sync went: the host has the
+// answer, the last line of standard output (RESULT_CONTRACT) and, when it is
+// not a success, one of the codes below.
+//
+// The connection is built from constants. What reaches it from outside is the
+// password (standard input, never an environment variable or an argument) and
+// the session pooler's host name (drill-server.json poolerHost, a public
+// value); neither can name another project: the tenant is the user name's
+// suffix, which is fixed here. The password is never printed or written.
+// Production is never connected to from here.
+import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { appDirectory, applyTransform, matchTransform } from './migration-ledger.mjs';
 import { productionChain, readRepository, readSnapshot } from './production-schema-chain.mjs';
 import { SCHEMA_STATEMENT, prepareReplay } from './production-schema-drift.mjs';
 
 export const PRODUCTION_REF = 'ccxsikzwxlolxqlosril';
 export const DRILL_TEST_REF = 'uscrdifznmlvczcekqpw';
-export const RECEIPT_CONTRACT = 'clued.drill-test-sync-receipt.v1';
+export const RESULT_CONTRACT = 'clued.drill-test-sync.result/1';
 export const APPLIED_CONTRACT = 'clued.production-applied.v1';
-// Supabase's session pooler (IPv4; GitHub-hosted machines have no IPv6 route to the direct address).
+// Supabase's session pooler (IPv4; the direct address is IPv6 only).
 const POOLER_HOST = /^aws-[0-9]+-[a-z]+(?:-[a-z]+)+-[0-9]+\.pooler\.supabase\.com$/;
+
+// What the host reads when the sync is not a success (the ruling's table). One more than the table: the pooler's
+// host name is not in drill-server.json yet, or is not one (named after DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET).
+export const CODES = Object.freeze(['DRILL_SERVER_PRODUCTION_LIST_MISSING', 'DRILL_SERVER_DATABASE_CREDENTIAL_MISSING',
+  'DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED', 'DRILL_SERVER_DIVERGED', 'DRILL_SERVER_SYNC_FAILED', 'DRILL_SERVER_SYNC_TOOL_MISSING',
+  'DRILL_SERVER_UNREACHABLE', 'DRILL_SERVER_POOLER_HOST_NOT_SET']);
+export class SyncError extends Error {
+  // `code`: one of CODES; DRILL_SERVER_SYNC_FAILED is followed by ":" and the row's file or the stage that failed.
+  constructor(code, detail = '', options) {
+    super(detail === '' ? code : `${code} ${detail}`, options);
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+// The drill's server file (work/independent-ci-resident-v1/drill/drill-server.json), the one place the drill's
+// server is named. Read here: the pooler's host name, and that the file names this project and no other.
+export const DRILL_SERVER_FILE = fileURLToPath(new URL('../../../work/independent-ci-resident-v1/drill/drill-server.json', import.meta.url));
+export async function readPoolerHost(file = DRILL_SERVER_FILE) {
+  let server = null;
+  try { server = JSON.parse((await readFile(file, 'utf8')).replace(/^\uFEFF/, '')); } catch { server = null; }
+  if (server === null || typeof server !== 'object' || Array.isArray(server) || server.supabaseUrl !== `https://${DRILL_TEST_REF}.supabase.co`
+      || typeof server.poolerHost !== 'string' || !POOLER_HOST.test(server.poolerHost)) throw new SyncError('DRILL_SERVER_POOLER_HOST_NOT_SET');
+  return server.poolerHost;
+}
+
+// The scope the drill's token is asked for: the first-install kit's record.scope (the host's holders request reads
+// the same field), or the value given. Never a constant here.
+const SCOPE = /^(?:global|project:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+export function checkedScope(scope) {
+  if (typeof scope !== 'string' || !SCOPE.test(scope)) throw new Error('drill_test_scope_invalid');
+  return scope;
+}
+export async function readKitScope(file) {
+  let kit = null;
+  try { kit = JSON.parse((await readFile(file, 'utf8')).replace(/^\uFEFF/, '')); } catch { kit = null; }
+  return checkedScope(kit?.record?.scope);
+}
 
 // A configuration object, not a URL: nothing in the password is ever parsed as
 // routing, and node-postgres reads no PG* variable for a field given here.
 export function connectionConfig({ password, host } = {}) {
-  if (typeof host !== 'string' || !POOLER_HOST.test(host)) throw new Error('drill_test_pooler_host_invalid');
-  if (typeof password !== 'string' || password === '') throw new Error('drill_test_database_password_missing');
-  const config = { host, port: 5432, user: `postgres.${DRILL_TEST_REF}`, database: 'postgres', password,
+  if (typeof host !== 'string' || !POOLER_HOST.test(host)) throw new SyncError('DRILL_SERVER_POOLER_HOST_NOT_SET');
+  if (typeof password !== 'string' || password === '') throw new SyncError('DRILL_SERVER_DATABASE_CREDENTIAL_MISSING');
+  const config = { host, port: 5432, user: `postgres.${DRILL_TEST_REF}`, database: 'postgres', password, connectionTimeoutMillis: 15_000,
     // As the production URLs' sslmode=no-verify: encrypted, the pooler's certificate is not from a public authority.
     ssl: { rejectUnauthorized: false } };
   const { password: omitted, ...routing } = config;
@@ -222,7 +269,7 @@ export async function applyStep(client, step, before = []) {
       if (stored !== step.statements_md5) throw new Error('recorded text differs from production');
     });
   } catch (error) {
-    throw new Error(`apply_failed:${step.version}_${step.name}: ${error.message}`, { cause: error });
+    throw new SyncError(`DRILL_SERVER_SYNC_FAILED:${step.file}`, error.message, { cause: error });
   }
 }
 
@@ -256,10 +303,35 @@ async function seedParking(client, userId) {
     { binding_id: binding.binding_id, role: 'ci-admission', enabled: true, purpose: 'parking' }, 'issued')), 'committed');
 }
 
+// The project the kit's scope names, owned by the account that will issue the drill's token: a token for
+// project:<id> cannot be issued, and no token is answered for that scope, unless the account owns a project with
+// exactly that id (resource_action_not_authorized otherwise, an "all contexts" token included). The product's
+// functions generate a project's id, so this one row is written directly, under the product's writer guard. A
+// project's id is its primary key: it belongs to one account. With one account that is the owner; with several
+// and no such project yet, nothing here says which, and the sync stops.
+async function seedProject(client, scope, users) {
+  if (!scope.startsWith('project:')) return null;
+  const id = scope.slice('project:'.length);
+  const owner = (await client.query('select user_id from public.clued_projects where id = $1', [id])).rows[0]?.user_id ?? null;
+  if (owner !== null) {
+    if (!users.some((user) => user.id === owner)) throw new Error('fixture_project_owner_unknown');
+    return 'present';
+  }
+  if (users.length === 0) return null;
+  if (users.length !== 1) throw new Error('fixture_project_owner_ambiguous');
+  await transaction(client, async () => {
+    await client.query('select clued_private.authorization_writer_guard_v2($1)', [users[0].id]);
+    await client.query(`insert into public.clued_projects(id, user_id, name, normalized_name, context_key)
+      values ($1, $2, 'drill', 'drill', $3)`, [id, users[0].id, scope]);
+  });
+  return 'seeded';
+}
+
 // Every account of the test project keeps ci-admission marked by a parking
 // spot. Without one the server admits every Binding to the role
 // (binding_role_admits_v1) and the drill guest's probe reads "held".
-export async function seedFixtures(client) {
+export async function seedFixtures(client, { scope }) {
+  checkedScope(scope);
   const users = (await client.query(`select u.id, exists (select 1 from clued_private.binding_roles_v1 r
       where r.user_id = u.id and r.role = 'ci-admission' and r.purpose = 'parking' and r.revoked_at is null) as parked
     from auth.users u where u.deleted_at is null order by u.id`)).rows;
@@ -269,43 +341,22 @@ export async function seedFixtures(client) {
     await seedParking(client, user.id);
     seeded += 1;
   }
-  return { users: users.length, seeded };
+  return { users: users.length, seeded, project: await seedProject(client, scope, users) };
 }
 
-// The receipt is a function whose body is a constant: anon can call it through
-// the REST API, nothing can be read through it but what is written here.
-export async function writeReceipt(client, receipt) {
-  const json = JSON.stringify(receipt);
-  const tag = `$receipt_${randomBytes(8).toString('hex')}$`;
-  await client.query(`create or replace function public.clued_drill_sync_receipt_v1() returns jsonb
-    language sql immutable set search_path = '' as ${tag}select '${json.replaceAll("'", "''")}'::jsonb${tag};
-    revoke all on function public.clued_drill_sync_receipt_v1() from public;
-    grant execute on function public.clued_drill_sync_receipt_v1() to anon, authenticated, service_role;
-    notify pgrst, 'reload schema';`);
-  return receipt;
-}
-
-export async function syncDatabase(client, { applied, repository, snapshot, rebuild = false, platform = 'hosted', meta = {}, log = () => {} }) {
+export async function syncDatabase(client, { applied, repository, snapshot, scope, rebuild = false, platform = 'hosted', log = () => {} }) {
+  checkedScope(scope);
   const production = [...applied].sort(byVersion);
   // Resolved before anything changes: a list this commit cannot resolve to texts changes nothing.
   const { steps, prehistory, roles, schemas } = resolveSteps({ applied: production, repository, snapshot, platform });
-  const stamp = { source_commit: meta.sourceCommit ?? null, run_id: meta.runId ?? null, at: meta.at ?? new Date().toISOString() };
-  const receipt = (state, facts = {}) => ({ contract: RECEIPT_CONTRACT, state, ...facts, ...stamp });
   if (rebuild) {
     log(`rebuild: dropping the application objects of ${schemas.join(', ')} and the roles ${roles.join(', ')}`);
     await transaction(client, () => clearApplication(client, { schemas, roles }));
   }
   const plan = planSync({ production, test: await readTestHistory(client) });
-  if (plan.state === 'diverged') {
-    await writeReceipt(client, receipt('diverged'));
-    return { state: 'diverged', applied: [], at: plan.at };
-  }
+  if (plan.state === 'diverged') return { state: 'diverged', applied: [], at: plan.at };
   if (plan.state === 'stale') return { state: 'stale', applied: [] };
   await client.query(HISTORY_TABLE);
-  // While rows are applied there is no receipt (the drill host reads "no-receipt"), not one that says
-  // "syncing": production's own history refuses an anon-callable public.clued_* function it does not know
-  // (20261011011706_worker_gateway_closeout_v1, unknown_anon_function_acl), and a later row may check again.
-  if (plan.missing.length > 0) await client.query(`drop function if exists public.clued_drill_sync_receipt_v1(); notify pgrst, 'reload schema'`);
   const stepOf = new Map(steps.map((step) => [step.version, step]));
   const fromEmpty = plan.missing.length === production.length;
   const done = [];
@@ -315,11 +366,8 @@ export async function syncDatabase(client, { applied, repository, snapshot, rebu
     done.push(`${step.version}_${step.name}`);
     await log(`applied ${step.version}_${step.name}${step.run === null ? ' (data-only row: recorded, not run)' : ''}`);
   }
-  const fixtures = await seedFixtures(client);
-  const last = production.at(-1);
-  const written = await writeReceipt(client, receipt('in-sync',
-    { production_last: { version: last.version, name: last.name }, production_rows: production.length }));
-  return { state: 'in-sync', applied: done, fixtures, receipt: written };
+  const fixtures = await seedFixtures(client, { scope });
+  return { state: 'in-sync', applied: done, fixtures };
 }
 
 // The exported list: the row applied.sql returns ({"applied": [...]}), the
@@ -332,39 +380,100 @@ export function parseApplied(text) {
   return applied.map(({ version, name, statements_md5, statements_length }) => ({ version, name, statements_md5, statements_length }));
 }
 
-async function main(argv, env) {
-  const appliedFile = argv[argv.indexOf('--applied') + 1];
-  if (!argv.includes('--applied') || !appliedFile) throw new Error('usage: node scripts/drill-test-sync.mjs --applied <production-applied.json> [--rebuild]');
-  const applied = parseApplied(await readFile(appliedFile, 'utf8'));
+const NOT_FOUND = new Set(['ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND']);
+// A wrong password is 28P01 (28000: a login refused outright).
+const REFUSED = new Set(['28P01', '28000']);
+
+async function readStandardInput(stream = process.stdin) {
+  if (stream.isTTY) return '';
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+  // One line: the line end the sender added is not part of the password.
+  return Buffer.concat(chunks).toString('utf8').replace(/\r?\n$/, '');
+}
+
+// node-postgres from this app's node_modules. A checkout that never installed them cannot sync.
+export async function loadPg({ exists = existsSync, load = () => import('pg') } = {}) {
+  if (!exists(join(appDirectory, 'node_modules'))) throw new SyncError('DRILL_SERVER_SYNC_TOOL_MISSING');
+  try { return (await load()).default; } catch (error) {
+    if (NOT_FOUND.has(error?.code)) throw new SyncError('DRILL_SERVER_SYNC_TOOL_MISSING', '', { cause: error });
+    throw error;
+  }
+}
+
+// Three attempts. A refused password is not tried again: it will not become right.
+export async function connected(pg, config, { attempts = 3, pause = () => new Promise((resolve) => { setTimeout(resolve, 2_000); }) } = {}) {
+  let last;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const client = new pg.Client(config);
+    client.on?.('error', () => {});
+    try { await client.connect(); return client; } catch (error) {
+      await client.end?.().catch(() => {});
+      if (REFUSED.has(error?.code)) throw new SyncError('DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED', '', { cause: error });
+      last = error;
+      if (attempt < attempts) await pause();
+    }
+  }
+  throw new SyncError('DRILL_SERVER_UNREACHABLE', String(last?.code ?? last?.message ?? ''), { cause: last });
+}
+
+const option = (argv, name) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] ?? '' : undefined);
+const USAGE = 'usage: node scripts/drill-test-sync.mjs --applied <production-applied.json> (--kit <first-install-kit.json> | --scope <scope>) [--server <drill-server.json>] [--rebuild] < password';
+
+// Returns the result the host reads; throws SyncError (a code) or, for a wrong call, a plain Error.
+export async function runSync(argv, { stdin = readStandardInput, tool = loadPg, connect = connected, say = () => {} } = {}) {
+  const appliedFile = option(argv, '--applied');
+  const given = [option(argv, '--kit'), option(argv, '--scope')];
+  if (!appliedFile || given.filter((value) => value !== undefined).length !== 1 || given.includes('')) throw new Error(USAGE);
+  const scope = given[0] !== undefined ? await readKitScope(given[0]) : checkedScope(given[1]);
+  // Everything that can be refused without the password is refused before it is read.
+  const pg = await tool();
+  let applied;
+  try { applied = parseApplied(await readFile(appliedFile, 'utf8')); } catch (error) {
+    throw new SyncError('DRILL_SERVER_PRODUCTION_LIST_MISSING', error?.code === 'ENOENT' ? 'no file' : 'not a list', { cause: error });
+  }
+  const host = await readPoolerHost(option(argv, '--server') ?? DRILL_SERVER_FILE);
   const repository = await readRepository();
   const snapshot = await readSnapshot();
-  const { default: pg } = await import('pg');
-  const client = new pg.Client(connectionConfig({ password: env.CLUED_DRILL_TEST_DATABASE_PASSWORD, host: env.CLUED_DRILL_TEST_POOLER_HOST }));
-  const say = (line) => console.log(`drill-test-sync: ${line}`);
-  await client.connect();
+  const password = await stdin();
+  const client = await connect(pg, connectionConfig({ password, host }));
+  const last = [...applied].sort(byVersion).at(-1);
   try {
     // The tenant is the user name's suffix; the database behind it reports only these.
     const who = (await client.query('select current_user as login, current_database() as database')).rows[0];
-    if (who.login !== 'postgres' || who.database !== 'postgres' || client.user !== `postgres.${DRILL_TEST_REF}`) throw new Error('drill_test_login_unexpected');
-    const outcome = await syncDatabase(client, { applied, repository, snapshot, rebuild: argv.includes('--rebuild'), platform: 'hosted',
-      meta: { sourceCommit: env.GITHUB_SHA ?? null, runId: env.GITHUB_RUN_ID ?? null }, log: say });
-    const last = applied.at(-1);
-    const lines = [`state: ${outcome.state}`, `production list: ${applied.length} rows through ${last.version}_${last.name}`, `applied now: ${outcome.applied.length}`];
-    if (outcome.fixtures) lines.push(`accounts: ${outcome.fixtures.users}, parking spots added: ${outcome.fixtures.seeded}`);
-    if (outcome.at) lines.push(`first difference at row ${outcome.at.index + 1}: production ${outcome.at.production.version}_${outcome.at.production.name}, test project ${outcome.at.test.version}_${outcome.at.test.name}; run again with rebuild`);
-    for (const line of lines) say(line);
-    if (env.GITHUB_STEP_SUMMARY) await appendFile(env.GITHUB_STEP_SUMMARY, `## Drill test project sync\n\n${lines.map((line) => `- ${line}`).join('\n')}\n`);
-    return outcome.state === 'diverged' ? 1 : 0;
+    if (who.login !== 'postgres' || who.database !== 'postgres' || client.user !== `postgres.${DRILL_TEST_REF}`) throw new SyncError('DRILL_SERVER_SYNC_FAILED:login', 'not the test project');
+    const outcome = await syncDatabase(client, { applied, repository, snapshot, scope, rebuild: argv.includes('--rebuild'), platform: 'hosted', log: say });
+    if (outcome.state === 'diverged') {
+      throw new SyncError('DRILL_SERVER_DIVERGED', `row ${outcome.at.index + 1}: production ${outcome.at.production.version}_${outcome.at.production.name}, `
+        + `test project ${outcome.at.test.version}_${outcome.at.test.name}`);
+    }
+    return { contract: RESULT_CONTRACT, state: outcome.state, production_last: { version: last.version, name: last.name },
+      production_rows: applied.length, applied: outcome.applied.length, fixtures: outcome.fixtures ?? null };
+  } catch (error) {
+    if (error instanceof SyncError && !error.code.startsWith('DRILL_SERVER_SYNC_FAILED:')) throw error;
+    // The message may quote the server; never the password.
+    const clean = (text) => String(text ?? '').split(password).join('***');
+    if (error instanceof SyncError) throw new SyncError(error.code, clean(error.detail), { cause: error });
+    // Not a row: the rebuild's clearing, the list's texts, the fixtures.
+    const stage = /^production_chain_unresolved/.test(error?.message ?? '') ? 'production-list-texts' : /^fixture_/.test(error?.message ?? '') ? 'fixtures' : 'database';
+    throw new SyncError(`DRILL_SERVER_SYNC_FAILED:${stage}`, clean(error?.message), { cause: error });
   } finally {
     await client.end().catch(() => {});
   }
 }
 
-if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
+async function main(argv) {
   try {
-    process.exitCode = await main(process.argv.slice(2), process.env);
+    console.log(JSON.stringify(await runSync(argv, { say: (line) => console.log(`drill-test-sync: ${line}`) })));
+    return 0;
   } catch (error) {
     console.error(`drill-test-sync: ${error.message}`);
-    process.exitCode = 1;
+    if (!(error instanceof SyncError)) return 2;
+    console.log(JSON.stringify({ contract: RESULT_CONTRACT, state: 'failed', code: error.code }));
+    return 1;
   }
+}
+
+if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
+  process.exitCode = await main(process.argv.slice(2));
 }

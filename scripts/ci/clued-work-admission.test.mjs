@@ -2647,9 +2647,8 @@ test("owner review: the workflows on main that hold an environment are exactly t
   // MergeAdmission §12.1 (Owner Decision 00b71629): the usage report reads the measurement App's key from clued-admission.
   // DESIGN §80: the train front's main merge reads the clued-admission App key (update-branch and its attestation check);
   // its hosted copy for the scaffold (framework v1 §2.3) the same key in the same environment.
-  // Task 87d330d0: the drill test project sync reads the test project's database password from clued-drill-test.
   assert.deepEqual(holders, ["clued-ci-usage-report.yml", "clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml",
-    "clued-drill-test-sync.yml", "clued-front-main-merge-hosted.yml", "clued-front-main-merge.yml", "clued-handover-disposable-idle.yml", "clued-handover-external-qualification.yml", "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-reconcile.yml", "clued-merge-slot-ci.yml", "clued-native617-admission-dispatch.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
+    "clued-front-main-merge-hosted.yml", "clued-front-main-merge.yml", "clued-handover-disposable-idle.yml", "clued-handover-external-qualification.yml", "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-reconcile.yml", "clued-merge-slot-ci.yml", "clued-native617-admission-dispatch.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
     "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
 });
 
