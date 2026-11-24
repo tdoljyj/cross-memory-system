@@ -2510,9 +2510,10 @@ public static class CluedDrillCredUiV2 {
   $buf = [Runtime.InteropServices.Marshal]::AllocHGlobal($size)
   try {
     [Runtime.InteropServices.Marshal]::Copy($zero, 0, $buf, $size)
-    $user = New-Object Text.StringBuilder 514
-    if ($User) { [void]$user.Append($User) }
-    $rc = [CluedDrillCredUiV2]::Prompt($user, $Target, $Caption, $Message, $buf, [bool]$User)
+    # Not $user: PowerShell names are case-insensitive, and it would overwrite the parameter $User.
+    $nameBuf = New-Object Text.StringBuilder 514
+    if ($User) { [void]$nameBuf.Append($User) }
+    $rc = [CluedDrillCredUiV2]::Prompt($nameBuf, $Target, $Caption, $Message, $buf, [bool]$User)
     if ($rc -eq 1223) { throw (New-DrillError "$($Codes)_CANCELLED") }
     if ($rc -ne 0) { throw (New-DrillError "$($Codes)_FAILED" $rc) }
     $secure = New-Object Security.SecureString
@@ -2521,8 +2522,8 @@ public static class CluedDrillCredUiV2 {
       $secure.AppendChar([char]$c)
     }
     $secure.MakeReadOnly()
-    # The prefilled name does not always show in the dialog: an empty field means the expected name.
-    $name = $user.ToString().Trim(); if (-not $name) { $name = $User }
+    # An emptied field means the expected name.
+    $name = $nameBuf.ToString().Trim(); if (-not $name) { $name = $User }
     New-Object System.Management.Automation.PSCredential ($name.ToLowerInvariant()), $secure
   } finally { [Runtime.InteropServices.Marshal]::Copy($zero, 0, $buf, $size); [Runtime.InteropServices.Marshal]::FreeHGlobal($buf) }
 }
