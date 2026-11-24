@@ -587,12 +587,14 @@ test('only candidates are brought: not a conflict, a red head, a head the App br
   r = await w.run();
   assert.equal(r.pr, 1217, JSON.stringify(r)); assert.deepEqual(w.brought(), [1217]);
   assert.match(r.train.members.find(m => m.pr === 1156).state, /^red \(kooyumi-work-admission\)$/);
-  // Red on a head the App brought up: a true red, not brought again.
-  w = scene0823();
+  // Red on a head the App brought up (its first parent the author's, BASE): brought again only after every candidate that is
+  // not red (第二轮规划 A, 任务 2fb32dc7).
+  w = scene0823(); w.head(BASE);
   w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID);
   w.check(sha(0x1156), 'clued-cloud-tests', 'failure');
   r = await w.run();
   assert.equal(r.pr, 1217, JSON.stringify(r)); assert.deepEqual(w.brought(), [1217]);
+  assert.match(r.train.members.find(m => m.pr === 1156).state, /^candidate, red \(clued-cloud-tests\) on a head the App brought/, JSON.stringify(r.train.members));
   // The App brought this head earlier and the admission never admitted it: not brought again.
   w = scene0823();
   w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
