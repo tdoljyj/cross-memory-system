@@ -2,6 +2,7 @@
   "contract": "clued.drill.server/1",
   "project": "clued-auth-test",
   "supabaseUrl": "https://uscrdifznmlvczcekqpw.supabase.co",
+  "poolerHost": null,
   "blackholeHosts": [
     "clued.pixelgrav.com",
     "kooyumi.pixelgrav.com"

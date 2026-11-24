@@ -127,8 +127,10 @@ const standInSteps = credentials => [...Object.values(credentials?.required ?? {
 
 // The drill's server (FABLE-drill-role-probe-20261124.md, PR-3): the drill installs against the test project, never production. A made-up
 // CI token against production can only be answered "unauthorized" (the 17th candidate's drill), and a real one must not be there at all.
-// drill-server.json is the one place the drill's server is named: the project, its address and its publishable key (a public client
-// value). No key there yet: no kit (DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET); nothing falls back to the Release's address.
+// drill-server.json is the one place the drill's server is named: the project, its address, the hosts the guest cuts off or lets
+// through, and the session pooler the host's sync connects through (poolerHost: the host only, never in the kit; its shape is the sync
+// script's to hold, apps/clued-cloud/scripts/drill-test-sync.mjs, null until DESK fills it in). The publishable key is the host's copy
+// (below). No key yet: no kit (DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET); nothing falls back to the Release's address.
 // The first-install kit carries the server in two public fields of its record (prepare-record.mjs); the drill kit carries a copy of that
 // file with those two replaced and nothing else, and with it the three files that pin its bytes in the guest: the first-install sums
 // (bootstrap.ps1 kitListed), the acceptance (install.mjs firstInstallKitSha256) and the drill's own release-pins.json. The Release
@@ -141,7 +143,8 @@ export const SERVER_KEY = /^sb_publishable_[A-Za-z0-9_-]+$/;
 const hostOf = url => new URL(url).hostname;
 const hostList = v => Array.isArray(v) && v.every(h => typeof h === 'string' && /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/.test(h)) && new Set(v).size === v.length;
 function checkedServer(s, { allowUnset = false } = {}) {
-  check(s !== null && typeof s === 'object' && !Array.isArray(s) && Object.keys(s).sort().join() === 'allowedHosts,blackholeHosts,contract,project,publishableKey,supabaseUrl' &&
+  check(s !== null && typeof s === 'object' && !Array.isArray(s) && Object.keys(s).sort().join() === 'allowedHosts,blackholeHosts,contract,poolerHost,project,publishableKey,supabaseUrl' &&
+    (s.poolerHost === null || (typeof s.poolerHost === 'string' && s.poolerHost.length <= 253)) &&
     s.contract === SERVER_CONTRACT && typeof s.project === 'string' && /^[a-z0-9][a-z0-9-]{0,62}$/.test(s.project) &&
     typeof s.supabaseUrl === 'string' && SERVER_URL.test(s.supabaseUrl) && hostList(s.blackholeHosts) && hostList(s.allowedHosts) &&
     // a host is cut off or let through, never both; the drill's own server is never cut off
@@ -149,7 +152,7 @@ function checkedServer(s, { allowUnset = false } = {}) {
   check(s.publishableKey !== null || allowUnset, 'DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET');
   check(s.publishableKey === null || (typeof s.publishableKey === 'string' && SERVER_KEY.test(s.publishableKey)), 'DRILL_SERVER_REFUSED');
   return { contract: s.contract, project: s.project, supabaseUrl: s.supabaseUrl, publishableKey: s.publishableKey,
-    blackholeHosts: [...s.blackholeHosts], allowedHosts: [...s.allowedHosts] };
+    blackholeHosts: [...s.blackholeHosts], allowedHosts: [...s.allowedHosts], poolerHost: s.poolerHost };
 }
 // Every host the package's archive names after "https://", in any entry (code, lists, comments alike; lower case, a port or a path is
 // not part of it). What the package's own code reaches is what it names, whatever the record says: the node's service posts its renew
@@ -274,7 +277,7 @@ export function verifyKitServer({ kit, from, version }) {
     blackholeHosts: s.blackholeHosts };
 }
 // Registered as a stand-in (FIRST-INSTALL-KIT.md): the kit's per-node steps name it, so A10 never passes on a server that is not production's.
-export const SERVER_STAND_IN_STEP = '服务端与 CI 令牌替身（kit 的两个公开字段换成测试项目，CI 令牌是 Owner 在测试项目签发的不带 ci-admission 角色的演练绑定，最长 90 天，到期重签；测试项目的库由同步作业向生产已应用清单收敛，账户里的 parking 角色也由同步作业种，没有它服务端会放行任何绑定；替的是生产服务端与真节点的 CI 绑定；因为演练不得接触生产；因此没验到生产服务端对本包的应答与带角色节点的首班车；不可删，没验到的部分由真机首装承担）';
+export const SERVER_STAND_IN_STEP = '服务端与 CI 令牌替身（kit 的两个公开字段换成测试项目，CI 令牌是 Owner 在测试项目签发的不带 ci-admission 角色的演练绑定，最长 90 天，到期重签；测试项目的库在每次开机前由宿主向生产已应用清单收敛（同步脚本，清单取自 main 上最近一次成功的发布运行），账户里的 parking 角色也由这次同步种，没有它服务端会放行任何绑定；替的是生产服务端与真节点的 CI 绑定；因为演练不得接触生产；因此没验到生产服务端对本包的应答与带角色节点的首班车；不可删，没验到的部分由真机首装承担）';
 
 export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null, credentials = null, credentialFilesSha256 = null, server = null }) {
   check(Number.isInteger(timeoutMinutes) && timeoutMinutes >= 5 && timeoutMinutes <= 240, 'DRILL_KIT_TIMEOUT_REFUSED');
