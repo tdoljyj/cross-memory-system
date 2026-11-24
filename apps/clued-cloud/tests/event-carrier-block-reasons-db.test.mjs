@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import EmbeddedPostgres from "embedded-postgres";
+import { newCluster } from "./pg-cluster-fixture.mjs";
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { setWorkerGatewayCaller, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
@@ -15,27 +14,19 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString("hex");
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 // Incident 2026-10-03: an Owner decision written as a legacy decision Event
 // shadowed every Global Decision and stopped project work with no stated reason.
 test("Event carrier blocks: decision-class Events rejected, blocks named with resolutions", { timeout: 240000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-carrier-block-"));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: "postgres", password: hash(), port: await freePort(),
+  const server = newCluster({
+    databaseDir: directory, user: "postgres", password: hash(), 
     persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = server.getPgClient();
     clients.push(admin);
     await admin.connect();
