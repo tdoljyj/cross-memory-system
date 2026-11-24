@@ -215,6 +215,10 @@
       "class": "ledger",
       "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
     },
+    "clued_private.context_archive_batches_v1": {
+      "class": "ledger",
+      "reason": "检查点归档索引（第三批 C1a）：每批一行记对象键、行数、哈希与状态，永久保留，取回工具凭它找回归档正文；一年约 2,200 行、不到 1 MB"
+    },
     "clued_private.context_pack_manifests": {
       "class": "state",
       "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
