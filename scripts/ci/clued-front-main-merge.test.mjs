@@ -1535,6 +1535,6 @@ test('A4: a head the App brought whose admission failed is not brought again, re
     const w = scene1298({ admission: 'failure', red });
     const r = await w.run({}, SCAFFOLD);
     assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
-    assert.match(r.train.members.find(m => m.pr === REBRING).state, new RegExp(`^red \(.*${INDEPENDENT_ADMISSION_CHECK}`), statesOf(r));
+    assert.match(r.train.members.find(m => m.pr === REBRING).state, new RegExp(String.raw`^red \(.*` + INDEPENDENT_ADMISSION_CHECK), statesOf(r));
   }
 });
