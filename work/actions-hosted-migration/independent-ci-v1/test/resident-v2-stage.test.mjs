@@ -237,6 +237,23 @@ test('every v2 entry finds the same Source root whatever its depth (the check-pu
   assert.throws(() => sourceRootOfModule(pathToFileURL('C:\\elsewhere\\x.mjs').href), { code: 'ENTRY_OUTSIDE_HELD_SOURCE_REFUSED' });
 });
 
+// Board 271 (FABLE-backlog-batch-design-20261124 §4): the broker reads `started` only once the helper reached RUNNING, which it
+// reports after its boundary validated. A started helper without a receipt passed its preflight and may have run a child, so its
+// tree is not confirmed; a helper that never started is unchanged.
+test('invoke-stage: a started helper (PID) without a receipt is NATIVE_RECEIPT_UNCONFIRMED and its tree is not confirmed', async t => {
+  const f = await fixture(t);
+  const fact = await run(f, 1, fakeBroker(f, { writeReceipt: false, outcome: null }));
+  assert.deepEqual([fact.failure_code, fact.tree_cleanup_confirmed, fact.tree_active_processes, fact.root_exit_confirmed],
+    ['NATIVE_RECEIPT_UNCONFIRMED', false, null, false]);
+});
+
+test('invoke-stage guard: a helper that never started and wrote no receipt ends as before (NATIVE_RECEIPT_UNCONFIRMED, a zero tree)', async t => {
+  const f = await fixture(t);
+  const fact = await run(f, 1, fakeBroker(f, { writeReceipt: false, outcome: null, response: { started: false, helperPid: null } }));
+  assert.deepEqual([fact.failure_code, fact.tree_cleanup_confirmed, fact.tree_active_processes, fact.root_exit_confirmed],
+    ['NATIVE_RECEIPT_UNCONFIRMED', true, 0, true]);
+});
+
 test('invoke-stage: helper preflight refusal, tree unknown, unbound outcome and a not-admitted stage 1', async t => {
   const f = await fixture(t);
   assert.equal((await run(f, 1, fakeBroker(f, { writeReceipt: false, outcome: null }))).failure_code, 'STAGE_HELPER_PREFLIGHT_REFUSED');
