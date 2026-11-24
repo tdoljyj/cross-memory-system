@@ -3,9 +3,10 @@
 // (FABLE-tests-outside-required-suites-20261121 §2; Clued Task 700f2b68). A test no required check runs goes red
 // unnoticed: the Connect release tests, the fleet publishing tools and the database tests each did.
 //
-//   node scripts/ci/check-tests-covered.mjs [--root <checkout>]
+//   node scripts/ci/check-tests-covered.mjs [--root <checkout>] [--base <main commit>]
 //
-// A test file is a tracked *.test.{mjs,js,cjs,ts}, test_*.py or *_test.py. It runs when a suite command takes it:
+// A test file is a tracked *.test.{mjs,js,cjs,ts}, test_*.py, *_test.py, test-*.ps1 or *.Tests.ps1, wherever it is
+// (FABLE-defect-remediation-plan-20261124 §3.6: the whole checkout by file name). It runs when a suite command takes it:
 // each command of SUITE_COMMANDS expanded by the selection's own expandArgv and read by its filterCommand (the
 // files --run-files would run), or when a file that runs imports it with a top-level static import. Fails on:
 //   - a test file that does not run and is not listed;
@@ -15,21 +16,29 @@
 //     archive; an other-workflow entry whose workflow file is missing, has no pull_request trigger or does not
 //     name the test;
 //   - a file that imports a test runner (node:test, or a Python unittest TestCase) under a name that is no test
-//     file name, when no test file imports it and no suite runs it: rename it, or list it.
+//     file name, when no test file imports it and no suite runs it: rename it, or list it;
+//   - growth against the base (--base, else CI_BASE_SHA, else the newest origin/main commit HEAD contains), read from
+//     git: an entry of ci-uncovered-tests.json the base does not list, once the base's table has SHRINKING_SCHEMA; an
+//     entry of ci-known-failures.json (suite, file, test path and fingerprint) the base does not list; a base it cannot
+//     read. Both lists only shrink: a file leaves the table when a suite runs it, a failure leaves when it is fixed.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CI_SCRIPT_TEST_DIRS, SUITE_COMMANDS, expandArgv, filterCommand, globToRegExp } from './ci-required-selection.mjs';
+import { CI_SCRIPT_TEST_DIRS, SUITE_COMMANDS, expandArgv, filterCommand, globToRegExp, knownKey } from './ci-required-selection.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_ROOT = path.resolve(HERE, '../..');
 export const TABLE_PATH = 'scripts/ci/ci-uncovered-tests.json';
+export const KNOWN_PATH = 'scripts/ci/ci-known-failures.json';
+// A table of this schema only shrinks against the base: the change that brought the rule listed the gaps of its day.
+export const SHRINKING_SCHEMA = 'clued.ci-uncovered-tests/2';
 export const KINDS = ['environment', 'stale-or-suspect', 'other-workflow', 'unsorted', 'archive'];
 const TASK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const NODE_SOURCE = /\.(?:mjs|js|cjs|ts)$/;
 
-export const isTestFile = (file) => /\.test\.(?:mjs|js|cjs|ts)$/.test(file) || /(?:^|\/)test_[^/]*\.py$/.test(file) || /_test\.py$/.test(file);
+export const isTestFile = (file) => /\.test\.(?:mjs|js|cjs|ts)$/.test(file) || /(?:^|\/)test_[^/]*\.py$/.test(file) || /_test\.py$/.test(file) ||
+  /(?:^|\/)test-[^/]*\.ps1$/.test(file) || /\.Tests\.ps1$/.test(file);
 
 export function trackedFiles(root) {
   return execFileSync('git', ['-C', root, 'ls-files', '-z'], { encoding: 'utf8', maxBuffer: 1 << 28 }).split('\0').filter(Boolean);
@@ -119,6 +128,66 @@ export function readTable(root) {
   return JSON.parse(text);
 }
 
+const git = (root, args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1 << 26 });
+
+// The main commit the lists are measured against: --base, CI_BASE_SHA (the required checks' base), else the newest
+// origin/main commit HEAD contains (a pull request's merge commit contains its base; the required checks fetch all).
+export function resolveBase(root, explicit, env = process.env) {
+  for (const value of [explicit, env.CI_BASE_SHA]) if (value && !/^0+$/.test(value)) return value;
+  try {
+    return git(root, ['merge-base', 'HEAD', 'refs/remotes/origin/main']).trim();
+  } catch {
+    return null;
+  }
+}
+
+// Both lists as the base holds them, parsed; a list the base does not have is null. Throws when the base cannot be read.
+export function readBaseline(root, base) {
+  if (!base) throw new Error('no base: pass --base <main commit>, set CI_BASE_SHA or fetch origin/main');
+  try {
+    git(root, ['cat-file', '-e', `${base}^{commit}`]);
+  } catch {
+    throw new Error('no such commit in this checkout; fetch main first');
+  }
+  const at = (file) => {
+    try {
+      return JSON.parse(git(root, ['show', `${base}:${file}`]));
+    } catch (error) {
+      if (/does not exist|exists on disk, but not in/.test(String(error.stderr))) return null;
+      throw error;
+    }
+  };
+  return { base, table: at(TABLE_PATH), known: at(KNOWN_PATH) };
+}
+
+function readKnown(read) {
+  const text = read(KNOWN_PATH);
+  return text === null ? {} : JSON.parse(text);
+}
+
+// Entries the base does not have: the uncovered table once its base has the rule, and the known failures always.
+function growth(table, known, baseline) {
+  const problems = [];
+  const at = `the base (${baseline.base})`;
+  if (baseline.table?.schema === SHRINKING_SCHEMA) {
+    if (table?.schema !== SHRINKING_SCHEMA) problems.push(`${TABLE_PATH}: schema must stay ${SHRINKING_SCHEMA}, as at ${at}: the list only shrinks`);
+    const listed = new Set((Array.isArray(baseline.table.tests) ? baseline.table.tests : []).map((entry) => entry?.path));
+    for (const entry of Array.isArray(table?.tests) ? table.tests : []) {
+      if (typeof entry?.path === 'string' && !listed.has(entry.path)) {
+        problems.push(`${entry.path}: ${at} does not list it; ${TABLE_PATH} only shrinks: make a required suite run it`);
+      }
+    }
+  }
+  const keyOf = (entry) => (typeof entry?.file === 'string' && Array.isArray(entry.path) ? knownKey(entry) : JSON.stringify(entry));
+  for (const [suite, entries] of Object.entries(known ?? {})) {
+    const listed = new Set((Array.isArray(baseline.known?.[suite]) ? baseline.known[suite] : []).map(keyOf));
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      if (!listed.has(keyOf(entry))) problems.push(`${KNOWN_PATH}: ${suite}: ${keyOf(entry)}: ${at} does not list it; the list only shrinks: fix the test`);
+    }
+  }
+  return problems;
+}
+
 const entryProblems = (entry) => {
   const name = typeof entry?.path === 'string' ? entry.path : JSON.stringify(entry);
   const problems = [];
@@ -138,8 +207,9 @@ const entryProblems = (entry) => {
 const PULL_REQUEST_TRIGGER = /^\s*(?:-\s*)?pull_request\s*:?\s*$|^on:.*\bpull_request\b(?!_)/m;
 
 // The whole verdict; inputs are injectable so the test can add files that do not exist.
+// baseline ({ base, table, known }: the lists at the base) defaults to readBaseline at resolveBase(root, base).
 export function coverage({ root = DEFAULT_ROOT, tracked = trackedFiles(root), read = (file) => readOr(root, file),
-  table = readTable(root), commands = SUITE_COMMANDS, listUnit } = {}) {
+  table = readTable(root), known = readKnown(read), base, baseline, commands = SUITE_COMMANDS, listUnit } = {}) {
   const trackedSet = new Set(tracked);
   const tests = tracked.filter(isTestFile);
   const { runs: bySuite, collects } = suiteFiles(root, { commands, tracked, listUnit });
@@ -164,6 +234,15 @@ export function coverage({ root = DEFAULT_ROOT, tracked = trackedFiles(root), re
     !bySuite.has(file) && !reached.has(file) && importsRunner(file, source(file)));
 
   const problems = [];
+  if (baseline === undefined) {
+    const at = resolveBase(root, base);
+    try {
+      baseline = readBaseline(root, at);
+    } catch (error) {
+      problems.push(`${TABLE_PATH}, ${KNOWN_PATH}: cannot read the base${at ? ` ${at}` : ''}: ${error.message}`);
+    }
+  }
+  if (baseline) problems.push(...growth(table, known, baseline));
   const entries = Array.isArray(table?.tests) ? table.tests : [];
   if (!Array.isArray(table?.tests)) problems.push(`${TABLE_PATH}: "tests" must be a list of entries`);
   const seen = new Set();
@@ -202,7 +281,9 @@ export function coverage({ root = DEFAULT_ROOT, tracked = trackedFiles(root), re
   for (const file of uncovered) {
     const dir = path.posix.dirname(file);
     const siblings = [...new Set(tests.filter((other) => path.posix.dirname(other) === dir && bySuite.has(other)).flatMap((other) => bySuite.get(other)))];
-    problems.push(`${file}: no required suite runs it and ${TABLE_PATH} does not list it${siblings.length ? ` (other tests of ${dir} run in ${siblings.join(', ')}: add it to that command)` : ''}`);
+    const hint = file.endsWith('.ps1') ? ' (no suite command takes a PowerShell file yet: ci-required-selection.mjs must learn one first)'
+      : siblings.length ? ` (other tests of ${dir} run in ${siblings.join(', ')}: add it to that command)` : '';
+    problems.push(`${file}: no required suite runs it and ${TABLE_PATH} does not list it${hint}`);
   }
   for (const file of misnamed.filter((candidate) => !exempt.has(candidate))) {
     problems.push(`${file}: imports a test runner but is not named as a test file and no test imports it: rename it (*.test.mjs, test_*.py) or list it`);
@@ -214,13 +295,13 @@ export function coverage({ root = DEFAULT_ROOT, tracked = trackedFiles(root), re
 }
 
 if (import.meta.main) {
-  const at = process.argv.indexOf('--root');
-  const root = at >= 0 ? path.resolve(process.argv[at + 1]) : DEFAULT_ROOT;
-  const result = coverage({ root });
+  const option = (flag) => (process.argv.includes(flag) ? process.argv[process.argv.indexOf(flag) + 1] : undefined);
+  const root = option('--root') ? path.resolve(option('--root')) : DEFAULT_ROOT;
+  const result = coverage({ root, base: option('--base') });
   if (result.problems.length > 0) {
     console.error(`TESTS_NOT_COVERED: ${result.problems.length} problem(s)\n${result.problems.join('\n')}`);
     console.error(`\nA file in one of these is taken without editing the command:\n${result.collects.join('\n')}`);
-    console.error(`Otherwise list it in a suite command (scripts/ci/ci-required-selection.mjs) or in ${TABLE_PATH} with kind, reason and Task.`);
+    console.error(`Otherwise list it in a suite command (scripts/ci/ci-required-selection.mjs). ${TABLE_PATH} and ${KNOWN_PATH} only shrink.`);
     process.exitCode = 1;
   } else {
     const { tests, runs, exempt, misnamed } = result.counts;
