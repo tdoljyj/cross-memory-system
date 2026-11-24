@@ -38,8 +38,8 @@ const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: tr
 // entry's output directory.
 const HALT = '{"code":"ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED","facts":{"intentSeq":3,"failureCode":null,"engineError":"SOURCE_V2_REQUIRED","ok":null,"proof":null,"outcomeStatus":null,"outcomeReason":null,"roleProbeFact":false},"at":"2026-11-21T08:52:41.100Z","clearedOnlyBy":"owner-rearm"}\n';
 function guest(name, { list = fs.readFileSync(listFile, 'utf8'), extra = () => {} } = {}) {
-  const root = path.join(tmp, name), ci = path.join(root, 'ci'), work = path.join(root, 'bootstrap'), kitDir = path.join(root, 'kit'), out = path.join(root, 'out');
-  for (const d of [ci, work, kitDir, out]) fs.mkdirSync(d, { recursive: true });
+  const root = path.join(tmp, name), ci = path.join(root, 'ci'), work = path.join(root, 'bootstrap'), kitDir = path.join(root, 'kit'), out = path.join(root, 'out'), users = path.join(root, 'Users');
+  for (const d of [ci, work, kitDir, out, users]) fs.mkdirSync(d, { recursive: true });
   write(path.join(ci, 'resident', 'state', 'HALT.json'), HALT);
   write(path.join(ci, 'resident', 'state', 'status.json'), '{"executor":{"state":"HALTED"}}');
   write(path.join(ci, 'resident', 'secrets', 'ci-admission.token'), 'NEVER-READ-TOKEN');
@@ -48,22 +48,25 @@ function guest(name, { list = fs.readFileSync(listFile, 'utf8'), extra = () => {
   write(path.join(work, 'prepare', 'launch-20261121T084432Z', 'progress', '001-output.json'), '{"index":1,"step":"output","at":"2026-11-21T08:44:33Z"}');
   write(path.join(work, 'prepare', 'launch-20261121T084432Z', 'verify.stdout.json'), '{"status":"RESIDENT_VERIFICATION_FAILED","checks":{"not-halted":{"ok":false}}}');
   write(path.join(kitDir, 'guest-failure-files.json'), list);
-  extra({ ci, work, kitDir, out });
-  return { ci, work, kitDir, out };
+  extra({ ci, work, kitDir, out, users });
+  return { ci, work, kitDir, out, users };
 }
 // The entry's own Get-FirstInstallEntryResult with the guest check, the release check and the first install stood in: the first install
-// makes its work directory known (as the real one does) and stops.
+// makes its work directory known (as the real one does) and stops. The Task Scheduler log switch and the guest's own account (drill r10)
+// are stood in too: this machine's logs are neither changed nor read.
 const stoppedEntry = (g, { guestCheck = '', stop = "throw 'LAUNCHER_STOPPED:R4_WINDOWS_REINSTALLED_VERIFY_NOT_PASSED_RESIDENT_STOPPED'" } = {}) => `$Work = ${q(g.out)}; $Kit = ${q(g.kitDir)}
-  $script:EntryFailureRoots = @{ ci = ${q(g.ci)}; work = $null }
-  $script:eventAsk = $null
+  $script:EntryFailureRoots = @{ ci = ${q(g.ci)}; work = $null; users = ${q(g.users)} }
+  $script:eventAsk = $null; $script:guestAsk = $null; $script:taskLogAsked = 0; $script:taskLogAtInstall = $null
+  function Enable-EntryTaskSchedulerLog { $script:taskLogAsked++; [ordered]@{ state = 'enabled'; enabledBefore = $false; error = $null } }
+  $script:EntryFailureGuestReader = { param($Since, $Max) $script:guestAsk = @($Since.ToString('o'), $Max); [ordered]@{ taskSchedulerLog = $script:EntryTaskLog; stood = 'in' } }
   $script:EntryFailureEventReader = { param($Since, $Max) $script:eventAsk = @($Since.ToString('o'), $Max)
     1..60 | ForEach-Object { [pscustomobject]@{ TimeCreated = [datetime]'2026-11-21T08:52:35Z'; Id = 7000 + $_; LevelDisplayName = 'Error'; Message = ("service CluedCIResident line $_ " + ('x' * 500)) } } }
   ${guestCheck || 'function Assert-FirstInstallGuest { }'}
   function Assert-FirstInstallRelease { }
   function Set-EntryServerBlackhole { }
-  function Invoke-FirstInstallAccepted { $script:EntryFailureRoots.work = ${q(g.work)}; ${stop} }
+  function Invoke-FirstInstallAccepted { $script:taskLogAtInstall = $script:EntryTaskLog.state; $script:EntryFailureRoots.work = ${q(g.work)}; ${stop} }
   $r = Get-FirstInstallEntryResult
-  [ordered]@{ result = $r; eventAsk = $script:eventAsk }`;
+  [ordered]@{ result = $r; eventAsk = $script:eventAsk; guestAsk = $script:guestAsk; taskLogAsked = $script:taskLogAsked; taskLogAtInstall = $script:taskLogAtInstall }`;
 const snapshotOf = g => JSON.parse(fs.readFileSync(path.join(g.out, 'resident-failure-snapshot.json'), 'utf8'));
 
 test('S1: an entry that ends STOPPED leaves the failure snapshot: HALT.json word for word, the progress records, verify, the SCM events', opts, () => {
@@ -85,14 +88,20 @@ test('S1: an entry that ends STOPPED leaves the failure snapshot: HALT.json word
   // a listed file that is not there is named absent, never left out
   assert.deepEqual(s.files.filter(f => f.pattern === 'resident\\state\\PAUSED.json').map(f => f.state), ['absent']);
   assert.deepEqual(s.files.filter(f => f.pattern === 'reinstall-progress-*\\*.json').map(f => path.win32.basename(f.path)), ['001-output.json', '002-verify.json']);
-  assert.deepEqual(s.files.filter(f => f.root === 'work').map(f => [f.pattern, f.state, path.win32.basename(f.path)]),
-    [['prepare\\launch-*\\progress\\*.json', 'read', '001-output.json'], ['prepare\\launch-*\\verify.stdout.json', 'read', 'verify.stdout.json']]);
+  assert.deepEqual(s.files.filter(f => f.root === 'work').map(f => [f.pattern, f.state, f.path && path.win32.basename(f.path)]),
+    [['prepare\\launch-*\\progress\\*.json', 'read', '001-output.json'], ['prepare\\launch-*\\verify.stdout.json', 'read', 'verify.stdout.json'],
+      ['prepare\\launch-*\\companion-headless.stdout.json', 'absent', undefined]]);
   assert.match(byLeaf('verify.stdout.json')[0].text, /"not-halted":\{"ok":false\}/);
   // the events since the entry started: asked for once, with the entry's own start and the limit
   assert.equal(got.eventAsk[1], 50);
   assert.equal(got.eventAsk[0], s.since);
   assert.equal(s.events.state, 'read');
   assert.deepEqual(s.events.items[0], { at: s.events.items[0].at, id: 7001, level: 'Error', message: s.events.items[0].message });
+  // drill r10: the Task Scheduler log was switched on after the guest check, before the first install, and the guest's account was read
+  // once, with the entry's start and the limit, into the snapshot beside the events
+  assert.deepEqual([got.taskLogAsked, got.taskLogAtInstall], [1, 'enabled']);
+  assert.deepEqual(got.guestAsk, [s.since, 50]);
+  assert.deepEqual(s.guest, { taskSchedulerLog: { state: 'enabled', enabledBefore: false, error: null }, stood: 'in' });
   // nothing of the secrets directory, by any route
   assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /NEVER-READ-TOKEN|ci-admission/);
 });
@@ -171,14 +180,16 @@ test('S3: the committed list is accepted by the entry and names no secret, crede
   assert.deepEqual(Object.keys(doc).sort(), ['contract', 'files']);
   for (const f of doc.files) {
     assert.deepEqual(Object.keys(f).sort(), ['path', 'root']);
-    assert.ok(['ci', 'work'].includes(f.root));
+    assert.ok(['ci', 'work', 'users'].includes(f.root));
     assert.doesNotMatch(f.path, /secret|credential|token|\.pem|key|password|carry/i, f.path);
     assert.match(f.path, /\.json$/);
   }
   assert.doesNotMatch(fs.readFileSync(listFile, 'utf8'), /secrets|credentials/i);
-  // what the report names: the resident's three state records, the launcher's progress records, verify's full answer
+  // what the report names: the resident's three state records, the launcher's progress records, verify's full answer; drill r10: the
+  // companion switch's full answer, the companion's install records, the companion account's own supervisor.json
   assert.deepEqual(doc.files.map(f => `${f.root}:${f.path}`), ['ci:resident\\state\\HALT.json', 'ci:resident\\state\\PAUSED.json', 'ci:resident\\state\\status.json',
-    'ci:reinstall-progress-*\\*.json', 'work:prepare\\launch-*\\progress\\*.json', 'work:prepare\\launch-*\\verify.stdout.json']);
+    'ci:reinstall-progress-*\\*.json', 'work:prepare\\launch-*\\progress\\*.json', 'work:prepare\\launch-*\\verify.stdout.json',
+    'work:prepare\\launch-*\\companion-headless.stdout.json', 'ci:resident\\install\\companion-*.json', 'users:clued-companion*\\AppData\\Local\\CluedIndependentCI\\supervisor.json']);
   assert.deepEqual(ps(`@((Read-EntryFailureFiles ${q(listFile)}) | ForEach-Object { $_.root + ':' + $_.path })`), doc.files.map(f => `${f.root}:${f.path}`));
 });
 
@@ -189,6 +200,7 @@ test('S4: an entry refused before the drill guest is known reads nothing and wri
   assert.deepEqual([got.result.status, got.result.stopCode], ['FIRST_INSTALL_STOPPED', 'DRILL_ENTRY_NOT_THE_ELEVATED_GUEST']);
   assert.equal(fs.existsSync(path.join(g.out, 'resident-failure-snapshot.json')), false);
   assert.equal(got.eventAsk, null);
+  assert.deepEqual([got.taskLogAsked, got.guestAsk], [0, null], 'nor is the Task Scheduler log switched on');
 });
 
 test('S5: the list travels in the kit beside the entry, and the entry reads it from the kit directory', opts, () => {
