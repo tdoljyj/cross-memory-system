@@ -104,13 +104,15 @@ export function within(promise, ms, { schedule = setTimeout, cancel = clearTimeo
   return Promise.race([Promise.resolve(promise).catch(() => null), late]).finally(() => cancel(timer));
 }
 
-// The poll lane and the advisory lane as main() runs them (lane above), from the parts main() builds. Exported so that the tests
-// run the very lanes main() runs. The poll lane (f79929d9) has its own Runner (pollRunner, the one the poller's gh reads run on):
-// a retention notice, a bundle retention, a backstop or a PR page pass that does not return, or an advisory child that never
-// ended, delays only the advisory lane, never finding a new PR head. The PR page and the re-run lane read poller.lastPass only.
-// readStatus(): the executor's status board; pruneOldBundles(), backstop(): one bundle retention and one ruleset backstop pass.
-export function advisoryLanes({ advisory, pollRunner, poller, readStatus, renewKeyCheck, retentionNotifier, pruneOldBundles, backstop, reporter,
-  schedule = setTimeout, cancel = clearTimeout }) {
+// The poller, the poll lane and the advisory lane as main() runs them (lane above), from the parts main() builds. Exported so that
+// the tests run the very poller and lanes main() runs. The poll lane (f79929d9) has its own Runner, pollRunner, and the Poller is
+// built here on it (every gh read of the poll runs there): a retention notice, a bundle retention, a backstop or a PR page pass that
+// does not return, or an advisory child that never ended, delays only the advisory lane, never finding a new PR head. The PR page
+// and the re-run lane read poller.lastPass only. -> { poller, lanes }
+// writeTrigger(v): the inbox drop box; readStatus(): the executor's status board; pruneOldBundles(), backstop(): one bundle retention
+// and one ruleset backstop pass.
+export function advisoryLanes({ advisory, pollRunner, repo, ghExe, writeTrigger, clock = Date.now, readStatus, renewKeyCheck, retentionNotifier,
+  pruneOldBundles, backstop, reporter, schedule = setTimeout, cancel = clearTimeout }) {
   let lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0, lastBundlePrune = 0;
   let statusRead = null; // the poll lane's status read while it is outstanding: never a second one on top of it
   let passStatus = null; // what this pass's status read gave (null: not read within POLL_STATUS_READ_MS, or unreadable)
@@ -118,8 +120,10 @@ export function advisoryLanes({ advisory, pollRunner, poller, readStatus, renewK
   // the train on, stage 10's effective route push and no scan required from this App) proposes a head behind main on its merge
   // base; no such field, or a status not read, is github-merge (status.mjs#pollerLandingOf). From the pass's own read (f79929d9
   // round 2): poller.pass reads status.json no second time, so a stalled read holds it up at most POLL_STATUS_READ_MS.
-  poller.landing = async () => pollerLandingOf(passStatus);
-  return [
+  // A `hints` key an older companion.json still carries (the removed hosted relay, DESIGN §76) is never read.
+  const poller = new Poller({ repo, ghExe, run: (a, o) => pollRunner.run(a, o), clock, writeTrigger,
+    landing: async () => pollerLandingOf(passStatus) });
+  return { poller, lanes: [
     { runner: pollRunner, everyMs: POLL_EVERY_MS, work: async () => {
       // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
       statusRead ??= Promise.resolve().then(readStatus).catch(() => null).finally(() => { statusRead = null; });
@@ -155,7 +159,7 @@ export function advisoryLanes({ advisory, pollRunner, poller, readStatus, renewK
         }
       }
     } },
-  ];
+  ] };
 }
 const exists = async p => { try { await fs.access(p); return true; } catch { return false; } };
 // A record the companion reads for itself (a challenge's deadline, DESIGN §25.4), bounded like a bridge record.
@@ -306,12 +310,6 @@ export async function main(args = process.argv.slice(2)) {
   const companion = new Companion({ cfg, mailbox, run: (a, o) => runner.run(a, o), fileExists: exists, sleep, clock: Date.now, readPull: pr => readPullArgv(raw.ghExe, raw.repo, pr),
     readText, log: relayLog, bundleDir: path.join(values.root, 'bundles') });
   const inboxDir = path.join(values.root, 'inbox');
-  // A `hints` key an older companion.json still carries (the removed hosted relay, DESIGN §76) is never read.
-  const poller = new Poller({
-    repo: raw.repo, ghExe: raw.ghExe, run: (a, o) => pollRunner.run(a, o), clock: Date.now,
-    writeTrigger: v => Inbox.drop(inboxDir, v), // a create-only drop box: the reader waits for a file still being written (DESIGN §31.3)
-    // Its landing port is the poll lane's (advisoryLanes): the landing mode comes from the pass's one bounded status read.
-  });
   // PR page status and Windows notifications (pr-status.mjs). Their memory lives in the Owner's own profile, never in the
   // resident's directories.
   const statusCfg = validateStatusConfig(raw.status);
@@ -406,6 +404,14 @@ export async function main(args = process.argv.slice(2)) {
   // r3 implementation review MAJOR 2). The beat stops with the lanes; the entry below exits outright, so no timer keeps a
   // companion alive that answers nothing.
   const renewKeyCheck=companionKeyWatch(values.root);
+  // The poller and its lane, and the advisory lane (advisoryLanes): built before any lane starts (the re-run lane reads poller.lastPass).
+  const { poller, lanes: advisorySpecs } = advisoryLanes({ advisory, pollRunner, repo: raw.repo, ghExe: raw.ghExe, clock: Date.now,
+    writeTrigger: v => Inbox.drop(inboxDir, v), // a create-only drop box: the reader waits for a file still being written (DESIGN §31.3)
+    readStatus: () => readStatus(values.root), renewKeyCheck, retentionNotifier,
+    pruneOldBundles: () => companion.pruneOldBundles(),
+    backstop: () => companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o),
+      store, notify, observeRules: rules => poller.noteBranchRules(rules) }),
+    reporter });
   const beating = startHeartbeat(mailbox);
   const lockAlive = setInterval(() => { instanceLock.touch().catch(() => {}); }, COMPANION_LOCK_TOUCH_MS);
   // Review MINOR 6: the companion's own gh login is checked again every few minutes, not only at start: a hosts.yml that lost its token
@@ -425,11 +431,7 @@ export async function main(args = process.argv.slice(2)) {
       ...(mergeReconcile?[lane({runner:mergeRunner,work:()=>mergeReconcile.step(),everyMs:MERGE_RECONCILE_LANE_EVERY_MS})]:[]),
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
       ...(frontMerge ? [lane({ runner: frontMergeRunner, work: () => frontMerge.step(), everyMs: FRONT_MERGE_LANE_EVERY_MS })] : []),
-      ...advisoryLanes({ advisory, pollRunner, poller, readStatus: () => readStatus(values.root), renewKeyCheck, retentionNotifier,
-        pruneOldBundles: () => companion.pruneOldBundles(),
-        backstop: () => companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o),
-          store, notify, observeRules: rules => poller.noteBranchRules(rules) }),
-        reporter }).map(spec => lane(spec)),
+      ...advisorySpecs.map(spec => lane(spec)),
     ]);
   } finally {
     clearInterval(beating);

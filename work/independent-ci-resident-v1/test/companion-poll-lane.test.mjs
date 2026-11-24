@@ -1,5 +1,6 @@
-// The poller's own lane (f79929d9, PR 乙 of D:/w/tmp/PLAN-native-admission-latency-20261124.md §1.3): the companion's lanes as
-// main() assembles them (companion-main.mjs#advisoryLanes, run by its own `lane`), a fake clock and fake Runners. Finding a new
+// The poller's own lane (f79929d9, PR 乙 of D:/w/tmp/PLAN-native-admission-latency-20261124.md §1.3, §9): the Poller and the
+// companion's lanes as main() assembles them (companion-main.mjs#advisoryLanes, run by its own `lane`), a fake clock and fake
+// Runners: every gh read of the poll must reach the poll lane's own Runner (the advisory one answers none of them). Finding a new
 // PR head never waits for the advisory lane: a retention notice that never returns or an advisory Runner held by a child that
 // never ended delays only that lane. The poll comes every POLL_EVERY_MS (15 s); an unchanged minute is only 304s.
 import test from 'node:test';
@@ -8,9 +9,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { advisoryLanes, lane } from '../src/companion-main.mjs';
-import { Poller } from '../src/poller.mjs';
 import { Inbox } from '../src/inbox.mjs';
-import { pollerLandingOf } from '../src/status.mjs';
 import { Runner } from '../src/runner.mjs';
 import { restPolls } from './gh-rest-stub.mjs';
 
@@ -50,7 +49,7 @@ function fakeTime(start) {
 
 const pull = (number, head) => ({ number, headRefOid: head, baseRefOid: MAIN, isDraft: false, body: '', updatedAt: '2026-11-24T04:00:00Z' });
 
-// The parts of main() the advisory and poll lanes are built from, all fakes but the Poller and the inbox.
+// The parts of main() the poller and the two lanes are built from, all fakes but the inbox.
 async function companionParts(t, ft, { advisory, retentionStep = async () => ({}), readStatus = async () => ({ queue: { generation: 'g1' }, pending: [] }) } = {}) {
   const dir = await fs.mkdtemp(path.join(process.env.TEMP || os.tmpdir(), 'poll-lane-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
@@ -70,13 +69,11 @@ async function companionParts(t, ft, { advisory, retentionStep = async () => ({}
   } };
   const statusReads = { n: 0 };
   const countedRead = () => { statusReads.n += 1; return readStatus(); };
-  // The Poller as main() built it before round 2 of f79929d9: its landing port read status.json once more inside poller.pass. The poll
-  // lane now answers the landing from its own bounded read of the pass (advisoryLanes), whatever port the Poller was built with.
-  const poller = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run: (a, o) => pollRunner.run(a, o), clock: ft.clock,
-    writeTrigger: v => ft.track(Inbox.drop(inboxDir, v, ft.clock)), landing: async () => pollerLandingOf(await countedRead()) });
   const parts = {
+    // An advisory Runner that answers no gh read: a poll wired to it finds nothing.
     advisory: advisory ?? { get busy() { return false; }, run: async () => ({ code: 0, stdout: '', stderr: '' }) },
-    pollRunner, poller,
+    pollRunner, repo: REPO, ghExe: 'C:\\gh.exe', clock: ft.clock,
+    writeTrigger: v => ft.track(Inbox.drop(inboxDir, v, ft.clock)),
     readStatus: countedRead,
     renewKeyCheck: async () => {},
     retentionNotifier: { step: retentionStep },
@@ -89,14 +86,15 @@ async function companionParts(t, ft, { advisory, retentionStep = async () => ({}
     const names = (await fs.readdir(inboxDir)).filter(n => n.endsWith('.json')).sort();
     return Promise.all(names.map(async n => JSON.parse(await fs.readFile(path.join(inboxDir, n), 'utf8'))));
   };
-  return { parts, pulls, gh, poller, triggers, statusReads };
+  return { parts, pulls, gh, triggers, statusReads };
 }
 
 // Every lane advisoryLanes returns, run by companion-main's own `lane` on the fake clock (as main() runs them).
 function startLanes(parts, ft) {
   let stopped = false;
-  const lanes = advisoryLanes(parts).map(spec => lane({ ...spec, sleep: ft.sleep, stop: () => stopped }));
-  return { lanes, stop: () => { stopped = true; } };
+  const { poller, lanes: specs } = advisoryLanes(parts);
+  const lanes = specs.map(spec => lane({ ...spec, sleep: ft.sleep, stop: () => stopped }));
+  return { poller, lanes, stop: () => { stopped = true; } };
 }
 
 test('a retention notice that never returns: a new PR head is in the inbox within 15 s (fake clock) and one poll', async t => {
