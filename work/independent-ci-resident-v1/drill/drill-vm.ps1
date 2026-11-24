@@ -2,7 +2,7 @@
 #
 #   pwsh -NoProfile -File drill-vm.ps1 -BaselineOnly
 #   pwsh -NoProfile -File drill-vm.ps1 -PrereqOnly      (baseline copy + the pinned prerequisites from D:\clued-drill\prereq, then restored)
-#   pwsh -NoProfile -File drill-vm.ps1 -Version <v> -From <dir with tar/acceptance/SHA256SUMS> -Kit <first-install kit dir> [-SkipReinstall] [-RunTimeoutMinutes 70 | -Ladder]
+#   pwsh -NoProfile -File drill-vm.ps1 -Version <v> -From <dir with tar/acceptance/SHA256SUMS> -Kit <first-install kit dir> [-RunTimeoutMinutes 70 | -Ladder]
 #     (a candidate: -From without an acceptance; the kit carries a drill-only one, see Test-DrillPackageDir and FIRST-INSTALL-KIT.md)
 #   pwsh -NoProfile -File drill-vm.ps1 -Finalize <receipt.json> -ProductionReadback <readback.json>
 #   pwsh -NoProfile -File drill-vm.ps1 -ServerKey <key>     (DESK stores the test project's public key on the host once the project answers it)
@@ -43,7 +43,6 @@ param(
   [string]$Kit,
   [switch]$BaselineOnly,
   [switch]$PrereqOnly,
-  [switch]$SkipReinstall,
   [switch]$Interactive,
   [ValidateRange(5, 240)][int]$InteractiveTimeoutMinutes = 120,
   [ValidateRange(5, 240)][int]$RunTimeoutMinutes = 70,
@@ -1250,16 +1249,21 @@ function Wait-DrillInteractive([string]$RunDir, $Paths, [pscredential]$Cred) {
 
 function New-DrillItem([string]$Id, $Pass, [string]$Detail) { [ordered]@{ id = $Id; pass = $Pass; detail = $Detail } }
 
-function Test-DrillReinstallLauncher($Reinstall) {
-  $exitCode = Get-Prop $Reinstall 'launcherExit'
-  return ($exitCode -is [int]) -and ($exitCode -eq 0) -and ((Get-Prop $Reinstall 'launcherVerdict') -ceq 'BOOTSTRAP_DONE')
+# The pause a launcher confirmed, as verify-resident.ps1 -ExpectPausedSha256 takes it: the sha256 of the state\PAUSED.json its terminal
+# read once that pause was confirmed (pause.paused.sha256; A6 reads the same terminal). $null when the terminal shows no confirmed pause:
+# the read then runs verify without an expectation and A2 fails on that, never on "not paused" (task 87d330d0, drill r13 A2).
+function Get-DrillExpectedPause($Launcher) {
+  if ((Get-Prop $Launcher 'pause.confirmed') -ne $true) { return $null }
+  $h = [string](Get-Prop $Launcher 'pause.paused.sha256')
+  if ($h -cmatch '^[0-9a-f]{64}$') { return $h }
+  return $null
 }
 
 # The phase-A verdict (plan section 3) from what the drill read in the guest. pass: $true, $false, or $null (not judged here:
 # A5's production half and A9 are judged by -Finalize from the production read-back).
 #   $E: entry (Read-DrillEntryResult), launcher (the launcher's terminal), pause (state\PAUSED.json: sha256, requestSha256),
 #       verify (@{status}), status (status.json), current (upgrade\current.json), facts (version-facts.json), acceptanceSource,
-#       now (DateTimeOffset), reboot (@{ok, status, readAt, boot}), reinstall (@{skipped, ...}), skipReinstall (the option given), kit,
+#       now (DateTimeOffset), reboot (@{ok, status, readAt, boot}), reinstall (A8's record: upgradeStatus, upgradeExit, prepareStatus, prepareCode), kit,
 #       firstInstallSteps (Read-DrillFirstInstallSteps)
 function Get-DrillVerdict($E) {
   $items = New-Object System.Collections.ArrayList
@@ -1269,8 +1273,17 @@ function Get-DrillVerdict($E) {
   # parsed, or a stage that ran without its complete log -- does not pass, and the detail says why (Codex review of 1cedea9ef, high 1;
   # branch one 74e7a65e7 holds the same).
   [void]$items.Add((Get-DrillA1Item $entry (Get-Prop $E 'firstInstallSteps') (Get-Prop $E 'failureSnapshot')))
+  # A2 (drill r13, task 87d330d0): a first install ends paused by its launcher (Fable renew-key ruling 11-19, section 1 item 5; A6), so
+  # verify must have run against THAT pause (-ExpectPausedSha256: 'paused-as-expected' replaces 'not-paused'). No confirmed pause in the
+  # launcher's terminal, or a verify run against none or another, is no pass. The detail names every check verify failed (verify.failed).
   $vs = [string](Get-Prop $E.verify 'status')
-  [void]$items.Add((New-DrillItem 'A2' ($vs -ceq 'RESIDENT_VERIFIED') "verify=$vs"))
+  $expect = Get-DrillExpectedPause $E.launcher; $against = [string](Get-Prop $E.verify 'expectPausedSha256')
+  $vf = @(@(Get-Prop $E.verify 'failed') | Where-Object { $null -ne $_ } | ForEach-Object { [string](Get-Prop $_ 'name') })
+  $a2 = ($vs -ceq 'RESIDENT_VERIFIED') -and [bool]$expect -and ($against -ceq $expect)
+  $a2Detail = "verify=$vs expectPaused=$(if ($expect) { $expect } else { 'UNREADABLE_FROM_LAUNCHER' }) verifiedAgainst=$(if (-not $against) { 'none' } elseif ($against -ceq $expect) { 'expected' } else { $against })"
+  if ($vf.Count) { $a2Detail += ' failed=' + (@($vf | Select-Object -First 20) -join ',') + $(if ($vf.Count -gt 20) { ",+$($vf.Count - 20)" } else { '' }) }
+  elseif ($vs -cne 'RESIDENT_VERIFIED' -and (Get-Prop $E.verify 'checksRead') -ne $true) { $a2Detail += ' checks=unread' }
+  [void]$items.Add((New-DrillItem 'A2' $a2 $a2Detail))
   [void]$items.Add((Test-DrillSelfcheck 'A3' $E.status $now))
   # A4: both halves on the same package (upgrade-mailbox.mjs#consistent) and a settled first generation.
   $c = $E.current; $f = $E.facts
@@ -1304,21 +1317,20 @@ function Get-DrillVerdict($E) {
   else {
     $sc = Test-DrillSelfcheck 'A7' $r.status ([DateTimeOffset]$r.readAt)
     $scAfter = Test-DrillAfterBoot ([string](Get-Prop $r.status 'versions.selfcheck.observedAt')) ([string](Get-Prop $r 'boot'))
-    [void]$items.Add((New-DrillItem 'A7' ([bool]$r.ok -and $sc.pass -and $scAfter) "refreshedAfterBoot=$($r.ok) selfcheckAfterBoot=$scAfter boot=$(Get-Prop $r 'boot') $($sc.detail)"))
+    $cab = Test-DrillCompanionAfterBoot (Get-Prop $r 'companionAfterBoot') ([string](Get-Prop $r 'boot'))   # K3: the companion up by itself
+    [void]$items.Add((New-DrillItem 'A7' ([bool]$r.ok -and $sc.pass -and $scAfter -and $cab.pass) "refreshedAfterBoot=$($r.ok) selfcheckAfterBoot=$scAfter boot=$(Get-Prop $r 'boot') $($sc.detail) $($cab.detail)"))
   }
-  # A8: the operator's choice (-SkipReinstall, $E.skipReinstall) and the run's A8 result reach here apart (Codex review of 58136df61,
-  # medium 2). Only the choice, with a result that says skipped, is "skipped"; no result, or a skip nobody chose, is FAIL.
+  # A8 (FABLE-drill-r13-a8-m5-20261125.md section 1): the same package again through both entries, the node not moved. The generic upgrade
+  # answers "already at this package" (exit 0) and install.mjs prepare refuses it, NEW_SOURCE_IS_THE_INSTALLED_ONE (install.mjs: a node
+  # with a receipt takes the reinstall path, which only goes from an older Source to a newer one). Nothing runs after them. The reinstall
+  # from an older package is another drill; the detail says so.
   $ri = $E.reinstall
-  $chosen = (Get-Prop $E 'skipReinstall') -eq $true
-  $saysSkipped = (Get-Prop $ri 'skipped') -eq $true
-  if ($chosen -and $saysSkipped) { [void]$items.Add((New-DrillItem 'A8' $null 'skipped (-SkipReinstall): same-package reinstall not drilled (同包重装未演练)')) }
-  elseif ($null -eq $ri) { [void]$items.Add((New-DrillItem 'A8' $false 'no A8 result: the run handed none over')) }
-  elseif ($saysSkipped) { [void]$items.Add((New-DrillItem 'A8' $false 'the A8 result says skipped, but the run was not started with the skip option')) }
-  elseif ($chosen) { [void]$items.Add((New-DrillItem 'A8' $false 'started with the skip option, but an A8 result came back')) }
+  if ($null -eq $ri) { [void]$items.Add((New-DrillItem 'A8' $false 'no A8 result: the run handed none over')) }
   else {
-    $a8 = ([string]$ri.upgradeStatus -ceq 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE') -and ([string]$ri.prepareStatus -ceq 'FLEET_NODE_INSTALL_PREPARED') `
-      -and (Test-DrillReinstallLauncher $ri) -and [bool]$ri.reverifyPassed -and ([string]$ri.prepareAgainStatus -ceq 'FLEET_NODE_INSTALL_PREPARED')
-    [void]$items.Add((New-DrillItem 'A8' $a8 "upgrade=$($ri.upgradeStatus) prepare=$($ri.prepareStatus) launcher=$(Get-Prop $ri 'launcherVerdict') launcherStatus=$(Get-Prop $ri 'launcherStatus') launcherExit=$(Get-Prop $ri 'launcherExit') reverify=$($ri.reverifyPassed) prepareAgain=$($ri.prepareAgainStatus)"))
+    $upExit = Get-Prop $ri 'upgradeExit'
+    $a8 = ([string](Get-Prop $ri 'upgradeStatus') -ceq 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE') -and ($upExit -is [int] -or $upExit -is [long]) -and ($upExit -eq 0) `
+      -and ([string](Get-Prop $ri 'prepareStatus') -ceq 'FLEET_NODE_INSTALL_REFUSED') -and ([string](Get-Prop $ri 'prepareCode') -ceq 'NEW_SOURCE_IS_THE_INSTALLED_ONE')
+    [void]$items.Add((New-DrillItem 'A8' $a8 "upgrade=$(Get-Prop $ri 'upgradeStatus') upgradeExit=$upExit prepare=$(Get-Prop $ri 'prepareStatus') prepareCode=$(Get-Prop $ri 'prepareCode'); reinstall from an older package is not drilled here（旧包到新包的重装不在本演练内）"))
   }
   [void]$items.Add((New-DrillItem 'A9' $null 'production read-back by -Finalize'))
   $steps = @($E.kit.perNodeSteps)
@@ -1374,28 +1386,24 @@ function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
 }
 
 # Overall: FAIL if any required item is missing or a core item failed, or M5 (the renewal observations) is not PASS; PASS_A when
-# A1-A9 hold and M5 passed; PENDING_PRODUCTION_READBACK while the read-back (-Finalize) has not been judged. The three PASS values are the
+# A1-A9 hold and M5 passed; PENDING_PRODUCTION_READBACK while the read-back (-Finalize) has not been judged. The two PASS values are the
 # set publish.mjs seal --drill-receipt takes (test/drill-vm-part1.test.mjs holds them equal); a candidate is shown to the Owner only after its
 # -Finalize (Fable renew-key ruling section 4.3: drill -> -Finalize -> accept -> seal). M5 has no "not evaluated" exit (section 2.2): a package
-# without the renewal leaves its observations missing and fails here; NOT_EVALUATED only marks a run that stopped before M5 was read.
-# A candidate (its receipt is what the Owner's acceptance and seal rest on): each of A1-A7 must be true, and A8 true unless the run chose
-# to skip it (-SkipReinstall, an explicit option, never the default; Fable renew-key ruling, supplement "candidate skips A8"). A candidate
-# that skipped A8 ends in its own value, PASS_A_REINSTALL_NOT_DRILLED, never in the two others (Codex review of PR-甲, blocking 1: a skipped
-# candidate must not look like a full one; the value tells them apart, in the receipt and in the index seal writes). It is reported even
-# when per-node steps remain too (the larger gap; A10's detail still names them). An accepted version's re-drill keeps "skipped" as the
-# diagnosis it was.
+# without the renewal leaves its observations missing and fails here; NOT_EVALUATED only marks a run that stopped before M5 was read. M5's
+# gateway recorded as not verified (the drill cut the gateway off: renewal-drill.mjs) is no other value: the conclusion is one of the two.
+# A candidate (its receipt is what the Owner's acceptance and seal rest on): each of A1-A8 must be true. A8 has no skip
+# (FABLE-drill-r13-a8-m5-20261125.md section 1.2: it takes seconds, and every run is the same run).
 # The items that make the conclusion FAIL, in order (A1..A10, then M5): a missing item, a core item that failed, for a candidate any of
-# A1-A8 not true (A8 skipped by choice excepted), and M5 not PASS. Empty: no item fails. Get-DrillConclusion's FAIL is exactly "not empty",
+# A1-A8 not true, and M5 not PASS. Empty: no item fails. Get-DrillConclusion's FAIL is exactly "not empty",
 # and the run's summary line names them (Get-DrillRunSummary): one rule for both.
 function Get-DrillFailedItems($Items, $M5, [bool]$Candidate = $false) {
   $byId = @{}; foreach ($i in $Items) { $byId[[string]$i.id] = $i }
   $core = @('A1','A2','A3','A4','A5','A6','A7','A8','A9')
-  $a8Skipped = $byId.ContainsKey('A8') -and $null -eq $byId['A8'].pass -and [string]$byId['A8'].detail -match '^skipped'
   $failed = @()
   foreach ($id in ($core + 'A10')) {
     if (-not $byId.ContainsKey($id)) { $failed += $id; continue }
     if ($core -ccontains $id -and $byId[$id].pass -eq $false) { $failed += $id; continue }
-    if ($Candidate -and $id -cne 'A9' -and $id -cne 'A10' -and $byId[$id].pass -ne $true -and -not ($id -eq 'A8' -and $a8Skipped)) { $failed += $id }
+    if ($Candidate -and $id -cne 'A9' -and $id -cne 'A10' -and $byId[$id].pass -ne $true) { $failed += $id }
   }
   if ([string](Get-Prop $M5 'result') -cne 'PASS') { $failed += 'M5' }
   $failed   # unrolled: the callers collect it with @()
@@ -1405,9 +1413,7 @@ function Get-DrillConclusion($Items, $M5, [bool]$Candidate = $false) {
   if (@(Get-DrillFailedItems $Items $M5 $Candidate).Count) { return 'FAIL' }
   $byId = @{}; foreach ($i in $Items) { $byId[$i.id] = $i }
   $core = @('A1','A2','A3','A4','A5','A6','A7','A8','A9')
-  $a8Skipped = $null -eq $byId['A8'].pass -and [string]$byId['A8'].detail -match '^skipped'
-  if (@($core | Where-Object { $null -eq $byId[$_].pass -and $byId[$_].detail -notmatch '^skipped' }).Count) { return 'PENDING_PRODUCTION_READBACK' }
-  if ($Candidate -and $a8Skipped) { return 'PASS_A_REINSTALL_NOT_DRILLED' }
+  if (@($core | Where-Object { $null -eq $byId[$_].pass }).Count) { return 'PENDING_PRODUCTION_READBACK' }
   if ($byId['A10'].pass) { return 'PASS_A_FULL' }
   return 'PASS_A_PER_NODE_STEPS_REMAIN'
 }
@@ -2942,8 +2948,9 @@ function Invoke-DrillBaseline([string]$RunDir, [switch]$ExistingOnly) {
 }
 
 # The guest reads of one verdict pass: status, current, facts, verify. Inside the VM only.
+# $ExpectPausedSha256: the pause the launcher confirmed (Get-DrillExpectedPause, on the host), or $null.
 $script:GuestRead = {
-  param($Root, $NativeText)
+  param($Root, $NativeText, $ExpectPausedSha256)
   $ErrorActionPreference = 'Stop'
   $native = [scriptblock]::Create($NativeText)
   $read = { param($p) if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null } }
@@ -2959,15 +2966,39 @@ $script:GuestRead = {
     $pause = [ordered]@{ sha256 = (Get-FileHash -LiteralPath $pausedFile -Algorithm SHA256).Hash.ToLowerInvariant()
       requestSha256 = $(if ($pausedSource -and $pausedSource.PSObject.Properties['requestSha256']) { [string]$pausedSource.requestSha256 } else { $null }) }
   }
-  $verify = [ordered]@{ status = 'NOT_RUN'; exit = $null; tail = @(); stderr = $null }
+  $verify = [ordered]@{ status = 'NOT_RUN'; exit = $null; expectPausedSha256 = $null; checksRead = $false; failed = @(); tail = @(); stderr = $null }
   $receipt = Join-Path $Root 'install\install-receipt.json'
   if ($current -and (Test-Path -LiteralPath $receipt)) {
     $script = Join-Path $Root ("resident\" + $current.residentManifestSha256 + "\windows\verify-resident.ps1")
     $rs = (Get-FileHash -LiteralPath $receipt -Algorithm SHA256).Hash.ToLowerInvariant()
-    $n = & $native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $script, '-ExpectedInstallReceiptSha256', $rs, '-LinuxVersionFactsFile', $factsFile) 840
+    # the node is meant to hold the pause the launcher confirmed: verify checks 'paused-as-expected' instead of 'not-paused'. Without an
+    # expectation verify runs on its own rule, and A2 fails on the missing expectation (Get-DrillVerdict), never on "not paused".
+    $expect = if ([string]$ExpectPausedSha256 -cmatch '^[0-9a-f]{64}$') { [string]$ExpectPausedSha256 } else { $null }
+    $argv = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $script, '-ExpectedInstallReceiptSha256', $rs, '-LinuxVersionFactsFile', $factsFile)
+    if ($expect) { $argv += @('-ExpectPausedSha256', $expect) }
+    $n = & $native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $argv 840
     $out = @($n.stdout -split "`r?`n")
     $verdict = @($out | Where-Object { $_ -match 'RESIDENT_VERIF' }) | Select-Object -Last 1
-    $verify = [ordered]@{ status = $(if ($verdict -match '(RESIDENT_[A-Z_]+)') { $Matches[1] } else { 'UNPARSED' }); exit = $n.exit; tail = @($out | Select-Object -Last 40); stderr = $n.stderr }
+    # every check that did not pass, with its detail (an object as compact JSON, each cut to 300 characters), from verify's whole JSON: the
+    # last 40 lines alone left the fifty checks before not-halted unseen (r13). The tail stays beside it.
+    $failed = @(); $checksRead = $false
+    $text = [string]$n.stdout; $at = $text.IndexOf('{')
+    $parsed = if ($at -ge 0) { try { $text.Substring($at) | ConvertFrom-Json } catch { $null } } else { $null }
+    $checks = if ($null -ne $parsed -and $parsed.PSObject.Properties['checks']) { $parsed.checks } else { $null }
+    if ($null -ne $checks) {
+      $checksRead = $true
+      $failed = @(foreach ($c in $checks.PSObject.Properties) {
+        $v = $c.Value
+        $okp = if ($null -ne $v) { $v.PSObject.Properties['ok'] } else { $null }; $ok = if ($okp) { $okp.Value } else { $null }
+        if ($ok -is [bool] -and $ok) { continue }
+        $dp = if ($null -ne $v) { $v.PSObject.Properties['detail'] } else { $null }; $d = if ($dp) { $dp.Value } else { $null }
+        if ($null -ne $d -and $d -isnot [string]) { $d = ConvertTo-Json -InputObject $d -Compress -Depth 6 }
+        if ($null -ne $d -and $d.Length -gt 300) { $d = $d.Substring(0, 300) }
+        [ordered]@{ name = $c.Name; ok = $ok; detail = $d }
+      })
+    }
+    $verify = [ordered]@{ status = $(if ($verdict -match '(RESIDENT_[A-Z_]+)') { $Matches[1] } else { 'UNPARSED' }); exit = $n.exit; expectPausedSha256 = $expect
+      checksRead = $checksRead; failed = $failed; tail = @($out | Select-Object -Last 40); stderr = $n.stderr }
   }
   [ordered]@{ status = $status; current = $current; facts = $facts; pause = $pause; verify = $verify; readAt = [DateTimeOffset]::UtcNow.ToString('o') }
 }
@@ -3246,9 +3277,11 @@ $script:GuestReinstallUpgrade = {
   param($Node, $Tree, $From, $Work, $Version, $NativeText)
   $native = [scriptblock]::Create($NativeText)
   $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
-  & $native $Node @((Join-Path $fleet 'upgrade.mjs'), 'fetch', '--version', $Version, '--work', (Join-Path $Work 'a8-upgrade'), '--from', $From, '--no-request') 3600
+  & $native $Node @((Join-Path $fleet 'upgrade.mjs'), 'fetch', '--version', $Version, '--work', (Join-Path $Work 'a8-upgrade'), '--from', $From, '--no-request') 540
 }
 
+# A8's prepare, the second entry (FABLE-drill-r13-a8-m5-20261125.md section 1.3): only the prepare, read with its status and its code beside
+# the upgrade's answer. Whatever it answers, nothing is started after it -- a runCommand it hands over is not run: the node is not moved.
 # $UpRun: the upgrade's raw result (GuestReinstallUpgrade), handed over by the host.
 $script:GuestReinstall = {
   param($Node, $Tree, $From, $Work, $Version, $TarName, $AccName, $TarSha, $NativeText, $UpRun)
@@ -3256,33 +3289,15 @@ $script:GuestReinstall = {
   $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
   $last = { param($lines) $l = @($lines | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1; if ($l) { try { $l | ConvertFrom-Json } catch { $null } } }
   $upRun = $UpRun
-  $p1Run = & $native $Node @((Join-Path $fleet 'install.mjs'), 'prepare', '--artifact', (Join-Path $From $TarName), '--artifact-sha', $TarSha, '--acceptance', (Join-Path $From $AccName), '--work', (Join-Path $Work 'a8-prepare')) 3600
+  $p1Run = & $native $Node @((Join-Path $fleet 'install.mjs'), 'prepare', '--artifact', (Join-Path $From $TarName), '--artifact-sha', $TarSha, '--acceptance', (Join-Path $From $AccName), '--work', (Join-Path $Work 'a8-prepare')) 540
   $up = @($upRun.stdout -split "`r?`n"); $p1 = @($p1Run.stdout -split "`r?`n")
   $upj = & $last $up; $p1j = & $last $p1
-  $reinstall = [ordered]@{ skipped = $false;
-    upgradeStatus = $(if ($upj -and $upj.PSObject.Properties['status']) { [string]$upj.status });
-    prepareStatus = $(if ($p1j -and $p1j.PSObject.Properties['status']) { [string]$p1j.status });
-    launcherVerdict = 'NOT_RUN_MISSING_RUN_COMMAND'; launcherStatus = $null; launcherExit = $null; launcherTail = @(); launcherStderr = $null;
+  [ordered]@{
+    upgradeStatus = $(if ($upj -and $upj.PSObject.Properties['status']) { [string]$upj.status } else { $null });
+    prepareStatus = $(if ($p1j -and $p1j.PSObject.Properties['status']) { [string]$p1j.status } else { $null });
+    prepareCode = $(if ($p1j -and $p1j.PSObject.Properties['code'] -and $null -ne $p1j.code) { [string]$p1j.code } else { $null });
     upgradeTail = @($up | Where-Object { $_ -ne '' } | Select-Object -Last 5); prepareTail = @($p1 | Where-Object { $_ -ne '' } | Select-Object -Last 5);
-    upgradeExit = $upRun.exit; upgradeStderr = $upRun.stderr; prepareExit = $p1Run.exit; prepareStderr = $p1Run.stderr;
-    reverifyPassed = $false; prepareAgainStatus = $null }
-  $runCommand = if ($p1j) { $p1j.PSObject.Properties['runCommand'] }
-  if ($runCommand -and $runCommand.Value -is [string] -and -not [string]::IsNullOrWhiteSpace($runCommand.Value)) {
-    try {
-      # Use the accepted package's parser and verdict for the launcher's indented terminal JSON.
-      . (Join-Path $fleet 'bootstrap.ps1') -From $From
-      $launch = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', $runCommand.Value) 0
-      $reinstall.launcherExit = $launch.exit
-      $reinstall.launcherStatus = Get-Key $launch.last 'status'
-      $reinstall.launcherVerdict = (Get-LauncherVerdict $false $launch.last).status
-      $reinstall.launcherTail = @($launch.stdout -split "`r?`n" | Select-Object -Last 20)
-      $reinstall.launcherStderr = $launch.stderr
-    } catch {
-      $reinstall.launcherVerdict = 'DRILL_LAUNCHER_ERROR'
-      $reinstall.launcherStderr = $_.Exception.Message
-    }
-  }
-  return $reinstall
+    upgradeExit = $upRun.exit; upgradeStderr = $upRun.stderr; prepareExit = $p1Run.exit; prepareStderr = $p1Run.stderr }
 }
 
 # The public allowlist in docs/ci-connection.md (renewal package). Only the two profile SIDs leave the acceptance file.
@@ -3343,9 +3358,14 @@ $script:GuestM5Files = {
   return $public
 }
 
-function Copy-DrillM5([string]$RunDir, [pscredential]$Cred) {
+# $BlackholeHosts: the hosts this run cut off in the guest, the kit's server.blackholeHosts (the one list the entry applied; the receipt's
+# server.blackholeHosts). The host writes them as m5\network.json beside the guest's observations, its own fact and not one of them
+# (DrillM5Names): renewal-drill.mjs reads it to know whether the renewal gateway was cut off (FABLE-drill-r13-a8-m5-20261125.md section 2).
+function Copy-DrillM5([string]$RunDir, [pscredential]$Cred, [string[]]$BlackholeHosts = @()) {
   $dir = Join-Path $RunDir 'm5'
   New-Item -ItemType Directory -Path $dir | Out-Null
+  $network = ConvertTo-Json -Compress -InputObject ([ordered]@{ blackholeHosts = @($BlackholeHosts | Where-Object { $_ } | ForEach-Object { [string]$_ }) })
+  [IO.File]::WriteAllText((Join-Path $dir 'network.json'), $network, (New-Object Text.UTF8Encoding($false)))
   $names = $script:DrillM5Names
   $missing = @(); $code = $null
   try { $files = Invoke-DrillGuest $Cred $script:GuestM5Files -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 2 -Step 'm5-observations' }
@@ -3391,7 +3411,104 @@ function Get-DrillM5Verdict([string]$RunDir, $M5) {
 $script:GuestReadStatus = {
   param($Root) $p = Join-Path $Root 'state\status.json'
   $s = if (Test-Path $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
-  [ordered]@{ status = $s; readAt = [DateTimeOffset]::UtcNow.ToString('o'); boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o') }
+  $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
+  # Task 87d330d0 K3 (FABLE-drill-companion-k3-20261124 section 4): whether the companion came up by itself after a reboot nobody logged on
+  # to -- the companion task's definition (its logon type), the users logged on, the SYSTEM start task's last run and result, the
+  # companion task's running instances (and its State, kept but not judged: with a queued instance still there the task's State is not
+  # to be trusted, drill-queued-repro), the companion account's supervisor processes with their start. Each part read on its own: one that
+  # cannot be read is named in errors, never thrown.
+  # The users logged on are the window-station sessions that carry a user name (WTSEnumerateSessions, WTSUserName; as "query user"), not
+  # the LSA logon sessions of type 2 or 10: this read itself comes over PowerShell Direct as the drill administrator, a type 2 logon session
+  # with no window station (first review of K3, item 1).
+  $cab = [ordered]@{ boot = $boot; definition = $null; interactiveSessions = $null; interactiveUsers = @(); startTask = $null; companionState = $null
+    companionInstances = $null; supervisors = @(); errors = [ordered]@{} }
+  $folder = $null
+  try { $svc = New-Object -ComObject Schedule.Service; $svc.Connect(); $folder = $svc.GetFolder('\Clued') } catch { $cab.errors['scheduler'] = [string]$_.Exception.Message }
+  if ($null -ne $folder) {
+    try {
+      $t = $folder.GetTask('CluedCIResidentCompanion'); $cab.companionState = [int]$t.State; $lt = [int]$t.Definition.Principal.LogonType
+      $cab.definition = $(if ($lt -eq 1) { 'password' } elseif ($lt -eq 3) { 'interactive' } else { 'logon-type-' + $lt })
+      $cab.companionInstances = @(@($t.GetInstances(0)) | Where-Object { $null -ne $_ } | ForEach-Object { [ordered]@{ state = [int]$_.State; enginePid = [int]$_.EnginePID } })
+    } catch { $cab.errors['companionTask'] = [string]$_.Exception.Message }
+    try {
+      $st = $folder.GetTask('CluedCIResidentCompanionStart'); $last = [DateTime]$st.LastRunTime
+      $cab.startTask = [ordered]@{ lastRun = $(if ($last.Year -lt 2000) { $null } else { ([DateTimeOffset]$last).ToUniversalTime().ToString('o') }); lastResult = ([int64]$st.LastTaskResult -band 0xFFFFFFFFL) }
+    } catch { $cab.errors['startTask'] = [string]$_.Exception.Message }
+  }
+  try {
+    if (-not ('CluedDrillWts' -as [type])) {
+      Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class CluedDrillWts {
+  [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern bool WTSEnumerateSessions(IntPtr server, int reserved, int version, out IntPtr info, out int count);
+  [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern bool WTSQuerySessionInformation(IntPtr server, int session, int infoClass, out IntPtr buffer, out int bytes);
+  [DllImport("wtsapi32.dll")]
+  static extern void WTSFreeMemory(IntPtr memory);
+  [StructLayout(LayoutKind.Sequential)]
+  struct SessionInfo { public int SessionId; public IntPtr WinStationName; public int State; }
+  // "<session id>:<user name>" of every session that carries a user name (WTSUserName = 5)
+  public static string[] UserSessions() {
+    IntPtr info; int count;
+    if (!WTSEnumerateSessions(IntPtr.Zero, 0, 1, out info, out count)) throw new Win32Exception();
+    List<string> users = new List<string>();
+    try {
+      int size = Marshal.SizeOf(typeof(SessionInfo));
+      for (int i = 0; i < count; i++) {
+        SessionInfo s = (SessionInfo)Marshal.PtrToStructure(new IntPtr(info.ToInt64() + (long)i * size), typeof(SessionInfo));
+        IntPtr buffer; int bytes;
+        if (!WTSQuerySessionInformation(IntPtr.Zero, s.SessionId, 5, out buffer, out bytes)) throw new Win32Exception();
+        try { string name = Marshal.PtrToStringUni(buffer); if (!String.IsNullOrEmpty(name)) users.Add(s.SessionId + ":" + name); }
+        finally { WTSFreeMemory(buffer); }
+      }
+    } finally { WTSFreeMemory(info); }
+    return users.ToArray();
+  }
+}
+'@
+    }
+    $cab.interactiveUsers = @([CluedDrillWts]::UserSessions())
+    $cab.interactiveSessions = $cab.interactiveUsers.Count
+  } catch { $cab.errors['sessions'] = [string]$_.Exception.Message }
+  try {
+    $cab.supervisors = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='CluedCompanionSupervisor.exe'" -ErrorAction Stop | ForEach-Object {
+      $owner = $null; try { $owner = [string](Invoke-CimMethod -InputObject $_ -MethodName GetOwner -ErrorAction Stop).User } catch { }
+      [ordered]@{ pid = [int]$_.ProcessId; owner = $owner; created = $(if ($_.CreationDate) { ([DateTimeOffset][DateTime]$_.CreationDate).ToUniversalTime().ToString('o') } else { $null }) } })
+  } catch { $cab.errors['supervisors'] = [string]$_.Exception.Message }
+  [ordered]@{ status = $s; readAt = [DateTimeOffset]::UtcNow.ToString('o'); boot = $boot; companionAfterBoot = $cab }
+}
+
+# A7's added condition (K3 section 4): under the companion's password definition the companion came up by itself after this boot, nobody
+# logged on -- all five: this boot's time; no session with a user logged on; the start task ran after the boot and returned 0; an instance
+# of the companion task running; a supervisor of the companion account started after the boot. Any one missing: no pass, named in the detail. Under the
+# interactive definition (a person logs on; -Interactive) it adds nothing. No read, or a definition that cannot be told: no pass.
+$script:DrillCompanionAccount = 'clued-companion'
+function Test-DrillCompanionAfterBoot($Cab, [string]$Boot) {
+  if ($null -eq $Cab) { return @{ pass = $false; detail = 'companionAfterBoot=missing' } }
+  $definition = [string](Get-Prop $Cab 'definition')
+  if ($definition -ceq 'interactive') { return @{ pass = $true; detail = 'companionAfterBoot=interactive-definition' } }
+  if ($definition -cne 'password') { return @{ pass = $false; detail = "companionAfterBoot definition=$(if ($definition) { $definition } else { 'unknown' })" } }
+  $missing = New-Object Collections.Generic.List[string]
+  $bootOk = $false; try { $bootOk = [bool]$Boot -and ($null -ne [DateTimeOffset]::Parse($Boot, [Globalization.CultureInfo]::InvariantCulture)) } catch { $bootOk = $false }
+  if (-not $bootOk) { $missing.Add('boot') }
+  $sessions = Get-Prop $Cab 'interactiveSessions'
+  if ($null -eq $sessions -or [int]$sessions -ne 0) { $missing.Add("interactiveSessions=$(if ($null -eq $sessions) { 'unread' } else { $sessions })") }
+  $start = Get-Prop $Cab 'startTask'
+  if (-not (Test-DrillAfterBoot ([string](Get-Prop $start 'lastRun')) $Boot)) { $missing.Add('startTaskRanAfterBoot') }
+  $result = Get-Prop $start 'lastResult'
+  if ($null -eq $result -or [int64]$result -ne 0) { $missing.Add("startTaskResult=$(if ($null -eq $result) { 'unread' } else { $result })") }
+  # running: an instance of the companion task running (4) or with an engine process, as the import's start is judged; the task's State
+  # is not, a queued instance beside it can leave it wrong (first review of K3, item 5)
+  $running = @(@(Get-Prop $Cab 'companionInstances') | Where-Object { $null -ne $_ -and ([int](Get-Prop $_ 'state') -eq 4 -or [int](Get-Prop $_ 'enginePid') -ne 0) })
+  if (-not $running.Count) { $missing.Add('companionRunning') }
+  $mine = @(@(Get-Prop $Cab 'supervisors') | Where-Object { $null -ne $_ -and [string]::Equals([string](Get-Prop $_ 'owner'), $script:DrillCompanionAccount, [StringComparison]::OrdinalIgnoreCase) -and (Test-DrillAfterBoot ([string](Get-Prop $_ 'created')) $Boot) })
+  if (-not $mine.Count) { $missing.Add('supervisorAfterBoot') }
+  if ($missing.Count) { return @{ pass = $false; detail = ('companionAfterBoot missing=' + ($missing -join ',')) } }
+  @{ pass = $true; detail = 'companionAfterBoot=complete' }
 }
 
 # One A7 sample: the status rewritten after the boot it was read in, and a passing self-check observed after that same boot (never one an
@@ -3402,8 +3519,10 @@ function Get-DrillRebootSample($Sample, [DateTimeOffset]$WaitedBoot) {
   try { $b = [DateTimeOffset]::Parse($boot, [Globalization.CultureInfo]::InvariantCulture); $known = $b -ge $WaitedBoot; $changed = $b -gt $WaitedBoot } catch { $known = $false }
   $status = Get-Prop $Sample 'status'
   $ok = $known -and (Test-DrillAfterBoot ([string](Get-Prop $status 'writtenAt')) $boot)
-  $done = $ok -and [string](Get-Prop $status 'versions.selfcheck.result') -ceq 'PASS' -and (Test-DrillAfterBoot ([string](Get-Prop $status 'versions.selfcheck.observedAt')) $boot)
-  [ordered]@{ ok = $ok; status = $status; readAt = (Get-Prop $Sample 'readAt'); boot = $(if ($known) { $boot } else { $null }); waitedBoot = $WaitedBoot.ToString('o'); bootChanged = $changed; done = $done }
+  $cab = Get-Prop $Sample 'companionAfterBoot'
+  # K3: the wait goes on until the companion is up as well (it may come after the self-check), within the same window
+  $done = $ok -and [string](Get-Prop $status 'versions.selfcheck.result') -ceq 'PASS' -and (Test-DrillAfterBoot ([string](Get-Prop $status 'versions.selfcheck.observedAt')) $boot) -and (Test-DrillCompanionAfterBoot $cab $boot).pass
+  [ordered]@{ ok = $ok; status = $status; readAt = (Get-Prop $Sample 'readAt'); boot = $(if ($known) { $boot } else { $null }); waitedBoot = $WaitedBoot.ToString('o'); bootChanged = $changed; done = $done; companionAfterBoot = $cab }
 }
 
 # Fable ruling 11-20 "first install r4" section 4 (E4): whether the first install left anything a reboot could expose, from the guest's raw
@@ -3743,17 +3862,6 @@ $script:GuestEntry = {
   [ordered]@{ lines = @($n.stdout -split "`r?`n"); stderr = $n.stderr; exit = $n.exit }
 }
 
-# A8's second prepare after the reinstall, read the same way.
-$script:GuestPrepareAgain = {
-  param($Node, $Tree, $From, $Work, $TarName, $AccName, $TarSha, $NativeText)
-  $native = [scriptblock]::Create($NativeText)
-  $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
-  $n = & $native $Node @((Join-Path $fleet 'install.mjs'), 'prepare', '--artifact', (Join-Path $From $TarName), '--artifact-sha', $TarSha, '--acceptance', (Join-Path $From $AccName), '--work', (Join-Path $Work 'a8-prepare-again')) 3600
-  $l = @($n.stdout -split "`r?`n" | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1
-  # the status, with the exit code and stderr beside it for reinstall.json (Codex review of 58136df61, low 4)
-  [ordered]@{ status = $(if ($l) { [string]($l | ConvertFrom-Json).status } else { 'UNPARSED' }); exit = $n.exit; stderr = $n.stderr }
-}
-
 # 甲4: the first install ended done -- the only end after which A7, A8 and M5 have anything to drill.
 function Test-DrillEntryDone($Entry) {
   return ($Entry.parsed -eq $true) -and ($Entry.exitCode -eq 0) -and ($null -eq $Entry.stopCode) -and ([string]$Entry.status -ceq 'FIRST_INSTALL_DONE')
@@ -3840,7 +3948,8 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   $entryDone = Test-DrillEntryDone $entry
 
   Write-DrillHostStep $RunDir 'read-after-install' 'start'
-  $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-install' -Restartable -Until $afterEntry
+  # verify runs against the pause the first install's launcher confirmed (A2; the same terminal A6 reads)
+  $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText, (Get-DrillExpectedPause $launcher)) -TimeoutMinutes 15 -Step 'read-after-install' -Restartable -Until $afterEntry
   Write-DrillJson (Join-Path $RunDir 'read-after-install.json') $first
 
   # A7: reboot, nobody logs in; within 10 minutes the status is rewritten after the boot and the self-check still passes. Only when the
@@ -3861,38 +3970,26 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   }
   Write-DrillJson (Join-Path $RunDir 'read-after-reboot.json') $reboot
 
-  # A8: same package again: the generic upgrade answers "already at this package"; prepare -> launcher -> verify -> prepare.
-  $reinstall = @{ skipped = $true }
-  if (-not $SkipReinstall -and -not $entryDone) {
+  # A8: same package again through both entries, the node not moved: the generic upgrade answers "already at this package" and prepare
+  # refuses it (Get-DrillVerdict). Two guest steps, nothing after them; the 10 minutes each are a bound (r13: 13 s and 2 s).
+  if (-not $entryDone) {
     # 甲4: blocked by A1 (recorded, not run)
-    $reinstall = @{ skipped = $false; upgradeStatus = 'DRILL_A8_BLOCKED_BY_A1'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null }
-  } elseif (-not $SkipReinstall -and $entry.tree -and $entry.node) {
+    $reinstall = @{ upgradeStatus = 'DRILL_A8_BLOCKED_BY_A1'; prepareStatus = $null; prepareCode = $null }
+  } elseif ($entry.tree -and $entry.node) {
     # the upgrade first, on its own; its raw result is on the host before the prepare starts (Codex narrow review of 4190b0f8e, medium)
     Write-DrillHostStep $RunDir 'A8-reinstall' 'start'
-    $upRun = Invoke-DrillGuest $Cred $script:GuestReinstallUpgrade -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, $script:DrillNativeText) -TimeoutMinutes 65 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall-upgrade' -Until $afterEntry
+    $upRun = Invoke-DrillGuest $Cred $script:GuestReinstallUpgrade -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, $script:DrillNativeText) -TimeoutMinutes 10 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall-upgrade' -Until $afterEntry
     Write-DrillJson (Join-Path $RunDir 'reinstall-upgrade.json') (ConvertTo-DrillReinstallUpgradeRecord $upRun)
-    $reinstall = Invoke-DrillGuest $Cred $script:GuestReinstall -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText, $upRun) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall' -Until $afterEntry
+    $reinstall = Invoke-DrillGuest $Cred $script:GuestReinstall -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText, $upRun) -TimeoutMinutes 10 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall' -Until $afterEntry
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
-  } elseif (-not $SkipReinstall) { $reinstall = @{ skipped = $false; upgradeStatus = 'NOT_RUN_ENTRY_GAVE_NO_TREE_OR_NODE'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null } }
-
-  if (Test-DrillReinstallLauncher $reinstall) {
-    # the re-verify runs the whole verdict: its input carries the launcher verdict and the pause, the same sources as the first install's A6
-    # (Codex review of f33fc33e5, medium 5: without them strict mode stopped it before prepare-again)
-    $again = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-reinstall' -Restartable -Until $afterEntry
-    Write-DrillJson (Join-Path $RunDir 'read-after-reinstall.json') $again
-    $reVerdict = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($again.readAt); entry = $entry; launcher = $launcher; pause = $again.pause; verify = $again.verify; status = $again.status; current = $again.current; facts = $again.facts; acceptanceSource = $Package.ciSourceManifestSha256; reboot = $null; reinstall = $null; kit = $KitInfo }
-    $reinstall.reverifyPassed = @($reVerdict | Where-Object { $_.id -in @('A2', 'A3', 'A4') -and $_.pass -ne $true }).Count -eq 0 -and $null -eq (@($reVerdict | Where-Object { $_.id -eq 'A5' })[0].pass)
-    $p2 = Invoke-DrillGuest $Cred $script:GuestPrepareAgain -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText) -TimeoutMinutes 60 -Step 'prepare-again' -Until $afterEntry
-    $reinstall.prepareAgainStatus = [string](Get-Prop $p2 'status'); $reinstall.prepareAgainExit = $p2.exit; $reinstall.prepareAgainStderr = $p2.stderr
-    Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
-  }
+  } else { $reinstall = @{ upgradeStatus = 'NOT_RUN_ENTRY_GAVE_NO_TREE_OR_NODE'; prepareStatus = $null; prepareCode = $null } }
 
   # the one worker-instance start (r8 trivy cache): after everything the verdict reads has been collected; never part of a verdict
   [void](Save-DrillLateProbe $RunDir $Cred)
 
   # 甲4: M5 is read only after a first install that ended done; otherwise blocked by A1 (recorded, not read)
   $m5 = if (-not $entryDone) { @{ directory = 'm5'; missing = @($script:DrillM5Names); collectionCode = 'DRILL_M5_BLOCKED_BY_A1'; blocked = $true } }
-    else { try { Copy-DrillM5 $RunDir $Cred } catch { @{ collectionCode = (Get-DrillCode $_).code } } }
+    else { try { Copy-DrillM5 $RunDir $Cred @(Get-Prop $KitInfo 'server.blackholeHosts') } catch { @{ collectionCode = (Get-DrillCode $_).code } } }
   return @{ entry = $entry; launcher = $launcher; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake; prereq = $prereqFacts; timings = $timings; m5 = $m5 }
 }
 
@@ -4344,7 +4441,7 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
-    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); skipReinstall = [bool]$SkipReinstall; kit = $kitInfo; candidate = [bool]$package['candidate']; firstInstallSteps = $firstInstallSteps; failureSnapshot = $failureSnapshot }
+    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); kit = $kitInfo; candidate = [bool]$package['candidate']; firstInstallSteps = $firstInstallSteps; failureSnapshot = $failureSnapshot }
   }
   # the run stopped after the first install gave its result: A1 from that result alone (the other items are missing, so the receipt fails)
   $entryResultFile = Join-Path $runDir 'entry-result.json'

@@ -141,7 +141,7 @@ if ($LASTEXITCODE) { throw '候选演练 kit 构建失败' }
 pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Version $v -From $candFrom -Kit $candKit -Ladder
 ```
 
-候选演练默认跑 A8 并要求它为真；跳过 A8 只能显式带 `-SkipReinstall`（不是默认，Fable 裁定补“候选跳过 A8”）。候选回执的 A1–A7 必须逐项为真，A8 为真或被显式跳过，其他情况都是 `FAIL`。跳过了 A8 的候选，回读后最好只能得到 `PASS_A_REINSTALL_NOT_DRILLED`，A8 的 detail 写“同包重装未演练”；这个值原样写进索引的演练格，永远不会是另外两种 PASS。
+A8 是“同一个包再走两条入口，节点不被动”（FABLE-drill-r13-a8-m5-20261125.md 第 1 节）：通用升级必须答 `FLEET_NODE_ALREADY_AT_THIS_PACKAGE`（退出码 0），`install.mjs prepare` 必须答 `FLEET_NODE_INSTALL_REFUSED` 且码为 `NEW_SOURCE_IS_THE_INSTALLED_ONE`；两步各限 10 分钟，之后什么都不跑（prepare 即使给出 `runCommand` 也不执行）。A8 没有跳过开关，每次都跑。候选回执的 A1–A8 必须逐项为真，其他情况都是 `FAIL`。旧包到新包的重装不在本演练内，A8 的 detail 如实写着，另由“重装演练”验。
 
 演练 kit 平铺存放 `first-install-entry.ps1`、`guest-failure-files.json`（入口失败快照可读的来宾文件清单）、`release-pins.json`、WSL MSI、Ubuntu rootfs、全部 .deb 和 `kit.json`。
 除 `kit.json` 自身外，每个文件都在 `files` 中钉 sha256。prereq.json 按原始字节绑定；其 WSL/rootfs/debs 与正式
@@ -189,10 +189,10 @@ pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Versio
 - A1 阻断：首装没有以 `FIRST_INSTALL_DONE` 结束（退出码非 0、带停止码、或结果读不出）时，不重启、不跑 A8、不读 M5。三者分别记为 `DRILL_A7_BLOCKED_BY_A1`（若什么都没装上，仍记 `DRILL_A7_BLOCKED_NOTHING_INSTALLED`）、`upgradeStatus = DRILL_A8_BLOCKED_BY_A1`、`DRILL_M5_BLOCKED_BY_A1`。装后读取与两次探针照跑。
 - 明盒：入口每进入、每结束一个阶段，就当场往来宾工作目录的 `stage-progress.jsonl` 追加一行（`stage`、`event`、`startedAt`、`endedAt`、`result`、`code`、`tail`，其中 `tail` 为该段日志最后 5 行）。阶段依次为 assets、prereq、unpack、check、host-inputs（check 判定后到 host 之前的本地拷贝、凭据目录与第二次解包）、host、prepare、wsl-cold-start、launcher；每段在自己的判定之后才记结束，停止码记在停下的那一段，万一没有打开的段则单记一行 `between-stages`。prereq 段内每个 item/deb 的每一步（`sha`、`copy`、`get`、`expand`，最后 `tools:find`）各记开始、结束两行（`event` 为 `step-start`/`step-end`，带 `item`、`step`、`bytes`），时间线在该段下列 `steps`，段被中止时 `inProgressStep` 指出卡在哪个 item 的哪一步。写不进就跳过，不影响首装。host 段：包里的 `first-install-host.ps1` 带 `-StepProgress` 参数时（入口探测到才传，bootstrap.ps1 不传），每个 `Enter-Step` 开始、每步结束也往同一个 `stage-progress.jsonl` 各写一行，时间线 host 段列 `steps`，被中止时 `inProgressStep` 给出进行中的子步骤名和开始时刻；旧包的 host 没有这个参数，被中止的 host/prepare/launcher 段给 `lastStepLine`（运行目录里该段日志最后一条步骤行的名字、结论和时刻）。宿主自己的步骤（入口前的 copy-in，入口后的 read-after-install、A7-reboot、A8-reinstall）开始、结束写在运行目录的 `host-steps.jsonl`，开始了没写出结果的记为进行中被中止。宿主每拍拉回这个文件，取证时再取一次。无论结局如何，回执的 `evidence.stageTimeline` 都列出走到第几段和每段结论：`ok`、`failed` 带码，或 `aborted-in-progress`（进行中被中止）。之后接 A1 结果、装后读取、A7、A8 各自的记录。kit 的入口若不写这个文件，就按运行目录里已有的阶段日志列出，此时 `source` 为 `stage-logs`。
 
-M5 对每个包都收集、都判定（Fable 11-19 裁定 §2.2：没有“不评估也算数”的出口）。完成 A 档步骤后，`m5/` 保存来宾已生成的公开观测，宿主的 `test/renewal-drill.mjs` 核验齐备的七份文件（六份公开观测，加来宾管理员对连接记录在不在的实读 `record.json`）。
+M5 对每个包都收集、都判定（Fable 11-19 裁定 §2.2：没有“不评估也算数”的出口）。完成 A 档步骤后，`m5/` 保存来宾已生成的公开观测，宿主的 `test/renewal-drill.mjs` 核验齐备的八份文件（六份公开观测，加来宾管理员对连接记录在不在的实读 `record.json`，加宿主写的 `network.json`：本轮在来宾里切断的主机名单，取 kit 的 `server.blackholeHosts`）。续期网关主机（`windows/SwapBroker.cs` 的 `Route`）在名单里时，探询必须恰为 `RENEW_GATEWAY_UNAVAILABLE`，`m5.verdict.gateway` 记 `NOT_VERIFIED_GATEWAY_CUT_OFF`（未验到，M5 仍可 `PASS`），收到 403 或别的码即 `FAIL`；不在名单里时仍要求 403。
 回执记录 `m5.result`：核验通过为 `PASS`，观测缺失（包里没有续期组件也是这一种）、核验器缺失或核验失败为 `FAIL`；`NOT_EVALUATED` 只出现在中途已失败的回执里。
 回执 `conclusion` 只有在 `m5.result` 为 `PASS` 时才可能不是 `FAIL`；`-Finalize` 同样按回执里的 `m5` 判，旧回执没有 `m5` 即 `FAIL`。
-回读（`-Finalize`）之前结论为 `PENDING_PRODUCTION_READBACK`；回读之后只有 `PASS_A_FULL`、`PASS_A_PER_NODE_STEPS_REMAIN`、`PASS_A_REINSTALL_NOT_DRILLED`（仅候选跳过 A8）三种 PASS，
+回读（`-Finalize`）之前结论为 `PENDING_PRODUCTION_READBACK`；回读之后只有 `PASS_A_FULL`、`PASS_A_PER_NODE_STEPS_REMAIN` 两种 PASS（M5 网关未验到不另设结论值），
 正是 `publish.mjs seal --drill-receipt` 收的集合（定义在 `publish.mjs`，测试核两边一致）。
 
 **候选的顺序：演练 → `-Finalize` → Owner 接受 → seal**（Fable 11-19 续期密钥裁定 §4.3）。候选回执在接受之前就定稿：
@@ -281,7 +281,7 @@ New-Item C:\drill\work\interactive.done -ItemType File
 没有信号就超时失败并还原。信号本身不构成成功证据。
 A1 来自 VM 内 C:\ProgramData\CluedBootstrap\<guid>\elevated-launcher-*.txt 的最后一个 JSON，由接受版
 Get-LauncherVerdict 判定，要求唯一结果文件、有效 PNG 截图、tree/node 路径。证据复制到宿主本次 runs 目录后，继续
-现有验收、A7 无登录重启和 A8 再装，最后关闭 VM 并还原 S0。临时登录口令随还原失效，不改宿主 DPAPI 基线凭据文件。
+现有验收、A7 无登录重启和 A8 同包两入口，最后关闭 VM 并还原 S0。临时登录口令随还原失效，不改宿主 DPAPI 基线凭据文件。
 
 这仍使用假凭据，不能证明服务端登记、心跳接纳或 STANDBY。为防把适配 kit 冒充完整首装，本封装在交互模式仍保留 A10
 限制；原入口证据单独记录于 interactive-launcher.json 和 interactive-screen.png，供 DESK/Owner 审核。
