@@ -31,18 +31,20 @@ export const OPERATOR = `${SID}1000`, CONTROLLER = `${SID}1007`, COMPANION = `${
 export const RESIDENT = 'S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629';
 
 // One Windows PowerShell 5.1 run of `command` (the parent's process scope: `policy`); its last stdout line is JSON. A command too long for
-// one command line (32767 characters) runs from a script file (UTF-8 with BOM) under TEMP instead, removed afterwards.
-export function ps(command, { policy = 'Bypass', raw = false } = {}) {
+// one command line (32767 characters) runs from a script file (UTF-8 with BOM) under TEMP instead, removed afterwards. `spawn` is
+// injectable for the no-wall-clock tests of first-install-chain.test.mjs only. No wall-clock limit (task 11092b8b): a hang is the job's
+// timeout-minutes; a failed spawn reports the last 20 lines PowerShell wrote to stderr (a scan writes one per file).
+export function ps(command, { policy = 'Bypass', raw = false, spawn = spawnSync } = {}) {
   const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; delete env.PSExecutionPolicyPreference;
   const encoded = Buffer.from(command, 'utf16le').toString('base64');
   const dir = encoded.length > 30_000 ? fs.mkdtempSync(path.join(os.tmpdir(), 'fi-ps-')) : null;
   if (dir) fs.writeFileSync(path.join(dir, 'run.ps1'), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(command, 'utf8')]));
   let r;
   try {
-    r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', policy, ...(dir ? ['-File', path.join(dir, 'run.ps1')] : ['-EncodedCommand', encoded])],
-      { cwd: RES, env, encoding: raw ? 'buffer' : 'utf8', windowsHide: true, timeout: 300_000, maxBuffer: 1 << 26 });
+    r = spawn(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', policy, ...(dir ? ['-File', path.join(dir, 'run.ps1')] : ['-EncodedCommand', encoded])],
+      { cwd: RES, env, encoding: raw ? 'buffer' : 'utf8', windowsHide: true, maxBuffer: 1 << 26 });
   } finally { if (dir) fs.rmSync(dir, { recursive: true, force: true }); }
-  assert.ifError(r.error);
+  if (r.error) assert.fail(`${r.error.message}\n--- last stderr lines ---\n${String(r.stderr ?? '').replace(/\r?\n$/, '').split(/\r?\n/).slice(-20).join('\n')}`);
   if (raw) return r;
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
   return JSON.parse(String(r.stdout).trim().split(/\r?\n/).at(-1));

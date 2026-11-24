@@ -242,9 +242,17 @@ function requireLocal(env, runtime) {
   return daemon;
 }
 
+// `supabase start` applies no migration ([db.migrations] enabled = false). The chain is applied here, in
+// production's shape, by the one local executor; it connects only to 127.0.0.1 and the [db] port of this
+// checkout's prepared config.toml. Its progress goes to stderr: stdout carries only this script's result.
+function defaultApplyMigrations(root) {
+  execFileSync(process.execPath, [path.join(root, 'scripts/ci/clued-local-migrate.mjs')],
+    { cwd: root, stdio: ['ignore', 2, 2] });
+}
+
 // Test-only command boundaries; the CLI always uses these fixed host defaults.
 const adapters = (overrides = {}) => ({ git: defaultGit, docker: defaultDocker, fs, portProbe: probePorts,
-  startLock: verifyStartupLock,
+  startLock: verifyStartupLock, applyMigrations: defaultApplyMigrations,
   portPolicy: () => parsePortPolicy(fs.readFileSync('/proc/sys/net/ipv4/ip_local_port_range', 'utf8'),
     fs.readFileSync('/proc/sys/net/ipv4/ip_local_reserved_ports', 'utf8')),
   platform: process.platform, ...overrides });
@@ -333,6 +341,9 @@ export function verify(env = process.env, overrides) {
   const container = JSON.parse(docker('inspect', '--format', inspect, database).trim());
   const labels = JSON.parse(docker('volume', 'inspect', '--format', '{{json .Labels}}', database).trim());
   verifyContainer(marker, container, labels);
+  // Only now, with the configuration, the lock and the container proven to be this run's own, is the database
+  // written: the whole chain, then the history it left is compared with the files below.
+  runtime.applyMigrations(root);
   // Fixed local container and read-only query: never a linked/remote connection string.
   const sql = "select coalesce(json_agg(json_build_object('version',version,'name',name) order by version), '[]'::json) from supabase_migrations.schema_migrations";
   const history = JSON.parse(docker('exec', `supabase_db_${marker.project}`, 'psql', '-X', '-U', 'postgres',
