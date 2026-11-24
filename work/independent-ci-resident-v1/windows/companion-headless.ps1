@@ -295,12 +295,14 @@ function Register-CompanionFallbackTask([string]$root, [string]$residentSha) {
   $null = $folder.RegisterTaskDefinition($CompanionFallbackTaskName, $def, 6, $null, $null, 5, 'D:P(A;;FA;;;SY)(A;;FA;;;BA)')
 }
 # K3: the password definition's own boot and time triggers only queue on a node with nobody logged on (drill r11 guest), a SYSTEM task's
-# run. So a SYSTEM task starts it, ignoring constraints, at boot (+30 s) and every 15 minutes: one fixed system command, no input, no
-# credential; IgnoreNew on the companion task drops the start while it runs. Registered with the password definition (both switches,
+# run. So a SYSTEM task starts it, ignoring constraints, at boot (+30 s) and every 15 minutes: one fixed PowerShell line that calls the
+# Task Scheduler's RunEx(ignore constraints) as Start-CompanionTask does (schtasks /Run /I was only seen to work after the constraint
+# had gone, drill repro 2026-11-24), no input, no credential; IgnoreNew on the companion task drops the start while it runs. Registered with the password definition (both switches,
 # after the registrar, before the first start), deleted with it (Invoke-CompanionFallback; uninstall). No parameters, create or update;
 # any failure is COMPANION_START_TASK_REGISTER_FAILED.
 $CompanionStartTaskName = 'CluedCIResidentCompanionStart'
-$CompanionStartTaskAction = [ordered]@{ path = 'C:\Windows\System32\schtasks.exe'; arguments = '/Run /I /TN "\Clued\CluedCIResidentCompanion"' }
+$CompanionStartTaskAction = [ordered]@{ path = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+  arguments = '-NoProfile -NonInteractive -Command "$s = New-Object -ComObject ''Schedule.Service''; $s.Connect(); $null = $s.GetFolder(''\Clued'').GetTask(''CluedCIResidentCompanion'').RunEx($null, 2, 0, $null)"' }
 function Register-CompanionStartTask {
   try {
     $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
@@ -1165,10 +1167,12 @@ function Get-CompanionMonotonicMs { [double]([Diagnostics.Stopwatch]::GetTimesta
 # Runs the one-shot import task once and deletes it (task 87d330d0, drill r11: an instance still queued was taken for an end two seconds
 # after Run, its LastTaskResult 0 for the program's exit 0, and the task deleted under it). Started with RunEx(ignore constraints, K3).
 # Every 500 ms after Run (-Now: milliseconds on
-# a monotonic clock) it reads the task's State, LastRunTime and LastTaskResult, and its instances (State, EnginePID). Ended (neither
-# queued nor running, LastRunTime not the one before Run, and no instance; or, the instances unreadable, a last result that is
-# $CompanionImportDoneExitCode): the last result, unsigned. Never ran (the task or an instance running, or an instance with an engine)
-# within $CompanionImportStartSeconds: stopped, 'not-started'. Not ended within $CompanionImportRunSeconds: stopped, 'timeout'. A look
+# a monotonic clock) it reads the task's State, LastRunTime and LastTaskResult, and its instances (State, EnginePID). Started: only an
+# instance running (State 4) or with an engine (EnginePID not 0), never the task's State (after a RunEx instance ended the task is back to
+# 2 while an older queued instance stays: drill repro 2026-11-24). Ended (the task not running, LastRunTime not the one before Run, no
+# instance running or with an engine, and either seen started or a last result that is no Task Scheduler status: never 0, which a
+# queued instance shows; or, the instances unreadable, a last result that is $CompanionImportDoneExitCode): the last result, unsigned.
+# Never started within $CompanionImportStartSeconds: stopped, 'not-started'. Not ended within $CompanionImportRunSeconds: stopped, 'timeout'. A look
 # that cannot read the task: stopped, 'unreadable'. No task: 'not-registered'. The task is deleted on every way out. Whether the last
 # result is an import is the caller's ($CompanionImportDoneExitCode), never this function's.
 function Invoke-CompanionWslImportTask([scriptblock]$Service = { $s = New-Object -ComObject 'Schedule.Service'; $s.Connect(); $s },
@@ -1211,10 +1215,11 @@ function Invoke-CompanionWslImportTask([scriptblock]$Service = { $s = New-Object
           $last = $seen
         }
       } catch { $watch = $null }
-      $up = $state -eq 4 -or ($null -ne $instances -and @($instances | Where-Object { $_.state -eq 4 -or $_.enginePid -ne 0 }).Count -gt 0)
+      $up = $null -ne $instances -and @($instances | Where-Object { $_.state -eq 4 -or $_.enginePid -ne 0 }).Count -gt 0
       if ($up -and $null -eq $startedAt) { $startedAt = $ms }
-      if ($state -ne 2 -and $state -ne 4 -and $ran) {
-        if ($null -ne $instances -and $instances.Count -eq 0) { $endedAt = $ms; $why = 'ended'; return $result }
+      if ($state -ne 4 -and $ran) {
+        $status = @(0L, 0x41301L, 0x41303L, 0x41325L) -contains $result   # none, running, never run, queued
+        if ($null -ne $instances -and -not $up -and ($null -ne $startedAt -or -not $status)) { $endedAt = $ms; $why = 'ended'; return $result }
         if ($null -eq $instances -and $result -eq $CompanionImportDoneExitCode) { $endedAt = $ms; $why = 'ended' + $tail; return $result }
       }
       if ($null -eq $startedAt -and $ms -ge $CompanionImportStartSeconds * 1000L) { try { $task.Stop(0) } catch { }; $why = 'not-started' + $tail; return 'not-started' }

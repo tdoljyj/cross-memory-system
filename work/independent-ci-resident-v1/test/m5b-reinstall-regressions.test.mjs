@@ -498,10 +498,10 @@ test('T3 import: queued 3 s, then ran and ended with the program\'s own code: su
   assert.equal(sw.importWatch.startedAfterMs, 3000);
 });
 
-test('T4 switch: an import task that ended with last result 0 (no program success code) is WSL_IMPORT_FAILED:0, the key kept', { skip: !windows, timeout: 240_000 }, async () => {
+test('T4 switch: an import task never seen running whose last result is 0 (what a queued instance leaves) is not-started, never an import; the key kept', { skip: !windows, timeout: 240_000 }, async () => {
   const root = await switchRoot('t4');
   const got = headlessPs(fakeScheduler(`if ($t -lt 1000) { @{ state = 2; result = 0; inst = @(,@(2, 0)) } } else { @{ state = 3; result = 0; inst = @() } }`) + accountSwitch(root));
-  assert.equal(got.failed, 'WSL_IMPORT_FAILED:0', `log ${got.log.join(',')}`);
+  assert.equal(got.failed, 'WSL_IMPORT_FAILED:not-started', `log ${got.log.join(',')}`);
   assert.ok(!got.log.some(l => l.startsWith('remove-key')), got.log.join(','));
   assert.equal(got.stage, 'moved'); assert.equal(got.imported, false); assert.equal(got.fellBack, true);
 });
@@ -586,7 +586,8 @@ test('R3 import: instances never readable: ended (not queued, not running, run, 
   const ran = `if ($t -lt 1000) { @{ state = 2; result = 0; inst = @(,@(2, 0)) } } elseif ($t -lt 2000) { @{ state = 4; result = 267009; inst = @(,@(4, 4242)) } } else { @{ state = 3; result = ${IMPORT_DONE}; inst = @() } }`;
   const got = headlessPs(fakeScheduler(ran, { instancesFail: true }) + importCall);
   assert.equal(got.r, IMPORT_DONE, `returned ${JSON.stringify(got.r)}; log ${got.log.join(',')}`);
-  assert.equal(got.watch.startedAfterMs, 1000); assert.equal(got.watch.endedAfterMs, 2000);
+  // started is read from the instances only, never the task's State (repro 2026-11-24): unreadable instances, no start seen
+  assert.equal(got.watch.startedAfterMs, null); assert.equal(got.watch.endedAfterMs, 2000);
   assert.equal(got.watch.why, 'ended:instances-unreadable'); assert.equal(got.watch.instancesUnreadable, 4);
   assert.deepEqual(got.watch.transitions.map(x => [x.ms, x.state, x.lastTaskResult, x.instances]), [[500, 2, 0, null], [1000, 4, 267009, null], [2000, 3, IMPORT_DONE, null]]);
   assert.deepEqual(got.log, [RUNEX, 'delete:CluedCIResidentCompanionWslImport@2000']);
@@ -649,7 +650,9 @@ test('K3 T4 start task: registered before the first start, SYSTEM, boot +30 s an
   assert.deepEqual([st.flags, st.user, st.password, st.logonType, st.sddl], [6, null, null, 5, 'D:P(A;;FA;;;SY)(A;;FA;;;BA)']);
   assert.deepEqual(st.triggers, [{ Type: 8, Delay: 'PT30S', Repetition: {} }, { Type: 1, StartBoundary: '2026-01-01T00:00:00', Repetition: { Interval: 'PT15M' } }]);
   assert.deepEqual(st.settings, { MultipleInstances: 2, ExecutionTimeLimit: 'PT1M', StartWhenAvailable: true, DisallowStartIfOnBatteries: false, StopIfGoingOnBatteries: false });
-  assert.deepEqual(st.actions, [{ Type: 0, Path: 'C:\\Windows\\System32\\schtasks.exe', Arguments: '/Run /I /TN "\\Clued\\CluedCIResidentCompanion"' }]);
+  // the one fixed PowerShell line (repro 2026-11-24: schtasks /Run /I was not shown to start it while the constraint holds)
+  assert.deepEqual(st.actions, [{ Type: 0, Path: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    Arguments: `-NoProfile -NonInteractive -Command "$s = New-Object -ComObject 'Schedule.Service'; $s.Connect(); $null = $s.GetFolder('\\Clued').GetTask('CluedCIResidentCompanion').RunEx($null, 2, 0, $null)"` }]);
   // no parameters, idempotent (create or update), a failure is the one code
   const again = headlessPs(fakeScheduler(R11_QUEUED) + `Register-CompanionStartTask; Register-CompanionStartTask
 $failed = try { $script:startRegisterFails = $true; Register-CompanionStartTask; 'NO_THROW' } catch { $_.Exception.Message }
@@ -694,4 +697,21 @@ test('K3 T6 switch: a RunEx that queues too is still not-started at 120 s, the O
   assert.equal(got.failed, 'WSL_IMPORT_FAILED:not-started', `log ${got.log.join(',')}`);
   assert.ok(!got.log.some(l => l.startsWith('remove-key') || l === 'remove-default'), got.log.join(','));
   assert.equal(got.stage, 'moved'); assert.equal(got.imported, false);
+});
+
+test('K3 T7 import: started is an instance running or with an engine, never the task\'s State; a stale queued instance does not hide the end', { skip: !windows, timeout: 240_000 }, () => {
+  // RunEx starts a new instance next to an older queued one; when it ends the task is back to State 2 (repro 2026-11-24)
+  const stale = `if ($t -lt 2000) { @{ state = 4; result = 267009; inst = @(@(2, 0), @(4, 4242)) } } else { @{ state = 2; result = ${IMPORT_DONE}; inst = @(,@(2, 0)) } }`;
+  const got = headlessPs(fakeScheduler(stale) + importCall);
+  assert.equal(got.r, IMPORT_DONE, `returned ${JSON.stringify(got.r)}; log ${got.log.join(',')}`);
+  assert.equal(got.watch.startedAfterMs, 500); assert.equal(got.watch.endedAfterMs, 2000); assert.equal(got.watch.why, 'ended');
+  assert.deepEqual(got.log, [RUNEX, 'delete:CluedCIResidentCompanionWslImport@2000']);
+  // the task says running (4) but no instance runs or has an engine: never started, so not-started at 120 s
+  const ghost = headlessPs(fakeScheduler(`@{ state = 4; result = 0; inst = @(,@(2, 0)) }`) + importCall);
+  assert.equal(ghost.r, 'not-started', `returned ${JSON.stringify(ghost.r)}; log ${ghost.log.join(',')}`);
+  assert.equal(ghost.watch.startedAfterMs, null);
+  assert.deepEqual(ghost.log, [RUNEX, 'stop:0@120000', 'delete:CluedCIResidentCompanionWslImport@120000']);
+  // ended fast (between two looks) with a failure code: an end, the code reported
+  const fast = headlessPs(fakeScheduler(`if ($t -lt 400) { @{ state = 4; result = 267009; inst = @(,@(4, 7)) } } else { @{ state = 3; result = 3; inst = @() } }`) + importCall);
+  assert.equal(fast.r, 3); assert.equal(fast.watch.startedAfterMs, null); assert.equal(fast.watch.endedAfterMs, 500);
 });
