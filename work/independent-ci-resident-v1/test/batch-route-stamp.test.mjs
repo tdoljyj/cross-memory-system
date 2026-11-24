@@ -113,12 +113,13 @@ test('queue stopBase (L1): on the old base, a front row and every row without th
 
 // E7 (the stamp cannot be forged): with the effective route github-merge, an Agent's trigger (no prUpdatedAt) that names the merge base
 // of its head and main gets no stamp, and its batch is described with main's tip as its base: the bundle refuses it as on origin/main.
-test('E7: a trigger cannot choose the rule: an Agent\'s trigger on a merge base, route github-merge -> no stamp, no baseRule, the bundle\'s RESIDENT_BASE_MOVED', async t => {
+test('E7: a trigger cannot choose the rule: an Agent\'s trigger on a merge base, route github-merge -> no stamp, no baseRule; lean, so no bundle (main moving is stage 8\'s to find)', async t => {
   const engine = fakeEngine();
   const subjects = [];
   const derive = engine.derive;
   engine.derive = async (s, key, chain) => { subjects.push(s); return { ...(await derive(s, key, chain)), pr: s.pr }; };
-  const comp = { calls: [], async heartbeat() { return { at: f.clock() }; }, async buildBundle() { return { ok: false, code: 'RESIDENT_BASE_MOVED' }; },
+  let bundles = 0;
+  const comp = { calls: [], async heartbeat() { return { at: f.clock() }; }, async buildBundle() { bundles += 1; return { ok: false, code: 'RESIDENT_BASE_MOVED' }; },
     async prepareWorkspaces() { return { ok: true }; }, async linuxQuiescence() { return { linuxUnitsInactive: true, containersZero: true }; },
     async archiveLinux(batch, reason) { return { verified: true, directory: `failed-x-${reason}-111111111111` }; }, async prHead() { return null; } };
   const f = await executorFixture(t, { engine, companion: comp });
@@ -146,7 +147,11 @@ test('E7: a trigger cannot choose the rule: an Agent\'s trigger on a merge base,
     trainMode: 'on', trainLanding: { landing: 'push', batchMax: 1 },
     paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'node.exe', powershellExe: 'powershell.exe', scExe: 'sc.exe' } });
   const r = await f.exec.tick();
-  assert.deepEqual([r.state, r.failureCode], ['NOT_EXECUTED', 'RESIDENT_BASE_MOVED'], JSON.stringify(r));
+  // Task f79929d9 (PLAN-native-admission-latency-20261124 section 8.2 item 1): this batch was born on a reading "no scan from this App"
+  // and has no S, so it builds no bundle; before, the bundle's RESIDENT_BASE_MOVED ended it here. On this route main moving is found
+  // at stage 8 (park.test.mjs), as for every batch that rests at B.
+  assert.equal(r.state, 'COMPLETED', JSON.stringify(r));
+  assert.equal(bundles, 0);
   assert.equal(subjects.length, 1);
   assert.equal(Object.hasOwn(subjects[0], 'batchRoute'), false);
   const batch = await real.derive(subjects[0], 'a'.repeat(64));
