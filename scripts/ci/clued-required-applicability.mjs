@@ -4,17 +4,11 @@ import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {performance} from 'node:perf_hooks';
 import {REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
+// Which changes need the migration verification is the selector's own answer (board line 251); its base bytes are
+// checked against these below, so the selection used is the reviewed one.
+import {SELECT_ALL,SUITES,selectSuites} from './ci-required-selection.mjs';
 
-export const COMPONENT_VERSION='1.0.15';
-export const REQUIRED_MIGRATION_PATHS=Object.freeze([
-  'apps/clued-cloud/supabase/**','apps/clued-cloud/scripts/production-schema-*.mjs',
-  'apps/clued-cloud/scripts/migration-ledger.mjs','apps/clued-cloud/scripts/production-release-baseline.json',
-  'apps/clued-cloud/tests/production-schema-drift.test.mjs','apps/clued-cloud/package.json','apps/clued-cloud/package-lock.json',
-]);
-export const REQUIRED_SELECT_ALL_PATHS=Object.freeze([
-  'scripts/ci/ci-required-selection.mjs','scripts/ci/ci-known-failures.json','scripts/ci/ci-test-failures-reporter.mjs',
-  '.github/workflows/clued-required-tests.yml','.github/actions/**',
-]);
+export const COMPONENT_VERSION='1.0.16';
 const tokens=new WeakMap(),SHA=/^[a-f0-9]{40}$/,REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SOURCE_GATE='scripts/ci/clued-work-admission.mjs',MAX_READ_MS=20000,MAX_CONTEXT_AGE_MS=120000;
 const hash=value=>createHash('sha256').update(value).digest('hex');
@@ -37,16 +31,7 @@ const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const positive=n=>Number.isSafeInteger(n)&&n>0;
 const safePath=p=>typeof p==='string'&&p.length>0&&p.length<=4096&&!/[\u0000-\u001f\u007f\u0085\u2028\u2029\\]/.test(p)&&
   !p.startsWith('/')&&!p.split('/').some(x=>!x||x==='.'||x==='..');
-function glob(pattern) {
-  let out='';
-  for(let i=0;i<pattern.length;i++) {
-    if(pattern[i]==='*'&&pattern[i+1]==='*'){out+='.*';i++;if(pattern[i+1]==='/')i++;}
-    else out+=pattern[i]==='*'?'[^/]*':pattern[i].replace(/[.+?^${}()|[\]\\]/g,'\\$&');
-  }
-  return new RegExp('^'+out+'$');
-}
-const migrationPatterns=[...REQUIRED_MIGRATION_PATHS,...REQUIRED_SELECT_ALL_PATHS].map(glob);
-const policySha=digest({migration:REQUIRED_MIGRATION_PATHS,select_all:REQUIRED_SELECT_ALL_PATHS});
+const policySha=digest({migration:SUITES['migration-verify'],select_all:SELECT_ALL});
 function pull(pr,{repository,prNumber,head,base}) {
   if(pr?.number!==prNumber||pr.state!=='open'||pr.head?.sha!==head||pr.base?.sha!==base||
     pr.base?.repo?.full_name!==repository||!REPO.test(pr.head?.repo?.full_name??'')||
@@ -145,7 +130,7 @@ export async function readRequiredApplicability(options) {
     }
     const changedPaths=[...paths].sort();
     if(!changedPaths.length||Buffer.byteLength(JSON.stringify(changedPaths))>131072||
-      changedPaths.some(p=>migrationPatterns.some(pattern=>pattern.test(p))))return null;
+      selectSuites('migration-verify',changedPaths,'linux').suites.length>0)return null;
     const body=await get(runRoute+'/attempts/'+subject.runAttempt+'/jobs?per_page=100&page=1');
     const requiredNames=['admission-gate',...REQUIRED_TESTS_SOURCE.primary_ids],count=requiredNames.length;
     if(body?.total_count!==count||!Array.isArray(body.jobs)||body.jobs.length!==count||

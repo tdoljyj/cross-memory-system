@@ -5,8 +5,7 @@ import {createHash} from 'node:crypto';
 import {SUITES,selectSuites} from './ci-required-selection.mjs';
 import {parseWorkflowProfiles,workflowBlob,REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
 import {qualifiedCI,qualifyPrimary} from './clued-gated-proof.mjs';
-import {COMPONENT_VERSION,readRequiredApplicability,inspectRequiredApplicability,REQUIRED_SELECTOR_SOURCE,
-  REQUIRED_MIGRATION_PATHS,REQUIRED_SELECT_ALL_PATHS} from './clued-required-applicability.mjs';
+import {COMPONENT_VERSION,readRequiredApplicability,inspectRequiredApplicability,REQUIRED_SELECTOR_SOURCE} from './clued-required-applicability.mjs';
 
 const H='a'.repeat(40),B='b'.repeat(40),M='c'.repeat(40),repository='o/r',prNumber=17,runId=777,runAttempt=2;
 assert.match(COMPONENT_VERSION,/^\d+\.\d+\.\d+$/);
@@ -97,13 +96,12 @@ test('opaque context cannot be forged, serialized, replayed to another request o
   assert.equal(inspectRequiredApplicability(JSON.parse(JSON.stringify(inspectRequiredApplicability(token,f.expected))),f.expected),null);
 });
 
-test('all seven migration patterns and all five select-all patterns deny no-op qualification, including rename origins',async()=>{
+test('the migration and select-all paths of the selector deny no-op qualification, including rename origins',async()=>{
   const examples=['apps/clued-cloud/supabase/migrations/x.sql','apps/clued-cloud/scripts/production-schema-check.mjs',
     'apps/clued-cloud/scripts/migration-ledger.mjs','apps/clued-cloud/scripts/production-release-baseline.json',
     'apps/clued-cloud/tests/production-schema-drift.test.mjs','apps/clued-cloud/package.json','apps/clued-cloud/package-lock.json',
     'scripts/ci/ci-required-selection.mjs','scripts/ci/ci-known-failures.json','scripts/ci/ci-test-failures-reporter.mjs',
     '.github/workflows/clued-required-tests.yml','.github/actions/something/action.yml'];
-  assert.equal(REQUIRED_MIGRATION_PATHS.length,7);assert.equal(REQUIRED_SELECT_ALL_PATHS.length,5);
   for(const path of examples){
     assert.deepEqual(selectSuites('migration-verify',[path]).suites,['production-schema']);
     assert.equal(await readRequiredApplicability(fixture([{filename:path,status:'modified'}]).options()),null);
