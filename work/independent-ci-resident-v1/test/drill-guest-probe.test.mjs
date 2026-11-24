@@ -2,7 +2,9 @@
 // and before the checkpoint is restored, whether the first install passed or failed, one read-only pass over the guest's WSL: the docker storage, the image list, each
 // kit image's .Id and RepoDigests, the sha256 and package version of the files the inventory names, systemctl --failed. The answers are
 // kept raw in stage-evidence.json ('guest-probe') and never judged; a probe that cannot run is recorded and changes nothing else.
-// No VM is touched: the guest side runs against a fake wsl.exe; no test here depends on the wall clock.
+// No VM is touched: the guest side runs against a fake wsl.exe. One test uses a real per-command bound (1 second, the docker readings in
+// the bound test); the verdict does not depend on how fast the machine is: the readings that do not hang get a 120-second bound there, and
+// the docker that hangs never answers until it is released, so it runs into its bound on any machine.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -101,15 +103,20 @@ test('the kit image ids come from the release files the drill already holds', op
 
 // A fake wsl.exe, a real console program (a .cmd would let cmd.exe read the | and && of a script argument): it appends each call's arguments
 // (separated by U+001F, one call per line) to calls.txt beside it and answers by the script text; FAKE_FAIL is a substring of a script
-// whose command exits 7 with "boom" on stderr; FAKE_SLEEP is one whose command first sleeps FAKE_SLEEP_MS.
+// whose command exits 7 with "boom" on stderr; FAKE_HOLD is one whose command does not answer until a file named "release" is made beside
+// it (it ends by itself after 120 seconds, so none is left behind); FAKE_LAG is one whose command first sleeps FAKE_LAG_MS, then answers.
 const FAKE_WSL_CS = `using System; using System.IO;
 public static class P { public static int Main(string[] a) {
   string dir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
   File.AppendAllText(Path.Combine(dir, "calls.txt"), string.Join("\\u001f", a) + "\\n");
   int c = Array.IndexOf(a, "-c"); string s = (c >= 0 && c + 1 < a.Length) ? a[c + 1] : "";
   int u = Array.IndexOf(a, "_"); string rest = (u >= 0) ? string.Join(",", a, u + 1, a.Length - u - 1) : "";
-  string sleep = Environment.GetEnvironmentVariable("FAKE_SLEEP");
-  if (!string.IsNullOrEmpty(sleep) && s.Contains(sleep)) System.Threading.Thread.Sleep(int.Parse(Environment.GetEnvironmentVariable("FAKE_SLEEP_MS")));
+  string hold = Environment.GetEnvironmentVariable("FAKE_HOLD");
+  if (!string.IsNullOrEmpty(hold) && s.Contains(hold)) {
+    var held = System.Diagnostics.Stopwatch.StartNew();
+    while (!File.Exists(Path.Combine(dir, "release")) && held.ElapsedMilliseconds < 120000) System.Threading.Thread.Sleep(50); }
+  string lag = Environment.GetEnvironmentVariable("FAKE_LAG");
+  if (!string.IsNullOrEmpty(lag) && s.Contains(lag)) System.Threading.Thread.Sleep(int.Parse(Environment.GetEnvironmentVariable("FAKE_LAG_MS")));
   string fail = Environment.GetEnvironmentVariable("FAKE_FAIL");
   if (!string.IsNullOrEmpty(fail) && s.Contains(fail)) { Console.Error.WriteLine("boom"); return 7; }
   Console.Out.WriteLine("ANSWER " + s.Split(' ')[0] + " " + rest); return 0; } }`;
@@ -299,16 +306,27 @@ test('the guest side bounds each command and stops after two timeouts: a docker 
   assert.equal(plan.commandSeconds, 30, 'one command at most 30 seconds');
   assert.equal(plan.maxTimeouts, 2, 'no command is started after two have timed out');
   assert.ok(plan.maxTimeouts * plan.commandSeconds < 5 * 60, 'so a hung docker leaves the guest answering inside the 5-minute outer bound');
-  const r = ps(`$env:FAKE_SLEEP = 'docker'; $env:FAKE_SLEEP_MS = '2500'
-    $plan = New-DrillProbePlan -Commands (Get-DrillProbeCommands ${PLAN_ARGS}) -WslExe ${q(w.cmd)} -CommandSeconds 1
-    & $script:GuestInspect $plan $script:DrillNativeText`);
+  // a docker that hangs never answers until it is released; the two file readings are each 1.5 seconds slow on every run (a busy node).
+  // Only the docker readings keep the 1-second bound under test; every other reading gets its own 120 seconds, as guest-boot has in the drill.
+  // The held docker is released as soon as the guest side returns, in the same PowerShell: a held child keeps the inherited stdout pipe
+  // open, so ps() itself would not return before it ends; the release after ps() only covers a ps() that threw.
+  const release = path.join(w.dir, 'release');
+  let r;
+  try {
+    r = ps(`$env:FAKE_HOLD = 'docker'; $env:FAKE_LAG = 'sha256sum'; $env:FAKE_LAG_MS = '1500'
+      $c = @(Get-DrillProbeCommands ${PLAN_ARGS}); foreach ($x in $c) { if ([string]$x['id'] -notmatch '^(docker-|image:)') { $x['seconds'] = 120 } }
+      $plan = New-DrillProbePlan -Commands $c -WslExe ${q(w.cmd)} -CommandSeconds 1
+      $got = & $script:GuestInspect $plan $script:DrillNativeText
+      [IO.File]::WriteAllText(${q(release)}, ''); $got`);
+  } finally { fs.writeFileSync(release, ''); }
   const ids = commandsOf().map(x => x.id);
   assert.deepEqual(r.commands.map(x => x.id), ids, 'every command has its entry');
   const isDocker = (x) => /^(docker-|image:)/.test(x.id);
   const docker = r.commands.filter(isDocker), rest = r.commands.filter(x => !isDocker(x));
-  assert.ok(rest.length >= 12 && rest.every(x => x.exit === 0 && x.stdout.startsWith('ANSWER')), 'the file and systemd readings are kept');
-  assert.deepEqual(docker.map(x => x.error.startsWith('COMMAND_TIMEOUT') ? 'timeout' : x.error), ['timeout', 'timeout', ...docker.slice(2).map(() => 'PROBE_STOPPED_AFTER_TIMEOUTS')],
-    'two docker readings time out; none is started after them, each says why it has no answer');
+  const notKept = rest.filter(x => !(x.exit === 0 && x.stdout.startsWith('ANSWER'))).map(x => ({ id: x.id, exit: x.exit, error: x.error }));
+  assert.ok(rest.length >= 12 && notKept.length === 0, `the file and systemd readings are kept; not kept: ${JSON.stringify(notKept)}`);
+  assert.deepEqual(docker.map(x => (typeof x.error === 'string' && x.error.startsWith('COMMAND_TIMEOUT')) ? 'timeout' : x.error), ['timeout', 'timeout', ...docker.slice(2).map(() => 'PROBE_STOPPED_AFTER_TIMEOUTS')],
+    `two docker readings time out; none is started after them, each says why it has no answer; got: ${JSON.stringify(docker.map(x => ({ id: x.id, exit: x.exit, error: x.error })))}`);
   assert.ok(docker.every(x => x.exit === null));
 });
 
