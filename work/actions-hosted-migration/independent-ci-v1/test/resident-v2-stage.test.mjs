@@ -237,9 +237,26 @@ test('every v2 entry finds the same Source root whatever its depth (the check-pu
   assert.throws(() => sourceRootOfModule(pathToFileURL('C:\\elsewhere\\x.mjs').href), { code: 'ENTRY_OUTSIDE_HELD_SOURCE_REFUSED' });
 });
 
-test('invoke-stage: helper preflight refusal, tree unknown, unbound outcome and a not-admitted stage 1', async t => {
+// Board 271 (FABLE-backlog-batch-design-20261124 §4): the broker reads `started` only once the helper reached RUNNING, which it
+// reports after its boundary validated. A started helper without a receipt passed its preflight and may have run a child, so its
+// tree is not confirmed; a helper that never started is unchanged.
+test('invoke-stage: a started helper (PID) without a receipt is NATIVE_RECEIPT_UNCONFIRMED and its tree is not confirmed', async t => {
   const f = await fixture(t);
-  assert.equal((await run(f, 1, fakeBroker(f, { writeReceipt: false, outcome: null }))).failure_code, 'STAGE_HELPER_PREFLIGHT_REFUSED');
+  const fact = await run(f, 1, fakeBroker(f, { writeReceipt: false, outcome: null }));
+  assert.deepEqual([fact.failure_code, fact.tree_cleanup_confirmed, fact.tree_active_processes, fact.root_exit_confirmed],
+    ['NATIVE_RECEIPT_UNCONFIRMED', false, null, false]);
+});
+
+test('invoke-stage guard: a helper stopped before RUNNING (its preflight refused, as r13) wrote no receipt: as before (NATIVE_RECEIPT_UNCONFIRMED, a zero tree)', async t => {
+  const f = await fixture(t);
+  const fact = await run(f, 1, fakeBroker(f, { writeReceipt: false, outcome: null,
+    response: { ok: false, code: 'BROKER_PID_HANDSHAKE_UNCONFIRMED', started: false, helperPid: null } }));
+  assert.deepEqual([fact.failure_code, fact.tree_cleanup_confirmed, fact.tree_active_processes, fact.root_exit_confirmed],
+    ['NATIVE_RECEIPT_UNCONFIRMED', true, 0, true]);
+});
+
+test('invoke-stage: tree unknown, unbound outcome and a not-admitted stage 1', async t => {
+  const f = await fixture(t);
   assert.equal((await run(f, 1, fakeBroker(f, { receipt: { tree_cleanup_confirmed: false, tree_active_processes: 1 } }))).failure_code, 'STAGE_CHILD_TREE_UNCONFIRMED');
   assert.equal((await run(f, 1, fakeBroker(f, { receipt: { outcome_sha256: 'f'.repeat(64), state: 'FIXED_CHILD_REFUSED', node_exit_code: 2 } }))).failure_code, 'STAGE_OUTCOME_MISSING');
   const na = await run(f, 1, fakeBroker(f, { receipt: { state: 'FIXED_CHILD_REFUSED', node_exit_code: 2 },
