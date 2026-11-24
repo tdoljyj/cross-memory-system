@@ -112,8 +112,13 @@ export function containerStartedAt() {
   return out;
 }
 
+// The CLI only recreates the database: it applies no migration ([db.migrations] enabled = false). The chain is
+// applied by scripts/ci/clued-local-migrate.mjs, in the shape production runs it.
 export function resetDatabase() {
-  return supabase(['db', 'reset', '--local', '--no-seed'], { timeout: 900000 });
+  const reset = supabase(['db', 'reset', '--local', '--no-seed'], { timeout: 900000 });
+  return reset + execFileSync(process.execPath, [path.resolve(cloudRoot, '../../scripts/ci/clued-local-migrate.mjs')],
+    { cwd: cloudRoot, encoding: 'utf8', timeout: 900000, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 64 * 1024 * 1024 });
 }
 
 export async function waitHealthy(apiUrl, publishableKey, timeoutMs = 180000) {

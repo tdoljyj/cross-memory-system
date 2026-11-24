@@ -1,6 +1,6 @@
 {
-  "schema": "clued.ci-uncovered-tests/1",
-  "note": "Test files no required suite runs, each with why (scripts/ci/check-tests-covered.mjs; FABLE-tests-outside-required-suites-20261121 §2.3). kind: environment (needs what the required checks do not have), stale-or-suspect (ran and failed), other-workflow (another workflow runs it on pull requests; workflow names the file), unsorted (never ran, not yet sorted; one file per entry), archive (sealed directories; the only kind that may be a pattern). A file that starts to run, or is removed, must leave this table: the check fails otherwise. The list only shrinks.",
+  "schema": "clued.ci-uncovered-tests/2",
+  "note": "Test files no required suite runs, each with why (scripts/ci/check-tests-covered.mjs; FABLE-tests-outside-required-suites-20261121 §2.3). kind: environment (needs what the required checks do not have), stale-or-suspect (ran and failed), other-workflow (another workflow runs it on pull requests; workflow names the file), unsorted (never ran, not yet sorted; one file per entry), archive (sealed directories; the only kind that may be a pattern). A file that starts to run, or is removed, must leave this table: the check fails otherwise. The list only shrinks: from schema clued.ci-uncovered-tests/2 the check fails on an entry the base commit does not list (FABLE-defect-remediation-plan-20261124 §3.6).",
   "tests": [
     {
       "path": "apps/clued-cloud/evals/public-mcp/a03-contract.test.mjs",
@@ -701,6 +701,42 @@
       "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
     },
     {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/control-install-delta-v2/batch/test-pure.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/control-install-delta-v2/test-offline.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/windows/test-archive-windows-spool.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/windows/test-build-bundle.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；测试 resident-v2-build-bundle.test.mjs、halt-timeouts.test.mjs 提到它，是否真跑待查；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/windows/test-migrate-acl.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/resident-v2/windows/test-pure-v2.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；测试 pure-v2-csharp.test.mjs、train-run.test.mjs、first-install-state-parent.test.mjs 提到它，是否真跑待查；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/image-identity.test.mjs",
       "kind": "unsorted",
       "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
@@ -767,6 +803,12 @@
       "reason": "从没在 CI 跑过；B2 把整个目录并入 resident-node 后删本条（等 #1199、#1206 合入）"
     },
     {
+      "path": "work/independent-ci-resident-v1/rollout/fleet/test/test-bootstrap.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；测试 pure-v2-csharp.test.mjs、fleet-node-powershell.test.mjs 提到它，是否真跑待查；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
       "path": "work/independent-ci-resident-v1/upgrader/test/drill-upgrade.test.mjs",
       "kind": "unsorted",
       "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
@@ -789,6 +831,90 @@
       "kind": "unsorted",
       "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
       "reason": "从没在 CI 跑过；C1：先用唯一入口定向跑，绿的进 resident-node，红的改记 stale-or-suspect 并开 Task"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-companion-headless.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-companion-maintenance-switch.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-companion-maintenance.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-companion-relay-parent-acl.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；测试 relay-parent-acl.test.mjs 提到它，是否真跑待查；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-companion-wsl-restore.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-first-install-host.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；测试 fleet-node-powershell.test.mjs、ps-execution-policy.test.mjs 提到它，是否真跑待查；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-install-carry.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-job-host.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；测试 job-host.test.mjs 提到它，是否真跑待查；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-m5b-wsl-release.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；测试 m5b-reinstall-regressions.test.mjs 提到它，是否真跑待查；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-resident-windows.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；测试 resident-v2-node-profile.test.mjs、node-identity.test.mjs、r4-first-halt.test.mjs、verify-verdict.test.mjs 提到它，是否真跑待查；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-upgrade-system.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；测试 test_upgrade_system_script.py 提到它，是否真跑待查；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-upgrade-windows.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-verify-relay-parents-ensure.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；测试 relay-parent-acl.test.mjs 提到它，是否真跑待查；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/windows/test-vhdx-file-acl.ps1",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
     },
     {
       "path": "work/successor-reviewer/verify-issued-documents.test.mjs",

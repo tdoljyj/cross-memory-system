@@ -27,14 +27,42 @@ test('the reinstall generator pin accepts the committed reviewed launcher templa
   assert.equal(actual, pins[0][1], 'template changes must update their reviewed generator pin in the same delivery');
 });
 
-test('M5-b VM management bounds inherited output after an exited client', { skip: !windows }, () => {
-  const script = fileURLToPath(new URL('../windows/test-m5b-wsl-release.ps1', import.meta.url));
-  const result = run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-InheritedPipeProbe'], { timeout: 6000 });
+const probeScript = fileURLToPath(new URL('../windows/test-m5b-wsl-release.ps1', import.meta.url));
+// The inherited-pipe probe's one call path; `spawn` is injectable for the no-wall-clock test below only.
+function inheritedPipeProbe(spawn = spawnSync) {
+  const result = run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', probeScript, '-InheritedPipeProbe'], {}, spawn);
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  const facts = JSON.parse(result.stdout.trim());
+  return JSON.parse(result.stdout.trim());
+}
+let probeFacts; // one real probe run, shared by the two tests that read it
+const realProbe = () => (probeFacts ??= inheritedPipeProbe());
+
+test('M5-b VM management bounds inherited output after an exited client', { skip: !windows }, () => {
+  const facts = realProbe();
   assert.equal(facts.boundedInheritedPipe, true);
   assert.equal(facts.actualWslCalls, 0);
-  assert.ok(facts.elapsedMs < 4000);
+});
+
+// Task 11092b8b (run 45013546431: 6039 ms, spawnSync powershell.exe ETIMEDOUT): the verdict does not depend on how fast the machine
+// is. A spawn "slower than any finite limit": any call that sets a timeout gets ETIMEDOUT at once; one without gets a normal result.
+const slowerThanAnyLimit = stdout => (exe, args, options = {}) => options.timeout === undefined
+  ? { status: 0, signal: null, stdout, stderr: '', error: undefined }
+  : { status: null, signal: null, stdout: '', stderr: '', error: Object.assign(new Error(`spawnSync ${exe} ETIMEDOUT`), { code: 'ETIMEDOUT', errno: -4039, syscall: `spawnSync ${exe}`, path: exe, spawnargs: args }) };
+
+test('M5-b inherited-pipe probe run sets no wall-clock limit (a busy machine is not a red)', () => {
+  const facts = inheritedPipeProbe(slowerThanAnyLimit('{"result":"PASS","boundedInheritedPipe":true,"drainBoundTaken":true,"actualWslCalls":0}\n'));
+  assert.equal(facts.drainBoundTaken, true);
+});
+
+test('M5-b inherited-pipe probe proves the bounded drain branch was taken, not an elapsed time', { skip: !windows }, () => {
+  const facts = realProbe();
+  assert.equal(facts.drainBoundTaken, true, JSON.stringify(facts));
+  assert.equal(Object.hasOwn(facts, 'elapsedMs'), false, JSON.stringify(facts));
+});
+
+test('M5-b inherited-pipe probe reads no clock', async () => {
+  const text = await fs.readFile(probeScript, 'utf8');
+  assert.deepEqual(['Stopwatch', 'ElapsedMilliseconds'].filter(w => text.includes(w)), []);
 });
 after(async () => {
   if (!fixturePromise) return;
@@ -44,9 +72,9 @@ after(async () => {
   await fs.rm(tools.dir, { recursive: true, force: true });
 });
 
-function run(exe, args, extra = {}) {
-  const result = spawnSync(exe, args, { windowsHide: true, encoding: 'utf8', timeout: 30_000,
-    maxBuffer: 1024 * 1024, ...extra });
+function run(exe, args, extra = {}, spawn = spawnSync) {
+  const result = spawn(exe, args, { windowsHide: true, encoding: 'utf8',
+    maxBuffer: 1024 * 1024, ...extra }); // no wall-clock limit: a hang is the job's timeout-minutes (task 11092b8b)
   assert.ifError(result.error);
   return result;
 }

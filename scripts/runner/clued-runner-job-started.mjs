@@ -332,7 +332,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const HOOK_VERSION = "native-only-admission-v1";
-export const COMPONENT_VERSION = "1.0.8";
+export const COMPONENT_VERSION = "1.0.9";
 
 // Transient reads (see the header).
 export const READ_ATTEMPTS = 3;
@@ -1083,8 +1083,18 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
       await sleep(10_000);
     }
     const current = await github(fetchImpl, token, `/repos/${repository}/pulls/${pr.number}`);
-    const live = current?.state === "open" && current.base?.ref === defaultBranch
+    const same = current?.base?.ref === defaultBranch
       && current.base?.repo?.full_name?.toLowerCase() === repository.toLowerCase() && current.head?.sha === pr.head.sha;
+    let live = same && current.state === "open";
+    // 戊 (FABLE-main-push-same-tree-parallel-20261123 §7): when this admission is the last required check, GitHub
+    // merges within seconds, while this hook still waits for it. The same PR merged with this very head is still
+    // this PR once main contains the head: read again then, its job changes no workflow and starts on the
+    // "changes no workflow" path above with no admission at all, so this admits nothing that path does not.
+    let merged = false;
+    if (!live && same && native.admitted && current.state === "closed" && current.merged === true) {
+      merged = (await changedWorkflows(fetchImpl, token, repository, defaultBranch, pr.head.sha)).length === 0;
+      live = merged;
+    }
     let repair = { ok: true, why: "" };
     if (native.admitted && live && runnerAttempt > 1) {
       if (workflow !== ".github/workflows/clued-required-tests.yml") {
@@ -1100,7 +1110,7 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
     }
     result.allow = Boolean(native.admitted && live && repair.ok);
     result.reason = `pull request #${pr.number} changes ${[...new Set(changed)].join(", ")}; Native admission ${native.check?.id ?? "absent"}: `
-      + `${result.allow ? "succeeded" : `not admitted (binding, current head, conclusion, freshness or rerun${repair.why ? `: ${repair.why}` : ""})`}${rerun}`;
+      + `${result.allow ? `succeeded${merged ? "; merged with this head meanwhile" : ""}` : `not admitted (binding, current head, conclusion, freshness or rerun${repair.why ? `: ${repair.why}` : ""})`}${rerun}`;
     return result;
   }
   throw new Error(`unreachable event ${event}`);
