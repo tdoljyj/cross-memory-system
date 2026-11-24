@@ -288,7 +288,7 @@ test('no limit', async () => {
   // The static scan reads the same in a test the debt list does not name (a path the run may skip on this platform).
   const { root: repo, base } = repository({ [DEBT_FILE]: '', 'test/clean.test.mjs': `${header}test('x', () => {});\n` });
   write(repo, 'test/promised.test.mjs', fixture);
-  assert.deepEqual(debtVerdict({ root: repo, base, ci: false }).problems,
+  assert.deepEqual(debtVerdict({ root: repo, base }).problems,
     ['test/promised.test.mjs:6,9: a promisified exec or execFile is given a timeout in a test; the entry bounds the whole command']);
 });
 
@@ -347,10 +347,10 @@ test('a listed test without a use of its own stays listed while it imports a lis
     'test/nested/more.mjs': "export { stamp } from '../helpers.mjs';\n",
   });
   // The guard lets the helper's use through only for a listed test: a.test.mjs (directly) and b.test.mjs (through more.mjs) run it.
-  assert.deepEqual(debtVerdict({ root, base, ci: true }).problems, []);
+  assert.deepEqual(debtVerdict({ root, base }).problems, []);
   write(root, 'test/helpers.mjs', 'export const stamp = () => 1;\n');
   write(root, DEBT_FILE, 'test/a.test.mjs\ntest/b.test.mjs\n');
-  assert.deepEqual(debtVerdict({ root, base, ci: true }).problems, [
+  assert.deepEqual(debtVerdict({ root, base }).problems, [
     `test/a.test.mjs: no real-clock use left; remove the line from ${DEBT_FILE}`,
     `test/b.test.mjs: no real-clock use left; remove the line from ${DEBT_FILE}`,
   ]);
@@ -384,38 +384,48 @@ test('the allowlist names a file, a kind and the exact count', () => {
   const sleeper = `${header}import { sleep } from '../scripts/ci/test-clock-guard.mjs';\ntest('x', async () => { await sleep(1, 'a'); await sleep(1, 'b'); });\n`;
   const entry = (count) => JSON.stringify([{ file: 'test/s.test.mjs', kind: 'sleep', count, reason: 'measures a real delay', ruling: 'FABLE x' }]);
   const { root } = repository({ [DEBT_FILE]: '', 'test/s.test.mjs': sleeper, 'scripts/ci/test-clock-allow.json': entry(2) });
-  assert.deepEqual(debtVerdict({ root, ci: false }).problems, []);
+  assert.deepEqual(debtVerdict({ root, base: null }).problems, []);
   write(root, 'scripts/ci/test-clock-allow.json', entry(1));
-  assert.match(debtVerdict({ root, ci: false }).problems.join('\n'), /the entry says 1, the file has 2/);
+  assert.match(debtVerdict({ root, base: null }).problems.join('\n'), /the entry says 1, the file has 2/);
   write(root, 'scripts/ci/test-clock-allow.json', JSON.stringify([{ file: 'test/s.test.mjs', kind: 'wallclock', count: 1, reason: 'r', ruling: 'x' }]));
-  assert.match(debtVerdict({ root, ci: false }).problems.join('\n'), /an entry is \{ file, kind/);
+  assert.match(debtVerdict({ root, base: null }).problems.join('\n'), /an entry is \{ file, kind/);
 });
 
-test('in CI the debt list is compared or the check fails: no base commit, or a base list that is not a file, is a failure', () => {
+test('the debt list is compared or the check fails: the caller gives the base, the environment is never read', () => {
   const clean = `${header}test('x', () => {});\n`;
-  const { root } = repository({ [DEBT_FILE]: '', 'test/clean.test.mjs': clean });
-  assert.deepEqual(debtVerdict({ root, ci: false }).problems, []);
-  assert.deepEqual(debtVerdict({ root, ci: true }).problems, ['no base commit (CI_BASE_SHA) in CI: the debt list cannot be compared; give the entry the base commit']);
-  // The command line takes CI from the environment.
-  const cli = (extra) => {
+  const { root, base } = repository({ [DEBT_FILE]: '', 'test/clean.test.mjs': clean });
+  // No base given is a failure wherever it runs; base: null says in so many words that the list is not compared.
+  assert.deepEqual(debtVerdict({ root }).problems, ['no base commit: the debt list cannot be compared; give the check the base commit (--base)']);
+  assert.deepEqual(debtVerdict({ root, base: undefined }).problems, ['no base commit: the debt list cannot be compared; give the check the base commit (--base)']);
+  assert.deepEqual(debtVerdict({ root, base: null }).problems, []);
+  // The command line takes the base from --base and nothing else: without it (or with no value) the check is a usage
+  // error, whatever CI_BASE_SHA, CI or GITHUB_ACTIONS say.
+  const cli = (args, extra = {}) => {
     const env = { ...process.env, ...extra };
     for (const name of ['CI', 'GITHUB_ACTIONS', 'CI_BASE_SHA']) if (!(name in extra)) delete env[name];
-    return spawnSync(process.execPath, [SCAN_PATH, '--check', '--root', root], { env, encoding: 'utf8' });
+    return spawnSync(process.execPath, [SCAN_PATH, '--check', '--root', root, ...args], { env, encoding: 'utf8' });
   };
-  const local = cli({});
-  assert.equal(local.status, 0, local.stdout);
-  const inCi = cli({ GITHUB_ACTIONS: 'true' });
-  assert.equal(inCi.status, 1, inCi.stdout);
-  assert.match(inCi.stdout, /no base commit \(CI_BASE_SHA\) in CI/);
+  for (const [args, extra] of [[[], {}], [[], { CI_BASE_SHA: base }], [[], { CI_BASE_SHA: base, GITHUB_ACTIONS: 'true' }],
+    [['--base'], {}], [['--base', ''], { CI_BASE_SHA: base }], [['--base', '--root', root], {}]]) {
+    const run = cli(args, extra);
+    assert.equal(run.status, 2, `${JSON.stringify([args, extra])}\n${run.stdout}${run.stderr}`);
+    assert.match(run.stderr, /--check needs --base <commit>/);
+  }
+  const given = cli(['--base', base]);
+  assert.equal(given.status, 0, given.stdout + given.stderr);
+  // The environment's base does not stand in for the given one, nor override it.
+  const unread = cli(['--base', '0123456789abcdef0123456789abcdef01234567'], { CI_BASE_SHA: base });
+  assert.equal(unread.status, 1, unread.stdout);
+  assert.match(unread.stdout, /base commit 0123456789abcdef0123456789abcdef01234567 cannot be read/);
   // A base without the list is the change that brings it: nothing to compare. A base whose list is not a file is a failure.
   const first = repository({ 'test/clean.test.mjs': clean });
   write(first.root, DEBT_FILE, 'test/x.test.mjs\n');
   write(first.root, 'test/x.test.mjs', `${header}test('x', () => {\n  assert.ok(Date.now());\n});\n`);
-  assert.deepEqual(debtVerdict({ root: first.root, base: first.base, ci: true }).problems, []);
+  assert.deepEqual(debtVerdict({ root: first.root, base: first.base }).problems, []);
   const odd = repository({ [`${DEBT_FILE}/x`]: '', 'test/clean.test.mjs': clean });
   rmSync(path.join(odd.root, DEBT_FILE), { recursive: true });
   write(odd.root, DEBT_FILE, '');
-  assert.match(debtVerdict({ root: odd.root, base: odd.base, ci: true }).problems.join('\n'), /base commit's config\/test-clock-debt\.txt is not a file/);
+  assert.match(debtVerdict({ root: odd.root, base: odd.base }).problems.join('\n'), /base commit's config\/test-clock-debt\.txt is not a file/);
 });
 
 test('the guard environment and what counts as test code', () => {
@@ -433,7 +443,7 @@ test('the guard environment and what counts as test code', () => {
 
 test('the repository as it is: the debt list, the allowlist and the static rules hold', () => {
   // Tracked files only: what other tests of the same run write into the checkout is not the repository.
-  const { problems, debt } = debtVerdict({ root: REPO, untracked: false, ci: false });
+  const { problems, debt } = debtVerdict({ root: REPO, base: null, untracked: false });
   assert.deepEqual(problems, []);
   assert.ok(debt.length > 0);
 });
