@@ -14,7 +14,7 @@ import {
   PLATFORMS, SUITE_PLATFORMS, hostPlatform, runSelected, suitePlatforms,
 } from './ci-required-selection.mjs';
 import * as selection from './ci-required-selection.mjs';
-import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
+import reporterStream, { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
@@ -2634,4 +2634,244 @@ test('--shard: the test files and the command a pull request adds to a suite are
     if (total === 1) assert.deepEqual(ran, plan);
     assert.deepEqual(shardUnits(ran).sort(), shardUnits(plan).sort(), `${total} shards`);
   }
+});
+
+// Block 5 (FABLE-hosted-win-shard-balance-20261124 §2): --shard packs a listing command's files by their seconds
+// (ci-shard-seconds.json, passed to shardCommand here, never the repository's table), heaviest first into the lightest
+// shard. The table only moves files between shards: each file still runs in exactly one.
+const bySeconds = (files, total, position, seconds) => {
+  const parts = [];
+  for (let index = 1; index <= total; index += 1) {
+    const part = selection.shardCommand({ cwd: '.' }, ['node', '--test', '--test-concurrency=2', ...files], { index, total }, position, seconds);
+    assert.equal(part.units, files.length);
+    parts.push({ argv: part.argv, files: part.files ? [...part.files] : [] });
+  }
+  return parts;
+};
+
+test('--shard by seconds: two heavy files whose numbers agree mod n land in different shards (block 5 root cause)', () => {
+  const files = 'abcdefgh'.split('').map((letter) => `t/${letter}.test.mjs`);
+  const weights = [100, 1, 1, 1, 100, 1, 1, 1];
+  const seconds = Object.fromEntries(files.map((file, i) => [file, weights[i]]));
+  const sum = weights.reduce((a, b) => a + b, 0);
+  for (let position = 0; position < 4; position += 1) {
+    const parts = bySeconds(files, 4, position, seconds);
+    const loads = parts.map((part) => part.files.reduce((total, file) => total + seconds[file], 0));
+    const heavy = parts.find((part) => part.files.includes(files[0]));
+    assert.ok(!heavy.files.includes(files[4]), `position ${position}: the two 100-second files share a shard (${loads})`);
+    // One file alone weighs 100: no partition gets the heaviest shard under it.
+    assert.ok(Math.max(...loads) <= Math.max(1.15 * (sum / 4), Math.max(...weights)), `position ${position}: shards ${loads}`);
+  }
+});
+
+test('--shard by seconds: any table, any n, the shards split the command\'s files: disjoint, all of them, in order', () => {
+  let seed = 0x3435f8bf;
+  const random = () => {
+    seed = (seed + 0x6d2b79f5) >>> 0;
+    let t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const pick = (list) => list[Math.floor(random() * list.length)];
+  for (let trial = 0; trial < 300; trial += 1) {
+    const count = 1 + Math.floor(random() * 24);
+    const files = Array.from({ length: count }, (_, i) => `d${i % 3}/f${String(i).padStart(2, '0')}.test.mjs`);
+    // Empty, keys missing, ties, huge values, values that are no seconds at all (they weigh 1), keys of other commands.
+    const seconds = {};
+    const kind = trial % 4;
+    for (const file of files) {
+      if (kind === 0 || random() < 0.3) continue;
+      seconds[file] = kind === 1 ? pick([3, 3, 7]) : kind === 2 ? pick([3, 50, 1e9, Number.MAX_SAFE_INTEGER]) : pick([4, 0, -5, 2.5, '9', null, 12]);
+    }
+    seconds['elsewhere/x.test.mjs'] = 999;
+    const total = 1 + (trial % 8);
+    const position = Math.floor(random() * 40);
+    const parts = bySeconds(files, total, position, seconds);
+    const ran = parts.flatMap((part) => part.files);
+    assert.deepEqual([...ran].sort(), [...files].sort(), `trial ${trial}: every file once`);
+    for (const part of parts) {
+      assert.deepEqual(part.files, files.filter((file) => part.files.includes(file)), `trial ${trial}: a shard keeps the command's order`);
+      if (part.files.length === 0) assert.equal(part.argv, null);
+      else assert.deepEqual(part.argv, ['node', '--test', '--test-concurrency=2', ...part.files], `trial ${trial}: its own switches`);
+    }
+    if (total === 1) assert.deepEqual(parts[0].argv, ['node', '--test', '--test-concurrency=2', ...files], 'n = 1: the command as it is');
+  }
+});
+
+test('--shard by seconds: with no table (or none of its files in it) a file goes where (position + unit) mod n puts it', () => {
+  for (let count = 1; count <= 12; count += 1) {
+    const files = Array.from({ length: count }, (_, i) => `t/f${String(i).padStart(2, '0')}.test.mjs`);
+    for (let total = 1; total <= 8; total += 1) {
+      for (let position = 0; position <= 10; position += 1) {
+        for (const seconds of [undefined, {}, { 'elsewhere/x.test.mjs': 300 }]) {
+          const parts = bySeconds(files, total, position, seconds);
+          parts.forEach((part, i) => assert.deepEqual(part.files, files.filter((file, unit) => (position + unit) % total === i),
+            `${count} files, ${total} shards, from ${position}, table ${JSON.stringify(seconds)}`));
+        }
+      }
+    }
+  }
+});
+
+test('--shard by seconds: the checked-in table spreads resident-node over 4 shards (heaviest within 1.15 of the mean or one file)', () => {
+  const { table, problem } = selection.readShardSeconds();
+  assert.equal(problem, null, 'the checked-in table reads');
+  const [command] = SUITE_COMMANDS['resident-node'];
+  const argv = expandArgv(command.argv, { cwd: path.join(ROOT, command.cwd), root: ROOT, base: 'a'.repeat(40), report: '' });
+  const position = selection.shardOffset('resident-node');
+  const loads = [];
+  const ran = [];
+  let listed = null;
+  for (let index = 1; index <= 4; index += 1) {
+    const part = selection.shardCommand(command, argv, { index, total: 4 }, position, table);
+    listed ??= part.listed;
+    const mine = part.files ? [...part.files] : [];
+    ran.push(...mine);
+    loads.push(mine.reduce((total, file) => total + (table.get(file) ?? 0), 0));
+  }
+  assert.ok(listed && listed.size > 100, 'resident-node lists its files');
+  assert.deepEqual(ran.sort(), [...listed].sort(), 'every resident-node file once');
+  const weights = [...listed].map((file) => table.get(file) ?? 0);
+  const bound = Math.max(1.15 * (weights.reduce((a, b) => a + b, 0) / 4), ...weights);
+  assert.ok(Math.max(...loads) <= bound, `table seconds per shard ${loads}, bound ${bound}`);
+});
+
+test('ci-shard-seconds.json is the writer\'s output: repository path -> whole seconds >= 3, keys sorted', () => {
+  const text = readFileSync(selection.SHARD_SECONDS_PATH, 'utf8');
+  const data = JSON.parse(text);
+  assert.ok(data && typeof data === 'object' && !Array.isArray(data));
+  const keys = Object.keys(data);
+  assert.deepEqual(keys, [...keys].sort(), 'keys sorted');
+  for (const [file, seconds] of Object.entries(data)) {
+    assert.match(file, /^(?!\/)[^\\]+$/, `${file}: a repository path with forward slashes`);
+    assert.ok(Number.isSafeInteger(seconds) && seconds >= 3, `${file}: ${seconds}`);
+  }
+  assert.equal(text, `${JSON.stringify(data, null, 2)}\n`, 'written as --write-shard-seconds writes it');
+  // It is read only by --shard: neither every-suite selection nor the local selector files name it.
+  assert.ok(!SELECT_ALL.includes('scripts/ci/ci-shard-seconds.json'));
+  assert.ok(SUITES['ci-suites'].selection.includes('scripts/ci/ci-shard-seconds.json'), 'a change to the table runs its tests');
+});
+
+test('--shard by seconds: a missing or broken table is an empty one, with a notice; the shard still runs', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-seconds-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const write = (name, text) => { const file = path.join(temp, name); writeFileSync(file, text); return file; };
+  const bad = [path.join(temp, 'missing.json'), write('corrupt.json', '{"a":'), write('array.json', '[1]'), write('null.json', 'null'),
+    write('negative.json', '{"t/a.test.mjs":-3}'), write('fraction.json', '{"t/a.test.mjs":3.5}'), write('text.json', '{"t/a.test.mjs":"9"}'),
+    write('backslash.json', JSON.stringify({ 't\\a.test.mjs': 9 })), write('absolute.json', '{"/t/a.test.mjs":9}')];
+  for (const file of bad) {
+    const { table, problem } = selection.readShardSeconds(file);
+    assert.equal(table.size, 0, file);
+    assert.ok(problem, `${file}: says why`);
+  }
+  assert.deepEqual([...selection.readShardSeconds(write('good.json', '{"t/a.test.mjs":9}')).table], [['t/a.test.mjs', 9]]);
+  for (const file of bad.slice(0, 2)) {
+    const lines = [];
+    let ran = null;
+    const code = executeSuite('retrigger-counter', { root: ROOT, env: { RUNNER_TEMP: temp }, log: (line) => lines.push(line), platform: 'linux',
+      known: {}, spawn: (command, args) => { ran = args; return { status: 0 }; }, shard: { index: 1, total: 1 }, shardSecondsFile: file,
+      readReportFile: () => JSON.stringify({ type: 'summary', counts: {}, success: true }) });
+    assert.equal(code, 0);
+    assert.ok(ran.includes('scripts/ci/retrigger-counter.test.mjs'));
+    assert.match(lines.join('\n'), /::notice title=retrigger-counter shard seconds::/);
+    assert.match(lines.join('\n'), /按秒数分片，表里命中 0 \/ 本命令 1 个文件/);
+  }
+});
+
+test('--shard by seconds: a listing command says how much of the table it hit and logs each of its files\' seconds', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-seconds-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const files = SUITE_COMMANDS['admission-self-tests'][0].argv.slice(2);
+  const table = path.join(temp, 'table.json');
+  writeFileSync(table, `${JSON.stringify({ [files[0]]: 40, [files[1]]: 7, 'elsewhere/x.test.mjs': 5 })}\n`);
+  const at = (file) => path.join(ROOT, file);
+  const events = [{ type: 'pass', file: at(files[0]), path: ['a'], ms: 1500 }, { type: 'pass', file: at(files[0]), path: ['a', 'inner'] },
+    { type: 'fail', file: at(files[1]), path: ['b'], fingerprint: 'b'.repeat(16), ms: 2049 }, { type: 'pass', file: at(files[0]), path: ['c'], ms: 250 },
+    { type: 'summary', counts: {}, success: false }];
+  const known = { 'admission-self-tests': [{ file: files[1], path: ['b'], fingerprint: 'b'.repeat(16), reason: 'r' }] };
+  const lines = [];
+  const code = executeSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: temp }, known, log: (line) => lines.push(line),
+    platform: 'linux', spawn: () => ({ status: 1 }), shard: { index: 1, total: 1 }, shardSecondsFile: table,
+    readReportFile: () => events.map((event) => JSON.stringify(event)).join('\n') });
+  assert.equal(code, 0);
+  const text = lines.join('\n');
+  assert.match(text, new RegExp(`admission-self-tests: 按秒数分片，表里命中 2 / 本命令 ${files.length} 个文件`));
+  const logged = lines.filter((line) => line.startsWith('admission-self-tests: shard-seconds '));
+  assert.equal(logged.length, 1);
+  assert.deepEqual(JSON.parse(logged[0].slice('admission-self-tests: shard-seconds '.length)), { [files[0]]: 1.8, [files[1]]: 2 });
+  // The suite's first line names the table it read, so the shards' logs show they read the same one.
+  assert.match(lines[0], /^admission-self-tests: shard 1\/1, units numbered from \d+; 按秒数分片，表 3 条（[0-9a-f]{12}）$/);
+});
+
+test('--write-shard-seconds: the median of each file\'s samples in the shard logs, under 3 seconds dropped, keys sorted', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-seconds-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const one = path.join(temp, 'shard-1.log');
+  const two = path.join(temp, 'shard-2.log');
+  writeFileSync(one, ['2026-11-24T02:00:00.0000000Z resident-node: shard 1/4, units numbered from 3; 按秒数分片，表 0 条（e3b0c44298fc）',
+    '2026-11-24T02:03:00.0000000Z resident-node: shard-seconds {"w/z.test.mjs":10,"w/b.test.mjs":2,"w/d.test.mjs":4}',
+    'some other line: shard-seconds are fun', '2026-11-24T02:04:00.0000000Z selection: shard-seconds {"s/c.test.mjs":3.4}'].join('\r\n'));
+  writeFileSync(two, ['resident-node: shard-seconds {"w/z.test.mjs":30,"w/b.test.mjs":2.9,"w/d.test.mjs":5}',
+    'resident-node: shard-seconds {"w/z.test.mjs":20}'].join('\n'));
+  const out = path.join(temp, 'table.json');
+  writeFileSync(out, '{"old/gone.test.mjs":50}\n');
+  const expected = '{\n  "s/c.test.mjs": 3,\n  "w/d.test.mjs": 5,\n  "w/z.test.mjs": 20\n}\n';
+  const lines = [];
+  assert.equal(selection.writeShardSeconds([one, two], { file: out, log: (line) => lines.push(line) }), 0);
+  assert.equal(readFileSync(out, 'utf8'), expected);
+  assert.match(lines.join('\n'), /3 files written/);
+  // Nothing to write from (no shard-seconds line, an unreadable log, no log): the table stays as it was.
+  const none = path.join(temp, 'none.log');
+  writeFileSync(none, 'resident-node: shard 1/4\n');
+  for (const logs of [[none], [one, path.join(temp, 'missing.log')], []]) {
+    assert.notEqual(selection.writeShardSeconds(logs, { file: out, log: () => {} }), 0, logs.join(' '));
+    assert.equal(readFileSync(out, 'utf8'), expected);
+  }
+  const cli = spawnSync(process.execPath, [path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), '--write-shard-seconds'],
+    { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '' } });
+  assert.equal(cli.status, 2, `${cli.stdout}${cli.stderr}`);
+  assert.match(cli.stderr, /--write-shard-seconds <log>/);
+});
+
+test('the reporter gives a top-level test its whole milliseconds (ms), a nested one none', async () => {
+  const file = path.join(ROOT, 'x.test.mjs');
+  async function* source() {
+    yield { type: 'test:start', data: { file, nesting: 0, name: 'top' } };
+    yield { type: 'test:start', data: { file, nesting: 1, name: 'inner' } };
+    yield { type: 'test:pass', data: { file, nesting: 1, name: 'inner', details: { duration_ms: 12.6 } } };
+    yield { type: 'test:pass', data: { file, nesting: 0, name: 'top', details: { duration_ms: 1234.4 } } };
+    yield { type: 'test:start', data: { file, nesting: 0, name: 'bad' } };
+    yield { type: 'test:fail', data: { file, nesting: 0, name: 'bad', details: { duration_ms: 99.5, error: new Error('x') } } };
+    yield { type: 'test:start', data: { file, nesting: 0, name: 'skipped' } };
+    yield { type: 'test:pass', data: { file, nesting: 0, name: 'skipped', skip: true, details: { duration_ms: 0.2 } } };
+  }
+  const lines = [];
+  for await (const line of reporterStream(source())) lines.push(JSON.parse(line));
+  assert.deepEqual(lines.map(({ path: at, ms }) => [at.join(' > '), ms]),
+    [['top > inner', undefined], ['top', 1234], ['bad', 100], ['skipped', 0]]);
+});
+
+test('the reporter counts a test\'s child process in the test\'s own file (fleet-node-children: its fleet tests are its seconds)', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-seconds-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  // Named like another file, as fleet-node-children names each fleet test it starts.
+  writeFileSync(path.join(temp, 'parent.test.mjs'), [
+    "import { spawnSync } from 'node:child_process';",
+    "import test from 'node:test';",
+    "test('rollout/fleet/test/other.test.mjs', () => {",
+    "  const r = spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1200)']);",
+    "  if (r.status !== 0) throw new Error('child failed');",
+    '});', ''].join('\n'));
+  const out = path.join(temp, 'report.jsonl');
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const run = spawnSync(process.execPath, ['--test', `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`, `--test-reporter-destination=${out}`,
+    'parent.test.mjs'], { cwd: temp, env, encoding: 'utf8' });
+  assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+  const { events } = readReport(readFileSync(out, 'utf8'), temp);
+  const top = events.filter((event) => event.type === 'pass');
+  assert.equal(top.length, 1);
+  assert.equal(top[0].file, 'parent.test.mjs');
+  assert.ok(top[0].ms >= 1100, `the child's time is the parent file's: ${top[0].ms} ms`);
 });
