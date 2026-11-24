@@ -186,10 +186,12 @@ test('S3: the committed list is accepted by the entry and names no secret, crede
   }
   assert.doesNotMatch(fs.readFileSync(listFile, 'utf8'), /secrets|credentials/i);
   // what the report names: the resident's three state records, the launcher's progress records, verify's full answer; drill r10: the
-  // companion switch's full answer, the companion's install records, the companion account's own supervisor.json
+  // companion switch's full answer, the companion's install records, the companion account's own supervisor.json; drill r12: the
+  // companion's WSL import result
   assert.deepEqual(doc.files.map(f => `${f.root}:${f.path}`), ['ci:resident\\state\\HALT.json', 'ci:resident\\state\\PAUSED.json', 'ci:resident\\state\\status.json',
     'ci:reinstall-progress-*\\*.json', 'work:prepare\\launch-*\\progress\\*.json', 'work:prepare\\launch-*\\verify.stdout.json',
-    'work:prepare\\launch-*\\companion-headless.stdout.json', 'ci:resident\\install\\companion-*.json', 'users:clued-companion*\\AppData\\Local\\CluedIndependentCI\\supervisor.json']);
+    'work:prepare\\launch-*\\companion-headless.stdout.json', 'ci:resident\\install\\companion-*.json', 'users:clued-companion*\\AppData\\Local\\CluedIndependentCI\\supervisor.json',
+    'ci:wsl\\*\\companion-wsl-import-result.json']);
   assert.deepEqual(ps(`@((Read-EntryFailureFiles ${q(listFile)}) | ForEach-Object { $_.root + ':' + $_.path })`), doc.files.map(f => `${f.root}:${f.path}`));
 });
 
@@ -223,7 +225,7 @@ test('T1: the phases before the host stage are timed by name into stage-timings.
     Write-EntryStageTimings ${q(out)} $m
     [ordered]@{ once = $once; twice = $m.unpack }`);
   const timings = JSON.parse(fs.readFileSync(path.join(out, 'stage-timings.json'), 'utf8'));
-  assert.deepEqual(Object.keys(timings), ['assets', 'prereq', 'unpack', 'check', 'host', 'prepare', 'launcher']);
+  assert.deepEqual(Object.keys(timings), ['assets', 'prereq', 'unpack', 'check', 'host', 'prepare', 'launcher', 'companionImport']);
   for (const k of ['assets', 'prereq', 'unpack', 'check']) assert.ok(typeof timings[k] === 'number' && timings[k] > 0, `${k}: ${timings[k]}`);
   assert.deepEqual([timings.host, timings.prepare, timings.launcher], [null, null, null], 'a stage not reached stays null');
   assert.ok(got.twice > got.once, 'the two extractions add up');

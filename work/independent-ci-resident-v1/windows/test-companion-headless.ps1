@@ -150,7 +150,9 @@ Yes ($pm.pid -eq $PID -and $pm.processStart) 'pending-records-the-switch-process
 Yes ($sw.Contains("'COMPANION_HEADLESS_SWITCH_IN_PROGRESS'") -and $sw.Contains('Remove-Item -LiteralPath (Join-Path $root $CompanionPendingFile) -Force -ErrorAction SilentlyContinue')) 'switch-never-two-at-once-marker-removal-tolerant'
 foreach ($f in @('rearm-resident.ps1', 'verify-resident.ps1', 'companion-headless-fallback.ps1')) { Yes ($texts[$f].Contains('Invoke-CompanionStopAndFallback')) ('stop-before-fallback:' + $f) }
 # review B1: the time the qualification counts from is taken after the old instance ended, and the child's own start bounds the signals
-$iSince = $sw.IndexOf('$since = [DateTimeOffset]::UtcNow')
+# the line the switch takes its start time from (source text, looked up in two scripts below)
+$sinceLine = '$since = [DateTimeOffset]::UtcNow'
+$iSince = $sw.IndexOf($sinceLine)
 Yes ($iSince -gt $sw.IndexOf('Wait-CompanionTaskNotRunning') -and $iSince -lt $iRun) 'switch-counts-from-after-the-old-instance'
 Yes ($functions['companion-headless.ps1:Test-CompanionQualifiedOnce'].Contains("'companion-process-older-than-the-switch'") -and $functions['companion-headless.ps1:Test-CompanionQualifiedOnce'].Contains('$since = $childStart')) 'qualification-signals-after-the-child-started'
 # review M2: the registrar runs with a cleared environment; injection variables refuse the switch
@@ -288,6 +290,8 @@ $runSwitch = {
     [ordered]@{ directory = $fakeBuild; generation = ('b' * 64); registrar = [ordered]@{ exe = $fakeRegistrar; sourceSha256 = ('1' * 64); sha256 = ('2' * 64) } }
   }
   function Register-CompanionFallbackTask { $fakeCalls.Add('fallback-task') }
+  function Register-CompanionStartTask { }
+  function Remove-CompanionStartTask { }
   function Invoke-CompanionRegistrar([string]$r, [string[]]$a, [string]$exe) { $fakeCalls.Add('registrar:' + $a[0] + ':' + $(if ($exe -ceq $fakeRegistrar) { 'build' } else { $exe })); $registrarOut }
   function Invoke-CompanionFallback([string]$r, [string]$o) { $fakeCalls.Add('fallback'); Remove-Item -LiteralPath (Join-Path $r $CompanionPendingFile) -Force -ErrorAction SilentlyContinue; [ordered]@{ fellBack = $true } }
   function Invoke-CompanionStopAndFallback([string]$r, [string]$o) { $fakeCalls.Add('stop-and-fallback'); Invoke-CompanionFallback $r $o }
@@ -535,6 +539,11 @@ $i = [ordered]@{ pre = $as.IndexOf('Get-CompanionAccountPreflight'); fb = $as.In
   move = $as.IndexOf('Invoke-CompanionWslMove'); reg = $as.IndexOf('Invoke-CompanionRegistrar'); imp = $as.IndexOf('Invoke-CompanionWslImportTask'); run = $as.IndexOf('Start-CompanionTask')
   qual = $as.IndexOf('Wait-CompanionQualified'); rec = $as.LastIndexOf('Write-CompanionWslRecord'); done = $as.IndexOf('$result.qualified = $true') }
 Yes (@($i.Values | Where-Object { $_ -lt 0 }).Count -eq 0 -and $i.pre -lt $i.fb -and $i.fb -lt $i.mark -and $i.mark -lt $i.stop -and $i.stop -lt $i.move -and $i.move -lt $i.reg -and $i.reg -lt $i.imp -and $i.imp -lt $i.run -and $i.run -lt $i.qual -and $i.qual -lt $i.rec -and $i.rec -lt $i.done) 'account-switch-order'
+# review of K3, item 4: the start task after the import and the Owner's key; stopped and waited for after it, then $since, then the start
+$k3 = [ordered]@{ start = $as.IndexOf('Register-CompanionStartTask'); forget = $as.IndexOf('Remove-CompanionOwnerRegistration'); since = $as.IndexOf($sinceLine) }
+$k3.stop = if ($k3.start -ge 0) { $as.IndexOf('Stop-CompanionTask', $k3.start) } else { -1 }
+$k3.wait = if ($k3.start -ge 0) { $as.IndexOf('Wait-CompanionTaskNotRunning', $k3.start) } else { -1 }
+Yes (@($k3.Values | Where-Object { $_ -lt 0 }).Count -eq 0 -and $k3.start -gt $i.imp -and $k3.start -gt $k3.forget -and $k3.start -lt $k3.stop -and $k3.stop -lt $k3.wait -and $k3.wait -lt $k3.since -and $k3.since -lt $i.run) 'account-switch-start-task-after-import-stopped-before-start'
 Yes ($as.Contains("@('register-account', `$root, `$distro, `$vhdx, [string]`$uid)") -and $as.Contains("@('register-account', `$root)") -and $as.Contains('New-CompanionBuild $root') -and $as.Contains('Remove-CompanionBuild $build.directory')) 'account-switch-own-build-register-account-only'
 Yes ($as.IndexOf('Invoke-CompanionFallback $root $sid', $i.move) -gt $i.move -and $as.Contains('COMPANION_HEADLESS_QUALIFICATION_FAILED') -and $as.Contains('Invoke-CompanionStopAndFallback $root $sid')) 'account-switch-falls-back'
 Yes ($functions['companion-headless.ps1:Invoke-CompanionRootShell'].Contains("@('root-shell', `$root)")) 'root-shell-through-the-registrar'
@@ -694,6 +703,8 @@ function Invoke-R1Switch($sc, $opt, [string]$vhdxDir) {
     function Get-LockoutPolicy { $lockOk }
     function Get-CompanionDomainCredsDisabled { if ($script:opt.ContainsKey('lsa')) { $script:opt.lsa } else { 0 } }
     function Register-CompanionFallbackTask { [void]$script:sc.log.Add('fallback-task') }
+    function Register-CompanionStartTask { }
+    function Remove-CompanionStartTask { }
     function Remove-CompanionFallbackTask { [void]$script:sc.log.Add('fallback-task-removed') }
     function Stop-CompanionTask { [void]$script:sc.log.Add('stop') }
     function Get-CompanionProcessTree { [ordered]@{ supervisors = @(); children = @() } }
@@ -714,7 +725,7 @@ function Invoke-R1Switch($sc, $opt, [string]$vhdxDir) {
     function Set-CompanionVhdxAcl { [void]$script:sc.log.Add('vhdx-acl') }
     function Get-CompanionFileSha256Unbuffered([string]$path) { if ($script:opt.ContainsKey('badHash')) { 'f' * 64 } else { Get-CompanionFileSha256 $path } }
     function Invoke-CompanionRegistrar($root, [string[]]$arguments, $exe) { [void]$script:sc.log.Add('registrar:' + ($arguments -join ' ')); '{"code":"' + $(if ($script:opt.ContainsKey('registrar')) { $script:opt.registrar } else { 'REGISTERED' }) + '"}' }
-    function Invoke-CompanionWslImportTask { [void]$script:sc.log.Add('import-task'); if ($script:opt.ContainsKey('import')) { $script:opt.import } else { 0L } }
+    function Invoke-CompanionWslImportTask { [void]$script:sc.log.Add('import-task'); if ($script:opt.ContainsKey('import')) { $script:opt.import } else { [int64]$CompanionImportDoneExitCode } }
     function Start-CompanionTask { [void]$script:sc.log.Add('run') }
     function Wait-CompanionQualified { if ($script:opt.ContainsKey('qualify')) { $script:opt.qualify } else { $null } }
     function Get-CompanionTaskFacts { [ordered]@{ mode = 'password'; problems = @() } }
@@ -803,6 +814,19 @@ R1 'M4-m1-import-failure-reported-key-kept' {
   if ((Read-CompanionWslRecord $rootR).stage -cne 'moved') { throw 'STAGE' }
   $r = Invoke-R1Switch $sc @{ import = 'timeout' } ''
   if ($r.failed -cne 'WSL_IMPORT_FAILED:timeout') { throw ('timeout:' + $r.failed) }
+}
+# task 87d330d0 (drill r11): only the import program's own success code is an import; the Task Scheduler's 0 (an instance that never ran)
+# and an instance that never started are failures that keep the Owner's registration and the record at moved.
+R1 'import-0-or-not-started-is-no-import-key-kept' {
+  if ([int64]$CompanionImportDoneExitCode -ne 0x434C4901 -or $texts['companion-headless.ps1'] -cnotmatch '(?m)^\$CompanionImportDoneExitCode = 0x434C4901\s*$' -or
+      -not ([IO.File]::ReadAllText((Join-Path $here 'CompanionTaskRegistrar.cs'))).Contains('public const int ImportDoneExitCode = 0x434C4901;')) { throw 'DONE_CODE_NOT_ONE_VALUE' }
+  foreach ($case in @(@{ import = 0L; want = 'WSL_IMPORT_FAILED:0' }, @{ import = 'not-started'; want = 'WSL_IMPORT_FAILED:not-started' }, @{ import = 'unreadable'; want = 'WSL_IMPORT_FAILED:unreadable' }, @{ import = 'run-failed:0x80070005'; want = 'WSL_IMPORT_FAILED:run-failed:0x80070005' })) {
+    $sc = New-R1Scenario ('dq-' + $case.want.Length)
+    $r = Invoke-R1Switch $sc @{ import = $case.import } $sc.targetDir
+    if ($r.failed -cne $case.want -or @($sc.log) -contains 'remove-key:{g1}' -or -not (@($sc.log) -contains 'fallback')) { throw ('got:' + $r.failed + ':' + (@($sc.log) -join ',')) }
+    $rec = Read-CompanionWslRecord $rootR
+    if ($rec.stage -cne 'moved' -or [bool]$rec.imported) { throw ('RECORD:' + $rec.stage) }
+  }
 }
 R1 'M4-exception-after-key-removed-resumes' {
   $sc = New-R1Scenario 'm4d'
