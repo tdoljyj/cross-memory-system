@@ -576,10 +576,23 @@ test('only candidates are brought: not a conflict, a red head, a head the App br
   w.prs.get(1156).mergeable = 'UNKNOWN';
   r = await w.run();
   assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, 1217); assert.deepEqual(w.brought(), [1217]);
-  // A required check failed on the behind head: not brought (its holder has to push anyway).
+  // A required check failed on the behind head, the author's own: brought once, main may carry the fix (§3.1, #1258).
   w = scene0823();
   w.check(sha(0x1156), 'clued-cloud-tests', 'failure');
-  assert.equal((await w.run()).pr, 1217); assert.deepEqual(w.brought(), [1217]);
+  r = await w.run();
+  assert.equal(r.pr, 1156, JSON.stringify(r)); assert.deepEqual(w.brought(), [1156]);
+  // The admission failed on the behind head (#292 requires it): main does not change that, not brought (its holder has to push anyway).
+  w = rulesOf(scene0823(), 'framework');
+  w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'failure', INDEPENDENT_ADMISSION_APP_ID);
+  r = await w.run();
+  assert.equal(r.pr, 1217, JSON.stringify(r)); assert.deepEqual(w.brought(), [1217]);
+  assert.match(r.train.members.find(m => m.pr === 1156).state, /^red \(kooyumi-work-admission\)$/);
+  // Red on a head the App brought up: a true red, not brought again.
+  w = scene0823();
+  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID);
+  w.check(sha(0x1156), 'clued-cloud-tests', 'failure');
+  r = await w.run();
+  assert.equal(r.pr, 1217, JSON.stringify(r)); assert.deepEqual(w.brought(), [1217]);
   // The App brought this head earlier and the admission never admitted it: not brought again.
   w = scene0823();
   w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
@@ -1355,4 +1368,71 @@ test('§3.11: a head missing two required checks with nothing run for 40 minutes
   w.now += 10 * MIN;
   await w.run();
   assert.equal(namings(w).length, 1, 'once per head');
+});
+
+test('§3.11: not named before 30 quiet minutes, nor a red, conflicting or busy head; what it cannot read or post changes nothing else', async () => {
+  const head = sha(0x1300);
+  // The last required check finished 20 minutes ago: quiet for 20 minutes only.
+  let w = sceneStalled();
+  w.heads.get(head).checks.at(-1).started_at = iso(w.now - 20 * MIN);
+  let r = await w.run();
+  assert.equal(namings(w).length, 0, JSON.stringify(r)); assert.equal(r.named, undefined);
+  for (const change of [
+    x => x.check(head, 'kooyumi-merge-slot', 'failure', INDEPENDENT_ADMISSION_APP_ID, { started_at: iso(x.now - 39 * MIN) }),   // red
+    x => { x.prs.get(STALLED).mergeable = 'CONFLICTING'; },
+    x => x.heads.get(head).runs.push({ id: 1, status: 'queued', conclusion: null }),
+    x => x.heads.get(head).statuses.push({ context: 'resident-queue/turing', state: 'pending', description: '排队中' }),
+  ]) {
+    w = sceneStalled(); change(w);
+    r = await w.run();
+    assert.equal(namings(w).length, 0, JSON.stringify(r));
+  }
+  // GitHub refuses the comment: reported in the run, the decision stands, the next run tries again.
+  w = sceneStalled();
+  const fetch = w.fetchImpl;
+  let refuse = true;
+  w.fetchImpl = async (url, init = {}) => (refuse && init.method === 'POST' && String(url).endsWith(`/issues/${STALLED}/comments`))
+    ? { ok: false, status: 403, headers: { get: () => null }, json: async () => ({}), text: async () => '' } : fetch(url, init);
+  r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(r.named.map(n => [n.pr, n.comment]), [[STALLED, 'not posted (HTTP 403)']]);
+  assert.match(renderSummary(r), /#1300 .*kooyumi-admission-verified missing, kooyumi-merge-slot missing; not posted \(HTTP 403\)/);
+  refuse = false; w.now += 10 * MIN;
+  await w.run();
+  assert.equal(namings(w).length, 1);
+  // The comments cannot be read: not named, the run is not failed.
+  w = sceneStalled(); w.failing = `/issues/${STALLED}/comments`;
+  r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.named[0].comment, /^not named/); assert.equal(namings(w).length, 0);
+});
+
+test('§3.11: #1258 unadmitted (heavy jobs skipped under their unexpanded names, the admission never posted) is named once, under the scaffold', async () => {
+  const w = scene0823(); w.pins = {}; w.required = SCAFFOLD_R6; w.prs.clear();
+  const head = sha(0x12580);
+  w.open(1258, { head, auto: '2026-11-23T10:17:00Z', contains: T, at: w.now - 45 * MIN });
+  for (const name of HOSTED) {
+    const job = ['hosted-ci-suites', 'hosted-clued-cloud-tests'].includes(name)
+      ? `\${{ needs.admission-gate.outputs.admitted == 'true' && '${name}' || '${name}-skipped' }}` : name;
+    w.check(head, job, job === name ? 'success' : 'skipped', GITHUB_ACTIONS_APP_ID, { started_at: iso(w.now - 44 * MIN) });
+  }
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', JSON.stringify(r));
+  const [named] = namings(w);
+  assert.equal(named?.pr, 1258, JSON.stringify(w.comments));
+  assert.match(named.body, /- hosted-ci-suites: job-skipped\n- hosted-clued-cloud-tests: job-skipped\n- kooyumi-work-admission: missing\n/);
+  w.now += 10 * MIN; await w.run({}, SCAFFOLD); w.now += 10 * MIN; await w.run({}, SCAFFOLD);
+  assert.equal(namings(w).length, 1);
+});
+
+test('§3.11: a stalled head behind main is named while another pull request is the front; the one brought up in the same run is not', async () => {
+  const w = sceneStalled();
+  const front = sha(0x1301);
+  w.open(1301, { head: front, auto: '2026-11-24T00:30:00Z', contains: T, at: w.now - 5 * MIN }); w.check(front, 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);
+  w.heads.get(sha(0x1300)).contains = BASE;   // #1300 behind main
+  let r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#1301 contains main/);
+  assert.deepEqual(namings(w).map(c => c.pr), [STALLED]);
+  // Without a front the stalled head behind main is the candidate: brought up, and its old head is not named.
+  const alone = sceneStalled(); alone.heads.get(sha(0x1300)).contains = BASE;
+  r = await alone.run();
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(alone.brought(), [STALLED]); assert.equal(namings(alone).length, 0);
 });
