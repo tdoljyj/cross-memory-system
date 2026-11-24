@@ -37,7 +37,7 @@ class Fixture(unittest.TestCase):
         self.binding = {"schema": "clued.cache-node/1", "node_id": "fixture-node",
                         "state_root": str(self.root / "state"),
                         "caches": {"packages": {"profile": "generic", "root": str(self.root / "cache")}}}
-        self.now = 1_800_000_000.0
+        self.now = time.time() + 1000
         self.manager = m.Manager(self.registry, self.binding, clock=lambda: self.now)
         self.manager.initialize()
 
