@@ -2297,7 +2297,9 @@ test("gate guard (Owner Decision 586181ec): large strategies are read in linear 
       [...S.slice(0, 5), "          - k0: 0", ...many(30000, (n) => `            k${n + 1}: 0`)]],
   ];
   for (const [label, base, head] of cases) {
+    const started = Date.now();
     assert.deepEqual(gateFindings(withStrategy(head), withStrategy(base)), STRATEGY_CHANGED, label);
+    assert.ok(Date.now() - started < 5000, `${label}: ${Date.now() - started} ms`);
   }
 });
 
