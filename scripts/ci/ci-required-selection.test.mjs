@@ -573,6 +573,75 @@ test('a change to a file a pinned registry holds runs the pinned-registry check'
   assert.deepEqual(SUITE_COMMANDS['pinned-registries'][0].argv, ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}']);
 });
 
+// Task 700f2b68 (PLAN-main-red-real-repo-20261124 §4.3, PR-A): a check that compares with the base gets it from the command
+// table's --base {base}. The coverage check runs as a command of its own in clued-cloud (the suite every change runs), the
+// schema drift check takes the base the same way; each runs once, also when a plan is split into shards.
+const COVERAGE_CHECK = ['node', 'scripts/ci/check-tests-covered.mjs', '--base', '{base}'];
+const takesBase = (id) => SUITE_COMMANDS[id].filter((command) => command.argv.includes('{base}'));
+test('the coverage and schema drift checks take the base from the command table, once each, also under --shard', () => {
+  assert.deepEqual(takesBase('clued-cloud').map(({ cwd, argv }) => ({ cwd, argv })), [{ cwd: '.', argv: COVERAGE_CHECK }]);
+  const drift = takesBase('production-schema');
+  assert.equal(drift.length, 1, 'one schema drift command takes the base');
+  assert.deepEqual(drift[0].argv.slice(0, 5), ['node', 'scripts/production-schema-drift.mjs', 'check', '--base', '{base}']);
+  const base = 'b'.repeat(40);
+  for (const command of [...takesBase('clued-cloud'), ...drift]) {
+    const options = { cwd: path.join(ROOT, command.cwd), root: ROOT, report: 'r.json' };
+    const argv = expandArgv(command.argv, { ...options, base });
+    assert.equal(argv[argv.indexOf('--base') + 1], base, argv.join(' '));
+    assert.throws(() => expandArgv(command.argv, options), /CI_BASE_SHA is required/, 'no base: the suite fails, it never guesses');
+    for (const total of [1, 2, 3, 4]) {
+      for (let position = 0; position < 2 * total; position += 1) {
+        const shards = [];
+        for (let index = 1; index <= total; index += 1) {
+          if (selection.shardCommand(command, argv, { index, total }, position).argv) shards.push(index);
+        }
+        assert.equal(shards.length, 1, `${argv.join(' ')}: shards ${shards.join(', ')} of ${total} at ${position}`);
+      }
+    }
+  }
+});
+
+test('the suite run hands the job base to the checks: clued-cloud and production-schema start them with --base CI_BASE_SHA', () => {
+  const base = 'c'.repeat(40);
+  const summary = JSON.stringify({ type: 'summary', counts: {}, success: true });
+  for (const [id, script] of [['clued-cloud', 'scripts/ci/check-tests-covered.mjs'], ['production-schema', 'scripts/production-schema-drift.mjs']]) {
+    const calls = [];
+    const spawn = (command, args) => { calls.push(args); return { status: 0 }; };
+    assert.equal(executeSuite(id, { root: ROOT, env: { CI_BASE_SHA: base, RUNNER_TEMP: os.tmpdir() }, spawn, log, platform: 'linux',
+      known: { 'clued-cloud': [] }, readReportFile: () => summary }), 0, id);
+    const checks = calls.filter((args) => args.includes(script));
+    assert.equal(checks.length, 1, `${id} runs ${script} once`);
+    assert.equal(checks[0][checks[0].indexOf('--base') + 1], base, `${id}: ${checks[0].join(' ')}`);
+  }
+});
+
+// Task 700f2b68 (PLAN-main-red-ci-base-sha-20261124 §3.1): a suite whose trusted commands take {base} and has no base
+// stops before its first command, and says how to set one locally. Before, it ran every command up to the one that took
+// the base (clued-cloud: lint, typecheck, build and every unit test) and only then threw.
+test('a suite whose trusted commands take {base} starts no command without a base and names the local setting', () => {
+  const suites = Object.keys(SUITE_COMMANDS).filter((id) => SUITE_COMMANDS[id].some((command) => command.argv.includes('{base}')));
+  assert.ok(['clued-cloud', 'production-schema', 'components', 'pinned-registries'].every((id) => suites.includes(id)), suites.join(', '));
+  for (const id of suites) {
+    for (const env of [{}, { CI_BASE_SHA: '' }, { CI_BASE_SHA: '0'.repeat(40) }]) {
+      const calls = [];
+      const lines = [];
+      const spawn = (command, args) => { calls.push(args); return { status: 0 }; };
+      let status;
+      try {
+        status = executeSuite(id, { root: ROOT, env: { ...env, RUNNER_TEMP: os.tmpdir() }, spawn, platform: 'linux',
+          log: (line) => lines.push(String(line)) });
+      } catch (error) {
+        status = `threw ${error.message}`;
+      }
+      const what = `${id} ${JSON.stringify(env)}`;
+      assert.equal(calls.length, 0, `${what}: started ${calls.map((args) => args.join(' ')).join('; ')}`);
+      assert.equal(status, 2, what);
+      assert.match(lines.join('\n'), /CI_BASE_SHA is required for this suite/, what);
+      assert.match(lines.join('\n'), /CI_BASE_SHA=\$\(git merge-base HEAD origin\/main\)/, what);
+    }
+  }
+});
+
 test('compute panel changes select the panel tests; the retired cache maintenance suite is gone', () => {
   for (const file of ['scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml']) {
     assert.ok(selectSuites('ci-suites', [file]).suites.includes('compute-panel'), file);
@@ -695,7 +764,7 @@ for (const [cpus, concurrency] of [[16, 4], [4, 2], [64, 4], [15, 3]]) {
       calls.push([command, ...args]);
       return { status: 0 };
     };
-    assert.equal(executeSuite('production-schema', { root: ROOT, env: {}, spawn, log }), 0);
+    assert.equal(executeSuite('production-schema', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log }), 0);
     assert.deepEqual(calls.slice(-2).map((argv) => argv.filter((arg) => arg.startsWith('--test-concurrency'))),
       [[`--test-concurrency=${concurrency}`], [`--test-concurrency=${concurrency}`]]);
   });
@@ -1051,7 +1120,7 @@ test('a suite stops at its first failing command and reports a command that did 
   assert.equal(executeSuite('components', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log }), 3);
   assert.equal(calls.length, 2);
   assert.equal(executeSuite('selection', { root: ROOT, env: {}, spawn: () => ({ error: new Error('ENOENT') }), log }), 1);
-  assert.equal(executeSuite('production-schema', { root: ROOT, env: {}, spawn: () => ({ status: 0 }), log }), 0);
+  assert.equal(executeSuite('production-schema', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn: () => ({ status: 0 }), log }), 0);
   assert.throws(() => executeSuite('nope', { root: ROOT, spawn, log }), /unknown suite/);
 });
 
@@ -1601,7 +1670,7 @@ test('a known-failure command adds the trusted reporter, warns on known failures
 test('the application suite gates lint, ledger, typecheck and build before the unit tests', () => {
   const calls = [];
   const spawn = (command, args) => { calls.push(args.join(' ')); return { status: args.includes('typecheck') ? 2 : 0 }; };
-  assert.equal(executeSuite('clued-cloud', { root: ROOT, env: {}, spawn, log, platform: 'linux' }), 2);
+  assert.equal(executeSuite('clued-cloud', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log, platform: 'linux' }), 2);
   assert.deepEqual(calls, ['run lint', 'run ledger:verify', 'run typecheck']);
 });
 
@@ -1621,7 +1690,7 @@ test('on Windows the entry starts npm and npx through node, not the .cmd shim; e
   assert.deepEqual(resolveCommand(['npm', 'run', 'lint'], { ...win, exists: () => false }), ['npm', 'run', 'lint']);
   assert.deepEqual(resolveCommand(['npm', 'run', 'lint'], { ...win, platform: 'linux' }), ['npm', 'run', 'lint']);
   const calls = [];
-  executeSuite('clued-cloud', { root: ROOT, env: {}, platform: 'win32', log, spawn: (command, args) => { calls.push([command, ...args]); return { status: 1 }; } });
+  executeSuite('clued-cloud', { root: ROOT, env: { CI_BASE_SHA: 'b' }, platform: 'win32', log, spawn: (command, args) => { calls.push([command, ...args]); return { status: 1 }; } });
   assert.equal(calls.length, 1);
   if (process.platform === 'win32') {
     assert.equal(calls[0][0], process.execPath, 'the first step starts npm via node');
@@ -1990,6 +2059,10 @@ function runBaseline(t, { shell, script }, repo, { EVENT_NAME, PUSH_REF, STAGING
   return { status: r.status, outputs: kv(output), env: kv(envFile), log: r.stdout + r.stderr };
 }
 const STAGING = { EVENT_NAME: 'push', PUSH_REF: 'refs/heads/clued-train/staging' };
+// The suites each Linux required job runs that take {base}: ci-suites the selected ones, clued-cloud-tests and
+// migration-verify their one suite (the coverage check and the schema drift check, task 700f2b68).
+const BASE_SUITES_OF_JOB = { 'ci-suites': ['components', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry'],
+  'clued-cloud-tests': ['clued-cloud'], 'migration-verify': ['production-schema'] };
 for (const [file, id] of BASELINE_JOBS) {
   const label = `${path.basename(file)} ${id}`;
   const step = baselineStep(file, id);
@@ -2075,21 +2148,18 @@ for (const [file, id] of BASELINE_JOBS) {
     assert.equal(pr.status, 0, pr.log);
     assert.deepEqual(pr.outputs, { ci_base: repo.M2 }, pr.log);
   });
-  if (id !== 'ci-suites') continue;
-  // The consumer, end to end: what the step wrote to GITHUB_ENV (the suite step sets no CI_BASE_SHA of its own, which
-  // would override it), then the selector expanding every command of the four suites that take {base}. Before the
+  const baseSuites = BASE_SUITES_OF_JOB[id];
+  if (!baseSuites) continue;
+  // The consumer, end to end: what the step wrote to GITHUB_ENV (that no step sets CI_BASE_SHA itself is checked once, in
+  // ci-base.test.mjs), then the selector expanding every command of the job's suites that take {base}. Before the
   // dispatch fix this threw 'CI_BASE_SHA is required for this suite', as in the run's log.
   test(`lost-run dispatch, ${label}: the suites that compare with a base get the merge-base commit`, { skip }, (t) => {
     const repo = dispatchCheckout(t);
-    const text = readFileSync(file, 'utf8');
-    const job = text.slice(text.indexOf(`\n  ${id}:\n`) + 1);
-    const suitesStep = job.slice(job.indexOf('- name: Run the selected suites\n'));
-    assert.doesNotMatch(suitesStep.slice(0, suitesStep.indexOf('\n      - ')), /^ +CI_BASE_SHA:/m);
     for (const [head, expected] of [[repo.caughtUp, repo.M2], [repo.behind, repo.T]]) {
       const r = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: head });
       assert.equal(r.status, 0, r.log);
       const base = r.env.CI_BASE_SHA ?? '';
-      for (const suite of ['components', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry']) {
+      for (const suite of baseSuites) {
         let compared = 0;
         for (const command of SUITE_COMMANDS[suite]) {
           const argv = expandArgv(command.argv, { cwd: path.join(ROOT, command.cwd), root: ROOT, base, report: path.join(repo.dir, 'r.json') });
