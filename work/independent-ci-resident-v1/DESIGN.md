@@ -2445,7 +2445,7 @@ STANDBY 不再写备用提醒、不再为此读任何 head（ADR 0028）。原�
    - 触发照常读进排队表，不丢。方案里的“不取新触发”，在这里的意思是不从队列取行去开批次，和暂停接新（§20）一致。
    - 在途批次照常续跑：停在 A 的批次每个 tick 照常判断，停在 B 的照常尝试第 8 段，去留由实时准入决定。停在 A 的批次仍是 tick 的结果，状态里的 `current` 也不消失（和暂停接新一样）。
 4. **节点闸门排在暂停接新之前**，也排在“队列为空就是 IDLE”之后。所以不是 ACTIVE 的节点显示 `NODE_*` 的原因，探测不会被暂停接新挡住。空队列时仍是 `IDLE`。
-5. **探测间隔**：`UNCERTAIN` 用 `STANDBY` 的 15 分钟，但上一次答案是 uncertain 时按连续不确定次数退避重试：1、2、4、8 分钟，之后 15 分钟（`ROLE_PROBE_UNCERTAIN_BACKOFF_MS`；TURING 2026-11-11 开机后首次探测不确定，节点因此空等了 15 分钟）；`STANDBY` 15 分钟、空闲的 `ACTIVE` 30 分钟不变；`urgent` 时不等。任何一次探测结果（包括 uncertain）都清掉 `urgent`，所以不确定时不会每个 tick 探一次。
+5. **探测间隔**：`UNCERTAIN` 用 `STANDBY` 的间隔，但上一次答案是 uncertain 时按连续不确定次数退避重试：1、2、4 分钟，之后每 5 分钟，任何模式都不短于该模式自己的间隔（`ROLE_PROBE_UNCERTAIN_BACKOFF_MS`；TURING 2026-11-11 开机后首次探测不确定，节点因此空等了 15 分钟）；`STANDBY` 每 1 分钟、空闲的 `ACTIVE` 每 5 分钟（`ROLE_PROBE_INTERVAL_MS`，平滑交接 ADR 0026；原为 15、30 分钟）；`urgent` 时不等。任何一次探测结果（包括 uncertain）都清掉 `urgent`，所以不确定时不会每个 tick 探一次。
    - 探测只在没有 HALT、没有暂停、没有批次正在跑某一段时进行。
    - **停在 A、B 的批次不挡探测，当节点不是 `ACTIVE`，或这次探测是 `urgent` 时**（`probeAtParking()`；2026-10-29 复核 M1）。空闲 `ACTIVE` 节点的定期探测保持 C2 的做法：账本里有任何打开的批次就不探。
    - 为什么可以：C2 要求账本里没有打开的条目，是因为探测要经交换代理切换一次 runner 服务，不能和正式的段抢。但 tick 是串行的，探测只在 tick 里运行，不会与本执行器自己的段重叠。停在 A、B 的批次没有进程，没有 broker 请求，Linux 是空的（§18.1）。不在停靠点的打开条目（崩溃现场）在每个 tick 开头已被恢复处理成 HALT，到不了探测这一步。
@@ -6043,3 +6043,46 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
    - 带戳批次的扫描计划从戳推出（B1）：`localPlan` 对带戳批次（含车头）取 appScans = `[]`，不读 trainLast，所以第 2–7 段到不了，也不会以 `REFS_MAIN_BASE_CHANGED` 结束；回执 `scans-not-app-required` 照写。不带戳的批次不变（读不到就三项全跑）。出生后 Owner 把扫描改回本 App：带戳批次仍不进第 2 段，之后第 8 段与第 10 段按现场规则判；这条路径没实测，不为它加机制。
    - 待查、不在本次：切换日里 head 已 started、之后因 main 前进被第 8 段 `RESIDENT_BASE_MOVED` 结束的 PR（账本一次性规则不让重跑），属 C5 切换步骤与 C7 验收，由 DESK 登记缺陷行。
 5. **主规则集的认法。** 见 §82 第 4 条：`landingRoute` 与 `rulesetFacts` 共用 `sixPinned`/`pinAllowed`，扫描钉 Actions 时第 10 段读到 push、`appScans` 为空，第 1 条的条件在现场成立；端到端 `train-landing-e2e.test.mjs` 的 E3、E8、E1（读不到状态）锁住。
+
+## 84. 首装的令牌被拒与角色没确认：launcher 判成明确失败（任务 `87d330d0`，FABLE-drill-role-probe-20261124 §3、§5 PR-1，分支 `claude/launcher-role-unauthorized`）
+
+### 84.1 为什么
+
+- 令牌被服务端拒绝（吊销、过期、范围不符，或根本没登记）时，角色探测答 uncertain，码 `ROLE_PROBE_CONNECTION_UNAUTHORIZED`，节点一直是 `UNCERTAIN`（§29.2 第 2 条）。
+- launcher 的 first-train 第一阶段只在列车跑完、HALT、“不适用”（STANDBY、not-held）三种情况下提前结束，所以要空等满 1500 秒；等完照常 verify、pause，终态仍写 `R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED`，首装算成功。第 16 代演练 20261123T201433Z 就是这样等了 1505 秒。
+- 常驻这一侧不改：401 只退避、不 HALT（UNCERTAIN 等同 STANDBY，不开批次；HALT 要 Owner 复位，令牌续期后节点本可自己恢复）。
+
+### 84.2 规则
+
+1. **令牌被拒立即结束第一阶段。** 条件全部满足：
+   - 与“不适用”分支同样核对的状态框架：合同、节点名、Source、`writtenAt` 不早于本步开始、执行器 IDLE、无 HALT、无 current、队列无在跑（`Test-FirstTrainStatusFrame`）；
+   - 模式 `UNCERTAIN`，探测结果 uncertain，探测时刻不早于本步开始；
+   - status 的 `notices` 里有一条 `role-probe-connection`、码 `ROLE_PROBE_CONNECTION_UNAUTHORIZED`，时刻不早于同一份 status 的 `probe.failingSince`（当前这段连续失败的起点，须是合法时刻；中间有过 held 或 not-held 就被清空或换成更晚的时刻），且不超过 15 分钟（`role-probe.mjs` observe 发出，执行器并入 status）。
+   - 为什么和 `failingSince` 比、不和本步开始比（PLAN-launcher-role-review-m1m2-20261124 第 1 节，审查中-1）：通知每段失败只发一次，时刻是这段失败里第一次被拒；新常驻在安装尾段就开始探测，首探可能早于本步开始（第 16 代只差 12 秒），和本步开始比，这条通知就永远不算。通知属不属于眼下这段失败，常驻在 status 里已经给出答案。“探测时刻不早于本步开始”保留：它保证 launcher 在本步之内亲眼看到一次新的 uncertain；竞态时要等到下一次探测（约 66 秒），仍在 120 秒以内。
+2. **普通 uncertain 不提前结束。** 网络抖动答 uncertain，一分钟后可能答 held 并开列车，这正是 review M1 要挡的。`FIRST_TRAIN_WAIT_SECONDS`（1500）和它的 assert 都不动。
+3. **为什么令牌被拒可以提前结束。** 列车只在 ACTIVE 时开，ACTIVE 只来自 held；服务端刚拒绝这张令牌，下一次探测至少 60 秒之后，令牌不换就不会变成 held。第二阶段“runner 安静两次”照常执行，verify 仍受它保护。
+4. **步骤的角色。** first-train 报告和 launcher 终态都有 `role`：
+   - `unauthorized`：第 1 条成立；步骤行 `first-train-role-unauthorized`，`result` 为 failed，`rejectCode` 为 `ROLE_PROBE_CONNECTION_UNAUTHORIZED`；
+   - `not-held`：“不适用”分支成立；
+   - `held` 或 `not-held`：否则取最后一次轮询的状态（本节点、本 Source、`writtenAt` 不早于本步开始、探测不超过 15 分钟；ACTIVE+held 或 STANDBY+not-held）；
+   - `unconfirmed`：以上都不成立（普通 uncertain 等满、读不到状态等）。
+5. **之后照常 verify、pause 和后续各步**，它们不依赖角色，节点留在安全的暂停状态。终态 `status` 的取值不变。
+6. **首装判定。** `rollout/fleet/bootstrap.ps1` 的 `Get-LauncherVerdict`（它决定 `BOOTSTRAP_DONE`，演练入口据此给出 `FIRST_INSTALL_DONE`）：launcher 走到 VERIFIED_PAUSED 之后先判角色、再判换账户（PLAN-launcher-role-review-m1m2-20261124 第 2 节，审查中-2：否则令牌被拒又碰上换账户没过时，结论只说换账户，根因不出现在任何结论里），`role` 不是 `held` 或 `not-held` 就不算完成，换账户过没过都一样，状态 `BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED`，码 `FIRST_INSTALL_ROLE_UNAUTHORIZED`（令牌被拒）或 `FIRST_INSTALL_ROLE_UNCONFIRMED`（其余，包括终态没有 `role`）；换账户的状态仍在结论的 `companionSwitch` 里。角色确认之后换账户没过，才是 `BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE`。处理办法：前者换一张有效令牌，两者都重跑同一条首装命令。重装的判定不变。
+7. **续装**（`continue.py`）把 `first-train-role-unauthorized` 与其他三个 first-train 步骤名同样看作“第一阶段已结束”。
+
+### 84.3 步骤开始行（FABLE §3.3）
+
+- launcher 每个 `Step-*` 开始时往 stdout 写一行 `{started, at, ms}`（`Write-StepStart`，调用它的函数名）。第一行就是“首装跳过”的步骤，这一行写在跳过之后。
+- 这一行没有 `name`、`result`：演练把带 `name`+`result` 的行算作步骤，续装只读进度记录（开始行不写进度记录），都不会把它当成完成的步骤。
+- 用处：步骤行只在结束时写，第 16 代最后 3 分钟在跑哪一步没有直接证据；演练的 launcher 段进度门（PR-2）以 launcher.stdout.log 增长为进度。
+
+### 84.4 已知局限
+
+- 通知每轮失败只发一次，记在本地账本（`connectionNotified`），通知本身只在常驻进程的内存里（执行器的角色通知只留最近 10 条，每个 tick 写进 status）。常驻在一段失败中途重启过，通知就没了，账本又记着“已发过”，不再发；老节点重装时账本已记过也是一样。这两种情况 launcher 都退回等满 1500 秒，判 `unconfirmed`。方向安全，只是慢。全新首装账本为空，不受影响。要彻底消掉得在 status 的 `probe` 里加 `code`（改状态合同），这一轮不做。
+- 通知列表截前 50 条（executor.mjs），角色通知排在版本、companion 通知之后；极端情况下被截掉，同样退回 `unconfirmed`。
+
+### 84.5 测试
+
+- `reinstall/test/test_launcher_first_train.py`：带通知的 uncertain 一次轮询结束、`first-train-role-unauthorized`、`role=unauthorized`，通知早于本步但不早于 `failingSince` 也一样；普通 uncertain 等满、`role=unconfirmed`；反例（通知早于 `failingSince`、探测早于本步、别的通知种类或码、模式不是 UNCERTAIN、别的节点或 Source、执行器不空闲、队列有在跑、状态过期或合同未知）不提前结束；“不适用”`role=not-held`，ACTIVE+held `role=held`。
+- `test/first-install-switch.test.mjs`（Windows 必需检查会跑）：真实 `Step-WaitFirstTrain` 与进度处理（真实 `Wait-Until`）下令牌被拒几秒结束、步骤行 failed 带拒绝码、开始行在前；通知早于本步但属于当前这段失败也几秒结束；反例（上一段失败的旧通知、探测早于本步、`failingSince` 为 null 或不是时刻、码是 `ROLE_PROBE_UNCERTAIN`）不提前结束；`Get-LauncherVerdict` 与演练入口的判定表，含换账户 FELL_BACK 时角色未确认仍以 `FIRST_INSTALL_ROLE_*` 停下；终态带 `role`。
+- 端到端：下一代候选包用假令牌演练一次，first-train 步骤 `seconds` 小于 120，入口以 `FIRST_INSTALL_ROLE_UNAUTHORIZED` 结束（修复前：回执 20261123T201433Z-2026.11.24-74bc5ef0-52d496e7，1505 秒，`DRILL_RUN_TIMEOUT`）。

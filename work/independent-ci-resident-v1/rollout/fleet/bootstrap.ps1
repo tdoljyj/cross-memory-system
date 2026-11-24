@@ -37,8 +37,11 @@
             in the work directory (Copy-ToWork): an elevated token does not see a drive letter the Owner mapped;
          c. install.mjs prepare --from <dir> (not elevated);
        then the launcher ELEVATED (UAC 2): -Stage launcher copies the launcher prepare wrote into an admin-only directory, checks its
-       sha256 and runs that copy with -RunApprovedInstall. A first install ends BOOTSTRAP_DONE only when the launcher verified, paused
-       and the companion switch passed (Get-LauncherVerdict; else BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE).
+       sha256 and runs that copy with -RunApprovedInstall. A first install ends BOOTSTRAP_DONE only when the launcher verified and paused,
+       its first-train wait confirmed the node's role, held or not-held, and the companion switch passed (Get-LauncherVerdict, in this
+       order: the role first, else BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED with FIRST_INSTALL_ROLE_UNAUTHORIZED, the service refused the
+       node's CI token, or FIRST_INSTALL_ROLE_UNCONFIRMED, whatever the switch did; then the switch, else
+       BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE).
   An elevated stage runs its child (P1, the launcher) with stdout and stderr read apart (Invoke-StageChild): a line on stderr never
   ends the stage or loses the child's verdict.
   The first install's token directory (C:\ProgramData\CluedIndependentCI\first-install\credentials) never outlives the run (L3): the
@@ -259,13 +262,17 @@ function Test-UnderDirectory([string]$path, [string]$dir) {
   $d = [IO.Path]::GetFullPath($dir).TrimEnd('\') + '\'
   [IO.Path]::GetFullPath($path).StartsWith($d, [StringComparison]::OrdinalIgnoreCase)
 }
-# M4: the run's verdict from the launcher's terminal. A first install is done only when the M5-b switch moved the distribution to the
-# companion account (companion-headless COMPANION_HEADLESS_QUALIFIED): until then it is the operator's (wsl-first-install), which the
-# profile's ownerSid (the companion) does not match. A reinstall's verdict is as before.
+# M4: the run's verdict from the launcher's terminal. A first install is done only when the node confirmed its role (below) and the M5-b
+# switch moved the distribution to the companion account (companion-headless COMPANION_HEADLESS_QUALIFIED): until then it is the operator's
+# (wsl-first-install), which the profile's ownerSid (the companion) does not match. A reinstall's verdict is as before.
+# Order: a launcher that did not end verified and paused; then the role (a refused or unconfirmed role is the root cause, so it is the
+# verdict even when the switch did not pass too, PLAN-launcher-role-review-m1m2-20261124 2); then the switch. Every verdict keeps the
+# switch's status in companionSwitch.
 # code (Fable ruling 11-20 "first install r4" section 5(a), E5): why the launcher did not end done, as the launcher said it -- a terminal
-# that stopped gives its own code, a companion switch not done the switch's status, no terminal an empty code; a done
-# verdict has none. The status words stay as they are; the step line and the result line carry the code (Out-LauncherVerdict), and the
-# drill's entry takes it as its stop code from this verdict.
+# that stopped gives its own code, a role not confirmed FIRST_INSTALL_ROLE_UNAUTHORIZED or FIRST_INSTALL_ROLE_UNCONFIRMED, a companion
+# switch not done the switch's status, no terminal an empty code; a done verdict has none. The status words: BOOTSTRAP_LAUNCHER_ENDED,
+# BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED, BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE, BOOTSTRAP_DONE; the step line and the
+# result line carry the code (Out-LauncherVerdict), and the drill's entry takes it as its stop code from this verdict.
 function Get-LauncherVerdict([bool]$firstInstall, $terminal) {
   $ts = [string](Get-Key $terminal 'status')
   $chh = Get-Key $terminal 'companionHeadless'
@@ -273,6 +280,16 @@ function Get-LauncherVerdict([bool]$firstInstall, $terminal) {
   if ($ts -cne 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED') {
     $code = Get-Key $terminal 'code'
     return [ordered]@{ status = 'BOOTSTRAP_LAUNCHER_ENDED'; code = $(if ($code -is [string] -and $code.Length) { $code } else { $null }); companionSwitch = $ch; next = $null }
+  }
+  # FABLE-drill-role-probe-20261124 3.2 (task 87d330d0): a first install whose node never confirmed its role is not done. The launcher's
+  # terminal role is its first-train wait's: unauthorized (the service refused the node's CI token), unconfirmed (no definite answer in
+  # the wait), not-held or held; a terminal without one is unconfirmed. A reinstall's verdict is as before.
+  $role = [string](Get-Key $terminal 'role')
+  if ($firstInstall -and $role -cne 'held' -and $role -cne 'not-held') {
+    $unauthorized = $role -ceq 'unauthorized'
+    return [ordered]@{ status = 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED'; code = $(if ($unauthorized) { 'FIRST_INSTALL_ROLE_UNAUTHORIZED' } else { 'FIRST_INSTALL_ROLE_UNCONFIRMED' }); companionSwitch = $ch
+      next = $(if ($unauthorized) { 'installed, verified and paused, but the service refused this node''s CI token (ROLE_PROBE_CONNECTION_UNAUTHORIZED): the token is revoked, expired or not registered; give a valid one and run the same first-install command again' }
+        else { 'installed, verified and paused, but the node''s role probe gave no definite answer within the first-train wait; run the same first-install command again; see first-train-report.json of this launch' }) }
   }
   if ($firstInstall -and $ch -cne 'COMPANION_HEADLESS_QUALIFIED') {
     return [ordered]@{ status = 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE'; code = $(if ($ch) { $ch } else { $null }); companionSwitch = $ch
@@ -648,7 +665,7 @@ function Invoke-Bootstrap {
   $l = Invoke-Elevated 'launcher' @('-Launcher', [string]$lch['path'], '-LauncherSha256', [string]$lch['sha256'], '-ExpectedOperatorSid', $operator) $LauncherLimitSeconds
   if ($l.declined) { Stop-Bootstrap 'launcher' 'UAC_DECLINED' ([ordered]@{ note = 'the launcher did not run; run the same command again'; cleanup = (& $clear 'launcher declined') }) }
   $ls = [string](Get-Key $l.last 'status')
-  # M4: a first install is done only with the companion switch passed (Get-LauncherVerdict)
+  # M4: a first install is done only with a confirmed role and the companion switch passed (Get-LauncherVerdict)
   $v = Get-LauncherVerdict $firstInstall $l.last
   Out-LauncherVerdict $v ([ordered]@{ firstInstall = $firstInstall; prepare = $ps; launcher = $ls; companionSwitch = $v.companionSwitch; next = $v.next
     residueUnchecked = (Get-Key $pr.last 'residueUnchecked'); exit = $l.exit; output = $l.output })
