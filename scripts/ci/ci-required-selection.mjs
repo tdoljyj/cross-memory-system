@@ -90,7 +90,7 @@ const AUTHORIZATION_DB_TESTS = [
   'agent-messages-db', 'all-contexts-authorization-db', 'all-contexts-authorization-locks-db', 'authorization-closeout', 'authorization-end-to-end',
   'authorization-expiry-db', 'authorization-migration-chain', 'authorization-roles-db', 'checkpoint-backlog-controls-db', 'checkpoint-idempotency-db',
   'checkpoint-replay-receipt-db', 'checkpoint-session-renewal-db', 'connection-authorization-db', 'connection-permission-request-db',
-  'context-ownership-db', 'context-v2-terminal-restore-db', 'currentness-admission-db', 'currentness-record-fence-db', 'currentness-retained-all',
+  'context-archive-structure-db', 'context-ownership-db', 'context-v2-terminal-restore-db', 'currentness-admission-db', 'currentness-record-fence-db', 'currentness-retained-all',
   'currentness-work-claims-db', 'dataset-split-native-grant-binding-successor-db', 'dataset-split-native-grant-correction-db',
   'dataset-split-native-grant-currentness-scope-db', 'decision-supersede-schema-guard-db', 'event-carrier-block-reasons-db',
   'event-continuity-manifest-db', 'global-scope-projection-invalidation-db', 'headless-binding-issuance-db', 'information-flow-candidate-store-db',
