@@ -415,6 +415,10 @@ function train() {
       w.comments.push({ pr: Number(comment[1]), body: body.body, app: init.headers.authorization === 'Bearer ghs_app' });
       return reply({ id: w.comments.length }, 201);
     }
+    // A pull request's comments, 100 a page, as GitHub answers (a plain list, no count).
+    const comments = /^\/repos\/o\/r\/issues\/([0-9]+)\/comments\?(?:.*&)?page=([0-9]+)/.exec(route);
+    if (method === 'GET' && comments) return reply(w.comments.filter(c => c.pr === Number(comments[1])).map((c, i) => ({ id: i + 1, body: c.body }))
+      .slice((Number(comments[2]) - 1) * 100).slice(0, 100));
     if (method === 'GET' && route === '/repos/o/r/branches/main') return reply({ name: 'main', commit: { sha: w.tip } });
     const pull = /^\/repos\/o\/r\/pulls\/([0-9]+)$/.exec(route), p = pull && w.prs.get(Number(pull[1]));
     if (method === 'GET' && pull) return p ? reply({ number: p.number, state: 'open', draft: p.draft, updated_at: iso(p.updatedAt),
@@ -1270,4 +1274,85 @@ test('gate-leak kept: an unpinned required check still reads its status: a failu
   r = await w.run();
   assert.equal(r.train.members.find(m => m.pr === A).state, 'front', statesOf(r));
   assert.equal(r.result, 'none', JSON.stringify(r));
+});
+
+// FABLE-defect-remediation-plan-20261124 §3.1 (#1258): a red head behind main was passed over for good. Its red came from the
+// pipeline (hosted-gitleaks against an old base), and once the fix was on main the head stayed red, behind and passed over from
+// 11-23 18:32 on. A red head behind main that the App did not bring up is brought up once; a head the App brought that is red again
+// is truly red and passed over as before.
+function scene1258() {
+  const w = rulesOf(train(), 'scaffold');
+  w.open(1258, { head: sha(0x1258), auto: '2026-11-23T10:17:00Z' });
+  for (const name of HOSTED) w.check(sha(0x1258), name, name === 'hosted-gitleaks' ? 'failure' : 'success');
+  return w;
+}
+
+test('§3.1 #1258: red, behind main and alone on the train, it is brought up to main once; red again on that head, it is passed over', async () => {
+  const w = scene1258();
+  const first = await w.run({}, SCAFFOLD);
+  assert.equal(first.result, 'merged', JSON.stringify(first)); assert.equal(first.pr, 1258); assert.deepEqual(w.brought(), [1258]);
+  // The App's head runs everything and is red again: a true red. Nobody else is on the train; nothing is done.
+  const made = w.headOf(1258);
+  w.check(made, 'hosted-gitleaks', 'failure');
+  w.now += 10 * MIN;
+  let again = await w.run({}, SCAFFOLD);
+  assert.equal(again.result, 'none', JSON.stringify(again)); assert.deepEqual(w.brought(), [1258]);
+  // main moves on: the App's head is behind and red, and it is the App's own: passed over, not brought a second time.
+  w.tip = sha(0x7258); w.now += 10 * MIN;
+  again = await w.run({}, SCAFFOLD);
+  assert.equal(again.result, 'none', JSON.stringify(again)); assert.deepEqual(w.brought(), [1258]);
+  assert.match(again.train.members.find(m => m.pr === 1258).state, /^red \(hosted-gitleaks\)$/, statesOf(again));
+  // The self-hosted copy under #292 the same: the author's red head behind main is brought up once.
+  const framework = rulesOf(train(), 'framework');
+  framework.open(1258, { head: sha(0x1258), auto: '2026-11-23T10:17:00Z' });
+  for (const name of FRAMEWORK) framework.check(sha(0x1258), name, name === 'gitleaks' ? 'failure' : 'success', INDEPENDENT_ADMISSION_APP_ID);
+  const r = await framework.run();
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(framework.brought(), [1258]);
+});
+
+// 修订 6 (Decision c8c4d565): the scaffold ruleset's eighth check is kooyumi-work-admission pinned to App 5368905. The phase is read
+// by the one rule that names the main ruleset (train-rules.mjs#sixPinned), not by "main requires some check of 5368905" (搁19).
+const SCAFFOLD_R6 = [...HOSTED.map(context => ({ context, integration_id: GITHUB_ACTIONS_APP_ID })),
+  { context: INDEPENDENT_ADMISSION_CHECK, integration_id: INDEPENDENT_ADMISSION_APP_ID }];
+
+test('修订 6: the scaffold ruleset pinning kooyumi-work-admission to App 5368905 is in force; only the hosted copy brings the front up', async () => {
+  const w = scene0823(); w.pins = {}; w.required = SCAFFOLD_R6;
+  assert.equal((await phaseOutput(w)).output, 'in_force=true\n');
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [1156]);
+  const self = scene0823(); self.pins = {}; self.required = SCAFFOLD_R6;
+  const s = await self.run();
+  assert.equal(s.result, 'none', JSON.stringify(s)); assert.match(s.reason, /脚手架规则集在用，由托管副本带车头/); assert.deepEqual(self.brought(), []);
+  // With #292 enabled as well (the trial switch) it is not in force: the self-hosted copy brings the front up.
+  const both = scene0823(); both.pins = {}; both.required = [...SCAFFOLD_R6, ...BOTH];
+  assert.equal((await phaseOutput(both)).output, 'in_force=false\n');
+});
+
+// FABLE-defect-remediation-plan-20261124 §3.11 item 3: a head on the train whose required checks are not all there, with nothing
+// queued or running on it for 30 minutes, is named on its pull request once: which required checks are missing and how each last ended.
+const STALLED = 1300;
+function sceneStalled() {
+  const w = rulesOf(train(), 'framework');
+  const head = sha(0x1300);
+  w.open(STALLED, { head, auto: '2026-11-24T01:00:00Z', contains: T, at: w.now - 40 * MIN });
+  for (const name of FRAMEWORK.filter(n => n !== 'kooyumi-merge-slot' && n !== 'kooyumi-admission-verified'))
+    w.check(head, name, 'success', INDEPENDENT_ADMISSION_APP_ID, { started_at: iso(w.now - 39 * MIN) });
+  return w;
+}
+const namings = w => w.comments.filter(c => c.body.includes('clued-front-main-merge: stalled'));
+
+test('§3.11: a head missing two required checks with nothing run for 40 minutes is named once on its pull request', async () => {
+  const w = sceneStalled();
+  const r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  const named = namings(w);
+  assert.equal(named.length, 1, JSON.stringify(w.comments));
+  assert.equal(named[0].pr, STALLED); assert.equal(named[0].app, true, 'posted by the clued-admission App');
+  assert.match(named[0].body, new RegExp(sha(0x1300)));
+  assert.match(named[0].body, /kooyumi-merge-slot: missing/); assert.match(named[0].body, /kooyumi-admission-verified: missing/);
+  assert.doesNotMatch(named[0].body, /gitleaks: /, 'a green required check is not listed');
+  // The schedule 10 minutes later: the same head is not named again.
+  w.now += 10 * MIN;
+  await w.run();
+  assert.equal(namings(w).length, 1, 'once per head');
 });
