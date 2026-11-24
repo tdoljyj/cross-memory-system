@@ -26,6 +26,7 @@ import { createRequire, syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { importsDebt } from './test-clock-scan.mjs';
 
 const require = createRequire(import.meta.url);
 const INSTALLED = Symbol.for('clued.test-clock-guard');
@@ -42,6 +43,7 @@ export const FAILURE_HELP = [
 ].join('\n');
 const TEST_CODE = /(^|\/)(tests?|fixtures|evals)\/|\.test\.[cm]?[jt]sx?$/;
 const GUARD_FILE = /(^|\/)scripts\/ci\/test-clock-guard\.mjs$/;
+const TEST_NAME = /\.test\.[cm]?[jt]sx?$/;
 const CHILD_CALLS = ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork'];
 
 // One installation per process: a test that imports this file (for until) from another checkout than the preloaded one
@@ -137,6 +139,26 @@ function install() {
   // is process.argv[1]; null when that is not test code (a script under test, node -e).
   let entry;
   const entryFile = () => (entry === undefined ? (entry = process.argv[1] ? testFile(process.argv[1]) : null) : entry);
+  // Whether a listed test of this process runs `file`: the entry when it is listed; else a listed *.test.* file the entry
+  // imports (an aggregate test such as apps/clued-cloud/tests/local-dev-tools.test.mjs), when it is `file` or imports it.
+  // A listed helper the entry imports is not such a test: an unlisted test that imports helpers.mjs borrows nothing.
+  const read = (file) => {
+    try {
+      return readFileSync(path.join(root, file), 'utf8');
+    } catch {
+      return null;
+    }
+  };
+  const runsListed = new Map();
+  function listedTestRuns(file, test, list) {
+    if (list.has(test)) return true;
+    if (!runsListed.has(file)) {
+      const reaches = (from) => from === file || importsDebt(from, { read, listed: new Set([file]), hitsOf: () => 1 });
+      const tests = new Set([...list].filter((name) => TEST_NAME.test(name)));
+      runsListed.set(file, importsDebt(test, { read, listed: tests, hitsOf: (name) => (reaches(name) ? 1 : 0) }));
+    }
+    return runsListed.get(file);
+  }
   // Refuses `api` called from test code, recording it. A real-clock use is the debt of the file that makes the call (its
   // count on the list only shrinks, so the fix is measured where the code is) and of the test the process runs: a listed
   // helper (helpers.mjs waitFor) lets through only a listed test, so a new test cannot borrow a helper's debt. The test is
@@ -148,7 +170,7 @@ function install() {
     if (!file) return;
     const test = entryFile();
     const list = s.debt();
-    const debt = list.has(file) && (test === null || list.has(test));
+    const debt = list.has(file) && (test === null || listedTestRuns(file, test, list));
     note({ api, file, line: site.line, entry: test, debt });
     if (debt) return;
     const via = test && test !== file ? ` (run by ${test}, which the debt list does not name)` : '';
