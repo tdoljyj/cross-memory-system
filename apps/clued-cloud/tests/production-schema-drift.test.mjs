@@ -319,3 +319,38 @@ test('unknown base migrations are an error, never an empty judgement', async () 
   await assert.rejects(readBaseMigrations({}, noTrusted), /base migrations are unknown/);
   await assert.rejects(readBaseMigrations({ CI_BASE_SHA: '0'.repeat(40) }, noTrusted), /base migrations are unknown/);
 });
+
+// Board row 281: the platform image newer than production's grants PUBLIC SELECT on pg_cron's own sequence. A pending
+// migration that copies the worker gateway rows' "no privilege on any sequence" assertion fails in migration-verify,
+// whatever its wording; one that limits the same check to the application's schema passes.
+test('a pending migration that refuses any privilege on any sequence fails on the newer platform image', async () => {
+  const catalogSql = `select jsonb_build_object('objects', '[]'::jsonb) as catalog`;
+  const snapshotFor = (repo) => ({ contract: SNAPSHOT_CONTRACT, objects: [], catalog_sql_sha256: createHash('sha256').update(catalogSql).digest('hex'),
+    applied: [appliedRow('20260901120000', 'one', sql('one').replace(/\n/g, '\r\n')), appliedRow('20260902120000', 'two', sql('two')),
+      appliedRow('20261031000000', 'applied_late', repo.migrations['20261102000000_applied_late.sql'])] });
+  const check = (pendingText) => {
+    const repo = repository();
+    if (pendingText !== undefined) repo.migrations['20261101000000_pending.sql'] = pendingText;
+    return runCheck({ repository: repo, snapshot: snapshotFor(repo), catalogSql });
+  };
+  // The predicate is the one in 20261009070002_worker_gateway_transition_v1.sql and 20261010161848_worker_gateway_closeout_v1.sql.
+  const refuse = (from) => `create role clued_worker_gateway nologin;
+do $check$ declare found text; begin
+  select string_agg(c.oid::regclass::text, ',') into found from ${from}
+    where case when c.relkind='S' then
+      pg_catalog.has_sequence_privilege('clued_worker_gateway',c.oid,'USAGE,SELECT,UPDATE') else false end;
+  if found is not null then raise exception 'worker_gateway_role_unexpected_privileges' using errcode='42501', detail=found; end if;
+end $check$;
+`;
+  const copied = await check(refuse('pg_catalog.pg_class c'));
+  assert.equal(copied.status, 'FAIL', JSON.stringify(copied));
+  assert.deepEqual(copied.errors, ['pending_migration_failed:migrations/20261101000000_pending.sql']);
+  assert.match(copied.pending_failure.message, /^worker_gateway_role_unexpected_privileges \(detail: cron\.job_jobid_seq\)$/);
+
+  const limited = await check(refuse(`pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace and n.nspname='public'`));
+  assert.equal(limited.status, 'PASS', JSON.stringify(limited));
+
+  const plain = await check();
+  assert.equal(plain.status, 'PASS', JSON.stringify(plain));
+  assert.equal(plain.errors.some((error) => /^(?:repository|production)_chain_failed:/.test(error)), false);
+});
