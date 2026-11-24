@@ -38,7 +38,9 @@
 //     selects as --check does, then runs every selected suite in turn and fails
 //     when any of them fails: one job step, the same on Linux and on Windows
 //     (the ci-suites-windows job; resident ADR 0032). With --shard, only the
-//     i-th of n parts of that plan (parseShard); only in a CI job.
+//     i-th of n parts of that plan (parseShard); only in a CI job. Without it,
+//     a CI job on a machine with 8 or more cores runs the plan in lanes: the
+//     n parts --shard would make, at once in the one job (laneCount, runSelected).
 //   node scripts/ci/ci-required-selection.mjs --run <suite> [--root <checkout>]
 //     runs one suite's commands (SUITE_COMMANDS) in the checkout at --root.
 //   node scripts/ci/ci-required-selection.mjs --write-known <suite> [--keep] [--root <checkout>]
@@ -47,10 +49,11 @@
 //   node scripts/ci/ci-required-selection.mjs --write-shard-seconds <log> [<log>...]
 //     rewrites ci-shard-seconds.json (the seconds --shard packs files by) from
 //     the shard-seconds lines of --shard job logs: each file's median, files
-//     under 3 seconds left out. The table is only ever written this way. It
-//     goes, with --shard, when hosted-required.yml does (S8).
+//     under 3 seconds left out. The table is only ever written this way. When
+//     hosted-required.yml goes (S8), --shard goes; the table and the packing
+//     stay for the lanes (FABLE-ci-duration-node-side-20261124, 做法 2).
 // All three run modes wait for a machine-wide suite slot outside GitHub Actions.
-import { spawnSync } from 'node:child_process';
+import { spawn as spawnAsync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -201,7 +204,7 @@ export const SUITES = {
     // Its tests read the database tests of apps/clued-cloud/tests and what they import, so a new or changed test there, or
     // the classifier, selects it.
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
-      'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/local-suite-slots.mjs',
+      'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
       'scripts/ci/check-tests-covered.mjs', 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-shard-seconds.json',
@@ -218,8 +221,9 @@ export const SUITES = {
   'migration-verify': {
     'production-schema': ['apps/clued-cloud/supabase/**', 'apps/clued-cloud/scripts/production-schema-*.mjs',
       'apps/clued-cloud/scripts/migration-ledger.mjs', 'apps/clued-cloud/scripts/production-release-baseline.json',
-      // The drill test project sync and what its database test reaches (the drift module imports the compatibility check).
-      'apps/clued-cloud/scripts/drill-test-sync.mjs', 'apps/clued-cloud/scripts/release-migration-compat.mjs',
+      // The drill test project sync and what its database test reaches (the drift module imports the compatibility check; the
+      // sync script imports its generated client, scripts/generated/drill-pg.mjs).
+      'apps/clued-cloud/scripts/drill-test-sync.mjs', 'apps/clued-cloud/scripts/generated/drill-pg.mjs', 'apps/clued-cloud/scripts/release-migration-compat.mjs',
       // The release door flow test runs the release workflow steps and the grant script (FABLE-release-identity-autonomous §3.1).
       '.github/workflows/clued-cloud-production-release.yml', 'scripts/ci/clued-release-door.mjs',
       'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...MIGRATION_DB_TESTS, ...AUTHORIZATION_DB_TESTS, ...MIGRATION_DB_TEST_INPUTS, 'apps/clued-cloud/package.json',
@@ -347,7 +351,8 @@ export const SUITE_COMMANDS = {
   'ci-deps-entry': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-deps.test.mjs', 'scripts/ci/check-ci-deps-entry.test.mjs'] },
     { cwd: '.', argv: ['node', 'scripts/ci/check-ci-deps-entry.mjs', '--base', '{base}'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
-    'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs'] }],
+    'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/local-verify.test.mjs',
+    'scripts/ci/local-verify-concurrency.test.mjs'] }],
   'clued-cloud': [
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'lint'] },
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'ledger:verify'] },
@@ -375,7 +380,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const KNOWN_FAILURES_PATH = path.join(HERE, 'ci-known-failures.json');
 export const REPORTER_PATH = path.join(HERE, 'ci-test-failures-reporter.mjs');
 // The seconds --shard packs a listing command's files by (shardCommand), read next to this file (the trusted base checkout,
-// the same for every shard). Written only by --write-shard-seconds; read only under --shard. It goes with --shard at S8.
+// the same for every shard). Written only by --write-shard-seconds; read only under --shard and in a lane (runSelected).
 export const SHARD_SECONDS_PATH = path.join(HERE, 'ci-shard-seconds.json');
 
 // Tests that already fail on main (quarantine, Task 679a0c2b), by suite: each
@@ -1193,9 +1198,30 @@ function withReporter(argv, out) {
 }
 const testAt = (entry) => `${entry.file} :: ${entry.path.join(' > ')}`;
 
+// Whether CI_BASE_SHA names a commit (Task 11092b8b; PLAN-mainpush-flaky-rerun-20261124 §2): null, or why not. The one
+// judgement of the base's form, read by the run again in full (unchangedSinceBase) and by a CI job's --run and
+// --run-selected (ciBaseRefusal).
+export function baseCommitProblem(base) {
+  return typeof base !== 'string' || !/^[0-9a-f]{7,64}$/i.test(base) || /^0+$/.test(base) ? 'CI_BASE_SHA is not a commit' : null;
+}
+
+// In a CI job (GITHUB_ACTIONS) the base is an input of the suites, resolved once by the job's train-base step, which writes
+// CI_BASE_SHA to GITHUB_ENV for every later step (ci-base.mjs). A step without it is wired wrong, every time (no train-base
+// before it, or the step overrides the value): --run and --run-selected start nothing and fail there, so the change that
+// breaks it fails in its own pull request (before, the run again in full gave up with one log line and some suites failed
+// only when they reached {base}). A local run is not judged here.
+export function ciBaseRefusal(env = process.env) {
+  if (env.GITHUB_ACTIONS !== 'true') return null;
+  const problem = baseCommitProblem(env.CI_BASE_SHA);
+  if (!problem) return null;
+  return `${problem} (${env.CI_BASE_SHA === undefined ? 'not set' : JSON.stringify(env.CI_BASE_SHA)}): this step does not get `
+    + "the base its job's train-base step writes to GITHUB_ENV (no train-base step before it in this job, or the step sets CI_BASE_SHA itself and overrides it); nothing ran";
+}
+
 // Each file as the base commit has it: its blob there equals the checkout's file as git would store it. Local reads only.
 function unchangedSinceBase(root, base, files, env) {
-  if (typeof base !== 'string' || !/^[0-9a-f]{7,64}$/i.test(base) || /^0+$/.test(base)) return 'CI_BASE_SHA is not a commit';
+  const problem = baseCommitProblem(base);
+  if (problem) return problem;
   const git = (...args) => {
     const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30_000,
       env: { ...env, GIT_TERMINAL_PROMPT: '0' } });
@@ -1311,9 +1337,12 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
     seconds = table;
     if (problem) log(`::notice title=${id} shard seconds::${problem}`);
     const digest = createHash('sha256').update(JSON.stringify([...table])).digest('hex').slice(0, 12);
-    log(`${id}: shard ${shard.index}/${shard.total}, units numbered from ${position}; 按秒数分片，表 ${table.size} 条（${digest}）`);
+    log(`${id}: ${shard.lane ? '道' : 'shard'} ${shard.index}/${shard.total}, units numbered from ${position}; 按秒数分片，表 ${table.size} 条（${digest}）`);
   }
   const skipSwitches = hostLacksSwitches(host.lacks);
+  // A lane's node --test runs at most its share of the cores (laneTestConcurrency), so n lanes do not each start one
+  // process per core; a command that sets its own concurrency keeps it.
+  const laneSwitches = shard?.lane && Number.isSafeInteger(shard.concurrency) ? [`--test-concurrency=${shard.concurrency}`] : [];
   if (skipSwitches.length > 0) log(`${id}: ${hostLacksNote(host.lacks)}`);
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
   // The trusted commands, then the candidate's additions (read once the trusted ones have run), or, for a suite only the
@@ -1359,8 +1388,9 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
       }
     }
     // What this host lacks is part of the command itself: the first run and the run again in full (passesAgain) both skip it.
-    const plain = skipSwitches.length > 0 && given[0] === 'node' && given[1] === '--test'
-      ? [given[0], given[1], ...skipSwitches, ...given.slice(2)] : given;
+    const switches = given[0] === 'node' && given[1] === '--test'
+      ? [...skipSwitches, ...(given.some((arg) => arg.startsWith('--test-concurrency')) ? [] : laneSwitches)] : [];
+    const plain = switches.length > 0 ? [given[0], given[1], ...switches, ...given.slice(2)] : given;
     let argv = plain;
     let reportDir = null;
     // A known-failure command reports to the trusted reporter for its verdict; any other node --test command of the trusted
@@ -1464,11 +1494,85 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
   return 0;
 }
 
+// Lanes (FABLE-ci-duration-node-side-20261124, 做法 2): a CI job without --shard runs the n parts --shard i/n would make of
+// its plan at once, each part in a process of its own (runLanePart), each lane its suites in order. The parts are --shard's
+// (shardPart, ci-shard-seconds.json): together they run every unit once, a file in one lane only. n is read from the
+// machine, max(1, min(LANES_MAX, floor(cores / 4))): a 4-core hosted machine gets 1, today's serial run command for
+// command. CI_SELECTED_LANES lowers it, never raises it; a value that is not a whole number from 1 runs serially (an aid
+// that fails only does nothing). Outside a CI job (the local suite slots hold one suite at a time) and with --shard: 1.
+// Stop-loss: a timing failure lanes bring lowers LANES_MAX, then CI_SELECTED_LANES=1 (the design's 止损).
+export const LANES_MAX = 3;
+export const LANES_VARIABLE = 'CI_SELECTED_LANES';
+export function laneCount({ cores = os.availableParallelism(), env = process.env, shard = null } = {}) {
+  if (shard || env.GITHUB_ACTIONS !== 'true') return 1;
+  const ceiling = Math.max(1, Math.min(LANES_MAX, Math.floor(cores / 4)));
+  const asked = env[LANES_VARIABLE];
+  if (asked === undefined || asked === '') return ceiling;
+  return /^[1-9]\d*$/.test(String(asked).trim()) ? Math.min(ceiling, Number(String(asked).trim())) : 1;
+}
+export const laneTestConcurrency = (cores, lanes) => Math.max(2, Math.floor((cores - 1) / lanes));
+
+// One lane's part of one suite, in a child process: runSuite with --shard's part i/n, so its commands, known failures and
+// run again in full are --shard's. Its output (the suite's commands inherit it) is held and handed back whole; the result
+// comes back in a file, never parsed out of that output. A process a test leaves behind may hold the output pipe open (it
+// inherited it): the part ends LANE_DRAIN_MS after its process exits, with the output read by then, and says so in a
+// notice line (what that process writes later is not in the log; review M2).
+export const LANE_DRAIN_MS = 5_000;
+const LANE_PART = `const [url, id, root, index, total, concurrency, out] = process.argv.slice(1);
+const { writeFileSync } = await import('node:fs');
+const { runSuite } = await import(url);
+const tally = { units: 0, ran: 0 };
+let status = 1;
+try {
+  status = await runSuite(id, { root, shard: { index: Number(index), total: Number(total), tally, lane: true, concurrency: Number(concurrency) } });
+} catch (error) {
+  console.log('::error title=' + id + '::' + error.message);
+}
+writeFileSync(out, JSON.stringify({ status, tally }));`;
+export function runLanePart(id, { root, env = process.env, lane, drainMs = LANE_DRAIN_MS }) {
+  const dir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-lane-`));
+  const out = path.join(dir, 'result.json');
+  return new Promise((resolve) => {
+    const chunks = [];
+    const child = spawnAsync(process.execPath, ['--input-type=module', '-e', LANE_PART, import.meta.url, id, root,
+      String(lane.index), String(lane.total), String(lane.concurrency), out], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    child.stdout.on('data', (chunk) => chunks.push(chunk));
+    child.stderr.on('data', (chunk) => chunks.push(chunk));
+    let done = false;
+    let drain = null;
+    const finish = (problem, drained = false) => {
+      if (done) return;
+      done = true;
+      clearTimeout(drain);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      let result = null;
+      try {
+        result = JSON.parse(readFileSync(out, 'utf8'));
+      } catch { /* the part did not finish: it failed */ }
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch { /* a temporary directory left behind */ }
+      const ok = result && Number.isInteger(result.status);
+      const output = Buffer.concat(chunks).toString('utf8')
+        + (drained ? `::notice title=${id}::道 ${lane.index}/${lane.total}：子进程已退出，留下的进程仍占输出管道，${drainMs} 毫秒后收尾，之后的输出未收\n` : '')
+        + (ok ? '' : `::error title=${id}::lane ${lane.index}/${lane.total} ended without a result (${problem})\n`);
+      resolve({ status: ok ? result.status : 1, output, tally: ok ? result.tally : null });
+    };
+    child.on('error', (error) => finish(error.message));
+    child.on('exit', (code, signal) => {
+      drain = setTimeout(() => finish(`exit ${code ?? signal}; its output pipe still open after ${drainMs} ms`, true), drainMs);
+    });
+    child.on('close', (code, signal) => finish(`exit ${code ?? signal}`));
+  });
+}
+
 // One job step for a platform: every selected suite runs, in order, even after
 // one fails (so the summary names each); any failure fails the step, and with
 // it the check. Nothing selected is a pass: the change touches no suite of
 // this platform.
-export async function runSelected(suites, { root, env = process.env, run = runSuite, log = console.log, summary = () => {}, shard = null } = {}) {
+export async function runSelected(suites, { root, env = process.env, run = runSuite, log = console.log, summary = () => {}, shard = null,
+  cores = os.availableParallelism(), runPart = runLanePart } = {}) {
   const host = hostLacks(env);
   if (host.error) {
     log(`::error title=${HOST_LACKS_VARIABLE}::${host.error}`);
@@ -1480,6 +1584,40 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
     summary(`- ${hostLacksNote(host.lacks)}\n`);
   }
   const failed = [];
+  const lanes = laneCount({ cores, env, shard });
+  if (lanes > 1 && suites.length > 0) {
+    const concurrency = laneTestConcurrency(cores, lanes);
+    log(`${suites.length} 个套件分 ${lanes} 道并行（本机 ${cores} 核，每道 node --test 并发 ${concurrency}；${LANES_VARIABLE} 可压低），道内依次跑`);
+    const parts = new Map(suites.map((id) => [id, []]));
+    const started = performance.now();
+    await Promise.all(Array.from({ length: lanes }, async (unused, at) => {
+      const lane = { index: at + 1, total: lanes, concurrency };
+      for (const id of suites) {
+        // A line as the part starts: a job cancelled at its time limit drops the parts still held, and the suites that
+        // started and never ended name where it stopped (review M1).
+        log(`${id}: 道 ${lane.index}/${lanes} 开始`);
+        const begun = performance.now();
+        let part;
+        try {
+          part = await runPart(id, { root, env, lane });
+        } catch (error) {
+          part = { status: 1, output: `::error title=${id}::${error.message}\n`, tally: null };
+        }
+        const took = ((performance.now() - begun) / 1000).toFixed(1);
+        // Printed whole when it ends: one block per suite and lane, never interleaved with another lane's.
+        log(`${id}: 道 ${lane.index}/${lanes} 用时 ${took} 秒，${part.status === 0 ? 'passed' : `failed (${part.status})`}\n${String(part.output ?? '').trimEnd()}`);
+        parts.get(id).push(part);
+      }
+    }));
+    for (const id of suites) {
+      const status = parts.get(id).find((part) => part.status !== 0)?.status ?? 0;
+      summary(`- \`${id}\`: ${status === 0 ? 'passed' : '**failed**'}\n`);
+      if (status !== 0) failed.push(id);
+    }
+    log(`${lanes} 道全部结束，墙钟 ${((performance.now() - started) / 1000).toFixed(1)} 秒`);
+    if (failed.length > 0) log(`::error title=${hostPlatform()} suites::failed: ${failed.join(' ')}`);
+    return failed.length > 0 ? 1 : 0;
+  }
   let timedOut = false;
   if (shard) summary(`- shard ${shard.index}/${shard.total}\n`);
   for (const id of suites) {
@@ -1694,6 +1832,11 @@ async function main(argv, env = process.env) {
   if (runIndex >= 0) {
     const rootIndex = argv.indexOf('--root');
     const root = rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT;
+    const refusal = ciBaseRefusal(env);
+    if (refusal) {
+      console.log(`::error title=${argv[runIndex + 1]} CI_BASE_SHA::${refusal}`);
+      return 2;
+    }
     return runSuite(argv[runIndex + 1], { root, env });
   }
   const selectedIndex = argv.indexOf('--run-selected');
@@ -1701,6 +1844,11 @@ async function main(argv, env = process.env) {
   const check = index >= 0 ? argv[index + 1] : undefined;
   if (!SUITES[check]) {
     console.error(USAGE);
+    return 2;
+  }
+  const refusal = selectedIndex >= 0 ? ciBaseRefusal(env) : null;
+  if (refusal) {
+    console.log(`::error title=${check} CI_BASE_SHA::${refusal}`);
     return 2;
   }
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};

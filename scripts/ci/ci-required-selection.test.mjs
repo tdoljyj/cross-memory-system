@@ -119,7 +119,8 @@ function slotFixture(t) {
     writeFileSync(path.join(scripts, 'check-pinned-registries.mjs'), 'process.exitCode = 75;\n');
     const env = { ...process.env, SLOT_FIXTURE_QUEUE: queue, SLOT_FIXTURE_WAIT: String(waitMs),
       SLOT_FIXTURE_HOLD: String(holdMs), SLOT_FIXTURE_PROBE_ERROR: String(probeErrors || ''), SLOT_FIXTURE_PROBE_AFTER: String(probeAfter) };
-    env.CI_BASE_SHA ||= 'fixture-base';
+    // A CI job always has a base commit (ciBaseRefusal); none of these commands compares with it.
+    env.CI_BASE_SHA ||= 'f'.repeat(40);
     delete env.CI;
     delete env.GITHUB_ACTIONS;
     delete env.NODE_TEST_CONTEXT;
@@ -391,10 +392,12 @@ test('Linux required jobs fail before invoking the selector when the trusted cop
   }
 });
 
-test('the migration candidate checkout only fetches full history for lost-run dispatches and staging pushes', () => {
+// train-base reads origin/main on every event (scripts/ci/ci-base.mjs is loaded from main), so no candidate checkout of a
+// job with train-base may be shallow (task 6cd46765).
+test('the migration candidate checkout fetches full history', () => {
   const migration = requiredWorkflowJobs().find(([, id]) => id === 'migration-verify');
   assert.ok(migration);
-  assert.match(migration[2], /\n      - name: Check out the candidate\n(?:(?!      - )[^\n]*\n)*? {10}fetch-depth: \$\{\{ \(github\.event_name == 'workflow_dispatch' \|\| \(github\.event_name == 'push' && github\.ref == 'refs\/heads\/clued-train\/staging'\)\) && '0' \|\| '2' \}\}\n/);
+  assert.match(migration[2], /\n      - name: Check out the candidate\n(?:(?!      - )[^\n]*\n)*? {10}fetch-depth: 0\n/);
 });
 
 // A lost-run dispatch (git merge-base origin/main <head>) and a staging push (the chain root T) both walk main's history in
@@ -419,6 +422,8 @@ test('every Linux required job with train-base checks the candidate out with ful
     assert.ok(depth, `${id}: candidate checkout declares fetch-depth`);
     assert.equal(depthFor(depth[1], 'workflow_dispatch', 'refs/heads/claude/some-branch'), '0', `${id}: lost-run dispatch`);
     assert.equal(depthFor(depth[1], 'push', 'refs/heads/clued-train/staging'), '0', `${id}: staging push`);
+    assert.equal(depthFor(depth[1], 'pull_request', 'refs/pull/9/merge'), '0', `${id}: pull request (ci-base.mjs is read from origin/main)`);
+    assert.equal(depthFor(depth[1], 'push', 'refs/heads/main'), '0', `${id}: main push`);
   }
 });
 
@@ -1281,7 +1286,7 @@ test('the trusted CLI runs a command added by this PR and its failure fails the 
   const trusted = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs');
   // As in the required check: the trusted base's selector on the candidate checkout, in Actions (no local slot).
   const run = () => spawnSync(process.execPath, [trusted, '--run', 'retrigger-counter', '--root', root],
-    { env: { ...childEnv(), GITHUB_ACTIONS: 'true' }, encoding: 'utf8' });
+    { env: { ...childEnv(), GITHUB_ACTIONS: 'true', CI_BASE_SHA: 'f'.repeat(40) }, encoding: 'utf8' });
   writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), "console.log('baseline executed');\n");
   const unchanged = run();
   assert.equal(unchanged.status, 0, unchanged.stdout + unchanged.stderr);
@@ -1338,7 +1343,7 @@ test('candidate commands: no known-failure allowance, nothing outside the checko
 
 // As the required check runs: the trusted selector (given) on the candidate checkout, in Actions (no local slot).
 const runCandidate = (root, id = 'retrigger-counter', trusted = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')) =>
-  spawnSync(process.execPath, [trusted, '--run', id, '--root', root], { env: { ...childEnv(), GITHUB_ACTIONS: 'true' }, encoding: 'utf8' });
+  spawnSync(process.execPath, [trusted, '--run', id, '--root', root], { env: { ...childEnv(), GITHUB_ACTIONS: 'true', CI_BASE_SHA: 'f'.repeat(40) }, encoding: 'utf8' });
 const groupLines = (out) => out.split(/\r?\n/).filter((line) => line.startsWith('::group::'));
 
 // Gap A review finding 1: the selector's bytes say nothing about the modules it imports, so a candidate selector at another
@@ -1903,18 +1908,19 @@ test('bors staging, Windows side: T is resolved on main before the trusted selec
   assert.match(job.slice(0, resolver), /fetch-depth: 0/);
   const verification = job.slice(resolver, trusted);
   assert.match(verification, /\n {8}shell: powershell\n/);
-  assert.match(verification, /git rev-parse "\$\(\$env:STAGING_SHA\)\^1"/);
-  // On staging, the runner hook's chain walk read from main (behaviour: the multi-member tests below).
-  assert.match(verification, /execFileSync\('git', \['show', 'origin\/main:scripts\/runner\/clued-runner-job-started\.mjs'\]\)/);
-  assert.ok(verification.indexOf('stagingBaseFromCheckout(process.env.STAGING_SHA)') < verification.indexOf('$env:GITHUB_OUTPUT'));
+  // The one rule, scripts/ci/ci-base.mjs, read from main (behaviour: the tests below and ci-base.test.mjs); the step exits
+  // with its status.
+  assert.match(verification, /git\('show', 'origin\/main:scripts\/ci\/ci-base\.mjs'\)/);
+  assert.match(verification, /process\.exitCode = await writeCiBase\(\);"\n {10}exit \$LASTEXITCODE\n/);
   assert.match(job, /ref: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}\n {10}path: trusted\n/);
-  assert.match(job, /CI_BASE_SHA: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| steps\.train-base\.outputs\.ci_base \}\}\n/);
+  // CI_BASE_SHA comes from the GITHUB_ENV train-base writes; a step env would override it.
+  assert.doesNotMatch(job, /^ +CI_BASE_SHA:/m);
 });
 
 // A batch of N members is S = merge(...merge(T, H1)..., HN) (ADR 0019 §3): S^1 is an intermediate train merge, not on
 // main, and only T, the root of the member chain, is a trusted base. Each required job's push-baseline step runs here as
 // it does on the runner: its own script, its own shell, a real Git checkout whose origin/main is T and holds this
-// change's runner hook (the step's walk is the hook's, read from main).
+// change's scripts/ci/ci-base.mjs and runner hook (the step loads both from main).
 const LINUX_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'clued-required-tests.yml');
 const BASELINE_JOBS = [[LINUX_WORKFLOW, 'clued-cloud-tests'], [LINUX_WORKFLOW, 'ci-suites'], [LINUX_WORKFLOW, 'migration-verify'],
   [LINUX_WORKFLOW, 'gitleaks'], [LINUX_WORKFLOW, 'trivy'], [LINUX_WORKFLOW, 'contract-placement'],
@@ -1953,6 +1959,8 @@ function trainCheckout(t) {
   git('init', '-q', '-b', 'work');
   mkdirSync(path.join(dir, 'scripts', 'runner'), { recursive: true });
   copyFileSync(path.join(ROOT, 'scripts', 'runner', 'clued-runner-job-started.mjs'), path.join(dir, 'scripts', 'runner', 'clued-runner-job-started.mjs'));
+  mkdirSync(path.join(dir, 'scripts', 'ci'), { recursive: true });
+  copyFileSync(path.join(ROOT, 'scripts', 'ci', 'ci-base.mjs'), path.join(dir, 'scripts', 'ci', 'ci-base.mjs'));
   git('add', '-A');
   git('commit', '-q', '-m', 'T');
   const T = git('rev-parse', 'HEAD'), tree = git('rev-parse', 'HEAD^{tree}');
@@ -1964,16 +1972,22 @@ function trainCheckout(t) {
   const one = commit(T, H1), two = commit(one, H2), three = commit(two, H3);
   return { dir, T, H1, H2, one, two, three, commit, git, offMain: commit(commit(X, H1), H2), single: commit(commit(T), H2) };
 }
-function runBaseline(t, { shell, script }, repo, env) {
+// The step reads GitHub's own variables: EVENT_NAME, PUSH_REF and STAGING_SHA here are github.event_name, github.ref and
+// github.sha; event is the payload at GITHUB_EVENT_PATH. Returns its outputs and what it wrote to GITHUB_ENV.
+function runBaseline(t, { shell, script }, repo, { EVENT_NAME, PUSH_REF, STAGING_SHA, event = {} }) {
   const command = shellCommand(shell);
-  const output = path.join(repo, `output-${Math.random().toString(16).slice(2)}`);
-  const file = path.join(repo, `step-${Math.random().toString(16).slice(2)}.${shell === 'bash' ? 'sh' : 'ps1'}`);
+  const tag = Math.random().toString(16).slice(2);
+  const output = path.join(repo, `output-${tag}`), envFile = path.join(repo, `env-${tag}`), eventFile = path.join(repo, `event-${tag}.json`);
+  const file = path.join(repo, `step-${tag}.${shell === 'bash' ? 'sh' : 'ps1'}`);
   writeFileSync(output, '');
+  writeFileSync(envFile, '');
+  writeFileSync(eventFile, JSON.stringify(event));
   writeFileSync(file, script);
   const r = spawnSync(command[0], [...command[1], file], { cwd: repo, encoding: 'utf8',
-    env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}`, GITHUB_OUTPUT: output, ...env } });
-  const outputs = Object.fromEntries(readFileSync(output, 'utf8').split('\n').filter(Boolean).map((line) => line.split('=')));
-  return { status: r.status, outputs, log: r.stdout + r.stderr };
+    env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}`, GITHUB_OUTPUT: output, GITHUB_ENV: envFile,
+      GITHUB_EVENT_PATH: eventFile, GITHUB_EVENT_NAME: EVENT_NAME, GITHUB_REF: PUSH_REF, GITHUB_SHA: STAGING_SHA, CI_BASE_SHA: '' } });
+  const kv = (f) => Object.fromEntries(readFileSync(f, 'utf8').split('\n').filter(Boolean).map((line) => line.split('=')));
+  return { status: r.status, outputs: kv(output), env: kv(envFile), log: r.stdout + r.stderr };
 }
 const STAGING = { EVENT_NAME: 'push', PUSH_REF: 'refs/heads/clued-train/staging' };
 for (const [file, id] of BASELINE_JOBS) {
@@ -1988,17 +2002,21 @@ for (const [file, id] of BASELINE_JOBS) {
       assert.deepEqual(r.outputs, { sha: repo.T, ci_base: repo.T }, r.log);
     }
   });
-  test(`bors staging, ${label}: a one-member S keeps T = S^1; main pushes and pull requests are unchanged`, { skip }, (t) => {
+  test(`bors staging, ${label}: a one-member S keeps T = S^1; a main push measures from before, a pull request from its merge's first parent`, { skip }, (t) => {
     const repo = trainCheckout(t);
     const one = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: repo.one });
     assert.equal(one.status, 0, one.log);
     assert.deepEqual(one.outputs, { sha: repo.T, ci_base: repo.T }, one.log);
-    const main = runBaseline(t, step, repo.dir, { EVENT_NAME: 'push', PUSH_REF: 'refs/heads/main', STAGING_SHA: repo.one });
+    assert.deepEqual(one.env, { CI_BASE_SHA: repo.T }, one.log);
+    const main = runBaseline(t, step, repo.dir, { EVENT_NAME: 'push', PUSH_REF: 'refs/heads/main', STAGING_SHA: repo.one, event: { before: repo.T } });
     assert.equal(main.status, 0, main.log);
     assert.deepEqual(main.outputs, { ci_base: repo.T }, main.log);
-    const pr = runBaseline(t, step, repo.dir, { EVENT_NAME: 'pull_request', PUSH_REF: 'refs/pull/9/merge', STAGING_SHA: repo.one });
+    assert.deepEqual(main.env, { CI_BASE_SHA: repo.T }, main.log);
+    const pr = runBaseline(t, step, repo.dir, { EVENT_NAME: 'pull_request', PUSH_REF: 'refs/pull/9/merge', STAGING_SHA: repo.one,
+      event: { pull_request: { base: { sha: repo.T }, head: { sha: repo.H1 } } } });
     assert.equal(pr.status, 0, pr.log);
-    assert.deepEqual(pr.outputs, {}, pr.log);
+    assert.deepEqual(pr.outputs, { ci_base: repo.T }, pr.log);
+    assert.deepEqual(pr.env, { CI_BASE_SHA: repo.T }, pr.log);
   });
   test(`bors staging, ${label}: a chain that does not reach main through train merges gives no trusted base`, { skip }, (t) => {
     const repo = trainCheckout(t);
@@ -2051,28 +2069,26 @@ for (const [file, id] of BASELINE_JOBS) {
       assert.notEqual(r.status, 0, `${EVENT_NAME}: ${r.log}`);
       assert.deepEqual(r.outputs, {}, `${EVENT_NAME}: ${r.log}`);
     }
-    const pr = runBaseline(t, step, repo.dir, { EVENT_NAME: 'pull_request', PUSH_REF: 'refs/pull/9/merge', STAGING_SHA: repo.caughtUp });
+    // GitHub's merge of the head H1 into main M2: the base is M2, the merge's first parent, whatever base.sha says.
+    const pr = runBaseline(t, step, repo.dir, { EVENT_NAME: 'pull_request', PUSH_REF: 'refs/pull/9/merge', STAGING_SHA: repo.commit(repo.M2, repo.H1),
+      event: { pull_request: { base: { sha: repo.T }, head: { sha: repo.H1 } } } });
     assert.equal(pr.status, 0, pr.log);
-    assert.deepEqual(pr.outputs, {}, pr.log);
+    assert.deepEqual(pr.outputs, { ci_base: repo.M2 }, pr.log);
   });
   if (id !== 'ci-suites') continue;
-  // The consumer, end to end: the step's outputs, the job's own CI_BASE_SHA expression (GitHub's ||, a missing property
-  // is null; under dispatch there is no pull_request), then the selector expanding every command of the four suites
-  // that take {base}. Before the fix this threw 'CI_BASE_SHA is required for this suite', as in the run's log.
+  // The consumer, end to end: what the step wrote to GITHUB_ENV (the suite step sets no CI_BASE_SHA of its own, which
+  // would override it), then the selector expanding every command of the four suites that take {base}. Before the
+  // dispatch fix this threw 'CI_BASE_SHA is required for this suite', as in the run's log.
   test(`lost-run dispatch, ${label}: the suites that compare with a base get the merge-base commit`, { skip }, (t) => {
     const repo = dispatchCheckout(t);
     const text = readFileSync(file, 'utf8');
     const job = text.slice(text.indexOf(`\n  ${id}:\n`) + 1);
-    const expression = /\n {10}CI_BASE_SHA: \$\{\{ (.+?) \}\}\n/.exec(job.slice(job.indexOf('- name: Run the selected suites\n')))[1];
-    const operands = expression.split('||').map((operand) => operand.trim());
-    assert.ok(operands.every((operand) => /^[a-z_]+(\.[a-z_-]+)+$/.test(operand)), expression);
+    const suitesStep = job.slice(job.indexOf('- name: Run the selected suites\n'));
+    assert.doesNotMatch(suitesStep.slice(0, suitesStep.indexOf('\n      - ')), /^ +CI_BASE_SHA:/m);
     for (const [head, expected] of [[repo.caughtUp, repo.M2], [repo.behind, repo.T]]) {
       const r = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: head });
       assert.equal(r.status, 0, r.log);
-      const context = { steps: { 'train-base': { outputs: r.outputs } },
-        github: { event_name: 'workflow_dispatch', event: { inputs: { pr: '9', head } } } };
-      const value = (operand) => operand.split('.').reduce((at, key) => (at == null ? null : at[key] ?? null), context);
-      const base = operands.map(value).find(Boolean) ?? '';
+      const base = r.env.CI_BASE_SHA ?? '';
       for (const suite of ['components', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry']) {
         let compared = 0;
         for (const command of SUITE_COMMANDS[suite]) {
@@ -2084,11 +2100,61 @@ for (const [file, id] of BASELINE_JOBS) {
         }
         assert.equal(compared, 1, `${suite} compares with the base once`);
       }
-      assert.equal(base, expected, expression);
+      assert.equal(base, expected, r.log);
       assert.ok(isAncestor(repo, base, head), 'the suites compare the head with one of its own ancestors');
     }
   });
 }
+
+// T2 (Task 11092b8b, PLAN-mainpush-flaky-rerun-20261124 §3): in a CI job (GITHUB_ACTIONS=true) a step that runs suites without a base commit is wired wrong: the
+// selector starts nothing and fails, naming CI_BASE_SHA, so the change that drops the line fails in its own pull request.
+// The selector here is this one with a ci-suites table of one suite whose command only leaves a file behind.
+test('in a CI job, --run and --run-selected without a base commit start no command and name CI_BASE_SHA', (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-no-base-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const tools = path.join(dir, 'tools');
+  mkdirSync(tools);
+  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(tools, 'test-env.mjs'));
+  const tail = `for (const key of Object.keys(SUITES['ci-suites'])) delete SUITES['ci-suites'][key];
+SUITES['ci-suites']['retrigger-counter'] = ['**'];
+delete SUITE_PLATFORMS['retrigger-counter'];
+SUITE_COMMANDS['retrigger-counter'] = [{ cwd: '.', argv: ['node', '-e', "require('node:fs').writeFileSync('started', '')"] }];`;
+  const selector = path.join(tools, 'ci-required-selection.mjs');
+  writeFileSync(selector, `${readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8')}\n${tail}\n`);
+  const root = path.join(dir, 'checkout');
+  mkdirSync(root);
+  const started = path.join(root, 'started');
+  const run = (args, base) => {
+    const env = { ...process.env, GITHUB_ACTIONS: 'true' };
+    for (const name of ['NODE_TEST_CONTEXT', 'CI_BASE_SHA', 'GITHUB_EVENT_NAME', 'GITHUB_EVENT_PATH', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY',
+      'CLUED_CI_HOST_LACKS']) delete env[name];
+    if (base !== undefined) env.CI_BASE_SHA = base;
+    return spawnSync(process.execPath, [selector, ...args, '--root', root], { env, encoding: 'utf8', timeout: 60_000 });
+  };
+  for (const args of [['--run', 'retrigger-counter'], ['--run-selected', 'ci-suites']]) {
+    // The fixture sees a command start: with a base the command runs.
+    const wired = run(args, 'a'.repeat(40));
+    assert.equal(wired.status, 0, `${args.join(' ')}: ${wired.stdout}${wired.stderr}`);
+    assert.ok(existsSync(started), `${args.join(' ')} with a base runs the command`);
+    rmSync(started);
+    for (const base of [undefined, '', '0'.repeat(40), 'unset']) {
+      const r = run(args, base);
+      const where = `${args.join(' ')}, CI_BASE_SHA=${JSON.stringify(base)}: ${r.stdout}${r.stderr}`;
+      assert.notEqual(r.status, 0, where);
+      assert.equal(existsSync(started), false, `no command starts\n${where}`);
+      assert.match(r.stdout + r.stderr, /CI_BASE_SHA/, where);
+    }
+  }
+});
+
+// T3 (same plan as T2): outside a CI job nothing changes: a local --run without a base runs its suite (and a failed command is then
+// not run again: ci-required-selection-flaky.test.mjs G).
+test('a local --run without a base commit runs its suite', async (t) => {
+  const start = slotFixture(t);
+  const run = start('local-no-base', { body: "console.log('ran without a base');\n", extraEnv: { CI_BASE_SHA: undefined } });
+  assert.deepEqual(await run.done, [0, null], run.output());
+  assert.match(run.output(), /ran without a base/);
+});
 
 // The release door flow test runs the release workflow's steps and the grant script against a database, so a change to
 // either runs it (FABLE-release-identity-autonomous-20261119 §3.1 tests 8 to 12).
