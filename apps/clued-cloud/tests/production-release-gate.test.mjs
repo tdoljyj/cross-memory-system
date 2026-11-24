@@ -336,8 +336,8 @@ test('发布门不依赖心跳，两个发布入口使用部署后状态模式',
 
 test('libpq tools get sslmode=require where the node-postgres URL says no-verify', () => {
   const scripts = [...productionWorkflow.matchAll(/node -e '((?:const|let) url[^']*)'/g)].map((m) => m[1]);
-  // Backup, migration login role, apply and (release door v1) the deploy grant step.
-  assert.equal(scripts.length, 4);
+  // Capacity gate, backup, migration login role, apply, (release door v1) the deploy grant step and the applied-history export.
+  assert.equal(scripts.length, 6);
   for (const script of scripts) {
     const run = (value) => spawnSync(process.execPath, ['-e', script], {
       env: { ...process.env, CLUED_ATTESTATION_DATABASE_URL: value, CLUED_MIGRATION_DATABASE_URL: value },
@@ -696,7 +696,8 @@ function simulateRelease(inputs, failAt = null) {
     ran.push(step);
     const ok = step.name !== failAt;
     if (step.id) context.outcomes[step.id] = ok ? 'success' : 'failure';
-    if (!ok) context.failed = true;
+    // A step with continue-on-error keeps its outcome and never fails the job.
+    if (!ok && !/\n {8}continue-on-error: true\n/.test(step.text)) context.failed = true;
   }
   return { mode: context.inputs.mode, ran: ran.map((step) => step.name), steps: ran, conclusion: context.failed ? 'failure' : 'success' };
 }
@@ -712,6 +713,9 @@ const RELEASE_ORDER = [
   'Verify projection currentness after deployment', 'Verify exact live commit and currentness transport', 'Preserve release evidence',
 ];
 const ROLLBACK_STEP = 'Roll back the Workers after a failed deploy or verification';
+// Drill test project sync (Task 87d330d0, design §2.1): after everything else,
+// every mode exports production's applied migration list for the test project.
+const APPLIED_EXPORT_STEPS = ['Export the applied production history', 'Publish the applied production history'];
 const DRILL_STEP = 'Fail the rollback drill after every verification passed';
 const G6_STEP = 'Verify exact live commit and currentness transport';
 const G6_REPORT_STEP = 'Report an unconfirmed G6 attestation';
@@ -766,7 +770,8 @@ test('the G6 attestation runs after the rollback step, only when everything succ
   for (const mode of ['deploy', 'release']) {
     const ok = simulateRelease({ mode });
     assert.equal(ok.conclusion, 'success');
-    assert.equal(at(ok, G6_STEP), ok.ran.length - 2, 'only the evidence upload follows the attestation');
+    assert.deepEqual(ok.ran.slice(at(ok, G6_STEP) + 1), ['Preserve release evidence', ...APPLIED_EXPORT_STEPS],
+      'only the evidence upload and the read-only applied-history export follow the attestation');
     // A failed deploy, check, queue or grant: the G6 step never writes.
     for (const failAt of ['Consume the Owner Grant for this commit', QUEUE_STEP, ...DEPLOY_STEPS, ...VERIFY_STEPS]) {
       const failed = simulateRelease({ mode }, failAt);
@@ -855,7 +860,8 @@ test('a failed deploy or post-deploy verification rolls the Workers back and the
   const record = releaseSteps.find((s) => s.name === RECORD_STEP);
   assert.match(record.text, /RELEASE_MODE: \$\{\{ inputs\.mode \}\}/);
   assert.match(record.text, /node scripts\/release-worker-versions\.mjs record --mode "\$RELEASE_MODE" --out \.sites-runtime\/release-evidence\/worker-versions\.json/);
-  assert.doesNotMatch(productionWorkflow, /continue-on-error/);
+  // Nothing on the release path may fail quietly; the only steps that may are the applied-history export.
+  assert.deepEqual(releaseSteps.filter((s) => /continue-on-error/.test(s.text)).map((s) => s.name), APPLIED_EXPORT_STEPS);
   for (const file of ['worker-versions', 'worker-rollback']) {
     assert.match(productionWorkflow, new RegExp(`release-evidence/${file}\\.json\\n`));
   }
@@ -1391,6 +1397,50 @@ test('backup failures stop migrate mode before any grant or production mutation'
   }
 });
 
+// Capacity gate (FABLE-prod-db-shrink-v2-20261124 §8, B3): migrate mode reads the database size with the migration login
+// and hands it to scripts/migration-size-gate.mjs before the backup, so a refused migration makes no full backup. The
+// threshold is the script's constant: the step passes the size and the files and nothing else.
+const SIZE_GATE_STEP = 'Refuse additions while the database is near its size limit';
+test('the capacity gate runs only in migrate mode, before the backup, with the size and the files as its only arguments', () => {
+  const steps = productionWorkflow.split(/\n      - /).slice(1);
+  const index = (name) => steps.findIndex((step) => step.startsWith(`name: ${name}\n`));
+  const gate = index(SIZE_GATE_STEP);
+  assert.ok(gate >= 0, 'the capacity gate step exists');
+  assert.ok(index('Verify backup and migration database identity') < gate);
+  assert.ok(gate < index('Create and verify encrypted pre-migration backup'));
+  const step = steps[gate];
+  assert.match(step, /\n {8}if: \$\{\{ inputs\.mode == 'migrate' \}\}\n/);
+  // Five minutes: the first pull of the psql image counts against it (§12).
+  assert.match(step, /\n {8}timeout-minutes: 5\n/);
+  assert.match(step, /CLUED_MIGRATION_DATABASE_URL: \$\{\{ secrets\.CLUED_MIGRATION_DATABASE_URL \}\}/);
+  assert.match(step, /MIGRATIONS: \$\{\{ inputs\.migrations \}\}/);
+  // The size is read once with ON_ERROR_STOP; a failed read fails the step.
+  assert.match(step, /psql "\$database_url" -v ON_ERROR_STOP=1 -X -tA[^\n]*\n/);
+  assert.match(step, /size_bytes=\$\(psql_read 'select pg_database_size\(current_database\(\)\)'\) \\\n\s+\|\| \{ echo "::error::[^"]+"; exit 1; \}/);
+  const calls = [...step.matchAll(/node scripts\/migration-size-gate\.mjs([^\n]*)/g)].map((match) => match[1].trim());
+  assert.deepEqual(calls, ['--size-bytes "$size_bytes" --files "$files"']);
+  // The sweep reminder never decides the step: its read may fail and it only warns, and only for a registered job that
+  // has not succeeded in 48 hours (§12): a database without the job reads 'absent', which is not 0.
+  assert.match(step, /\|\| sweep=''/);
+  assert.match(step, /case when not exists \(select 1 from cron\.job where jobname = 'clued-retention-sweep'\) then 'absent'/);
+  assert.match(step, /jobname = 'clued-retention-sweep' and d\.status = 'succeeded' and d\.end_time > now\(\) - interval '48 hours'/);
+  assert.match(step, /\n {10}if \[ "\$sweep" = 0 \]; then\n {12}echo "::warning::[^"\n]+"\n {10}fi\n/);
+  assert.ok(step.indexOf("|| sweep=''") < step.indexOf('node scripts/migration-size-gate.mjs'));
+
+  for (const mode of ['preflight', 'backup', 'deploy', 'release', 'source-capture']) {
+    const inputs = { mode, source_request_id: mode === 'source-capture' ? 'r' : '', source_request_digest: mode === 'source-capture' ? 'd' : '' };
+    assert.ok(!simulateRelease(inputs).ran.includes(SIZE_GATE_STEP), mode);
+  }
+  assert.ok(simulateRelease({ mode: 'migrate', migrations: MIGRATION }).ran.includes(SIZE_GATE_STEP));
+  const refused = simulateRelease({ mode: 'migrate', migrations: MIGRATION }, SIZE_GATE_STEP);
+  assert.equal(refused.conclusion, 'failure');
+  assert.deepEqual(grantSteps(refused), []);
+  for (const name of ['Create and verify encrypted pre-migration backup', 'Require verified backup before migration',
+    'Record migration database login role', 'Apply the named migrations']) {
+    assert.ok(!refused.ran.includes(name), name);
+  }
+});
+
 // Round-3 review, medium 1: a kill while the progress file is being written
 // must not lose the progress already on disk (write to a temporary file, then
 // rename over the old one).
@@ -1806,6 +1856,40 @@ function configPathFindings(source) {
   }
   return [...new Set(findings)];
 }
+
+test('every mode ends by exporting the applied production history, read-only, and the export cannot fail a release', () => {
+  const [exportStep, publishStep] = APPLIED_EXPORT_STEPS.map((name) => releaseSteps.find((s) => s.name === name));
+  assert.ok(exportStep && publishStep, 'the release workflow has no applied-history export');
+  for (const mode of RELEASE_MODES) {
+    const inputs = { mode, ...(mode === 'migrate' ? { migrations: MIGRATION } : {}) };
+    const run = simulateRelease(inputs);
+    assert.equal(run.conclusion, 'success', mode);
+    assert.deepEqual(run.ran.slice(-3), ['Preserve release evidence', ...APPLIED_EXPORT_STEPS], mode);
+    // The export failing, or the upload, leaves the release as it was.
+    for (const failAt of APPLIED_EXPORT_STEPS) assert.equal(simulateRelease(inputs, failAt).conclusion, 'success', `${mode}: ${failAt}`);
+  }
+  // A failed release exports nothing: the test project follows only what a successful run reports.
+  const failed = simulateRelease({ mode: 'release' }, 'Deploy Clued production Worker');
+  for (const name of APPLIED_EXPORT_STEPS) assert.ok(!failed.ran.includes(name), name);
+  for (const step of [exportStep, publishStep]) {
+    assert.match(step.text, /\n {8}continue-on-error: true\n/);
+    assert.match(step.text, /\n {8}timeout-minutes: \d+\n/);
+    assert.equal(step.condition, null, `${step.name} runs in every mode`);
+  }
+  // Read-only: the attestation login, one read-only transaction, the committed query; names, md5 and order only.
+  assert.deepEqual([...exportStep.text.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]), ['CLUED_ATTESTATION_DATABASE_URL_V2']);
+  assert.match(exportStep.text, /-c 'begin read only' -f supabase\/production-schema\/applied\.sql -c 'commit'/);
+  assert.doesNotMatch(exportStep.text, /MIGRATION_DATABASE_URL|clued-release-door|statements\b(?!_)/);
+  const query = fs.readFileSync(new URL('../supabase/production-schema/applied.sql', import.meta.url), 'utf8');
+  assert.match(query, /'statements_md5', md5\(array_to_string\(statements, ''\)\)/);
+  assert.doesNotMatch(query.replace(/--[^\n]*/g, ''), /\b(?:insert|update|delete|create|alter|drop|grant|truncate)\b/i);
+  // Its own artifact: the encrypted backup and the release evidence stay where they are.
+  assert.doesNotMatch(publishStep.text, /secrets\./);
+  assert.match(publishStep.text, /\n {10}name: clued-production-applied-\$\{\{ github\.run_id \}\}\n/);
+  assert.match(publishStep.text, /\n {10}path: apps\/clued-cloud\/\.sites-runtime\/production-applied\/production-applied\.json\n/);
+  assert.match(publishStep.text, /\n {10}if-no-files-found: ignore\n/);
+  assert.doesNotMatch(releaseSteps.find((s) => s.name === 'Preserve release evidence').text, /production-applied/);
+});
 
 test('the release path reads wrangler configurations only through readWranglerConfig', () => {
   // The guard catches each way of parsing a configuration by hand (samples
