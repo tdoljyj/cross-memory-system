@@ -110,6 +110,7 @@ function workflowFixture(run, attempt = 1) {
     CLUED_G4_FRESH_PROJECT: `clued-g4-${run}-${attempt}` };
   const calls = [];
   const runtime = { platform: 'linux', portProbe: async () => true, startLock: () => {},
+    applyMigrations: (checkout) => { calls.push(['apply-migrations', checkout]); },
     portPolicy: () => ({ ephemeral: [32768, 60999], reserved: [] }), git: (verb, ref) => {
     if (verb === 'show') return config;
     if (verb === 'status') return fs.readFileSync(path.join(app, 'config.toml'), 'utf8') === config ? '' : ' M apps/clued-cloud/supabase/config.toml';
@@ -140,6 +141,32 @@ test('prepare and verify perform the actual file transitions and only a fixed lo
     assert.match(fs.readFileSync(f.e.GITHUB_ENV, 'utf8'), /DOCKER_HOST=unix:\/\/\/var\/run\/docker.sock/);
     assert.equal(f.calls.filter((args) => args[0] === 'exec').length, 1);
     assert.equal(f.calls.some((args) => args.includes('rm') || args.includes('prune') || args.includes('start')), false);
+  } finally { f.dispose(); }
+});
+
+test('verify applies the migration chain once, after the container identity is proven and before the history is read', async () => {
+  const f = workflowFixture(134);
+  try {
+    await prepare(f.e, f.runtime);
+    f.calls.length = 0;
+    assert.equal(verify(f.e, f.runtime).history_matches, true);
+    const at = (match) => f.calls.findIndex(match);
+    const applied = f.calls.filter((args) => args[0] === 'apply-migrations');
+    assert.deepEqual(applied, [['apply-migrations', f.root]], 'the local executor runs exactly once, on this checkout');
+    const identity = at((args) => args[0] === 'volume' && args[1] === 'inspect');
+    const apply = at((args) => args[0] === 'apply-migrations');
+    const history = at((args) => args[0] === 'exec');
+    assert.ok(identity >= 0 && identity < apply && apply < history, `identity ${identity}, apply ${apply}, history ${history}`);
+    // A container that is not this run's own database is never written to.
+    f.calls.length = 0;
+    assert.throws(() => verify(f.e, { ...f.runtime, docker: (...args) =>
+      args[0] === 'volume' && args[1] === 'inspect' ? JSON.stringify({ 'com.supabase.cli.project': 'clued-g4-1-1' }) : f.runtime.docker(...args) }),
+    /fresh_/);
+    assert.equal(f.calls.some((args) => args[0] === 'apply-migrations' || args[0] === 'exec'), false);
+    // A failing chain is the verification's failure; no history is accepted after it.
+    f.calls.length = 0;
+    assert.throws(() => verify(f.e, { ...f.runtime, applyMigrations: () => { throw new Error('Migration x.sql: boom'); } }), /Migration x\.sql: boom/);
+    assert.equal(f.calls.some((args) => args[0] === 'exec'), false);
   } finally { f.dispose(); }
 });
 
@@ -180,9 +207,8 @@ test('both G4 routes prove freshness before start, keep every database test, and
   assert.equal(routes.length, 2);
   for (const route of routes) {
     assert.ok(route.indexOf('--prepare') >= 0 && route.indexOf('--prepare') < route.indexOf('supabase start'));
-    // start only brings the containers up; the chain is applied in production's shape before the history is verified.
-    const migrate = route.indexOf('node ../../scripts/ci/clued-local-migrate.mjs');
-    assert.ok(migrate > route.indexOf('supabase start') && migrate < route.indexOf('--verify'));
+    // start only brings the containers up; --verify applies the chain in production's shape (see the verify tests).
+    assert.ok(route.indexOf('--verify') > route.indexOf('supabase start'));
     assert.equal(route.includes('supabase db reset'), false);
     for (const command of ['supabase db lint --local', 'supabase test db supabase/tests/m1_runtime_contracts.test.sql',
       'npm run test:project:lifecycle:v2']) assert.ok(route.includes(command));
