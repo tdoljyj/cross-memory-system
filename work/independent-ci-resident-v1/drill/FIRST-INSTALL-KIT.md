@@ -40,16 +40,28 @@ kit 的接受文件给角色钉的每个主机工具（`fleetRefs.formalRoles.<�
 
 设计：`D:/w/tmp/FABLE-drill-role-probe-20261124.md` PR-3。演练对着测试项目 `clued-auth-test` 装，不对着生产。
 
-- **唯一来源** `drill/drill-server.json`：项目名、地址、公开 key（`sb_publishable_…`，客户端公开值）。key 还没填时不出 kit
-  （`DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET`），任何一步都不回落到 Release 里的生产地址。
+- **唯一来源** `drill/drill-server.json`：项目名、地址、要断开的主机、放行的主机。**公开 key 不在仓库里**（文件里出现 `publishableKey` 即拒，`DRILL_SERVER_REFUSED`）：
+  它的来源是测试项目本身，DESK 读出后交给 `pwsh -NoProfile -File drill-vm.ps1 -ServerKey <key>`，该入口核形状、拿它问一次测试项目的同步回执函数，项目应答了才写进宿主的
+  `D:\clued-drill\drill-server.local.json`（记着它属于哪个项目，换了项目即 `DRILL_SERVER_KEY_REFUSED`）。宿主没有这份时不出 kit（`DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET`），
+  任何一步都不回落到 Release 里的生产地址。key 轮换后演练以 `DRILL_SERVER_KEY_REFUSED` 停，重交一次并重做 kit。
 - **kit 里换什么**：构建器把 Release 的首装 kit 复制一份，只换 `record.supabaseUrl`、`record.publishableKey` 两个字段，逐叶比较多差一个即不出 kit
   （`DRILL_SERVER_STAND_IN_DIFFERS`），地址与 Release 相同也不出（`DRILL_SERVER_IS_PRODUCTION`）。来宾里钉住这份 kit 字节的三处随之换成演练版，都放进 kit 并钉进 `kit.json`：
   首装 SHA256SUMS（只换 kit 那一行）、接受文件（`acceptanceOf(…, DRILL_RESERVED)`，`firstInstallKitSha256` 是演练版的；已接受的版本也用这份保留值文件，上不了 Release）、`release-pins.json`。
   `-From` 目录不改；tar 与 Source 是包自己的（服务端地址不进 Source 哈希）。回执的 `firstInstallKitSha256` 仍是 Release 的（seal 拿它对 Owner 的接受文件），演练版哈希记在回执 `server` 里。
-- **开机前**（`Assert-DrillServerReady`）：kit 没有 `server` 即拒（`DRILL_KIT_SERVER_STAND_IN_MISSING`，旧 kit 重做）；`make-drill-kit.mjs --server-of` 再核一遍 kit 与 `-From`
-  （`DRILL_KIT_SERVER_NOT_THIS_RELEASE` 等）；演练绑定不在即拒（`DRILL_BINDING_CREDENTIAL_MISSING`），形状不对即拒（`DRILL_BINDING_CREDENTIAL_REFUSED`）。
+- **开机前**（`Assert-DrillServerReady`）：kit 没有 `server` 即拒（`DRILL_KIT_SERVER_STAND_IN_MISSING`，旧 kit 重做）；演练绑定不在即拒（`DRILL_BINDING_CREDENTIAL_MISSING`），形状不对即拒
+  （`DRILL_BINDING_CREDENTIAL_REFUSED`）；然后 `drill-server-check.mjs --ready`（令牌经标准输入交给它，不进命令行和环境变量）先离线核 kit 与 `-From`（`DRILL_KIT_SERVER_NOT_THIS_RELEASE` 等），
+  再向测试项目发两次请求，无应答各试 3 次：
+
+  | 请求 | 要求 | 不符时的码 |
+  |---|---|---|
+  | 同步回执 `clued_drill_sync_receipt_v1` | 200 且 `state` 为 `in-sync` | `DRILL_SERVER_KEY_REFUSED`（401/403，key 轮换了）、`DRILL_SERVER_NOT_IN_SYNC`（`syncing`、`diverged`、`no-receipt`）、`DRILL_SERVER_UNREACHABLE` |
+  | 角色探测 `clued_work_merge_slot_holders_v1`，就是来宾将要发的那一个（令牌哈希、kit 的 `scope` 与 `repository`） | 答“无角色”（`holders: []`、`reason: admission_binding_required`，与节点同一个解析函数） | `DRILL_SERVER_PROBE_FUNCTION_MISSING`（404，测试项目缺迁移）、`DRILL_BINDING_REFUSED_BY_SERVER`（401/403，令牌过期或对 `scope` 无只读授权）、`DRILL_BINDING_ON_DUTY`（被放行：账户没有 parking 角色，或绑定带了角色，来宾会转 ACTIVE） |
+
+  回执内容记进演练回执的 `server.sync`：每张回执写明它替的是生产哪一版。没防住的一种：生产变了而同步作业没启动，回执仍是上一次的 `in-sync`。
+- **测试项目靠什么与生产一致**：同步作业（另一条 PR 的工作流）把测试库向生产的已应用迁移清单收敛，并给每个账户种一条 ci-admission 的 parking 角色。没有 parking 时服务端对任何绑定都放行，
+  探测会答 held，所以它是这套替身的前提；重建测试库后由同步作业自动恢复，但演练绑定要重签。
 - **演练绑定**：Owner 在测试项目建一条不带 ci-admission 角色的绑定，交一次：`pwsh -NoProfile -File drill-vm.ps1 -BindingCredential` 弹出 Windows 凭据窗口，
-  用户名填连接 id，密码贴 `clued_bnd_` 令牌；存到 `D:\clued-drill\drill-binding.clixml`（DPAPI，仅本 Windows 用户），与来宾管理员凭据同一处、同一个读取函数（`Get-DrillCredential`）。
+  用户名填连接 id，密码贴 `clued_bnd_` 令牌（无头令牌最长 90 天，签发时选 90 天、只读、范围选 kit `record.scope` 那一项；到期后演练在开机前以 `DRILL_BINDING_REFUSED_BY_SERVER` 停，重签重交）；存到 `D:\clued-drill\drill-binding.clixml`（DPAPI，仅本 Windows 用户），与来宾管理员凭据同一处、同一个读取函数（`Get-DrillCredential`）。
   每轮经 PowerShell Direct 会话交给来宾写成 `ci-admission.token`，随检查点恢复消失；`public.json` 的绑定 id 与令牌指纹就是这条绑定的。升级令牌与 App 私钥仍在来宾里现造。
 - **来宾里断开生产**：包自己的代码里写死着生产地址（`windows/SwapBroker.cs` 的 `Route`：服务每次启动都向生产网关发续期探测，不读 record），换 record 管不到。
   所以建 kit 时把 tar 里出现的每个 `https://` 主机逐个判定：在 `drill-server.json` 的 `blackholeHosts`（加上 Release record 的数据库主机）里就断开，在 `allowedHosts`（不是 Clued 的主机）里就放行，

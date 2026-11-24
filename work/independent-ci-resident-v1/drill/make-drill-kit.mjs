@@ -274,7 +274,7 @@ export function verifyKitServer({ kit, from, version }) {
     blackholeHosts: s.blackholeHosts };
 }
 // Registered as a stand-in (FIRST-INSTALL-KIT.md): the kit's per-node steps name it, so A10 never passes on a server that is not production's.
-export const SERVER_STAND_IN_STEP = '服务端与 CI 令牌替身（kit 的两个公开字段换成测试项目，CI 令牌是 Owner 在测试项目建的不带 ci-admission 角色的演练绑定；替的是生产服务端与真节点的 CI 绑定；因为演练不得接触生产；因此没验到生产服务端对本包的应答与带角色节点的首班车；不可删，没验到的部分由真机首装承担）';
+export const SERVER_STAND_IN_STEP = '服务端与 CI 令牌替身（kit 的两个公开字段换成测试项目，CI 令牌是 Owner 在测试项目签发的不带 ci-admission 角色的演练绑定，最长 90 天，到期重签；测试项目的库由同步作业向生产已应用清单收敛，账户里的 parking 角色也由同步作业种，没有它服务端会放行任何绑定；替的是生产服务端与真节点的 CI 绑定；因为演练不得接触生产；因此没验到生产服务端对本包的应答与带角色节点的首班车；不可删，没验到的部分由真机首装承担）';
 
 export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null, credentials = null, credentialFilesSha256 = null, server = null }) {
   check(Number.isInteger(timeoutMinutes) && timeoutMinutes >= 5 && timeoutMinutes <= 240, 'DRILL_KIT_TIMEOUT_REFUSED');
