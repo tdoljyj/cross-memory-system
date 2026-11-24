@@ -281,9 +281,8 @@
       "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
     },
     "clued_private.imprint_record_history_v1": {
-      "class": "pending",
-      "owner": "B1b：Owner 选 A 上线时改为 rule retention_rule_imprint_history_v1；选 B 改为 canonical",
-      "expiresOn": "2026-12-15"
+      "class": "rule",
+      "rule": "retention_rule_imprint_history_v1"
     },
     "clued_private.independent_review_settings_v1": {
       "class": "state",
@@ -968,9 +967,8 @@
       "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
     },
     "public.clued_continuity_sessions": {
-      "class": "pending",
-      "owner": "B1a：上线时改为 rule retention_rule_session_payload_v1",
-      "expiresOn": "2026-12-15"
+      "class": "rule",
+      "rule": "retention_rule_session_payload_v1"
     },
     "public.clued_evidence": {
       "class": "canonical"
@@ -982,9 +980,8 @@
       "class": "canonical"
     },
     "public.clued_memory_audit": {
-      "class": "pending",
-      "owner": "B1a：上线时改为 rule retention_rule_memory_audit_v1",
-      "expiresOn": "2026-12-15"
+      "class": "rule",
+      "rule": "retention_rule_memory_audit_v1"
     },
     "public.clued_organizations": {
       "class": "canonical"

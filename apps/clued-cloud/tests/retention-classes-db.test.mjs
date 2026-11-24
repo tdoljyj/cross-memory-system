@@ -227,9 +227,10 @@ test('every table the migrations create declares its retention class', { timeout
       }
       for (const name of ['public.clued_context_checkpoints', 'public.clued_context_events',
         'public.clued_checkpoint_event_absorptions', 'clued_private.search_text_v1']) assert.equal(classOf(name), 'canonical', name);
-      for (const name of ['public.clued_memory_audit', 'public.clued_continuity_sessions', 'clued_private.imprint_record_history_v1']) {
-        assert.ok(['rule', 'pending'].includes(classOf(name)), name);
-      }
+      // B1a and B1b merge before this change (design §12, B1a 与 B2 的衔接): their rules, which the replayed migrations create.
+      assert.deepEqual(registry.tables['public.clued_memory_audit'], { class: 'rule', rule: 'retention_rule_memory_audit_v1' });
+      assert.deepEqual(registry.tables['public.clued_continuity_sessions'], { class: 'rule', rule: 'retention_rule_session_payload_v1' });
+      assert.deepEqual(registry.tables['clued_private.imprint_record_history_v1'], { class: 'rule', rule: 'retention_rule_imprint_history_v1' });
       for (const schema of ['mtpe_m0_test', 'mtpe_m0_work']) assert.ok(nonEmpty(registry.excludedSchemas[schema]), schema);
     });
     t.diagnostic(`replayed ${names.length} migrations; ${replayed.tables.length} tables`);
