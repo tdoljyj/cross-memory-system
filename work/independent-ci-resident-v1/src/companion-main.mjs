@@ -93,6 +93,49 @@ export async function lane({ runner, work, sleep: wait = sleep, everyMs = 2_000,
     await wait(everyMs);
   }
 }
+// The advisory lane as main() runs it (lane above), from the parts main() builds: the poller, the retention notice, the bundle
+// retention, the ruleset backstop and the PR page status. Exported so that the tests run the very lanes main() runs.
+// readStatus(): the executor's status board; pruneOldBundles(), backstop(): one bundle retention and one ruleset backstop pass.
+export function advisoryLanes({ advisory, poller, readStatus, renewKeyCheck, retentionNotifier, pruneOldBundles, backstop, reporter }) {
+  let lastPoll = 0, lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0, lastBundlePrune = 0;
+  return [
+    { runner: advisory, work: async () => {
+      await renewKeyCheck();
+      try { await retentionNotifier.step(); } catch { /* advisory; retry without marking an undelivered notice */ }
+      // The bundle retention (companion.mjs#pruneBundles): bundles of ended batches, at start and every hour.
+      if (Date.now() - lastBundlePrune > BUNDLE_PRUNE_EVERY_MS) { lastBundlePrune = Date.now(); await pruneOldBundles(); }
+      if (Date.now() - lastPoll > POLL_EVERY_MS) {
+        lastPoll = Date.now();
+        // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
+        const status = await readStatus().catch(() => null);
+        try {
+          await poller.pass({ generation: status?.queue?.generation ?? null });
+          await poller.parkedPass(status?.pending ?? []);
+        } catch { /* next pass */ }
+      }
+      // The ruleset backstop (phase 2 step 3c-1, DESIGN §22.3): main's rules every five minutes, as before the 60-second poll.
+      if (Date.now() - lastBackstop > BACKSTOP_EVERY_MS) {
+        lastBackstop = Date.now();
+        try { await backstop(); } catch { /* next time */ }
+      }
+      // Generation 10 (DESIGN 53.5): status.json is read at most every REPORT_MIN_GAP_MS; the PR page is posted every minute as before,
+      // and also at once when the batch, its stage, the breaker, the intake pause or HALT/PAUSE changed (a claimed batch or a started
+      // trial is on the page within seconds, not after the next minute or the batch's end). reporter.pass still writes only what
+      // changed, within its own bounds.
+      if (Date.now() - lastReport > REPORT_MIN_GAP_MS && Date.now() - lastStatusRead > REPORT_MIN_GAP_MS) {
+        lastStatusRead = Date.now();
+        let status = null, statusError = false;
+        try { status = await readStatus(); } catch { statusError = true; }
+        const signature = statusSignature(status);
+        if (reportDue({ now: Date.now(), lastReport, lastSignature, signature, everyMs: REPORT_EVERY_MS })) {
+          lastReport = Date.now();
+          lastSignature = signature;
+          try { await reporter.pass({ pulls: poller.lastPass?.pulls ?? [], drafts: poller.lastPass?.drafts ?? [], status, statusError }); } catch { /* advisory: the next minute tries again */ }
+        }
+      }
+    } },
+  ];
+}
 const exists = async p => { try { await fs.access(p); return true; } catch { return false; } };
 // A record the companion reads for itself (a challenge's deadline, DESIGN §25.4), bounded like a bridge record.
 const readText = async p => { const b = await fs.readFile(p); check(b.length <= 1_400_000, 'COMPANION_READ_BOUND'); return b.toString('utf8'); };
@@ -339,7 +382,6 @@ export async function main(args = process.argv.slice(2)) {
   sessionFacts({ wsl: (...l) => [cfg.wslExe, '--distribution', cfg.distribution, '--user', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LANG=C', 'LC_ALL=C', ...l],
     run: (a, o) => upgradeRunner.run(a, o) })
     .then(f => writeSessionFacts(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI'), { ...f, wslClient })).catch(() => {});
-  let lastPoll = 0, lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0, lastBundlePrune = 0;
   // Only now, with a usable job host and every part of the companion set up: a companion whose job host cannot start a
   // child, or whose set-up failed, sends no heartbeat, so the service starts no batch (DESIGN §24; design r3 review MINOR 1;
   // r3 implementation review MAJOR 2). The beat stops with the lanes; the entry below exits outright, so no timer keeps a
@@ -364,42 +406,11 @@ export async function main(args = process.argv.slice(2)) {
       ...(mergeReconcile?[lane({runner:mergeRunner,work:()=>mergeReconcile.step(),everyMs:MERGE_RECONCILE_LANE_EVERY_MS})]:[]),
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
       ...(frontMerge ? [lane({ runner: frontMergeRunner, work: () => frontMerge.step(), everyMs: FRONT_MERGE_LANE_EVERY_MS })] : []),
-      lane({ runner: advisory, work: async () => {
-        await renewKeyCheck();
-        try { await retentionNotifier.step(); } catch { /* advisory; retry without marking an undelivered notice */ }
-        // The bundle retention (companion.mjs#pruneBundles): bundles of ended batches, at start and every hour.
-        if (Date.now() - lastBundlePrune > BUNDLE_PRUNE_EVERY_MS) { lastBundlePrune = Date.now(); await companion.pruneOldBundles(); }
-        if (Date.now() - lastPoll > POLL_EVERY_MS) {
-          lastPoll = Date.now();
-          // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
-          const status = await readStatus(values.root).catch(() => null);
-          try {
-            await poller.pass({ generation: status?.queue?.generation ?? null });
-            await poller.parkedPass(status?.pending ?? []);
-          } catch { /* next pass */ }
-        }
-        // The ruleset backstop (phase 2 step 3c-1, DESIGN §22.3): main's rules every five minutes, as before the 60-second poll.
-        if (Date.now() - lastBackstop > BACKSTOP_EVERY_MS) {
-          lastBackstop = Date.now();
-          try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o),
-            store, notify, observeRules: rules => poller.noteBranchRules(rules) }); } catch { /* next time */ }
-        }
-        // Generation 10 (DESIGN 53.5): status.json is read at most every REPORT_MIN_GAP_MS; the PR page is posted every minute as before,
-        // and also at once when the batch, its stage, the breaker, the intake pause or HALT/PAUSE changed (a claimed batch or a started
-        // trial is on the page within seconds, not after the next minute or the batch's end). reporter.pass still writes only what
-        // changed, within its own bounds.
-        if (Date.now() - lastReport > REPORT_MIN_GAP_MS && Date.now() - lastStatusRead > REPORT_MIN_GAP_MS) {
-          lastStatusRead = Date.now();
-          let status = null, statusError = false;
-          try { status = await readStatus(values.root); } catch { statusError = true; }
-          const signature = statusSignature(status);
-          if (reportDue({ now: Date.now(), lastReport, lastSignature, signature, everyMs: REPORT_EVERY_MS })) {
-            lastReport = Date.now();
-            lastSignature = signature;
-            try { await reporter.pass({ pulls: poller.lastPass?.pulls ?? [], drafts: poller.lastPass?.drafts ?? [], status, statusError }); } catch { /* advisory: the next minute tries again */ }
-          }
-        }
-      } }),
+      ...advisoryLanes({ advisory, poller, readStatus: () => readStatus(values.root), renewKeyCheck, retentionNotifier,
+        pruneOldBundles: () => companion.pruneOldBundles(),
+        backstop: () => companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o),
+          store, notify, observeRules: rules => poller.noteBranchRules(rules) }),
+        reporter }).map(spec => lane(spec)),
     ]);
   } finally {
     clearInterval(beating);
