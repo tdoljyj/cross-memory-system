@@ -2764,6 +2764,42 @@ export async function independentAdmissionCheck(fetchImpl, env, repository, head
   return { settled: true, check: newest, bound, admitted: bound && newest.conclusion === "success" };
 }
 
+// Task 2fb32dc7 (PLAN-train-full-and-gate-poll-20261125 §2.3): the admission side says on the PR page, under its
+// resident-queue/<node> status, when it will not propose this head (behind main under github-merge landing, or a stale PR base;
+// the resident package's src/pr-status.mjs#describe). The head is fixed and main only moves on, so that admission is not
+// coming: the gate stops polling and ends not admitted instead of holding its runner for the whole wait; the robot's new head runs
+// again. Only ever stricter, so who posted the status does not matter: it can end a wait, never admit. The newest resident-queue/
+// status decides (GitHub lists a commit's statuses newest first). One read without retries per poll: an error or any other text
+// (another node's, an older or a newer sentence) keeps the wait as before.
+// The held texts: pr-status.mjs writes them and holds the block between the held-texts marks byte for byte (the gate imports nothing
+// outside scripts/ci, that package nothing from scripts/ci); the admission self-tests lock the two.
+// held-texts: begin
+const HELD_TEXTS = Object.freeze({
+  'merge-main': behindBy => `落后 main ${behindBy} 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）`,
+  'push-any-commit': () => '已包含 main，但 PR 的基准还是旧的：推一个任意提交即可',
+});
+const HELD_NUMBER = '\u0000';
+const HELD_PATTERNS = Object.entries(HELD_TEXTS).map(([hint, text]) =>
+  [hint, new RegExp(`^${text(HELD_NUMBER).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(HELD_NUMBER, '[0-9]{1,10}')}$`, 'u')]);
+// { hint, text }: the held part of a PR page text (text is that part alone: a fixed sentence and digits), or null.
+export function heldPartOf(description) {
+  if (typeof description !== 'string' || description.length > 1000) return null;
+  for (const part of description.split('；')) for (const [hint, pattern] of HELD_PATTERNS) if (pattern.test(part)) return { hint, text: part };
+  return null;
+}
+// held-texts: end
+export const RESIDENT_STATUS_CONTEXT_PREFIX = "resident-queue/";
+export async function residentHeldHint(fetchImpl, env, repository, headSha) {
+  try {
+    const statuses = await githubJson(fetchImpl[RETRY_ORIGINAL] ?? fetchImpl, env, `/repos/${repository}/commits/${headSha}/statuses?per_page=100`);
+    if (!Array.isArray(statuses)) return null;
+    const newest = statuses.find((status) => status && typeof status.context === "string" && status.context.startsWith(RESIDENT_STATUS_CONTEXT_PREFIX));
+    return heldPartOf(newest && newest.description);
+  } catch {
+    return null;
+  }
+}
+
 export async function independentRepairRerun({ fetchImpl, env, pr, head = pr?.head.sha, attempt, self }) {
   const repository = env.GITHUB_REPOSITORY;
   const runId = env.GITHUB_RUN_ID;
@@ -2773,7 +2809,7 @@ export async function independentRepairRerun({ fetchImpl, env, pr, head = pr?.he
     read: route => githubJson(fetchImpl, env, route), readLog: route => githubText(fetchImpl, env, route) });
 }
 
-async function independentGateOutcome({ env, event, fetchImpl, outcome, pr, attempt, independent, limit, self }) {
+async function independentGateOutcome({ env, event, fetchImpl, outcome, pr, attempt, independent, limit, self, held = null }) {
   const what = `${INDEPENDENT_ADMISSION_CHECK} of App ${INDEPENDENT_ADMISSION_APP_ID} for #${pr.number} on ${pr.head.sha}`;
   outcome.admission_source = INDEPENDENT_GATE_SOURCE;
   outcome.automation_self_hosted = false;
@@ -2783,7 +2819,8 @@ async function independentGateOutcome({ env, event, fetchImpl, outcome, pr, atte
     html_url: check.html_url ?? null, source: what };
   if (!independent || !independent.settled) {
     outcome.verdict = "ADMISSION_PENDING";
-    outcome.reasons.push(`${what}: ${check ? `check ${check.id} still ${check.status}` : "has posted no check"} after ${limit}s`);
+    if (held) outcome.reasons.push(`${what}: 准入方不提议（${held.hint}）：${held.text}；机器人带上来后新 head 重新跑`);
+    else outcome.reasons.push(`${what}: ${check ? `check ${check.id} still ${check.status}` : "has posted no check"} after ${limit}s`);
   } else if (!independent.bound) {
     outcome.verdict = "REJECTED";
     outcome.reasons.push(`${what}: check ${check.id} does not bind this pull request (external_id or summary)`);
@@ -3193,6 +3230,7 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     if (!Number.isFinite(since)) throw new Error(`run ${env.GITHUB_RUN_ID} has no created_at.`);
     let found = { run: null, check: null };
     let independent = null;
+    let held = null;
     const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID} for #${pr.number} from the admission run of this event (created since ${self.created_at} less ${SAME_EVENT_MS / 1000}s)`;
     for (let waited = 0; ;) {
       let settled;
@@ -3209,13 +3247,15 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
       // The pauses of retried GitHub reads count into the wait.
       const used = waited + retryBudget.spentMs / 1000;
       if (settled || used >= limit) break;
+      // The admission side said it will not propose this head: no admission is coming (residentHeldHint).
+      if (independentSource && (held = await residentHeldHint(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha))) break;
       const delay = Math.min(pollSeconds, limit - used);
       await sleep(delay * 1000);
       waited += delay;
     }
     // A gate with the independent source is decided by the Native check alone, whether or not the
     // clued-admission workflow runs again: its event-bound check never stands in.
-    if (independentSource) return await independentGateOutcome({ env, event, fetchImpl, outcome, pr, attempt, independent, limit, self });
+    if (independentSource) return await independentGateOutcome({ env, event, fetchImpl, outcome, pr, attempt, independent, limit, self, held });
     // Merge Admission step 2 (review MINOR-3/4): on a re-run, the newest
     // check for this pull request on this head decides, whichever admission
     // run (or re-verification) posted it: every later check is a later
