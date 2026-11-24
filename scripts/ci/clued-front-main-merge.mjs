@@ -44,7 +44,9 @@
 //                 (REBRING_RED_MAX in a row): main may have fixed that red since.
 // Every run without inputs also names, once per head, a pull request on the train
 // whose required checks are not all there with nothing queued or running for
-// STALLED_AFTER_MS (§3.11 item 3; nameStalled below).
+// STALLED_AFTER_MS (§3.11 item 3; nameStalled below). The resident's own page status that
+// it does not propose a head (heldPartOf: "落后 main N 个提交：轮到时机器人合入 main…")
+// is neither under way nor activity there (PLAN-unadmitted-silent-20261125 §2.2).
 // With a front it does nothing. Without one it brings the candidate whose
 // auto-merge was enabled first (ties: the lower number) exactly as a named run
 // does, one per run, unless BROUGHT_UNADMITTED_LIMIT heads on the train are ones
@@ -66,8 +68,8 @@
 // It takes no authorization step itself; it holds no Clued credential.
 
 import fs from 'node:fs';
-import { ADMISSION_APP_ID, APP_CHECK_NAME, INDEPENDENT_ADMISSION_APP_ID, INDEPENDENT_ADMISSION_CHECK, MAIN_MERGE_CHECK, appJwt, githubJson,
-  githubPaged, mainMergeExternalId } from './clued-work-admission.mjs';
+import { ADMISSION_APP_ID, APP_CHECK_NAME, INDEPENDENT_ADMISSION_APP_ID, INDEPENDENT_ADMISSION_CHECK, MAIN_MERGE_CHECK, RESIDENT_STATUS_CONTEXT_PREFIX,
+  appJwt, githubJson, githubPaged, heldPartOf, mainMergeExternalId } from './clued-work-admission.mjs';
 import { appRequest } from './clued-managed-auto-merge.mjs';
 import { resolveMode } from './merge-admission-policy.mjs';
 import { sixPinned } from '../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
@@ -107,6 +109,11 @@ const FAILED = new Set(['failure', 'cancelled', 'timed_out', 'action_required'])
 const GREEN = new Set(['success', 'skipped', 'neutral']);
 // The independent CI withdrew this check (no verdict on the code); its pending status that says it stopped will not finish.
 const WITHDRAWN = 'Independent CI check withdrawn', STOPPED = '已停止';
+// The resident saying it does not propose this head (poller.mjs hints merge-main and push-any-commit; pr-status.mjs#describe writes
+// the sentence, heldPartOf reads it, the same bytes as the PR gate's). Pending while the head is behind, and rewritten each time main
+// moves: read as under way or as activity, a head behind main that the train will not bring was never named (PLAN-unadmitted-silent
+// -20261125 §1.2 缺陷乙). Any other text, of the resident or anyone, is under way as before: unknown, it waits.
+const residentHeld = status => String(status?.context ?? '').startsWith(RESIDENT_STATUS_CONTEXT_PREFIX) && heldPartOf(status?.description) !== null;
 const TRAIN_QUERY = 'query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){defaultBranchRef{name} '
   + 'pullRequests(states:OPEN,first:100,after:$after){pageInfo{hasNextPage endCursor} '
   + 'nodes{number isDraft baseRefName headRefOid mergeable updatedAt autoMergeRequest{enabledAt} headRepository{nameWithOwner}}}}}';
@@ -162,7 +169,7 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
     return (run?.status === 'completed' && GREEN.has(run.conclusion) && !withdrawn(run)) || stateOf(check) === 'success';
   });
   const unfinished = runs.filter(run => run.status !== 'completed').length
-    + statuses.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED)).length;
+    + statuses.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED) && !residentHeld(status)).length;
   const by = (name, app) => succeeded(runs, name, app);
   // What each required check that is not green last did, as wait-pr's exit 5 lists it: a job GitHub skipped keeps its unexpanded
   // name ("... && 'ci-suites' || 'ci-suites-skipped'"), so the required name never appears: that is "job-skipped".
@@ -176,7 +183,7 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
       : state ? `status ${state}` : job ? `job-${job.conclusion ?? job.status}` : 'missing';
     return { context: check.context, last };
   });
-  const times = [...runs.map(run => run.completed_at ?? run.started_at), ...statuses.map(status => status.updated_at ?? status.created_at)]
+  const times = [...runs.map(run => run.completed_at ?? run.started_at), ...statuses.filter(status => !residentHeld(status)).map(status => status.updated_at ?? status.created_at)]
     .map(t => Date.parse(t ?? '')).filter(Number.isFinite);
   return { failed, green, unfinished, missing, lastActivity: times.length ? Math.max(...times) : 0, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID),
     admitted: admitters.every(({ context, integration_id }) => by(context, integration_id)) };
@@ -351,7 +358,8 @@ async function appearedAt({ env, fetchImpl, repository, member }) {
 // check failed (a red one is seen on the PR and by wait-pr) and not all of them green, is not reported as a conflict, and nothing has
 // been queued, running or pending on it for STALLED_AFTER_MS: the rule of wait-pr's exit 5, the length a parameter. A head behind
 // main is one of these only when the train will not bring it up (behindVerdict: the App brought it and it is not admitted); a
-// candidate waits for the front and is brought up, naming it would send someone to merge main by hand. Such a head is
+// candidate waits for the front and is brought up, naming it would send someone to merge main by hand. The resident's pending
+// "落后 main N 个提交" on such a head is not under way and not activity (headRecords, residentHeld). Such a head is
 // named on its pull request, once: which required checks are missing and how each last ended. Nothing is kept between runs: the
 // comment carries the head, and a comment that already names it (stalledMark) means it was named. A helper: whatever it cannot read
 // or post it only reports, per pull request; it never changes what the run decided.

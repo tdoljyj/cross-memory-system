@@ -1656,5 +1656,5 @@ test('U7: the comment refused (403) changes nothing the run decided; the summary
   const r = await w.run({}, SCAFFOLD);
   assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#1400 contains main/); assert.deepEqual(w.brought(), []);
   assert.deepEqual(r.named?.map(n => [n.pr, n.comment]), [[SILENT_B, 'not posted (HTTP 403)']], JSON.stringify(r));
-  assert.match(renderSummary(r), new RegExp(`#${SILENT_B} .*${INDEPENDENT_ADMISSION_CHECK} missing; not posted \(HTTP 403\)`));
+  assert.match(renderSummary(r), new RegExp(`#${SILENT_B} .*${INDEPENDENT_ADMISSION_CHECK} missing; not posted [(]HTTP 403[)]`));
 });
