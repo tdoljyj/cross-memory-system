@@ -134,6 +134,7 @@ apps/clued-cloud/tests/model-domain-bootstrap-request-diagnostics.test.mjs
 apps/clued-cloud/tests/model-domain-bootstrap-source.test.mjs
 apps/clued-cloud/tests/model-domain-integration.test.mjs
 apps/clued-cloud/tests/model-domain-postgres-lifecycle.fixture.mjs
+apps/clued-cloud/tests/model-domain-postgres-lifecycle.test.mjs
 apps/clued-cloud/tests/model-domain-successor-db.test.mjs
 apps/clued-cloud/tests/model-reference-owner-source.test.mjs
 apps/clued-cloud/tests/mtpe-frontier-eligibility-v2-1-db.test.mjs
@@ -333,6 +334,7 @@ scripts/ci/ci-usage-report.test.mjs
 scripts/ci/clued-g4-fresh-start.test.mjs
 scripts/ci/clued-handover-external-fixture-locator.test.mjs
 scripts/ci/clued-handover-external-provider.integration.test.mjs
+scripts/ci/clued-independent-publication-port.test.mjs
 scripts/ci/clued-independent-revocation-controller.test.mjs
 scripts/ci/clued-independent-revoker.test.mjs
 scripts/ci/clued-independent-supervisor.test.mjs
