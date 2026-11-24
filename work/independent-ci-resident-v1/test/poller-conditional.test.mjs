@@ -11,8 +11,8 @@ const MAIN = 'd'.repeat(40);
 const TRAILER = 'Clued-Work-Claim: 842cf499-1519-4ba9-b3be-b9ac3f6e8ee4';
 const compareOk = async argv => argv.some(a => a.includes('/compare/')) ? { code: 0, stdout: JSON.stringify({ behind_by: 0, base: MAIN }) } : { code: 9, stdout: '' };
 
-test('cadence: the poller looks once a minute, the ruleset backstop stays at five minutes', () => {
-  assert.deepEqual([POLL_EVERY_MS, REPORT_EVERY_MS, BACKSTOP_EVERY_MS], [60_000, 60_000, 300_000]);
+test('cadence: the poller looks every 15 seconds in its own lane (f79929d9), the PR page once a minute, the ruleset backstop every five minutes', () => {
+  assert.deepEqual([POLL_EVERY_MS, REPORT_EVERY_MS, BACKSTOP_EVERY_MS], [15_000, 60_000, 300_000]);
 });
 
 test('an unchanged minute is two 304s: nothing is proposed again, the last answer stands, the If-None-Match argv is exact', async () => {
