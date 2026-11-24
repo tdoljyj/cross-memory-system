@@ -76,7 +76,7 @@ test('reuse qualifies only earlier PR evidence and never claims main PASS', asyn
 
 // 甲 (FABLE-main-push-same-tree-parallel-20261123 §3) reads an in-flight head run for the gate-decided ('ancestry')
 // workflows only: a tree-report workflow whose head run is still going runs its heavy job, as before, after five reads.
-test('a tree-report workflow whose head run is still in flight runs, as before; the in-flight reading is the gate's alone', async () => {
+test('a tree-report workflow whose head run is still in flight runs, as before; the in-flight reading is the gate\'s alone', async () => {
   const fake = api(proof(), { 4: { total_count: 1, workflow_runs: [{ ...proof().run, status: 'in_progress', conclusion: null }] } });
   assert.deepEqual(await evaluatePush(env, fake.fetch), { run_heavy: true, reason: 'pr_run_not_passed', current_sha_pass: false });
   assert.equal(fake.calls.length, 5);
