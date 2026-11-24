@@ -32,7 +32,6 @@
 // There is no option to change the threshold. Exit 0 pass, 1 refused, 2 usage.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { sqlTokens } from '../../../scripts/ci/sql-tokens.mjs';
 
 const LIMIT_BYTES = 500 * 1024 * 1024;
@@ -292,6 +291,6 @@ export function main(argv, { log = console.log, error = console.error } = {}) {
   return 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   process.exitCode = main(process.argv.slice(2));
 }
