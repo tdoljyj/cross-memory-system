@@ -618,6 +618,20 @@ class SharedConcurrencyGroupTests(unittest.TestCase):
         ambiguous = PREFIX.replace("  group: fixture\n", "  group: >-\n    fixture\n")
         self.assert_shared(policy.evaluate_workflows({"a.yml": ambiguous + job()}, {}, {}, {}, {}), "ambiguous concurrency group")
 
+    def test_group_names_differing_only_in_case_are_one_group(self):
+        # GitHub compares concurrency group names case-insensitively.
+        upper = PREFIX.replace("  group: fixture\n", "  group: FIXTURE\n") + job()
+        report = policy.evaluate_workflows({"a.yml": PREFIX + job(), "b.yml": upper}, {}, {}, {}, {})
+        self.assert_shared(report, "'fixture' is shared by a.yml, b.yml")
+        self.assertEqual({row["workflow"] for row in self.shared(report)}, {"a.yml", "b.yml"})
+        # The exemption compares the same way: a fourth file in another case is one more, a row in another case still holds.
+        texts = self.real()
+        fourth = PREFIX.replace("  group: fixture\n", "  group: Clued-Merge-Executor\n") + job()
+        self.assert_shared(policy.evaluate_workflows({**texts, "fourth.yml": fourth}),
+                           "shared concurrency group exemption 'clued-merge-executor'")
+        row = policy.SHARED_CONCURRENCY_GROUPS["clued-merge-executor"]
+        self.assertEqual(self.shared(policy.evaluate_workflows(texts, None, None, None, {"CLUED-MERGE-EXECUTOR": row})), [])
+
     def test_a_new_pair_on_the_real_tree_fails(self):
         texts = self.real()
         copied = PREFIX.replace("  group: fixture\n", "  group: clued-release-tags\n") + job()
@@ -653,7 +667,9 @@ class SharedConcurrencyGroupTests(unittest.TestCase):
                         {"g": {"workflows": ("a.yml", "b/c.yml"), "note": "n"}},
                         {"g": {"workflows": ("a.yml", "b.yml"), "note": ""}},
                         {"g": {"workflows": ("a.yml", "b.yml"), "note": "n", "extra": True}},
-                        {"${{ github.workflow }}": {"workflows": ("a.yml", "b.yml"), "note": "n"}}]:
+                        {"${{ github.workflow }}": {"workflows": ("a.yml", "b.yml"), "note": "n"}},
+                        {"g": {"workflows": ("a.yml", "b.yml"), "note": "n"},
+                         "G": {"workflows": ("c.yml", "d.yml"), "note": "n"}}]:
             with self.subTest(invalid=invalid):
                 report = policy.evaluate_workflows({"a.yml": text}, {}, {}, {}, invalid)
                 self.assert_shared(report, "invalid shared concurrency group exemption")

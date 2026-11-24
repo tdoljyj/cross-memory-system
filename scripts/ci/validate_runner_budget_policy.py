@@ -565,6 +565,9 @@ def shared_group_findings(exemptions: object) -> list[str]:
     if not isinstance(exemptions, dict):
         return ["invalid shared concurrency group exemption table"]
     findings = []
+    names = [group.lower() for group in exemptions if isinstance(group, str)]
+    if len(set(names)) != len(names):
+        findings.append("invalid shared concurrency group exemption: two rows name one group (names are case-insensitive)")
     for group, entry in exemptions.items():
         if not isinstance(group, str) or not group.strip() or WORKFLOW_SCOPED_GROUP.search(group):
             findings.append("invalid shared concurrency group exemption: the group must be a literal name")
@@ -708,6 +711,8 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
         reject("<embedded-shared-concurrency>", error)
     if shared_errors:
         shared_groups = {}
+    # GitHub compares concurrency group names case-insensitively: G1 and g1 are one group.
+    exempt_groups = {group.lower(): entry for group, entry in shared_groups.items()}
     files_by_group: dict[str, set[str]] = {}
     observed = set()
     observed_owner = set()
@@ -739,7 +744,7 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
                 reject(filename, str(error))
                 continue
             if not WORKFLOW_SCOPED_GROUP.search(group):
-                files_by_group.setdefault(group, set()).add(filename)
+                files_by_group.setdefault(group.lower(), set()).add(filename)
         has_cancel = bool(re.search(r"(?m)^\s+cancel-in-progress\s*:", concurrency))
         routes = []
         for job_id, block in jobs.items():
@@ -823,11 +828,11 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
             if (filename, job_id) not in observed_scaffold:
                 reject(filename, "removed hosted scaffold job must be deleted; stale permits are prohibited", job_id)
     for group, files in sorted(files_by_group.items()):
-        if len(files) > 1 and group not in shared_groups:
+        if len(files) > 1 and group not in exempt_groups:
             for filename in sorted(files):
                 reject(filename, f"literal concurrency group {group!r} is shared by {', '.join(sorted(files))}; "
                                  "a literal group belongs to one workflow file (task 2fb32dc7)")
-    for group, entry in sorted(shared_groups.items()):
+    for group, entry in sorted(exempt_groups.items()):
         listed, actual = set(entry["workflows"]), files_by_group.get(group, set())
         if actual != listed:
             reject("<embedded-shared-concurrency>",
