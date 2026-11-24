@@ -299,6 +299,14 @@ test('context archive structure: deleting an old checkpoint takes nothing else w
       assert.equal((await one(`select count(*)::int n from ${BATCHES} where user_id=$1`, [d.user])).n, 0);
       assert.equal((await one(`select count(*)::int n from ${BATCHES}`)).n, 1);
     });
+
+    await t.test('deleting a user still removes the head together with its current checkpoint', async () => {
+      // The head no longer goes with its checkpoint, but both go with their user in the same statement.
+      await admin.query('delete from auth.users where id=$1', [c.user]);
+      for (const table of ['clued_context_heads', 'clued_context_checkpoints', 'clued_checkpoint_event_absorptions', 'clued_context_events']) {
+        assert.equal((await one(`select count(*)::int n from public.${table} where user_id=$1`, [c.user])).n, 0, table);
+      }
+    });
   } finally {
     for (const client of clients) await client.end().catch(() => {});
     await stopCluster(server);
