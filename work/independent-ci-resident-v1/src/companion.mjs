@@ -389,25 +389,8 @@ export const UPGRADE_TOOL_ARGV = Object.freeze([
 export const upgradeToolArgvOk = args => Array.isArray(args) && args.length >= 1 && args.length <= 11 && args.every(a => typeof a === 'string' && /^[a-z0-9-]{1,64}$/.test(a))
   && UPGRADE_TOOL_ARGV.some(re => re.test(args.join(' ')));
 
-// ---- The node reboot fallback (node-reboot.mjs, docs/architecture.md 9.1): its fixed commands ----
-// shutdown.exe takes exactly two argument groups: a restart after 60 s or 600 s with the one fixed comment, and the abort. Anything
-// else is refused here and again by node-reboot.mjs before it runs (shutdownArgvOk), so no caller can turn it into a shutdown, a
-// restart without warning, or a restart with text of its own.
-export const SHUTDOWN_EXE = 'C:\\Windows\\System32\\shutdown.exe';
-export const REBOOT_DELAYS_S = Object.freeze([60, 600]);
-export const REBOOT_COMMENT = 'Clued CI: this node restarts to reclaim kernel pool memory (node reboot fallback)';
-export const rebootArgv = delayS => {
-  check(REBOOT_DELAYS_S.includes(delayS), 'COMPANION_REBOOT_ARGS_INVALID');
-  return [SHUTDOWN_EXE, '/r', '/t', String(delayS), '/c', REBOOT_COMMENT];
-};
-export const REBOOT_ABORT_ARGV = Object.freeze([SHUTDOWN_EXE, '/a']);
-const sameArgv = (a, b) => Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i]);
-// true for exactly the abort or a restart with one of the fixed delays; false for every other argv (also for any other program).
-export const shutdownArgvOk = a => sameArgv(a, REBOOT_ABORT_ARGV) || REBOOT_DELAYS_S.some(d => sameArgv(a, rebootArgv(d)));
-export const TASKLIST_EXE = 'C:\\Windows\\System32\\tasklist.exe';
-export const QUSER_EXE = 'C:\\Windows\\System32\\quser.exe';
-export const WHOAMI_PRIV_EXE = 'C:\\Windows\\System32\\whoami.exe';
-// The read-only pool tag reader, from this generation's own resident directory (resident\<residentManifestSha256>\windows).
+// ---- The kernel pool alert (pool-alert.mjs, docs/architecture.md 9.1): its one fixed, read-only command ----
+// The pool reader, from this generation's own resident directory (resident\<residentManifestSha256>\windows).
 export const POOL_TAGS_TOOL = path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), 'windows', 'read-pool-tags.ps1');
 
 // Fixed argv builders. Every variable part is an id that matched a strict pattern first.
@@ -447,26 +430,8 @@ export function argv(cfg) {
     // DESIGN §63 (Task 3ea699f6): one of the six PUBLIC live role files, base64 on one line, as root and read-only; the name is one of
     // the six fixed ones (roles-public.mjs#ROLES_PUBLIC_NAMES), nothing variable reaches the path.
     rolePublic: name => { check(ROLES_PUBLIC_NAMES.includes(name), 'COMPANION_ROLE_PUBLIC_NAME_INVALID'); return wsl('/usr/bin/base64', '-w', '0', '--', `${ROLES_PUBLIC_LINUX_DIR}/${name}`); },
-    // The node reboot fallback (node-reboot.mjs). Restart and abort: the two fixed shutdown.exe groups above, nothing else.
-    reboot: delayS => rebootArgv(delayS),
-    rebootAbort: () => [...REBOOT_ABORT_ARGV],
-    // Read-only: the largest paged pool tag's bytes in use (windows/read-pool-tags.ps1).
+    // The kernel pool alert (pool-alert.mjs): the largest paged pool tag, the paged pool and the commit charge (windows/read-pool-tags.ps1).
     poolTags: () => powershellArgv(cfg.powershellExe, '-File', POOL_TAGS_TOOL),
-    // Read-only: every process's image name (Runner.Worker / Runner.Listener are looked for by name; nothing is ended).
-    tasklist: () => [TASKLIST_EXE, '/FO', 'CSV', '/NH'],
-    // Read-only: the logged-on sessions with their idle time (whether a person is using the machine).
-    quser: () => [QUSER_EXE],
-    // Read-only: the privileges in the companion's own token (is SeShutdownPrivilege there).
-    whoamiPriv: () => [WHOAMI_PRIV_EXE, '/priv', '/fo', 'csv', '/nh'],
-    // Read-only: the companion's own session and the process that started it (the supervisor in session 0).
-    selfProcess: pid => {
-      check(Number.isSafeInteger(pid) && pid > 0 && pid <= 0xffffffff, 'COMPANION_SELF_PID_INVALID');
-      return powershellArgv(cfg.powershellExe, '-Command', `$p = Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=${pid}'; $q = $null; if ($p) { $q = Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId=' + [int]$p.ParentProcessId) }; [pscustomobject]@{ session = $(if ($p) { [int]$p.SessionId } else { $null }); parentName = $(if ($q) { $q.Name } else { $null }); parentPath = $(if ($q) { $q.ExecutablePath } else { $null }) } | ConvertTo-Json -Compress`);
-    },
-    // Read-only: a Runner.Worker in this node's distribution (pgrep: 0 found, 1 none, anything else unreadable).
-    wslRunnerWorker: () => wsl('/usr/bin/pgrep', '-x', 'Runner.Worker'),
-    // Read-only: the distribution answers at all (after a restart).
-    wslUp: () => wsl('/usr/bin/true'),
   };
 }
 
