@@ -101,7 +101,7 @@ function assets(debs, { formalRoles = PINS } = {}) {
   for (const [name, b] of [['wsl.msi', 'wsl'], ['ubuntu.wsl', 'rootfs'], ['gh.msi', 'gh'], ['git.exe', 'git'], ...Object.entries(debs).map(([p, b]) => [`debs/${p}`, b])]) fs.writeFileSync(path.join(root, name), b);
   const f = { build: path.join(root, 'build'), final: path.join(root, 'final'), images: path.join(root, 'images'), version, prereq, from: path.join(root, 'from'), out: path.join(root, 'kit'),
     // the drill's server (drill-server.json in a real run): fixture values, registered nowhere
-    server: { contract: 'clued.drill.server/1', project: 'fixture-drill-project', supabaseUrl: 'https://drillfixture000000000.supabase.co', publishableKey: 'sb_publishable_drilltest', blackholeHosts: [], allowedHosts: [] } };
+    server: { contract: 'clued.drill.server/1', project: 'fixture-drill-project', supabaseUrl: 'https://drillfixture000000000.supabase.co', poolerHost: null, publishableKey: 'sb_publishable_drilltest', blackholeHosts: [], allowedHosts: [] } };
   prepareFrom({ ...f, out: f.from });
   return f;
 }

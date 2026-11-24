@@ -43,7 +43,9 @@ export const RECORD_NAMES = { scope: 'project:fixture-scope', repository: 'fixtu
 export const DRILL_SERVER = { contract: 'clued.drill.server/1', project: 'fixture-drill-project', supabaseUrl: 'https://drillfixture000000000.supabase.co', publishableKey: 'sb_publishable_drilltest',
   // every https host the package's archive names is one or the other, or no kit (review M1): the service's own beyond the record's
   // database (cut off in the guest), and the others (not Clued's)
-  blackholeHosts: [PRODUCTION_GATEWAY], allowedHosts: ['api.github.com'] };
+  blackholeHosts: [PRODUCTION_GATEWAY], allowedHosts: ['api.github.com'],
+  // the session pooler the host's sync connects through (never in the kit: the guest does not use it)
+  poolerHost: 'aws-0-fixture-region-1.pooler.supabase.com' };
 export const BINDING_ID = '11111111-2222-4333-8444-555555555555';
 export const BINDING_TOKEN = 'clued_bnd_DRILLFIXTUREdrillfixture';
 export const bindingPs = `(New-Object System.Management.Automation.PSCredential ${"'" + BINDING_ID + "'"}, (ConvertTo-SecureString ${"'" + BINDING_TOKEN + "'"} -AsPlainText -Force))`;
@@ -58,7 +60,14 @@ export const bindingPs = `(New-Object System.Management.Automation.PSCredential 
 // a server: every fixture's call is the offline half of that tool (the kit against its Release), unless a test gives its own answer.
 const offlineServer = `function Invoke-DrillServerReadyNode([string]$Node, [string]$KitDir, [string]$From, [string]$Version, $Binding) {
     Invoke-DrillNode $Node @((Join-Path (Split-Path -Parent $script:DrillScriptPath) 'make-drill-kit.mjs'), '--server-of', $KitDir, '--from', $From, '--version', $Version) 60 }`;
-const fixtureBinding = `$script:Drill.BindingCredential = ${q(path.join(tmp, 'fixture-drill-binding.clixml'))}; if (-not (Test-Path -LiteralPath $script:Drill.BindingCredential)) { ${bindingPs} | Export-Clixml -LiteralPath $script:Drill.BindingCredential }; $script:Drill.ServerKeyFile = ${q(path.join(tmp, 'fixture-drill-server.local.json'))}; ${offlineServer}`;
+// Before the probe the host brings the test project to production's applied list (Sync-DrillServer: the release run's list, the sync
+// script with the database password on its standard input). No fixture reaches GitHub or a database: every fixture's sync answers "in
+// sync" (SYNCED) from here, and never reads the host's own password; a test that needs the real one takes $script:RealSyncDrillServer.
+export const SYNCED = { state: 'in-sync', releaseRun: 9001, productionLast: '20261124140000_context_archive_structure_v1', productionRows: 329, applied: 0, projectAccount: 'q***@qq.com' };
+const offlineSync = `$script:Drill.ServerDatabaseCredential = ${q(path.join(tmp, 'fixture-no-server-database.clixml'))}; $script:Drill.ProductionListCache = ${q(path.join(tmp, 'fixture-production-applied'))}
+  $script:RealSyncDrillServer = \${function:Sync-DrillServer}
+  function Sync-DrillServer([string]$From, [string]$Version, [switch]$Rebuild) { ${q(JSON.stringify(SYNCED))} | ConvertFrom-Json }`;
+const fixtureBinding = `$script:Drill.BindingCredential = ${q(path.join(tmp, 'fixture-drill-binding.clixml'))}; if (-not (Test-Path -LiteralPath $script:Drill.BindingCredential)) { ${bindingPs} | Export-Clixml -LiteralPath $script:Drill.BindingCredential }; $script:Drill.ServerKeyFile = ${q(path.join(tmp, 'fixture-drill-server.local.json'))}; ${offlineServer}; ${offlineSync}`;
 export const ownMutexes = `$script:Drill.HostMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-host`)}; $script:Drill.BootMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-boot`)}; ${fixtureBinding}`;
 // The fixtures' one time (task ce2e5c1a step 2): a host status is written at T0, and Get-DrillTime answers T0 in every ps() snippet
 // that does not define its own, so what a fixture writes reads the same whenever the snippet runs. A snippet that needs time to pass

@@ -12,7 +12,7 @@ import * as kitModule from '../drill/make-drill-kit.mjs';
 const checkModule = await import('../drill/drill-server-check.mjs').catch(() => ({}));   // the host's requests to the drill's server
 import { validateAcceptance } from '../rollout/fleet/install.mjs';
 import { DRILL_RESERVED, namesDrillReserved } from '../rollout/fleet/publish.mjs';
-import { BINDING_ID, BINDING_TOKEN, DRILL_SERVER, PRODUCTION_GATEWAY, PRODUCTION_SERVER, RECORD_NAMES, bindingPs, candidateStubs, entryPs, evidence, firstInstallAssets, kitDir, ps, psCode, q, sha, tmp, verdictOf } from './drill-vm-fixtures.mjs';
+import { BINDING_ID, BINDING_TOKEN, DRILL_SERVER, SYNCED, PRODUCTION_GATEWAY, PRODUCTION_SERVER, RECORD_NAMES, bindingPs, candidateStubs, entryPs, evidence, firstInstallAssets, kitDir, ps, psCode, q, sha, tmp, verdictOf } from './drill-vm-fixtures.mjs';
 
 const { makeDrillKit, prepareFrom } = kitModule;
 const windows = process.platform === 'win32';
@@ -261,22 +261,30 @@ test('the drill server\'s public key is the host\'s checked copy, never a field 
   // no copy on the host yet: no kit
   assert.throws(() => kitModule.readDrillServer({ file, keyFile }), e => e.message === 'DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET');
   assert.equal(kitModule.readDrillServer({ file, keyFile, allowUnset: true }).publishableKey, null);
-  // stored only when the project itself answers the key: one request to the sync receipt function, the key as the api key
+  // stored only when the project itself answers the key (the ruling's 2: no receipt function any more): the role probe with a random
+  // token hash, the key as the api key. The project's own refusal of that hash (binding_not_authorized) is the key accepted; the
+  // gateway's refusal is the key refused; the probe function missing is the project not synced yet.
   const calls = [];
-  const answering = status => async (url, init) => { calls.push({ url, init }); return reply(status, { state: 'syncing' }); };
-  await assert.rejects(() => checkModule.storeServerKey({ key: 'sb_secret_not_public', file, keyFile, fetch: answering(200) }), e => e.message === 'DRILL_SERVER_KEY_REFUSED');
+  const NOT_AUTHORIZED = { code: '42501', message: 'binding_not_authorized' };
+  const answering = (status, body = NOT_AUTHORIZED) => async (url, init) => { calls.push({ url, init }); return reply(status, body); };
+  await assert.rejects(() => checkModule.storeServerKey({ key: 'sb_secret_not_public', file, keyFile, fetch: answering(401) }), e => e.message === 'DRILL_SERVER_KEY_REFUSED');
   assert.equal(calls.length, 0, 'a key of another shape is sent nowhere');
-  await assert.rejects(() => checkModule.storeServerKey({ key: KEY, file, keyFile, fetch: answering(401), pause: async () => {} }), e => e.message === 'DRILL_SERVER_KEY_REFUSED');
-  await assert.rejects(() => checkModule.storeServerKey({ key: KEY, file, keyFile, fetch: answering(404), pause: async () => {} }), e => e.message === 'DRILL_SERVER_NOT_IN_SYNC:no-receipt');
+  await assert.rejects(() => checkModule.storeServerKey({ key: KEY, file, keyFile, fetch: answering(401, { message: 'Invalid API key', hint: 'Double check your Supabase `anon` or `service_role` API key.' }), pause: async () => {} }), e => e.message === 'DRILL_SERVER_KEY_REFUSED');
+  await assert.rejects(() => checkModule.storeServerKey({ key: KEY, file, keyFile, fetch: answering(404, { code: 'PGRST202' }), pause: async () => {} }), e => e.message === 'DRILL_SERVER_PROBE_FUNCTION_MISSING');
+  await assert.rejects(() => checkModule.storeServerKey({ key: KEY, file, keyFile, fetch: answering(200, { status: 'ok', holders: [] }), pause: async () => {} }), e => e.message === 'DRILL_SERVER_KEY_REFUSED');
   assert.equal(fs.existsSync(keyFile), false, 'nothing stored');
   calls.length = 0;
   await assert.rejects(() => checkModule.storeServerKey({ key: KEY, file, keyFile, fetch: async () => { calls.push(1); throw new Error('offline'); }, pause: async () => {} }), e => e.message === 'DRILL_SERVER_UNREACHABLE');
   assert.equal(calls.length, 3, 'three tries'); assert.equal(fs.existsSync(keyFile), false);
   calls.length = 0;
-  const stored = await checkModule.storeServerKey({ key: KEY, file, keyFile, fetch: answering(200) });
+  const stored = await checkModule.storeServerKey({ key: KEY, file, keyFile, fetch: answering(401) });
   assert.equal(stored.status, 'DRILL_SERVER_KEY_STORED'); assert.equal(stored.file, keyFile);
-  assert.equal(calls.length, 1); assert.equal(calls[0].url, `${DRILL_SERVER.supabaseUrl}/rest/v1/rpc/clued_drill_sync_receipt_v1`);
+  assert.equal(calls.length, 1); assert.equal(calls[0].url, `${DRILL_SERVER.supabaseUrl}/rest/v1/rpc/clued_work_merge_slot_holders_v1`);
   assert.equal(calls[0].init.method, 'POST'); assert.equal(calls[0].init.headers.apikey, KEY);
+  const asked = JSON.parse(calls[0].init.body);
+  assert.match(asked.p_token_hash, /^[0-9a-f]{64}$/); assert.deepEqual(asked.p_input, {});
+  calls.length = 0; await checkModule.storeServerKey({ key: KEY, file, keyFile, fetch: answering(401) });
+  assert.notEqual(JSON.parse(calls[0].init.body).p_token_hash, asked.p_token_hash, 'a new random hash each time: no binding is ever named');
   assert.deepEqual(kitModule.readDrillServer({ file, keyFile }), { ...named, publishableKey: KEY });
   // a copy stored for another project is not this server's key
   const other = path.join(tmp, 'server-key-other.json'); fs.writeFileSync(other, JSON.stringify({ ...named, supabaseUrl: 'https://anotherfixture0000000.supabase.co' }));
@@ -288,75 +296,83 @@ test('the drill server\'s public key is the host\'s checked copy, never a field 
   assert.equal(fs.existsSync(path.join(tmp, 'fixture-drill-server.local.json')), false);
 });
 
-// FABLE-drill-test-project-sync-20261124.md section 2.2: before any boot the host asks the drill's server what the guest is about to ask
-// it. A project that was not brought to production's state, a token that expired, a binding the server would let through (no parking
-// role in the account, or a role on the binding): each ends in seconds with its own code, not after forty minutes in the guest.
-const IN_SYNC = { state: 'in-sync', productionLast: '20261113100000_binding_role_in_force_single_reader_v1', productionCount: 326, commit: 'c'.repeat(40), run: 77, at: '2026-11-24T05:00:00Z' };
+// FABLE-drill-test-project-sync-20261124.md section 2.2 and its ruling: before any boot the host asks the drill's server what the guest is
+// about to ask it (the receipt function is gone: the host brings the project to production itself just before, Sync-DrillServer). A
+// token that expired, a rotated key, a binding the server would let through (no parking role in the account, or a role on the binding):
+// each ends in seconds with its own code, not after forty minutes in the guest.
 const NOT_ON_DUTY = { status: 'ok', holders: [], reason: 'admission_binding_required' };
 const server = answers => { const calls = []; return { calls, fetch: async (url, init) => { calls.push({ url, init }); const a = answers[url.split('/').pop()]; if (a instanceof Error) throw a; return reply(...a); } }; };
-test('before any boot the host asks the drill server itself: the sync receipt, then the role probe the guest will send', async () => {
+test('before any boot the host asks the drill server itself: the role probe the guest will send, and nothing else', async () => {
   const { f, kit } = await built('server-ready');
   const ready = answers => { const s = server(answers); return { s, run: () => checkModule.serverReady({ kit: f.out, from: f.from, version: f.version, token: BINDING_TOKEN, fetch: s.fetch, pause: async () => {} }) }; };
   const codeOf = async answers => { try { await ready(answers).run(); return null; } catch (e) { return e.message; } };
-  const receipt = 'clued_drill_sync_receipt_v1', holders = 'clued_work_merge_slot_holders_v1';
-  // in sync, and the binding holds no role: ready, with the receipt (which production state this drill stands in for)
-  const ok = ready({ [receipt]: [200, IN_SYNC], [holders]: [200, NOT_ON_DUTY] });
+  const holders = 'clued_work_merge_slot_holders_v1';
+  // the binding holds no role: ready
+  const ok = ready({ [holders]: [200, NOT_ON_DUTY] });
   const r = await ok.run();
-  assert.deepEqual(r.receipt, IN_SYNC); assert.equal(r.supabaseUrl, DRILL_SERVER.supabaseUrl); assert.equal(r.firstInstallKitSha256, kit.server.firstInstallKitSha256);
-  assert.deepEqual(ok.s.calls.map(c => c.url), [receipt, holders].map(n => `${DRILL_SERVER.supabaseUrl}/rest/v1/rpc/${n}`), 'the drill server only');
-  // the second request is the guest's: the token's hash, the kit's scope and repository, the drill's public key; the token itself goes nowhere
-  const sent = ok.s.calls[1].init;
+  assert.equal(r.supabaseUrl, DRILL_SERVER.supabaseUrl); assert.equal(r.firstInstallKitSha256, kit.server.firstInstallKitSha256);
+  assert.equal(Object.hasOwn(r, 'receipt'), false, 'no receipt any more');
+  assert.deepEqual(ok.s.calls.map(c => c.url), [`${DRILL_SERVER.supabaseUrl}/rest/v1/rpc/${holders}`], 'the drill server only, one request');
+  // the request is the guest's: the token's hash, the kit's scope and repository, the drill's public key; the token itself goes nowhere
+  const sent = ok.s.calls[0].init;
   assert.deepEqual(JSON.parse(sent.body), { p_token_hash: sha(BINDING_TOKEN), p_input: { scope: RECORD_NAMES.scope, repository: RECORD_NAMES.repository } });
   assert.equal(sent.headers.apikey, DRILL_SERVER.publishableKey);
   assert.doesNotMatch(JSON.stringify(ok.s.calls) + JSON.stringify(r), new RegExp(BINDING_TOKEN));
-  // the receipt
-  assert.equal(await codeOf({ [receipt]: [200, { ...IN_SYNC, state: 'syncing' }], [holders]: [200, NOT_ON_DUTY] }), 'DRILL_SERVER_NOT_IN_SYNC:syncing');
-  assert.equal(await codeOf({ [receipt]: [200, { ...IN_SYNC, state: 'diverged' }], [holders]: [200, NOT_ON_DUTY] }), 'DRILL_SERVER_NOT_IN_SYNC:diverged');
-  assert.equal(await codeOf({ [receipt]: [404, { code: 'PGRST202' }], [holders]: [200, NOT_ON_DUTY] }), 'DRILL_SERVER_NOT_IN_SYNC:no-receipt');
-  assert.equal(await codeOf({ [receipt]: [401, { message: 'Invalid API key' }], [holders]: [200, NOT_ON_DUTY] }), 'DRILL_SERVER_KEY_REFUSED');
-  const down = ready({ [receipt]: new Error('offline'), [holders]: [200, NOT_ON_DUTY] });
-  await assert.rejects(down.run, e => e.message === 'DRILL_SERVER_UNREACHABLE'); assert.equal(down.s.calls.length, 3, 'three tries, and no probe after them');
-  // the probe: let through (no parking role, or a role on the binding: the guest would turn ACTIVE), refused, or not there at all
-  assert.equal(await codeOf({ [receipt]: [200, IN_SYNC], [holders]: [200, { status: 'ok', repository: RECORD_NAMES.repository, holders: [] }] }), 'DRILL_BINDING_ON_DUTY');
-  assert.equal(await codeOf({ [receipt]: [200, IN_SYNC], [holders]: [401, { code: '42501', message: 'binding_not_authorized' }] }), 'DRILL_BINDING_REFUSED_BY_SERVER');
-  assert.equal(await codeOf({ [receipt]: [200, IN_SYNC], [holders]: [403, { code: '42501', message: 'authorization_revoked_or_expired' }] }), 'DRILL_BINDING_REFUSED_BY_SERVER');
-  assert.equal(await codeOf({ [receipt]: [200, IN_SYNC], [holders]: [404, { code: 'PGRST202' }] }), 'DRILL_SERVER_PROBE_FUNCTION_MISSING');
-  assert.equal(await codeOf({ [receipt]: [200, IN_SYNC], [holders]: [503, null] }), 'DRILL_SERVER_UNREACHABLE');
-  assert.equal(await codeOf({ [receipt]: [200, IN_SYNC], [holders]: [200, { status: 'what' }] }), 'DRILL_SERVER_UNREACHABLE:probe-unreadable');
+  const down = ready({ [holders]: new Error('offline') });
+  await assert.rejects(down.run, e => e.message === 'DRILL_SERVER_UNREACHABLE'); assert.equal(down.s.calls.length, 3, 'three tries');
+  // let through (no parking role, or a role on the binding: the guest would turn ACTIVE), refused by the project, not there at all
+  assert.equal(await codeOf({ [holders]: [200, { status: 'ok', repository: RECORD_NAMES.repository, holders: [] }] }), 'DRILL_BINDING_ON_DUTY');
+  assert.equal(await codeOf({ [holders]: [401, { code: '42501', message: 'binding_not_authorized' }] }), 'DRILL_BINDING_REFUSED_BY_SERVER');
+  assert.equal(await codeOf({ [holders]: [403, { code: '42501', message: 'authorization_revoked_or_expired' }] }), 'DRILL_BINDING_REFUSED_BY_SERVER');
+  // refused by the gateway, not the project: the kit's key was rotated (section 3), not the token
+  assert.equal(await codeOf({ [holders]: [401, { message: 'Invalid API key', hint: 'Double check your Supabase `anon` or `service_role` API key.' }] }), 'DRILL_SERVER_KEY_REFUSED');
+  assert.equal(await codeOf({ [holders]: [404, { code: 'PGRST202' }] }), 'DRILL_SERVER_PROBE_FUNCTION_MISSING');
+  assert.equal(await codeOf({ [holders]: [503, null] }), 'DRILL_SERVER_UNREACHABLE');
+  assert.equal(await codeOf({ [holders]: [200, { status: 'what' }] }), 'DRILL_SERVER_UNREACHABLE:probe-unreadable');
   // not a binding token: nothing is sent
   const none = server({});
   await assert.rejects(() => checkModule.serverReady({ kit: f.out, from: f.from, version: f.version, token: 'not-a-token', fetch: none.fetch }), e => e.message === 'DRILL_BINDING_CREDENTIAL_REFUSED');
   assert.equal(none.calls.length, 0);
 });
 
-test('Assert-DrillServerReady stops the drill on the server\'s answer, each with its code, and keeps the receipt for the drill\'s own', { skip: !windows }, async () => {
+test('Assert-DrillServerReady syncs the project first, then stops the drill on the probe\'s answer, and keeps what the sync followed', { skip: !windows }, async () => {
   const { f } = await built('server-ready-host');
   const answering = (exit, text) => `function Invoke-DrillServerReadyNode([string]$Node, [string]$KitDir, [string]$From, [string]$Version, $Binding) {
-      $script:Asked = [ordered]@{ kit = $KitDir; from = $From; version = $Version; connection = $Binding.UserName }
+      $script:Order += 'probe'; $script:Asked = [ordered]@{ kit = $KitDir; from = $From; version = $Version; connection = $Binding.UserName }
       @{ exit = ${exit}; stdout = ${exit === 0 ? q(text) : "''"}; stderr = ${exit === 0 ? "''" : q(text + '\n')} } }`;
+  const syncing = (code = null) => `$script:Order = @(); function Sync-DrillServer([string]$From, [string]$Version, [switch]$Rebuild) {
+      $script:Order += 'sync'; $script:Synced = [ordered]@{ from = $From; version = $Version; rebuild = [bool]$Rebuild }
+      ${code ? `throw (New-DrillError ${q(code.split(':')[0])} ${q(code.split(':')[1] ?? '')})` : `${q(JSON.stringify(SYNCED))} | ConvertFrom-Json`} }`;
   const gate = `$k = Read-DrillKit ${q(f.out)}; $p = Test-DrillPackageDir ${q(f.from)} ${q(f.version)} $k; Assert-DrillServerReady $k $p`;
-  for (const code of ['DRILL_SERVER_KEY_REFUSED', 'DRILL_SERVER_NOT_IN_SYNC:syncing', 'DRILL_SERVER_UNREACHABLE', 'DRILL_SERVER_PROBE_FUNCTION_MISSING',
-    'DRILL_BINDING_REFUSED_BY_SERVER', 'DRILL_BINDING_ON_DUTY']) {
-    assert.equal(psCode(`${answering(1, code)}; ${gate}`), code.split(':')[0], code);
+  for (const code of ['DRILL_SERVER_KEY_REFUSED', 'DRILL_SERVER_UNREACHABLE', 'DRILL_SERVER_PROBE_FUNCTION_MISSING', 'DRILL_BINDING_REFUSED_BY_SERVER', 'DRILL_BINDING_ON_DUTY']) {
+    assert.equal(psCode(`${syncing()}; ${answering(1, code)}; ${gate}`), code, code);
+  }
+  // the sync refuses: no probe after it
+  for (const code of ['DRILL_SERVER_PRODUCTION_LIST_MISSING', 'DRILL_SERVER_DATABASE_CREDENTIAL_MISSING', 'DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED', 'DRILL_SERVER_DIVERGED:stale', 'DRILL_SERVER_SYNC_TOOL_MISSING']) {
+    const r = ps(`${syncing(code)}; ${answering(0, '{}')}; try { ${gate} | Out-Null; $c = $null } catch { $c = (Get-DrillCode $_).code }; [ordered]@{ code = $c; order = @($script:Order) }`);
+    assert.deepEqual(r, { code: code.split(':')[0], order: ['sync'] }, code);
   }
   const kit = JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json'))).server;
-  const answer = JSON.stringify({ supabaseUrl: kit.supabaseUrl, releaseFirstInstallKitSha256: kit.releaseFirstInstallKitSha256, firstInstallKitSha256: kit.firstInstallKitSha256, receipt: IN_SYNC });
-  const ok = ps(`${answering(0, answer)}; ${gate}; [ordered]@{ asked = $script:Asked; sync = $k.server.sync }`);
+  const answer = JSON.stringify({ supabaseUrl: kit.supabaseUrl, releaseFirstInstallKitSha256: kit.releaseFirstInstallKitSha256, firstInstallKitSha256: kit.firstInstallKitSha256 });
+  const ok = ps(`${syncing()}; ${answering(0, answer)}; ${gate}; [ordered]@{ order = @($script:Order); synced = $script:Synced; asked = $script:Asked; sync = $k.server.sync }`);
+  assert.deepEqual(ok.order, ['sync', 'probe']);
+  assert.deepEqual(ok.synced, { from: f.from, version: f.version, rebuild: false }, 'the Release the kit was made from; never a rebuild before a drill');
   assert.deepEqual(ok.asked, { kit: f.out, from: f.from, version: f.version, connection: BINDING_ID });
-  assert.equal(ok.sync.state, 'in-sync'); assert.equal(ok.sync.productionLast, IN_SYNC.productionLast);
+  // the drill's receipt says which production state it stood in for: the release run followed, its last row and row count, rows applied now
+  assert.deepEqual(ok.sync, SYNCED);
   // the whole run: the answer is asked for before the host hold, and a refusal starts nothing
   const main = `$script:RealAssertDrillServerReady = \${function:Assert-DrillServerReady}; ${candidateStubs}
     function Read-DrillKit { @{ dir = 'unused'; prereqSha256 = 'pin'; executionBlocker = $null; candidate = @{ acceptance = 'x' }; server = @{ supabaseUrl = 'unused' }; credentials = $null } }
     function Test-DrillPackageDir { @{ tar = 'unused'; version = '1.2.3'; candidate = $true } }
     Set-Item function:Assert-DrillServerReady $script:RealAssertDrillServerReady`;
-  assert.equal(psCode(`${main}; ${answering(1, 'DRILL_BINDING_ON_DUTY')}; Invoke-DrillMain`), 'DRILL_BINDING_ON_DUTY');
-  assert.equal(psCode(`${main}; ${answering(1, 'DRILL_SERVER_NOT_IN_SYNC:diverged')}; Invoke-DrillMain`), 'DRILL_SERVER_NOT_IN_SYNC');
+  assert.equal(psCode(`${main}; ${syncing()}; ${answering(1, 'DRILL_BINDING_ON_DUTY')}; Invoke-DrillMain`), 'DRILL_BINDING_ON_DUTY');
+  assert.equal(psCode(`${main}; ${syncing('DRILL_SERVER_DIVERGED')}; ${answering(0, '{}')}; Invoke-DrillMain`), 'DRILL_SERVER_DIVERGED');
 });
 
 // Section 5 of the sync design: what the stand-in rests on is registered where the stand-in is (the kit's step, the decision table).
-test('the registered stand-in says what it rests on: the parking role the sync job seeds, and the token\'s 90 days', () => {
-  assert.match(kitModule.SERVER_STAND_IN_STEP, /parking/); assert.match(kitModule.SERVER_STAND_IN_STEP, /同步作业/); assert.match(kitModule.SERVER_STAND_IN_STEP, /90 天/);
+test('the registered stand-in says what it rests on: the parking role the host\'s sync seeds before any boot, and the token\'s 90 days', () => {
+  assert.match(kitModule.SERVER_STAND_IN_STEP, /parking/); assert.match(kitModule.SERVER_STAND_IN_STEP, /开机前/); assert.match(kitModule.SERVER_STAND_IN_STEP, /90 天/);
   const source = JSON.parse(fs.readFileSync(new URL('../drill/credential-decisions.json', import.meta.url), 'utf8')).decisions?.['ci-admission.token']?.source
     ?? JSON.stringify(JSON.parse(fs.readFileSync(new URL('../drill/credential-decisions.json', import.meta.url), 'utf8')));
-  assert.match(source, /parking/); assert.match(source, /90 days/);
+  assert.match(source, /parking/); assert.match(source, /90 days/); assert.match(source, /before any boot/); assert.doesNotMatch(source, /sync job/);
 });
