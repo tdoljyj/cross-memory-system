@@ -136,7 +136,8 @@ const standInSteps = credentials => [...Object.values(credentials?.required ?? {
 export const SERVER_CONTRACT = 'clued.drill.server/1';
 export const SERVER_STAND_IN_CONTRACT = 'clued.drill.server-stand-in/1';
 export const SERVER_FIELDS = Object.freeze(['record.publishableKey', 'record.supabaseUrl']);
-const SERVER_URL = /^https:\/\/[a-z0-9]+\.supabase\.co$/, SERVER_KEY = /^sb_publishable_[A-Za-z0-9_-]+$/;
+const SERVER_URL = /^https:\/\/[a-z0-9]+\.supabase\.co$/;
+export const SERVER_KEY = /^sb_publishable_[A-Za-z0-9_-]+$/;
 const hostOf = url => new URL(url).hostname;
 const hostList = v => Array.isArray(v) && v.every(h => typeof h === 'string' && /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/.test(h)) && new Set(v).size === v.length;
 function checkedServer(s, { allowUnset = false } = {}) {
@@ -164,11 +165,28 @@ function assertTarHostsDecided(tarBytes, { blackholeHosts, allowedHosts, supabas
   const undecided = hostsOfTar(tarBytes).filter(h => !blackholeHosts.includes(h) && !allowedHosts.includes(h) && h !== hostOf(supabaseUrl));
   check(undecided.length === 0, `DRILL_SERVER_PRODUCTION_HOST_NOT_CUT_OFF:${undecided.join(',')}`);
 }
-// allowUnset: read the file while its key is still to be filled in (its own test); a kit is never made from such a reading.
-export function readDrillServer({ file = fileURLToPath(new URL('./drill-server.json', import.meta.url)), allowUnset = false } = {}) {
+// The drill server's public key is not in the repository (FABLE-drill-test-project-sync-20261124.md section 3): its one source is the
+// test project, and this host keeps the copy drill-vm.ps1 -ServerKey stored once the project answered it (drill-server-check.mjs
+// storeServerKey). The copy names the project it is for: one stored for another project is not this server's key.
+export const HOST_KEY_FILE = 'D:\\clued-drill\\drill-server.local.json';
+export const SERVER_KEY_CONTRACT = 'clued.drill.server-key/1';
+export const serverKeyRecord = (server, key) => ({ contract: SERVER_KEY_CONTRACT, project: server.project, supabaseUrl: server.supabaseUrl, publishableKey: key });
+function hostKey(keyFile, server) {
+  if (!fs.existsSync(keyFile)) return null;
+  let k = null;
+  try { k = JSON.parse(fs.readFileSync(keyFile, 'utf8').replace(/^\uFEFF/, '')); } catch { k = null; }
+  check(k !== null && typeof k === 'object' && typeof k.publishableKey === 'string' && SERVER_KEY.test(k.publishableKey) &&
+    JSON.stringify(k) === JSON.stringify(serverKeyRecord(server, k.publishableKey)), 'DRILL_SERVER_KEY_REFUSED');
+  return k.publishableKey;
+}
+// The drill's server: drill-server.json (which carries no key: a file with one is refused) and the host's copy of the key.
+// allowUnset: read it while the host has no copy yet (a kit is never made from such a reading); keyFile null: the file alone.
+export function readDrillServer({ file = fileURLToPath(new URL('./drill-server.json', import.meta.url)), keyFile = HOST_KEY_FILE, allowUnset = false } = {}) {
   let s;
   try { s = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch { throw new Error('DRILL_SERVER_REFUSED'); }
-  return checkedServer(s, { allowUnset });
+  check(s !== null && typeof s === 'object' && !Array.isArray(s) && !Object.hasOwn(s, 'publishableKey'), 'DRILL_SERVER_REFUSED');
+  const named = checkedServer({ ...s, publishableKey: null }, { allowUnset: true });
+  return checkedServer({ ...named, publishableKey: keyFile === null ? null : hostKey(keyFile, named) }, { allowUnset });
 }
 // Every leaf of a JSON value by its path (an empty object or array is a leaf too), for a comparison that sees every difference.
 const leavesOf = (v, at = '') => v !== null && typeof v === 'object' && Object.keys(v).length > 0

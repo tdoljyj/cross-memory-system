@@ -5,6 +5,7 @@
 #   pwsh -NoProfile -File drill-vm.ps1 -Version <v> -From <dir with tar/acceptance/SHA256SUMS> -Kit <first-install kit dir> [-SkipReinstall] [-RunTimeoutMinutes 70 | -Ladder]
 #     (a candidate: -From without an acceptance; the kit carries a drill-only one, see Test-DrillPackageDir and FIRST-INSTALL-KIT.md)
 #   pwsh -NoProfile -File drill-vm.ps1 -Finalize <receipt.json> -ProductionReadback <readback.json>
+#   pwsh -NoProfile -File drill-vm.ps1 -ServerKey <key>     (DESK stores the test project's public key on the host once the project answers it)
 #   pwsh -NoProfile -File drill-vm.ps1 -BindingCredential   (the Owner hands over the drill binding once, in the Windows credential dialog)
 #
 # Inputs on the host: D:\clued-drill\iso (the Windows 11 ISO and expected-sha256.txt), D:\clued-drill\prereq\prereq.json (the
@@ -46,7 +47,8 @@ param(
   [switch]$Ladder,
   [string]$Finalize,
   [string]$ProductionReadback,
-  [switch]$BindingCredential
+  [switch]$BindingCredential,
+  [string]$ServerKey
 )
 Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
@@ -89,6 +91,9 @@ $script:Drill = [ordered]@{
   Credential = 'D:\clued-drill\guest-admin.clixml'
   # the Owner's drill binding in the test project (connection id, token), beside the guest credential and read by the same function
   BindingCredential = 'D:\clued-drill\drill-binding.clixml'
+  # the host's copy of the drill server's public key: where drill-server-check.mjs keeps it (make-drill-kit.mjs HOST_KEY_FILE) unless a
+  # test names its own
+  ServerKeyFile = ''
   Runs = 'D:\clued-drill\runs'
   GuestUser = 'drill'
   ComputerName = 'CLUED-DRILL'
@@ -757,11 +762,7 @@ function Assert-DrillServerReady($KitInfo, $Package) {
   $run = Invoke-DrillNode $node @($reader, '--server-of', [string]$KitInfo.dir, '--from', (Split-Path -Parent ([string]$Package.tar)), '--version', [string]$Package.version) 60
   $derived = $null
   if ($run.exit -eq 0) { try { $derived = $run.stdout | ConvertFrom-Json } catch { $derived = $null } }
-  if ($null -eq $derived) {
-    $code = [string](@(([string]$run.stderr) -split "`r?`n" | Where-Object { $_ -cmatch '^DRILL_[A-Z0-9_]+' }) | Select-Object -First 1)
-    if ($code -cmatch '^(DRILL_[A-Z0-9_]+)(?::(.*))?$') { throw (New-DrillError $Matches[1] $Matches[2]) }
-    throw (New-DrillError 'DRILL_KIT_SERVER_STAND_IN_REFUSED' ([string]$run.stderr))
-  }
+  if ($null -eq $derived) { throw (New-DrillServerError $run 'DRILL_KIT_SERVER_STAND_IN_REFUSED') }
   foreach ($k in @('supabaseUrl', 'releaseFirstInstallKitSha256', 'firstInstallKitSha256')) {
     if (-not [string]::Equals([string](Get-Prop $derived $k), [string]$server[$k], [StringComparison]::Ordinal)) { throw (New-DrillError 'DRILL_KIT_SERVER_STAND_IN_REFUSED' $k) }
   }
@@ -4022,7 +4023,34 @@ function Get-DrillLadderStep([string]$RunsDir, [string]$Version, [string]$KitSha
   return (& $step ([Math]::Min($previous, $ceiling)) 'not-longer')
 }
 
+# -ServerKey <key>: the test project's public key, as DESK read it from the project (it is in no repository file:
+# FABLE-drill-test-project-sync-20261124.md section 3). The one checker (drill-server-check.mjs --store-key) holds its shape, asks the
+# project with it and stores it on the host only when the project answers; make-drill-kit.mjs reads that copy.
+function Save-DrillServerKey([string]$Key) {
+  $tool = Join-Path (Split-Path -Parent $script:DrillScriptPath) 'drill-server-check.mjs'
+  $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+  if ($Key -cnotmatch '^[A-Za-z0-9_-]{1,200}$') { throw (New-DrillError 'DRILL_SERVER_KEY_REFUSED' 'not a public key') }
+  $arguments = @($tool, '--store-key', $Key)
+  if ($script:Drill.ServerKeyFile) { $arguments += @('--key-file', [string]$script:Drill.ServerKeyFile) }
+  $run = Invoke-DrillNode $node $arguments 90
+  $stored = $null
+  if ($run.exit -eq 0) { try { $stored = $run.stdout | ConvertFrom-Json } catch { $stored = $null } }
+  if ($null -eq $stored) { throw (New-DrillServerError $run 'DRILL_SERVER_KEY_REFUSED') }
+  return [ordered]@{ status = [string]$stored.status; project = [string]$stored.project; file = [string]$stored.file }
+}
+
+# The code a server tool ended on (its first stderr line that is one: DRILL_X or DRILL_X:detail), as this script's error.
+function New-DrillServerError($Run, [string]$Otherwise) {
+  $code = [string](@(([string]$Run.stderr) -split "`r?`n" | Where-Object { $_ -cmatch '^DRILL_[A-Z0-9_]+' }) | Select-Object -First 1)
+  if ($code -cmatch '^(DRILL_[A-Z0-9_]+)(?::(.*))?$') { return (New-DrillError $Matches[1] $Matches[2]) }
+  return (New-DrillError $Otherwise ([string]$Run.stderr))
+}
+
 function Invoke-DrillMain {
+  if ($ServerKey) {
+    if ($Version -or $From -or $Kit -or $BaselineOnly -or $PrereqOnly -or $Finalize -or $Interactive -or $BindingCredential) { throw (New-DrillError 'DRILL_USAGE' '-ServerKey is given alone') }
+    return (Save-DrillServerKey $ServerKey)
+  }
   if ($BindingCredential) {
     if ($Version -or $From -or $Kit -or $BaselineOnly -or $PrereqOnly -or $Finalize -or $Interactive) { throw (New-DrillError 'DRILL_USAGE' '-BindingCredential is given alone') }
     return (Save-DrillBindingCredential)
