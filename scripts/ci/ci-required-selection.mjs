@@ -559,6 +559,10 @@ export function testConcurrency(cores = os.availableParallelism()) {
   return Math.max(2, Math.min(4, Math.floor(cores / 4)));
 }
 
+// No base commit: unset, empty, or GitHub's all-zero SHA. expandArgv refuses {base} then, executeSuite refuses the suite.
+const missingBase = (base) => !base || /^0+$/.test(base);
+const BASE_REQUIRED = 'CI_BASE_SHA is required for this suite';
+
 // hosted: a CI job's expansion. The trusted side passes it and its core count to the candidate's (readCandidate), whose
 // environment has no GITHUB_ACTIONS (test-env.mjs keep), so both sides expand the same command alike.
 export function expandArgv(argv, { cwd, root, base, report, listUnit = () => unitTestFiles(cwd),
@@ -586,7 +590,7 @@ export function expandArgv(argv, { cwd, root, base, report, listUnit = () => uni
       return files;
     }
     if (arg === '{base}') {
-      if (!base || /^0+$/.test(base)) throw new Error('CI_BASE_SHA is required for this suite');
+      if (missingBase(base)) throw new Error(BASE_REQUIRED);
       return [base];
     }
     if (arg === '{report}') return [report];
@@ -1310,6 +1314,12 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
   }
   if (shard && (files || captureKnown)) throw new Error('--shard splits a suite run, not --run-files or --write-known');
   if (captureKnown) return writeKnown(id, root, env, keep);
+  // A suite whose trusted commands compare with the base stops here without one, before its first command, rather than
+  // after every command ahead of the one that takes it (task 700f2b68). --run-files plans {base} commands out (planFiles).
+  if (!files && missingBase(env.CI_BASE_SHA) && (SUITE_COMMANDS[id] ?? []).some((command) => command.argv.includes('{base}'))) {
+    log(`::error title=${id}::${BASE_REQUIRED}; no command started. A CI job sets it in the step that runs the suite; locally: CI_BASE_SHA=$(git merge-base HEAD origin/main)`);
+    return 2;
+  }
   // The global number of this suite's next unit (parseShard).
   let position = shard ? shardOffset(id) : 0;
   // The seconds the shard packs files by, read only here; the first line names the table (entries, a digest of them) so
