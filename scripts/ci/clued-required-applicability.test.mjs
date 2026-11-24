@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
-import {selectSuites} from './ci-required-selection.mjs';
+import {SUITES,selectSuites} from './ci-required-selection.mjs';
 import {parseWorkflowProfiles,workflowBlob,REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
 import {qualifiedCI,qualifyPrimary} from './clued-gated-proof.mjs';
 import {COMPONENT_VERSION,readRequiredApplicability,inspectRequiredApplicability,REQUIRED_SELECTOR_SOURCE,
@@ -198,4 +198,38 @@ test('outer CI preserves actual execution versus not-applicable children and kee
   const wrong=copy(f.nativeJobs);wrong[3].steps.find(x=>x.name==='Not affected').conclusion='skipped';
   const wrongRead=async route=>route.includes('/attempts/')?{total_count:wrong.length,jobs:wrong}:read(route);
   callbacks=0;assert.equal((await qualifiedCI({...options,read:wrongRead})).passed,false);assert.equal(callbacks,0);
+});
+
+// Board line 251: the paths that need the migration verification are the selector's own (selectSuites), not a copy.
+// One chain per change: the selector picks production-schema, the issuer mints no not-applicable evidence, and the
+// primary proof refuses the attempt whose verification and install steps were skipped.
+async function selectedAndRefused(files,label){
+  const changed=[...new Set(files.flatMap(file=>[file.filename,...(file.previous_filename?[file.previous_filename]:[])]))];
+  assert.deepEqual(selectSuites('migration-verify',changed,'linux').suites,['production-schema'],label);
+  const f=fixture(files),token=await readRequiredApplicability(f.options());
+  assert.equal(token,null,label);
+  const r=qualifyPrimary(profile,copy(f.nativeJobs),REQUIRED_TESTS_SOURCE.file,{requiredDiffContext:{token,expected:f.expected}});
+  assert.equal(r.passed,false,label);
+}
+
+test('a database test the selector sends to migration-verify gets no not-applicable evidence',async()=>{
+  await selectedAndRefused([{filename:'apps/clued-cloud/tests/agent-messages-db.test.mjs',status:'modified'}],'database test');
+});
+
+test('a database test helper and a rename out of the migration paths get no not-applicable evidence',async()=>{
+  await selectedAndRefused([{filename:'apps/clued-cloud/tests/cluster-cleanup.mjs',status:'modified'}],'helper');
+  await selectedAndRefused([{filename:'docs/agent-messages-db.test.mjs',previous_filename:'apps/clued-cloud/tests/agent-messages-db.test.mjs',
+    status:'renamed'}],'rename');
+});
+
+test('a change outside migration-verify still gets the not-applicable evidence',async()=>{
+  assert.deepEqual(selectSuites('migration-verify',['docs/example.md'],'linux').suites,[]);
+  const f=fixture([{filename:'docs/example.md',status:'modified'}]),token=await readRequiredApplicability(f.options());
+  assert.ok(token);
+  assert.equal(qualifyPrimary(profile,copy(f.nativeJobs),REQUIRED_TESTS_SOURCE.file,{requiredDiffContext:{token,expected:f.expected}}).passed,true);
+});
+
+test('the last migration-verify pattern of the selector is refused, however far its scope grows',async()=>{
+  const pattern=SUITES['migration-verify']['production-schema'].at(-1);
+  await selectedAndRefused([{filename:pattern.replaceAll('**','x/y').replaceAll('*','x'),status:'modified'}],pattern);
 });
