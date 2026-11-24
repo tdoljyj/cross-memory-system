@@ -255,8 +255,7 @@ export function leaseText(row, now, { running, since = null }) {
 }
 
 // Stage timings on the running line (status /8, stage-timing.mjs): the time the batch has run so far and the finished segments, e.g.
-// "；已跑 12分；备 2分 1:40秒 2:5分" (备: reservation -> the batch is derived, what stage 1 waits for; the bundle is built after stage 1 and
-// is not in it, Task f79929d9). Whole minutes (or seconds below one), so the text changes at most once a minute. It fills only the room
+// "；已跑 12分；备 2分 1:40秒 2:5分". Whole minutes (or seconds below one), so the text changes at most once a minute. It fills only the room
 // that is left after the stage text and the lease reminder, minus TIMING_HEADROOM for the words other lines put in front or behind
 // (rerun line, duty word, watchdog): the lease reminder is never cut for it. No room, no timing, or a timing that is not this batch's: ''.
 export const TIMING_HEADROOM = 30;
@@ -435,8 +434,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       case 'NOT_EXECUTED':
         // Defect a8910e41: the binding run is released now (before: burned, FAILED_CLEAN below); the same words.
         if (recent.code === 'TRAIN_FRONT_CLAIM_BOUND') return { state: 'pending', description: '合并列车：已为队首认领绑定此 PR，车头批次随后在试合并提交上跑，不用推新提交' };
-        // Field defect 2026-11-14: main moved past this head's base; the row stopped (no retry with that base). Older records only: the
-        // bundle that finds it is built after stage 1 now (Task f79929d9), so the batch ends FAILED_CLEAN with the same code.
+        // Field defect 2026-11-14: the bundle found main moved past this head's base; the row stopped (no retry with that base).
         if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'pending', description: 'main 已移动：等待系统更新 PR 的基线' };
         return recent.code === 'BATCH_SUPERSEDED' ? null : { state: 'pending', description: clip(`未执行（${code}），稍后自动重试`) };
       case 'IGNORED':

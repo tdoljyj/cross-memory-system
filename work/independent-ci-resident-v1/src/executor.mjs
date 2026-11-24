@@ -9,17 +9,12 @@ import { boundedNotice, budgetNotice } from './budget-alert.mjs';
 // that run as clued-control; this module never sees a secret.
 //
 // Order of one batch:
-//   reserve -> derive -> stage 1 (admission) -> markStarted (burns the head) ->
+//   reserve -> derive -> companion bundle -> stage 1 (admission) -> markStarted (burns the head) ->
 //   15-relay-wait (t0, batch; the record keeps its historic name) -> 20-plan-intent -> 25-plan (every heavy role local) ->
-//   [only with a local role: companion bundle -> Linux workspace preparation -> execution + publication stages of the heavy roles] ->
+//   [Linux workspace preparation] -> execution + publication stages of the heavy roles ->
 //   stage 8 -> close (success-path archive) -> COMPLETED
 // Before markStarted nothing touched Linux, no scanner ran and no success check was published, so a
-// stage-1 "not admitted" releases the reservation instead of burning the head.
-// The admission does not wait for the bundle (Task f79929d9, PLAN-native-admission-latency-20261124 §1.2): stage 1 never reads it (it
-// is the all-refs package of the Linux scans and their workspaces), so it is built after stage 1, right before the workspaces, and only
-// by a batch that has a local role; a batch main's rules ask no scan of (R3 lean, DESIGN §82) builds none. The head is burned by then: a
-// bundle that fails ends the batch as a workspace preparation failure (BUNDLE_UNAVAILABLE at stage 0, phase workspace: clean, one
-// attempt 2, which is a batch of its own with its own bundle directory).
+// bundle failure or a stage-1 "not admitted" releases the reservation instead of burning the head.
 // The hosted relay (stage R, the hosted wait and its hints, the relay qualification hold) is removed (Owner 2026-11-14,
 // DESIGN §76): it was never switched on. The plan records keep their fields (candidates [], relayed [], every role local with
 // RELAY_DISABLED), byte for byte what relay.enabled = false wrote, so every reader of older ledger entries stays as it was.
@@ -142,7 +137,7 @@ import { stageHeadScans } from './head-scans.mjs';
 import { HEAD_MOVED, PR_CLOSED, PR_DRAFT, PR_DRAFT_HELD, prCandidate } from './pr-candidate.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
-import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS } from './mailbox.mjs';
+import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
@@ -313,6 +308,9 @@ export const PUBLICATION_RETRY_MS = Object.freeze([30_000, 90_000, 300_000]);
 // Generation 11 (DESIGN 54; stage 2: generation 14, DESIGN 59): the waits before an execution stage (2, 4, 6) runs again in the same batch (classify.mjs#executionRetryable);
 // two runs again at most, each its own stage run with its own cap.
 export const EXECUTION_RETRY_MS = Object.freeze([60_000, 300_000]);
+// Generation 13 (DESIGN §57.3, Task 3e2e12d7): the waits before the second bundle of a batch resumed from parking point A is built again
+// after a network failure (the Source moves the failed gen-2\ aside); two builds again at most, then the batch ends as before.
+export const REBUNDLE_NETWORK_RETRY_MS = Object.freeze([60_000, 300_000]);
 // What a run again needs before its wait: the bounded quiescence proof and the two archives (each at its own request bound).
 const EXECUTION_RETRY_PREPARE_MS = ABORT_QUIESCENCE_WAIT_MS + 2 * ARCHIVE_LINUX_REQUEST_MS;
 // The refs gate's facts (DESIGN 55) for a stage-terminal receipt: only when it asked more than once or stopped asking; checked shapes only.
@@ -415,6 +413,14 @@ export const DRAIN_MAX_AGE_MS = 60 * 60_000;
 // refused, so it never keeps a PAUSE behind it out of the per-tick read (independent review of C6, M1).
 export const INTAKE_PAUSE_UNCONFIRMED_MAX_MS = 30 * 60_000;
 export const INTAKE_REQUEST_TRIES = 3;
+// The oldest bundle a batch takes into the workspace preparation (which accepts at most 2 hours), measured from the
+// reservation, which comes before the bundle (design v0.5 §4.3 item 3).
+export const BUNDLE_MAX_AGE_AT_WORKSPACE_MS = 100 * 60_000;
+// Task 4012c1b9 (DESIGN §37): a batch whose workspace comes this long after its reservation (it waited at parking point A)
+// first gets its second and last bundle (build-bundle.ps1 -Rebundle): fresh refs for stage 2's refs gate, and a bundle the
+// workspace preparation accepts. The refs must still be the batch's (REMOTE_REFS_CHANGED_SINCE_BUNDLE, a clean transient
+// ending); any other refusal ends it as before (PARKED_BUNDLE_TOO_OLD). A batch that never waited is not touched.
+export const REBUNDLE_AFTER_MS = 30 * 60_000;
 // The status row reason of a batch that rests at parking point A (the hosted wait).
 export const PARKED_A_REASON = 'PARKED_A';
 // Rule 41ab823a: at most this many front batches' stage-1 scan facts are kept between their stage 1 and their plan (normally one).
@@ -869,8 +875,8 @@ export class ResidentExecutor {
   }
 
   // After a wait of the refs gate (DESIGN 55): still no HALT, no drift, and the authority still covers this stage and the rest.
-  // true, or why not ('halt', 'drift', 'authority', 'error'); the authority also covers the next request (the refs read,
-  // CHECK_REFS_REQUEST_MS).
+  // true, or why not ('halt', 'drift', 'authority', 'error'); the authority also covers the next request (`nextMs`: the refs read,
+  // CHECK_REFS_REQUEST_MS, or a rebuild of the bundle and the workspaces after a network wait).
   async gateWaitStillAllowed(key, number, nextMs = CHECK_REFS_REQUEST_MS) {
     try {
       if (await this.ledger.halted()) return 'halt';
@@ -3945,10 +3951,20 @@ export class ResidentExecutor {
     keepBatch(batch);
     await this.receipt('batch-derived', { key, batchId: batch.batchId, packageSha256: batch.packageSha256 });
 
-    // No bundle here (Task f79929d9): stage 1 does not read it, and a batch with no local role never needs one (continueBatch builds it).
+    // The bundle comes first: it needs only the Owner's own read credential, has no Windows or Linux
+    // effect and publishes nothing, so its failure can release the reservation.
+    this.atStage(0, 'bundle');
+    const bundle = await this.companion.buildBundle(batch);
+    // ADR 0019 (review 2): a member of a batch of several PRs moved on (companion.mjs#BUNDLE_MEMBER_MOVED_REASONS): its own code.
+    // Field defect 2026-11-14: main is no longer this subject's base (the bundle checked GitHub's refs): its own code, never the breaker.
+    const bundleCode = bundle?.code === TRAIN_BATCH_MEMBER_MOVED && Object.hasOwn(subject, 'testSha') ? TRAIN_BATCH_MEMBER_MOVED
+      : bundle?.code === RESIDENT_BASE_MOVED ? RESIDENT_BASE_MOVED : 'BUNDLE_UNAVAILABLE';
+    if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, bundleCode, {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null,
+      // Generation 10 (DESIGN 53.3): the companion's own word that a GitHub step failed in git (companion.mjs#bundleNetworkRefusal).
+      bundleNetwork: bundle?.code === BUNDLE_NETWORK_UNAVAILABLE });
     const early = await this.abortIfRequested(key, batch, 'before-stage-1');
     if (early) return early;
-    // Phase 2: a newer commit of the PR arrived since the reservation. Nothing of this batch ran: released, not
+    // Phase 2: a newer commit of the PR arrived while the bundle was built. Nothing of this batch ran: released, not
     // burned (design v0.5 §4.2; v0.6 §3: before stage 1 the arrival order alone may decide).
     const superseded = await this.supersededBeforeStart(key, subject, batch);
     if (superseded) return superseded;
@@ -4020,7 +4036,7 @@ export class ResidentExecutor {
       // Every resume re-runs the start-of-batch checks; any drift fails closed (UNKNOWN, HALT).
       const startCode = await this.batchStartChecks(subject);
       if (startCode) return this.afterBatch(subject, entry.reserved.origin ?? 'queued', await this.unknown(key, startCode, 'resume-start-checks', batch));
-      outcome = await this.continueBatch(key, subject, batch, t0);
+      outcome = await this.continueBatch(key, subject, batch, t0, { resumed: true });
       if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
     } catch (error) {
       outcome = await this.unknown(key, codeOf(error), 'executor-exception', batch, archiveFacts(error));
@@ -4028,9 +4044,10 @@ export class ResidentExecutor {
     return this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome);
   }
 
-  // Everything after 15-relay-wait: 20-plan-intent, 25-plan, the bundle and the local roles (when there is one), stage 8 and the close.
-  // The batch's own first pass and a batch that rested at parking point A in an earlier tick (resumeWaiting) go the same way.
-  async continueBatch(key, subject, batch, t0) {
+  // Everything after 15-relay-wait: 20-plan-intent, 25-plan, the local roles, stage 8 and the close.
+  //   resumed: this call resumes a batch that rested at parking point A in an earlier tick (resumeWaiting), never the
+  //   batch's own first pass (DESIGN §37: only a batch that waited is re-bundled; independent review M1).
+  async continueBatch(key, subject, batch, t0, { resumed = false } = {}) {
     let aborted = await this.abortIfRequested(key, batch, 'before-relay-plan');
     if (aborted) return aborted;
     if (this.frontBindKeys.has(key)) return this.frontBindEnd(key);
@@ -4044,25 +4061,47 @@ export class ResidentExecutor {
     if (localRoles.length > 0) {
       if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
       if ((aborted = await this.endIfNotStanding(key, subject, batch, 'before-workspace', POSITIONS[1]))) return aborted;
-      // The batch's bundle, built here and nowhere else (Task f79929d9): after stage 1, only for a batch with a local role, right before
-      // its workspaces. Always the first generation, also for a batch that rested at parking point A: 20-plan-intent is written before
-      // this line and a batch with that record is never resumed from A (ledger.mjs#waitingAt), so no batch comes here twice, and an
-      // upgrade ends every resting batch before the new version starts (upgradeDraining), so none comes with an older version's bundle.
-      // The second generation (build-bundle.ps1 -Rebundle, REBUNDLE_REQUIRES_FIRST_GENERATION) is therefore never asked for. Should a
-      // first generation exist all the same, the script refuses to build over it and the batch ends like any refused bundle, below.
-      // The head is burned: a refusal ends the batch as a workspace preparation failure, nothing of it on Linux. Main no longer the
-      // batch base and a member of a batch of several PRs moved on keep their own codes (RESIDENT_BASE_MOVED; TRAIN_BATCH_MEMBER_MOVED,
-      // ADR 0019), both final for this batch and never the breaker; anything else (also no answer) is BUNDLE_UNAVAILABLE, the clean
-      // ending the one attempt 2 follows (a batch of its own: its own key and bundle directory).
-      this.atStage(0, 'bundle');
-      const bundle = await this.companion.buildBundle(batch);
-      const bundleCode = bundle?.ok === true ? null : bundle?.code === TRAIN_BATCH_MEMBER_MOVED && Object.hasOwn(subject, 'testSha') ? TRAIN_BATCH_MEMBER_MOVED
-        : bundle?.code === RESIDENT_BASE_MOVED ? RESIDENT_BASE_MOVED : 'BUNDLE_UNAVAILABLE';
-      // Generation 10 (DESIGN 53.3): the companion's own word that a GitHub step failed in git (companion.mjs#bundleNetworkRefusal).
-      const bundleNetwork = bundleCode === 'BUNDLE_UNAVAILABLE' && bundle?.code === BUNDLE_NETWORK_UNAVAILABLE;
-      await this.receipt('batch-bundled', { key, failureCode: bundleCode, companionJobTree: bundle?.jobTree ?? null, ...(bundleNetwork ? { network: true } : {}) });
-      if (bundleCode) return Object.assign(new StepFailure(0, bundleCode, {}, 'workspace', relayed), { bundleNetwork });
-      if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
+      // A batch resumed from parking point A gets its second bundle before the workspace (Task 4012c1b9, DESIGN §37). When
+      // that is refused, it ends here, nothing of it on Linux: refs no longer the batch's as the clean transient
+      // REMOTE_REFS_CHANGED_SINCE_BUNDLE, anything else as before (PARKED_BUNDLE_TOO_OLD). A batch that never waited, or a
+      // companion without the re-bundle port, keeps the old rule: a bundle older than 100 minutes ends the batch here.
+      const reservedAt = Date.parse((await this.ledger.state(key)).reserved?.reservedAt ?? '');
+      const rebundle = resumed && typeof this.companion.rebuildBundle === 'function' && Number.isFinite(reservedAt) && this.clock() - reservedAt > REBUNDLE_AFTER_MS;
+      if (!rebundle) {
+        if (Number.isFinite(reservedAt) && this.clock() - reservedAt > BUNDLE_MAX_AGE_AT_WORKSPACE_MS) return new StepFailure(0, 'PARKED_BUNDLE_TOO_OLD', {}, 'workspace', relayed);
+      } else {
+        this.atStage(0, 'rebundle');
+        let rb = await this.companion.rebuildBundle(batch);
+        // Generation 13 (DESIGN §57.3): a network step that failed is built again after REBUNDLE_NETWORK_RETRY_MS, each wait and rebuild
+        // allowed like an execution retry (review round 1, MINOR 3): no HALT, no Source drift, and the installed authority still covering
+        // the wait (before it), the rebuild and the workspaces after it at their bounds and every stage of the batch from the first local
+        // one at its cap.
+        const firstLocal = ROLE_STAGES[localRoles[0]][0], rebuildMs = REBUILD_BUNDLE_REQUEST_MS + PREPARE_WORKSPACES_REQUEST_MS;
+        for (let again = 0; again < REBUNDLE_NETWORK_RETRY_MS.length && rb?.ok !== true && rb?.code === BUNDLE_NETWORK_UNAVAILABLE; again++) {
+          const wait = REBUNDLE_NETWORK_RETRY_MS[again];
+          if (!this.executionRetryFitsAuthority(firstLocal, 0, { afterWait: true, extraMs: wait + rebuildMs })) {
+            await this.receipt('rebundle-retry-refused', { key, try: again + 1, step: 'before-wait-authority' });
+            break;
+          }
+          await this.receipt('rebundle-retry', { key, try: again + 1, afterMs: wait, failureCode: BUNDLE_NETWORK_UNAVAILABLE, companionJobTree: rb?.jobTree ?? null });
+          this.atStage(0, 'retry-wait');
+          await this.retryWait(key, wait);
+          if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
+          const still = await this.gateWaitStillAllowed(key, firstLocal, rebuildMs);
+          if (still !== true) {
+            await this.receipt('rebundle-retry-refused', { key, try: again + 1, step: `after-wait-${still}` });
+            break;
+          }
+          this.atStage(0, 'rebundle');
+          rb = await this.companion.rebuildBundle(batch);
+        }
+        const code = rb?.ok === true ? null : (rb?.code === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'PARKED_BUNDLE_TOO_OLD');
+        // The line to GitHub, and nothing else, as for the first bundle (DESIGN 53.3; review round 1, MINOR 6): the ending keeps it.
+        const bundleNetwork = code === 'PARKED_BUNDLE_TOO_OLD' && rb?.code === BUNDLE_NETWORK_UNAVAILABLE;
+        await this.receipt('batch-rebundled', { key, failureCode: code, ageMinutes: Math.floor((this.clock() - reservedAt) / 60_000), companionJobTree: rb?.jobTree ?? null,
+          ...(bundleNetwork ? { network: true } : {}) });
+        if (code) return Object.assign(new StepFailure(0, code, {}, 'workspace', relayed), { bundleNetwork });
+      }
       this.atStage(0, 'workspace');
       let prep = await this.companion.prepareWorkspaces(batch);
       for (let again = 0; again < EXECUTION_RETRY_MS.length && prep?.ok !== true && prep?.code === 'WORKSPACE_PREPARATION_REFUSED'; again++) {
@@ -4252,6 +4291,40 @@ export class ResidentExecutor {
     const breakerState = breakerOf(this.queue.breaker).state;
     try {
       const started = (await this.ledger.state(key)).state === 'STARTED';
+      if (!started && failure.phase === 'bundle' && failure.code === TRAIN_BATCH_MEMBER_MOVED) {
+        // ADR 0019 (review 2): a member of the batch moved on after stage 10 composed it. Nothing about the front, the line or this
+        // node was decided: released like a supersession (no release cap, no breaker), and this S is dropped from the run queue
+        // (settle dropFront: it can never pass again); stage 10 composes the next batch from the members' current heads.
+        await this.closeOrThrow(batch, { linux: false });
+        await this.ledger.releaseUnexecuted(key, 'SUPERSEDED', { failureCode: failure.code, basis: 'train-batch-member-moved-before-stage-1', class: 'superseded', breaker: 'neutral' });
+        await this.receipt('batch-unexecuted', { key, failureCode: failure.code, release: 'SUPERSEDED', companionJobTree: failure.companionJobTree ?? null, network: false });
+        this.reportOutcome(this.current, 'NOT_EXECUTED', { code: failure.code, key });
+        return { state: 'NOT_EXECUTED', key, failureCode: failure.code, release: 'SUPERSEDED',
+          settle: { kind: 'released', reason: 'SUPERSEDED', code: failure.code, klass: 'superseded', breaker: 'neutral', breakerState, pos, dropFront: true } };
+      }
+      if (!started && failure.phase === 'bundle' && failure.code === RESIDENT_BASE_MOVED) {
+        // Field defect 2026-11-14 (TURING, PRs #594/#942: three of these opened the breaker and held every other PR for an hour): the
+        // bundle found GitHub's main is no longer this subject's base. Nothing ran; the fact is about this subject alone, which can
+        // never pass with that base. Released like a supersession (no release cap, no breaker) and the row stops (settle ignored:
+        // only a new commit, the PR brought up to main, runs it again; a front S is dropped). A real environment fault stays below.
+        await this.closeOrThrow(batch, { linux: false });
+        await this.ledger.releaseUnexecuted(key, 'SUPERSEDED', { failureCode: failure.code, basis: 'main-moved-before-stage-1', class: 'superseded', breaker: 'neutral' });
+        await this.receipt('batch-unexecuted', { key, failureCode: failure.code, release: 'SUPERSEDED', companionJobTree: failure.companionJobTree ?? null, network: false });
+        this.reportOutcome(this.current, 'NOT_EXECUTED', { code: failure.code, key });
+        return { state: 'NOT_EXECUTED', key, failureCode: failure.code, release: 'SUPERSEDED',
+          settle: { kind: 'ignored', reason: 'SUPERSEDED', code: failure.code, klass: 'superseded', breaker: 'neutral', breakerState, pos, dropFront: true } };
+      }
+      if (!started && failure.phase === 'bundle') {
+        // Nothing of this batch reached Linux yet (DESIGN §24): the close archives Windows only and asks the companion for
+        // nothing, so a companion still busy with, or done with, the failed bundle cannot turn this release into a HALT.
+        await this.closeOrThrow(batch, { linux: false });
+        const network = networkFailure({ code: failure.code, bundleNetwork: failure.bundleNetwork === true });
+        await this.ledger.releaseUnexecuted(key, 'BUNDLE_UNAVAILABLE', { failureCode: failure.code, class: 'environment', breaker: 'counts', breakerState, network });
+        await this.receipt('batch-unexecuted', { key, failureCode: failure.code, companionJobTree: failure.companionJobTree ?? null, network });
+        this.reportOutcome(this.current, 'NOT_EXECUTED', { code: failure.code, key });
+        return { state: 'NOT_EXECUTED', key, failureCode: failure.code,
+          settle: { kind: 'released', reason: 'BUNDLE_UNAVAILABLE', code: failure.code, klass: 'environment', breaker: 'counts', breakerState, pos, network } };
+      }
       const proof = await this.proofFor(batch, failure.proof);
       // Defect a8910e41 (DESIGN §62.4): the take-over binding run's own end after stage 1 is released, never burned, once the Windows
       // side is proven quiet (as every stage-1 release): its head may run again when this duty is over (frontBound holds it within the

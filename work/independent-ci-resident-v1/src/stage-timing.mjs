@@ -3,9 +3,7 @@
 // A VIEW, never evidence (like status.json itself): the status board feeds this recorder from the calls the executor already makes
 // (setCurrent at every stage / phase change, stageDone at every stage-terminal receipt, stageRelay with a scanner stage's relay
 // facts, outcome, noteTrain), and the recorder turns them into millisecond sums per batch:
-//   prep           reservation (current.since) -> the batch is derived (prepMs: what the admission, stage 1, waits for; Task f79929d9: no
-//                  longer the bundle), and derive / bundle / workspace separately. prep.bundle is there only for a batch that built one:
-//                  after stage 1, right before its workspaces, a batch with a local role (rebundle: older records only);
+//   prep           reservation (current.since) -> the bundle is built (prepMs), and derive / bundle / workspace / rebundle separately;
 //   stages[n]      ms: the sum of every run of stage n (retries and stage-8 tries add up), runs, waitMs (retry waits);
 //                  relay (stages with a Linux worker only): handoffs { n, ms, maxMs } = the companion's relay calls (issue, challenge,
 //                  response, result) and rounds = each admission challenge round's ms (challenge sighted -> response sent);
@@ -150,7 +148,7 @@ export class StageTimings {
     } else {
       const k = PREP_KEYS.includes(c.phase) ? c.phase : 'other';
       r.prep[k] = (r.prep[k] ?? 0) + dt;
-      if (c.phase === 'derive' && r.prepMs === null) r.prepMs = Math.max(0, now - Date.parse(r.startedAt));
+      if (c.phase === 'bundle' && r.prepMs === null) r.prepMs = Math.max(0, now - Date.parse(r.startedAt));
     }
     r.activeMs += dt;
   }
