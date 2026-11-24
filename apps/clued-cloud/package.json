@@ -86,7 +86,7 @@
     "information-flow:e2e:verify": "node evals/information-flow-e2e/verify-evidence.mjs"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "0.10.3",
+    "@cloudflare/workers-oauth-provider": "1.2.4",
     "@supabase/supabase-js": "^2.112.3",
     "drizzle-orm": "0.45.2",
     "js-tiktoken": "1.0.21",
