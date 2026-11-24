@@ -132,6 +132,8 @@ const AUTHORIZATION_DB_TESTS = [
   'task-owner-detail-db', 'work-claims-generated-files-db', 'work-claims-lease-pin-db',
   // The merge queue of a served repository is joined only through the CI door (20261122140000).
   'merge-queue-ci-join-only-db',
+  // The drill test project is brought to production's applied list (FABLE-drill-test-project-sync-20261124 §1).
+  'drill-test-sync-db',
 ].map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
 // What those tests read besides the migrations: their shared test helpers, the worker code some of them bundle, the
 // Resource Center host and policy modules, the context compiler and the vendored Information Flow and DatasetSplit
@@ -204,6 +206,7 @@ export const SUITES = {
   'migration-verify': {
     'production-schema': ['apps/clued-cloud/supabase/**', 'apps/clued-cloud/scripts/production-schema-*.mjs',
       'apps/clued-cloud/scripts/migration-ledger.mjs', 'apps/clued-cloud/scripts/production-release-baseline.json',
+      'apps/clued-cloud/scripts/drill-test-sync.mjs',
       // The release door flow test runs the release workflow steps and the grant script (FABLE-release-identity-autonomous §3.1).
       '.github/workflows/clued-cloud-production-release.yml', 'scripts/ci/clued-release-door.mjs',
       'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...MIGRATION_DB_TESTS, ...AUTHORIZATION_DB_TESTS, ...MIGRATION_DB_TEST_INPUTS, 'apps/clued-cloud/package.json',
