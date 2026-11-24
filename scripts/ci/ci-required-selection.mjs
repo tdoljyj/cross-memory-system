@@ -1094,47 +1094,64 @@ async function whereFilesRun(files, root) {
 // command runs, each with a PREPUSH_TIMEOUT_MS timeout; a red one is named with the tests that failed.
 export function runPrepush(root, { env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
   commands = PREPUSH_COMMANDS, timeoutMs = PREPUSH_TIMEOUT_MS, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
+  // One verdict at the end: a red command is a clear red even when a later one timed out, did not start, could not be
+  // expanded or threw (the push entry refuses only on exit 1 with a "prepush 红：" line); no red but a command that did
+  // not run is PREPUSH_ERROR_EXIT, never 1, so a check that could not run never stops a push.
   const red = [];
+  const notRun = [];
   for (const command of commands) {
     const cwd = path.join(root, command.cwd);
-    let argv;
+    const named = `(${command.cwd}) ${command.argv.join(' ')}`;
     try {
-      argv = expandArgv(command.argv, { cwd, root, hosted: false });
+      let argv;
+      try {
+        argv = expandArgv(command.argv, { cwd, root, hosted: false });
+      } catch (error) {
+        throw new Error(`cannot be expanded: ${error.message}`);
+      }
+      let reportDir = null;
+      if (isNodeTest(argv) && existsSync(REPORTER_PATH)) {
+        try {
+          reportDir = mkdtempSync(path.join(os.tmpdir(), 'prepush-tests-'));
+        } catch { /* runs without naming its failed tests */ }
+      }
+      const report = reportDir ? path.join(reportDir, 'failures.jsonl') : null;
+      log(`::group::prepush: (${command.cwd}) ${argv.join(' ')}`);
+      let result;
+      try {
+        const run = resolveCommand(report ? withReporter(argv, report) : argv, { platform });
+        result = spawn(run[0], run.slice(1), { cwd, env: testEnv(env), stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit', timeout: timeoutMs });
+        if (command.quiet && result.stdout) {
+          const text = result.stdout.toString();
+          log(result.status === 0 ? `${text.split('\n').slice(0, 4).join('\n')}\n...` : text);
+        }
+      } finally {
+        log('::endgroup::');
+      }
+      let tests = [];
+      if (report) {
+        try {
+          tests = [...new Set(readReport(readReportFile(report), root).events.filter((event) => event.type === 'fail').map(testAt))];
+        } catch { /* the command's own output names them */ }
+        try {
+          rmSync(reportDir, { recursive: true, force: true });
+        } catch { /* a report directory left in the temp directory is litter, not a verdict */ }
+      }
+      if (result.error || result.signal || result.status === null) {
+        throw new Error(result.error?.code === 'ETIMEDOUT' ? `timed out after ${timeoutMs / 1000} s`
+          : result.error ? `did not start: ${result.error.message}` : `ended by ${result.signal}`);
+      }
+      if (result.status !== 0) red.push({ command, argv, status: result.status, tests });
     } catch (error) {
-      log(`prepush: (${command.cwd}) ${command.argv.join(' ')} cannot be expanded: ${error.message}`);
-      return PREPUSH_ERROR_EXIT;
+      log(`prepush: ${named} ${error.message}; this command did not run`);
+      notRun.push(`${named}: ${error.message}`);
     }
-    let reportDir = null;
-    if (isNodeTest(argv) && existsSync(REPORTER_PATH)) {
-      try {
-        reportDir = mkdtempSync(path.join(os.tmpdir(), 'prepush-tests-'));
-      } catch { /* runs without naming its failed tests */ }
-    }
-    const report = reportDir ? path.join(reportDir, 'failures.jsonl') : null;
-    log(`::group::prepush: (${command.cwd}) ${argv.join(' ')}`);
-    const run = resolveCommand(report ? withReporter(argv, report) : argv, { platform });
-    const result = spawn(run[0], run.slice(1), { cwd, env: testEnv(env), stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit', timeout: timeoutMs });
-    if (command.quiet && result.stdout) {
-      const text = result.stdout.toString();
-      log(result.status === 0 ? `${text.split('\n').slice(0, 4).join('\n')}\n...` : text);
-    }
-    log('::endgroup::');
-    let tests = [];
-    if (report) {
-      try {
-        tests = [...new Set(readReport(readReportFile(report), root).events.filter((event) => event.type === 'fail').map(testAt))];
-      } catch { /* the command's own output names them */ }
-      rmSync(reportDir, { recursive: true, force: true });
-    }
-    if (result.error || result.signal || result.status === null) {
-      const why = result.error?.code === 'ETIMEDOUT' ? `timed out after ${timeoutMs / 1000} s`
-        : result.error ? `did not start: ${result.error.message}` : `ended by ${result.signal}`;
-      log(`prepush: (${command.cwd}) ${argv.join(' ')} ${why}; the check did not run`);
-      return PREPUSH_ERROR_EXIT;
-    }
-    if (result.status !== 0) red.push({ command, argv, status: result.status, tests });
   }
   if (red.length === 0) {
+    if (notRun.length) {
+      log(`prepush: 没跑成 ${notRun.length} 条、没有红，按未跑处理`);
+      return PREPUSH_ERROR_EXIT;
+    }
     log(`prepush: 全部通过（${commands.length} 条）`);
     return 0;
   }
@@ -1142,6 +1159,7 @@ export function runPrepush(root, { env = process.env, spawn = spawnSync, log = c
     log(`prepush 红：(${command.cwd}) ${argv.join(' ')} 退出 ${status}`);
     for (const name of tests) log(`  失败的测试：${name}`);
   }
+  for (const line of notRun) log(`  另有没跑成的：${line}`);
   log(`复现：node scripts/ci/ci-required-selection.mjs --run-prepush --root ${root}`);
   return 1;
 }
@@ -1709,7 +1727,12 @@ async function main(argv, env = process.env) {
       console.error(`run-prepush: needs the tree to check: --run-prepush --root <tree>\n${USAGE}`);
       return 2;
     }
-    return runPrepush(path.resolve(tree), { env });
+    try {
+      return runPrepush(path.resolve(tree), { env });
+    } catch (error) { // an exception is "did not run" (PREPUSH_ERROR_EXIT), never the red exit 1 the push entry refuses on
+      console.error(`run-prepush: did not run: ${error.message}`);
+      return PREPUSH_ERROR_EXIT;
+    }
   }
   const filesIndex = argv.indexOf('--run-files');
   if (filesIndex >= 0) {

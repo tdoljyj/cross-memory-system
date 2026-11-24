@@ -2937,3 +2937,39 @@ test('--run-prepush marks its environment as a test run, and needs --root', () =
   assert.equal(missing.status, 2, `${missing.stdout}${missing.stderr}`);
   assert.match(missing.stderr, /--run-prepush --root <tree>/);
 });
+
+// Review of 3435f8bf: a red command is a clear red even when a later one times out, does not start, cannot be expanded
+// or throws; and an exception inside the run is "did not run" (3), never the red exit 1 the push entry refuses on.
+test('runPrepush: an earlier red stays 1 when a later command times out, does not start, cannot be expanded or throws; a throw alone is 3', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-prepush-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const run = (commands, outcome) => {
+    const lines = [];
+    const spawn = (command, args) => ({ status: 0, signal: null, stdout: Buffer.from(''), ...outcome(args) });
+    let status;
+    try {
+      status = selection.runPrepush(temp, { env: { CLUED_TEST_IDENTITY_DIR: temp }, spawn, log: (line) => lines.push(String(line)), commands });
+    } catch (error) {
+      status = `threw: ${error.message}`;
+    }
+    return { status, text: lines.join('\n') };
+  };
+  const first = { cwd: '.', argv: ['python', 'a.py'] };
+  const second = { cwd: '.', argv: ['python', 'b.py'] };
+  const timedOut = { status: null, signal: 'SIGTERM', error: Object.assign(new Error('spawnSync python ETIMEDOUT'), { code: 'ETIMEDOUT' }) };
+  const noStart = { status: null, signal: null, error: Object.assign(new Error('spawnSync python ENOENT'), { code: 'ENOENT' }) };
+  for (const [name, later] of [['timed out', timedOut], ['did not start', noStart]]) {
+    const result = run([first, second], (args) => (args.includes('a.py') ? { status: 1 } : later));
+    assert.equal(result.status, 1, `${name}: ${result.text}`);
+    assert.match(result.text, /prepush 红：\(\.\) python a\.py 退出 1/, name);
+    assert.match(result.text, /b\.py/, `${name}: the command that did not run is named too`);
+  }
+  const unexpanded = run([first, { cwd: '.', argv: ['node', 'x.mjs', '{base}'] }], (args) => (args.includes('a.py') ? { status: 1 } : {}));
+  assert.equal(unexpanded.status, 1, unexpanded.text);
+  const thrower = (args) => { if (args.includes('b.py')) throw new Error('EBUSY: resource busy or locked'); return args.includes('a.py') ? { status: 1 } : {}; };
+  const redThenThrow = run([first, second], thrower);
+  assert.equal(redThenThrow.status, 1, redThenThrow.text);
+  const throwOnly = run([second], thrower);
+  assert.equal(throwOnly.status, selection.PREPUSH_ERROR_EXIT, throwOnly.text);
+  assert.doesNotMatch(throwOnly.text, /prepush 红：/);
+});
