@@ -6,11 +6,12 @@
 //   - Date.now(), Date() and new Date() without an argument, performance.now(), process.hrtime(), process.uptime(),
 //     setTimeout and setInterval (global, node:timers, node:timers/promises, scheduler.wait), AbortSignal.timeout(), and
 //     a child_process call (spawn, spawnSync, exec, execSync, execFile, execFileSync, fork) with a timeout option
-// are refused when the code that calls them directly is test code: a file named *.test.* or under a test, tests or
-// fixtures directory of the checkout (CLUED_CLOCK_ROOT). Every refusal is one line in the record (CLUED_CLOCK_RECORD) and
+// are refused when the code that calls them directly is test code: a file named *.test.* or under a test, tests, fixtures
+// or evals directory of the checkout (CLUED_CLOCK_ROOT). Every refusal is one line in the record (CLUED_CLOCK_RECORD) and
 // a thrown REAL_CLOCK_IN_TEST error at the place; the entry fails a command whose record has a line outside the debt list
-// even when the test swallowed the error. A test file on the debt list (config/test-clock-debt.txt, which may only shrink:
-// test-clock-scan.mjs debtVerdict) is recorded and let through. Code under test, node_modules and node's own code are let
+// even when the test swallowed the error. A call from a file on the debt list (config/test-clock-debt.txt, which may only
+// shrink: test-clock-scan.mjs debtVerdict), in a process whose test file is on the list too, is recorded and let through
+// (check: a listed helper does not lend its debt to a new test). Code under test, node_modules and node's own code are let
 // through: once the test cannot read the real time, code under test that reads it and is not given a clock fails every
 // time, not now and then.
 // node:test's own { timeout } option and what runs outside JavaScript (PowerShell, Python, SQL in a test) are read by the
@@ -39,7 +40,7 @@ export const FAILURE_HELP = [
   '  a child limit -> none: the entry bounds the whole command',
   '  a real delay  -> sleep()/elapsedMs() and an entry in scripts/ci/test-clock-allow.json (Owner grant)',
 ].join('\n');
-const TEST_CODE = /(^|\/)(tests?|fixtures)\/|\.test\.[cm]?[jt]sx?$/;
+const TEST_CODE = /(^|\/)(tests?|fixtures|evals)\/|\.test\.[cm]?[jt]sx?$/;
 const GUARD_FILE = /(^|\/)scripts\/ci\/test-clock-guard\.mjs$/;
 const CHILD_CALLS = ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork'];
 
@@ -79,6 +80,12 @@ function install() {
     allow: () => (allow ??= root ? readAllow(path.join(root, 'scripts', 'ci', 'test-clock-allow.json')) : []),
   };
   globalThis[INSTALLED] = s;
+  // Imported for until() outside the entry (no checkout given): there is no debt list to judge by, so nothing is wrapped
+  // or refused, and a test that imports until() runs as before where the entry does not preload the guard.
+  if (!root) {
+    Object.assign(s, { check() {}, caller: () => null, testFile: () => null, note() {} });
+    return s;
+  }
 
   // The file of the frame that called the wrapped function: the first frame with a file name (a builtin such as
   // Array.prototype.map has none). A call from node's own code (node:...) is node's business: let through.
@@ -126,16 +133,26 @@ function install() {
       appendFileSync(s.record, `${JSON.stringify({ ...entry, pid: process.pid })}\n`);
     } catch { /* the thrown error still stops the test */ }
   }
-  // Refuses `api` called from test code, recording it; a debt-list file is recorded and let through.
+  // The test file this process runs: node --test starts one process a file (no suite uses --test-isolation=none), so it
+  // is process.argv[1]; null when that is not test code (a script under test, node -e).
+  let entry;
+  const entryFile = () => (entry === undefined ? (entry = process.argv[1] ? testFile(process.argv[1]) : null) : entry);
+  // Refuses `api` called from test code, recording it. A real-clock use is the debt of the file that makes the call (its
+  // count on the list only shrinks, so the fix is measured where the code is) and of the test the process runs: a listed
+  // helper (helpers.mjs waitFor) lets through only a listed test, so a new test cannot borrow a helper's debt. The test is
+  // the process's, not one read off the stack: after an await in the helper the stack no longer has the test's frame.
   function check(api, above) {
     const site = caller(above);
     if (!site) return;
     const file = testFile(site.file);
     if (!file) return;
-    const debt = s.debt().has(file);
-    note({ api, file, line: site.line, debt });
+    const test = entryFile();
+    const list = s.debt();
+    const debt = list.has(file) && (test === null || list.has(test));
+    note({ api, file, line: site.line, entry: test, debt });
     if (debt) return;
-    const error = new Error(`${ERROR_CODE}: ${api} at ${file}:${site.line}\n${FAILURE_HELP}`);
+    const via = test && test !== file ? ` (run by ${test}, which the debt list does not name)` : '';
+    const error = new Error(`${ERROR_CODE}: ${api} at ${file}:${site.line}${via}\n${FAILURE_HELP}`);
     error.code = ERROR_CODE;
     throw error;
   }
@@ -166,8 +183,14 @@ function install() {
     check('Date()', apply);
     return Reflect.apply(target, self, args);
   }
+  // Date.now answers through the guard until the test puts its own clock there (Date.now = fake, t.mock.method): the
+  // assignment lands on the real Date, and what is there then is what Date.now is. Putting the real one back is the guard again.
   const GuardedDate = new Proxy(real.Date, {
-    construct, apply, get: (target, key) => (key === 'now' ? now : Reflect.get(target, key, target)),
+    construct, apply,
+    get(target, key) {
+      const value = Reflect.get(target, key, target);
+      return key === 'now' && value === real.now ? now : value;
+    },
   });
   globalThis.Date = GuardedDate;
 
@@ -208,16 +231,28 @@ function install() {
 
   // A time limit on a child process (§3.4): any timeout option a test passes. The entry bounds the whole command instead.
   const childProcess = require('node:child_process');
+  // util.promisify(exec) and util.promisify(execFile) take the function's promisify.custom, which calls node's own exec
+  // without passing the wrapper: the custom one is wrapped the same way.
+  const limited = (name, args, above) => {
+    const options = args.find((arg) => arg && typeof arg === 'object' && !Array.isArray(arg));
+    const limit = options?.timeout;
+    if (limit !== undefined && limit !== null && limit !== 0 && limit !== Infinity) check(`${name}({ timeout })`, above);
+  };
   for (const name of CHILD_CALLS) {
     const original = childProcess[name];
     const guarded = function (...args) {
-      const options = args.find((arg) => arg && typeof arg === 'object' && !Array.isArray(arg));
-      const limit = options?.timeout;
-      if (limit !== undefined && limit !== null && limit !== 0 && limit !== Infinity) check(`${name}({ timeout })`, guarded);
+      limited(name, args, guarded);
       return original.apply(this, args);
     };
     Object.defineProperty(guarded, 'name', { value: name });
-    if (original[promisify.custom]) Object.defineProperty(guarded, promisify.custom, { value: original[promisify.custom], configurable: true });
+    const custom = original[promisify.custom];
+    if (custom) {
+      const guardedCustom = function (...args) {
+        limited(name, args, guardedCustom);
+        return custom.apply(this, args);
+      };
+      Object.defineProperty(guarded, promisify.custom, { value: guardedCustom, configurable: true });
+    }
     childProcess[name] = guarded;
   }
   syncBuiltinESMExports();

@@ -6,9 +6,11 @@
 //   debtVerdict     the debt list (config/test-clock-debt.txt) and the static rules:
 //                   - the list only shrinks: a line the base commit's list does not have, a listed file with more hits than
 //                     at the base commit, a listed file that is gone or has no hit left (remove the line) are each a problem;
+//                     in CI a missing base commit is a problem too (the comparison may not quietly stop), and a base
+//                     without the list (the change that brings it) is the only one not compared;
 //                   - what has no preload is read here, in every test file the list does not name: node:test's { timeout }
-//                     option, PowerShell clock reads and waits (in a test's strings or a test script), pg_sleep, and
-//                     Python's clock, sleep and timeout= (FABLE §2.5, §3.4);
+//                     option, a timeout given to a promisified exec or execFile, PowerShell clock reads and waits (in a
+//                     test's strings or a test script), pg_sleep, and Python's clock, sleep and timeout= (FABLE §2.5, §3.4);
 //                   - the allowlist (scripts/ci/test-clock-allow.json) names a file, a kind and the exact count.
 // The counts are lexical (a line that starts a comment is skipped, nothing else): the same text gives the same count, so
 // the base and the change are compared on one measure. node --import scripts/ci/test-clock-scan.mjs is not how it runs: run
@@ -28,7 +30,7 @@ export const RECORD_SHOWN = 20;
 
 // Test code: what the guard treats as test code (a *.test.* file or a file under a test, tests or fixtures directory), plus
 // Python and PowerShell test files.
-const TEST_DIR = /(^|\/)(tests?|fixtures)\//;
+const TEST_DIR = /(^|\/)(tests?|fixtures|evals)\//;
 const JS = /\.(?:[cm]?js|jsx|tsx?)$/;
 export function testFileKind(file) {
   const name = file.replaceAll('\\', '/');
@@ -65,9 +67,13 @@ export const PATTERNS = Object.freeze({
     ps: [PS],
   },
 });
+// A file that promisifies exec or execFile: its timeout options are a child's time limit the guard sees only on the paths
+// the run takes (promisedChild: the child hits of such a file, read statically on top of the guard).
+const PROMISED_CHILD = /\bpromisify\s*\(\s*(?:[\w$]+\.)*exec(?:File)?\s*\)/;
 // The kinds a debt-list file's hits are counted over, and the ones enforced here on files the list does not name.
+// promisedChild repeats child hits, so it is not counted for the list.
 export const DEBT_KINDS = Object.freeze(['clock', 'timer', 'child', 'testTimeout', 'ps', 'sql', 'py']);
-export const STATIC_KINDS = Object.freeze(['testTimeout', 'ps', 'sql', 'py']);
+export const STATIC_KINDS = Object.freeze(['testTimeout', 'promisedChild', 'ps', 'sql', 'py']);
 const COMMENT_LINE = { js: /^\s*(?:\/\/|\/\*|\*)/, py: /^\s*#/, ps: /^\s*#/ };
 
 // Hits by kind: { kind: [line, ...] } (one entry per hit).
@@ -96,6 +102,7 @@ export function scanSource(text, kind) {
       }
     }
   });
+  if (kind === 'js' && found.child && PROMISED_CHILD.test(text)) found.promisedChild = [...found.child];
   return found;
 }
 export const debtHits = (found) => DEBT_KINDS.reduce((sum, kind) => sum + (found[kind]?.length ?? 0), 0);
@@ -129,7 +136,7 @@ export function parseDebt(text) {
   return { files: sorted, markers, problems };
 }
 
-// Several blobs of one commit in one git process: Map path -> text (absent: not in that commit).
+// Several blobs of one commit in one git process: Map path -> text (null: not a file there; absent: not in that commit).
 export function readAtCommit(root, commit, files, { git = spawnSync } = {}) {
   const result = new Map();
   if (files.length === 0) return result;
@@ -143,9 +150,12 @@ export function readAtCommit(root, commit, files, { git = spawnSync } = {}) {
     const header = buffer.subarray(at, end).toString('utf8');
     at = end + 1;
     const match = /^[0-9a-f]+ (\w+) (\d+)$/.exec(header);
-    if (!match) continue; // "<object> missing"
+    if (!match) {
+      if (header.endsWith(' missing')) continue; // not in that commit
+      throw new Error(`git cat-file: ${header}`);
+    }
     const size = Number(match[2]);
-    if (match[1] === 'blob') result.set(file, buffer.subarray(at, at + size).toString('utf8'));
+    result.set(file, match[1] === 'blob' ? buffer.subarray(at, at + size).toString('utf8') : null);
     at += size + 1;
   }
   return result;
@@ -186,9 +196,12 @@ export function allowProblems(entries, scanOf) {
   return { problems, byFile };
 }
 
+// CI as the environment says it: GitHub Actions, or CI set to anything but false or 0.
+export const inCi = (env = process.env) => env.GITHUB_ACTIONS === 'true' || (!!env.CI && !/^(?:false|0)$/i.test(env.CI));
+
 // Every problem of the list, the allowlist and the static rules in the checkout at root, against the base commit's list
-// when base is given (none when it is not: a local run).
-export function debtVerdict({ root, base = null, git = spawnSync, untracked = true } = {}) {
+// when base is given. Without a base the list is not compared: a local run; in CI (ci) that is a problem of its own.
+export function debtVerdict({ root, base = null, git = spawnSync, untracked = true, ci = inCi() } = {}) {
   const problems = [];
   const read = (file) => {
     try {
@@ -210,13 +223,18 @@ export function debtVerdict({ root, base = null, git = spawnSync, untracked = tr
     return scans.get(file);
   };
   let baseList = null;
-  if (base) {
+  if (!base && ci) {
+    // In CI a missing base would quietly stop the comparison: the list could grow with every check green.
+    problems.push('no base commit (CI_BASE_SHA) in CI: the debt list cannot be compared; give the entry the base commit');
+  } else if (base) {
     if (!commitExists(root, base, git)) {
       problems.push(`the base commit ${base} cannot be read: the debt list is not compared (fetch it)`);
     } else {
-      const [text] = [readAtCommit(root, base, [DEBT_FILE], { git }).get(DEBT_FILE)];
-      // The change that brings the list has no list to compare with.
-      if (text !== undefined) baseList = parseDebt(text).files;
+      const text = readAtCommit(root, base, [DEBT_FILE], { git }).get(DEBT_FILE);
+      // Only a base without the file is the change that brings the list (nothing to compare with); a base where it is
+      // something git cannot give as a file is a failure, not a pass.
+      if (text === null) problems.push(`the base commit's ${DEBT_FILE} is not a file: the debt list cannot be compared`);
+      else if (text !== undefined) baseList = parseDebt(text).files;
     }
   }
   const listed = new Set(head.files);
@@ -237,7 +255,7 @@ export function debtVerdict({ root, base = null, git = spawnSync, untracked = tr
       problems.push(`${file}: no real-clock use left; remove the line from ${DEBT_FILE}`);
       continue;
     }
-    if (baseTexts.has(file)) {
+    if (typeof baseTexts.get(file) === 'string') {
       const before = debtHits(scanSource(baseTexts.get(file), testFileKind(file)));
       if (hits > before) problems.push(`${file}: real-clock uses grew from ${before} to ${hits}; a listed file only sheds them`);
     }
@@ -252,7 +270,7 @@ export function debtVerdict({ root, base = null, git = spawnSync, untracked = tr
     }
   }
   problems.push(...allow.problems);
-  const allowKind = { ps: 'ps', py: 'py' };
+  const allowKind = { ps: 'ps', py: 'py', promisedChild: 'child-timeout' };
   for (const file of testFiles(root, { git, untracked })) {
     if (listed.has(file)) continue;
     const found = scanOf(file);
@@ -266,6 +284,7 @@ export function debtVerdict({ root, base = null, git = spawnSync, untracked = tr
 }
 const STATIC_HELP = {
   testTimeout: "node:test's { timeout } puts a wall-clock limit on the test; the entry bounds the whole command",
+  promisedChild: 'a promisified exec or execFile is given a timeout in a test; the entry bounds the whole command',
   ps: 'PowerShell reads the real clock or waits in a test (Get-Date, Start-Sleep, ::Now, Stopwatch); give the script a time seam (Get-DrillTime)',
   sql: 'pg_sleep waits for real time in a test; write the time into the row (now() - interval ...)',
   py: 'Python reads the real clock, sleeps or sets a timeout in a test; pass a clock, wait on the event',
@@ -298,8 +317,10 @@ export function recordVerdict(text, { suite = 'suite' } = {}) {
   }
   const refused = entries.filter((entry) => !entry.debt);
   const debt = entries.filter((entry) => entry.debt);
+  // The test the process ran, when the use is in another file (a helper): that test is what the debt list does not name.
+  const via = (entry) => (entry.entry && entry.entry !== entry.file ? ` (${entry.entry})` : '');
   const lines = refused.length === 0 ? [] : [`${suite}: ${refused.length} real-clock use${refused.length === 1 ? '' : 's'} in test code`,
-    ...refused.slice(0, RECORD_SHOWN).map((entry) => `  ${entry.file}:${entry.line} ${entry.api}`),
+    ...refused.slice(0, RECORD_SHOWN).map((entry) => `  ${entry.file}:${entry.line} ${entry.api}${via(entry)}`),
     ...(refused.length > RECORD_SHOWN ? [`  ... and ${refused.length - RECORD_SHOWN} more`] : [])];
   return { refused, debt, lines };
 }
@@ -315,7 +336,7 @@ function main(argv, env = process.env) {
   }
   if (argv[0] === '--check') {
     const base = option('--base') ?? (env.CI_BASE_SHA || null);
-    const { problems, debt } = debtVerdict({ root, base });
+    const { problems, debt } = debtVerdict({ root, base, ci: inCi(env) });
     for (const problem of problems) console.log(`::error title=test-clock::${problem}`);
     console.log(`test-clock: ${debt.length} files on the debt list; ${problems.length} problem${problems.length === 1 ? '' : 's'}${base ? '' : ' (no base commit: the list is not compared)'}`);
     return problems.length === 0 ? 0 : 1;
