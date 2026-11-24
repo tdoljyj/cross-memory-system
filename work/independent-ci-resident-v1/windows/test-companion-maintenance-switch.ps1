@@ -7,7 +7,7 @@ if(Test-Path -LiteralPath $Scratch){throw 'NEW_SCRATCH_REQUIRED'}
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'companion-headless.ps1'),[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'SOURCE_PARSE_ERROR'}
-foreach($name in @('Invoke-CompanionAccountSwitch','Test-CompanionPendingMaintenance')){
+foreach($name in @('Invoke-CompanionAccountSwitch','Test-CompanionPendingMaintenance','Get-CompanionQualifyEvidence')){
  $function=@($ast.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst]},$false)|Where-Object Name -CEQ $name)
  if($function.Count -ne 1){throw 'FUNCTION_COUNT'}
  . ([scriptblock]::Create($function[0].Extent.Text))
