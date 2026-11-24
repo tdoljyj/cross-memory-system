@@ -2,8 +2,8 @@
 // (Task 2a5fdb66; scripts/ci/ci-required-selection.mjs). It is loaded from the
 // trusted base checkout with --test-reporter=<this file> and writes one JSON
 // line per event it keeps:
-//   {"type":"fail","file":<abs>,"path":[names...],"failure_type":...,"fingerprint":...}
-//   {"type":"pass","file":<abs>,"path":[names...],"skip":true?}   (skip only for a skipped test)
+//   {"type":"fail","file":<abs>,"path":[names...],"failure_type":...,"fingerprint":...,"ms":...?}
+//   {"type":"pass","file":<abs>,"path":[names...],"skip":true?,"ms":...?}   (skip only for a skipped test)
 //   {"type":"summary","counts":{...},"success":bool}   (the run's own summary)
 // Every test:fail counts: a test, a suite, a hook (failure_type hookFailed), a
 // parent that throws after its subtests, a file that fails to load. So does
@@ -13,6 +13,8 @@
 // (subtestsFailed; the subtest carries the failure) and a todo test (Node
 // does not fail the run for it). The fingerprint identifies why a test
 // failed, so a known test failing for another reason is a new failure.
+// ms, whole milliseconds, only on a top-level test (nesting 0): their sum is
+// what the file took, the seconds --shard packs files by (ci-shard-seconds.json).
 import { createHash } from 'node:crypto';
 
 const ASYNC_AFTER_END = /generated asynchronous activity after the test ended|triggered an? (?:uncaughtException|unhandledRejection) event/;
@@ -49,6 +51,9 @@ export function failureFingerprint(error) {
   return createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
+// A top-level test's duration as {ms}, or nothing.
+const timed = (data) => (data.nesting === 0 && Number.isFinite(data.details?.duration_ms) ? { ms: Math.round(data.details.duration_ms) } : {});
+
 export default async function* reporter(source) {
   const stacks = new Map();
   const pathOf = (data) => {
@@ -67,7 +72,7 @@ export default async function* reporter(source) {
       if (error?.failureType === 'subtestsFailed' || (data.todo !== undefined && data.todo !== false)) continue;
       const code = (error?.cause ?? error)?.code;
       yield `${JSON.stringify({ type: 'fail', file: data.file ?? null, path: pathOf(data), failure_type: error?.failureType ?? null,
-        fingerprint: failureFingerprint(error), ...(MISSING_DEPENDENCY.has(code) ? { missing_dependency: code } : {}) })}\n`;
+        fingerprint: failureFingerprint(error), ...(MISSING_DEPENDENCY.has(code) ? { missing_dependency: code } : {}), ...timed(data) })}\n`;
     } else if (event.type === 'test:diagnostic' && ASYNC_AFTER_END.test(String(data.message ?? ''))) {
       // Without process isolation the diagnostic names no file; it is still a
       // failure, recorded under <run> so it never matches a known entry.
@@ -78,7 +83,7 @@ export default async function* reporter(source) {
     } else if (event.type === 'test:pass') {
       // A skipped test is reported as passed by Node; it did not run (a failure run alone again must run).
       const skipped = data.skip !== undefined && data.skip !== false;
-      yield `${JSON.stringify({ type: 'pass', file: data.file ?? null, path: pathOf(data), ...(skipped ? { skip: true } : {}) })}\n`;
+      yield `${JSON.stringify({ type: 'pass', file: data.file ?? null, path: pathOf(data), ...(skipped ? { skip: true } : {}), ...timed(data) })}\n`;
     } else if (event.type === 'test:summary' && data.file === undefined) {
       yield `${JSON.stringify({ type: 'summary', counts: data.counts ?? null, success: data.success === true })}\n`;
     }

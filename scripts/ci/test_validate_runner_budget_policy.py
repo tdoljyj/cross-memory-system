@@ -493,7 +493,7 @@ class HostedScaffoldTests(unittest.TestCase):
         texts = self.real()
         report = policy.evaluate_workflows(texts)
         self.assertEqual(report["status"], "PASS", report["violations"])
-        self.assertEqual(report["hosted_scaffold_jobs"], 9)
+        self.assertEqual(report["hosted_scaffold_jobs"], 11)
         self.assertEqual(set(policy.HOSTED_SCAFFOLD_JOBS), {"hosted-required.yml", "clued-front-main-merge-hosted.yml"})
         names = set()
         for filename in policy.HOSTED_SCAFFOLD_JOBS:
@@ -502,7 +502,8 @@ class HostedScaffoldTests(unittest.TestCase):
                 self.assertEqual(policy.classify_route(filename, job_id, policy.job_fields(block))[0], "hosted", (filename, job_id))
                 names |= policy.job_check_names(job_id, policy.job_fields(block))
         self.assertEqual(names, {"hosted-ci-suites", "hosted-clued-cloud-tests", "hosted-migration-verify",
-                                 "hosted-ci-suites-windows", "hosted-gitleaks", "hosted-trivy", "hosted-contract-placement",
+                                 "hosted-ci-suites-windows", "hosted-ci-suites-windows-shard-{0}",
+                                 "hosted-ci-suites-windows-duration", "hosted-gitleaks", "hosted-trivy", "hosted-contract-placement",
                                  "hosted-scaffold-phase", "hosted-clued-front-main-merge"})
         self.assertFalse(names & policy.REQUIRED_CHECK_NAMES)
 
@@ -513,6 +514,7 @@ class HostedScaffoldTests(unittest.TestCase):
             "hosted scaffold job changed": text.replace("    timeout-minutes: 25\n", "    timeout-minutes: 26\n", 1),
             "hosted scaffold workflow controls changed": text.replace("  contents: read\n\nconcurrency:", "  contents: write\n\nconcurrency:", 1),
             "check name only": text.replace("    name: hosted-gitleaks\n", "    name: gitleaks\n", 1),
+            "hosted- check name only": text.replace("format('hosted-ci-suites-windows-shard-{0}'", "format('ci-suites-windows-shard-{0}'", 1),
             "must be deleted once its job leaves": text.replace("    runs-on: windows-2025\n", "    runs-on: " + SELF_HOSTED + "\n", 1),
             "new GitHub-hosted execution is prohibited": text + job("extra", "ubuntu-24.04"),
         }

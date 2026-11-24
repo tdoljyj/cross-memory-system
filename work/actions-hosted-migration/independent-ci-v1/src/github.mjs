@@ -64,7 +64,7 @@ function jwt(appId, key, now) {
 export function createGitHubChecksPort({ repository, repositoryId, appId, installationId,
   privateKeyProvider, fetchImpl = globalThis.fetch, clock = Date.now, maxPages = 10,
   forbiddenAppIds = [5365273, 5164952], includeModeRead = false, retryWindowMs = 4_000, sleep = wait, budgetObserver = null, budgetObservedAtFetch = false,
-  stagedScanJournal = null } = {}) {
+  stagedScanJournal = null, batchRoute = null } = {}) {
   if (!repoPattern.test(repository ?? '') || ![repositoryId, appId, installationId].every(positive)
     || [5365273, 5164952].includes(appId) || !Array.isArray(forbiddenAppIds)
     || forbiddenAppIds.includes(appId) || typeof privateKeyProvider !== 'function'
@@ -240,11 +240,15 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
   }
   // base.sha: the batch base T for every job that tests the head (v1 jobs have no testSha); a v2 train front batch
   // (S != H) accepts what GitHub reads (job-v2.mjs#prBaseAcceptedV2, inlined: the v1 one-shot closure never loads
-  // job-v2.mjs), and both reads of one call must agree.
+  // job-v2.mjs), and both reads of one call must agree. bc982192: a port built with the batch route push (stages 1 and 8 of a
+  // batch stamped push, batch-route.mjs) also accepts what GitHub reads for an S = H job of the v2 contract: that batch runs on the
+  // merge base of its head and main, which stage 1 proves (full-admission-v2.mjs#baseOnMain). No route: exactly as on origin/main.
+  const routePush = batchRoute === 'push';
   function exactPr(pr, job) {
     const front = typeof job.testSha === 'string' && /^[0-9a-f]{40}$/.test(job.testSha) && job.testSha !== job.headSha;
+    const onMergeBase = routePush && typeof job.testSha === 'string' && /^[0-9a-f]{40}$/.test(job.testSha) && job.testSha === job.headSha;
     return pr?.number === job.pr && pr.state === 'open' && pr.head?.sha === job.headSha
-      && /^[0-9a-f]{40}$/.test(pr.base?.sha ?? '') && (front || pr.base.sha === job.baseSha) && pr.base?.ref === 'main'
+      && /^[0-9a-f]{40}$/.test(pr.base?.sha ?? '') && (front || onMergeBase || pr.base.sha === job.baseSha) && pr.base?.ref === 'main'
       && pr.head?.repo?.full_name === repository && pr.base?.repo?.full_name === repository
       && Number.isSafeInteger(pr.changed_files) && pr.changed_files > 0 && pr.changed_files <= 3000;
   }

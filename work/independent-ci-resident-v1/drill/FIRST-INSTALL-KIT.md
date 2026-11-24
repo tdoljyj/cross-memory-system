@@ -23,6 +23,7 @@
 
 | 替身 | 替的是什么 | 为什么 | 因此没验到 | 何时可删 |
 |---|---|---|---|---|
+| 服务端与 CI 令牌（`kit.json` 的 `server`；kit 里的 `fleet-node-<v>.first-install-kit.json`、`fleet-node-<v>.first-install.SHA256SUMS`、`fleet-node-<v>.acceptance.json` 三份；`C:\drill\fake\ci-admission.token` = Owner 的演练绑定） | 生产服务端（Release 的首装 kit 里 `record.supabaseUrl`、`record.publishableKey` 两个公开字段）与真节点的 CI 绑定 | 演练不得接触生产；现造的令牌打生产只会被答“未授权”（第 17 代候选包的演练），真令牌又不该出现在演练里 | 生产服务端对本包的应答；带 ci-admission 角色节点的首班车 | 不可删；没验到的部分由真机首装承担 |
 | `C:\drill\fake\companion-github.token`（`ghp_CLUEDDRILLFAKE…`，来宾里生成、来宾里读；仅当被演练的包在必需组或可选组列出它时生成并交付，kit 同时登记这一步） | Owner 在凭据窗口给的陪伴 GitHub 经典令牌 | 演练不得使用真凭据 | 令牌被 GitHub 接受；陪伴访问 GitHub 的各个通道 | 不可删；没验到的部分由真机首装后的运行状态承担 |
 
 按设计不给的可选凭据：
@@ -34,6 +35,51 @@
 gh 与 Git for Windows 本身不做替身，按包的前置清单由宿主注入来宾真装（缺一个不建 kit、不开机，来宾不下载）。
 kit 的接受文件给角色钉的每个主机工具（`fleetRefs.formalRoles.<角色>.hostTools.<名>`，如 gitleaks 的 `/usr/bin/python3.12`），建 kit 时从暂存的 .deb 里取出该路径核 sha256：凡带这个路径的 .deb 都须是钉住的普通文件，且至少有一个带；否则不建 kit（`DRILL_KIT_HOST_TOOL_NOT_THE_FLEET_PIN:<路径>`、`DRILL_KIT_HOST_TOOL_NOT_IN_THE_DEBS:<路径>`；Fable 裁定 0e418483 §4.1 第 3 步）。核过的结果在 make-drill-kit.mjs 输出的 `hostTools`。
 清空 perNodeSteps 也不能得到 PASS_A_FULL。即使 A1–A9 全通过，仍不能勾掉“新节点首装实测一次”或证明服务端接纳。
+
+## 演练的服务端：测试项目，不碰生产
+
+设计：`D:/w/tmp/FABLE-drill-role-probe-20261124.md` PR-3；`D:/w/tmp/FABLE-drill-test-project-sync-20261124.md`（以文末两节裁定为准：同步在演练宿主上做，没有工作流，没有回执函数）。演练对着测试项目 `clued-auth-test` 装，不对着生产。
+
+- **唯一来源** `drill/drill-server.json`：项目名、地址、要断开的主机、放行的主机、宿主同步用的 session pooler 主机 `poolerHost`（公开值，DESK 读一次项目区域后填；`null` 时同步以 `DRILL_SERVER_POOLER_HOST_NOT_SET` 拒跑；不进 kit，来宾用不到）。
+  **公开 key 不在仓库里**（文件里出现 `publishableKey` 即拒，`DRILL_SERVER_REFUSED`）：它的来源是测试项目本身，DESK 读出后交给 `pwsh -NoProfile -File drill-vm.ps1 -ServerKey <key>`，
+  该入口核形状、拿它和一个随机令牌哈希调一次角色探测：项目自己答 `binding_not_authorized` 才算 key 被接受，写进宿主的 `D:\clued-drill\drill-server.local.json`
+  （记着它属于哪个项目，换了项目即 `DRILL_SERVER_KEY_REFUSED`）；网关拒 key 即 `DRILL_SERVER_KEY_REFUSED`，探测函数不在即 `DRILL_SERVER_PROBE_FUNCTION_MISSING`（先同步），都不写。
+  宿主没有这份时不出 kit（`DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET`），任何一步都不回落到 Release 里的生产地址。key 轮换后演练以 `DRILL_SERVER_KEY_REFUSED` 停，重交一次并重做 kit。
+- **kit 里换什么**：构建器把 Release 的首装 kit 复制一份，只换 `record.supabaseUrl`、`record.publishableKey` 两个字段，逐叶比较多差一个即不出 kit
+  （`DRILL_SERVER_STAND_IN_DIFFERS`），地址与 Release 相同也不出（`DRILL_SERVER_IS_PRODUCTION`）。来宾里钉住这份 kit 字节的三处随之换成演练版，都放进 kit 并钉进 `kit.json`：
+  首装 SHA256SUMS（只换 kit 那一行）、接受文件（`acceptanceOf(…, DRILL_RESERVED)`，`firstInstallKitSha256` 是演练版的；已接受的版本也用这份保留值文件，上不了 Release）、`release-pins.json`。
+  `-From` 目录不改；tar 与 Source 是包自己的（服务端地址不进 Source 哈希）。回执的 `firstInstallKitSha256` 仍是 Release 的（seal 拿它对 Owner 的接受文件），演练版哈希记在回执 `server` 里。
+- **开机前**（`Assert-DrillServerReady`，宿主闸门、占用与开机之前）：kit 没有 `server` 即拒（`DRILL_KIT_SERVER_STAND_IN_MISSING`，旧 kit 重做）；演练绑定不在即拒（`DRILL_BINDING_CREDENTIAL_MISSING`），
+  形状不对即拒（`DRILL_BINDING_CREDENTIAL_REFUSED`）；然后两步：
+  1. **同步**（`Sync-DrillServer`）：测试库密码不在即拒，什么都不问（`DRILL_SERVER_DATABASE_CREDENTIAL_MISSING`）；同步脚本 `apps/clued-cloud/scripts/drill-test-sync.mjs` 不在即拒；
+     `drill-server-check.mjs --production-list` 用 `gh` 取 main 上最近一次成功的发布运行（`clued-cloud-production-release.yml`）导出的制品 `clued-production-applied-<run>`，每次 gh 调用试 3 次，
+     同一运行号直接用宿主缓存 `D:\clued-drill\production-applied\<run>\`；再调同步脚本：清单、Release 的首装 kit（它的 `record.scope` 决定夹具的项目）、`drill-server.json` 走参数，
+     **密码只走标准输入**（不进命令行、环境变量、文件；脚本输出里出现密码也会被替换后才显示）。已一致时只是一次清单比对。
+  2. **角色探测**：`drill-server-check.mjs --ready`（令牌经标准输入交给它）先离线核 kit 与 `-From`（`DRILL_KIT_SERVER_NOT_THIS_RELEASE` 等），再发来宾将要发的那一个请求，无应答试 3 次。
+
+  | 步 | 不符时的码 |
+  |---|---|
+  | 同步 | `DRILL_SERVER_PRODUCTION_LIST_MISSING`（没有成功的发布运行、它没导出清单或制品过期、文件不是该运行的清单；处理：触发一次发布 preflight，只读）、`DRILL_SERVER_DATABASE_CREDENTIAL_MISSING`（密码没交）、`DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED`（连不上：28P01，或存的那份读不出、形状不对；重置后重交）、`DRILL_SERVER_DIVERGED`（测试库清单不是生产清单的前缀；`:stale` 是测试库比生产最新清单还多，有人绕过同步写过它；处理：`-SyncServer -Rebuild`）、`DRILL_SERVER_SYNC_FAILED:<文件或环节>`（带 `/` 的是应用失败的那一行的文件，否则是 `production-list-texts`、`fixtures`、`database`、`login` 之一；`no-result` 是脚本没给出结果行）、`DRILL_SERVER_SYNC_TOOL_MISSING`（检出没有同步脚本或 `apps/clued-cloud/node_modules`，`:gh` 是宿主没有 gh）、`DRILL_SERVER_POOLER_HOST_NOT_SET`、`DRILL_SERVER_UNREACHABLE`（`:github` 是 gh 试 3 次仍不通） |
+  | 角色探测 `clued_work_merge_slot_holders_v1`（令牌哈希、kit 的 `scope` 与 `repository`；要求答“无角色”：`holders: []`、`reason: admission_binding_required`，与节点同一个解析函数） | `DRILL_SERVER_PROBE_FUNCTION_MISSING`（404，测试项目缺迁移）、`DRILL_BINDING_REFUSED_BY_SERVER`（项目答 401/403 `42501`：令牌过期或对 `scope` 无只读授权）、`DRILL_SERVER_KEY_REFUSED`（网关答 401/403：kit 里的 key 轮换了）、`DRILL_BINDING_ON_DUTY`（被放行：账户没有 parking 角色，或绑定带了角色，来宾会转 ACTIVE）、`DRILL_SERVER_UNREACHABLE` |
+
+  同步跟随的内容记进演练回执的 `server.sync`：发布运行号 `releaseRun`、生产清单末行 `productionLast` 与行数 `productionRows`、本次应用了几行 `applied`、拥有项目的账号 `projectAccount`（只留首字符和域名）。
+  每次演练都拿生产最新的清单现比，所以“生产变了而没人同步”也在开机前收敛。
+- **测试项目靠什么与生产一致**：上面的同步，每次开机前一次；它也给每个账户种一条 ci-admission 的 parking 角色，并把 kit `scope` 指的项目种给注册最早的那个账号。没有 parking 时服务端对任何绑定都放行，
+  探测会答 held，所以它是这套替身的前提；重建后由同步自动恢复，但演练绑定要重签（重建会删掉它）。
+- **测试库密码**：Owner 在 Supabase 后台重置 `clued-auth-test` 的数据库密码，贴进 `pwsh -NoProfile -File drill-vm.ps1 -ServerDatabaseCredential` 弹出的 Windows 凭据窗口（用户名已填好且不能改：
+  `postgres.<项目 ref>`，从 `drill-server.json` 的地址得出）；存到 `D:\clued-drill\drill-server-database.clixml`（DPAPI，仅本 Windows 用户），同一个读取函数（`Get-DrillCredential -ServerDatabase`）。
+  只收单行可打印 ASCII（标准输入在任何代码页下原样送到）；别的用户名（别的项目、生产）不收。代理不看、不传、不存。
+- **单独同步**：`pwsh -NoProfile -File drill-vm.ps1 -SyncServer [-Rebuild] -From <Release 目录> -Version <v>`，与开机前同一个函数，不开虚拟机、不占宿主；输出 `DRILL_SERVER_SYNCED` 与上面 `server.sync` 的字段。
+  `-Rebuild`（清空测试库的应用对象后从空重放，`auth` 不动）只在首次和 `DRILL_SERVER_DIVERGED` 之后由 DESK 拉起；开机前的同步从不重建。
+- **演练绑定**：Owner 在测试项目建一条不带 ci-admission 角色的绑定，交一次：`pwsh -NoProfile -File drill-vm.ps1 -BindingCredential` 弹出 Windows 凭据窗口，
+  用户名填连接 id，密码贴 `clued_bnd_` 令牌（无头令牌最长 90 天，签发时选 90 天、只读、范围选 kit `record.scope` 那一项；到期后演练在开机前以 `DRILL_BINDING_REFUSED_BY_SERVER` 停，重签重交）；存到 `D:\clued-drill\drill-binding.clixml`（DPAPI，仅本 Windows 用户），与来宾管理员凭据同一处、同一个读取函数（`Get-DrillCredential`）。
+  每轮经 PowerShell Direct 会话交给来宾写成 `ci-admission.token`，随检查点恢复消失；`public.json` 的绑定 id 与令牌指纹就是这条绑定的。升级令牌与 App 私钥仍在来宾里现造。
+- **来宾里断开生产**：包自己的代码里写死着生产地址（`windows/SwapBroker.cs` 的 `Route`：服务每次启动都向生产网关发续期探测，不读 record），换 record 管不到。
+  所以建 kit 时把 tar 里出现的每个 `https://` 主机逐个判定：在 `drill-server.json` 的 `blackholeHosts`（加上 Release record 的数据库主机）里就断开，在 `allowedHosts`（不是 Clued 的主机）里就放行，
+  两边都不在即不出 kit（`DRILL_SERVER_PRODUCTION_HOST_NOT_CUT_OFF:<主机>`）；开机前 `--server-of` 按同一规则再核一遍。入口在装之前核 `-From` 里的首装 kit 指的就是演练服务端
+  （否则 `DRILL_ENTRY_SERVER_IS_PRODUCTION`），把 kit 的 `blackholeHosts` 写进 hosts（`0.0.0.0` 与 `::`），再解析一遍，解析到别的地址即停（`DRILL_ENTRY_PRODUCTION_NOT_CUT_OFF`）。
+  hosts 管到 Windows 进程与按默认设置生成 hosts 的 WSL；容器内的解析不经它，运行时拼出来的地址也不在扫描之内，这两处没有机制兜住。
+- **A6**：绑定没有角色，launcher 的角色探测答 `not-held`、首班车 `first-train-not-applicable`、节点 STANDBY；UNCERTAIN（探测被拒或没答上）不算过。
 
 ## 两种 kit
 
@@ -92,7 +138,7 @@ node $builder --version $v --build $build --final $prepared --images $images --o
 if ($LASTEXITCODE) { throw '候选 Release 目录组装失败' }
 node $builder --version $v --from $candFrom --prereq D:/clued-drill/prereq/prereq.json --request $request --out $candKit
 if ($LASTEXITCODE) { throw '候选演练 kit 构建失败' }
-pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Version $v -From $candFrom -Kit $candKit
+pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Version $v -From $candFrom -Kit $candKit -Ladder
 ```
 
 候选演练默认跑 A8 并要求它为真；跳过 A8 只能显式带 `-SkipReinstall`（不是默认，Fable 裁定补“候选跳过 A8”）。候选回执的 A1–A7 必须逐项为真，A8 为真或被显式跳过，其他情况都是 `FAIL`。跳过了 A8 的候选，回读后最好只能得到 `PASS_A_REINSTALL_NOT_DRILLED`，A8 的 detail 写“同包重装未演练”；这个值原样写进索引的演练格，永远不会是另外两种 PASS。
@@ -112,13 +158,36 @@ guest 路径固定映射为 `C:\drill\{from,kit,fake,work}`。fake 是 VM 内现
 Owner 批准后，DESK 在可用 Hyper-V 与 pwsh 的宿主机运行 A 档：
 
 ```powershell
-pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Version $v -From $from -Kit $kit
+pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Version $v -From $from -Kit $kit -Ladder
 ```
 
-默认整轮限时 70 分钟，包含来宾开机、A 档步骤及观测采集，可用 `-RunTimeoutMinutes` 指定。当班时须已有
+**梯度模式是演练的默认跑法**（`-Ladder`，协调方 Owner 11-23：“先把每段结论传回来，再慢慢梯度测试，把黑盒逐步切成明盒”）。整轮限时由代码推出，不靠人记：脚本在 `D:\clued-drill\runs` 下按目录名（`<UTC 开始>-<version>-<id>`）只看本 version 的运行目录，取同一 kit sha256 最近一次的回执，读它的 `evidence.stageTimeline` 定本轮限时（`Get-DrillLadderStep`）。没有 `receipt.json` 的目录跳过；本 version 的 `receipt.json` 读不出或缺 `version`/`kitSha256` 时拒绝开跑（`DRILL_LADDER_PREVIOUS_RECEIPT_UNREADABLE`，带路径），不越过它去用更早的回执：
+
+| 上一轮 | 本轮 |
+| --- | --- |
+| 没有 | 10 分钟（`LadderFirstMinutes`） |
+| 通过（无 failure，结论不是 FAIL） | 与上轮相同，不加长（不超过整轮上限） |
+| 停在无进展门槛（`DRILL_GUEST_NO_PROGRESS`） | 拒绝开跑：`DRILL_LADDER_PREVIOUS_NO_PROGRESS`，带卡住的阶段与原因 |
+| 时间线里有阶段失败 | 拒绝开跑：`DRILL_LADDER_PREVIOUS_STAGE_FAILED`，带阶段名与码，先修再跑 |
+| 整轮超时（`DRILL_RUN_TIMEOUT`，前台自停或宿主看门狗报出都算），且上轮限时已到整轮上限（70 分钟） | 拒绝开跑：`DRILL_LADDER_CEILING_EXHAUSTED`，带上轮停在哪一段（`stage`，取时间线的 `abortedIn`，没有则取最后一段）、`reached`、`previousMinutes`、`ceiling` 与回执路径。上限档再跑一轮结果一样（第 16 代 2026.11.24-74bc5ef0：70 分钟在 launcher 段超时，旧规则下一档仍是 70 分钟）；先修，换包后梯度从头算 |
+| 整轮超时（`DRILL_RUN_TIMEOUT`，前台自停或宿主看门狗报出都算），上轮限时未到上限，时间线无失败段、各段结论都是已知值 | 翻倍（10→20→40→70），封顶为整轮上限 70 分钟（保持预算 120 − 等待 40 − 余量 10）；超时落在段内、段间、首装完成后的 A7/A8，或旧 kit 只有阶段日志，都翻倍 |
+| 其他结局（守护因内存等中止、某步自身超时等） | 与上轮相同，不加长（不超过整轮上限） |
+
+拒绝发生在申请暂停接新和开机之前。本轮回执写 `runTimeoutMinutes`，以及 `ladder`：`minutes`、`rule`、`basis`（依据的那份回执路径）、`previousMinutes`、`reached`（上一轮走到的那段及其结论）、`ceiling`。显式给 `-RunTimeoutMinutes` 时不推导，`ladder` 为空。
+
+不带 `-Ladder` 时整轮限时默认 70 分钟，包含来宾开机、A 档步骤及观测采集，可用 `-RunTimeoutMinutes` 指定。当班时须已有
 `S0-clean-os`，脚本通过已安装代次的 `rearm-tool.mjs` 申请 `drill` 暂停接新，最多等 40 分钟让在跑批次结束。
 保持预算为 40 分钟加整轮限时再加 10 分钟，超过 120 分钟会拒绝开机。开机前和运行中均检查宿主状态与内存。
 来宾按同一截止时间自关机，重启后沿用截止时间。脚本确认关机并还原检查点后请求恢复接新，未确认时保持到期自解。
+
+**早停与取证（Fable 规划 87d330d0 甲，`D:/w/tmp/PLAN-drill-loop-root-20261123.md` §2.2、§2.4）**：
+
+- 前台期限：前台在守护期限之前留出取证窗口就停（`DRILL_RUN_TIMEOUT`，`detail.by = foreground`，带 `deadline` 与 `evidenceWindowMinutes`）。窗口为整轮限时的 30%，最多 5 分钟，最少 1 分钟（`Get-DrillEvidenceWindowMinutes`）；10 分钟一轮的窗口是 3 分钟，前台在开机后第 7 分钟停。停下后照常先取证，再由本轮自己的收尾还原，守护不会抢先还原。
+- 分拍等待：客机长步骤每 30 秒一拍（`GuestTickSeconds`），每拍先问守护、再判期限。首装每拍把 `first-install.stdout.log`（存为 `first-install.log`）、`stage-progress.jsonl`、`host.stdout.log`、`prepare.stdout.log`、`launcher.stdout.log` 拉回运行目录，只在长度变化时写入；单次拉取限时 20 秒，拉不到只计数（`failedPulls`、`consecutiveFailedPulls`、`pullFailingSince`），不算“无增长”：门槛只在拉取有回应的那一拍判；拉取超时的作业不同步等待，异步停止后再移除。这样守护在任何时刻中止，运行目录里都留着最后一拍的副本。每拍的阶段与门槛状态写在 `guest-progress.json`，回执带在 `evidence.guestProgress`。
+- 无进展门槛（`ProgressGates`）：当前阶段取最新一个已出现日志的阶段，顺序为入口、host、prepare、launcher。入口段 15 分钟内未出现 `host.stdout.log` 就停（`host-log-not-started`）；host 段日志 10 分钟不增长（`stalled`）或在该段满 30 分钟（`stage-over-limit`）就停；prepare 段满 6 分钟就停；launcher 段日志 10 分钟不增长或在该段满 25 分钟就停（任务 87d330d0 PR-2：两个值在 launcher 不写步骤开始行时也成立——已见最长的无输出步骤是 linux-B 约 222 秒，换账户一步最长 8 分钟，修好后整段约 17 分钟；第 16 代 first-train 无输出 1505 秒，原来只靠整轮期限才停）。门槛触发统一报 `DRILL_GUEST_NO_PROGRESS`，`detail` 带 `stage`、`reason`、`limitMinutes`、`stageSeconds`、`sinceGrowthSeconds`、`lastGrowthAt`。前台期限先于门槛判定，所以短时限一轮不会被门槛误判。
+- 首装之后的上限：读状态、A7 重启与 A8 共用一个上限，取“首装结束后 20 分钟”（`AfterEntryMaxMinutes`）与前台期限中较早的一个，超出报 `DRILL_AFTER_ENTRY_TIMEOUT`。取证、晚探针与 M5 不受此上限约束。
+- A1 阻断：首装没有以 `FIRST_INSTALL_DONE` 结束（退出码非 0、带停止码、或结果读不出）时，不重启、不跑 A8、不读 M5。三者分别记为 `DRILL_A7_BLOCKED_BY_A1`（若什么都没装上，仍记 `DRILL_A7_BLOCKED_NOTHING_INSTALLED`）、`upgradeStatus = DRILL_A8_BLOCKED_BY_A1`、`DRILL_M5_BLOCKED_BY_A1`。装后读取与两次探针照跑。
+- 明盒：入口每进入、每结束一个阶段，就当场往来宾工作目录的 `stage-progress.jsonl` 追加一行（`stage`、`event`、`startedAt`、`endedAt`、`result`、`code`、`tail`，其中 `tail` 为该段日志最后 5 行）。阶段依次为 assets、prereq、unpack、check、host-inputs（check 判定后到 host 之前的本地拷贝、凭据目录与第二次解包）、host、prepare、wsl-cold-start、launcher；每段在自己的判定之后才记结束，停止码记在停下的那一段，万一没有打开的段则单记一行 `between-stages`。prereq 段内每个 item/deb 的每一步（`sha`、`copy`、`get`、`expand`，最后 `tools:find`）各记开始、结束两行（`event` 为 `step-start`/`step-end`，带 `item`、`step`、`bytes`），时间线在该段下列 `steps`，段被中止时 `inProgressStep` 指出卡在哪个 item 的哪一步。写不进就跳过，不影响首装。host 段：包里的 `first-install-host.ps1` 带 `-StepProgress` 参数时（入口探测到才传，bootstrap.ps1 不传），每个 `Enter-Step` 开始、每步结束也往同一个 `stage-progress.jsonl` 各写一行，时间线 host 段列 `steps`，被中止时 `inProgressStep` 给出进行中的子步骤名和开始时刻；旧包的 host 没有这个参数，被中止的 host/prepare/launcher 段给 `lastStepLine`（运行目录里该段日志最后一条步骤行的名字、结论和时刻）。宿主自己的步骤（入口前的 copy-in，入口后的 read-after-install、A7-reboot、A8-reinstall）开始、结束写在运行目录的 `host-steps.jsonl`，开始了没写出结果的记为进行中被中止。宿主每拍拉回这个文件，取证时再取一次。无论结局如何，回执的 `evidence.stageTimeline` 都列出走到第几段和每段结论：`ok`、`failed` 带码，或 `aborted-in-progress`（进行中被中止）。之后接 A1 结果、装后读取、A7、A8 各自的记录。kit 的入口若不写这个文件，就按运行目录里已有的阶段日志列出，此时 `source` 为 `stage-logs`。
 
 M5 对每个包都收集、都判定（Fable 11-19 裁定 §2.2：没有“不评估也算数”的出口）。完成 A 档步骤后，`m5/` 保存来宾已生成的公开观测，宿主的 `test/renewal-drill.mjs` 核验齐备的七份文件（六份公开观测，加来宾管理员对连接记录在不在的实读 `record.json`）。
 回执记录 `m5.result`：核验通过为 `PASS`，观测缺失（包里没有续期组件也是这一种）、核验器缺失或核验失败为 `FAIL`；`NOT_EVALUATED` 只出现在中途已失败的回执里。
@@ -160,11 +229,11 @@ Fable 11-19 裁定 §2.3：候选 → 演练 PASS → Owner 接受一次。`-Fro
 本轮在首装之后中断时，A1 由首装自己的结果（`entry-result.json`）单独形成。本轮没有判决就结束时（无 A1），记录在 `evidence.firstInstallSteps`。
 
 回执 `evidence.hostExecutorStates` 记录开机门和运行中守护采样的执行器状态、原因、阶段编号和相位，每种组合只保留首次观测的 UTC 时刻。
-开机前门两侧都看 `Runner.Worker`，**有作业不再拒绝开机，而是决定内存门取哪一档**（Fable 裁定“补：演练开机门与列车争 DESK”）：两侧都无作业 15 GB（生产余量 6＋来宾 8＋余量 1），任一侧有作业或查询失败再加开机后的增长（脚本常量 `RunnerJobGrowth`，唯一来源：r6 回执 `20261121T010455Z-2026.11.21-b7d92a1a-4b3f5ee5` 的 `evidence.hostMemory`，来宾起来后 19.3 减运行中最低 8.9，即 10.4 GB；Fable 裁定“r6 Linux 阶段 A”§5），现为 25.4 GB；运行中的 6 GB 门不变。**运行期释放**（Decision f572ac5b）：演练机开着、宿主可用内存低于 10 GB（且不低于 6 GB 中止线）时，运行期守护对 runner 发行版释放文件缓存，**有作业也放**；命令是写死的单引号字面量 `DrillWslReleaseCommand`，只有 `sync` 与 `echo 1 > /proc/sys/vm/drop_caches`（失败以 5 退出），不问作业、不读 Windows 进程表；只由 `drill-vm.ps1` 的运行期守护执行，按单调时钟至少隔 120 秒（失败也算一次），一次释放的全部 WSL 调用共用 20 秒预算；未武装（还没开机）不放，正好 10.0 GB 不放；失败、超时只记录，不中止、不重试，中止只看 6 GB 线。超时只结束 Windows 侧的 wsl.exe，发行版里的 `sync` 和写入可能仍会做完，所以记为失败不等于没放。每次释放记一行 `cacheReleases`（`at`、`freeBeforeGB`、`exit`、`freeAfterGB` 即下一拍读数、`failed`），写在本轮目录的 `host-guard.json`（正常跑完的一轮也写，中止记录同样带）；`receipt.json` 不带这一项。10 GB 与 6 GB 两个数的出处是 `docs/maintenance/runner-configuration-and-operations.md:60-61`（workstation 档的恢复线与暂停线），不另抄别的数。门的数只由脚本算：开机门记录（回执与拒绝输出的 `hostPreBoot.bootGate`）带 `requiredFreeGB` 与 `requiredBasis`（来宾、开机余量、作业增长及其出处、生产余量），派活不另写内存数字，开机前置就是脚本的开机门放行；“演练开机时本机套件不超过 1”仍是独立的操作规则，不并进内存门。两侧是：Windows 的进程表，以及本机 Linux runner 所在的 WSL 发行版（`scripts/ci/self-hosted/node-profiles.json` 按主机名取 `linux_runner`/`additional_linux_runners` 的 `distro`；主机不在其中、或 runner 发行版不是本账户已注册的发行版，都算查询失败，取高档）。WSL 一侧只认退出码（Fable 裁定“补：分支一第四轮”；这说的是判定，下面的 `wslMemory` 读 `/proc/meminfo` 只当证据，不参与判定）。**运行列表**是唯一还读输出的地方：`wsl --list --running --quiet` 须零退出、stderr 为空；按行切（CRLF 或 LF），只丢长度为零的行，其余每一行须整行、不修剪地等于本账户已注册的某个发行版名（HKCU Lxss 下各 DistributionName，只读），有一行不符即整次算查询失败（高档）。发行版不在其中就判无作业，不对它发任何命令。**查进程**：在运行的发行版里执行 `pgrep -ix Runner[.]Worker`（模式常量 `WslJobPattern`，点是字面点；开机前的空闲释放命令逐字带同一模式），标准输出不读；封闭表：退出 0 且 stderr 为空＝有作业（`busyWith` = `WSL_ACTIONS_RUNNER_JOB`，高档）；退出 1 且 stderr 为空＝无作业；其他任何退出码、stderr 非空、超时（只结束本次拉起的客户端进程）＝查询失败（`busyWith` = `WSL_UNREADABLE`，高档，原因记在 `wslUnreadable`）。每次开机前三段，各自采样（Fable 裁定“补：WSL 门竞态”，顺序不变）：**早拒**（保持生效、常驻空闲；两侧作业只采样不拒绝；不读内存）→ **释放**（只在早拒采样两侧都无作业时做，否则记 `skipped.where = early` 跳过；对每个 runner 发行版，先重读运行列表，再在调用前一刻重读 Windows 进程表；不在运行就不发命令；在运行则以 root 用 `sh -c` 执行写死的单引号命令 `DrillWslIdleReleaseCommand`（运行时按本文件语法树核对两条释放命令都未被改动、无双引号与反斜杠，且这一条去掉开头的作业查询后与运行期那条逐字相同）：同一个 `pgrep -ix 'Runner[.]Worker'`，退出 0 即有作业，以 3 退出跳过；查找出错以 4 退出；只有“没找到”才 `sync` 并只丢页缓存 `echo 1 > /proc/sys/vm/drop_caches`，失败以 5 退出，成功以 0 退出。宿主只看退出码：0＝已释放，3＝已跳过，其余＝释放失败；跳过与失败都不算演练失败。开机前只在空闲时放：演练机还没开，不在 Decision f572ac5b 的“有作业也放”之内，按其原文“空闲时的原有许可照旧”）→ **开机门**（两侧再查一次，按结果选档，然后内存门，只判这一次，然后开机）。**`wslMemory`**（Fable 裁定 0e418483 及其“补：实现后三问”§1）：runner 发行版的 `memTotalGB`、`memFreeGB`、`cachedGB`、`anonPagesGB`（读 `/proc/meminfo`）与 `runnerWorkers`（`pgrep -cix` 数 `Runner.Worker`），同一个读取函数 `Get-DrillWslMemory`、同形，两份：开机门样本一份（`hostPreBoot.bootGate.wslMemory`，在开机门判定之前、锁外读），因内存中止时一份（`host-guard.json` 的 `wslMemory`，关机之后读，不推后关机）；两份直接相减就是 WSL 从开机到中止涨了多少、涨在缓存还是匿名内存。只读，只问已在运行的发行版；读不全或超时就不带这个键，开机门放行或拒绝、中止与还原都照旧。运行期样本不读作业，也不再写没读过的作业字段（`runnerJob`、`busyWith`、`wslJobs`、`wslRunnerDistributions` 等）。开机前的守护、入口处与还原后的宿主检查只看执勤与保持，三段之外不另取样。基线建成或失败时三段数据都写进 `baseline.json`（`hostPreBoot`）。三段各自的时间与结果记在回执 `evidence.hostPreBoot`（`early`、`release`、`bootGate`，含 `runnerJob` 与 `requiredFreeGB`）。回执另有 `evidence.hostMemory`，只记原始事实：开机前可用（`beforeBootFreeGB`）与所需档位（`requiredFreeGB`）；开机时两侧 runner 作业（`runnerJobAtBoot`，按此优先：`yes` 任一侧确认有作业——另一侧没读出来也是 `yes`；`unknown` 没有确认的作业、但至少一侧没读出来——取高档，但不算有作业；`no` 两侧都读到且都没有；`null` 没采过作业样本，例如状态门在读作业之前就拒绝了；`runnerJobBefore` 是开机门看到的那一项）；来宾起来后守护第一次读数（`afterBootFreeGB`）、运行中最低值（`minRunningFreeGB`）与整轮最低值（`lowestFreeGB`，含开机门读数）。各步骤的原始结果与原始拒绝码照旧各记各的（A1 的首装逐步记录、`failure`、各项 detail），互不遮挡；A8 的通用升级单独一步，它的原始结果（退出码、status、code、输出原文）在下一条命令开始之前就由宿主写进 `reinstall-upgrade.json`，回执带在 `evidence.reinstallUpgrade`，后面的准备即便失败或超时也不丢；工具不对超时做任何归类。攒几轮后按这些读数换 `RunnerJobGrowth` 那条回执记录。
+开机前门两侧都看 `Runner.Worker`，**开机门只看内存，作业只记录**（Fable 规划 0e418483“演练开机门只看内存”，2026-11-23；此前“补：演练开机门与列车争 DESK”的有作业加 10.4 GB 一档已删）：开机门＝15 GB（生产余量 6＋来宾 8＋余量 1）＋ runner 发行版 `/proc/meminfo` 的 MemFree（生产 WSL 开机后还能再拿走的内存，按已占用记账：Fable 规划 87d330d0）；登记了但没在跑的 runner 发行版改记 Owner 的 `%USERPROFILE%\.wslconfig` 里 `[wsl2]` 节 `memory=` 的值（只认 `<数字>GB`/`<数字>MB`，向上取整；没有文件、没有这个键或解析不了都算读不到），本机没登记 runner 发行版记 0；几个发行版取最大（共用一台 VM，不相加）；读不到就拒绝开机，`DRILL_HOST_RESOURCE_UNREADABLE`。`requiredBasis.wslHeadroomSource` 记来源：`memfree`、`wslconfig-cap` 或 `none`，两侧有无作业、作业查询失败与否都一样，作业只写进记录（`busyWith`、`runnerJob`、`wslJobs`），不拒绝开机、不抬门槛；开机之后才来的作业由运行中的门兜底，运行中的 6 GB 门不变。**开机前等内存**（`Wait-DrillBootMemory`，完整演练与 `-PrereqOnly`；`-BaselineOnly` 不等）：拿到演练互斥锁后、读执勤状态和申请任何保持之前（不请求 intake、不起看门狗、不动 VM），按单调时钟每 `BootWaitPollSeconds`（120 秒）读一次宿主可用内存和 runner 发行版的内存（`Get-DrillWslMemory`），够开机门就往下走；最多等 `BootWaitMinutes`（60 分钟），超时 `DRILL_HOST_MEMORY_SHORT`、不开机；宿主内存读不出来就不再等，交给开机门自己读、自己判；runner 发行版的内存读失败（独立审查 29ed7255c 中级 A）只算这一拍不够、继续等，记次数与最后一次的原因码，到期时最后一拍仍读不到就 `DRILL_HOST_RESOURCE_UNREADABLE`、不开机。每次读数计入回执 `evidence.hostPreBoot.wait`（`samples` 次数、`firstAt`/`lastAt` 首末时刻、`firstFreeGB`/`lastFreeGB` 首末可用内存、`requiredFreeGB`（最后一次读全的那一拍）、`ok`、`unreadable`（宿主内存）、`wslUnreadSamples`、`wslUnreadable`），超时拒绝的输出在 `detail.wait` 带同一份。等到之后，开机门照旧在开机前再判一次。**运行期释放**（Decision f572ac5b）：演练机开着、宿主可用内存低于 10 GB（且不低于 6 GB 中止线）时，运行期守护对 runner 发行版释放文件缓存，**有作业也放**；命令是写死的单引号字面量 `DrillWslReleaseCommand`，只有 `sync` 与 `echo 1 > /proc/sys/vm/drop_caches`（失败以 5 退出），不问作业、不读 Windows 进程表；只由 `drill-vm.ps1` 的运行期守护执行，按单调时钟至少隔 120 秒（失败也算一次），一次释放的全部 WSL 调用共用 20 秒预算；未武装（还没开机）不放，正好 10.0 GB 不放；失败、超时只记录，不中止、不重试，中止只看 6 GB 线。超时只结束 Windows 侧的 wsl.exe，发行版里的 `sync` 和写入可能仍会做完，所以记为失败不等于没放。每次释放记一行 `cacheReleases`（`at`、`freeBeforeGB`、`exit`、`freeAfterGB` 即下一拍读数、`failed`），写在本轮目录的 `host-guard.json`（正常跑完的一轮也写，中止记录同样带）；`receipt.json` 不带这一项。10 GB 与 6 GB 两个数的出处是 `docs/maintenance/runner-configuration-and-operations.md:60-61`（workstation 档的恢复线与暂停线），不另抄别的数。门的数只由脚本算：开机门记录（回执与拒绝输出的 `hostPreBoot.bootGate`）带 `requiredFreeGB` 与 `requiredBasis`（来宾、开机余量、生产余量、`wslHeadroomGB` 与其来源 `wslHeadroomSource`），派活不另写内存数字，开机前置就是脚本的开机门放行；“演练开机时本机套件不超过 1”仍是独立的操作规则，不并进内存门。两侧是：Windows 的进程表，以及本机 Linux runner 所在的 WSL 发行版（`scripts/ci/self-hosted/node-profiles.json` 按主机名取 `linux_runner`/`additional_linux_runners` 的 `distro`；主机不在其中、或 runner 发行版不是本账户已注册的发行版，都算查询失败，只记录）。WSL 一侧只认退出码（Fable 裁定“补：分支一第四轮”；这说的是作业判定；下面 `wslMemory` 的 MemFree 只进开机门的内存账，不参与作业判定）。**运行列表**是唯一还读输出的地方：`wsl --list --running --quiet` 须零退出、stderr 为空；按行切（CRLF 或 LF），只丢长度为零的行，其余每一行须整行、不修剪地等于本账户已注册的某个发行版名（HKCU Lxss 下各 DistributionName，只读），有一行不符即整次算查询失败（只记录）。发行版不在其中就判无作业，不对它发任何命令。**查进程**：在运行的发行版里执行 `pgrep -ix Runner[.]Worker`（模式常量 `WslJobPattern`，点是字面点；开机前的空闲释放命令逐字带同一模式），标准输出不读；封闭表：退出 0 且 stderr 为空＝有作业（`busyWith` = `WSL_ACTIONS_RUNNER_JOB`）；退出 1 且 stderr 为空＝无作业；其他任何退出码、stderr 非空、超时（只结束本次拉起的客户端进程）＝查询失败（`busyWith` = `WSL_UNREADABLE`，原因记在 `wslUnreadable`）。每次开机前三段，各自采样（Fable 裁定“补：WSL 门竞态”，顺序不变）：**早拒**（保持生效、常驻空闲；两侧作业只采样不拒绝；不读内存）→ **释放**（只在早拒采样两侧都无作业时做，否则记 `skipped.where = early` 跳过；对每个 runner 发行版，先重读运行列表，再在调用前一刻重读 Windows 进程表；不在运行就不发命令；在运行则以 root 用 `sh -c` 执行写死的单引号命令 `DrillWslIdleReleaseCommand`（运行时按本文件语法树核对两条释放命令都未被改动、无双引号与反斜杠，且这一条去掉开头的作业查询后与运行期那条逐字相同）：同一个 `pgrep -ix 'Runner[.]Worker'`，退出 0 即有作业，以 3 退出跳过；查找出错以 4 退出；只有“没找到”才 `sync` 并只丢页缓存 `echo 1 > /proc/sys/vm/drop_caches`，失败以 5 退出，成功以 0 退出。宿主只看退出码：0＝已释放，3＝已跳过，其余＝释放失败；跳过与失败都不算演练失败。开机前只在空闲时放：演练机还没开，不在 Decision f572ac5b 的“有作业也放”之内，按其原文“空闲时的原有许可照旧”）→ **开机门**（两侧再查一次、只记录，然后内存门，只判这一次，然后开机）。**`wslMemory`**（Fable 裁定 0e418483 及其“补：实现后三问”§1）：runner 发行版的 `memTotalGB`、`memFreeGB`、`cachedGB`、`anonPagesGB`（读 `/proc/meminfo`）与 `runnerWorkers`（`pgrep -cix` 数 `Runner.Worker`；只作证据，数不出来记 null、不算读失败，不挡开机，独立审查 29ed7255c 中级 C），同一个读取函数 `Get-DrillWslMemory`、同形，两份：开机门样本一份（`hostPreBoot.bootGate.wslMemory`，在开机门判定之前、锁外读），因内存中止时一份（`host-guard.json` 的 `wslMemory`，关机之后读，不推后关机）；两份直接相减就是 WSL 从开机到中止涨了多少、涨在缓存还是匿名内存。只读，只问已在运行的发行版；meminfo 读不全或超时就不带这个键：开机门那份读不到即拒绝开机（`wslHeadroomGB` 为 null，原因码记在 `hostPreBoot.bootGate.wslMemoryUnreadable`），中止那份读不到则中止与还原照旧。运行期样本不读作业，也不再写没读过的作业字段（`runnerJob`、`busyWith`、`wslJobs`、`wslRunnerDistributions` 等）。开机前的守护、入口处与还原后的宿主检查只看执勤与保持，三段之外不另取样。基线建成或失败时三段数据都写进 `baseline.json`（`hostPreBoot`）。开机前等内存的记录与三段各自的时间与结果记在回执 `evidence.hostPreBoot`（`wait`、`early`、`release`、`bootGate`，后者含 `runnerJob` 与 `requiredFreeGB`；没等过时 `wait` 为 null）。回执另有 `evidence.hostMemory`，只记原始事实：开机前可用（`beforeBootFreeGB`）与所需档位（`requiredFreeGB`）；开机时两侧 runner 作业（`runnerJobAtBoot`，按此优先：`yes` 任一侧确认有作业——另一侧没读出来也是 `yes`；`unknown` 没有确认的作业、但至少一侧没读出来——不算有作业；`no` 两侧都读到且都没有；`null` 没采过作业样本，例如状态门在读作业之前就拒绝了；`runnerJobBefore` 是开机门看到的那一项）；来宾起来后守护第一次读数（`afterBootFreeGB`）、运行中最低值（`minRunningFreeGB`）与整轮最低值（`lowestFreeGB`，含开机门读数）。各步骤的原始结果与原始拒绝码照旧各记各的（A1 的首装逐步记录、`failure`、各项 detail），互不遮挡；A8 的通用升级单独一步，它的原始结果（退出码、status、code、输出原文）在下一条命令开始之前就由宿主写进 `reinstall-upgrade.json`，回执带在 `evidence.reinstallUpgrade`，后面的准备即便失败或超时也不丢；工具不对超时做任何归类。这些读数只作证据，开机门不用它们。
 
 **操作规则：某一步超时、且开机时宿主有 runner 作业（`runnerJobAtBoot = yes`）**——先换个时段复跑一次，再判断是不是包的问题；复跑仍在同一步超时，就按包的缺陷处理（Fable 裁定“补：争用标签止损”）。这条由读回执的人执行，不在代码里。
 
-“取证在还原之前”只对正常结束、失败、超时三种结局成立；运行中守护触发的紧急还原（`host-guard.json` 为 `DRILL_ABORTED`）可能先于取证，
+“取证在还原之前”对正常结束、失败、超时（含前台期限）与无进展停都成立。运行中守护触发的紧急还原（`host-guard.json` 为 `DRILL_ABORTED`，例如内存中止）仍可能先于取证，此时运行目录里留有最后一拍拉回的日志，`evidence` 记为部分已取。
 这时回执 `evidence.guardEmergencyRestore` 如实写结局：已还原、还原失败或结局未记下；证据未取、已取或部分已取（按运行目录里实有的文件），
 例如“由守护紧急还原，证据未取”。开机看门进程在拉起方消失后还原时没有回执，它把同样的结局记在运行目录的 `guest-shutdown.outcome.json`
 （它只在来宾计时器就绪前、首装第一步之前动手，所以证据总是未取）；拉起方仍在时，回执的 `evidence.watchdogRestore` 原样带上这份记录。

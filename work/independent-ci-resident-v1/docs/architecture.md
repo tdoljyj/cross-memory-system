@@ -159,7 +159,7 @@ App 私钥和 ci-admission token 不在 `<root>` 下，放在 `C:\ProgramData\Cl
 |---|---|---|
 | 预留 | `00-reserved.json` | 带 `origin`：queued、backoff-retry、waiting-retry、new-trigger、restored、attempt2 等 |
 | 导出 | — | Source v2 `derive-batch.mjs` 从"已安装 Source + 触发数据"确定性导出批次包，写描述符 |
-| 第 0 段 | — | companion 运行 `build-bundle.ps1` 打 bundle。失败 → 只关 Windows 侧，释放 |
+| 第 0 段 | — | companion 运行 `build-bundle.ps1` 打 bundle。失败 → 只关 Windows 侧，释放。出生时读到无本地角色且无 S 的批次不做（盖 push 戳，或最近一次第 10 段读到本 App 不出扫描）：写回执 `bundle-skipped`，直接进第 1 段，`10-started.json` 的 facts 记 `lean: true`，计划只认这条记录。lean 批次在第 1 段前遇到 main 前移，照过第 1 段（开着的 PR 的 `base.sha` 不随 main 前移），由第 8 段以 `RESIDENT_BASE_MOVED` 结束；切换日不重盖戳 |
 | 第 1 段 | — | Native 工作准入（见 §4.4）。未准入、不当班（`NODE_ROLE_NOT_HELD`），以及能证明什么都没写的 `GITHUB_TRANSIENT_UNAVAILABLE` / `NATIVE_ADMISSION_UNAVAILABLE`（`STAGE1_TRANSIENT_RELEASE_CODES`）→ 释放；其他失败 → 烧号 |
 | 开始 | `10-started.json` + `state\ledger-heads\<headKey>.json` | 这一步烧号 |
 | 资格冻结 | `14-qualification-hold.json` | 只收紧的转发资格冻结标记（`relay-qualification-hold.mjs`），存在就挡住这个 head；转发关着时不出现 |
@@ -570,7 +570,8 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 | 通道 | 周期 | 做什么 |
 |---|---|---|
 | 信箱 | 持续 | 打 bundle（第 0 段）、refs 闸门、建工作区、Linux 归档与静止证明、泵（第 2/4/6 段）、`pr-head` 实时读、内存读数 |
-| 咨询 | 1 分钟 | 轮询：用 Owner 的 gh 登录，带 ETag 条件请求读 `git/ref/heads/main` 和 open PR，只提议已跟上 main 的 head；写 PR 页面状态（`resident-queue/<node> (info only)`）；发 Windows 通知；每 5 分钟做一次规则集兜底 |
+| 轮询 | 15 秒 | 用 Owner 的 gh 登录，带 ETag 条件请求读 `git/ref/heads/main` 和 open PR（没变就是两次 304，不计速率额度），只提议已跟上 main 的 head；顺带观察停靠批次。读 `status.json` 取排队表代次最多等 5 秒，读不到按“代次未知”走。自己的 Runner：咨询通道里任何一步卡住，都不推迟发现新 head（任务 f79929d9） |
+| 咨询 | 2 秒检查，PR 页面每 1 分钟 | 保留通知；每小时清旧 bundle；写 PR 页面状态（`resident-queue/<node> (info only)`，只读轮询通道的上一轮结果）；发 Windows 通知；每 5 分钟做一次规则集兜底 |
 | 升级信箱 | 5 秒 | 把升级代理的请求交给冻结的 Linux 升级工具；刷新 Linux 版本事实和角色公开副本 |
 | 心跳 | 30 秒检查，每 1 分钟发一次（ADR 0026） | 用本节点专用的心跳令牌上报自身状态（§10.3） |
 | 面板触发 | 30 秒 | 当班节点每 5 分钟对算力面板发一次 `workflow_dispatch` |

@@ -271,7 +271,17 @@ function Read-Descriptor{
  $chain=$null
  if($d.contract -ceq $ChainContract){$chain=Chain-Of $d}
  elseif($null -ne $d.PSObject.Properties['members'] -or $null -ne $d.PSObject.Properties['testTree']){throw 'DESCRIPTOR_REFUSED'}
- return [pscustomobject]@{value=$d;sha256=(Hash-Bytes $raw);chain=$chain}
+ # bc982192: the optional baseRule, exactly 'on-main' (push landing, S = H: baseSha an ancestor of the head and of main's tip, or that
+ # tip; Base-On-Main), never on a front batch; absent: main's tip must be baseSha (the twin of prepare-workspaces.py#base_rule).
+ $rule=$d.PSObject.Properties['baseRule'];$onMain=$null -ne $rule
+ if($onMain -and ($rule.Value -isnot [string] -or $rule.Value -cne 'on-main' -or $d.testSha -cne $d.headSha)){throw 'DESCRIPTOR_REFUSED'}
+ return [pscustomobject]@{value=$d;sha256=(Hash-Bytes $raw);chain=$chain;onMain=$onMain}
+}
+# bc982192 (pure over a reader): $Count.Invoke(a, b) is `git rev-list --count a..b` (commits of b that a lacks). Base is an ancestor of
+# Head and of Main, or Main itself, exactly when neither lacks a commit of Base.
+function Base-On-Main($Count,[string]$Base,[string]$Head,[string]$Main){
+ foreach($x in @($Head,$Main)){if([string]($Count.Invoke($x,$Base)|Select-Object -Last 1) -cne '0'){return $false}}
+ return $true
 }
 # ADR 0019: descriptor /4's own shape, the twin of prepare-workspaces.py#chain_members_ok: 2..4 members {pr, headSha}, the front (the
 # descriptor's pr and head) first, distinct PRs and heads, none of them T or S, and S's tree. -> {members, heads, testTree}.
@@ -589,12 +599,13 @@ function Build-Store([string]$Dir){
  $local=Ref-Map (Invoke-Git 'for-each-ref' ($Common+@($gd,'for-each-ref','--format=%(objectname) %(refname)'))) ' ' $false
  # The one inconsistency a push between the fetch and the ls-remote makes; Fetch-Store retries only this one.
  if(-not (Same-Map $local $remote)){$script:refsDiffer=Ref-Diff $local $remote;throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'}
- if(-not $local.ContainsKey('refs/heads/main') -or $local['refs/heads/main'] -cne $Base){throw 'REMOTE_MAIN_BASE_CHANGED'}
+ if(-not $local.ContainsKey('refs/heads/main') -or (-not $desc.onMain -and $local['refs/heads/main'] -cne $Base)){throw 'REMOTE_MAIN_BASE_CHANGED'}
  # Generation 13 (DESIGN §57.6, Task 3edfc598): the installed Source commit is read from the store fetched from GitHub; one that GitHub
  # does not have (a Source built from an unpushed local branch) is said so by name, not as a failed git step: push that branch.
  $sourceType=$null;try{$sourceType=(Invoke-Git 'source-cat-file' ($Common+@($gd,'cat-file','-t',$desc.value.sourceCommit))).Trim()}catch{if($_.Exception.Message -cne 'GIT_STEP_FAILED'){throw}}
  if($sourceType -cne 'commit'){throw 'SOURCE_COMMIT_NOT_ON_REMOTE'}
  foreach($s in @($Head,$Base)){if((Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$s))).Trim() -cne 'commit'){throw 'HEAD_BASE_SOURCE_COMMIT_MISSING'}}
+ if($desc.onMain -and -not (Base-On-Main {param($a,$b) (Invoke-Git 'base-on-main' ($Common+@($gd,'rev-list','--count',"$a..$b"))).Trim()} $Base $Head $local['refs/heads/main'])){throw 'REMOTE_MAIN_BASE_CHANGED'}
  # One batch answer when every ref passes; otherwise (or with no usable answer) the per-ref loop decides, unchanged.
  $types=Ref-Target-Types $gd $local
  if($null -ne $types){foreach($k in $local.Keys){if(-not (Ref-Type-Allowed $k $types[$local[$k]])){$types=$null;break}}}

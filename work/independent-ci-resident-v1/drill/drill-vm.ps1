@@ -2,9 +2,14 @@
 #
 #   pwsh -NoProfile -File drill-vm.ps1 -BaselineOnly
 #   pwsh -NoProfile -File drill-vm.ps1 -PrereqOnly      (baseline copy + the pinned prerequisites from D:\clued-drill\prereq, then restored)
-#   pwsh -NoProfile -File drill-vm.ps1 -Version <v> -From <dir with tar/acceptance/SHA256SUMS> -Kit <first-install kit dir> [-SkipReinstall] [-RunTimeoutMinutes 70]
+#   pwsh -NoProfile -File drill-vm.ps1 -Version <v> -From <dir with tar/acceptance/SHA256SUMS> -Kit <first-install kit dir> [-SkipReinstall] [-RunTimeoutMinutes 70 | -Ladder]
 #     (a candidate: -From without an acceptance; the kit carries a drill-only one, see Test-DrillPackageDir and FIRST-INSTALL-KIT.md)
 #   pwsh -NoProfile -File drill-vm.ps1 -Finalize <receipt.json> -ProductionReadback <readback.json>
+#   pwsh -NoProfile -File drill-vm.ps1 -ServerKey <key>     (DESK stores the test project's public key on the host once the project answers it)
+#   pwsh -NoProfile -File drill-vm.ps1 -BindingCredential   (the Owner hands over the drill binding once, in the Windows credential dialog)
+#   pwsh -NoProfile -File drill-vm.ps1 -ServerDatabaseCredential   (the Owner hands over the test project's database password once, the same way)
+#   pwsh -NoProfile -File drill-vm.ps1 -SyncServer [-Rebuild] -From <Release dir> -Version <v>   (the test project brought to production's
+#     applied list on its own, as before every drill; -Rebuild: from empty, the first time and after DRILL_SERVER_DIVERGED only)
 #
 # Inputs on the host: D:\clued-drill\iso (the Windows 11 ISO and expected-sha256.txt), D:\clued-drill\prereq\prereq.json (the
 # pinned WSL package, Ubuntu image and docker .debs, see Read-DrillPrereq), and the kit's kit.json:
@@ -14,9 +19,13 @@
 # No node parameter. Every state is read from the scene (does the VM exist, is the checkpoint there); there is no state file.
 # Prints one JSON line: { status, code, receipt, ... }.
 #
-# The drill machine is NOT a node to the service: it holds no production credential (the CI token, upgrade token and App key are
-# generated inside the VM at every drill and die with the checkpoint restore), it is never registered, has no heartbeat link
-# and is never in the failover list. Its role probe can only answer "unauthorized", so it stays UNCERTAIN, which starts nothing.
+# The drill machine is NOT a node to the service: it holds no production credential and never reaches production. Its kit names the
+# drill's server (the test project, drill/drill-server.json) in place of production in the first-install kit's two public fields, and
+# its entry cuts the production host off in the guest (FABLE-drill-role-probe-20261124.md, PR-3). The upgrade token and App key are made
+# inside the VM at every drill and die with the checkpoint restore; the CI token is the Owner's drill binding in the test project, one
+# with no ci-admission role, kept beside the guest credential (Get-DrillCredential -Binding) and handed to the guest for the run only.
+# The machine is never registered, has no heartbeat link and is never in the failover list. Its role probe is answered "holds no role":
+# it rests STANDBY, which starts nothing, and its first train is not applicable (A6).
 #
 # Host boundary: writes only under D:\clued-drill\; touches only the VM whose name AND notes are ours; never touches the
 # host services, scheduled tasks, switches, or any process by name. Read the public host status and installed generation pointer.
@@ -38,13 +47,23 @@ param(
   [switch]$Interactive,
   [ValidateRange(5, 240)][int]$InteractiveTimeoutMinutes = 120,
   [ValidateRange(5, 240)][int]$RunTimeoutMinutes = 70,
+  [switch]$Ladder,
   [string]$Finalize,
-  [string]$ProductionReadback
+  [string]$ProductionReadback,
+  [switch]$BindingCredential,
+  [string]$BindingConnection,   # with -BindingCredential: the connection id, filled in so only the token is pasted
+  [string]$ServerKey,
+  [switch]$ServerDatabaseCredential,
+  [switch]$SyncServer,
+  [switch]$Rebuild
 )
 Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 $script:DrillScriptPath = $PSCommandPath
 $script:HostGuard = $null
+# ladder mode derives the limit only when none was given (Get-DrillLadderStep); the step it took goes into the receipt
+$script:DrillRunTimeoutGiven = $PSBoundParameters.ContainsKey('RunTimeoutMinutes')
+$script:DrillLadder = $null
 # The cache release: two fixed commands, run by sh in the runner distribution as root, through the one function
 # (Invoke-DrillWslCacheRelease). Each a single-quoted string with no double quote or backslash: PowerShell puts nothing into it and the
 # Windows command line passes it whole (Assert-DrillWslReleaseCommandLiteral, which also holds the idle one to be the running one behind
@@ -61,6 +80,8 @@ $script:DrillWslIdleReleaseCommand = 'pgrep -ix ''Runner[.]Worker'' >/dev/null; 
 $script:DrillPreBoot = $null
 # The guest password an interactive run set (Wait-DrillInteractive), for the evidence collection after it.
 $script:DrillInteractiveCredential = $null
+# The wait for memory before the hold (Wait-DrillBootMemory), carried into the pre-boot record (hostPreBoot.wait).
+$script:DrillBootWait = $null
 
 # ---------------------------------------------------------------- constants (the one place each fact lives)
 $script:Drill = [ordered]@{
@@ -75,6 +96,22 @@ $script:Drill = [ordered]@{
   AnswerDir = 'D:\clued-drill\vm\answer'
   AnswerIso = 'D:\clued-drill\vm\answer.iso'
   Credential = 'D:\clued-drill\guest-admin.clixml'
+  # the Owner's drill binding in the test project (connection id, token), beside the guest credential and read by the same function
+  BindingCredential = 'D:\clued-drill\drill-binding.clixml'
+  # the host's copy of the drill server's public key: where drill-server-check.mjs keeps it (make-drill-kit.mjs HOST_KEY_FILE) unless a
+  # test names its own
+  ServerKeyFile = ''
+  # the test project's database password (user postgres.<the project's ref>), handed over by the Owner once (-ServerDatabaseCredential):
+  # beside the binding, read by the same function; given to the sync script on its standard input only (Sync-DrillServer)
+  ServerDatabaseCredential = 'D:\clued-drill\drill-server-database.clixml'
+  # production's applied list as the newest successful release run on main exported it, one run's copy (drill-server-check.mjs --production-list)
+  ProductionListCache = 'D:\clued-drill\production-applied'
+  # the sync script: this checkout's own (apps/clued-cloud/scripts/drill-test-sync.mjs) unless a test names its own
+  SyncTool = ''
+  # a rebuild replays production's ~330 rows (6-10 minutes by the design's estimate, not yet measured on the hosted project); a sync
+  # already in step is a list comparison
+  SyncTimeoutSeconds = 1800
+  ProductionListTimeoutSeconds = 900
   Runs = 'D:\clued-drill\runs'
   GuestUser = 'drill'
   ComputerName = 'CLUED-DRILL'
@@ -88,17 +125,19 @@ $script:Drill = [ordered]@{
   # "drill host memory" item 2). The boot gate is guest + running gate + this margin; nothing else holds the value. PROVISIONAL, to be recalibrated from the first receipt taken
   # under clean conditions (Fable, 2026-11-20). The receipts' "free at start - free after boot - guest 8 GB" (5.9 GB in run
   # 20261119T172257Z, 3.3 GB in run 20261119T030253Z) is not counted: it was the production WSL growing under a CI job of the host's
-  # Actions runners, which the runner-job tier below now covers.
+  # Actions runners, which no boot gate can foresee (below).
   BootMarginBytes = 1GB
-  # A runner job on either side at boot (or a job query that failed) does not refuse the boot: it raises the boot gate by the growth of
-  # the host's other usage after the boot measured with a job at boot (Fable renew-key ruling, supplement "drill boot gate and the train
-  # both want DESK"; calibrated by the Fable ruling on r6 Linux phase A, section 5). The one source of that figure is this receipt
-  # reading: its evidence.hostMemory, free once the guest was up minus the lowest while running, 19.3 - 8.9 = 10.4 GB (the earlier 6 GB
-  # came from run 20261119T172257Z's 5.9 GB, a different reading: free at start - after boot - guest). 15 GB without a job, 25.4 GB with
-  # one. Test-DrillHostMemory derives the bytes and reports this record as the basis; the running gate does not use it. To recalibrate,
-  # replace the record with a later receipt's reading -- nothing else holds the value, and no dispatch carries a memory figure.
-  RunnerJobGrowth = [ordered]@{ receipt = 'D:\clued-drill\runs\20261121T010455Z-2026.11.21-b7d92a1a-4b3f5ee5\receipt.json'
-    afterBootFreeGB = 19.3; minRunningFreeGB = 8.9 }
+  # The boot gate is memory only (Fable plan 0e418483 "drill boot gate: memory only", 2026-11-23): guest + BootMarginBytes +
+  # ProductionReserveBytes, 15 GB, whatever runs on the host, plus what the runner distribution still has free, which the production WSL
+  # can take after the boot (Fable plan 87d330d0: Test-DrillHostMemory). A runner job at boot -- on either side, or a side that could not be read --
+  # is recorded (busyWith, runnerJob, wslJobs), never judged: what took the host short in the receipts was usage that came after the
+  # boot, with or without a job at boot, which no boot gate sees; the running gate (ProductionReserveBytes abort, CacheReleaseBelowBytes
+  # release) covers it. The job tier this replaces (10.4 GB more, from one receipt) only made the boot wait for an idle moment.
+  # Before the host hold (Wait-DrillBootMemory: no intake requested, no watchdog, no VM touched) free memory is read every
+  # BootWaitPollSeconds against that gate, for at most BootWaitMinutes; past it DRILL_HOST_MEMORY_SHORT and no boot. The boot gate in
+  # Start-DrillGuardedVm still judges once, as before. No dispatch carries a memory figure: the script computes it.
+  BootWaitMinutes = 60
+  BootWaitPollSeconds = 120
   HostGuardSeconds = 30
   # The running guard's cache release (Fable ruling 0e418483 "drill memory root" 2.3, G1): below production's own resume line on a
   # workstation host (docs/maintenance/runner-configuration-and-operations.md 2.2: resume at >= 10 GiB free; its pause line, < 6 GiB, is
@@ -112,6 +151,10 @@ $script:Drill = [ordered]@{
   # this checkout. Not the installed node profile's wslDistribution: that is the resident's own distribution, registered for its
   # companion account, while the runners' jobs run in the operator's distribution (Fable renew-key ruling, supplement "WSL runner jobs").
   NodeProfiles = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..\scripts\ci\self-hosted\node-profiles.json'))
+  # The Owner's WSL settings (Fable plan 87d330d0 4.1): [wsl2] memory= there is the cap the runners' WSL VM gets when it next starts, which
+  # the boot gate counts for a runner distribution that is not running (Read-DrillWslConfigMemory). The drill runs as the Owner, and the
+  # runner distributions are registered in the Owner's account.
+  WslConfig = (Join-Path $env:USERPROFILE '.wslconfig')
   WslTimeoutSeconds = 30
   # The one pattern pgrep looks for, in the probe, in the idle release command (which carries it verbatim:
   # Assert-DrillWslReleaseCommandLiteral) and in the Runner.Worker count of wslMemory (Get-DrillWslMemory):
@@ -123,6 +166,7 @@ $script:Drill = [ordered]@{
   IntakeWaitMinutes = 40
   IntakeMarginMinutes = 10
   IntakeMaxMinutes = 120 # resident src/intake-pause.mjs: INTAKE_PAUSE_MAX_MS
+  LadderFirstMinutes = 10 # ladder mode's first rung (coordinator, Owner 11-23: the first real round after 甲 is 10 minutes)
   IntakePollSeconds = 5
   HostMutex = 'Global\CluedFirstInstallDrill'
   BootMutex = 'Global\CluedFirstInstallDrillBoot'
@@ -154,6 +198,41 @@ $script:Drill = [ordered]@{
   # checked by test/drill-guest-probe.test.mjs) and the one file inventory it reads.
   ProbeDistribution = 'CluedResident-Linux'
   ProbeFiles = (Join-Path (Split-Path -Parent $script:DrillScriptPath) 'guest-probe-files.json')
+  # ---- Early stop and evidence while the first install runs (Fable plan 87d330d0, D:/w/tmp/PLAN-drill-loop-root-20261123.md 2.2 A1-A4,
+  # 2.4, section 3 block A). The one place these values live.
+  # A1: the foreground waits on a guest step one tick at a time; on each tick of the first install it pulls the guest's progress files
+  # (DrillProgressFiles) back into the run directory, so an abort of any kind (guard deadline, short memory, crash) leaves the last tick's
+  # copy. One pull is bounded by GuestPullSeconds, less than a tick.
+  GuestTickSeconds = 30
+  GuestPullSeconds = 20
+  # A2: the foreground's own stop comes this many minutes before the guard's deadline, so the evidence is taken before any restore:
+  # min(EvidenceWindowMinutes, EvidenceWindowShare x -RunTimeoutMinutes), never below EvidenceWindowMinMinutes (Get-DrillEvidenceWindowMinutes).
+  # A short run keeps most of its time for the guest (10 minutes: 3), and the window is never zero, negative or the whole run (5..240 allowed).
+  EvidenceWindowMinutes = 5
+  EvidenceWindowShare = 0.3
+  EvidenceWindowMinMinutes = 1
+  # A3: the no-progress gates, per stage (Get-DrillProgressStop). Progress: any of the guest's progress files grew (plan 2.4). The stage is
+  # the latest whose log is there: entry (none yet), host, prepare, launcher. Basis (plan 2.4, receipts under D:\clued-drill\runs):
+  # - entry: the entry's front part (assets, prereq, unpack, check) writes no stage log; it took 464 s in 20261122T142427Z-...-cbecb80d-a97892ae
+  #   (r13, the one run timed by segment): host.stdout.log must appear within EntryHostLogMinutes of the entry's start.
+  # - host: 392-1467 s over 10 runs (1467 s in 20261121T061228Z-...-998ab86a-39d3d3b3); r13's largest gap between two steps 137 s:
+  #   stalled 10 minutes, or 30 minutes in the stage.
+  # - prepare: 112-130 s over 8 runs: 6 minutes in the stage.
+  # - launcher (task 87d330d0 PR-2, plan FABLE-drill-role-probe-20261124 section 4.2): stalled 10 minutes, or 25 minutes in the stage. Both
+  #   hold for a launcher that writes no step-start line: the longest silent step seen is linux-B, 221.75 s (20261123T193713Z-...-ad98eac7
+  #   and 20261123T201433Z-...-74bc5ef0-52d496e7), the companion account step at most 8 minutes, the stage after the fix about 17 minutes
+  #   (8.6 before first-train, 0.5 first-train, 0.2 verify and pause, 8 companion). Before, none: generation 16's first-train wait was
+  #   silent for 1505 s and the run ended on its 70-minute deadline; now a launcher that waits silently stops within ten minutes.
+  # A gate never fires past the foreground's stop: the deadline is judged first, so a short run (-RunTimeoutMinutes 10) ends on it.
+  EntryHostLogMinutes = 15
+  ProgressGates = [ordered]@{
+    host = @{ stallMinutes = 10; maxMinutes = 30 }
+    prepare = @{ stallMinutes = $null; maxMinutes = 6 }
+    launcher = @{ stallMinutes = 10; maxMinutes = 25 }
+  }
+  # After the entry returned: read-after-install, A7 and A8 within this many minutes (13.1-13.8 observed in r13 and
+  # 20261122T002532Z-...-ed827708-a456e0cf), or DRILL_AFTER_ENTRY_TIMEOUT; never past the foreground's stop.
+  AfterEntryMaxMinutes = 20
 }
 
 # A stop carries its code in the message so every catch reports one code (no free text from the guest reaches it).
@@ -193,28 +272,47 @@ function Get-Prop($Object, [string]$Path) {
 
 # ---------------------------------------------------------------- pure decisions (unit-tested offline)
 
-# -RunnerJob (before boot only): a runner job on either side, or a job query that failed -- the high tier (the RunnerJobGrowth reading more).
-# requiredBasis: what requiredFreeBytes is made of, in GB, and the receipt reading the runner job growth comes from (null without it).
-function Test-DrillHostMemory([long]$FreeBytes, [long]$VmMemoryBytes = $script:Drill.MemoryBytes, [switch]$Running, [long]$MemoryAssigned = 0, [switch]$RunnerJob) {
+# Memory only, before boot and while running: no runner job enters it (BootWaitMinutes' note). requiredBasis: what requiredFreeBytes is
+# made of, in GB.
+# Before boot the production WSL's headroom is counted as taken (Fable plan 87d330d0, FABLE-drill-memory-short-20261124 2.1 and 4, PR-A):
+# what a running runner distribution still has free (/proc/meminfo MemFree) it can take after the boot, as it did in every
+# DRILL_HOST_MEMORY_SHORT receipt; one registered but not running can be started and take the whole cap of the Owner's WSL VM (.wslconfig
+# memory=, read by Get-DrillWslMemory -IdleCap). The highest of them: they share one VM. $WslMemory: Get-DrillWslMemory -IdleCap's
+# readings (none: this host has no runner distribution, nothing to count); $null, a running one without MemFree or one not running
+# without a cap: not read -- no boot (DRILL_HOST_RESOURCE_UNREADABLE), as for any host reading the boot gate rests on.
+# requiredBasis.wslHeadroomSource: memfree, wslconfig-cap or none. Running, nothing is counted: the running gate is unchanged.
+# The default (@(): nothing to count) is for the tests that call the gate directly. A boot is judged only through the two entries that
+# read the WSL first and hand the reading over: Get-DrillHostSafety (the boot gate in Start-DrillGuardedVm) and Wait-DrillBootMemory
+# (held by a test over this script's syntax tree).
+function Test-DrillHostMemory([long]$FreeBytes, [long]$VmMemoryBytes = $script:Drill.MemoryBytes, [switch]$Running, [long]$MemoryAssigned = 0,
+  $WslMemory = @()) {
   $target = [Math]::Max($script:Drill.MemoryBytes, $VmMemoryBytes)
-  $guest = $margin = $growth = 0L; $growthFrom = $null
+  $guest = $margin = $headroom = 0L; $unread = $false; $source = $null
   if ($Running) {
     # Hyper-V's assigned memory has already been deducted from the host's free memory.
     $guest = [Math]::Max(0L, $target - $MemoryAssigned)
   } else {
     $guest = [Math]::Max($target, $MemoryAssigned); $margin = $script:Drill.BootMarginBytes
-    if ($RunnerJob) {
-      $g = $script:Drill.RunnerJobGrowth
-      $growth = [long][Math]::Ceiling(([double]$g.afterBootFreeGB - [double]$g.minRunningFreeGB) * 1GB)
-      $growthFrom = "$($g.receipt): evidence.hostMemory afterBootFreeGB $($g.afterBootFreeGB) - minRunningFreeGB $($g.minRunningFreeGB)"
+    if ($null -eq $WslMemory) { $unread = $true }
+    else {
+      foreach ($w in @($WslMemory)) {
+        $f = Get-Prop $w 'memFreeGB'; $from = 'memfree'
+        if ($null -eq $f -and (Get-Prop $w 'running') -eq $false) { $f = Get-Prop $w 'capGB'; $from = 'wslconfig-cap' }
+        if ($null -eq $f) { $unread = $true; break }
+        # the reading is in GB rounded to two places (up to ~5 MB under; the 1 GB boot margin covers it); bytes rounded up
+        $b = [long][Math]::Ceiling([double]$f * 1GB); if ($null -eq $source -or $b -gt $headroom) { $headroom = $b; $source = $from }
+      }
     }
   }
-  $required = $guest + $margin + $growth + $script:Drill.ProductionReserveBytes
+  if (-not $unread -and $null -eq $source) { $source = 'none' }
+  $required = $guest + $margin + $script:Drill.ProductionReserveBytes + $headroom
   $gb = { param([long]$b) [Math]::Round($b / 1GB, 1) }
-  return @{ ok = ($FreeBytes -ge $required); code = $(if ($FreeBytes -lt $required) { 'DRILL_HOST_MEMORY_SHORT' } else { $null });
+  $code = if ($unread) { 'DRILL_HOST_RESOURCE_UNREADABLE' } elseif ($FreeBytes -lt $required) { 'DRILL_HOST_MEMORY_SHORT' } else { $null }
+  return @{ ok = ($null -eq $code); code = $code;
     freeGB = (& $gb $FreeBytes); requiredFreeBytes = $required
-    requiredBasis = [ordered]@{ guestGB = (& $gb $guest); bootMarginGB = (& $gb $margin); runnerJobGrowthGB = (& $gb $growth)
-      productionReserveGB = (& $gb $script:Drill.ProductionReserveBytes); runnerJobGrowthFrom = $growthFrom } }
+    requiredBasis = [ordered]@{ guestGB = (& $gb $guest); bootMarginGB = (& $gb $margin); productionReserveGB = (& $gb $script:Drill.ProductionReserveBytes)
+      wslHeadroomGB = $(if ($unread) { $null } else { [Math]::Round($headroom / 1GB, 2) })
+      wslHeadroomSource = $(if ($unread) { $null } else { $source }) } }
 }
 
 # An Actions self-hosted runner executes each job in a Runner.Worker process (its Runner.Listener only waits for work). Judged from the
@@ -227,7 +325,7 @@ function Test-DrillHostRunnerJob([string[]]$ProcessNames) {
 # not be read), and the runner distribution's answer -- $WslJob $true (a Runner.Worker there), $false (none, or no runner distribution
 # running), or $null (that side could not be read). A job confirmed on either side comes first: ACTIONS_RUNNER_JOB, WSL_ACTIONS_RUNNER_JOB;
 # then a side that could not be read: WINDOWS_UNREADABLE, WSL_UNREADABLE; $null only when both sides were read and neither has a job.
-# None of these refuses the boot (supplement "drill boot gate and the train both want DESK"): any but $null selects the high memory tier.
+# None of these refuses the boot or raises its memory gate (Fable plan 0e418483 "drill boot gate: memory only"): recorded only.
 function Get-DrillRunnerJob($ProcessNames, $WslJob) {
   if ($null -ne $ProcessNames -and (Test-DrillHostRunnerJob $ProcessNames)) { return 'ACTIONS_RUNNER_JOB' }
   if ($WslJob -eq $true) { return 'WSL_ACTIONS_RUNNER_JOB' }
@@ -265,12 +363,12 @@ function Test-DrillHostStatusFresh($WrittenAt, [DateTimeOffset]$Now) {
 # A drill hold leaves the parked stage-8 tries and revoke-only train maintenance on the Windows side.
 function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Running, [long]$VmMemoryBytes = $script:Drill.MemoryBytes,
   [long]$MemoryAssigned = 0, [DateTimeOffset]$Now = (Get-DrillTime),
-  [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, $ProcessNames = @(), $WslJob = $false) {
-  # Before boot only: a runner job on either side (or a side that could not be read) selects the boot gate's high memory tier; it refuses
-  # nothing by itself (Fable renew-key ruling, supplement "drill boot gate and the train both want DESK"). A job picked up after the boot
-  # is left to the running memory gate, as before.
+  [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, $ProcessNames = @(), $WslJob = $false, $WslMemory = @()) {
+  # Before boot only: a runner job on either side (or a side that could not be read) is recorded and judged by nothing -- neither a
+  # refusal nor a higher memory gate (Fable plan 0e418483 "drill boot gate: memory only"). A job picked up after the boot is left to the
+  # running memory gate, as before.
   $busyWith = if ($Running) { $null } else { Get-DrillRunnerJob $ProcessNames $WslJob }
-  $memory = Test-DrillHostMemory $FreeBytes $VmMemoryBytes -Running:$Running -MemoryAssigned $MemoryAssigned -RunnerJob:($null -ne $busyWith)
+  $memory = Test-DrillHostMemory $FreeBytes $VmMemoryBytes -Running:$Running -MemoryAssigned $MemoryAssigned -WslMemory $WslMemory
   $code = 'DRILL_HOST_STATUS_UNREADABLE'
   $mode = $null; $since = $null; $until = $null
   $executorObservation = $null
@@ -519,10 +617,22 @@ function Test-DrillPackageDir([string]$Dir, [string]$Version, $KitInfo = $null) 
   if ($Version -notmatch '^[0-9A-Za-z][0-9A-Za-z.\-]{0,63}$') { throw (New-DrillError 'DRILL_VERSION_REFUSED') }
   $tag = "fleet-node-$Version"
   $tar = Join-Path $Dir "$tag.tar"; $acc = Join-Path $Dir "$tag.acceptance.json"; $sums = Join-Path $Dir 'SHA256SUMS'
-  $candidate = Get-Prop $KitInfo 'candidate'
+  $candidate = Get-Prop $KitInfo 'candidate'; $server = Get-Prop $KitInfo 'server'
   if ($null -ne $candidate) {
     if (Test-Path -LiteralPath $acc) { throw (New-DrillError 'DRILL_CANDIDATE_KIT_BUT_FROM_HAS_AN_ACCEPTANCE' ([IO.Path]::GetFileName($acc))) }
     $acc = [string](Get-Prop $candidate 'acceptance')
+  }
+  # A kit with the server stand-in (make-drill-kit.mjs serverStandIn) carries the acceptance the guest installs on, for an accepted
+  # version too: it names the drill's first-install kit. The Owner's own in From is still read first and held to the Release's kit.
+  $ownersKitSha = $null
+  if ($null -ne $server -and $null -eq $candidate) {
+    if (-not (Test-Path -LiteralPath $acc -PathType Leaf)) { throw (New-DrillError 'DRILL_PACKAGE_FILE_MISSING' ([IO.Path]::GetFileName($acc))) }
+    $owners = Read-DrillJson $acc
+    if ([string](Get-Prop $owners 'contract') -cne 'clued.independent-ci.fleet-node-acceptance/1' -or [string](Get-Prop $owners 'version') -cne $Version) { throw (New-DrillError 'DRILL_ACCEPTANCE_REFUSED') }
+    if ([string](Get-Prop $owners 'archive_sha256') -cne (Get-Sha256Hex $tar)) { throw (New-DrillError 'DRILL_TAR_NOT_THE_ACCEPTED_ONE') }
+    $ownersKitSha = [string](Get-Prop $owners 'firstInstallKitSha256'); $ownersSource = [string](Get-Prop $owners 'ciSourceManifestSha256')
+    if ($ownersKitSha -cne [string]$server.releaseFirstInstallKitSha256) { throw (New-DrillError 'DRILL_KIT_SERVER_NOT_THIS_RELEASE' 'acceptance') }
+    $acc = [string]$server.overrides[[IO.Path]::GetFileName($acc)]
   }
   foreach ($f in @($tar, $acc, $sums)) { if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { throw (New-DrillError 'DRILL_PACKAGE_FILE_MISSING' ([IO.Path]::GetFileName($f))) } }
   $sha = Get-Sha256Hex $tar
@@ -534,10 +644,18 @@ function Test-DrillPackageDir([string]$Dir, [string]$Version, $KitInfo = $null) 
   $source = [string](Get-Prop $acceptance 'ciSourceManifestSha256')
   if ($source -notmatch '^[0-9a-f]{64}$') { throw (New-DrillError 'DRILL_ACCEPTANCE_REFUSED' 'ciSourceManifestSha256') }
   $kitSha = [string](Get-Prop $acceptance 'firstInstallKitSha256')
+  # with the server stand-in the kit's acceptance names the drill's first-install kit; the hash this run is held to and its receipt
+  # carries (what the Owner accepts, what seal compares) stays the Release's
+  $drillKitSha = $null
+  if ($null -ne $server) {
+    if ($kitSha -cne [string]$server.firstInstallKitSha256) { throw (New-DrillError 'DRILL_KIT_SERVER_STAND_IN_REFUSED' 'acceptance') }
+    if ($null -ne $ownersKitSha -and $source -cne $ownersSource) { throw (New-DrillError 'DRILL_KIT_SERVER_STAND_IN_REFUSED' 'acceptance source') }
+    $drillKitSha = $kitSha; $kitSha = [string]$server.releaseFirstInstallKitSha256
+  }
   if ($null -ne $candidate -and ($sha -cne [string](Get-Prop $candidate 'tarSha256') -or $source -cne [string](Get-Prop $candidate 'ciSourceManifestSha256') -or
       $kitSha -cne [string](Get-Prop $candidate 'firstInstallKitSha256'))) { throw (New-DrillError 'DRILL_CANDIDATE_NOT_THE_KITS') }
   return [ordered]@{ version = $Version; tar = $tar; acceptance = $acc; sums = $sums; tarSha256 = $sha; ciSourceManifestSha256 = $source
-    firstInstallKitSha256 = $kitSha; candidate = ($null -ne $candidate) }
+    firstInstallKitSha256 = $kitSha; drillFirstInstallKitSha256 = $drillKitSha; candidate = ($null -ne $candidate) }
 }
 
 # The first-install kit (kit.json, contract clued.drill.first-install-kit/1): every file pinned by sha256; one entry run in the
@@ -590,7 +708,26 @@ function Read-DrillKit([string]$Dir) {
       $candidate[$k] = $v
     }
   }
-  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha; prerequisiteMode = $mode; executionBlocker = $blocker; candidate = $candidate; credentials = (Get-Prop $kit 'credentials'); credentialFilesSha256 = (Get-Prop $kit 'credentialFilesSha256') }
+  # the server stand-in (make-drill-kit.mjs serverStandIn): the drill's server, the two hashes of the first-install kit (the Release's and
+  # the drill's) and the three files the kit carries in place of the Release's, each one of the kit's pinned files
+  $server = $null; $sv = Get-Prop $kit 'server'
+  if ($null -ne $sv) {
+    if ([string](Get-Prop $sv 'contract') -cne 'clued.drill.server-stand-in/1') { throw (New-DrillError 'DRILL_KIT_REFUSED' 'server.contract') }
+    $server = [ordered]@{ project = [string](Get-Prop $sv 'project'); supabaseUrl = [string](Get-Prop $sv 'supabaseUrl'); replaced = @(Get-Prop $sv 'replaced' | ForEach-Object { [string]$_ })
+      blackholeHosts = @(Get-Prop $sv 'blackholeHosts' | ForEach-Object { [string]$_ }); overrides = @{} }
+    if ($server.supabaseUrl -cnotmatch '^https://[a-z0-9]+\.supabase\.co$' -or $server.blackholeHosts.Count -lt 1) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'server') }
+    foreach ($k in @('releaseFirstInstallKitSha256', 'firstInstallKitSha256')) {
+      $v = [string](Get-Prop $sv $k); if ($v -cnotmatch '^[0-9a-f]{64}$') { throw (New-DrillError 'DRILL_KIT_REFUSED' "server.$k") }
+      $server[$k] = $v
+    }
+    foreach ($k in @('firstInstallKit', 'firstInstallSums', 'acceptance')) {
+      $name = [string](Get-Prop $sv "files.$k")
+      if ($name -cnotmatch '^fleet-node-[0-9A-Za-z][0-9A-Za-z.\-]{0,63}\.(first-install-kit\.json|first-install\.SHA256SUMS|acceptance\.json)$' -or -not $seen.ContainsKey($name.ToLowerInvariant())) { throw (New-DrillError 'DRILL_KIT_REFUSED' "server.files.$k") }
+      $server.overrides[$name] = (Join-Path $Dir $name)
+    }
+    if ($server.overrides.Count -ne 3) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'server.files') }
+  }
+  return [ordered]@{ server = $server; dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha; prerequisiteMode = $mode; executionBlocker = $blocker; candidate = $candidate; credentials = (Get-Prop $kit 'credentials'); credentialFilesSha256 = (Get-Prop $kit 'credentialFilesSha256') }
 }
 
 # The drill's decision for each credential file name a package may declare (Fable renew-key ruling, supplements "merge order" and
@@ -628,6 +765,105 @@ function Assert-DrillKitCredentialsBound($KitInfo, [string]$Tar) {
   # the recorded hash a lowercase hex digest, compared ordinally (9th review round, low 2: -cne is culture-aware and ignores some characters)
   $hashSame = ($recorded -cmatch '^[0-9a-f]{64}$') -and [string]::Equals($bytes, $recorded, [StringComparison]::Ordinal)
   if (-not $same -or -not $hashSame) { throw (New-DrillError 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES' @{ groupsEqual = $same; packageSha256 = $bytes; kitSha256 = $recorded }) }
+}
+
+# The drill's server and binding, before the host gate, the hold or any boot (FABLE-drill-role-probe-20261124.md, PR-3). A kit without
+# the server stand-in would install against the Release's own address, production: refused, nothing falls back to it. The stand-in is
+# held again to the Release directory by its one reader (make-drill-kit.mjs --server-of: the Release's first-install kit is the one the
+# kit was made from, the drill's differs in the two server fields only and is not production's, the production host is in the list the
+# guest cuts off). And the Owner's drill binding must be there, in its shape: without it the drill does not start.
+# Then the test project is brought to production's applied list (Sync-DrillServer; FABLE-drill-test-project-sync-20261124.md, the
+# ruling on the PR-A report, section 1: the host does it, no workflow), and the server itself is asked (section 2.2;
+# drill-server-check.mjs --ready): the role probe the guest is about to send, sent from here with the binding's token, must be answered
+# "holds no role". No list, no password or a refused one, a project that is not a prefix of production, a rotated key, an expired token,
+# a binding the server would let through: each stops the drill here with its own code (Sync-DrillServer's, then DRILL_SERVER_KEY_REFUSED,
+# DRILL_SERVER_UNREACHABLE, DRILL_SERVER_PROBE_FUNCTION_MISSING, DRILL_BINDING_REFUSED_BY_SERVER, DRILL_BINDING_ON_DUTY). What the sync
+# followed (the release run, production's last row and row count, the rows applied now) is kept for the drill's receipt (server.sync).
+function Assert-DrillServerReady($KitInfo, $Package) {
+  $server = Get-Prop $KitInfo 'server'
+  if ($null -eq $server) { throw (New-DrillError 'DRILL_KIT_SERVER_STAND_IN_MISSING' 'the kit names no drill server: make it again with make-drill-kit.mjs') }
+  $binding = Get-DrillCredential -Binding
+  # never a rebuild here: that is DESK's, once (-SyncServer -Rebuild)
+  $sync = Sync-DrillServer ([string](Split-Path -Parent ([string]$Package.tar))) ([string]$Package.version)
+  $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+  $run = Invoke-DrillServerReadyNode $node ([string]$KitInfo.dir) ([string](Split-Path -Parent ([string]$Package.tar))) ([string]$Package.version) $binding
+  $derived = $null
+  if ($run.exit -eq 0) { try { $derived = $run.stdout | ConvertFrom-Json } catch { $derived = $null } }
+  if ($null -eq $derived) { throw (New-DrillServerError $run 'DRILL_KIT_SERVER_STAND_IN_REFUSED') }
+  foreach ($k in @('supabaseUrl', 'releaseFirstInstallKitSha256', 'firstInstallKitSha256')) {
+    if (-not [string]::Equals([string](Get-Prop $derived $k), [string]$server[$k], [StringComparison]::Ordinal)) { throw (New-DrillError 'DRILL_KIT_SERVER_STAND_IN_REFUSED' $k) }
+  }
+  $server['sync'] = $sync
+}
+
+# The test project brought to production's applied list (the ruling on the PR-A report, sections 1 and 5): the database password first
+# (none: nothing is asked of anyone), the sync script there (a checkout without it cannot sync), production's list from the newest
+# successful release run on main (drill-server-check.mjs --production-list), then the sync script with the list, the Release's
+# first-install kit (its record.scope: the project the drill's token is issued for) and drill-server.json (the pooler host) as arguments
+# and the password on its standard input only. Its last line is its result (clued.drill-test-sync.result/1). Anything but in-sync stops
+# here with the script's code (DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED, DRILL_SERVER_DIVERGED, DRILL_SERVER_SYNC_FAILED:<file or stage>,
+# DRILL_SERVER_SYNC_TOOL_MISSING, DRILL_SERVER_UNREACHABLE, DRILL_SERVER_POOLER_HOST_NOT_SET, ...); stale (the test project holds rows the
+# newest production list does not: written past the sync) is DRILL_SERVER_DIVERGED:stale. Nothing the script prints is shown with the
+# password in it. Returns what the drill's receipt keeps (server.sync).
+function Sync-DrillServer([string]$From, [string]$Version, [switch]$Rebuild) {
+  $credential = Get-DrillCredential -ServerDatabase
+  $tool = Get-DrillSyncTool
+  if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) { throw (New-DrillError 'DRILL_SERVER_SYNC_TOOL_MISSING' $tool) }
+  $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+  $listRun = Invoke-DrillProductionListNode $node
+  $list = $null
+  if ($listRun.exit -eq 0) { try { $list = $listRun.stdout | ConvertFrom-Json } catch { $list = $null } }
+  if ($null -eq $list -or [string](Get-Prop $list 'file') -eq '' -or -not ((Get-Prop $list 'run') -is [ValueType])) { throw (New-DrillServerError $listRun 'DRILL_SERVER_PRODUCTION_LIST_MISSING') }
+  $arguments = @($tool, '--applied', [string]$list.file, '--kit', (Join-Path $From "fleet-node-$Version.first-install-kit.json"),
+    '--server', (Join-Path (Split-Path -Parent $script:DrillScriptPath) 'drill-server.json'))
+  if ($Rebuild) { $arguments += '--rebuild' }
+  $run = Invoke-DrillSyncNode $node $arguments $credential
+  $secret = $credential.GetNetworkCredential().Password
+  $clean = { param($t) ([string]$t).Replace($secret, '***') }
+  $last = @(@(([string]$run.stdout) -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -Last 1)
+  $result = $null
+  if ($last.Count -eq 1) { try { $result = (& $clean $last[0]) | ConvertFrom-Json } catch { $result = $null } }
+  $why = { param($t) $c = & $clean $t; $c.Substring(0, [Math]::Min(1500, $c.Length)) }
+  if ($null -eq $result -or [string](Get-Prop $result 'contract') -cne 'clued.drill-test-sync.result/1') {
+    throw (New-DrillError 'DRILL_SERVER_SYNC_FAILED' "no-result (exit $($run.exit)): $(& $why $run.stderr)")
+  }
+  $state = [string](Get-Prop $result 'state')
+  if ($state -ceq 'failed') {
+    if ([string](Get-Prop $result 'code') -cmatch '^(DRILL_SERVER_[A-Z_]+)(?::(.{1,400}))?$') {
+      # The database's own message is on the script's standard error after its code (password masked): without it a failed row
+      # names no cause. Only what follows the code is added, so a code alone stays exactly the script's code.
+      $where = & $clean $Matches[2]; $echo = 'drill-test-sync: ' + [string](Get-Prop $result 'code'); $err = [string]$run.stderr; $pos = $err.IndexOf($echo)
+      $cause = if ($pos -ge 0) { (& $why $err.Substring($pos + $echo.Length)).Trim() } else { '' }
+      throw (New-DrillError $Matches[1] "$where $cause".Trim())
+    }
+    throw (New-DrillError 'DRILL_SERVER_SYNC_FAILED' "no-result: $(& $why $run.stderr)")
+  }
+  if ($state -ceq 'stale') { throw (New-DrillError 'DRILL_SERVER_DIVERGED' 'stale') }
+  if ($state -cne 'in-sync' -or $run.exit -ne 0) { throw (New-DrillError 'DRILL_SERVER_SYNC_FAILED' "no-result: state $(& $why $state), exit $($run.exit)") }
+  $at = Get-Prop $result 'production_last'
+  return [ordered]@{ state = 'in-sync'; releaseRun = (Get-Prop $list 'run'); productionLast = "$(Get-Prop $at 'version')_$(Get-Prop $at 'name')"
+    productionRows = (Get-Prop $result 'production_rows'); applied = (Get-Prop $result 'applied'); projectAccount = (Get-Prop $result 'fixtures.project_account') }
+}
+function Get-DrillSyncTool {
+  if ($script:Drill.SyncTool) { return [string]$script:Drill.SyncTool }
+  [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $script:DrillScriptPath) '..\..\..\apps\clued-cloud\scripts\drill-test-sync.mjs'))
+}
+# The two calls Sync-DrillServer makes, each its own function (a test answers in their place): production's list (gh, three tries a
+# call, the host's copy for the same run), and the sync script with the password on its standard input (in no argument, no environment
+# variable, no file).
+function Invoke-DrillProductionListNode([string]$Node) {
+  $tool = Join-Path (Split-Path -Parent $script:DrillScriptPath) 'drill-server-check.mjs'
+  Invoke-DrillNode $Node @($tool, '--production-list', '--cache', [string]$script:Drill.ProductionListCache) $script:Drill.ProductionListTimeoutSeconds
+}
+function Invoke-DrillSyncNode([string]$Node, [string[]]$Arguments, $Credential) {
+  Invoke-DrillProcess $Node $Arguments $script:Drill.SyncTimeoutSeconds @{} @('NODE_OPTIONS', 'NODE_PATH') $Credential.GetNetworkCredential().Password
+}
+
+# The one call of the server tool for a run: the kit, its Release and version as arguments, the binding's token on the tool's standard
+# input (in no argument, no environment variable, no file).
+function Invoke-DrillServerReadyNode([string]$Node, [string]$KitDir, [string]$From, [string]$Version, $Binding) {
+  $tool = Join-Path (Split-Path -Parent $script:DrillScriptPath) 'drill-server-check.mjs'
+  Invoke-DrillProcess $Node @($tool, '--ready', $KitDir, '--from', $From, '--version', $Version) 120 @{} @('NODE_OPTIONS', 'NODE_PATH') $Binding.GetNetworkCredential().Password
 }
 
 # A credential group's members as written: each key with its value (a dictionary or a parsed JSON object).
@@ -702,11 +938,14 @@ function Get-DrillReleaseFiles($Package, $KitInfo) {
   $root = Split-Path -Parent $Package.tar; $seen = @{}; $files = @(); $inRoot = 0
   # a candidate's acceptance is the kit's (Test-DrillPackageDir), every other asset is From's
   $candidateAcceptance = if ($Package['candidate']) { [IO.Path]::GetFileName($Package.acceptance) } else { $null }
+  # the server stand-in's three files are the kit's too (Read-DrillKit .server.overrides); From's own of those names stay where they are
+  $overrides = Get-Prop (Get-Prop $KitInfo 'server') 'overrides'
   foreach ($f in @(Get-Prop $pins 'files')) {
     $name = [string](Get-Prop $f 'path'); $hash = [string](Get-Prop $f 'sha256')
     if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,200}$' -or $hash -cnotmatch '^[0-9a-f]{64}$' -or $seen.ContainsKey($name)) { throw (New-DrillError 'DRILL_RELEASE_PINS_REFUSED') }
     $seen[$name] = $true
-    $file = if ($name -ceq $candidateAcceptance) { $Package.acceptance } else { $inRoot++; Join-Path $root $name }
+    $file = if ($null -ne $overrides -and $overrides.ContainsKey($name)) { if (Test-Path -LiteralPath (Join-Path $root $name) -PathType Leaf) { $inRoot++ }; [string]$overrides[$name] }
+      elseif ($name -ceq $candidateAcceptance) { $Package.acceptance } else { $inRoot++; Join-Path $root $name }
     if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Sha256Hex $file) -cne $hash) { throw (New-DrillError 'DRILL_RELEASE_ASSET_CHANGED' $name) }
     $files += $file
   }
@@ -1046,13 +1285,18 @@ function Get-DrillVerdict($E) {
   else { [void]$items.Add((New-DrillItem 'A5' $(if ($a5) { $null } else { $false }) "local=$local acceptance=$($E.acceptanceSource); production half by -Finalize")) }
   # A6 (Fable renew-key ruling, supplement "eight on the path", item 5): a successful launcher ends with its own pause confirmed, so the
   # node holds THAT pause: the request the launcher's terminal confirmed (pause.requestSha256, the one source) is the one state\PAUSED.json
-  # names, the status says paused and the executor rests PAUSED, with UNCERTAIN, no current batch, live 0 and no HALT. Idle is no pass.
+  # names, the status says paused and the executor rests PAUSED, with no current batch, live 0 and no HALT. Idle is no pass.
   $s = $E.status
   $want = [string](Get-Prop $E.launcher 'pause.requestSha256'); $held = [string](Get-Prop $E.pause 'requestSha256')
   $ownPause = ((Get-Prop $E.launcher 'pause.confirmed') -eq $true) -and ($want -cmatch '^[0-9a-f]{64}$') -and ($held -ceq $want)
-  $a6 = $ownPause -and ((Get-Prop $s 'paused') -eq $true) -and ([string](Get-Prop $s 'executor.state') -ceq 'PAUSED') -and ([string](Get-Prop $s 'node.mode') -ceq 'UNCERTAIN') `
+  # The role is a confirmed one (FABLE-drill-role-probe-20261124.md, PR-3): the drill binding holds no role in the drill's server, so the
+  # launcher's probe is answered not-held, its first train is not applicable, and the node rests STANDBY. UNCERTAIN (the probe refused or
+  # unanswered: the drill would be talking to a server that does not know its token) is no pass, and neither is holding the slot.
+  $role = [string](Get-Prop $E.launcher 'role'); $done = @(Get-Prop $E.launcher 'completed' | ForEach-Object { [string]$_ })
+  $noRole = ($role -ceq 'not-held') -and ($done -ccontains 'first-train-not-applicable') -and ([string](Get-Prop $s 'node.mode') -ceq 'STANDBY')
+  $a6 = $ownPause -and $noRole -and ((Get-Prop $s 'paused') -eq $true) -and ([string](Get-Prop $s 'executor.state') -ceq 'PAUSED') `
     -and ($null -eq (Get-Prop $s 'current')) -and ((Get-Prop $s 'queue.live') -eq 0) -and ($null -eq (Get-Prop $s 'halt'))
-  [void]$items.Add((New-DrillItem 'A6' $a6 "pause=$held confirmedByLauncher=$want paused=$(Get-Prop $s 'paused') executor=$(Get-Prop $s 'executor.state') mode=$(Get-Prop $s 'node.mode') current=$($null -ne (Get-Prop $s 'current')) live=$(Get-Prop $s 'queue.live') halt=$(Get-Prop $s 'halt.code')"))
+  [void]$items.Add((New-DrillItem 'A6' $a6 "pause=$held confirmedByLauncher=$want paused=$(Get-Prop $s 'paused') executor=$(Get-Prop $s 'executor.state') mode=$(Get-Prop $s 'node.mode') role=$role firstTrainNotApplicable=$($done -ccontains 'first-train-not-applicable') current=$($null -ne (Get-Prop $s 'current')) live=$(Get-Prop $s 'queue.live') halt=$(Get-Prop $s 'halt.code')"))
   # A7: the status rewritten after this boot, and a self-check that passed, is fresh AND was observed after this boot (never the boot before's).
   $r = $E.reboot
   if ($null -eq $r) { [void]$items.Add((New-DrillItem 'A7' $false 'not run')) }
@@ -1131,7 +1375,7 @@ function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
 
 # Overall: FAIL if any required item is missing or a core item failed, or M5 (the renewal observations) is not PASS; PASS_A when
 # A1-A9 hold and M5 passed; PENDING_PRODUCTION_READBACK while the read-back (-Finalize) has not been judged. The three PASS values are the
-# set publish.mjs seal --drill-receipt takes (test/drill-vm.test.mjs holds them equal); a candidate is shown to the Owner only after its
+# set publish.mjs seal --drill-receipt takes (test/drill-vm-part1.test.mjs holds them equal); a candidate is shown to the Owner only after its
 # -Finalize (Fable renew-key ruling section 4.3: drill -> -Finalize -> accept -> seal). M5 has no "not evaluated" exit (section 2.2): a package
 # without the renewal leaves its observations missing and fails here; NOT_EVALUATED only marks a run that stopped before M5 was read.
 # A candidate (its receipt is what the Owner's acceptance and seal rest on): each of A1-A7 must be true, and A8 true unless the run chose
@@ -1234,13 +1478,17 @@ function Get-DrillProductionVerdict($Receipt, $Readback) {
 }
 
 # ---------------------------------------------------------------- guest-side fake credentials (Windows PowerShell 5.1 in the VM)
-# Generates, inside the VM, the CI token, upgrade token and an RSA App key nobody registered, and prints only public values.
+# Generates, inside the VM, the upgrade token and an RSA App key nobody registered, and prints only public values. The CI token is not
+# made up: it is the Owner's drill binding in the drill's server ($Binding, a PSCredential: the connection id and the token, from
+# Get-DrillCredential -Binding over the PowerShell Direct session), written as it is; asked for without one, nothing is written in its
+# place (a made-up token is one no server knows: the 17th candidate's drill).
 # Fingerprints use the package's formulas (tools/secret-fingerprint.mjs; the offline test cross-checks them).
 function New-DrillFakeCredentials {
   # $Make: the fake files to write (Get-DrillCredentialPlan .fake): none other is made
-  param([string]$OutDir, [string[]]$Make)   # in the body: the guest receives this function as a script block, which keeps only the body
+  param([string]$OutDir, [string[]]$Make, $Binding)   # in the body: the guest receives this function as a script block, which keeps only the body
   $ErrorActionPreference = 'Stop'
   if ($null -eq $Make) { throw 'FAKE_CREDENTIALS_NAMES_REQUIRED' }
+  if ($Make -contains 'ci-admission.token' -and $Binding -isnot [System.Management.Automation.PSCredential]) { throw 'FAKE_CREDENTIALS_BINDING_REQUIRED' }
   if (Test-Path -LiteralPath $OutDir) { throw 'FAKE_CREDENTIALS_DIR_EXISTS' }
   New-Item -ItemType Directory -Path $OutDir | Out-Null
   $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -1264,7 +1512,9 @@ function New-DrillFakeCredentials {
   $pemLabel = 'RSA PRIVATE KEY'
   $pemBody = ($b64 -split '(.{64})' | Where-Object { $_ }) -join "`n"
   $pem = "{0}BEGIN {1}{0}`n{2}`n{0}END {1}{0}`n" -f $pemFence, $pemLabel, $pemBody
-  $ci = & $token; $up = & $token
+  $up = & $token
+  # with no binding (a package that names no CI token) the public record's pin and id are of a token written nowhere
+  $ci = if ($null -ne $Binding) { $Binding.GetNetworkCredential().Password } else { & $token }
   $enc = New-Object System.Text.UTF8Encoding $false
   if ($Make -contains 'ci-admission.token') { [IO.File]::WriteAllText((Join-Path $OutDir 'ci-admission.token'), $ci, $enc) }
   if ($Make -contains 'resident-upgrade.token') { [IO.File]::WriteAllText((Join-Path $OutDir 'resident-upgrade.token'), $up, $enc) }
@@ -1281,8 +1531,8 @@ function New-DrillFakeCredentials {
   }
   $public = [ordered]@{
     contract = 'clued.drill.fake-credentials/1'
-    note = 'generated inside the drill VM; registered nowhere; the service refuses them'
-    ciPrincipalBindingId = [guid]::NewGuid().ToString()
+    note = 'the upgrade token and the App key are generated inside the drill VM and registered nowhere; the CI token is the drill binding of the drill server (no role there)'
+    ciPrincipalBindingId = $(if ($null -ne $Binding) { [string]$Binding.UserName } else { [guid]::NewGuid().ToString() })
     ciPrincipalRoleRef = [guid]::NewGuid().ToString()
     ciPrincipalQualificationRef = [guid]::NewGuid().ToString()
     ciTokenPinSha256 = (& $pin $ci)
@@ -1302,7 +1552,7 @@ function New-DrillFakeCredentials {
 
 # The receipt's record of the host's memory and runner jobs, raw facts only (Fable renew-key ruling, supplements "drill boot gate and the
 # train both want DESK" and "contention label stop-loss"): free before boot (the boot gate's reading) and the tier it required; the runner
-# jobs at boot on both sides, yes, no or unknown (a side not read: the high tier, but no job), and what the gate saw; free once the guest
+# jobs at boot on both sides, yes, no or unknown (a side not read, no job confirmed), and what the gate saw; free once the guest
 # was up (the running guard's first reading), the lowest while running, and the lowest of the whole run (the boot gate and every running
 # reading). No classification: what a time-out with a job at boot means is the operator's call (drill/FIRST-INSTALL-KIT.md).
 function Get-DrillHostMemoryEvidence($PreBoot, $RunningMemory) {
@@ -1346,9 +1596,27 @@ function Read-DrillHostStatus {
   try { Get-Content -LiteralPath $script:Drill.HostStatus -Raw -Encoding UTF8 -ErrorAction Stop } catch { $null }
 }
 
+# The host's free memory and the drill VM's memory (startup, assigned): the one reading the gates and the wait before the hold judge.
+# Throws when either cannot be read, or when the VM named ours is not.
+function Read-DrillHostMemory {
+  $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 5 -ErrorAction Stop
+  if ($null -eq $os.FreePhysicalMemory) { throw 'missing memory reading' }
+  $out = @{ free = [long]$os.FreePhysicalMemory * 1KB; target = [long]$script:Drill.MemoryBytes; assigned = 0L }
+  $vm = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq $script:Drill.VmName }
+  if ($vm) {
+    if ($vm.Notes -cne $script:Drill.Marker) { throw (New-DrillError 'DRILL_VM_NAME_TAKEN_NOT_OURS') }
+    $out.target = [Math]::Max($out.target, [long]$vm.MemoryStartup)
+    $out.assigned = [long]$vm.MemoryAssigned
+  }
+  return $out
+}
+
 # -JobsOnly: the duty, hold and runner-job checks without any memory reading: the early refusal before the WSL cache release (memory is
 # judged once, by the boot gate after the release: Fable renew-key ruling, supplement "WSL gate race" item 3).
-function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, [switch]$StatusOnly, [switch]$JobsOnly) {
+# $WslMemory: the runner distribution's memory the boot gate counts (Get-DrillWslMemory, read by Start-DrillGuardedVm); not given, it was
+# not read, and a boot gate refuses (Test-DrillHostMemory). Not used running or with -JobsOnly: no boot gate is judged there.
+function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, [switch]$StatusOnly, [switch]$JobsOnly,
+  $WslMemory = $null) {
   $json = Read-DrillHostStatus
   $duty = Test-DrillHostSafety $json ([long]::MaxValue) -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil
   if (-not $duty.ok -or $StatusOnly) {   # no memory and no job was read
@@ -1360,26 +1628,17 @@ function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [Dat
     # both sides' processes first, memory after: the reading a boot rests on is the latest one (Codex review of 74e7a65e7, high 2)
     $processes = @(); $wsl = @{ ok = $true; running = @(); jobs = @(); reason = $null; listCall = $null }; $windowsUnreadable = $null
     if (-not $Running) {
-      # a Windows process list that cannot be read is a job query that failed, as on the WSL side: the high tier, never a refusal by itself
+      # a Windows process list that cannot be read is a job query that failed, as on the WSL side: recorded, never a refusal by itself
       # (Codex review of f9ab1bb26, medium 1); memory and the VM are still read, and their failures still refuse below
       try { $processes = @(Get-Process -ErrorAction Stop | ForEach-Object { [string]$_.ProcessName }) }
       catch { $processes = $null; $windowsUnreadable = (Get-DrillCode $_).detail }
       $wsl = Get-DrillWslRunnerState
     }
-    if (-not $JobsOnly) {
-      $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 5 -ErrorAction Stop
-      if ($null -eq $os.FreePhysicalMemory) { throw 'missing memory reading' }
-      $free = [long]$os.FreePhysicalMemory * 1KB
-      $vm = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq $script:Drill.VmName }
-      if ($vm) {
-        if ($vm.Notes -cne $script:Drill.Marker) { throw (New-DrillError 'DRILL_VM_NAME_TAKEN_NOT_OURS') }
-        $target = [Math]::Max($target, [long]$vm.MemoryStartup)
-        $assigned = [long]$vm.MemoryAssigned
-      }
-    }
+    if (-not $JobsOnly) { $m = Read-DrillHostMemory; $free = $m.free; $target = $m.target; $assigned = $m.assigned }
     $wslJob = $null
     if (@($wsl.jobs).Count -gt 0) { $wslJob = $true } elseif ($wsl.ok) { $wslJob = $false }   # a confirmed job stays one beside an unread distribution
-    $safety = Test-DrillHostSafety $json $free -VmMemoryBytes $target -MemoryAssigned $assigned -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil -ProcessNames $processes -WslJob $wslJob
+    $gateWsl = $WslMemory; if ($Running -or $JobsOnly) { $gateWsl = @() }
+    $safety = Test-DrillHostSafety $json $free -VmMemoryBytes $target -MemoryAssigned $assigned -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil -ProcessNames $processes -WslJob $wslJob -WslMemory $gateWsl
     if ($JobsOnly) { $safety.freeGB = $null; $safety.requiredFreeBytes = $null; $safety.requiredBasis = $null }   # nothing was read
     if (-not $Running) {   # running, neither side's jobs were read (G2): no reading of them
       $safety.wslRunnerDistributions = $wsl.running
@@ -1419,17 +1678,17 @@ function ConvertTo-DrillGateTrace($Safety) {
 
 # Fable renew-key ruling, supplements "WSL runner jobs" item 3 and "WSL gate race" item 3: before every boot, three stages, each sampling for
 # itself -- the early sample (here: the duty and the hold refuse; the jobs are sampled, never refused on), the release (here, only when
-# neither side has a job or an unread side), the boot gate (Start-DrillGuardedVm: both sides again, the memory tier they select, memory
-# once, the boot). Each is kept in $script:DrillPreBoot for the receipt. A release skipped for a job is no failure: the boot gate's high
-# tier judges what is free. Only while idle (Decision 21db5a9c): Decision f572ac5b's "a job there or not" is the running guard's alone,
+# neither side has a job or an unread side), the boot gate (Start-DrillGuardedVm: both sides again, recorded only, then memory once, the
+# boot). Each is kept in $script:DrillPreBoot for the receipt, beside the wait for memory before the hold (wait: Wait-DrillBootMemory's
+# record, null without one). A release skipped for a job is no failure: the boot gate judges what is free. Only while idle (Decision
+# 21db5a9c): Decision f572ac5b's "a job there or not" is the running guard's alone,
 # with the drill VM on -- before the boot it is off, and "the earlier permission while idle stands" (independent review of a643c4b42, block 1).
 function Invoke-DrillPreBootRelease([DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue) {
-  $script:DrillPreBoot = [ordered]@{ early = $null; release = $null; bootGate = $null }
+  $script:DrillPreBoot = [ordered]@{ wait = $script:DrillBootWait; early = $null; release = $null; bootGate = $null }
   $early = Get-DrillHostSafety -HoldUntil $HoldUntil -JobsOnly
   $script:DrillPreBoot.early = ConvertTo-DrillGateTrace $early
   if (-not $early.ok) { throw (New-DrillError $early.code $early) }
-  # the release only when neither side has a job (while idle); with one -- or a side that could not be read -- the boot gate's high tier
-  # decides alone
+  # the release only when neither side has a job (while idle); with one -- or a side that could not be read -- the boot gate decides alone
   $earlyJob = Get-Prop $early 'busyWith'
   if ($null -ne $earlyJob) {
     $script:DrillPreBoot.release = [ordered]@{ at = (Get-DrillTime).ToString('o'); distributions = @(); results = @(); released = @()
@@ -1563,12 +1822,17 @@ function Get-DrillWslRunnerState([string]$HostName = $env:COMPUTERNAME) {
 }
 
 # Fable ruling 0e418483 "drill memory root" 2.4 (G2) and its supplement "three questions after the implementation" 1: what each runner
-# distribution holds, for the boot gate's sample and when the guard aborted for memory (one reader, one shape) -- MemTotal,
+# distribution holds, for the boot gate (its sample, and its MemFree counted as taken: Test-DrillHostMemory) and when the guard aborted
+# for memory (one reader, one shape) -- MemTotal,
 # MemFree, Cached and AnonPages from its /proc/meminfo, in GB, and how many Runner.Worker processes ran in it (pgrep -c with
 # WslJobPattern: exit 0 or 1, the count on stdout). Read-only, like the probe: only a distribution already running is asked (a command
-# would start it), every call sharing one budget (CacheReleaseSeconds, on the drill's clock). Anything not read whole throws, and the
-# caller records nothing; nothing is returned when no runner distribution runs.
-function Get-DrillWslMemory([string]$HostName = $env:COMPUTERNAME, [int]$WithinSeconds = $script:Drill.CacheReleaseSeconds) {
+# would start it), every call sharing one budget (CacheReleaseSeconds, on the drill's clock). The count is evidence only (the boot gate
+# needs MemFree; independent review of 29ed7255c, medium C): any other answer leaves it out (runnerWorkers null), nothing thrown. A
+# meminfo not read whole, or the budget run out, throws, and the caller records nothing; nothing is returned when no runner
+# distribution runs. -IdleCap (the boot gate's two entries, Fable plan 87d330d0 4.1): also one record per runner distribution of this
+# host that is not running -- distribution, running $false, and capGB, the cap of the Owner's WSL VM (Read-DrillWslConfigMemory, rounded
+# up to two places; null when not read), which it can take once started.
+function Get-DrillWslMemory([string]$HostName = $env:COMPUTERNAME, [int]$WithinSeconds = $script:Drill.CacheReleaseSeconds, [switch]$IdleCap) {
   $until = (Get-DrillTime).AddSeconds($WithinSeconds)
   $left = { $s = [int][Math]::Floor(($until - (Get-DrillTime)).TotalSeconds); if ($s -lt 1) { throw (New-DrillError 'DRILL_WSL_MEMORY_TIMEOUT') }; $s }
   $clean = { param($r) $e = Get-DrillField $r 'exit'; $err = Get-DrillField $r 'stderr'; ($e -is [int]) -and ($null -eq $err -or ([string]$err).Length -eq 0) }
@@ -1590,11 +1854,42 @@ function Get-DrillWslMemory([string]$HostName = $env:COMPUTERNAME, [int]$WithinS
     $pc = Invoke-DrillWsl @('--distribution', $d, '--exec', 'pgrep', '-cix', $script:Drill.WslJobPattern) (& $left)
     $workers = $null
     if ((& $clean $pc) -and (Get-DrillField $pc 'exit') -in @(0, 1) -and [string](Get-DrillField $pc 'stdout') -cmatch '\A(\d+)\r?\n?\z') { $workers = [int]$Matches[1] }
-    if ($null -eq $workers) { throw (New-DrillError 'WSL_PROCESS_QUERY_FAILED' $d) }
     $gb = { param([long]$k) [Math]::Round($k * 1KB / 1GB, 2) }
     [ordered]@{ distribution = $d; memTotalGB = (& $gb $kb['MemTotal']); memFreeGB = (& $gb $kb['MemFree']); cachedGB = (& $gb $kb['Cached'])
       anonPagesGB = (& $gb $kb['AnonPages']); runnerWorkers = $workers }
   }
+  if ($IdleCap) {
+    $idle = @($distributions | Where-Object { -not (Test-DrillNameIn $_ $runningNow) })
+    if ($idle.Count) {
+      $cap = Read-DrillWslConfigMemory
+      $capGB = if ($null -ne $cap) { [Math]::Ceiling($cap / 1GB * 100) / 100 } else { $null }
+      foreach ($d in $idle) { [ordered]@{ distribution = $d; running = $false; capGB = $capGB } }
+    }
+  }
+}
+
+# The cap of the Owner's WSL VM (Fable plan 87d330d0 4.1): in the [wsl2] section of $script:Drill.WslConfig, memory=<number>GB or
+# <number>MB (the unit in any case), once, in bytes rounded up. No file, no such key, the key twice, or anything else in the value: $null
+# (not read) -- WSL's own default is never guessed. Never the Owner's real file under test.
+function Read-DrillWslConfigMemory([string]$Path = $script:Drill.WslConfig) {
+  if (($env:NODE_TEST_CONTEXT -or $env:CLUED_UNDER_TEST) -and [string]::Equals([IO.Path]::GetFullPath($Path),
+      [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE '.wslconfig')), [StringComparison]::OrdinalIgnoreCase)) {
+    throw (New-DrillError 'DRILL_HOST_ACCESS_UNDER_TEST' '.wslconfig')
+  }
+  $text = $null
+  try { $text = [IO.File]::ReadAllText($Path) } catch { return $null }
+  $section = $null; $values = @()
+  foreach ($line in @($text -split "`r?`n")) {
+    $t = $line.Trim()
+    if ($t.Length -eq 0 -or $t.StartsWith('#') -or $t.StartsWith(';')) { continue }
+    if ($t -match '^\[([^\]]*)\]$') { $section = $Matches[1].Trim(); continue }
+    if ($section -ieq 'wsl2' -and $t -imatch '^memory\s*=') { $values += $t }
+  }
+  if ($values.Count -ne 1 -or -not ($values[0] -imatch '^memory\s*=\s*(\d+(?:\.\d+)?)(GB|MB)$')) { return $null }
+  $unit = if ($Matches[2] -ieq 'GB') { 1GB } else { 1MB }
+  $bytes = [long][Math]::Ceiling([double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture) * $unit)
+  if ($bytes -le 0) { return $null }
+  return $bytes
 }
 
 # Each release command is the single-quoted string this file assigns, unchanged, with nothing the Windows command line could split or
@@ -1626,7 +1921,7 @@ function Assert-DrillWslReleaseCommandLiteral {
 # - before a boot, the default, only while idle (Decision 21db5a9c, kept by f572ac5b; the renew-key ruling, supplements "WSL runner jobs"
 #   item 3, "WSL gate race" item 1 and "branch one, round four" item 2), after the early refusal: the Windows side read again (a job there
 #   stops the release), then DrillWslIdleReleaseCommand, which decides inside the distribution. Its exit alone: 0 released; 3 a job,
-#   skipped -- not a failure, the boot gate takes the high tier on the same job; anything else a failed release.
+#   skipped -- not a failure, the boot gate judges memory alone; anything else a failed release.
 # - -WhileRunning, the running guard's (Decision f572ac5b; Fable ruling 0e418483 "drill memory root" 2.3): the drill VM on and the host
 #   below 10 GB free, a job on either side or not: the Windows side is not read, DrillWslReleaseCommand is sent. Its exit alone: 0 released;
 #   anything else, 3 included, a failed release.
@@ -1730,7 +2025,8 @@ function Invoke-DrillNode([string]$Node, [string[]]$Arguments, [int]$TimeoutSeco
 }
 
 # One bounded child process, no shell; on a timeout it kills only the child it started.
-function Invoke-DrillProcess([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds, [hashtable]$Environment = @{}, [string[]]$RemoveEnvironment = @()) {
+# $StandardInput: text the child reads from its standard input (a secret that must be in no argument and no environment variable).
+function Invoke-DrillProcess([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds, [hashtable]$Environment = @{}, [string[]]$RemoveEnvironment = @(), $StandardInput = $null) {
   $child = [Diagnostics.Process]::new()
   try {
     $child.StartInfo.FileName = $File
@@ -1743,9 +2039,20 @@ function Invoke-DrillProcess([string]$File, [string[]]$Arguments, [int]$TimeoutS
     $child.StartInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
     foreach ($name in $RemoveEnvironment) { $child.StartInfo.EnvironmentVariables.Remove($name) }
     foreach ($name in $Environment.Keys) { $child.StartInfo.EnvironmentVariables[$name] = $Environment[$name] }
-    [void]$child.Start()
+    # Standard input as UTF-8 without a byte order mark: Windows PowerShell's .NET writes it in the console's input encoding, which on a
+    # UTF-8 console (hosted runners) starts with a BOM, and the child would read the BOM as the password's first character.
+    $inputWas = $null
+    if ($null -ne $StandardInput) {
+      $child.StartInfo.RedirectStandardInput = $true
+      $plain = New-Object Text.UTF8Encoding $false
+      if ($child.StartInfo.PSObject.Properties['StandardInputEncoding']) { $child.StartInfo.StandardInputEncoding = $plain }
+      elseif ([Console]::InputEncoding.GetPreamble().Length -gt 0) { $inputWas = [Console]::InputEncoding; [Console]::InputEncoding = $plain }
+    }
+    try { [void]$child.Start() } finally { if ($null -ne $inputWas) { [Console]::InputEncoding = $inputWas } }
     $stdout = $child.StandardOutput.ReadToEndAsync()
     $stderr = $child.StandardError.ReadToEndAsync()
+    # a child that ends before it reads its standard input (it refused first) closes the pipe: its exit and output say why
+    if ($null -ne $StandardInput) { try { $child.StandardInput.Write([string]$StandardInput); $child.StandardInput.Close() } catch [IO.IOException] { } }
     if (-not $child.WaitForExit($TimeoutSeconds * 1000)) {
       if (-not $child.HasExited) { $child.Kill() }
       throw "$([IO.Path]::GetFileName($File)) timed out"
@@ -1783,7 +2090,48 @@ function Request-DrillIntake($Tool, [ValidateSet('pause', 'resume')][string]$Ver
     if ($run.exit -ne 0 -or $status -cne $expected) { throw 'request refused' }
   } catch { throw (New-DrillError "DRILL_HOST_INTAKE_$($Verb.ToUpperInvariant())_FAILED") }
 }
-function Invoke-DrillWithHostHold([int]$Minutes, [scriptblock]$Body, [switch]$StandbyOnly) {
+# The wait for memory before the host hold (Fable plan 0e418483 "drill boot gate: memory only", section 2.2; BootWaitMinutes' note):
+# nothing is requested or started yet. Reads free memory (Read-DrillHostMemory) and the runner distribution's (Get-DrillWslMemory) against
+# the boot gate's memory (Test-DrillHostMemory, which Start-DrillGuardedVm judges again) every BootWaitPollSeconds on the monotonic
+# clock; returns once it is there; past BootWaitMinutes stops with DRILL_HOST_MEMORY_SHORT and the record. The host's reading failing
+# ends the wait and goes on (unreadable): the wait only delays, and the boot gate reads again and refuses on its own. The runner
+# distribution's reading failing (three wsl.exe calls under production load; independent review of 29ed7255c, medium A) is that sample
+# not passing: the wait goes on, counting it (wslUnreadSamples; wslUnreadable, the last code), and past BootWaitMinutes with the last
+# sample unread stops with DRILL_HOST_RESOURCE_UNREADABLE, as the boot gate would. Every reading is counted in $script:DrillBootWait
+# (hostPreBoot.wait); requiredFreeGB is the last read sample's.
+function Wait-DrillBootMemory {
+  $wait = [ordered]@{ samples = 0; firstAt = $null; lastAt = $null; firstFreeGB = $null; lastFreeGB = $null; requiredFreeGB = $null
+    ok = $false; unreadable = $null; wslUnreadSamples = 0; wslUnreadable = $null }
+  $script:DrillBootWait = $wait
+  $limit = [double]$script:Drill.BootWaitMinutes * 60
+  $start = Get-DrillMonotonicSeconds
+  while ($true) {
+    try { $m = Read-DrillHostMemory } catch { $wait.unreadable = (Get-DrillCode $_).code; return $wait }
+    $wm = $null; $wslCode = $null
+    try { $wm = @(Get-DrillWslMemory -IdleCap) } catch {
+      $wslCode = (Get-DrillCode $_).code
+      if ($wslCode -ceq 'DRILL_HOST_ACCESS_UNDER_TEST') { throw }   # a test that left the WSL unanswered stops here, not after an hour
+    }
+    $gate = Test-DrillHostMemory $m.free $m.target -MemoryAssigned $m.assigned -WslMemory $wm
+    $at = (Get-DrillTime).ToUniversalTime().ToString('o')
+    $wait.samples++
+    if ($wait.samples -eq 1) { $wait.firstAt = $at; $wait.firstFreeGB = $gate.freeGB }
+    $wait.lastAt = $at; $wait.lastFreeGB = $gate.freeGB
+    if ($null -ne $wslCode) { $wait.wslUnreadSamples++; $wait.wslUnreadable = $wslCode }
+    else { $wait.requiredFreeGB = [Math]::Round($gate.requiredFreeBytes / 1GB, 1) }
+    if ($gate.ok) { $wait.ok = $true; return $wait }
+    $left = $limit - ((Get-DrillMonotonicSeconds) - $start)
+    if ($left -le 0) {
+      $code = if ($null -ne $wslCode) { 'DRILL_HOST_RESOURCE_UNREADABLE' } else { 'DRILL_HOST_MEMORY_SHORT' }
+      throw (New-DrillError $code ([ordered]@{ wait = $wait }))
+    }
+    Start-Sleep -Seconds ([int][Math]::Ceiling([Math]::Min([double]$script:Drill.BootWaitPollSeconds, $left)))
+  }
+}
+
+# -BootWait: a run that boots the drill VM from its checkpoint waits for memory first (Wait-DrillBootMemory), inside the drill's own mutex
+# (one drill waits at a time) and before the host status is read or any hold requested.
+function Invoke-DrillWithHostHold([int]$Minutes, [scriptblock]$Body, [switch]$StandbyOnly, [switch]$BootWait) {
   # Serialize all invocations using the same VM and the fixed public holder, across logon sessions.
   $mutex = [Threading.Mutex]::new($false, $script:Drill.HostMutex)
   $locked = $false; $resume = $false; $tool = $null; $failure = $null; $resumeFailure = $null
@@ -1798,6 +2146,8 @@ function Invoke-DrillWithHostHold([int]$Minutes, [scriptblock]$Body, [switch]$St
       if (-not $bootFree) { throw (New-DrillError 'DRILL_HOST_CI_BUSY' 'previous drill boot cleanup in progress') }
       $bootMutex.ReleaseMutex()
     } finally { $bootMutex.Dispose() }
+    $script:DrillBootWait = $null
+    if ($BootWait) { [void](Wait-DrillBootMemory) }
     $now = Get-DrillTime
     $initial = Test-DrillHostSafety (Read-DrillHostStatus) ([long]::MaxValue) -Now $now
     if ($initial.mode -ceq 'ACTIVE' -and $initial.code -cin @('DRILL_HOST_IS_ON_DUTY', 'DRILL_HOST_CI_BUSY') -and -not $StandbyOnly) {
@@ -1881,7 +2231,7 @@ function Add-DrillExecutorObservation($State, $Safety) {
 }
 
 # The receipt's free memory once the guest is up: the running gate's first reading and its lowest (Fable renew-key ruling, supplement
-# "drill boot gate and the train both want DESK": kept to recalibrate the runner-job tier).
+# "drill boot gate and the train both want DESK": what the host's usage did once the guest was up).
 function Add-DrillRunningMemory($State, $Safety) {
   $free = Get-Prop $Safety 'freeGB'
   if ($null -eq $free -or $State -isnot [Collections.IDictionary]) { return }
@@ -1996,7 +2346,7 @@ function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreChec
 
 # Before the boot (not armed) the guard watches the duty and the hold only: runner jobs and memory are the boot gate's, judged once, in
 # Start-DrillGuardedVm (-BootGate). Armed, it is the running gate. (Codex review of 74e7a65e7, high 2.)
-function Get-DrillGuardSafety($State, [switch]$BootGate) {
+function Get-DrillGuardSafety($State, [switch]$BootGate, $WslMemory = $null) {
   $deadline = Get-Prop $State 'deadline'
   if ($deadline -and $deadline -ne [DateTimeOffset]::MinValue -and (Get-DrillTime) -ge $deadline) {
     return @{ ok = $false; code = 'DRILL_RUN_TIMEOUT'; deadline = $deadline }
@@ -2004,7 +2354,7 @@ function Get-DrillGuardSafety($State, [switch]$BootGate) {
   $holdUntil = Get-Prop $State 'holdUntil'
   if ($null -eq $holdUntil) { $holdUntil = [DateTimeOffset]::MinValue }
   if (-not $State.armed -and -not $BootGate) { return Get-DrillHostSafety -HoldUntil $holdUntil -StatusOnly }
-  return Get-DrillHostSafety -Running:$State.armed -HoldUntil $holdUntil
+  return Get-DrillHostSafety -Running:$State.armed -HoldUntil $holdUntil -WslMemory $WslMemory
 }
 
 function Start-DrillHostGuard([string]$RunDir, [switch]$RestoreCheckpoint, $Window) {
@@ -2043,18 +2393,21 @@ function Start-DrillGuardedVm($Watchdog) {
   $state = $script:HostGuard.state
   # the boot gate's sample carries what the runner distribution holds (Fable ruling 0e418483 supplement "three questions after the
   # implementation" 1): the abort's reader and shape, read right before the gate and outside the lock (the guard is not held up), so a
-  # refusal has it too. Evidence only: one not read is left out, and the gate judges as it would without it.
-  $wslMemory = @()
-  if ($script:DrillPreBoot) { try { $wslMemory = @(Get-DrillWslMemory) } catch { $wslMemory = @() } }
+  # refusal has it too. The gate counts its MemFree as taken, or the cap of one not running (Test-DrillHostMemory; Fable plan 87d330d0):
+  # one not read is left out of the sample and refuses the boot, its reason in bootGate.wslMemoryUnreadable (the reader's code).
+  $wslMemory = $null; $wslUnread = $null
+  try { $wslMemory = @(Get-DrillWslMemory -IdleCap) } catch { $wslMemory = $null; $wslUnread = (Get-DrillCode $_).code }
   [Threading.Monitor]::Enter($state.SyncRoot)
   try {
     Assert-DrillGuard
     # the boot gate: both sides' runner jobs again, then memory, judged here once
-    $safety = Get-DrillGuardSafety $state -BootGate
+    $safety = Get-DrillGuardSafety $state -BootGate -WslMemory $wslMemory
     if ($script:DrillPreBoot) {
       $script:DrillPreBoot.bootGate = ConvertTo-DrillGateTrace $safety
-      if ($wslMemory.Count) { $script:DrillPreBoot.bootGate['wslMemory'] = $wslMemory }
+      if ($null -ne $wslMemory -and $wslMemory.Count) { $script:DrillPreBoot.bootGate['wslMemory'] = $wslMemory }
+      if ($null -ne $wslUnread) { $script:DrillPreBoot.bootGate['wslMemoryUnreadable'] = $wslUnread }
     }
+    if ($null -ne $wslUnread) { $safety['wslMemoryUnreadable'] = $wslUnread }
     if (-not $safety.ok) { throw (New-DrillError $safety.code $safety) }
     if ($Watchdog) {
       [IO.File]::WriteAllText("$(Get-Prop $Watchdog 'signal').starting", 'starting')
@@ -2091,9 +2444,126 @@ function Assert-DrillHost([DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValu
   return $mem
 }
 
-function Get-DrillCredential {
+# The drill's two credentials, one place (D:\clued-drill, DPAPI, this Windows user only) and one reader: the guest's administrator (made
+# by the baseline) and, with -Binding, the Owner's drill binding in the drill's server (handed over once: Save-DrillBindingCredential).
+# The binding: user name = the connection id, password = the clued_bnd_ token (the shape first-install-host.ps1 takes). Missing or of
+# another shape, the drill refuses before any boot; nothing is made in its place.
+function Test-DrillBindingCredential($Credential) {
+  if ($Credential -isnot [System.Management.Automation.PSCredential]) { return $false }
+  $g = [guid]::Empty
+  if ([string]$Credential.UserName -cnotmatch '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' -or -not [guid]::TryParse([string]$Credential.UserName, [ref]$g) -or $g -eq [guid]::Empty) { return $false }
+  return ($Credential.GetNetworkCredential().Password -cmatch '^clued_bnd_[A-Za-z0-9_-]{8,480}\z')
+}
+# The test project's database password (-ServerDatabaseCredential; the ruling on the PR-A report, section 1: the sync runs on this host
+# and its password is kept where the binding is). User name: postgres.<the project's ref>, the one the session pooler routes by, from
+# drill-server.json's address (its one place); password: printable ASCII on one line (standard input carries it as it is in any code
+# page). Another user name -- another project's, production's -- is not this credential.
+function Get-DrillServerDatabaseUser {
+  $url = [string](Get-Prop (Read-DrillJson (Join-Path (Split-Path -Parent $script:DrillScriptPath) 'drill-server.json')) 'supabaseUrl')
+  if ($url -cnotmatch '^https://([a-z0-9]{20})\.supabase\.co$') { throw (New-DrillError 'DRILL_SERVER_REFUSED' 'drill-server.json supabaseUrl') }
+  "postgres.$($Matches[1])"
+}
+function Test-DrillServerDatabaseCredential($Credential) {
+  if ($Credential -isnot [System.Management.Automation.PSCredential]) { return $false }
+  if (-not [string]::Equals([string]$Credential.UserName, (Get-DrillServerDatabaseUser), [StringComparison]::Ordinal)) { return $false }
+  return ($Credential.GetNetworkCredential().Password -cmatch '^[\x21-\x7e](?:[\x20-\x7e]{0,510}[\x21-\x7e])?\z')
+}
+function Get-DrillCredential([switch]$Binding, [switch]$ServerDatabase) {
+  if ($ServerDatabase) {
+    if (-not (Test-Path -LiteralPath $script:Drill.ServerDatabaseCredential -PathType Leaf)) { throw (New-DrillError 'DRILL_SERVER_DATABASE_CREDENTIAL_MISSING' 'hand the test project''s database password over once: drill-vm.ps1 -ServerDatabaseCredential') }
+    $d = try { Import-Clixml -LiteralPath $script:Drill.ServerDatabaseCredential } catch { $null }
+    if (-not (Test-DrillServerDatabaseCredential $d)) { throw (New-DrillError 'DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED' 'not the test project''s database user with a password, or not readable by this Windows user: hand it over again') }
+    return $d
+  }
+  if ($Binding) {
+    if (-not (Test-Path -LiteralPath $script:Drill.BindingCredential -PathType Leaf)) { throw (New-DrillError 'DRILL_BINDING_CREDENTIAL_MISSING' 'hand the drill binding over once: drill-vm.ps1 -BindingCredential') }
+    $b = try { Import-Clixml -LiteralPath $script:Drill.BindingCredential } catch { $null }
+    if (-not (Test-DrillBindingCredential $b)) { throw (New-DrillError 'DRILL_BINDING_CREDENTIAL_REFUSED' 'not a connection id with a clued_bnd_ token, or not readable by this Windows user') }
+    return $b
+  }
   if (-not (Test-Path -LiteralPath $script:Drill.Credential)) { throw (New-DrillError 'DRILL_GUEST_CREDENTIAL_MISSING') }
   Import-Clixml -LiteralPath $script:Drill.Credential   # DPAPI, this Windows user only
+}
+
+# The Owner hands the drill binding over, once (-BindingCredential): the Windows credential dialog itself (credui.dll
+# CredUIPromptForCredentialsW, as first-install-host.ps1 Read-TokenFromDialog: generic credentials, always shown, never saved by Windows),
+# never the console's prompt. User name: the connection id; password: the token. Held to its shape, then written where the guest
+# credential is (DPAPI, this Windows user only). The token is never printed, logged or passed on a command line.
+function Read-DrillBindingFromDialog {
+  Read-DrillCredentialFromDialog 'Clued drill binding' 'Clued drill binding (clued-auth-test)' 'User name: the connection id of the drill binding in the TEST project (no ci-admission role). Password: its clued_bnd_ token. Stored for this Windows user only; never shown.' ([string]$BindingConnection).Trim().ToLowerInvariant() 'DRILL_BINDING_DIALOG'
+}
+# The test project's database password, the same dialog: the user name is filled in (an emptied box falls back to it),
+# the Owner pastes the password reset in the Supabase dashboard (clued-auth-test, Database, reset password).
+function Read-DrillServerDatabaseFromDialog {
+  Read-DrillCredentialFromDialog 'Clued drill test database' 'Clued drill test database (clued-auth-test)' 'User name: leave it as it is (empty is fine). Password: the database password of the TEST project clued-auth-test (Supabase dashboard, Database, reset password). Never production. Stored for this Windows user only; never shown.' (Get-DrillServerDatabaseUser) 'DRILL_SERVER_DATABASE_DIALOG'
+}
+# $User: filled in (editable; an emptied box falls back to it); empty: the person types it. $Codes: the prefix of the two stops (_CANCELLED, _FAILED).
+function Read-DrillCredentialFromDialog([string]$Target, [string]$Caption, [string]$Message, [string]$User, [string]$Codes) {
+  if (-not ('CluedDrillCredUiV2' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices; using System.Text;
+public static class CluedDrillCredUiV2 {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct Info { public int cbSize; public IntPtr hwndParent; public string pszMessageText; public string pszCaptionText; public IntPtr hbmBanner; }
+  [DllImport("credui.dll", CharSet = CharSet.Unicode)]
+  static extern int CredUIPromptForCredentialsW(ref Info info, string target, IntPtr reserved, int authError, StringBuilder user, int userMax, IntPtr password, int passwordMax, ref bool save, int flags);
+  [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
+  public const int PasswordChars = 513;
+  // GENERIC_CREDENTIALS 0x40000 | ALWAYS_SHOW_UI 0x80 | EXCLUDE_CERTIFICATES 0x8 | DO_NOT_PERSIST 0x2
+  public const int Flags = 0x40000 | 0x80 | 0x8 | 0x2;
+  // No KEEP_USERNAME (0x100000): with it CredUIPromptForCredentialsW answered 87 (ERROR_INVALID_PARAMETER) on the Owner's
+  // DESK 11-24. The user name is filled in and stays editable; the caller checks it is exactly the expected one.
+  public static int Prompt(StringBuilder user, string target, string caption, string message, IntPtr password, bool keepUser) {
+    Info i = new Info(); i.cbSize = Marshal.SizeOf(typeof(Info)); i.hwndParent = GetConsoleWindow(); i.pszCaptionText = caption; i.pszMessageText = message;
+    bool save = false;
+    return CredUIPromptForCredentialsW(ref i, target, IntPtr.Zero, 0, user, user.Capacity, password, PasswordChars, ref save, Flags);
+  }
+}
+'@
+  }
+  $size = [CluedDrillCredUiV2]::PasswordChars * 2; $zero = New-Object byte[] $size
+  $buf = [Runtime.InteropServices.Marshal]::AllocHGlobal($size)
+  try {
+    [Runtime.InteropServices.Marshal]::Copy($zero, 0, $buf, $size)
+    # Not $user: PowerShell names are case-insensitive, and it would overwrite the parameter $User.
+    $nameBuf = New-Object Text.StringBuilder 514
+    if ($User) { [void]$nameBuf.Append($User) }
+    $rc = [CluedDrillCredUiV2]::Prompt($nameBuf, $Target, $Caption, $Message, $buf, [bool]$User)
+    if ($rc -eq 1223) { throw (New-DrillError "$($Codes)_CANCELLED") }
+    if ($rc -ne 0) { throw (New-DrillError "$($Codes)_FAILED" $rc) }
+    $secure = New-Object Security.SecureString
+    for ($n = 0; $n -lt [CluedDrillCredUiV2]::PasswordChars; $n++) {
+      $c = [Runtime.InteropServices.Marshal]::ReadInt16($buf, $n * 2); if ($c -eq 0) { break }
+      $secure.AppendChar([char]$c)
+    }
+    $secure.MakeReadOnly()
+    # An emptied field means the expected name.
+    $name = $nameBuf.ToString().Trim(); if (-not $name) { $name = $User }
+    New-Object System.Management.Automation.PSCredential ($name.ToLowerInvariant()), $secure
+  } finally { [Runtime.InteropServices.Marshal]::Copy($zero, 0, $buf, $size); [Runtime.InteropServices.Marshal]::FreeHGlobal($buf) }
+}
+# $Read: where the credential comes from (the dialog; a test gives its own).
+function Save-DrillBindingCredential([scriptblock]$Read = { Read-DrillBindingFromDialog }) {
+  $b = & $Read
+  if (-not (Test-DrillBindingCredential $b)) { throw (New-DrillError 'DRILL_BINDING_CREDENTIAL_REFUSED' 'not a connection id with a clued_bnd_ token; nothing was stored') }
+  $dir = Split-Path -Parent $script:Drill.BindingCredential
+  if (-not (Test-Path -LiteralPath $dir -PathType Container)) { throw (New-DrillError 'DRILL_BINDING_DIRECTORY_MISSING' $dir) }
+  $b | Export-Clixml -LiteralPath $script:Drill.BindingCredential -Force
+  [void](Get-DrillCredential -Binding)   # read back through the one reader
+  return [ordered]@{ status = 'DRILL_BINDING_STORED'; connection = [string]$b.UserName; file = $script:Drill.BindingCredential }
+}
+
+# -ServerDatabaseCredential: the Owner hands over the test project's database password, once (and again only after another reset).
+# $Read: where the credential comes from (the dialog; a test gives its own). Held to its shape, written where the binding is (DPAPI, this
+# Windows user only) and read back through the one reader; what is printed carries the user name and the file, never the password.
+function Save-DrillServerDatabaseCredential([scriptblock]$Read = { Read-DrillServerDatabaseFromDialog }) {
+  $d = & $Read
+  if (-not (Test-DrillServerDatabaseCredential $d)) { throw (New-DrillError 'DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED' 'not the test project''s database user with a one-line printable password; nothing was stored') }
+  $dir = Split-Path -Parent $script:Drill.ServerDatabaseCredential
+  if (-not (Test-Path -LiteralPath $dir -PathType Container)) { throw (New-DrillError 'DRILL_SERVER_DATABASE_DIRECTORY_MISSING' $dir) }
+  $d | Export-Clixml -LiteralPath $script:Drill.ServerDatabaseCredential -Force
+  [void](Get-DrillCredential -ServerDatabase)   # read back through the one reader
+  return [ordered]@{ status = 'DRILL_SERVER_DATABASE_CREDENTIAL_STORED'; user = [string]$d.UserName; file = $script:Drill.ServerDatabaseCredential }
 }
 
 # Send Enter through the VM's synthetic keyboard for a few seconds: "Press any key to boot from CD or DVD".
@@ -2175,18 +2645,161 @@ function Wait-DrillGuest([pscredential]$Credential, [int]$Minutes, [DateTimeOffs
   throw (New-DrillError 'DRILL_GUEST_NOT_READY_IN_TIME' @{ minutes = $Minutes; lastProbe = $last })
 }
 
+# Fable plan 87d330d0 section 2.2 (甲1-甲3) and 2.4 (D:/w/tmp/PLAN-drill-loop-root-20261123.md): a long guest step is waited on in ticks
+# (GuestTickSeconds), never in one blocking wait. Each tick asks the host guard first, then the step's $Until (an @{ at; code; detail } the
+# run gives: the foreground deadline, or the after-entry limit) and, for the first install, pulls the progress files back ($Progress).
+# The step's own limit is counted on the monotonic clock.
+function Get-DrillEvidenceWindowMinutes([double]$RunMinutes) {
+  # the foreground stops this long before the guard's deadline so the evidence is taken first: 30 % of the run, at most
+  # EvidenceWindowMinutes, never under EvidenceWindowMinMinutes (a 10-minute run: 3 minutes; coordinator, Owner 11-23)
+  $w = [Math]::Min([double]$script:Drill.EvidenceWindowMinutes, $RunMinutes * [double]$script:Drill.EvidenceWindowShare)
+  return [Math]::Round([Math]::Max([double]$script:Drill.EvidenceWindowMinMinutes, $w), 2)
+}
+function Assert-DrillUntil($Until) {
+  if ($null -ne $Until -and (Get-DrillTime) -ge $Until.at) { throw (New-DrillError $Until.code $Until.detail) }
+}
+# The earlier of two limits (either may be $null).
+function Get-DrillEarlierUntil($A, $B) { if ($null -eq $A) { return $B }; if ($null -eq $B) { return $A }; if ($B.at -lt $A.at) { return $B }; return $A }
+
+# 甲1: the files pulled back each tick while the first install runs (guest name -> run directory name). Written only when their length
+# changed; the evidence collection after the step overwrites them with its own copies. stage-progress.jsonl is the entry's own record of
+# each stage it entered and ended (first-install-entry.ps1 Write-EntryStageProgress).
+$script:DrillProgressFiles = [ordered]@{ 'first-install.stdout.log' = 'first-install.log'; 'stage-progress.jsonl' = 'stage-progress.jsonl'
+  'host.stdout.log' = 'host.stdout.log'; 'prepare.stdout.log' = 'prepare.stdout.log'; 'launcher.stdout.log' = 'launcher.stdout.log' }
+# 2.4: the stage the first install is in is the latest one whose log has appeared, in this order (entry: none yet)
+$script:DrillProgressStageLogs = [ordered]@{ host = 'host.stdout.log'; prepare = 'prepare.stdout.log'; launcher = 'launcher.stdout.log' }
+
+# Review low 5 (fix round 1 of 87d330d0): Remove-Job -Force on a PowerShell Direct job still running is a synchronous StopJob, which a busy
+# guest can hold for minutes -- the foreground stalled past its own stop. A job that ended is removed; one still running is stopped without
+# waiting (its own StopJobAsync, else StopJob on a runspace of its own) and removed by a later call once it has ended.
+$script:DrillStoppingJobs = New-Object Collections.Generic.List[object]
+function Stop-DrillJob($Job, [bool]$Ended) {
+  if ($null -eq $Job) { return }
+  if ($Ended) { Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue }
+  else {
+    $stopper = $null
+    try {
+      if ($null -ne $Job.PSObject.Methods['StopJobAsync']) { $Job.StopJobAsync() }
+      else {
+        $stopper = [PowerShell]::Create()
+        [void]$stopper.AddScript('param($j) try { $j.StopJob() } catch { }').AddArgument($Job)
+        $stopper = @{ ps = $stopper; handle = $stopper.BeginInvoke() }
+      }
+    } catch { }
+    $script:DrillStoppingJobs.Add(@{ job = $Job; stopper = $stopper })
+  }
+  # the ones stopped earlier that have ended since: removed now (never waited on)
+  foreach ($s in @($script:DrillStoppingJobs.ToArray())) {
+    $state = [string](Get-DrillField $s.job 'State')
+    if (@('Completed', 'Failed', 'Stopped') -cnotcontains $state) { continue }
+    if ($null -ne $s.stopper -and -not $s.stopper.handle.IsCompleted) { continue }
+    Remove-Job -Job $s.job -Force -ErrorAction SilentlyContinue
+    if ($null -ne $s.stopper) { try { $s.stopper.ps.Dispose() } catch { } }
+    [void]$script:DrillStoppingJobs.Remove($s)
+  }
+}
+
+# One pull, bounded (GuestPullSeconds), never through Invoke-DrillGuest (no readiness wait of its own); $null when it did not answer.
+function Read-DrillGuestProgressFiles([pscredential]$Credential) {
+  Assert-DrillGuard
+  $job = $null; $ended = $false
+  try {
+    $job = Invoke-Command -VMName $script:Drill.VmName -Credential $Credential -ScriptBlock $script:GuestStageFiles -ArgumentList @(($script:Drill.GuestWork + '\work'), [string[]]@($script:DrillProgressFiles.Keys)) -AsJob
+    if (-not (Wait-Job -Job $job -Timeout $script:Drill.GuestPullSeconds)) { return $null }
+    $ended = $true
+    return Receive-Job -Job $job -ErrorAction Stop
+  } catch { return $null }
+  finally { Stop-DrillJob $job $ended }
+}
+
+function New-DrillGuestProgress([string]$RunDir) {
+  $now = Get-DrillTime; $t = Get-DrillMonotonicSeconds
+  return [ordered]@{ runDir = $RunDir; startedAt = $now.ToString('o'); startMono = $t; at = $null; ticks = 0; failedPulls = 0; consecutiveFailedPulls = 0
+    pullFailingSince = $null; stage = 'entry'; stageSince = $now.ToString('o'); stageMono = $t; lastGrowthAt = $now.ToString('o'); growthMono = $t; files = [ordered]@{}; stop = $null }
+}
+
+# 2.4: the no-progress gate of the stage the first install is in; $null while it is within it.
+function Get-DrillProgressStop($P, [double]$Now) {
+  $stageSeconds = [Math]::Round($Now - $P.stageMono); $sinceGrowth = [Math]::Round($Now - $P.growthMono)
+  $at = { param($reason, $limit) [ordered]@{ stage = $P.stage; reason = $reason; limitMinutes = $limit; stageSeconds = $stageSeconds; sinceGrowthSeconds = $sinceGrowth; lastGrowthAt = $P.lastGrowthAt
+    failedPulls = $P.failedPulls; progress = 'guest-progress.json' } }
+  if ($P.stage -ceq 'entry') {
+    if ($stageSeconds -ge $script:Drill.EntryHostLogMinutes * 60) { return (& $at 'host-log-not-started' $script:Drill.EntryHostLogMinutes) }
+    return $null
+  }
+  $gate = $script:Drill.ProgressGates[$P.stage]
+  if ($null -eq $gate) { return $null }
+  if ($null -ne $gate.stallMinutes -and $sinceGrowth -ge $gate.stallMinutes * 60) { return (& $at 'stalled' $gate.stallMinutes) }
+  if ($null -ne $gate.maxMinutes -and $stageSeconds -ge $gate.maxMinutes * 60) { return (& $at 'stage-over-limit' $gate.maxMinutes) }
+  return $null
+}
+
+# One tick of the first install's progress: pull, write what grew, find the stage, judge its gate, record guest-progress.json; a gate
+# reached stops the step with DRILL_GUEST_NO_PROGRESS (the run then takes the evidence and restores, as on any end of the first install).
+# Review medium 3: a pull that did not answer says nothing about the guest, so it is never "no growth": the gate is judged only on a tick
+# whose pull answered. Failed pulls are counted on their own (failedPulls, consecutiveFailedPulls, pullFailingSince) and never stop the
+# run by themselves -- the progress pull is an aid; the run's own deadline bounds a guest that does not answer.
+function Step-DrillGuestProgress([Collections.IDictionary]$P, [pscredential]$Credential) {
+  $got = Read-DrillGuestProgressFiles $Credential
+  $now = Get-DrillTime; $t = Get-DrillMonotonicSeconds
+  $P.ticks = [int]$P.ticks + 1; $P.at = $now.ToString('o')
+  if ($null -eq $got) {
+    $P.failedPulls = [int]$P.failedPulls + 1; $P.consecutiveFailedPulls = [int]$P.consecutiveFailedPulls + 1
+    if ($null -eq $P.pullFailingSince) { $P.pullFailingSince = $now.ToString('o') }
+  } else {
+    $P.consecutiveFailedPulls = 0; $P.pullFailingSince = $null
+    foreach ($name in @($script:DrillProgressFiles.Keys)) {
+      $f = Get-DrillField $got $name
+      if ((Get-DrillField $f 'present') -ne $true -or (Get-DrillField $f 'error')) { continue }
+      $text = [string](Get-DrillField $f 'text')
+      $prev = $P.files[$name]
+      if ($null -ne $prev -and $prev.bytes -eq $text.Length) { continue }
+      $saved = $true
+      try { [IO.File]::WriteAllText((Join-Path $P.runDir $script:DrillProgressFiles[$name]), $text, (New-Object Text.UTF8Encoding($false))) } catch { $saved = $false }
+      $P.files[$name] = [ordered]@{ bytes = $text.Length; changedAt = $now.ToString('o'); changedMono = $t; saved = $saved }
+    }
+  }
+  $stage = 'entry'
+  foreach ($s in @($script:DrillProgressStageLogs.Keys)) { if ($P.files.Contains($script:DrillProgressStageLogs[$s])) { $stage = $s } }
+  if ($stage -cne $P.stage) { $P.stage = $stage; $P.stageSince = $now.ToString('o'); $P.stageMono = $t }
+  if ($stage -cne 'entry') {
+    $log = $P.files[$script:DrillProgressStageLogs[$stage]]
+    $P.growthMono = $log.changedMono; $P.lastGrowthAt = $log.changedAt
+  }
+  if ($null -ne $got) { $P.stop = Get-DrillProgressStop $P $t }
+  $record = [ordered]@{}
+  foreach ($k in @('startedAt', 'at', 'ticks', 'failedPulls', 'consecutiveFailedPulls', 'pullFailingSince', 'stage', 'stageSince', 'lastGrowthAt')) { $record[$k] = $P[$k] }
+  $record.files = [ordered]@{}
+  foreach ($k in @($P.files.Keys)) { $record.files[$k] = [ordered]@{ bytes = $P.files[$k].bytes; changedAt = $P.files[$k].changedAt; saved = $P.files[$k].saved } }
+  $record.gates = [ordered]@{ entryHostLogMinutes = $script:Drill.EntryHostLogMinutes; stages = $script:Drill.ProgressGates }
+  $record.stop = $P.stop
+  try { Write-DrillJson (Join-Path $P.runDir 'guest-progress.json') $record } catch { }
+  if ($null -ne $P.stop) { throw (New-DrillError 'DRILL_GUEST_NO_PROGRESS' $P.stop) }
+}
+
 # Run one step in the guest, bounded. A failure is classified by the guest's boot time, never by the (localized) message:
 #   the guest restarted under the step -> a restartable (idempotent) step waits for the guest to be ready and runs again, at
 #   most twice; any other step stops with DRILL_GUEST_RESTARTED_DURING_STEP; the same boot -> DRILL_GUEST_STEP_FAILED.
 function Invoke-DrillGuest([pscredential]$Credential, [scriptblock]$Script, [object[]]$ArgumentList = @(), [int]$TimeoutMinutes = 10,
-    [string]$Code = 'DRILL_GUEST_STEP_TIMEOUT', [string]$Step = 'guest-step', [switch]$Restartable) {
+    [string]$Code = 'DRILL_GUEST_STEP_TIMEOUT', [string]$Step = 'guest-step', [switch]$Restartable, $Until = $null, [Collections.IDictionary]$Progress = $null) {
   for ($restarts = 0; ; $restarts++) {
     $probe = Get-DrillGuestProbe $Credential
     if ($null -eq $probe) { [void](Wait-DrillGuest $Credential 20); $probe = Get-DrillGuestProbe $Credential }
     $before = if ($probe) { [string]$probe.boot } else { '' }
     $job = Invoke-Command -VMName $script:Drill.VmName -Credential $Credential -ScriptBlock $Script -ArgumentList $ArgumentList -AsJob
+    $ended = $false
     try {
-      if (-not (Wait-Job -Job $job -Timeout ($TimeoutMinutes * 60))) { throw (New-DrillError $Code @{ step = $Step; minutes = $TimeoutMinutes }) }
+      $limit = $TimeoutMinutes * 60; $started = Get-DrillMonotonicSeconds
+      while ($true) {
+        Assert-DrillGuard
+        Assert-DrillUntil $Until
+        $left = $limit - ((Get-DrillMonotonicSeconds) - $started)
+        if ($left -le 0) { throw (New-DrillError $Code @{ step = $Step; minutes = $TimeoutMinutes }) }
+        $tick = [Math]::Min($left, [double]$script:Drill.GuestTickSeconds)
+        if ($null -ne $Until) { $tick = [Math]::Min($tick, ($Until.at - (Get-DrillTime)).TotalSeconds) }
+        if (Wait-Job -Job $job -Timeout ([int][Math]::Max(1, [Math]::Ceiling($tick)))) { $ended = $true; break }
+        if ($null -ne $Progress) { Step-DrillGuestProgress $Progress $Credential }
+      }
       return Receive-Job -Job $job -ErrorAction Stop
     } catch {
       $c = Get-DrillCode $_
@@ -2197,7 +2810,7 @@ function Invoke-DrillGuest([pscredential]$Credential, [scriptblock]$Script, [obj
       if ($kind -eq 'restarted' -and $Restartable -and $restarts -lt 2) { continue }
       $codeOut = @{ restarted = 'DRILL_GUEST_RESTARTED_DURING_STEP'; unreachable = 'DRILL_GUEST_NOT_READY_IN_TIME'; failed = 'DRILL_GUEST_STEP_FAILED' }[$kind]
       throw (New-DrillError $codeOut @{ step = $Step; message = $c.detail; bootBefore = $before; bootAfter = $after })
-    } finally { Remove-Job -Job $job -Force -ErrorAction SilentlyContinue }
+    } finally { Stop-DrillJob $job $ended }   # cut off (deadline, guard, its own limit): stopped without waiting
   }
 }
 
@@ -2752,7 +3365,7 @@ function Get-DrillM5Verdict([string]$RunDir, $M5) {
   if (-not $M5) { return @{ result = 'FAIL'; detail = 'DRILL_M5_OBSERVATIONS_MISSING' } }
   $M5.result = 'FAIL'
   if ($M5.collectionCode -or $M5.missing.Count -ne 0) {
-    $M5.detail = 'DRILL_M5_OBSERVATIONS_MISSING'
+    $M5.detail = $(if ((Get-DrillField $M5 'blocked') -eq $true) { [string]$M5.collectionCode } else { 'DRILL_M5_OBSERVATIONS_MISSING' })
     return $M5
   }
   $resident = Split-Path -Parent (Split-Path -Parent $script:DrillScriptPath)
@@ -2872,9 +3485,25 @@ docker image inspect --format '{{.Id}} {{json .RepoDigests}}' "$1"
 ids=$(docker image ls -aq --no-trunc | sort -u); [ -z "$ids" ] || docker image inspect --format '{{.Id}} {{json .RepoDigests}} os={{.Os}} env={{json .Config.Env}} volumes={{json .Config.Volumes}}' $ids
 '@.Trim()
   $verifyScript = 'systemd-analyze verify "$1"; echo "verify-exit=$?"'
+  # first, with its own 120-second bound (plan 87d330d0 1.3): the instance's boot as read without systemctl -- the compact block (uptime,
+  # systemd's private socket, PID 1's state, available memory, pressure), the last boots, then the journal of the previous boot and of this
+  # one. Taken by boot, never --since a time: the guest's wall clock jumps across a suspend, its monotonic clock does not. Each journal
+  # reading is bounded apart, so one that fails or hangs leaves the next its turn, and killed when it ignores TERM (-k). Together, kill
+  # grace included, they end by 89 s: the 120-second wsl bound throws away all the command printed, so it must never be the one to cut.
+  $bootScript = (@'
+echo "uptime=$(cat /proc/uptime)"
+if [ -S /run/systemd/private ]; then echo private=socket; elif [ -e /run/systemd/private ]; then echo private=not-socket; else echo private=absent; fi
+echo "pid1=$(sed -n 's/^State:[[:space:]]*//p' /proc/1/status)"
+echo "mem=$(free -m | awk '/^Mem:/{print $7}')"
+p=; for r in cpu memory io; do p="$p $r=$(sed -n 's/^some .*avg10=\([0-9.]*\).*/\1/p' /proc/pressure/$r)"; done; echo "psi=${p# }"
+echo '--- list-boots'; timeout -k 3s 10s journalctl --list-boots --no-pager | tail -n 3; s=${PIPESTATUS[0]}; [ "$s" = 0 ] || echo "(list-boots: exit $s)"
+echo '--- boot -1'; timeout -k 3s 35s journalctl -b -1 -o short-monotonic --no-pager -n 300; s=$?; [ "$s" = 0 ] || echo "(boot -1: exit $s)"
+echo '--- boot 0'; timeout -k 3s 35s journalctl -b 0 -o short-monotonic --no-pager -n 300; s=$?; [ "$s" = 0 ] || echo "(boot 0: exit $s)"
+'@.Trim() -split '\r?\n') -join '; '
   # every docker command last: a docker.service stuck in activating holds each docker call to its bound, and must not take the readings
   # that do not need docker with it (r8 fixup review F2)
   $c = New-Object Collections.Generic.List[object]
+  $boot = & $one 'guest-boot' $bootScript; $boot['seconds'] = 120; $c.Add($boot)
   foreach ($p in @($Files)) { $c.Add((& $one "file:$p" $fileScript @($p))) }
   $c.Add((& $one 'systemd-failed' 'systemctl --failed --no-pager --plain'))
   $c.Add((& $one 'systemd-is-system-running' 'systemctl is-system-running'))
@@ -2906,7 +3535,8 @@ n="$1"; d=/var/lib/clued-independent-ci-trivy-cache; stat -c '%U:%G:%a:%F' -- "$
   return @([ordered]@{ id = 'trivy-cache-by-rejected-worker'; script = $s; args = [string[]]@($script:ProbeLateInstance) })
 }
 
-# The bounds (r8 fixup review F2), without reading a clock in the guest: one command at most CommandSeconds; once MaxTimeouts commands
+# The bounds (r8 fixup review F2), without reading a clock in the guest: one command at most its own seconds when it names them (guest-boot,
+# 120), else CommandSeconds; once MaxTimeouts commands
 # have run into that bound (a docker stuck in activating, say), no further command is started, so the guest answers well inside
 # Invoke-DrillGuestProbe's 5-minute outer bound with what it read. Spool: the guest file each command's result is appended to as it
 # completes (one JSON line each), read back by the host when the outer bound cuts the probe all the same.
@@ -2938,7 +3568,8 @@ $script:GuestInspect = {
     else {
       try {
         $argv = @('-d', [string]$Plan['distribution'], '-u', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'LANG=C', 'LC_ALL=C', '/bin/bash', '-c', $r.script, '_') + @($r.args)
-        $n = & $native $wslExe $argv $each 'utf-8'
+        $secs = if ([int]$c['seconds'] -gt 0) { [int]$c['seconds'] } else { $each }
+        $n = & $native $wslExe $argv $secs 'utf-8'
         $out = [string]$n.stdout
         $r.exit = [int]$n.exit; $r.stdout = $(if ($out.Length -gt 200000) { $out.Substring(0, 200000) } else { $out }); $r.stderr = [string]$n.stderr
       } catch { $r.error = [string]$_.Exception.Message; if ($r.error -like 'COMMAND_TIMEOUT*') { $timeouts++ } }
@@ -3123,10 +3754,36 @@ $script:GuestPrepareAgain = {
   [ordered]@{ status = $(if ($l) { [string]($l | ConvertFrom-Json).status } else { 'UNPARSED' }); exit = $n.exit; stderr = $n.stderr }
 }
 
-function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscredential]$Cred) {
+# 甲4: the first install ended done -- the only end after which A7, A8 and M5 have anything to drill.
+function Test-DrillEntryDone($Entry) {
+  return ($Entry.parsed -eq $true) -and ($Entry.exitCode -eq 0) -and ($null -eq $Entry.stopCode) -and ([string]$Entry.status -ceq 'FIRST_INSTALL_DONE')
+}
+
+# $Deadline: the guard's deadline for the run (Invoke-DrillPreparedRun gives $Window.deadline). 甲2: the foreground stops
+# Get-DrillEvidenceWindowMinutes before it (DRILL_RUN_TIMEOUT, by = foreground), so the evidence is taken and the run's own cleanup
+# restores before the guard would; without a deadline (MinValue) there is no foreground limit.
+# The host's own steps of a run, around the entry's stages (fix round 1 of 87d330d0, review high 1): copy-in before the entry, the read
+# after it, A7's reboot and A8 -- one line in host-steps.jsonl as each starts and one as it ends, so the receipt's stage timeline says
+# where a run that was cut off was, outside the entry as well (Get-DrillStageTimeline). An aid: a line that cannot be written is not.
+function Write-DrillHostStep([string]$RunDir, [string]$Stage, [string]$Event, [string]$Result = 'running', $Code = $null) {
+  try {
+    $line = [ordered]@{ stage = $Stage; event = $Event; at = (Get-DrillTime).ToString('o'); result = $Result; code = $Code }
+    [IO.File]::AppendAllText((Join-Path $RunDir 'host-steps.jsonl'), (ConvertTo-Json -InputObject $line -Compress) + "`n", (New-Object Text.UTF8Encoding($false)))
+  } catch { }
+}
+
+function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscredential]$Cred, [DateTimeOffset]$Deadline = [DateTimeOffset]::MinValue) {
   $g = $script:Drill.GuestWork
+  $foreground = $null
+  if ($Deadline -ne [DateTimeOffset]::MinValue) {
+    $window = Get-DrillEvidenceWindowMinutes $RunTimeoutMinutes
+    $foreground = @{ at = $Deadline.AddMinutes(-$window); code = 'DRILL_RUN_TIMEOUT'
+      detail = [ordered]@{ by = 'foreground'; deadline = $Deadline.ToString('o'); evidenceWindowMinutes = $window } }
+  }
   $prereqFacts = if ($Interactive -or $KitInfo.prerequisiteMode -ceq 'first-install-host') { @{ mode = 'first-install-host'; preparedByEntry = (-not $Interactive) } } else { Invoke-DrillPrereqInGuest $RunDir $Prereq $Cred }
   $paths = @{ from = "$g\from"; kit = "$g\kit"; fake = "$g\fake"; work = "$g\work"; version = $Package.version }
+  Write-DrillHostStep $RunDir 'copy-in' 'start'
+  try {
   $session = New-PSSession -VMName $script:Drill.VmName -Credential $Cred
   try {
     Invoke-Command -Session $session -ScriptBlock { param($p) foreach ($d in @($p.from, $p.kit, $p.work)) { New-Item -ItemType Directory -Force -Path $d | Out-Null } } -ArgumentList $paths
@@ -3135,9 +3792,14 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     $tarInGuest = Invoke-Command -Session $session -ScriptBlock { param($p) (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() } -ArgumentList (Join-Path $paths.from ([IO.Path]::GetFileName($Package.tar)))
     if ($tarInGuest -cne $Package.tarSha256) { throw (New-DrillError 'DRILL_TAR_CHANGED_IN_COPY') }
     # only the files of the names this package declares and the drill gives (Get-DrillCredentialPlan)
-    $fake = Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create(${function:New-DrillFakeCredentials}.ToString())) -ArgumentList $paths.fake, ([string[]]@((Get-DrillCredentialPlan $KitInfo).fake))
+    # the CI token is the Owner's drill binding (read here, handed over the PowerShell Direct session, written in the guest only)
+    $fakeNames = [string[]]@((Get-DrillCredentialPlan $KitInfo).fake)
+    $binding = if ($fakeNames -ccontains 'ci-admission.token') { Get-DrillCredential -Binding } else { $null }
+    $fake = Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create(${function:New-DrillFakeCredentials}.ToString())) -ArgumentList $paths.fake, $fakeNames, $binding
     Write-DrillJson (Join-Path $RunDir 'fake-credentials.public.json') $fake
   } finally { Remove-PSSession -Session $session }
+  } catch { Write-DrillHostStep $RunDir 'copy-in' 'end' 'failed' (Get-DrillCode $_).code; throw }
+  Write-DrillHostStep $RunDir 'copy-in' 'end' 'ok'
 
   # the kit's image references for the guest probe, which runs on every end of the first install (Save-DrillGuestEvidence, last)
   $script:DrillProbeImageIds = @(try { Get-DrillKitImageIds @($Package.files) } catch { })
@@ -3154,8 +3816,10 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   # The guest evidence -- the entry's printed lines and the stage files -- is taken back on every end of this call: done, stopped, timed
   # out (Save-DrillGuestEvidence; Codex reviews of ced480363 and c1497e0a1); the original error is thrown on after.
   $entryOut = $null
+  # 甲1/2.4: the progress files pulled each tick into the run directory and the stage's no-progress gate (guest-progress.json)
+  $progress = New-DrillGuestProgress $RunDir
   try {
-    $entryOut = Invoke-DrillGuest $Cred $script:GuestEntry -ArgumentList @((Join-Path $paths.kit $KitInfo.entryFile), $entryArgs, $KitInfo.timeoutMinutes, $script:DrillNativeText, (Join-Path $paths.work $script:Drill.GuestEntryLog)) -TimeoutMinutes $KitInfo.timeoutMinutes -Code 'DRILL_FIRST_INSTALL_TIMEOUT' -Step 'first-install'
+    $entryOut = Invoke-DrillGuest $Cred $script:GuestEntry -ArgumentList @((Join-Path $paths.kit $KitInfo.entryFile), $entryArgs, $KitInfo.timeoutMinutes, $script:DrillNativeText, (Join-Path $paths.work $script:Drill.GuestEntryLog)) -TimeoutMinutes $KitInfo.timeoutMinutes -Code 'DRILL_FIRST_INSTALL_TIMEOUT' -Step 'first-install' -Until $foreground -Progress $progress
   } finally {
     # on every end of the first install, before anything else happens to the guest
     $collected = Save-DrillGuestEvidence $RunDir $Cred $entryOut
@@ -3169,38 +3833,56 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   $timings = $collected.timings
   # the first install's own result, kept on its own: A1 stands even when a later step stops the run (Get-DrillA1Item)
   Write-DrillJson (Join-Path $RunDir 'entry-result.json') $entry
+  # 甲3: the steps after the first install (the read, A7's reboot, A8) share one limit, AfterEntryMaxMinutes from now or the foreground
+  # deadline, whichever is earlier; the evidence collection, the late probe and M5 are not under it.
+  $afterEntry = Get-DrillEarlierUntil $foreground @{ at = (Get-DrillTime).AddMinutes($script:Drill.AfterEntryMaxMinutes); code = 'DRILL_AFTER_ENTRY_TIMEOUT'
+    detail = [ordered]@{ minutes = $script:Drill.AfterEntryMaxMinutes; since = (Get-DrillTime).ToString('o') } }
+  $entryDone = Test-DrillEntryDone $entry
 
-  $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-install' -Restartable
+  Write-DrillHostStep $RunDir 'read-after-install' 'start'
+  $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-install' -Restartable -Until $afterEntry
   Write-DrillJson (Join-Path $RunDir 'read-after-install.json') $first
 
   # A7: reboot, nobody logs in; within 10 minutes the status is rewritten after the boot and the self-check still passes. Only when the
   # install left something (Test-DrillInstallProduced): with nothing installed a reboot exposes nothing, and A7 says why it did not run.
-  if (Test-DrillInstallProduced $first) {
+  # 甲4: a first install that did not end done blocks A7 (recorded, not run)
+  if (-not (Test-DrillInstallProduced $first)) { $reboot = [ordered]@{ skipped = $true; reason = 'DRILL_A7_BLOCKED_NOTHING_INSTALLED' } }
+  elseif (-not $entryDone) { $reboot = [ordered]@{ skipped = $true; reason = 'DRILL_A7_BLOCKED_BY_A1' } }
+  else {
+    Assert-DrillUntil $afterEntry
+    Write-DrillHostStep $RunDir 'A7-reboot' 'start'
     $beforeReboot = [DateTimeOffset]::UtcNow
     try { Invoke-Command -VMName $script:Drill.VmName -Credential $Cred -ScriptBlock { Restart-Computer -Force } -ErrorAction Stop } catch { }
-    $boot = Wait-DrillGuest $Cred 15 $beforeReboot
-    $reboot = Wait-DrillRebootRefresh $Cred $boot ($boot.AddMinutes($script:Drill.UnattendedRebootMinutes))
-  } else { $reboot = [ordered]@{ skipped = $true; reason = 'DRILL_A7_BLOCKED_NOTHING_INSTALLED' } }
+    $left = [int][Math]::Ceiling(($afterEntry.at - (Get-DrillTime)).TotalMinutes)
+    try { $boot = Wait-DrillGuest $Cred ([Math]::Max(1, [Math]::Min(15, $left))) $beforeReboot } catch { Assert-DrillUntil $afterEntry; throw }
+    $refreshBy = $boot.AddMinutes($script:Drill.UnattendedRebootMinutes)
+    if ($afterEntry.at -lt $refreshBy) { $refreshBy = $afterEntry.at }
+    $reboot = Wait-DrillRebootRefresh $Cred $boot $refreshBy
+  }
   Write-DrillJson (Join-Path $RunDir 'read-after-reboot.json') $reboot
 
   # A8: same package again: the generic upgrade answers "already at this package"; prepare -> launcher -> verify -> prepare.
   $reinstall = @{ skipped = $true }
-  if (-not $SkipReinstall -and $entry.tree -and $entry.node) {
+  if (-not $SkipReinstall -and -not $entryDone) {
+    # 甲4: blocked by A1 (recorded, not run)
+    $reinstall = @{ skipped = $false; upgradeStatus = 'DRILL_A8_BLOCKED_BY_A1'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null }
+  } elseif (-not $SkipReinstall -and $entry.tree -and $entry.node) {
     # the upgrade first, on its own; its raw result is on the host before the prepare starts (Codex narrow review of 4190b0f8e, medium)
-    $upRun = Invoke-DrillGuest $Cred $script:GuestReinstallUpgrade -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, $script:DrillNativeText) -TimeoutMinutes 65 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall-upgrade'
+    Write-DrillHostStep $RunDir 'A8-reinstall' 'start'
+    $upRun = Invoke-DrillGuest $Cred $script:GuestReinstallUpgrade -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, $script:DrillNativeText) -TimeoutMinutes 65 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall-upgrade' -Until $afterEntry
     Write-DrillJson (Join-Path $RunDir 'reinstall-upgrade.json') (ConvertTo-DrillReinstallUpgradeRecord $upRun)
-    $reinstall = Invoke-DrillGuest $Cred $script:GuestReinstall -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText, $upRun) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall'
+    $reinstall = Invoke-DrillGuest $Cred $script:GuestReinstall -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText, $upRun) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall' -Until $afterEntry
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   } elseif (-not $SkipReinstall) { $reinstall = @{ skipped = $false; upgradeStatus = 'NOT_RUN_ENTRY_GAVE_NO_TREE_OR_NODE'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null } }
 
   if (Test-DrillReinstallLauncher $reinstall) {
     # the re-verify runs the whole verdict: its input carries the launcher verdict and the pause, the same sources as the first install's A6
     # (Codex review of f33fc33e5, medium 5: without them strict mode stopped it before prepare-again)
-    $again = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-reinstall' -Restartable
+    $again = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-reinstall' -Restartable -Until $afterEntry
     Write-DrillJson (Join-Path $RunDir 'read-after-reinstall.json') $again
     $reVerdict = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($again.readAt); entry = $entry; launcher = $launcher; pause = $again.pause; verify = $again.verify; status = $again.status; current = $again.current; facts = $again.facts; acceptanceSource = $Package.ciSourceManifestSha256; reboot = $null; reinstall = $null; kit = $KitInfo }
     $reinstall.reverifyPassed = @($reVerdict | Where-Object { $_.id -in @('A2', 'A3', 'A4') -and $_.pass -ne $true }).Count -eq 0 -and $null -eq (@($reVerdict | Where-Object { $_.id -eq 'A5' })[0].pass)
-    $p2 = Invoke-DrillGuest $Cred $script:GuestPrepareAgain -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText) -TimeoutMinutes 60 -Step 'prepare-again'
+    $p2 = Invoke-DrillGuest $Cred $script:GuestPrepareAgain -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText) -TimeoutMinutes 60 -Step 'prepare-again' -Until $afterEntry
     $reinstall.prepareAgainStatus = [string](Get-Prop $p2 'status'); $reinstall.prepareAgainExit = $p2.exit; $reinstall.prepareAgainStderr = $p2.stderr
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   }
@@ -3208,7 +3890,9 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   # the one worker-instance start (r8 trivy cache): after everything the verdict reads has been collected; never part of a verdict
   [void](Save-DrillLateProbe $RunDir $Cred)
 
-  $m5 = try { Copy-DrillM5 $RunDir $Cred } catch { @{ collectionCode = (Get-DrillCode $_).code } }
+  # 甲4: M5 is read only after a first install that ended done; otherwise blocked by A1 (recorded, not read)
+  $m5 = if (-not $entryDone) { @{ directory = 'm5'; missing = @($script:DrillM5Names); collectionCode = 'DRILL_M5_BLOCKED_BY_A1'; blocked = $true } }
+    else { try { Copy-DrillM5 $RunDir $Cred } catch { @{ collectionCode = (Get-DrillCode $_).code } } }
   return @{ entry = $entry; launcher = $launcher; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake; prereq = $prereqFacts; timings = $timings; m5 = $m5 }
 }
 
@@ -3238,10 +3922,13 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
   $stage = Save-DrillStageEvidence $RunDir $Cred
   $timings = $stage.timings
   try {
-    $got = Invoke-DrillGuest $Cred $script:GuestStageFiles -ArgumentList @(($script:Drill.GuestWork + '\work'), $names) -TimeoutMinutes 2 -Step 'guest-evidence'
+    # 明盒: the entry's own stage record comes with its log (an extra: a kit whose entry does not write it misses nothing)
+    $got = Invoke-DrillGuest $Cred $script:GuestStageFiles -ArgumentList @(($script:Drill.GuestWork + '\work'), @($names + 'stage-progress.jsonl')) -TimeoutMinutes 2 -Step 'guest-evidence'
     $text = { param($n) $f = Get-DrillField $got $n; if ((Get-DrillField $f 'present') -eq $true -and -not (Get-DrillField $f 'error')) { [string](Get-DrillField $f 'text') } else { $null } }
     $record.missing = @($names | Where-Object { $null -eq (& $text $_) })
     $log = & $text $script:Drill.GuestEntryLog
+    $stageRecord = & $text 'stage-progress.jsonl'
+    if ($null -ne $stageRecord) { try { [IO.File]::WriteAllText((Join-Path $RunDir 'stage-progress.jsonl'), $stageRecord, (New-Object Text.UTF8Encoding($false))) } catch { } }
     # the guest's copy only when there is one: no empty file and no 'guest-log' without it (Codex review of f734afe7e, low 1)
     if ($null -eq $record.entryLog -and $null -ne $log) {
       Write-DrillLines $logFile @($log -split "`r?`n" | Where-Object { $_ -ne '' })
@@ -3251,6 +3938,8 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
     $c = Get-DrillCode $_
     $record.code = $c.code; $record.detail = $c.detail
   }
+  # 甲1: no copy written above, but the progress pulls left the entry's log in the run directory (the last tick before the end)
+  if ($null -eq $record.entryLog -and (Test-Path -LiteralPath $logFile -PathType Leaf)) { $record.entryLog = 'progress-pull' }
   # the stage files that did not reach the run directory are missing too (their states: stage-files.json). The failure snapshot is
   # written only when the first install did not end done, so its absence is nothing missing only when the entry itself said
   # FIRST_INSTALL_DONE: stopped, cut off, or no result returned at all, it is missing (FABLE-r9-lineB-points R2: the entry swallows a
@@ -3287,8 +3976,258 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
   return @{ record = $record; timings = $timings; stageEvidence = $stage.stageEvidence; launcher = $launcher }
 }
 
+# 明盒 (coordinator, Owner 11-23): the receipt's stage timeline, on every end -- PASS, FAIL, the foreground deadline, a guard abort, a
+# no-progress stop. Read from the run directory only: the entry's stage-progress.jsonl (one line as each stage starts, one as it ends;
+# pulled each tick and taken again with the evidence), else -- a kit whose entry does not write it -- the stage logs that reached the run
+# directory. A stage that started and never ended is 'aborted-in-progress' (进行中被中止); the host's own steps after the first install
+# follow, from the records they wrote.
+# A step line inside a stage (the entry's prereq: item, step, bytes): on the stage of that name still running, else the last of that name.
+function Add-DrillTimelineStep($Stages, [string]$Name, $E) {
+  $owner = $null
+  for ($i = $Stages.Count - 1; $i -ge 0; $i--) { if ($Stages[$i].stage -ceq $Name -and $Stages[$i].result -ceq 'running') { $owner = $Stages[$i]; break } }
+  if ($null -eq $owner) { for ($i = $Stages.Count - 1; $i -ge 0; $i--) { if ($Stages[$i].stage -ceq $Name) { $owner = $Stages[$i]; break } } }
+  if ($null -eq $owner) { return }
+  if (-not $owner.Contains('steps')) { $owner.steps = New-Object Collections.Generic.List[object] }
+  $item = [string](Get-DrillField $E 'item'); $stepName = [string](Get-DrillField $E 'step')
+  $st = $null
+  for ($i = $owner.steps.Count - 1; $i -ge 0; $i--) { if ($owner.steps[$i].item -ceq $item -and $owner.steps[$i].step -ceq $stepName -and $owner.steps[$i].result -ceq 'running') { $st = $owner.steps[$i]; break } }
+  if ([string](Get-DrillField $E 'event') -ceq 'step-start' -or $null -eq $st) {
+    $st = [ordered]@{ item = $item; step = $stepName; bytes = (Get-DrillField $E 'bytes'); startedAt = (Get-DrillField $E 'startedAt'); endedAt = $null; result = 'running'; code = $null }
+    $owner.steps.Add($st)
+  }
+  if ([string](Get-DrillField $E 'event') -ceq 'step-end') { $st.endedAt = Get-DrillField $E 'endedAt'; $st.result = [string](Get-DrillField $E 'result'); $st.code = Get-DrillField $E 'code' }
+}
+# The last step line ({name, result, at}) of a stage log in the run directory; $null when it has none.
+function Get-DrillLastStepLine([string]$File) {
+  if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { return $null }
+  $lines = @(try { [IO.File]::ReadAllLines($File) } catch { @() })
+  for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+    $t = $lines[$i].Trim()
+    if (-not $t.StartsWith('{')) { continue }
+    $o = $null; try { $o = $t | ConvertFrom-Json } catch { continue }
+    $name = Get-DrillField $o 'name'; $result = Get-DrillField $o 'result'
+    if ($name -and $result) { return [ordered]@{ name = [string]$name; result = [string]$result; at = (Get-DrillField $o 'at') } }
+  }
+  return $null
+}
+# The host's own steps of a run (host-steps.jsonl, Write-DrillHostStep) by name: startedAt, endedAt, result (running until it ended), code.
+function Read-DrillHostSteps([string]$RunDir) {
+  $steps = [ordered]@{}
+  $file = Join-Path $RunDir 'host-steps.jsonl'
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $steps }
+  foreach ($line in @([IO.File]::ReadAllLines($file))) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    $e = $null; try { $e = $line | ConvertFrom-Json } catch { continue }
+    $name = [string](Get-DrillField $e 'stage'); if (-not $name) { continue }
+    if ([string](Get-DrillField $e 'event') -ceq 'start' -or -not $steps.Contains($name)) {
+      $steps[$name] = [ordered]@{ stage = $name; startedAt = (Get-DrillField $e 'at'); endedAt = $null; result = 'running'; code = $null; tail = $null }
+    }
+    if ([string](Get-DrillField $e 'event') -ceq 'end') { $steps[$name].endedAt = Get-DrillField $e 'at'; $steps[$name].result = [string](Get-DrillField $e 'result'); $steps[$name].code = Get-DrillField $e 'code' }
+  }
+  return $steps
+}
+
+function Get-DrillStageTimeline([string]$RunDir) {
+  $stages = New-Object Collections.Generic.List[object]
+  $source = $null
+  $file = Join-Path $RunDir 'stage-progress.jsonl'
+  if (Test-Path -LiteralPath $file -PathType Leaf) {
+    $source = 'stage-progress'
+    foreach ($line in @([IO.File]::ReadAllLines($file))) {
+      if ([string]::IsNullOrWhiteSpace($line)) { continue }
+      $e = $null; try { $e = $line | ConvertFrom-Json } catch { continue }   # a line cut by the pull is not a record
+      $name = [string](Get-DrillField $e 'stage'); if (-not $name) { continue }
+      $event = [string](Get-DrillField $e 'event')
+      if ($event -clike 'step-*') { Add-DrillTimelineStep $stages $name $e; continue }
+      $open = $null
+      for ($i = $stages.Count - 1; $i -ge 0; $i--) { if ($stages[$i].stage -ceq $name -and $stages[$i].result -ceq 'running') { $open = $stages[$i]; break } }
+      if ([string](Get-DrillField $e 'event') -ceq 'start' -or $null -eq $open) {
+        $open = [ordered]@{ stage = $name; startedAt = (Get-DrillField $e 'startedAt'); endedAt = $null; result = 'running'; code = $null; tail = $null }
+        $stages.Add($open)
+      }
+      if ([string](Get-DrillField $e 'event') -ceq 'end') {
+        $open.endedAt = Get-DrillField $e 'endedAt'; $open.result = [string](Get-DrillField $e 'result'); $open.code = Get-DrillField $e 'code'
+        $t = Get-DrillField $e 'tail'; if ($null -ne $t) { $open.tail = [object[]]@($t) }   # a list even of one line
+      }
+    }
+  } else {
+    # no record of its own: the stages whose logs reached the run directory, in order; a stage the next one followed was left, its verdict unknown
+    $present = @(@(@('entry', 'first-install.log'), @('host', 'host.stdout.log'), @('prepare', 'prepare.stdout.log'), @('launcher', 'launcher.stdout.log')) |
+      Where-Object { Test-Path -LiteralPath (Join-Path $RunDir $_[1]) -PathType Leaf })
+    if ($present.Count) { $source = 'stage-logs' }
+    foreach ($p in $present) { $stages.Add([ordered]@{ stage = $p[0]; startedAt = $null; endedAt = $null; result = 'left'; code = $null; tail = $null }) }
+    if ($stages.Count -and -not (Test-Path -LiteralPath (Join-Path $RunDir 'entry-result.json') -PathType Leaf)) { $stages[$stages.Count - 1].result = 'running' }
+    elseif ($stages.Count) { $stages[$stages.Count - 1].result = 'ended' }
+  }
+  # the host's own steps (host-steps.jsonl): copy-in before the entry's stages; the ones after it below
+  $hostSteps = Read-DrillHostSteps $RunDir
+  if ($hostSteps.Contains('copy-in')) { $stages.Insert(0, $hostSteps['copy-in']) }
+  # the run is over: a stage still running was cut off, and the step it was in (prereq: which item, which step)
+  foreach ($s in $stages) {
+    if ($s.result -ceq 'running') { $s.result = 'aborted-in-progress'; $s.label = '进行中被中止' }
+    if (-not $s.Contains('steps')) { continue }
+    foreach ($st in $s.steps) { if ($st.result -ceq 'running') { $st.result = 'aborted-in-progress'; if ($s.result -ceq 'aborted-in-progress') { $s.inProgressStep = $st } } }
+  }
+  # item 7: a cut-off stage with a log of step lines and no step in progress recorded (a host preparation that does not write its steps'
+  # starts, the candidate 2026.11.23-d5da6825's): the last step line its log printed and when -- the step after it is the one it was in
+  foreach ($s in $stages) {
+    if ($s.result -cne 'aborted-in-progress' -or $s.Contains('inProgressStep')) { continue }
+    $log = @{ host = 'host.stdout.log'; prepare = 'prepare.stdout.log'; launcher = 'launcher.stdout.log' }[[string]$s.stage]
+    if (-not $log) { continue }
+    $last = Get-DrillLastStepLine (Join-Path $RunDir $log)
+    if ($null -ne $last) { $s.lastStepLine = $last }
+  }
+  # the host's steps after the first install, each from the record it wrote; one that started and wrote none was cut off (absent: not reached)
+  $entryFile = Join-Path $RunDir 'entry-result.json'
+  if (Test-Path -LiteralPath $entryFile -PathType Leaf) {
+    $er = try { Read-DrillJson $entryFile } catch { $null }
+    $stages.Add([ordered]@{ stage = 'A1-entry-result'; result = $(if ($er -and (Test-DrillEntryDone $er)) { 'ok' } else { 'failed' }); code = $(if ($er) { $(if ($er.stopCode) { $er.stopCode } else { $er.status }) } else { 'unreadable' }) })
+  }
+  foreach ($pair in @(@('read-after-install', 'read-after-install.json'), @('A7-reboot', 'read-after-reboot.json'), @('A8-reinstall', 'reinstall.json'))) {
+    $f = Join-Path $RunDir $pair[1]
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) {
+      $started = $hostSteps[$pair[0]]
+      if ($null -ne $started) { $stages.Add([ordered]@{ stage = $pair[0]; startedAt = $started.startedAt; result = 'aborted-in-progress'; code = $null; label = '进行中被中止' }) }
+      continue
+    }
+    $doc = try { Read-DrillJson $f } catch { $null }
+    $skip = if ((Get-Prop $doc 'skipped') -eq $true) { [string](Get-Prop $doc 'reason') } elseif ([string](Get-Prop $doc 'upgradeStatus') -like 'DRILL_*BLOCKED*') { [string](Get-Prop $doc 'upgradeStatus') } else { $null }
+    $stages.Add([ordered]@{ stage = $pair[0]; result = $(if ($null -eq $doc) { 'unreadable' } elseif ($null -ne $skip) { 'skipped' } else { 'recorded' }); code = $skip })
+  }
+  $n = 0; foreach ($s in $stages) { $n++; $s.n = $n; if ($s.Contains('steps')) { $s.steps = $s.steps.ToArray() } }
+  $abortedIn = $null
+  foreach ($s in $stages) { if ($s.result -ceq 'aborted-in-progress') { $abortedIn = $s.stage } }
+  return [ordered]@{ source = $source; reached = $stages.Count; abortedIn = $abortedIn; stages = $stages.ToArray() }
+}
+
 # ---------------------------------------------------------------- main
+# Ladder mode (-Ladder; coordinator, Owner 11-23: "先把每段结论传回来，再慢慢梯度测试"): the run's limit is derived, never remembered.
+# Without -RunTimeoutMinutes it comes from the latest receipt of the same package and kit (version and kit sha256) under the runs
+# directory, read from its stage timeline:
+#   none                                          -> LadderFirstMinutes (10)
+#   it passed (conclusion not FAIL, no failure)   -> the same limit again, never longer
+#   it stopped on a no-progress gate              -> refused: DRILL_LADDER_PREVIOUS_NO_PROGRESS, the stage it was stuck in
+#   a stage in its timeline failed                -> refused: DRILL_LADDER_PREVIOUS_STAGE_FAILED, the stage and its code (fix first)
+#   it ran out of its time (DRILL_RUN_TIMEOUT, whoever reported it: the foreground's own stop or the host guard's deadline) with no
+#   stage failed and every stage in a known state -- wherever the time ran out: in a stage, between two, after the entry (A7, A8), on a
+#   kit whose entry wrote only stage logs                                          (fix round 1 of 87d330d0, review high 1)
+#                                                 -> twice its limit, at most the run's own ceiling (the intake budget less the wait
+#                                                    and the margin: Invoke-DrillWithHostHold refuses more)
+#   any other end (a guard abort, a step's own timeout ...) -> the same limit again, never longer
+# except that a run already at the ceiling which ran out of its time (DRILL_RUN_TIMEOUT, either clock) is not run again: the next rung
+# would be the same limit and the same end (generation 16, 2026.11.24-74bc5ef0: 70 minutes, out of time in the launcher, and the next
+# rung 70 minutes again) -> refused: DRILL_LADDER_CEILING_EXHAUSTED, the stage it stopped in (task 87d330d0 PR-2, plan section 4.2)
+# The same limit again is held to the ceiling as well. The newest run directory of this version decides: a receipt.json there that cannot
+# be read, or has no version or kit, refuses (DRILL_LADDER_PREVIOUS_RECEIPT_UNREADABLE, its path; review medium 4) -- never an older one.
+# The limit, the receipt it was derived from and how far that run got are written into this run's receipt (ladder).
+function Get-DrillLadderCeilingMinutes { [int]($script:Drill.IntakeMaxMinutes - $script:Drill.IntakeWaitMinutes - $script:Drill.IntakeMarginMinutes) }
+
+# The latest receipt of this version and kit; $null when none. Run directories are named <UTC start>-<version>-<id>
+# (Invoke-DrillPreparedRun), so newest first by name, and only this version's: a directory without receipt.json (a run that stopped before
+# it had one) is passed over; one that cannot be read, or carries no version or kit, refuses -- it may be the newest of this kit.
+function Find-DrillLadderReceipt([string]$RunsDir, [string]$Version, [string]$KitSha256) {
+  if (-not (Test-Path -LiteralPath $RunsDir -PathType Container)) { return $null }
+  $ours = '^\d{8}T\d{6}Z-' + [regex]::Escape($Version) + '-[0-9a-z]+$'
+  foreach ($dir in @(Get-ChildItem -LiteralPath $RunsDir -Directory | Where-Object { $_.Name -cmatch $ours } | Sort-Object Name -Descending)) {
+    $file = Join-Path $dir.FullName 'receipt.json'
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
+    $r = $null; $why = $null
+    try { $r = Read-DrillJson $file } catch { $why = [string]$_.Exception.Message }
+    if ($null -eq $r -and $null -eq $why) { $why = 'empty' }
+    if ($null -eq $why -and (-not [string](Get-DrillField $r 'version') -or -not [string](Get-DrillField $r 'kitSha256'))) { $why = 'no version or kitSha256' }
+    if ($null -ne $why) { throw (New-DrillError 'DRILL_LADDER_PREVIOUS_RECEIPT_UNREADABLE' ([ordered]@{ receipt = $file; reason = $why })) }
+    if ([string](Get-DrillField $r 'version') -ceq $Version -and [string](Get-DrillField $r 'kitSha256') -ceq $KitSha256) { return @{ path = $file; receipt = $r } }
+  }
+  return $null
+}
+# The stage results a timeline is written with (Get-DrillStageTimeline); a receipt with any other is not lengthened from.
+$script:DrillLadderKnownResults = @('ok', 'aborted-in-progress', 'left', 'ended', 'recorded', 'skipped')
+
+function Get-DrillLadderStep([string]$RunsDir, [string]$Version, [string]$KitSha256) {
+  $ceiling = Get-DrillLadderCeilingMinutes
+  $found = Find-DrillLadderReceipt $RunsDir $Version $KitSha256
+  if ($null -eq $found) { return [ordered]@{ minutes = [int]$script:Drill.LadderFirstMinutes; rule = 'first'; basis = $null; previousMinutes = $null; reached = $null; ceiling = $ceiling } }
+  $r = $found.receipt
+  $timeline = Get-DrillField (Get-DrillField $r 'evidence') 'stageTimeline'
+  $stages = @(Get-DrillField $timeline 'stages' | Where-Object { $null -ne $_ })
+  $last = if ($stages.Count) { $stages[$stages.Count - 1] } else { $null }
+  $reached = if ($last) { [ordered]@{ n = (Get-DrillField $last 'n'); stage = (Get-DrillField $last 'stage'); result = (Get-DrillField $last 'result') } } else { $null }
+  $previous = Get-DrillField $r 'runTimeoutMinutes'
+  if ($null -eq $previous) { $previous = Get-DrillField (Get-DrillField $r 'ladder') 'minutes' }
+  if ($null -eq $previous) { $previous = [int]$script:Drill.LadderFirstMinutes }   # a receipt from before the ladder: counted as the first rung
+  $previous = [int]$previous
+  $step = { param($minutes, $rule) [ordered]@{ minutes = [int]$minutes; rule = $rule; basis = $found.path; previousMinutes = $previous; reached = $reached; ceiling = $ceiling } }
+  $failure = Get-DrillField $r 'failure'
+  $code = [string](Get-DrillField $failure 'code')
+  if ($null -eq $failure -and [string](Get-DrillField $r 'conclusion') -cne 'FAIL') { return (& $step ([Math]::Min($previous, $ceiling)) 'passed-not-longer') }
+  if ($code -ceq 'DRILL_GUEST_NO_PROGRESS') {
+    throw (New-DrillError 'DRILL_LADDER_PREVIOUS_NO_PROGRESS' ([ordered]@{ stage = (Get-DrillField (Get-DrillField $failure 'detail') 'stage'); reason = (Get-DrillField (Get-DrillField $failure 'detail') 'reason'); receipt = $found.path }))
+  }
+  $failed = @($stages | Where-Object { [string](Get-DrillField $_ 'result') -ceq 'failed' }) | Select-Object -First 1
+  if ($failed) { throw (New-DrillError 'DRILL_LADDER_PREVIOUS_STAGE_FAILED' ([ordered]@{ stage = (Get-DrillField $failed 'stage'); code = (Get-DrillField $failed 'code'); receipt = $found.path })) }
+  # out of time at the ceiling (an earlier limit given past it by hand included): the next rung could only be the same run again
+  if ($code -ceq 'DRILL_RUN_TIMEOUT' -and $previous -ge $ceiling) {
+    $stoppedIn = [string](Get-DrillField $timeline 'abortedIn')
+    if (-not $stoppedIn -and $reached) { $stoppedIn = [string]$reached.stage }
+    throw (New-DrillError 'DRILL_LADDER_CEILING_EXHAUSTED' ([ordered]@{ stage = $(if ($stoppedIn) { $stoppedIn } else { $null }); reached = $reached
+      previousMinutes = $previous; ceiling = $ceiling; receipt = $found.path }))
+  }
+  # out of time, by either clock (the guard's failure replaces the foreground's: Invoke-DrillOnCheckpoint), nothing failed, nothing unknown
+  $known = @($stages | Where-Object { $script:DrillLadderKnownResults -cnotcontains [string](Get-DrillField $_ 'result') }).Count -eq 0
+  if ($code -ceq 'DRILL_RUN_TIMEOUT' -and $known) {
+    return (& $step ([Math]::Min($previous * 2, $ceiling)) $(if ($previous * 2 -ge $ceiling) { 'doubled-at-ceiling' } else { 'doubled' }))
+  }
+  return (& $step ([Math]::Min($previous, $ceiling)) 'not-longer')
+}
+
+# -ServerKey <key>: the test project's public key, as DESK read it from the project (it is in no repository file:
+# FABLE-drill-test-project-sync-20261124.md section 3). The one checker (drill-server-check.mjs --store-key) holds its shape, asks the
+# project with it and stores it on the host only when the project answers; make-drill-kit.mjs reads that copy.
+function Save-DrillServerKey([string]$Key) {
+  $tool = Join-Path (Split-Path -Parent $script:DrillScriptPath) 'drill-server-check.mjs'
+  $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+  if ($Key -cnotmatch '^[A-Za-z0-9_-]{1,200}$') { throw (New-DrillError 'DRILL_SERVER_KEY_REFUSED' 'not a public key') }
+  $arguments = @($tool, '--store-key', $Key)
+  if ($script:Drill.ServerKeyFile) { $arguments += @('--key-file', [string]$script:Drill.ServerKeyFile) }
+  $run = Invoke-DrillNode $node $arguments 90
+  $stored = $null
+  if ($run.exit -eq 0) { try { $stored = $run.stdout | ConvertFrom-Json } catch { $stored = $null } }
+  if ($null -eq $stored) { throw (New-DrillServerError $run 'DRILL_SERVER_KEY_REFUSED') }
+  return [ordered]@{ status = [string]$stored.status; project = [string]$stored.project; file = [string]$stored.file }
+}
+
+# The code a server tool ended on (its first stderr line that is one: DRILL_X or DRILL_X:detail), as this script's error.
+function New-DrillServerError($Run, [string]$Otherwise) {
+  $code = [string](@(([string]$Run.stderr) -split "`r?`n" | Where-Object { $_ -cmatch '^DRILL_[A-Z0-9_]+' }) | Select-Object -First 1)
+  if ($code -cmatch '^(DRILL_[A-Z0-9_]+)(?::(.*))?$') { return (New-DrillError $Matches[1] $Matches[2]) }
+  return (New-DrillError $Otherwise ([string]$Run.stderr))
+}
+
 function Invoke-DrillMain {
+  if ($Rebuild -and -not $SyncServer) { throw (New-DrillError 'DRILL_USAGE' '-Rebuild goes with -SyncServer only') }
+  if ($ServerKey) {
+    if ($Version -or $From -or $Kit -or $BaselineOnly -or $PrereqOnly -or $Finalize -or $Interactive -or $BindingCredential -or $ServerDatabaseCredential -or $SyncServer) { throw (New-DrillError 'DRILL_USAGE' '-ServerKey is given alone') }
+    return (Save-DrillServerKey $ServerKey)
+  }
+  if ($BindingCredential) {
+    if ($Version -or $From -or $Kit -or $BaselineOnly -or $PrereqOnly -or $Finalize -or $Interactive -or $ServerDatabaseCredential -or $SyncServer) { throw (New-DrillError 'DRILL_USAGE' '-BindingCredential is given alone') }
+    return (Save-DrillBindingCredential)
+  }
+  if ($ServerDatabaseCredential) {
+    if ($Version -or $From -or $Kit -or $BaselineOnly -or $PrereqOnly -or $Finalize -or $Interactive -or $SyncServer) { throw (New-DrillError 'DRILL_USAGE' '-ServerDatabaseCredential is given alone') }
+    return (Save-DrillServerDatabaseCredential)
+  }
+  # -SyncServer [-Rebuild] -From <Release dir> -Version <v>: the sync a drill runs before its boot, on its own (the first rebuild, a
+  # rebuild after DRILL_SERVER_DIVERGED, or a check). The Release gives the scope the fixtures follow; no VM, no host hold.
+  if ($SyncServer) {
+    if ($Kit -or $BaselineOnly -or $PrereqOnly -or $Finalize -or $Interactive) { throw (New-DrillError 'DRILL_USAGE' '-SyncServer takes -From, -Version and -Rebuild only') }
+    if (-not $From -or -not $Version) { throw (New-DrillError 'DRILL_USAGE' 'give -SyncServer -From <Release dir> -Version <v>') }
+    if (-not (Test-Path -LiteralPath (Join-Path $From "fleet-node-$Version.first-install-kit.json") -PathType Leaf)) { throw (New-DrillError 'DRILL_USAGE' "no fleet-node-$Version.first-install-kit.json in -From") }
+    $synced = Sync-DrillServer $From $Version -Rebuild:$Rebuild
+    $out = [ordered]@{ status = 'DRILL_SERVER_SYNCED'; rebuilt = [bool]$Rebuild }
+    foreach ($k in $synced.Keys) { $out[$k] = $synced[$k] }
+    return $out
+  }
   if ($Interactive -and ($BaselineOnly -or $PrereqOnly -or $Finalize)) { throw (New-DrillError 'DRILL_USAGE' '-Interactive is a full first-install run only') }
   # Fable renew-key ruling, supplements "interactive mode A1" and "branch two, two points" 2: A1's step record has one parser
   # (Read-DrillFirstInstallSteps); its source depends on the mode. In interactive mode the operator's window does not hold it: bootstrap.ps1
@@ -3326,16 +4265,23 @@ function Invoke-DrillMain {
     if ($kitInfo.prereqSha256 -cne $prereq.sha256) { throw (New-DrillError 'DRILL_KIT_PREREQ_NOT_THESE' @{ kit = $kitInfo.prereqSha256; prereq = $prereq.sha256 }) }
     $package.files = @(Get-DrillReleaseFiles $package $kitInfo)
     if ($kitInfo.executionBlocker) { throw (New-DrillError 'DRILL_FIRST_INSTALL_ENTRY_NOT_READY' $kitInfo.executionBlocker) }
+    # the drill's server (never production) and the Owner's drill binding, before the host gate, the hold or any boot
+    Assert-DrillServerReady $kitInfo $package
     # the package's credential names against the drill's decisions, before the host gate, the hold or any boot; the kit's names first bound
     # again to the package's verified tar
     Assert-DrillKitCredentialsBound $kitInfo (Get-Prop $package 'tar')
     Assert-DrillKitToolsBound $kitInfo (Join-Path $From "fleet-node-$Version.prereq-manifest.json")
     $kitInfo['credentialPlan'] = Get-DrillCredentialPlan $kitInfo
+    # ladder mode: the limit from the latest receipt of this version and kit, before the host hold is asked for it
+    if ($Ladder -and -not $script:DrillRunTimeoutGiven) {
+      $script:DrillLadder = Get-DrillLadderStep $script:Drill.Runs $Version ([string]$kitInfo.sha256)
+      $script:RunTimeoutMinutes = [int]$script:DrillLadder.minutes
+    }
   }
   Invoke-DrillWithHostHold $RunTimeoutMinutes {
     param($window)
     Invoke-DrillPreparedRun $window $package $kitInfo $prereq
-  } -StandbyOnly:$BaselineOnly
+  } -StandbyOnly:$BaselineOnly -BootWait:(-not $BaselineOnly)
 }
 
 function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
@@ -3378,7 +4324,7 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   # M5 is collected for every package (Fable ruling 11-19 section 2.2); until the run reads it, it is not evaluated, which fails the receipt
   $m5 = @{ result = 'NOT_EVALUATED'; detail = 'DRILL_M5_RUN_INCOMPLETE' }
   $startedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-  $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillRun $runDir $Package $KitInfo $Prereq $cred } $runDir $Window
+  $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillRun $runDir $Package $KitInfo $Prereq $cred $Window.deadline } $runDir $Window
   $run = $o.result; $failure = $o.failure; $restored = $o.restored
 
   $evidence = [ordered]@{ localSource = $null; hostExecutorStates = $o.hostExecutorStates; hostPreBoot = (Get-Prop $o 'preBoot') }
@@ -3391,6 +4337,10 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   $evidence.reinstallUpgrade = Read-DrillReinstallUpgradeEvidence $runDir
   $guestEvidence = Join-Path $runDir 'guest-evidence.json'
   if (Test-Path -LiteralPath $guestEvidence -PathType Leaf) { try { $evidence.guestEvidence = Read-DrillJson $guestEvidence } catch { $evidence.guestEvidence = @{ unreadable = $true } } }
+  # 甲1 and 明盒: the first install's last progress tick and the stage timeline, whatever the end
+  $guestProgress = Join-Path $runDir 'guest-progress.json'
+  if (Test-Path -LiteralPath $guestProgress -PathType Leaf) { $evidence.guestProgress = try { Read-DrillJson $guestProgress } catch { @{ unreadable = $true } } }
+  $evidence.stageTimeline = try { Get-DrillStageTimeline $runDir } catch { [ordered]@{ unreadable = [string]$_.Exception.Message } }
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
@@ -3429,9 +4379,16 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
     version = $package.version; tarSha256 = $package.tarSha256; ciSourceManifestSha256 = $package.ciSourceManifestSha256
     # the three hashes an acceptance names; candidate: the drill ran before the Owner's acceptance, on the kit's drill-only acceptance
     firstInstallKitSha256 = $package['firstInstallKitSha256']; candidate = [bool]$package['candidate']
+    # the server the guest installed against (never production) and the first-install kit it read: the Release's with the two fields replaced
+    server = $(if ($null -ne (Get-Prop $kitInfo 'server')) { [ordered]@{ project = $kitInfo.server.project; supabaseUrl = $kitInfo.server.supabaseUrl; replaced = @($kitInfo.server.replaced)
+        drillFirstInstallKitSha256 = $kitInfo.server.firstInstallKitSha256; blackholeHosts = @($kitInfo.server.blackholeHosts)
+        # the test project's sync receipt read before the boot: which production state this drill's server stood in for
+        sync = $kitInfo.server['sync'] } } else { $null })
     kitSha256 = $kitInfo.sha256; prereqSha256 = $prereq.sha256; baseline = [ordered]@{ checkpoint = $script:Drill.Checkpoint; build = $baseline }
     startedAt = $startedAt; endedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); hostFreeGBAtStart = (Get-Prop (Get-Prop $o 'preBoot') 'bootGate.freeGB')
     failure = $failure; restoredToCheckpoint = $restored
+    # this run's limit, and in ladder mode the step it was derived from (the receipt, how far that run got, the rule)
+    runTimeoutMinutes = $RunTimeoutMinutes; ladder = $script:DrillLadder
     evidence = $evidence; files = $files; items = $items; m5 = $m5
     conclusion = $(if ($failure -or -not $restored) { 'FAIL' } else { Get-DrillConclusion $items $m5 ([bool]$package['candidate']) })
     # the package's credential names as given or withheld by design (the optional ones not given this run, with why)

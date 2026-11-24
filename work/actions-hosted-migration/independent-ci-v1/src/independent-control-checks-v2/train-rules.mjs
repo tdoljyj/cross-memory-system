@@ -78,12 +78,13 @@ export function requiredCheckFailure(rules, inventory, headSha, appId) {
   for (const r of rules.filter(r => r.type === 'required_status_checks')) for (const required of r.parameters.required_status_checks) {
     check(typeof required.context === 'string' && (required.integration_id == null || required.integration_id === -1
       || (Number.isSafeInteger(required.integration_id) && required.integration_id > 0)), RULESET_UNREADABLE);
-    // This repository's supported producers are the resident's six Native
-    // check-runs and GitHub Actions. Legacy/unpinned/unknown providers cannot
-    // be qualified from a check-run inventory; park instead of assuming green.
+    // A check pinned to an App is read from that App's check runs (below), whichever App it is: the same name pinned to another App
+    // as well (the hosted scaffold ruleset next to #292, task 04f9b91b) is one more requirement, never a doubt about this App's.
+    // Two kinds cannot be qualified from a check-run inventory: a check pinned to no App (any App's run or a commit status would
+    // do), and one pinned to this App that it does not publish. Park on those instead of assuming green.
     // resident ADR 0018 §8 item 3: kooyumi-train-landed (pinned to this App) is known and never published: absent is not a failure.
     if (required.integration_id === appId && required.context === TRAIN_ONLY_CHECK) continue;
-    if (!(required.integration_id === 15368 || (required.integration_id === appId && REQUIRED_CHECK_NAMES.includes(required.context)))) uncertain = true;
+    if (!(required.integration_id > 0) || (required.integration_id === appId && !REQUIRED_CHECK_NAMES.includes(required.context))) uncertain = true;
     const matches = inventory.checks.filter(c => c.name === required.context
       && (!(required.integration_id > 0) || c.app.id === required.integration_id));
     const latest = matches.reduce((a, c) => !a || c.id > a.id ? c : a, null);
@@ -99,16 +100,20 @@ export function requiredCheckFailure(rules, inventory, headSha, appId) {
 // ruleset-backstop.mjs#rulesFacts is another package and is held to the same rule by its own test): a check pinned to this App, or a scan
 // pinned to GitHub Actions. A required check without an integration accepts any App: never a pin.
 export const pinAllowed = (context, integrationId, appId) => integrationId === appId || (RULE_SCAN_NAMES.includes(context) && integrationId === ACTIONS_INTEGRATION_ID);
-// checks: required_status_checks entries ({ context, integration_id }). Every one of the six is there, and each entry of it is pinned
-// as pinAllowed allows.
+// checks: required_status_checks entries ({ context, integration_id }). Every one of the six has an entry pinned as pinAllowed allows,
+// and none of their entries is pinned to no App. The same name pinned to another App as well is one more requirement (requiredCheckFailure
+// reads that App's runs), not a different pin (task 04f9b91b: the hosted scaffold ruleset next to #292).
 export const sixPinned = (checks, appId) => Array.isArray(checks) && REQUIRED_CHECK_NAMES.every(n => {
   const of = checks.filter(c => plain(c) && c.context === n);
-  return of.length > 0 && of.every(c => pinAllowed(n, c.integration_id, appId));
+  return of.some(c => pinAllowed(n, c.integration_id, appId)) && of.every(c => Number.isSafeInteger(c.integration_id) && c.integration_id > 0);
 });
 
 // The rules GitHub applies to main, reduced to the facts stages 8 and 10 need. Anything that is not exactly understood is
-// unreadable: no required_status_checks rule (the ruleset disabled), one of the six checks missing or pinned to another
-// integration (a disaster-recovery switch; a scan may be pinned to this App or to GitHub Actions, R3), a malformed rule.
+// unreadable: no required_status_checks rule (the ruleset disabled), one of the six checks with no entry pinned as pinAllowed allows
+// (missing, or moved to another integration: a disaster-recovery switch; a scan may be pinned to this App or to GitHub Actions, R3), an
+// entry of one of the six pinned to no App, a malformed rule. Several rulesets aggregate: the same name pinned to another App as well is
+// one more requirement, not a different pin (task 04f9b91b; ruleset-backstop.mjs#rulesFacts reads the pin the same way, a test keeps
+// the two equal).
 // appScans: the scans this App must still publish (pinned to it by at least one rule), in RULE_SCAN_NAMES order.
 export function rulesetFacts(rules, appId) {
   check(Array.isArray(rules) && rules.length < 100 && rules.every(r => plain(r) && typeof r.type === 'string' && r.type.length > 0), RULESET_UNREADABLE);
@@ -119,11 +124,13 @@ export function rulesetFacts(rules, appId) {
   for (const r of required) for (const c of r.parameters.required_status_checks) {
     check(plain(c) && typeof c.context === 'string', RULESET_UNREADABLE);
     if (!REQUIRED_CHECK_NAMES.includes(c.context)) continue;
-    check(pinAllowed(c.context, c.integration_id, appId), RULESET_UNREADABLE);
-    pins.set(c.context, new Set([...(pins.get(c.context) ?? []), c.integration_id]));
+    // A required check without an integration accepts any App: never this check's pin, and never read as one.
+    check(Number.isSafeInteger(c.integration_id) && c.integration_id > 0, RULESET_UNREADABLE);
+    // Pinned to another App: one more requirement on the same name (requiredCheckFailure reads that App's runs), not a pin of the six.
+    if (pinAllowed(c.context, c.integration_id, appId)) pins.set(c.context, new Set([...(pins.get(c.context) ?? []), c.integration_id]));
   }
   check(REQUIRED_CHECK_NAMES.every(n => pins.has(n)), RULESET_UNREADABLE);
-  const appScans = RULE_SCAN_NAMES.filter(n => pins.get(n).has(appId));
+  const appScans = appScansPinned(rules, appId);
   // Several rulesets aggregate, the strictest wins: strict holds if any rule asks for it; the merge methods allowed are
   // the ones every pull_request rule allows. No pull_request rule, or one whose methods cannot be read, is unknown, so
   // never "merge only"; that only matters to the train, never a reason to refuse the rules (review N6).
@@ -134,6 +141,28 @@ export function rulesetFacts(rules, appId) {
   const methods = prRules.length === 0 || !readable ? null
     : ['merge', 'squash', 'rebase'].filter(m => prRules.every(r => r.parameters.allowed_merge_methods.includes(m)));
   return { requiredPinned: true, strict, mergeOnly: methods !== null && methods.length === 1 && methods[0] === 'merge', appScans };
+}
+
+// Task 04f9b91b (admission p90, FABLE-admission-p90-20261122 §3 甲): the scans some rule of main pins to this App, in RULE_SCAN_NAMES
+// order, whether or not the six are all pinned. In the scaffold phase main's only rules are the scaffold ruleset (27843120): the six are
+// not there (rulesetFacts: unreadable, stage 8 publishes nothing), and no scan is pinned to this App, so the resident runs none
+// (executor.mjs#localPlan) instead of 13-15 minutes of scans per batch that nothing can use. A scan pinned to this App by any rule is this
+// App's to publish (the same scan pinned to Actions as well does not change that). Rules that are not exactly understood are null, never
+// [] (the caller runs every scan): not a list, a malformed rule, no required_status_checks rule, or an entry of a scan pinned to no App
+// (any App's run would do: nothing says who publishes it). When rulesetFacts reads the rules, its appScans is this.
+export function appScansPinned(rules, appId) {
+  if (!Array.isArray(rules) || rules.length >= 100 || !rules.every(r => plain(r) && typeof r.type === 'string' && r.type.length > 0)) return null;
+  const required = rules.filter(r => r.type === 'required_status_checks');
+  if (required.length === 0 || !required.every(r => plain(r.parameters) && Array.isArray(r.parameters.required_status_checks)
+    && typeof r.parameters.strict_required_status_checks_policy === 'boolean')) return null;
+  const own = new Set();
+  for (const r of required) for (const c of r.parameters.required_status_checks) {
+    if (!plain(c) || typeof c.context !== 'string') return null;
+    if (!RULE_SCAN_NAMES.includes(c.context)) continue;
+    if (!Number.isSafeInteger(c.integration_id) || c.integration_id <= 0) return null;
+    if (c.integration_id === appId) own.add(c.context);
+  }
+  return RULE_SCAN_NAMES.filter(n => own.has(n));
 }
 
 // Review of R3, problem A: the scans main's live rules still require from this App (rulesetFacts appScans) must be done for a train front
@@ -271,10 +300,17 @@ export function strictFrontHeadDecision({ job, holders, frontProof, proof, fullS
   } catch { return no; }
 }
 
+// GitHub merged the PR at exactly this job's head on this job's base: the PR is merged and closed, its head is H, it targets
+// main, and its merge commit is exactly [T, H]. The one statement of "merged at this head" (field defect 2026-11-23, PR #1238 and
+// #1239): stage 1 (formal-work-admission-check-v2/publisher.mjs) settles its green on it, and mergedAsTested below adds the tree.
+export function mergedAtHead({ pull, mergeCommit, job }) {
+  return plain(job) && plain(pull) && pull.number === job.pr && pull.merged === true && pull.state === 'closed'
+    && pull.head?.sha === job.headSha && pull.base?.ref === 'main' && SHA.test(pull.merge_commit_sha ?? '')
+    && plain(mergeCommit) && mergeCommit.sha === pull.merge_commit_sha && sameParents(mergeCommit, job.baseSha, job.headSha);
+}
+
 // Rule 7 of §5.3, after the write: the PR was merged (auto-merge merges within seconds of the green), and the merge
 // commit is exactly [T, H] with the tested tree. Then the green did what it was for: success, never revoked.
 export function mergedAsTested({ pull, mergeCommit, job, testTree }) {
-  return plain(job) && SHA.test(testTree ?? '') && plain(pull) && pull.number === job.pr && pull.merged === true && pull.state === 'closed'
-    && pull.head?.sha === job.headSha && pull.base?.ref === 'main' && SHA.test(pull.merge_commit_sha ?? '')
-    && plain(mergeCommit) && mergeCommit.sha === pull.merge_commit_sha && sameParents(mergeCommit, job.baseSha, job.headSha) && mergeCommit.tree === testTree;
+  return SHA.test(testTree ?? '') && mergedAtHead({ pull, mergeCommit, job }) && mergeCommit.tree === testTree;
 }

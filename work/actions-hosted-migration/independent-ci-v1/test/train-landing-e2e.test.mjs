@@ -25,15 +25,22 @@ import { createFixtureControlPublisherV2 } from '../src/independent-control-chec
 import { runTrain } from '../src/independent-control-checks-v2/train-maintenance.mjs';
 import { batchChainOk, parseStageTrainLanding, stageTrainLandingText } from '../src/independent-control-checks-v2/train-landing.mjs';
 import { validateTrainFacts, REQUIRED_CHECKS_MAX_WAIT_MS } from '../src/independent-control-checks-v2/train-facts.mjs';
-import { parseLandingArg } from '../src/resident-v2/invoke-stage.mjs';
+import { parseLandingArg, prepareStageDirectory } from '../src/resident-v2/invoke-stage.mjs';
+import { readStageBatchRoute, stageBatchRouteText, STAGE_BATCH_ROUTE_FILE } from '../src/independent-control-checks-v2/batch-route.mjs';
+import { makeTrainRun } from '../src/resident-v2/train-run.mjs';
 import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import fs from 'node:fs/promises';
+import os from 'node:os';
+import { createFullAdmissionPortV2 } from '../src/full-admission-v2.mjs';
+import { mergeSlotState } from '../../../../scripts/ci/clued-work-admission.mjs';
+import { Poller, MAIN_REF_ROUTE, PULLS_ROUTE } from '../../../independent-ci-resident-v1/src/poller.mjs';
 import { WindowsEngine, DESCRIPTOR_CHAIN_CONTRACT, DESCRIPTOR_CONTRACT } from '../../../independent-ci-resident-v1/src/engine-windows.mjs';
 import { chainOfFront, openFrontBatchOf } from '../../../independent-ci-resident-v1/src/train.mjs';
 import { AdmissionRerunner, AdmissionRerunState, decide, HEAD_RECHECK_MS } from '../../../independent-ci-resident-v1/src/admission-rerun.mjs';
-import { parseStatus, StatusBoard } from '../../../independent-ci-resident-v1/src/status.mjs';
+import { parseStatus, pollerLandingOf, StatusBoard } from '../../../independent-ci-resident-v1/src/status.mjs';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../../../independent-ci-resident-v1/src/policy.mjs';
-import { CLEAN_PROOF, executorFixture, fakeEngine, rawPolicy, TEST_NODE, TEST_NODE_SHA } from '../../../independent-ci-resident-v1/test/helpers.mjs';
+import { CLEAN_PROOF, executorFixture, fakeCompanion, fakeEngine, rawPolicy, TEST_NODE, TEST_NODE_SHA } from '../../../independent-ci-resident-v1/test/helpers.mjs';
+import { HOSTED, SCAFFOLD_RULESET as SCAFFOLD_RS, portRules, scaffoldRules } from './s7-rules-fixture.mjs';
 
 const APP = 5368905, ACTIONS = 15368, SCOPE = 'project:00000000-0000-4000-8000-000000000000';
 const h = s => createHash('sha1').update(s).digest('hex');
@@ -48,25 +55,36 @@ const healthy = { nodes: [{ node: { name: 'turing', sourceManifestSha256: SOURCE
 // it). The publisher reads only current_user_can_bypass (this App's own bypass); who else is on a list it does not read.
 const MAIN_RS = 24182890, FF_RS = 27500001;
 const FOUR = ['ci-suites', 'clued-cloud-tests', 'migration-verify', 'ci-suites-windows'];
-function rulesOf(kind) {
-  const push = kind === 'push';
+// R3 lean: the three scans, each required from this App or (not in appScans) from GitHub Actions, which then runs it on every commit.
+const SCANS = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
+function rulesOf(kind, appScans = SCANS) {
+  const push = ruleKind(kind) === 'push';
   return [{ type: 'pull_request', rulesetId: MAIN_RS, parameters: { allowed_merge_methods: ['merge'] } },
     { type: 'non_fast_forward', rulesetId: MAIN_RS, parameters: null }, { type: 'deletion', rulesetId: MAIN_RS, parameters: null },
     ...(push ? [{ type: 'non_fast_forward', rulesetId: FF_RS, parameters: null }, { type: 'deletion', rulesetId: FF_RS, parameters: null }] : []),
     { type: 'required_status_checks', rulesetId: MAIN_RS, parameters: { strict_required_status_checks_policy: true, required_status_checks: [
-      ...['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot', ...(push ? ['kooyumi-train-landed'] : [])]
+      ...['kooyumi-work-admission', ...appScans, 'kooyumi-admission-verified', 'kooyumi-merge-slot', ...(push ? ['kooyumi-train-landed'] : [])]
         .map(context => ({ context, integration_id: 5368905 })),
-      ...FOUR.map(context => ({ context, integration_id: 15368 }))] } }];
+      ...[...FOUR, ...SCANS.filter(n => !appScans.includes(n))].map(context => ({ context, integration_id: 15368 }))] } },
+    ...(kind.startsWith('s7') ? portRules(scaffoldRules()) : [])];
 }
-const rulesetsOf = kind => new Map(kind === 'push'
+// Task 04f9b91b (Fable s7-landing-gaps 11-22): the hosted trial's S7 adds the scaffold ruleset (as read back live: s7-rules-fixture.mjs).
+// 's7' is S7 after both of the Owner's steps (#292 with C, the guard ruleset, the scaffold ruleset with App 5368905 on its bypass list);
+// 's7-step1' is S7's first step only (#292 enabled as today, the scaffold ruleset the App can bypass, no guard ruleset yet).
+const rulesetsOf = kind => new Map([...(kind === 'push' || kind === 's7'
   ? [[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'always' }], [FF_RS, { id: FF_RS, currentUserCanBypass: 'never' }]]
-  : [[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never' }]]);
+  : [[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never' }]]),
+  ...(kind.startsWith('s7') ? [[SCAFFOLD_RS, { id: SCAFFOLD_RS, currentUserCanBypass: 'always' }]] : [])]);
+const ruleKind = kind => (kind === 's7' ? 'push' : kind === 's7-step1' ? 'today' : kind);
 
-async function world(t, { prs, bad = () => false, sharedClaim = false, rules = 'push' }) {
+// queued false: nobody is in Native's merge queue yet (stage 8 joins it); admitted false: no stage 1 has run on any head yet; appScans: the
+// scans main requires from this App (bc982192 E3: none).
+async function world(t, { prs, bad = () => false, sharedClaim = false, rules = 'push', behind = 0, queued = true, admitted = true, appScans = SCANS,
+  hosted = rules.startsWith('s7') }) {
   const e = await setup(t, { strict: true, fullDone: false, native: healthy, tick: 1 });
   e.claimFor = sharedClaim ? () => claimOf(prs[0]) : claimOf;
   e.native.bindings = new Map(prs.map(pr => [pr, { claimId: e.claimFor(pr), scope: SCOPE, headAuthorizationId: claimOf(pr) }]));
-  const W = { commits: new Map(), content: new Map(), refs: new Map(), checks: new Map(), pulls: new Map(), nextCheck: 1000, beforeFastForward: null, pushes: [] };
+  const W = { commits: new Map(), content: new Map(), refs: new Map(), checks: new Map(), pulls: new Map(), nextCheck: 1000, beforeFastForward: null, pushes: [], refused: [] };
   e.W = W;
   const treeOf = set => h(`tree:${[...set].sort().join(',')}`);
   const commit = (sha, parents, content) => { if (!W.commits.has(sha)) { W.commits.set(sha, { sha, tree: treeOf(content), parents }); W.content.set(sha, new Set(content)); } return sha; };
@@ -76,10 +94,15 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   let mergesMade = 0;
   W.merge = merge; W.ancestor = ancestor;
   const T0 = commit(h('T0'), [], []);
-  W.refs.set('heads/main', T0);
-  // GitHub Actions: the four required checks of the main ruleset, by their own names
+  // behind: main has moved that many commits past T0, the commit every PR head is on (nobody merged main into them), before the PRs
+  // were opened.
+  let tip = T0;
+  for (let i = 1; i <= behind; i++) tip = commit(h(`M${i}`), [tip], Array.from({ length: i }, (_, k) => `m${k + 1}`));
+  W.refs.set('heads/main', tip); W.T0 = T0;
+  // GitHub Actions: the four required checks of the main ruleset, by their own names (and in S7 the scaffold's six hosted-*: hosted-required.yml
+  // runs on pull requests and on pushes to clued-train/staging)
   const actions = sha => {
-    for (const name of FOUR) {
+    for (const name of [...FOUR, ...SCANS.filter(n => !appScans.includes(n)), ...(hosted ? HOSTED : [])]) {
       const id = W.nextCheck++;
       W.checks.set(id, { id, app: { id: ACTIONS }, name, head_sha: sha, status: 'completed',
         conclusion: bad(W.content.get(sha)) ? 'failure' : 'success', completed_at: iso(e.now - 5 * 60_000) });
@@ -88,19 +111,25 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   for (const pr of prs) {
     const head = commit(h(`head:${pr}`), [T0], [String(pr)]);
     // autoMerge: the author turned GitHub auto-merge on (every agent PR does, gh pr merge --auto); paths: its changed files (null: unreadable)
-    W.pulls.set(pr, { number: pr, head, state: 'open', merged: false, updated: iso(NOW - 3_600_000 + pr), body: body(pr), autoMerge: true, paths: ['a.txt'] });
+    // base: GitHub's base.sha, main's tip when the head was last pushed (here: when the PR was opened); it stays while main moves on
+    // (PLAN-native-admission-latency §10.1), only pushHead moves it
+    W.pulls.set(pr, { number: pr, head, base: W.refs.get('heads/main'), state: 'open', merged: false, updated: iso(NOW - 3_600_000 + pr), body: body(pr), autoMerge: true, paths: ['a.txt'] });
     actions(head); // the PR's own CI on its head (pull_request)
+    if (!admitted) continue;
     const id = W.nextCheck++; // stage 1 admitted it: App 5368905's kooyumi-work-admission on the head
     W.checks.set(id, { id, app: { id: APP }, name: 'kooyumi-work-admission', head_sha: head, status: 'completed', conclusion: 'success' });
   }
+  // A push of a new head to a PR: GitHub moves its base.sha to main's tip of that moment (the one place the fixture changes a head).
+  W.pushHead = (pr, sha, patch = {}) => Object.assign(W.pulls.get(pr), patch, { head: sha, base: W.refs.get('heads/main') });
+  W.actions = actions;
   const markMerged = () => { for (const p of W.pulls.values()) if (p.state === 'open' && ancestor(p.head, W.refs.get('heads/main'))) Object.assign(p, { state: 'closed', merged: true, mergeSha: W.refs.get('heads/main') }); };
   // GitHub (the checks port's reads, over this world)
   const gh = e.gh;
   gh.world.pulls.clear();
   Object.defineProperty(gh.world, 'main', { get: () => W.refs.get('heads/main'), set: () => {} });
   gh.readBranchHead = async () => ({ name: 'main', sha: W.refs.get('heads/main') });
-  W.rules = rulesOf(rules); W.rulesets = rulesetsOf(rules);
-  W.setRules = kind => { W.rules = rulesOf(kind); W.rulesets = rulesetsOf(kind); };
+  W.rules = rulesOf(rules, appScans); W.rulesets = rulesetsOf(rules);
+  W.setRules = kind => { W.rules = rulesOf(kind, appScans); W.rulesets = rulesetsOf(kind); };
   gh.readBranchRules = async () => ({ complete: true, branch: 'main', rules: structuredClone(W.rules) });
   // GET /rulesets/{id} as github.mjs#readRuleset answers it: this App's own bypass of the ruleset (current_user_can_bypass)
   gh.readRuleset = async id => {
@@ -113,7 +142,7 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
     const testMerge = p.state === 'open' ? (ancestor(p.head, main) ? null : merge(main, p.head)) : null;
     return { number: n, state: p.state, draft: false, merged: p.merged, mergeable: p.state === 'open', merge_commit_sha: p.merged ? p.mergeSha : testMerge, body: p.body,
       auto_merge: p.autoMerge ? { merge_method: 'merge' } : null,
-      head: { sha: p.head, ref: `topic-${n}`, repo: { full_name: REPO } }, base: { ref: 'main', sha: main, repo: { full_name: REPO } } };
+      head: { sha: p.head, ref: `topic-${n}`, repo: { full_name: REPO } }, base: { ref: 'main', sha: p.base, repo: { full_name: REPO } } };
   };
   gh.readChangedPaths = async j => {
     const p = W.pulls.get(j.pr);
@@ -134,12 +163,29 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   gh.readPullsUpdatedSince = async () => ({ complete: true, pulls: [], newest: null });
   gh.readPullCommitsBounded = async n => ({ complete: true, tooMany: false, count: 1, headSha: W.pulls.get(n).head, commits: [W.pulls.get(n).head] });
   gh.readForcePushes = async () => ({ complete: true, events: [] });
+  // GitHub refuses a push to main by the rulesets as GitHub does (task 04f9b91b): every ruleset on main this App cannot always bypass
+  // must hold for the pushed commit. A pull request rule never holds for a push; a required check holds when the newest run by id of its
+  // pinned App on that commit is a success (non_fast_forward and deletion hold for a fast-forward).
+  const refusedBy = s => {
+    for (const id of [...new Set(W.rules.map(r => r.rulesetId))].sort((a, b) => a - b)) {
+      if (W.rulesets.get(id)?.currentUserCanBypass === 'always') continue;
+      const list = W.rules.filter(r => r.rulesetId === id);
+      if (list.some(r => r.type === 'pull_request')) return id;
+      for (const c of list.filter(r => r.type === 'required_status_checks').flatMap(r => r.parameters.required_status_checks)) {
+        const newest = listChecks(s).filter(k => k.name === c.context && (!(c.integration_id > 0) || k.app.id === c.integration_id)).reduce((a, k) => (!a || k.id > a.id ? k : a), null);
+        if (newest?.status !== 'completed' || newest.conclusion !== 'success') return id;
+      }
+    }
+    return null;
+  };
   // The landing port (refs only), as train-landing-port.mjs answers.
   e.port = {
     async fastForwardMain(s) {
       W.beforeFastForward?.(); W.beforeFastForward = null;
       W.pushes.push(s);
       if (!W.commits.has(s) || !ancestor(W.refs.get('heads/main'), s)) return { status: 422, sha: null };
+      const by = refusedBy(s);
+      if (by !== null) { W.refused.push([s, by]); return { status: 422, sha: null }; }
       W.refs.set('heads/main', s); markMerged();
       return { status: 200, sha: s };
     },
@@ -157,7 +203,7 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
     },
   };
   // Native: one slot holder (the head of the queue), the rest waiting; adopt and touch failed leave the queue.
-  const queue = [...prs];
+  const queue = queued ? [...prs] : [];
   let takenAt = iso(NOW - 300_000), ci = { ciState: null, ciHeadSha: null }, slotUntil = NOW + 3_600_000;
   const holder = () => {
     if (!queue.length) return null;
@@ -186,6 +232,28 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   return e;
 }
 
+// The world itself (PLAN-native-admission-latency §10.1, §10.4): GitHub keeps an open PR's base.sha where main was when its head was last
+// pushed; main moving on does not move it, a push of a new head moves it to main's tip of that moment. The single PR read and the poller's
+// list of open pulls answer the same value.
+test('fixture (§10.4): base.sha is main at the last push of the head, not main now; a new head moves it', async t => {
+  const e = await world(t, { prs: [1201], rules: 'today' });
+  const listed = async () => {
+    const out = await pollerRun(e)(['api', '--include', PULLS_ROUTE(REPO)]);
+    return JSON.parse(out.stdout.slice(out.stdout.indexOf('\n\n') + 2)).find(p => p.number === 1201).base.sha;
+  };
+  const read = async () => (await e.gh.readPullRequest(1201)).base.sha;
+  const opened = e.main();
+  assert.deepEqual([await read(), await listed()], [opened, opened], 'opened on main');
+  const other = h('fixture-other');
+  e.W.commits.set(other, { sha: other, tree: h('tree:fixture-other'), parents: [opened] }); e.W.content.set(other, new Set(['other']));
+  e.W.refs.set('heads/main', other);
+  assert.deepEqual([await read(), await listed()], [opened, opened], 'main moved on: base.sha stays');
+  const next = h('fixture-next-1201');
+  e.W.commits.set(next, { sha: next, tree: h('tree:fixture-next'), parents: [e.head(1201)] }); e.W.content.set(next, new Set(['1201', 'next']));
+  e.W.pushHead(1201, next);
+  assert.deepEqual([e.head(1201), await read(), await listed()], [next, other, other], 'a new head: base.sha is main at that push');
+});
+
 // ---- stage 10, stage 8 and the loop between them ----
 let runN = 0;
 // The stage file stage 10 reads (invoke-stage.mjs writes it from the resident's --train-landing): push, batchMax 4, the chain installed.
@@ -200,7 +268,9 @@ async function stage10(e, outcome = null) {
     claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN4 });
 }
 // scans: the front batch's stages 2-7 passed and published its own scans on H (gh.frontScans); false for a batch that ran none.
-async function stage8(t, e, b, { trainLanding = { landing: 'push', batchMax: 4, unreadable: false }, mode = () => 'normal', scans = true } = {}) {
+// batchRoute: what stage 8 read from its batch-route.json (bc982192); claimAssist: Native's claim assist (a claim joins the queue).
+async function stage8(t, e, b, { trainLanding = { landing: 'push', batchMax: 4, unreadable: false }, mode = () => 'normal', scans = true, batchRoute = null, claimAssist = null,
+  admission = e.admission } = {}) {
   e.now += 60_000;
   const claim = pr => ({ claimId: e.claimFor(pr), fence: 3, epoch: 1, expiresAt: iso(e.now + 3_600_000) });
   const jobs = batchJobsV2({ repo: REPO, pr: b.pr, headSha: b.headSha, baseSha: b.baseSha, testSha: b.testSha, sourceManifestSha256: SOURCE, createdAt: iso(e.now), attempt: b.attempt });
@@ -208,14 +278,14 @@ async function stage8(t, e, b, { trainLanding = { landing: 'push', batchMax: 4, 
   e.journal ??= await EffectJournal.open(path.join(await tempDir(t), 'effects'));
   const publisher = createFixtureControlPublisherV2({ github: e.gh, journal: e.journal, trainMode: 'on', batchClaim: claimGeneration(claim(b.pr)), slotNative: e.native.port,
     sweepStore: e.store, greenLedger: e.ledger, pullsUpdatedSince: cursor => e.gh.readPullsUpdatedSince(cursor),
-    admission: { async evaluatePr(job, packet, options) {
+    admission: admission ?? { async evaluatePr(job, packet, options) {
       const front = e.queue[0] === job.pr;
       options?.scheduling?.({ mergeQueue: { entered: e.queue.includes(job.pr), state: front ? 'head' : 'waiting', position: e.queue.indexOf(job.pr) + 1 }, claimExpiresAt: iso(e.now + 3_600_000) });
       const { observationSha256, ...base } = admittedFacts(job, claim(job.pr), packet, { domain: 'fixture', mergeQueueHead: front, batchClaim: options?.batchClaim, observedAt: e.now, slotUntil: e.now + 600_000 });
       const facts = { ...base, mode: { state: mode(job.pr), layer: 'code', policyVersion: 1 } };
       return { ...facts, observationSha256: digest(facts) };
     } },
-    assertLive() {}, record() {}, authority: {}, clock: e.clock, sleep: e.sleep, trainLanding, landing: e.port });
+    assertLive() {}, record() {}, authority: {}, clock: e.clock, sleep: e.sleep, trainLanding, landing: e.port, batchRoute, claimAssist });
   return publisher.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: e.now + 90_000 });
 }
 // The executor's part: a front batch runs (stages 1-7 pass), stage 8 answers; a final PR failure is stage 10's next frontOutcome.
@@ -829,7 +899,6 @@ test('R3 problem A, push: scans pinned back from Actions to this App between lan
 // one with all six pinned to this App: none, so stage 10 read park and stage 8 TRAIN_LANDING_RULES_MISSING, never landing. Now the main
 // ruleset is found by the same pin rule as stages 8 and 10: stage 10 reads push with no scan required from this App, and stage 8 pushes S
 // once its Actions scans passed on S (external checks); while gitleaks still runs on S it waits, a failed one fails the batch.
-const SCANS = ['gitleaks', 'trivy', 'contract-placement'];
 function scansFromActions(e) {
   e.W.rules = e.W.rules.map(r => (r.type !== 'required_status_checks' ? r : { ...r, parameters: { ...r.parameters,
     required_status_checks: r.parameters.required_status_checks.map(c => (SCANS.includes(c.context) ? { ...c, integration_id: ACTIONS } : c)) } }));
@@ -1120,7 +1189,7 @@ test('应修 1 (T3): the switch to C at every point of the front\'s way -> no pe
 // the PR's own CI and stage 1 run again on the new head.
 function updateBranch(e, pr) {
   const W = e.W, head = W.merge(e.head(pr), e.main(), ':update');
-  W.pulls.get(pr).head = head;
+  W.pushHead(pr, head);
   for (const [app, name] of [...FOUR.map(n => [ACTIONS, n]), [APP, 'kooyumi-work-admission']]) {
     const id = W.nextCheck++; W.checks.set(id, { id, app: { id: app }, name, head_sha: head, status: 'completed', conclusion: 'success', completed_at: iso(e.now) });
   }
@@ -1205,15 +1274,14 @@ test('three ways, fail closed: kooyumi-train-landed read while the rest is not c
     'train-landed pinned to another App': W => { W.rules.find(r => r.type === 'required_status_checks').parameters.required_status_checks.find(x => x.context === 'kooyumi-train-landed').integration_id = 1; },
   };
   const expected = { 'no independent ruleset': 'independent_ruleset_missing', 'the App can bypass the independent ruleset': 'independent_ruleset_app_can_bypass',
-    'the App cannot bypass main': 'main_app_cannot_bypass', 'the App bypasses main for pull requests only': 'main_app_bypass_not_always', 'train-landed pinned to another App': null };
+    'the App cannot bypass main': 'main_app_cannot_bypass', 'the App bypasses main for pull requests only': 'main_app_bypass_not_always', 'train-landed pinned to another App': 'train_landed_check_missing' };
   for (const [name, change] of Object.entries(cases)) await t.test(name, async t => {
     const { e, b, T } = await opened(t, [910]);
     change(e.W);
     const p = await stage8(t, e, b, { trainLanding: PUSH1 });
-    // kooyumi-train-landed pinned to another App is an unknown provider to the queue head's required-check gate (train-rules.mjs), which
-    // parks first; landingRoute's own answer for it (train_landed_check_missing) is in train-landing.test.mjs
-    if (expected[name] === null) assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'REQUIRED_CHECKS_UNREADABLE', 0], JSON.stringify(p));
-    else assert.deepEqual([p.status, p.reason, p.sideEffects, p.missing], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0, [expected[name]]], JSON.stringify(p));
+    // kooyumi-train-landed pinned to another App is that App's required check to the queue head's gate (train-rules.mjs, task 04f9b91b:
+    // read from its runs, absent is no failure), so landingRoute answers for it: train_landed_check_missing
+    assert.deepEqual([p.status, p.reason, p.sideEffects, p.missing], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0, [expected[name]]], JSON.stringify(p));
     untouched(e, T); assert.deepEqual(e.W.pushes, []);
   });
 });
@@ -1329,7 +1397,7 @@ test('push, fail closed: a rider that is frozen, left the queue, moved to a new 
     if (change === 'queue') e.queue.splice(e.queue.indexOf(912), 1);
     if (change === 'head') {
       const n = h('new-head-911');
-      e.W.commits.set(n, { sha: n, tree: h('tree:n'), parents: [e.head(911)] }); e.W.content.set(n, new Set(['911', 'n'])); e.W.pulls.get(911).head = n;
+      e.W.commits.set(n, { sha: n, tree: h('tree:n'), parents: [e.head(911)] }); e.W.content.set(n, new Set(['911', 'n'])); e.W.pushHead(911, n);
     }
     if (change === 'closed') e.W.pulls.get(912).state = 'closed';
     const p = await stage8(t, e, b, { mode });
@@ -1386,7 +1454,7 @@ test('push: a member that moved to a new head after its batch landed is not adop
   e.port.fastForwardMain = async s => {
     const r = await ff(s);
     const n = h('later-912'); e.W.commits.set(n, { sha: n, tree: h('tree:l'), parents: [e.head(912)] }); e.W.content.set(n, new Set(['912', 'l']));
-    Object.assign(e.W.pulls.get(912), { head: n, state: 'open', merged: false });
+    e.W.pushHead(912, n, { state: 'open', merged: false });
     return r;
   };
   assert.equal((await stage8(t, e, b)).status, 'SETTLED');
@@ -1538,7 +1606,7 @@ test('field 2026-11-13: a Task whose CI head was replaced by a push still gets i
   for (let i = 0; i < 6 && !first; i++) first = (await stage10(e)).facts.openFrontBatch;
   assert.equal(first?.pr, 910);
   const W = e.W, pushed = W.merge(e.head(910), e.main(), ':push');
-  W.pulls.get(910).head = pushed;
+  W.pushHead(910, pushed);
   for (const [app, name] of [[ACTIONS, 'ci-suites'], [APP, 'kooyumi-work-admission']]) {
     const id = W.nextCheck++; W.checks.set(id, { id, app: { id: app }, name, head_sha: pushed, status: 'completed', conclusion: 'success' });
   }
@@ -1600,15 +1668,774 @@ test('D6 §8.4 (b): the same refused state beside a landing batch of this node -
     assert.equal((await fs.readdir(e.store.directory)).filter(n => n.startsWith('landing-state-')).length, 1, 'no state written over it');
     // the resident: status.json train.last carries the error, the front's PR line names it, the decision is an Owner notice
     const summary = trainSummary(r.facts);
-    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', bypass: { main: 'always', independent: 'never' } }]);
+    // (task 04f9b91b: the summary keeps what push lacks too, for the landing precheck's P3)
+    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', missing: [], bypass: { main: 'always', independent: 'never' } }]);
     const board = new StatusBoard({ clock: e.clock });
     board.update({ train: { enabled: 'on', last: summary } });
     const last = parseStatus(Buffer.from(JSON.stringify(board.snapshot()))).train.last;
-    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', bypass: { main: 'always', independent: 'never' } }]);
+    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', missing: [], bypass: { main: 'always', independent: 'never' } }]);
     const line = withTrainLine({ state: 'pending', description: '排队中' }, last, { pr: 910, headSha: e.head(910) }, e.now, 400);
     assert.match(line.description, /落地状态.*TRAIN_LANDING_STATE_UNREADABLE/, line.description);
     assert.ok(TRAIN_OWNER_NOTICE_DECISIONS.includes(summary.decision));
   }
   assert.deepEqual(e.W.pushes, []);
   assert.equal(e.main(), T);
+});
+
+// ---- bc982192 (replan §3.3, cause 甲): push landing admits a head behind main on its merge base ----
+// The real resident poller, the real Source v2 full admission (fixture domain; its evaluator answers the merge slot with the real
+// scripts/ci mergeSlotState: not_needed for a head that does not contain main's tip), the real stage 8 and stage 10.
+const reach = (W, sha) => { const seen = new Set(), todo = [sha]; while (todo.length) { const x = todo.pop(); if (seen.has(x)) continue; seen.add(x); todo.push(...(W.commits.get(x)?.parents ?? [])); } return seen; };
+function mergeBaseOf(W, a, b) {
+  const inB = reach(W, b);
+  const common = [...reach(W, a)].filter(x => inB.has(x));
+  return common.find(x => common.every(y => y === x || !W.ancestor(x, y))) ?? null;
+}
+// gh as the poller calls it: the main ref and the open pulls with --include, compare with its --jq projection.
+function pollerRun(e) {
+  return async argv => {
+    const route = argv.find(a => a.startsWith('repos/')) ?? '';
+    const included = v => ({ code: 0, stdout: `HTTP/1.1 200 OK\n\n${JSON.stringify(v)}` });
+    if (route === MAIN_REF_ROUTE(REPO)) return included({ object: { sha: e.main() } });
+    if (route === PULLS_ROUTE(REPO)) return included([...e.W.pulls.values()].filter(p => p.state === 'open').map(p => ({ number: p.number,
+      head: { sha: p.head }, base: { sha: p.base }, draft: false, updated_at: p.updated }))); // GitHub's base.sha: where main was at the last push
+    const m = /compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})/.exec(route);
+    if (m) {
+      const inHead = reach(e.W, m[2]);
+      const behindBy = [...reach(e.W, m[1])].filter(x => !inHead.has(x)).length;
+      return { code: 0, stdout: JSON.stringify({ behind_by: behindBy, base: m[1], merge_base: mergeBaseOf(e.W, m[1], m[2]) }) };
+    }
+    return { code: 9, stdout: '' };
+  };
+}
+const BINDING_ID = '0b1d0000-2222-4333-8444-555555555555';
+const taskOf = pr => `${String(pr).padStart(8, '0')}-3333-4333-8444-555555555555`;
+// The full admission port of stage 1 and stage 8, over the world: GitHub reads from it, Native's verify from its queue.
+// batchRoute: what the stage read from its batch-route.json (bc982192; null: none, main's tip is the batch base).
+function realAdmission(e, { batchRoute = null } = {}) {
+  const W = e.W, ref = `merge:${REPO}:main`, policyText = '{"policy":"fixture"}';
+  const config = { domain: 'fixture', repository: REPO, scope: SCOPE, workspace: os.tmpdir(), sourceManifestSha256: SOURCE, evaluatorSha256: digest('EVALUATOR'),
+    policyText, policySha256: digest(policyText), ciPrincipalBindingId: BINDING_ID, ciPrincipalQualificationRef: 'qualification-ref',
+    publishableKey: 'sb_publishable_fixture', supabaseUrl: 'https://fixture.supabase.co' };
+  const answer = v => ({ ok: true, status: 200, json: async () => structuredClone(v) });
+  const fetchImpl = async url => {
+    const p = new URL(url).pathname;
+    let m = /\/pulls\/(\d+)$/.exec(p);
+    if (m) return answer(await e.gh.readPullRequest(Number(m[1])));
+    m = /\/compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40}|main)$/.exec(p);
+    if (m) { const c = await e.gh.readCompare(m[1], m[2] === 'main' ? e.main() : m[2]); return answer({ status: c.status, ahead_by: c.aheadBy, behind_by: c.behindBy }); }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const evaluateImpl = async ({ event, observation_recorder }) => {
+    const pr = event.pull_request, n = pr.number, head = pr.head.sha, main = e.main(), prRef = `${REPO}#${n}`, claimId = e.claimFor(n);
+    const at = e.queue.indexOf(n), until = iso(e.now + 600_000), paths = [...W.pulls.get(n).paths];
+    const claim = { claim_id: claimId, task_id: taskOf(n), fence: 3, execution_epoch: 1, context_key: SCOPE, status: 'ACTIVE', bound_pr: prRef,
+      expires_at: iso(e.now + 3_600_000), lease_key_required: false, execution_handover_pending: false, merge_slot_until: until, trigger_refs: [ref],
+      merge_queue: at < 0 ? [] : [{ ref, state: at === 0 ? 'head' : 'waiting', position: at + 1, ahead: at === 0 ? [] : e.queue.slice(0, at).map(x => ({ claim_id: e.claimFor(x) })),
+        head: { claim_id: e.claimFor(e.queue[0]), bound_pr: `${REPO}#${e.queue[0]}`, since: iso(e.now - 1000), until } }] };
+    const native = { status: 'ok', verdict: 'ADMITTED', execution_authorized: true, execution_policy: 'staged', current_fence: 3, execution_epoch: 1,
+      bound_pr: prRef, pr_ref: prRef, head_sha: head, base_sha: pr.base.sha, verified_at: iso(e.now), paths_outside_write_set: [], claim };
+    observation_recorder.record('claim_verification', { result: { payload: native } });
+    const upToDate = W.ancestor(main, head), layer = (e.layerOfPaths ?? (() => 'code'))(paths);
+    // evaluate()'s check_and_strict of the protected layer (clued-work-admission.mjs, protected_change_not_up_to_date): unchanged here
+    const rejected = layer === 'protected' && !upToDate;
+    return { admitted: !rejected, verdict: rejected ? 'REJECTED' : 'ADMITTED', reasons: rejected ? [`protected_change_not_up_to_date:${main}`] : [],
+      head_sha: head, base_sha: pr.base.sha, pr_ref: prRef, claim_id: claimId, task_id: taskOf(n), scope: SCOPE, changed_paths: paths,
+      claim_binding: { status: 'ok', binding_status: 'bound', reason: null, repository: REPO, pr_number: n, pr_ref: prRef, head_sha: head, base_sha: pr.base.sha,
+        target_branch: 'main', scope: SCOPE, task_id: taskOf(n), claim: { claim_id: claimId, task_id: taskOf(n), context_key: SCOPE, fence: 3, execution_epoch: 1,
+          lease_version: 1, expires_at: claim.expires_at, status: 'ACTIVE', execution_handover_pending: false }, head_authorization_id: null, auto_bound: false, receipt_id: null },
+      admission_mode: { state: 'normal', layer, policy_version: 1 },
+      merge_slot: mergeSlotState({ repository: REPO, branch: 'main', tip: main, upToDate, claim, verifiedAt: native.verified_at }),
+      owner_review: null, workflow_gate_findings: [] };
+  };
+  return createFullAdmissionPortV2({ protectedConfig: config, batchRoute, clock: () => e.now, monotonic: () => e.now, fetchImpl,
+    tokenProvider: async () => ({ githubToken: 'gh-fixture', ciAdmissionToken: ['clued', 'bnd', 'fixture123'].join('_'), ciPrincipalBindingId: BINDING_ID, ciPrincipalQualificationRef: 'qualification-ref' }),
+    modeProvider: async () => ({ complete: true, repository: REPO, variable: 'CLUED_MERGE_ADMISSION_STATE', source: 'github-repository-variables', exists: false, observedAt: iso(e.now), proofRef: 'mode-proof' }),
+    recorderProvider: async () => ({ kind: 'independent-controller', domain: 'fixture', observedAt: iso(e.now), observationRef: 'obs', recorder: { newId: () => h(`id:${e.now}:${Math.random()}`), record() {} } }),
+    fixtureHooks: { evaluatorReader: () => 'EVALUATOR', evaluateImpl } });
+}
+// Stage 1 (S = H) of every trigger the poller wrote: the real full admission; then that batch's stage 8 (it parks: not the train front).
+async function stageOneAll(t, e, triggers, { batchRoute = null } = {}) {
+  const out = [];
+  for (const g of triggers) {
+    const job = batchJobsV2({ repo: REPO, pr: g.pr, headSha: g.headSha, baseSha: g.baseSha, testSha: g.headSha, sourceManifestSha256: SOURCE, createdAt: iso(e.now), attempt: 1 })['control-admission'];
+    const facts = await e.admission.evaluatePr(job, await e.gh.readChangedPaths(job));
+    const p8 = facts.status === 'ADMITTED' ? await stage8(t, e, { pr: g.pr, headSha: g.headSha, baseSha: g.baseSha, testSha: g.headSha, attempt: 1 }, { batchRoute }) : null;
+    out.push({ pr: g.pr, status: facts.status, reason: facts.reason ?? null, slot: facts.mergeSlot?.state ?? null, stage8: p8 ? [p8.status, p8.reason ?? null] : null });
+  }
+  return out;
+}
+const pollOnce = async (e, landing) => {
+  const triggers = [];
+  const poller = new Poller({ repo: REPO, ghExe: 'gh', run: pollerRun(e), clock: () => e.now, writeTrigger: async v => { triggers.push(v); }, landing: async () => landing });
+  await poller.pass();
+  return { triggers, pulls: poller.lastPass?.pulls ?? null };
+};
+
+test('push C3 (cause 甲): three PRs each two commits behind main, nobody merges main -> admitted on their merge base -> one batch of three lands within 30 minutes', async t => {
+  const prs = [1301, 1302, 1303];
+  const e = await world(t, { prs, behind: 2 });
+  e.admission = realAdmission(e, { batchRoute: 'push' }); // every batch here stamped push (the resident-level drive is E3 below)
+  const start = e.now, T0 = e.W.T0, M2 = e.main(), heads = prs.map(e.head);
+  assert.ok(prs.every(pr => !e.W.ancestor(M2, e.head(pr))), 'every head is behind main');
+  // ring 1: the poller proposes each head on its merge base with main (T0), not main's tip
+  const { triggers, pulls } = await pollOnce(e, 'push');
+  assert.deepEqual(triggers.map(g => [g.pr, g.headSha, g.baseSha]).sort((a, b) => a[0] - b[0]), prs.map(pr => [pr, e.head(pr), T0]), JSON.stringify(pulls));
+  // ring 2: stage 1's full admission admits S = H on T0 (the head does not contain main: merge slot not_needed); ring 3: its stage 8 never
+  // ends the base because main is past it
+  const one = await stageOneAll(t, e, triggers, { batchRoute: 'push' });
+  for (const r of one) {
+    assert.equal(r.status, 'ADMITTED', JSON.stringify(r));
+    assert.equal(r.slot, 'not_needed', JSON.stringify(r));
+    assert.notEqual(r.stage8?.[1], 'RESIDENT_BASE_MOVED', JSON.stringify(r));
+  }
+  // ring 4: stage 10 composes merge(M2, H...) and stage 8 (the real admission: the front's tested S contains main) pushes it
+  let batch = null;
+  const log = await drive(t, e, { until: () => prs.every(pr => e.W.pulls.get(pr).merged), opened: async (r, b) => { batch ??= b; } });
+  assert.ok(prs.every(pr => e.W.pulls.get(pr).merged), JSON.stringify(log));
+  assert.equal(e.W.pushes.length, 1, JSON.stringify(log));
+  assert.equal(new Set(prs.map(pr => e.W.pulls.get(pr).mergeSha)).size, 1, 'one batch');
+  assert.equal(batch.baseSha, M2);
+  assert.ok(e.W.ancestor(M2, e.main()), 'main only fast-forwarded');
+  assert.deepEqual(prs.map(e.head), heads, 'no head was changed: nobody merged main into a PR');
+  assert.ok(e.now - start <= 30 * 60_000, `landed after ${(e.now - start) / 60_000} minutes`);
+});
+
+test('C3 regression, github-merge: a head behind main is still told merge-main and proposed to no stage (also without a landing port, or when it cannot be read)', async t => {
+  const e = await world(t, { prs: [1331], behind: 2, rules: 'today' });
+  for (const landing of ['github-merge', undefined, 'unknown']) {
+    const { triggers, pulls } = await pollOnce(e, landing);
+    assert.deepEqual(triggers, [], String(landing));
+    assert.deepEqual(pulls.map(p => [p.pr, p.eligible, p.hint, p.behindBy]), [[1331, false, 'merge-main', 2]], String(landing));
+  }
+  // a broken landing port is github-merge too
+  const triggers = [];
+  const poller = new Poller({ repo: REPO, ghExe: 'gh', run: pollerRun(e), clock: () => e.now, writeTrigger: async v => { triggers.push(v); }, landing: async () => { throw new Error('status unreadable'); } });
+  await poller.pass();
+  assert.deepEqual(triggers, []);
+  assert.equal(poller.lastPass.pulls[0].hint, 'merge-main');
+  // a head that contains main's tip: proposed on main's tip, exactly as before
+  const up = await world(t, { prs: [1332] });
+  const r = await pollOnce(up, 'github-merge');
+  assert.deepEqual(r.triggers.map(g => [g.pr, g.baseSha]), [[1332, up.main()]]);
+});
+
+test('C3 regression, protected layer: a protected head behind main is still refused at stage 1 (it must contain main\'s tip) and never opens a batch', async t => {
+  const e = await world(t, { prs: [1311], behind: 2 });
+  e.layerOfPaths = LAYER;
+  e.W.pulls.get(1311).paths = ['scripts/ci/x.mjs'];
+  e.admission = realAdmission(e, { batchRoute: 'push' }); // stamped push: the evaluator's protected rule is what refuses it
+  const { triggers } = await pollOnce(e, 'push');
+  assert.equal(triggers.length, 1, 'the poller does not judge layers');
+  const [one] = await stageOneAll(t, e, triggers);
+  assert.deepEqual([one.status, one.reason], ['BLOCKED', 'full_admission_rejected'], JSON.stringify(one));
+  const decisions = [];
+  for (let i = 0; i < 4; i++) { const r = await stage10(e); decisions.push(r.facts.decision); assert.equal(r.facts.openFrontBatch ?? null, null, JSON.stringify(decisions)); }
+  assert.deepEqual(e.W.pushes, []);
+  assert.equal(e.W.pulls.get(1311).merged, false);
+});
+
+test('C3 rider rule: a PR whose head has a failed required check never rides; the batch lands the others in one push', async t => {
+  const prs = [1321, 1322, 1323];
+  const e = await world(t, { prs, bad: content => content.has('1322') });
+  assert.deepEqual(await firstBatchMembers(e), [1321, 1323]);
+  const log = await drive(t, e, { until: () => e.W.pulls.get(1321).merged && e.W.pulls.get(1323).merged });
+  assert.ok(e.W.pulls.get(1321).merged && e.W.pulls.get(1323).merged, JSON.stringify(log));
+  assert.equal(e.W.pulls.get(1321).mergeSha, e.W.pulls.get(1323).mergeSha, 'one batch');
+  assert.equal(e.W.pulls.get(1322).merged, false);
+});
+
+test('C3 descriptor: the resident writes baseRule on-main only for an S = H batch stamped push; what is installed decides nothing', async t => {
+  const describe = async (engine, root, subject) => {
+    const batch = await engine.derive(subject, createHash('sha256').update(JSON.stringify(subject)).digest('hex'));
+    return { batch, d: JSON.parse(await fs.readFile(path.join(root, 'outbox', batch.batchId, 'descriptor.json'), 'utf8')) };
+  };
+  const head = h('c3-head'), base = h('c3-merge-base'), S = h('c3-S');
+  const sh = { repo: REPO, pr: 1340, headSha: head, baseSha: base, sourceManifestSha256: CI_SOURCE, attempt: 1 };
+  const { engine, root } = await residentEngine(t);
+  for (const [trainMode, trainLanding] of [['on', { landing: 'push', batchMax: 3 }], ['shadow', { landing: 'push', batchMax: 3 }], ['on', { landing: 'github-merge', batchMax: 1 }]]) {
+    Object.assign(engine, { trainMode, trainLanding });
+    const why = `${trainMode} ${trainLanding.landing}`;
+    assert.equal((await describe(engine, root, { ...sh, batchRoute: 'push' })).d.baseRule, 'on-main', why);
+    assert.equal((await describe(engine, root, { ...sh, testSha: head, batchRoute: 'push' })).d.baseRule, 'on-main', why);
+    const front = await describe(engine, root, { ...sh, testSha: S, batchRoute: 'push' });
+    assert.equal(Object.hasOwn(front.d, 'baseRule'), false, `a front batch runs on main's tip (${why})`);
+    assert.equal(front.batch.batchRoute, 'push', 'its stages 1 and 8 still learn the route');
+    const plain = await describe(engine, root, sh);
+    assert.equal(Object.hasOwn(plain.d, 'baseRule'), false, `no stamp: main must be the base (${why})`);
+    assert.equal(Object.hasOwn(plain.batch, 'batchRoute'), false);
+  }
+});
+
+// ---- bc982192 (C3 rework, plan 戊; FABLE-c3-batch-rule-channel-20261122 §5, E1-E3, E6, E8): the batch route, end to end ----
+// The resident between the poller and the stages: the real ResidentExecutor (intake and its stamp, localPlan, the train's maintenance, the
+// front binding) over this world. Stage 10 is the real runTrain; derive is the resident engine's (its descriptor); stage 1 is the real
+// Source v2 full admission and stage 8 the real control publisher, each with the route its own stage file gives it: the engine's arguments
+// for that stage (stageArgs) -> the invoker's stage directory (invoke-stage.mjs#prepareStageDirectory) -> batch-route.mjs#readStageBatchRoute,
+// as both startup.mjs read it. Stages 2-7 are only counted (R3 skips them when no scan is required from this App). The poller reads the
+// executor's own status board as companion-main.mjs does (status.mjs#pollerLandingOf). Nothing is queued or admitted beforehand.
+// tamper(number, dir): changes stage 1's or 8's stage directory before the stage reads it (E6).
+const SEALED = Object.freeze({ files: Object.freeze({ 'formal-service-entry.json': Buffer.from('{}'), 'jobs.json': Buffer.from('[]') }) });
+const PROOF = Object.freeze({ windowsTreeZero: true, serviceOriginalStopped: true });
+const CHAIN3 = Object.freeze({ landing: 'push', batchMax: 3, batchChain: true, unreadable: false });
+let nonceN = 0;
+async function stageRoute(t, real, number, batch, tamper = null) {
+  const args = await real.stageArgs(number, batch), i = args.indexOf('--batch-route');
+  const dir = await prepareStageDirectory({ stageRoot: await tempDir(t), nonce: (++nonceN).toString(16).padStart(32, '0'), sealed: SEALED,
+    batchRoute: i < 0 ? null : args[i + 1] });
+  await tamper?.(number, dir);
+  return readStageBatchRoute(dir);
+}
+// The bundle (B1/B2 replan §6): judged by the descriptor exactly as build-bundle.ps1 judges it: without baseRule GitHub's main must be the
+// batch base (REMOTE_MAIN_BASE_CHANGED, which the companion answers as RESIDENT_BASE_MOVED); with baseRule on-main the base must be an
+// ancestor of the head and of main's tip (Base-On-Main).
+// Stage 2 (refs v2, protected-controller-ports-v2/refs.mjs:73): main must be the job's base, else REFS_MAIN_BASE_CHANGED.
+async function residentOver(t, e, { tamper = null, facts = null, queueFacts = false } = {}) {
+  const { engine: real, root } = await residentEngine(t);
+  const engine = fakeEngine();
+  const subjects = new Map();
+  Object.assign(engine, { stages: [], stage1: [], stage8: [], routes: [], descriptors: new Map(), trainRuns: [], trainAt: [], subjects, bundles: [], refused: [] });
+  const companion = fakeCompanion({}, () => f.clock());
+  companion.buildBundle = async batch => {
+    companion.calls.push(['bundle']);
+    const s = subjects.get(batch.key), d = engine.descriptors.get(batch.key), main = e.main();
+    const onMain = d?.baseRule === 'on-main';
+    const ok = onMain ? e.W.ancestor(s.baseSha, main) && e.W.ancestor(s.baseSha, s.headSha) : s.baseSha === main;
+    engine.bundles.push({ pr: s.pr, front: Object.hasOwn(s, 'testSha') && s.testSha !== s.headSha, baseRule: d?.baseRule ?? null, ok, at: f.clock() });
+    return ok ? { ok: true } : { ok: false, code: 'RESIDENT_BASE_MOVED' };
+  };
+  let f = null, run = 0;
+  const sync = () => { e.now = f.clock(); };
+  const back = () => { if (e.now > f.clock()) f.advance(e.now - f.clock()); };
+  engine.derive = async (subject, key, chain) => {
+    engine.calls.push(['derive', key]);
+    const batch = await real.derive(subject, key, chain ?? null);
+    subjects.set(key, subject);
+    engine.descriptors.set(key, JSON.parse(await fs.readFile(path.join(root, 'outbox', batch.batchId, 'descriptor.json'), 'utf8')));
+    return batch;
+  };
+  engine.runTrainStage = async (mode, input) => {
+    engine.calls.push(['stage', 10, mode]);
+    sync();
+    const { mode: m, ...params } = input;
+    const job = makeTrainRun({ repo: REPO, runId: `${(++run).toString(16).padStart(16, '0')}-0123456789ab`, mode: m, sourceManifestSha256: SOURCE, createdAt: iso(e.now), ...params });
+    e.inTen = true; // flakyRules 'ten': only stage 10's reads fail
+    const r = await runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
+      claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN3 }).finally(() => { e.inTen = false; });
+    const train = facts ? facts(r.facts) : r.facts;
+    engine.trainRuns.push(train);
+    engine.trainAt.push(f.clock());
+    back();
+    return { ok: true, runId: job.runId, proof: PROOF, train,
+      outcome: { status: 'TRAIN_FACTS', reason: null, sideEffects: r.sideEffects, mayHavePublished: r.sideEffects > 0, diagnostic: null, scheduling: null, safeToRerun: false } };
+  };
+  engine.runStage = async (batch, stage) => {
+    const subject = subjects.get(batch.key), front = Object.hasOwn(subject, 'testSha') && subject.testSha !== subject.headSha;
+    const testSha = subject.testSha ?? subject.headSha, n = subject.pr;
+    engine.stages.push({ pr: n, front, stage: stage.number, at: f.clock() });
+    engine.calls.push(['stage', stage.number]);
+    sync();
+    const b = { pr: n, headSha: subject.headSha, baseSha: subject.baseSha, testSha, attempt: subject.attempt };
+    const ok = { ok: true, factsSha256: 'd'.repeat(64), proof: PROOF };
+    if (stage.number === 1) {
+      const batchRoute = await stageRoute(t, real, 1, batch, tamper);
+      engine.routes.push({ pr: n, front, stage: 1, stamped: batch.batchRoute ?? null, read: batchRoute });
+      const job = batchJobsV2({ repo: REPO, ...b, sourceManifestSha256: SOURCE, createdAt: iso(e.now) })['control-admission'];
+      const facts = await realAdmission(e, { batchRoute }).evaluatePr(job, await e.gh.readChangedPaths(job));
+      engine.stage1.push({ pr: n, front, status: facts.status, reason: facts.reason ?? null, slot: facts.mergeSlot?.state ?? null });
+      if (facts.status !== 'ADMITTED') return { ok: false, code: 'NATIVE_NOT_ADMITTED', proof: PROOF,
+        outcome: { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: null, safeToRerun: true } };
+      // the admission stage publishes App 5368905's kooyumi-work-admission on H
+      if (!front) { const id = e.W.nextCheck++; e.W.checks.set(id, { id, app: { id: APP }, name: 'kooyumi-work-admission', head_sha: subject.headSha, status: 'completed', conclusion: 'success' }); }
+      const at = e.queue.indexOf(n);
+      return { ...ok, outcome: { status: 'SETTLED', reason: null, sideEffects: 1, mayHavePublished: true, diagnostic: null, safeToRerun: false,
+        scheduling: { ciRetryAfter: null, claimExpiresAt: null, mergeQueue: at < 0 ? { entered: false, state: null, position: null } : { entered: true, state: at === 0 ? 'head' : 'waiting', position: at + 1 } } } };
+    }
+    if (stage.number === 2 && subject.baseSha !== e.main()) {
+      engine.refused.push({ pr: n, front, stage: 2, code: 'REFS_MAIN_BASE_CHANGED', baseSha: subject.baseSha, main: e.main() });
+      return { ok: false, code: 'REFS_MAIN_BASE_CHANGED', proof: PROOF,
+        outcome: { status: 'BLOCKED', reason: 'REFS_MAIN_BASE_CHANGED', sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: null, safeToRerun: false } };
+    }
+    if (stage.number !== 8) return ok;
+    const batchRoute = await stageRoute(t, real, 8, batch, tamper);
+    engine.routes.push({ pr: n, front, stage: 8, stamped: batch.batchRoute ?? null, read: batchRoute });
+    const claimAssist = { async joinQueue({ pr }) { if (!e.queue.includes(pr)) e.queue.push(pr); return { ok: true, joined: true }; },
+      async extendLease() { return { ok: true, extended: false, reason: null }; } };
+    const p = await stage8(t, e, b, { trainLanding: CHAIN3, scans: false, batchRoute, claimAssist, admission: realAdmission(e, { batchRoute }) });
+    engine.stage8.push({ pr: n, front, status: p.status, reason: p.reason ?? null });
+    back();
+    // queueFacts: the stage's scheduling facts as the real stage 8 reports them (publisher.mjs: the claim's place in the merge queue), so a
+    // claim first in the queue owes stage 10 at once (frontOpenOwed; E9). Off for E1-E8 as they were written.
+    // The stage's code is its own reason, as the real engine hands the stage fact's failure_code to the executor (engine-windows.mjs).
+    const code = p.reason ?? 'TRAIN_SINGLE_GREEN_NOT_PROVEN';
+    return p.status === 'SETTLED' ? ok : { ok: false, code, proof: PROOF,
+      outcome: { status: 'BLOCKED', reason: code, sideEffects: 0, mayHavePublished: false, ...(queueFacts && p.scheduling ? { scheduling: p.scheduling } : {}) } };
+  };
+  const policy = rawPolicy({ contract: POLICY_CONTRACT_V8, train: { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * 60_000, maintenanceMaxPerDay: 200,
+    ...TRAIN_DEFAULTS, sweep: 'audit', landing: 'push', batchMax: 3 } });
+  const board = new StatusBoard({ clock: () => e.now });
+  f = await executorFixture(t, { now: e.now, engine, companion, status: board, policy });
+  f.exec.trainTakeoverDone = true;
+  await f.exec.trainRecover();
+  // companion-main.mjs: the poller's landing port reads the status file the executor writes (out.sees: the status as the poller read it
+  // earlier, when that reading is not the board of now; E10b). Every trigger it writes is counted (out.triggers).
+  const status = () => parseStatus(Buffer.from(JSON.stringify(board.snapshot())));
+  const out = { engine, real, board, status, sees: null, triggers: [] };
+  const poller = new Poller({ repo: REPO, ghExe: 'gh', run: pollerRun(e), clock: () => f.clock(),
+    writeTrigger: async v => { out.triggers.push(v); await f.drop(Buffer.from(JSON.stringify(v))); },
+    landing: async () => pollerLandingOf(out.sees ?? status()) });
+  // origin/main's poller (no landing port) over the same world, for comparison
+  const plain = new Poller({ repo: REPO, ghExe: 'gh', run: pollerRun(e), clock: () => f.clock(), writeTrigger: async () => { throw new Error('origin/main proposes nothing here'); } });
+  // A restart of the service (E10a): a new executor over the same state directory (ledger, queue, inbox, receipts from disk); nothing of the
+  // old process's memory (its trainLast) survives. The status file stays as the old process left it until the new one writes.
+  const restart = async () => {
+    f = await executorFixture(t, { now: f.clock(), engine, companion, status: board, policy, root: f.root });
+    f.exec.trainTakeoverDone = true;
+    await f.exec.trainRecover();
+    out.f = f;
+  };
+  return Object.assign(out, { f, poller, plain, restart });
+}
+const rowsOf = f => [...f.queue.data.rows].map(r => ({ pr: r.pr, state: r.state, headSha: r.current?.headSha ?? null, baseSha: r.current?.baseSha ?? null, batchRoute: r.current?.batchRoute ?? null }));
+const passOf = p => p.lastPass.pulls.map(x => [x.pr, x.eligible, x.hint, x.behindBy]);
+
+// E1 (H2) and E2: installed landing push; stage 10's own reading is not push, nothing was read, the status cannot be read, or a scan is still
+// required from this App (or appScans not read: a Source before R3, neither the top-level appScans of §82 item 5 nor rules.appScans): no stamp anywhere, the poller proposes nothing and says merge-main for
+// every head behind main, exactly as origin/main's poller (no landing port) on the same world; no row, no batch, only stage 10 runs.
+for (const scene of [
+  { name: 'E1 route github-merge (today\'s rules)', rules: 'today' },
+  { name: 'E1 route park (kooyumi-train-landed, the App cannot bypass main)', rules: 'push', prepare: e => { e.W.rulesets.set(MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never' }); } },
+  { name: 'E1 no route read yet (no stage 10)', rules: 'push', appScans: [], noStage10: true },
+  { name: 'E1 the status cannot be read', rules: 'push', appScans: [], unreadable: true },
+  { name: 'E2 route push, all three scans from this App', rules: 'push' },
+  { name: 'E2 route push, gitleaks still from this App', rules: 'push', appScans: ['gitleaks'] },
+  { name: 'E2 route push, appScans not read (a Source before R3)', rules: 'push', appScans: [], facts: ({ appScans: _top, ...x }) => (x.rules ? { ...x, rules: Object.fromEntries(Object.entries(x.rules).filter(([k]) => k !== 'appScans')) } : x) },
+]) test(`bc982192 ${scene.name}: installed push -> no stamp, no proposal, merge-main, as origin/main`, async t => {
+  const prs = [1401, 1402, 1403];
+  const e = await world(t, { prs, behind: 2, rules: scene.rules, queued: false, admitted: false, ...(scene.appScans ? { appScans: scene.appScans } : {}) });
+  scene.prepare?.(e);
+  const r = await residentOver(t, e, { facts: scene.facts ?? null });
+  if (scene.unreadable) r.board.snapshot = () => { throw new Error('status unreadable'); };
+  for (let i = 0; i < 4; i++) {
+    if (!scene.noStage10) await r.f.exec.tick();
+    await r.poller.pass(); await r.plain.pass();
+    assert.deepEqual(passOf(r.poller), passOf(r.plain), `pass ${i}`);
+    assert.deepEqual(passOf(r.poller), prs.map(pr => [pr, false, 'merge-main', 2]), `pass ${i}`);
+    if (!scene.noStage10) await r.f.exec.tick();
+    r.f.advance(10 * 60_000);
+  }
+  if (!scene.noStage10) {
+    assert.ok(r.engine.trainRuns.length > 0, 'stage 10 ran');
+    assert.equal(r.f.exec.batchRoute(), scene.unreadable ? 'push' : null, JSON.stringify(r.f.exec.trainLast));
+  }
+  if (!scene.unreadable) assert.equal(Object.hasOwn(r.f.exec.trainStatus(), 'batchRoute'), false);
+  assert.deepEqual(rowsOf(r.f), []);
+  assert.deepEqual(r.engine.calls.filter(c => c[0] !== 'stage' || c[1] !== 10), [], 'nothing but stage 10');
+  assert.deepEqual(e.W.pushes, []);
+});
+
+// E3 (the target scene, end to end): route push and no scan required from this App; three PRs each two commits behind main, nobody in the
+// merge queue, no admission yet; main moves once more on its own meanwhile. Nobody merges main into any PR; all three land, each front
+// batch in one push. FABLE-keep-train-replan §3.4 (main 072814270): with the train idle, stage 10 runs right after a head's admission,
+// before the next PR's ordinary batch, so the front batch is not held back to group the three.
+test('bc982192 E3: route push, appScans [] -> stamped at birth -> stage 1 on the merge base -> no scan stage -> stage 8 joins -> the front batches land, one push each, within 30 minutes', async t => {
+  const prs = [1411, 1412, 1413];
+  const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
+  const r = await residentOver(t, e);
+  const { f, engine } = r;
+  const start = f.clock(), T0 = e.W.T0, heads = prs.map(e.head);
+  let moved = null;
+  const landed = () => prs.every(pr => e.W.pulls.get(pr).merged);
+  for (let i = 0; i < 40 && !landed(); i++) {
+    await r.poller.pass();
+    await f.exec.tick();
+    // main moves once more on its own after the first stage 8 (another writer)
+    if (!moved && engine.stage8.length > 0) {
+      moved = h('E3-other');
+      e.W.commits.set(moved, { sha: moved, tree: h('tree:E3-other'), parents: [e.main()] }); e.W.content.set(moved, new Set([...e.W.content.get(e.main()), 'other']));
+      e.W.refs.set('heads/main', moved);
+    }
+    f.advance(60_000);
+  }
+  const diag = JSON.stringify({ rows: rowsOf(f), stages: engine.stages, stage1: engine.stage1, stage8: engine.stage8, routes: engine.routes,
+    ten: engine.trainRuns.map(x => [x.decision, x.landing?.route ?? null, x.landing?.missing ?? null, x.rules?.appScans ?? null, x.openFrontBatch?.pr ?? null]) });
+  assert.ok(landed(), diag);
+  assert.ok(moved, 'main moved during the run');
+  // one push per front batch, on main past the move; main only fast-forwarded; no head changed (nobody merged main into a PR)
+  assert.equal(e.W.pushes.length, new Set(prs.map(pr => e.W.pulls.get(pr).mergeSha)).size, diag);
+  assert.ok(e.W.ancestor(moved, e.main()), 'landed on main past the move');
+  assert.deepEqual(prs.map(e.head), heads);
+  assert.ok(f.clock() - start <= 30 * 60_000, `landed after ${(f.clock() - start) / 60_000} minutes`);
+  // the stamp: every ordinary batch was born push, on the merge base T0, and its descriptor says on-main
+  const ordinary = [...engine.subjects.entries()].filter(([, s]) => !Object.hasOwn(s, 'testSha'));
+  assert.deepEqual(ordinary.map(([, s]) => s.pr).sort(), prs, diag);
+  for (const [key, s] of ordinary) {
+    assert.deepEqual([s.baseSha, s.batchRoute], [T0, 'push'], JSON.stringify(s));
+    assert.equal(engine.descriptors.get(key).baseRule, 'on-main');
+  }
+  // stage 1 read the route from its file and admitted each head on T0; the front's stage 1 too (its merge slot read as on main's tip)
+  assert.ok(engine.routes.every(x => x.stamped === 'push' && x.read === 'push'), diag);
+  assert.deepEqual(engine.stage1.filter(x => !x.front).map(x => [x.pr, x.status]).sort((a, b) => a[0] - b[0]), prs.map(pr => [pr, 'ADMITTED']), diag);
+  const front1 = engine.stage1.filter(x => x.front);
+  assert.ok(front1.length >= 1 && front1.every(x => x.status === 'ADMITTED' && x.slot !== 'not_needed'), diag);
+  // R3: no scan stage ran for any batch; the receipt says why
+  assert.deepEqual(engine.stages.filter(s => s.stage >= 2 && s.stage <= 7), [], diag);
+  assert.ok((await f.receipts.latest(['scans-not-app-required'], 10)).length > 0);
+  // stage 8 of each ordinary batch joined the queue and never ended on the moved base; the front's stage 8 landed
+  assert.ok(engine.stage8.every(x => x.reason !== 'RESIDENT_BASE_MOVED' && x.reason !== 'full_admission_subject_changed'), diag);
+  assert.ok(engine.stage8.some(x => x.front && x.status === 'SETTLED'), diag);
+  // stage 10 opened front batches that hold the three PRs, each PR in exactly one
+  const opened = engine.trainRuns.filter(x => x.openFrontBatch).flatMap(x => x.openFrontBatch.members?.map(m => m.pr) ?? [x.openFrontBatch.pr]);
+  assert.deepEqual(opened.sort((a, b) => a - b), prs, diag);
+});
+
+// E6 (a broken channel is the strict rule): a batch stamped push whose stage file is missing, too long, names an unknown route or is not
+// the exact bytes: stage 1 refuses the head behind main (full_admission_subject_changed); stage 8 never relaxes either (the real admission:
+// full_admission_subject_changed; an admission that does not look at the base: RESIDENT_BASE_MOVED); a front job's merge slot is not taken
+// as on main's tip.
+const rewrite = text => async dir => { await fs.rm(path.join(dir, STAGE_BATCH_ROUTE_FILE)); if (text !== null) await fs.writeFile(path.join(dir, STAGE_BATCH_ROUTE_FILE), text); };
+for (const [name, tamper] of [
+  ['missing', rewrite(null)],
+  ['too long', rewrite(`${stageBatchRouteText('push')}${' '.repeat(300)}`)],
+  ['an unknown route', rewrite(stageBatchRouteText('push').replace('push', 'github-merge'))],
+  ['not the exact bytes', rewrite(`${stageBatchRouteText('push')}\n`)],
+]) test(`bc982192 E6: a batch stamped push whose batch-route.json is ${name} -> stage 1 full_admission_subject_changed, stage 8 never relaxes, frontSlot not transformed`, async t => {
+  const e = await world(t, { prs: [1421], behind: 2, queued: false, admitted: false, appScans: [] });
+  const { engine: real } = await residentEngine(t);
+  const stamped = { batchRoute: 'push' };
+  const T0 = e.W.T0, H1 = e.head(1421), M = e.main();
+  const route = n => stageRoute(t, real, n, stamped, (_, dir) => tamper(dir));
+  assert.equal(await stageRoute(t, real, 1, stamped), 'push', 'untouched it reads push');
+  const r1 = await route(1);
+  assert.equal(r1, null);
+  const job = batchJobsV2({ repo: REPO, pr: 1421, headSha: H1, baseSha: T0, testSha: H1, sourceManifestSha256: SOURCE, createdAt: iso(e.now), attempt: 1 })['control-admission'];
+  const one = await realAdmission(e, { batchRoute: r1 }).evaluatePr(job, await e.gh.readChangedPaths(job));
+  assert.deepEqual([one.status, one.reason], ['BLOCKED', 'full_admission_subject_changed'], JSON.stringify(one));
+  // stage 8, the publisher's own gate (publisher.mjs, RESIDENT_BASE_MOVED): an admission that admits the head and reads main's tip as the
+  // slot's tip; not in the queue, so the queue-head path does not answer first. The route read: main past the base ends nothing.
+  const b = { pr: 1421, headSha: H1, baseSha: T0, testSha: H1, attempt: 1 };
+  const r8 = await route(8);
+  assert.equal(r8, null);
+  const tipAdmission = { async evaluatePr(job, packet, options) {
+    const claim = { claimId: e.claimFor(job.pr), fence: 3, epoch: 1, expiresAt: iso(e.now + 3_600_000) };
+    options?.scheduling?.({ mergeQueue: { entered: false, state: null, position: null }, claimExpiresAt: claim.expiresAt });
+    const { observationSha256, ...base } = admittedFacts(job, claim, packet, { domain: 'fixture', mergeQueueHead: false, batchClaim: options?.batchClaim, observedAt: e.now, slotUntil: e.now + 600_000 });
+    const facts = { ...base, mergeSlot: { ...base.mergeSlot, tip: e.main() } };
+    return { ...facts, observationSha256: digest(facts) };
+  } };
+  const q = await stage8(t, e, b, { batchRoute: r8, scans: false, admission: tipAdmission });
+  assert.deepEqual([q.status, q.reason], ['BLOCKED', 'RESIDENT_BASE_MOVED'], JSON.stringify(q));
+  const qp = await stage8(t, e, b, { batchRoute: 'push', scans: false, admission: tipAdmission });
+  assert.notEqual(qp.reason, 'RESIDENT_BASE_MOVED', JSON.stringify(qp));
+  // the real admission at stage 8 (the queue head now): it refuses the moved base itself
+  e.queue.push(1421);
+  const p = await stage8(t, e, b, { batchRoute: r8, scans: false, admission: realAdmission(e, { batchRoute: r8 }) });
+  assert.deepEqual([p.status, p.reason], ['BLOCKED', 'full_admission_subject_changed'], JSON.stringify(p));
+  // the front job (S = merge(main, H)): its merge slot as the evaluator answered it (not_needed), never taken as on main's tip
+  const S = e.W.merge(M, H1);
+  const fjob = batchJobsV2({ repo: REPO, pr: 1421, headSha: H1, baseSha: M, testSha: S, sourceManifestSha256: SOURCE, createdAt: iso(e.now), attempt: 1 })['control-admission'];
+  const fr = await realAdmission(e, { batchRoute: await route(1) }).evaluatePr(fjob, await e.gh.readChangedPaths(fjob));
+  const fp = await realAdmission(e, { batchRoute: 'push' }).evaluatePr(fjob, await e.gh.readChangedPaths(fjob));
+  assert.equal(fr.mergeSlot?.state, 'not_needed', JSON.stringify(fr));
+  assert.notEqual(fp.mergeSlot?.state, 'not_needed', 'with the route read, the front slot is on main\'s tip');
+});
+
+// E8 (the route changes after the batch is born): the rows were stamped push; then main's rules go back to today's (route github-merge).
+// Stage 1 of a stamped batch still admits it on its merge base (the stamp is the birth's), but nothing lands: stage 10 opens no front batch
+// for a head behind main, no stage 8 writes main, and the next poll says merge-main again.
+test('bc982192 E8: stamped push at birth, then the route turns github-merge -> stage 1 still admits, nothing lands, the poller says merge-main', async t => {
+  const prs = [1431, 1432];
+  const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
+  const r = await residentOver(t, e);
+  const { f, engine } = r;
+  for (let i = 0; i < 6 && rowsOf(f).length < prs.length; i++) { await r.poller.pass(); await f.exec.tick(); f.advance(60_000); }
+  assert.deepEqual(rowsOf(f).map(x => [x.pr, x.batchRoute]), prs.map(pr => [pr, 'push']), JSON.stringify(rowsOf(f)));
+  e.W.setRules('today');
+  const T = e.main();
+  for (let i = 0; i < 30; i++) { await r.poller.pass(); await f.exec.tick(); f.advance(60_000); }
+  const diag = JSON.stringify({ rows: rowsOf(f), stage1: engine.stage1, stage8: engine.stage8, ten: engine.trainRuns.map(x => [x.decision, x.landing?.route ?? null, x.openFrontBatch?.pr ?? null]) });
+  assert.ok(engine.stage1.filter(x => !x.front).length >= 1 && engine.stage1.filter(x => !x.front).every(x => x.status === 'ADMITTED'), diag);
+  assert.equal(engine.trainRuns.at(-1).landing?.route, 'github-merge', diag);
+  assert.equal(f.exec.batchRoute(), null);
+  assert.deepEqual(e.W.pushes, [], diag);
+  assert.equal(e.main(), T);
+  assert.ok(prs.every(pr => !e.W.pulls.get(pr).merged));
+  assert.ok(engine.trainRuns.slice(-5).every(x => !x.openFrontBatch), diag);
+  assert.deepEqual(passOf(r.poller), prs.map(pr => [pr, false, 'merge-main', 2]));
+});
+
+// ---- bc982192 C3 rework 2 (FABLE-c3-b1b2-20261122): what a batch does when a reading is missing ----
+// The rules read (GET /rules/branches/main) fails while e.rulesFail is set (a 502, as the network gives it): true, every read (stage 10
+// and stage 8); 'ten', stage 10's reads only.
+function flakyRules(e) {
+  const read = e.gh.readBranchRules;
+  e.rulesFail = false;
+  e.gh.readBranchRules = async (...a) => { if (e.rulesFail === true || (e.rulesFail === 'ten' && e.inTen)) throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); return read(...a); };
+}
+const restampedOf = async f => (await f.receipts.latest(['batch-route-restamped'], 50)).map(x => x.value.body);
+const terminalCodes = async f => (await f.receipts.latest(['stage-terminal'], 500)).map(x => x.value.body?.failureCode).filter(Boolean);
+const diagOf = async r => JSON.stringify({ rows: rowsOf(r.f), stages: r.engine.stages.filter(s => s.stage !== 10), bundles: r.engine.bundles, refused: r.engine.refused,
+  stage1: r.engine.stage1, stage8: r.engine.stage8, triggers: r.triggers.map(g => [g.pr, g.baseSha]), restamped: (await restampedOf(r.f)).length,
+  ten: r.engine.trainRuns.map((x, i) => [r.engine.trainAt[i], x.decision, x.landing?.route ?? null, x.rules?.appScans ?? null, x.openFrontBatch?.pr ?? null]) });
+
+// E9 (B1): the batches are stamped push at birth; after the first one landed, one stage 10 cannot read main's rules (the real
+// runTrain: its summary carries no appScans), and the later stamped batches plan before stage 10 reads them again. Their scan plan comes
+// from the stamp, never from that reading: no stage 2-7, no REFS_MAIN_BASE_CHANGED; once the rules are read again all three land.
+test('bc982192 E9 (B1): stamped push, one stage 10 reads no rules before the later batches plan -> still no scan stage, never REFS_MAIN_BASE_CHANGED, all three land', async t => {
+  const prs = [1441, 1442, 1443];
+  const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
+  flakyRules(e);
+  const r = await residentOver(t, e, { queueFacts: true });
+  const { engine } = r;
+  const start = r.f.clock(), heads = prs.map(e.head);
+  const landed = () => prs.every(pr => e.W.pulls.get(pr).merged);
+  let failedAt = null, mark = null;
+  const ticks = [];
+  for (let i = 0; i < 60 && !landed(); i++) {
+    await r.poller.pass();
+    const x = await r.f.exec.tick();
+    ticks.push([(r.f.clock() - start) / 60_000, x?.state ?? null, x?.reason ?? x?.failureCode ?? null]);
+    // the first batch landed: the next stage 10 (the one that adopts the next front) reads no rules, and the next batch plans in that tick
+    if (mark === null && engine.stage8.some(x => x.front && x.status === 'SETTLED')) { e.rulesFail = 'ten'; mark = engine.trainRuns.length; }
+    else if (e.rulesFail && engine.trainRuns.length > mark) { e.rulesFail = false; failedAt = engine.trainAt[mark]; }
+    r.f.advance(60_000);
+  }
+  const diag = `${await diagOf(r)} ticks ${JSON.stringify(ticks)}`;
+  // the scene happened: a stage 10 that read no rules (no appScans), and a stamped batch planned after it, before the next stage 10
+  assert.ok(failedAt !== null, diag);
+  assert.equal(engine.trainRuns[mark].rules?.appScans ?? null, null, diag);
+  const next = engine.trainAt[mark + 1] ?? Infinity;
+  assert.ok(engine.stages.some(s => s.stage === 1 && !s.front && s.at >= failedAt && s.at < next), `a stamped batch planned on the summary without appScans: ${diag}`);
+  // B1: the plan came from the stamp
+  assert.deepEqual(engine.stages.filter(s => s.stage >= 2 && s.stage <= 7), [], diag);
+  assert.deepEqual(engine.refused, [], diag);
+  assert.ok(!(await terminalCodes(r.f)).includes('REFS_MAIN_BASE_CHANGED'), diag);
+  const notRequired = (await r.f.receipts.latest(['scans-not-app-required'], 50)).map(x => x.value.body?.pr);
+  assert.ok(prs.every(pr => notRequired.includes(pr)), diag);
+  // and the target scene still holds: all three land, nobody merged main into a PR, no new commit
+  assert.ok(landed(), diag);
+  assert.deepEqual(prs.map(e.head), heads);
+  assert.ok(r.f.clock() - start <= 60 * 60_000, `landed after ${(r.f.clock() - start) / 60_000} minutes`);
+});
+
+// E10a (B2, a restart): the status file says train.batchRoute push (the old process); the new executor has no stage 10 reading yet. The
+// poller proposes each head on its merge base from that file; the new executor's first intake stamps nothing, the bundle stops the rows
+// (RESIDENT_BASE_MOVED, zero side effects). Once stage 10 reads push the executor stamps them itself and queues them again (one receipt
+// each); they land. The poller wrote one trigger per head; no head changed.
+test('bc982192 E10a (B2, restart): status push, new executor without a reading -> no stamp, bundle stops the rows -> stage 10 reads push -> restamped once each -> land within 30 minutes', async t => {
+  const prs = [1451, 1452];
+  const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
+  const r = await residentOver(t, e);
+  for (let i = 0; i < 4 && r.f.exec.batchRoute() !== 'push'; i++) { await r.f.exec.tick(); r.f.advance(60_000); }
+  assert.equal(pollerLandingOf(r.status()), 'push', 'the old process wrote push');
+  await r.restart();
+  assert.equal(r.f.exec.batchRoute(), null, 'the new process has no stage 10 reading');
+  const start = r.f.clock(), T0 = e.W.T0, heads = prs.map(e.head);
+  await r.poller.pass();
+  assert.deepEqual(r.triggers.map(g => [g.pr, g.baseSha]).sort((a, b) => a[0] - b[0]), prs.map(pr => [pr, T0]), 'proposed on the merge base from the old status');
+  await r.f.exec.tick();
+  assert.deepEqual(rowsOf(r.f).map(x => [x.pr, x.state, x.batchRoute]), prs.map(pr => [pr, 'STOPPED', null]), await diagOf(r));
+  assert.ok(prs.every(pr => r.f.queue.row(pr).reason === 'RESIDENT_BASE_MOVED'));
+  assert.deepEqual(r.engine.stages.filter(s => s.stage !== 10), [], 'nothing ran past the bundle');
+  const landed = () => prs.every(pr => e.W.pulls.get(pr).merged);
+  for (let i = 0; i < 40 && !landed(); i++) { await r.poller.pass(); await r.f.exec.tick(); r.f.advance(60_000); }
+  const diag = await diagOf(r);
+  assert.ok(landed(), diag);
+  const restamped = await restampedOf(r.f);
+  assert.deepEqual(restamped.map(x => [x.pr, x.headSha, x.baseSha]).sort((a, b) => a[0] - b[0]), prs.map(pr => [pr, e.head(pr), T0]), diag);
+  assert.equal(r.triggers.length, prs.length, `one trigger per head: ${diag}`);
+  assert.deepEqual(prs.map(e.head), heads, 'nobody merged main into a PR');
+  // one push per front batch (FABLE-keep-train-replan §3.4: the idle train does not hold a front batch back to group both)
+  assert.equal(e.W.pushes.length, new Set(prs.map(pr => e.W.pulls.get(pr).mergeSha)).size, diag);
+  assert.ok(r.f.clock() - start <= 30 * 60_000, `landed after ${(r.f.clock() - start) / 60_000} minutes`);
+});
+
+// E10b (B2, a jitter): the executor is push and the poller read that; then one stage 10 cannot read main's rules (route park) before the
+// triggers are taken in; the next stage 10 reads push again. As E10a: one restamp receipt per row, landed, one trigger per head.
+test('bc982192 E10b (B2, jitter): the poller read push, one stage 10 reads no rules before the intake -> no stamp, stopped -> restamped once -> lands', async t => {
+  const prs = [1461];
+  const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
+  flakyRules(e);
+  const r = await residentOver(t, e);
+  for (let i = 0; i < 4 && r.f.exec.batchRoute() !== 'push'; i++) { await r.f.exec.tick(); r.f.advance(60_000); }
+  assert.equal(r.f.exec.batchRoute(), 'push');
+  r.sees = r.status(); // what the poller read
+  e.rulesFail = true;
+  const runs = r.engine.trainRuns.length;
+  for (let i = 0; i < 15 && r.engine.trainRuns.length === runs; i++) { r.f.advance(60_000); await r.f.exec.tick(); }
+  e.rulesFail = false;
+  assert.equal(r.engine.trainRuns.length, runs + 1, 'one stage 10 that read no rules');
+  assert.equal(r.f.exec.batchRoute(), null);
+  await r.poller.pass();
+  r.sees = null;
+  assert.deepEqual(r.triggers.map(g => [g.pr, g.baseSha]), [[1461, e.W.T0]]);
+  const start = r.f.clock();
+  await r.f.exec.tick();
+  assert.deepEqual(rowsOf(r.f).map(x => [x.pr, x.state, x.batchRoute]), [[1461, 'STOPPED', null]], await diagOf(r));
+  const landed = () => e.W.pulls.get(1461).merged;
+  for (let i = 0; i < 40 && !landed(); i++) { await r.poller.pass(); await r.f.exec.tick(); r.f.advance(60_000); }
+  const diag = await diagOf(r);
+  assert.ok(landed(), diag);
+  assert.equal((await restampedOf(r.f)).length, 1, diag);
+  assert.equal(r.triggers.length, 1, diag);
+  assert.ok(r.f.clock() - start <= 30 * 60_000, `landed after ${(r.f.clock() - start) / 60_000} minutes`);
+});
+
+// E11 (the switch day) and E12 ① (PLAN-native-admission-latency §10.2, §10.4): a head up to date under route github-merge is proposed on
+// main's tip; main moves. Its batch is born with no local role (lean: no bundle), so stage 1 admits it (GitHub's base.sha did not move
+// with main), it burns its head and stage 8 ends it (RESIDENT_BASE_MOVED: class queue, neutral to the breaker). While the route stays
+// github-merge nothing brings it back (E12 ①: GitHub's way, the author or the bot merges main). Then main's rules turn push with no scan
+// from this App: the row was not stopped as superseded, so it is not restamped, and the poller's key (pr, head, merge base) is the one it
+// already sent; the old head does not land (E11). A new head lands on the push route by itself. Whether such a head should land without a
+// new commit is board row 173 (待查 E): the todo test below is its must-red.
+async function switchDay(t) {
+  const e = await world(t, { prs: [1471], rules: 'today', queued: false, admitted: false, appScans: [] });
+  const r = await residentOver(t, e);
+  for (let i = 0; i < 4 && !r.engine.trainRuns.length; i++) { await r.f.exec.tick(); r.f.advance(60_000); }
+  assert.equal(r.engine.trainRuns.at(-1).landing?.route, 'github-merge');
+  const M = e.main();
+  await r.poller.pass();
+  assert.deepEqual(r.triggers.map(g => [g.pr, g.baseSha]), [[1471, M]]);
+  const moved = h('E11-other');
+  e.W.commits.set(moved, { sha: moved, tree: h('tree:E11-other'), parents: [M] }); e.W.content.set(moved, new Set([...e.W.content.get(M), 'other']));
+  const breaker = () => { const b = r.f.queue.breaker; return [b?.state ?? 'closed', b?.failures?.length ?? 0, b?.streak ?? 0]; };
+  const breakerAtStart = breaker();
+  e.W.refs.set('heads/main', moved);
+  // a lean batch (born with no local role: no bundle) passes stage 1 (GitHub's base.sha did not move with main), parks at B and stage 8
+  // ends it; a parked batch may take more than one tick to reach its stage 8
+  for (let i = 0; i < 6 && r.f.queue.row(1471)?.state !== 'STOPPED'; i++) { await r.f.exec.tick(); r.f.advance(60_000); }
+  const diag = await diagOf(r);
+  assert.deepEqual(rowsOf(r.f).map(x => [x.pr, x.state, x.baseSha, x.batchRoute]), [[1471, 'STOPPED', M, null]], diag);
+  assert.equal(r.f.queue.row(1471).reason, 'RESIDENT_BASE_MOVED');
+  assert.equal(r.engine.bundles.filter(x => x.pr === 1471).length, 0, `no bundle: ${diag}`);
+  assert.deepEqual(r.engine.stage1.filter(x => x.pr === 1471).map(x => x.status), ['ADMITTED'], `stage 1 once, admitted: ${diag}`);
+  assert.equal(r.f.queue.row(1471).stopClass, 'queue', diag);
+  assert.deepEqual(breaker(), breakerAtStart, `the breaker counted nothing: ${diag}`);
+  return { e, r, M };
+}
+test('bc982192 E12 ①: route github-merge, a row stage 8 ended (main moved) -> never restamped, stays STOPPED', async t => {
+  const { e, r } = await switchDay(t);
+  for (let i = 0; i < 25; i++) { await r.poller.pass(); await r.f.exec.tick(); r.f.advance(60_000); }
+  const diag = await diagOf(r);
+  assert.equal(r.f.exec.batchRoute(), null);
+  assert.deepEqual(rowsOf(r.f).map(x => [x.pr, x.state, x.batchRoute]), [[1471, 'STOPPED', null]], diag);
+  assert.deepEqual(await restampedOf(r.f), [], diag);
+  assert.equal(e.W.pulls.get(1471).merged, false);
+});
+test('bc982192 E11 (switch day): ended by stage 8 under github-merge, then the rules turn push -> stays STOPPED, not restamped; a new head lands on the push route', async t => {
+  const { e, r } = await switchDay(t);
+  e.W.setRules('push');
+  const head = e.head(1471);
+  for (let i = 0; i < 15; i++) { await r.poller.pass(); await r.f.exec.tick(); r.f.advance(60_000); }
+  let diag = await diagOf(r);
+  assert.equal(r.f.exec.batchRoute(), 'push', diag);
+  assert.deepEqual(rowsOf(r.f).map(x => [x.pr, x.state, x.headSha]), [[1471, 'STOPPED', head]], diag);
+  assert.deepEqual(await restampedOf(r.f), [], diag);
+  assert.equal(r.triggers.length, 1, `the poller did not send the old head again: ${diag}`);
+  assert.equal(e.W.pulls.get(1471).merged, false);
+  // the author pushes one commit on the old head (main not merged in): only a new head was missing, nothing else holds it
+  const next = h('E11-next-1471');
+  e.W.commits.set(next, { sha: next, tree: h('tree:E11-next'), parents: [head] }); e.W.content.set(next, new Set([...e.W.content.get(head), 'next']));
+  e.W.pushHead(1471, next); e.W.actions(next);
+  const start = r.f.clock();
+  for (let i = 0; i < 40 && !e.W.pulls.get(1471).merged; i++) { await r.poller.pass(); await r.f.exec.tick(); r.f.advance(60_000); }
+  diag = await diagOf(r);
+  assert.ok(e.W.pulls.get(1471).merged, diag);
+  assert.ok(e.W.ancestor(next, e.main()), diag);
+  assert.deepEqual(r.triggers.map(g => [g.pr, g.headSha]), [[1471, head], [1471, next]], `one trigger for the new head: ${diag}`);
+  assert.deepEqual(await restampedOf(r.f), [], diag);
+  assert.ok(r.f.clock() - start <= 30 * 60_000, `landed after ${(r.f.clock() - start) / 60_000} minutes`);
+});
+// Board row 173 (待查 E): the switch-day recovery E11 asserted before PLAN-native-admission-latency §10.2 accepted its loss. Red today: a
+// head stage 8 ended under github-merge (burned, class queue) is never restamped when the route turns push. Its fix is the switch design's.
+test('bc982192 E11 todo (board row 173, 待查 E): ended under github-merge, then the rules turn push -> restamped, lands without a new commit; the poller sends nothing again',
+  { todo: 'board row 173 (待查 E): a head RESIDENT_BASE_MOVED ended under github-merge does not land on the push route without a new commit' }, async t => {
+  const { e, r, M } = await switchDay(t);
+  e.W.setRules('push');
+  const start = r.f.clock(), head = e.head(1471);
+  for (let i = 0; i < 40 && !e.W.pulls.get(1471).merged; i++) { await r.poller.pass(); await r.f.exec.tick(); r.f.advance(60_000); }
+  const diag = await diagOf(r);
+  assert.ok(e.W.pulls.get(1471).merged, diag);
+  assert.deepEqual((await restampedOf(r.f)).map(x => [x.pr, x.headSha, x.baseSha]), [[1471, head, M]], diag);
+  assert.equal(r.triggers.length, 1, `the poller did not send again: ${diag}`);
+  assert.equal(e.head(1471), head);
+  assert.ok(r.f.clock() - start <= 30 * 60_000, `landed after ${(r.f.clock() - start) / 60_000} minutes`);
+});
+
+// ---- Task 04f9b91b (Fable s7-landing-gaps 11-22): S7, #292 and the scaffold ruleset both on main ----
+// Pushing main must pass every ruleset on main (改动 1). A guard ruleset (deletion and non_fast_forward only) a fast-forward passes; every
+// other ruleset but the main one this App must always bypass, or GitHub refuses the push (the world above refuses as GitHub does). The
+// scaffold ruleset (27843120, as read back live: deletion, non_fast_forward, a pull request, six hosted-* and kooyumi-work-admission pinned
+// to this App) is not the guard ruleset.
+const S7_SAVE_MISSING = ['train_landed_check_missing', 'main_app_cannot_bypass'];
+test('S7 E1 (stay green): #292 with C, the guard ruleset, the scaffold ruleset the App always bypasses -> three PRs land in one batch, no write refused', async t => {
+  const e = await world(t, { prs: [910, 911, 912], rules: 's7' });
+  const log = await drive(t, e, { until: () => e.queue.length === 0, steps: 6 });
+  const landings = log.filter(l => l[0] === '8');
+  assert.deepEqual(landings, [['8', 'SETTLED', null, [910, 911, 912]]], JSON.stringify(log));
+  const S = e.W.pushes.at(-1);
+  assert.equal(e.main(), S, 'main is exactly the tested S');
+  assert.deepEqual([910, 911, 912].map(pr => e.W.pulls.get(pr).merged), [true, true, true]);
+  assert.deepEqual(e.W.refused, [], 'no push GitHub refused');
+  assert.ok(HOSTED.every(n => [...e.W.checks.values()].some(c => c.head_sha === S && c.name === n && c.conclusion === 'success')), 'the hosted-* ran on S');
+});
+
+test('S7 E2 (must-red): the scaffold ruleset the App cannot bypass -> park naming it, nothing written to main; App 5368905 added to its bypass list -> lands, no write ever refused', async t => {
+  const e = await world(t, { prs: [910], rules: 's7' });
+  e.W.rulesets.get(SCAFFOLD_RS).currentUserCanBypass = 'never';
+  const T = e.main();
+  const s10 = await stage10(e);
+  assert.deepEqual([s10.facts.landing?.route, s10.facts.landing?.missing], ['park', [`ruleset_app_cannot_bypass:${SCAFFOLD_RS}`]], JSON.stringify(s10.facts.landing));
+  assert.deepEqual(s10.facts.landing?.bypass, { main: 'always', independent: 'never' }, 'the guard ruleset alone is the independent one');
+  assert.equal(s10.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(s10.facts.decision));
+  const b = s10.facts.openFrontBatch;
+  const p = await stage8(t, e, b);
+  assert.deepEqual([p.status, p.reason, p.missing, p.sideEffects], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', [`ruleset_app_cannot_bypass:${SCAFFOLD_RS}`], 0], JSON.stringify(p));
+  assert.deepEqual([e.W.pushes, e.W.refused, e.main()], [[], [], T], 'never a write GitHub refuses');
+  untouched(e, T);
+  e.W.rulesets.get(SCAFFOLD_RS).currentUserCanBypass = 'always';
+  e.now += 10 * MIN;
+  const again = await stage8(t, e, b);
+  assert.equal(again.status, 'SETTLED', JSON.stringify(again));
+  assert.deepEqual([e.main(), e.W.pushes, e.W.refused], [b.testSha, [b.testSha], []]);
+});
+
+test('S7 E4 (must-red): S7 step 1 (#292 as today, the scaffold ruleset, no guard ruleset yet) lands through GitHub, the independent ruleset absent; the guard ruleset created -> never, push lacks only what the save adds', async t => {
+  let e = await world(t, { prs: [910], rules: 's7-step1' });
+  let r = await stage10(e);
+  assert.deepEqual([r.facts.landing?.route, r.facts.landing?.missing, r.facts.landing?.bypass],
+    ['github-merge', ['independent_ruleset_missing', ...S7_SAVE_MISSING], { main: 'never', independent: 'absent' }], JSON.stringify(r.facts.landing));
+  assert.equal(r.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(r.facts.decision));
+  const b = r.facts.openFrontBatch;
+  const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+  assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+  assert.deepEqual(p.rehearsal, { testSha: b.testSha, missing: ['independent_ruleset_missing', ...S7_SAVE_MISSING], bypass: { main: 'never', independent: 'absent' } });
+  assert.deepEqual([e.W.pushes, e.W.refused], [[], []]);
+  assert.equal(greens(e, b.headSha).length, 1, 'the merge-slot green of the current path');
+  const M = githubMerges(e, b);
+  await stage10(e);
+  assert.deepEqual(e.adopted, [[910, M]]);
+  // the Owner's step 1 included the guard ruleset ("main 只许快进"): the App cannot bypass it
+  e = await world(t, { prs: [910], rules: 's7-step1' });
+  e.W.rulesets.set(FF_RS, { id: FF_RS, currentUserCanBypass: 'never' });
+  e.W.rules = [...e.W.rules, { type: 'non_fast_forward', rulesetId: FF_RS, parameters: null }, { type: 'deletion', rulesetId: FF_RS, parameters: null }];
+  r = await stage10(e);
+  assert.deepEqual([r.facts.landing?.route, r.facts.landing?.missing, r.facts.landing?.bypass],
+    ['github-merge', S7_SAVE_MISSING, { main: 'never', independent: 'never' }], 'push lacks exactly what the save of C adds');
+  validateTrainFacts(r.facts);
+});
+
+test('S7 (stay green): green hosted-* on same-tree H cannot replace missing, pending or failed hosted-* on S', async t => {
+  for (const testChecks of ['missing', 'pending', 'failed']) await t.test(testChecks, async t => {
+    const { e, b, T } = await opened(t, [910], { rules: 's7' });
+    assert.equal(e.W.commits.get(b.headSha).tree, e.W.commits.get(b.testSha).tree);
+    for (const [id, c] of e.W.checks) if (c.head_sha === b.testSha && HOSTED.includes(c.name)) {
+      if (testChecks === 'missing') e.W.checks.delete(id);
+      else Object.assign(c, { status: testChecks === 'pending' ? 'in_progress' : 'completed', conclusion: testChecks === 'pending' ? null : 'failure' });
+    }
+    const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+    assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', testChecks === 'failed' ? 'TRAIN_LANDING_CHECK_FAILED' : 'TRAIN_LANDING_CHECKS_PENDING', 0]);
+    untouched(e, T);
+    assert.deepEqual(e.W.pushes, []);
+  });
 });

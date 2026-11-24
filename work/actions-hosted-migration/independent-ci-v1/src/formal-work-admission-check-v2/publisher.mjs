@@ -44,12 +44,20 @@
 //     job id, which covers S; job-v2.mjs#frontJobIdsV2): the non-front run H normally has first does not refuse it (§41.4);
 //   - a front job's SETTLED result names, from the same read, the scans H already carries (headScans, resident DESIGN §75): the
 //     resident runs none of them again when S's tree is H's tree. A read that does not fit names none; it never changes the ending.
+//
+// Merged at this head (field defect 2026-11-23, PR #1238 and #1239): when this check is the PR's last required one, GitHub's
+// auto-merge merges the PR within seconds of the green, and the verification after the write then fails (the PR is not open any
+// more). Before anything is withdrawn, the PR and its merge commit are read: merged at exactly this job's head on this job's base
+// (train-rules.mjs#mergedAtHead, the one statement of it) and the green read back as the one success -> SETTLED with settledMerged,
+// never withdrawn: the green did what it was for (the same rule as stage 8's merged-as-tested). Anything else (closed without a
+// merge, merged at another head or on another first parent, squashed, a read that fails, a green that cannot be confirmed) is
+// withdrawn as before. The resident then ends the batch at its next safe point, where the live read shows the PR closed.
 import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../proof.mjs';
 import { freshStamp } from '../clock-skew.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, sameClaimGeneration, MAX_ATTEMPT_V2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
-import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal, projectedHolderForJob } from '../independent-control-checks-v2/train-rules.mjs';
+import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal, projectedHolderForJob, mergedAtHead } from '../independent-control-checks-v2/train-rules.mjs';
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
 import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, headScansOf, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
 import { scanStartSubjectLine } from '../scan-start-v1/subject.mjs';
@@ -64,6 +72,9 @@ import { withdrawalTitle, withdrawalNote, verificationUnavailable, admissionVeri
 export const VERIFY_REREAD_DELAYS_MS = Object.freeze([10_000, 30_000, 60_000]);
 export const VERIFY_WAIT_WINDOW_MS = 180_000;
 export const VERIFY_REVOKE_RESERVE_MS = 120_000;
+// A withdrawal whose confirmation failed is read again on GitHub: at once, then after these waits (revoke#withdrawn). Reads only,
+// inside the same live deadline as every other read; when they run out the result is UNCERTAIN as before.
+export const WITHDRAWN_REREAD_DELAYS_MS = Object.freeze([1_000, 3_000]);
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 export const ROLE = 'work-admission', CHECK_NAME = 'kooyumi-work-admission', APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
 const DEFINITION = Object.freeze({ name: CHECK_NAME, appId: APP_ID });
@@ -192,8 +203,47 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   }
   async function readback(job, externalId, id, conclusion) { const m = await inventory(job, externalId); check(m.length === 1 && m[0].id === id && m[0].status === 'completed' && m[0].conclusion === conclusion, 'NATIVE_CHECK_READBACK_UNCONFIRMED'); return m[0]; }
   async function transition(key, phase, next, details) { try { return await journal.transition(key, phase, next, details); } catch { return null; } }
+  // GitHub's own answer for the PR now: the merge commit's sha when it merged the PR at exactly this job's head on this job's base
+  // (train-rules.mjs#mergedAtHead), else null (also when it cannot be read: no new fact, the withdrawal goes on as before).
+  async function mergedAtThisHead(job) {
+    try {
+      const pull = await github.readPullRequest(job.pr);
+      const mergeCommit = /^[a-f0-9]{40}$/.test(pull?.merge_commit_sha ?? '') ? await github.readGitCommit(pull.merge_commit_sha) : null;
+      return mergedAtHead({ pull, mergeCommit, job }) ? pull.merge_commit_sha : null;
+    } catch { return null; }
+  }
+  // GitHub's own answer for a withdrawal whose confirmation did not go through (field evidence 2026-11-23, PR #1238: the negative
+  // PATCH answered 200 and a step after it said "unconfirmed"; FABLE-resident-halt-merge-race-20261123 B): the head's complete
+  // inventory is read again, at most WITHDRAWN_REREAD_DELAYS_MS.length + 1 times (the list can lag the PATCH), and the withdrawal
+  // stands when this effect's one check is there completed/failure. Never throws; a read that fails or still shows another
+  // conclusion is "not confirmed", and so is a lost lease (no wait and no read past it). Asked only once the PATCH was sent.
+  // What counts (readback): the inventory is complete, exactly ONE check on the head carries this effect's identity (App, name, head,
+  // this effect key's external_id), it is the check id that was patched, and it is completed/failure; a second check of this effect
+  // key (a success beside it) or another id is "not confirmed".
+  async function withdrawn(job, externalId, id) {
+    for (const delay of [0, ...WITHDRAWN_REREAD_DELAYS_MS]) {
+      try { assertLive(); if (delay) await sleep(delay); await readback(job, externalId, id, 'failure'); return true; } catch { /* next read */ }
+    }
+    return false;
+  }
+  // The answer for an effect the journal already holds unfinished. A journal at sent / uncertain may only be BEHIND GitHub: a
+  // withdrawal confirmed there whose local record could not be written (revoke's fallback), or one the code before that fallback
+  // left uncertain although its PATCH had landed (PR #1238, #1239). This stage only ever creates its check as success, so this
+  // effect's one check completed/failure in a complete inventory IS the withdrawal: the journal is brought forward (best effort)
+  // and the answer is REVOKED, nothing written on GitHub. Anything else keeps RECONCILIATION_REQUIRED, also a read that fails.
+  async function earlier(job, key, externalId, previous) {
+    let revoked = previous.state === 'revoked';
+    if (!revoked && ['sent', 'uncertain'].includes(previous.state)) {
+      try {
+        const m = await inventory(job, externalId), id = previous.details?.checkRunId;
+        revoked = m.length === 1 && m[0].status === 'completed' && m[0].conclusion === 'failure' && (id === undefined || id === null || id === m[0].id);
+        if (revoked) await transition(key, previous.state, 'revoked', { checkRunId: m[0].id, externalId, reason: 'withdrawal_confirmed_on_github' });
+      } catch { revoked = false; }
+    }
+    return { status: revoked ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
+  }
   async function revoke({ job, key, externalId, known, phase, cause, sideEffects, admissionDiagnostic }) {
-    const revKey = digest({ action: 'native-work-admission-revoke/2', effectKey: key, checkRunId: known.id }); let revPhase = 'intent', logged = false;
+    const revKey = digest({ action: 'native-work-admission-revoke/2', effectKey: key, checkRunId: known.id }); let revPhase = 'intent', logged = false, patching = false, said = false;
     try { const m = await inventory(job, externalId); check(m.length === 1 && m[0].id === known.id, 'NEGATIVE_COMPENSATION_IDENTITY_UNCONFIRMED'); }
     catch { return { status: 'UNCERTAIN', reason: 'NEGATIVE_COMPENSATION_IDENTITY_UNCONFIRMED', effectKey: key, sideEffects, productionAuthorized: false }; }
     try {
@@ -204,14 +254,25 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     try {
       assertLive(); sideEffects++;
       const unavailable = unverified(cause, admissionDiagnostic);
+      patching = true;
       const patched = await github.revokeCheck(known.id, { status: 'completed', conclusion: 'failure', output: { title: withdrawalTitle('Work admission', cause, unavailable), summary: `Reconcile Native admission check ${key}; ${cause}.${withdrawalNote(cause, unavailable)} No Native ticket or Receipt is asserted.` } });
       check(identity(patched, job, externalId) && patched.status === 'completed' && patched.conclusion === 'failure', 'NEGATIVE_COMPENSATION_UNCONFIRMED'); await readback(job, externalId, known.id, 'failure');
       if (logged) await journal.transition(revKey, 'sent', 'settled', { checkRunId: known.id, conclusion: 'failure' });
       const current = await journal.read(key); check(['sent', 'uncertain', 'settled'].includes(current?.state), 'NEGATIVE_COMPENSATION_STATE_UNCONFIRMED');
       await journal.transition(key, current.state, 'revoked', { checkRunId: known.id, externalId, reason: cause, ...(admissionDiagnostic ? { admissionDiagnostic } : {}) });
-      record('native_check_revoked', { effectKey: key, checkRunId: known.id, cause });
+      said = true; record('native_check_revoked', { effectKey: key, checkRunId: known.id, cause });
       return { status: 'REVOKED', reason: cause, ...(admissionDiagnostic ? { admissionDiagnostic } : {}), effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: false };
     } catch {
+      // The withdrawal is a fact on GitHub, not in this node's journal or log: when GitHub shows the check withdrawn, the result is
+      // REVOKED whichever step failed above (the PATCH's answer, its read-back, a journal or log write). The local records are then
+      // brought as far as they go, best effort; none of them can turn a confirmed withdrawal into UNCERTAIN.
+      if (patching && await withdrawn(job, externalId, known.id)) {
+        if (revPhase === 'sent') await transition(revKey, 'sent', 'settled', { checkRunId: known.id, conclusion: 'failure' });
+        let current = null; try { current = await journal.read(key); } catch { /* best effort */ }
+        if (['sent', 'uncertain', 'settled'].includes(current?.state)) await transition(key, current.state, 'revoked', { checkRunId: known.id, externalId, reason: cause, ...(admissionDiagnostic ? { admissionDiagnostic } : {}) });
+        if (!said) try { record('native_check_revoked', { effectKey: key, checkRunId: known.id, cause, confirmedByReread: true }); } catch { /* best effort */ }
+        return { status: 'REVOKED', reason: cause, ...(admissionDiagnostic ? { admissionDiagnostic } : {}), effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: false };
+      }
       if (revPhase === 'sent') await transition(revKey, 'sent', 'uncertain', { checkRunId: known.id, reason: 'NEGATIVE_COMPENSATION_UNCONFIRMED' });
       if (phase === 'sent') await transition(key, 'sent', 'uncertain', { checkRunId: known.id, externalId, reason: 'NEGATIVE_COMPENSATION_UNCONFIRMED' });
       return { status: 'UNCERTAIN', effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: false, reason: 'NEGATIVE_COMPENSATION_UNCONFIRMED' };
@@ -231,7 +292,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       if (claimed) {
         key = admissionEffectKeyV2(ACTION, job, claimed, DEFINITION); externalId = admissionExternalIdV2(PREFIX, job, claimed);
         previous = await journal.read(key);
-        if (previous && !['settled', 'not_sent'].includes(previous.state)) return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
+        if (previous && !['settled', 'not_sent'].includes(previous.state)) return earlier(job, key, externalId, previous);
       } else {
         // C4: GitHub is the shared record of what was published on this head, by any node or install.
         step = 'published-on-github';
@@ -278,7 +339,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         check(claimed && sameClaimGeneration(claimed, current.facts.observedClaim), 'BATCH_CLAIM_CHANGED');
         key = admissionEffectKeyV2(ACTION, job, claimed, DEFINITION); externalId = admissionExternalIdV2(PREFIX, job, claimed);
         previous = await journal.read(key);
-        if (previous) return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
+        if (previous) return earlier(job, key, externalId, previous);
         // Re-run the complete boundary against the replacement, never reuse the
         // unbound observation as publication authority.
         evaluated = await evaluate(job, claimed, facts => { scheduling = facts; });
@@ -297,7 +358,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         claimed = claimGeneration(before.facts.observedClaim);
         key = admissionEffectKeyV2(ACTION, job, claimed, DEFINITION); externalId = admissionExternalIdV2(PREFIX, job, claimed);
         previous = await journal.read(key);
-        if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
+        if (previous && previous.state !== 'settled') return earlier(job, key, externalId, previous);
       }
       if (previous) { await reverified(job, () => readback(job, externalId, previous.details.checkRunId, 'success')); return settled({ status: 'SETTLED', effectKey: key, checkRunId: previous.details.checkRunId, sideEffects: 0, productionAuthorized: production, scheduling }); }
     } catch (e) {
@@ -346,6 +407,24 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         return { status: 'BLOCKED', effectKey: key, reason: 'native_publication_not_sent', sideEffects: 0, productionAuthorized: false };
       }
       if (sent && !known) { try { const m = await inventory(job, externalId); if (m.length === 1) known = m[0]; } catch { /* read-only discovery cannot prove a missing POST */ } }
+      // Merged at this head: the green stands (header).
+      if (sent && known) {
+        const mergeSha = await mergedAtThisHead(job);
+        let settledNow = false;
+        if (mergeSha) {
+          try {
+            await readback(job, externalId, known.id, 'success');
+            await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', settledMerged: mergeSha,
+              nativeObservationBeforeSha256: before.facts.observationSha256, bindingSha256: before.bindingSha256 });
+            settledNow = true;
+          } catch { /* not confirmed: compensate as before */ }
+        }
+        // Settled is settled: the log after it is best-effort and can never turn it into a withdrawal.
+        if (settledNow) {
+          try { record('native_check_settled_merged', { jobId: job.id, effectKey: key, checkRunId: known.id, mergeSha, cause: safe(e) }); } catch { /* best-effort */ }
+          return settled({ status: 'SETTLED', effectKey: key, checkRunId: known.id, nativeObservationBeforeSha256: before.facts.observationSha256, sideEffects, productionAuthorized: production, scheduling, settledMerged: true });
+        }
+      }
       if (sent && known) return revoke({ job, key, externalId, known, phase, cause: safe(e), sideEffects, admissionDiagnostic: diagnosticOf(e) });
       await transition(key, phase, sent ? 'uncertain' : 'not_sent', { reason: safe(e), externalId });
       return { status: sent ? 'UNCERTAIN' : 'BLOCKED', effectKey: key, reason: safe(e), sideEffects, productionAuthorized: false };
