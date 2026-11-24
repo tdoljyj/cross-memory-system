@@ -2480,7 +2480,7 @@ function Read-DrillBindingFromDialog {
 # The test project's database password, the same dialog: the user name is filled in and cannot be changed (CREDUI_FLAGS_KEEP_USERNAME),
 # the Owner pastes the password reset in the Supabase dashboard (clued-auth-test, Database, reset password).
 function Read-DrillServerDatabaseFromDialog {
-  Read-DrillCredentialFromDialog 'Clued drill test database' 'Clued drill test database (clued-auth-test)' 'Password: the database password of the TEST project clued-auth-test (Supabase dashboard, Database, reset password). Never production. Stored for this Windows user only; never shown.' (Get-DrillServerDatabaseUser) 'DRILL_SERVER_DATABASE_DIALOG'
+  Read-DrillCredentialFromDialog 'Clued drill test database' 'Clued drill test database (clued-auth-test)' 'User name: leave it as it is (empty is fine). Password: the database password of the TEST project clued-auth-test (Supabase dashboard, Database, reset password). Never production. Stored for this Windows user only; never shown.' (Get-DrillServerDatabaseUser) 'DRILL_SERVER_DATABASE_DIALOG'
 }
 # $User: filled in and kept (not editable); empty: the person types it. $Codes: the prefix of the two stops (_CANCELLED, _FAILED).
 function Read-DrillCredentialFromDialog([string]$Target, [string]$Caption, [string]$Message, [string]$User, [string]$Codes) {
@@ -2521,7 +2521,9 @@ public static class CluedDrillCredUiV2 {
       $secure.AppendChar([char]$c)
     }
     $secure.MakeReadOnly()
-    New-Object System.Management.Automation.PSCredential ($user.ToString().Trim().ToLowerInvariant()), $secure
+    # The prefilled name does not always show in the dialog: an empty field means the expected name.
+    $name = $user.ToString().Trim(); if (-not $name) { $name = $User }
+    New-Object System.Management.Automation.PSCredential ($name.ToLowerInvariant()), $secure
   } finally { [Runtime.InteropServices.Marshal]::Copy($zero, 0, $buf, $size); [Runtime.InteropServices.Marshal]::FreeHGlobal($buf) }
 }
 # $Read: where the credential comes from (the dialog; a test gives its own).
