@@ -33,7 +33,6 @@ const PACKAGE_ALLOWED = new Map([
   ['apps/clued-cloud/tests/pg-cluster-fixture.mjs', 'the one entry that loads the package'],
   ['apps/clued-cloud/scripts/select-tests.mjs', 'the test classifier names the package to find database tests'],
   [self, 'this check names the package in its rule'],
-  ['scripts/ci/local-verify-concurrency.test.mjs', 'string samples for the classifier, starts nothing'],
   // To clear: the release-gate script still picks a port itself; a follow-up PR moves it onto the fixture.
   ['apps/clued-cloud/scripts/production-schema-drift.mjs', 'to clear: release-gate script, follow-up PR'],
   // To clear: phase-2 qualification tests that no required check has ever run (ci-uncovered-tests.json); task 700f2b68
