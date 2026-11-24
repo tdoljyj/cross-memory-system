@@ -14,9 +14,9 @@ const TASK = '700f2b68-b355-4edb-95c1-be97f04ea8de';
 const RUNNER = 'node:' + 'test';
 
 // A throwaway checkout: files (path -> text), its own suite commands and table; tracked defaults to every file.
-// The base the lists are measured against defaults to the same table and no known failures.
+// The base the lists are measured against defaults to the same table, the same files and no known failures.
 function fixture(t, files, { commands = { unit: [{ cwd: '.', argv: ['node', '--test', '{tests:t}'] }] }, table = { tests: [] }, tracked,
-  known = {}, baseline = { base: 'base', table, known: {} } } = {}) {
+  known = {}, baseline = { base: 'base', table, known: {}, files: tracked ?? Object.keys(files) } } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'tests-covered-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const [file, text] of Object.entries(files)) {
@@ -55,7 +55,7 @@ test('a new test-x.ps1 in the repository fails the check: no suite command takes
 const SHRINKS = 'clued.ci-uncovered-tests/2';
 test('the uncovered table only shrinks against the base: an entry the base does not list fails, one removed passes', (t) => {
   const files = { 't/a.test.mjs': '', 'u/b.test.mjs': '', 'u/c.test.mjs': '' };
-  const baseline = { base: 'b1', table: { schema: SHRINKS, tests: [entry('u/b.test.mjs')] }, known: {} };
+  const baseline = { base: 'b1', table: { schema: SHRINKS, tests: [entry('u/b.test.mjs')] }, known: {}, files: [...Object.keys(files), 'old/d.test.mjs'] };
   assert.deepEqual(fixture(t, files, { table: { schema: SHRINKS, tests: [entry('u/b.test.mjs'), entry('u/c.test.mjs')] }, baseline }).problems,
     ['u/c.test.mjs: the base (b1) does not list it; scripts/ci/ci-uncovered-tests.json only shrinks: make a required suite run it']);
   // A pattern is an entry like any other.
@@ -74,6 +74,18 @@ test('the uncovered table only shrinks against the base: an entry the base does 
   // The change that brings the rule lists today's gaps: its base has no rule yet.
   assert.deepEqual(fixture(t, files, { table: { schema: SHRINKS, tests: [entry('u/b.test.mjs'), entry('u/c.test.mjs')] },
     baseline: { base: 'b0', table: { schema: 'clued.ci-uncovered-tests/1', tests: [] }, known: {} } }).problems, []);
+});
+
+test('an archive pattern is sealed: a test file the base does not have fails even where the pattern matches it', (t) => {
+  const files = { 't/a.test.mjs': '', 'old/b.test.mjs': '', 'old/sub/c.test.mjs': '' };
+  const table = { schema: SHRINKS, tests: [entry('old/**', { kind: 'archive' })] };
+  const baseline = { base: 'b1', table, known: {}, files: ['t/a.test.mjs', 'old/b.test.mjs'] };
+  const sealed = 'old/sub/c.test.mjs: the base (b1) does not have it; the archive old/** is sealed and takes no new test: make a required suite run it';
+  assert.deepEqual(fixture(t, files, { table, baseline }).problems, [sealed]);
+  // No bootstrap: sealed whatever schema the base's table has.
+  assert.deepEqual(fixture(t, files, { table, baseline: { ...baseline, table: { tests: table.tests } } }).problems, [sealed]);
+  // A file the base had stays exempt.
+  assert.deepEqual(fixture(t, files, { table, baseline: { ...baseline, files: Object.keys(files) } }).problems, []);
 });
 
 const failure = (file, name, fingerprint = '0123456789abcdef') => ({ file, path: [name], fingerprint, reason: 'fails on main' });
@@ -307,4 +319,18 @@ test('the command line reads the lists at --base from git: an entry added since 
   const unreadable = run('0123456789abcdef0123456789abcdef01234567');
   assert.equal(unreadable.status, 1, unreadable.stdout);
   assert.match(unreadable.stderr, /^scripts\/ci\/ci-uncovered-tests\.json, scripts\/ci\/ci-known-failures\.json: cannot read the base 0123456789abcdef0123456789abcdef01234567/m);
+});
+
+test('the command line seals archive patterns against the base: a new test file under one fails, the archived ones pass', (t) => {
+  const { put, add, commit, run } = cliCheckout(t);
+  put('old/kept.test.mjs');
+  put(TABLE_PATH, `${JSON.stringify({ schema: SHRINKS, tests: [entry('old/**', { kind: 'archive' })] }, null, 2)}\n`);
+  commit();
+  const green = run();
+  assert.equal(green.status, 0, green.stderr);
+  put('old/deeper/brand-new.test.mjs');
+  add();
+  const red = run();
+  assert.equal(red.status, 1, red.stdout);
+  assert.match(red.stderr, /^TESTS_NOT_COVERED: 1 problem\(s\)\nold\/deeper\/brand-new\.test\.mjs: the base \([0-9a-f]{40}\) does not have it; the archive old\/\*\* is sealed/);
 });
