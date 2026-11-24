@@ -336,8 +336,8 @@ test('发布门不依赖心跳，两个发布入口使用部署后状态模式',
 
 test('libpq tools get sslmode=require where the node-postgres URL says no-verify', () => {
   const scripts = [...productionWorkflow.matchAll(/node -e '((?:const|let) url[^']*)'/g)].map((m) => m[1]);
-  // Backup, migration login role, apply and (release door v1) the deploy grant step.
-  assert.equal(scripts.length, 4);
+  // Capacity gate, backup, migration login role, apply and (release door v1) the deploy grant step.
+  assert.equal(scripts.length, 5);
   for (const script of scripts) {
     const run = (value) => spawnSync(process.execPath, ['-e', script], {
       env: { ...process.env, CLUED_ATTESTATION_DATABASE_URL: value, CLUED_MIGRATION_DATABASE_URL: value },
