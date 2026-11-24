@@ -6,6 +6,8 @@
 //   debtVerdict     the debt list (config/test-clock-debt.txt) and the static rules:
 //                   - the list only shrinks: a line the base commit's list does not have, a listed file with more hits than
 //                     at the base commit, a listed file that is gone or has no hit left (remove the line) are each a problem;
+//                     a listed test with no hit of its own that imports a listed file with one keeps its line (it runs
+//                     that file's debt: the guard lets a listed helper through only for a listed test);
 //                     in CI a missing base commit is a problem too (the comparison may not quietly stop), and a base
 //                     without the list (the change that brings it) is the only one not compared;
 //                   - what has no preload is read here, in every test file the list does not name: node:test's { timeout }
@@ -196,6 +198,27 @@ export function allowProblems(entries, scanOf) {
   return { problems, byFile };
 }
 
+// Whether `file` imports, directly or through other modules of the checkout (relative specifiers only), a listed file that
+// has a real-clock use of its own.
+const RELATIVE_IMPORT = /\b(?:from|import)\s*\(?\s*(['"])(\.\.?\/[^'"\n]+)\1/g;
+export function importsDebt(file, { read, listed, hitsOf }) {
+  const seen = new Set([file]);
+  const pending = [file];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    const text = read(current);
+    if (text === null) continue;
+    for (const match of text.matchAll(RELATIVE_IMPORT)) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(current), match[2]));
+      if (seen.has(target) || !JS.test(target)) continue;
+      seen.add(target);
+      if (listed.has(target) && hitsOf(target) > 0) return true;
+      pending.push(target);
+    }
+  }
+  return false;
+}
+
 // CI as the environment says it: GitHub Actions, or CI set to anything but false or 0.
 export const inCi = (env = process.env) => env.GITHUB_ACTIONS === 'true' || (!!env.CI && !/^(?:false|0)$/i.test(env.CI));
 
@@ -252,7 +275,11 @@ export function debtVerdict({ root, base = null, git = spawnSync, untracked = tr
     }
     const hits = debtHits(found);
     if (hits === 0) {
-      problems.push(`${file}: no real-clock use left; remove the line from ${DEBT_FILE}`);
+      // A test that runs a listed helper's use carries that debt too (the guard lets the helper through only for a listed
+      // test): its line stays while it imports a listed file with a use, and goes once that file is clear.
+      if (!importsDebt(file, { read, listed, hitsOf: (other) => debtHits(scanOf(other) ?? {}) })) {
+        problems.push(`${file}: no real-clock use left; remove the line from ${DEBT_FILE}`);
+      }
       continue;
     }
     if (typeof baseTexts.get(file) === 'string') {
@@ -290,12 +317,20 @@ const STATIC_HELP = {
   py: 'Python reads the real clock, sleeps or sets a timeout in a test; pass a clock, wait on the event',
 };
 
-// The scan's list: every test file with a hit, for the first list and nothing else (debtVerdict refuses any growth).
+// The scan's list, for the first list and nothing else (debtVerdict refuses any growth): every test file with a hit, and
+// the lines already there for tests that run a listed helper's use (the guard's record finds those; no scan can).
 export function debtListOf(root, { git = spawnSync } = {}) {
-  return testFiles(root, { git }).filter((file) => {
-    const text = readFileSync(path.join(root, file), 'utf8');
-    return debtHits(scanSource(text, testFileKind(file))) > 0;
-  });
+  const read = (file) => {
+    try {
+      return readFileSync(path.join(root, file), 'utf8');
+    } catch {
+      return null;
+    }
+  };
+  const hit = new Set(testFiles(root, { git }).filter((file) => debtHits(scanSource(read(file), testFileKind(file))) > 0));
+  const borrowers = parseDebt(read(DEBT_FILE) ?? '').files.filter((file) => !hit.has(file) && testFileKind(file)
+    && importsDebt(file, { read, listed: hit, hitsOf: () => 1 }));
+  return [...hit, ...borrowers].sort();
 }
 
 // The variables that preload the guard: into a suite command, and from there into every node it starts.
