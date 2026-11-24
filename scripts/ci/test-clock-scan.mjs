@@ -8,16 +8,17 @@
 //                     at the base commit, a listed file that is gone or has no hit left (remove the line) are each a problem;
 //                     a listed test with no hit of its own that imports a listed file with one keeps its line (it runs
 //                     that file's debt: the guard lets a listed helper through only for a listed test);
-//                     in CI a missing base commit is a problem too (the comparison may not quietly stop), and a base
-//                     without the list (the change that brings it) is the only one not compared;
+//                     the caller gives the base commit: none given is a problem (the comparison may not quietly stop),
+//                     base: null says in so many words not to compare, and a base without the list (the change that
+//                     brings it) is the only base not compared; the environment (CI_BASE_SHA, CI) is never read;
 //                   - what has no preload is read here, in every test file the list does not name: node:test's { timeout }
 //                     option, a timeout given to a promisified exec or execFile, PowerShell clock reads and waits (in a
 //                     test's strings or a test script), pg_sleep, and Python's clock, sleep and timeout= (FABLE §2.5, §3.4);
 //                   - the allowlist (scripts/ci/test-clock-allow.json) names a file, a kind and the exact count.
 // The counts are lexical (a line that starts a comment is skipped, nothing else): the same text gives the same count, so
 // the base and the change are compared on one measure. node --import scripts/ci/test-clock-scan.mjs is not how it runs: run
-//   node scripts/ci/test-clock-scan.mjs --check [--root <checkout>] [--base <commit>]   (CI_BASE_SHA when --base is not given)
-//   node scripts/ci/test-clock-scan.mjs --write-debt [--root <checkout>]                (the list as the scan finds it)
+//   node scripts/ci/test-clock-scan.mjs --check --base <commit> [--root <checkout>]   (--base is required)
+//   node scripts/ci/test-clock-scan.mjs --write-debt [--root <checkout>]              (the list as the scan finds it)
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -219,12 +220,10 @@ export function importsDebt(file, { read, listed, hitsOf }) {
   return false;
 }
 
-// CI as the environment says it: GitHub Actions, or CI set to anything but false or 0.
-export const inCi = (env = process.env) => env.GITHUB_ACTIONS === 'true' || (!!env.CI && !/^(?:false|0)$/i.test(env.CI));
-
-// Every problem of the list, the allowlist and the static rules in the checkout at root, against the base commit's list
-// when base is given. Without a base the list is not compared: a local run; in CI (ci) that is a problem of its own.
-export function debtVerdict({ root, base = null, git = spawnSync, untracked = true, ci = inCi() } = {}) {
+// Every problem of the list, the allowlist and the static rules in the checkout at root, against the base commit's list.
+// The base comes from the caller only: not given (undefined) is a problem of its own, wherever it runs; base: null is the
+// caller saying the list is not compared (the static rules and the allowlist still are).
+export function debtVerdict({ root, base, git = spawnSync, untracked = true } = {}) {
   const problems = [];
   const read = (file) => {
     try {
@@ -246,10 +245,10 @@ export function debtVerdict({ root, base = null, git = spawnSync, untracked = tr
     return scans.get(file);
   };
   let baseList = null;
-  if (!base && ci) {
-    // In CI a missing base would quietly stop the comparison: the list could grow with every check green.
-    problems.push('no base commit (CI_BASE_SHA) in CI: the debt list cannot be compared; give the entry the base commit');
-  } else if (base) {
+  if (base === undefined) {
+    // A missing base would quietly stop the comparison: the list could grow with every check green.
+    problems.push('no base commit: the debt list cannot be compared; give the check the base commit (--base)');
+  } else if (base !== null) {
     if (!commitExists(root, base, git)) {
       problems.push(`the base commit ${base} cannot be read: the debt list is not compared (fetch it)`);
     } else {
@@ -360,7 +359,7 @@ export function recordVerdict(text, { suite = 'suite' } = {}) {
   return { refused, debt, lines };
 }
 
-function main(argv, env = process.env) {
+function main(argv) {
   const option = (flag) => (argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : undefined);
   const root = path.resolve(option('--root') ?? path.join(HERE, '..', '..'));
   if (argv[0] === '--write-debt') {
@@ -370,13 +369,18 @@ function main(argv, env = process.env) {
     return 0;
   }
   if (argv[0] === '--check') {
-    const base = option('--base') ?? (env.CI_BASE_SHA || null);
-    const { problems, debt } = debtVerdict({ root, base, ci: inCi(env) });
+    // The base is an argument and nothing else: the environment is not read, and no base is not a quiet skip.
+    const base = option('--base');
+    if (!base || base.startsWith('-')) {
+      console.error('test-clock-scan: --check needs --base <commit> (the commit whose debt list this checkout is compared with)');
+      return 2;
+    }
+    const { problems, debt } = debtVerdict({ root, base });
     for (const problem of problems) console.log(`::error title=test-clock::${problem}`);
-    console.log(`test-clock: ${debt.length} files on the debt list; ${problems.length} problem${problems.length === 1 ? '' : 's'}${base ? '' : ' (no base commit: the list is not compared)'}`);
+    console.log(`test-clock: ${debt.length} files on the debt list; ${problems.length} problem${problems.length === 1 ? '' : 's'}`);
     return problems.length === 0 ? 0 : 1;
   }
-  console.error('usage: node scripts/ci/test-clock-scan.mjs --check [--root <checkout>] [--base <commit>] | --write-debt [--root <checkout>]');
+  console.error('usage: node scripts/ci/test-clock-scan.mjs --check --base <commit> [--root <checkout>] | --write-debt [--root <checkout>]');
   return 2;
 }
 if (import.meta.main) process.exitCode = main(process.argv.slice(2));
