@@ -70,6 +70,7 @@ test('a checkout reached through a junction or link is the same checkout: its te
   const refused = runGuarded(link, 'test/now.test.mjs');
   assert.notEqual(refused.status, 0, refused.output);
   assert.deepEqual(refused.record.refused.map(({ api, file, line }) => ({ api, file, line })), [{ api: 'Date.now()', file: 'test/now.test.mjs', line: 4 }]);
+  rmSync(path.join(root, 'clock-record.jsonl'), { force: true }); // each run reads a record of its own
   const listed = runGuarded(link, 'test/listed.test.mjs');
   assert.equal(listed.status, 0, listed.output);
   assert.deepEqual(listed.record.refused, []);
@@ -449,6 +450,24 @@ test('the debt list is compared or the check fails: the caller gives the base, t
   rmSync(path.join(odd.root, DEBT_FILE), { recursive: true });
   write(odd.root, DEBT_FILE, '');
   assert.match(debtVerdict({ root: odd.root, base: odd.base }).problems.join('\n'), /base commit's config\/test-clock-debt\.txt is not a file/);
+});
+
+// The entry runs --check as a command of clued-cloud, so with the guard preloaded (NODE_OPTIONS). The guard's own imports
+// are evaluated before the scan starts: had they included the scan, the scan would not be the entry point there (its
+// import.meta.main false), print nothing and exit 0, whatever the list says.
+test('the check run as the entry runs it, with the guard preloaded, still checks', () => {
+  const { root, base } = repository({ [DEBT_FILE]: '', 'test/clean.test.mjs': `${header}test('x', () => {});\n` });
+  const env = { ...process.env, ...clockGuardEnv({ root, record: path.join(root, 'clock-record.jsonl') }) };
+  for (const name of ['CI', 'GITHUB_ACTIONS', 'CI_BASE_SHA', 'NODE_TEST_CONTEXT']) delete env[name];
+  const check = (...args) => spawnSync(process.execPath, [SCAN_PATH, '--check', '--root', root, ...args], { env, encoding: 'utf8' });
+  const usage = check();
+  assert.equal(usage.status, 2, usage.stdout + usage.stderr);
+  assert.match(usage.stderr, /--check needs --base <commit>/);
+  write(root, DEBT_FILE, 'test/new.test.mjs\n');
+  write(root, 'test/new.test.mjs', `${header}test('x', () => {\n  assert.ok(Date.now());\n});\n`);
+  const grown = check('--base', base);
+  assert.equal(grown.status, 1, grown.stdout + grown.stderr);
+  assert.match(grown.stdout, /test\/new\.test\.mjs: test-clock debt grew/);
 });
 
 test('the guard environment and what counts as test code', () => {
