@@ -255,9 +255,8 @@ test('invoke-stage guard: a helper stopped before RUNNING (its preflight refused
     ['NATIVE_RECEIPT_UNCONFIRMED', true, 0, true]);
 });
 
-test('invoke-stage: helper preflight refusal, tree unknown, unbound outcome and a not-admitted stage 1', async t => {
+test('invoke-stage: tree unknown, unbound outcome and a not-admitted stage 1', async t => {
   const f = await fixture(t);
-  assert.equal((await run(f, 1, fakeBroker(f, { writeReceipt: false, outcome: null }))).failure_code, 'STAGE_HELPER_PREFLIGHT_REFUSED');
   assert.equal((await run(f, 1, fakeBroker(f, { receipt: { tree_cleanup_confirmed: false, tree_active_processes: 1 } }))).failure_code, 'STAGE_CHILD_TREE_UNCONFIRMED');
   assert.equal((await run(f, 1, fakeBroker(f, { receipt: { outcome_sha256: 'f'.repeat(64), state: 'FIXED_CHILD_REFUSED', node_exit_code: 2 } }))).failure_code, 'STAGE_OUTCOME_MISSING');
   const na = await run(f, 1, fakeBroker(f, { receipt: { state: 'FIXED_CHILD_REFUSED', node_exit_code: 2 },
