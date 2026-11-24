@@ -16,9 +16,11 @@
 // Statements are found with the migration tokenizer (scripts/ci/sql-tokens.mjs):
 // top-level SQL, DO bodies and the text of a literal EXECUTE in a DO body are
 // judged; function bodies are not (they run when called, not when the file is
-// applied). A DO body's EXECUTE of anything but one literal cannot be judged and
-// counts as an addition. A file the tokenizer cannot read is refused at or above
-// the threshold and passes with a warning below it.
+// applied). A DO body that EXECUTEs anything but one literal is judged by every
+// string literal of that body instead (§12): a literal that holds an adding
+// statement at its start or after a semicolon refuses the file; a literal the
+// tokenizer cannot read counts as an addition. A file the tokenizer cannot read is
+// refused at or above the threshold and passes with a warning below it.
 // There is no option to change the threshold. Exit 0 pass, 1 refused, 2 usage.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -116,11 +118,36 @@ function bodyOfDo(tokens, index) {
   return isCode(tokens[index - 2], 'language') && isCode(tokens[index - 3], 'do');
 }
 
-function scan(tokens, plpgsql, additions) {
+// A string literal judged as the SQL it holds. A literal the tokenizer cannot read
+// cannot be judged and counts as an addition, as an unreadable file does.
+function scanLiteral(token, additions) {
+  let tokens;
+  try {
+    tokens = sqlTokens(token.value, token.line);
+  } catch (error) {
+    additions.push({ kind: 'unreadable literal', line: token.line, statement: `${render([token])} (${error.message})` });
+    return;
+  }
+  scan(tokens, false, additions);
+}
+
+// A DO body: its statements, and, when it executes anything but one literal, every
+// string literal of the body (FABLE-prod-db-shrink-v2-20261124 §12): the statement
+// it builds is written in one of them (a constant, a format or replace argument).
+function scanDo(tokens, additions) {
+  const body = { dynamic: false, judged: new Set() };
+  scan(tokens, true, additions, body);
+  if (!body.dynamic) return;
+  for (const token of tokens) {
+    if (token.kind === 'literal' && !body.judged.has(token)) scanLiteral(token, additions);
+  }
+}
+
+function scan(tokens, plpgsql, additions, body = null) {
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (token.kind === 'literal' && bodyOfDo(tokens, index)) {
-      scan(sqlTokens(token.value, token.line), true, additions);
+      scanDo(sqlTokens(token.value, token.line), additions);
       continue;
     }
     if (token.kind !== 'code' || !atStatementStart(tokens, index)) continue;
@@ -140,9 +167,10 @@ function scan(tokens, plpgsql, additions) {
       if (stop < 0) stop = statement.length;
       const argument = statement.slice(1, stop);
       if (argument.length === 1 && argument[0].kind === 'literal') {
-        scan(sqlTokens(argument[0].value, argument[0].line), false, additions);
-      } else {
-        add('dynamic');
+        body?.judged.add(argument[0]);
+        scanLiteral(argument[0], additions);
+      } else if (body) {
+        body.dynamic = true;
       }
     }
   }

@@ -163,11 +163,11 @@ jobs:
       # the 500 MB database limit, a migration that adds a table, an index or a
       # column is refused here, before the full backup. The size is read with the
       # migration login the apply step uses; the threshold is the script's own
-      # constant. The retention sweep reminder only warns, and only when it could
-      # read cron.job_run_details.
+      # constant. The retention sweep reminder only warns, and only for a registered
+      # job without a success in 48 hours (a database without it reads 'absent').
       - name: Refuse additions while the database is near its size limit
         if: ${{ inputs.mode == 'migrate' }}
-        timeout-minutes: 2
+        timeout-minutes: 5
         env:
           CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
           MIGRATIONS: ${{ inputs.migrations }}
@@ -178,7 +178,7 @@ jobs:
             psql "$database_url" -v ON_ERROR_STOP=1 -X -tA -c "$1"; }
           size_bytes=$(psql_read 'select pg_database_size(current_database())') \
             || { echo "::error::容量门：读不到生产库大小；没有备份、没有迁移，生产没有变化"; exit 1; }
-          sweep=$(psql_read "select count(*) from cron.job_run_details d join cron.job j on j.jobid = d.jobid where j.jobname = 'clued-retention-sweep' and d.status = 'succeeded' and d.end_time > now() - interval '48 hours'" 2>/dev/null) || sweep=''
+          sweep=$(psql_read "select case when not exists (select 1 from cron.job where jobname = 'clued-retention-sweep') then 'absent' else (select count(*) from cron.job_run_details d join cron.job j on j.jobid = d.jobid where j.jobname = 'clued-retention-sweep' and d.status = 'succeeded' and d.end_time > now() - interval '48 hours')::text end" 2>/dev/null) || sweep=''
           if [ "$sweep" = 0 ]; then
             echo "::warning::每日清理 clued-retention-sweep 最近 48 小时没有一次成功（cron.job_run_details）；不影响本次迁移"
           fi
