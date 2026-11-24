@@ -2,7 +2,9 @@
 // and before the checkpoint is restored, whether the first install passed or failed, one read-only pass over the guest's WSL: the docker storage, the image list, each
 // kit image's .Id and RepoDigests, the sha256 and package version of the files the inventory names, systemctl --failed. The answers are
 // kept raw in stage-evidence.json ('guest-probe') and never judged; a probe that cannot run is recorded and changes nothing else.
-// No VM is touched: the guest side runs against a fake wsl.exe; no test here depends on the wall clock.
+// No VM is touched: the guest side runs against a fake wsl.exe. One test uses a real per-command bound (1 second, the docker readings in
+// the bound test); the verdict does not depend on how fast the machine is: the readings that do not hang get a 120-second bound there, and
+// the docker that hangs never answers until it is released, so it runs into its bound on any machine.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -304,13 +306,19 @@ test('the guest side bounds each command and stops after two timeouts: a docker 
   assert.equal(plan.commandSeconds, 30, 'one command at most 30 seconds');
   assert.equal(plan.maxTimeouts, 2, 'no command is started after two have timed out');
   assert.ok(plan.maxTimeouts * plan.commandSeconds < 5 * 60, 'so a hung docker leaves the guest answering inside the 5-minute outer bound');
-  // a docker that hangs never answers until it is released; the two file readings are each 1.5 seconds slow on every run (a busy node)
+  // a docker that hangs never answers until it is released; the two file readings are each 1.5 seconds slow on every run (a busy node).
+  // Only the docker readings keep the 1-second bound under test; every other reading gets its own 120 seconds, as guest-boot has in the drill.
+  // The held docker is released as soon as the guest side returns, in the same PowerShell: a held child keeps the inherited stdout pipe
+  // open, so ps() itself would not return before it ends; the release after ps() only covers a ps() that threw.
+  const release = path.join(w.dir, 'release');
   let r;
   try {
     r = ps(`$env:FAKE_HOLD = 'docker'; $env:FAKE_LAG = 'sha256sum'; $env:FAKE_LAG_MS = '1500'
-      $plan = New-DrillProbePlan -Commands (Get-DrillProbeCommands ${PLAN_ARGS}) -WslExe ${q(w.cmd)} -CommandSeconds 1
-      & $script:GuestInspect $plan $script:DrillNativeText`);
-  } finally { fs.writeFileSync(path.join(w.dir, 'release'), ''); }
+      $c = @(Get-DrillProbeCommands ${PLAN_ARGS}); foreach ($x in $c) { if ([string]$x['id'] -notmatch '^(docker-|image:)') { $x['seconds'] = 120 } }
+      $plan = New-DrillProbePlan -Commands $c -WslExe ${q(w.cmd)} -CommandSeconds 1
+      $got = & $script:GuestInspect $plan $script:DrillNativeText
+      [IO.File]::WriteAllText(${q(release)}, ''); $got`);
+  } finally { fs.writeFileSync(release, ''); }
   const ids = commandsOf().map(x => x.id);
   assert.deepEqual(r.commands.map(x => x.id), ids, 'every command has its entry');
   const isDocker = (x) => /^(docker-|image:)/.test(x.id);
