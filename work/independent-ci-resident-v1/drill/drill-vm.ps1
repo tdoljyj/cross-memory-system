@@ -754,19 +754,31 @@ function Assert-DrillKitCredentialsBound($KitInfo, [string]$Tar) {
 # held again to the Release directory by its one reader (make-drill-kit.mjs --server-of: the Release's first-install kit is the one the
 # kit was made from, the drill's differs in the two server fields only and is not production's, the production host is in the list the
 # guest cuts off). And the Owner's drill binding must be there, in its shape: without it the drill does not start.
+# Then the server itself is asked (FABLE-drill-test-project-sync-20261124.md section 2.2; drill-server-check.mjs --ready): its sync
+# receipt must say in-sync, and the role probe the guest is about to send, sent from here with the binding's token, must be answered
+# "holds no role". A project that was not synced, a rotated key, an expired token, a binding the server would let through: each stops
+# the drill here with its own code (DRILL_SERVER_KEY_REFUSED, DRILL_SERVER_NOT_IN_SYNC, DRILL_SERVER_UNREACHABLE,
+# DRILL_SERVER_PROBE_FUNCTION_MISSING, DRILL_BINDING_REFUSED_BY_SERVER, DRILL_BINDING_ON_DUTY). The receipt is kept for the drill's own.
 function Assert-DrillServerReady($KitInfo, $Package) {
   $server = Get-Prop $KitInfo 'server'
   if ($null -eq $server) { throw (New-DrillError 'DRILL_KIT_SERVER_STAND_IN_MISSING' 'the kit names no drill server: make it again with make-drill-kit.mjs') }
-  $reader = Join-Path (Split-Path -Parent $script:DrillScriptPath) 'make-drill-kit.mjs'
+  $binding = Get-DrillCredential -Binding
   $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
-  $run = Invoke-DrillNode $node @($reader, '--server-of', [string]$KitInfo.dir, '--from', (Split-Path -Parent ([string]$Package.tar)), '--version', [string]$Package.version) 60
+  $run = Invoke-DrillServerReadyNode $node ([string]$KitInfo.dir) ([string](Split-Path -Parent ([string]$Package.tar))) ([string]$Package.version) $binding
   $derived = $null
   if ($run.exit -eq 0) { try { $derived = $run.stdout | ConvertFrom-Json } catch { $derived = $null } }
   if ($null -eq $derived) { throw (New-DrillServerError $run 'DRILL_KIT_SERVER_STAND_IN_REFUSED') }
   foreach ($k in @('supabaseUrl', 'releaseFirstInstallKitSha256', 'firstInstallKitSha256')) {
     if (-not [string]::Equals([string](Get-Prop $derived $k), [string]$server[$k], [StringComparison]::Ordinal)) { throw (New-DrillError 'DRILL_KIT_SERVER_STAND_IN_REFUSED' $k) }
   }
-  [void](Get-DrillCredential -Binding)
+  $server['sync'] = Get-Prop $derived 'receipt'
+}
+
+# The one call of the server tool for a run: the kit, its Release and version as arguments, the binding's token on the tool's standard
+# input (in no argument, no environment variable, no file).
+function Invoke-DrillServerReadyNode([string]$Node, [string]$KitDir, [string]$From, [string]$Version, $Binding) {
+  $tool = Join-Path (Split-Path -Parent $script:DrillScriptPath) 'drill-server-check.mjs'
+  Invoke-DrillProcess $Node @($tool, '--ready', $KitDir, '--from', $From, '--version', $Version) 120 @{} @('NODE_OPTIONS', 'NODE_PATH') $Binding.GetNetworkCredential().Password
 }
 
 # A credential group's members as written: each key with its value (a dictionary or a parsed JSON object).
@@ -1928,7 +1940,8 @@ function Invoke-DrillNode([string]$Node, [string[]]$Arguments, [int]$TimeoutSeco
 }
 
 # One bounded child process, no shell; on a timeout it kills only the child it started.
-function Invoke-DrillProcess([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds, [hashtable]$Environment = @{}, [string[]]$RemoveEnvironment = @()) {
+# $StandardInput: text the child reads from its standard input (a secret that must be in no argument and no environment variable).
+function Invoke-DrillProcess([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds, [hashtable]$Environment = @{}, [string[]]$RemoveEnvironment = @(), $StandardInput = $null) {
   $child = [Diagnostics.Process]::new()
   try {
     $child.StartInfo.FileName = $File
@@ -1941,9 +1954,11 @@ function Invoke-DrillProcess([string]$File, [string[]]$Arguments, [int]$TimeoutS
     $child.StartInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
     foreach ($name in $RemoveEnvironment) { $child.StartInfo.EnvironmentVariables.Remove($name) }
     foreach ($name in $Environment.Keys) { $child.StartInfo.EnvironmentVariables[$name] = $Environment[$name] }
+    if ($null -ne $StandardInput) { $child.StartInfo.RedirectStandardInput = $true }
     [void]$child.Start()
     $stdout = $child.StandardOutput.ReadToEndAsync()
     $stderr = $child.StandardError.ReadToEndAsync()
+    if ($null -ne $StandardInput) { $child.StandardInput.Write([string]$StandardInput); $child.StandardInput.Close() }
     if (-not $child.WaitForExit($TimeoutSeconds * 1000)) {
       if (-not $child.HasExited) { $child.Kill() }
       throw "$([IO.Path]::GetFileName($File)) timed out"
@@ -4208,7 +4223,9 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
     firstInstallKitSha256 = $package['firstInstallKitSha256']; candidate = [bool]$package['candidate']
     # the server the guest installed against (never production) and the first-install kit it read: the Release's with the two fields replaced
     server = $(if ($null -ne (Get-Prop $kitInfo 'server')) { [ordered]@{ project = $kitInfo.server.project; supabaseUrl = $kitInfo.server.supabaseUrl; replaced = @($kitInfo.server.replaced)
-        drillFirstInstallKitSha256 = $kitInfo.server.firstInstallKitSha256; blackholeHosts = @($kitInfo.server.blackholeHosts) } } else { $null })
+        drillFirstInstallKitSha256 = $kitInfo.server.firstInstallKitSha256; blackholeHosts = @($kitInfo.server.blackholeHosts)
+        # the test project's sync receipt read before the boot: which production state this drill's server stood in for
+        sync = $kitInfo.server['sync'] } } else { $null })
     kitSha256 = $kitInfo.sha256; prereqSha256 = $prereq.sha256; baseline = [ordered]@{ checkpoint = $script:Drill.Checkpoint; build = $baseline }
     startedAt = $startedAt; endedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); hostFreeGBAtStart = (Get-Prop (Get-Prop $o 'preBoot') 'bootGate.freeGB')
     failure = $failure; restoredToCheckpoint = $restored

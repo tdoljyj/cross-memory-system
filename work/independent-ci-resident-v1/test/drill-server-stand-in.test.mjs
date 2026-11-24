@@ -347,6 +347,7 @@ test('Assert-DrillServerReady stops the drill on the server\'s answer, each with
   // the whole run: the answer is asked for before the host hold, and a refusal starts nothing
   const main = `$script:RealAssertDrillServerReady = \${function:Assert-DrillServerReady}; ${candidateStubs}
     function Read-DrillKit { @{ dir = 'unused'; prereqSha256 = 'pin'; executionBlocker = $null; candidate = @{ acceptance = 'x' }; server = @{ supabaseUrl = 'unused' }; credentials = $null } }
+    function Test-DrillPackageDir { @{ tar = 'unused'; version = '1.2.3'; candidate = $true } }
     Set-Item function:Assert-DrillServerReady $script:RealAssertDrillServerReady`;
   assert.equal(psCode(`${main}; ${answering(1, 'DRILL_BINDING_ON_DUTY')}; Invoke-DrillMain`), 'DRILL_BINDING_ON_DUTY');
   assert.equal(psCode(`${main}; ${answering(1, 'DRILL_SERVER_NOT_IN_SYNC:diverged')}; Invoke-DrillMain`), 'DRILL_SERVER_NOT_IN_SYNC');
