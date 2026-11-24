@@ -89,11 +89,38 @@ test('G2: the companion account\'s logons and refused logons, by their named fie
   assert.match(fs.readFileSync(hostScript, 'utf8'), /\$CompanionAccountName = 'clued-companion'/);
 });
 
-test('G2: both event queries are accepted by the event log as written (put to the Application log: read-only, no match needed)', opts, () => {
-  const got = ps(`@((Get-EntryTaskEventsXPath ${SINCE}), (Get-EntryLogonEventsXPath ${SINCE}) | ForEach-Object {
+test('G2: the event queries are accepted by the event log as written (put to the Application log: read-only, no match needed)', opts, () => {
+  const got = ps(`@((Get-EntryTaskEventsXPath ${SINCE}), (Get-EntryTaskEngineEventsXPath ${SINCE}), (Get-EntryLogonEventsXPath ${SINCE}) | ForEach-Object {
     try { [void](Get-WinEvent -LogName Application -FilterXPath $_ -MaxEvents 1 -ErrorAction Stop); 'accepted' }
     catch { if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { 'accepted' } else { [string]$_.Exception.Message } } })`);
-  assert.deepEqual(got, ['accepted', 'accepted']);
+  assert.deepEqual(got, ['accepted', 'accepted', 'accepted']);
+});
+
+// Review of 36a20badc, M1: the task engine's events (104 logon failed for a task, 311 engine did not start, 314 stopped idle, 317
+// started) carry no TaskName, so the companion tasks' query never brings them back. The Operational log is stood in by a Get-WinEvent
+// that filters as the event log does: an event without a TaskName never matches a query on TaskName.
+test('G2 (review M1): a task engine event without a TaskName (311, 104) reaches the snapshot, on its own 50', opts, () => {
+  const out = path.join(tmp, 'g2-engine'); fs.mkdirSync(out, { recursive: true });
+  const list = path.join(tmp, 'g2-engine-list.json');
+  write(list, JSON.stringify({ contract: 'clued.drill.guest-failure-files/1', files: [{ root: 'ci', path: 'none\\x.json' }] }));
+  const got = ps(`$script:asked = New-Object Collections.ArrayList
+    $log = @(
+      [pscustomobject]@{ TimeCreated = [datetime]'2026-11-24T09:40:02Z'; Id = 311; ActivityId = $null; TaskName = $null; Message = 'Task Scheduler failed to start task engine "S-1-5-21-1-2-3-1002:CLUED-DRILL\\clued-companion:Password:" process due to an error occurring in "LUAIsElevatedToken". Command="taskhostw.exe". Error Value: 2147943726.' },
+      [pscustomobject]@{ TimeCreated = [datetime]'2026-11-24T09:40:01Z'; Id = 104; ActivityId = $null; TaskName = $null; Message = 'Task Scheduler failed to log on "CLUED-DRILL\\clued-companion". Failure occurred in "LogonUserExEx".' },
+      [pscustomobject]@{ TimeCreated = [datetime]'2026-11-24T09:40:00Z'; Id = 325; ActivityId = $null; TaskName = '\\Clued\\CluedCIResidentCompanion'; Message = 'Task Scheduler queued instance of task "\\Clued\\CluedCIResidentCompanion".' })
+    function Get-WinEvent([string]$LogName, [string]$FilterXPath, $ErrorAction) { [void]$script:asked.Add($LogName)
+      if ($LogName -cne $script:EntryTaskSchedulerLogName) { throw 'not stood in' }
+      $log | Where-Object { if ($FilterXPath.Contains("Data[@Name='TaskName']")) { $null -ne $_.TaskName -and $FilterXPath.Contains("'" + $_.TaskName + "'") } else { $FilterXPath.Contains('EventID=' + $_.Id) } } }
+    function Read-EntryLogonEvents { 'L' }; function Read-EntryGuestMemory { 'M' }; function Read-EntryGuestProcesses { 'P' }; function Read-EntryWslService { 'W' }
+    $null = Write-EntryFailureSnapshot ${q(out)} ${q(list)} @{ ci = ${q(tmp)} } ${SINCE} ([ordered]@{ status = 'FIRST_INSTALL_STOPPED'; stopCode = 'x' }) { param($s, $m) @() }
+    [ordered]@{ asked = @($script:asked); xpath = (Get-EntryTaskEngineEventsXPath ${SINCE}) }`);
+  assert.equal(got.xpath, "*[System[(EventID=104 or EventID=311 or EventID=314 or EventID=317) and TimeCreated[@SystemTime>='2026-11-24T08:51:23.000Z']]]");
+  assert.deepEqual(got.asked, ['Microsoft-Windows-TaskScheduler/Operational', 'Microsoft-Windows-TaskScheduler/Operational']);
+  const s = JSON.parse(fs.readFileSync(path.join(out, 'resident-failure-snapshot.json'), 'utf8'));
+  assert.deepEqual(s.guest.taskEvents.items.map(e => e.id), [325]);
+  assert.equal(s.guest.engineEvents.state, 'read');
+  assert.deepEqual(s.guest.engineEvents.items.map(e => [e.id, e.at]), [[311, '2026-11-24T09:40:02.0000000+00:00'], [104, '2026-11-24T09:40:01.0000000+00:00']]);
+  assert.match(s.guest.engineEvents.items[0].message, /clued-companion:Password.*taskhostw\.exe/);
 });
 
 test('G2: the memory, the processes (sorted, at most 50) and the WslService service, each with its own error', opts, () => {
@@ -112,7 +139,7 @@ test('G2: the memory, the processes (sorted, at most 50) and the WslService serv
       wqlAccepted = $(try { [void]@(Get-CimInstance -ClassName Win32_Process -Filter (Get-EntryGuestProcessFilter) -ErrorAction Stop); $true } catch { [string]$_.Exception.Message }) }`);
   assert.deepEqual(got.memory, { state: 'read', error: null, totalVisibleKb: 8388608, freePhysicalKb: 204800, totalVirtualKb: 9437184, freeVirtualKb: 307200 });
   assert.deepEqual(got.noMemory, { state: 'unreadable', error: 'denied' });
-  assert.equal(got.filter, ['wsl.exe', 'wslhost.exe', 'wslservice.exe', 'wslrelay.exe', 'vmmem', 'vmmemWSL', 'vmwp.exe', 'CluedCompanionSupervisor.exe', 'node.exe'].map(n => `Name='${n}'`).join(' OR '));
+  assert.equal(got.filter, ['wsl.exe', 'wslhost.exe', 'wslservice.exe', 'wslrelay.exe', 'vmmem', 'vmmemWSL', 'vmwp.exe', 'taskhostw.exe', 'CluedCompanionSupervisor.exe', 'node.exe'].map(n => `Name='${n}'`).join(' OR '));
   assert.equal(got.wqlAccepted, true, 'WMI accepts the filter as written');
   assert.equal(got.processes.state, 'read');
   assert.equal(got.processes.items.length, 50);
@@ -126,6 +153,7 @@ test('G2: the memory, the processes (sorted, at most 50) and the WslService serv
 test('G2: the guest reader puts the parts together, with the entry\'s start, the limit and what G1 recorded', opts, () => {
   const got = ps(`$script:calls = New-Object Collections.ArrayList
     function Read-EntryTaskEvents([DateTimeOffset]$Since, [int]$Max) { [void]$script:calls.Add("tasks $($Since.ToString('o')) $Max"); 'T' }
+    function Read-EntryTaskEngineEvents([DateTimeOffset]$Since, [int]$Max) { [void]$script:calls.Add("engine $($Since.ToString('o')) $Max"); 'E' }
     function Read-EntryLogonEvents([DateTimeOffset]$Since, [int]$Max) { [void]$script:calls.Add("logons $($Since.ToString('o')) $Max"); 'L' }
     function Read-EntryGuestMemory { 'M' }
     function Read-EntryGuestProcesses([int]$Max) { [void]$script:calls.Add("processes $Max"); 'P' }
@@ -133,9 +161,9 @@ test('G2: the guest reader puts the parts together, with the entry\'s start, the
     $script:EntryTaskLog = [ordered]@{ state = 'enabled'; enabledBefore = $false; error = $null }
     $g = & $script:EntryFailureGuestReader ${SINCE} 50
     [ordered]@{ keys = @($g.Keys); guest = $g; calls = @($script:calls) }`);
-  assert.deepEqual(got.keys, ['taskSchedulerLog', 'taskEvents', 'logons', 'memory', 'processes', 'wslService']);
-  assert.deepEqual(got.guest, { taskSchedulerLog: { state: 'enabled', enabledBefore: false, error: null }, taskEvents: 'T', logons: 'L', memory: 'M', processes: 'P', wslService: 'W' });
-  assert.deepEqual(got.calls, ['tasks 2026-11-24T08:51:23.0000000+00:00 50', 'logons 2026-11-24T08:51:23.0000000+00:00 50', 'processes 50']);
+  assert.deepEqual(got.keys, ['taskSchedulerLog', 'taskEvents', 'engineEvents', 'logons', 'memory', 'processes', 'wslService']);
+  assert.deepEqual(got.guest, { taskSchedulerLog: { state: 'enabled', enabledBefore: false, error: null }, taskEvents: 'T', engineEvents: 'E', logons: 'L', memory: 'M', processes: 'P', wslService: 'W' });
+  assert.deepEqual(got.calls, ['tasks 2026-11-24T08:51:23.0000000+00:00 50', 'engine 2026-11-24T08:51:23.0000000+00:00 50', 'logons 2026-11-24T08:51:23.0000000+00:00 50', 'processes 50']);
 });
 
 test('G3: the guest\'s account is in the snapshot and counted within its 1 MiB before any file; a reader that throws leaves the files read', opts, () => {

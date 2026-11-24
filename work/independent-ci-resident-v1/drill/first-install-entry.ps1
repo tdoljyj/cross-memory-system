@@ -425,15 +425,20 @@ $script:EntryFailureEventReader = {
 # $script:EntryFailureEventChars characters:
 #   taskSchedulerLog  whether the entry switched the Task Scheduler's Operational log on at its start (it is off on a clean Windows)
 #   taskEvents        that log's events for the companion's tasks since the entry started, newest first
+#   engineEvents      that log's task engine events since then, newest first: a logon that failed for a task (104), a task engine
+#                     that did not start (311), started (317) or stopped idle (314). They name no task (review of 36a20badc, M1), so
+#                     they are asked for by their ids, every account's, on their own 50.
 #   logons            the Security log's logons (4624) and refused logons (4625) of the companion account since then, newest first
 #   memory            the guest's memory now (KiB)
-#   processes         the WSL, Hyper-V worker, supervisor and node processes now: id, parent, session, start, working set
+#   processes         the WSL, Hyper-V worker, task host (taskhostw: the task engine), supervisor and node processes now: id, parent,
+#                     session, start, working set
 #   wslService        the WslService service's status now
 $script:EntryTaskSchedulerLogName = 'Microsoft-Windows-TaskScheduler/Operational'
 $script:EntryCompanionTaskNames = @('\Clued\CluedCIResidentCompanion', '\Clued\CluedCIResidentCompanionWslImport', '\Clued\CluedCIResidentCompanionFallback', '\Clued\CluedCIResidentNotifier')
 $script:EntryCompanionAccount = 'clued-companion'
 $script:EntryLogonFields = @('TargetUserSid', 'TargetUserName', 'TargetLogonId', 'LogonType', 'LogonProcessName', 'AuthenticationPackageName', 'ProcessName', 'Status', 'SubStatus', 'FailureReason')
-$script:EntryGuestProcessNames = @('wsl.exe', 'wslhost.exe', 'wslservice.exe', 'wslrelay.exe', 'vmmem', 'vmmemWSL', 'vmwp.exe', 'CluedCompanionSupervisor.exe', 'node.exe')
+$script:EntryGuestProcessNames = @('wsl.exe', 'wslhost.exe', 'wslservice.exe', 'wslrelay.exe', 'vmmem', 'vmmemWSL', 'vmwp.exe', 'taskhostw.exe', 'CluedCompanionSupervisor.exe', 'node.exe')
+$script:EntryTaskEngineEventIds = @(104, 311, 314, 317)
 $script:EntryTaskLog = [ordered]@{ state = 'not-asked'; enabledBefore = $null; error = $null }
 
 # Switches the Task Scheduler's Operational log on, before the first install (the guest only). Never throws: the outcome is recorded.
@@ -459,10 +464,17 @@ function Read-EntryGuestPart([scriptblock]$Read) {
 function Get-EntryTaskEventsXPath([DateTimeOffset]$Since) {
   "*[System[" + (Get-EntryEventSinceXPath $Since) + "]] and *[EventData[" + ((@($script:EntryCompanionTaskNames) | ForEach-Object { "Data[@Name='TaskName']='" + $_ + "'" }) -join ' or ') + "]]"
 }
-function Read-EntryTaskEvents([DateTimeOffset]$Since, [int]$Max, [scriptblock]$Query = { param($xpath) Get-WinEvent -LogName $script:EntryTaskSchedulerLogName -FilterXPath $xpath -ErrorAction Stop }) {
-  $xpath = Get-EntryTaskEventsXPath $Since
+# XPath: another query of the same log (the task engine's events); by default the companion's tasks'.
+function Read-EntryTaskEvents([DateTimeOffset]$Since, [int]$Max, [scriptblock]$Query = { param($xpath) Get-WinEvent -LogName $script:EntryTaskSchedulerLogName -FilterXPath $xpath -ErrorAction Stop }, [string]$XPath = '') {
+  $xpath = if ($XPath) { $XPath } else { Get-EntryTaskEventsXPath $Since }
   Read-EntryGuestPart { @(& $Query $xpath | Select-Object -First $Max | ForEach-Object {
     [ordered]@{ at = (Get-EntryEventAt $_); id = [int]$_.Id; activityId = $(if ($null -ne $_.ActivityId) { [string]$_.ActivityId } else { $null }); message = (Get-EntryEventText $_.Message) } }) }
+}
+function Get-EntryTaskEngineEventsXPath([DateTimeOffset]$Since) {
+  "*[System[(" + ((@($script:EntryTaskEngineEventIds) | ForEach-Object { 'EventID=' + $_ }) -join ' or ') + ") and " + (Get-EntryEventSinceXPath $Since) + "]]"
+}
+function Read-EntryTaskEngineEvents([DateTimeOffset]$Since, [int]$Max, [scriptblock]$Query = { param($xpath) Get-WinEvent -LogName $script:EntryTaskSchedulerLogName -FilterXPath $xpath -ErrorAction Stop }) {
+  Read-EntryTaskEvents $Since $Max $Query (Get-EntryTaskEngineEventsXPath $Since)
 }
 function Get-EntryLogonEventsXPath([DateTimeOffset]$Since) {
   "*[System[(EventID=4624 or EventID=4625) and " + (Get-EntryEventSinceXPath $Since) + "]] and *[EventData[Data[@Name='TargetUserName']='" + $script:EntryCompanionAccount + "']]"
@@ -500,7 +512,8 @@ function Read-EntryWslService([scriptblock]$Query = { Get-Service -Name WslServi
 }
 $script:EntryFailureGuestReader = {
   param([DateTimeOffset]$Since, [int]$Max)
-  [ordered]@{ taskSchedulerLog = $script:EntryTaskLog; taskEvents = (Read-EntryTaskEvents $Since $Max); logons = (Read-EntryLogonEvents $Since $Max)
+  [ordered]@{ taskSchedulerLog = $script:EntryTaskLog; taskEvents = (Read-EntryTaskEvents $Since $Max); engineEvents = (Read-EntryTaskEngineEvents $Since $Max)
+    logons = (Read-EntryLogonEvents $Since $Max)
     memory = (Read-EntryGuestMemory); processes = (Read-EntryGuestProcesses $Max); wslService = (Read-EntryWslService) }
 }
 

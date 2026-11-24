@@ -6,6 +6,9 @@
 //   Q2  the task's run facts (state, last and next run, last result, missed runs) and each instance it holds, and the memory
 //   Q3  taken before the roll-back stops anything, on both switches (the account switch and the Owner's), and kept through rearm's JSON
 //   Q4  nothing when the qualification held; never a throw when the Task Scheduler or CIM cannot be read
+//   Q5  (review of 36a20badc S1) the qualification's Run, watched: the task's run facts just before and just after it, and the instance
+//       Run returned; a Run that throws is still COMPANION_TASK_RUN_FAILED, watched all the same
+//   Q6  (review S4) evidence that cannot be taken on a look leaves that look uncounted (-1) and never changes the verdict
 // companion-headless.ps1's real functions, dot-sourced in Windows PowerShell 5.1; the Task Scheduler, CIM and every process are stood in
 // (nothing is stopped, started or registered).
 import assert from 'node:assert/strict';
@@ -60,7 +63,7 @@ function Invoke-CompanionStopAndFallback { [void]$script:log.Add('stop-and-fallb
 function Invoke-CompanionFallback { [void]$script:log.Add('fallback'); [ordered]@{ fellBack = $true } }
 function Stop-CompanionTask { [void]$script:log.Add('stop-task') }
 function Wait-CompanionTaskNotRunning { }
-function Start-CompanionTask { [void]$script:log.Add('run'); $script:ran = $true }
+function Start-CompanionTask { [void]$script:log.Add('run'); $script:ran = $true; $script:CompanionLastRun = [ordered]@{ instanceGuid = '{22222222-0000-0000-0000-000000000001}'; state = 2; enginePid = 0 } }
 function Register-CompanionFallbackTask { [void]$script:log.Add('fallback-task') }
 function Remove-CompanionFallbackTask { [void]$script:log.Add('fallback-task-removed') }
 function Write-CompanionPending { [void]$script:log.Add('pending') }
@@ -100,8 +103,14 @@ test('Q1 Q2 Q3: none counted: the account switch says 0 at every look, the queue
     [2, 0, 1, 2, '{11111111-2222-3333-4444-555555555555}']);
   assert.equal(e.memory.freePhysicalKb, 409600);
   assert.ok(!Number.isNaN(Date.parse(e.at)));
-  // the task was read before the roll-back stopped it
-  assert.ok(got.log.indexOf('run') < got.log.indexOf('run-facts') && got.log.indexOf('run-facts') < got.log.indexOf('stop-and-fallback'), got.log.join(' '));
+  // the task was read just before and just after the Run, and again before the roll-back stopped it
+  const run = got.log.indexOf('run');
+  assert.deepEqual(got.log.slice(run - 1, run + 2), ['run-facts', 'run', 'run-facts'], got.log.join(' '));
+  assert.ok(got.log.lastIndexOf('run-facts') > run + 1 && got.log.lastIndexOf('run-facts') < got.log.indexOf('stop-and-fallback'), got.log.join(' '));
+  // Q5: the watched Run, kept through rearm's JSON
+  const w = got.printed.taskRun;
+  assert.deepEqual(w.returned, { instanceGuid: '{22222222-0000-0000-0000-000000000001}', state: 2, enginePid: 0 });
+  assert.deepEqual([w.before.state, w.before.instances[0].instanceGuid, w.after.instances[0].instanceGuid, w.runError], [2, '{11111111-2222-3333-4444-555555555555}', '{11111111-2222-3333-4444-555555555555}', null]);
 });
 
 test('Q1 Q3: two counted: the Owner\'s switch names both supervisors, their sessions and starts', opts, () => {
@@ -162,6 +171,50 @@ $noMem = Get-CompanionMemoryFacts { throw (New-Object UnauthorizedAccessExceptio
   assert.deepEqual(got.broken, { error: 'TASK_RUN_FACTS_UNREADABLE:COMException' });
   assert.deepEqual(got.mem, { totalVisibleKb: 8388608, freePhysicalKb: 1024, totalVirtualKb: 9437184, freeVirtualKb: 2048 });
   assert.deepEqual(got.noMem, { error: 'MEMORY_FACTS_UNREADABLE:UnauthorizedAccessException' });
+});
+
+test('Q5: Start-CompanionTask keeps the instance Run returned; a Run that throws is still COMPANION_TASK_RUN_FAILED, and watched', opts, () => {
+  const got = ps(`
+$running = [pscustomobject]@{ InstanceGuid = '{33333333-0000-0000-0000-000000000003}'; State = 2; EnginePID = 0 }
+$task = [pscustomobject]@{}; $task | Add-Member -MemberType ScriptMethod -Name Run -Value { param($a) $script:runArg = $a; if ($script:refuse) { throw 'refused' }; $running }
+$tf = [pscustomobject]@{}; $tf | Add-Member -MemberType ScriptMethod -Name GetTask -Value { param($n) $script:runTask = $n; $task }
+$svc = [pscustomobject]@{}; $svc | Add-Member -MemberType ScriptMethod -Name Connect -Value { }
+$svc | Add-Member -MemberType ScriptMethod -Name GetFolder -Value { param($p) $tf }
+function New-Object { $svc }
+$script:refuse = $false
+$ok = Watch-CompanionTaskRun { Start-CompanionTask }
+$script:refuse = $true
+$refused = Watch-CompanionTaskRun { Start-CompanionTask }
+[ordered]@{ ok = $ok; refused = $refused; task = $script:runTask } | ConvertTo-Json -Depth 6 -Compress`);
+  assert.equal(got.task, 'CluedCIResidentCompanion');
+  assert.deepEqual(got.ok.returned, { instanceGuid: '{33333333-0000-0000-0000-000000000003}', state: 2, enginePid: 0 });
+  assert.equal(got.ok.runError, null);
+  // the Task Scheduler is stood in by New-Object here: its run facts are then a code, never a throw
+  assert.match(got.ok.before.error, /^TASK_RUN_FACTS_UNREADABLE:/);
+  assert.equal(got.refused.returned, null, 'an earlier Run\'s instance is not kept');
+  assert.match(got.refused.runError, /refused/);
+  assert.ok(got.refused.before && got.refused.after);
+
+  // the switch: a Run that throws is COMPANION_TASK_RUN_FAILED as before, and the result carries the watch
+  const sw = ps(`${stubs}$script:supervisors = @()
+function Start-CompanionTask { [void]$script:log.Add('run'); throw 'BOOM' }
+${accountSwitch(root('q5-throw'))}
+[ordered]@{ runError = $r.runError; failed = $r.failed; taskRun = $r.taskRun } | ConvertTo-Json -Depth 6 -Compress`);
+  assert.equal(sw.runError, 'COMPANION_TASK_RUN_FAILED');
+  assert.equal(sw.failed, 'COMPANION_HEADLESS_QUALIFICATION_FAILED:supervisor-process');
+  assert.deepEqual([sw.taskRun.runError, sw.taskRun.returned, sw.taskRun.before.state, sw.taskRun.after.state], ['BOOM', null, 2, 2]);
+});
+
+test('Q6: evidence that cannot be taken leaves the look uncounted and the verdict as it was', opts, () => {
+  const got = ps(`${stubs}$script:ran = $true; $script:supervisors = @(${sup(4242)})
+function Get-CompanionProcessFacts { throw 'facts broke' }
+$r = Wait-CompanionQualified ${q(root('q6'))} '${SID}' ([DateTimeOffset]::UtcNow) 1
+$e = Get-CompanionQualifyEvidence
+[ordered]@{ why = $r; counts = $e.supervisorCounts; supervisors = $e.supervisors } | ConvertTo-Json -Compress`);
+  // one supervisor: the look goes on to the companion child (none here), as without the evidence
+  assert.equal(got.why, 'companion-process');
+  assert.ok(got.counts.split(',').every(c => c === '-1'), got.counts);
+  assert.equal(got.supervisors, null);
 });
 
 test('Q3: rearm prints the switch\'s result at the depth the evidence was checked at', opts, () => {

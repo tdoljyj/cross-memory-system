@@ -457,7 +457,8 @@ function Get-CompanionProcessFacts($processes) {
 function Test-CompanionQualifiedOnce([string]$root, [string]$ownerSid, [DateTimeOffset]$since, [string]$registrar = (Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe'), [Collections.IDictionary]$look = $null) {
   $launch = try { Get-Content -LiteralPath (Join-Path $root 'config\companion-launch.json') -Raw | ConvertFrom-Json } catch { return 'launch-file' }
   $tree = Get-CompanionProcessTree $root
-  if ($null -ne $look) { $look['supervisors'] = @(Get-CompanionProcessFacts $tree.supervisors); $look['children'] = @(Get-CompanionProcessFacts $tree.children) }
+  # evidence only: a look it cannot be taken for stays empty (counted -1), never changing the verdict (review of 36a20badc S4)
+  if ($null -ne $look) { try { $look['supervisors'] = @(Get-CompanionProcessFacts $tree.supervisors); $look['children'] = @(Get-CompanionProcessFacts $tree.children) } catch { $look.Clear() } }
   if (@($tree.supervisors).Count -ne 1) { return 'supervisor-process' }
   $child = @($tree.children | Where-Object { ([string]$_.CommandLine).Contains('--config-sha256 ' + [string]$launch.configSha256) -and ([string]$_.CommandLine).Contains([string]$launch.entry) })
   if ($child.Count -ne 1) { return 'companion-process' }
@@ -552,9 +553,24 @@ function Wait-CompanionTaskNotRunning {
     Start-Sleep -Milliseconds 500
   }
 }
+# The instance the last Run returned (its guid, state and engine), for Watch-CompanionTaskRun; reading it never fails the Run.
+$script:CompanionLastRun = $null
 function Start-CompanionTask {
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
-  $null = $svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanion').Run($null)
+  $run = $svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanion').Run($null)
+  try { if ($null -ne $run) { $script:CompanionLastRun = [ordered]@{ instanceGuid = [string]$run.InstanceGuid; state = [int]$run.State; enginePid = [int]$run.EnginePID } } } catch { }
+}
+# The qualification's Run, watched (2026-11-24, review of 36a20badc S1): the task's run facts just before and just after it and the
+# instance it returned, so whether IgnoreNew dropped this Run (an instance already queued before it, none of its own) is read without
+# the Operational log, which is off on a node. Never throws: the Run's own error is in runError, the caller decides as before.
+function Watch-CompanionTaskRun([scriptblock]$Run) {
+  $facts = { try { Get-CompanionTaskRunFacts } catch { [ordered]@{ error = 'TASK_RUN_FACTS_UNREADABLE:' + $_.Exception.GetType().Name } } }
+  $watch = [ordered]@{ before = (& $facts); returned = $null; after = $null; runError = $null }
+  $script:CompanionLastRun = $null
+  try { $null = & $Run } catch { $watch.runError = [string]$_.Exception.Message }
+  try { $watch.returned = $script:CompanionLastRun } catch { }
+  $watch.after = & $facts
+  $watch
 }
 
 # The whole switch: -CompanionHeadless (mode 'headless') and -CompanionCredential (mode 'credential') are the same steps; the
@@ -606,7 +622,8 @@ function Invoke-CompanionHeadless([string]$root, $node, [string]$mode) {
     Wait-CompanionTaskNotRunning
     # Review B1: from here on; the old instance has ended, so nothing it wrote counts.
     $since = [DateTimeOffset]::UtcNow
-    try { Start-CompanionTask } catch { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
+    $runWatch = Watch-CompanionTaskRun { Start-CompanionTask }
+    if ($null -ne $runWatch.runError) { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
     $why = Wait-CompanionQualified $root $ownerSid $since -registrar $build.registrar.exe
     $result.task = Get-CompanionTaskFacts $root $ownerSid
     if ($null -eq $why -and $result.task.mode -ceq 'password') {
@@ -618,6 +635,7 @@ function Invoke-CompanionHeadless([string]$root, $node, [string]$mode) {
     $result.failed = 'COMPANION_HEADLESS_QUALIFICATION_FAILED:' + $(if ($why) { $why } else { 'task-' + $result.task.mode })
     $qualifyEvidence = Get-CompanionQualifyEvidence
     if ($null -ne $qualifyEvidence) { $result.qualification = $qualifyEvidence }
+    $result.taskRun = $runWatch
     $null = Invoke-CompanionStopAndFallback $root $ownerSid
     # The interactive task runs in the Owner's session (it is there: he started this); without a session it starts at the next log-on.
     try { Start-CompanionTask } catch { }
@@ -1265,7 +1283,8 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
       }
     }
     $since = [DateTimeOffset]::UtcNow
-    try { Start-CompanionTask } catch { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
+    $runWatch = Watch-CompanionTaskRun { Start-CompanionTask }
+    if ($null -ne $runWatch.runError) { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
     $why = Wait-CompanionQualified $root $sid $since -registrar $build.registrar.exe
     $result.task = Get-CompanionTaskFacts $root $sid
     if ($null -eq $why) { $why = Get-CompanionRelayParentsProblem $sid }
@@ -1284,6 +1303,7 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
     $result.failed = 'COMPANION_HEADLESS_QUALIFICATION_FAILED:' + $(if ($why) { $why } else { 'task-' + $result.task.mode })
     $qualifyEvidence = Get-CompanionQualifyEvidence
     if ($null -ne $qualifyEvidence) { $result.qualification = $qualifyEvidence }
+    $result.taskRun = $runWatch
     if ($MaintenanceContextFile) { $result.manualRecovery = $true }
     else { $null = Invoke-CompanionStopAndFallback $root $sid; $result.fellBack = $true }
     $result
