@@ -2496,12 +2496,12 @@ public static class CluedDrillCredUiV2 {
   public const int PasswordChars = 513;
   // GENERIC_CREDENTIALS 0x40000 | ALWAYS_SHOW_UI 0x80 | EXCLUDE_CERTIFICATES 0x8 | DO_NOT_PERSIST 0x2
   public const int Flags = 0x40000 | 0x80 | 0x8 | 0x2;
-  // KEEP_USERNAME 0x100000: a user name given in is shown and cannot be changed
-  public const int KeepUserName = 0x100000;
+  // No KEEP_USERNAME (0x100000): with it CredUIPromptForCredentialsW answered 87 (ERROR_INVALID_PARAMETER) on the Owner's
+  // DESK 11-24. The user name is filled in and stays editable; the caller checks it is exactly the expected one.
   public static int Prompt(StringBuilder user, string target, string caption, string message, IntPtr password, bool keepUser) {
     Info i = new Info(); i.cbSize = Marshal.SizeOf(typeof(Info)); i.hwndParent = GetConsoleWindow(); i.pszCaptionText = caption; i.pszMessageText = message;
     bool save = false;
-    return CredUIPromptForCredentialsW(ref i, target, IntPtr.Zero, 0, user, user.Capacity, password, PasswordChars, ref save, Flags | (keepUser ? KeepUserName : 0));
+    return CredUIPromptForCredentialsW(ref i, target, IntPtr.Zero, 0, user, user.Capacity, password, PasswordChars, ref save, Flags);
   }
 }
 '@
