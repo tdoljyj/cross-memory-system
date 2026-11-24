@@ -199,6 +199,53 @@ test('a DO body that executes a built statement is judged by the literals of tha
   assert.match(later.stderr, /_fixture_0\.sql:3: create unique index/);
 });
 
+// FABLE-prod-db-shrink-v2-20261124 §14. In a DO body that executes a built statement: a literal whose first word is `add`
+// continues an `alter table` literal of the same body (14.1), a literal that starts with a code word continues a `create`
+// literal (14.2, 2), a placeholder where a created object's type belongs is an addition `create ?` (14.2, 1), and a
+// fragment with an unclosed `$tag$` or `/*` is read on past it instead of being unreadable (14.3).
+const refusedAt = (sql, text = /\S/) => {
+  const result = verdict(AT, `${sql}\n`);
+  assert.equal(result.status, 1, `${sql}\n${result.stdout}${result.stderr}`);
+  assert.match(result.stderr, new RegExp(`_fixture_0\\.sql:1: ${text.source}`), sql);
+};
+const passedAt = (sql) => {
+  const result = verdict(AT, `${sql}\n`);
+  assert.equal(result.status, 0, `${sql}\n${result.stdout}${result.stderr}`);
+};
+const patch = (from, to) => `do $$ declare r record; begin for r in select pg_get_functiondef(p.oid) as d from pg_proc p where p.proname = 'f' loop execute replace(r.d, ${from}, ${to}); end loop; end $$;`;
+
+test('a built alter table that adds a column or a key is refused (§14.1)', () => {
+  refusedAt(`do $$ declare t text := 't'; begin execute 'alter table public.' || quote_ident(t) || ' add column b text'; end $$;`, /… add column b text/);
+  refusedAt(`do $$ declare s text := 'alter table public.t '; begin execute s || 'add column b int'; end $$;`, /… add column b int/);
+  refusedAt(`do $$ begin execute format('alter table %I %s', 't', 'add column b int'); end $$;`, /… add column b int/);
+  refusedAt(`do $$ declare t text := 't'; begin execute 'alter table public.' || t || ' add primary key (id)'; end $$;`, /… add primary key/);
+  passedAt(`do $$ declare t text := 't'; begin execute 'alter table public.' || quote_ident(t) || ' enable row level security'; end $$;`);
+  passedAt(`do $$ declare t text := 't'; begin execute 'alter table public.' || t || ' add constraint c check (a > 0)'; end $$;`);
+  passedAt(`do $$ declare s text := 'add'; begin execute s || ' column b int'; end $$;`);
+  passedAt(`do $$ declare t text := 't'; begin execute 'alter table public.' || t || ' enable row level security'; raise notice 'cannot add column'; end $$;`);
+});
+
+test('a placeholder object type and a built create table or index are refused (§14.2)', () => {
+  refusedAt(`do $$ begin execute format('create %s index i on public.t(a)', 'unique'); end $$;`, /create % s index/);
+  refusedAt(`do $$ begin execute 'create %s index i on public.t(a)'; end $$;`, /create % s index/);
+  refusedAt(`do $$ begin execute format('create %s', 'unique index i on public.t(a)'); end $$;`);
+  refusedAt(`do $$ declare u text := 'unique'; begin execute 'create ' || u || ' index i on public.t(a)'; end $$;`, /… index i on/);
+  refusedAt(`do $$ begin execute 'create ' || 'table public.x(a int)'; end $$;`, /… table public\.x/);
+  const shrink = verdict(AT, `-- clued-release: shrink receipts by created_at\ndo $$ begin execute format('create %s index i on public.t(a)', 'unique'); end $$;\n`);
+  assert.equal(shrink.status, 1, shrink.stdout + shrink.stderr);
+  passedAt(`do $$ declare p text := 'p'; t text := 't'; begin execute format('create policy %I on public.%I using (true)', p, t); end $$;`);
+  passedAt(patch(`'create function'`, `'create or replace function'`));
+  passedAt(`do $$ begin execute 'create ' || 'temp table x(a int)'; end $$;`);
+  passedAt(`do $$ declare m text := current_setting('x'); begin if m = 'create' then raise exception 'create failed'; end if; execute m; end $$;`);
+});
+
+test('a fragment with an unclosed dollar quote or block comment is judged past it (§14.3)', () => {
+  passedAt(patch(`'as $function$'`, `'as $function$ /* v2 */'`));
+  passedAt(patch(`'/* old'`, `'/* new'`));
+  refusedAt(patch(`'as $f$ begin'`, `'as $f$ begin create table public.c(a int);'`), /create table public\.c/);
+  refusedAt(patch(`'/* old'`, `'/* new; create index i on public.t(a)'`), /create index i on/);
+});
+
 // An escape string (E'...') with a backslash is a literal like any other: it is judged after its escapes are undone, so
 // a multi-line statement written with \n is read from its first word (independent review of claude/prod-db-b2b3, 必改 1).
 test('escape string literals are judged as the statement they hold', () => {

@@ -186,6 +186,11 @@ test('every table the migrations create declares its retention class', { timeout
           assert.deepEqual(retentionErrors(copy, replayed), [`${someTable} (${kind}): needs a reason`]);
         }
       }
+      // FABLE-prod-db-shrink-v2-20261124 §14.4: a class the author is not sure of is pending, not state or ledger.
+      for (const kind of ['state', 'ledger']) {
+        const copy = edited((r) => { r.tables[someTable] = { class: kind, reason: '估计有界（低把握）' }; });
+        assert.deepEqual(retentionErrors(copy, replayed), [`${someTable} (${kind}): a reason with 低把握 must be pending`]);
+      }
       assert.deepEqual(retentionErrors(edited((r) => { r.tables[someTable] = { class: 'kept' }; }), replayed),
         [`${someTable}: class must be one of rule, canonical, state, ledger, pending`]);
     });
