@@ -578,6 +578,7 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 | 准入补跑 | 1 分钟 | `admission-gate` 以 `ADMISSION_PENDING` 结束时，用 Owner 的 gh 登录点一次 "Re-run all jobs"，每个 head 最多一次（Decision `207c0cd0`） |
 | 合并对账 | 30 秒 | 唤醒原合并控制器（`clued-merge-reconcile.yml`），不做任何合并判断。**默认关闭**：只有 companion.json 写了 `mergeReconcile.enabled=true` 的包才运行，仓库里现有配置都没有打开 |
 | 信箱心跳 | 每 10 秒 | 执行器据此判断 companion 是否活着；超过 120 秒没更新算失联（信号 D） |
+| 到线重启 | 5 秒检查，每 10 分钟量一次 | 内核分页池最大标签过线后，等空闲、暂停接新、重启整机、重启后自检（§9.1） |
 
 安全边界：
 
@@ -594,6 +595,28 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 - GitHub：companion 用只限本仓库的细粒度令牌，放在 `%LOCALAPPDATA%\CluedIndependentCI\companion-gh\`，读不到就不启动。
 - 状态：`executor.companion.firstBeatAfterServiceStartMs`；服务启动 10 分钟仍无心跳时出 `companion-absent`。
 - 上线只能整套重装（R 类），步骤见 [`../rollout/M5-COMPANION-HEADLESS-RUNBOOK.md`](../rollout/M5-COMPANION-HEADLESS-RUNBOOK.md)。
+
+### 9.1 到线自动重启（内核池兜底）
+
+代码：`R/src/node-reboot.mjs`、`R/windows/read-pool-tags.ps1`、`R/src/companion.mjs`（固定命令）、`R/src/companion-main.mjs`（通道）
+档案：`D:/w/tmp/FABLE-admission-reboot-batch-20261124.md` 第 4 节（看板第 140 行）
+
+内核持有的对象只增不减时，只有重启整机才回收。companion 的一个通道兜底：量内核分页池里在用字节最大的那个标签（不认标签名，`NtQuerySystemInformation(22)`，不用提权），过线后在空闲时重启。随通用升级下发（U 类），零 UAC；不新增服务、计划任务、账户、权限；不动执行器、升级代理和冻结通道。
+
+| 线 | 默认 | 到线后 |
+|---|---|---|
+| 软线 | 3 GiB | 等自然空闲，含人 30 分钟没碰机器，空闲就重启 |
+| 硬线 | 5 GiB | 立即请暂停接新，CI 一空就重启，不等人离开；有人在用机器时倒计时 600 秒 |
+
+- 阈值与开关：`companion.json` 的可选键 `nodeReboot: { enabled, softBytes, hardBytes }`，缺省开、取上表默认值；`tools/build-package.mjs` 校验。每 10 分钟量一次，连续 2 次过线才算；量不出就什么都不做。
+- 空闲（全部成立并连续 10 分钟）：`status.json` 新鲜、没有批次在跑、没有 HALT、没有 PAUSE；没有升级在进行（`versions.upgrade` 未到结局、升级信箱无待办）；Windows 与本节点 WSL 发行版里都没有 `Runner.Worker`（读不出算不空闲）；软线还要交互会话 30 分钟无输入（`quser`）；距本机制上次重启不少于 6 小时。HALT 时永不重启。
+- 排空与重启：先写只建不改的意向记录，再往 `requests\` 放暂停接新（持有者 `node-reboot`，30 分钟，期间续）；间隔 20 秒连读 3 次都空，发 `shutdown.exe /r /t 60`（固定说明文字）。倒计时中每 5 秒看一次，出现 `Runner.Worker`、批次或升级就 `shutdown.exe /a`，记一次“因来活取消”，5 分钟后从连读 3 次重来。`shutdown.exe` 只允许这两组固定参数（`companion.mjs#shutdownArgvOk`），通道里再拦一次。
+- 本机制的暂停最多 2 小时：到时还没重启，就撤暂停、通知一次 `NODE_REBOOT_FAILED`、6 小时内不再试。
+- 重启后（有未结意向、开机时刻晚于意向）：15 分钟内每分钟核一次——状态新鲜且节点模式离开 UNCERTAIN、没有 HALT、代次与 Source 和重启前相同、`Runner.Listener` 在、WSL 起来、companion 心跳发出、最大标签低于软线的四分之一。全过写 `node-reboot-verified`；到时有不过的写 `node-reboot-check-failed` 并通知 `NODE_REBOOT_CHECK_FAILED`；两种都撤暂停。重启后第一次读数不低于软线一半，说明重启没回收，本机制在这台节点上永久停用并通知 `NODE_REBOOT_INEFFECTIVE`。
+- 同一次开机里 companion 重启时若有未结意向：发一次 `/a`（只在本机制发过 `/r` 时），结掉意向，撤暂停，从头量。
+- 自报：companion 启动时读自己令牌里有没有 `SeShutdownPrivilege`、是不是由 `bin\CluedCompanionSupervisor.exe` 在会话 0 拉起；任一否，写 `NODE_REBOOT_UNAVAILABLE` 加原因，不重试、不通知。
+- 记录都在 companion 自己的 `%LOCALAPPDATA%\CluedIndependentCI\node-reboot\`：`availability.json`（自报）、`state.json`（上次重启、退避、停用、取消记录）、`intent-<id>.json` 与 `close-<id>.json`（只建不改；`close` 的 `kind` 即回执）。
+- 与升级：升级在进行就不重启，倒计时里来了升级就取消；由 companion 让路，不改升级代理。升级不能代替重启，重启也不改代次。
 
 ---
 

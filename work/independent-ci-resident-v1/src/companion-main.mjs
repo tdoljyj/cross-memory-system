@@ -39,6 +39,7 @@ import { SETTINGS_FILE, readRetentionSettings } from './retention-settings.mjs';
 import { assertGhIsolation, assertNotElevated, sessionFacts, writeSessionFacts } from './companion-session.mjs';
 import { companionKeyWatch } from './connection-renewal.mjs';
 import { resolveCompanionWslClient } from './wsl-client.mjs';
+import { NODE_REBOOT_STEP_MS, NodeReboot, nodeRebootDir, validateNodeRebootConfig } from './node-reboot.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
 // phase 1, item 7). The poller looks for new PR heads every 15 seconds in a lane of its own (f79929d9; it was once a minute in
@@ -394,6 +395,17 @@ export async function main(args = process.argv.slice(2)) {
     notify });
   // The PR page says when this lane re-ran a head's required tests, or what came of a lost run's dispatch (pr-status.mjs#PrStatusReporter).
   reporter.rerunLine = headSha => rerunner.line(headSha);
+  // The node reboot fallback (node-reboot.mjs, docs/architecture.md 9.1): its own Runner, lane and records. A helper: a configuration
+  // it cannot read leaves it off (reported in its availability.json), never the companion.
+  const rebootRunner = new Runner({ env: { ...process.env }, jobHost });
+  let rebootConfig = null;
+  try { rebootConfig = validateNodeRebootConfig(raw.nodeReboot); } catch { rebootConfig = null; }
+  const nodeReboot = new NodeReboot({ config: rebootConfig, a: companionArgv(cfg), run: (a, o) => rebootRunner.run(a, o), root: values.root,
+    dir: nodeRebootDir(cfg.node.ownerProfileDirectory), clock: Date.now, uptimeMs: () => os.uptime() * 1000, pid: process.pid,
+    readStatus: () => readStatus(values.root),
+    upgradePending: async () => { const box = await upgradeLane.box(); return box ? (await box.pending()).length > 0 : false; },
+    writeRequest: v => Inbox.drop(requestsDir, v), notify,
+    heartbeatOk: () => (heartbeat ? heartbeat.lastFingerprint !== null && heartbeat.failures === 0 : true) });
   keepalive(companionArgv(cfg).keepalive());
   // M5 (ADR 0022 §6 Q1, Q2): the WSL instance this session sees, for the Owner's read-only probe. In the background; never blocks.
   sessionFacts({ wsl: (...l) => [cfg.wslExe, '--distribution', cfg.distribution, '--user', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LANG=C', 'LC_ALL=C', ...l],
@@ -430,6 +442,7 @@ export async function main(args = process.argv.slice(2)) {
       ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),
       ...(mergeReconcile?[lane({runner:mergeRunner,work:()=>mergeReconcile.step(),everyMs:MERGE_RECONCILE_LANE_EVERY_MS})]:[]),
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
+      lane({ runner: rebootRunner, work: () => nodeReboot.step(), everyMs: NODE_REBOOT_STEP_MS }),
       ...(frontMerge ? [lane({ runner: frontMergeRunner, work: () => frontMerge.step(), everyMs: FRONT_MERGE_LANE_EVERY_MS })] : []),
       ...advisorySpecs.map(spec => lane(spec)),
     ]);
