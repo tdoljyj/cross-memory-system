@@ -13,6 +13,8 @@ import * as selection from './ci-required-selection.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SOURCE = readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8');
+// What the selector imports from beside it: a copy of it runs only with them (the real-clock guard since Task 11092b8b).
+const SELECTOR_IMPORTS = ['test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'test-clock-imports.mjs'];
 const childEnv = () => { const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; for (const name of ['GITHUB_EVENT_PATH', 'GITHUB_EVENT_NAME', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY']) delete env[name]; return env; };
 const groupLines = (out) => out.split(/\r?\n/).filter((line) => line.startsWith('::group::'));
 
@@ -24,7 +26,7 @@ function checkout(t, tail = '', files = {}, at = null) {
   else t.after(() => rmSync(root, { recursive: true, force: true }));
   const dir = path.join(root, 'scripts/ci');
   mkdirSync(dir, { recursive: true });
-  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'test-env.mjs'));
+  for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
   writeFileSync(path.join(dir, 'ci-required-selection.mjs'), `${SOURCE}\n${tail}\n`);
   for (const [name, text] of Object.entries(files)) {
     mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
@@ -35,9 +37,10 @@ function checkout(t, tail = '', files = {}, at = null) {
 const passing = (label) => `import test from 'node:test';\ntest('${label}', () => { console.log('${label} executed'); });\n`;
 const failing = (label) => `import test from 'node:test';\ntest('${label}', () => { console.log('${label} executed'); throw new Error('${label} red'); });\n`;
 
-// The trusted selector on the candidate checkout, in Actions (no local slot).
+// The trusted selector on the candidate checkout, in Actions (no local slot), with the base commit a CI job always has
+// (ciBaseRefusal): a fixed one, not the outer environment's, so CI and a local run take the same path.
 const cli = (selector, args, env = {}, cwd = undefined) => spawnSync(process.execPath, [selector, ...args],
-  { cwd, env: { ...childEnv(), GITHUB_ACTIONS: 'true', ...env }, encoding: 'utf8' });
+  { cwd, env: { ...childEnv(), GITHUB_ACTIONS: 'true', CI_BASE_SHA: 'f'.repeat(40), ...env }, encoding: 'utf8' });
 const NEW_SUITE = (platforms) => `SUITES['ci-suites']['brand-new'] = ['scripts/ci/brand-new/**'];
 SUITE_COMMANDS['brand-new'] = [{ cwd: '.', known: 'retrigger-counter', argv: ['node', '--test', '{tests:scripts/ci/brand-new}'] }];
 ${platforms ? `SUITE_PLATFORMS['brand-new'] = { platforms: ${JSON.stringify(platforms)}, reason: 'test' };` : ''}`;
@@ -146,7 +149,7 @@ test('a test file the candidate adds after {unit-tests} runs alone, without the 
   const trustedDir = mkdtempSync(path.join(os.tmpdir(), 'ci-trusted-unit-'));
   t.after(() => rmSync(trustedDir, { recursive: true, force: true }));
   mkdirSync(path.join(trustedDir, 'scripts/ci'), { recursive: true });
-  for (const name of ['test-env.mjs', 'ci-test-failures-reporter.mjs']) {
+  for (const name of [...SELECTOR_IMPORTS, 'ci-test-failures-reporter.mjs']) {
     copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(trustedDir, 'scripts/ci', name));
   }
   writeFileSync(path.join(trustedDir, 'scripts/ci/ci-known-failures.json'), '{}\n');
@@ -198,7 +201,7 @@ test('a changed expansion under an unchanged command line runs the test files it
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-trusted-expand-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(path.join(dir, 'scripts/ci'), { recursive: true });
-  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'scripts/ci/test-env.mjs'));
+  for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, 'scripts/ci', name));
   const trusted = path.join(dir, 'scripts/ci/ci-required-selection.mjs');
   writeFileSync(trusted, SOURCE.replace(command, own));
   const tail = `const ownExpand = expandArgv;
@@ -207,7 +210,7 @@ expandArgv = (argv, options) => ownExpand(argv, options).flatMap((arg) => (arg =
   t.after(() => rmSync(candidate, { recursive: true, force: true }));
   mkdirSync(path.join(candidate, 'scripts/ci/rc'), { recursive: true });
   mkdirSync(path.join(candidate, 'scripts/ci/rc-more'), { recursive: true });
-  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(candidate, 'scripts/ci/test-env.mjs'));
+  for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(candidate, 'scripts/ci', name));
   writeFileSync(path.join(candidate, 'scripts/ci/ci-required-selection.mjs'), `${SOURCE.replace(command, own)}\n${tail}\n`);
   writeFileSync(path.join(candidate, 'scripts/ci/rc/a.test.mjs'), passing('baseline'));
   writeFileSync(path.join(candidate, 'scripts/ci/rc-more/b.test.mjs'), failing('rule addition'));

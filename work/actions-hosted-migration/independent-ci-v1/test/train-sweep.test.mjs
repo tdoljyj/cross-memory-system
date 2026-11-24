@@ -697,6 +697,7 @@ test('a front batch longer than sweepFreshMs: the next stage 10 refreshes the pr
   const frontJob = { repo: REPO, pr: 910, headSha: H, baseSha: T, testSha: S };
   const stage8 = async () => trainHeadDecision({ job: frontJob, claimId: CLAIM, holders: { onDuty: true, holders: [e.native.holder] }, proof: await e.store.latestProof(),
     storeRefused: e.store.refused, front: (await e.store.frontBatches({ pr: 910, headSha: H }))[0], ledger: await e.ledger.list(), pulls: { complete: true, pulls: [] }, now: e.now });
+  e.now += 1000; // stage 8 runs after stage 10's records (the store stamps them strictly increasing, board 269)
   assert.equal(await stage8(), null, 'fresh at first');
   e.now += 20 * 60_000;
   assert.equal(await stage8(), TRAIN_SINGLE_GREEN_NOT_PROVEN, 'older than sweepFreshMs: parked in B');
@@ -706,6 +707,7 @@ test('a front batch longer than sweepFreshMs: the next stage 10 refreshes the pr
     ['TRAIN_FRONT_BATCH_RUNNING', null, false, false]);
   validateTrainFacts(again.facts);
   assert.equal((await e.store.frontBatches({ pr: 910, headSha: H })).length, 1, 'no attempt 2');
+  e.now += 1000;
   assert.equal(await stage8(), null, 'the refreshed proof covers the running batch');
   // a new S (main moved), a finished attempt (frontOutcome) or a clock no longer running: not the running batch
   e.native.holder = { ...e.native.holder, ciState: null };
