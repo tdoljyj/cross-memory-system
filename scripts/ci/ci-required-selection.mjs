@@ -52,7 +52,11 @@
 //     under 3 seconds left out. The table is only ever written this way. When
 //     hosted-required.yml goes (S8), --shard goes; the table and the packing
 //     stay for the lanes (FABLE-ci-duration-node-side-20261124, 做法 2).
-// All three run modes wait for a machine-wide suite slot outside GitHub Actions.
+//   node scripts/ci/ci-required-selection.mjs --run-prepush --root <tree>
+//     runs PREPUSH_COMMANDS (a few static checks, seconds) in <tree>: the push entry's check of the tree a push would
+//     merge into main. Exit 0 all passed, 1 a command failed (named with its failed tests), 3 one could not run.
+//     No suite slot, no application dependencies (runPrepush).
+// The suite run modes (--run, --run-selected, --write-known, --run-files) wait for a machine-wide suite slot outside GitHub Actions.
 import { spawn as spawnAsync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -146,6 +150,8 @@ const AUTHORIZATION_DB_TESTS = [
   'merge-queue-ci-join-only-db',
   // The drill test project is brought to production's applied list (FABLE-drill-test-project-sync-20261124 §1).
   'drill-test-sync-db',
+  // Repository paths are exclusive until delivery: a claim with a live head authorization does not block another (20261124160000).
+  'work-claims-delivered-paths-db',
 ].map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
 // What those tests read besides the migrations: their shared test helpers, the worker code some of them bundle, the
 // Resource Center host and policy modules, the context compiler and the vendored Information Flow and DatasetSplit
@@ -212,8 +218,8 @@ export const SUITES = {
       'apps/clued-cloud/scripts/select-tests.mjs', 'apps/clued-cloud/scripts/run-tests.mjs'],
   },
   // The application suite reads files from across the repository (workflow,
-  // contract and CI-script tests), so every change runs it. Its CI-script tests
-  // include check-tests-covered.test.mjs: every test file runs in a required
+  // contract and CI-script tests), so every change runs it. It runs
+  // check-tests-covered.mjs --base {base}: every test file runs in a required
   // suite or is listed in ci-uncovered-tests.json, checked on every change.
   'clued-cloud-tests': {
     'clued-cloud': ['**'],
@@ -364,17 +370,34 @@ export const SUITE_COMMANDS = {
     // suites run their own two.
     { cwd: '.', argv: [PYTHON, '-B', '-m', 'unittest', 'scripts/ci/test_check_contract_placement.py', 'scripts/ci/test_clued_docs_only.py'] },
     { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-concurrency}', '{unit-tests}', '{ci-script-tests}'] },
+    // Every test file runs in a required suite or is listed, and both lists only shrink against the base: a check, so it takes
+    // the job's base from here (Task 700f2b68; PLAN-main-red-real-repo-20261124 §4.3). Last, so the units before it keep their
+    // shard numbers; one command, run whole, so one shard runs it.
+    { cwd: '.', argv: ['node', 'scripts/ci/check-tests-covered.mjs', '--base', '{base}'] },
   ],
   'production-schema': [
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/ci-connection-renew-db.test.mjs'] },
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/production-schema-drift.test.mjs'] },
-    { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--report', '{report}'] },
+    { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--base', '{base}', '--report', '{report}'] },
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', '{db-concurrency}',
       ...MIGRATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
     { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{db-concurrency}', '--test-force-exit',
       ...AUTHORIZATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
   ],
 };
+
+// What the push entry runs before a push, on the tree the push would merge into main (--run-prepush; task 3435f8bf,
+// FABLE-ci-one-round-20261124 §3.2 and §3.7 ruling 1). A command joins only when it reads tracked files alone, uses only
+// Node's and Python's standard library, gives one answer on every platform and takes under 120 seconds; and only once the
+// same static check has failed a whole CI round twice. A suite's commands are referenced, never copied: one place each.
+export const PREPUSH_COMMANDS = [
+  { cwd: '.', argv: ['node', '--test', 'scripts/ci/main-entry-realpath.test.mjs'] },
+  ...SUITE_COMMANDS['runner-budget-policy'],
+];
+export const PREPUSH_TIMEOUT_MS = 120_000;
+// Exit codes of --run-prepush: 0 all passed, 1 a command failed (the push entry refuses), PREPUSH_ERROR_EXIT a command timed
+// out, did not start or could not be expanded (the push entry pushes and says the check did not run).
+export const PREPUSH_ERROR_EXIT = 3;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const KNOWN_FAILURES_PATH = path.join(HERE, 'ci-known-failures.json');
@@ -555,6 +578,10 @@ export function testConcurrency(cores = os.availableParallelism()) {
   return Math.max(2, Math.min(4, Math.floor(cores / 4)));
 }
 
+// No base commit: unset, empty, or GitHub's all-zero SHA. expandArgv refuses {base} then, executeSuite refuses the suite.
+const missingBase = (base) => !base || /^0+$/.test(base);
+const BASE_REQUIRED = 'CI_BASE_SHA is required for this suite';
+
 // hosted: a CI job's expansion. The trusted side passes it and its core count to the candidate's (readCandidate), whose
 // environment has no GITHUB_ACTIONS (test-env.mjs keep), so both sides expand the same command alike.
 export function expandArgv(argv, { cwd, root, base, report, listUnit = () => unitTestFiles(cwd),
@@ -582,7 +609,7 @@ export function expandArgv(argv, { cwd, root, base, report, listUnit = () => uni
       return files;
     }
     if (arg === '{base}') {
-      if (!base || /^0+$/.test(base)) throw new Error('CI_BASE_SHA is required for this suite');
+      if (missingBase(base)) throw new Error(BASE_REQUIRED);
       return [base];
     }
     if (arg === '{report}') return [report];
@@ -703,10 +730,10 @@ export {
   FAKE_GITHUB_TOKEN, KEEP_VARIABLE, TEST_ENV_RULES, TEST_ENV_VERSION, TEST_GIT_IDENTITY, fakeIdentityEnv, keptVariables, ownIdentityDir, testEnv,
 } from './test-env.mjs';
 // The command line marks its own environment first, before any child starts (the unit-test listing included), when it runs
-// suites: --run, --run-selected, --write-known, --run-files; it also makes the run's fake identity directory (Task 2ee162c2).
-// --check runs nothing and is left as it is.
+// suites: --run, --run-selected, --write-known, --run-files, and --run-prepush; it also makes the run's fake identity
+// directory (Task 2ee162c2). --check runs nothing and is left as it is.
 export function markTestRun(argv, env) {
-  if (!['--run', '--run-selected', '--write-known', '--run-files'].some((flag) => argv.includes(flag))) return;
+  if (!['--run', '--run-selected', '--write-known', '--run-files', '--run-prepush'].some((flag) => argv.includes(flag))) return;
   env.CLUED_UNDER_TEST = '1';
   env.CLUED_TEST_IDENTITY_DIR = ownIdentityDir(env);
 }
@@ -1106,6 +1133,83 @@ async function whereFilesRun(files, root) {
   }
 }
 
+// --run-prepush --root <tree>: PREPUSH_COMMANDS in order, expanded and run in the environment a suite's commands get
+// (expandArgv, testEnv, resolveCommand). Unlike --run it is not a suite run: it does not go through --run-files, does not
+// link or install an application's dependencies (linkSuiteDependencies) and does not wait for a machine-wide suite slot:
+// the commands take seconds together, and the slots keep heavy suites from crowding the node's production CI. Every
+// command runs, each with a PREPUSH_TIMEOUT_MS timeout; a red one is named with the tests that failed.
+export function runPrepush(root, { env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
+  commands = PREPUSH_COMMANDS, timeoutMs = PREPUSH_TIMEOUT_MS, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
+  // One verdict at the end: a red command is a clear red even when a later one timed out, did not start, could not be
+  // expanded or threw (the push entry refuses only on exit 1 with a "prepush 红：" line); no red but a command that did
+  // not run is PREPUSH_ERROR_EXIT, never 1, so a check that could not run never stops a push.
+  const red = [];
+  const notRun = [];
+  for (const command of commands) {
+    const cwd = path.join(root, command.cwd);
+    const named = `(${command.cwd}) ${command.argv.join(' ')}`;
+    try {
+      let argv;
+      try {
+        argv = expandArgv(command.argv, { cwd, root, hosted: false });
+      } catch (error) {
+        throw new Error(`cannot be expanded: ${error.message}`);
+      }
+      let reportDir = null;
+      if (isNodeTest(argv) && existsSync(REPORTER_PATH)) {
+        try {
+          reportDir = mkdtempSync(path.join(os.tmpdir(), 'prepush-tests-'));
+        } catch { /* runs without naming its failed tests */ }
+      }
+      const report = reportDir ? path.join(reportDir, 'failures.jsonl') : null;
+      log(`::group::prepush: (${command.cwd}) ${argv.join(' ')}`);
+      let result;
+      try {
+        const run = resolveCommand(report ? withReporter(argv, report) : argv, { platform });
+        result = spawn(run[0], run.slice(1), { cwd, env: testEnv(env), stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit', timeout: timeoutMs });
+        if (command.quiet && result.stdout) {
+          const text = result.stdout.toString();
+          log(result.status === 0 ? `${text.split('\n').slice(0, 4).join('\n')}\n...` : text);
+        }
+      } finally {
+        log('::endgroup::');
+      }
+      let tests = [];
+      if (report) {
+        try {
+          tests = [...new Set(readReport(readReportFile(report), root).events.filter((event) => event.type === 'fail').map(testAt))];
+        } catch { /* the command's own output names them */ }
+        try {
+          rmSync(reportDir, { recursive: true, force: true });
+        } catch { /* a report directory left in the temp directory is litter, not a verdict */ }
+      }
+      if (result.error || result.signal || result.status === null) {
+        throw new Error(result.error?.code === 'ETIMEDOUT' ? `timed out after ${timeoutMs / 1000} s`
+          : result.error ? `did not start: ${result.error.message}` : `ended by ${result.signal}`);
+      }
+      if (result.status !== 0) red.push({ command, argv, status: result.status, tests });
+    } catch (error) {
+      log(`prepush: ${named} ${error.message}; this command did not run`);
+      notRun.push(`${named}: ${error.message}`);
+    }
+  }
+  if (red.length === 0) {
+    if (notRun.length) {
+      log(`prepush: 没跑成 ${notRun.length} 条、没有红，按未跑处理`);
+      return PREPUSH_ERROR_EXIT;
+    }
+    log(`prepush: 全部通过（${commands.length} 条）`);
+    return 0;
+  }
+  for (const { command, argv, status, tests } of red) {
+    log(`prepush 红：(${command.cwd}) ${argv.join(' ')} 退出 ${status}`);
+    for (const name of tests) log(`  失败的测试：${name}`);
+  }
+  for (const line of notRun) log(`  另有没跑成的：${line}`);
+  log(`复现：node scripts/ci/ci-required-selection.mjs --run-prepush --root ${root}`);
+  return 1;
+}
+
 export async function runSuite(id, { root, env = process.env, log = console.log, captureKnown = false, keep = false, files = null, shard = null } = {}) {
   // A suite this file does not have may be one the candidate adds (requiredCommands reads it); not in this file's own checkout.
   if (!Object.hasOwn(SUITE_COMMANDS, id) && (files || captureKnown || !candidateSelectorOf(root, fileURLToPath(import.meta.url), id))) {
@@ -1327,6 +1431,12 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
   }
   if (shard && (files || captureKnown)) throw new Error('--shard splits a suite run, not --run-files or --write-known');
   if (captureKnown) return writeKnown(id, root, env, keep);
+  // A suite whose trusted commands compare with the base stops here without one, before its first command, rather than
+  // after every command ahead of the one that takes it (task 700f2b68). --run-files plans {base} commands out (planFiles).
+  if (!files && missingBase(env.CI_BASE_SHA) && (SUITE_COMMANDS[id] ?? []).some((command) => command.argv.includes('{base}'))) {
+    log(`::error title=${id}::${BASE_REQUIRED}; no command started. A CI job sets it in the step that runs the suite; locally: CI_BASE_SHA=$(git merge-base HEAD origin/main)`);
+    return 2;
+  }
   // The global number of this suite's next unit (parseShard).
   let position = shard ? shardOffset(id) : 0;
   // The seconds the shard packs files by, read only here; the first line names the table (entries, a digest of them) so
@@ -1743,7 +1853,7 @@ export function writeShardSeconds(logs, { file = SHARD_SECONDS_PATH, log = conso
   return 0;
 }
 
-const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>] | --run-selected <check> [--root <checkout>] [--shard <i>/<n>] | --run <suite> [--root <checkout>] | --run-files <suite> <file> [<file>...] [--root <checkout>] | --write-shard-seconds <log> [<log>...]';
+const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>] | --run-selected <check> [--root <checkout>] [--shard <i>/<n>] | --run <suite> [--root <checkout>] | --run-files <suite> <file> [<file>...] [--root <checkout>] | --run-prepush --root <tree> | --write-shard-seconds <log> [<log>...]';
 export const LOCAL_TIMEOUT_EXIT = 75;
 
 async function main(argv, env = process.env) {
@@ -1793,6 +1903,20 @@ async function main(argv, env = process.env) {
     if (env.GITHUB_ACTIONS !== 'true') {
       console.error('--shard runs only in a CI job (GITHUB_ACTIONS=true); run locally with --run or --run-files');
       return 2;
+    }
+  }
+  if (argv.includes('--run-prepush')) {
+    const rootIndex = argv.indexOf('--root');
+    const tree = rootIndex >= 0 ? argv[rootIndex + 1] : undefined;
+    if (!tree || tree.startsWith('--')) {
+      console.error(`run-prepush: needs the tree to check: --run-prepush --root <tree>\n${USAGE}`);
+      return 2;
+    }
+    try {
+      return runPrepush(path.resolve(tree), { env });
+    } catch (error) { // an exception is "did not run" (PREPUSH_ERROR_EXIT), never the red exit 1 the push entry refuses on
+      console.error(`run-prepush: did not run: ${error.message}`);
+      return PREPUSH_ERROR_EXIT;
     }
   }
   const filesIndex = argv.indexOf('--run-files');
