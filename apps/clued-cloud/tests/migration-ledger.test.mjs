@@ -715,7 +715,7 @@ const START_CALLERS = {
   // realDatabase(), the start, then `clued-g4-fresh-start.mjs --verify`, then the checks.
   'clued-real-database.mjs': (text) => {
     const body = /^export async function realDatabase\(([\s\S]*?)^\}/m.exec(text)?.[1] ?? '';
-    const start = body.indexOf('supabase(START)');
+    const start = body.search(/\bsupabase\(START\b/);
     const verify = body.indexOf("fresh('--verify')");
     const checks = body.indexOf('for (const step of steps)');
     return [...(start >= 0 && start < verify && verify < checks ? []

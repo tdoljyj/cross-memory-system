@@ -2195,7 +2195,7 @@ test('the release workflow and its grant script select the release door flow dat
     'apps/clued-cloud/tests/production-release-door-flow-db.test.mjs', 'apps/clued-cloud/tests/release-door-psql-fixture.mjs']) {
     assert.deepEqual(selectSuites('migration-verify', [file], 'linux').suites, ['production-schema'], file);
   }
-  assert.ok(SUITE_COMMANDS['production-schema'].at(-1).argv.includes('tests/production-release-door-flow-db.test.mjs'));
+  assert.ok(SUITE_COMMANDS['production-schema'].find(({ argv }) => argv.includes('--test-force-exit')).argv.includes('tests/production-release-door-flow-db.test.mjs'));
 });
 
 // --run-files: point-in-time reproduction of named test files through the same suite command.
