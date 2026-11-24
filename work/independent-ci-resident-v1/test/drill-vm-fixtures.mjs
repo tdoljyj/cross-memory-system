@@ -36,7 +36,12 @@ export const credentialFilesJson = (c = PACKAGE_CREDENTIALS) => JSON.stringify({
 // drill kit names instead, and the Owner's drill binding as drill-vm.ps1 reads it (a PSCredential: connection id, token). Fixture values,
 // registered nowhere.
 export const PRODUCTION_SERVER = { supabaseUrl: 'https://prodfixture0000000000.supabase.co', publishableKey: 'sb_publishable_prodfix' };
-export const DRILL_SERVER = { contract: 'clued.drill.server/1', project: 'fixture-drill-project', supabaseUrl: 'https://drillfixture000000000.supabase.co', publishableKey: 'sb_publishable_drilltest' };
+// The production gateway a package's own code names (windows/SwapBroker.cs Route: the renew probe every service start sends), here a fixture.
+export const PRODUCTION_GATEWAY = 'gateway.prodfixture.example';
+export const DRILL_SERVER = { contract: 'clued.drill.server/1', project: 'fixture-drill-project', supabaseUrl: 'https://drillfixture000000000.supabase.co', publishableKey: 'sb_publishable_drilltest',
+  // every https host the package's archive names is one or the other, or no kit (review M1): the service's own beyond the record's
+  // database (cut off in the guest), and the others (not Clued's)
+  blackholeHosts: [PRODUCTION_GATEWAY], allowedHosts: ['api.github.com'] };
 export const BINDING_ID = '11111111-2222-4333-8444-555555555555';
 export const BINDING_TOKEN = 'clued_bnd_DRILLFIXTUREdrillfixture';
 export const bindingPs = `(New-Object System.Management.Automation.PSCredential ${"'" + BINDING_ID + "'"}, (ConvertTo-SecureString ${"'" + BINDING_TOKEN + "'"} -AsPlainText -Force))`;
@@ -75,7 +80,8 @@ export const entryPs = expr => ps(`. ${q(entryScript)}; ${expr}`);
 
 // dropManifest: prerequisite item names left out of the package's prereq-manifest.json (Codex review of f33fc33e5, medium 3)
 // credentialFiles: the archive's windows/credential-files.json as text, or null for a package without one
-export function firstInstallAssets(label, { candidate = false, credentialFiles = credentialFilesJson(), dropManifest = [] } = {}) {
+// tarExtra: more entries of the archive ({ path, data })
+export function firstInstallAssets(label, { candidate = false, credentialFiles = credentialFilesJson(), dropManifest = [], tarExtra = [] } = {}) {
   const root = path.join(tmp, label); fs.mkdirSync(root);
   for (const d of ['build', 'final', 'images']) fs.mkdirSync(path.join(root, d));
   const version = '1.2.3', tag = `fleet-node-${version}`, id = 'b'.repeat(64);
@@ -90,6 +96,9 @@ export function firstInstallAssets(label, { candidate = false, credentialFiles =
       { name: 'gh', fileName: 'gh.msi', sha256: sha('gh'), bytes: 2 }, { name: 'git-for-windows', fileName: 'git.exe', sha256: sha('git'), bytes: 3 }
     ].filter(i => !dropManifest.includes(i.name)), debs: [{ fileName: 'docker.deb', sha256: sha('deb'), bytes: 3 }] })) })),
     ...(credentialFiles === null ? [] : [{ path: 'tree/work/independent-ci-resident-v1/windows/credential-files.json', data: Buffer.isBuffer(credentialFiles) ? credentialFiles : Buffer.from(credentialFiles) }]),
+    // the package's own code names the production gateway and a host that is not Clued's (SwapBroker.cs Route; any case)
+    { path: 'tree/work/independent-ci-resident-v1/windows/SwapBroker.cs', data: Buffer.from(`const string Route = "https://${PRODUCTION_GATEWAY}/v1/ci/node/renew"; // HTTPS://API.GitHub.com/x\n`) },
+    ...tarExtra,
     { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-universal/1', version, commit: 'c'.repeat(40), files: [] })) }]);
   fs.writeFileSync(path.join(root, 'build', `${tag}.tar`), archive);
   fs.writeFileSync(path.join(root, 'build', `${tag}.release.json`), '{}');

@@ -11,7 +11,7 @@ import test from 'node:test';
 import * as kitModule from '../drill/make-drill-kit.mjs';
 import { validateAcceptance } from '../rollout/fleet/install.mjs';
 import { DRILL_RESERVED, namesDrillReserved } from '../rollout/fleet/publish.mjs';
-import { BINDING_ID, BINDING_TOKEN, DRILL_SERVER, PRODUCTION_SERVER, bindingPs, candidateStubs, entryPs, evidence, firstInstallAssets, kitDir, ps, psCode, q, sha, tmp, verdictOf } from './drill-vm-fixtures.mjs';
+import { BINDING_ID, BINDING_TOKEN, DRILL_SERVER, PRODUCTION_GATEWAY, PRODUCTION_SERVER, bindingPs, candidateStubs, entryPs, evidence, firstInstallAssets, kitDir, ps, psCode, q, sha, tmp, verdictOf } from './drill-vm-fixtures.mjs';
 
 const { makeDrillKit, prepareFrom } = kitModule;
 const windows = process.platform === 'win32';
@@ -20,8 +20,8 @@ const leaves = (v, at = '') => v !== null && typeof v === 'object'
   ? Object.entries(v).flatMap(([k, x]) => leaves(x, at ? `${at}.${k}` : k)) : [[at, JSON.stringify(v)]];
 const differing = (a, b) => { const A = new Map(leaves(a)), B = new Map(leaves(b)); return [...new Set([...A.keys(), ...B.keys()])].filter(k => A.get(k) !== B.get(k)).sort(); };
 
-async function built(label, over = {}) {
-  const f = firstInstallAssets(label);
+async function built(label, over = {}, assets = {}) {
+  const f = firstInstallAssets(label, assets);
   prepareFrom({ ...f, out: f.from });
   const made = await makeDrillKit({ ...f, ...over });
   const tag = `fleet-node-${f.version}`;
@@ -40,7 +40,10 @@ test('the drill kit names the drill server in the two public fields and nothing 
   assert.equal(s.contract, 'clued.drill.server-stand-in/1'); assert.equal(s.project, DRILL_SERVER.project); assert.equal(s.supabaseUrl, DRILL_SERVER.supabaseUrl);
   assert.deepEqual(s.replaced, ['record.publishableKey', 'record.supabaseUrl']);
   assert.equal(s.releaseFirstInstallKitSha256, sha(releaseBytes)); assert.equal(s.firstInstallKitSha256, sha(drillBytes));
-  assert.deepEqual(s.blackholeHosts, [hostOf(PRODUCTION_SERVER.supabaseUrl)]);
+  // cut off in the guest: the Release record's database and the service hosts the package's own code names (review M1); the rest the
+  // archive names are the registered ones that are not Clued's
+  assert.deepEqual(s.blackholeHosts, [PRODUCTION_GATEWAY, hostOf(PRODUCTION_SERVER.supabaseUrl)].sort());
+  assert.deepEqual(s.allowedHosts, ['api.github.com']);
   assert.deepEqual(s.files, { firstInstallKit: names.kit, firstInstallSums: names.sums, acceptance: names.acceptance });
   // the three files that pin the kit's bytes in the guest (bootstrap's first-install sums, the acceptance, the drill's release pins)
   const sums = fs.readFileSync(path.join(f.out, names.sums), 'utf8'), releaseSums = fs.readFileSync(path.join(f.from, names.sums), 'utf8');
@@ -68,6 +71,37 @@ test('no kit when the drill server is production, has no publishable key yet, or
   // the committed drill-server.json is the one source of the drill's server: the test project, never a production address
   const committed = kitModule.readDrillServer({ allowUnset: true });
   assert.equal(committed.project, 'clued-auth-test'); assert.equal(committed.supabaseUrl, 'https://uscrdifznmlvczcekqpw.supabase.co');
+  // the production gateway SwapBroker's renew probe is sent to (SwapBroker.cs Route, not read from the record) is cut off; no host is both
+  assert.ok(committed.blackholeHosts.includes('kooyumi.pixelgrav.com'), JSON.stringify(committed.blackholeHosts));
+  assert.deepEqual(committed.blackholeHosts.filter(h => committed.allowedHosts.includes(h)), []);
+});
+
+// Review M1: a host the package's own code names is reached whatever the record says (SwapBroker posts its renew probe to a constant).
+test('every https host the archive names is cut off or registered as not Clued\'s: one that is neither, and no kit', async () => {
+  const entry = text => ({ tarExtra: [{ path: 'tree/work/independent-ci-resident-v1/upgrader/src/extra.mjs', data: Buffer.from(text) }] });
+  const f = firstInstallAssets('server-host-unlisted', entry('export const door = "https://Unlisted.ProdFixture.example:8443/v1/door";\n'));
+  prepareFrom({ ...f, out: f.from });
+  await assert.rejects(() => makeDrillKit({ ...f }), e => e.message === 'DRILL_SERVER_PRODUCTION_HOST_NOT_CUT_OFF:unlisted.prodfixture.example');
+  assert.ok(!fs.existsSync(path.join(f.out, 'kit.json')), 'no kit');
+  // the gateway the fixture archive names, taken off the list: the same refusal; a host on both lists is no server at all
+  const g = firstInstallAssets('server-host-gateway'); prepareFrom({ ...g, out: g.from });
+  await assert.rejects(() => makeDrillKit({ ...g, server: { ...DRILL_SERVER, blackholeHosts: [] } }), e => e.message === `DRILL_SERVER_PRODUCTION_HOST_NOT_CUT_OFF:${PRODUCTION_GATEWAY}`);
+  await assert.rejects(() => makeDrillKit({ ...g, server: { ...DRILL_SERVER, allowedHosts: [PRODUCTION_GATEWAY] } }), e => e.message === 'DRILL_SERVER_REFUSED');
+  await assert.rejects(() => makeDrillKit({ ...g, server: { ...DRILL_SERVER, blackholeHosts: [hostOf(DRILL_SERVER.supabaseUrl)] } }), e => e.message === 'DRILL_SERVER_REFUSED');
+  assert.ok(!fs.existsSync(path.join(g.out, 'kit.json')), 'no kit');
+  // registered, either way: a kit, and its record says which
+  const { kit } = await built('server-host-listed', { server: { ...DRILL_SERVER, blackholeHosts: [PRODUCTION_GATEWAY, 'unlisted.prodfixture.example'] } },
+    entry('https://unlisted.prodfixture.example/v1/door'));
+  assert.ok(kit.server.blackholeHosts.includes('unlisted.prodfixture.example'));
+  // before any boot the same rule is held again (--server-of, Assert-DrillServerReady): a kit whose list lost a host is refused
+  const h = await built('server-host-verify');
+  assert.deepEqual(kitModule.verifyKitServer({ kit: h.f.out, from: h.f.from, version: h.f.version }).blackholeHosts, h.kit.server.blackholeHosts);
+  const file = path.join(h.f.out, 'kit.json'), lost = structuredClone(h.kit);
+  lost.server.blackholeHosts = lost.server.blackholeHosts.filter(x => x !== PRODUCTION_GATEWAY); fs.writeFileSync(file, JSON.stringify(lost));
+  assert.throws(() => kitModule.verifyKitServer({ kit: h.f.out, from: h.f.from, version: h.f.version }), e => e.message === `DRILL_SERVER_PRODUCTION_HOST_NOT_CUT_OFF:${PRODUCTION_GATEWAY}`);
+  const moved = structuredClone(h.kit); moved.server.blackholeHosts = lost.server.blackholeHosts; moved.server.allowedHosts = [...moved.server.allowedHosts, PRODUCTION_GATEWAY];
+  fs.writeFileSync(file, JSON.stringify(moved));
+  assert.throws(() => kitModule.verifyKitServer({ kit: h.f.out, from: h.f.from, version: h.f.version }), e => e.message === `DRILL_SERVER_PRODUCTION_HOST_NOT_CUT_OFF:${PRODUCTION_GATEWAY}`);
 });
 
 test('a drill kit whose first-install kit differs from the Release\'s in one more field is refused, and so is a production address', async () => {
@@ -170,9 +204,10 @@ test('the guest entry cuts the production host off (hosts) and refuses a From wh
   const call = from => `$Kit = ${q(f.out)}; $From = ${q(from)}; $Version = ${q(f.version)}
     $r = Set-EntryServerBlackhole ${q(hosts)} { param($n) @('0.0.0.0', '::') }; [ordered]@{ hosts = @($r.hosts); server = $r.server }`;
   const r = entryPs(call(guestFrom));
-  assert.deepEqual(r.hosts, [prod]); assert.equal(r.server, hostOf(DRILL_SERVER.supabaseUrl));
+  assert.deepEqual(r.hosts, [PRODUCTION_GATEWAY, prod].sort()); assert.equal(r.server, hostOf(DRILL_SERVER.supabaseUrl));
   const text = fs.readFileSync(hosts, 'utf8');
   assert.match(text, new RegExp(`^0\\.0\\.0\\.0 ${prod.replaceAll('.', '\\.')}\\r?$`, 'm')); assert.match(text, new RegExp(`^:: ${prod.replaceAll('.', '\\.')}\\r?$`, 'm'));
+  assert.match(text, new RegExp(`^0\\.0\\.0\\.0 ${PRODUCTION_GATEWAY.replaceAll('.', '\\.')}\\r?$`, 'm'), 'the gateway the package\'s code names is cut off too');
   assert.match(text, /127\.0\.0\.1 localhost/, 'the file\'s own lines are kept');
   entryPs(call(guestFrom));
   assert.equal(fs.readFileSync(hosts, 'utf8'), text, 'a second run adds nothing');
