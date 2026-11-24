@@ -41,8 +41,14 @@
 //   node scripts/ci/ci-required-selection.mjs --write-known <suite> [--keep] [--root <checkout>]
 //     regenerates that suite's ci-known-failures.json entries from a real run
 //     (--keep also keeps the entries already listed).
+//   node scripts/ci/ci-required-selection.mjs --write-shard-seconds <log> [<log>...]
+//     rewrites ci-shard-seconds.json (the seconds --shard packs files by) from
+//     the shard-seconds lines of --shard job logs: each file's median, files
+//     under 3 seconds left out. The table is only ever written this way. It
+//     goes, with --shard, when hosted-required.yml does (S8).
 // All three run modes wait for a machine-wide suite slot outside GitHub Actions.
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -195,7 +201,8 @@ export const SUITES = {
       'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
-      'scripts/ci/check-tests-covered.mjs', 'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml', 'apps/clued-cloud/tests/**',
+      'scripts/ci/check-tests-covered.mjs', 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-shard-seconds.json',
+      '.github/workflows/clued-required-tests-windows.yml', 'apps/clued-cloud/tests/**',
       'apps/clued-cloud/scripts/select-tests.mjs', 'apps/clued-cloud/scripts/run-tests.mjs'],
   },
   // The application suite reads files from across the repository (workflow,
@@ -364,6 +371,9 @@ export const SUITE_COMMANDS = {
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const KNOWN_FAILURES_PATH = path.join(HERE, 'ci-known-failures.json');
 export const REPORTER_PATH = path.join(HERE, 'ci-test-failures-reporter.mjs');
+// The seconds --shard packs a listing command's files by (shardCommand), read next to this file (the trusted base checkout,
+// the same for every shard). Written only by --write-shard-seconds; read only under --shard. It goes with --shard at S8.
+export const SHARD_SECONDS_PATH = path.join(HERE, 'ci-shard-seconds.json');
 
 // Tests that already fail on main (quarantine, Task 679a0c2b), by suite: each
 // entry names the test file (relative to the checkout), the test's full path
@@ -768,7 +778,9 @@ export function commandArgv(command, options) {
 // and a listing command with an operand that is not a test file, such as a package: it would leave every shard's command).
 // A unit's global number is the suite's own number (shardOffset) plus the unit's place in the suite's plan; shard i runs the
 // units whose number mod n is i - 1, so the shards together run every unit once and n = 1 runs today's plan command for
-// command. The suite's number comes from its id alone, never from what else a shard selected: each shard selects on its own
+// command. A listing command's files are packed by their seconds instead (FABLE-hosted-win-shard-balance-20261124, block 5):
+// see shardCommand; with no table, or none of the command's files in it, that is the same mod n rule. The suite's number
+// comes from its id alone, never from what else a shard selected: each shard selects on its own
 // (one that cannot read the changed files runs every suite), and a suite's units go to the same shards whichever other
 // suites a shard runs or stops at their first failure (REVIEW-hosted-speed-b3-20261124 H1). A listing command runs only its
 // shard's files, with its own switches, and runs again in full (passesAgain) as that narrower command; its known failures
@@ -792,10 +804,58 @@ export function shardOffset(id) {
   return ids.length + hash;
 }
 
+// ci-shard-seconds.json as a Map of repository path -> whole seconds. A table that is missing or not that shape is an empty
+// one (problem says why): an aid that fails only does nothing, it never stops a shard (FABLE-hosted-win-shard-balance §1.3).
+export function readShardSeconds(file = SHARD_SECONDS_PATH) {
+  let data;
+  try {
+    data = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    return { table: new Map(), problem: `${path.basename(file)} cannot be read (${error?.code ?? error?.message ?? error}); every file weighs 1` };
+  }
+  const entries = data && typeof data === 'object' && !Array.isArray(data) ? Object.entries(data) : null;
+  const valid = entries && entries.every(([key, value]) => key.length > 0 && !key.startsWith('/') && !key.includes('\\')
+    && Number.isSafeInteger(value) && value > 0);
+  if (!valid) return { table: new Map(), problem: `${path.basename(file)} is not {"<repository path>": whole seconds}; every file weighs 1` };
+  return { table: new Map(entries), problem: null };
+}
+
+// The shard of each of a command's files: heaviest first (seconds from the table, 1 when it has none; equal ones in the
+// command's order), each into the lightest shard, equal ones taken in turn from shard position mod n. With equal weights that
+// puts unit u in shard (position + u) mod n, the rule for a command that runs whole. It reads only this command's files, the
+// table and the suite's number, never what else a shard selected (REVIEW-hosted-speed-b3-20261124 H1).
+function packFiles(files, total, position, seconds) {
+  const weight = (file) => {
+    const value = seconds instanceof Map ? seconds.get(file) : seconds && Object.hasOwn(seconds, file) ? seconds[file] : undefined;
+    return Number.isSafeInteger(value) && value > 0 ? value : 1;
+  };
+  const weights = files.map(weight);
+  const order = files.map((file, unit) => unit).sort((a, b) => weights[b] - weights[a] || a - b);
+  const loads = new Array(total).fill(0);
+  const shardOf = new Array(files.length);
+  const start = position % total;
+  for (const unit of order) {
+    let best = start;
+    for (let step = 1; step < total; step += 1) {
+      const candidate = (start + step) % total;
+      if (loads[candidate] < loads[best]) best = candidate;
+    }
+    shardOf[unit] = best;
+    loads[best] += weights[unit];
+  }
+  return shardOf;
+}
+
 // The part of one expanded command a shard runs: argv null when none; units, the units the command counts for; files, the
-// repository paths of the shard's test files, and listed, those of all the command's (both null for a command that runs whole).
-export function shardCommand(command, argv, { index, total }, position) {
-  const mine = (unit) => (position + unit) % total === index - 1;
+// repository paths of the shard's test files, and listed, those of all the command's (both null for a command that runs
+// whole). seconds: the table (readShardSeconds), passed in; none packs as one with no entry.
+export function shardCommand(command, argv, shard, position, seconds = null) {
+  const { accepts, ...part } = shardPart(command, argv, shard, position, seconds);
+  return part;
+}
+
+// shardCommand, with accepts: every test file of a listing command (empty for a command that runs whole).
+function shardPart(command, argv, { index, total }, position, seconds) {
   const testAt = argv.indexOf('--test');
   const unittestAt = argv.findIndex((arg, i) => arg === 'unittest' && argv[i - 1] === '-m');
   const listing = testAt >= 0 || (unittestAt >= 0 && argv[unittestAt + 1] !== 'discover');
@@ -803,13 +863,25 @@ export function shardCommand(command, argv, { index, total }, position) {
   // Each operand after the anchor a test file: filterCommand keeps no other operand (review M1).
   const everyOperand = listing && accepts.length === operandsAfter(argv, testAt >= 0 ? testAt : unittestAt).length;
   if (everyOperand && accepts.length > 0 && new Set(accepts).size === accepts.length) {
-    const files = accepts.filter((file, unit) => mine(unit));
-    if (files.length === 0) return { argv: null, units: accepts.length, files: null, listed: null };
+    const shardOf = packFiles(accepts, total, position, seconds);
+    const files = accepts.filter((file, unit) => shardOf[unit] === index - 1);
+    if (files.length === 0) return { argv: null, units: accepts.length, files: null, listed: null, accepts };
     const { runs, matched } = filterCommand(command, argv, new Set(files));
     if (runs.length !== 1 || matched.length !== files.length) throw new Error(`cannot shard (${command.cwd}) ${argv.join(' ')}`);
-    return { argv: runs[0], units: accepts.length, files: new Set(files), listed: new Set(accepts) };
+    return { argv: runs[0], units: accepts.length, files: new Set(files), listed: new Set(accepts), accepts };
   }
-  return { argv: mine(0) ? argv : null, units: 1, files: null, listed: null };
+  return { argv: position % total === index - 1 ? argv : null, units: 1, files: null, listed: null, accepts: [] };
+}
+
+// The seconds a shard spent on each of its files: the sum of the file's top-level tests (the reporter's ms), so a test that
+// waits on a child process counts the child's time (fleet-node-children). One decimal; a file with no timed test is left out.
+export function shardSecondsOf(report, files) {
+  const ms = new Map();
+  for (const event of report.events) {
+    if ((event.type !== 'pass' && event.type !== 'fail') || typeof event.ms !== 'number' || !files.has(event.file)) continue;
+    ms.set(event.file, (ms.get(event.file) ?? 0) + event.ms);
+  }
+  return Object.fromEntries([...ms].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([file, total]) => [file, Math.round(total / 100) / 10]));
 }
 
 // Gap A (FABLE r8 B2): the trusted list first, in its order and with its policy, even if the PR removes or replaces a
@@ -1190,7 +1262,7 @@ function reportFlaky(id, failures, { env, log }) {
 // The CI process or the already guarded worker executes the suite here.
 export function executeSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
   captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : ''),
-  rerunMaxElapsedMs = RERUN_MAX_ELAPSED_MS, rerunMinTimeoutMs = RERUN_MIN_TIMEOUT_MS, shard = null } = {}) {
+  rerunMaxElapsedMs = RERUN_MAX_ELAPSED_MS, rerunMinTimeoutMs = RERUN_MIN_TIMEOUT_MS, shard = null, shardSecondsFile = SHARD_SECONDS_PATH } = {}) {
   const host = hostLacks(env);
   if (host.error) {
     log(`::error title=${id}::${host.error}`);
@@ -1200,7 +1272,16 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
   if (captureKnown) return writeKnown(id, root, env, keep);
   // The global number of this suite's next unit (parseShard).
   let position = shard ? shardOffset(id) : 0;
-  if (shard) log(`${id}: shard ${shard.index}/${shard.total}, units numbered from ${position}`);
+  // The seconds the shard packs files by, read only here; the first line names the table (entries, a digest of them) so
+  // the shards' logs show they all read the same one.
+  let seconds = null;
+  if (shard) {
+    const { table, problem } = readShardSeconds(shardSecondsFile);
+    seconds = table;
+    if (problem) log(`::notice title=${id} shard seconds::${problem}`);
+    const digest = createHash('sha256').update(JSON.stringify([...table])).digest('hex').slice(0, 12);
+    log(`${id}: shard ${shard.index}/${shard.total}, units numbered from ${position}; 按秒数分片，表 ${table.size} 条（${digest}）`);
+  }
   const skipSwitches = hostLacksSwitches(host.lacks);
   if (skipSwitches.length > 0) log(`${id}: ${hostLacksNote(host.lacks)}`);
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
@@ -1226,9 +1307,14 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
     // A known failure counts in this shard when its file is one of the shard's, or one the command no longer lists and the
     // shard has the command's first file (one shard warns that it no longer runs, as without --shard).
     let shardKnown = null;
+    let part = null;
     if (shard) {
-      const part = shardCommand(command, full, shard, position);
+      part = shardPart(command, full, shard, position, seconds);
       position += part.units;
+      if (part.accepts.length > 0) {
+        const hits = part.accepts.filter((file) => seconds.has(file)).length;
+        log(`${id}: 按秒数分片，表里命中 ${hits} / 本命令 ${part.accepts.length} 个文件`);
+      }
       // How much of the suite the shard ran, for runSelected's summary (review M2).
       if (shard.tally) {
         shard.tally.units += part.units;
@@ -1274,6 +1360,13 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
       log(result.status === 0 ? `${text.split('\n').slice(0, 4).join('\n')}\n...` : text);
     }
     log('::endgroup::');
+    // What each of the shard's files took on this first run, for --write-shard-seconds; never part of the verdict.
+    if (part?.files && reportDir && !result.error) {
+      try {
+        const timed = shardSecondsOf(readReport(readReportFile(path.join(reportDir, 'failures.jsonl')), root), part.files);
+        log(`${id}: shard-seconds ${JSON.stringify(timed)}`);
+      } catch { /* no seconds this run */ }
+    }
     if (result.error) {
       dropReport();
       log(`${id}: ${shown[0]} did not start: ${result.error.message}`);
@@ -1429,7 +1522,59 @@ function writeKnown(id, root, env, keep = false) {
   return unexplained ? 1 : 0;
 }
 
-const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>] | --run-selected <check> [--root <checkout>] [--shard <i>/<n>] | --run <suite> [--root <checkout>] | --run-files <suite> <file> [<file>...] [--root <checkout>]';
+// --write-shard-seconds <log>...: rewrite ci-shard-seconds.json, the whole of it, from the shard-seconds lines of --shard job
+// logs (executeSuite): each file's median over its samples, rounded to whole seconds, files under 3 seconds left out, keys
+// sorted. The only way the table is written. A log it cannot read, or no shard-seconds line at all, writes nothing.
+export function writeShardSeconds(logs, { file = SHARD_SECONDS_PATH, log = console.log } = {}) {
+  const samples = new Map();
+  if (logs.length === 0) {
+    log('write-shard-seconds: no log named; nothing written');
+    return 2;
+  }
+  for (const name of logs) {
+    let text;
+    try {
+      text = readFileSync(name, 'utf8');
+    } catch (error) {
+      log(`write-shard-seconds: ${name} cannot be read (${error?.code ?? error?.message ?? error}); nothing written`);
+      return 1;
+    }
+    for (const line of text.split(/\r?\n/)) {
+      const match = /: shard-seconds (\{.*\})\s*$/.exec(line);
+      if (!match) continue;
+      let data;
+      try {
+        data = JSON.parse(match[1]);
+      } catch {
+        continue;
+      }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+      for (const [key, value] of Object.entries(data)) {
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) continue;
+        samples.set(key, [...(samples.get(key) ?? []), value]);
+      }
+    }
+  }
+  if (samples.size === 0) {
+    log('write-shard-seconds: no shard-seconds line in the logs; nothing written');
+    return 1;
+  }
+  const median = (values) => {
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  };
+  const table = {};
+  for (const key of [...samples.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const seconds = median(samples.get(key));
+    if (seconds >= 3) table[key] = Math.round(seconds);
+  }
+  writeFileSync(file, `${JSON.stringify(table, null, 2)}\n`);
+  log(`write-shard-seconds: ${Object.keys(table).length} files written to ${path.basename(file)} (of ${samples.size} timed)`);
+  return 0;
+}
+
+const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>] | --run-selected <check> [--root <checkout>] [--shard <i>/<n>] | --run <suite> [--root <checkout>] | --run-files <suite> <file> [<file>...] [--root <checkout>] | --write-shard-seconds <log> [<log>...]';
 export const LOCAL_TIMEOUT_EXIT = 75;
 
 async function main(argv, env = process.env) {
@@ -1444,6 +1589,15 @@ async function main(argv, env = process.env) {
     console.log(`Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
     console.log('--run-files runs only the named test files (repository paths) with the suite command CI runs, takes a local slot, and is refused under GITHUB_ACTIONS (exit 2): its result is not a suite verdict.');
     return 0;
+  }
+  const secondsIndex = argv.indexOf('--write-shard-seconds');
+  if (secondsIndex >= 0) {
+    const logs = argv.slice(secondsIndex + 1);
+    if (logs.length === 0 || logs.some((arg) => arg.startsWith('--'))) {
+      console.error(`--write-shard-seconds <log> [<log>...] takes the --shard job logs and nothing else\n${USAGE}`);
+      return 2;
+    }
+    return writeShardSeconds(logs);
   }
   // Written any other way --shard would be ignored and the shard would run the whole plan (review L3).
   if (argv.some((arg) => arg.startsWith('--shard='))) {
