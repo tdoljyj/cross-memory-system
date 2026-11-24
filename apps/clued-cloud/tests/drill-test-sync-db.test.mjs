@@ -105,6 +105,8 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
     const leftBehind = async () => (await admin.query(`select p.oid::regprocedure::text as name from pg_catalog.pg_proc p
       where p.pronamespace = 'public'::regnamespace and p.proname ~ 'drill'`)).rows.map((r) => r.name);
     const user = crypto.randomUUID();
+    // The hosted auth.users has created_at; the embedded stand-in does not.
+    await admin.query('alter table auth.users add column created_at timestamptz default clock_timestamp()');
     await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,'drill@example.invalid',now())`, [user]);
     const projects = async () => (await admin.query('select id, user_id, context_key from public.clued_projects order by id')).rows;
 
@@ -114,7 +116,7 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
     assert.deepEqual(Object.keys(first).sort(), ['applied', 'fixtures', 'state']);
     assert.equal(first.state, 'in-sync');
     assert.equal(first.applied.length, earlier.length);
-    assert.deepEqual(first.fixtures, { users: 1, seeded: 1, project: 'seeded' }, 'the account present gets its parking spot and the kit\'s project in the same run');
+    assert.deepEqual(first.fixtures, { users: 1, seeded: 1, project: 'seeded', project_account: 'd***@example.invalid' }, 'the account present gets its parking spot and the kit\'s project in the same run');
     assert.deepEqual(await projects(), [{ id: kitProject, user_id: user, context_key: kitScope }]);
     assert.deepEqual(identity(await readTestHistory(admin)), identity(earlier));
     assert.deepEqual(await leftBehind(), []);
@@ -152,7 +154,7 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
       // In sync with the list it was given: nothing to apply, and the result names what the drill's receipt records.
       assert.deepEqual(await (await hostCall(earlier)).result, { contract: RESULT_CONTRACT, state: 'in-sync',
         production_last: { version: earlier.at(-1).version, name: earlier.at(-1).name }, production_rows: earlier.length, applied: 0,
-        fixtures: { users: 1, seeded: 0, project: 'present' } });
+        fixtures: { users: 1, seeded: 0, project: 'present', project_account: 'd***@example.invalid' } });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -166,7 +168,7 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
     assert.deepEqual(identity(await readTestHistory(admin)), identity(production));
     // Again: nothing to do.
     const again = await run({ applied: production });
-    assert.deepEqual([again.state, again.applied, again.fixtures], ['in-sync', [], { users: 1, seeded: 0, project: 'present' }]);
+    assert.deepEqual([again.state, again.applied, again.fixtures], ['in-sync', [], { users: 1, seeded: 0, project: 'present', project_account: 'd***@example.invalid' }]);
     // An older list arriving late changes nothing.
     const late = await run({ applied: earlier });
     assert.deepEqual(late, { state: 'stale', applied: [] });
@@ -205,7 +207,7 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
       // An account that does not own that project (it signed up after the sync; parking seeded here, no project).
       const stranger = crypto.randomUUID();
       await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,'drill-stranger@example.invalid',now())`, [stranger]);
-      assert.deepEqual(await seedFixtures(admin, { scope: kitScope }), { users: 2, seeded: 1, project: 'present' });
+      assert.deepEqual(await seedFixtures(admin, { scope: kitScope }), { users: 2, seeded: 1, project: 'present', project_account: 'd***@example.invalid' });
       // 1. "All contexts, read only" is not enough by itself: the token is issued and answers for the personal
       //    scope, but for the kit's project it is refused. The fixture has to hold the project.
       const everything = await sessions(stranger)('contexts:*');
@@ -247,10 +249,10 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
     const open = await holders(drill.token, 'global');
     assert.deepEqual([open.status, open.holders, open.reason], ['ok', [], undefined], JSON.stringify(open));
     // The fixture: one parking spot per account, through the product's own functions.
-    assert.deepEqual(await seedFixtures(admin, { scope: 'global' }), { users: 3, seeded: 1, project: null });
+    assert.deepEqual(await seedFixtures(admin, { scope: 'global' }), { users: 3, seeded: 1, project: null, project_account: null });
     assert.equal(await parkingRows(), 1);
     assert.deepEqual(await holders(drill.token, 'global'), NOT_HELD);
-    assert.deepEqual(await seedFixtures(admin, { scope: kitScope }), { users: 3, seeded: 0, project: 'present' }, 'a second run adds nothing');
+    assert.deepEqual(await seedFixtures(admin, { scope: kitScope }), { users: 3, seeded: 0, project: 'present', project_account: 'd***@example.invalid' }, 'a second run adds nothing');
     assert.equal(await parkingRows(), 1);
     // The parking Binding's token was never returned to this process and admits nobody.
     const parking = (await admin.query(`select b.id,b.vendor,b.agent_name,b.scopes,b.context_keys from clued_private.binding_roles_v1 r
@@ -260,15 +262,10 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
       [parking.id])).rows[0].ok, false);
 
     // --- Rebuild over a populated database: application data goes, auth stays, the parking fixture comes back. ---
-    // A project's id is its primary key, so the kit's project belongs to one account. Several accounts and no such
-    // project (the rebuild dropped it): nothing says whose it is, and the sync stops after the rows are applied.
-    await assert.rejects(() => run({ applied: production, rebuild: true }), /fixture_project_owner_ambiguous/);
-    assert.deepEqual(identity(await readTestHistory(admin)), identity(production));
-    assert.deepEqual(await projects(), []);
     const rebuilt = await run({ applied: production, rebuild: true, scope: 'global' });
     assert.equal(rebuilt.state, 'in-sync');
     assert.equal(rebuilt.applied.length, production.length);
-    assert.deepEqual(rebuilt.fixtures, { users: 3, seeded: 3, project: null });
+    assert.deepEqual(rebuilt.fixtures, { users: 3, seeded: 3, project: null, project_account: null });
     assert.deepEqual(identity(await readTestHistory(admin)), identity(production));
     assert.equal((await admin.query('select count(*)::int n from auth.users')).rows[0].n, 3);
     assert.equal(await parkingRows(), 1);
@@ -279,6 +276,67 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
     assert.equal((await admin.query(`select count(*)::int n from clued_private.binding_roles_v1
       where user_id=$1 and role='ci-admission' and purpose='parking' and revoked_at is null`, [owner])).rows[0].n, 1);
     }
+  });
+});
+
+test('two accounts and no project: the kit\'s project goes to the account that signed up first, the other gets parking only',
+  { timeout: 1_500_000 }, async () => {
+  const { syncDatabase, seedFixtures } = await sync();
+  const repository = await readRepository();
+  const snapshot = await readSnapshot();
+  const production = repository.ledger.rows.map(({ version, name, statements_md5, statements_length }) =>
+    ({ version, name, statements_md5, statements_length }));
+  const kitProject = crypto.randomUUID();
+  const kitScope = `project:${kitProject}`;
+  await withCluster('drill-sync-two', async (admin) => {
+    // The hosted auth.users has created_at; the embedded stand-in does not.
+    await admin.query('alter table auth.users add column created_at timestamptz');
+    // The earlier account has the greater id and the later e-mail: only the sign-up time decides.
+    const earlier = 'ffffffff-0000-4000-8000-000000000002';
+    const later = '00000000-0000-4000-8000-000000000001';
+    const gone = '00000000-0000-4000-8000-000000000000';
+    await admin.query(`insert into auth.users(id,email,email_confirmed_at,created_at,deleted_at) values
+      ($1,'quiet.owner@qq.com',now(),'2026-09-03T00:00:00Z',null), ($2,'another@example.invalid',now(),'2026-09-05T00:00:00Z',null),
+      ($3,'deleted@example.invalid',now(),'2026-09-01T00:00:00Z',now())`, [earlier, later, gone]);
+    const projects = async () => (await admin.query('select id, user_id, context_key from public.clued_projects order by id')).rows;
+    const parking = async () => (await admin.query(`select user_id from clued_private.binding_roles_v1
+      where role='ci-admission' and purpose='parking' and revoked_at is null order by user_id`)).rows.map((r) => r.user_id);
+
+    const first = await syncDatabase(admin, { applied: production, repository, snapshot, platform: 'embedded', scope: kitScope, rebuild: true });
+    assert.equal(first.state, 'in-sync');
+    // The account the Owner signs in with, told without its full address.
+    assert.deepEqual(first.fixtures, { users: 2, seeded: 2, project: 'seeded', project_account: 'q***@qq.com' });
+    assert.ok(!JSON.stringify(first).includes('quiet.owner'));
+    assert.deepEqual(await projects(), [{ id: kitProject, user_id: earlier, context_key: kitScope }]);
+    assert.deepEqual(await parking(), [later, earlier]);
+
+    // Again: nothing changes, and the answer names the same account.
+    const again = await syncDatabase(admin, { applied: production, repository, snapshot, platform: 'embedded', scope: kitScope });
+    assert.deepEqual([again.state, again.applied, again.fixtures], ['in-sync', [], { users: 2, seeded: 0, project: 'present', project_account: 'q***@qq.com' }]);
+    assert.deepEqual(await seedFixtures(admin, { scope: kitScope }), { users: 2, seeded: 0, project: 'present', project_account: 'q***@qq.com' });
+    assert.deepEqual(await projects(), [{ id: kitProject, user_id: earlier, context_key: kitScope }]);
+    assert.deepEqual(await parking(), [later, earlier]);
+
+    // The later account: parking, no project; its "all contexts, read only" token is refused for the kit's scope.
+    const human = async (name, input) => {
+      await admin.query('begin');
+      try {
+        await admin.query('set local role authenticated');
+        await admin.query("select set_config('request.jwt.claim.sub',$1,true),set_config('request.jwt.claims',$2,true)", [later, JSON.stringify(fresh(later))]);
+        const value = (await admin.query(`select public.${name}($1) v`, [input])).rows[0].v;
+        await admin.query('commit');
+        return value;
+      } catch (error) { await admin.query('rollback'); throw error; }
+    };
+    const confirmation = await human('clued_headless_binding_confirmation_issue_v1',
+      { label: 'drill', days: 90, selected: [{ resource_kind: 'scope', resource_id: 'contexts:*', environment: 'canonical', actions: ['read'] }] });
+    const wide = await human('clued_headless_binding_issue_v1', { confirmation_token: confirmation.confirmation_token, view_digest: confirmation.view_digest });
+    assert.equal(wide.status, 'committed', JSON.stringify({ ...wide, token: undefined }));
+    await admin.query('set role anon');
+    try {
+      await assert.rejects(() => admin.query('select public.clued_work_merge_slot_holders_v1($1,$2::jsonb) v',
+        [sha256(wide.token), JSON.stringify({ scope: kitScope, repository: 'tdoljyj/cross-memory-system' })]), /resource_action_not_authorized/);
+    } finally { await admin.query('reset role'); }
   });
 });
 
