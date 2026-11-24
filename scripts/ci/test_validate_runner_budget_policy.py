@@ -69,7 +69,7 @@ def frozen(text, name="legacy.yml"):
 class RunnerBudgetPolicyTests(unittest.TestCase):
     def evaluate(self, texts, baseline=None, owner_hosted=None):
         return policy.evaluate_workflows(texts, {} if baseline is None else baseline,
-                                         {} if owner_hosted is None else owner_hosted, {})
+                                         {} if owner_hosted is None else owner_hosted, {}, {})
 
     def assert_pass(self, report):
         self.assertEqual(report["violations"], [], report["violations"])
@@ -287,18 +287,18 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
             text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
             debt = ({filename: policy.LEGACY_HOSTED_DEBT[filename]} if successor["kind"] == "legacy" else {})
             owner = ({filename: policy.OWNER_DECISION_HOSTED_JOBS[filename]} if successor["kind"] == "owner" else {})
-            self.assert_pass(policy.evaluate_workflows({filename: text}, debt, owner, {}))
+            self.assert_pass(policy.evaluate_workflows({filename: text}, debt, owner, {}, {}))
             # Full workflow identity and exact previous-map identity are both
             # mandatory. A candidate hash is never a generic hosted permit.
             changed = text.replace("    runs-on: ubuntu", "    timeout-minutes: 360\n    runs-on: ubuntu", 1)
             self.assertNotEqual(changed, text)
-            self.assertEqual(policy.evaluate_workflows({filename: changed}, debt, owner, {})["status"], "FAIL")
+            self.assertEqual(policy.evaluate_workflows({filename: changed}, debt, owner, {}, {})["status"], "FAIL")
             changed = text.replace("jobs:\n", "jobs:\n  extra-paid-job:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo extra\n", 1)
-            self.assertEqual(policy.evaluate_workflows({filename: changed}, debt, owner, {})["status"], "FAIL")
+            self.assertEqual(policy.evaluate_workflows({filename: changed}, debt, owner, {}, {})["status"], "FAIL")
             altered_debt, altered_owner = copy.deepcopy(debt), copy.deepcopy(owner)
             target = altered_debt if debt else altered_owner
             target[filename]["control_sha256"] = "a" * 64
-            self.assertEqual(policy.evaluate_workflows({filename: text}, altered_debt, altered_owner, {})["status"], "FAIL")
+            self.assertEqual(policy.evaluate_workflows({filename: text}, altered_debt, altered_owner, {}, {})["status"], "FAIL")
     def test_hosted_executors_never_carry_a_required_check_name(self):
         # Owner Decision bc6fdad1: a same-name hosted check run counts as the
         # required check even though the ruleset pins App 5368905.
@@ -536,16 +536,16 @@ class HostedScaffoldTests(unittest.TestCase):
     def test_scaffold_table_schema_fails_closed(self):
         text = PREFIX + job("check", "ubuntu-24.04").replace("  check:\n", "  check:\n    name: hosted-check\n", 1)
         exact = frozen(text)
-        self.assertEqual(policy.evaluate_workflows({"legacy.yml": text}, {}, {}, exact)["status"], "PASS")
+        self.assertEqual(policy.evaluate_workflows({"legacy.yml": text}, {}, {}, exact, {})["status"], "PASS")
         for invalid in [[], {"legacy.yml": {"control_sha256": "0" * 64, "jobs": {}}},
                         {"legacy.yml": {**exact["legacy.yml"], "extra": True}}]:
             with self.subTest(invalid=invalid):
-                report = policy.evaluate_workflows({"legacy.yml": text}, {}, {}, invalid)
+                report = policy.evaluate_workflows({"legacy.yml": text}, {}, {}, invalid, {})
                 self.assertTrue(any("hosted scaffold" in row["reason"] for row in report["violations"]), report)
         self.assertTrue(any("never both" in row["reason"]
-                            for row in policy.evaluate_workflows({"legacy.yml": text}, {}, exact, exact)["violations"]))
+                            for row in policy.evaluate_workflows({"legacy.yml": text}, {}, exact, exact, {})["violations"]))
         unnamed = PREFIX + job("check", "ubuntu-24.04")
-        report = policy.evaluate_workflows({"legacy.yml": unnamed}, {}, {}, frozen(unnamed))
+        report = policy.evaluate_workflows({"legacy.yml": unnamed}, {}, {}, frozen(unnamed), {})
         self.assertTrue(any("check name only" in row["reason"] for row in report["violations"]), report)
 
 
@@ -559,7 +559,8 @@ class Native617MigrationTests(unittest.TestCase):
         for filename, primary in workflows.items():
             self.assertNotIn(filename, policy.LEGACY_HOSTED_DEBT)
             text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
-            report = policy.evaluate_workflows({filename: text}, baseline={}, owner_hosted={}, scaffold={})
+            report = policy.evaluate_workflows({filename: text}, baseline={}, owner_hosted={}, scaffold={},
+                                                shared_groups={})
             self.assertEqual(report["status"], "PASS", report)
             self.assertIn("handover-native-", text)
             self.assertIn("node scripts/ci/clued-handover-native-entry.mjs --check", text)
@@ -570,7 +571,92 @@ class Native617MigrationTests(unittest.TestCase):
             restored = text.replace("runs-on: " + route, "runs-on: ubuntu-24.04")
             self.assertNotEqual(restored, text)
             self.assertEqual(policy.evaluate_workflows({filename: restored}, baseline={},
-                                                      owner_hosted={}, scaffold={})["status"], "FAIL")
+                                                      owner_hosted={}, scaffold={}, shared_groups={})["status"], "FAIL")
+
+
+class SharedConcurrencyGroupTests(unittest.TestCase):
+    """Task 2fb32dc7: a literal concurrency group belongs to one workflow file. Two files sharing one hold each other back (the
+    self-hosted front merge's no-op held the hosted copy for 17 minutes); the only exemption is an exact row of the table."""
+
+    EXECUTOR = ("clued-merge-executor.yml", "clued-merge-reconcile.yml", "clued-merge-slot-ci.yml")
+
+    def real(self):
+        return {p.name: p.read_text(encoding="utf-8") for p in policy.WORKFLOW_DIR.glob("*.yml")}
+
+    def shared(self, report):
+        return [row for row in report["violations"] if "concurrency group" in row["reason"]]
+
+    def assert_shared(self, report, reason):
+        self.assertEqual(report["status"], "FAIL")
+        self.assertTrue(any(reason in row["reason"] for row in self.shared(report)), report["violations"])
+
+    def test_real_tree_shares_no_literal_group_outside_the_one_exact_row(self):
+        self.assertEqual(set(policy.SHARED_CONCURRENCY_GROUPS), {"clued-merge-executor"})
+        row = policy.SHARED_CONCURRENCY_GROUPS["clued-merge-executor"]
+        self.assertEqual(set(row), {"workflows", "note"})
+        self.assertEqual(sorted(row["workflows"]), sorted(self.EXECUTOR))
+        report = policy.evaluate_workflows(self.real())
+        self.assertEqual(self.shared(report), [])
+        self.assertEqual(report["status"], "PASS", report["violations"])
+
+    def test_two_files_sharing_a_literal_group_fail_naming_both(self):
+        job_level = PREFIX.replace("concurrency:\n  group: fixture\n  cancel-in-progress: true\n", "").replace(
+            "  pull_request:\n", "  push:\n") + job().replace(
+            "    timeout-minutes: 3\n", "    timeout-minutes: 3\n    concurrency:\n      group: fixture\n      cancel-in-progress: false\n", 1)
+        for first, second in [(PREFIX + job(), PREFIX + job()), (PREFIX + job(), job_level), (job_level, job_level)]:
+            with self.subTest(first=first, second=second):
+                report = policy.evaluate_workflows({"a.yml": first, "b.yml": second}, {}, {}, {}, {})
+                self.assert_shared(report, "'fixture'")
+                self.assertEqual({row["workflow"] for row in self.shared(report)}, {"a.yml", "b.yml"})
+                self.assertTrue(all("a.yml, b.yml" in row["reason"] for row in self.shared(report)), report["violations"])
+        # A group scoped by the workflow, or the same group twice in one file, is not shared between files.
+        scoped = PREFIX.replace("  group: fixture\n", "  group: ${{ github.workflow }}-${{ github.ref }}\n")
+        self.assertEqual(policy.evaluate_workflows({"a.yml": scoped + job(), "b.yml": scoped + job()}, {}, {}, {}, {})["status"], "PASS")
+        twice = PREFIX + job("one") + job("two").replace(
+            "    timeout-minutes: 3\n", "    timeout-minutes: 3\n    concurrency:\n      group: fixture\n      cancel-in-progress: false\n", 1)
+        self.assertEqual(policy.evaluate_workflows({"a.yml": twice}, {}, {}, {}, {})["status"], "PASS")
+        ambiguous = PREFIX.replace("  group: fixture\n", "  group: >-\n    fixture\n")
+        self.assert_shared(policy.evaluate_workflows({"a.yml": ambiguous + job()}, {}, {}, {}, {}), "ambiguous concurrency group")
+
+    def test_a_new_pair_on_the_real_tree_fails(self):
+        texts = self.real()
+        copied = PREFIX.replace("  group: fixture\n", "  group: clued-release-tags\n") + job()
+        report = policy.evaluate_workflows({**texts, "copied.yml": copied})
+        self.assert_shared(report, "'clued-release-tags'")
+        self.assertEqual({row["workflow"] for row in self.shared(report)}, {"clued-release-tags.yml", "copied.yml"})
+
+    def test_the_exemption_is_an_exact_set_one_more_one_fewer_or_another_name_fails(self):
+        texts = self.real()
+        fourth = PREFIX.replace("  group: fixture\n", "  group: clued-merge-executor\n") + job()
+        slot = texts["clued-merge-slot-ci.yml"]
+        renamed = slot.replace("      group: clued-merge-executor\n", "      group: clued-merge-executor-2\n", 1)
+        self.assertNotEqual(renamed, slot)
+        fewer = {name: body for name, body in texts.items() if name != "clued-merge-reconcile.yml"}
+        for case, changed in {"one more": {**texts, "fourth.yml": fourth}, "one fewer": fewer,
+                              "one renamed out": {**texts, "clued-merge-slot-ci.yml": renamed}}.items():
+            with self.subTest(case=case):
+                self.assert_shared(policy.evaluate_workflows(changed), "shared concurrency group exemption 'clued-merge-executor'")
+        # A row whose group name does not match: the row is stale and the real three are an unexempted share.
+        row = policy.SHARED_CONCURRENCY_GROUPS["clued-merge-executor"]
+        report = policy.evaluate_workflows(texts, None, None, None, {"clued-merge-executors": row})
+        self.assert_shared(report, "shared concurrency group exemption 'clued-merge-executors'")
+        self.assert_shared(report, "'clued-merge-executor' is shared by")
+        # Without the row the three files fail by name.
+        report = policy.evaluate_workflows(texts, None, None, None, {})
+        self.assertEqual({r["workflow"] for r in self.shared(report)}, set(self.EXECUTOR))
+
+    def test_exemption_table_schema_fails_closed(self):
+        text = PREFIX + job()
+        for invalid in [[], {"": {"workflows": ("a.yml", "b.yml"), "note": "n"}},
+                        {"g": {"workflows": ("a.yml",), "note": "n"}},
+                        {"g": {"workflows": ("a.yml", "a.yml"), "note": "n"}},
+                        {"g": {"workflows": ("a.yml", "b/c.yml"), "note": "n"}},
+                        {"g": {"workflows": ("a.yml", "b.yml"), "note": ""}},
+                        {"g": {"workflows": ("a.yml", "b.yml"), "note": "n", "extra": True}},
+                        {"${{ github.workflow }}": {"workflows": ("a.yml", "b.yml"), "note": "n"}}]:
+            with self.subTest(invalid=invalid):
+                report = policy.evaluate_workflows({"a.yml": text}, {}, {}, {}, invalid)
+                self.assert_shared(report, "invalid shared concurrency group exemption")
 
 
 if __name__ == "__main__":
