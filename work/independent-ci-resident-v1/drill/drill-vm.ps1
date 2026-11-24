@@ -51,6 +51,7 @@ param(
   [string]$Finalize,
   [string]$ProductionReadback,
   [switch]$BindingCredential,
+  [string]$BindingConnection,   # with -BindingCredential: the connection id, filled in so only the token is pasted
   [string]$ServerKey,
   [switch]$ServerDatabaseCredential,
   [switch]$SyncServer,
@@ -2478,7 +2479,7 @@ function Get-DrillCredential([switch]$Binding, [switch]$ServerDatabase) {
 # never the console's prompt. User name: the connection id; password: the token. Held to its shape, then written where the guest
 # credential is (DPAPI, this Windows user only). The token is never printed, logged or passed on a command line.
 function Read-DrillBindingFromDialog {
-  Read-DrillCredentialFromDialog 'Clued drill binding' 'Clued drill binding (clued-auth-test)' 'User name: the connection id of the drill binding in the TEST project (no ci-admission role). Password: its clued_bnd_ token. Stored for this Windows user only; never shown.' '' 'DRILL_BINDING_DIALOG'
+  Read-DrillCredentialFromDialog 'Clued drill binding' 'Clued drill binding (clued-auth-test)' 'User name: the connection id of the drill binding in the TEST project (no ci-admission role). Password: its clued_bnd_ token. Stored for this Windows user only; never shown.' ([string]$BindingConnection).Trim().ToLowerInvariant() 'DRILL_BINDING_DIALOG'
 }
 # The test project's database password, the same dialog: the user name is filled in and cannot be changed (CREDUI_FLAGS_KEEP_USERNAME),
 # the Owner pastes the password reset in the Supabase dashboard (clued-auth-test, Database, reset password).
