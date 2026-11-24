@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { CLEANUP_DEFAULTS, HOST_HARNESS_ROOT, removeTestDirectory, stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
+import { CLEANUP_DEFAULTS, HOST_HARNESS_ROOT, removeTestDirectory, startCluster, stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
 
 // No real waiting: every injected sleep only counts.
 const harness = (overrides = {}) => {
@@ -191,4 +191,90 @@ test('stopCluster waits for the pid of its own child and only reports one that s
   assert.deepEqual(state.rmCalls, [], 'a live child still owns its data directory');
   assert.equal(state.logs.length, 1);
   assert.match(state.logs[0], /postmaster 4242 is still running 20 ms after stop\(\)/);
+});
+
+// A stand-in for embedded-postgres: start() on a taken port logs the postmaster's FATAL line and
+// rejects with no reason at all, as the library does when its child exits before it is ready.
+const portBoundServer = (taken, port) => {
+  const server = {
+    options: { port, onLog: () => {} },
+    initialised: 0,
+    starts: [],
+    initialise: async () => { server.initialised += 1; },
+    start: () => {
+      const at = server.options.port;
+      server.starts.push(at);
+      if (!taken.includes(at)) return Promise.resolve();
+      server.options.onLog(`LOG:  could not bind IPv4 address "127.0.0.1": Address already in use\n`);
+      server.options.onLog(`FATAL:  could not create any TCP/IP sockets (port ${at})\n`);
+      return Promise.reject();
+    },
+  };
+  return server;
+};
+const portsFrom = (ports) => async () => ports.shift();
+const startLog = () => { const lines = []; return { lines, log: (line) => lines.push(line) }; };
+
+test('a postmaster that exits at start because its port was taken starts again on a newly picked port, and says so', async () => {
+  const server = portBoundServer([5001], 5001);
+  const ownLog = server.options.onLog;
+  const { lines, log } = startLog();
+  assert.equal(await startCluster(server, { pickPort: portsFrom([5002]), log }), server);
+  assert.deepEqual(server.starts, [5001, 5002]);
+  assert.equal(server.initialised, 1, 'the data directory is initialised once');
+  assert.equal(server.options.port, 5002, 'clients connect to the port the postmaster holds');
+  assert.equal(server.options.onLog, ownLog, 'the caller\'s log handler is back in place');
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /port 5001 \(port taken\), retrying on port 5002: FATAL: {2}could not create any TCP\/IP sockets \(port 5001\)/);
+  assert.match(lines[1], /started on port 5002 after taken port\(s\) 5001/);
+});
+
+test('a start on a free port leaves no line', async () => {
+  const { lines, log } = startLog();
+  await startCluster(portBoundServer([], 5001), { pickPort: portsFrom([]), log });
+  assert.deepEqual(lines, []);
+});
+
+test('when every start finds its port taken the error names the ports and carries the postmaster\'s log, not undefined', async () => {
+  const server = portBoundServer([5001, 5002, 5003], 5001);
+  const { log } = startLog();
+  await assert.rejects(startCluster(server, { attempts: 3, pickPort: portsFrom([5002, 5003]), log }), (error) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /ports 5001, 5002, 5003 taken/);
+    assert.match(error.message, /could not create any TCP\/IP sockets \(port 5003\)/);
+    return true;
+  });
+  assert.deepEqual(server.starts, [5001, 5002, 5003]);
+});
+
+test('an early exit for anything but a taken port is not retried and carries the postmaster\'s log', async () => {
+  const server = portBoundServer([], 5001);
+  server.start = () => {
+    server.starts.push(server.options.port);
+    server.options.onLog('FATAL:  could not create semaphores: No space left on device\n');
+    return Promise.reject();
+  };
+  const { lines, log } = startLog();
+  await assert.rejects(startCluster(server, { pickPort: portsFrom([5002]), log }), (error) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /on port 5001, not for a taken port, so not retried/);
+    assert.match(error.message, /FATAL: {2}could not create semaphores: No space left on device/);
+    return true;
+  });
+  assert.deepEqual(server.starts, [5001]);
+  assert.deepEqual(lines, []);
+});
+
+test('an early exit with an empty log is not retried either', async () => {
+  const server = portBoundServer([], 5001);
+  server.start = () => { server.starts.push(server.options.port); return Promise.reject(); };
+  await assert.rejects(startCluster(server, { pickPort: portsFrom([5002]), log: () => {} }), /not retried; its log: \(empty\)/);
+  assert.deepEqual(server.starts, [5001]);
+});
+
+test('a start error with a reason is thrown as it is and not retried', async () => {
+  const server = portBoundServer([], 5001);
+  server.start = async () => { server.starts.push(server.options.port); throw new Error('Postgres cannot run as a root user.'); };
+  await assert.rejects(startCluster(server, { pickPort: portsFrom([5002]), log: () => {} }), /cannot run as a root user/);
+  assert.deepEqual(server.starts, [5001]);
 });

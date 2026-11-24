@@ -1,4 +1,4 @@
-// Shared cleanup for tests that run an embedded PostgreSQL cluster.
+// Shared start and cleanup for tests that run an embedded PostgreSQL cluster.
 //
 // On Windows the cluster's files stay locked for a short while after the
 // postgres process exits, so an immediate recursive remove fails with EBUSY
@@ -13,6 +13,7 @@
 // pid of the child this process started (postmaster.pid is not trusted; on
 // Windows the library's taskkill leaves a stale one behind).
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -173,4 +174,69 @@ export async function stopCluster(server, overrides = {}) {
   const removed = await cleanupStep(o, 'removeDirectory', () => removeDirectory
     ? removeTestDirectory(directory, o) : true);
   return stopped && removed;
+}
+
+// A port nothing listens on at this moment. It is only a candidate: see startCluster.
+export async function freePort() {
+  const listener = net.createServer();
+  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
+  const port = listener.address().port;
+  await new Promise((resolve) => listener.close(resolve));
+  return port;
+}
+
+export const START_ATTEMPTS = 5;
+
+// The postmaster's own words for "this port is taken": no TCP socket could be
+// bound, or another postmaster holds the port's socket lock file. The library
+// pins LC_MESSAGES to an English locale, so these are the English messages.
+export const PORT_TAKEN = /could not create any TCP\/IP sockets|Address already in use|Is another postmaster|lock file "[^"]*\.s\.PGSQL\.\d+\.lock" already exists/;
+
+const fatalLines = (log) => log.split(/\r?\n/).filter((line) => /FATAL|PANIC/.test(line)).map((line) => line.trim()).join(' | ') || log;
+
+// Initialises the cluster and starts it on a port its postmaster can bind.
+// Picking a free port and the postmaster binding it are two steps, and the
+// database suites start four files' clusters at once (--test-concurrency=4):
+// another cluster can bind the port in between, and the postmaster then exits
+// at once. embedded-postgres rejects an early exit with no reason, so the test
+// failed with a bare `undefined` (migration-verify run 45380641278,
+// work-claims-owner-grants-db, 663 ms in).
+// Only an early exit whose log says the port is taken is retried, on a newly
+// picked port, and each retry and a start after retries leave one stderr line.
+// Any other early exit is thrown at once with the postmaster's log, and a start
+// error that has a reason is thrown as it is.
+export async function startCluster(server, overrides = {}) {
+  const o = { attempts: START_ATTEMPTS, pickPort: freePort, log: defaultLog, ...overrides };
+  await server.initialise();
+  const ownLog = server.options.onLog;
+  const ports = [];
+  let lines = [];
+  server.options.onLog = (message) => { lines.push(String(message)); return ownLog?.(message); };
+  try {
+    for (;;) {
+      const port = server.options.port;
+      ports.push(port);
+      lines = [];
+      try {
+        await server.start();
+      } catch (error) {
+        if (error !== undefined) throw error;
+        const log = lines.join('').trim();
+        if (!PORT_TAKEN.test(log)) {
+          throw new Error(`embedded PostgreSQL exited during start on port ${port}, not for a taken port, so not retried; its log: ${log || '(empty)'}`);
+        }
+        if (ports.length >= o.attempts) {
+          throw new Error(`embedded PostgreSQL found ports ${ports.join(', ')} taken; its last log: ${log}`);
+        }
+        const next = await o.pickPort();
+        o.log(`postmaster exited at start on port ${port} (port taken), retrying on port ${next}: ${fatalLines(log)}`);
+        server.options.port = next;
+        continue;
+      }
+      if (ports.length > 1) o.log(`postmaster started on port ${port} after taken port(s) ${ports.slice(0, -1).join(', ')}`);
+      return server;
+    }
+  } finally {
+    server.options.onLog = ownLog;
+  }
 }
