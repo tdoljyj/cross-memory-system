@@ -153,6 +153,31 @@ test('drill item 9: no snapshot read inside the B8 or B9 window is undetermined'
   assert.equal(drill(late).checks.B9.ok, null, JSON.stringify(drill(late).checks.B9));
 });
 
+test('drill 复审 B9: a snapshot in the B9 window without an exclusion field is undetermined, not "rejoined"', () => {
+  const d = drillParts();
+  delete d.snapshots[1].exclusion;      // read, but the field is missing — not the same as exclusion: null
+  const r = drill(d);
+  assert.equal(r.checks.B9.ok, null, JSON.stringify(r.checks.B9));
+  assert.notEqual(r.verdict, 'PASS');
+  const still = drillParts();          // a missing one next to a still-excluded one is a FAIL, not undetermined
+  delete still.snapshots[1].exclusion;
+  still.snapshots.push(snapshot(plus(STEADY, 32 * 60), { ...still.snapshots[1], page: { ...still.snapshots[1].page, observed_at: plus(STEADY, 32 * 60) },
+    steady: STEADY, receipts: still.snapshots[1].receipts, duty: still.snapshots[1].duty_answers, exclusion: 'auto_handed_out' }));
+  assert.equal(drill(still).checks.B9.ok, false, JSON.stringify(drill(still).checks.B9));
+});
+
+test('drill 复审 B10: a cut shorter than 540 s is a FAIL', () => {
+  for (const seconds of [300, 539]) {
+    const d = drillParts(); d.cut.restoredAt = plus(d.cut.t0, seconds);
+    const r = drill(d);
+    assert.equal(r.checks.B10.ok, false, `${seconds}: ${JSON.stringify(r.checks.B10)}`);
+    assert.match(r.checks.B10.why, new RegExp(`断网只有 ${seconds} 秒`));
+    assert.equal(r.verdict, 'FAIL');
+  }
+  const exact = drillParts(); exact.cut.restoredAt = plus(exact.cut.t0, 540);
+  assert.equal(drill(exact).checks.B10.ok, true, JSON.stringify(drill(exact).checks.B10));
+});
+
 test('drill item 2: B4 — DESK\'s first duty answer later than the anchor + 2 minutes is not a pass', () => {
   const d = drillParts();
   for (const s of d.snapshots) s.duty_answers = s.duty_answers.filter(a => a.binding_id !== DESK).concat([{ binding_id: DESK, at: plus(HANDOVER, 200) }]);
