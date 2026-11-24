@@ -6,24 +6,29 @@
 //
 // 1. Starts the database as clued-g4-fresh-start.mjs isolates it: the host's start lock (FD 9 of prepare, start and verify),
 //    --prepare, `supabase db start` (the database alone, not the whole local stack), --verify, which applies the migration
-//    chain through clued-local-migrate.mjs as production does.
+//    chain through clued-local-migrate.mjs as production does. The database alone is a hard prerequisite (ruling 11-25 B2):
+//    should it not pass, the plan goes back to planning; the start is not widened to the whole local stack.
 // 2. The checks, each printing one line "real-database: <check> ran: ..." once it has run: plpgsql_check lint and the
 //    pgTAP files, as clued-g4-database.yml runs them (Supabase CLI 2.115.0), and the PostgreSQL 17 backup coverage test
 //    (the files named on the command line) on the same image digest.
-// 3. --cleanup, whatever failed; the checkout's config.toml is restored.
+// 3. --cleanup, whatever failed, and the checkout's config.toml restored. On a GitHub-hosted runner (RUNNER_ENVIRONMENT
+//    exactly github-hosted, which test-env.mjs passes) neither: the machine is thrown away after the job (p90 §3.6). Any
+//    other value, or none, cleans: slower at worst, nothing left on a self-hosted node.
 //
 // Nothing that did not run passes: before it exits, the run checks that all three checks said they ran, and fails when
 // one did not, whatever else passed. A failure of the host (no Docker, the image not pulled after 3 attempts, the start
 // lock not taken, the stack not started, cleanup) starts with real_database_infrastructure:, a failing check without.
-// --observe (the first merge, §2.2 step 4): everything runs and is reported the same, a failure as ::warning and in the
-// step summary, and the run exits 0.
+// --observe (the first merge, §2.2 step 4): everything runs and is reported the same, the failures as one ::warning instead
+// of one ::error, and the run exits 0. Every run, passed or failed, observed or not, gives one ::notice with each check's
+// exit status, the seconds of the start, the checks, the cleanup and the run, and the runner kind (ruling 11-25 #4): what
+// the observation reads, from a green job too. There is no step summary, as the selector never passes its variable.
 //
 // Under the selector a suite command gets only the variables test-env.mjs passes (no GITHUB_RUN_ID, GITHUB_SHA or
 // RUNNER_TEMP), so this run gives clued-g4-fresh-start.mjs an identity of its own: a random run number (the project
 // clued-g4-<n>-1 and its port block), the checkout's HEAD and a temporary directory for its marker.
 import { randomInt } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -91,7 +96,6 @@ export const defaultRuntime = () => ({
   tempDir: () => mkdtempSync(path.join(os.tmpdir(), 'clued-real-database-')),
   runId: () => randomInt(1, 2 ** 31),
   log: (line) => console.log(line),
-  summary: (text, env) => { if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, text); },
   now: () => performance.now(),
 });
 
@@ -111,7 +115,11 @@ export async function realDatabase({ argv = process.argv.slice(2), env = process
   const infrastructure = (message) => failures.push(`${INFRASTRUCTURE} ${message}`);
   const ran = new Map();
   const started = runtime.now();
-  const seconds = (from) => ((runtime.now() - from) / 1000).toFixed(1);
+  const seconds = (from, to = runtime.now()) => ((to - from) / 1000).toFixed(1);
+  const hosted = env.RUNNER_ENVIRONMENT === 'github-hosted';
+  // When the start (prepare to verify) and the checks began and ended: the notice's seconds.
+  const at = { start: null, started: null, checks: null, checked: null };
+  let cleanupSeconds = 'none';
   let lock;
   let config = null;
   let marker = null;
@@ -161,6 +169,7 @@ export async function realDatabase({ argv = process.argv.slice(2), env = process
     config = readFileSync(path.join(root, CONFIG), 'utf8');
     marker = path.join(work, `clued-g4-fresh-${id}-1.json`);
     let from = runtime.now();
+    at.start = from;
     const prepare = fresh('--prepare');
     if (prepare !== 0) {
       infrastructure(`clued-g4-fresh-start.mjs --prepare ${exitText(prepare)}`);
@@ -174,6 +183,7 @@ export async function realDatabase({ argv = process.argv.slice(2), env = process
     runtime.log(`real-database: database started in ${seconds(from)} s`);
     from = runtime.now();
     const verify = fresh('--verify');
+    at.started = runtime.now();
     if (verify !== 0) {
       failures.push(`${FAILURE} the migration chain did not apply on the real database (clued-g4-fresh-start.mjs --verify ${exitText(verify)})`);
       return;
@@ -181,6 +191,7 @@ export async function realDatabase({ argv = process.argv.slice(2), env = process
     runtime.log(`real-database: migration chain applied and verified in ${seconds(from)} s`);
     runtime.closeLock(lock);
     lock = undefined;
+    at.checks = runtime.now();
     for (const step of steps) {
       from = runtime.now();
       const status = step.run({ exec, runtime, env: child, cwd, tests, infrastructure });
@@ -189,37 +200,54 @@ export async function realDatabase({ argv = process.argv.slice(2), env = process
       runtime.log(`real-database: ${step.id} ran: ${exitText(status)} (${seconds(from)} s)`);
       if (status !== 0) failures.push(`${FAILURE} ${step.id} failed (${exitText(status)})`);
     }
+    at.checked = runtime.now();
   };
   try {
     startAndCheck();
   } catch (error) {
     infrastructure(`the run stopped: ${error.message}`);
   } finally {
+    const stopped = runtime.now();
+    at.started ??= at.start === null ? null : stopped;
+    at.checked ??= at.checks === null ? null : stopped;
     if (lock !== undefined) runtime.closeLock(lock);
-    if (marker && existsSync(marker)) {
+    if (marker && existsSync(marker) && hosted) {
+      cleanupSeconds = 'skipped';
+      runtime.log('real-database: a GitHub-hosted runner, thrown away after the job: no cleanup');
+    } else if (marker && existsSync(marker)) {
       const from = runtime.now();
       const cleanup = runtime.run(['node', FRESH, '--cleanup'], { cwd, env: child });
-      if (cleanup.status === 0) runtime.log(`real-database: cleaned up in ${seconds(from)} s`);
+      cleanupSeconds = seconds(from);
+      if (cleanup.status === 0) runtime.log(`real-database: cleaned up in ${cleanupSeconds} s`);
       else {
         keep = true;
         infrastructure(`clued-g4-fresh-start.mjs --cleanup ${exitText(cleanup.status)}; what is left is in ${marker}`);
       }
     }
-    if (config !== null) writeFileSync(path.join(root, CONFIG), config);
+    if (config !== null && !hosted) writeFileSync(path.join(root, CONFIG), config);
     // The marker of a failed cleanup says what is left; otherwise nothing of this run stays behind.
     if (work && !keep) rmSync(work, { recursive: true, force: true });
   }
-  return verdict({ ran, failures, observe, runtime, env, seconds: seconds(started) });
+  const span = (from, to) => (from === null ? 'none' : seconds(from, to));
+  const times = { start: span(at.start, at.started), checks: span(at.checks, at.checked), cleanup: cleanupSeconds,
+    total: seconds(started) };
+  return verdict({ ran, failures, observe, runtime, times, runner: hosted ? 'github-hosted' : 'self-hosted' });
 }
 
-// The one verdict: the failures, and each of CHECKS that did not say it ran.
-function verdict({ ran, failures, observe, runtime, env, seconds }) {
+// An annotation's message is one line: the workflow command escapes (%, CR, LF).
+const message = (text) => text.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
+
+// The one verdict: the failures, and each of CHECKS that did not say it ran. Always one notice; the problems, if any, in
+// one warning (observed) or error, so a step shows them all (at most 10 of each kind are shown).
+function verdict({ ran, failures, observe, runtime, times, runner }) {
   const problems = [...failures, ...CHECKS.filter((check) => !ran.has(check)).map((check) => `${FAILURE} ${check} did not run`)];
-  const title = observe ? 'real database (observe)' : 'real database';
-  for (const problem of problems) runtime.log(`::${observe ? 'warning' : 'error'} title=${title}::${problem}`);
-  runtime.summary([`### ${title}: ${problems.length === 0 ? 'passed' : 'failed'} (${seconds} s)`, '',
-    ...CHECKS.map((check) => `- ${check}: ${ran.has(check) ? `ran, ${exitText(ran.get(check))}` : 'did not run'}`),
-    ...problems.map((problem) => `- ${problem}`), ''].join('\n'), env);
+  const statuses = CHECKS.map((check) => `${check}=${ran.has(check) ? ran.get(check) : 'none'}`).join(' ');
+  runtime.log(`::notice title=real database::${statuses} start=${times.start} checks=${times.checks} ` +
+    `cleanup=${times.cleanup} total=${times.total} runner=${runner}`);
+  if (problems.length > 0) {
+    const title = observe ? 'real database (observe)' : 'real database';
+    runtime.log(`::${observe ? 'warning' : 'error'} title=${title}::${message(problems.join('; '))}`);
+  }
   return problems.length === 0 || observe ? 0 : 1;
 }
 
