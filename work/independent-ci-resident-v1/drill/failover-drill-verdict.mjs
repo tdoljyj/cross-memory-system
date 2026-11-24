@@ -6,6 +6,7 @@
 //
 // gateVerdict(input) 放行前 A0–A7、I1–I5：
 //   { now,                     入口跑门的时刻（毫秒或 ISO）
+//     finishedAt,              入口现读结束的时刻（毫秒或 ISO；距 now 超过 freshSeconds 判 A0 未判定，补充三 S1）
 //     turing, desk,            两台的 CI 连接 binding_id
 //     source,                  第 18 代的 Source（--source，64 位十六进制，取自接受文件）
 //     snapshotAt,              快照的服务器时刻（server_time）
@@ -25,7 +26,7 @@
 //     exclusions,              每个快照一条 { at: server_time, exclusion: TURING 的排除原因, steadySince: TURING 的 steady_since }
 //     statusTuring, statusDesk } 演练后两台 status.json
 export const RULES = Object.freeze({
-  freshSeconds: 120,                 // A0：快照与两台 status.json 距跑门不超过 2 分钟
+  freshSeconds: 120,                 // A0：快照与两台 status.json 距跑门不超过 2 分钟；现读结束距跑门也不超过 2 分钟
   heartbeatFreshSeconds: 120,        // A3、A4：心跳 2 分钟内
   rules: Object.freeze({ silence_minutes: 5, unhealthy_minutes: 5, rejoin_steady_minutes: 30 }), // A6：5/5/30
   silenceSeconds: [300, 390],        // B2：交接 − 最后心跳在 5 分 00 秒到 6 分 30 秒
@@ -97,9 +98,13 @@ export function gateVerdict(input) {
   checks.A0 = judge(() => {
     const now = typeof g.now === 'number' ? g.now : need(ms(g.now), 'now（跑门时刻）');
     const st = need(obj(g.statusTuring), 'TURING status.json'), sd = need(obj(g.statusDesk), 'DESK status.json');
+    const done = typeof g.finishedAt === 'number' ? g.finishedAt : need(ms(g.finishedAt), 'finishedAt（现读结束时刻）');
+    const took = done - now;
     const stale = [ageProblem('快照', g.snapshotAt ?? page?.observed_at, now), ageProblem('TURING status.json', st.writtenAt, now),
-      ageProblem('DESK status.json', sd.writtenAt, now)].filter(Boolean);
-    return stale.length ? unknown(`读数不新鲜（超过 ${RULES.freshSeconds} 秒）：${stale.join('；')}`) : pass('快照与两台 status.json 都是 2 分钟内的');
+      ageProblem('DESK status.json', sd.writtenAt, now),
+      took > RULES.freshSeconds * 1000 || took < 0 ? `现读耗时 ${sec(took)}` : null].filter(Boolean);
+    return stale.length ? unknown(`读数不新鲜（超过 ${RULES.freshSeconds} 秒）：${stale.join('；')}`)
+      : pass(`快照与两台 status.json 都是 2 分钟内的，现读耗时 ${sec(took)}`);
   });
   checks.A1 = judge(() => {
     const want = need(typeof source === 'string' && /^[0-9a-f]{64}$/.test(source) ? source : null, '--source');

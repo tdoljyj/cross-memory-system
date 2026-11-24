@@ -89,8 +89,8 @@ const checkPair = (snap, turing, desk, file) => {
   if (snap.turing !== turing || snap.desk !== desk) throw new UsageError(`${file} 是为别的绑定号读的快照（${snap.turing} / ${snap.desk}）`);
 };
 
-export function gateInputFrom({ snapshot, statusTuring, statusDesk, turing, desk, source, idle, now }) {
-  return { now, turing, desk, source, snapshotAt: snapshot?.server_time, page: snapshot?.page, candidates: snapshot?.candidates,
+export function gateInputFrom({ snapshot, statusTuring, statusDesk, turing, desk, source, idle, now, finishedAt }) {
+  return { now, finishedAt, turing, desk, source, snapshotAt: snapshot?.server_time, page: snapshot?.page, candidates: snapshot?.candidates,
     statusTuring, statusDesk, idle };
 }
 
@@ -139,15 +139,18 @@ export async function collectIdle({ shadowPrs, readers = defaultReaders(), sleep
   return { idle, readErrors };
 }
 
+// 每条现读都有超时（补充三 S1）：gh 与 Get-VM 60 秒，影子对比 100 秒；超时即抛，按读不到处理（重试后仍不成，该项未判定）。
+export const READ_TIMEOUT_MS = { gh: 60_000, vms: 60_000, shadow: 100_000 };
 export function defaultReaders({ exec = promisify(execFile) } = {}) {
-  const json = async (file, args) => JSON.parse((await exec(file, args, { cwd: REPO_ROOT, maxBuffer: 64 << 20, windowsHide: true })).stdout);
+  const run = (file, args, timeout) => exec(file, args, { cwd: REPO_ROOT, maxBuffer: 64 << 20, windowsHide: true, timeout });
+  const json = async (file, args, timeout) => JSON.parse((await run(file, args, timeout)).stdout);
   return {
     // event 用来只数 PR 与 push 触发的运行（定案 E3）；定时任务多，取 50 行
-    runs: status => json('gh', ['run', 'list', '--status', status, '--limit', '50', '--json', 'databaseId,name,status,createdAt,event']),
-    prs: () => json('gh', ['pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,isDraft,statusCheckRollup']),
+    runs: status => json('gh', ['run', 'list', '--status', status, '--limit', '50', '--json', 'databaseId,name,status,createdAt,event'], READ_TIMEOUT_MS.gh),
+    prs: () => json('gh', ['pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,isDraft,statusCheckRollup'], READ_TIMEOUT_MS.gh),
     shadow: async prs => {
       if (!prs) throw new Error('没给 --shadow-prs');
-      const { stdout } = await exec(process.execPath, ['scripts/ci/shadow-compare.mjs', '--prs', prs], { cwd: REPO_ROOT, maxBuffer: 64 << 20, windowsHide: true });
+      const { stdout } = await run(process.execPath, ['scripts/ci/shadow-compare.mjs', '--prs', prs], READ_TIMEOUT_MS.shadow);
       const out = JSON.parse(stdout.trim().split(/\r?\n/).at(-1));
       if (out?.status === 'error') throw new Error(out.error);
       return out;
@@ -155,7 +158,7 @@ export function defaultReaders({ exec = promisify(execFile) } = {}) {
     // Get-VM 只读；State 写成名字（Running、Off…）。
     vms: async () => {
       const cmd = "ConvertTo-Json -Compress -InputObject @(Get-VM -ErrorAction Stop | ForEach-Object { [ordered]@{ Name = $_.Name; State = [string]$_.State } })";
-      const v = await json(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', cmd]);
+      const v = await json(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', cmd], READ_TIMEOUT_MS.vms);
       return Array.isArray(v) ? v : [];
     },
   };
@@ -215,14 +218,15 @@ export async function main(argv, { readers, now = () => Date.now(), sleep, write
   let result;
   try {
     if (cmd === 'gate') {
-      // 跑门的时刻在读文件与现读之前取：读数要比它新，且不晚于它 2 分钟。
+      // 跑门的时刻在读文件与现读之前取：读数要比它新，且不晚于它 2 分钟；现读结束再取一次，距跑门超过 2 分钟也不放行（补充三 S1）。
       const at = now();
       const snapshot = readSnapshot(await readText(values.snap));
       checkPair(snapshot, turing, desk, values.snap);
       const [statusTuring, statusDesk] = [await readJson(values['status-turing']), await readJson(values['status-desk'])];
       const { idle, readErrors } = await collectIdle({ shadowPrs: values['shadow-prs'], readers: readers ?? defaultReaders(), sleep });
-      result = { ...gateVerdict(gateInputFrom({ snapshot, statusTuring, statusDesk, turing, desk, source: values.source, idle, now: at })),
-        drillId: id, at: new Date(at).toISOString(), atBeijing: beijing(at), readErrors, idle };
+      const finishedAt = now();
+      result = { ...gateVerdict(gateInputFrom({ snapshot, statusTuring, statusDesk, turing, desk, source: values.source, idle, now: at, finishedAt })),
+        drillId: id, at: new Date(at).toISOString(), atBeijing: beijing(at), finishedAt: new Date(finishedAt).toISOString(), readErrors, idle };
       if (result.verdict === 'PASS' && values.release) {
         await writeNew(values.release, id);
         result.releaseFile = values.release;

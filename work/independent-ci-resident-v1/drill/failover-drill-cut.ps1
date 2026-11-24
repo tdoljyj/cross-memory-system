@@ -1,18 +1,24 @@
 ﻿# 第 18 代故障转移演练：在 TURING 上断网（任务 04f9b91b；方案 D:/w/tmp/PLAN-failover-drill-gen18-20261124.md 第 1、5、8 节，
-# 定案 D:/w/tmp/PLAN-failover-drill-gen18-addendum-20261124.md 第 1 节第 1、3、5 条，独立复核 D:/w/tmp/claude-review-failover-drill-gen18-fable.md M1、M2、S1）。
+# 定案 D:/w/tmp/PLAN-failover-drill-gen18-addendum-20261124.md 第 1 节第 1、3、5 条，独立复核 D:/w/tmp/claude-review-failover-drill-gen18-fable.md M1、M2、S1；
+# 补充二第 2 条 S2、S4；补充三“读回出错”）。
+# 本轮的 error 字段记最近一次失败的原因；后面重试成了也留着，配合 backstopRetries 看。
 # 一个提权进程从头到尾，只碰 TURING 本机路径（共享目录那份结果文件尽力写）：
 #   0. 放行文件所在目录探针写一次，写不进就退出（不空等）；放行文件事先就在（上一次留下的、或待命前就写的）就删掉，删不掉就退出。
-#   1. 记下状态为 Up 的物理网卡，写状态文件。
-#   2. 注册兜底任务（SYSTEM；触发：到点起每 2 分钟重复一天、开机；动作：启用记下的网卡，读回都不是 Disabled 才删掉自己），读回确认。
+#   1. 记下状态为 Up 的物理网卡，写状态文件。其中有不是有线（PhysicalMediaType 不是 802.3）的就退出：断了可能连不回，
+#      兜底任务只会启用、救不了（S2）。
+#   2. 注册兜底任务（原地最多试 3 次、间隔 5 秒，补充三；SYSTEM；触发：到点起每 2 分钟重复一天、开机；动作：启用记下的网卡，读回都不是 Disabled 才删掉自己），读回确认。
 #      没注册成就退出，不断网。
 #   3. 待命：每 15 秒看一次放行文件（内容只有演练编号；只认待命之后写的，第 0 步已清掉旧的），最长 8 小时；到时删兜底任务退出。
-#      放行到了先读本机 status.json 核一次（ACTIVE、无在途批次、非 PAUSED、无 HALT、无暂停收单）：不满足就删掉这份放行文件、
+#      放行到了先读本机 status.json 核一次（ACTIVE、无在途批次、非 PAUSED、无 HALT、无暂停收单；这几个键和 writtenAt 缺一个
+#      就算不满足，writtenAt 距此刻超过 120 秒也算不满足，S4）：不满足就删掉这份放行文件、
 #      把原因写进状态文件、回到待命；放行文件删不掉才退出。满足就删掉放行文件（用过即删）往下走。
-#   4. 重列在用网卡，与第 1 步的取并集；把兜底任务按并集、到点改成此刻 + 12 分钟重注册并读回（不成就不断网），
+#   4. 重列在用网卡，与第 1 步的取并集；此刻有非有线网卡在用就删兜底任务退出，不断网（S2）；
+#      把兜底任务按并集、到点改成此刻 + 12 分钟重注册并读回，
+#      抛错或读回不对就不断网、回到待命（放行文件已删、兜底任务留着，等重新放行，8 小时上限不变；补充三），
 #      按并集禁用网卡记 T0，睡 540 秒，finally 里按并集启用网卡并读回。
 #   5. 等连通（github.com:443，最多 2 分钟）；网卡全部读回已启用才删兜底任务（否则留给它重复触发或开机再启用）；
 #      写结果文件（本机 WorkDir 与共享目录各一份）。
-# 真正动系统的动作收在 Get-DrillUpAdapters、Disable-DrillAdapters、Enable-DrillAdapters、Register-DrillBackstop、
+# 真正动系统的动作收在 Get-DrillUpAdapters、Get-DrillNonWiredUp、Disable-DrillAdapters、Enable-DrillAdapters、Register-DrillBackstop、
 # Remove-DrillBackstop 里；测试（test/failover-drill-cut.test.mjs）dot-source 本文件后换成桩。dot-source 只定义函数，不执行。
 # 不停服务、不碰 companion、不碰冻结通道和生产开关。兜底任务是本脚本自己的临时任务，演练结束即删，结果文件记“已删”。
 [CmdletBinding()]
@@ -31,14 +37,21 @@ $script:BackstopMinutes = 12          # 兜底任务到点：断网后 12 分钟
 $script:BackstopRepeatMinutes = 2     # 到点之后每 2 分钟再触发一次，持续 1 天（复核 M1）
 $script:BackstopTries = 5             # 每次触发里启用并读回最多 5 遍，间隔 10 秒
 $script:StandbyLimitSeconds = 8 * 3600
+$script:RegisterTries = 3             # 待命前注册兜底任务原地最多试 3 次（补充三）
+$script:RegisterGapSeconds = 5
 $script:PollSeconds = 15
 $script:ReconnectSeconds = 120
 $script:ProbeHost = 'github.com'
 $script:ProbePort = 443
+$script:StatusFreshSeconds = 120      # 本机 status.json 的 writtenAt 距此刻不超过 120 秒（S4；与门侧的 120 秒各写各的）
 
 # --- 动系统的动作（测试换桩） ----------------------------------------------
 function Get-DrillUpAdapters {
   @(Get-NetAdapter -Physical | Where-Object { [string]$_.Status -eq 'Up' } | ForEach-Object { [string]$_.Name })
+}
+# 状态为 Up、PhysicalMediaType 不是 802.3（有线）的物理网卡名（S2）。
+function Get-DrillNonWiredUp {
+  @(Get-NetAdapter -Physical | Where-Object { [string]$_.Status -eq 'Up' -and [string]$_.PhysicalMediaType -ne '802.3' } | ForEach-Object { [string]$_.Name })
 }
 function Disable-DrillAdapters([string[]]$Names) {
   foreach ($n in $Names) { Disable-NetAdapter -Name $n -Confirm:$false }
@@ -111,18 +124,45 @@ function Get-DrillProp($Object, [string]$Name) {
 }
 function Format-DrillTime([datetime]$At) { $At.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ') }
 
-# 本机 status.json 核一次：输出不满足的原因（调用方用 @() 收，空＝可以断）。读不到或不是 JSON 也算不满足。
+function Test-DrillHasProp($Object, [string]$Name) {
+  if ($null -eq $Object) { return $false }
+  if ($Object -is [Collections.IDictionary]) { return $Object.Contains($Name) }
+  $null -ne $Object.PSObject.Properties[$Name]
+}
+# 时刻文本（或 5.1 以外的 ConvertFrom-Json 已转好的 DateTime）转成 UTC；解析不了给 $null。
+function ConvertTo-DrillUtc($Value) {
+  if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+  try { return [DateTimeOffset]::Parse([string]$Value, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime } catch { return $null }
+}
+
+# 本机 status.json 核一次：输出不满足的原因（调用方用 @() 收，空＝可以断）。读不到或不是 JSON 也算不满足；
+# 要核的键缺一个就记“缺 <键>”，writtenAt 距此刻超过 120 秒或解析不了记“status.json 不新鲜”（S4）。
 function Get-DrillLocalProblems([string]$File) {
   try { $s = Get-Content -LiteralPath $File -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return @("status.json 读不到：$($_.Exception.Message)") }
   $out = New-Object System.Collections.ArrayList
-  $mode = Get-DrillProp (Get-DrillProp $s 'node') 'mode'
-  if ($mode -cne 'ACTIVE') { [void]$out.Add("mode=$mode") }
+  $node = Get-DrillProp $s 'node'; $executor = Get-DrillProp $s 'executor'
+  # 键路径 → 它所在的对象；父键缺了只记父键
+  $where = [ordered]@{ 'node' = $s; 'node.mode' = $node; 'current' = $s; 'paused' = $s; 'halt' = $s; 'intakePause' = $s
+    'executor' = $s; 'executor.state' = $executor; 'writtenAt' = $s }
+  $missing = New-Object System.Collections.ArrayList
+  foreach ($k in $where.Keys) {
+    $parts = $k.Split('.')
+    if ($parts.Count -gt 1 -and $missing.Contains($parts[0])) { continue }
+    if (-not (Test-DrillHasProp $where[$k] $parts[-1])) { [void]$missing.Add($k); [void]$out.Add("缺 $k") }
+  }
+  if (-not $missing.Contains('node') -and -not $missing.Contains('node.mode')) {
+    $mode = Get-DrillProp $node 'mode'; if ($mode -cne 'ACTIVE') { [void]$out.Add("mode=$mode") }
+  }
   if ($null -ne (Get-DrillProp $s 'current')) { [void]$out.Add('有在途批次') }
   if ((Get-DrillProp $s 'paused') -eq $true) { [void]$out.Add('paused') }
-  $state = Get-DrillProp (Get-DrillProp $s 'executor') 'state'
+  $state = Get-DrillProp $executor 'state'
   if ($state -ceq 'PAUSED' -or $state -ceq 'HALTED') { [void]$out.Add("executor=$state") }
   if ($null -ne (Get-DrillProp $s 'halt')) { [void]$out.Add('HALT') }
   if ($null -ne (Get-DrillProp $s 'intakePause')) { [void]$out.Add('暂停收单') }
+  if (-not $missing.Contains('writtenAt')) {
+    $written = ConvertTo-DrillUtc (Get-DrillProp $s 'writtenAt')
+    if ($null -eq $written -or [Math]::Abs(((Get-DrillNow).ToUniversalTime() - $written).TotalSeconds) -gt $script:StatusFreshSeconds) { [void]$out.Add('status.json 不新鲜') }
+  }
   $out
 }
 function Test-DrillRelease([string]$File, [string]$Id) {
@@ -164,23 +204,33 @@ function Invoke-DrillCutSteps($r, [string]$DrillId, [string]$WorkDir, [string]$S
     $r.staleReleaseRemoved = $true
   }
 
-  # 1. 记下在用的物理网卡
+  # 1. 记下在用的物理网卡；有不是有线的就不断（S2）
   $names = @(Get-DrillUpAdapters)
   $r.adapters = $names
   Write-DrillJson $stateFile $r
   if (@($names).Count -eq 0) { $r.outcome = 'NO_ADAPTER'; $r.detail = '没有状态为 Up 的物理网卡'; return }
+  $nonWired = @(Get-DrillNonWiredUp)
+  if (@($nonWired).Count -gt 0) { $r.outcome = 'NON_WIRED_ADAPTER'; $r.detail = "在用的非有线网卡：$($nonWired -join '、')"; return }
   Write-DrillLine ("在用网卡：{0}" -f ($names -join '、'))
 
-  # 2. 兜底任务（此刻到点触发先放在待命上限之后，放行时再改到断网后 12 分钟）
+  # 2. 兜底任务（此刻到点触发先放在待命上限之后，放行时再改到断网后 12 分钟）；原地最多试 3 次，间隔 5 秒（补充三）
   $ok = $false
-  try { $ok = [bool](Register-DrillBackstop $taskName $names ((Get-DrillNow).AddSeconds($script:StandbyLimitSeconds).AddMinutes($script:BackstopMinutes))) }
-  catch { $r.error = "注册兜底任务：$($_.Exception.Message)" }
+  for ($try = 1; $try -le $script:RegisterTries; $try++) {
+    $why = '读回不对'
+    try { $ok = [bool](Register-DrillBackstop $taskName $names ((Get-DrillNow).AddSeconds($script:StandbyLimitSeconds).AddMinutes($script:BackstopMinutes))) }
+    catch { $ok = $false; $why = $_.Exception.Message }
+    if ($ok) { break }
+    $r.error = "注册兜底任务（第 $try 次）：$why"
+    if ($try -lt $script:RegisterTries) { Wait-DrillSeconds $script:RegisterGapSeconds }
+  }
   if (-not $ok) { $r.outcome = 'BACKSTOP_NOT_REGISTERED'; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return }
   $r.backstopRegistered = $true
   $r.standbySince = Format-DrillTime (Get-DrillNow)
   Write-DrillJson $stateFile $r
 
   # 3. 待命；放行到了本机状态不满足就删掉这份放行文件、回到待命
+  # 4.（在待命循环里）重列网卡取并集（待命期间新连上的也要断）；兜底到点改为此刻 + 12 分钟，读回对了才断，
+  #    读回不对就回到待命，兜底任务原样留着（补充三）
   Write-DrillLine "待命，等放行文件 $ReleaseFile"
   $deadline = (Get-DrillNow).AddSeconds($script:StandbyLimitSeconds)
   while ($true) {
@@ -190,35 +240,41 @@ function Invoke-DrillCutSteps($r, [string]$DrillId, [string]$WorkDir, [string]$S
         if (-not (Remove-DrillRelease $ReleaseFile)) {
           $r.outcome = 'RELEASE_NOT_REMOVED'; $r.detail = "放行文件用后删不掉：$ReleaseFile"; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return
         }
-        break
+        $r.releasedAt = Format-DrillTime (Get-DrillNow)
+        $union = New-Object System.Collections.ArrayList
+        foreach ($n in @($names) + @(Get-DrillUpAdapters)) { if ($n -and -not $union.Contains($n)) { [void]$union.Add($n) } }
+        $names = @($union)
+        $r.adapters = $names
+        Write-DrillJson $stateFile $r
+        if (@($names).Count -eq 0) { $r.outcome = 'NO_ADAPTER'; $r.detail = '没有状态为 Up 的物理网卡'; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return }
+        $nonWired = @(Get-DrillNonWiredUp)
+        if (@($nonWired).Count -gt 0) {
+          $r.outcome = 'NON_WIRED_ADAPTER'; $r.detail = "待命期间连上的非有线网卡：$($nonWired -join '、')"; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return
+        }
+        $ok = $false; $why = '读回不对'
+        try { $ok = [bool](Register-DrillBackstop $taskName $names ((Get-DrillNow).AddMinutes($script:BackstopMinutes))) }
+        catch { $ok = $false; $why = $_.Exception.Message }
+        if ($ok) { break }
+        $r.error = "改兜底任务到点：$why"
+        $r.backstopRetries = [int]$r.backstopRetries + 1
+        Write-DrillLine "$($r.error)，不断网，回到待命"
+        Write-DrillJson $stateFile $r
+      } else {
+        $r.localProblems = $problems
+        $r.releasesRefused = [int]$r.releasesRefused + 1
+        $r.lastRefusedAt = Format-DrillTime (Get-DrillNow)
+        if (-not (Remove-DrillRelease $ReleaseFile)) {
+          $r.outcome = 'LOCAL_STATUS_NOT_READY'; $r.detail = "本机状态不满足且放行文件删不掉：$ReleaseFile"; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return
+        }
+        Write-DrillLine ("本机状态不满足（{0}），已删放行文件，回到待命" -f ($problems -join '、'))
+        Write-DrillJson $stateFile $r
       }
-      $r.localProblems = $problems
-      $r.releasesRefused = [int]$r.releasesRefused + 1
-      $r.lastRefusedAt = Format-DrillTime (Get-DrillNow)
-      if (-not (Remove-DrillRelease $ReleaseFile)) {
-        $r.outcome = 'LOCAL_STATUS_NOT_READY'; $r.detail = "本机状态不满足且放行文件删不掉：$ReleaseFile"; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return
-      }
-      Write-DrillLine ("本机状态不满足（{0}），已删放行文件，回到待命" -f ($problems -join '、'))
-      Write-DrillJson $stateFile $r
     }
     if ((Get-DrillNow) -ge $deadline) {
       $r.outcome = 'STANDBY_TIMEOUT'; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return
     }
     Wait-DrillSeconds $script:PollSeconds
   }
-  $r.releasedAt = Format-DrillTime (Get-DrillNow)
-
-  # 4. 重列网卡取并集（待命期间新连上的也要断）；兜底到点改为此刻 + 12 分钟，读回对了才断
-  $union = New-Object System.Collections.ArrayList
-  foreach ($n in @($names) + @(Get-DrillUpAdapters)) { if ($n -and -not $union.Contains($n)) { [void]$union.Add($n) } }
-  $names = @($union)
-  $r.adapters = $names
-  Write-DrillJson $stateFile $r
-  if (@($names).Count -eq 0) { $r.outcome = 'NO_ADAPTER'; $r.detail = '没有状态为 Up 的物理网卡'; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return }
-  $ok = $false
-  try { $ok = [bool](Register-DrillBackstop $taskName $names ((Get-DrillNow).AddMinutes($script:BackstopMinutes))) }
-  catch { $r.error = "改兜底任务到点：$($_.Exception.Message)" }
-  if (-not $ok) { $r.outcome = 'BACKSTOP_NOT_REGISTERED'; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return }
 
   $interrupted = $false
   try {
@@ -254,7 +310,7 @@ function Invoke-FailoverDrillCut {
   $taskName = "CluedFailoverDrillRestore-$DrillId"
   $r = [ordered]@{ drillId = $DrillId; outcome = $null; detail = $null; computer = $env:COMPUTERNAME; startedAt = (Format-DrillTime (Get-DrillNow))
     releaseFile = $ReleaseFile; staleReleaseRemoved = $false; adapters = @(); backstopTask = $taskName; backstopRegistered = $false; standbySince = $null
-    releasesRefused = 0; lastRefusedAt = $null; localProblems = @(); releasedAt = $null; t0 = $null; restoredAt = $null
+    releasesRefused = 0; lastRefusedAt = $null; backstopRetries = 0; localProblems = @(); releasedAt = $null; t0 = $null; restoredAt = $null
     enableFailed = @(); connected = $null; connectedAt = $null; backstopRemoved = $false; error = $null; sharedWritten = $null; finishedAt = $null }
   try {
     # 步骤里的杂散输出不进结果
