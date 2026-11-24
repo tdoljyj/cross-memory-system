@@ -120,7 +120,7 @@ test('a new test file no suite runs and the table does not list fails the check,
 test('a listed file that no longer exists, or that now runs, fails: remove the entry', () => {
   const table = JSON.parse(readFileSync(path.join(ROOT, TABLE_PATH), 'utf8'));
   table.tests.push(entry('scripts/ci/long-gone.test.mjs'), entry('scripts/ci/ci-required-selection.test.mjs'));
-  const { problems } = coverage({ root: ROOT, table });
+  const { problems } = coverage({ root: ROOT, table, baseline: null }); // the base is not this test: once main has the shrinking rule it would also report growth
   assert.deepEqual(problems, ['scripts/ci/long-gone.test.mjs: no such tracked file; remove the entry',
     'scripts/ci/ci-required-selection.test.mjs: runs in a required suite (selection, clued-cloud); remove the entry']);
 });

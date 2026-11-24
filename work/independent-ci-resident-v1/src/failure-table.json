@@ -58,7 +58,6 @@
     { "code": "BROKER_REQUEST_REFUSED", "stages": "any", "class": "environment", "disposition": "burn", "retry": "same-batch", "breaker": "counts", "note": "the broker refused the request" },
     { "code": "STAGE_PACKAGE_REFUSED", "stages": "any", "class": "environment", "disposition": "burn", "retry": "continuation", "breaker": "counts", "note": "the sealed stage package did not verify" },
     { "code": "STAGE_INPUT_RESULT_MISSING", "stages": "any", "class": "environment", "disposition": "burn", "retry": "same-batch", "breaker": "counts", "note": "no ready-marked signed result for the publisher stage" },
-    { "code": "STAGE_HELPER_PREFLIGHT_REFUSED", "stages": "any", "class": "environment", "disposition": "burn", "retry": "same-batch", "breaker": "counts", "note": "the generic helper refused before any child" },
     { "code": "STAGE_CHILD_TIMEOUT", "stages": "any", "class": "environment", "disposition": "burn", "retry": "same-batch", "breaker": "counts", "note": "the stage child ran out of time and its tree was drained" },
     { "code": "RESIDENT_QUEUE_HEAD_NOT_REACHED", "stages": "any", "class": "queue", "disposition": "park", "retry": "park", "breaker": "neutral", "note": "Stage 8 waits on zero effects, then sleeps until an event when the retry budget is exhausted." },
     { "code": "RESIDENT_MERGE_QUEUE_NOT_JOINED", "stages": "any", "class": "queue", "disposition": "park", "retry": "park", "breaker": "neutral", "note": "Stage 8 waits on zero effects, then sleeps until an event when the retry budget is exhausted." },
