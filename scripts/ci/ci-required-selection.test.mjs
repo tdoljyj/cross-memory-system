@@ -97,12 +97,16 @@ function slotFixture(t) {
       setTimeout(() => { clearInterval(poll); process.exitCode = 1; }, 35_000).unref();
     `;
     writeFileSync(path.join(scripts, 'retrigger-counter.test.mjs'), body ?? probe);
+    // The probe waits for real events on real timers: on the checkout's debt list, which the guard the entry preloads reads
+    // (Task 11092b8b).
+    mkdirSync(path.join(root, 'config'), { recursive: true });
+    writeFileSync(path.join(root, 'config', 'test-clock-debt.txt'), 'scripts/ci/retrigger-counter.test.mjs\n');
     let tool = selector;
     let target = suite;
     if (mode === '--write-known') {
       const tools = path.join(root, 'tools');
       mkdirSync(tools);
-      for (const file of ['ci-required-selection.mjs', 'test-env.mjs', 'ci-test-failures-reporter.mjs',
+      for (const file of ['ci-required-selection.mjs', 'test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'ci-test-failures-reporter.mjs',
         'local-suite-slot-guard.mjs', 'local-suite-slots.mjs', 'local-suite-slot-job.ps1']) {
         copyFileSync(path.join(ROOT, 'scripts', 'ci', file), path.join(tools, file));
       }

@@ -21,7 +21,7 @@
 // and kind the allowlist (scripts/ci/test-clock-allow.json, a protected path: every entry is an Owner grant) names.
 // This guards against writing such a test by habit, not on purpose: a new vm context, a forged source URL or a child
 // started without NODE_OPTIONS get past it (review catches those).
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -73,7 +73,16 @@ function install() {
     abortTimeout: AbortSignal.timeout,
   };
   const env = process.env;
-  const root = env.CLUED_CLOCK_ROOT ? path.resolve(env.CLUED_CLOCK_ROOT) : null;
+  // The checkout by its real path: node names a module by its real path, while the entry may give the checkout, and node
+  // --test the test file, through a junction or link (review r3 §4). A path that cannot be resolved is taken as it is.
+  const realPath = (file) => {
+    try {
+      return realpathSync.native(file);
+    } catch {
+      return file;
+    }
+  };
+  const root = env.CLUED_CLOCK_ROOT ? realPath(path.resolve(env.CLUED_CLOCK_ROOT)) : null;
   let debt = null;
   let allow = null;
   const s = {
@@ -120,9 +129,17 @@ function install() {
     }
     return null;
   }
-  // The checkout path of a test-code file, or null for anything else (code under test, node_modules, a file outside the checkout).
+  // The checkout path of a test-code file, or null for anything else (code under test, node_modules, a file outside the
+  // checkout); a file named through a junction or link is read by its real path too (once a name).
+  const named = new Map();
   function testFile(file) {
-    const absolute = path.resolve(file);
+    if (!named.has(file)) {
+      const absolute = path.resolve(file);
+      named.set(file, nameIn(absolute) ?? nameIn(realPath(absolute)));
+    }
+    return named.get(file);
+  }
+  function nameIn(absolute) {
     const relative = root ? path.relative(root, absolute) : absolute;
     if (root && (relative.startsWith('..') || path.isAbsolute(relative))) return null;
     const name = relative.split(path.sep).join('/');

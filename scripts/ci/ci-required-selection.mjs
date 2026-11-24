@@ -54,12 +54,13 @@
 //     stay for the lanes (FABLE-ci-duration-node-side-20261124, 做法 2).
 // All three run modes wait for a machine-wide suite slot outside GitHub Actions.
 import { spawn as spawnAsync, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ownIdentityDir, testEnv } from './test-env.mjs';
+import { clockGuardEnv, recordVerdict } from './test-clock-scan.mjs';
 
 // The resident layer imports Source v2, Source v2 imports scripts/ci (and
 // through it scripts/runner) and the resident's node profile, the admission
@@ -203,7 +204,8 @@ export const SUITES = {
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
     // Its tests read the database tests of apps/clued-cloud/tests and what they import, so a new or changed test there, or
     // the classifier, selects it.
-    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
+    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/test-clock-scan.mjs', 'scripts/ci/test-clock-guard.mjs',
+      'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
       'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
@@ -368,6 +370,9 @@ export const SUITE_COMMANDS = {
     // the job's base from here (Task 700f2b68; PLAN-main-red-real-repo-20261124 §4.3). Last, so the units before it keep their
     // shard numbers; one command, run whole, so one shard runs it.
     { cwd: '.', argv: ['node', 'scripts/ci/check-tests-covered.mjs', '--base', '{base}'] },
+    // The real-clock debt list only shrinks against the same base, and the static rules hold (Task 11092b8b;
+    // PLAN-main-red-ci-base-sha-20261124 §4): after the coverage check, so the units before it keep their shard numbers.
+    { cwd: '.', argv: ['node', 'scripts/ci/test-clock-scan.mjs', '--check', '--base', '{base}'] },
   ],
   'production-schema': [
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/ci-connection-renew-db.test.mjs'] },
@@ -1267,6 +1272,7 @@ function passesAgain(id, { command, argv, failures, report, status, signal, elap
     return false;
   }
   const timeout = Math.max(2 * Math.ceil(elapsed), minTimeout);
+  const clock = clockRun(id, root, env);
   const dir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-again-`));
   let text = '';
   let result;
@@ -1277,7 +1283,7 @@ function passesAgain(id, { command, argv, failures, report, status, signal, elap
     const kept = Object.entries(testEnv(env)).filter(([name]) => !/^(TEMP|TMP|TMPDIR)$/i.test(name));
     log(`::group::${id}: run again in full (timeout ${Math.ceil(timeout / 1000)} s): (${command.cwd}) ${argv.join(' ')}`);
     const run = resolveCommand(withReporter(argv, path.join(dir, 'failures.jsonl')), { platform });
-    result = spawn(run[0], run.slice(1), { cwd, env: { ...Object.fromEntries(kept), TEMP: temp, TMP: temp, TMPDIR: temp },
+    result = spawn(run[0], run.slice(1), { cwd, env: { ...Object.fromEntries(kept), TEMP: temp, TMP: temp, TMPDIR: temp, ...clock.env },
       stdio: 'inherit', timeout });
     log('::endgroup::');
     text = readReportFile(path.join(dir, 'failures.jsonl'));
@@ -1292,6 +1298,8 @@ function passesAgain(id, { command, argv, failures, report, status, signal, elap
   const again = readReport(text, root);
   const failed = again.events.filter((event) => event.type === 'fail');
   const problems = new Set();
+  const clockUses = clock.refused(log);
+  if (clockUses > 0) problems.add(`${clockUses} real-clock use${clockUses === 1 ? '' : 's'} in test code`);
   if (result.error) problems.add(result.error.message);
   if (again.corrupt || !again.summary) problems.add('the test report has no summary of the run');
   if (command.known) {
@@ -1322,6 +1330,34 @@ function reportFlaky(id, failures, { env, log }) {
       appendFileSync(env.GITHUB_STEP_SUMMARY, failures.map((event) => `- \`${id}\` flaky: ${testAt(event)} (fingerprint ${event.fingerprint})\n`).join(''));
     }
   } catch { /* the annotations above are the record */ }
+}
+
+// The real-clock guard (test-clock-guard.mjs; Task 11092b8b, FABLE-no-real-clock-20261122 §2.1, §2.2): every command of a
+// suite runs with it preloaded (NODE_OPTIONS, so every node the command starts has it too), the checkout and a record of
+// its own. Once the command has ended, a use the record has outside the debt list fails it, whatever its exit code (a test
+// may swallow the error the guard throws). The guard is this file's neighbour: the entry's own checkout's, never the change's.
+// A record the entry cannot read fails the command: the verdict is not guessed.
+function clockRun(id, root, env) {
+  const record = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-clock-${randomUUID()}.jsonl`);
+  return {
+    env: clockGuardEnv({ root, record }),
+    refused(log) {
+      let text = '';
+      try {
+        if (existsSync(record)) text = readFileSync(record, 'utf8');
+      } catch (error) {
+        log(`::error title=${id} real clock::the guard's record ${record} cannot be read: ${error?.message ?? error}`);
+        return 1;
+      }
+      try {
+        rmSync(record, { force: true });
+      } catch { /* a record left behind decides nothing */ }
+      const { refused, lines } = recordVerdict(text, { suite: id });
+      if (lines.length > 0) log(`::error title=${id} real clock::${lines[0]}`);
+      for (const line of lines) log(line);
+      return refused.length;
+    },
+  };
 }
 
 // The CI process or the already guarded worker executes the suite here.
@@ -1426,8 +1462,9 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
     const shown = command.known ? argv : plain;
     log(`::group::${id}: (${command.cwd}) ${shown.join(' ')}`);
     const run = resolveCommand(argv, { platform });
+    const clock = clockRun(id, root, env);
     const started = performance.now();
-    const result = spawn(run[0], run.slice(1), { cwd, env: testEnv(env), stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
+    const result = spawn(run[0], run.slice(1), { cwd, env: { ...testEnv(env), ...clock.env }, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
     const elapsed = performance.now() - started;
     if (command.quiet && result.stdout) {
       // The runner budget report is long; print its head on success, all of it on failure.
@@ -1444,8 +1481,17 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
     }
     if (result.error) {
       dropReport();
+      clock.refused(() => {});
       log(`${id}: ${shown[0]} did not start: ${result.error.message}`);
       return 1;
+    }
+    // A real-clock use in test code fails the command as it is: running it again would only hide it.
+    if (clock.refused(log) > 0) {
+      try {
+        if (reportDir) rmSync(reportDir, { recursive: true, force: true });
+      } catch { /* a temporary directory left behind */ }
+      log(`${id}: ${shown.join(' ')} used the real clock in test code (exit ${result.status ?? result.signal})`);
+      return result.status || 1;
     }
     // Every error on the way to running again keeps the failure (FABLE-flaky-no-new-commit-20261122 §2.5).
     const again = (failures, { report: ran, status, list = [] }) => {

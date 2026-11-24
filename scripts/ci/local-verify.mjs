@@ -109,9 +109,11 @@ export const DISTRIBUTION = 'CluedDev-Linux';
 export const CI_NODE = '24.19.0';
 const CACHE_VERSION = 5; // 5: tests run with a temporary directory of their own (a failure message may name its drive)
 const SELECTOR = 'scripts/ci/ci-required-selection.mjs';
-// test-env.mjs: what the selector imports since Task 2ee162c2; a main before it has none (OPTIONAL_SELECTOR_FILES).
-const SELECTOR_FILES = [SELECTOR, 'scripts/ci/test-env.mjs', 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
-const OPTIONAL_SELECTOR_FILES = new Set(['scripts/ci/test-env.mjs']);
+// test-env.mjs: what the selector imports since Task 2ee162c2; test-clock-scan.mjs and the guard it preloads since Task
+// 11092b8b; a main before them has none (OPTIONAL_SELECTOR_FILES).
+const SELECTOR_FILES = [SELECTOR, 'scripts/ci/test-env.mjs', 'scripts/ci/test-clock-scan.mjs', 'scripts/ci/test-clock-guard.mjs',
+  'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
+const OPTIONAL_SELECTOR_FILES = new Set(['scripts/ci/test-env.mjs', 'scripts/ci/test-clock-scan.mjs', 'scripts/ci/test-clock-guard.mjs']);
 const APP = 'apps/clued-cloud';
 // mechanical-outputs links the store into its throwaway worktree (component-version-integration.py): it never installs here.
 const NEEDS_APP_DEPENDENCIES = new Set(['clued-cloud', 'production-schema', 'mechanical-outputs']);
