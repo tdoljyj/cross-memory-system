@@ -13,6 +13,10 @@ import { boundedNotice, budgetNotice } from './budget-alert.mjs';
 //   15-relay-wait (t0, batch; the record keeps its historic name) -> 20-plan-intent -> 25-plan (every heavy role local) ->
 //   [Linux workspace preparation] -> execution + publication stages of the heavy roles ->
 //   stage 8 -> close (success-path archive) -> COMPLETED
+// A batch born with no local role builds no bundle (Task f79929d9, PLAN-native-admission-latency-20261124 §8): stage 1 never reads the
+// bundle (it is the all-refs package of the Linux scans and their workspaces), so a batch that tests its own head (no S) and whose scan
+// reading at birth is "none from this App" (batchAppScans) goes straight to stage 1; 10-started records it (facts.lean) and the plan
+// follows that record alone. Every other batch builds its bundle first, as before.
 // Before markStarted nothing touched Linux, no scanner ran and no success check was published, so a
 // bundle failure or a stage-1 "not admitted" releases the reservation instead of burning the head.
 // The hosted relay (stage R, the hosted wait and its hints, the relay qualification hold) is removed (Owner 2026-11-14,
@@ -439,6 +443,20 @@ const outcomeSummary = r => {
 
 // The ports every executor needs (service-main.mjs builds them; a test checks the service entry passes each one).
 export const EXECUTOR_PORTS = Object.freeze(['policy', 'ledger', 'receipts', 'inbox', 'requests', 'owner', 'engine', 'companion', 'sourceIntegrity', 'clock', 'executedHeads', 'queue']);
+
+// The scans main's rules require from this App for this batch, as far as it is known (Task f79929d9: the one reading drive() and
+// localPlan share): [] for a batch stamped push (bc982192 B1: born on a reading that found none; its plan comes from the stamp, never
+// from a later stage 10), else what the newest stage 10 read (R3 lean, DESIGN §82: rulesetFacts appScans), or null when it was not read
+// (no summary yet, a failed read, a Source before R3): every scan runs then.
+export function batchAppScans(subject, trainLast) {
+  return subject?.batchRoute === 'push' ? [] : trainLast?.appScans ?? null;
+}
+// A lean batch (Task f79929d9): it tests its own head (no S: a front batch keeps its bundle, whose refusal TRAIN_BATCH_MEMBER_MOVED
+// releases it) and its scan reading is read and empty. It builds no bundle and, by its 10-started record, plans no local role.
+export function leanBatch(subject, trainLast) {
+  const scans = batchAppScans(subject, trainLast);
+  return !Object.hasOwn(subject ?? {}, 'testSha') && Array.isArray(scans) && scans.length === 0;
+}
 
 export class ResidentExecutor {
   // ports: { policy, ledger, receipts, inbox, requests, owner, engine, companion, sourceIntegrity, clock, executedHeads, queue }
@@ -3951,17 +3969,25 @@ export class ResidentExecutor {
     keepBatch(batch);
     await this.receipt('batch-derived', { key, batchId: batch.batchId, packageSha256: batch.packageSha256 });
 
-    // The bundle comes first: it needs only the Owner's own read credential, has no Windows or Linux
-    // effect and publishes nothing, so its failure can release the reservation.
-    this.atStage(0, 'bundle');
-    const bundle = await this.companion.buildBundle(batch);
-    // ADR 0019 (review 2): a member of a batch of several PRs moved on (companion.mjs#BUNDLE_MEMBER_MOVED_REASONS): its own code.
-    // Field defect 2026-11-14: main is no longer this subject's base (the bundle checked GitHub's refs): its own code, never the breaker.
-    const bundleCode = bundle?.code === TRAIN_BATCH_MEMBER_MOVED && Object.hasOwn(subject, 'testSha') ? TRAIN_BATCH_MEMBER_MOVED
-      : bundle?.code === RESIDENT_BASE_MOVED ? RESIDENT_BASE_MOVED : 'BUNDLE_UNAVAILABLE';
-    if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, bundleCode, {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null,
-      // Generation 10 (DESIGN 53.3): the companion's own word that a GitHub step failed in git (companion.mjs#bundleNetworkRefusal).
-      bundleNetwork: bundle?.code === BUNDLE_NETWORK_UNAVAILABLE });
+    // Task f79929d9: decided once, here, from the reading at the batch's birth; 10-started carries it (facts.lean) and localPlan follows
+    // that record, never a later reading (a restart or a stage 10 that could not read the rules in between changes nothing).
+    const lean = leanBatch(subject, this.trainLast);
+    if (lean) {
+      // No bundle: nothing of this batch will read one (no workspace, no Linux stage; stages 1 and 8 and the close never do).
+      await this.receipt('bundle-skipped', { key, pr: subject.pr, headSha: subject.headSha });
+    } else {
+      // The bundle comes first: it needs only the Owner's own read credential, has no Windows or Linux
+      // effect and publishes nothing, so its failure can release the reservation.
+      this.atStage(0, 'bundle');
+      const bundle = await this.companion.buildBundle(batch);
+      // ADR 0019 (review 2): a member of a batch of several PRs moved on (companion.mjs#BUNDLE_MEMBER_MOVED_REASONS): its own code.
+      // Field defect 2026-11-14: main is no longer this subject's base (the bundle checked GitHub's refs): its own code, never the breaker.
+      const bundleCode = bundle?.code === TRAIN_BATCH_MEMBER_MOVED && Object.hasOwn(subject, 'testSha') ? TRAIN_BATCH_MEMBER_MOVED
+        : bundle?.code === RESIDENT_BASE_MOVED ? RESIDENT_BASE_MOVED : 'BUNDLE_UNAVAILABLE';
+      if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, bundleCode, {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null,
+        // Generation 10 (DESIGN 53.3): the companion's own word that a GitHub step failed in git (companion.mjs#bundleNetworkRefusal).
+        bundleNetwork: bundle?.code === BUNDLE_NETWORK_UNAVAILABLE });
+    }
     const early = await this.abortIfRequested(key, batch, 'before-stage-1');
     if (early) return early;
     // Phase 2: a newer commit of the PR arrived while the bundle was built. Nothing of this batch ran: released, not
@@ -4003,7 +4029,7 @@ export class ResidentExecutor {
     }
 
     // Admitted and published: from here on this head is burned.
-    await this.ledger.markStarted(key, { batchId: batch.batchId });
+    await this.ledger.markStarted(key, { batchId: batch.batchId, ...(lean ? { lean: true } : {}) });
     await this.receipt('batch-started', { key });
     // Stage 1's admission just read the PR open at this head: the batch's first live read of the rule (DESIGN §72). Not when it settled
     // on a PR that merged meanwhile (the publisher's settledMerged, field 2026-11-23 #1233-#1239): the read stays due, so the next safe
@@ -4052,13 +4078,19 @@ export class ResidentExecutor {
     if (aborted) return aborted;
     if (this.frontBindKeys.has(key)) return this.frontBindEnd(key);
     if ((aborted = await this.endIfNotStanding(key, subject, batch, 'before-relay-plan', POSITIONS[1]))) return aborted;
-    const plan = await this.localPlan(key, subject, t0);
+    // Task f79929d9: a batch that built no bundle says so in its 10-started record; its plan has no local role, whatever is read now.
+    const lean = (await this.ledger.state(key)).started?.facts?.lean === true;
+    const plan = await this.localPlan(key, subject, t0, { lean });
     const relayed = 0;
 
     // Only LOCAL_REQUIRED roles run locally, in the fixed role order; the protocol records of the previous
     // local Linux role are archived before the next one (between-roles-4 / -6 only where needed).
     const localRoles = HEAVY_ROLES.filter(r => plan.local.some(l => l.role === r));
     if (localRoles.length > 0) {
+      // Never reached as the code stands (localPlan plans nothing for a lean batch); kept so that a later change of the plan cannot send
+      // a batch without a bundle to its workspaces: it stops here as a missing bundle, nothing of it on Linux. The failure table has
+      // no row for this code after 10-started, on purpose: a broken invariant is not a known ending (UNKNOWN, HALT).
+      if (lean) return new StepFailure(0, 'BUNDLE_UNAVAILABLE', {}, 'workspace', relayed);
       if ((aborted = await this.abortIfRequested(key, batch, 'before-workspace'))) return aborted;
       if ((aborted = await this.endIfNotStanding(key, subject, batch, 'before-workspace', POSITIONS[1]))) return aborted;
       // A batch resumed from parking point A gets its second bundle before the workspace (Task 4012c1b9, DESIGN §37). When
@@ -4234,7 +4266,8 @@ export class ResidentExecutor {
   // 20-plan-intent -> 25-plan: every heavy role is local (the hosted relay is removed, DESIGN §76). The records are written exactly as
   // relay.enabled = false wrote them (reason RELAY_DISABLED, no candidates, nothing relayed), so older readers keep their meaning.
   // Returns the plan { candidates: [], relayed: [], local: [{ role, reason, receipt, source }] }.
-  async localPlan(key, subject, t0) {
+  //   lean: the batch's 10-started record says it built no bundle (drive): no scan from this App, read once at its birth.
+  async localPlan(key, subject, t0, { lean = false } = {}) {
     // A train front batch (a subject with S, §41.4, §38.8 m1): every role stays local with its own reason.
     const front = Object.hasOwn(subject, 'testSha');
     // Rule 41ab823a (DESIGN §75): a scan whose check H already carries on GitHub (read by this batch's stage 1) is not run again on the front.
@@ -4245,7 +4278,7 @@ export class ResidentExecutor {
     // bc982192 (B1, FABLE-c3-b1b2 §2): a batch stamped push was born on a reading that found no scan required from this App
     // (batchRoute()), and its base is the merge base, which stages 2-7 refuse (refs: main must be the base). Its plan comes from the
     // stamp, never from a later stage 10 that could not read the rules: no scan, whatever trainLast holds now.
-    const appScans = subject.batchRoute === 'push' ? [] : this.trainLast?.appScans ?? null;
+    const appScans = lean ? [] : batchAppScans(subject, this.trainLast);
     const notRequired = appScans ? HEAVY_ROLES.filter(r => !appScans.includes(r)) : [];
     const roles = (front ? HEAVY_ROLES.filter(r => !reused.some(x => x.role === r)) : [...HEAVY_ROLES]).filter(r => !notRequired.includes(r));
     const reason = front ? RELAY_TRAIN_FRONT_LOCAL : 'RELAY_DISABLED';

@@ -3,7 +3,9 @@
 // A VIEW, never evidence (like status.json itself): the status board feeds this recorder from the calls the executor already makes
 // (setCurrent at every stage / phase change, stageDone at every stage-terminal receipt, stageRelay with a scanner stage's relay
 // facts, outcome, noteTrain), and the recorder turns them into millisecond sums per batch:
-//   prep           reservation (current.since) -> the bundle is built (prepMs), and derive / bundle / workspace / rebundle separately;
+//   prep           reservation (current.since) -> stage 1 is entered (prepMs: what the admission waited for, whether or not the batch
+//                  built a bundle; Task f79929d9), and derive / bundle / workspace / rebundle separately (prep.bundle only for a batch
+//                  that built one: a batch born with no local role builds none);
 //   stages[n]      ms: the sum of every run of stage n (retries and stage-8 tries add up), runs, waitMs (retry waits);
 //                  relay (stages with a Linux worker only): handoffs { n, ms, maxMs } = the companion's relay calls (issue, challenge,
 //                  response, result) and rounds = each admission challenge round's ms (challenge sighted -> response sent);
@@ -128,6 +130,9 @@ export class StageTimings {
     if (!this.open.has(id)) { this.open.set(id, blank(c, now)); this.prune(now); }
     this.flight = id;
     this.cur = { id, stage, phase, from: now };
+    // prep ends when the batch first enters stage 1 (the admission), with or without a bundle before it.
+    const r = this.open.get(id);
+    if (r && r.prepMs === null && stage === 1 && phase === 'stage') r.prepMs = Math.max(0, now - Date.parse(r.startedAt));
   }
 
   // Adds the open interval's length to its batch and leaves the batch open (no interval is open afterwards).
@@ -148,7 +153,6 @@ export class StageTimings {
     } else {
       const k = PREP_KEYS.includes(c.phase) ? c.phase : 'other';
       r.prep[k] = (r.prep[k] ?? 0) + dt;
-      if (c.phase === 'bundle' && r.prepMs === null) r.prepMs = Math.max(0, now - Date.parse(r.startedAt));
     }
     r.activeMs += dt;
   }

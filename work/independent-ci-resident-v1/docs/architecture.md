@@ -159,7 +159,7 @@ App 私钥和 ci-admission token 不在 `<root>` 下，放在 `C:\ProgramData\Cl
 |---|---|---|
 | 预留 | `00-reserved.json` | 带 `origin`：queued、backoff-retry、waiting-retry、new-trigger、restored、attempt2 等 |
 | 导出 | — | Source v2 `derive-batch.mjs` 从"已安装 Source + 触发数据"确定性导出批次包，写描述符 |
-| 第 0 段 | — | companion 运行 `build-bundle.ps1` 打 bundle。失败 → 只关 Windows 侧，释放 |
+| 第 0 段 | — | companion 运行 `build-bundle.ps1` 打 bundle。失败 → 只关 Windows 侧，释放。出生时读到无本地角色且无 S 的批次不做（盖 push 戳，或最近一次第 10 段读到本 App 不出扫描）：写回执 `bundle-skipped`，直接进第 1 段，`10-started.json` 的 facts 记 `lean: true`，计划只认这条记录。lean 批次在第 1 段前遇到 main 前移，照过第 1 段（开着的 PR 的 `base.sha` 不随 main 前移），由第 8 段以 `RESIDENT_BASE_MOVED` 结束；切换日不重盖戳 |
 | 第 1 段 | — | Native 工作准入（见 §4.4）。未准入、不当班（`NODE_ROLE_NOT_HELD`），以及能证明什么都没写的 `GITHUB_TRANSIENT_UNAVAILABLE` / `NATIVE_ADMISSION_UNAVAILABLE`（`STAGE1_TRANSIENT_RELEASE_CODES`）→ 释放；其他失败 → 烧号 |
 | 开始 | `10-started.json` + `state\ledger-heads\<headKey>.json` | 这一步烧号 |
 | 资格冻结 | `14-qualification-hold.json` | 只收紧的转发资格冻结标记（`relay-qualification-hold.mjs`），存在就挡住这个 head；转发关着时不出现 |

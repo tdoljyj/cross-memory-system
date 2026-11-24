@@ -94,7 +94,8 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   let mergesMade = 0;
   W.merge = merge; W.ancestor = ancestor;
   const T0 = commit(h('T0'), [], []);
-  // behind: main has moved that many commits past T0, the commit every PR head is on (nobody merged main into them).
+  // behind: main has moved that many commits past T0, the commit every PR head is on (nobody merged main into them), before the PRs
+  // were opened.
   let tip = T0;
   for (let i = 1; i <= behind; i++) tip = commit(h(`M${i}`), [tip], Array.from({ length: i }, (_, k) => `m${k + 1}`));
   W.refs.set('heads/main', tip); W.T0 = T0;
@@ -110,12 +111,17 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   for (const pr of prs) {
     const head = commit(h(`head:${pr}`), [T0], [String(pr)]);
     // autoMerge: the author turned GitHub auto-merge on (every agent PR does, gh pr merge --auto); paths: its changed files (null: unreadable)
-    W.pulls.set(pr, { number: pr, head, state: 'open', merged: false, updated: iso(NOW - 3_600_000 + pr), body: body(pr), autoMerge: true, paths: ['a.txt'] });
+    // base: GitHub's base.sha, main's tip when the head was last pushed (here: when the PR was opened); it stays while main moves on
+    // (PLAN-native-admission-latency §10.1), only pushHead moves it
+    W.pulls.set(pr, { number: pr, head, base: W.refs.get('heads/main'), state: 'open', merged: false, updated: iso(NOW - 3_600_000 + pr), body: body(pr), autoMerge: true, paths: ['a.txt'] });
     actions(head); // the PR's own CI on its head (pull_request)
     if (!admitted) continue;
     const id = W.nextCheck++; // stage 1 admitted it: App 5368905's kooyumi-work-admission on the head
     W.checks.set(id, { id, app: { id: APP }, name: 'kooyumi-work-admission', head_sha: head, status: 'completed', conclusion: 'success' });
   }
+  // A push of a new head to a PR: GitHub moves its base.sha to main's tip of that moment (the one place the fixture changes a head).
+  W.pushHead = (pr, sha, patch = {}) => Object.assign(W.pulls.get(pr), patch, { head: sha, base: W.refs.get('heads/main') });
+  W.actions = actions;
   const markMerged = () => { for (const p of W.pulls.values()) if (p.state === 'open' && ancestor(p.head, W.refs.get('heads/main'))) Object.assign(p, { state: 'closed', merged: true, mergeSha: W.refs.get('heads/main') }); };
   // GitHub (the checks port's reads, over this world)
   const gh = e.gh;
@@ -136,7 +142,7 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
     const testMerge = p.state === 'open' ? (ancestor(p.head, main) ? null : merge(main, p.head)) : null;
     return { number: n, state: p.state, draft: false, merged: p.merged, mergeable: p.state === 'open', merge_commit_sha: p.merged ? p.mergeSha : testMerge, body: p.body,
       auto_merge: p.autoMerge ? { merge_method: 'merge' } : null,
-      head: { sha: p.head, ref: `topic-${n}`, repo: { full_name: REPO } }, base: { ref: 'main', sha: main, repo: { full_name: REPO } } };
+      head: { sha: p.head, ref: `topic-${n}`, repo: { full_name: REPO } }, base: { ref: 'main', sha: p.base, repo: { full_name: REPO } } };
   };
   gh.readChangedPaths = async j => {
     const p = W.pulls.get(j.pr);
@@ -225,6 +231,28 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   e.main = () => W.refs.get('heads/main');
   return e;
 }
+
+// The world itself (PLAN-native-admission-latency §10.1, §10.4): GitHub keeps an open PR's base.sha where main was when its head was last
+// pushed; main moving on does not move it, a push of a new head moves it to main's tip of that moment. The single PR read and the poller's
+// list of open pulls answer the same value.
+test('fixture (§10.4): base.sha is main at the last push of the head, not main now; a new head moves it', async t => {
+  const e = await world(t, { prs: [1201], rules: 'today' });
+  const listed = async () => {
+    const out = await pollerRun(e)(['api', '--include', PULLS_ROUTE(REPO)]);
+    return JSON.parse(out.stdout.slice(out.stdout.indexOf('\n\n') + 2)).find(p => p.number === 1201).base.sha;
+  };
+  const read = async () => (await e.gh.readPullRequest(1201)).base.sha;
+  const opened = e.main();
+  assert.deepEqual([await read(), await listed()], [opened, opened], 'opened on main');
+  const other = h('fixture-other');
+  e.W.commits.set(other, { sha: other, tree: h('tree:fixture-other'), parents: [opened] }); e.W.content.set(other, new Set(['other']));
+  e.W.refs.set('heads/main', other);
+  assert.deepEqual([await read(), await listed()], [opened, opened], 'main moved on: base.sha stays');
+  const next = h('fixture-next-1201');
+  e.W.commits.set(next, { sha: next, tree: h('tree:fixture-next'), parents: [e.head(1201)] }); e.W.content.set(next, new Set(['1201', 'next']));
+  e.W.pushHead(1201, next);
+  assert.deepEqual([e.head(1201), await read(), await listed()], [next, other, other], 'a new head: base.sha is main at that push');
+});
 
 // ---- stage 10, stage 8 and the loop between them ----
 let runN = 0;
@@ -1161,7 +1189,7 @@ test('应修 1 (T3): the switch to C at every point of the front\'s way -> no pe
 // the PR's own CI and stage 1 run again on the new head.
 function updateBranch(e, pr) {
   const W = e.W, head = W.merge(e.head(pr), e.main(), ':update');
-  W.pulls.get(pr).head = head;
+  W.pushHead(pr, head);
   for (const [app, name] of [...FOUR.map(n => [ACTIONS, n]), [APP, 'kooyumi-work-admission']]) {
     const id = W.nextCheck++; W.checks.set(id, { id, app: { id: app }, name, head_sha: head, status: 'completed', conclusion: 'success', completed_at: iso(e.now) });
   }
@@ -1369,7 +1397,7 @@ test('push, fail closed: a rider that is frozen, left the queue, moved to a new 
     if (change === 'queue') e.queue.splice(e.queue.indexOf(912), 1);
     if (change === 'head') {
       const n = h('new-head-911');
-      e.W.commits.set(n, { sha: n, tree: h('tree:n'), parents: [e.head(911)] }); e.W.content.set(n, new Set(['911', 'n'])); e.W.pulls.get(911).head = n;
+      e.W.commits.set(n, { sha: n, tree: h('tree:n'), parents: [e.head(911)] }); e.W.content.set(n, new Set(['911', 'n'])); e.W.pushHead(911, n);
     }
     if (change === 'closed') e.W.pulls.get(912).state = 'closed';
     const p = await stage8(t, e, b, { mode });
@@ -1426,7 +1454,7 @@ test('push: a member that moved to a new head after its batch landed is not adop
   e.port.fastForwardMain = async s => {
     const r = await ff(s);
     const n = h('later-912'); e.W.commits.set(n, { sha: n, tree: h('tree:l'), parents: [e.head(912)] }); e.W.content.set(n, new Set(['912', 'l']));
-    Object.assign(e.W.pulls.get(912), { head: n, state: 'open', merged: false });
+    e.W.pushHead(912, n, { state: 'open', merged: false });
     return r;
   };
   assert.equal((await stage8(t, e, b)).status, 'SETTLED');
@@ -1578,7 +1606,7 @@ test('field 2026-11-13: a Task whose CI head was replaced by a push still gets i
   for (let i = 0; i < 6 && !first; i++) first = (await stage10(e)).facts.openFrontBatch;
   assert.equal(first?.pr, 910);
   const W = e.W, pushed = W.merge(e.head(910), e.main(), ':push');
-  W.pulls.get(910).head = pushed;
+  W.pushHead(910, pushed);
   for (const [app, name] of [[ACTIONS, 'ci-suites'], [APP, 'kooyumi-work-admission']]) {
     const id = W.nextCheck++; W.checks.set(id, { id, app: { id: app }, name, head_sha: pushed, status: 'completed', conclusion: 'success' });
   }
@@ -1670,7 +1698,7 @@ function pollerRun(e) {
     const included = v => ({ code: 0, stdout: `HTTP/1.1 200 OK\n\n${JSON.stringify(v)}` });
     if (route === MAIN_REF_ROUTE(REPO)) return included({ object: { sha: e.main() } });
     if (route === PULLS_ROUTE(REPO)) return included([...e.W.pulls.values()].filter(p => p.state === 'open').map(p => ({ number: p.number,
-      head: { sha: p.head }, base: { sha: e.W.T0 }, draft: false, updated_at: p.updated }))); // GitHub's base.sha: where main was at the last push
+      head: { sha: p.head }, base: { sha: p.base }, draft: false, updated_at: p.updated }))); // GitHub's base.sha: where main was at the last push
     const m = /compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})/.exec(route);
     if (m) {
       const inHead = reach(e.W, m[2]);
@@ -1938,8 +1966,10 @@ async function residentOver(t, e, { tamper = null, facts = null, queueFacts = fa
     back();
     // queueFacts: the stage's scheduling facts as the real stage 8 reports them (publisher.mjs: the claim's place in the merge queue), so a
     // claim first in the queue owes stage 10 at once (frontOpenOwed; E9). Off for E1-E8 as they were written.
-    return p.status === 'SETTLED' ? ok : { ok: false, code: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', proof: PROOF,
-      outcome: { status: 'BLOCKED', reason: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', sideEffects: 0, mayHavePublished: false, ...(queueFacts && p.scheduling ? { scheduling: p.scheduling } : {}) } };
+    // The stage's code is its own reason, as the real engine hands the stage fact's failure_code to the executor (engine-windows.mjs).
+    const code = p.reason ?? 'TRAIN_SINGLE_GREEN_NOT_PROVEN';
+    return p.status === 'SETTLED' ? ok : { ok: false, code, proof: PROOF,
+      outcome: { status: 'BLOCKED', reason: code, sideEffects: 0, mayHavePublished: false, ...(queueFacts && p.scheduling ? { scheduling: p.scheduling } : {}) } };
   };
   const policy = rawPolicy({ contract: POLICY_CONTRACT_V8, train: { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * 60_000, maintenanceMaxPerDay: 200,
     ...TRAIN_DEFAULTS, sweep: 'audit', landing: 'push', batchMax: 3 } });
@@ -2251,10 +2281,13 @@ test('bc982192 E10b (B2, jitter): the poller read push, one stage 10 reads no ru
   assert.ok(r.f.clock() - start <= 30 * 60_000, `landed after ${(r.f.clock() - start) / 60_000} minutes`);
 });
 
-// E11 (the switch day) and E12 ①: a head up to date under route github-merge is proposed on main's tip; main moves; the bundle stops its row.
-// While the route stays github-merge nothing brings it back (E12 ①: GitHub's way, the author or the bot merges main). Then main's rules turn
-// push with no scan from this App: the poller's key (pr, head, merge base) is the one it already sent, so it sends nothing; the executor
-// restamps the row and it lands.
+// E11 (the switch day) and E12 ① (PLAN-native-admission-latency §10.2, §10.4): a head up to date under route github-merge is proposed on
+// main's tip; main moves. Its batch is born with no local role (lean: no bundle), so stage 1 admits it (GitHub's base.sha did not move
+// with main), it burns its head and stage 8 ends it (RESIDENT_BASE_MOVED: class queue, neutral to the breaker). While the route stays
+// github-merge nothing brings it back (E12 ①: GitHub's way, the author or the bot merges main). Then main's rules turn push with no scan
+// from this App: the row was not stopped as superseded, so it is not restamped, and the poller's key (pr, head, merge base) is the one it
+// already sent; the old head does not land (E11). A new head lands on the push route by itself. Whether such a head should land without a
+// new commit is board row 173 (待查 E): the todo test below is its must-red.
 async function switchDay(t) {
   const e = await world(t, { prs: [1471], rules: 'today', queued: false, admitted: false, appScans: [] });
   const r = await residentOver(t, e);
@@ -2265,13 +2298,22 @@ async function switchDay(t) {
   assert.deepEqual(r.triggers.map(g => [g.pr, g.baseSha]), [[1471, M]]);
   const moved = h('E11-other');
   e.W.commits.set(moved, { sha: moved, tree: h('tree:E11-other'), parents: [M] }); e.W.content.set(moved, new Set([...e.W.content.get(M), 'other']));
+  const breaker = () => { const b = r.f.queue.breaker; return [b?.state ?? 'closed', b?.failures?.length ?? 0, b?.streak ?? 0]; };
+  const breakerAtStart = breaker();
   e.W.refs.set('heads/main', moved);
-  await r.f.exec.tick();
-  assert.deepEqual(rowsOf(r.f).map(x => [x.pr, x.state, x.baseSha, x.batchRoute]), [[1471, 'STOPPED', M, null]], await diagOf(r));
+  // a lean batch (born with no local role: no bundle) passes stage 1 (GitHub's base.sha did not move with main), parks at B and stage 8
+  // ends it; a parked batch may take more than one tick to reach its stage 8
+  for (let i = 0; i < 6 && r.f.queue.row(1471)?.state !== 'STOPPED'; i++) { await r.f.exec.tick(); r.f.advance(60_000); }
+  const diag = await diagOf(r);
+  assert.deepEqual(rowsOf(r.f).map(x => [x.pr, x.state, x.baseSha, x.batchRoute]), [[1471, 'STOPPED', M, null]], diag);
   assert.equal(r.f.queue.row(1471).reason, 'RESIDENT_BASE_MOVED');
+  assert.equal(r.engine.bundles.filter(x => x.pr === 1471).length, 0, `no bundle: ${diag}`);
+  assert.deepEqual(r.engine.stage1.filter(x => x.pr === 1471).map(x => x.status), ['ADMITTED'], `stage 1 once, admitted: ${diag}`);
+  assert.equal(r.f.queue.row(1471).stopClass, 'queue', diag);
+  assert.deepEqual(breaker(), breakerAtStart, `the breaker counted nothing: ${diag}`);
   return { e, r, M };
 }
-test('bc982192 E12 ①: route github-merge, a row the bundle stopped (main moved) -> never restamped, stays STOPPED', async t => {
+test('bc982192 E12 ①: route github-merge, a row stage 8 ended (main moved) -> never restamped, stays STOPPED', async t => {
   const { e, r } = await switchDay(t);
   for (let i = 0; i < 25; i++) { await r.poller.pass(); await r.f.exec.tick(); r.f.advance(60_000); }
   const diag = await diagOf(r);
@@ -2280,7 +2322,34 @@ test('bc982192 E12 ①: route github-merge, a row the bundle stopped (main moved
   assert.deepEqual(await restampedOf(r.f), [], diag);
   assert.equal(e.W.pulls.get(1471).merged, false);
 });
-test('bc982192 E11 (switch day): stopped under github-merge, then the rules turn push with no scan from this App -> restamped, lands; the poller sends nothing again', async t => {
+test('bc982192 E11 (switch day): ended by stage 8 under github-merge, then the rules turn push -> stays STOPPED, not restamped; a new head lands on the push route', async t => {
+  const { e, r } = await switchDay(t);
+  e.W.setRules('push');
+  const head = e.head(1471);
+  for (let i = 0; i < 15; i++) { await r.poller.pass(); await r.f.exec.tick(); r.f.advance(60_000); }
+  let diag = await diagOf(r);
+  assert.equal(r.f.exec.batchRoute(), 'push', diag);
+  assert.deepEqual(rowsOf(r.f).map(x => [x.pr, x.state, x.headSha]), [[1471, 'STOPPED', head]], diag);
+  assert.deepEqual(await restampedOf(r.f), [], diag);
+  assert.equal(r.triggers.length, 1, `the poller did not send the old head again: ${diag}`);
+  assert.equal(e.W.pulls.get(1471).merged, false);
+  // the author pushes one commit on the old head (main not merged in): only a new head was missing, nothing else holds it
+  const next = h('E11-next-1471');
+  e.W.commits.set(next, { sha: next, tree: h('tree:E11-next'), parents: [head] }); e.W.content.set(next, new Set([...e.W.content.get(head), 'next']));
+  e.W.pushHead(1471, next); e.W.actions(next);
+  const start = r.f.clock();
+  for (let i = 0; i < 40 && !e.W.pulls.get(1471).merged; i++) { await r.poller.pass(); await r.f.exec.tick(); r.f.advance(60_000); }
+  diag = await diagOf(r);
+  assert.ok(e.W.pulls.get(1471).merged, diag);
+  assert.ok(e.W.ancestor(next, e.main()), diag);
+  assert.deepEqual(r.triggers.map(g => [g.pr, g.headSha]), [[1471, head], [1471, next]], `one trigger for the new head: ${diag}`);
+  assert.deepEqual(await restampedOf(r.f), [], diag);
+  assert.ok(r.f.clock() - start <= 30 * 60_000, `landed after ${(r.f.clock() - start) / 60_000} minutes`);
+});
+// Board row 173 (待查 E): the switch-day recovery E11 asserted before PLAN-native-admission-latency §10.2 accepted its loss. Red today: a
+// head stage 8 ended under github-merge (burned, class queue) is never restamped when the route turns push. Its fix is the switch design's.
+test('bc982192 E11 todo (board row 173, 待查 E): ended under github-merge, then the rules turn push -> restamped, lands without a new commit; the poller sends nothing again',
+  { todo: 'board row 173 (待查 E): a head RESIDENT_BASE_MOVED ended under github-merge does not land on the push route without a new commit' }, async t => {
   const { e, r, M } = await switchDay(t);
   e.W.setRules('push');
   const start = r.f.clock(), head = e.head(1471);
