@@ -145,39 +145,19 @@ jobs:
           TEMP: ${{ runner.temp }}
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
           WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
-          STAGING_SHA: ${{ github.sha }}
-          PUSH_REF: ${{ github.ref }}
-          EVENT_NAME: ${{ github.event_name }}
         shell: bash
         run: |
           set -euo pipefail
-          # A pull request is measured against its event's base.sha. Every other event names its base here;
-          # one without a base fails, never handing the suites an empty CI_BASE_SHA.
-          if [ "$EVENT_NAME" = pull_request ]; then exit 0; fi
-          if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            # Lost-run recovery tests the PR head itself, unmerged. Its base is the newest main commit it
-            # contains, always its ancestor (main's newest is not once main moves on); git fails when there
-            # is no common history. The trusted checkout stays on main: this is only what to compare with.
-            base=$(git merge-base origin/main "$STAGING_SHA")
-            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
-          elif [ "$EVENT_NAME" != push ]; then
-            echo "No CI base is defined for the $EVENT_NAME event." >&2
-            exit 1
-          elif [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
-            # Checkout fetched full history; no candidate code has run. T is the
-            # root of S's member chain (ADR 0019), a commit on main (S^1 for one
-            # member), walked by the runner hook's own code read from main.
-            base=$(node --input-type=module -e "
-              const { execFileSync } = await import('node:child_process');
-              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);
-              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));
-              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));")
-            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
-            echo "sha=$base" >> "$GITHUB_OUTPUT"
-          else
-            base=$(git rev-parse "$STAGING_SHA^1")
-          fi
-          echo "ci_base=$base" >> "$GITHUB_OUTPUT"
+          # CI_BASE_SHA and the staging trusted ref, for every event, from the one rule in scripts/ci/ci-base.mjs read from main
+          # (the candidate copy only while main has none: the change that adds it). Later steps read CI_BASE_SHA from GITHUB_ENV.
+          node --input-type=module -e "
+            const { execFileSync } = await import('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+            const onMain = git('ls-tree', '--name-only', 'origin/main', 'scripts/ci/ci-base.mjs').trim() !== '';
+            if (!onMain) console.log('::warning title=CI base::main has no scripts/ci/ci-base.mjs yet; the candidate copy resolves the base');
+            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');
+            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+            process.exitCode = await writeCiBase();"
       - name: Check out the trusted base (selection and commands)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -264,39 +244,19 @@ jobs:
           TEMP: ${{ runner.temp }}
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
           WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
-          STAGING_SHA: ${{ github.sha }}
-          PUSH_REF: ${{ github.ref }}
-          EVENT_NAME: ${{ github.event_name }}
         shell: bash
         run: |
           set -euo pipefail
-          # A pull request is measured against its event's base.sha. Every other event names its base here;
-          # one without a base fails, never handing the suites an empty CI_BASE_SHA.
-          if [ "$EVENT_NAME" = pull_request ]; then exit 0; fi
-          if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            # Lost-run recovery tests the PR head itself, unmerged. Its base is the newest main commit it
-            # contains, always its ancestor (main's newest is not once main moves on); git fails when there
-            # is no common history. The trusted checkout stays on main: this is only what to compare with.
-            base=$(git merge-base origin/main "$STAGING_SHA")
-            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
-          elif [ "$EVENT_NAME" != push ]; then
-            echo "No CI base is defined for the $EVENT_NAME event." >&2
-            exit 1
-          elif [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
-            # Checkout fetched full history; no candidate code has run. T is the
-            # root of S's member chain (ADR 0019), a commit on main (S^1 for one
-            # member), walked by the runner hook's own code read from main.
-            base=$(node --input-type=module -e "
-              const { execFileSync } = await import('node:child_process');
-              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);
-              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));
-              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));")
-            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
-            echo "sha=$base" >> "$GITHUB_OUTPUT"
-          else
-            base=$(git rev-parse "$STAGING_SHA^1")
-          fi
-          echo "ci_base=$base" >> "$GITHUB_OUTPUT"
+          # CI_BASE_SHA and the staging trusted ref, for every event, from the one rule in scripts/ci/ci-base.mjs read from main
+          # (the candidate copy only while main has none: the change that adds it). Later steps read CI_BASE_SHA from GITHUB_ENV.
+          node --input-type=module -e "
+            const { execFileSync } = await import('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+            const onMain = git('ls-tree', '--name-only', 'origin/main', 'scripts/ci/ci-base.mjs').trim() !== '';
+            if (!onMain) console.log('::warning title=CI base::main has no scripts/ci/ci-base.mjs yet; the candidate copy resolves the base');
+            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');
+            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+            process.exitCode = await writeCiBase();"
       - name: Check out the trusted base (selection and commands)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -342,7 +302,6 @@ jobs:
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
           SUITES: ${{ steps.select.outputs.suites }}
-          CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
           PYTHONDONTWRITEBYTECODE: "1"
           # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
           CLUED_UNDER_TEST: "1"
@@ -392,7 +351,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          fetch-depth: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging')) && '0' || '2' }}
+          fetch-depth: 0
           path: candidate
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -406,39 +365,19 @@ jobs:
           TEMP: ${{ runner.temp }}
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
           WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
-          STAGING_SHA: ${{ github.sha }}
-          PUSH_REF: ${{ github.ref }}
-          EVENT_NAME: ${{ github.event_name }}
         shell: bash
         run: |
           set -euo pipefail
-          # A pull request is measured against its event's base.sha. Every other event names its base here;
-          # one without a base fails, never handing the suites an empty CI_BASE_SHA.
-          if [ "$EVENT_NAME" = pull_request ]; then exit 0; fi
-          if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            # Lost-run recovery tests the PR head itself, unmerged. Its base is the newest main commit it
-            # contains, always its ancestor (main's newest is not once main moves on); git fails when there
-            # is no common history. The trusted checkout stays on main: this is only what to compare with.
-            base=$(git merge-base origin/main "$STAGING_SHA")
-            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
-          elif [ "$EVENT_NAME" != push ]; then
-            echo "No CI base is defined for the $EVENT_NAME event." >&2
-            exit 1
-          elif [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
-            # Checkout fetched full history; no candidate code has run. T is the
-            # root of S's member chain (ADR 0019), a commit on main (S^1 for one
-            # member), walked by the runner hook's own code read from main.
-            base=$(node --input-type=module -e "
-              const { execFileSync } = await import('node:child_process');
-              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);
-              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));
-              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));")
-            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
-            echo "sha=$base" >> "$GITHUB_OUTPUT"
-          else
-            base=$(git rev-parse "$STAGING_SHA^1")
-          fi
-          echo "ci_base=$base" >> "$GITHUB_OUTPUT"
+          # CI_BASE_SHA and the staging trusted ref, for every event, from the one rule in scripts/ci/ci-base.mjs read from main
+          # (the candidate copy only while main has none: the change that adds it). Later steps read CI_BASE_SHA from GITHUB_ENV.
+          node --input-type=module -e "
+            const { execFileSync } = await import('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+            const onMain = git('ls-tree', '--name-only', 'origin/main', 'scripts/ci/ci-base.mjs').trim() !== '';
+            if (!onMain) console.log('::warning title=CI base::main has no scripts/ci/ci-base.mjs yet; the candidate copy resolves the base');
+            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');
+            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+            process.exitCode = await writeCiBase();"
       - name: Check out the trusted base (selection and commands)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -550,39 +489,19 @@ jobs:
           TEMP: ${{ runner.temp }}
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
           WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
-          STAGING_SHA: ${{ github.sha }}
-          PUSH_REF: ${{ github.ref }}
-          EVENT_NAME: ${{ github.event_name }}
         shell: bash
         run: |
           set -euo pipefail
-          # A pull request is measured against its event's base.sha. Every other event names its base here;
-          # one without a base fails, never handing the suites an empty CI_BASE_SHA.
-          if [ "$EVENT_NAME" = pull_request ]; then exit 0; fi
-          if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            # Lost-run recovery tests the PR head itself, unmerged. Its base is the newest main commit it
-            # contains, always its ancestor (main's newest is not once main moves on); git fails when there
-            # is no common history. The trusted checkout stays on main: this is only what to compare with.
-            base=$(git merge-base origin/main "$STAGING_SHA")
-            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
-          elif [ "$EVENT_NAME" != push ]; then
-            echo "No CI base is defined for the $EVENT_NAME event." >&2
-            exit 1
-          elif [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
-            # Checkout fetched full history; no candidate code has run. T is the
-            # root of S's member chain (ADR 0019), a commit on main (S^1 for one
-            # member), walked by the runner hook's own code read from main.
-            base=$(node --input-type=module -e "
-              const { execFileSync } = await import('node:child_process');
-              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);
-              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));
-              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));")
-            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
-            echo "sha=$base" >> "$GITHUB_OUTPUT"
-          else
-            base=$(git rev-parse "$STAGING_SHA^1")
-          fi
-          echo "ci_base=$base" >> "$GITHUB_OUTPUT"
+          # CI_BASE_SHA and the staging trusted ref, for every event, from the one rule in scripts/ci/ci-base.mjs read from main
+          # (the candidate copy only while main has none: the change that adds it). Later steps read CI_BASE_SHA from GITHUB_ENV.
+          node --input-type=module -e "
+            const { execFileSync } = await import('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+            const onMain = git('ls-tree', '--name-only', 'origin/main', 'scripts/ci/ci-base.mjs').trim() !== '';
+            if (!onMain) console.log('::warning title=CI base::main has no scripts/ci/ci-base.mjs yet; the candidate copy resolves the base');
+            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');
+            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+            process.exitCode = await writeCiBase();"
       - name: Check out the trusted base (scanner script and configuration)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -719,7 +638,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          fetch-depth: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging')) && '0' || '2' }}
+          fetch-depth: 0
           path: candidate
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -733,39 +652,19 @@ jobs:
           TEMP: ${{ runner.temp }}
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
           WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
-          STAGING_SHA: ${{ github.sha }}
-          PUSH_REF: ${{ github.ref }}
-          EVENT_NAME: ${{ github.event_name }}
         shell: bash
         run: |
           set -euo pipefail
-          # A pull request is measured against its event's base.sha. Every other event names its base here;
-          # one without a base fails, never handing the suites an empty CI_BASE_SHA.
-          if [ "$EVENT_NAME" = pull_request ]; then exit 0; fi
-          if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            # Lost-run recovery tests the PR head itself, unmerged. Its base is the newest main commit it
-            # contains, always its ancestor (main's newest is not once main moves on); git fails when there
-            # is no common history. The trusted checkout stays on main: this is only what to compare with.
-            base=$(git merge-base origin/main "$STAGING_SHA")
-            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
-          elif [ "$EVENT_NAME" != push ]; then
-            echo "No CI base is defined for the $EVENT_NAME event." >&2
-            exit 1
-          elif [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
-            # Checkout fetched full history; no candidate code has run. T is the
-            # root of S's member chain (ADR 0019), a commit on main (S^1 for one
-            # member), walked by the runner hook's own code read from main.
-            base=$(node --input-type=module -e "
-              const { execFileSync } = await import('node:child_process');
-              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);
-              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));
-              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));")
-            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
-            echo "sha=$base" >> "$GITHUB_OUTPUT"
-          else
-            base=$(git rev-parse "$STAGING_SHA^1")
-          fi
-          echo "ci_base=$base" >> "$GITHUB_OUTPUT"
+          # CI_BASE_SHA and the staging trusted ref, for every event, from the one rule in scripts/ci/ci-base.mjs read from main
+          # (the candidate copy only while main has none: the change that adds it). Later steps read CI_BASE_SHA from GITHUB_ENV.
+          node --input-type=module -e "
+            const { execFileSync } = await import('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+            const onMain = git('ls-tree', '--name-only', 'origin/main', 'scripts/ci/ci-base.mjs').trim() !== '';
+            if (!onMain) console.log('::warning title=CI base::main has no scripts/ci/ci-base.mjs yet; the candidate copy resolves the base');
+            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');
+            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+            process.exitCode = await writeCiBase();"
       - name: Check out the trusted base (temporary storage)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -984,39 +883,19 @@ jobs:
           TEMP: ${{ runner.temp }}
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
           WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
-          STAGING_SHA: ${{ github.sha }}
-          PUSH_REF: ${{ github.ref }}
-          EVENT_NAME: ${{ github.event_name }}
         shell: bash
         run: |
           set -euo pipefail
-          # A pull request is measured against its event's base.sha. Every other event names its base here;
-          # one without a base fails, never handing the suites an empty CI_BASE_SHA.
-          if [ "$EVENT_NAME" = pull_request ]; then exit 0; fi
-          if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            # Lost-run recovery tests the PR head itself, unmerged. Its base is the newest main commit it
-            # contains, always its ancestor (main's newest is not once main moves on); git fails when there
-            # is no common history. The trusted checkout stays on main: this is only what to compare with.
-            base=$(git merge-base origin/main "$STAGING_SHA")
-            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
-          elif [ "$EVENT_NAME" != push ]; then
-            echo "No CI base is defined for the $EVENT_NAME event." >&2
-            exit 1
-          elif [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
-            # Checkout fetched full history; no candidate code has run. T is the
-            # root of S's member chain (ADR 0019), a commit on main (S^1 for one
-            # member), walked by the runner hook's own code read from main.
-            base=$(node --input-type=module -e "
-              const { execFileSync } = await import('node:child_process');
-              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);
-              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));
-              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));")
-            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
-            echo "sha=$base" >> "$GITHUB_OUTPUT"
-          else
-            base=$(git rev-parse "$STAGING_SHA^1")
-          fi
-          echo "ci_base=$base" >> "$GITHUB_OUTPUT"
+          # CI_BASE_SHA and the staging trusted ref, for every event, from the one rule in scripts/ci/ci-base.mjs read from main
+          # (the candidate copy only while main has none: the change that adds it). Later steps read CI_BASE_SHA from GITHUB_ENV.
+          node --input-type=module -e "
+            const { execFileSync } = await import('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+            const onMain = git('ls-tree', '--name-only', 'origin/main', 'scripts/ci/ci-base.mjs').trim() !== '';
+            if (!onMain) console.log('::warning title=CI base::main has no scripts/ci/ci-base.mjs yet; the candidate copy resolves the base');
+            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');
+            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+            process.exitCode = await writeCiBase();"
       - name: Check out the trusted base (temporary storage)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -1029,33 +908,6 @@ jobs:
             .github
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
-      # The change: a pull request's head against its base (the run's commit is GitHub's merge of the two), a push
-      # against the baseline resolved above (main: the first parent; staging: the root T of its member chain), a
-      # dispatch against its merge base with main.
-      - name: Resolve the changed range
-        id: range
-        working-directory: candidate
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD: ${{ github.event.pull_request.head.sha }}
-          PUSH_BASE: ${{ steps.train-base.outputs.ci_base }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          case "$EVENT_NAME" in
-            pull_request)
-              base=$PR_BASE head=$PR_HEAD
-              test "$(git rev-parse --verify --quiet "$GITHUB_SHA^2")" = "$head" ;;
-            push) base=$PUSH_BASE head=$GITHUB_SHA ;;
-            workflow_dispatch) head=$GITHUB_SHA base=$(git merge-base origin/main "$GITHUB_SHA") ;;
-            *) echo "::error::no changed range for event $EVENT_NAME"; exit 1 ;;
-          esac
-          for sha in "$base" "$head"; do
-            [[ "$sha" =~ ^[0-9a-f]{40}$ && ! "$sha" =~ ^0+$ ]] || { echo "::error::not a commit id: '$sha'"; exit 1; }
-          done
-          echo "base=$base" >> "$GITHUB_OUTPUT"
-          echo "head=$head" >> "$GITHUB_OUTPUT"
       - name: Placement and renderer fixtures
         working-directory: candidate
         run: |
@@ -1080,6 +932,5 @@ jobs:
       - name: Enforce placement and one-time production gate
         working-directory: candidate
         env:
-          BASE: ${{ steps.range.outputs.base }}
           CANDIDATE: ${{ github.sha }}
-        run: python3 -I -B scripts/ci/check_contract_placement.py --base "$BASE" --head "$CANDIDATE" --minimum-service-version 0.4.5 --rendered-responses "$RUNNER_TEMP/contract-responses.json"
+        run: python3 -I -B scripts/ci/check_contract_placement.py --base "$CI_BASE_SHA" --head "$CANDIDATE" --minimum-service-version 0.4.5 --rendered-responses "$RUNNER_TEMP/contract-responses.json"

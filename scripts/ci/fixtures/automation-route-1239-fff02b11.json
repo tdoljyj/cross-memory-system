@@ -1,0 +1,208 @@
+{
+  "_source": [
+    "GitHub GET replies (gh api, read-only) read 2026-11-23 (Beijing) for #1239 head fff02b115 (the clued-admission[bot] main refresh of c4552421), Linux required-tests run 45042307550. The PR was merged at 16:20:52Z with this head (merge 549789505, parents [base 61611c57, head fff02b11]); the gate job ended 16:21:09Z. Trimmed to the fields the route reads; values as read unless named below.",
+    "verbatim: live_pull_request, merge_commit, run, commit, main_merge_attestation, prior_head_admission, recorded_admission. recorded_admission is the App 5368905 check 137272320595 as it is now (re-read 2026-11-23 02:52 Beijing): failure, summary \"Reconcile ... full_admission_rejected\", no PR named. It was created success at 16:20:48Z and withdrawn after the merge (FABLE-same-tree-main-push-redesign-20261123 §1); the real replay reads this one.",
+    "constructed: pull_request is the synchronize event payload as at the event, not a GET reply: live_pull_request with state \"open\" and without merged, merged_at and merge_commit_sha (the PR was open until 16:20:52Z). constructed_admission_after_1244 is NOT a GitHub reply: check 137272320595 written as the admission would look if it had stayed success after #1244 (conclusion \"success\", summary naming tdoljyj/cross-memory-system#1239, its first sentence shortened from the summary of #1240 check 137299496678); id, app, external_id, head_sha and timestamps are the recorded check's. Only the constructed-scenario tests read it."
+  ],
+  "repository": {
+    "default_branch": "main",
+    "full_name": "tdoljyj/cross-memory-system",
+    "owner": {
+      "id": 52366662,
+      "login": "tdoljyj",
+      "type": "User"
+    }
+  },
+  "pull_request": {
+    "number": 1239,
+    "state": "open",
+    "user": {
+      "id": 52366662,
+      "login": "tdoljyj",
+      "type": "User"
+    },
+    "head": {
+      "ref": "claude/rerun-mapped-required",
+      "repo": {
+        "full_name": "tdoljyj/cross-memory-system"
+      },
+      "sha": "fff02b115ad4690dfe8c5759e8d85be1cc8e4275"
+    },
+    "base": {
+      "ref": "main",
+      "repo": {
+        "default_branch": "main",
+        "full_name": "tdoljyj/cross-memory-system"
+      },
+      "sha": "61611c5738d8378e2c5669aad2727f9604e99845"
+    }
+  },
+  "live_pull_request": {
+    "base": {
+      "ref": "main",
+      "repo": {
+        "default_branch": "main",
+        "full_name": "tdoljyj/cross-memory-system"
+      },
+      "sha": "61611c5738d8378e2c5669aad2727f9604e99845"
+    },
+    "head": {
+      "ref": "claude/rerun-mapped-required",
+      "repo": {
+        "full_name": "tdoljyj/cross-memory-system"
+      },
+      "sha": "fff02b115ad4690dfe8c5759e8d85be1cc8e4275"
+    },
+    "merge_commit_sha": "549789505a6be39bfdcae30fc15343ebc97bb5d6",
+    "merged": true,
+    "merged_at": "2026-11-22T16:20:52Z",
+    "number": 1239,
+    "state": "closed",
+    "user": {
+      "id": 52366662,
+      "login": "tdoljyj",
+      "type": "User"
+    }
+  },
+  "merge_commit": {
+    "parents": [
+      {
+        "sha": "61611c5738d8378e2c5669aad2727f9604e99845"
+      },
+      {
+        "sha": "fff02b115ad4690dfe8c5759e8d85be1cc8e4275"
+      }
+    ],
+    "sha": "549789505a6be39bfdcae30fc15343ebc97bb5d6"
+  },
+  "run": {
+    "actor": {
+      "id": 337003645,
+      "login": "clued-admission[bot]",
+      "type": "Bot"
+    },
+    "created_at": "2026-11-22T16:10:14Z",
+    "event": "pull_request",
+    "head_branch": "claude/rerun-mapped-required",
+    "head_repository": {
+      "full_name": "tdoljyj/cross-memory-system"
+    },
+    "head_sha": "fff02b115ad4690dfe8c5759e8d85be1cc8e4275",
+    "id": 45042307550,
+    "path": ".github/workflows/clued-required-tests.yml",
+    "repository": {
+      "full_name": "tdoljyj/cross-memory-system"
+    },
+    "run_attempt": 1,
+    "triggering_actor": {
+      "id": 337003645,
+      "login": "clued-admission[bot]",
+      "type": "Bot"
+    },
+    "workflow_id": 402974661
+  },
+  "commit": {
+    "author": {
+      "id": 337003645,
+      "login": "clued-admission[bot]",
+      "type": "Bot"
+    },
+    "commit": {
+      "committer": {
+        "date": "2026-11-22T16:10:08Z"
+      },
+      "tree": {
+        "sha": "dac2d7cb12fea5c411b55456ac22daffb8e58e1e"
+      },
+      "verification": {
+        "payload": "tree dac2d7cb12fea5c411b55456ac22daffb8e58e1e\nparent c4552421cb6d2e030cc9fee932d93a8a72b85f10\nparent 61611c5738d8378e2c5669aad2727f9604e99845\nauthor clued-admission[bot] <337003645+clued-admission[bot]@users.noreply.github.com> 1795363808 +0000\ncommitter GitHub <noreply@github.com> 1795363808 +0000\n\nMerge branch 'main' into claude/rerun-mapped-required",
+        "reason": "valid",
+        "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJrAxPgCRC1aQ7uu5UhlAAAB3IQAKkhZ4HJNzyp8+qVa6zdr/jK\ngq9Tswd6Yny/qS0LXplJ4o3QAwdCDarK7wYSb3QxaJ+mZA74Mj26SUaQh89Qx5zh\nwW/lJmesllxHED7sJYZVpAzSRQVh7YBcVSHunf0h+IZjPV/ZkzrR4rnEle/pArgv\naG3IXe4I36Udbs1UFYrPzpL0I1qTAd+QL56AkDXZq58ad8hyY3mTceA4ckprNKij\nGX1wuGJztiSdve5N/DxtFwWiPuNeyeV6rjM08vnlqFREEEjkIKkLa3+Sf1Ay/nQe\n5v7gul2dXJvre4J/tKvNTHPLAs5YuvsmjCbstG6bGPtI3fraSNoUqB6dhztw9dqk\nXk+lLfxflH+VWFSmP1UesD2TmGdJeU/w7+WQYAkbasIdUpsSrtlGf31rzP+9QO7z\njtZnX9az5mVi+9nxwL1yJbPyp4sM0DXnqa3zisvVxIbYaCPZif9YqRGkUWRweAJT\nh1yDc5RfQxwrK3lN6EjWmX1cYaFBSzTUilXUG/N4H3h2YIRk6cxN3hSJMDYKY/in\nZSZK0KMakT6VCaEKy3XGtDnWPa4uESHHLby5sXTfB0OAeGpm215Rh2Fdo01RKZbh\nSLGEuS/3qt6OcQljQ6iSU+Xy7hSl+CiJWrFKm4DmJ4V4IcQMJRSLGjCY8N5gzDZy\n56nxeQJMyTm7ufy0PFPm\n=OXXl\n-----END PGP SIGNATURE-----\n",
+        "verified": true
+      }
+    },
+    "committer": {
+      "id": 19864447,
+      "login": "web-flow",
+      "type": "User"
+    },
+    "parents": [
+      {
+        "sha": "c4552421cb6d2e030cc9fee932d93a8a72b85f10"
+      },
+      {
+        "sha": "61611c5738d8378e2c5669aad2727f9604e99845"
+      }
+    ],
+    "sha": "fff02b115ad4690dfe8c5759e8d85be1cc8e4275"
+  },
+  "constructed_admission_after_1244": {
+    "total_count": 1,
+    "check_runs": [
+      {
+        "app": {
+          "id": 5368905,
+          "slug": "clued-ci-checks-turing-20261018"
+        },
+        "completed_at": "2026-11-22T16:20:48Z",
+        "conclusion": "success",
+        "external_id": "independent-ci:native-work-admission:v2:524dd23d8d17806b1bbae01b39d65e90cf14753b1edeba8f7149704951427409:a1:c602f9747:f4:e1",
+        "head_sha": "fff02b115ad4690dfe8c5759e8d85be1cc8e4275",
+        "id": 137272320595,
+        "name": "kooyumi-work-admission",
+        "output": {
+          "summary": "Independent Native control check for tdoljyj/cross-memory-system#1239 (attempt 1). This is not a scanner execution, Native publication ticket, Receipt or qualification."
+        },
+        "started_at": "2026-11-22T16:20:48Z",
+        "status": "completed"
+      }
+    ]
+  },
+  "recorded_admission": {
+    "check_runs": [
+      {
+        "app": {
+          "id": 5368905,
+          "slug": "clued-ci-checks-turing-20261018"
+        },
+        "completed_at": "2026-11-22T16:20:48Z",
+        "conclusion": "failure",
+        "external_id": "independent-ci:native-work-admission:v2:524dd23d8d17806b1bbae01b39d65e90cf14753b1edeba8f7149704951427409:a1:c602f9747:f4:e1",
+        "head_sha": "fff02b115ad4690dfe8c5759e8d85be1cc8e4275",
+        "id": 137272320595,
+        "name": "kooyumi-work-admission",
+        "output": {
+          "summary": "Reconcile Native admission check 6ce0e75389c224e6ba3e6bf3265c8b7090c0565ee9753996f099a9fc83685b5d; full_admission_rejected. No Native ticket or Receipt is asserted."
+        },
+        "started_at": "2026-11-22T16:20:48Z",
+        "status": "completed"
+      }
+    ],
+    "total_count": 1
+  },
+  "main_merge_attestation": {
+    "check_runs": [
+      {
+        "app": {
+          "id": 5164952,
+          "slug": "clued-admission"
+        },
+        "completed_at": "2026-11-22T16:10:14Z",
+        "conclusion": "success",
+        "external_id": "main-merge:1:1239:c4552421cb6d2e030cc9fee932d93a8a72b85f10:61611c5738d8378e2c5669aad2727f9604e99845",
+        "head_sha": "fff02b115ad4690dfe8c5759e8d85be1cc8e4275",
+        "id": 137269243095,
+        "name": "kooyumi-main-merge",
+        "output": {
+          "summary": "The merge train's front was behind main. The clued-admission App brought main in (update-branch, GitHub's own merge); nothing else changed. The admission carries the holder's authorization of c4552421cb6d2e030cc9fee932d93a8a72b85f10 to this commit."
+        },
+        "status": "completed"
+      }
+    ],
+    "total_count": 1
+  },
+  "prior_head_admission": {
+    "total_count": 0,
+    "check_runs": []
+  }
+}
