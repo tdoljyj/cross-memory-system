@@ -113,5 +113,5 @@ test('batch route (L1): a subject answered RESIDENT_BASE_MOVED stops the rows on
   assert.deepEqual([f.queue.row(1).state, f.queue.row(3).state, f.queue.row(3).reason], ['STOPPED', 'STOPPED', 'RESIDENT_BASE_MOVED']);
   assert.equal(f.queue.row(2).state, 'QUEUED');
   assert.equal((await f.exec.tick()).state, 'COMPLETED', 'PR 2 runs next on the same base');
-  assert.deepEqual(f.bundles, [1, 2]);
+  assert.deepEqual(f.bundles, [1], 'PR 2 is stamped push and tests its head: no bundle (Task f79929d9)');
 });
