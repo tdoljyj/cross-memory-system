@@ -521,8 +521,10 @@ const pushes = (...logins) => {
   const runs = [...logins.map(login => ({ event: 'pull_request', actor: { login } })), { event: 'workflow_dispatch', actor: { login: BOT } }];
   return { total_count: runs.length, workflow_runs: runs };
 };
-async function exitStreak({ heads = 30, spanHours = 72, unmerged = [], dependabot = false, botCommit = false, bothRed = true, lead = null,
-  pushers = { 15: BOT }, leadPusher = 'tdoljyj', pushError = [] } = {}) {
+const exitStreak = async options => (await exitReport(options)).summary.streak;
+// race：在第 15、16 个 head 之间插一个刚合入、框架结论未出的最终 head（§8 P4，addRace 在下方定义），now 随之给定。
+async function exitReport({ heads = 30, spanHours = 72, unmerged = [], dependabot = false, botCommit = false, bothRed = true, lead = null,
+  pushers = { 15: BOT }, leadPusher = 'tdoljyj', pushError = [], race = null, now = NOW } = {}) {
   const t0 = Date.parse('2026-11-23T00:00:00Z');
   const iso = ms => new Date(ms).toISOString().replace('.000Z', 'Z');
   const prs = [], checks = {};
@@ -543,8 +545,8 @@ async function exitStreak({ heads = 30, spanHours = 72, unmerged = [], dependabo
   const routes = prRoutes(prs.sort((a, b) => b.number - a.number), checks);
   for (let i = 0; i < heads; i++) routes[pushesRoute(sha(5000 + i))] = pushError.includes(i) ? { error: 'gh GET 失败（退出码 1）' } : pushes(pushers[i] ?? 'tdoljyj');
   if (lead !== null) routes[pushesRoute(sha(4999))] = pushes(leadPusher);
-  const report = await compare({ prs: { from: 1799, to: 1899 }, api: api(routes), now: NOW });
-  return report.summary.streak;
+  if (race) addRace(routes, { number: 1850, t: iso(t0 + Math.round(14.5 * spanHours * 3600_000 / (heads - 1))), ...race });
+  return compare({ prs: { from: 1799, to: 1899 }, api: api(routes), now });
 }
 
 test('S6-a 30 个一致、跨满 72 小时、10 个已合入 PR、含一个机器人推送且判一致的 head、有同红：达成', async () => {
@@ -844,4 +846,150 @@ test('R3 防掩盖：#1264 21025a8 head 上框架 Windows 红、合入提交上�
   assert.equal(pairOf(h, 'ci-suites-windows').direction, '框架红、托管绿');
   assert.ok(h.pairs.every(p => p.frameworkFrom === undefined));
   assert.ok(!calls.some(r => r.includes('196bd4ce048d4d8e5e010048541a836b81feb2ba')));
+});
+
+// 刚合入、框架结论未出（D:/w/tmp/FABLE-s6-merge-before-shadow-20261124.md §8）：已合入 PR 的最终 head 框架侧缺检查（按树读前提成立）
+// 或未完成、托管侧已完成，距合入不满 90 分钟判在跑（不计入、不打断）；满 90 分钟或窗口内已能确定没有结论的照旧判未知；
+// 连续段内有这样的在跑 head 时判据一律未达。
+const PULLS = '/pulls?state=all&sort=created&direction=desc&per_page=100&page=1';
+const MERGED_AT = '2026-11-26T00:00:00Z'; // prRoutes 给已合入 PR 的 merged_at
+const afterMerge = minutes => new Date(Date.parse(MERGED_AT) + minutes * 60_000).toISOString();
+// #1281 13:07 现场形状：M 上六项 success、ci-suites-windows in_progress。
+const windowsRunning = t => frameworkOnly(t, check => check === 'ci-suites-windows'
+  ? [run(check, FRAMEWORK_PINS[check], null, { status: 'in_progress', started: t })] : null);
+// 把一个合入跑赢框架的已合入 PR 加进已有路由（同 mergedRace）：head 上托管七项全绿、框架七项默认全缺，M 上框架七项由 mRuns 给。
+function addRace(routes, { number, t = at(24), headRuns, mRuns, mError, mergeTree, parents, mergedAt = MERGED_AT }) {
+  const head = sha(number), merge = sha(number + 1), headTree = tree(number);
+  routes[PULLS].push({ number, state: 'closed', merged_at: mergedAt, merge_commit_sha: merge, head: { sha: head }, user: { login: 'tdoljyj' } });
+  routes[`/pulls/${number}/commits?per_page=100&page=1`] = [{ sha: head, author: { login: 'tdoljyj' }, commit: { committer: {} } }];
+  routes[checksRoute(head)] = page(headRuns ?? runsAt(t, (check, side) => side === 'framework' ? undefined : null));
+  routes[checksRoute(merge)] = mError ? { error: mError } : page(mRuns ?? windowsRunning(t));
+  routes[gitRoute(head)] = { sha: head, tree: { sha: headTree }, parents: [{ sha: sha(number + 2) }] };
+  routes[gitRoute(merge)] = { sha: merge, tree: { sha: mergeTree ?? headTree }, parents: (parents ?? [sha(number + 2), head]).map(p => ({ sha: p })) };
+  return { head, merge };
+}
+// 前面 lead 个一致 head（已合入 PR 2999 的提交，时间在前），后面是刚合入的 PR 3000；now 为合入后 minutes 分钟。
+async function justMerged({ minutes, lead = 0, ...race } = {}) {
+  const leads = Array.from({ length: lead }, (_, i) => sha(2990 + i));
+  const routes = prRoutes(lead ? [{ number: 2999, state: 'closed', merged: true, commits: leads.map(s => ({ sha: s })) }] : [],
+    Object.fromEntries(leads.map((s, i) => [s, runsAt(at(23, i + 1))])));
+  const { head, merge } = addRace(routes, { number: 3000, ...race });
+  const stub = api(routes);
+  const report = await compare({ prs: { from: 2999, to: 3000 }, api: stub, now: afterMerge(minutes) });
+  return { report, head: report.heads.find(h => h.sha === head), merge, calls: stub.calls };
+}
+const p3Runs = t => runsAt(t, (check, side) => check === 'ci-suites-windows' && side === 'framework'
+  ? [run(check, FRAMEWORK_PINS[check], null, { status: 'in_progress', started: t })] : null);
+const SHAPES = { P1: {}, P2: { mRuns: [run('kooyumi-main-merge', 5164952, 'success', { started: at(24) })] }, P3: { headRuns: p3Runs(at(24)) } };
+
+test('P1 #1281 现场形状：head 上框架七项全缺，M 同树六项 success、Windows in_progress，合入后 9 分钟：判在跑，不打断连续段，判据未达', async () => {
+  const { report, head } = await justMerged({ minutes: 9, lead: 2 });
+  assert.equal(head.role, 'final');
+  assert.equal(head.verdict, '在跑');
+  const win = pairOf(head, 'ci-suites-windows');
+  assert.equal(win.verdict, '在跑');
+  assert.equal(win.reason, '已合入 9 分钟，框架结论未出（框架未完成（in_progress））');
+  assert.equal(pairOf(head, 'gitleaks').verdict, '一致');
+  assert.equal(report.summary.counts.在跑, 1);
+  assert.equal(report.summary.streak.heads, 2);
+  assert.equal(report.summary.pendingMergedHeads, 1);
+  assert.equal(report.summary.streak.met, false);
+  assert.ok(report.summary.streak.unmet.includes('连续段内有 1 个已合入 head 的框架结论未出'), JSON.stringify(report.summary.streak.unmet));
+  assert.match(report.summary.line, /已合入未出结论 1 个/);
+});
+
+test('P2 M 上一条框架检查都还没有（合入后 1 分钟，只有无关检查）：七项判在跑', async () => {
+  const { report, head, merge } = await justMerged({ minutes: 1, lead: 2, ...SHAPES.P2 });
+  assert.equal(head.verdict, '在跑');
+  assert.ok(head.pairs.every(p => p.verdict === '在跑' && p.reason === '已合入 1 分钟，框架结论未出（框架缺检查）'), JSON.stringify(head.pairs));
+  assert.equal(head.frameworkByTree.sha, merge);
+  assert.equal(report.summary.streak.heads, 2);
+  assert.equal(report.summary.pendingMergedHeads, 1);
+});
+
+test('P3 #1274 形状：head 自己的框架 Windows in_progress，不读 M，合入后 10 分钟：判在跑', async () => {
+  const { report, head, merge, calls } = await justMerged({ minutes: 10, lead: 2, ...SHAPES.P3 });
+  assert.equal(head.verdict, '在跑');
+  assert.equal(pairOf(head, 'ci-suites-windows').reason, '已合入 10 分钟，框架结论未出（框架未完成（in_progress））');
+  assert.ok(!calls.includes(gitRoute(merge)) && !calls.includes(checksRoute(merge)), calls.join('\n'));
+  assert.equal(head.frameworkByTree, undefined);
+  assert.equal(report.summary.streak.heads, 2);
+  assert.equal(report.summary.pendingMergedHeads, 1);
+});
+
+test('P4 30 个一致 head、覆盖项全满足，中间夹一个 P1 形状的 head：连续 30 个，判据未达，只差“框架结论未出”', async () => {
+  const report = await exitReport({ race: {}, now: afterMerge(9) });
+  assert.equal(report.heads.find(h => h.sha === sha(1850))?.verdict, '在跑');
+  assert.equal(report.summary.streak.heads, 30);
+  assert.equal(report.summary.pendingMergedHeads, 1);
+  assert.equal(report.summary.streak.met, false);
+  assert.deepEqual(report.summary.streak.unmet, ['连续段内有 1 个已合入 head 的框架结论未出']);
+  assert.match(report.summary.line, /判据：未达，连续段内有 1 个已合入 head 的框架结论未出/);
+});
+
+test('P5 封顶：P1、P2、P3 合入后 90、91 分钟：判未知，连续 0', async () => {
+  for (const [name, shape] of Object.entries(SHAPES)) {
+    for (const minutes of [90, 91]) {
+      const { report, head } = await justMerged({ minutes, lead: 2, ...shape });
+      const label = `${name} +${minutes}`;
+      assert.equal(head.verdict, '未知', label);
+      assert.ok(!head.pairs.some(p => p.verdict === '在跑'), label);
+      assert.equal(report.summary.streak.heads, 0, label);
+      assert.ok(!(report.summary.pendingMergedHeads > 0), label);
+    }
+  }
+});
+
+test('P5b 封顶原因与边界：满 90 分钟原因写“合入已超过 90 分钟”；89 分钟仍判在跑', async () => {
+  const cases = { P1: ['ci-suites-windows', '框架未完成（in_progress）'], P2: ['trivy', '框架缺检查'], P3: ['ci-suites-windows', '框架未完成（in_progress）'] };
+  for (const [name, [check, original]] of Object.entries(cases)) {
+    const { head } = await justMerged({ minutes: 91, ...SHAPES[name] });
+    assert.equal(pairOf(head, check).reason, `合入已超过 90 分钟，框架仍无结论（${original}）`, name);
+    const inside = await justMerged({ minutes: 89, ...SHAPES[name] });
+    assert.equal(inside.head.verdict, '在跑', name);
+    assert.equal(pairOf(inside.head, check).reason, `已合入 89 分钟，框架结论未出（${original}）`, name);
+  }
+});
+
+test('P6 窗口内也不放过：合入后 9 分钟，能确定没有结论或前提不成立的逐个判未知', async () => {
+  const t = at(24);
+  const hostedOverride = replaced => runsAt(t, (check, side) => side === 'framework' ? undefined : check === 'trivy' ? replaced : null);
+  const cases = [
+    ['M 一项 cancelled', { mRuns: frameworkOnly(t, check => check === 'trivy' ? [run(check, FRAMEWORK_PINS[check], 'cancelled', { started: t, completed: t })]
+      : check === 'ci-suites-windows' ? [run(check, FRAMEWORK_PINS[check], null, { status: 'in_progress', started: t })] : null) }, 'trivy', '框架无结论（cancelled）'],
+    ['M 树不同', { mergeTree: tree(9999) }, 'trivy', '框架缺检查'],
+    ['第二父不是 head', { parents: [sha(3002), sha(3003)] }, 'trivy', '框架缺检查'],
+    ['M 不是两父合并', { parents: [sha(3002)] }, 'trivy', '框架缺检查'],
+    ['M 的 check-runs 读取失败', { mError: 'gh GET 失败（退出码 1）' }, 'trivy', '框架缺检查'],
+    ['merged_at 读不到（不可解析）', { mergedAt: 'not-a-date' }, 'ci-suites-windows', '框架未完成（in_progress）'],
+    ['托管一项缺', { headRuns: hostedOverride(undefined) }, 'trivy', '托管缺检查'],
+    ['托管一项 in_progress', { headRuns: hostedOverride([run('hosted-trivy', 15368, null, { status: 'in_progress', started: t })]) }, 'trivy', '托管未完成（in_progress）'],
+    ['now 早于 merged_at', { minutes: -5 }, 'ci-suites-windows', '框架未完成（in_progress）'],
+  ];
+  for (const [label, options, check, reason] of cases) {
+    const { report, head } = await justMerged({ minutes: 9, lead: 2, ...options });
+    assert.equal(head.role, 'final', label);
+    assert.equal(head.verdict, '未知', label);
+    assert.equal(pairOf(head, check).verdict, '未知', label);
+    assert.equal(pairOf(head, check).reason, reason, label);
+    assert.equal(report.summary.streak.heads, 0, label);
+    assert.ok(!(report.summary.pendingMergedHeads > 0), label);
+  }
+});
+
+test('P7 自愈：框架跑完后再读按真实结果判（合入后 120 分钟）', async () => {
+  const t = at(24);
+  const green = await justMerged({ minutes: 120, lead: 2, mRuns: frameworkOnly(t) });
+  assert.equal(green.head.verdict, '一致');
+  assert.ok(green.head.pairs.every(p => p.verdict === '一致' && p.frameworkFrom?.sha === green.merge), JSON.stringify(green.head.pairs));
+  assert.equal(green.report.summary.streak.heads, 3);
+  const red = await justMerged({ minutes: 120, lead: 2, mRuns: frameworkOnly(t, check => check === 'ci-suites-windows'
+    ? [run(check, FRAMEWORK_PINS[check], 'failure', { started: t, completed: t, title: 'windows red' })] : null) });
+  assert.equal(red.head.verdict, '不一致');
+  assert.equal(pairOf(red.head, 'ci-suites-windows').direction, '框架红、托管绿');
+  assert.equal(pairOf(red.head, 'ci-suites-windows').frameworkFrom?.sha, red.merge);
+  assert.equal(red.report.summary.streak.heads, 0);
+  const own = await justMerged({ minutes: 120, lead: 2, headRuns: runsAt(t) });
+  assert.equal(own.head.verdict, '一致');
+  assert.equal(own.report.summary.streak.heads, 3);
 });
