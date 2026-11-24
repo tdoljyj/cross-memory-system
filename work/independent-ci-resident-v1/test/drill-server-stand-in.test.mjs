@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import * as kitModule from '../drill/make-drill-kit.mjs';
+const checkModule = await import('../drill/drill-server-check.mjs').catch(() => ({}));   // the host's requests to the drill's server
 import { validateAcceptance } from '../rollout/fleet/install.mjs';
 import { DRILL_RESERVED, namesDrillReserved } from '../rollout/fleet/publish.mjs';
 import { BINDING_ID, BINDING_TOKEN, DRILL_SERVER, PRODUCTION_GATEWAY, PRODUCTION_SERVER, bindingPs, candidateStubs, entryPs, evidence, firstInstallAssets, kitDir, ps, psCode, q, sha, tmp, verdictOf } from './drill-vm-fixtures.mjs';
@@ -69,7 +70,7 @@ test('no kit when the drill server is production, has no publishable key yet, or
   await assert.rejects(() => makeDrillKit({ ...f, server: { ...DRILL_SERVER, supabaseUrl: 'http://drill.example' } }), /DRILL_SERVER_REFUSED/);
   assert.ok(!fs.existsSync(f.out), 'refused before the kit is written');
   // the committed drill-server.json is the one source of the drill's server: the test project, never a production address
-  const committed = kitModule.readDrillServer({ allowUnset: true });
+  const committed = kitModule.readDrillServer({ allowUnset: true, keyFile: path.join(tmp, 'no-such-server-key.json') });
   assert.equal(committed.project, 'clued-auth-test'); assert.equal(committed.supabaseUrl, 'https://uscrdifznmlvczcekqpw.supabase.co');
   // the production gateway SwapBroker's renew probe is sent to (SwapBroker.cs Route, not read from the record) is cut off; no host is both
   assert.ok(committed.blackholeHosts.includes('kooyumi.pixelgrav.com'), JSON.stringify(committed.blackholeHosts));
@@ -242,4 +243,47 @@ test('-BindingCredential stores the binding the dialog gave, read back through t
   assert.equal(fs.existsSync(none), false);
   // given alone: never beside a run's arguments
   assert.equal(psCode(`$BindingCredential = $true; $Version = '1.2.3'; function Save-DrillBindingCredential { throw 'reached the dialog' }; Invoke-DrillMain`), 'DRILL_USAGE');
+});
+
+// FABLE-drill-test-project-sync-20261124.md section 3: the drill server's public key is not in the repository. Its one source is the
+// test project; the host keeps a copy that was checked against the project when it was stored (drill-vm.ps1 -ServerKey).
+const reply = (status, body) => ({ status, ok: status === 200, json: async () => body, text: async () => JSON.stringify(body) });
+const KEY = 'sb_publishable_fixture_hostcache';
+test('the drill server\'s public key is the host\'s checked copy, never a field of the committed file', { skip: !windows }, async () => {
+  const committedFile = new URL('../drill/drill-server.json', import.meta.url);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(committedFile, 'utf8')), 'publishableKey'), false, 'no key in the repository');
+  const { publishableKey, ...named } = DRILL_SERVER;
+  const file = path.join(tmp, 'server-key-source.json'), keyFile = path.join(tmp, 'server-key-cache.json');
+  fs.writeFileSync(file, JSON.stringify(named));
+  // a committed file that carries a key is no drill server (the key would be in the repository again)
+  const withKey = path.join(tmp, 'server-key-in-file.json'); fs.writeFileSync(withKey, JSON.stringify(DRILL_SERVER));
+  assert.throws(() => kitModule.readDrillServer({ file: withKey, keyFile }), e => e.message === 'DRILL_SERVER_REFUSED');
+  // no copy on the host yet: no kit
+  assert.throws(() => kitModule.readDrillServer({ file, keyFile }), e => e.message === 'DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET');
+  assert.equal(kitModule.readDrillServer({ file, keyFile, allowUnset: true }).publishableKey, null);
+  // stored only when the project itself answers the key: one request to the sync receipt function, the key as the api key
+  const calls = [];
+  const answering = status => async (url, init) => { calls.push({ url, init }); return reply(status, { state: 'syncing' }); };
+  await assert.rejects(() => checkModule.storeServerKey({ key: 'sb_secret_not_public', file, keyFile, fetch: answering(200) }), e => e.message === 'DRILL_SERVER_KEY_REFUSED');
+  assert.equal(calls.length, 0, 'a key of another shape is sent nowhere');
+  await assert.rejects(() => checkModule.storeServerKey({ key: KEY, file, keyFile, fetch: answering(401), pause: async () => {} }), e => e.message === 'DRILL_SERVER_KEY_REFUSED');
+  await assert.rejects(() => checkModule.storeServerKey({ key: KEY, file, keyFile, fetch: answering(404), pause: async () => {} }), e => e.message === 'DRILL_SERVER_NOT_IN_SYNC:no-receipt');
+  assert.equal(fs.existsSync(keyFile), false, 'nothing stored');
+  calls.length = 0;
+  await assert.rejects(() => checkModule.storeServerKey({ key: KEY, file, keyFile, fetch: async () => { calls.push(1); throw new Error('offline'); }, pause: async () => {} }), e => e.message === 'DRILL_SERVER_UNREACHABLE');
+  assert.equal(calls.length, 3, 'three tries'); assert.equal(fs.existsSync(keyFile), false);
+  calls.length = 0;
+  const stored = await checkModule.storeServerKey({ key: KEY, file, keyFile, fetch: answering(200) });
+  assert.equal(stored.status, 'DRILL_SERVER_KEY_STORED'); assert.equal(stored.file, keyFile);
+  assert.equal(calls.length, 1); assert.equal(calls[0].url, `${DRILL_SERVER.supabaseUrl}/rest/v1/rpc/clued_drill_sync_receipt_v1`);
+  assert.equal(calls[0].init.method, 'POST'); assert.equal(calls[0].init.headers.apikey, KEY);
+  assert.deepEqual(kitModule.readDrillServer({ file, keyFile }), { ...named, publishableKey: KEY });
+  // a copy stored for another project is not this server's key
+  const other = path.join(tmp, 'server-key-other.json'); fs.writeFileSync(other, JSON.stringify({ ...named, supabaseUrl: 'https://anotherfixture0000000.supabase.co' }));
+  assert.throws(() => kitModule.readDrillServer({ file: other, keyFile }), e => e.message === 'DRILL_SERVER_KEY_REFUSED');
+  fs.writeFileSync(keyFile, '{'); assert.throws(() => kitModule.readDrillServer({ file, keyFile }), e => e.message === 'DRILL_SERVER_KEY_REFUSED');
+  // the entry: -ServerKey alone; a key of another shape is refused by the one checker before anything is sent or stored
+  assert.equal(psCode(`$ServerKey = 'sb_secret_not_public'; Invoke-DrillMain`), 'DRILL_SERVER_KEY_REFUSED');
+  assert.equal(psCode(`$ServerKey = ${q(KEY)}; $Version = '1.2.3'; function Save-DrillServerKey { throw 'reached the request' }; Invoke-DrillMain`), 'DRILL_USAGE');
+  assert.equal(fs.existsSync(path.join(tmp, 'fixture-drill-server.local.json')), false);
 });

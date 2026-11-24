@@ -49,9 +49,10 @@ export const bindingPs = `(New-Object System.Management.Automation.PSCredential 
 // The drill's named mutexes are machine-wide (Global\): a fixture holding them would refuse a real drill on this host and fail while one
 // runs. Every fixture that loads drill-vm.ps1 swaps in names of this test run's own right after loading it; the PowerShell processes one
 // test starts (a host and the watchdog it launches) load the same fixture, so they still share them.
+// (The same for the host's cache of the drill server's public key, drill-vm.ps1 -ServerKey: no fixture writes the host's own.)
 // The Owner's drill binding is read from the host (D:\\clued-drill, Get-DrillCredential -Binding): a fixture never reads that one. Every
 // fixture that loads drill-vm.ps1 points the script at this test run's own, a fixture binding written on first use.
-const fixtureBinding = `$script:Drill.BindingCredential = ${q(path.join(tmp, 'fixture-drill-binding.clixml'))}; if (-not (Test-Path -LiteralPath $script:Drill.BindingCredential)) { ${bindingPs} | Export-Clixml -LiteralPath $script:Drill.BindingCredential }`;
+const fixtureBinding = `$script:Drill.BindingCredential = ${q(path.join(tmp, 'fixture-drill-binding.clixml'))}; if (-not (Test-Path -LiteralPath $script:Drill.BindingCredential)) { ${bindingPs} | Export-Clixml -LiteralPath $script:Drill.BindingCredential }; $script:Drill.ServerKeyFile = ${q(path.join(tmp, 'fixture-drill-server.local.json'))}`;
 export const ownMutexes = `$script:Drill.HostMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-host`)}; $script:Drill.BootMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-boot`)}; ${fixtureBinding}`;
 // The fixtures' one time (task ce2e5c1a step 2): a host status is written at T0, and Get-DrillTime answers T0 in every ps() snippet
 // that does not define its own, so what a fixture writes reads the same whenever the snippet runs. A snippet that needs time to pass
