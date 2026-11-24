@@ -1,0 +1,1030 @@
+{
+  "$comment": "每张表的保留类别（FABLE-prod-db-shrink-v2-20261124 第 7 节）。检查：apps/clued-cloud/tests/retention-classes-db.test.mjs，表清单取自回放全部迁移后的 pg_class。rule={rule}、canonical、state={reason}、ledger={reason}、pending={owner,expiresOn}（过期即红，按北京时间日期）。",
+  "schemas": [
+    "clued_private",
+    "clued_watchdog",
+    "mtpe_m0",
+    "public"
+  ],
+  "excludedSchemas": {
+    "auth": "Supabase 平台自带（测试库里是平台桩），不由本仓库迁移建表",
+    "mtpe_m0_test": "MTPE M0 测试数据，只在生产库里（仓库迁移不建它的表）；设计定为不纳入",
+    "mtpe_m0_work": "MTPE M0 工作数据，只在生产库里（仓库迁移不建它的表）；设计定为不纳入"
+  },
+  "tables": {
+    "clued_private.agent_message_settings_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.agent_messages_v1": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "clued_private.authorization_audit_v12": {
+      "class": "ledger",
+      "reason": "审计记录：只增，作为审计账本保留（谁在何时做了什么）"
+    },
+    "clued_private.authorization_contributions_v2": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.authorization_entries_v12": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.authorization_issuers_v12": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.authorization_protocol_capabilities_v2": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.authorization_requests_v12": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.authorization_resource_overrides_v2": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.authorization_source_bindings_v2": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.authorization_sources_v2": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.authorizations_v12": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.binding_retirements_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.binding_roles_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.candidate_confirmation_tokens": {
+      "class": "state",
+      "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
+    },
+    "clued_private.candidate_promotions": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.candidate_transitions": {
+      "class": "ledger",
+      "reason": "业务变更历史：只增，作为账本保留，回读历史与回执引用它"
+    },
+    "clued_private.ci_connection_expiry_reminders_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.ci_connection_renewals_v1": {
+      "class": "ledger",
+      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+    },
+    "clued_private.ci_duty_answers_v1": {
+      "class": "ledger",
+      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+    },
+    "clued_private.ci_exec_keys_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.ci_failover_members_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.ci_failover_settings_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.ci_failover_watchdog_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.ci_green_ledger_v1": {
+      "class": "ledger",
+      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+    },
+    "clued_private.ci_green_mirror_v1": {
+      "class": "ledger",
+      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+    },
+    "clued_private.ci_heartbeat_token_salt_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.ci_job_leases_v1": {
+      "class": "state",
+      "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
+    },
+    "clued_private.ci_jobs_v1": {
+      "class": "pending",
+      "owner": "规划：FABLE-prod-db-shrink-v2-20261124 第 7 节点名待定",
+      "expiresOn": "2026-12-15"
+    },
+    "clued_private.ci_lease_sweep_watchdog_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.ci_node_binding_rebinds_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.ci_node_commands_v1": {
+      "class": "ledger",
+      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+    },
+    "clued_private.ci_node_heartbeat_link_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.ci_node_lists_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.ci_node_liveness_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.ci_nodes_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.ci_nonce_ledger_v1": {
+      "class": "ledger",
+      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+    },
+    "clued_private.ci_publish_keys_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.ci_quota_counters_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.ci_renew_standing_decision_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.ci_result_index_v1": {
+      "class": "ledger",
+      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+    },
+    "clued_private.ci_scan_start_keys_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.ci_scan_start_policies_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.ci_sealed_drop_v1": {
+      "class": "ledger",
+      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+    },
+    "clued_private.ci_sweep_watermark_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.ci_train_front_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.ci_train_lease_v1": {
+      "class": "state",
+      "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
+    },
+    "clued_private.clock_source_epoch_candidate_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.clock_source_seals_candidate_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.context_pack_manifests": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.context_policies": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.credential_function_backup_v1": {
+      "class": "state",
+      "reason": "一次性盘点或迁移留档：盘点完成后不再增长"
+    },
+    "clued_private.credential_proof_backup_v1": {
+      "class": "state",
+      "reason": "一次性盘点或迁移留档：盘点完成后不再增长"
+    },
+    "clued_private.currentness_transport_attestations": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.development_feedback_v14": {
+      "class": "canonical"
+    },
+    "clued_private.development_grants_v14": {
+      "class": "state",
+      "reason": "成员与权限关系：随用户、项目、工作区数有界"
+    },
+    "clued_private.development_operations_v14": {
+      "class": "ledger",
+      "reason": "业务变更历史：只增，作为账本保留，回读历史与回执引用它"
+    },
+    "clued_private.development_record_versions_v14": {
+      "class": "canonical"
+    },
+    "clued_private.development_records_v14": {
+      "class": "canonical"
+    },
+    "clued_private.development_spaces_v14": {
+      "class": "canonical"
+    },
+    "clued_private.event_truth_carriers": {
+      "class": "canonical"
+    },
+    "clued_private.evidence_withdrawals": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.imprint_bulk_batches_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.imprint_bulk_items_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.imprint_bulk_proof_key_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.imprint_development_organization_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.imprint_extractions_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.imprint_organization_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.imprint_record_history_v1": {
+      "class": "pending",
+      "owner": "B1b：Owner 选 A 上线时改为 rule retention_rule_imprint_history_v1；选 B 改为 canonical",
+      "expiresOn": "2026-12-15"
+    },
+    "clued_private.independent_review_settings_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.information_candidates": {
+      "class": "canonical"
+    },
+    "clued_private.information_intake_submissions": {
+      "class": "canonical"
+    },
+    "clued_private.integration_binding_domains_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.integration_binding_owners_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.integration_binding_ownership_log_v1": {
+      "class": "ledger",
+      "reason": "业务变更历史：只增，作为账本保留，回读历史与回执引用它"
+    },
+    "clued_private.integration_canonical_verifications_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.integration_capability_declarations_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.integration_capability_vocabulary_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.integration_claims_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.integration_compatibility_rules_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.integration_connections_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.integration_derivation_diagnostics_v1": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "clued_private.integration_facts_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.integration_host_surfaces_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.integration_hosts_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.integration_identity_snapshots_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.integration_installation_requests_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.integration_operation_log_v1": {
+      "class": "ledger",
+      "reason": "业务变更历史：只增，作为账本保留，回读历史与回执引用它"
+    },
+    "clued_private.integration_policy_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.integration_providers_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.integration_ready_profiles_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.integration_ready_verifications_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.integration_reauth_marks_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.integration_regrants_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.integration_revocations_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.integration_scope_capability_map_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.integrations_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.issuer_credentials_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.issuer_function_sources_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.issuer_identities_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.knowledge_candidates": {
+      "class": "canonical"
+    },
+    "clued_private.knowledge_lineage": {
+      "class": "canonical"
+    },
+    "clued_private.legacy_carrier_inventory_receipts": {
+      "class": "state",
+      "reason": "一次性盘点或迁移留档：盘点完成后不再增长"
+    },
+    "clued_private.legacy_event_candidates": {
+      "class": "state",
+      "reason": "一次性盘点或迁移留档：盘点完成后不再增长"
+    },
+    "clued_private.legacy_event_project_impacts": {
+      "class": "state",
+      "reason": "一次性盘点或迁移留档：盘点完成后不再增长"
+    },
+    "clued_private.legacy_inventory_epoch": {
+      "class": "state",
+      "reason": "一次性盘点或迁移留档：盘点完成后不再增长"
+    },
+    "clued_private.merge_clock_boundary_candidate_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.merge_clock_samples_candidate_v1": {
+      "class": "ledger",
+      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+    },
+    "clued_private.merge_measurement_clock_registration_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.merge_measurement_events_v1": {
+      "class": "pending",
+      "owner": "规划：FABLE-prod-db-shrink-v2-20261124 第 7 节点名待定",
+      "expiresOn": "2026-12-15"
+    },
+    "clued_private.merge_measurement_stream_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.merge_queue_settings_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.mtpe_intake_projection": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.mtpe_owner_focus": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.native_confirmation_tokens": {
+      "class": "state",
+      "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
+    },
+    "clued_private.native_write_markers": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.owner_auto_approve_settings_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.owner_auto_approve_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.owner_grant_actions": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.owner_grants_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.owner_requests_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.platform_admin_audit_v13": {
+      "class": "ledger",
+      "reason": "审计记录：只增，作为审计账本保留（谁在何时做了什么）"
+    },
+    "clued_private.platform_admin_v13": {
+      "class": "state",
+      "reason": "成员与权限关系：随用户、项目、工作区数有界"
+    },
+    "clued_private.project_access_audit_v13": {
+      "class": "ledger",
+      "reason": "审计记录：只增，作为审计账本保留（谁在何时做了什么）"
+    },
+    "clued_private.project_access_requests_v13": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.project_invitations_v13": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.project_lifecycle_v2_dispositions": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.project_lifecycle_v2_recognitions": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.project_memberships_v13": {
+      "class": "state",
+      "reason": "成员与权限关系：随用户、项目、工作区数有界"
+    },
+    "clued_private.projection_builder_grants": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.projection_dependency_registry": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.projection_heads": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.projection_invalidation_heads": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.projection_record_bindings": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.projection_refresh_attempts": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "clued_private.projection_refresh_heartbeat": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.projection_refresh_jobs": {
+      "class": "state",
+      "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
+    },
+    "clued_private.raw_binding_grants_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.record_custom_priority_history_v1": {
+      "class": "ledger",
+      "reason": "业务变更历史：只增，作为账本保留，回读历史与回执引用它"
+    },
+    "clued_private.record_custom_priority_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.record_evidence_status": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.record_priority_legacy_v1": {
+      "class": "state",
+      "reason": "一次性盘点或迁移留档：盘点完成后不再增长"
+    },
+    "clued_private.record_reopen_audit": {
+      "class": "ledger",
+      "reason": "审计记录：只增，作为审计账本保留（谁在何时做了什么）"
+    },
+    "clued_private.release_identity_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.resource_center_artifacts_v1": {
+      "class": "canonical"
+    },
+    "clued_private.resource_center_bindings_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.resource_center_mutations_v1": {
+      "class": "ledger",
+      "reason": "业务变更历史：只增，作为账本保留，回读历史与回执引用它"
+    },
+    "clued_private.resource_center_profiles_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.resource_center_renewals_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.resource_center_rotations_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.resource_center_writer_bindings_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.scope_currentness_heads": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.search_text_v1": {
+      "class": "canonical"
+    },
+    "clued_private.storage_access_digest_recovery_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.storage_account_policies_v2": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.storage_admin_v2": {
+      "class": "state",
+      "reason": "成员与权限关系：随用户、项目、工作区数有界"
+    },
+    "clued_private.storage_automatic_reconcile_checks_v1": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "clued_private.storage_budgets_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.storage_client_capabilities_v2": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.storage_client_denies_v2": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.storage_client_digest_contracts_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.storage_client_grants_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.storage_client_registrations_v2": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.storage_client_request_links_v2": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.storage_conflict_exit_permits_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.storage_conflict_isolations_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.storage_conflict_observations_v1": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "clued_private.storage_conflict_scan_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.storage_conflict_validations_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.storage_connections_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.storage_current_registration_results_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.storage_directory_probes_v1": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "clued_private.storage_jobs_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.storage_master_controls_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.storage_oauth_apps_v1": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.storage_oauth_attempts_v1": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "clued_private.storage_onboard_allowlist_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.storage_onboard_attempts_v1": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "clued_private.storage_owner_connection_hidden_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.storage_owner_lifecycle_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.storage_policy_transition_cancellations_v2": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.storage_policy_transition_manifests_v2": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.storage_policy_transition_results_v2": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.storage_read_access_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.storage_read_client_denies_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.storage_read_receipts_v1": {
+      "class": "ledger",
+      "reason": "审计记录：只增，作为审计账本保留（谁在何时做了什么）"
+    },
+    "clued_private.storage_recovery_backoff_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.storage_recovery_diagnostics_v1": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "clued_private.storage_refresh_activity_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.storage_refresh_attempts_v1": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "clued_private.storage_refresh_delegations_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.storage_refresh_demand_proofs_v1": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "clued_private.storage_refresh_token_issuance_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.storage_registration_artifact_permits_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.storage_registration_checks_v1": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "clued_private.storage_revision_pins_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.storage_root_denies_v2": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.storage_semantic_attempts_v1": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "clued_private.storage_semantic_verifications_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.storage_staging_v1": {
+      "class": "state",
+      "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
+    },
+    "clued_private.storage_trash_batch_items_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.storage_trash_batch_uses_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.storage_trash_batches_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.task_goal_delivery_acceptances_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.task_goal_delivery_completion_admissions_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.typed_event_currentness_registry": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.visible_projection_invalidation_heads": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.visible_scope_currentness_heads": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.work_claim_activation_drains_v1": {
+      "class": "state",
+      "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
+    },
+    "clued_private.work_claim_ci_merge_refs_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.work_claim_door_usage_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.work_claim_execution_admissions_v1": {
+      "class": "pending",
+      "owner": "规划：FABLE-prod-db-shrink-v2-20261124 第 7 节点名待定",
+      "expiresOn": "2026-12-15"
+    },
+    "clued_private.work_claim_execution_policy_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.work_claim_exemptions_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.work_claim_free_handover_settings_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.work_claim_handover_deliveries_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.work_claim_handover_requests_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.work_claim_head_authorizations_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.work_claim_independent_consumer_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.work_claim_independent_drains_v1": {
+      "class": "state",
+      "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
+    },
+    "clued_private.work_claim_mechanical_policy_published_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.work_claim_merge_departed_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.work_claim_merge_front_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.work_claim_merge_queue_v1": {
+      "class": "state",
+      "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
+    },
+    "clued_private.work_claim_merge_rank_v1": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "clued_private.work_claim_pr_task_bindings_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.work_claim_publications_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.work_claim_rate_buckets_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "clued_private.work_claim_resource_kinds": {
+      "class": "state",
+      "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
+    },
+    "clued_private.work_claim_revocation_outbox_v1": {
+      "class": "state",
+      "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
+    },
+    "clued_private.work_claim_storage_authorizations_v1": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "clued_private.work_claim_task_modes_v1": {
+      "class": "state",
+      "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
+    },
+    "clued_private.work_claims_v1": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "clued_private.worker_request_probe_lifecycle_v1": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "public.clued_agent_bindings": {
+      "class": "state",
+      "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
+    },
+    "public.clued_audit_receipts": {
+      "class": "pending",
+      "owner": "规划：回执保留另出设计（FABLE-prod-db-shrink-v2-20261124 第 6 节）",
+      "expiresOn": "2026-12-15"
+    },
+    "public.clued_checkpoint_event_absorptions": {
+      "class": "canonical"
+    },
+    "public.clued_context_checkpoints": {
+      "class": "canonical"
+    },
+    "public.clued_context_events": {
+      "class": "canonical"
+    },
+    "public.clued_context_heads": {
+      "class": "state",
+      "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
+    },
+    "public.clued_context_streams": {
+      "class": "state",
+      "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
+    },
+    "public.clued_continuity_sessions": {
+      "class": "pending",
+      "owner": "B1a：上线时改为 rule retention_rule_session_payload_v1",
+      "expiresOn": "2026-12-15"
+    },
+    "public.clued_evidence": {
+      "class": "canonical"
+    },
+    "public.clued_log_versions": {
+      "class": "canonical"
+    },
+    "public.clued_memories": {
+      "class": "canonical"
+    },
+    "public.clued_memory_audit": {
+      "class": "pending",
+      "owner": "B1a：上线时改为 rule retention_rule_memory_audit_v1",
+      "expiresOn": "2026-12-15"
+    },
+    "public.clued_organizations": {
+      "class": "canonical"
+    },
+    "public.clued_p5_audit_events": {
+      "class": "ledger",
+      "reason": "审计记录：只增，作为审计账本保留（谁在何时做了什么）"
+    },
+    "public.clued_p5_events": {
+      "class": "ledger",
+      "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
+    },
+    "public.clued_p5_gateway_attempts": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "public.clued_p5_idempotency": {
+      "class": "ledger",
+      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+    },
+    "public.clued_p5_receipts": {
+      "class": "ledger",
+      "reason": "审计记录：只增，作为审计账本保留（谁在何时做了什么）"
+    },
+    "public.clued_pending_intents": {
+      "class": "state",
+      "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
+    },
+    "public.clued_project_mentions": {
+      "class": "canonical"
+    },
+    "public.clued_projects": {
+      "class": "canonical"
+    },
+    "public.clued_workspace_memberships": {
+      "class": "state",
+      "reason": "成员与权限关系：随用户、项目、工作区数有界"
+    },
+    "public.clued_workspaces": {
+      "class": "canonical"
+    }
+  }
+}

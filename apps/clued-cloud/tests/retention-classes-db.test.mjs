@@ -191,14 +191,15 @@ test('every table the migrations create declares its retention class', { timeout
     });
 
     await t.test('pending needs an owner and turns red after its date', () => {
+      // Fixture dates before every committed pending date, so only the edited entry can lapse.
       const pending = (entry) => edited((r) => { r.tables[someTable] = { class: 'pending', ...entry }; });
-      assert.deepEqual(retentionErrors(pending({ owner: 'Fable', expiresOn: '2026-12-15' }), replayed, '2026-12-15'), []);
-      assert.deepEqual(retentionErrors(pending({ owner: 'Fable', expiresOn: '2026-12-15' }), replayed, '2026-12-16'),
-        [`${someTable} (pending): undecided since 2026-12-15 (owner Fable); declare its class`]);
-      assert.deepEqual(retentionErrors(pending({ owner: '', expiresOn: '2026-12-15' }), replayed, '2026-12-01'),
+      assert.deepEqual(retentionErrors(pending({ owner: 'Fable', expiresOn: '2026-01-15' }), replayed, '2026-01-15'), []);
+      assert.deepEqual(retentionErrors(pending({ owner: 'Fable', expiresOn: '2026-01-15' }), replayed, '2026-01-16'),
+        [`${someTable} (pending): undecided since 2026-01-15 (owner Fable); declare its class`]);
+      assert.deepEqual(retentionErrors(pending({ owner: '', expiresOn: '2026-01-15' }), replayed, '2026-01-01'),
         [`${someTable} (pending): needs an owner`]);
       for (const expiresOn of [undefined, '2026-02-30', '15/12/2026']) {
-        assert.deepEqual(retentionErrors(pending({ owner: 'Fable', expiresOn }), replayed, '2026-12-01'),
+        assert.deepEqual(retentionErrors(pending({ owner: 'Fable', expiresOn }), replayed, '2026-01-01'),
           [`${someTable} (pending): expiresOn must be a date (YYYY-MM-DD)`]);
       }
     });
