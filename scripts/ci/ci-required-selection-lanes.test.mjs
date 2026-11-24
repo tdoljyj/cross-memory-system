@@ -214,7 +214,8 @@ test('lanes: the part process runs its suite\'s share through runSuite and hands
   assert.equal(okBlocks.length, 1, logged.join('\n'));
   assert.match(okBlocks[0], /^lane-ok: 道 [12]\/2 用时 [\d.]+ 秒，passed\n[\s\S]*::group::lane-ok: \(\.\) node ok\.mjs[\s\S]*lane-ok ran/);
   assert.ok(logged.some((line) => /^lane-bad: 道 [12]\/2 用时 [\d.]+ 秒，failed \(3\)\n[\s\S]*lane-bad ran/.test(line)), logged.join('\n'));
-  assert.equal(logged.filter((line) => /^lane-(ok|bad): 道 [12]\/2 /.test(line)).length, 4, 'a part of each suite in each lane');
+  assert.equal(logged.filter((line) => /^lane-(ok|bad): 道 [12]\/2 用时 /.test(line)).length, 4, 'a part of each suite in each lane');
+  assert.ok(!logged.some((line) => line.includes('输出未收')), 'a part whose pipe closed with its process has no drain notice');
 });
 
 test('lanes: a process a test leaves behind holding the output pipe does not hold the lane: the part ends after the drain', async (t) => {
@@ -240,5 +241,48 @@ test('lanes: a process a test leaves behind holding the output pipe does not hol
   assert.equal(status, 0, logged.join('\n'));
   assert.ok(wall < 10_000, `the lanes ended after ${Math.round(wall)} ms, not when the left process did`);
   assert.ok(logged.some((line) => line.includes('orphan left')), logged.join('\n'));
+  // The part ended by the drain says so (review M2): passed, and what the left process writes later is not in the log.
+  const drained = logged.filter((line) => line.includes('留下的进程仍占输出管道'));
+  assert.equal(drained.length, 1, logged.join('\n'));
+  assert.match(drained[0], /^lane-orphan: 道 [12]\/2 用时 [\d.]+ 秒，passed\n[\s\S]*orphan left[\s\S]*\n::notice title=lane-orphan::道 [12]\/2：子进程已退出，留下的进程仍占输出管道，500 毫秒后收尾，之后的输出未收$/);
   assert.equal(selection.LANE_DRAIN_MS, 5_000);
+});
+
+test('lanes: each part logs a start line as it starts, before its block; a job cancelled while a part runs names it by that line', async () => {
+  const logged = [];
+  let release;
+  const hung = new Promise((resolve) => { release = resolve; });
+  const atStart = [];
+  const until = async (done) => {
+    const limit = performance.now() + 5_000;
+    while (!done()) {
+      assert.ok(performance.now() < limit, logged.join('\n'));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  };
+  // Lane 2's part of b does not end until released: as a part still running when the job is cancelled at its limit.
+  const running = runSelected(['a', 'b', 'c'], { root: ROOT, env: { GITHUB_ACTIONS: 'true' }, cores: 8, log: (text) => logged.push(String(text)),
+    run: () => assert.fail('lanes'),
+    runPart: async (id, { lane }) => {
+      atStart.push(`${id} ${lane.index} ${logged.includes(`${id}: 道 ${lane.index}/2 开始`)}`);
+      if (id === 'b' && lane.index === 2) await hung;
+      return { status: 0, output: `${id} lane ${lane.index} output`, tally: null };
+    } });
+  await until(() => logged.some((line) => line.startsWith('c: 道 1/2 用时 ')));
+  // What a cancel now leaves in the log: the parts that started and have no block are the one still running.
+  const started = logged.filter((line) => / 开始$/.test(line)).map((line) => line.replace(/ 开始$/, ''));
+  const ended = logged.filter((line) => / 用时 /.test(line)).map((line) => line.split(' 用时 ')[0]);
+  assert.deepEqual(started.filter((part) => !ended.includes(part)), ['b: 道 2/2'], logged.join('\n'));
+  release();
+  assert.equal(await running, 0);
+  assert.deepEqual(atStart.sort(), ['a 1 true', 'a 2 true', 'b 1 true', 'b 2 true', 'c 1 true', 'c 2 true'], 'the start line is out before the part runs');
+  for (const id of ['a', 'b', 'c']) {
+    for (const index of [1, 2]) {
+      const start = logged.indexOf(`${id}: 道 ${index}/2 开始`);
+      const blocks = logged.map((line, at) => [line, at]).filter(([line]) => line.startsWith(`${id}: 道 ${index}/2 用时 `));
+      assert.equal(blocks.length, 1, `${id} ${index}: ${logged.join('\n')}`);
+      assert.ok(start >= 0 && start < blocks[0][1], `${id} lane ${index}: start line at ${start}, its block at ${blocks[0][1]}`);
+      assert.equal(logged.filter((line) => line === `${id}: 道 ${index}/2 开始`).length, 1);
+    }
+  }
 });

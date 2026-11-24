@@ -1462,7 +1462,8 @@ export const laneTestConcurrency = (cores, lanes) => Math.max(2, Math.floor((cor
 // One lane's part of one suite, in a child process: runSuite with --shard's part i/n, so its commands, known failures and
 // run again in full are --shard's. Its output (the suite's commands inherit it) is held and handed back whole; the result
 // comes back in a file, never parsed out of that output. A process a test leaves behind may hold the output pipe open (it
-// inherited it): the part ends LANE_DRAIN_MS after its process exits, with the output read by then.
+// inherited it): the part ends LANE_DRAIN_MS after its process exits, with the output read by then, and says so in a
+// notice line (what that process writes later is not in the log; review M2).
 export const LANE_DRAIN_MS = 5_000;
 const LANE_PART = `const [url, id, root, index, total, concurrency, out] = process.argv.slice(1);
 const { writeFileSync } = await import('node:fs');
@@ -1486,7 +1487,7 @@ export function runLanePart(id, { root, env = process.env, lane, drainMs = LANE_
     child.stderr.on('data', (chunk) => chunks.push(chunk));
     let done = false;
     let drain = null;
-    const finish = (problem) => {
+    const finish = (problem, drained = false) => {
       if (done) return;
       done = true;
       clearTimeout(drain);
@@ -1501,12 +1502,13 @@ export function runLanePart(id, { root, env = process.env, lane, drainMs = LANE_
       } catch { /* a temporary directory left behind */ }
       const ok = result && Number.isInteger(result.status);
       const output = Buffer.concat(chunks).toString('utf8')
+        + (drained ? `::notice title=${id}::道 ${lane.index}/${lane.total}：子进程已退出，留下的进程仍占输出管道，${drainMs} 毫秒后收尾，之后的输出未收\n` : '')
         + (ok ? '' : `::error title=${id}::lane ${lane.index}/${lane.total} ended without a result (${problem})\n`);
       resolve({ status: ok ? result.status : 1, output, tally: ok ? result.tally : null });
     };
     child.on('error', (error) => finish(error.message));
     child.on('exit', (code, signal) => {
-      drain = setTimeout(() => finish(`exit ${code ?? signal}; its output pipe still open after ${drainMs} ms`), drainMs);
+      drain = setTimeout(() => finish(`exit ${code ?? signal}; its output pipe still open after ${drainMs} ms`, true), drainMs);
     });
     child.on('close', (code, signal) => finish(`exit ${code ?? signal}`));
   });
@@ -1538,6 +1540,9 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
     await Promise.all(Array.from({ length: lanes }, async (unused, at) => {
       const lane = { index: at + 1, total: lanes, concurrency };
       for (const id of suites) {
+        // A line as the part starts: a job cancelled at its time limit drops the parts still held, and the suites that
+        // started and never ended name where it stopped (review M1).
+        log(`${id}: 道 ${lane.index}/${lanes} 开始`);
         const begun = performance.now();
         let part;
         try {
