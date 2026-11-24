@@ -236,6 +236,12 @@ test('each refusal of the sync script is the host\'s code: the password refused,
     const r = syncCode(w, t.tool);
     assert.equal(`${r.code}${r.detail ? `:${r.detail}` : ''}`, code, code);
   }
+  // a failed row: the database's own reason (on standard error after the code) comes along, the password masked
+  const row = 'DRILL_SERVER_SYNC_FAILED:supabase/migrations/20261124120000_retention_sweep_v1.sql';
+  const why = fakeSyncTool('row-reason', { ...failed(row), stderr: `drill-test-sync: ${row} permission denied for table t (as ${DB_PASSWORD})` });
+  const rr = syncCode(w, why.tool);
+  assert.equal(rr.code, 'DRILL_SERVER_SYNC_FAILED');
+  assert.equal(rr.detail, 'supabase/migrations/20261124120000_retention_sweep_v1.sql permission denied for table t (as ***)');
   // the test project already holds more than production's newest list: someone wrote it past the sync; the drill does not run on it
   const stale = fakeSyncTool('stale', inSync({ state: 'stale', applied: 0, fixtures: null }));
   const r = syncCode(w, stale.tool);

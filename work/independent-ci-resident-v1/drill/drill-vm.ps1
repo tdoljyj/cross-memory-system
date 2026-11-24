@@ -830,8 +830,11 @@ function Sync-DrillServer([string]$From, [string]$Version, [switch]$Rebuild) {
   $state = [string](Get-Prop $result 'state')
   if ($state -ceq 'failed') {
     if ([string](Get-Prop $result 'code') -cmatch '^(DRILL_SERVER_[A-Z_]+)(?::(.{1,400}))?$') {
-      # The database's own message is on the script's standard error (password masked): without it a failed row names no cause.
-      $where = & $clean $Matches[2]; throw (New-DrillError $Matches[1] "$where $(& $why $run.stderr)".Trim())
+      # The database's own message is on the script's standard error after its code (password masked): without it a failed row
+      # names no cause. Only what follows the code is added, so a code alone stays exactly the script's code.
+      $where = & $clean $Matches[2]; $echo = 'drill-test-sync: ' + [string](Get-Prop $result 'code'); $err = [string]$run.stderr; $pos = $err.IndexOf($echo)
+      $cause = if ($pos -ge 0) { (& $why $err.Substring($pos + $echo.Length)).Trim() } else { '' }
+      throw (New-DrillError $Matches[1] "$where $cause".Trim())
     }
     throw (New-DrillError 'DRILL_SERVER_SYNC_FAILED' "no-result: $(& $why $run.stderr)")
   }
@@ -2481,12 +2484,12 @@ function Get-DrillCredential([switch]$Binding, [switch]$ServerDatabase) {
 function Read-DrillBindingFromDialog {
   Read-DrillCredentialFromDialog 'Clued drill binding' 'Clued drill binding (clued-auth-test)' 'User name: the connection id of the drill binding in the TEST project (no ci-admission role). Password: its clued_bnd_ token. Stored for this Windows user only; never shown.' ([string]$BindingConnection).Trim().ToLowerInvariant() 'DRILL_BINDING_DIALOG'
 }
-# The test project's database password, the same dialog: the user name is filled in and cannot be changed (CREDUI_FLAGS_KEEP_USERNAME),
+# The test project's database password, the same dialog: the user name is filled in (an emptied box falls back to it),
 # the Owner pastes the password reset in the Supabase dashboard (clued-auth-test, Database, reset password).
 function Read-DrillServerDatabaseFromDialog {
   Read-DrillCredentialFromDialog 'Clued drill test database' 'Clued drill test database (clued-auth-test)' 'User name: leave it as it is (empty is fine). Password: the database password of the TEST project clued-auth-test (Supabase dashboard, Database, reset password). Never production. Stored for this Windows user only; never shown.' (Get-DrillServerDatabaseUser) 'DRILL_SERVER_DATABASE_DIALOG'
 }
-# $User: filled in and kept (not editable); empty: the person types it. $Codes: the prefix of the two stops (_CANCELLED, _FAILED).
+# $User: filled in (editable; an emptied box falls back to it); empty: the person types it. $Codes: the prefix of the two stops (_CANCELLED, _FAILED).
 function Read-DrillCredentialFromDialog([string]$Target, [string]$Caption, [string]$Message, [string]$User, [string]$Codes) {
   if (-not ('CluedDrillCredUiV2' -as [type])) {
     Add-Type -TypeDefinition @'
