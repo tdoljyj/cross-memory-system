@@ -1,7 +1,8 @@
 // The lock on wall-clock reads in test fixtures (task ce2e5c1a, step 2; FABLE-drill-vm-frozen-clock-20261121 §2 and its DESK
 // postscript). Three CI reds had one shape: a fixture took the real time once, a later comparison read the real time again, and
 // the verdict depended on how much real time passed between the two -- green on a fast host, red on a slow one
-// (drill-vm.test.mjs wslWorld, CI run 44746396297; native-claim-observation-retry and stale-facts-production-wiring, run 44895513321).
+// (drill-vm.test.mjs wslWorld, now in drill-vm-fixtures.mjs, CI run 44746396297; native-claim-observation-retry and
+// stale-facts-production-wiring, run 44895513321).
 //
 // scanClockLock(entries) reads the given test files and the test-directory modules they import (relative imports, any depth)
 // and returns one finding per place of these shapes:
@@ -18,8 +19,8 @@
 // process.uptime() or Temporal.Now.*; for a default parameter also the bare reference Date.now / performance.now (the
 // function then calls it). Not counted, and why:
 //   - reads in a test body, or in a function only tests call: they run when the test runs (default parameters too);
-//   - text in strings and templates: a PowerShell snippet runs in its own process when the test runs (drill-vm.test.mjs pins
-//     those reads itself, and its ps() fixes Get-DrillTime);
+//   - text in strings and templates: a PowerShell snippet runs in its own process when the test runs (drill-vm-part4.test.mjs pins
+//     those reads, and the ps() of drill-vm-fixtures.mjs fixes Get-DrillTime);
 //   - new Date(x) with an argument, and method calls x.now() of an object that is not the global clock (a fake clock).
 // Limits, by design (a lexer, not a type checker): a function reached only through an object, a method or a variable is not
 // followed, and a call that passes the argument a clocked default would take still counts for "load".

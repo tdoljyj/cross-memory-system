@@ -1,0 +1,8 @@
+{
+  "name": "clued-contract-build",
+  "private": true,
+  "description": "The esbuild the contract-placement job bundles the public bootstrap with, installed by scripts/ci/ci-deps.mjs (the versions are those of apps/clued-cloud/package-lock.json, so the runner store already holds them).",
+  "dependencies": {
+    "esbuild": "0.28.1"
+  }
+}

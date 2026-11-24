@@ -181,3 +181,42 @@ test('build-bundle: ref target types from one cat-file --batch-check; the per-re
   const invoke = text.slice(text.indexOf('function Invoke-Git'), text.indexOf('function Assert-FormalRefName'));
   assert.ok(invoke.indexOf('ReadToEndAsync') < invoke.indexOf('StandardInput.Write') && invoke.indexOf('StandardInput.Write') < invoke.indexOf('StandardInput.Close()'));
 });
+
+// bc982192 (push landing, S = H on the merge base of head and main): descriptor baseRule 'on-main' replaces "main's tip is baseSha" by
+// "baseSha is an ancestor of the head and of main's tip, or that tip"; without it nothing changes. The twin of
+// prepare-workspaces.py#on_main/base_on_main (test_prepare_workspaces_v2.py).
+test('build-bundle (bc982192): baseRule on-main checks ancestry of head and main instead of main = base; absent, main must be base', () => {
+  assert.ok(text.includes("$rule=$d.PSObject.Properties['baseRule'];$onMain=$null -ne $rule"));
+  assert.ok(text.includes("if($onMain -and ($rule.Value -isnot [string] -or $rule.Value -cne 'on-main' -or $d.testSha -cne $d.headSha)){throw 'DESCRIPTOR_REFUSED'}"));
+  assert.ok(text.includes("if(-not $local.ContainsKey('refs/heads/main') -or (-not $desc.onMain -and $local['refs/heads/main'] -cne $Base)){throw 'REMOTE_MAIN_BASE_CHANGED'}"));
+  const cat = text.indexOf("throw 'HEAD_BASE_SOURCE_COMMIT_MISSING'"), on = text.indexOf("if($desc.onMain -and -not (Base-On-Main ");
+  assert.ok(cat > 0 && on > cat && text.slice(on, text.indexOf('\n', on)).includes("throw 'REMOTE_MAIN_BASE_CHANGED'"), 'checked once head and base are known commits');
+  assert.equal((text.match(/REMOTE_MAIN_BASE_CHANGED/g) ?? []).length, 2);
+});
+
+test('build-bundle (bc982192): Base-On-Main over real git', { skip: process.platform !== 'win32' }, async () => {
+  const { spawnSync } = await import('node:child_process');
+  const os = await import('node:os'), path = await import('node:path');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-bundle-base-')), dir = path.join(root, 'repo'), config = path.join(root, 'gitconfig');
+  fs.mkdirSync(dir); fs.writeFileSync(config, ''); // an empty global config: git does not take os.devNull on Windows
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'f', GIT_AUTHOR_EMAIL: 'f@f', GIT_COMMITTER_NAME: 'f', GIT_COMMITTER_EMAIL: 'f@f' };
+    const git = (...a) => { const r = spawnSync('git', ['-C', dir, ...a], { env, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+    const commit = m => { fs.writeFileSync(path.join(dir, `${m}.txt`), m); git('add', '.'); git('commit', '-q', '-m', m); return git('rev-parse', 'HEAD'); };
+    git('init', '-q', '-b', 'main');
+    const t0 = commit('t0'); git('checkout', '-q', '-b', 'pr'); const head = commit('head');
+    git('checkout', '-q', 'main'); commit('m1'); const m2 = commit('m2');
+    git('checkout', '-q', '-b', 'other', t0); const other = commit('other');
+    const file = new URL('../src/resident-v2/build-bundle.ps1', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1').replaceAll("'", "''");
+    const cases = [[t0, head, m2], [m2, m2, m2], [m2, head, m2], [head, head, m2], [other, head, m2]];
+    const script = `$ErrorActionPreference='Stop';Set-StrictMode -Version 2
+$t=$null;$e=$null;$ast=[Management.Automation.Language.Parser]::ParseFile('${decodeURIComponent(file)}',[ref]$t,[ref]$e);if($e.Count){throw 'PARSE'}
+$f=@($ast.FindAll({param($a)$a -is [Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -ceq 'Base-On-Main'},$true));if($f.Count -ne 1){throw 'FUNCTION'}
+. ([scriptblock]::Create($f[0].Extent.Text))
+$count={param($a,$b) (& git -C '${dir.replaceAll("'", "''")}' rev-list --count "$a..$b")}
+${cases.map(([b, h, m]) => `[Console]::Out.WriteLine([string](Base-On-Main $count '${b}' '${h}' '${m}'))`).join('\n')}`;
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.stdout.trim().split(/\r?\n/), ['True', 'True', 'False', 'False', 'False']);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

@@ -10,8 +10,9 @@ name: hosted-required
 #
 # - Same entry as the self-hosted jobs: scripts/ci/ci-required-selection.mjs
 #   from the trusted base checkout selects and runs the suites (clued-required-
-#   tests.yml and clued-required-tests-windows.yml); the scans repeat the
-#   executor steps of gitleaks.yml, trivy.yml and contract-placement.yml.
+#   tests.yml and clued-required-tests-windows.yml); hosted-gitleaks repeats the
+#   R1 changed-range steps of clued-required-tests.yml's gitleaks job, the other
+#   scans the executor steps of trivy.yml and contract-placement.yml.
 # - Hosted machines are thrown away after each job: there is no node to protect,
 #   so no admission gate; the admission check is the scaffold ruleset's own
 #   kooyumi-work-admission (App 5164952, clued-work-admission.yml). No secret,
@@ -41,7 +42,7 @@ jobs:
   clued-cloud-tests:
     name: hosted-clued-cloud-tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: read
       pull-requests: read
@@ -106,12 +107,13 @@ jobs:
         if: steps.select.outputs.run_clued_cloud == 'true'
         env:
           CLUED_UNDER_TEST: "1"
+          CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
         run: node trusted/scripts/ci/ci-required-selection.mjs --run clued-cloud --root candidate
 
   ci-suites:
     name: hosted-ci-suites
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: read
       pull-requests: read
@@ -267,15 +269,25 @@ jobs:
         if: steps.select.outputs.run_production_schema == 'true'
         env:
           CLUED_UNDER_TEST: "1"
+          CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
         run: node trusted/scripts/ci/ci-required-selection.mjs --run production-schema --root candidate
       - name: Not affected
         if: steps.select.outputs.run_production_schema != 'true'
         run: echo "No migration, ledger, snapshot or drift-check file changed; nothing to verify." >> "$GITHUB_STEP_SUMMARY"
 
-  ci-suites-windows:
-    name: hosted-ci-suites-windows
+  ci-suites-windows-shard:
+    # The Windows suites in shards (task 3435f8bf block 4, PLAN-hosted-windows-speed-20261123 §3.2): one 4-core machine ran
+    # them in 23-26 minutes; each shard runs the i-th of n parts of the same --run-selected plan (ci-required-selection.mjs
+    # --shard, run from the trusted base like the rest). The number of shards is written in the matrix list only. A shard's
+    # check name is hosted-ci-suites-windows-shard-<n>, which no ruleset names: the required hosted-ci-suites-windows is the
+    # summary job below.
+    name: ${{ format('hosted-ci-suites-windows-shard-{0}', matrix.shard) }}
     runs-on: windows-2025
-    timeout-minutes: 45
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     permissions:
       contents: read
       pull-requests: read
@@ -330,6 +342,27 @@ jobs:
           path: trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
+      # The image warms Windows PowerShell's module analysis cache only at the machine-level PSModuleAnalysisCachePath. A
+      # PowerShell a test starts with its own minimal environment (the service's three variables) does not get that variable
+      # and uses the default cache under LocalApplicationData, which is cold: 45-56 s per process re-analysing the image's
+      # modules (task 3435f8bf block 1; whether the job is fast is judged by hosted-ci-suites-windows-duration). Copy the
+      # warmed file there. Auxiliary: when the file is missing or the copy fails it says so and does nothing
+      # (hosted-required.test.mjs).
+      - name: Warm the default PowerShell module analysis cache
+        shell: powershell
+        continue-on-error: true
+        timeout-minutes: 2
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = [Environment]::GetEnvironmentVariable('PSModuleAnalysisCachePath', 'Machine')
+          $target = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Microsoft\Windows\PowerShell\ModuleAnalysisCache'
+          try {
+            if (-not $source -or -not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "no warmed cache at the machine-level PSModuleAnalysisCachePath ($source)" }
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+            Copy-Item -LiteralPath $source -Destination $target -Force
+            Write-Output "warmed $target from $source ($((Get-Item -LiteralPath $target).Length) bytes)"
+          } catch { Write-Output "::notice title=PowerShell analysis cache not warmed::$($_.Exception.Message)" }
+          exit 0
       - name: Select and run the suites declared for Windows
         shell: powershell
         env:
@@ -342,8 +375,60 @@ jobs:
           CLUED_CI_HOST_LACKS: non-elevated
         run: |
           $ErrorActionPreference = 'Stop'
-          & node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate
+          & node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate --shard ${{ matrix.shard }}/${{ strategy.job-total }}
           exit $LASTEXITCODE
+
+  # The required check hosted-ci-suites-windows: green only when every shard succeeded. A failed, cancelled or skipped
+  # shard makes it red (a skipped required check would count as passed, hence always()). One judgement and nothing else:
+  # no artifact, no API, no numbers summed across shards (FABLE-hosted-b3-L2-ruling-20261124; hosted-required.test.mjs).
+  ci-suites-windows:
+    name: hosted-ci-suites-windows
+    needs: ci-suites-windows-shard
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every Windows suite shard succeeded
+        env:
+          RESULT: ${{ needs.ci-suites-windows-shard.result }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        run: |
+          echo "hosted-ci-suites-windows-shard-*: $RESULT"
+          test "$RESULT" = success
+
+  # Not a required check (no ruleset names it, and it is not one of shadow-compare.mjs's seven pairs): red when the shards
+  # took more than 10 minutes from the first start to the last end, with each shard's time in the step summary
+  # (scripts/ci/hosted-windows-duration.mjs, V4). It shows, it never blocks. It runs the candidate's script: nothing
+  # depends on its verdict, so a pull request may change it like any test.
+  ci-suites-windows-duration:
+    name: hosted-ci-suites-windows-duration
+    needs: ci-suites-windows-shard
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./candidate/.github/actions/ci-temporary-storage
+      - name: Measure the Windows suite shards
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node candidate/scripts/ci/hosted-windows-duration.mjs
 
   # The scans: the executor steps of gitleaks.yml, trivy.yml and contract-placement.yml from "Configure job temporary
   # storage" on, byte for byte, without the Native permission and relay identity steps (see the header).
@@ -353,107 +438,121 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: read
+    # Not gitleaks.yml's complete-history scan (the comment above is about trivy and contract-placement here): the R1
+    # changed-range steps of clued-required-tests.yml's gitleaks job, byte for byte (hosted-required.test.mjs). No step
+    # reads the live main or compares it with the event's base.sha, so a reopened or rerun pull request whose base.sha
+    # main has moved past scans the same range (PLAN-hosted-stale-base-20261123).
     steps:
-      # The trusted base only: the pinned .gitleaks.toml and the reviewed-finding helper come from main, never from the pull request.
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Check out the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
-      - name: Configure job temporary storage
-        uses: ./.github/actions/ci-temporary-storage
-      - name: Prepare the required history
+          # The changed range and its merge parents.
+          fetch-depth: 0
+          path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Resolve push baseline before loading trusted commands
+        id: train-base
+        working-directory: candidate
         env:
-          FETCH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+          STAGING_SHA: ${{ github.sha }}
+          PUSH_REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
         run: |
-          set -eu
-          umask 022
+          set -euo pipefail
+          if [ "$EVENT_NAME" = pull_request ]; then exit 0; fi
+          if [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
+            base=$(node --input-type=module -e "
+              const { execFileSync } = await import('node:child_process');
+              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);
+              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));
+              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));")
+            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
+            echo "sha=$base" >> "$GITHUB_OUTPUT"
+          else
+            base=$(git rev-parse "$STAGING_SHA^1")
+          fi
+          echo "ci_base=$base" >> "$GITHUB_OUTPUT"
+      - name: Check out the trusted base (scanner script and configuration)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}
+          path: trusted
+      - name: Configure job temporary storage
+        uses: ./trusted/.github/actions/ci-temporary-storage
+      # The change: a pull request's head against its base (the run's commit is GitHub's merge of the two), a push
+      # against the baseline resolved above (main: the first parent; staging: the root T of its member chain), a
+      # dispatch against its merge base with main.
+      - name: Resolve the changed range
+        id: range
+        working-directory: candidate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BASE: ${{ steps.train-base.outputs.ci_base }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request)
+              base=$PR_BASE head=$PR_HEAD
+              test "$(git rev-parse --verify --quiet "$GITHUB_SHA^2")" = "$head" ;;
+            push) base=$PUSH_BASE head=$GITHUB_SHA ;;
+            workflow_dispatch) head=$GITHUB_SHA base=$(git merge-base origin/main "$GITHUB_SHA") ;;
+            *) echo "::error::no changed range for event $EVENT_NAME"; exit 1 ;;
+          esac
+          for sha in "$base" "$head"; do
+            [[ "$sha" =~ ^[0-9a-f]{40}$ && ! "$sha" =~ ^0+$ ]] || { echo "::error::not a commit id: '$sha'"; exit 1; }
+          done
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+      - name: Copy the changed history into a fresh Git directory
+        env:
+          BASE: ${{ steps.range.outputs.base }}
+          HEAD: ${{ steps.range.outputs.head }}
+        shell: bash
+        run: |
+          set -euo pipefail
           export LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1
-          scan="$RUNNER_TEMP/clued-gitleaks"; repo="$scan/repo"; control="$scan/control"
-          mkdir "$scan" "$repo" "$control"
-          # The one departure from gitleaks.yml's bytes: the pins are not copied here (copies go stale: the five of the
-          # disabled gitleaks.yml no longer match main). They
-          # are read from the trusted base's Native gitleaks worker that protected-job-bridge-v4 runs, the one place a
-          # reviewed change of .gitleaks.toml or the helpers re-pins them (Task 04f9b91b; hosted-required.test.mjs).
-          node --input-type=module -e "
-            const { writeFileSync } = await import('node:fs');
-            const m = await import('./work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v4/required-history/prepare.mjs');
-            const [control, ignore] = process.argv.slice(1);
-            const hex = (value) => { if (!/^[0-9a-f]{64}$/.test(value)) throw new Error('not a sha256 pin: ' + value); return value; };
-            const files = Object.keys(m.SOURCE_PINS).sort();
-            if (files.join(' ') !== '.gitleaks.toml scripts/ci/reviewed_gitleaks.py scripts/ci/reviewed_gitleaks_historical.py') throw new Error('pinned files: ' + files);
-            writeFileSync(control + '/source.sha256', files.map((file) => hex(m.SOURCE_PINS[file]) + '  ' + file + '\n').join(''));
-            writeFileSync(control + '/reviewed-commits.sha256', hex(m.REVIEWED_COMMITS.sha256) + '  ' + control + '/reviewed-commits\n');
-            writeFileSync(control + '/reviewed-ignore.sha256', hex(m.REVIEWED_HISTORY_PROOF.reviewed_ignore_sha256) + '  ' + ignore + '\n');
-          " "$control" "$control/reviewed.ignore"
-          sha256sum -c --quiet "$control/source.sha256"
-          sed -n 's/^# clued-reviewed-finding: {"fingerprint":"\([0-9a-f]\{40\}\):.*$/\1/p' .gitleaks.toml | sort -u > "$control/reviewed-commits"
-          sha256sum -c --quiet "$control/reviewed-commits.sha256"
+          scan="$RUNNER_TEMP/clued-gitleaks"; repo="$scan/repo"
+          mkdir "$scan" "$repo"
+          git -C candidate update-ref refs/clued-scan/base "$BASE"
+          git -C candidate update-ref refs/clued-scan/head "$HEAD"
           git init --quiet --template= "$repo"
-          auth="$(printf 'x-access-token:%s' "$FETCH_TOKEN" | base64 -w0)"
-          fetch() {
-            GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
-              git -C "$repo" -c core.logAllRefUpdates=false -c core.hooksPath=/nonexistent-clued-hooks -c protocol.allow=never \
-              -c protocol.https.allow=always fetch --quiet --no-tags --no-recurse-submodules --no-auto-gc --update-head-ok \
-              "https://github.com/$GITHUB_REPOSITORY" "$@"
-          }
-          fetch '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
-          fetch "$HEAD_SHA" "$GITHUB_SHA" $(cat "$control/reviewed-commits")
-          rm -f "$repo/.git/FETCH_HEAD"
-          git -C "$repo" -c core.logAllRefUpdates=false update-ref --no-deref HEAD "$HEAD_SHA"
-          test "$(git -C "$repo" cat-file -t "$HEAD_SHA")" = commit
-          # The scanned head is the second parent of the merge commit this run belongs to.
-          test "$GITHUB_EVENT_NAME" != pull_request || test "$(git -C "$repo" rev-parse --verify --quiet "$GITHUB_SHA^2")" = "$HEAD_SHA"
-          test -z "$BASE_SHA" || test "$(git -C "$repo" rev-parse --verify --quiet refs/heads/main)" = "$BASE_SHA"
-          test "$(git -C "$repo" cat-file --batch-check='%(objecttype)' < "$control/reviewed-commits" | sort -u)" = commit
-          test -z "$(git -C "$repo" for-each-ref --format='%(refname)' | grep -Ev '^refs/(heads|tags)/' || true)"
-          for indirect in shallow info/grafts objects/info/alternates objects/info/http-alternates logs; do test ! -e "$repo/.git/$indirect"; done
-          git -C "$repo" fsck --full --strict --no-reflogs --no-progress
-          install -m 0444 .gitleaks.toml "$repo/.gitleaks.toml"
-          printf '[safe]\n\tdirectory = /repo\n\tdirectory = /test\n' > "$control/git-safe.config"
-          chmod -R a+rX "$repo" && chmod 0444 "$control/git-safe.config"
-      - name: Validate exact historical exceptions and detection regressions
+          git -C "$repo" -c protocol.file.allow=always fetch --quiet --no-tags --no-recurse-submodules \
+            "$GITHUB_WORKSPACE/candidate" refs/clued-scan/base:refs/heads/base refs/clued-scan/head:refs/heads/head
+          test "$(git -C "$repo" rev-parse refs/heads/head)" = "$HEAD"
+          install -m 0444 trusted/.gitleaks.toml "$repo/.gitleaks.toml"
+          printf '[safe]\n\tdirectory = /repo\n' > "$scan/git-safe.config"
+      - name: Scan the changed range with Gitleaks 8.30.1
+        env:
+          BASE: ${{ steps.range.outputs.base }}
+          HEAD: ${{ steps.range.outputs.head }}
+        shell: bash
         run: |
-          set -eu
-          # The helper's git commands go through the argv adapter of the Native self-test shim this worker runs
-          # (formal-gitleaks-v4 selftest-shim.mjs safeGitArguments), not a copy of its rules: its command allow-list and
-          # core.abbrev=8 for the two pinned historical patch digests. Without it git abbreviates a complete history
-          # to 9+ characters and the helper fails "Reviewed-finding verification failed" (Task 04f9b91b).
-          shim="$RUNNER_TEMP/clued-gitleaks/self-test"
-          mkdir -m 0700 "$shim" "$shim/bin" "$shim/templates"
-          cat > "$shim/git.mjs" <<'EOF'
-          import { spawnSync } from 'node:child_process';
-          import { pathToFileURL } from 'node:url';
-          const [git, module, templates, ...args] = process.argv.slice(2);
-          const { safeGitArguments } = await import(pathToFileURL(module).href);
-          process.exitCode = spawnSync(git, safeGitArguments(args, { templates }), { stdio: 'inherit' }).status ?? 1;
-          EOF
-          printf '#!/bin/sh\nexec %s %s %s %s %s "$@"\n' "$(command -v node)" "$shim/git.mjs" "$(command -v git)" \
-            "$PWD/work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v4/required-history/selftest-shim.mjs" \
-            "$shim/templates" > "$shim/bin/git"
-          chmod 0500 "$shim/bin/git"
-          PATH="$shim/bin:$PATH" python3 -I -B scripts/ci/reviewed_gitleaks.py \
-            --config "$RUNNER_TEMP/clued-gitleaks/repo/.gitleaks.toml" \
-            --output "$RUNNER_TEMP/clued-gitleaks/control/reviewed.ignore" \
-            --self-test
-      - name: Scan complete history with Gitleaks 8.30.1
-        run: |
-          set -eu
+          set -euo pipefail
           scan="$RUNNER_TEMP/clued-gitleaks"
-          image=ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
-          sha256sum -c --quiet "$scan/control/reviewed-ignore.sha256"
-          chmod 0444 "$scan/control/reviewed.ignore"
-          docker pull --quiet "$image" > /dev/null
-          docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+          image=ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          docker image inspect "$image" > /dev/null 2>&1 || docker pull --quiet "$image" > /dev/null
+          bash trusted/scripts/ci/gitleaks-range.sh "$scan/repo" "$BASE" "$HEAD" -- \
+            docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user="$(id -u):$(id -g)" --read-only \
             --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
-            --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \
-            --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \
-            --mount "type=bind,src=$scan/repo,dst=/repo,readonly,bind-propagation=rprivate" \
-            --mount "type=bind,src=$scan/control/reviewed.ignore,dst=/reviewed.ignore,readonly,bind-propagation=rprivate" \
-            --mount "type=bind,src=$scan/control/git-safe.config,dst=/etc/gitconfig,readonly,bind-propagation=rprivate" \
+            --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=HOME=/scratch --env=TMPDIR=/scratch \
+            --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid="$(id -u)",gid="$(id -g)" \
+            --mount "type=bind,src=$scan/repo,dst=/repo,bind-propagation=rprivate" \
+            --mount "type=bind,src=$scan/git-safe.config,dst=/etc/gitconfig,readonly,bind-propagation=rprivate" \
             --workdir=/repo --entrypoint /usr/bin/gitleaks "$image" \
-            git /repo --config /repo/.gitleaks.toml --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1
+            git /repo --config /repo/.gitleaks.toml --redact --no-banner --exit-code 1
 
   trivy:
     name: hosted-trivy

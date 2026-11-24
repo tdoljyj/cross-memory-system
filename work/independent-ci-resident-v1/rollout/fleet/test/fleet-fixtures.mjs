@@ -90,7 +90,9 @@ function rolePolicy(role, letter, fleet, installedCi, { toolchainSha = hex(32), 
 
 // One node: its installed package (generation 1) and its root. `fleet`: the shared record facts (another value: a node outside the fleet).
 // companionAccount: the node runs its companion under its own account (install\companion-account.json, the profile's ownerSid).
-export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAccount = false, heartbeat = false } = {}) {
+// policyContract: the installed policy's contract (default policy.example.json's /7, whose train it keeps; /8 and later carry the fleet's
+// train, policy.mjs FLEET_TRAIN, on: as the nodes in the field do).
+export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAccount = false, heartbeat = false, policyContract = null } = {}) {
   const d = await tempDir(t, `fleetnode${letter}`);
   const profile = profileOf(letter);
   const signer = signerKeys();
@@ -106,6 +108,7 @@ export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAc
   writeRecord(record, assembleRecord(inputs, sourceFiles()));
   const policy = JSON.parse(await fs.readFile(path.join(RES, 'config', 'policy.example.json'), 'utf8'));
   Object.assign(policy, { node: profile, nodeProfileSha256: nodeProfileSha256(profile) });
+  if (policyContract !== null) policy.contract = policyContract;
   policy.companion.userSid = profile.ownerSid; policy.linux.distribution = profile.wslDistribution;
   const companion = JSON.parse(await fs.readFile(path.join(RES, 'config', 'companion.example.json'), 'utf8'));
   Object.assign(companion.companion, { node: profile, nodeProfileSha256: nodeProfileSha256(profile), distribution: profile.wslDistribution });

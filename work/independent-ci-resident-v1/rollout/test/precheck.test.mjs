@@ -1,6 +1,7 @@
 // precheck.mjs (DESIGN §42.3.2): the installed upgrader's ACCEPT against a node root, read-only. The packages carry the REAL upgrader
 // copy of this tree (tools/build-package.mjs upgraderCopy), as every built package does, so the code that decides is the code under test.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -114,10 +115,11 @@ test('precheck: an admin-only slot is a stand-in, the rest is still decided', as
   assert.deepEqual(r.unreadableSlots, ['helpers\\controller-formal-generic-v2.exe']);
 });
 
-// Defect 15894c2a: the precheck before a train-on upgrade compares the OTHER nodes' Sources with the target, on the list stage 10 last
-// read from Native (ci_nodes_status). The status snapshot's train.nodes is written exactly as the executor writes it: stage 10's facts
-// (train-facts.mjs, as train-maintenance.mjs fills them) through train.mjs#trainNodesView.
-const MIN = 60_000, HOUR = 60 * MIN;
+// Task 0b1516c0 (was defect 15894c2a): the precheck compares no Source across nodes. A fresh nodes list on the node on duty that shows the
+// other node on another Source (behind, or really older: the same input) is no refusal; the order is upgrade.mjs step 8's, one Source
+// across the fleet stage 10's TRAIN_SOURCE_MISMATCH at run time. The status snapshot's train.nodes is written exactly as the executor
+// writes it: stage 10's facts (train-facts.mjs, as train-maintenance.mjs fills them) through train.mjs#trainNodesView.
+const MIN = 60_000;
 const peer = (node, source, heardAgo) => ({ node, sourceManifestSha256: source, state: 'NORMAL', lastHeartbeatAt: heardAgo === null ? null : new Date(T - heardAgo).toISOString() });
 async function writeNodes(root, { own, nodes, at = T, mode = 'ACTIVE' }) {
   const facts = trainFacts({ mode: 'on', at: new Date(at).toISOString(), onDuty: true, holders: [], mainSha: null, rules: null, front: null, revoke: [], ledger: null,
@@ -128,114 +130,29 @@ async function writeNodes(root, { own, nodes, at = T, mode = 'ACTIVE' }) {
   await fs.writeFile(path.join(root, 'state', 'status.json'), JSON.stringify({ node: { name: NODE, mode }, train: { enabled: 'on', last: null, nodes: view } }));
 }
 
-test('defect 15894c2a: target on, the other node heard within 24 hours already runs the target Source: PASS', async t => {
+test('task 0b1516c0: target on, the node on duty, a fresh list with the other node on an older Source: the precheck passes on its own checks', async t => {
   const { base, next, root, run } = await world(t, { trainMode: 'on' });
-  await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE, base.ciSource, MIN), peer('node-b', next.ciSource, 5 * MIN)] });
+  await writeNodes(root, { own: base.ciSource, at: T - 5 * MIN, nodes: [peer(NODE, base.ciSource, MIN), peer('node-b', base.ciSource, MIN), peer('node-c', 'c'.repeat(64), 5 * MIN)] });
   const before = await listing(root);
   const r = await run();
   assert.equal(r.status, 'PRECHECK_PASS', JSON.stringify(r));
-  assert.deepEqual([r.fleetSourceReadiness.status, r.fleetSourceReadiness.targetMode, r.fleetSourceReadiness.targetCiSourceManifestSha256, r.fleetSourceReadiness.staleNodesIgnored],
-    ['PASS', 'on', next.ciSource, []]);
-  assert.ok(!r.warnings.includes('FLEET_SOURCE_UNVERIFIED'));
+  assert.equal(r.plan.target.ciSourceManifestSha256, next.ciSource);
+  assert.ok(r.warnings.includes('NODE_HOLDS_CI_ADMISSION_HAND_OVER_FIRST'), 'the hand-over gate (upgrade.mjs step 8) still reads this');
+  for (const k of ['fleetSourceReadiness', 'localChecks', 'code', 'advice']) assert.equal(k in r, false, k);
+  assert.ok(!r.warnings.some(w => w.startsWith('FLEET_')), JSON.stringify(r.warnings));
   assert.deepEqual(await listing(root), before, 'nothing is written');
 });
 
-test('defect 15894c2a: target on, the other node heard within 24 hours runs another Source: refused, and it is named to go first', async t => {
-  const { base, next, root, run } = await world(t, { trainMode: 'on' });
-  // today's field case: this node goes to the next generation while the other one, heard 5 minutes ago, still runs the current Source
-  // (this node's own entry, under any letter case, is the one being upgraded and is never compared)
-  await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE.toUpperCase(), base.ciSource, MIN), peer('node-b', base.ciSource, 5 * MIN)] });
-  const r = await run();
-  assert.deepEqual([r.status, r.code, r.detail, r.localChecks], ['PRECHECK_REFUSED', 'FLEET_SOURCE_MISMATCH', { upgradeFirst: ['node-b'] }, 'PRECHECK_PASS'], JSON.stringify(r));
-  assert.equal(r.fleetSourceReadiness.status, 'MISMATCH');
-  assert.deepEqual(r.fleetSourceReadiness.mismatchedNodes, [{ node: 'node-b', sourceManifestSha256: base.ciSource, lastHeartbeatAt: new Date(T - 5 * MIN).toISOString() }]);
-  assert.match(r.advice, /先给 node-b 装目标 Source/);
-  assert.match(r.advice, new RegExp(next.ciSource.slice(0, 12)));
-  assert.equal(r.fleetSourceReadiness.ownerStatusUrl, 'https://kooyumi.pixelgrav.com/bindings/failover');
-  // a node on a third Source is just as much a mismatch; one that reports no Source (§41.6 "no record") is not compared
-  await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE, base.ciSource, MIN), peer('node-b', 'c'.repeat(64), 23 * HOUR), peer('fresh', null, MIN)] });
-  const s = await run();
-  assert.deepEqual([s.status, s.code, s.detail.upgradeFirst], ['PRECHECK_REFUSED', 'FLEET_SOURCE_MISMATCH', ['node-b']]);
-});
-
-test('defect 15894c2a: target on, the other node on another Source was not heard for over 24 hours: not compared, PASS with a notice', async t => {
-  const { base, root, run } = await world(t, { trainMode: 'on' });
-  await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE, base.ciSource, MIN), peer('node-b', base.ciSource, 25 * HOUR), peer('never', base.ciSource, null)] });
-  const r = await run();
-  assert.equal(r.status, 'PRECHECK_PASS', JSON.stringify(r));
-  assert.equal(r.fleetSourceReadiness.status, 'PASS');
-  assert.deepEqual(r.fleetSourceReadiness.staleNodesIgnored.map(n => n.node), ['node-b', 'never']);
-  assert.ok(r.warnings.includes('FLEET_STALE_NODES_IGNORED'));
-});
-
-test('defect 15894c2a: no list the precheck can trust is never a fleet PASS (a standby has none); the target mode is the package\'s', async t => {
-  const { base, next, root, run } = await world(t, { trainMode: 'on' });
-  const unverified = async reason => {
-    const r = await run();
-    assert.deepEqual([r.status, r.localChecks, r.fleetSourceReadiness.status, r.fleetSourceReadiness.reason], ['PRECHECK_PASS_LOCAL_ONLY', 'PRECHECK_PASS', 'UNVERIFIED', reason], JSON.stringify(r));
-    assert.ok(r.warnings.includes('FLEET_SOURCE_UNVERIFIED'));
-    return r;
-  };
-  await unverified('NODES_VIEW_ABSENT'); // no status.json at all
-  await writeNodes(root, { own: base.ciSource, at: T - 2 * HOUR, nodes: [peer(NODE, base.ciSource, 2 * HOUR), peer('node-b', base.ciSource, 2 * HOUR)] });
-  await unverified('NODES_VIEW_STALE');
-  await writeNodes(root, { own: base.ciSource, nodes: [peer('someone-else', base.ciSource, MIN), peer('node-b', next.ciSource, MIN)] });
-  assert.deepEqual((await unverified('SELF_NOT_IN_NODES_VIEW')).fleetSourceReadiness.nodes.map(n => n.node), ['someone-else', 'node-b']);
-  // the target's mode, absent or not one of off | shadow | on, is never "not required"
-  for (const trainMode of [null, 'ON']) {
-    const w = await world(t, { trainMode });
-    const r = await w.run();
-    assert.deepEqual([r.status, r.fleetSourceReadiness.reason, r.fleetSourceReadiness.targetMode], ['PRECHECK_PASS_LOCAL_ONLY', 'TARGET_TRAIN_MODE_UNREADABLE', null]);
-  }
-});
-
-test('defect 15894c2a: a target with the train shadow or off needs no fleet check, so a shadow rollback is never held by it', async t => {
-  for (const trainMode of ['shadow', 'off']) {
-    const { base, root, run } = await world(t, { trainMode });
-    await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE, base.ciSource, MIN), peer('node-b', base.ciSource, MIN)] });
-    const r = await run();
-    assert.deepEqual([r.status, r.fleetSourceReadiness.status, r.fleetSourceReadiness.targetMode], ['PRECHECK_PASS', 'NOT_REQUIRED', trainMode]);
-  }
-});
-
-test('defect 15894c2a (review m2): right after a hand-over both lists are fresh; only the node on duty now refuses, the other warns', async t => {
-  const { base, root, run } = await world(t, { trainMode: 'on' });
-  const nodes = [peer(NODE, base.ciSource, MIN), peer('node-b', base.ciSource, 5 * MIN)];
-  for (const mode of ['STANDBY', 'UNCERTAIN']) {
-    // this node handed over 20 minutes ago: its list is younger than an hour and still shows node-b on the current Source
-    await writeNodes(root, { own: base.ciSource, at: T - 20 * MIN, mode, nodes });
-    const r = await run();
-    assert.deepEqual([r.status, r.localChecks, r.fleetSourceReadiness.status, r.fleetSourceReadiness.reason], ['PRECHECK_PASS_LOCAL_ONLY', 'PRECHECK_PASS', 'UNVERIFIED', 'NOT_ON_DUTY'], mode);
-    assert.deepEqual(r.fleetSourceReadiness.mismatchedNodes.map(n => n.node), ['node-b'], 'what the older list showed is still told');
-    assert.ok(r.warnings.includes('FLEET_SOURCE_UNVERIFIED'));
-    assert.match(r.advice, /不当班/);
-  }
-  await writeNodes(root, { own: base.ciSource, at: T - 20 * MIN, mode: 'ACTIVE', nodes });
-  assert.deepEqual([(await run()).status, (await run()).code], ['PRECHECK_REFUSED', 'FLEET_SOURCE_MISMATCH'], 'the holder refuses');
-});
-
-test('defect 15894c2a (review m3): the Owner\'s explicit pass for a node gone for good passes the precheck and says the train will stop', async t => {
-  const { base, root, run } = await world(t, { trainMode: 'on' });
-  await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE, base.ciSource, MIN), peer('node-b', base.ciSource, 3 * HOUR)] });
-  const refused = await run();
-  assert.equal(refused.code, 'FLEET_SOURCE_MISMATCH');
-  assert.match(refused.advice, /-AllowFleetSourceMismatch/);
-  const r = await run({ allowFleetSourceMismatch: true });
-  assert.deepEqual([r.status, r.localChecks, r.fleetSourceReadiness.status, r.fleetSourceReadiness.allowed], ['PRECHECK_PASS_FLEET_SOURCE_MISMATCH_ALLOWED', 'PRECHECK_PASS', 'MISMATCH', true]);
-  assert.ok(r.warnings.includes('FLEET_SOURCE_MISMATCH_ALLOWED'));
-  assert.match(r.advice, /TRAIN_SOURCE_MISMATCH 停车/);
-  assert.equal(r.code, undefined);
-  // the pass changes nothing when there is no mismatch
-  await writeNodes(root, { own: base.ciSource, nodes: [peer(NODE, base.ciSource, MIN)] });
-  assert.equal((await run({ allowFleetSourceMismatch: true })).status, 'PRECHECK_PASS');
-});
-
-test('defect 15894c2a (review m4): before the first generation that writes train.nodes, the pass is local only and says so', async t => {
-  const { run } = await world(t, { trainMode: 'on' });
-  const r = await run();
-  assert.deepEqual([r.status, r.fleetSourceReadiness.reason], ['PRECHECK_PASS_LOCAL_ONLY', 'NODES_VIEW_ABSENT']);
-  assert.match(r.advice, /首代空窗/);
-  assert.match(r.advice, /bindings\/failover/);
+test('task 0b1516c0: --allow-fleet-source-mismatch is an unknown option now; the command line answers PRECHECK_FAILED with exit code 1', async t => {
+  const { next, root, base } = await world(t, { trainMode: 'on' });
+  const args = ['--root', root, '--package', next.dir, '--package-sha', next.sha, '--acceptance', DECISION, '--installed-package', base.dir];
+  const cli = path.join(RESIDENT, 'rollout', 'precheck.mjs');
+  const ok = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', windowsHide: true });
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  const r = spawnSync(process.execPath, [cli, ...args, '--allow-fleet-source-mismatch'], { encoding: 'utf8', windowsHide: true });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const out = JSON.parse(r.stdout.trim().split('\n').at(-1));
+  assert.deepEqual([out.status, out.code], ['PRECHECK_FAILED', 'ERR_PARSE_ARGS_UNKNOWN_OPTION']);
 });
 
 test('precheck: a changed frozen module is a channel change, and the changed files are named', async t => {
@@ -408,15 +325,13 @@ test('M5-b relay parents: an entry missing and a target whose VERIFY does not ad
   for (const ensures of [false, null]) {
     const { ci, run, sddlOf } = await relayWorld(t, { ensures });
     sddlOf.set(path.join(ci, 'formal-spool'), WITHOUT);
-    for (const over of [{}, { allowFleetSourceMismatch: true }]) {
-      const r = await run(over);
-      assert.equal(r.status, 'PRECHECK_REFUSED', JSON.stringify(r));
-      assert.equal(r.code, 'COMPANION_RELAY_PARENT_ACL_MISSING_TARGET_DOES_NOT_ADD_IT');
-      assert.deepEqual([r.detail.parents.map(p => p.presence), r.detail.targetEnsures], [['present', 'missing'], false]);
-      assert.ok(r.advice.includes('Invoke-CompanionRelayParentsEnsure') && r.advice.includes('此节点需用通用安装包重装'));
-      assert.equal('fix' in r, false);
-      assert.doesNotMatch(r.advice, /powershell|ensure-companion/i);
-    }
+    const r = await run();
+    assert.equal(r.status, 'PRECHECK_REFUSED', JSON.stringify(r));
+    assert.equal(r.code, 'COMPANION_RELAY_PARENT_ACL_MISSING_TARGET_DOES_NOT_ADD_IT');
+    assert.deepEqual([r.detail.parents.map(p => p.presence), r.detail.targetEnsures], [['present', 'missing'], false]);
+    assert.ok(r.advice.includes('Invoke-CompanionRelayParentsEnsure') && r.advice.includes('此节点需用通用安装包重装'));
+    assert.equal('fix' in r, false);
+    assert.doesNotMatch(r.advice, /powershell|ensure-companion/i);
   }
 });
 

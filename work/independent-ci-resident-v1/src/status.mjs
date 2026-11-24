@@ -33,7 +33,7 @@ import { parseBudget } from './budget-alert.mjs';
 // only when it has a value, so a reader before 3c-2b and the train shapes of today stay as they were. A notice kind `train-owner`
 // carries stage 10's decisions the Owner must hear of (a PAUSE for a landed tree that differs, another node's Source).
 // Defect 15894c2a (still /8: only `train` grows, written only when it has a value): `train.nodes`, the nodes the newest on-mode run
-// compared in its §41.6 Source check (train.mjs#trainNodesView), for the NON-elevated upgrade precheck (rollout/precheck.mjs).
+// compared in its §41.6 Source check (train.mjs#trainNodesView), for the fleet-lag alert and the landing precheck (rollout/landing-precheck.mjs).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
@@ -312,7 +312,7 @@ function trainOf(t) {
   const out = { enabled: ['off', 'shadow', 'on'].includes(t?.enabled) ? t.enabled : null, last: parseTrainLast(t?.last) };
   const sweep = parseTrainSweep(t?.sweep), revokeHead = parseRevokeHead(t?.revokeHead), onSince = ms(t?.onSince);
   if (sweep) out.sweep = sweep;
-  // Defect 15894c2a: the nodes the newest on-mode run compared (train.mjs#trainNodesView); read by the upgrade precheck.
+  // Defect 15894c2a: the nodes the newest on-mode run compared (train.mjs#trainNodesView); read by the fleet-lag alert and the landing precheck.
   const nodes = parseTrainNodes(t?.nodes);
   if (nodes) out.nodes = nodes;
   if (revokeHead) out.revokeHead = revokeHead;
@@ -325,6 +325,8 @@ function trainOf(t) {
   if (['gate', 'audit', 'off'].includes(t?.sweepMode)) out.sweepMode = t.sweepMode;
   // ADR 0018: the policy's train.landing (github-merge: GitHub merges after the merge-slot green; push: the train lands main itself).
   if (['github-merge', 'push'].includes(t?.landing)) out.landing = t.landing;
+  // bc982192: the batch route a batch born now gets (executor.mjs#batchRoute); only 'push' is ever written, anything else is none.
+  if (t?.batchRoute === 'push') out.batchRoute = 'push';
   for (const k of ['fullPending', 'backgroundAllPending']) if (typeof t?.[k] === 'boolean') out[k] = t[k];
   for (const k of ['maintenanceExtraUsed', 'maintenanceExtraLimit'])
     if (Number.isSafeInteger(t?.[k]) && t[k] >= 0 && t[k] <= 200) out[k] = t[k];
@@ -451,3 +453,7 @@ export function versionNotices(view, upgradeStatus = null) {
 export async function readStatus(root) {
   return parseStatus(await readBounded(path.join(root, 'state', STATUS_FILE), STATUS_MAX_BYTES, 'STATUS_REFUSED'));
 }
+
+// bc982192 (C3, plan 戊): the landing mode the companion's poller proposes by (poller.mjs#landingMode): 'push' only when the status board
+// says a batch born now is stamped push (train.batchRoute, executor.mjs#batchRoute); no status, no field: github-merge.
+export const pollerLandingOf = status => (status?.train?.batchRoute === 'push' ? 'push' : 'github-merge');

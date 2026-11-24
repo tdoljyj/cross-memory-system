@@ -22,7 +22,9 @@ test('happy path: bundle, stage 1, start, workspaces, stages 2..8 once; the same
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
   assert.deepEqual(stagesRun(f.engine), [1, 2, 3, 4, 5, 6, 7, 8]);
-  assert.deepEqual(f.companion.calls.map(c => c[0]), ['pr-head', 'bundle', 'wsprep'], 'one live PR read before the reservation');
+  // The fixture's companion has no answer: stage 1 is then not the batch's first live read (PLAN-resident-draft-batch-20261123 §2
+  // item 7), so its first safe point (before the workspace) reads once more.
+  assert.deepEqual(f.companion.calls.map(c => c[0]), ['pr-head', 'bundle', 'pr-head', 'wsprep'], 'one live PR read before the reservation, one at the first safe point');
   assert.equal((await f.ledger.state(keyFor())).outcome, 'COMPLETED');
   assert.equal(await f.ledger.headBurned(headKey(subject())), true);
   // The same head again: the run queue has seen it, nothing is reserved (phase 2).

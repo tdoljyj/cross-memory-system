@@ -2,7 +2,7 @@
 // helper and the pure harness with the in-box csc into a new scratch directory, derives its fixture with this checkout's Node side
 // (the shared train-run table, test/fixtures/train-run-cases.json, among it) and runs the pure assertions. Offline: no service, no
 // ProgramData, no elevation (the script's own header). R3 batch 2 follow-up §3a (task 04f9b91b): before this nothing ran it.
-// Windows only, like test/fleet-node.test.mjs's wrapper of test-bootstrap.ps1 in the resident.
+// Windows only, like test/fleet-node-powershell.test.mjs's wrapper of test-bootstrap.ps1 in the resident.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';

@@ -905,7 +905,7 @@
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
-        "ci-suites-windows": {
+        "ci-suites-windows-shard": {
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./trusted/.github/actions/ci-temporary-storage",
@@ -928,16 +928,45 @@
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
-        "gitleaks": {
+        "ci-suites-windows": {
+          "mode": "step-env",
+          "purpose": "hosted scaffold summary of the Windows suite shards (one result comparison; no checkout, no repository code)",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "ci-suites-windows-duration": {
           "mode": "job-temp",
-          "purpose": "application or repository control",
-          "action": "./.github/actions/ci-temporary-storage",
+          "purpose": "hosted scaffold Windows shard wall-clock report (not required; reads this run's jobs)",
+          "action": "./candidate/.github/actions/ci-temporary-storage",
           "checkout_sources": [
             {
               "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
               "if": "true",
-              "path": "",
-              "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "gitleaks": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}",
               "repository": null
             }
           ],
@@ -1667,6 +1696,75 @@
           "persistent_action_caches": []
         },
         "migration-verify": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "gitleaks": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "trivy": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "contract-placement": {
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./trusted/.github/actions/ci-temporary-storage",
