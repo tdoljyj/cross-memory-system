@@ -828,7 +828,10 @@ function Sync-DrillServer([string]$From, [string]$Version, [switch]$Rebuild) {
   }
   $state = [string](Get-Prop $result 'state')
   if ($state -ceq 'failed') {
-    if ([string](Get-Prop $result 'code') -cmatch '^(DRILL_SERVER_[A-Z_]+)(?::(.{1,400}))?$') { throw (New-DrillError $Matches[1] (& $clean $Matches[2])) }
+    if ([string](Get-Prop $result 'code') -cmatch '^(DRILL_SERVER_[A-Z_]+)(?::(.{1,400}))?$') {
+      # The database's own message is on the script's standard error (password masked): without it a failed row names no cause.
+      $where = & $clean $Matches[2]; throw (New-DrillError $Matches[1] "$where $(& $why $run.stderr)".Trim())
+    }
     throw (New-DrillError 'DRILL_SERVER_SYNC_FAILED' "no-result: $(& $why $run.stderr)")
   }
   if ($state -ceq 'stale') { throw (New-DrillError 'DRILL_SERVER_DIVERGED' 'stale') }
