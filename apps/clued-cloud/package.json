@@ -43,7 +43,7 @@
     "db:test:m1": "npx --yes supabase@2.115.0 test db supabase/tests/m1_runtime_contracts.test.sql supabase/tests/m1_legacy_mapping.test.sql --local",
     "test:p5:postgres": "node scripts/run-tests.mjs --test --test-force-exit tests/p5-real-postgres.test.mjs",
     "db:lint": "npx --yes supabase@2.115.0 db lint --local --schema public,clued_private --level error --fail-on error",
-    "mcp:isolated:fixture": "node evals/public-mcp/fixtures.mjs",
+    "mcp:isolated:fixture": "node ../../scripts/ci/clued-local-migrate.mjs && node evals/public-mcp/fixtures.mjs",
     "mcp:isolated:start": "node evals/public-mcp/start-isolated.mjs",
     "mcp:tools:freeze": "node evals/public-mcp/freeze-tools.mjs",
     "mcp:tools:verify": "node evals/public-mcp/verify-tools.mjs --live evals/public-mcp/tools-list.baseline.json",
