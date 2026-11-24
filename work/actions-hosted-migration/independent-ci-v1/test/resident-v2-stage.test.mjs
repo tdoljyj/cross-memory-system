@@ -247,9 +247,10 @@ test('invoke-stage: a started helper (PID) without a receipt is NATIVE_RECEIPT_U
     ['NATIVE_RECEIPT_UNCONFIRMED', false, null, false]);
 });
 
-test('invoke-stage guard: a helper that never started and wrote no receipt ends as before (NATIVE_RECEIPT_UNCONFIRMED, a zero tree)', async t => {
+test('invoke-stage guard: a helper stopped before RUNNING (its preflight refused, as r13) wrote no receipt: as before (NATIVE_RECEIPT_UNCONFIRMED, a zero tree)', async t => {
   const f = await fixture(t);
-  const fact = await run(f, 1, fakeBroker(f, { writeReceipt: false, outcome: null, response: { started: false, helperPid: null } }));
+  const fact = await run(f, 1, fakeBroker(f, { writeReceipt: false, outcome: null,
+    response: { ok: false, code: 'BROKER_PID_HANDSHAKE_UNCONFIRMED', started: false, helperPid: null } }));
   assert.deepEqual([fact.failure_code, fact.tree_cleanup_confirmed, fact.tree_active_processes, fact.root_exit_confirmed],
     ['NATIVE_RECEIPT_UNCONFIRMED', true, 0, true]);
 });
