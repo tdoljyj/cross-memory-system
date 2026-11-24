@@ -41,10 +41,14 @@ import { companionKeyWatch } from './connection-renewal.mjs';
 import { resolveCompanionWslClient } from './wsl-client.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
-// phase 1, item 7). The poller looks for new PR heads once a minute too (Decision 1b99e7e4; it was five minutes): its two
-// reads are conditional (poller.mjs), so an unchanged minute costs two 304s. The ruleset backstop stays at five minutes.
+// phase 1, item 7). The poller looks for new PR heads every 15 seconds in a lane of its own (f79929d9; it was once a minute in
+// the advisory lane, Decision 1b99e7e4, and five minutes before): its two reads are conditional (poller.mjs), so an unchanged
+// minute costs eight 304s, which GitHub does not count against the REST rate limit. The ruleset backstop stays at five minutes.
 export const REPORT_EVERY_MS = 60_000;
-export const POLL_EVERY_MS = 60_000;
+export const POLL_EVERY_MS = 15_000;
+// The poll lane's read of status.json (the run queue's generation, the parked batches) waits at most this long; a read not
+// done by then is "generation unknown" for this pass (poller.mjs#pass), and the next pass waits on that same read again.
+export const POLL_STATUS_READ_MS = 5_000;
 export const BACKSTOP_EVERY_MS = 5 * 60_000;
 // The upgrade mailbox lane looks for requests this often (the upgrader polls its answers once a second; the shortest deadline is 60 s).
 export const UPGRADE_LANE_EVERY_MS = 5_000;
@@ -82,10 +86,10 @@ export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershe
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // One lane of the companion: its own Runner, its own loop. The companion's actions (the mailbox: bundles, workspaces,
-// Linux archives and quiescence proofs, the relay pump) and the advisory work (poller, PR page status, notifications)
-// run in two lanes (independent review of the quota redesign phase 1, M1). A child keeps only its own lane busy, and a
-// slow GitHub can never make a mailbox request expire: the service's proofs (for example the 2-minute linux-quiescence)
-// are answered while the advisory lane waits. A child that outlives its limit is ended by the job host with its whole job
+// Linux archives and quiescence proofs, the relay pump), the poller and the advisory work (PR page status, notifications,
+// retention) run in lanes of their own (independent review of the quota redesign phase 1, M1; f79929d9 for the poller). A child
+// keeps only its own lane busy, and a slow GitHub can never make a mailbox request expire: the service's proofs (for example
+// the 2-minute linux-quiescence) are answered while the advisory lane waits. A child that outlives its limit is ended by the job host with its whole job
 // (DESIGN §24), so the lane is busy again only while a job host itself has not ended.
 export async function lane({ runner, work, sleep: wait = sleep, everyMs = 2_000, stop = () => false }) {
   while (!stop()) {
@@ -93,26 +97,37 @@ export async function lane({ runner, work, sleep: wait = sleep, everyMs = 2_000,
     await wait(everyMs);
   }
 }
-// The advisory lane as main() runs it (lane above), from the parts main() builds: the poller, the retention notice, the bundle
-// retention, the ruleset backstop and the PR page status. Exported so that the tests run the very lanes main() runs.
+// The value of a promise, or null when it is not settled within ms (or rejects). schedule/cancel: the timers (tests: fake ones).
+export function within(promise, ms, { schedule = setTimeout, cancel = clearTimeout } = {}) {
+  let timer = null;
+  const late = new Promise(resolve => { timer = schedule(() => resolve(null), ms); });
+  return Promise.race([Promise.resolve(promise).catch(() => null), late]).finally(() => cancel(timer));
+}
+
+// The poll lane and the advisory lane as main() runs them (lane above), from the parts main() builds. Exported so that the tests
+// run the very lanes main() runs. The poll lane (f79929d9) has its own Runner (pollRunner, the one the poller's gh reads run on):
+// a retention notice, a bundle retention, a backstop or a PR page pass that does not return, or an advisory child that never
+// ended, delays only the advisory lane, never finding a new PR head. The PR page and the re-run lane read poller.lastPass only.
 // readStatus(): the executor's status board; pruneOldBundles(), backstop(): one bundle retention and one ruleset backstop pass.
-export function advisoryLanes({ advisory, poller, readStatus, renewKeyCheck, retentionNotifier, pruneOldBundles, backstop, reporter }) {
-  let lastPoll = 0, lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0, lastBundlePrune = 0;
+export function advisoryLanes({ advisory, pollRunner, poller, readStatus, renewKeyCheck, retentionNotifier, pruneOldBundles, backstop, reporter,
+  schedule = setTimeout, cancel = clearTimeout }) {
+  let lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0, lastBundlePrune = 0;
+  let statusRead = null; // the poll lane's status read while it is outstanding: never a second one on top of it
   return [
+    { runner: pollRunner, everyMs: POLL_EVERY_MS, work: async () => {
+      // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
+      statusRead ??= Promise.resolve().then(readStatus).catch(() => null).finally(() => { statusRead = null; });
+      const status = await within(statusRead, POLL_STATUS_READ_MS, { schedule, cancel });
+      try {
+        await poller.pass({ generation: status?.queue?.generation ?? null });
+        await poller.parkedPass(status?.pending ?? []);
+      } catch { /* next pass */ }
+    } },
     { runner: advisory, work: async () => {
       await renewKeyCheck();
       try { await retentionNotifier.step(); } catch { /* advisory; retry without marking an undelivered notice */ }
       // The bundle retention (companion.mjs#pruneBundles): bundles of ended batches, at start and every hour.
       if (Date.now() - lastBundlePrune > BUNDLE_PRUNE_EVERY_MS) { lastBundlePrune = Date.now(); await pruneOldBundles(); }
-      if (Date.now() - lastPoll > POLL_EVERY_MS) {
-        lastPoll = Date.now();
-        // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
-        const status = await readStatus().catch(() => null);
-        try {
-          await poller.pass({ generation: status?.queue?.generation ?? null });
-          await poller.parkedPass(status?.pending ?? []);
-        } catch { /* next pass */ }
-      }
       // The ruleset backstop (phase 2 step 3c-1, DESIGN §22.3): main's rules every five minutes, as before the 60-second poll.
       if (Date.now() - lastBackstop > BACKSTOP_EVERY_MS) {
         lastBackstop = Date.now();
@@ -263,6 +278,7 @@ export async function main(args = process.argv.slice(2)) {
   check(await exists(jobHost), 'COMPANION_JOB_HOST_REQUIRED');
   const runner = new Runner({ env: { ...process.env }, jobHost }); // the Owner's own environment: gh/git credential helpers live here
   const advisory = new Runner({ env: { ...process.env }, jobHost }); // the advisory lane's own (see lane)
+  const pollRunner = new Runner({ env: { ...process.env }, jobHost }); // the poll lane's own (advisoryLanes)
   // DESIGN §34: the upgrade mailbox lane's own (a 20-minute Linux stage never holds up the resident's mailbox or the advisory work).
   const upgradeRunner = new Runner({ env: { ...process.env }, jobHost });
   await probeJobHost(runner);
@@ -286,7 +302,7 @@ export async function main(args = process.argv.slice(2)) {
   const inboxDir = path.join(values.root, 'inbox');
   // A `hints` key an older companion.json still carries (the removed hosted relay, DESIGN §76) is never read.
   const poller = new Poller({
-    repo: raw.repo, ghExe: raw.ghExe, run: (a, o) => advisory.run(a, o), clock: Date.now,
+    repo: raw.repo, ghExe: raw.ghExe, run: (a, o) => pollRunner.run(a, o), clock: Date.now,
     writeTrigger: v => Inbox.drop(inboxDir, v), // a create-only drop box: the reader waits for a file still being written (DESIGN §31.3)
     // bc982192: the batch route the service stamps a batch born now with (its status board's train.batchRoute, executor.mjs#batchRoute:
     // the train on, stage 10's effective route push and no scan required from this App) proposes a head behind main on its merge
@@ -406,7 +422,7 @@ export async function main(args = process.argv.slice(2)) {
       ...(mergeReconcile?[lane({runner:mergeRunner,work:()=>mergeReconcile.step(),everyMs:MERGE_RECONCILE_LANE_EVERY_MS})]:[]),
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
       ...(frontMerge ? [lane({ runner: frontMergeRunner, work: () => frontMerge.step(), everyMs: FRONT_MERGE_LANE_EVERY_MS })] : []),
-      ...advisoryLanes({ advisory, poller, readStatus: () => readStatus(values.root), renewKeyCheck, retentionNotifier,
+      ...advisoryLanes({ advisory, pollRunner, poller, readStatus: () => readStatus(values.root), renewKeyCheck, retentionNotifier,
         pruneOldBundles: () => companion.pruneOldBundles(),
         backstop: () => companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o),
           store, notify, observeRules: rules => poller.noteBranchRules(rules) }),
