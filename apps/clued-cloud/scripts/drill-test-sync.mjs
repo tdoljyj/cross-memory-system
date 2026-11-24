@@ -243,10 +243,14 @@ end $clear$`);
     where not exists (select 1 from pg_catalog.pg_depend d where d.classid = o.classid and d.objid = o.oid and d.deptype = 'e')
     order by 1 limit 20`)).rows.map((row) => row.object);
   if (left.length > 0) throw new Error(`clear_incomplete: ${left.join(', ')}`);
+  const newer = roles.length > 0 && Number((await client.query('show server_version_num')).rows[0].server_version_num) >= 160000;
   for (const role of roles) {
     if (!ROLE_NAME.test(role) || PLATFORM_ROLE.test(role)) throw new Error(`migration_role_refused:${role}`);
     const present = (await client.query('select 1 from pg_catalog.pg_roles where rolname = $1', [role])).rows.length === 1;
     if (!present) continue;
+    // drop owned needs the role's privileges. The hosted postgres holds these roles with admin but without inherit
+    // (granted by supabase_admin), and answered "permission denied to drop objects"; admin lets it grant itself inherit.
+    if (newer) await client.query(`grant ${quoted(role)} to current_user with inherit true`);
     await client.query(`drop owned by ${quoted(role)} cascade`);
     await client.query(`drop role ${quoted(role)}`);
   }
@@ -269,7 +273,8 @@ export async function applyStep(client, step, before = []) {
       if (stored !== step.statements_md5) throw new Error('recorded text differs from production');
     });
   } catch (error) {
-    throw new SyncError(`DRILL_SERVER_SYNC_FAILED:${step.file}`, error.message, { cause: error });
+    // The database's DETAIL (a migration's bounded diagnostic) names what the message alone does not.
+    throw new SyncError(`DRILL_SERVER_SYNC_FAILED:${step.file}`, error.detail ? `${error.message} ${error.detail}` : error.message, { cause: error });
   }
 }
 

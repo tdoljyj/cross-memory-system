@@ -822,7 +822,7 @@ function Sync-DrillServer([string]$From, [string]$Version, [switch]$Rebuild) {
   $last = @(@(([string]$run.stdout) -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -Last 1)
   $result = $null
   if ($last.Count -eq 1) { try { $result = (& $clean $last[0]) | ConvertFrom-Json } catch { $result = $null } }
-  $why = { param($t) $c = & $clean $t; $c.Substring(0, [Math]::Min(300, $c.Length)) }
+  $why = { param($t) $c = & $clean $t; $c.Substring(0, [Math]::Min(1500, $c.Length)) }
   if ($null -eq $result -or [string](Get-Prop $result 'contract') -cne 'clued.drill-test-sync.result/1') {
     throw (New-DrillError 'DRILL_SERVER_SYNC_FAILED' "no-result (exit $($run.exit)): $(& $why $run.stderr)")
   }
