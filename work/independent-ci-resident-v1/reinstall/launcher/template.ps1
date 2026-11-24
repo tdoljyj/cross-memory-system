@@ -607,9 +607,12 @@ function Stop-CompanionTask {
   Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\ScheduledTasks\ScheduledTasks.psd1'
   Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction Stop
 }
+# K3 (task 87d330d0): a plain start (the ScheduledTasks cmdlet, a COM Run) of a task whose principal is not a service account can stay queued under a
+# start constraint outside the task's XML (a node with no user session); RunEx with TASK_RUN_IGNORE_CONSTRAINTS (2), no session, no user
+# starts it. test/companion-run-ignores-constraints.test.mjs holds every start of the companion's tasks to this.
 function Start-CompanionTask {
-  Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\ScheduledTasks\ScheduledTasks.psd1'
-  Start-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction Stop
+  $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
+  $null = $svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanion').RunEx($null, 2, 0, $null)
 }
 function Get-FileSha([string]$p) { if ([IO.File]::Exists($p)) { Sha256Bytes ([IO.File]::ReadAllBytes($p)) } else { $null } }
 function Test-UninstallPlan($plan) {
