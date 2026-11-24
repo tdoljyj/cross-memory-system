@@ -1941,7 +1941,8 @@ function shellCommand(shell) {
   const bash = exec && path.resolve(exec, '..', '..', '..', 'bin', 'bash.exe');
   return bash && existsSync(bash) ? [bash, []] : null;
 }
-function trainCheckout(t) {
+// files: more files committed in T, the chain root (every commit below has T's tree).
+function trainCheckout(t, files = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'clued-train-base-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => {
@@ -1953,6 +1954,10 @@ function trainCheckout(t) {
   git('init', '-q', '-b', 'work');
   mkdirSync(path.join(dir, 'scripts', 'runner'), { recursive: true });
   copyFileSync(path.join(ROOT, 'scripts', 'runner', 'clued-runner-job-started.mjs'), path.join(dir, 'scripts', 'runner', 'clued-runner-job-started.mjs'));
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    writeFileSync(path.join(dir, file), text);
+  }
   git('add', '-A');
   git('commit', '-q', '-m', 'T');
   const T = git('rev-parse', 'HEAD'), tree = git('rev-parse', 'HEAD^{tree}');
@@ -2089,6 +2094,158 @@ for (const [file, id] of BASELINE_JOBS) {
     }
   });
 }
+
+// Task 11092b8b (PLAN-mainpush-flaky-rerun-20261124 §3 T1): every step that runs suites through the selector hands the
+// selector the base its own job's train-base step resolved, on every event its workflow runs on. End to end: the job's
+// train-base step in a real Git checkout, then the step's own CI_BASE_SHA expression over that step's outputs (a step
+// without the line gives nothing), then the selector running a suite whose one test fails on the first run only: the
+// command runs again in full and passes, with a flaky warning. In the main push runs 45093271303 and 45380641278 the
+// clued-cloud-tests and migration-verify steps set no CI_BASE_SHA and the log said 'not run again in full: CI_BASE_SHA is
+// not a commit'; a lost-run dispatch and a staging push had the same gap there.
+const HOSTED_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'hosted-required.yml');
+const SUITE_RUN_WORKFLOWS = [LINUX_WORKFLOW, WINDOWS_WORKFLOW, HOSTED_WORKFLOW];
+const SUITE_RUN = /ci-required-selection\.mjs --run|\$SELECTOR" --run/;
+// The events a workflow runs on (its on: block), as the train-base step and the expression see them.
+function workflowEvents(text) {
+  const on = /\non:\n((?:(?: {2}.*)?\n)*)/.exec(text)[1];
+  const events = [];
+  if (/^ {2}pull_request:/m.test(on)) events.push('pull_request');
+  const push = /^ {2}push:\n {4}branches: \[([^\]]*)\]/m.exec(on);
+  for (const branch of push ? push[1].split(',').map((name) => name.trim()) : []) {
+    assert.ok(['main', 'clued-train/staging'].includes(branch), `a push branch this test does not know: ${branch}`);
+    events.push(branch === 'main' ? 'push main' : 'push staging');
+  }
+  if (/^ {2}workflow_dispatch:/m.test(on)) events.push('workflow_dispatch');
+  assert.ok(events.includes('pull_request'), on);
+  return events;
+}
+// Each step of the workflow that runs suites (its comment lines left out): its job and its CI_BASE_SHA expression, or null.
+function suiteRunSteps(file) {
+  const text = readFileSync(file, 'utf8');
+  const jobs = text.slice(text.indexOf('\njobs:\n') + '\njobs:\n'.length).split(/\n(?= {2}[a-z][a-z0-9-]*:\n)/);
+  const found = [];
+  for (const job of jobs) {
+    const id = /^ {2}([a-z][a-z0-9-]*):\n/.exec(job)?.[1];
+    if (!id) continue;
+    for (const step of job.split('\n      - ').slice(1)) {
+      const code = step.split('\n').filter((line) => !/^\s*#/.test(line)).join('\n');
+      if (!SUITE_RUN.test(code)) continue;
+      const expression = /\n {10}CI_BASE_SHA: \$\{\{ (.+?) \}\}\n/.exec(code)?.[1] ?? null;
+      found.push({ file, id, name: code.split('\n')[0], expression });
+    }
+  }
+  return found;
+}
+const SUITE_RUN_STEPS = SUITE_RUN_WORKFLOWS.flatMap(suiteRunSteps);
+test('every workflow step that runs suites through the selector is found (no pattern matching nothing)', () => {
+  assert.ok(SUITE_RUN_STEPS.length >= 8, SUITE_RUN_STEPS.map(({ file, id }) => `${path.basename(file)} ${id}`).join(', '));
+  for (const file of SUITE_RUN_WORKFLOWS) assert.ok(SUITE_RUN_STEPS.some((step) => step.file === file), file);
+});
+const BRIDGE_SUITE = 'source-v2-node';
+const BRIDGE_FILE = 'work/actions-hosted-migration/independent-ci-v1/test/flaky.test.mjs';
+// Fails on the first run only: a counter beside it (not committed) says which run it is.
+const FAILS_ONCE = `import test from 'node:test';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+const counter = new URL(import.meta.url.replace(/\\.test\\.mjs$/, '.count'));
+const run = (existsSync(counter) ? Number(readFileSync(counter, 'utf8')) : 0) + 1;
+writeFileSync(counter, String(run));
+test('fails on the first run only', () => { if (run === 1) throw new Error('first run fails'); });
+`;
+const BRIDGE_EVENTS = (repo) => ({
+  pull_request: { stepEnv: { EVENT_NAME: 'pull_request', PUSH_REF: 'refs/pull/9/merge', STAGING_SHA: repo.one },
+    github: { event_name: 'pull_request', event: { pull_request: { base: { sha: repo.T } } } } },
+  'push main': { stepEnv: { EVENT_NAME: 'push', PUSH_REF: 'refs/heads/main', STAGING_SHA: repo.one }, github: { event_name: 'push', event: {} } },
+  'push staging': { stepEnv: { ...STAGING, STAGING_SHA: repo.two }, github: { event_name: 'push', event: {} } },
+  workflow_dispatch: { stepEnv: { EVENT_NAME: 'workflow_dispatch', PUSH_REF: 'refs/heads/claude/some-branch', STAGING_SHA: repo.H1 },
+    github: { event_name: 'workflow_dispatch', event: { inputs: { pr: '9', head: repo.H1 } } } },
+});
+for (const { file, id, name, expression } of SUITE_RUN_STEPS) {
+  const label = `${path.basename(file)} ${id} (${name.trim()})`;
+  const step = baselineStep(file, id);
+  const skip = shellCommand(step.shell) ? false : `no ${step.shell} for this platform`;
+  const events = workflowEvents(readFileSync(file, 'utf8'));
+  test(`${label}: on ${events.join(', ')} the selector gets the job's base and a test failing once passes run again in full`, { skip }, (t) => {
+    const operands = expression === null ? [] : expression.split('||').map((operand) => operand.trim());
+    assert.ok(operands.every((operand) => /^[a-z_]+(\.[a-z_-]+)+$/.test(operand)), String(expression));
+    for (const event of events) {
+      const repo = trainCheckout(t, { [BRIDGE_FILE]: FAILS_ONCE });
+      const root = realpathSync.native(repo.dir);
+      writeFileSync(path.join(root, '.git', 'info', 'exclude'), '*.count\n');
+      const { stepEnv, github } = BRIDGE_EVENTS(repo)[event];
+      const resolved = runBaseline(t, step, root, stepEnv);
+      assert.equal(resolved.status, 0, `${event}: ${resolved.log}`);
+      // GitHub's ||: a missing property is null, the first non-empty operand is the value.
+      const context = { steps: { 'train-base': { outputs: resolved.outputs } }, github };
+      const value = (operand) => operand.split('.').reduce((at, key) => (at == null ? null : at[key] ?? null), context);
+      const base = operands.map(value).find(Boolean) ?? '';
+      const env = { ...process.env, RUNNER_TEMP: root };
+      for (const variable of ['NODE_TEST_CONTEXT', 'GITHUB_STEP_SUMMARY', 'CI_BASE_SHA', 'CLUED_CI_HOST_LACKS']) delete env[variable];
+      if (base) env.CI_BASE_SHA = base;
+      const lines = [];
+      let calls = 0;
+      const spawn = (command, args, options) => { calls += 1; return spawnSync(command, args, options); };
+      const status = executeSuite(BRIDGE_SUITE, { root, env, spawn, log: (line) => lines.push(String(line)) });
+      const out = lines.join('\n');
+      const where = `${label}, ${event}: CI_BASE_SHA=${base || '(not set)'}\n${out}`;
+      assert.equal(status, 0, where);
+      assert.equal(calls, 2, `the suite run and one run of the same command again\n${where}`);
+      assert.match(out, /run again in full/, where);
+      assert.ok(lines.some((line) => line.startsWith(`::warning title=${BRIDGE_SUITE} flaky::`)), where);
+      assert.doesNotMatch(out, /not run again in full/, where);
+      assert.equal(base, repo.T, `the base is the one the job's train-base resolved\n${where}`);
+    }
+  });
+}
+
+// T2 (same plan): in a CI job (GITHUB_ACTIONS=true) a step that runs suites without a base commit is wired wrong: the
+// selector starts nothing and fails, naming CI_BASE_SHA, so the change that drops the line fails in its own pull request.
+// The selector here is this one with a ci-suites table of one suite whose command only leaves a file behind.
+test('in a CI job, --run and --run-selected without a base commit start no command and name CI_BASE_SHA', (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-no-base-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const tools = path.join(dir, 'tools');
+  mkdirSync(tools);
+  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(tools, 'test-env.mjs'));
+  const tail = `for (const key of Object.keys(SUITES['ci-suites'])) delete SUITES['ci-suites'][key];
+SUITES['ci-suites']['retrigger-counter'] = ['**'];
+delete SUITE_PLATFORMS['retrigger-counter'];
+SUITE_COMMANDS['retrigger-counter'] = [{ cwd: '.', argv: ['node', '-e', "require('node:fs').writeFileSync('started', '')"] }];`;
+  const selector = path.join(tools, 'ci-required-selection.mjs');
+  writeFileSync(selector, `${readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8')}\n${tail}\n`);
+  const root = path.join(dir, 'checkout');
+  mkdirSync(root);
+  const started = path.join(root, 'started');
+  const run = (args, base) => {
+    const env = { ...process.env, GITHUB_ACTIONS: 'true' };
+    for (const name of ['NODE_TEST_CONTEXT', 'CI_BASE_SHA', 'GITHUB_EVENT_NAME', 'GITHUB_EVENT_PATH', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY',
+      'CLUED_CI_HOST_LACKS']) delete env[name];
+    if (base !== undefined) env.CI_BASE_SHA = base;
+    return spawnSync(process.execPath, [selector, ...args, '--root', root], { env, encoding: 'utf8', timeout: 60_000 });
+  };
+  for (const args of [['--run', 'retrigger-counter'], ['--run-selected', 'ci-suites']]) {
+    // The fixture sees a command start: with a base the command runs.
+    const wired = run(args, 'a'.repeat(40));
+    assert.equal(wired.status, 0, `${args.join(' ')}: ${wired.stdout}${wired.stderr}`);
+    assert.ok(existsSync(started), `${args.join(' ')} with a base runs the command`);
+    rmSync(started);
+    for (const base of [undefined, '', '0'.repeat(40), 'unset']) {
+      const r = run(args, base);
+      const where = `${args.join(' ')}, CI_BASE_SHA=${JSON.stringify(base)}: ${r.stdout}${r.stderr}`;
+      assert.notEqual(r.status, 0, where);
+      assert.equal(existsSync(started), false, `no command starts\n${where}`);
+      assert.match(r.stdout + r.stderr, /CI_BASE_SHA/, where);
+    }
+  }
+});
+
+// T3 (same plan): outside a CI job nothing changes: a local --run without a base runs its suite (and a failed command is then
+// not run again: ci-required-selection-flaky.test.mjs G).
+test('a local --run without a base commit runs its suite', async (t) => {
+  const start = slotFixture(t);
+  const run = start('local-no-base', { body: "console.log('ran without a base');\n", extraEnv: { CI_BASE_SHA: undefined } });
+  assert.deepEqual(await run.done, [0, null], run.output());
+  assert.match(run.output(), /ran without a base/);
+});
 
 // The release door flow test runs the release workflow's steps and the grant script against a database, so a change to
 // either runs it (FABLE-release-identity-autonomous-20261119 §3.1 tests 8 to 12).
