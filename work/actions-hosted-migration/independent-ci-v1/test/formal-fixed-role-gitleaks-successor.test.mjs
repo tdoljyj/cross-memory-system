@@ -16,8 +16,9 @@ const iso = ms => new Date(ms).toISOString();
 // Evaluate only the pinned Python helper's real report/return expressions, not
 // its scanner/Git side effects. This is a wire-schema fixture, never detection
 // evidence. New producer fields cannot silently disappear in a hand-built JS mock.
-const helperReport = (() => {
-  const script = String.raw`import ast,hashlib,json,pathlib,sys
+// Started by the first test that reads it, not at module load; `spawn` is injectable for the no-wall-clock tests below only (an
+// injected spawn is never cached).
+const HELPER = String.raw`import ast,hashlib,json,pathlib,sys
 tree=ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))
 functions={node.name:node for node in tree.body if isinstance(node,ast.FunctionDef)}
 def returned(name):
@@ -35,14 +36,35 @@ report=evaluate(constructor)
 report['regression']=regression
 print(json.dumps(report))
 `;
-  const result = spawnSync('python', ['-I', '-B', '-c', script,
+let helperCache;
+function helperReport(spawn = spawnSync) {
+  if (spawn === spawnSync && helperCache) return helperCache;
+  const result = spawn('python', ['-I', '-B', '-c', HELPER,
     fileURLToPath(new URL('../../../../scripts/ci/reviewed_gitleaks.py', import.meta.url)),
     fileURLToPath(new URL('../../../../.gitleaks.toml', import.meta.url)), String(REVIEWED_HISTORY_PROOF.verified_git_objects)],
   { windowsHide: true, encoding: 'utf8', timeout: 10000 });
   assert.equal(result.status, 0, result.stderr);
-  return JSON.parse(result.stdout);
-})();
-const report = () => structuredClone(helperReport);
+  const parsed = JSON.parse(result.stdout);
+  if (spawn === spawnSync) helperCache = parsed;
+  return parsed;
+}
+const report = () => structuredClone(helperReport());
+
+// Task 11092b8b (run 45305788126 shard-3: 10176 ms, a file-level failure with an empty message): the helper run sets no wall-clock
+// limit and a failed run says why. A spawn "slower than any finite limit": a call that sets a timeout gets ETIMEDOUT at once; one
+// without gets a normal result.
+const etimedout = (exe, args) => Object.assign(new Error(`spawnSync ${exe} ETIMEDOUT`), { code: 'ETIMEDOUT', errno: -4039, syscall: `spawnSync ${exe}`, path: exe, spawnargs: args });
+test('the pinned helper run sets no wall-clock limit (a busy machine is not a red)', () => {
+  const slowerThanAnyLimit = (exe, args, options = {}) => options.timeout === undefined
+    ? { status: 0, signal: null, stdout: '{"ok":true}\n', stderr: '', error: undefined }
+    : { status: null, signal: null, stdout: '', stderr: '', error: etimedout(exe, args) };
+  assert.deepEqual(helperReport(slowerThanAnyLimit), { ok: true });
+});
+test('a failed pinned helper run reports its spawn error', () => {
+  const failed = (exe, args) => ({ status: null, signal: 'SIGTERM', stdout: '', stderr: '', error: etimedout(exe, args) });
+  assert.throws(() => helperReport(failed), /ETIMEDOUT/);
+});
+
 function execution() {
   const now = Date.now();
   const job = batchJobsV2({ repo: 'tdoljyj/cross-memory-system', pr: 920, headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), testSha: 'a'.repeat(40),

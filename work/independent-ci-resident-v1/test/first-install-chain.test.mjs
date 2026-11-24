@@ -327,3 +327,25 @@ test('static: every PowerShell a package script starts carries -ExecutionPolicy 
   assert.ok(sites.some(s => s.file.endsWith('/windows/install-resident.ps1') && s.kind === 'invoke' && /migrate-acl|\$tool/.test(s.text)), show(sites));
   assert.equal(sites.filter(isProbe).length, 1, `the probe exception is one start: ${show(sites.filter(isProbe))}`);
 });
+
+// Task 11092b8b (run 45201050855: 300582 ms, spawnSync powershell.exe ETIMEDOUT): the shared ps() sets no wall-clock limit, and when a
+// run does fail it says what PowerShell last wrote. A spawn "slower than any finite limit": a call that sets a timeout gets ETIMEDOUT
+// at once; one without gets a normal result.
+const etimedout = (exe, args) => Object.assign(new Error(`spawnSync ${exe} ETIMEDOUT`), { code: 'ETIMEDOUT', errno: -4039, syscall: `spawnSync ${exe}`, path: exe, spawnargs: args });
+const slowerThanAnyLimit = (exe, args, options = {}) => options.timeout === undefined
+  ? { status: 0, signal: null, stdout: '{"ok":true}\n', stderr: '', error: undefined }
+  : { status: null, signal: null, stdout: '', stderr: '', error: etimedout(exe, args) };
+
+test('ps(): a PowerShell run sets no wall-clock limit (a busy machine is not a red)', () => {
+  assert.deepEqual(ps(`'{"ok":true}'`, { spawn: slowerThanAnyLimit }), { ok: true });
+});
+
+test('ps(): a failed spawn reports the last lines PowerShell wrote to stderr', () => {
+  const stderr = Array.from({ length: 25 }, (_, i) => `progress-line-${i + 1}`).join('\r\n') + '\r\n';
+  const failed = (exe, args) => ({ status: null, signal: 'SIGTERM', stdout: '', stderr, error: etimedout(exe, args) });
+  const message = (() => { try { ps(`'{}'`, { spawn: failed }); } catch (e) { return String(e.message); } return 'did not throw'; })();
+  assert.match(message, /ETIMEDOUT/);
+  assert.match(message, /progress-line-25/, message);
+  assert.match(message, /progress-line-6\b/, message);
+  assert.doesNotMatch(message, /progress-line-5\b/, 'the last 20 lines, not the whole stream');
+});
