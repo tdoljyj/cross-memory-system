@@ -37,7 +37,11 @@
 //                 remediation-plan-20261124 §3.1, #1258): its red may be the
 //                 pipeline's (an old base's gitleaks) and main may carry the fix;
 //                 the head made from it runs everything. Not when an admission
-//                 failed: main does not change that.
+//                 failed: main does not change that. A red head the App brought up
+//                 is a candidate again (第二轮规划 A, 任务 2fb32dc7, #1298), after
+//                 every candidate that is not red, when it was admitted, the red is
+//                 not the admission and its first parent is not one the App brought
+//                 (REBRING_RED_MAX in a row): main may have fixed that red since.
 // Every run without inputs also names, once per head, a pull request on the train
 // whose required checks are not all there with nothing queued or running for
 // STALLED_AFTER_MS (§3.11 item 3; nameStalled below).
@@ -159,7 +163,7 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
   });
   const unfinished = runs.filter(run => run.status !== 'completed').length
     + statuses.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED)).length;
-  const by = (name, app) => runs.some(run => run.name === name && Number(run.app?.id) === app && run.status === 'completed' && run.conclusion === 'success');
+  const by = (name, app) => succeeded(runs, name, app);
   // What each required check that is not green last did, as wait-pr's exit 5 lists it: a job GitHub skipped keeps its unexpanded
   // name ("... && 'ci-suites' || 'ci-suites-skipped'"), so the required name never appears: that is "job-skipped".
   const missing = required.filter(check => {
@@ -226,12 +230,38 @@ async function phaseGate(env, fetchImpl) {
   return inForce ? { result: 'none', reason: `脚手架规则集在用，由托管副本带车头 (${reason})` } : null;
 }
 
+// 第二轮规划 A (任务 2fb32dc7): #1298's head, which the App brought up, went red on a test of main that read the real base; main fixed
+// that test 38 minutes later and the head stayed red, behind and passed over until a person merged main. A red head the App brought
+// is brought again while fewer than this many heads in a row (it and its first parents) are ones the App brought; the count is read
+// from GitHub each run (the App's kooyumi-main-merge success on each), nothing kept. A true red costs one more round at most.
+export const REBRING_RED_MAX = 2;
+const succeeded = (runs, name, app) => runs.some(run => run.name === name && Number(run.app?.id) === app && run.status === 'completed' && run.conclusion === 'success');
+const admissionRed = (records, admitters) => records.failed.some(context => admitters.some(row => row.context === context));
+// A head the App brought, admitted, red on a required check that is not the admission: main may have changed that red.
+const redBrought = (records, admitters) => records.failed.length > 0 && records.brought && records.admitted && !admissionRed(records, admitters);
+
+// How many heads in a row, this one first, the App brought up (this one is): its first parents read while each carries the App's
+// kooyumi-main-merge success, at most REBRING_RED_MAX deep. Throws when GitHub cannot be read (then nothing is decided).
+async function broughtInARow({ env, fetchImpl, repository, head }) {
+  let count = 1;
+  for (let at = head; count < REBRING_RED_MAX;) {
+    const parent = (await githubJson(fetchImpl, env, `/repos/${repository}/commits/${at}`))?.parents?.[0]?.sha;
+    if (!SHA.test(parent ?? '')) throw new Error(`the first parent of ${at} could not be read`);
+    if (!succeeded(await githubPaged(fetchImpl, env, `/repos/${repository}/commits/${parent}/check-runs`, 'check_runs'), MAIN_MERGE_CHECK, ADMISSION_APP_ID)) break;
+    count++; at = parent;
+  }
+  return count;
+}
+
 // What the train does with a head behind main, one rule for choosing the front and for naming the stalled: a candidate is brought
-// up to main once there is no front; anything else stays where it is. §3.1: red on a head the App brought is a true red, and a
-// failed admission is not something main changes; a head the App brought that is not admitted is not brought again.
+// up to main once there is no front; anything else stays where it is. §3.1: a failed admission is not something main changes; a
+// head the App brought that is not admitted is not brought again. A red head the App brought is brought again (last) while
+// records.inARow (read by chooseFront for such a head only) is below REBRING_RED_MAX; unread, it is not.
 function behindVerdict(member, records, admitters) {
   if (member.mergeable === 'CONFLICTING') return { state: 'conflict', candidate: false };
-  if (records.failed.length && (records.brought || records.failed.some(context => admitters.some(row => row.context === context))))
+  if (redBrought(records, admitters) && (records.inARow ?? REBRING_RED_MAX) < REBRING_RED_MAX)
+    return { state: `candidate, red (${records.failed.join(', ')}) on a head the App brought: main is merged in again, after the others`, candidate: true, last: true };
+  if (records.failed.length && (records.brought || admissionRed(records, admitters)))
     return { state: `red (${records.failed.join(', ')})`, candidate: false };
   if (records.brought && !records.admitted) return { state: 'brought up before and not admitted', candidate: false };
   return { state: records.failed.length ? `candidate, red (${records.failed.join(', ')}): main is merged in once` : 'candidate', candidate: true };
@@ -283,15 +313,17 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
     // Quiet and not green.
     if (now() - await appearedAt({ env, fetchImpl, repository, member }) >= IDLE_AFTER_MS) member.state = 'idle';
   }
-  const candidates = [];
+  const candidates = [], last = [];
   const nofront = !train.some(member => member.state === 'front');
   // Without a front every member's head is read, a conflict's too: each one the App brought up and not admitted counts.
   if (nofront) for (const member of train.filter(member => member.behind > 0)) {
     const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
-    const { state, candidate } = behindVerdict(member, records, admitters);
-    member.state = state;
-    if (candidate) candidates.push(member);
+    if (member.mergeable !== 'CONFLICTING' && redBrought(records, admitters)) records.inARow = await broughtInARow({ env, fetchImpl, repository, head: member.head });
+    const verdict = behindVerdict(member, records, admitters);
+    member.state = verdict.state;
+    if (verdict.candidate) (verdict.last ? last : candidates).push(member);
   }
+  candidates.push(...last);
   for (const member of train) member.state ??= 'behind';
   const stranded = nofront ? train.filter(member => member.records?.brought && !member.records.admitted) : [];
   if (stranded.length >= BROUGHT_UNADMITTED_LIMIT) { for (const member of candidates) member.state = 'candidate, held'; candidates.length = 0; }
