@@ -16,6 +16,10 @@ import {
 import * as selection from './ci-required-selection.mjs';
 import reporterStream, { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
 
+// What a copy of the selector needs beside it: the modules it imports (test-env since Task 2ee162c2, the real-clock scan,
+// guard and their shared imports since Task 11092b8b).
+const SELECTOR_IMPORTS = ['test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'test-clock-imports.mjs'];
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
 
@@ -97,12 +101,16 @@ function slotFixture(t) {
       setTimeout(() => { clearInterval(poll); process.exitCode = 1; }, 35_000).unref();
     `;
     writeFileSync(path.join(scripts, 'retrigger-counter.test.mjs'), body ?? probe);
+    // The probe waits for real events on real timers: on the checkout's debt list, which the guard the entry preloads reads
+    // (Task 11092b8b).
+    mkdirSync(path.join(root, 'config'), { recursive: true });
+    writeFileSync(path.join(root, 'config', 'test-clock-debt.txt'), 'scripts/ci/retrigger-counter.test.mjs\n');
     let tool = selector;
     let target = suite;
     if (mode === '--write-known') {
       const tools = path.join(root, 'tools');
       mkdirSync(tools);
-      for (const file of ['ci-required-selection.mjs', 'test-env.mjs', 'ci-test-failures-reporter.mjs',
+      for (const file of ['ci-required-selection.mjs', ...SELECTOR_IMPORTS, 'ci-test-failures-reporter.mjs',
         'local-suite-slot-guard.mjs', 'local-suite-slots.mjs', 'local-suite-slot-job.ps1']) {
         copyFileSync(path.join(ROOT, 'scripts', 'ci', file), path.join(tools, file));
       }
@@ -128,6 +136,8 @@ function slotFixture(t) {
     Object.assign(env, extraEnv);
     if (mode === '--run-selected') {
       writeFileSync(path.join(scripts, 'check-cron-budget.test.mjs'), probe);
+      writeFileSync(path.join(root, 'config', 'test-clock-debt.txt'),
+        'scripts/ci/check-cron-budget.test.mjs\nscripts/ci/retrigger-counter.test.mjs\n');
       writeFileSync(path.join(scripts, 'check-cron-budget.mjs'), '');
       target = 'ci-suites';
       const event = path.join(root, 'event.json');
@@ -577,9 +587,13 @@ test('a change to a file a pinned registry holds runs the pinned-registry check'
 // table's --base {base}. The coverage check runs as a command of its own in clued-cloud (the suite every change runs), the
 // schema drift check takes the base the same way; each runs once, also when a plan is split into shards.
 const COVERAGE_CHECK = ['node', 'scripts/ci/check-tests-covered.mjs', '--base', '{base}'];
+// Task 11092b8b (PLAN-main-red-ci-base-sha-20261124 §4): the real-clock debt list only shrinks against the same base, checked
+// by a command of its own after the coverage check, last in clued-cloud.
+const CLOCK_CHECK = ['node', 'scripts/ci/test-clock-scan.mjs', '--check', '--base', '{base}'];
 const takesBase = (id) => SUITE_COMMANDS[id].filter((command) => command.argv.includes('{base}'));
-test('the coverage and schema drift checks take the base from the command table, once each, also under --shard', () => {
-  assert.deepEqual(takesBase('clued-cloud').map(({ cwd, argv }) => ({ cwd, argv })), [{ cwd: '.', argv: COVERAGE_CHECK }]);
+test('the coverage, real-clock debt and schema drift checks take the base from the command table, once each, also under --shard', () => {
+  assert.deepEqual(takesBase('clued-cloud').map(({ cwd, argv }) => ({ cwd, argv })), [{ cwd: '.', argv: COVERAGE_CHECK }, { cwd: '.', argv: CLOCK_CHECK }]);
+  assert.deepEqual(SUITE_COMMANDS['clued-cloud'].slice(-2).map(({ argv }) => argv), [COVERAGE_CHECK, CLOCK_CHECK], 'last, after the coverage check');
   const drift = takesBase('production-schema');
   assert.equal(drift.length, 1, 'one schema drift command takes the base');
   assert.deepEqual(drift[0].argv.slice(0, 5), ['node', 'scripts/production-schema-drift.mjs', 'check', '--base', '{base}']);
@@ -604,7 +618,8 @@ test('the coverage and schema drift checks take the base from the command table,
 test('the suite run hands the job base to the checks: clued-cloud and production-schema start them with --base CI_BASE_SHA', () => {
   const base = 'c'.repeat(40);
   const summary = JSON.stringify({ type: 'summary', counts: {}, success: true });
-  for (const [id, script] of [['clued-cloud', 'scripts/ci/check-tests-covered.mjs'], ['production-schema', 'scripts/production-schema-drift.mjs']]) {
+  for (const [id, script] of [['clued-cloud', 'scripts/ci/check-tests-covered.mjs'], ['clued-cloud', 'scripts/ci/test-clock-scan.mjs'],
+    ['production-schema', 'scripts/production-schema-drift.mjs']]) {
     const calls = [];
     const spawn = (command, args) => { calls.push(args); return { status: 0 }; };
     assert.equal(executeSuite(id, { root: ROOT, env: { CI_BASE_SHA: base, RUNNER_TEMP: os.tmpdir() }, spawn, log, platform: 'linux',
@@ -1170,8 +1185,9 @@ console.log(JSON.stringify({
   global: scoped.filter(([scope]) => scope === 'global').map(([, entry]) => entry),
   system: scoped.filter(([scope]) => scope === 'system').map(([, entry]) => entry),
   command: scoped.filter(([scope]) => scope === 'command').map(([, entry]) => entry),
-  leaked: ['GITHUB_PAT_TOKEN', 'ANTHROPIC_API_KEY', 'CLUED_HOME', 'GIT_CONFIG_COUNT', 'NODE_OPTIONS'].filter((name) => name in process.env),
+  leaked: ['GITHUB_PAT_TOKEN', 'ANTHROPIC_API_KEY', 'CLUED_HOME', 'GIT_CONFIG_COUNT'].filter((name) => name in process.env),
   kept: ['CI_BASE_SHA', 'PYTHONDONTWRITEBYTECODE', 'CLUED_CI_APP_DEPS'].map((name) => process.env[name]),
+  clock: ['NODE_OPTIONS', 'CLUED_CLOCK_ROOT'].map((name) => process.env[name]), record: Boolean(process.env.CLUED_CLOCK_RECORD),
 }));`;
 test('suite children get only the listed variables and a fake identity: fake GitHub tokens, an empty gh configuration, a git global configuration with only the test identity, no system configuration', (t) => {
   // The caller's identity, as a run on the Owner's own account inherits it.
@@ -1214,6 +1230,10 @@ test('suite children get only the listed variables and a fake identity: fake Git
     assert.deepEqual(child.command, [], "no configuration from the caller's environment");
     assert.deepEqual(child.kept, ['b', '1', '1'], 'the listed ones are');
     assert.equal(child.prompt, '0');
+    // Task 11092b8b (FABLE-no-real-clock-20261122 §2.1, §7.8): the caller's NODE_OPTIONS is not passed; the one a child
+    // gets preloads the real-clock guard of this checkout, with the checkout and a record of its own.
+    assert.deepEqual(child.clock, [`--import=${pathToFileURL(path.join(ROOT, 'scripts/ci/test-clock-guard.mjs')).href}`, path.resolve(ROOT)]);
+    assert.equal(child.record, true);
   }
   assert.deepEqual(env, before, "the caller's env is not changed");
 });
@@ -1342,7 +1362,7 @@ function candidateSelector(t) {
   const dir = path.join(root, 'scripts/ci');
   mkdirSync(dir, { recursive: true });
   const source = readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8');
-  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'test-env.mjs'));
+  for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
   const change = (id, commands) => writeFileSync(path.join(dir, 'ci-required-selection.mjs'),
     commands === undefined ? source : `${source}\nSUITE_COMMANDS[${JSON.stringify(id)}] = ${JSON.stringify(commands)};\n`);
   change();
@@ -1423,7 +1443,7 @@ test('a command added by a module the candidate selector imports runs although t
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const dir = path.join(root, 'scripts/ci');
     mkdirSync(dir, { recursive: true });
-    copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'test-env.mjs'));
+    for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
     writeFileSync(path.join(dir, 'ci-required-selection.mjs'), `${readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8')}
 import { ADDED } from './suite-additions.mjs';
 SUITE_COMMANDS['retrigger-counter'].push(...ADDED);
@@ -2168,7 +2188,9 @@ for (const [file, id] of BASELINE_JOBS) {
           assert.equal(argv[at + 1], expected, `${suite}: ${argv.join(' ')}`);
           compared++;
         }
-        assert.equal(compared, 1, `${suite} compares with the base once`);
+        // clued-cloud: the coverage check and the real-clock debt check (Task 11092b8b); the others: one command each.
+        const expectedCount = suite === 'clued-cloud' ? 2 : 1;
+        assert.equal(compared, expectedCount, `${suite} compares with the base ${expectedCount} time(s)`);
       }
       assert.equal(base, expected, r.log);
       assert.ok(isAncestor(repo, base, head), 'the suites compare the head with one of its own ancestors');
@@ -2184,7 +2206,7 @@ test('in a CI job, --run and --run-selected without a base commit start no comma
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const tools = path.join(dir, 'tools');
   mkdirSync(tools);
-  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(tools, 'test-env.mjs'));
+  for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(tools, name));
   const tail = `for (const key of Object.keys(SUITES['ci-suites'])) delete SUITES['ci-suites'][key];
 SUITES['ci-suites']['retrigger-counter'] = ['**'];
 delete SUITE_PLATFORMS['retrigger-counter'];
