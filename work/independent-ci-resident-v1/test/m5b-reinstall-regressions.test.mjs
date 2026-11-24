@@ -30,7 +30,7 @@ test('the reinstall generator pin accepts the committed reviewed launcher templa
 const probeScript = fileURLToPath(new URL('../windows/test-m5b-wsl-release.ps1', import.meta.url));
 // The inherited-pipe probe's one call path; `spawn` is injectable for the no-wall-clock test below only.
 function inheritedPipeProbe(spawn = spawnSync) {
-  const result = run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', probeScript, '-InheritedPipeProbe'], { timeout: 6000 }, spawn);
+  const result = run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', probeScript, '-InheritedPipeProbe'], {}, spawn);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   return JSON.parse(result.stdout.trim());
 }
@@ -41,7 +41,6 @@ test('M5-b VM management bounds inherited output after an exited client', { skip
   const facts = realProbe();
   assert.equal(facts.boundedInheritedPipe, true);
   assert.equal(facts.actualWslCalls, 0);
-  assert.ok(facts.elapsedMs < 4000);
 });
 
 // Task 11092b8b (run 45013546431: 6039 ms, spawnSync powershell.exe ETIMEDOUT): the verdict does not depend on how fast the machine
@@ -74,8 +73,8 @@ after(async () => {
 });
 
 function run(exe, args, extra = {}, spawn = spawnSync) {
-  const result = spawn(exe, args, { windowsHide: true, encoding: 'utf8', timeout: 30_000,
-    maxBuffer: 1024 * 1024, ...extra });
+  const result = spawn(exe, args, { windowsHide: true, encoding: 'utf8',
+    maxBuffer: 1024 * 1024, ...extra }); // no wall-clock limit: a hang is the job's timeout-minutes (task 11092b8b)
   assert.ifError(result.error);
   return result;
 }

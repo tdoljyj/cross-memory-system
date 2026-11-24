@@ -42,7 +42,8 @@ function helperReport(spawn = spawnSync) {
   const result = spawn('python', ['-I', '-B', '-c', HELPER,
     fileURLToPath(new URL('../../../../scripts/ci/reviewed_gitleaks.py', import.meta.url)),
     fileURLToPath(new URL('../../../../.gitleaks.toml', import.meta.url)), String(REVIEWED_HISTORY_PROOF.verified_git_objects)],
-  { windowsHide: true, encoding: 'utf8', timeout: 10000 });
+  { windowsHide: true, encoding: 'utf8' }); // no wall-clock limit: a hang is the job's timeout-minutes (task 11092b8b)
+  assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
   const parsed = JSON.parse(result.stdout);
   if (spawn === spawnSync) helperCache = parsed;

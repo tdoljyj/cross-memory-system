@@ -240,7 +240,7 @@ const listFile = (t, list) => { const f = path.join(tempDir(t, 'fi-chain-list-')
 
 // Drill 70e8be94 (launcher VERIFY_SCRIPT_PARSE_ERRORS): the launcher reads a package script as UTF8Encoding($false).GetString(bytes) and
 // parses that text (Read-VerifySecretHelpers), which keeps a BOM. Every script the package carries parses so in Windows PowerShell 5.1.
-test('static: every PowerShell script of the package parses in Windows PowerShell 5.1 as the launcher reads it', { skip, timeout: 300_000 }, async (t) => {
+test('static: every PowerShell script of the package parses in Windows PowerShell 5.1 as the launcher reads it', { skip }, async (t) => {
   const scripts = await packageScripts();
   assert.ok(scripts.length > 10, `${scripts.length} scripts`);
   const r = ps(`$ErrorActionPreference = 'Stop'; $U8 = New-Object Text.UTF8Encoding($false); $bad = @()
@@ -270,6 +270,7 @@ function Get-Fn($n) { for ($p = $n.Parent; $null -ne $p; $p = $p.Parent) { if ($
 function Get-ScopeKey($n) { $f = Get-Fn $n; if ($f) { [string]$f.Extent.StartOffset } else { 'S' } }
 function Get-VarName($v) { $v.VariablePath.UserPath.ToLowerInvariant() -replace '^(script|global|local|private):', '' }
 foreach ($rel in $files) {
+  [Console]::Error.WriteLine($rel)
   $text = $U8.GetString([IO.File]::ReadAllBytes((Join-Path $Checkout $rel))).TrimStart([char]0xFEFF)
   $tk = $null; $er = $null; $ast = [Management.Automation.Language.Parser]::ParseInput($text, [ref]$tk, [ref]$er)
   $fns = @{}; foreach ($f in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { $fns[$f.Name.ToLowerInvariant()] = $f }
@@ -315,7 +316,7 @@ ConvertTo-Json -Depth 4 -Compress -InputObject $sites.ToArray()`;
 // The one start without Bypass by design: the host preparation's probe of the machine's own policy (ps-execution-policy.test.mjs PROBE).
 const PROBE = { file: 'work/independent-ci-resident-v1/windows/first-install-host.ps1', via: 'Invoke-ExecutionPolicyBaseline' };
 
-test('static: every PowerShell a package script starts carries -ExecutionPolicy Bypass', { skip, timeout: 300_000 }, async (t) => {
+test('static: every PowerShell a package script starts carries -ExecutionPolicy Bypass', { skip }, async (t) => {
   const closure = JSON.parse(fs.readFileSync(path.join(CHECKOUT, ...CLOSURE.split('/')), 'utf8')).paths;
   const scripts = (await packageScripts()).filter(p => !closure.includes(p));
   const sites = ps(`& { ${SCANNER} } ${psLiteral(CHECKOUT)} ${psLiteral(listFile(t, scripts))}`);
