@@ -377,7 +377,8 @@ HOSTED_SCAFFOLD_JOBS = {
         "control_sha256": "5f732deb1d366951e326ad41fb74df57a56db845b79be95956c25352346cd8a7",
         "jobs": {
             "scaffold-phase": "973b475909436bd551f30f1cfc8d64d06178c340d89f4ceeb98725169edac16c",
-            "merge-main": "fcaa51b208689f3427c000b2f31e94c89a51c49e9ecf7a1500eb6db9a983c04d"
+            # Task 2fb32dc7: its own concurrency group clued-front-main-merge-hosted (was fcaa51b2…, the shared group).
+            "merge-main": "71d1b3ec9125e118e5d0aa1f3d3a6a05c6461ffd2e8694a3386886673a34ad2b"
         }
     }
 }
