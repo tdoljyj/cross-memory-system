@@ -51,7 +51,7 @@ export const TRAIN_CODES = Object.freeze(['TRAIN_FRONT_JOB_WITHOUT_TRAIN', 'TRAI
   'TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_RULES_MISSING', 'TRAIN_LANDING_REFUSED', 'TRAIN_LANDING_CHECK_FAILED', 'TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH']);
 // Clean, but final for this head and attempt (never retried automatically).
 export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_INPUT_RESULT_MISSING', 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED', 'BROKER_REQUEST_EXPIRED',
-  'BROKER_REQUEST_REFUSED', 'STAGE_HELPER_PREFLIGHT_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
+  'BROKER_REQUEST_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
   'NATIVE_POLICY_UNSUPPORTED', 'PUBLICATION_BLOCKED', 'PUBLICATION_REVOKED', 'EVIDENCE_REFUSED', 'WORKSPACE_PREPARATION_REFUSED',
   // The removed stage R's clean refusal (resident DESIGN §76): kept so the catalogue stays the resident's, which reads old receipts.
   'RELAY_STAGE_REFUSED',
@@ -256,10 +256,11 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
   if (!broker.stoppedInTime) return done('STAGE_HELPER_NOT_STOPPED_IN_TIME');
   if (!broker.restored || !broker.stableAfter || !broker.accountUnchanged) return done('STAGE_ORIGINAL_NOT_RESTORED');
   if (!receipt) {
-    // The helper stopped without a receipt: its preflight refused before any child (FormalSession0V2
-    // writes a receipt only once its boundary validated). No child means a zero tree.
-    return { ...done(broker.started && broker.helperPid ? 'STAGE_HELPER_PREFLIGHT_REFUSED' : 'NATIVE_RECEIPT_UNCONFIRMED'),
-      tree_cleanup_confirmed: true, tree_active_processes: 0, root_exit_confirmed: true };
+    // No receipt. The broker reads `started` only once the helper reached RUNNING, which FormalSession0V2 reports after its
+    // boundary validated: a helper that never started refused in its preflight before any child (a zero tree, as before);
+    // a started one passed it and may have run a child, so its tree stays unconfirmed (board 271: no clean, retryable code).
+    if (broker.started) return done('NATIVE_RECEIPT_UNCONFIRMED');
+    return { ...done('NATIVE_RECEIPT_UNCONFIRMED'), tree_cleanup_confirmed: true, tree_active_processes: 0, root_exit_confirmed: true };
   }
   const n = validateNativeReceiptV2(receipt, { nonce, plan, planSha256, controllerSid, helperPid: broker.helperPid });
   fact.native_receipt_sha256 = hash(receiptBytes);

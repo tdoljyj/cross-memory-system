@@ -141,6 +141,8 @@ test('an uncertain strict revocation survives a call and must be double-readback
   e.gh.world.hooks.run = (id, count, actual) => id === 99 && count === 2 ? { ...actual, conclusion: 'success' } : actual;
   const a = await e.run(); assert.notEqual(a.facts.sweep.strictCoverage.state, 'ready');
   assert.deepEqual((await e.store.readStrictRound()).pending.map(t => t.checkRunId), [99]);
+  // The next round starts after the last one's records (the store stamps them strictly increasing, board 269).
+  e.now += 1000;
   const reads = e.gh.world.reads.get(99), b = await e.run();
   assert.equal(b.facts.sweep.strictCoverage.state, 'ready'); assert.equal((await e.store.readStrictRound()).pending.length, 0);
   assert.ok(e.gh.world.reads.get(99) >= reads + 2, 'failure from the prior write still needs two confirmations');

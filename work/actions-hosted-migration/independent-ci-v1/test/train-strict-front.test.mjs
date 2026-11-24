@@ -7,7 +7,7 @@ import { setup, jobOf, ledgered, sha, iso, T, H, S, CLAIM, SOURCE, REPO, NOW, RU
 import { tempDir, admittedFacts } from './resident-v2-fixtures.mjs';
 import { batchJobsV2, claimGeneration } from '../src/job-v2.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
-import { digest } from '../src/proof.mjs';
+import { canonical, digest } from '../src/proof.mjs';
 import { createFixtureControlPublisherV2 } from '../src/independent-control-checks-v2/publisher.mjs';
 import { validStrictFrontReadiness, strictIdentity } from '../src/independent-control-checks-v2/train-strict.mjs';
 import { runTrain, FRONT_BIND_MAX_READS } from '../src/independent-control-checks-v2/train-maintenance.mjs';
@@ -263,10 +263,14 @@ test('strict front: a genuinely completed all round releases the legacy unknown 
 test('strict front: pending readers reject torn/conflicting records across calls and at publication', async t => {
   for (const kind of ['torn', 'conflict']) await t.test(kind, async t => {
     const e = await cold(t); await e.run(); e.now += 1000;
-    await e.store.writePendingRevocations({ repo: REPO, writtenAt: iso(e.now), runId: RUN, targets: [] });
+    const first = await e.store.writePendingRevocations({ repo: REPO, writtenAt: iso(e.now), runId: RUN, targets: [] });
     if (kind === 'torn') await fs.writeFile(path.join(e.store.directory, `pending-revocations-${e.now}-${RUN}-00000000.json`), '{');
-    else await e.store.writePendingRevocations({ repo: REPO, writtenAt: iso(e.now), runId: RUN,
-      targets: [{ checkRunId: 779, headSha: sha(779), reason: 'NOT_FRONT_HEAD', own: false }] });
+    else {
+      // The store's write entry never gives two records one stamp (board 269): a same-stamp record of another meaning is put on disk directly.
+      const record = JSON.parse(await fs.readFile(path.join(e.store.directory, first), 'utf8'));
+      await fs.writeFile(path.join(e.store.directory, first.replace(/-[0-9a-f]{8}\.json$/, first.endsWith('-ffffffff.json') ? '-00000000.json' : '-ffffffff.json')),
+        canonical({ ...record, targets: [{ checkRunId: 779, headSha: sha(779), reason: 'NOT_FRONT_HEAD', own: false }] }));
+    }
     assert.equal((await publish(t, e)).status, 'BLOCKED');
     for (let n = 0; n < 2; n++) {
       const result = await e.run(jobOf({ createdAt: iso(e.now) }));

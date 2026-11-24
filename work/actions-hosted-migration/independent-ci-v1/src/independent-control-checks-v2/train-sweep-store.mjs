@@ -170,10 +170,21 @@ export class TrainSweepStore {
     return [...this.tornNames.values()].filter(t => ['strict-proof', 'strict-round', 'front'].includes(t.kind)
       && (this.newestStrictMs === null || t.ms >= this.newestStrictMs)).length;
   }
+  // The name's millisecond stamp is the store's only order ("which record is newest"), so it is strictly increasing across the
+  // whole store: the actual stamp is max(the caller's writtenAt, newest stamp of any name of this store, torn ones included, + 1),
+  // written to both record.writtenAt and the name. Two records never share a stamp and name order is write order, also after the
+  // clock steps back. One writer at a time (one node on duty, its stages run serially); readdir and link are not atomic together.
   async write(kind, record) {
     if (!Object.hasOwn(KIND, kind)) fail('invalid_train_sweep_record');
     KIND[kind][1](record);
-    const name = `${kind}-${String(Date.parse(record.writtenAt)).padStart(13, '0')}-${record.runId}-${randomBytes(4).toString('hex')}.json`;
+    let newest = -1;
+    for (const existing of await fs.readdir(this.directory)) {
+      const parts = existing.endsWith('.tmp') ? null : NAME.exec(existing);
+      if (parts) newest = Math.max(newest, Number(parts[2]));
+    }
+    const stamp = Math.max(Date.parse(record.writtenAt), newest + 1);
+    if (stamp !== Date.parse(record.writtenAt)) record = KIND[kind][1]({ ...record, writtenAt: new Date(stamp).toISOString() });
+    const name = `${kind}-${String(stamp).padStart(13, '0')}-${record.runId}-${randomBytes(4).toString('hex')}.json`;
     const temporary = path.join(this.directory, `${name}.tmp`);
     const handle = await fs.open(temporary, 'wx', 0o600);
     try { await handle.writeFile(canonical(record)); await handle.sync(); } finally { await handle.close(); }
