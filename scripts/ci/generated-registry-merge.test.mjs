@@ -189,6 +189,25 @@ test('缺少本地选择器时仍能加载准入模块，适用性返回 null',(
   }finally{fs.writeFileSync(file,bytes);}
 });
 
+// 选择器文件在、加载就抛：运行时照常加载，适用性只是不签（辅助功能出错只能“不做”，看板第 251 行补充裁定）。
+test('本地选择器加载即抛时仍能加载准入模块，适用性返回 null 且不发起读取',()=>{
+  const file=path.join(tree,selector),bytes=fs.readFileSync(file);
+  fs.writeFileSync(file,"throw new Error('broken selector');\n");
+  try{
+    const result=node('--input-type=module','-e',`
+      import assert from 'node:assert/strict';
+      import './scripts/ci/clued-gated-proof-runtime.mjs';
+      import {readRequiredApplicability,REQUIRED_SELECTOR_SOURCE as pin} from './scripts/ci/clued-required-applicability.mjs';
+      assert.notEqual(pin.blob,null);
+      let calls=0;const count=async()=>{calls++;return null;};
+      assert.equal(await readRequiredApplicability({read:count,readLog:count,repository:'o/r',prNumber:17,head:'a'.repeat(40),
+        base:'b'.repeat(40),runId:777,runAttempt:2,requestKey:{},trustedGateBlob:'c'.repeat(40)}),null);
+      assert.equal(calls,0);
+    `);
+    assert.equal(result.status,0,result.stderr);
+  }finally{fs.writeFileSync(file,bytes);}
+});
+
 test('同一份基线证据在选择器相同时有效，换用另一提交的选择器后返回 null',async()=>{
   const prHead=edit(base,firstHelper,'PR change');
   edit(base,selector,'different local selector');
