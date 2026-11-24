@@ -2019,23 +2019,59 @@ export async function mainMergeSource(fetchImpl, env, repository, prNumber, head
 // an authorized head, Native carries that authorization (carry_main_merge; the
 // on-duty issuer only). Returns the source or null; never throws (an
 // unavailable read or refusal leaves the head unauthorized, as before).
+//
+// Task 30643342 (#1220): main can move again before the node on duty ever
+// admits a merge commit, so the newest attestation names a merge commit that
+// has no authorization row of its own. The admission therefore follows the
+// attested merges back from the head (mainMergeSource for every hop, checked
+// exactly as for one) at most MAIN_MERGE_CHAIN_DEPTH hops; the first hop that
+// is unreadable or does not qualify ends the chain there. It then asks Native
+// for each hop, the oldest first, with the same one-hop carry: Native still
+// trusts one hop at a time, only from a head this claim authorized (a hop
+// already carried answers replayed). A refused hop does not stop the later
+// ones (a middle head the holder authorized directly still carries onwards);
+// any other refusal does. The head is authorized when its own hop committed.
+export const MAIN_MERGE_CHAIN_DEPTH = 8;
+
 async function carryMainMerge(fetchImpl, env, workspace, pr, binding, tip, outcome) {
-  try {
-    const source = await mainMergeSource(fetchImpl, env, env.GITHUB_REPOSITORY, pr.number, pr.head.sha, tip);
-    if (!source) return null;
-    const reply = await cluedRpc(fetchImpl, env, workspace, VERIFY_RPC, { action: "carry_main_merge", scope: binding.scope,
-      pr_ref: `${env.GITHUB_REPOSITORY}#${pr.number}`, from_head_sha: source.from, head_sha: pr.head.sha, main_sha: source.main,
-      target_branch: pr.base.ref });
-    if (reply.status !== 200 || reply.body?.status !== "committed") {
-      outcome.notices.push(`main_merge_not_carried: ${plainFinding(reply.body?.error_code ?? reply.detail ?? reply.status)}`);
+  const notCarried = (why) => outcome.notices.push(`main_merge_not_carried: ${plainFinding(why)}`);
+  const message = (error) => error instanceof Error ? error.message : String(error);
+  const chain = [];
+  for (let head = pr.head.sha, seen = new Set([head]); chain.length < MAIN_MERGE_CHAIN_DEPTH;) {
+    let source;
+    try {
+      source = await mainMergeSource(fetchImpl, env, env.GITHUB_REPOSITORY, pr.number, head, tip);
+    } catch (error) {
+      notCarried(chain.length ? `chain cut at ${head.slice(0, 12)}: ${message(error)}` : message(error));
+      break;
+    }
+    if (!source || seen.has(source.from)) break;
+    chain.unshift({ head, ...source });
+    seen.add(source.from);
+    head = source.from;
+  }
+  let carried = null;
+  for (const hop of chain) {
+    let reply;
+    try {
+      reply = await cluedRpc(fetchImpl, env, workspace, VERIFY_RPC, { action: "carry_main_merge", scope: binding.scope,
+        pr_ref: `${env.GITHUB_REPOSITORY}#${pr.number}`, from_head_sha: hop.from, head_sha: hop.head, main_sha: hop.main,
+        target_branch: pr.base.ref });
+    } catch (error) {
+      notCarried(message(error));
       return null;
     }
-    outcome.notices.push(`main_merge_carried: ${source.from.slice(0, 12)} + main ${source.main.slice(0, 12)}`);
-    return source;
-  } catch (error) {
-    outcome.notices.push(`main_merge_not_carried: ${plainFinding(error instanceof Error ? error.message : String(error))}`);
-    return null;
+    if (reply.status !== 200 || reply.body?.status !== "committed") {
+      const code = reply.body?.error_code ?? reply.detail ?? reply.status;
+      notCarried(code);
+      carried = null;
+      if (code === "source_head_not_authorized") continue;
+      return null;
+    }
+    outcome.notices.push(`main_merge_carried: ${hop.from.slice(0, 12)} + main ${hop.main.slice(0, 12)}${reply.body.replayed === true ? " (already carried)" : ""}`);
+    carried = hop;
   }
+  return carried && carried.head === pr.head.sha ? { from: carried.from, main: carried.main } : null;
 }
 
 // Owner Decision a0d93cd0: merging the base branch into a head the Owner
@@ -2901,13 +2937,19 @@ export async function qualifyTrustedAutomationRoute({ env, event, run, currentAd
     const mergedAt = timestamp(commit.commit?.committer?.date), createdAt = timestamp(run.created_at);
     requireProof(mergedAt !== null && createdAt !== null && mergedAt <= createdAt, 'refresh_time');
     const checksPath = head => `/repos/${repository}/commits/${head}/check-runs?check_name=${admissionName}&filter=all&per_page=100`;
-    const prior = boundedChecks(await read(checksPath(parents[0]))).filter(check => {
+    // FABLE-scaffold-shadow-fix-20261122 §2 A: under Native the earlier head's
+    // admission is not read. The current head's exact Native admission (claim,
+    // authorization, write_set, Grant of this head) and the main-only
+    // attestation below decide, as for a head the author refreshed and pushed;
+    // a behind protected head is never admitted, so requiring it refused every
+    // bot refresh of one. The legacy branch keeps the earlier-head proof.
+    const prior = native ? null : boundedChecks(await read(checksPath(parents[0]))).filter(check => {
       const finished = timestamp(check.completed_at);
       return validCheck(check, parents[0], pr.number) && successful(check) && finished !== null && finished <= mergedAt;
     }).sort((a, b) => b.id - a.id)[0];
     // This earlier successful check proves provenance only. It cannot replace
     // the current head's live admission, epoch or rerun authorization.
-    requireProof(prior, 'prior_pr_admission_missing');
+    if (!native) requireProof(prior, 'prior_pr_admission_missing');
     let priorRunId = null;
     if (native) {
       // The existing main-only App attests the exact two-parent refresh. A
@@ -2935,7 +2977,7 @@ export async function qualifyTrustedAutomationRoute({ env, event, run, currentAd
     requireProof(samePR(await read(`/repos/${repository}/pulls/${pr.number}`), context), 'live_pr_changed');
     return { qualified: true, reason: 'admitted_owner_pr_signed_main_refresh', run_id: run.id, run_attempt: attempt,
       pr_number: pr.number, head_sha: pr.head.sha, previous_head_sha: parents[0], main_sha: parents[1],
-      actor_id: AUTOMATION_BOT.id, prior_check_id: prior.id, prior_admission_run_id: priorRunId,
+      actor_id: AUTOMATION_BOT.id, prior_check_id: prior?.id ?? null, prior_admission_run_id: priorRunId,
       current_check_id: currentAdmission.id };
   } catch (error) {
     if (error instanceof RouteRefusal) reason = error.message;

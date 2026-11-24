@@ -125,7 +125,161 @@ const standInSteps = credentials => [...Object.values(credentials?.required ?? {
   .filter(n => Object.hasOwn(CREDENTIAL_DECISIONS, n) && CREDENTIAL_DECISIONS[n].give === true && typeof CREDENTIAL_DECISIONS[n].perNodeStep === 'string')
   .map(n => CREDENTIAL_DECISIONS[n].perNodeStep);
 
-export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null, credentials = null, credentialFilesSha256 = null }) {
+// The drill's server (FABLE-drill-role-probe-20261124.md, PR-3): the drill installs against the test project, never production. A made-up
+// CI token against production can only be answered "unauthorized" (the 17th candidate's drill), and a real one must not be there at all.
+// drill-server.json is the one place the drill's server is named: the project, its address, the hosts the guest cuts off or lets
+// through, and the session pooler the host's sync connects through (poolerHost: the host only, never in the kit; its shape is the sync
+// script's to hold, apps/clued-cloud/scripts/drill-test-sync.mjs, null until DESK fills it in). The publishable key is the host's copy
+// (below). No key yet: no kit (DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET); nothing falls back to the Release's address.
+// The first-install kit carries the server in two public fields of its record (prepare-record.mjs); the drill kit carries a copy of that
+// file with those two replaced and nothing else, and with it the three files that pin its bytes in the guest: the first-install sums
+// (bootstrap.ps1 kitListed), the acceptance (install.mjs firstInstallKitSha256) and the drill's own release-pins.json. The Release
+// directory is never changed; the archive and its Source are the package's (the record's address is not in the Source hash).
+export const SERVER_CONTRACT = 'clued.drill.server/1';
+export const SERVER_STAND_IN_CONTRACT = 'clued.drill.server-stand-in/1';
+export const SERVER_FIELDS = Object.freeze(['record.publishableKey', 'record.supabaseUrl']);
+const SERVER_URL = /^https:\/\/[a-z0-9]+\.supabase\.co$/;
+export const SERVER_KEY = /^sb_publishable_[A-Za-z0-9_-]+$/;
+const hostOf = url => new URL(url).hostname;
+const hostList = v => Array.isArray(v) && v.every(h => typeof h === 'string' && /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/.test(h)) && new Set(v).size === v.length;
+function checkedServer(s, { allowUnset = false } = {}) {
+  check(s !== null && typeof s === 'object' && !Array.isArray(s) && Object.keys(s).sort().join() === 'allowedHosts,blackholeHosts,contract,poolerHost,project,publishableKey,supabaseUrl' &&
+    (s.poolerHost === null || (typeof s.poolerHost === 'string' && s.poolerHost.length <= 253)) &&
+    s.contract === SERVER_CONTRACT && typeof s.project === 'string' && /^[a-z0-9][a-z0-9-]{0,62}$/.test(s.project) &&
+    typeof s.supabaseUrl === 'string' && SERVER_URL.test(s.supabaseUrl) && hostList(s.blackholeHosts) && hostList(s.allowedHosts) &&
+    // a host is cut off or let through, never both; the drill's own server is never cut off
+    !s.blackholeHosts.some(h => s.allowedHosts.includes(h)) && !s.blackholeHosts.includes(hostOf(s.supabaseUrl)), 'DRILL_SERVER_REFUSED');
+  check(s.publishableKey !== null || allowUnset, 'DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET');
+  check(s.publishableKey === null || (typeof s.publishableKey === 'string' && SERVER_KEY.test(s.publishableKey)), 'DRILL_SERVER_REFUSED');
+  return { contract: s.contract, project: s.project, supabaseUrl: s.supabaseUrl, publishableKey: s.publishableKey,
+    blackholeHosts: [...s.blackholeHosts], allowedHosts: [...s.allowedHosts], poolerHost: s.poolerHost };
+}
+// Every host the package's archive names after "https://", in any entry (code, lists, comments alike; lower case, a port or a path is
+// not part of it). What the package's own code reaches is what it names, whatever the record says: the node's service posts its renew
+// probe to a constant, windows/SwapBroker.cs Route (review M1 of PR-3). An address put together at run time is not seen here.
+export function hostsOfTar(tarBytes) {
+  const hosts = new Set();
+  for (const e of readTar(tarBytes)) for (const m of e.data.toString('latin1').matchAll(/https:\/\/([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)/gi)) hosts.add(m[1].toLowerCase());
+  return [...hosts].sort();
+}
+// Each of them is cut off in the guest (blackholeHosts) or registered as not Clued's (allowedHosts; the drill's own server is the
+// drill's), or there is no kit and no boot: a host nobody decided on is taken for production.
+function assertTarHostsDecided(tarBytes, { blackholeHosts, allowedHosts, supabaseUrl }) {
+  const undecided = hostsOfTar(tarBytes).filter(h => !blackholeHosts.includes(h) && !allowedHosts.includes(h) && h !== hostOf(supabaseUrl));
+  check(undecided.length === 0, `DRILL_SERVER_PRODUCTION_HOST_NOT_CUT_OFF:${undecided.join(',')}`);
+}
+// The drill server's public key is not in the repository (FABLE-drill-test-project-sync-20261124.md section 3): its one source is the
+// test project, and this host keeps the copy drill-vm.ps1 -ServerKey stored once the project answered it (drill-server-check.mjs
+// storeServerKey). The copy names the project it is for: one stored for another project is not this server's key.
+export const HOST_KEY_FILE = 'D:\\clued-drill\\drill-server.local.json';
+export const SERVER_KEY_CONTRACT = 'clued.drill.server-key/1';
+export const serverKeyRecord = (server, key) => ({ contract: SERVER_KEY_CONTRACT, project: server.project, supabaseUrl: server.supabaseUrl, publishableKey: key });
+function hostKey(keyFile, server) {
+  if (!fs.existsSync(keyFile)) return null;
+  let k = null;
+  try { k = JSON.parse(fs.readFileSync(keyFile, 'utf8').replace(/^\uFEFF/, '')); } catch { k = null; }
+  check(k !== null && typeof k === 'object' && typeof k.publishableKey === 'string' && SERVER_KEY.test(k.publishableKey) &&
+    JSON.stringify(k) === JSON.stringify(serverKeyRecord(server, k.publishableKey)), 'DRILL_SERVER_KEY_REFUSED');
+  return k.publishableKey;
+}
+// The drill's server: drill-server.json (which carries no key: a file with one is refused) and the host's copy of the key.
+// allowUnset: read it while the host has no copy yet (a kit is never made from such a reading); keyFile null: the file alone.
+export function readDrillServer({ file = fileURLToPath(new URL('./drill-server.json', import.meta.url)), keyFile = HOST_KEY_FILE, allowUnset = false } = {}) {
+  let s;
+  try { s = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch { throw new Error('DRILL_SERVER_REFUSED'); }
+  check(s !== null && typeof s === 'object' && !Array.isArray(s) && !Object.hasOwn(s, 'publishableKey'), 'DRILL_SERVER_REFUSED');
+  const named = checkedServer({ ...s, publishableKey: null }, { allowUnset: true });
+  return checkedServer({ ...named, publishableKey: keyFile === null ? null : hostKey(keyFile, named) }, { allowUnset });
+}
+// Every leaf of a JSON value by its path (an empty object or array is a leaf too), for a comparison that sees every difference.
+const leavesOf = (v, at = '') => v !== null && typeof v === 'object' && Object.keys(v).length > 0
+  ? Object.entries(v).flatMap(([k, x]) => leavesOf(x, at ? `${at}.${k}` : k)) : [[at, JSON.stringify(v)]];
+const recordOf = (bytes, code) => {
+  let k;
+  try { k = JSON.parse(bytes.toString('utf8')); } catch { throw new Error(code); }
+  const r = k?.record;
+  check(r !== null && typeof r === 'object' && typeof r.supabaseUrl === 'string' && SERVER_URL.test(r.supabaseUrl) &&
+    typeof r.publishableKey === 'string' && SERVER_KEY.test(r.publishableKey), code);
+  return { kit: k, supabaseUrl: r.supabaseUrl, publishableKey: r.publishableKey };
+};
+// The drill's first-install kit against the Release's: another server address, and no difference but the two server fields. Returns them.
+export function assertServerStandIn(releaseBytes, drillBytes) {
+  const release = recordOf(releaseBytes, 'DRILL_SERVER_RELEASE_KIT_NAMES_NO_SERVER'), drill = recordOf(drillBytes, 'DRILL_SERVER_STAND_IN_REFUSED');
+  check(hostOf(release.supabaseUrl) !== hostOf(drill.supabaseUrl), 'DRILL_SERVER_IS_PRODUCTION');
+  const a = new Map(leavesOf(release.kit)), b = new Map(leavesOf(drill.kit));
+  const differs = [...new Set([...a.keys(), ...b.keys()])].filter(k => a.get(k) !== b.get(k)).sort();
+  check(JSON.stringify(differs) === JSON.stringify(SERVER_FIELDS), `DRILL_SERVER_STAND_IN_DIFFERS:${differs.join(',')}`);
+  return differs;
+}
+// The Release's first-install kit with the drill's server in place of its own.
+export function drillFirstInstallKit(releaseBytes, server) {
+  const { kit } = recordOf(releaseBytes, 'DRILL_SERVER_RELEASE_KIT_NAMES_NO_SERVER');
+  kit.record.supabaseUrl = server.supabaseUrl; kit.record.publishableKey = server.publishableKey;
+  const bytes = Buffer.from(JSON.stringify(kit, null, 2) + '\n');
+  assertServerStandIn(releaseBytes, bytes);
+  return bytes;
+}
+// The three stand-in files and the kit's record of them. `accepted`: the acceptance on the Release's own first-install kit (a candidate's
+// drill-only one, candidateAcceptance; or the Owner's, of an accepted version). The stand-in acceptance is that one naming the drill's
+// kit and the drill's reserved Decision and receipt (publish.mjs DRILL_RESERVED: for a candidate's they are there already), so it is
+// refused wherever an Owner's acceptance is read (namesDrillReserved); every other field is the accepted one's, read by the guest as it is.
+function serverStandIn({ from, version, server, accepted }) {
+  const tag = `fleet-node-${version}`;
+  const names = { firstInstallKit: `${tag}.first-install-kit.json`, firstInstallSums: `${tag}.first-install.SHA256SUMS`, acceptance: `${tag}.acceptance.json` };
+  const releaseKit = read(from, names.firstInstallKit), drillKit = drillFirstInstallKit(releaseKit, server);
+  const releaseSha = sha256(releaseKit), drillSha = sha256(drillKit);
+  const releaseSums = read(from, names.firstInstallSums).toString();
+  check(readSums(releaseSums).filter(f => f.name === names.firstInstallKit && f.sha256 === releaseSha).length === 1, 'DRILL_FIRST_SUMS_NOT_THE_KITS');
+  const sumsBytes = Buffer.from(releaseSums.split(/(?<=\n)/)
+    .map(line => (line.replace(/\r?\n$/, '') === `${releaseSha}  ${names.firstInstallKit}` ? line.replace(releaseSha, drillSha) : line)).join(''));
+  check(accepted.firstInstallKitSha256 === releaseSha, 'DRILL_FIRST_INSTALL_KIT_NOT_ACCEPTED');
+  const acceptance = { ...accepted, cluedDecision: DRILL_RESERVED.decision, acceptedAt: DRILL_RESERVED.acceptedAt,
+    fleetRefs: { ...accepted.fleetRefs, installationReceiptRef: DRILL_RESERVED.receipt, ownerDecisionRef: DRILL_RESERVED.decision, ownerReceiptRef: DRILL_RESERVED.receipt },
+    firstInstallKitSha256: drillSha };
+  check(namesDrillReserved(acceptance), 'DRILL_ACCEPTANCE_STAND_IN_REFUSED');
+  const release = recordOf(releaseKit, 'DRILL_SERVER_RELEASE_KIT_NAMES_NO_SERVER');
+  // cut off in the guest: the Release record's database, and the service's other hosts (drill-server.json blackholeHosts)
+  const blackholeHosts = [...new Set([hostOf(release.supabaseUrl), ...server.blackholeHosts])].sort(), allowedHosts = [...server.allowedHosts].sort();
+  check(!allowedHosts.includes(hostOf(release.supabaseUrl)), 'DRILL_SERVER_REFUSED');
+  assertTarHostsDecided(read(from, `${tag}.tar`), { blackholeHosts, allowedHosts, supabaseUrl: server.supabaseUrl });
+  return { acceptance,
+    payloads: { [names.firstInstallKit]: drillKit, [names.firstInstallSums]: sumsBytes, [names.acceptance]: Buffer.from(JSON.stringify(acceptance, null, 2) + '\n') },
+    record: { contract: SERVER_STAND_IN_CONTRACT, project: server.project, supabaseUrl: server.supabaseUrl, replaced: [...SERVER_FIELDS],
+      releaseFirstInstallKitSha256: releaseSha, firstInstallKitSha256: drillSha, files: names, blackholeHosts, allowedHosts } };
+}
+// A made kit's server stand-in against the Release directory it is run with, for drill-vm.ps1's gate before any boot
+// (Assert-DrillServerReady; the kit's own files are already held to kit.json's hashes by Read-DrillKit): the Release's first-install kit
+// is the one the stand-in was made from, the drill's differs from it in the two server fields only and names the kit's server, the
+// production host is in the list the guest cuts off, every host the archive names is in that list or the registered one, the sums differ in the kit's line only, the acceptance names the drill's kit.
+export function verifyKitServer({ kit, from, version }) {
+  const s = JSON.parse(fs.readFileSync(path.join(kit, 'kit.json'), 'utf8')).server;
+  check(s !== null && typeof s === 'object' && s.contract === SERVER_STAND_IN_CONTRACT, 'DRILL_KIT_SERVER_STAND_IN_MISSING');
+  const tag = `fleet-node-${version}`;
+  check(JSON.stringify(s.files) === JSON.stringify({ firstInstallKit: `${tag}.first-install-kit.json`, firstInstallSums: `${tag}.first-install.SHA256SUMS`, acceptance: `${tag}.acceptance.json` }) &&
+    JSON.stringify(s.replaced) === JSON.stringify(SERVER_FIELDS) && hostList(s.blackholeHosts) && hostList(s.allowedHosts) &&
+    !s.blackholeHosts.some(h => s.allowedHosts.includes(h)), 'DRILL_KIT_SERVER_STAND_IN_REFUSED');
+  const releaseKit = read(from, s.files.firstInstallKit), drillKit = read(kit, s.files.firstInstallKit);
+  check(sha256(releaseKit) === s.releaseFirstInstallKitSha256, 'DRILL_KIT_SERVER_NOT_THIS_RELEASE');
+  check(sha256(drillKit) === s.firstInstallKitSha256, 'DRILL_KIT_SERVER_STAND_IN_REFUSED');
+  assertServerStandIn(releaseKit, drillKit);
+  const release = recordOf(releaseKit, 'DRILL_SERVER_RELEASE_KIT_NAMES_NO_SERVER'), drill = recordOf(drillKit, 'DRILL_SERVER_STAND_IN_REFUSED');
+  check(drill.supabaseUrl === s.supabaseUrl && s.blackholeHosts.includes(hostOf(release.supabaseUrl)) && !s.blackholeHosts.includes(hostOf(drill.supabaseUrl)),
+    'DRILL_KIT_SERVER_STAND_IN_REFUSED');
+  // the archive this run installs names no host but the kit's cut-off and registered ones (the rule the kit was made under, held again)
+  assertTarHostsDecided(read(from, `${tag}.tar`), s);
+  const others = text => readSums(text).map(f => (f.name === s.files.firstInstallKit ? { ...f, sha256: '' } : f));
+  const releaseSums = read(from, s.files.firstInstallSums).toString(), drillSums = read(kit, s.files.firstInstallSums).toString();
+  check(JSON.stringify(others(releaseSums)) === JSON.stringify(others(drillSums)) &&
+    readSums(drillSums).some(f => f.name === s.files.firstInstallKit && f.sha256 === s.firstInstallKitSha256), 'DRILL_KIT_SERVER_STAND_IN_REFUSED');
+  const acceptance = JSON.parse(read(kit, s.files.acceptance).toString('utf8'));
+  check(acceptance.firstInstallKitSha256 === s.firstInstallKitSha256 && namesDrillReserved(acceptance), 'DRILL_KIT_SERVER_STAND_IN_REFUSED');
+  return { project: s.project, supabaseUrl: s.supabaseUrl, releaseFirstInstallKitSha256: s.releaseFirstInstallKitSha256, firstInstallKitSha256: s.firstInstallKitSha256,
+    blackholeHosts: s.blackholeHosts };
+}
+// Registered as a stand-in (FIRST-INSTALL-KIT.md): the kit's per-node steps name it, so A10 never passes on a server that is not production's.
+export const SERVER_STAND_IN_STEP = '服务端与 CI 令牌替身（kit 的两个公开字段换成测试项目，CI 令牌是 Owner 在测试项目签发的不带 ci-admission 角色的演练绑定，最长 90 天，到期重签；测试项目的库在每次开机前由宿主向生产已应用清单收敛（同步脚本，清单取自 main 上最近一次成功的发布运行），账户里的 parking 角色也由这次同步种，没有它服务端会放行任何绑定；替的是生产服务端与真节点的 CI 绑定；因为演练不得接触生产；因此没验到生产服务端对本包的应答与带角色节点的首班车；不可删，没验到的部分由真机首装承担）';
+
+export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null, credentials = null, credentialFilesSha256 = null, server = null }) {
   check(Number.isInteger(timeoutMinutes) && timeoutMinutes >= 5 && timeoutMinutes <= 240, 'DRILL_KIT_TIMEOUT_REFUSED');
   const prereq = JSON.parse(prereqBytes.toString('utf8'));
   check(prereq.contract === 'clued.drill.prereq/1', 'DRILL_PREREQ_CONTRACT_REFUSED');
@@ -135,9 +289,9 @@ export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, 
     files: names.map(name => ({ path: name, sha256: sha256(payloads[name]) })),
     entry: { file: 'first-install-entry.ps1', arguments: ['-From', '{from}', '-Kit', '{kit}', '-Fake', '{fake}', '-Work', '{work}', '-Version', '{version}'] },
     // a stand-in step for every name the package names and the drill makes and hands over (the decision table), required or optional
-    timeoutMinutes, perNodeSteps: ['未验证原入口的非提权检查', '绕过 RunAs 提权', '绕过凭据窗口', ...standInSteps(credentials)], prereqSha256: sha256(prereqBytes),
+    timeoutMinutes, perNodeSteps: ['未验证原入口的非提权检查', '绕过 RunAs 提权', '绕过凭据窗口', ...standInSteps(credentials), ...(server ? [SERVER_STAND_IN_STEP] : [])], prereqSha256: sha256(prereqBytes),
     // The real first-install host owns WSL import, Docker and accounts, from S0.
-    prerequisiteMode: 'first-install-host', ...(candidate ? { candidate } : {}), ...(credentials ? { credentials } : {}), ...(credentialFilesSha256 ? { credentialFilesSha256 } : {}) };
+    prerequisiteMode: 'first-install-host', ...(candidate ? { candidate } : {}), ...(server ? { server } : {}), ...(credentials ? { credentials } : {}), ...(credentialFilesSha256 ? { credentialFilesSha256 } : {}) };
 }
 
 // The host tools the kit's acceptance pins for its roles (fleetRefs.formalRoles.<role>.hostTools.<name>: path and sha256, the source
@@ -260,21 +414,26 @@ export function releasePins(from, version) {
 export const KIT_DRILL_FILES = ['first-install-entry.ps1', 'guest-failure-files.json'];
 
 // `request`: a candidate's acceptance request (publish.mjs prepare's --out); required for a candidate, refused for an accepted version.
-export async function makeDrillKit({ from, version, prereq, out, request, timeoutMinutes = 240, now = Date.now() }) {
+// `server`: the drill's server (default: drill-server.json, the one source; tests give their own).
+export async function makeDrillKit({ from, version, prereq, out, request, timeoutMinutes = 240, now = Date.now(), server }) {
   const { candidate: isCandidate, ...pins } = releasePins(from, version);
   const here = path.dirname(fileURLToPath(import.meta.url));
   const payloads = Object.fromEntries(KIT_DRILL_FILES.map(name => [name, read(here, name)]));
   let candidate = null;
   check(isCandidate || !request, 'DRILL_REQUEST_FOR_AN_ACCEPTED_VERSION');
-  let acceptance = null;   // the kit's acceptance: the candidate's (drill-only) or the Owner's in the From directory
-  if (isCandidate) {
-    acceptance = candidateAcceptance({ from, version, request, now });
-    const name = `fleet-node-${version}.acceptance.json`, bytes = Buffer.from(JSON.stringify(acceptance, null, 2) + '\n');
-    payloads[name] = bytes;
-    pins.files = [...pins.files, { path: name, sha256: sha256(bytes) }].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-    candidate = { acceptance: name, tarSha256: acceptance.archive_sha256, ciSourceManifestSha256: acceptance.ciSourceManifestSha256,
-      firstInstallKitSha256: acceptance.firstInstallKitSha256 };
-  }
+  // What was accepted (a candidate: what the Owner is asked to accept, with the drill's stand-ins), on the Release's own first-install kit;
+  // the kit's acceptance is that with the drill's first-install kit in its place (serverStandIn), for the guest only.
+  const accepted = isCandidate ? candidateAcceptance({ from, version, request, now }) : JSON.parse(read(from, `fleet-node-${version}.acceptance.json`).toString('utf8'));
+  server = server === undefined ? readDrillServer() : checkedServer(server);
+  const standIn = serverStandIn({ from, version, server, accepted });
+  const acceptance = standIn.acceptance;
+  Object.assign(payloads, standIn.payloads);
+  const replaced = new Set(Object.keys(standIn.payloads));
+  pins.files = [...pins.files.filter(f => !replaced.has(f.path)), ...Object.entries(standIn.payloads).map(([name, bytes]) => ({ path: name, sha256: sha256(bytes) }))]
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  // a candidate's three hashes are the Release's (what the Owner accepts and seal compares): its first-install kit is the Release's own
+  if (isCandidate) candidate = { acceptance: standIn.record.files.acceptance, tarSha256: accepted.archive_sha256, ciSourceManifestSha256: accepted.ciSourceManifestSha256,
+    firstInstallKitSha256: accepted.firstInstallKitSha256 };
   payloads['release-pins.json'] = Buffer.from(JSON.stringify(pins, null, 2) + '\n');
   const { sha256: credentialFilesSha256, credentials } = credentialsOfTar(read(from, `fleet-node-${version}.tar`));
   const prereqBytes = fs.readFileSync(prereq), p = JSON.parse(prereqBytes);
@@ -301,13 +460,12 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
     const need = declared[0];
     check(Object.hasOwn(payloads, need.fileName) && sha256(payloads[need.fileName]) === need.sha256, `DRILL_PREREQ_TOOLS_INCOMPLETE:${tool}`);
   }
-  acceptance ??= JSON.parse(read(from, `fleet-node-${version}.acceptance.json`).toString('utf8'));
   const hostTools = kitHostTools(acceptance, (p.debs ?? []).map(item => { const name = path.win32.basename(item.path); return { name, bytes: payloads[name] }; }));
-  const manifest = drillKitManifest({ payloads, prereqBytes, timeoutMinutes, candidate, credentials, credentialFilesSha256 });
+  const manifest = drillKitManifest({ payloads, prereqBytes, timeoutMinutes, candidate, credentials, credentialFilesSha256, server: standIn.record });
   fs.mkdirSync(out); // refuse an existing target, including a previous kit
   for (const [name, bytes] of Object.entries(payloads)) fs.writeFileSync(path.join(out, name), bytes, { flag: 'wx' });
   fs.writeFileSync(path.join(out, 'kit.json'), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' });
-  return { kit: path.resolve(out), version, files: manifest.files.length, perNodeSteps: manifest.perNodeSteps, candidate, hostTools };
+  return { kit: path.resolve(out), version, files: manifest.files.length, perNodeSteps: manifest.perNodeSteps, candidate, hostTools, server: standIn.record };
 }
 
 // Assemble the local build/final layout exactly as publish.mjs does, never changing the originals.
@@ -345,9 +503,11 @@ export function prepareFrom({ build, final, images, version, out }) {
 
 if (import.meta.main) {
   try {
-    const { values } = parseArgs({ options: Object.fromEntries(['from', 'version', 'prereq', 'out', 'request', 'build', 'final', 'images', 'credentials-of'].map(n => [n, { type: 'string' }])) });
+    const { values } = parseArgs({ options: Object.fromEntries(['from', 'version', 'prereq', 'out', 'request', 'build', 'final', 'images', 'credentials-of', 'server-of'].map(n => [n, { type: 'string' }])) });
     // --credentials-of <tar>: the package's credential list and its bytes' hash, for drill-vm.ps1's gate (Assert-DrillKitCredentialsBound)
     if (values['credentials-of']) console.log(JSON.stringify(credentialsOfTar(fs.readFileSync(values['credentials-of']))));
+    // --server-of <kit> --from <release-dir> --version <v>: the kit's server stand-in against that Release (Assert-DrillServerReady)
+    else if (values['server-of']) console.log(JSON.stringify(verifyKitServer({ kit: values['server-of'], from: values.from, version: values.version })));
     else {
       check(values.version && values.out, 'USAGE: --version <v> --out <new-dir> (--from <release-dir> --prereq <prereq.json> [--request <fleet-node-<v>.acceptance-request.json>: a candidate] | --build <dir> --final <dir> --images <dir>) | --credentials-of <tar>');
       console.log(JSON.stringify(values.build ? prepareFrom(values) : await makeDrillKit(values)));

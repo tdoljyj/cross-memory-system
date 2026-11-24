@@ -8,6 +8,7 @@ import { runEntry, controllerPrincipal, controllerPorts, publicationControllerGi
 import { STATE_V2 } from '../resident-v2/layout.mjs';
 import { createProductionWorkAdmissionPublisherV2 } from './publisher.mjs';
 import { readStageTrainModeFact, trainPortsV2 } from '../independent-control-checks-v2/train-mode.mjs';
+import { readStageBatchRoute } from '../independent-control-checks-v2/batch-route.mjs';
 import { createClaimAssistNative, stage1WithLease, stage1FrontRequeue } from '../independent-control-checks-v2/claim-assist-native.mjs';
 
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
@@ -15,7 +16,9 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const job = inputs.jobs[0];
     const { appKey, nativeToken, bindingId } = await controllerPrincipal(inputs.record);
     const log = observationLog(STATE_V2.effectsWorkAdmission, job.id);
-    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot, live, log });
+    // bc982192: the batch's own route stamp from this stage directory (batch-route.mjs; none: main's tip is the batch base).
+    const batchRoute = await readStageBatchRoute(inputs.dir);
+    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot, live, log, batchRoute });
     const { admission } = ports;
     const journal = await EffectJournal.open(STATE_V2.effectsWorkAdmission);
     const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record, plan: inputs.plan });

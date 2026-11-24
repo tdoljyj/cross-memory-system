@@ -2,7 +2,7 @@
 # NON-elevated, read-only on the repository and the host; writes only new files under the configuration's workDir. Run from
 # PowerShell, never from Git Bash.
 #   powershell -NoProfile -File build-upgrade.ps1 -Config <reinstall-config.json> -Commit <40hex> -InstalledPackage <dir> [-Tag t]
-#        [-Final -DecisionRef <uuid> -ReceiptRef <uuid>] [-StateCompat <stateCompat.json>] [-Root <resident root>] [-AllowFleetSourceMismatch]
+#        [-Final -DecisionRef <uuid> -ReceiptRef <uuid>] [-StateCompat <stateCompat.json>] [-Root <resident root>]
 # Differences from reinstall\build.ps1 (same configuration, same tools):
 #   - the record's acceptance references and acceptedAt are the INSTALLED package's (record-inputs.py with no --ref; Decision b1dd8a84):
 #     the node identity pins them, and the upgrader refuses a package whose identity changed. The Owner's acceptance of THIS upgrade is
@@ -20,10 +20,7 @@ param([Parameter(Mandatory)][string]$Config,
       [ValidatePattern('^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$')][string]$DecisionRef = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
       [ValidatePattern('^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$')][string]$ReceiptRef = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
       [string]$StateCompat = '',
-      [string]$Root = 'C:\ProgramData\CluedIndependentCI\resident',
-      # defect 15894c2a: the Owner's explicit pass for a fleet Source mismatch (the other node is gone for good). The train still stops
-      # with TRAIN_SOURCE_MISMATCH until that node's last heartbeat is 24 hours old or it runs the target Source (rollout\README.md §3).
-      [switch]$AllowFleetSourceMismatch)
+      [string]$Root = 'C:\ProgramData\CluedIndependentCI\resident')
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $Here = Split-Path -Parent $PSCommandPath
@@ -162,7 +159,6 @@ if ($m.nodeProfileSha256 -cne $installedManifest.nodeProfileSha256) { throw 'UPG
 
 # 7. the precheck: the installed upgrader's ACCEPT on this node, read-only
 $preArgs = @('--root', $Root, '--package', $pkg, '--package-sha', $pkgSha, '--acceptance', $DecisionRef, '--installed-package', $InstalledPackage)
-if ($AllowFleetSourceMismatch) { $preArgs += '--allow-fleet-source-mismatch' }
 $pre = & node (Join-Path $Here 'precheck.mjs') @preArgs
 $preExit = $LASTEXITCODE
 Write-New (Join-Path $R ('upgrade\precheck.' + $stem + '.' + $pkgSha.Substring(0, 8) + '.json')) ($pre | Out-String)
@@ -171,11 +167,7 @@ $request = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + (Join-P
 ([ordered]@{ status = $(if ($preExit -eq 0) { 'UPGRADE_PACKAGE_BUILT' } else { 'UPGRADE_PACKAGE_BUILT_PRECHECK_REFUSED' }); node = $cfg.node; final = [bool]$Final
   package = $pkg; packageManifestSha256 = $pkgSha; ciSourceManifestSha256 = $m.ciSourceManifestSha256; residentManifestSha256 = $m.residentManifestSha256
   grantResource = ('ci-resident:' + $cfg.node + '/' + $pkgSha); rolesCopySource = $rolesRes.copySource; precheck = $p.status; precheckCode = $(if ($p.PSObject.Properties.Name -contains 'code') { $p.code } else { $null })
-  # defect 15894c2a: the fleet Source comparison (and which node goes first) and the local result behind a LOCAL_ONLY pass or a fleet refusal
   precheckWarnings = @(if ($p.PSObject.Properties.Name -contains 'warnings') { $p.warnings })
-  precheckLocalChecks = $(if ($p.PSObject.Properties.Name -contains 'localChecks') { $p.localChecks } else { $p.status })
-  fleetSourceReadiness = $(if ($p.PSObject.Properties.Name -contains 'fleetSourceReadiness') { $p.fleetSourceReadiness } else { $null })
   precheckAdvice = $(if ($p.PSObject.Properties.Name -contains 'advice') { $p.advice } else { $null })
-  fleetSourceMismatchAllowed = [bool]$AllowFleetSourceMismatch
   requestCommand = $(if ($Final -and $preExit -eq 0) { $request } else { $null }) } | ConvertTo-Json -Depth 6)
 if ($preExit -ne 0) { exit 1 }

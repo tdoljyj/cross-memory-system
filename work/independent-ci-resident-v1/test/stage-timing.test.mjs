@@ -34,7 +34,7 @@ test('median and P90: the middle value (mean of the two middle ones), and the ne
   assert.equal(p90([7]), 7);
 });
 
-test('segments accumulate: prep up to the bundle, each stage run, retries and waits; the rest at A is not counted', () => {
+test('segments accumulate: prep up to stage 1, each stage run, retries and waits; the rest at A is not counted', () => {
   const { board, at } = clocked();
   board.setCurrent(cur(1, 0, 'derive')); at(5 * SEC);
   board.setCurrent(cur(1, 0, 'bundle')); at(25 * SEC);
@@ -48,7 +48,7 @@ test('segments accumulate: prep up to the bundle, each stage run, retries and wa
   board.setCurrent(cur(1, 2, 'stage')); at(90 * SEC);
   const mid = snap(board).timing.current;
   assert.equal(mid.stage, 2);
-  assert.equal(mid.prepMs, 30 * SEC, 'reservation -> the bundle is built');
+  assert.equal(mid.prepMs, 30 * SEC, 'reservation -> stage 1 is entered');
   assert.deepEqual(mid.prep, { derive: 5 * SEC, bundle: 25 * SEC, workspace: 20 * SEC });
   assert.deepEqual(mid.stages['1'], { ms: 40 * SEC, runs: 1, waitMs: 0 });
   assert.deepEqual(mid.stages['2'], { ms: 2 * MIN, runs: 1, waitMs: 60 * SEC }, 'the open run is not in it yet');
@@ -93,6 +93,7 @@ test('statistics over the newest 20 finished batches: per segment median and P90
   for (let i = 1; i <= 25; i += 1) {
     const h = H(1).slice(0, 38) + String(i).padStart(2, '0');
     board.setCurrent({ ...cur(1, 0, 'bundle'), headSha: h }); at(i * SEC);
+    board.setCurrent({ ...cur(1, 1, 'stage'), headSha: h }); board.stageDone(1); // prep ends where stage 1 is entered (Task f79929d9)
     board.setCurrent({ ...cur(1, 2, 'stage'), headSha: h }); at(i * 10 * SEC); board.stageDone(2);
     if (i % 2 === 0) { board.setCurrent({ ...cur(1, 4, 'stage'), headSha: h }); at(i * SEC); board.stageDone(4); }
     board.outcome({ pr: 7, headSha: h, attempt: 1, outcome: 'COMPLETED', pushedAt: c.now - i * MIN });

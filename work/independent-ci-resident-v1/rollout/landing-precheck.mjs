@@ -42,8 +42,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
-import { FLEET_HEARTBEAT_WINDOW_MS, fleetSourceCheck } from './precheck.mjs';
-import { parseTrainLast, parseTrainNodes } from '../src/train.mjs';
+import { FLEET_HEARTBEAT_WINDOW_MS, fleetSourceCheck, parseTrainLast, parseTrainNodes } from '../src/train.mjs';
 import { externalChecksDecision, externalRequiredChecks, guardRuleset, runsOfRequired } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs';
 
 export const LANDING_PRECHECK_CONTRACT = 'clued.independent-ci.landing-precheck/1';

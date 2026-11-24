@@ -32,7 +32,9 @@ function fakeGithub(e, w) {
     async readChangedPaths(job) { return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] }; },
     async createCheck(body) { const id = Math.max(100, ...world.checks.keys()) + 1; const c = { id, app: { id: APP }, ...structuredClone(body) }; world.checks.set(id, c); world.hooks.create?.(c); return structuredClone(c); },
     async readBranchHead(name) { call('branch'); return { name, sha: world.main }; },
-    async readBranchRules() { call('rules'); return { complete: true, branch: 'main', rules: [{ type: 'pull_request', parameters: { allowed_merge_methods: ['merge'] } },
+    // world.rules: the whole rules reply's list as given (the scaffold ruleset, task 04f9b91b); world.rulesIncomplete: GitHub did not give it whole.
+    async readBranchRules() { call('rules'); if (world.rules) return { complete: world.rulesIncomplete !== true, branch: 'main', rules: structuredClone(world.rules) };
+      return { complete: world.rulesIncomplete !== true, branch: 'main', rules: [{ type: 'pull_request', parameters: { allowed_merge_methods: ['merge'] } },
       { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: world.strict === true, required_status_checks: world.ruleChecks ?? ['kooyumi-work-admission', 'gitleaks', 'trivy',
         'contract-placement', 'kooyumi-admission-verified', SLOT].map(context => ({ context, integration_id: APP })) } }] }; },
     async readPullRequest(n) { call('pull'); const p = world.pulls.get(n); return { number: n, state: p.state, draft: false, merged: !!p.merged, mergeable: true,

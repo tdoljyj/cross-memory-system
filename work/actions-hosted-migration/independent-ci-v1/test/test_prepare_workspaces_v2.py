@@ -73,6 +73,48 @@ class PrepareWorkspacesV2Tests(unittest.TestCase):
         for line in (' '.join(['4' * 40, d['headSha'], d['baseSha']]), ' '.join(['4' * 40, d['baseSha']]), ' '.join(['4' * 40, d['baseSha'], d['headSha'], '5' * 40]), ''):
             self.assertFalse(pw.test_parents_ok(line, front))
 
+    def test_base_rule_on_main_descriptor(self):
+        """bc982192: baseRule is optional and only 'on-main' on an S = H /3 descriptor (push landing); absent means main's tip is baseSha."""
+        self.assertFalse(pw.on_main(descriptor()))
+        d = descriptor(baseRule='on-main')
+        self.assertTrue(pw.on_main(d))
+        self.assertEqual(pw.validate_descriptor(d, BATCH)['trivy'], d['linuxJobIds'][1])
+        self.assertEqual(d['linuxJobIds'], descriptor()['linuxJobIds'], 'baseRule is not part of any job id')
+        for bad in (descriptor(baseRule='any'), descriptor(baseRule=True), descriptor(baseRule=None), descriptor(baseRule='on-main', testSha='4' * 40)):
+            with self.assertRaises(pw.Refused) as e:
+                pw.validate_descriptor(bad, BATCH)
+            self.assertEqual(e.exception.code, 'DESCRIPTOR_REFUSED')
+
+    def test_base_on_main_real_git(self):
+        """bc982192: base must be an ancestor of the head and of main's tip, or that tip (git rev-list --count x..base == 0)."""
+        tmp = tempfile.mkdtemp(prefix='clued-wsprep-base-')
+        try:
+            env = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_AUTHOR_NAME': 'f', 'GIT_AUTHOR_EMAIL': 'f@f', 'GIT_COMMITTER_NAME': 'f', 'GIT_COMMITTER_EMAIL': 'f@f'}
+            run = lambda *a: subprocess.run(['git', '-C', tmp, *a], env=env, capture_output=True, text=True, check=True).stdout
+            run('init', '-q', '-b', 'main')
+            def commit(msg):
+                with open(os.path.join(tmp, msg + '.txt'), 'w') as f:
+                    f.write(msg + chr(10))
+                run('add', '.')
+                run('commit', '-q', '-m', msg)
+                return run('rev-parse', 'HEAD').strip()
+            t0 = commit('t0')
+            run('checkout', '-q', '-b', 'pr')
+            head = commit('head')
+            run('checkout', '-q', 'main')
+            commit('m1')
+            m2 = commit('m2')
+            run('checkout', '-q', '-b', 'other', t0)
+            other = commit('other')
+            count = lambda a, b: run('rev-list', '--count', f'{a}..{b}')
+            self.assertTrue(pw.base_on_main(count, t0, head, m2), 'the merge base of a head two commits behind main')
+            self.assertTrue(pw.base_on_main(count, m2, m2, m2), "main's tip itself")
+            self.assertFalse(pw.base_on_main(count, m2, head, m2), 'not an ancestor of the head')
+            self.assertFalse(pw.base_on_main(count, head, head, m2), 'not an ancestor of main')
+            self.assertFalse(pw.base_on_main(count, other, head, m2), 'neither')
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_receipt_binding_and_freshness(self):
         d = descriptor()
         now = time.time()
