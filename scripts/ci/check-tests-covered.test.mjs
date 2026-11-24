@@ -109,6 +109,18 @@ test('the repository as committed: every test file runs in a required suite or i
   assert.ok(result.counts.tests > 900 && result.counts.runs > 600, JSON.stringify(result.counts));
 });
 
+// PLAN-g4-red-merged-20261125 §2.2 (Task 4432ee9b): the PostgreSQL 17 backup coverage test runs in production-schema (the
+// real database command of migration-verify names it), so its entry (Task 5ba48256: production-schema had no Docker image)
+// is gone; listed again, the table says it runs and the entry must go.
+test('the PostgreSQL 17 backup coverage test runs in production-schema and is not listed as uncovered', () => {
+  const file = 'apps/clued-cloud/tests/production-backup-scope-db.test.mjs';
+  const table = JSON.parse(readFileSync(path.join(ROOT, TABLE_PATH), 'utf8'));
+  assert.deepEqual(table.tests.filter((listed) => listed.path === file), []);
+  table.tests.push(entry(file, { kind: 'environment' }));
+  const { problems } = coverage({ root: ROOT, table, baseline: null });
+  assert.deepEqual(problems, [`${file}: runs in a required suite (production-schema); remove the entry`]);
+});
+
 test('a new test file no suite runs and the table does not list fails the check, naming the file', () => {
   const tracked = [...trackedFiles(ROOT), 'scripts/ci/brand-new-orphan.test.mjs', 'tests/test_brand_new_orphan.py'];
   const { problems } = coverage({ root: ROOT, tracked });

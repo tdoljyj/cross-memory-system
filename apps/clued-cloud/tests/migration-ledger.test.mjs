@@ -611,12 +611,15 @@ test('export --out writes new history-only texts next to that ledger, never into
 // ([db.migrations] enabled = false, which holds for `start` and for `db reset`), and each caller of
 // `supabase start` has one entry that applies the chain through scripts/ci/clued-local-migrate.mjs.
 // The three workflows are registered byte for byte, so the entry is a repository script they already call.
+// `supabase db start` starts the database alone: a start as well (Task 4432ee9b).
 const LOCAL_MIGRATE = 'scripts/ci/clued-local-migrate.mjs';
-const CLI_START = /\bsupabase(?:@[\w.-]+)?\s+start\b/;
+const CLI_START = /\bsupabase(?:@[\w.-]+)?\s+(?:db\s+)?start\b/;
 // Commands that push migration files through the CLI whatever the config says.
 const CLI_APPLIES = /\bsupabase(?:@[\w.-]+)?\s+(?:db\s+push|migration\s+up)\b/;
 const commandLines = (text) => text.split(/\r?\n/).map((line, index) => ({ line, number: index + 1 }))
   .filter(({ line }) => !/^\s*#/.test(line));
+// A CI script's code without its comment lines: a comment that names `supabase start` starts nothing.
+const scriptCode = (text) => text.split(/\r?\n/).filter((line) => !/^\s*(?:\/\/|\/\*|\*)/.test(line)).join('\n');
 
 function cliAppliesProblems(text) {
   return commandLines(text).filter(({ line }) => CLI_APPLIES.test(line))
@@ -647,25 +650,31 @@ const packageScripts = () => JSON.parse(read('apps', 'clued-cloud', 'package.jso
 
 // Who applies the migration chain for each file that runs `supabase start`. A new caller is added here with its
 // entry; a caller without one starts an empty database.
+// `clued-g4-fresh-start.mjs --verify`: its verify() applies the chain after it has proven the container is this run's
+// own and before it reads the history.
+function freshStartVerifyProblems() {
+  const problems = [];
+  const source = read('scripts', 'ci', 'clued-g4-fresh-start.mjs');
+  const verify = /^export function verify\(([\s\S]*?)^\}/m.exec(source)?.[1] ?? '';
+  const identity = verify.indexOf('verifyContainer(');
+  const apply = verify.indexOf('runtime.applyMigrations(');
+  const history = verify.indexOf('schema_migrations');
+  if (!(identity >= 0 && identity < apply && apply < history)) {
+    problems.push('clued-g4-fresh-start.mjs verify() does not apply the chain between verifyContainer and the history query');
+  }
+  if (!/applyMigrations: defaultApplyMigrations\b/.test(source) ||
+    !/function defaultApplyMigrations\([\s\S]*?clued-local-migrate\.mjs[\s\S]*?^\}/m.test(source)) {
+    problems.push(`clued-g4-fresh-start.mjs does not run ${LOCAL_MIGRATE} as its applyMigrations default`);
+  }
+  return problems;
+}
+
 const START_CALLERS = {
-  'clued-g4-database.yml': (text) => {
-    // Each route: start, then `clued-g4-fresh-start.mjs --verify`, whose verify() applies the chain after it has
-    // proven the container is this run's own and before it reads the history.
-    const problems = startEntryProblems(text, /clued-g4-fresh-start\.mjs --verify\b/, /\bsupabase\s+(?:db\s+lint|test\s+db)\b/);
-    const source = read('scripts', 'ci', 'clued-g4-fresh-start.mjs');
-    const verify = /^export function verify\(([\s\S]*?)^\}/m.exec(source)?.[1] ?? '';
-    const identity = verify.indexOf('verifyContainer(');
-    const apply = verify.indexOf('runtime.applyMigrations(');
-    const history = verify.indexOf('schema_migrations');
-    if (!(identity >= 0 && identity < apply && apply < history)) {
-      problems.push('clued-g4-fresh-start.mjs verify() does not apply the chain between verifyContainer and the history query');
-    }
-    if (!/applyMigrations: defaultApplyMigrations\b/.test(source) ||
-      !/function defaultApplyMigrations\([\s\S]*?clued-local-migrate\.mjs[\s\S]*?^\}/m.test(source)) {
-      problems.push(`clued-g4-fresh-start.mjs does not run ${LOCAL_MIGRATE} as its applyMigrations default`);
-    }
-    return problems;
-  },
+  'clued-g4-database.yml': (text) => [
+    // Each route: start, then `clued-g4-fresh-start.mjs --verify`, which applies the chain.
+    ...startEntryProblems(text, /clued-g4-fresh-start\.mjs --verify\b/, /\bsupabase\s+(?:db\s+lint|test\s+db)\b/),
+    ...freshStartVerifyProblems(),
+  ],
   'information-flow-e2e.yml': (text) => {
     // Each route: start, then the harness, which always recreates the database (no --skip-reset) and fills it.
     const problems = startEntryProblems(text, /npm run test:information-flow:e2e\b/, null);
@@ -702,6 +711,17 @@ const START_CALLERS = {
     }
     return problems;
   },
+  // The real database command of production-schema (PLAN-g4-red-merged-20261125 §2.2, Task 4432ee9b): in
+  // realDatabase(), the start, then `clued-g4-fresh-start.mjs --verify`, then the checks.
+  'clued-real-database.mjs': (text) => {
+    const body = /^export async function realDatabase\(([\s\S]*?)^\}/m.exec(text)?.[1] ?? '';
+    const start = body.indexOf('supabase(START)');
+    const verify = body.indexOf("fresh('--verify')");
+    const checks = body.indexOf('for (const step of steps)');
+    return [...(start >= 0 && start < verify && verify < checks ? []
+      : ['realDatabase() does not run clued-g4-fresh-start.mjs --verify between supabase(START) and its checks']),
+    ...freshStartVerifyProblems()];
+  },
 };
 
 test('the rules find a start without its entry and a CLI command that applies migrations', () => {
@@ -729,12 +749,16 @@ test('the Supabase CLI applies no migration, and every caller of supabase start 
   assert.deepEqual(section.match(/^[ \t]*enabled[ \t]*=.*$/gm), ['enabled = false'],
     'supabase/config.toml [db.migrations] enabled must be false: supabase start and db reset apply no migration');
   const workflows = path.join(repository, '.github', 'workflows');
+  // The CI scripts as well: a required suite command starts a database from one (Task 4432ee9b).
+  const scripts = path.join(repository, 'scripts', 'ci');
   const files = [...readdirSync(workflows).filter((name) => /\.ya?ml$/.test(name)).sort().map((name) => path.join(workflows, name)),
-    path.join(appDirectory, 'package.json')];
+    path.join(appDirectory, 'package.json'),
+    ...readdirSync(scripts).filter((name) => name.endsWith('.mjs') && !name.endsWith('.test.mjs')).sort().map((name) => path.join(scripts, name))];
   assert.ok(files.length > 10);
   const label = (file) => path.relative(repository, file).split(path.sep).join('/');
-  assert.deepEqual(files.flatMap((file) => cliAppliesProblems(readFileSync(file, 'utf8')).map((problem) => `${label(file)} ${problem}`)), []);
-  const starts = files.filter((file) => CLI_START.test(readFileSync(file, 'utf8')));
+  const code = (file) => (file.endsWith('.mjs') ? scriptCode : (text) => text)(readFileSync(file, 'utf8'));
+  assert.deepEqual(files.flatMap((file) => cliAppliesProblems(code(file)).map((problem) => `${label(file)} ${problem}`)), []);
+  const starts = files.filter((file) => CLI_START.test(code(file)));
   assert.deepEqual(starts.map((file) => path.basename(file)), Object.keys(START_CALLERS),
     'a new caller of supabase start needs an entry that applies the migration chain; add it to START_CALLERS');
   assert.deepEqual(starts.flatMap((file) => START_CALLERS[path.basename(file)](readFileSync(file, 'utf8'))

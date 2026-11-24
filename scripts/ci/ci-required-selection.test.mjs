@@ -640,7 +640,7 @@ test('every file a moved database test imports selects production-schema', () =>
   const specifiers = (source) => [...source.matchAll(/\b(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(?\s*['"]([^'"]+)['"]/g)]
     .map((match) => match[1] ?? match[2]).filter((spec) => spec.startsWith('.'));
   const seen = new Set();
-  const roots = [...SUITE_COMMANDS['production-schema'].at(-1).argv.filter((arg) => arg.endsWith('.test.mjs')).map((arg) => `apps/clued-cloud/${arg}`),
+  const roots = [...SUITE_COMMANDS['production-schema'].find(({ argv }) => argv.includes('--test-force-exit')).argv.filter((arg) => arg.endsWith('.test.mjs')).map((arg) => `apps/clued-cloud/${arg}`),
     'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs', 'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs'];
   const pending = roots.map((file) => path.join(ROOT, file));
   while (pending.length > 0) {
@@ -652,6 +652,37 @@ test('every file a moved database test imports selects production-schema', () =>
     if (/\.(?:m?js|ts)$/.test(file)) pending.push(...specifiers(readFileSync(file, 'utf8')).map((spec) => path.resolve(path.dirname(file), spec)));
   }
   assert.ok(roots.length > 60 && seen.size > roots.length);
+});
+
+// PLAN-g4-red-merged-20261125 §2.2 (Task 4432ee9b): the checks only clued-g4-database.yml ran (plpgsql_check lint, pgTAP,
+// PostgreSQL 17 backup coverage) run in production-schema, the suite of the required migration-verify, as one command on a
+// real Supabase database, last; first with --observe. The files it runs and starts from select it.
+const REAL_DATABASE = { cwd: 'apps/clued-cloud',
+  argv: ['node', '../../scripts/ci/clued-real-database.mjs', '--observe', 'tests/production-backup-scope-db.test.mjs'] };
+test('production-schema runs the real database checks last, selected by the files they run and start from', () => {
+  assert.deepEqual(SUITE_COMMANDS['production-schema'].at(-1), REAL_DATABASE);
+  for (const file of ['apps/clued-cloud/scripts/verify-production-backup-scope.mjs', 'apps/clued-cloud/tests/production-backup-scope-db.test.mjs',
+    'scripts/ci/clued-real-database.mjs', 'scripts/ci/clued-real-database.test.mjs', 'scripts/ci/clued-g4-fresh-start.mjs',
+    'scripts/ci/clued-local-migrate.mjs', 'apps/clued-cloud/supabase/tests/m1_runtime_contracts.test.sql']) {
+    assert.ok(existsSync(path.join(ROOT, file)), `${file} exists`);
+    assert.deepEqual(selectSuites('migration-verify', [file], 'linux').suites, ['production-schema'], file);
+  }
+});
+
+// A script command's test file operands are files the command runs: coverage (check-tests-covered.mjs) counts them as run
+// and --run-files runs the whole command for one. Any other second operand still leaves the command unplannable.
+test('a node script command takes its script and its test file operands, nothing else', () => {
+  const named = new Set(['apps/clued-cloud/tests/production-backup-scope-db.test.mjs', 'scripts/ci/clued-real-database.mjs']);
+  const result = selection.filterCommand(REAL_DATABASE, REAL_DATABASE.argv, named);
+  assert.deepEqual(result.accepts, ['scripts/ci/clued-real-database.mjs', 'apps/clued-cloud/tests/production-backup-scope-db.test.mjs']);
+  assert.deepEqual(result.runs, [REAL_DATABASE.argv]);
+  assert.deepEqual(result.matched, ['scripts/ci/clued-real-database.mjs', 'apps/clued-cloud/tests/production-backup-scope-db.test.mjs']);
+  const drift = { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--report', 'r.json'] };
+  assert.deepEqual(selection.filterCommand(drift, drift.argv, new Set(['apps/clued-cloud/scripts/production-schema-drift.mjs'])),
+    { runs: [], matched: [], accepts: [] });
+  const one = { cwd: '.', argv: ['node', 'scripts/ci/check-cron-budget.mjs'] };
+  assert.deepEqual(selection.filterCommand(one, one.argv, new Set(['scripts/ci/check-cron-budget.mjs'])),
+    { runs: [one.argv], matched: ['scripts/ci/check-cron-budget.mjs'], accepts: ['scripts/ci/check-cron-budget.mjs'] });
 });
 
 // Every database test, like every other test file, runs in a required suite or is listed in ci-uncovered-tests.json with its
@@ -672,7 +703,7 @@ test('a migration selects the production-schema check; ordinary documentation se
   for (const file of ['ci-connection-self-db.test.mjs', 'fixtures/ci-connection-self-v1.json']) {
     assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/tests/' + file]).suites, ['production-schema']);
   }
-  const scanStart = SUITE_COMMANDS['production-schema'].at(-2);
+  const scanStart = SUITE_COMMANDS['production-schema'].find(({ argv }) => argv[1] === '--test' && argv.includes('{db-concurrency}'));
   assert.equal(scanStart.cwd, 'apps/clued-cloud');
   t.mock.method(os, 'availableParallelism', () => 16);
   assert.deepEqual(expandArgv(scanStart.argv, { cwd: scanStart.cwd }), ['node', '--test', '--test-concurrency=4',
@@ -696,7 +727,8 @@ for (const [cpus, concurrency] of [[16, 4], [4, 2], [64, 4], [15, 3]]) {
       return { status: 0 };
     };
     assert.equal(executeSuite('production-schema', { root: ROOT, env: {}, spawn, log }), 0);
-    assert.deepEqual(calls.slice(-2).map((argv) => argv.filter((arg) => arg.startsWith('--test-concurrency'))),
+    assert.deepEqual(calls.filter((argv) => argv.includes('{db-concurrency}') || argv.some((arg) => arg.startsWith('--test-concurrency')))
+      .map((argv) => argv.filter((arg) => arg.startsWith('--test-concurrency'))),
       [[`--test-concurrency=${concurrency}`], [`--test-concurrency=${concurrency}`]]);
   });
 }
