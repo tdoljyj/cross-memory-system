@@ -126,8 +126,11 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   var danger=DangerFor(path);
   foreach(FileSystemAccessRule r in a.GetAccessRules(true,true,typeof(SecurityIdentifier))){if(r.AccessControlType!=AccessControlType.Allow||(r.PropagationFlags&PropagationFlags.InheritOnly)!=0)continue;if((r.FileSystemRights&danger)!=0&&!WriterAllowed(path,r.IdentityReference.Value))Deny("UNTRUSTED_PUBLIC_MUTATION_RIGHT_REFUSED");}
  }
+ // The path being opened, for the helper's refusal event before ready (FormalSession0V2 ReportRefusedBeforeReady): set before the checkpoint
+ // and CreateFileW, so a refusal anywhere in Open, or in Read after it, names its path.
+ public string LastOpenPath;
  SafeFileHandle Open(string path,bool file){
-  Check();var h=CreateFileW(path,file?0x80020080u:0x20080u,file?1u:3u,IntPtr.Zero,3,0x02200000,IntPtr.Zero);if(h.IsInvalid){h.Dispose();Deny("PUBLIC_HANDLE_OPEN_REFUSED");}
+  LastOpenPath=path;Check();var h=CreateFileW(path,file?0x80020080u:0x20080u,file?1u:3u,IntPtr.Zero,3,0x02200000,IntPtr.Zero);if(h.IsInvalid){h.Dispose();Deny("PUBLIC_HANDLE_OPEN_REFUSED");}
   try{var i=Metadata(h);uint maximum=path==Node?256u*1024*1024:16u*1024*1024;if((i.Attributes&0x400)!=0||file&&((i.Attributes&0x10)!=0||i.Links!=1||i.SizeHigh!=0||i.SizeLow==0||i.SizeLow>maximum)||!file&&(i.Attributes&0x10)==0)Deny("PUBLIC_TYPE_LINK_SIZE_REFUSED");Final(h,path);Acl(h,path);held.Add(h);return h;}catch{h.Dispose();throw;}
  }
  void Parents(string path){var chain=new List<string>();for(string p=Path.GetDirectoryName(path);p!=null;p=Path.GetDirectoryName(p))chain.Insert(0,p);foreach(string p in chain)if(directories.Add(p))Open(p,false);}
