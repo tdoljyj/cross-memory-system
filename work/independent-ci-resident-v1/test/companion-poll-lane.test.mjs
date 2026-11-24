@@ -10,11 +10,14 @@ import path from 'node:path';
 import { advisoryLanes, lane } from '../src/companion-main.mjs';
 import { Poller } from '../src/poller.mjs';
 import { Inbox } from '../src/inbox.mjs';
+import { pollerLandingOf } from '../src/status.mjs';
 import { Runner } from '../src/runner.mjs';
 import { restPolls } from './gh-rest-stub.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const MAIN = 'd'.repeat(40);
+// GitHub's merge base of a head and main: a push-landed trigger (poller.mjs#pass) carries it as its baseSha, a github-merge one carries MAIN.
+const MERGE_BASE = 'f'.repeat(40);
 const T0 = Date.parse('2026-11-24T04:00:00.000Z');
 const never = () => new Promise(() => {});
 
@@ -56,7 +59,7 @@ async function companionParts(t, ft, { advisory, retentionStep = async () => ({}
   const pulls = [];
   const gh = { calls: [], compares: 0, statuses: [] };
   const stub = restPolls(async argv => {
-    if (argv.some(a => a.includes('/compare/'))) { gh.compares += 1; return { code: 0, stdout: JSON.stringify({ behind_by: 0, base: MAIN }) }; }
+    if (argv.some(a => a.includes('/compare/'))) { gh.compares += 1; return { code: 0, stdout: JSON.stringify({ behind_by: 0, base: MAIN, merge_base: MERGE_BASE }) }; }
     return { code: 9, stdout: '' };
   }, { main: () => MAIN, pulls: () => pulls });
   const pollRunner = { get busy() { return false; }, run: async (argv, o) => {
@@ -65,13 +68,16 @@ async function companionParts(t, ft, { advisory, retentionStep = async () => ({}
     gh.statuses.push(/^HTTP\/[0-9.]+ ([0-9]{3})/.exec(r.stdout ?? '')?.[1] ?? 'other');
     return r;
   } };
-  const poller = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run: (a, o) => pollRunner.run(a, o), clock: ft.clock,
-    writeTrigger: v => ft.track(Inbox.drop(inboxDir, v, ft.clock)) });
   const statusReads = { n: 0 };
+  const countedRead = () => { statusReads.n += 1; return readStatus(); };
+  // The Poller as main() built it before round 2 of f79929d9: its landing port read status.json once more inside poller.pass. The poll
+  // lane now answers the landing from its own bounded read of the pass (advisoryLanes), whatever port the Poller was built with.
+  const poller = new Poller({ repo: REPO, ghExe: 'C:\\gh.exe', run: (a, o) => pollRunner.run(a, o), clock: ft.clock,
+    writeTrigger: v => ft.track(Inbox.drop(inboxDir, v, ft.clock)), landing: async () => pollerLandingOf(await countedRead()) });
   const parts = {
     advisory: advisory ?? { get busy() { return false; }, run: async () => ({ code: 0, stdout: '', stderr: '' }) },
     pollRunner, poller,
-    readStatus: () => { statusReads.n += 1; return readStatus(); },
+    readStatus: countedRead,
     renewKeyCheck: async () => {},
     retentionNotifier: { step: retentionStep },
     pruneOldBundles: async () => [],
@@ -143,18 +149,32 @@ test('an unchanged minute: four polls, only 304s, no trigger written, no compare
   run.stop();
 });
 
-test('a status read that never returns: the poll goes on after 5 s with the generation unknown', async t => {
+test('a status read that never returns: the poll goes on after 5 s with the generation unknown and github-merge landing', async t => {
   const ft = fakeTime(T0);
-  const c = await companionParts(t, ft, { readStatus: never });
+  // The advisory lane is stuck at its retention notice, so every status read counted here is the poll lane's.
+  const c = await companionParts(t, ft, { readStatus: never, retentionStep: never });
   const run = startLanes(c.parts, ft);
   await ft.runUntil(T0 + 6_000);
+  assert.equal(c.statusReads.n, 1, 'one poll pass reads status.json exactly once (the landing mode comes from that same read)');
   const head = 'e'.repeat(40);
   c.pulls.push(pull(1304, head));
   await ft.runUntil(ft.clock() + 15_000 + 5_000);
-  assert.deepEqual((await c.triggers()).map(v => [v.pr, v.headSha]), [[1304, head]]);
-  // The advisory lane's own read (the PR page) hangs too, once; the poll lane waits on its one outstanding read again each pass.
-  const reads = c.statusReads.n;
+  assert.deepEqual((await c.triggers()).map(v => [v.pr, v.headSha, v.baseSha]), [[1304, head, MAIN]],
+    'proposed with main as its base: no push stamp while the status is unknown');
   await ft.runUntil(ft.clock() + 2 * (15_000 + 5_000));
-  assert.equal(c.statusReads.n, reads, 'a read still outstanding is waited on again, never a second one on top of it');
+  assert.equal(c.statusReads.n, 1, 'a read still outstanding is waited on again, never a second one on top of it');
+  run.stop();
+});
+
+test('a status that says push: the trigger carries the merge base, from the pass\'s one status read', async t => {
+  const ft = fakeTime(T0);
+  const c = await companionParts(t, ft, { retentionStep: never,
+    readStatus: async () => ({ queue: { generation: 'g1' }, pending: [], train: { batchRoute: 'push' } }) });
+  const head = '1'.repeat(40);
+  c.pulls.push(pull(1305, head));
+  const run = startLanes(c.parts, ft);
+  await ft.runUntil(T0);
+  assert.equal(c.statusReads.n, 1, 'one poll pass, one status read');
+  assert.deepEqual((await c.triggers()).map(v => [v.pr, v.headSha, v.baseSha]), [[1305, head, MERGE_BASE]]);
   run.stop();
 });
