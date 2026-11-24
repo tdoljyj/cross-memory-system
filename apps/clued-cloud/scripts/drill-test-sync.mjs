@@ -32,11 +32,12 @@
 // suffix, which is fixed here. The password is never printed or written.
 // Production is never connected to from here.
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { appDirectory, applyTransform, matchTransform } from './migration-ledger.mjs';
+// node-postgres, bundled into a tracked file (scripts/generate-drill-pg.mjs): the drill host runs this from a checkout that
+// installed nothing, so everything it imports is a node: module or a file of the repository.
+import drillPg from './generated/drill-pg.mjs';
+import { applyTransform, matchTransform } from './migration-ledger.mjs';
 import { productionChain, readRepository, readSnapshot } from './production-schema-chain.mjs';
 import { SCHEMA_STATEMENT, prepareReplay } from './production-schema-drift.mjs';
 
@@ -50,8 +51,8 @@ const POOLER_HOST = /^aws-[0-9]+-[a-z]+(?:-[a-z]+)+-[0-9]+\.pooler\.supabase\.co
 // What the host reads when the sync is not a success (the ruling's table). One more than the table: the pooler's
 // host name is not in drill-server.json yet, or is not one (named after DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET).
 export const CODES = Object.freeze(['DRILL_SERVER_PRODUCTION_LIST_MISSING', 'DRILL_SERVER_DATABASE_CREDENTIAL_MISSING',
-  'DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED', 'DRILL_SERVER_DIVERGED', 'DRILL_SERVER_SYNC_FAILED', 'DRILL_SERVER_SYNC_TOOL_MISSING',
-  'DRILL_SERVER_UNREACHABLE', 'DRILL_SERVER_POOLER_HOST_NOT_SET']);
+  'DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED', 'DRILL_SERVER_DIVERGED', 'DRILL_SERVER_SYNC_FAILED', 'DRILL_SERVER_UNREACHABLE',
+  'DRILL_SERVER_POOLER_HOST_NOT_SET']);
 export class SyncError extends Error {
   // `code`: one of CODES; DRILL_SERVER_SYNC_FAILED is followed by ":" and the row's file or the stage that failed.
   constructor(code, detail = '', options) {
@@ -414,7 +415,6 @@ export function parseApplied(text) {
   return applied.map(({ version, name, statements_md5, statements_length }) => ({ version, name, statements_md5, statements_length }));
 }
 
-const NOT_FOUND = new Set(['ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND']);
 // A wrong password is 28P01 (28000: a login refused outright).
 const REFUSED = new Set(['28P01', '28000']);
 
@@ -424,15 +424,6 @@ async function readStandardInput(stream = process.stdin) {
   for await (const chunk of stream) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
   // One line: the line end the sender added is not part of the password.
   return Buffer.concat(chunks).toString('utf8').replace(/\r?\n$/, '');
-}
-
-// node-postgres from this app's node_modules. A checkout that never installed them cannot sync.
-export async function loadPg({ exists = existsSync, load = () => import('pg') } = {}) {
-  if (!exists(join(appDirectory, 'node_modules'))) throw new SyncError('DRILL_SERVER_SYNC_TOOL_MISSING');
-  try { return (await load()).default; } catch (error) {
-    if (NOT_FOUND.has(error?.code)) throw new SyncError('DRILL_SERVER_SYNC_TOOL_MISSING', '', { cause: error });
-    throw error;
-  }
 }
 
 // Three attempts. A refused password is not tried again: it will not become right.
@@ -455,7 +446,7 @@ const option = (argv, name) => (argv.includes(name) ? argv[argv.indexOf(name) + 
 const USAGE = 'usage: node scripts/drill-test-sync.mjs --applied <production-applied.json> (--kit <first-install-kit.json> | --scope <scope>) [--server <drill-server.json>] [--rebuild] < password';
 
 // Returns the result the host reads; throws SyncError (a code) or, for a wrong call, a plain Error.
-export async function runSync(argv, { stdin = readStandardInput, tool = loadPg, connect = connected, say = () => {} } = {}) {
+export async function runSync(argv, { stdin = readStandardInput, tool = async () => drillPg, connect = connected, say = () => {} } = {}) {
   const appliedFile = option(argv, '--applied');
   const given = [option(argv, '--kit'), option(argv, '--scope')];
   if (!appliedFile || given.filter((value) => value !== undefined).length !== 1 || given.includes('')) throw new Error(USAGE);

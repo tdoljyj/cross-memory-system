@@ -426,3 +426,97 @@ test('same-node rebind authorization, CAS, replay, duty, links and expiry remind
     });
   } finally { await f.close(); }
 });
+
+// DESK shape: the old connection is rotated while it is still valid. Real Native
+// issuance and the anonymous readers a resident uses with its token. Without the
+// revocation the old token stays a roleless, nodeless credential that can still
+// read the project until its natural expiry.
+test('rebinding a node away from a still-valid connection revokes that connection in the same change', { timeout: 900000 }, async t => {
+  const f = await schedulingFixture();
+  t.after(() => f.close());
+  const scope = 'project:' + f.project;
+  const issueBinding = async (label, kind = 'binding') => {
+    const preview = await f.native('clued_headless_' + kind + '_confirmation_issue_v1', kind === 'binding' ? { label, days: 30,
+      selected: [{ resource_kind: 'scope', resource_id: scope, environment: 'canonical', actions: ['read'] }] } : { label, days: 30 });
+    assert.equal(preview.status, 'issued');
+    return f.committed(await f.native('clued_headless_' + kind + '_issue_v1', {
+      confirmation_token: preview.confirmation_token, view_digest: preview.view_digest }));
+  };
+  const anon = await f.connect('anon');
+  const probe = async token => (await anon.query('select public.clued_work_merge_slot_holders_v1($1,$2) v',
+    [digest(token), { scope, repository: 'fixture/repository-12345' }])).rows[0].v;
+  const self = async token => (await anon.query('select public.clued_ci_connection_self_v1($1,$2) v',
+    [digest(token), JSON.stringify({ scope })])).rows[0].v;
+  const refused = { code: '42501', message: /binding_not_authorized|authorization_revoked_or_expired/ };
+  const untouched = { binding_revoked_at: null, authorization_revoked_at: null, audits: 0 };
+  const row = async id => (await f.admin.query(`select b.revoked_at binding_revoked_at,a.revoked_at authorization_revoked_at,
+    (select count(*)::int from clued_private.authorization_audit_v12 x where x.binding_id=b.id and x.operation='revoked_by_node_binding_rebind') audits
+    from public.clued_agent_bindings b left join clued_private.authorizations_v12 a on a.binding_id=b.id where b.id=$1`, [id])).rows[0];
+  const preview = choices => f.native('clued_ci_node_binding_rebind_confirmation_issue_v1', { ...choices, idempotency_key: uuid() });
+  const apply = issued => f.native('clued_ci_node_binding_rebind_apply_v1', {
+    confirmation_token: issued.confirmation_token, view_digest: issued.view_digest });
+  const start = async () => {
+    const old = await issueBinding('old CI'), next = await issueBinding('new CI');
+    const node = f.committed(await f.native('clued_ci_node_registration_v1', { ...f.registration(), binding_id: old.binding_id }));
+    const before = (await f.admin.query('select * from clued_private.ci_nodes_v1 where node_id=$1', [node.node_id])).rows[0];
+    return { old, next, node: node.node_id, choices: { project_id: f.project, node_id: node.node_id, old_binding_id: old.binding_id,
+      new_binding_id: next.binding_id, base_version: Number(before.version), binding_generation: Number(before.binding_generation),
+      accepted_ref: 'rotate-while-valid' } };
+  };
+
+  await t.test('the old token is refused by the role probe and the connection self-read once the rebind commits', async () => {
+    const heartbeat = await issueBinding('heartbeat', 'heartbeat_binding');
+    const x = await start();
+    await f.admin.query(`insert into clued_private.ci_node_heartbeat_link_v1(user_id,heartbeat_binding_id,node_binding_id,linked_at,linked_receipt_id)
+      values($1,$2,$3,clock_timestamp(),$4)`, [f.user, heartbeat.binding_id, x.old.binding_id, heartbeat.receipt_id]);
+    assert.equal((await probe(x.old.token)).status, 'ok', 'the old connection is valid before the change');
+    assert.equal((await self(x.old.token)).node.node_id, x.node);
+    const issued = await preview(x.choices);
+    assert.equal(issued.status, 'issued');
+    // The Owner confirms this effect: it is part of the digested view.
+    assert.equal(issued.confirmation_view.effects.old_connection, 'revoke at commit; its token stops working wherever it is used');
+    const result = f.committed(await apply(issued));
+    await assert.rejects(() => probe(x.old.token), refused);
+    await assert.rejects(() => self(x.old.token), refused);
+    const old = await row(x.old.binding_id);
+    assert.ok(old.binding_revoked_at, 'the connection itself is revoked');
+    assert.equal(old.authorization_revoked_at?.toISOString(), old.binding_revoked_at.toISOString());
+    assert.equal(old.audits, 1);
+    // Nothing else is withdrawn: the new connection and the linked heartbeat connection keep working.
+    assert.equal((await probe(x.next.token)).status, 'ok');
+    const current = await self(x.next.token);
+    assert.equal(current.binding_id, x.next.binding_id);
+    assert.equal(current.node.rebind_receipt_id, result.receipt_id);
+    assert.deepEqual(await row(x.next.binding_id), untouched);
+    assert.deepEqual(await row(heartbeat.binding_id), untouched);
+    const heard = (await anon.query('select public.clued_work_verify_v1($1,$2) v', [digest(heartbeat.token),
+      { action: 'ci_node_heartbeat', scope: 'global', state: 'NORMAL', mode: 'STANDBY', service_running: true, snapshot_age_seconds: 0 }])).rows[0].v;
+    assert.equal(heard.status, 'ok', JSON.stringify(heard));
+    assert.equal(heard.node_binding_id, x.next.binding_id);
+    // An exact replay revokes nothing further, and the revoked connection is never a rebind target again.
+    const replay = await apply(issued);
+    assert.equal(replay.replayed, true); assert.equal(replay.receipt_id, result.receipt_id);
+    assert.deepEqual(await row(x.old.binding_id), old);
+    await assert.rejects(() => preview({ ...x.choices, old_binding_id: x.next.binding_id, new_binding_id: x.old.binding_id,
+      base_version: Number(result.version), binding_generation: Number(result.binding_generation) }), /CI_BINDING_UNAVAILABLE/);
+  });
+
+  await t.test('a refused apply leaves the old connection valid', async () => {
+    const x = await start(), issued = await preview(x.choices);
+    await f.admin.query('update clued_private.ci_nodes_v1 set version=version+1 where node_id=$1', [x.node]);
+    const r = await apply(issued);
+    assert.equal(r.status, 'rejected', JSON.stringify(r));
+    assert.equal((await probe(x.old.token)).status, 'ok');
+    assert.deepEqual(await row(x.old.binding_id), untouched);
+  });
+
+  await t.test('a connection already swept at expiry is left as the sweep recorded it', async () => {
+    const x = await start();
+    await f.admin.query("update clued_private.authorizations_v12 set expires_at=clock_timestamp()-interval '1 second' where binding_id=$1", [x.old.binding_id]);
+    await f.admin.query('select clued_private.binding_expiry_sweep_v1()');
+    const swept = await row(x.old.binding_id);
+    assert.ok(swept.binding_revoked_at);
+    f.committed(await apply(await preview(x.choices)));
+    assert.deepEqual(await row(x.old.binding_id), swept);
+  });
+});
