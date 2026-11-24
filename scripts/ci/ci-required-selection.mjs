@@ -1193,9 +1193,29 @@ function withReporter(argv, out) {
 }
 const testAt = (entry) => `${entry.file} :: ${entry.path.join(' > ')}`;
 
+// Whether CI_BASE_SHA names a commit (Task 11092b8b; PLAN-mainpush-flaky-rerun-20261124 §2): null, or why not. The one
+// judgement of the base's form, read by the run again in full (unchangedSinceBase) and by a CI job's --run and
+// --run-selected (ciBaseRefusal).
+export function baseCommitProblem(base) {
+  return typeof base !== 'string' || !/^[0-9a-f]{7,64}$/i.test(base) || /^0+$/.test(base) ? 'CI_BASE_SHA is not a commit' : null;
+}
+
+// In a CI job (GITHUB_ACTIONS) the base is an input of the suites, resolved once by the job's train-base step and handed to
+// each step that runs suites in that step's env. A step without it is wired wrong, every time: --run and --run-selected
+// start nothing and fail there, so the change that drops the line fails in its own pull request (before, the run again in
+// full gave up with one log line and some suites failed only when they reached {base}). A local run is not judged here.
+export function ciBaseRefusal(env = process.env) {
+  if (env.GITHUB_ACTIONS !== 'true') return null;
+  const problem = baseCommitProblem(env.CI_BASE_SHA);
+  if (!problem) return null;
+  return `${problem} (${env.CI_BASE_SHA === undefined ? 'not set' : JSON.stringify(env.CI_BASE_SHA)}): this step does not pass `
+    + "the base its job's train-base step resolved (CI_BASE_SHA in the step's env, as every step that runs suites sets it); nothing ran";
+}
+
 // Each file as the base commit has it: its blob there equals the checkout's file as git would store it. Local reads only.
 function unchangedSinceBase(root, base, files, env) {
-  if (typeof base !== 'string' || !/^[0-9a-f]{7,64}$/i.test(base) || /^0+$/.test(base)) return 'CI_BASE_SHA is not a commit';
+  const problem = baseCommitProblem(base);
+  if (problem) return problem;
   const git = (...args) => {
     const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30_000,
       env: { ...env, GIT_TERMINAL_PROMPT: '0' } });
@@ -1694,6 +1714,11 @@ async function main(argv, env = process.env) {
   if (runIndex >= 0) {
     const rootIndex = argv.indexOf('--root');
     const root = rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT;
+    const refusal = ciBaseRefusal(env);
+    if (refusal) {
+      console.log(`::error title=${argv[runIndex + 1]} CI_BASE_SHA::${refusal}`);
+      return 2;
+    }
     return runSuite(argv[runIndex + 1], { root, env });
   }
   const selectedIndex = argv.indexOf('--run-selected');
@@ -1701,6 +1726,11 @@ async function main(argv, env = process.env) {
   const check = index >= 0 ? argv[index + 1] : undefined;
   if (!SUITES[check]) {
     console.error(USAGE);
+    return 2;
+  }
+  const refusal = selectedIndex >= 0 ? ciBaseRefusal(env) : null;
+  if (refusal) {
+    console.log(`::error title=${check} CI_BASE_SHA::${refusal}`);
     return 2;
   }
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};

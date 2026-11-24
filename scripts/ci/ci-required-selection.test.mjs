@@ -119,7 +119,8 @@ function slotFixture(t) {
     writeFileSync(path.join(scripts, 'check-pinned-registries.mjs'), 'process.exitCode = 75;\n');
     const env = { ...process.env, SLOT_FIXTURE_QUEUE: queue, SLOT_FIXTURE_WAIT: String(waitMs),
       SLOT_FIXTURE_HOLD: String(holdMs), SLOT_FIXTURE_PROBE_ERROR: String(probeErrors || ''), SLOT_FIXTURE_PROBE_AFTER: String(probeAfter) };
-    env.CI_BASE_SHA ||= 'fixture-base';
+    // A CI job always has a base commit (ciBaseRefusal); none of these commands compares with it.
+    env.CI_BASE_SHA ||= 'f'.repeat(40);
     delete env.CI;
     delete env.GITHUB_ACTIONS;
     delete env.NODE_TEST_CONTEXT;
@@ -1281,7 +1282,7 @@ test('the trusted CLI runs a command added by this PR and its failure fails the 
   const trusted = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs');
   // As in the required check: the trusted base's selector on the candidate checkout, in Actions (no local slot).
   const run = () => spawnSync(process.execPath, [trusted, '--run', 'retrigger-counter', '--root', root],
-    { env: { ...childEnv(), GITHUB_ACTIONS: 'true' }, encoding: 'utf8' });
+    { env: { ...childEnv(), GITHUB_ACTIONS: 'true', CI_BASE_SHA: 'f'.repeat(40) }, encoding: 'utf8' });
   writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), "console.log('baseline executed');\n");
   const unchanged = run();
   assert.equal(unchanged.status, 0, unchanged.stdout + unchanged.stderr);
@@ -1338,7 +1339,7 @@ test('candidate commands: no known-failure allowance, nothing outside the checko
 
 // As the required check runs: the trusted selector (given) on the candidate checkout, in Actions (no local slot).
 const runCandidate = (root, id = 'retrigger-counter', trusted = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')) =>
-  spawnSync(process.execPath, [trusted, '--run', id, '--root', root], { env: { ...childEnv(), GITHUB_ACTIONS: 'true' }, encoding: 'utf8' });
+  spawnSync(process.execPath, [trusted, '--run', id, '--root', root], { env: { ...childEnv(), GITHUB_ACTIONS: 'true', CI_BASE_SHA: 'f'.repeat(40) }, encoding: 'utf8' });
 const groupLines = (out) => out.split(/\r?\n/).filter((line) => line.startsWith('::group::'));
 
 // Gap A review finding 1: the selector's bytes say nothing about the modules it imports, so a candidate selector at another
