@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { isBuiltin } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -35,8 +36,8 @@ function trackedCopy(into, paths) {
   return files.length;
 }
 
-// No node_modules inside the copy, and none with pg above it (Node looks upward: a pg there would make the run pass here and
-// fail on the drill host).
+// No node_modules inside the copy, none in any directory above it, no ~/.node_modules or ~/.node_libraries (Node looks there:
+// a package there would make the run pass here and fail on the drill host).
 function assertNoDependencies(root) {
   const inside = [];
   const walk = (dir) => {
@@ -48,9 +49,12 @@ function assertNoDependencies(root) {
   walk(root);
   assert.deepEqual(inside, [], 'the copy holds only tracked files');
   for (let dir = path.dirname(root); ; dir = path.dirname(dir)) {
-    assert.equal(existsSync(path.join(dir, 'node_modules', 'pg')), false,
-      `${path.join(dir, 'node_modules', 'pg')} is above the copy: Node would find it; run with TEMP somewhere without one`);
+    assert.equal(existsSync(path.join(dir, 'node_modules')), false,
+      `${path.join(dir, 'node_modules')} is above the copy: Node would look there; run with TEMP somewhere without one`);
     if (path.dirname(dir) === dir) break;
+  }
+  for (const name of ['.node_modules', '.node_libraries']) {
+    assert.equal(existsSync(path.join(os.homedir(), name)), false, `${path.join(os.homedir(), name)}: Node's require looks there`);
   }
 }
 
@@ -78,9 +82,11 @@ test('the sync script runs from the tracked files alone: it loads its client and
   }
 });
 
-// Static imports, export-from and side-effect imports; dynamic import() with a literal name.
+// Static imports, export-from and side-effect imports; loaded on demand: import() and require() (the generated module's
+// CommonJS: require, or esbuild's __require) with a literal name. A Node module, with node: or without, is no package.
 const STATIC = /^[ \t]*(?:import|export)\s+(?:[\w*{}\s,$]+?\s+from\s+)?['"]([^'"]+)['"]/gm;
-const DYNAMIC = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+const DYNAMIC = [/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g, /(?:\b|__)require\s*\(\s*['"]([^'"]+)['"]\s*\)/g];
+const notPackage = (name) => name.startsWith('./') || name.startsWith('../') || isBuiltin(name);
 function importClosure(start) {
   const files = new Map();
   const queue = [start];
@@ -89,7 +95,7 @@ function importClosure(start) {
     if (files.has(file)) continue;
     const source = readFileSync(file, 'utf8');
     const statics = [...source.matchAll(STATIC)].map((match) => match[1]);
-    const dynamics = [...source.matchAll(DYNAMIC)].map((match) => match[1]);
+    const dynamics = DYNAMIC.flatMap((pattern) => [...source.matchAll(pattern)].map((match) => match[1]));
     files.set(file, { source, statics, dynamics });
     for (const name of statics) if (name.startsWith('.')) queue.push(path.resolve(path.dirname(file), name));
   }
@@ -101,15 +107,15 @@ test('what the sync script imports is node: modules and repository files; no pac
   const closure = importClosure(start);
   assert.ok(closure.has(path.join(scripts, 'generated', 'drill-pg.mjs')), 'the client is the generated module');
   for (const [file, { statics }] of closure) {
-    for (const name of statics) assert.match(name, /^(?:node:|\.\.?\/)/, `${path.relative(app, file)} imports ${name}: the drill host has no node_modules`);
+    for (const name of statics) assert.ok(notPackage(name), `${path.relative(app, file)} imports ${name}: the drill host has no node_modules`);
   }
   assert.doesNotMatch(closure.get(start).source, /\bimport\s*\(/, 'the sync script loads nothing on demand');
-  // The two packages the closure loads on demand, each in a function the sync never calls (pg: the ledger's own database
-  // check; the embedded PostgreSQL: the drift check). Another one is a package the drill host would not have: look before
-  // adding it here.
-  const onDemand = [...closure].flatMap(([file, { dynamics }]) => dynamics.filter((name) => !/^(?:node:|\.\.?\/)/.test(name))
+  // The packages the closure loads on demand, each where the sync never goes (pg: the ledger's own database check; the
+  // embedded PostgreSQL: the drift check; pg-native: the lazy pg.native getter). Another one is a package the drill host
+  // would not have: look before adding it here.
+  const onDemand = [...closure].flatMap(([file, { dynamics }]) => dynamics.filter((name) => !notPackage(name))
     .map((name) => `${path.relative(scripts, file).split(path.sep).join('/')} ${name}`)).sort();
-  assert.deepEqual(onDemand, ['migration-ledger.mjs pg', 'production-schema-drift.mjs embedded-postgres']);
+  assert.deepEqual(onDemand, ['generated/drill-pg.mjs pg-native', 'migration-ledger.mjs pg', 'production-schema-drift.mjs embedded-postgres']);
 });
 
 test('the generated client is node-postgres as package-lock.json pins it, regenerated byte for byte', async () => {

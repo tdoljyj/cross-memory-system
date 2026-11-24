@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -43,8 +44,8 @@ function freshCheckout() {
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     fs.copyFileSync(from, path.join(root, file));
   }
-  // Only tracked files: no node_modules in the copy, and none with pg above it (Node looks upward: one there would make this pass
-  // here and the drill host fail).
+  // Only tracked files: no node_modules in the copy, none in any directory above it, no ~/.node_modules or ~/.node_libraries
+  // (Node looks there: a package there would make this pass here and the drill host fail).
   const inside = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -55,9 +56,12 @@ function freshCheckout() {
   walk(root);
   assert.deepEqual(inside, [], 'the copy holds only tracked files');
   for (let dir = path.dirname(root); ; dir = path.dirname(dir)) {
-    assert.equal(fs.existsSync(path.join(dir, 'node_modules', 'pg')), false,
-      `${path.join(dir, 'node_modules', 'pg')} is above the copy: Node would find it; run with TEMP somewhere without one`);
+    assert.equal(fs.existsSync(path.join(dir, 'node_modules')), false,
+      `${path.join(dir, 'node_modules')} is above the copy: Node would look there; run with TEMP somewhere without one`);
     if (path.dirname(dir) === dir) break;
+  }
+  for (const name of ['.node_modules', '.node_libraries']) {
+    assert.equal(fs.existsSync(path.join(os.homedir(), name)), false, `${path.join(os.homedir(), name)}: Node's require looks there`);
   }
   // The committed drill-server.json names the real pooler: the copy's names none, so nothing is connected to.
   const serverFile = path.join(root, 'work', 'independent-ci-resident-v1', 'drill', 'drill-server.json');
@@ -89,6 +93,9 @@ test('a fresh worktree syncs before the boot with nothing installed: its own syn
     $script:Drill.ServerDatabaseCredential = ${q(w.credFile)}
     if (-not (Test-Path -LiteralPath ${q(w.credFile)})) { ${w.credential} | Export-Clixml -LiteralPath ${q(w.credFile)} }
     function Invoke-DrillProductionListNode([string]$Node) { @{ exit = 0; stdout = ${q(JSON.stringify({ run: 9001, file: w.applied, cached: false }))}; stderr = '' } }
+    # Before anything can connect: the script and the sync tool are the copy's (else drill-server.json would be the tracked one).
+    $copy = ${q(path.resolve(root) + path.sep)}
+    foreach ($p in @($script:DrillScriptPath, (Get-DrillSyncTool))) { if (-not ([IO.Path]::GetFullPath($p)).StartsWith($copy, [StringComparison]::OrdinalIgnoreCase)) { throw "not the copy: $p" } }
     $c = $null; $d = $null; $m = $null
     try { Sync-DrillServer ${q(w.from)} '1.2.3' | Out-Null } catch { $x = Get-DrillCode $_; $c = $x.code; $d = [string]$x.detail; $m = [string]$_.Exception.Message }
     [ordered]@{ tool = Get-DrillSyncTool; code = $c; detail = $d; message = $m }`);

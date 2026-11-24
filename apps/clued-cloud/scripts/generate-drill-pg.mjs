@@ -5,13 +5,28 @@
 // only node: modules and files the repository tracks (task 87d330d0, design FABLE-drill-sync-deps-20261124).
 // pg-native stays outside: only the lazy pg.native getter requires it, and the sync never reads it.
 // `--check` exits 1 when the committed module is out of date.
-import { readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
 const app = new URL("../", import.meta.url);
 const target = new URL("generated/drill-pg.mjs", import.meta.url);
 const packageOf = input => /^node_modules\/((?:@[^/]+\/)?[^/]+)\//.exec(input)?.[1] ?? null;
+
+// A bundled package's license text as it ships it: its LICENSE file, or, for a package that ships none (pg-types, pgpass),
+// the License section of its README. Kept verbatim in the generated file's closing comment.
+async function licenseText(name) {
+  const dir = new URL(`node_modules/${name}/`, app);
+  const files = await readdir(dir);
+  const file = files.filter(entry => /^(?:licen[cs]e|copying)(?:\.(?:md|txt))?$/i.test(entry)).sort()[0];
+  if (file) return (await readFile(new URL(file, dir), "utf8")).replace(/\r\n/g, "\n").trim();
+  const readme = files.find(entry => /^readme(?:\.md)?$/i.test(entry));
+  const lines = readme ? (await readFile(new URL(readme, dir), "utf8")).replace(/\r\n/g, "\n").split("\n") : [];
+  const at = lines.findIndex(line => /^#+\s*licen[cs]e\s*$/i.test(line));
+  if (at < 0) throw new Error(`${name}: no license file and no License section in its README`);
+  const end = lines.findIndex((line, index) => index > at && /^#/.test(line));
+  return lines.slice(at + 1, end < 0 ? undefined : end).join("\n").trim();
+}
 
 export async function renderDrillPgModule() {
   const result = await build({
@@ -43,7 +58,14 @@ export async function renderDrillPgModule() {
     "import { createRequire } from \"node:module\";",
     "const require = createRequire(import.meta.url);",
   ];
-  return lines.join("\n") + "\n" + result.outputFiles[0].text.replace(/\r\n/g, "\n");
+  const licenses = ["/*", " * The bundled packages' licenses, as each one ships it.", " *"];
+  for (const name of names) {
+    licenses.push(` * ---- ${name} ${await version(name)}`, " *");
+    for (const line of (await licenseText(name)).replace(/\*\//g, "* /").split("\n")) licenses.push(` * ${line}`.trimEnd());
+    licenses.push(" *");
+  }
+  licenses.push(" */", "");
+  return lines.join("\n") + "\n" + result.outputFiles[0].text.replace(/\r\n/g, "\n") + "\n" + licenses.join("\n");
 }
 
 if (import.meta.main ?? process.argv[1]?.split(/[\\/]/).pop() === decodeURIComponent(import.meta.url.split('/').pop())) {
