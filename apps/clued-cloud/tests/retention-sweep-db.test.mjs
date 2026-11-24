@@ -261,6 +261,21 @@ test('retention sweep: stock cleanup in the migration transaction and the daily 
       assert.deepEqual(await remaining(), [3, 4]);
     });
 
+    await t.test('without pg_cron run history the run-history rule returns 0; its search path is still empty', async () => {
+      const rule = 'clued_private.retention_rule_cron_run_history_v1(timestamptz)';
+      assert.deepEqual((await one('select proconfig from pg_proc where oid=$1::regprocedure', [rule])).proconfig, ['search_path=""']);
+      assert.equal((await one("select count(*)::int n from pg_proc where proname='retention_rule_cron_run_history_v1'")).n, 1);
+      await admin.query('begin');
+      try {
+        await admin.query('drop table cron.job_run_details');
+        assert.equal((await one('select clued_private.retention_rule_cron_run_history_v1($1) n', [await now()])).n, 0);
+        assert.equal((await sweep(await now())).retention_rule_cron_run_history_v1, 0);
+      } finally {
+        await admin.query('rollback');
+      }
+      assert.equal((await one("select to_regclass('cron.job_run_details') is not null ok")).ok, true);
+    });
+
     await t.test('the statement timeout in the registered command cancels the whole run; one set on the function would not', async () => {
       const cron = await connect();
       const { command } = await one('select command from cron.job where jobname=$1', [SWEEP_JOB]);
