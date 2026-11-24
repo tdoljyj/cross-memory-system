@@ -1,0 +1,177 @@
+{
+  "_source": [
+    "Verbatim GitHub GET replies (gh api, read-only) for PR #1242 head 86bfebfe6, pushed by the owner. Read 2026-11-22T18:47:44Z to 2026-11-22T18:47:51Z (2026-11-23 02:47-02:48 Beijing): the Linux run 45055934558 and its attempt-1 job list, then the Windows run 45055934417 and its job list (read 18:47:51Z-18:48:04Z). Trimmed to the fields the tree reuse reads; no value changed.",
+    "At that moment each gate had admitted (completed/success, 18:43:09Z and 18:43:19Z) and the heavy jobs carried their real names: Linux ci-suites, migration-verify, clued-cloud-tests all \"queued\" (conclusion null, started_at equal to created_at 18:43:09Z, completed_at null, runner_name \"\", runner_id 0, steps []), and its run status \"queued\"; Windows ci-suites-windows \"in_progress\" on clued-ci-company-win-01, run status \"in_progress\".",
+    "This PR was open and unmerged when read, so it has no main push: a test that uses these job lists for another PR's run rewrites run_id (and only run_id) to that run's id; that is the one constructed field and the test says so."
+  ],
+  "pr": {
+    "number": 1242,
+    "head_sha": "86bfebfe67f203e74fd261fcab0ea3f6c5b822e0"
+  },
+  "workflows": {
+    "clued-required-tests.yml": {
+      "runs": {
+        "total_count": 1,
+        "workflow_runs": [
+          {
+            "conclusion": null,
+            "created_at": "2026-11-22T18:35:18Z",
+            "event": "pull_request",
+            "head_branch": "claude/state-parent-acl",
+            "head_sha": "86bfebfe67f203e74fd261fcab0ea3f6c5b822e0",
+            "id": 45055934558,
+            "path": ".github/workflows/clued-required-tests.yml",
+            "run_attempt": 1,
+            "run_number": 816,
+            "status": "queued",
+            "updated_at": "2026-11-22T18:43:09Z",
+            "actor": {
+              "id": 52366662,
+              "login": "tdoljyj",
+              "type": "User"
+            },
+            "triggering_actor": {
+              "id": 52366662,
+              "login": "tdoljyj",
+              "type": "User"
+            },
+            "head_repository": {
+              "full_name": "tdoljyj/cross-memory-system"
+            },
+            "repository": {
+              "full_name": "tdoljyj/cross-memory-system"
+            },
+            "pull_requests": [
+              {
+                "number": 1242
+              }
+            ]
+          }
+        ]
+      },
+      "jobs": {
+        "total_count": 4,
+        "jobs": [
+          {
+            "id": 137311039514,
+            "name": "admission-gate",
+            "run_id": 45055934558,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-22T18:35:19Z",
+            "started_at": "2026-11-22T18:37:12Z",
+            "completed_at": "2026-11-22T18:43:09Z",
+            "runner_name": "clued-ci-company-linux-03"
+          },
+          {
+            "id": 137313302632,
+            "name": "ci-suites",
+            "run_id": 45055934558,
+            "run_attempt": 1,
+            "status": "queued",
+            "conclusion": null,
+            "created_at": "2026-11-22T18:43:09Z",
+            "started_at": "2026-11-22T18:43:09Z",
+            "completed_at": null,
+            "runner_name": ""
+          },
+          {
+            "id": 137313302650,
+            "name": "migration-verify",
+            "run_id": 45055934558,
+            "run_attempt": 1,
+            "status": "queued",
+            "conclusion": null,
+            "created_at": "2026-11-22T18:43:09Z",
+            "started_at": "2026-11-22T18:43:09Z",
+            "completed_at": null,
+            "runner_name": ""
+          },
+          {
+            "id": 137313302751,
+            "name": "clued-cloud-tests",
+            "run_id": 45055934558,
+            "run_attempt": 1,
+            "status": "queued",
+            "conclusion": null,
+            "created_at": "2026-11-22T18:43:09Z",
+            "started_at": "2026-11-22T18:43:09Z",
+            "completed_at": null,
+            "runner_name": ""
+          }
+        ]
+      }
+    },
+    "clued-required-tests-windows.yml": {
+      "runs": {
+        "total_count": 1,
+        "workflow_runs": [
+          {
+            "conclusion": null,
+            "created_at": "2026-11-22T18:35:18Z",
+            "event": "pull_request",
+            "head_branch": "claude/state-parent-acl",
+            "head_sha": "86bfebfe67f203e74fd261fcab0ea3f6c5b822e0",
+            "id": 45055934417,
+            "path": ".github/workflows/clued-required-tests-windows.yml",
+            "run_attempt": 1,
+            "run_number": 450,
+            "status": "in_progress",
+            "updated_at": "2026-11-22T18:43:22Z",
+            "actor": {
+              "id": 52366662,
+              "login": "tdoljyj",
+              "type": "User"
+            },
+            "triggering_actor": {
+              "id": 52366662,
+              "login": "tdoljyj",
+              "type": "User"
+            },
+            "head_repository": {
+              "full_name": "tdoljyj/cross-memory-system"
+            },
+            "repository": {
+              "full_name": "tdoljyj/cross-memory-system"
+            },
+            "pull_requests": [
+              {
+                "number": 1242
+              }
+            ]
+          }
+        ]
+      },
+      "jobs": {
+        "total_count": 2,
+        "jobs": [
+          {
+            "id": 137311039096,
+            "name": "admission-gate",
+            "run_id": 45055934417,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-22T18:35:18Z",
+            "started_at": "2026-11-22T18:37:52Z",
+            "completed_at": "2026-11-22T18:43:19Z",
+            "runner_name": "clued-ci-company-linux-01"
+          },
+          {
+            "id": 137313346312,
+            "name": "ci-suites-windows",
+            "run_id": 45055934417,
+            "run_attempt": 1,
+            "status": "in_progress",
+            "conclusion": null,
+            "created_at": "2026-11-22T18:43:19Z",
+            "started_at": "2026-11-22T18:43:21Z",
+            "completed_at": null,
+            "runner_name": "clued-ci-company-win-01"
+          }
+        ]
+      }
+    }
+  }
+}
