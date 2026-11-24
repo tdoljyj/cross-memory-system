@@ -216,3 +216,48 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
     }
   });
 });
+
+test('the sync workflow reads one secret, the test project password, and shares nothing with the release workflow', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { DRILL_TEST_REF, PRODUCTION_REF } = await sync();
+  const workflow = (name) => readFile(new URL(`../../../.github/workflows/${name}`, import.meta.url), 'utf8');
+  const text = (await workflow('clued-drill-test-sync.yml')).replace(/\r\n/g, '\n');
+  const release = (await workflow('clued-cloud-production-release.yml')).replace(/\r\n/g, '\n');
+  const code = text.split('\n').filter((line) => !/^\s*#/.test(line)).join('\n');
+  // Triggers: after the release workflow (by its name) and by hand; never a pull request, so the file runs from main.
+  const releaseName = /^name: (.+)$/m.exec(release)[1];
+  assert.ok(code.includes(['', 'on:', '  workflow_run:', '    workflows:', `      - ${releaseName}`, '    types: [completed]', '  workflow_dispatch:', ''].join('\n')));
+  assert.doesNotMatch(code, /pull_request|\bpush:|schedule:/);
+  assert.match(code, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(code, /github\.event\.workflow_run\.conclusion == 'success'/);
+  assert.match(code, /\nconcurrency:\n  group: clued-drill-test-sync\n  cancel-in-progress: false\n/);
+  // One environment, one secret; nothing of production.
+  assert.deepEqual([...code.matchAll(/\n    environment: (\S+)\n/g)].map((m) => m[1]), ['clued-drill-test']);
+  assert.deepEqual([...code.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1]), ['CLUED_DRILL_TEST_DATABASE_PASSWORD']);
+  assert.ok(!text.includes(PRODUCTION_REF) && !text.includes(DRILL_TEST_REF), 'the project is named in the script only');
+  assert.doesNotMatch(code, /ATTESTATION|MIGRATION_DATABASE|CLOUDFLARE|clued-release\b|DATABASE_URL/);
+  assert.doesNotMatch(release.split('\n').filter((line) => !/^\s*#/.test(line)).join('\n'), /clued-drill-test|CLUED_DRILL_TEST/);
+  assert.match(code, /\npermissions:\n  contents: read\n/);
+  assert.deepEqual([...code.matchAll(/\n      (actions|checks|contents|id-token|pull-requests|statuses|deployments|packages): (\S+)/g)].map((m) => `${m[1]}:${m[2]}`),
+    ['actions:read', 'contents:read']);
+  assert.doesNotMatch(code, /: write\b/);
+  // The secret is in the environment of one step, and that step runs the sync script and nothing else.
+  const steps = code.split(/\n      - /).slice(1);
+  const holding = steps.filter((step) => step.includes('secrets.'));
+  assert.equal(holding.length, 1);
+  assert.equal(holding[0], steps.at(-1), 'no step runs after the one that holds the password');
+  const commands = holding[0].split('\n        run: |\n')[1].split('\n').map((line) => line.trim()).filter(Boolean);
+  assert.deepEqual(commands, ['set -euo pipefail', 'if [ "${REBUILD:-false}" = "true" ]; then',
+    'node scripts/drill-test-sync.mjs --applied "$CLUED_PRODUCTION_APPLIED" --rebuild', 'else',
+    'node scripts/drill-test-sync.mjs --applied "$CLUED_PRODUCTION_APPLIED"', 'fi']);
+  assert.match(holding[0], /\n          NODE_OPTIONS: ''\n/);
+  // Inputs reach the shell as environment values, never as text of the script.
+  for (const step of steps) assert.doesNotMatch(step.split('\n        run: ')[1] ?? '', /\$\{\{/);
+  // The list it follows is the artifact the release workflow publishes, of a run read again as that workflow's success on main.
+  assert.match(release, /\n          name: clued-production-applied-\$\{\{ github\.run_id \}\}\n/);
+  assert.match(code, /--name "clued-production-applied-\$run_id"/);
+  assert.match(code, /"\.github\/workflows\/\$release_workflow main success"/);
+  assert.match(code, /''\|\*\[!0-9\]\*\)/);
+  // Actions pinned by commit, as everywhere.
+  for (const uses of code.matchAll(/uses: (\S+)/g)) assert.match(uses[1], /^(?:\.\/\.github\/actions\/ci-temporary-storage|actions\/[a-z-]+@[0-9a-f]{40})$/);
+});

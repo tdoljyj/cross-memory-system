@@ -1,0 +1,141 @@
+name: Clued drill test project sync
+
+# Task 87d330d0 (FABLE-drill-test-project-sync-20261124 §1, §2.1). The drill
+# guest talks to the hosted test project clued-auth-test instead of production.
+# This workflow keeps that project at production's applied migration list: the
+# same schema_migrations rows, in production's order, each applied from the
+# text production ran (apps/clued-cloud/scripts/drill-test-sync.mjs).
+#
+# After every successful run of the production release workflow, in any mode,
+# it downloads the list that run exported (artifact clued-production-applied-<run>:
+# names, md5 and order, no statement text) and applies what the test project is
+# missing. A test project whose history is not a prefix of production's is left
+# alone and reported as diverged; only a dispatch with rebuild drops its
+# application objects and starts from empty (its accounts stay).
+#
+# It is not the release workflow with another target (§1.2): production's
+# identity, backup and grant steps stay unconditional there, a failure here
+# cannot fail a release, and the two do not share an environment. The only
+# secret read is the test project's database password (environment
+# clued-drill-test, deployment branches main only). No production credential is
+# in that environment, and production's database is never connected to: its
+# list arrives as a file.
+#
+# Never a pull request event: workflow_run and workflow_dispatch run this file
+# and the script from the default branch.
+
+on:
+  workflow_run:
+    workflows:
+      - Clued Cloud production release
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      rebuild:
+        description: >-
+          Drop the test project's application objects, migration roles and history rows,
+          then apply production's whole list from empty. Only for the first run and after
+          the sync reported diverged; the drill Binding has to be issued again afterwards.
+        type: boolean
+        default: false
+      release_run_id:
+        description: >-
+          Run id of the production release run whose applied list to follow
+          (empty: the latest successful one on main)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+# One at a time, none cancelled: a later list waits for the earlier one to finish.
+concurrency:
+  group: clued-drill-test-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: clued-drill-test-sync
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: clued-drill-test
+    # actions: read downloads the release run's artifact with this run's token.
+    permissions:
+      actions: read
+      contents: read
+    defaults:
+      run:
+        working-directory: apps/clued-cloud
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 3
+        with:
+          ref: ${{ github.event.repository.default_branch || 'main' }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        timeout-minutes: 5
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: apps/clued-cloud/package-lock.json
+      - name: Configure job temporary storage
+        timeout-minutes: 2
+        uses: ./.github/actions/ci-temporary-storage
+      # The run is read again here: a successful run of the release workflow on
+      # main. The dispatch input is only a request, and only digits.
+      - name: Fetch the applied production history
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+          REQUESTED_RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          set -euo pipefail
+          release_workflow=clued-cloud-production-release.yml
+          run_id="${EVENT_RUN_ID:-}"
+          [ -n "$run_id" ] || run_id="${REQUESTED_RUN_ID:-}"
+          if [ -z "$run_id" ]; then
+            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$release_workflow" --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          fi
+          case "$run_id" in
+            ''|*[!0-9]*) echo "::error::No successful production release run to follow"; exit 1 ;;
+          esac
+          facts=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '[.path, .head_branch, .conclusion] | join(" ")')
+          if [ "$facts" != ".github/workflows/$release_workflow main success" ]; then
+            echo "::error::Run $run_id is not a successful production release run on main"
+            exit 1
+          fi
+          out="$RUNNER_TEMP/production-applied"
+          rm -rf "$out"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "clued-production-applied-$run_id" --dir "$out" \
+            || { echo "::error::Release run $run_id exported no applied production history; the next release run is followed instead"; exit 1; }
+          test -s "$out/production-applied.json"
+          echo "CLUED_PRODUCTION_APPLIED=$out/production-applied.json" >> "$GITHUB_ENV"
+          echo "Following production release run $run_id"
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: npm ci --ignore-scripts
+      # The connection is built from constants in the script (user
+      # postgres.<test project ref>, database postgres, port 5432). The password
+      # is this job's only secret; the host is the session pooler of the test
+      # project's region (IPv4; a GitHub-hosted machine has no IPv6 route to the
+      # direct address), a plain variable the script accepts only in the
+      # pooler's form. Neither can name another project.
+      - name: Bring the test project to production's applied list
+        timeout-minutes: 20
+        env:
+          CLUED_DRILL_TEST_DATABASE_PASSWORD: ${{ secrets.CLUED_DRILL_TEST_DATABASE_PASSWORD }}
+          CLUED_DRILL_TEST_POOLER_HOST: ${{ vars.CLUED_DRILL_TEST_POOLER_HOST }}
+          REBUILD: ${{ inputs.rebuild }}
+          NODE_OPTIONS: ''
+        run: |
+          set -euo pipefail
+          if [ "${REBUILD:-false}" = "true" ]; then
+            node scripts/drill-test-sync.mjs --applied "$CLUED_PRODUCTION_APPLIED" --rebuild
+          else
+            node scripts/drill-test-sync.mjs --applied "$CLUED_PRODUCTION_APPLIED"
+          fi
