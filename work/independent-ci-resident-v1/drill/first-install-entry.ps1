@@ -295,8 +295,9 @@ function Write-EntryStageTimings([string]$Output, $Measurements) {
 # r9 follow-up (FABLE-drill-r9-followup 1.3 B): a first install that did not end FIRST_INSTALL_DONE leaves resident-failure-snapshot.json
 # in the entry's output directory, beside launcher-result.json, so it goes back with the stage files before any restore (r9's HALT.json
 # never left the guest). What it reads is one fixed list, drill/guest-failure-files.json (in the kit, beside this script): the resident's
-# HALT, PAUSED and status records, the launcher's progress records and verify's full answer. Plus the Service Control Manager's System
-# events since the entry started. Bounded: 64 KiB of each file, 1 MiB for the whole snapshot. Never a secret: a list that names a
+# HALT, PAUSED and status records, the launcher's progress records and verify's full answer. Plus the generic helper's refusal events
+# (Application log, its service name as source) and the Service Control Manager's System events since the entry started. Bounded:
+# 64 KiB of each file, 1 MiB for the whole snapshot. Never a secret: a list that names a
 # secrets or credentials directory, or a file that is not .json, is refused whole, and a wildcard that reaches one reads nothing there.
 $script:EntryFailureFilesContract = 'clued.drill.guest-failure-files/1'
 $script:EntryFailureSnapshotContract = 'clued.drill.resident-failure-snapshot/1'
@@ -388,10 +389,32 @@ function Read-EntryFailureFile([string]$File) {
 }
 
 # The Service Control Manager's System events since $Since, newest first, at most $Max.
-$script:EntryFailureEventReader = {
-  param([DateTimeOffset]$Since, [int]$Max)
+function Read-EntryScmEvents([DateTimeOffset]$Since, [int]$Max) {
   try { @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; StartTime = $Since.LocalDateTime } -MaxEvents $Max -ErrorAction Stop) }
   catch { if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { @() } else { throw } }
+}
+
+# The generic helper's refusal events since $Since (r13 PR-2, FABLE-r13-state-acl-fix section 3): a refusal before ready leaves no receipt,
+# only the SCM exit code, so the helper writes one Application event: the code, the path being opened, the stage. Its source is the
+# service name (first-install-host.ps1: the runner service, this prefix and the node's name), unregistered, so the event's text is its
+# insertion string, not a rendered message; it is named by its source. Newest first, at most $Max. Never throws: an Application log that
+# cannot be read is one record saying so, and the SCM events are read all the same.
+$script:EntryHelperEventSourcePrefix = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-'
+function Read-EntryHelperEvents([DateTimeOffset]$Since, [int]$Max, [scriptblock]$Query = { param($xpath) Get-WinEvent -LogName Application -FilterXPath $xpath -ErrorAction Stop }) {
+  $xpath = "*[System[TimeCreated[@SystemTime>='" + $Since.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture) + "']]]"
+  try {
+    @(& $Query $xpath | Where-Object { ([string]$_.ProviderName).StartsWith($script:EntryHelperEventSourcePrefix, [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First $Max | ForEach-Object {
+      [pscustomobject]@{ TimeCreated = $_.TimeCreated; Id = $_.Id; LevelDisplayName = $(if ([string]$_.LevelDisplayName) { [string]$_.LevelDisplayName } else { (@{ 1 = 'Critical'; 2 = 'Error'; 3 = 'Warning'; 4 = 'Information' })[[int]$_.Level] }); Message = ([string]$_.ProviderName + ': ' + (@($_.Properties | ForEach-Object { [string]$_.Value }) -join ' ')) } })
+  } catch {
+    if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { @() }
+    else { [pscustomobject]@{ TimeCreated = [datetime]::UtcNow; Id = 0; LevelDisplayName = 'Error'; Message = ('Application log unreadable: ' + $_.Exception.Message) } }
+  }
+}
+
+# The snapshot's events: the helper's first (few, and the one that names a refusal), then the SCM's, at most $Max together.
+$script:EntryFailureEventReader = {
+  param([DateTimeOffset]$Since, [int]$Max)
+  @(@(Read-EntryHelperEvents $Since $Max) + @(Read-EntryScmEvents $Since $Max) | Select-Object -First $Max)
 }
 
 # Writes the snapshot and returns it. Never throws and never changes the entry's result: what could not be read is named in its place.
