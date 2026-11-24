@@ -14,7 +14,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { prepare, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
+import { acceptanceOf, prepare, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
 import { FAKE_GH } from '../rollout/fleet/test/fleet-fixtures.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
 
@@ -32,10 +32,22 @@ export const PACKAGE_CREDENTIALS = { required: { appKey: 'app-private-key.pem', 
 export const CREDENTIAL_FILES_CONTRACT = 'clued.independent-ci.credential-files/1';
 export const credentialFilesJson = (c = PACKAGE_CREDENTIALS) => JSON.stringify({ contract: CREDENTIAL_FILES_CONTRACT, ...c }, null, 2) + '\n';
 
+// The drill's server stand-in (drill/drill-server.json in a real run) and the fixtures' "production": what a Release kit names, what the
+// drill kit names instead, and the Owner's drill binding as drill-vm.ps1 reads it (a PSCredential: connection id, token). Fixture values,
+// registered nowhere.
+export const PRODUCTION_SERVER = { supabaseUrl: 'https://prodfixture0000000000.supabase.co', publishableKey: 'sb_publishable_prodfix' };
+export const DRILL_SERVER = { contract: 'clued.drill.server/1', project: 'fixture-drill-project', supabaseUrl: 'https://drillfixture000000000.supabase.co', publishableKey: 'sb_publishable_drilltest' };
+export const BINDING_ID = '11111111-2222-4333-8444-555555555555';
+export const BINDING_TOKEN = 'clued_bnd_DRILLFIXTUREdrillfixture';
+export const bindingPs = `(New-Object System.Management.Automation.PSCredential ${"'" + BINDING_ID + "'"}, (ConvertTo-SecureString ${"'" + BINDING_TOKEN + "'"} -AsPlainText -Force))`;
+
 // The drill's named mutexes are machine-wide (Global\): a fixture holding them would refuse a real drill on this host and fail while one
 // runs. Every fixture that loads drill-vm.ps1 swaps in names of this test run's own right after loading it; the PowerShell processes one
 // test starts (a host and the watchdog it launches) load the same fixture, so they still share them.
-export const ownMutexes = `$script:Drill.HostMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-host`)}; $script:Drill.BootMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-boot`)}`;
+// The Owner's drill binding is read from the host (D:\\clued-drill, Get-DrillCredential -Binding): a fixture never reads that one. Every
+// fixture that loads drill-vm.ps1 points the script at this test run's own, a fixture binding written on first use.
+const fixtureBinding = `$script:Drill.BindingCredential = ${q(path.join(tmp, 'fixture-drill-binding.clixml'))}; if (-not (Test-Path -LiteralPath $script:Drill.BindingCredential)) { ${bindingPs} | Export-Clixml -LiteralPath $script:Drill.BindingCredential }`;
+export const ownMutexes = `$script:Drill.HostMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-host`)}; $script:Drill.BootMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-boot`)}; ${fixtureBinding}`;
 // The fixtures' one time (task ce2e5c1a step 2): a host status is written at T0, and Get-DrillTime answers T0 in every ps() snippet
 // that does not define its own, so what a fixture writes reads the same whenever the snippet runs. A snippet that needs time to pass
 // defines Get-DrillTime itself.
@@ -61,14 +73,6 @@ export const activeHostStatus = (hold, { writtenAt = T0, executor = 'IDLE', reas
 export const entryScript = fileURLToPath(new URL('../drill/first-install-entry.ps1', import.meta.url));
 export const entryPs = expr => ps(`. ${q(entryScript)}; ${expr}`);
 
-// The drill's server stand-in (drill/drill-server.json in a real run) and the fixtures' "production": what a Release kit names, what the
-// drill kit names instead, and the Owner's drill binding as drill-vm.ps1 reads it (a PSCredential: connection id, token). Fixture values,
-// registered nowhere.
-export const PRODUCTION_SERVER = { supabaseUrl: 'https://prodfixture0000000000.supabase.co', publishableKey: 'sb_publishable_prodfix' };
-export const DRILL_SERVER = { contract: 'clued.drill.server/1', project: 'fixture-drill-project', supabaseUrl: 'https://drillfixture000000000.supabase.co', publishableKey: 'sb_publishable_drilltest' };
-export const BINDING_ID = '11111111-2222-4333-8444-555555555555';
-export const BINDING_TOKEN = 'clued_bnd_DRILLFIXTUREdrillfixture';
-export const bindingPs = `(New-Object System.Management.Automation.PSCredential ${"'" + BINDING_ID + "'"}, (ConvertTo-SecureString ${"'" + BINDING_TOKEN + "'"} -AsPlainText -Force))`;
 // dropManifest: prerequisite item names left out of the package's prereq-manifest.json (Codex review of f33fc33e5, medium 3)
 // credentialFiles: the archive's windows/credential-files.json as text, or null for a package without one
 export function firstInstallAssets(label, { candidate = false, credentialFiles = credentialFilesJson(), dropManifest = [] } = {}) {
@@ -91,8 +95,13 @@ export function firstInstallAssets(label, { candidate = false, credentialFiles =
   fs.writeFileSync(path.join(root, 'build', `${tag}.release.json`), '{}');
   fs.writeFileSync(path.join(root, 'build', 'SHA256SUMS'), `${sha(archive)}  ${tag}.tar\n${sha('{}')}  ${tag}.release.json\n`);
   fs.writeFileSync(path.join(root, 'final', `${tag}.first-install-kit.json`), kit);
-  if (!candidate) fs.writeFileSync(path.join(root, 'final', `${tag}.acceptance.json`), JSON.stringify({
-    contract: 'clued.independent-ci.fleet-node-acceptance/1', version, archive_sha256: sha(archive), firstInstallKitSha256: sha(kit), ciSourceManifestSha256: 'a'.repeat(64) }));
+  // an Owner's acceptance in full (publish.mjs acceptanceOf): the drill kit's stand-in acceptance is made from its fields
+  const U = n => `${String(n).repeat(8)}-1111-4111-8111-111111111111`;
+  if (!candidate) fs.writeFileSync(path.join(root, 'final', `${tag}.acceptance.json`), JSON.stringify(acceptanceOf({
+    version, archive_sha256: sha(archive), commit: 'c'.repeat(40), repository: 'tdoljyj/cross-memory-system', firstInstallKitSha256: sha(kit), ciSourceManifestSha256: 'a'.repeat(64),
+    fleetRefs: { sourceAcceptanceRef: U(5), hostQualificationRef: U(6), ownerAuthorizationRef: U(5), publisherQualificationRef: U(5), ownerPackageAcceptanceRef: U(5),
+      formalRoles: { gitleaks: { image: 'g' }, trivy: { image: 't' }, 'contract-placement': { image: 'c' } } } },
+  { decision: U(7), receipt: U(8), acceptedAt: '2026-01-01T00:00:00Z' })));
   fs.writeFileSync(path.join(root, 'images', image), 'fake image fixture');
   const prereq = path.join(root, 'prereq.json');
   fs.writeFileSync(prereq, JSON.stringify({ contract: 'clued.drill.prereq/1',
@@ -345,6 +354,7 @@ export const candidateStubs = `
     function Invoke-DrillWithHostHold { throw (New-DrillError 'TEST_REACHED_HOST_HOLD') }
     function Get-DrillIntakeTool { throw (New-DrillError 'TEST_REACHED_HOST_HOLD') }
     function Assert-DrillKitCredentialsBound { }
+    function Assert-DrillServerReady { }
     function Assert-DrillKitToolsBound { }`;
 
 // One world for the WSL side: this host's runner distribution Fixture-CI (registered, running), a probe answering `probe` (exit, stderr,

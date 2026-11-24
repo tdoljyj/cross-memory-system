@@ -118,7 +118,7 @@ test('before any boot: a kit without the server stand-in, a From that is not the
   const moved = JSON.parse(original); moved.record.node = 'changed'; fs.writeFileSync(fromKit, JSON.stringify(moved));
   assert.equal(psCode(run()), 'DRILL_KIT_SERVER_NOT_THIS_RELEASE');
   fs.writeFileSync(fromKit, original);
-  assert.equal(psCode(run()), null);
+  assert.equal(ps(`${run()}; 'ready'`), 'ready');
 });
 
 test('Invoke-DrillMain reaches the host hold only after the server stand-in and the binding were checked', { skip: !windows }, () => {
@@ -193,4 +193,19 @@ test('the guest entry cuts the production host off (hosts) and refuses a From wh
 test('the acceptance the drill kit carries is one a node\'s install reads as it is', async () => {
   const { f, names } = await built('server-acceptance');
   validateAcceptance(JSON.parse(fs.readFileSync(path.join(f.out, names.acceptance))));
+});
+
+test('-BindingCredential stores the binding the dialog gave, read back through the one reader; another shape stores nothing', { skip: !windows }, () => {
+  const file = path.join(tmp, 'binding-stored.clixml');
+  const stored = ps(`$script:Drill.BindingCredential = ${q(file)}; $r = Save-DrillBindingCredential { ${bindingPs} }
+    [ordered]@{ status = $r.status; connection = $r.connection; file = $r.file; user = (Get-DrillCredential -Binding).UserName; text = (ConvertTo-Json $r -Compress) }`);
+  assert.equal(stored.status, 'DRILL_BINDING_STORED'); assert.equal(stored.connection, BINDING_ID); assert.equal(stored.user, BINDING_ID); assert.equal(stored.file, file);
+  // what the command prints never carries the token, and neither does the file in the clear (DPAPI)
+  assert.doesNotMatch(stored.text, new RegExp(BINDING_TOKEN)); assert.doesNotMatch(fs.readFileSync(file, 'latin1').replaceAll('\0', ''), new RegExp(BINDING_TOKEN));
+  const none = path.join(tmp, 'binding-not-stored.clixml');
+  assert.equal(psCode(`$script:Drill.BindingCredential = ${q(none)}
+    Save-DrillBindingCredential { New-Object System.Management.Automation.PSCredential 'someone', (ConvertTo-SecureString 'not-a-binding-token' -AsPlainText -Force) }`), 'DRILL_BINDING_CREDENTIAL_REFUSED');
+  assert.equal(fs.existsSync(none), false);
+  // given alone: never beside a run's arguments
+  assert.equal(psCode(`$BindingCredential = $true; $Version = '1.2.3'; function Save-DrillBindingCredential { throw 'reached the dialog' }; Invoke-DrillMain`), 'DRILL_USAGE');
 });

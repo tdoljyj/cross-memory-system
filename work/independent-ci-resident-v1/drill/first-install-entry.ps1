@@ -72,6 +72,40 @@ function Assert-FirstInstallRelease {
 # it comes, so a stage cut off at its limit still leaves what it printed. Otherwise as the package's Invoke-StageChild (the same argument
 # quoting; stdout and stderr apart; nothing killed at the limit) and, with -NoWindow and $EnvAdd, as its Invoke-NonElevated. A limit of 0
 # waits for the end.
+# The drill installs against the drill's server, never production (FABLE-drill-role-probe-20261124.md, PR-3). The kit names the server
+# stand-in (kit.json server, make-drill-kit.mjs): the first-install kit in From must name that server -- the Release's own, with the
+# production address, is refused before anything is installed -- and every production host the kit lists is cut off in this guest's hosts
+# file (0.0.0.0 and ::), so nothing the package starts can reach it whatever it reads; the checkpoint restore takes the lines away.
+# Each name is then resolved: an answer that is not the black hole means the guest is not cut off, and the install does not start.
+# $HostsFile, $Resolve: the guest's own by default, and then only on the drill guest; a test gives its own.
+function Set-EntryServerBlackhole([string]$HostsFile = '', [scriptblock]$Resolve = $null) {
+  $manifest = Get-Content -LiteralPath (Join-Path $Kit 'kit.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+  $server = Get-EntryProperty $manifest 'server'
+  $hosts = @(Get-EntryProperty $server 'blackholeHosts' | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
+  $address = [string](Get-EntryProperty $server 'supabaseUrl')
+  if ($null -eq $server -or [string](Get-EntryProperty $server 'contract') -cne 'clued.drill.server-stand-in/1' -or $hosts.Count -lt 1 -or
+      $address -cnotmatch '^https://([a-z0-9]+\.supabase\.co)$') { throw 'DRILL_ENTRY_SERVER_STAND_IN_MISSING' }
+  $drillHost = $Matches[1]
+  foreach ($h in $hosts) { if ($h -cnotmatch '^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$' -or $h -ceq $drillHost) { throw 'DRILL_ENTRY_SERVER_STAND_IN_MISSING' } }
+  $firstKit = Get-Content -LiteralPath (Join-Path $From "fleet-node-$Version.first-install-kit.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+  $named = [string](Get-EntryProperty (Get-EntryProperty $firstKit 'record') 'supabaseUrl')
+  if ($named -cne $address) { throw 'DRILL_ENTRY_SERVER_IS_PRODUCTION' }
+  if (-not $HostsFile) {
+    if ($env:COMPUTERNAME -cne 'CLUED-DRILL') { throw 'DRILL_ENTRY_NOT_THE_ELEVATED_GUEST' }   # never another machine's hosts file
+    $HostsFile = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+  }
+  if ($null -eq $Resolve) { $Resolve = { param($n) try { @([Net.Dns]::GetHostAddresses($n) | ForEach-Object { $_.IPAddressToString }) } catch { @() } } }
+  $have = @(Get-Content -LiteralPath $HostsFile -Encoding ASCII -ErrorAction SilentlyContinue | ForEach-Object { ([string]$_).Trim() })
+  $add = @()
+  foreach ($h in $hosts) { foreach ($line in @("0.0.0.0 $h", ":: $h")) { if ($have -cnotcontains $line) { $add += $line } } }
+  if ($add.Count) { [IO.File]::AppendAllText($HostsFile, "`r`n" + ($add -join "`r`n") + "`r`n", [Text.Encoding]::ASCII) }
+  foreach ($h in $hosts) {
+    # no answer at all is cut off too; any address but the black hole is not
+    foreach ($a in @(& $Resolve $h)) { if (@('0.0.0.0', '::') -cnotcontains [string]$a) { throw 'DRILL_ENTRY_PRODUCTION_NOT_CUT_OFF' } }
+  }
+  return [ordered]@{ hosts = $hosts; server = $drillHost; added = $add.Count }
+}
+
 function Invoke-EntryStreamedChild([string]$Exe, [string[]]$Arguments, [int]$LimitSeconds, [string]$Log, [hashtable]$EnvAdd = @{}, [switch]$NoWindow) {
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = $Exe; $psi.Arguments = (($Arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' ')
@@ -648,6 +682,7 @@ function Get-FirstInstallEntryResult {
     Assert-FirstInstallGuest
     $guest = $true
     Assert-FirstInstallRelease
+    [void](Set-EntryServerBlackhole)
     $result = Invoke-FirstInstallAccepted $From $Kit $Fake $Work $Version
   } catch {
     $code = [string]$_.Exception.Message

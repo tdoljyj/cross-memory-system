@@ -15,6 +15,7 @@ import {
   commandIn, preBootWorld, meminfoWithFree, early, bootGate, gateMemory, WSL_MEMORY, bootWaitWorld, packageDir, kitDir, prereqDir, NOW, S, L,
   guestWorkDir, evidence, verdictOf, pass, finalize
 } from './drill-vm-fixtures.mjs';
+import { DRILL_SERVER, PRODUCTION_SERVER } from './drill-vm-fixtures.mjs';
 
 test('seal takes the candidate receipt drill-vm.ps1 finalized and refuses the one not read back', opts, async t => {
   const w = await sealWorld(t);
@@ -85,7 +86,8 @@ test('a candidate from its build alone: prepare makes the Release and the index 
   const image = 'b'.repeat(64), imageFile = path.join(f.images, `role-image-${image}.tar.gz`);
   const U = n => `${String(n).repeat(8)}-1111-4111-8111-111111111111`;
   const deps = { readKit: () => ({}), sourceHash: async () => ({ ciSourceManifestSha256: S }),
-    kitOf: async () => ({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', template: {}, config: { ciSourceManifestSha256: L }, images: { pull: [], local: [{ id: image, asset: `role-image-${image}.tar.gz` }] } }),
+    kitOf: async () => ({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', template: {}, config: { ciSourceManifestSha256: L }, images: { pull: [], local: [{ id: image, asset: `role-image-${image}.tar.gz` }] },
+      record: { ...PRODUCTION_SERVER } }),
     fleetMaterial: async () => ({ formalRoles: { gitleaks: {}, trivy: {}, 'contract-placement': {} },
       installed: { sourceAcceptanceRef: U(5), hostQualificationRef: U(6), ownerAuthorizationRef: U(5), publisherQualificationRef: U(5), ownerPackageAcceptanceRef: U(5), ciSourceManifestSha256: L } }) };
   // 1. prepare, with nothing published before it
@@ -96,7 +98,7 @@ test('a candidate from its build alone: prepare makes the Release and the index 
   // 2. -From from the build and what prepare left; 3. the candidate's kit on that request
   const from = path.join(f.root, 'from-prepared');
   prepareFrom({ build: f.build, final: accept, images: accept, version, out: from });
-  const made = await makeDrillKit({ from, version, prereq: f.prereq, out: path.join(f.root, 'kit-prepared'), request: p.request });
+  const made = await makeDrillKit({ from, version, prereq: f.prereq, out: path.join(f.root, 'kit-prepared'), request: p.request, server: DRILL_SERVER });
   assert.deepEqual(made.candidate, { acceptance: `${tag}.acceptance.json`, tarSha256: sha(tar), ciSourceManifestSha256: S, firstInstallKitSha256: request.firstInstallKitSha256 });
   // 4. the receipt drill-vm.ps1's conclusion function writes for this candidate, read back (-Finalize)
   const cand = m5DrillReceipt('candidate-from-build-run', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, version,

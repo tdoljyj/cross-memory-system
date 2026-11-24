@@ -76,7 +76,8 @@ function assets(debs, { formalRoles = PINS } = {}) {
   const root = path.join(tmp, `k${n++}`); fs.mkdirSync(root);
   for (const d of ['build', 'final', 'images']) fs.mkdirSync(path.join(root, d));
   const version = '1.2.3', tag = `fleet-node-${version}`, id = 'b'.repeat(64), image = `role-image-${id}.tar.gz`;
-  const kit = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', images: { local: [{ id, asset: image }] } }));
+  const kit = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', images: { local: [{ id, asset: image }] },
+    record: { supabaseUrl: 'https://prodfixture0000000000.supabase.co', publishableKey: 'sb_publishable_prodfix' } }));
   const items = [{ fileName: 'wsl.msi', sha256: sha('wsl'), bytes: 3 }, { fileName: 'ubuntu.wsl', sha256: sha('rootfs'), bytes: 6 },
     { name: 'gh', fileName: 'gh.msi', sha256: sha('gh'), bytes: 2 }, { name: 'git-for-windows', fileName: 'git.exe', sha256: sha('git'), bytes: 3 }];
   const archive = writeTar([
@@ -98,7 +99,9 @@ function assets(debs, { formalRoles = PINS } = {}) {
     debs: Object.entries(debs).map(([p, b]) => ({ path: `debs\\${p}`, sha256: sha(b) })), tools: [{ path: 'gh.msi', sha256: sha('gh') }, { path: 'git.exe', sha256: sha('git') }] }));
   fs.mkdirSync(path.join(root, 'debs'));
   for (const [name, b] of [['wsl.msi', 'wsl'], ['ubuntu.wsl', 'rootfs'], ['gh.msi', 'gh'], ['git.exe', 'git'], ...Object.entries(debs).map(([p, b]) => [`debs/${p}`, b])]) fs.writeFileSync(path.join(root, name), b);
-  const f = { build: path.join(root, 'build'), final: path.join(root, 'final'), images: path.join(root, 'images'), version, prereq, from: path.join(root, 'from'), out: path.join(root, 'kit') };
+  const f = { build: path.join(root, 'build'), final: path.join(root, 'final'), images: path.join(root, 'images'), version, prereq, from: path.join(root, 'from'), out: path.join(root, 'kit'),
+    // the drill's server (drill-server.json in a real run): fixture values, registered nowhere
+    server: { contract: 'clued.drill.server/1', project: 'fixture-drill-project', supabaseUrl: 'https://drillfixture000000000.supabase.co', publishableKey: 'sb_publishable_drilltest' } };
   prepareFrom({ ...f, out: f.from });
   return f;
 }

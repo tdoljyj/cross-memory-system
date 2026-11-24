@@ -23,6 +23,7 @@
 
 | 替身 | 替的是什么 | 为什么 | 因此没验到 | 何时可删 |
 |---|---|---|---|---|
+| 服务端与 CI 令牌（`kit.json` 的 `server`；kit 里的 `fleet-node-<v>.first-install-kit.json`、`fleet-node-<v>.first-install.SHA256SUMS`、`fleet-node-<v>.acceptance.json` 三份；`C:\drill\fake\ci-admission.token` = Owner 的演练绑定） | 生产服务端（Release 的首装 kit 里 `record.supabaseUrl`、`record.publishableKey` 两个公开字段）与真节点的 CI 绑定 | 演练不得接触生产；现造的令牌打生产只会被答“未授权”（第 17 代候选包的演练），真令牌又不该出现在演练里 | 生产服务端对本包的应答；带 ci-admission 角色节点的首班车 | 不可删；没验到的部分由真机首装承担 |
 | `C:\drill\fake\companion-github.token`（`ghp_CLUEDDRILLFAKE…`，来宾里生成、来宾里读；仅当被演练的包在必需组或可选组列出它时生成并交付，kit 同时登记这一步） | Owner 在凭据窗口给的陪伴 GitHub 经典令牌 | 演练不得使用真凭据 | 令牌被 GitHub 接受；陪伴访问 GitHub 的各个通道 | 不可删；没验到的部分由真机首装后的运行状态承担 |
 
 按设计不给的可选凭据：
@@ -34,6 +35,26 @@
 gh 与 Git for Windows 本身不做替身，按包的前置清单由宿主注入来宾真装（缺一个不建 kit、不开机，来宾不下载）。
 kit 的接受文件给角色钉的每个主机工具（`fleetRefs.formalRoles.<角色>.hostTools.<名>`，如 gitleaks 的 `/usr/bin/python3.12`），建 kit 时从暂存的 .deb 里取出该路径核 sha256：凡带这个路径的 .deb 都须是钉住的普通文件，且至少有一个带；否则不建 kit（`DRILL_KIT_HOST_TOOL_NOT_THE_FLEET_PIN:<路径>`、`DRILL_KIT_HOST_TOOL_NOT_IN_THE_DEBS:<路径>`；Fable 裁定 0e418483 §4.1 第 3 步）。核过的结果在 make-drill-kit.mjs 输出的 `hostTools`。
 清空 perNodeSteps 也不能得到 PASS_A_FULL。即使 A1–A9 全通过，仍不能勾掉“新节点首装实测一次”或证明服务端接纳。
+
+## 演练的服务端：测试项目，不碰生产
+
+设计：`D:/w/tmp/FABLE-drill-role-probe-20261124.md` PR-3。演练对着测试项目 `clued-auth-test` 装，不对着生产。
+
+- **唯一来源** `drill/drill-server.json`：项目名、地址、公开 key（`sb_publishable_…`，客户端公开值）。key 还没填时不出 kit
+  （`DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET`），任何一步都不回落到 Release 里的生产地址。
+- **kit 里换什么**：构建器把 Release 的首装 kit 复制一份，只换 `record.supabaseUrl`、`record.publishableKey` 两个字段，逐叶比较多差一个即不出 kit
+  （`DRILL_SERVER_STAND_IN_DIFFERS`），地址与 Release 相同也不出（`DRILL_SERVER_IS_PRODUCTION`）。来宾里钉住这份 kit 字节的三处随之换成演练版，都放进 kit 并钉进 `kit.json`：
+  首装 SHA256SUMS（只换 kit 那一行）、接受文件（`acceptanceOf(…, DRILL_RESERVED)`，`firstInstallKitSha256` 是演练版的；已接受的版本也用这份保留值文件，上不了 Release）、`release-pins.json`。
+  `-From` 目录不改；tar 与 Source 是包自己的（服务端地址不进 Source 哈希）。回执的 `firstInstallKitSha256` 仍是 Release 的（seal 拿它对 Owner 的接受文件），演练版哈希记在回执 `server` 里。
+- **开机前**（`Assert-DrillServerReady`）：kit 没有 `server` 即拒（`DRILL_KIT_SERVER_STAND_IN_MISSING`，旧 kit 重做）；`make-drill-kit.mjs --server-of` 再核一遍 kit 与 `-From`
+  （`DRILL_KIT_SERVER_NOT_THIS_RELEASE` 等）；演练绑定不在即拒（`DRILL_BINDING_CREDENTIAL_MISSING`），形状不对即拒（`DRILL_BINDING_CREDENTIAL_REFUSED`）。
+- **演练绑定**：Owner 在测试项目建一条不带 ci-admission 角色的绑定，交一次：`pwsh -NoProfile -File drill-vm.ps1 -BindingCredential` 弹出 Windows 凭据窗口，
+  用户名填连接 id，密码贴 `clued_bnd_` 令牌；存到 `D:\clued-drill\drill-binding.clixml`（DPAPI，仅本 Windows 用户），与来宾管理员凭据同一处、同一个读取函数（`Get-DrillCredential`）。
+  每轮经 PowerShell Direct 会话交给来宾写成 `ci-admission.token`，随检查点恢复消失；`public.json` 的绑定 id 与令牌指纹就是这条绑定的。升级令牌与 App 私钥仍在来宾里现造。
+- **来宾里断开生产**：入口在装之前核 `-From` 里的首装 kit 指的就是演练服务端（否则 `DRILL_ENTRY_SERVER_IS_PRODUCTION`），把 kit 列出的生产域名写进 hosts
+  （`0.0.0.0` 与 `::`），再解析一遍，解析到别的地址即停（`DRILL_ENTRY_PRODUCTION_NOT_CUT_OFF`）。hosts 管到 Windows 进程与按默认设置生成 hosts 的 WSL；容器内的解析不经它，
+  那里靠的是来宾里没有任何一份配置写着生产地址。
+- **A6**：绑定没有角色，launcher 的角色探测答 `not-held`、首班车 `first-train-not-applicable`、节点 STANDBY；UNCERTAIN（探测被拒或没答上）不算过。
 
 ## 两种 kit
 

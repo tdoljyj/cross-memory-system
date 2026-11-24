@@ -18,6 +18,7 @@ import {
   intakeArgv, releaseLoop, at, releaseRow, memoryAbort, drillTestJob, m5DrillReceipt, RENEWAL_3BC571A6, notTheDrillsSource,
   decisionsOf, planOf, sealWorld, candidateStubs, S, L, evidence, verdictOf, pass, finalize
 } from './drill-vm-fixtures.mjs';
+import { bindingPs } from './drill-vm-fixtures.mjs';
 
 test('entry converts only completed bootstrap with valid paths and exit zero into A1 success', opts, () => {
   const r = entryPs(`@(
@@ -132,8 +133,9 @@ test('the shipped credential list: the kit records companionToken as required, t
   const manifest = JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json')));
   assert.equal(manifest.credentials.required.companionToken, 'companion-github.token');
   assert.deepEqual(manifest.credentials.optional, { heartbeatToken: 'ci-node-heartbeat.token' });
-  assert.equal(manifest.perNodeSteps.length, 4);
+  assert.equal(manifest.perNodeSteps.length, 5);
   assert.match(manifest.perNodeSteps[3], /^陪伴 GitHub 经典令牌替身/);
+  assert.match(manifest.perNodeSteps[4], /^服务端与 CI 令牌替身/);   // the drill's server and binding (drill-server-stand-in.test.mjs)
   // the run's plan from that kit: the companion token given and made; the heartbeat withheld by design, nothing made for it
   const plan = ps(`Get-DrillCredentialPlan (Read-DrillKit ${q(f.out)})`);
   assert.ok(plan.given.includes('companion-github.token') && plan.fake.includes('companion-github.token'), JSON.stringify(plan));
@@ -145,7 +147,7 @@ test('the shipped credential list: the kit records companionToken as required, t
   assert.equal(ps(`Assert-DrillKitCredentialsBound (Read-DrillKit ${q(f.out)}) ${q(tar)}; 'bound'`), 'bound');
   // made as the run makes it (the plan's fake list): the stand-in in the classic token's shape, named in public.json
   const out = path.join(tmp, 'fake-shipped-list');
-  ps(`New-DrillFakeCredentials ${q(out)} @(${plan.fake.map(q).join(', ')}); 'ok'`);
+  ps(`New-DrillFakeCredentials ${q(out)} @(${plan.fake.map(q).join(', ')}) ${bindingPs}; 'ok'`);
   assert.deepEqual(fs.readdirSync(out).sort(), [...plan.fake].sort());
   assert.match(fs.readFileSync(path.join(out, 'companion-github.token'), 'utf8'), /^ghp_CLUEDDRILLFAKE[A-Za-z0-9]{22}$/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'public.json'), 'utf8')).files.companionGithubToken, 'companion-github.token');
@@ -196,7 +198,10 @@ test('a candidate drills on a kit-carried acceptance: the request with the drill
   assert.deepEqual(made.candidate, { acceptance: accName, tarSha256: tarSha, ciSourceManifestSha256: S, firstInstallKitSha256: kitSha });
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json'))).candidate, made.candidate);
   const accBytes = fs.readFileSync(path.join(f.out, accName)), acc = JSON.parse(accBytes);
-  assert.deepEqual(acc, acceptanceOf(request, DRILL_RESERVED));
+  // the request with the drill's stand-ins, naming the drill's first-install kit (the Release's with the drill server: drill-server-stand-in.test.mjs)
+  const drillKitSha = sha(fs.readFileSync(path.join(f.out, `${tag}.first-install-kit.json`)));
+  assert.notEqual(drillKitSha, kitSha);
+  assert.deepEqual(acc, acceptanceOf({ ...request, firstInstallKitSha256: drillKitSha }, DRILL_RESERVED));
   assert.equal(acc.cluedDecision, DRILL_RESERVED.decision); assert.equal(acc.fleetRefs.ownerReceiptRef, DRILL_RESERVED.receipt);
   validateAcceptance(acc);   // what the guest's install.mjs reads, unchanged: no drill mode in the package
   // and the real file the kit carries is never taken for an Owner's acceptance (cross test, ruling renew-key 4.1 row 3)
@@ -1008,6 +1013,7 @@ test('an EndInvoke exception leaves a failed receipt after the owned VM is stopp
     function Read-DrillKit { @{ sha256 = 'kit'; prereqSha256 = 'prereq'; executionBlocker = $null; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) } }
     function Get-DrillReleaseFiles { }
     function Assert-DrillKitCredentialsBound { }
+    function Assert-DrillServerReady { }
     function Assert-DrillKitToolsBound { }
     function Assert-DrillHost { @{ freeGB = 16 } }
     # the wait for memory before the hold reads the host's real memory: answered here, as the gates are
@@ -1236,7 +1242,7 @@ test('the credential plan: every required name given, every optional name decide
   assert.ok(!withoutCompanion.fake.includes('companion-github.token') && !withoutCompanion.given.includes('companion-github.token'));
   for (const [name, p] of [['plain', withoutCompanion], ['companion', plan]]) {
     const out = path.join(tmp, `fake-plan-${name}`);
-    ps(`New-DrillFakeCredentials ${q(out)} @(${p.fake.map(q).join(', ')}); 'ok'`);
+    ps(`New-DrillFakeCredentials ${q(out)} @(${p.fake.map(q).join(', ')}) ${bindingPs}; 'ok'`);
     assert.deepEqual(fs.readdirSync(out).sort(), [...p.fake].sort(), name);
     assert.equal(fs.existsSync(path.join(out, 'companion-github.token')), name === 'companion', name);
     assert.equal('companionGithubToken' in JSON.parse(fs.readFileSync(path.join(out, 'public.json'), 'utf8')).files, name === 'companion', name);

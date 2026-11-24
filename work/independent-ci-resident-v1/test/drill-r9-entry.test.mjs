@@ -60,6 +60,7 @@ const stoppedEntry = (g, { guestCheck = '', stop = "throw 'LAUNCHER_STOPPED:R4_W
     1..60 | ForEach-Object { [pscustomobject]@{ TimeCreated = [datetime]'2026-11-21T08:52:35Z'; Id = 7000 + $_; LevelDisplayName = 'Error'; Message = ("service CluedCIResident line $_ " + ('x' * 500)) } } }
   ${guestCheck || 'function Assert-FirstInstallGuest { }'}
   function Assert-FirstInstallRelease { }
+  function Set-EntryServerBlackhole { }
   function Invoke-FirstInstallAccepted { $script:EntryFailureRoots.work = ${q(g.work)}; ${stop} }
   $r = Get-FirstInstallEntryResult
   [ordered]@{ result = $r; eventAsk = $script:eventAsk }`;
