@@ -116,9 +116,11 @@ LEGACY_HOSTED_DEBT = {
             # main job da0654044b1ffd68e72ca867a3a8fe462583c2b9caa0cde7205269f77a829fcc, routing unchanged.
             # Review after main: the 165-minute job timeout only for deploy and release (others keep 45),
             # and no rollback before the first deploy step ran.
+            # Task 87d330d0 (FABLE-drill-test-project-sync-20261124 §2.1): two last steps export production's
+            # applied migration list read-only as its own artifact; routing, triggers and permissions unchanged.
             # B3 (FABLE-prod-db-shrink-v2-20261124 §8, PR #1282): one capacity-gate step before migrate in the
             # existing job; controls (c9cd44da…) and routing unchanged, no new hosted job, independently reviewed.
-            "release": "d922621d5b93b4ffb9e7e98dd8eff69ddc4357fc9c863b7badb58e642ec8c5e4"
+            "release": "8397996e2d32c85d246f605fdde1b16d13c77183b074598c05e137dfaf217bc5"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {
