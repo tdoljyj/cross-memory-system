@@ -314,6 +314,31 @@ test('a sparse trusted checkout gives the same base migration names as a full on
   assert.deepEqual([...await readBaseMigrations({}, trusted)].sort(), [...full].sort());
 });
 
+// Task 700f2b68 (PLAN-main-red-real-repo-20261124 §4.3, PR-A): the check takes its base from the command table's
+// --base {base}. A base given that way is the one read, before CI_BASE_SHA; one that cannot be read is an error, never a
+// fallback to the environment.
+test('the base given with --base is read before CI_BASE_SHA, and an unreadable one is an error', async () => {
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: new URL('..', import.meta.url), encoding: 'utf8' });
+  if (head.status !== 0) return;
+  const noTrusted = fileURLToPath(new URL('./no-trusted-checkout', import.meta.url));
+  const names = await readBaseMigrations({ CI_BASE_SHA: '0'.repeat(40) }, noTrusted, head.stdout.trim());
+  assert.ok(names instanceof Set && names.size > 100, 'the --base tree lists the committed migrations');
+  const unreadable = 'e'.repeat(40);
+  await assert.rejects(readBaseMigrations({ CI_BASE_SHA: head.stdout.trim() }, noTrusted, unreadable), new RegExp(`--base ${unreadable}`));
+});
+
+test('check --base hands that base to the base migration read', async () => {
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: new URL('..', import.meta.url), encoding: 'utf8' });
+  if (head.status !== 0) return;
+  const { main } = await import('../scripts/production-schema-drift.mjs');
+  assert.equal(typeof main, 'function', 'the command entry is exported');
+  const noTrusted = fileURLToPath(new URL('./no-trusted-checkout', import.meta.url));
+  const unreadable = 'd'.repeat(40);
+  // The environment's base is readable: only the --base one, unreadable, makes the check stop before any database starts.
+  await assert.rejects(main(['check', '--base', unreadable], { env: { CI_BASE_SHA: head.stdout.trim() }, trustedRoot: noTrusted }),
+    new RegExp(`--base ${unreadable}`));
+});
+
 test('unknown base migrations are an error, never an empty judgement', async () => {
   const noTrusted = fileURLToPath(new URL('./no-trusted-checkout', import.meta.url));
   await assert.rejects(readBaseMigrations({}, noTrusted), /base migrations are unknown/);

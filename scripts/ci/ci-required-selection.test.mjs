@@ -568,6 +568,48 @@ test('a change to a file a pinned registry holds runs the pinned-registry check'
   assert.deepEqual(SUITE_COMMANDS['pinned-registries'][0].argv, ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}']);
 });
 
+// Task 700f2b68 (PLAN-main-red-real-repo-20261124 §4.3, PR-A): a check that compares with the base gets it from the command
+// table's --base {base}. The coverage check runs as a command of its own in clued-cloud (the suite every change runs), the
+// schema drift check takes the base the same way; each runs once, also when a plan is split into shards.
+const COVERAGE_CHECK = ['node', 'scripts/ci/check-tests-covered.mjs', '--base', '{base}'];
+const takesBase = (id) => SUITE_COMMANDS[id].filter((command) => command.argv.includes('{base}'));
+test('the coverage and schema drift checks take the base from the command table, once each, also under --shard', () => {
+  assert.deepEqual(takesBase('clued-cloud').map(({ cwd, argv }) => ({ cwd, argv })), [{ cwd: '.', argv: COVERAGE_CHECK }]);
+  const drift = takesBase('production-schema');
+  assert.equal(drift.length, 1, 'one schema drift command takes the base');
+  assert.deepEqual(drift[0].argv.slice(0, 5), ['node', 'scripts/production-schema-drift.mjs', 'check', '--base', '{base}']);
+  const base = 'b'.repeat(40);
+  for (const command of [...takesBase('clued-cloud'), ...drift]) {
+    const options = { cwd: path.join(ROOT, command.cwd), root: ROOT, report: 'r.json' };
+    const argv = expandArgv(command.argv, { ...options, base });
+    assert.equal(argv[argv.indexOf('--base') + 1], base, argv.join(' '));
+    assert.throws(() => expandArgv(command.argv, options), /CI_BASE_SHA is required/, 'no base: the suite fails, it never guesses');
+    for (const total of [1, 2, 3, 4]) {
+      for (let position = 0; position < 2 * total; position += 1) {
+        const shards = [];
+        for (let index = 1; index <= total; index += 1) {
+          if (selection.shardCommand(command, argv, { index, total }, position).argv) shards.push(index);
+        }
+        assert.equal(shards.length, 1, `${argv.join(' ')}: shards ${shards.join(', ')} of ${total} at ${position}`);
+      }
+    }
+  }
+});
+
+test('the suite run hands the job base to the checks: clued-cloud and production-schema start them with --base CI_BASE_SHA', () => {
+  const base = 'c'.repeat(40);
+  const summary = JSON.stringify({ type: 'summary', counts: {}, success: true });
+  for (const [id, script] of [['clued-cloud', 'scripts/ci/check-tests-covered.mjs'], ['production-schema', 'scripts/production-schema-drift.mjs']]) {
+    const calls = [];
+    const spawn = (command, args) => { calls.push(args); return { status: 0 }; };
+    assert.equal(executeSuite(id, { root: ROOT, env: { CI_BASE_SHA: base, RUNNER_TEMP: os.tmpdir() }, spawn, log, platform: 'linux',
+      known: { 'clued-cloud': [] }, readReportFile: () => summary }), 0, id);
+    const checks = calls.filter((args) => args.includes(script));
+    assert.equal(checks.length, 1, `${id} runs ${script} once`);
+    assert.equal(checks[0][checks[0].indexOf('--base') + 1], base, `${id}: ${checks[0].join(' ')}`);
+  }
+});
+
 test('compute panel changes select the panel tests; the retired cache maintenance suite is gone', () => {
   for (const file of ['scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml']) {
     assert.ok(selectSuites('ci-suites', [file]).suites.includes('compute-panel'), file);
