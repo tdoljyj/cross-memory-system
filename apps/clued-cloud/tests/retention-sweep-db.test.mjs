@@ -131,7 +131,13 @@ test('retention sweep: stock cleanup in the migration transaction and the daily 
       assert.deepEqual(await jobs(), before.jobs);
     });
 
-    await migrate(admin, migrationText);
+    await other.query('begin');
+    const racedAudit = (await other.query("insert into public.clued_memory_audit(user_id,memory_id,action) values($1,gen_random_uuid(),'create') returning id", [owner])).rows[0].id;
+    { const pending = migrate(admin, migrationText); await new Promise(r => setTimeout(r, 1500)); await other.query('commit'); await pending; }
+    await t.test('an audit row committed while the migration waits for its lock is kept', async () => {
+      assert.equal((await one('select count(*)::int n from public.clued_memory_audit where id=$1', [racedAudit])).n, 1);
+    });
+    await admin.query('delete from public.clued_memory_audit where id=$1', [racedAudit]);
 
     await t.test('memory audit stock: only the last 30 days remain, unchanged, and the files shrink', async () => {
       const after = await auditRows();
@@ -348,7 +354,13 @@ test('retention sweep: stock cleanup in the migration transaction and the daily 
     });
 
     const jobsBeforeKeep = await jobs();
-    await migrate(admin, keepText);
+    await other.query('begin');
+    await other.query("insert into clued_private.imprint_record_history_v1(user_id,record_id,version,scope,envelope,envelope_sha256) select $1,$2::uuid,900,'global',jsonb_build_object('id',$2::text,'version',900),repeat('0',64)", [owner, bulk]);
+    { const pending = migrate(admin, keepText); await new Promise(r => setTimeout(r, 1500)); await other.query('commit'); await pending; }
+    await t.test('a history row committed while the history migration waits for its lock is kept', async () => {
+      assert.equal((await one('select count(*)::int n from clued_private.imprint_record_history_v1 where record_id=$1 and version=900', [bulk])).n, 1);
+    });
+    await admin.query('delete from clued_private.imprint_record_history_v1 where record_id=$1 and version=900', [bulk]);
 
     await t.test('history stock: the 20 newest prior versions stay readable, older ones are gone and the files shrink', async () => {
       assert.deepEqual(await history(long), stockHistory.long.filter(row => row.version > 5), 'kept rows are unchanged');
