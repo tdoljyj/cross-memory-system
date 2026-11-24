@@ -625,9 +625,15 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
         // batch of one keeps touch failed on frontFailed true only (below); it counts toward the front's attempts, so it never loops.
         const batchOfOutcome = push && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha
           ? await sweepStore.landingBatchByTest(job.frontTestSha) : null;
-        if (batchOfOutcome && batchOfOutcome.members.length > 1 && !landingState) {
+        // §6 review must-fix 1: an ended report not reported failed stays with the executor until a new batch of this head opens, and is
+        // carried into every round. Once bisected (handled) it holds nothing here: the round goes on to adopt, give back or yield the front
+        // below; otherwise a front that cannot land (draft, closed, merged by GitHub) kept the slot while others waited. A failure still
+        // reports failed every round it is carried (the executor drops it on that).
+        const bisectOutcome = batchOfOutcome && batchOfOutcome.members.length > 1
+          && (job.frontFailed === true || !landingState?.handled.includes(job.frontTestSha));
+        if (bisectOutcome && !landingState) {
           // the landing state could not be read: neither bisect nor touch failed (the front is not alone to blame); the next run tries again
-        } else if (batchOfOutcome && batchOfOutcome.members.length > 1) {
+        } else if (bisectOutcome) {
           // ADR 0018 §3: a batch of several members ended (failed for a PR's own reason, or ended for any other: §6 above): bisect (the next
           // batch takes the first half), no touch failed.
           if (!landingState.handled.includes(job.frontTestSha)) {
