@@ -309,6 +309,25 @@ test('the debt list only shrinks: a new line, more hits, a gone or clean file ea
   assert.deepEqual(parseDebt('a\na\n').problems, [`${DEBT_FILE}: a file is listed twice`]);
 });
 
+test('a listed test without a use of its own stays listed while it imports a listed file; once that file is clear, its line goes', () => {
+  const stamps = (from) => `${header}import { stamp } from '${from}';\ntest('x', () => {\n  assert.ok(stamp());\n});\n`;
+  const { root, base } = repository({
+    [DEBT_FILE]: 'test/a.test.mjs\ntest/b.test.mjs\ntest/helpers.mjs\n',
+    'test/helpers.mjs': 'export const stamp = () => Date.now();\n',
+    'test/a.test.mjs': stamps('./helpers.mjs'),
+    'test/b.test.mjs': stamps('./nested/more.mjs'),
+    'test/nested/more.mjs': "export { stamp } from '../helpers.mjs';\n",
+  });
+  // The guard lets the helper's use through only for a listed test: a.test.mjs (directly) and b.test.mjs (through more.mjs) run it.
+  assert.deepEqual(debtVerdict({ root, base, ci: true }).problems, []);
+  write(root, 'test/helpers.mjs', 'export const stamp = () => 1;\n');
+  write(root, DEBT_FILE, 'test/a.test.mjs\ntest/b.test.mjs\n');
+  assert.deepEqual(debtVerdict({ root, base, ci: true }).problems, [
+    `test/a.test.mjs: no real-clock use left; remove the line from ${DEBT_FILE}`,
+    `test/b.test.mjs: no real-clock use left; remove the line from ${DEBT_FILE}`,
+  ]);
+});
+
 test('what has no preload is read statically: PowerShell, Python, SQL sleep, node:test timeout', () => {
   // The texts are split so this file does not carry them.
   const ps = ['Start', 'Sleep'].join('-');
