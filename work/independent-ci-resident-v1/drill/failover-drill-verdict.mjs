@@ -36,7 +36,7 @@ export const RULES = Object.freeze({
   standbyMinutes: 10,                // B6：steady_since 不晚于复网 + 10 分钟
   noTakeBackMinutes: 45,             // B7：到 T0+45 分钟没有第 2 条自动交接
   excludedBeforeMinutes: 29,         // B8：steady_since + 29 分钟以前仍 auto_handed_out
-  rejoinedMinutes: Object.freeze([31, 40]), // B9：steady_since + 31–40 分钟已恢复（null；字段缺失判未判定）
+  rejoinedMinutes: Object.freeze([31, 40]), // B9：steady_since + 31–40 分钟已恢复（null；字段缺失判未判定，B8 同）
   cutSeconds: 540,                   // B10：断网实际时长（restoredAt − t0）不少于 540 秒
   runEvents: Object.freeze(['pull_request', 'pull_request_target', 'push']), // I1：只数这几种触发的运行
 });
@@ -321,8 +321,12 @@ export function drillVerdict(input) {
     const x = theHandover(); if (!x) return fail('没有自动交接');
     const e = exclusions().filter(v => ms(v.at) > ms(x.created_at) && ms(v.at) < steady + RULES.excludedBeforeMinutes * 60_000);
     if (!e.length) return unknown('交接后、steady_since + 29 分钟前没有快照');
-    return e.every(v => v.exclusion === 'auto_handed_out') ? pass(`交接后到 steady_since + 29 分钟的 ${e.length} 个快照里 TURING 都是 auto_handed_out`)
-      : fail(`排除原因 ${JSON.stringify(e.map(v => v.exclusion))}`);
+    // 缺 exclusion 字段是读数不全，不是失败（与 B9 同一口径）
+    const off = e.filter(v => v.exclusion !== undefined && v.exclusion !== 'auto_handed_out');
+    if (off.length) return fail(`排除原因 ${JSON.stringify(off.map(v => v.exclusion))}`);
+    const missing = e.filter(v => v.exclusion === undefined);
+    if (missing.length) return unknown(`交接后到 steady_since + 29 分钟有 ${missing.length} 个快照没有 exclusion 字段（${missing.map(v => v.at).join('、')}）`);
+    return pass(`交接后到 steady_since + 29 分钟的 ${e.length} 个快照里 TURING 都是 auto_handed_out`);
   });
   checks.B9 = judge(() => {
     const steady = steadySince(); if (steady === null) return unknown('没读到 steady_since');
