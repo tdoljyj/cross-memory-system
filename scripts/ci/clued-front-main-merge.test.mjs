@@ -1423,16 +1423,57 @@ test('§3.11: #1258 unadmitted (heavy jobs skipped under their unexpanded names,
   assert.equal(namings(w).length, 1);
 });
 
-test('§3.11: a stalled head behind main is named while another pull request is the front; the one brought up in the same run is not', async () => {
+// Review 2fb32dc7 §5: a head behind main that the App did not bring up is a candidate; the train brings it up once the front is done.
+// Naming it ("nothing will move it, a new head is needed") would send someone to push or merge main by hand: it is not named.
+test('§3.11: an author’s head behind main is not named while another pull request is the front; the train brings it up once that is done', async () => {
   const w = sceneStalled();
   const front = sha(0x1301);
   w.open(1301, { head: front, auto: '2026-11-24T00:30:00Z', contains: T, at: w.now - 5 * MIN }); w.check(front, 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);
   w.heads.get(sha(0x1300)).contains = BASE;   // #1300 behind main
   let r = await w.run();
   assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#1301 contains main/);
-  assert.deepEqual(namings(w).map(c => c.pr), [STALLED]);
+  assert.equal(namings(w).length, 0, JSON.stringify(w.comments)); assert.equal(r.named, undefined);
+  // An hour on, the front still under way: still not named.
+  w.now += 60 * MIN;
+  r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.equal(namings(w).length, 0, JSON.stringify(w.comments));
+  // The front leaves the train: #1300 is the candidate and brought up, not named.
+  w.prs.delete(1301);
+  r = await w.run();
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [STALLED]); assert.equal(namings(w).length, 0);
   // Without a front the stalled head behind main is the candidate: brought up, and its old head is not named.
   const alone = sceneStalled(); alone.heads.get(sha(0x1300)).contains = BASE;
   r = await alone.run();
   assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(alone.brought(), [STALLED]); assert.equal(namings(alone).length, 0);
+});
+
+// What nothing moves behind main: a head the App brought up that is not admitted (the train does not bring it again). It is named
+// once, with or without a front; a brought head that is admitted is a candidate again and not named.
+test('§3.11: a head the App brought up, behind main and not admitted, is named once; admitted, it is a candidate and not named', async () => {
+  const head = sha(0x1300);
+  const brought = x => {
+    x.heads.get(head).contains = BASE;
+    x.heads.get(head).checks = x.heads.get(head).checks.filter(c => c.name !== INDEPENDENT_ADMISSION_CHECK);
+    x.check(head, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID, { started_at: iso(x.now - 40 * MIN) });
+  };
+  let w = sceneStalled(); brought(w);
+  let r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  assert.deepEqual(namings(w).map(c => c.pr), [STALLED], JSON.stringify(w.comments));
+  assert.match(namings(w)[0].body, new RegExp(`- ${INDEPENDENT_ADMISSION_CHECK}: missing\n`));
+  // Review §6: the comment is posted with a token that can only write pull requests.
+  assert.deepEqual(w.calls.filter(c => c.route?.endsWith('/access_tokens')).map(c => c.body.permissions), [{ pull_requests: 'write' }]);
+  w.now += 10 * MIN; await w.run();
+  assert.equal(namings(w).length, 1, 'once per head');
+  // The same with another pull request the front.
+  w = sceneStalled(); brought(w);
+  w.open(1301, { head: sha(0x1301), auto: '2026-11-24T00:30:00Z', contains: T, at: w.now - 5 * MIN }); w.check(sha(0x1301), 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);
+  r = await w.run();
+  assert.match(r.reason, /#1301 contains main/); assert.deepEqual(namings(w).map(c => c.pr), [STALLED], JSON.stringify(w.comments));
+  // Brought and admitted: a candidate again, not named.
+  w = sceneStalled(); brought(w);
+  w.check(head, INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID, { started_at: iso(w.now - 39 * MIN) });
+  w.open(1301, { head: sha(0x1301), auto: '2026-11-24T00:30:00Z', contains: T, at: w.now - 5 * MIN }); w.check(sha(0x1301), 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);
+  r = await w.run();
+  assert.match(r.reason, /#1301 contains main/); assert.equal(namings(w).length, 0, JSON.stringify(w.comments));
 });
