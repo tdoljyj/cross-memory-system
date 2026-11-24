@@ -345,15 +345,15 @@ HOSTED_SCAFFOLD_JOBS = {
     "hosted-required.yml": {
         "control_sha256": "9a057883ee2ed3562058c81812778c539a19dda2afc1571c5cf1d50ae1c6ac76",
         "jobs": {
-            "clued-cloud-tests": "6cbe5548054ab7718475ae8cfb85ce095ea7761526f2b184bdf01b7696fa0bcb",
-            "ci-suites": "f76d702d186df8db2a7877dcb4bac03c6202775740f16667027193c33bfcab95",
-            "migration-verify": "99c0769279ea8f6c0b5a485b2d80e2ef163642e4c5f191cbb3dd493487714da1",
-            "ci-suites-windows-shard": "b4fcbce1fd84783fbfc90448fe28b1123230d866efb04b46b0ea500360877953",
+            "clued-cloud-tests": "4a34326ddef88ce360a11ddaa513320f7f551a649d615e544f85b1eb2567cf01",
+            "ci-suites": "24ad2a46369a2d0b0b628573a2946bacb41149ce85ce234ff66765199bfb693b",
+            "migration-verify": "72d1e7cc226ec3c5c8e545e41b26970ea63d1db00ca93fc8be6d182ae4f7859e",
+            "ci-suites-windows-shard": "27fdc362705fdf1cb776ecd2fd7e581b442471adc4ab13f4d84840590a800438",
             "ci-suites-windows": "5071b13bdf66b49332eb45beefc7b4941f9666a6f4d5659606d232ce61e901a4",
             "ci-suites-windows-duration": "9cfd47298e34cea4eca39a7ad78e5a4b4dfd08c356ee42ccd511066b73a99653",
-            "gitleaks": "4d532d733482aa3d94c2f83c33954b9af8e420c387cf1cd8b473e8f92aae45f6",
+            "gitleaks": "da5e2dfe2648d4472f45977fbef4d7b4e95824c5dec27d3095d336fb06ba5eef",
             "trivy": "7a5b2fee28fb2304c03a4d70c35832b64cbac60d70dc0a8c6f26eafc04bbb18a",
-            "contract-placement": "a07add60bcd9ec6caee62f0e86213c48ce3d16700894dc71e38b75a9493334df"
+            "contract-placement": "c7aefc109446652549e01ba4b659416446ba2aae4b86e4c722d6f428bfcc6e15"
         }
     },
     "clued-front-main-merge-hosted.yml": {

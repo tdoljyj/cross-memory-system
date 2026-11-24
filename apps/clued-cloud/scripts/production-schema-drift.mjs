@@ -74,6 +74,14 @@ alter default privileges in schema public grant all on sequences to postgres;
 alter default privileges in schema public grant all on functions to postgres;
 `;
 
+// What the platform image newer than production's (17.11.0.003 against
+// 17.6.1.155) adds beyond PLATFORM_SQL: PUBLIC SELECT on pg_cron's own sequence, granted by
+// supabase_admin, which postgres cannot revoke. Production meets it when it is
+// upgraded to that image. The applied rows ran on the older image, so it is
+// granted only before the pending migrations (runCheck): a pending migration
+// that refuses any privilege on any sequence fails here, however it is written.
+export const PLATFORM_IMAGE_GRANTS_SQL = 'grant select on sequence cron.job_jobid_seq to public';
+
 // How the release workflow's migrate mode runs a file (clued-cloud-production-release.yml):
 // one plpgsql EXECUTE inside its own transaction, so transaction control or a
 // trailing SELECT ... INTO fails here as it would there.
@@ -396,6 +404,14 @@ export async function runCheck({ repository, snapshot, catalogSql, baseMigration
         report.production_failure = { file: step.file, message: error.message };
         return null;
       }
+    }
+    // Pending migrations meet the newer platform image (PLATFORM_IMAGE_GRANTS_SQL).
+    try {
+      await client.query(PLATFORM_IMAGE_GRANTS_SQL);
+    } catch (error) {
+      report.errors.push('platform_image_grant_failed');
+      report.production_failure = { file: 'PLATFORM_IMAGE_GRANTS_SQL', message: failureMessage(error) };
+      return null;
     }
     log(`production chain: applying ${chain.pending.length} pending migrations in migrate mode`);
     for (const step of chain.pending) {
