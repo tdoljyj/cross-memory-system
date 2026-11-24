@@ -120,6 +120,25 @@ export function planSync({ production, test }) {
 // (catalog.json replay_substitutions: pg_cron). A hosted project has the
 // extension, so there the row runs as production ran it.
 const EMBEDDED_ONLY_SUBSTITUTION = /^create\s+extension\b/i;
+// The other way round: what only a hosted platform has (PLAN-drill-test-platform-acl-20261124). A rule applies to
+// every row whose text holds `find`, exactly once in that row (prepareReplay). Only the executed text changes: the
+// recorded text and its md5 stay production's. Not in catalog.json, whose substitutions also reach the embedded
+// drift check.
+export const HOSTED_ONLY_SUBSTITUTIONS = Object.freeze([Object.freeze({
+  find: `pg_catalog.has_sequence_privilege('clued_worker_gateway',c.oid,'USAGE,SELECT,UPDATE') else false end)`,
+  // Still refused: USAGE or UPDATE on any sequence, an ACL entry of the role itself, SELECT on any sequence but
+  // one that is in the cron schema, owned by a superuser (nothing the application made or can grant on) and in a
+  // schema the role cannot enter. The schema is matched by membership and the owner by existence: a comparison
+  // with to_regnamespace('cron') is NULL where there is no such schema and would let every SELECT through.
+  replace: `(pg_catalog.has_sequence_privilege('clued_worker_gateway',c.oid,'USAGE,UPDATE')
+ or exists(select 1 from pg_catalog.aclexplode(c.relacl) a where a.grantee='clued_worker_gateway'::regrole)
+ or (pg_catalog.has_sequence_privilege('clued_worker_gateway',c.oid,'SELECT')
+     and not (c.relnamespace in (select n.oid from pg_catalog.pg_namespace n where n.nspname='cron')
+              and exists(select 1 from pg_catalog.pg_roles r where r.oid=c.relowner and r.rolsuper)
+              and not pg_catalog.has_schema_privilege('clued_worker_gateway',c.relnamespace,'USAGE')))) else false end)`,
+  reason: 'A platform image newer than production\'s (17.11.0.003 against 17.6.1.155) gives PUBLIC SELECT on pg_cron\'s own sequences, '
+    + 'granted by supabase_admin: postgres cannot revoke it, and the worker gateway rows refuse any privilege on any sequence.',
+})]);
 const withoutComments = (text) => text.replace(/--[^\n]*/g, ' ');
 const ROLE_NAME = /^[a-z_][a-z0-9_]*$/;
 const PLATFORM_ROLE = /^(?:postgres|anon|authenticated|authenticator|service_role|dashboard_user|pgbouncer|pg_.*|supabase_.*)$/;
@@ -142,6 +161,13 @@ export function resolveSteps({ applied, repository, snapshot, platform = 'hosted
   for (const entry of snapshot.replay_substitutions ?? []) {
     if (platform === 'hosted' && EMBEDDED_ONLY_SUBSTITUTION.test(entry.find)) continue;
     substitutions.set(entry.file, [...(substitutions.get(entry.file) ?? []), entry]);
+  }
+  if (platform === 'hosted') {
+    for (const rule of HOSTED_ONLY_SUBSTITUTIONS) {
+      for (const step of chain.applied) {
+        if (step.text.includes(rule.find)) substitutions.set(step.file, [...(substitutions.get(step.file) ?? []), { file: step.file, ...rule }]);
+      }
+    }
   }
   const rows = new Map(applied.map((row) => [row.version, row]));
   const steps = chain.applied.map((step) => {
@@ -243,10 +269,14 @@ end $clear$`);
     where not exists (select 1 from pg_catalog.pg_depend d where d.classid = o.classid and d.objid = o.oid and d.deptype = 'e')
     order by 1 limit 20`)).rows.map((row) => row.object);
   if (left.length > 0) throw new Error(`clear_incomplete: ${left.join(', ')}`);
+  const newer = roles.length > 0 && Number((await client.query('show server_version_num')).rows[0].server_version_num) >= 160000;
   for (const role of roles) {
     if (!ROLE_NAME.test(role) || PLATFORM_ROLE.test(role)) throw new Error(`migration_role_refused:${role}`);
     const present = (await client.query('select 1 from pg_catalog.pg_roles where rolname = $1', [role])).rows.length === 1;
     if (!present) continue;
+    // drop owned needs the role's privileges. The hosted postgres holds these roles with admin but without inherit
+    // (granted by supabase_admin), and answered "permission denied to drop objects"; admin lets it grant itself inherit.
+    if (newer) await client.query(`grant ${quoted(role)} to current_user with inherit true`);
     await client.query(`drop owned by ${quoted(role)} cascade`);
     await client.query(`drop role ${quoted(role)}`);
   }
@@ -269,7 +299,8 @@ export async function applyStep(client, step, before = []) {
       if (stored !== step.statements_md5) throw new Error('recorded text differs from production');
     });
   } catch (error) {
-    throw new SyncError(`DRILL_SERVER_SYNC_FAILED:${step.file}`, error.message, { cause: error });
+    // The database's DETAIL (a migration's bounded diagnostic) names what the message alone does not.
+    throw new SyncError(`DRILL_SERVER_SYNC_FAILED:${step.file}`, error.detail ? `${error.message} ${error.detail}` : error.message, { cause: error });
   }
 }
 

@@ -72,6 +72,40 @@ function Assert-FirstInstallRelease {
 # it comes, so a stage cut off at its limit still leaves what it printed. Otherwise as the package's Invoke-StageChild (the same argument
 # quoting; stdout and stderr apart; nothing killed at the limit) and, with -NoWindow and $EnvAdd, as its Invoke-NonElevated. A limit of 0
 # waits for the end.
+# The drill installs against the drill's server, never production (FABLE-drill-role-probe-20261124.md, PR-3). The kit names the server
+# stand-in (kit.json server, make-drill-kit.mjs): the first-install kit in From must name that server -- the Release's own, with the
+# production address, is refused before anything is installed -- and every production host the kit lists is cut off in this guest's hosts
+# file (0.0.0.0 and ::), so nothing the package starts can reach it whatever it reads; the checkpoint restore takes the lines away.
+# Each name is then resolved: an answer that is not the black hole means the guest is not cut off, and the install does not start.
+# $HostsFile, $Resolve: the guest's own by default, and then only on the drill guest; a test gives its own.
+function Set-EntryServerBlackhole([string]$HostsFile = '', [scriptblock]$Resolve = $null) {
+  $manifest = Get-Content -LiteralPath (Join-Path $Kit 'kit.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+  $server = Get-EntryProperty $manifest 'server'
+  $hosts = @(Get-EntryProperty $server 'blackholeHosts' | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
+  $address = [string](Get-EntryProperty $server 'supabaseUrl')
+  if ($null -eq $server -or [string](Get-EntryProperty $server 'contract') -cne 'clued.drill.server-stand-in/1' -or $hosts.Count -lt 1 -or
+      $address -cnotmatch '^https://([a-z0-9]+\.supabase\.co)$') { throw 'DRILL_ENTRY_SERVER_STAND_IN_MISSING' }
+  $drillHost = $Matches[1]
+  foreach ($h in $hosts) { if ($h -cnotmatch '^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$' -or $h -ceq $drillHost) { throw 'DRILL_ENTRY_SERVER_STAND_IN_MISSING' } }
+  $firstKit = Get-Content -LiteralPath (Join-Path $From "fleet-node-$Version.first-install-kit.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+  $named = [string](Get-EntryProperty (Get-EntryProperty $firstKit 'record') 'supabaseUrl')
+  if ($named -cne $address) { throw 'DRILL_ENTRY_SERVER_IS_PRODUCTION' }
+  if (-not $HostsFile) {
+    if ($env:COMPUTERNAME -cne 'CLUED-DRILL') { throw 'DRILL_ENTRY_NOT_THE_ELEVATED_GUEST' }   # never another machine's hosts file
+    $HostsFile = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+  }
+  if ($null -eq $Resolve) { $Resolve = { param($n) try { @([Net.Dns]::GetHostAddresses($n) | ForEach-Object { $_.IPAddressToString }) } catch { @() } } }
+  $have = @(Get-Content -LiteralPath $HostsFile -Encoding ASCII -ErrorAction SilentlyContinue | ForEach-Object { ([string]$_).Trim() })
+  $add = @()
+  foreach ($h in $hosts) { foreach ($line in @("0.0.0.0 $h", ":: $h")) { if ($have -cnotcontains $line) { $add += $line } } }
+  if ($add.Count) { [IO.File]::AppendAllText($HostsFile, "`r`n" + ($add -join "`r`n") + "`r`n", [Text.Encoding]::ASCII) }
+  foreach ($h in $hosts) {
+    # no answer at all is cut off too; any address but the black hole is not
+    foreach ($a in @(& $Resolve $h)) { if (@('0.0.0.0', '::') -cnotcontains [string]$a) { throw 'DRILL_ENTRY_PRODUCTION_NOT_CUT_OFF' } }
+  }
+  return [ordered]@{ hosts = $hosts; server = $drillHost; added = $add.Count }
+}
+
 function Invoke-EntryStreamedChild([string]$Exe, [string[]]$Arguments, [int]$LimitSeconds, [string]$Log, [hashtable]$EnvAdd = @{}, [switch]$NoWindow) {
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = $Exe; $psi.Arguments = (($Arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' ')
@@ -261,8 +295,9 @@ function Write-EntryStageTimings([string]$Output, $Measurements) {
 # r9 follow-up (FABLE-drill-r9-followup 1.3 B): a first install that did not end FIRST_INSTALL_DONE leaves resident-failure-snapshot.json
 # in the entry's output directory, beside launcher-result.json, so it goes back with the stage files before any restore (r9's HALT.json
 # never left the guest). What it reads is one fixed list, drill/guest-failure-files.json (in the kit, beside this script): the resident's
-# HALT, PAUSED and status records, the launcher's progress records and verify's full answer. Plus the Service Control Manager's System
-# events since the entry started. Bounded: 64 KiB of each file, 1 MiB for the whole snapshot. Never a secret: a list that names a
+# HALT, PAUSED and status records, the launcher's progress records and verify's full answer. Plus the generic helper's refusal events
+# (Application log, its service name as source) and the Service Control Manager's System events since the entry started. Bounded:
+# 64 KiB of each file, 1 MiB for the whole snapshot. Never a secret: a list that names a
 # secrets or credentials directory, or a file that is not .json, is refused whole, and a wildcard that reaches one reads nothing there.
 $script:EntryFailureFilesContract = 'clued.drill.guest-failure-files/1'
 $script:EntryFailureSnapshotContract = 'clued.drill.resident-failure-snapshot/1'
@@ -354,10 +389,32 @@ function Read-EntryFailureFile([string]$File) {
 }
 
 # The Service Control Manager's System events since $Since, newest first, at most $Max.
-$script:EntryFailureEventReader = {
-  param([DateTimeOffset]$Since, [int]$Max)
+function Read-EntryScmEvents([DateTimeOffset]$Since, [int]$Max) {
   try { @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; StartTime = $Since.LocalDateTime } -MaxEvents $Max -ErrorAction Stop) }
   catch { if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { @() } else { throw } }
+}
+
+# The generic helper's refusal events since $Since (r13 PR-2, FABLE-r13-state-acl-fix section 3): a refusal before ready leaves no receipt,
+# only the SCM exit code, so the helper writes one Application event: the code, the path being opened, the stage. Its source is the
+# service name (first-install-host.ps1: the runner service, this prefix and the node's name), unregistered, so the event's text is its
+# insertion string, not a rendered message; it is named by its source. Newest first, at most $Max. Never throws: an Application log that
+# cannot be read is one record saying so, and the SCM events are read all the same.
+$script:EntryHelperEventSourcePrefix = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-'
+function Read-EntryHelperEvents([DateTimeOffset]$Since, [int]$Max, [scriptblock]$Query = { param($xpath) Get-WinEvent -LogName Application -FilterXPath $xpath -ErrorAction Stop }) {
+  $xpath = "*[System[TimeCreated[@SystemTime>='" + $Since.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture) + "']]]"
+  try {
+    @(& $Query $xpath | Where-Object { ([string]$_.ProviderName).StartsWith($script:EntryHelperEventSourcePrefix, [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First $Max | ForEach-Object {
+      [pscustomobject]@{ TimeCreated = $_.TimeCreated; Id = $_.Id; LevelDisplayName = $(if ([string]$_.LevelDisplayName) { [string]$_.LevelDisplayName } else { (@{ 1 = 'Critical'; 2 = 'Error'; 3 = 'Warning'; 4 = 'Information' })[[int]$_.Level] }); Message = ([string]$_.ProviderName + ': ' + (@($_.Properties | ForEach-Object { [string]$_.Value }) -join ' ')) } })
+  } catch {
+    if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { @() }
+    else { [pscustomobject]@{ TimeCreated = [datetime]::UtcNow; Id = 0; LevelDisplayName = 'Error'; Message = ('Application log unreadable: ' + $_.Exception.Message) } }
+  }
+}
+
+# The snapshot's events: the helper's first (few, and the one that names a refusal), then the SCM's, at most $Max together.
+$script:EntryFailureEventReader = {
+  param([DateTimeOffset]$Since, [int]$Max)
+  @(@(Read-EntryHelperEvents $Since $Max) + @(Read-EntryScmEvents $Since $Max) | Select-Object -First $Max)
 }
 
 # Writes the snapshot and returns it. Never throws and never changes the entry's result: what could not be read is named in its place.
@@ -648,6 +705,7 @@ function Get-FirstInstallEntryResult {
     Assert-FirstInstallGuest
     $guest = $true
     Assert-FirstInstallRelease
+    [void](Set-EntryServerBlackhole)
     $result = Invoke-FirstInstallAccepted $From $Kit $Fake $Work $Version
   } catch {
     $code = [string]$_.Exception.Message
