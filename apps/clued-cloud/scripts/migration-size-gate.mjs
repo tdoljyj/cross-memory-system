@@ -19,8 +19,11 @@
 // applied). A DO body that EXECUTEs anything but one literal is judged by every
 // string literal of that body instead (§12): a literal that holds an adding
 // statement at its start or after a semicolon refuses the file; a literal the
-// tokenizer cannot read counts as an addition. A file the tokenizer cannot read is
-// refused at or above the threshold and passes with a warning below it.
+// tokenizer cannot read counts as an addition. SELECT ... INTO counts only in the
+// file's top-level SQL, never in text from a literal (§13): EXECUTE refuses it
+// (0A000, tests/migration-size-gate-db.test.mjs) and in a function body it assigns
+// variables. A file the tokenizer cannot read is refused at or above the
+// threshold and passes with a warning below it.
 // There is no option to change the threshold. Exit 0 pass, 1 refused, 2 usage.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -101,7 +104,8 @@ function alterTableKinds(statement) {
   return kinds;
 }
 
-// SELECT ... INTO <table> in plain SQL creates a table (in plpgsql it assigns variables).
+// SELECT ... INTO <table> in top-level SQL creates a table (in plpgsql it assigns
+// variables; through EXECUTE PostgreSQL refuses it).
 function selectIntoKind(statement) {
   const words = [...topLevel(statement)];
   const verb = statement[0].value === 'with'
@@ -128,7 +132,7 @@ function scanLiteral(token, additions) {
     additions.push({ kind: 'unreadable literal', line: token.line, statement: `${render([token])} (${error.message})` });
     return;
   }
-  scan(tokens, false, additions);
+  scan(tokens, false, additions, null, true);
 }
 
 // A DO body: its statements, and, when it executes anything but one literal, every
@@ -143,7 +147,7 @@ function scanDo(tokens, additions) {
   }
 }
 
-function scan(tokens, plpgsql, additions, body = null) {
+function scan(tokens, plpgsql, additions, body = null, fromLiteral = false) {
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (token.kind === 'literal' && bodyOfDo(tokens, index)) {
@@ -159,7 +163,7 @@ function scan(tokens, plpgsql, additions, body = null) {
       if (kind) add(kind);
     } else if (token.value === 'alter' && isCode(statement[1], 'table')) {
       alterTableKinds(statement).forEach(add);
-    } else if (!plpgsql && (token.value === 'select' || token.value === 'with')) {
+    } else if (!plpgsql && !fromLiteral && (token.value === 'select' || token.value === 'with')) {
       const kind = selectIntoKind(statement);
       if (kind) add(kind);
     } else if (plpgsql && token.value === 'execute') {
