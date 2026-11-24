@@ -721,8 +721,9 @@ test('T3 M 上那一项 cancelled、缺、in_progress：判未知，不判一致
   const t = at(24);
   const cases = [
     ['cancelled', [run('trivy', FRAMEWORK_PINS.trivy, 'cancelled', { started: t, completed: t })], '框架无结论（cancelled）'],
-    ['缺', undefined, '框架缺检查'],
-    ['in_progress', [run('trivy', FRAMEWORK_PINS.trivy, null, { status: 'in_progress', started: t })], '框架未完成（in_progress）'],
+    // 缺、in_progress 是框架结论未出：NOW 在合入后两周，超过 §8 的 90 分钟窗口，原因写明超窗。
+    ['缺', undefined, '合入已超过 90 分钟，框架仍无结论（框架缺检查）'],
+    ['in_progress', [run('trivy', FRAMEWORK_PINS.trivy, null, { status: 'in_progress', started: t })], '合入已超过 90 分钟，框架仍无结论（框架未完成（in_progress））'],
   ];
   for (const [label, replaced, reason] of cases) {
     const { head } = await raceReport({ mRuns: frameworkOnly(t, check => check === 'trivy' ? replaced : null) });
@@ -737,7 +738,7 @@ test('T4 M 上同名但不是 #292 钉的来源：不算数，判未知', async 
   const t = at(24);
   const { head } = await raceReport({ mRuns: frameworkOnly(t, check => check === 'gitleaks' ? [run('gitleaks', 15368, 'success', { started: t, completed: t })] : null) });
   assert.equal(pairOf(head, 'gitleaks').verdict, '未知');
-  assert.equal(pairOf(head, 'gitleaks').reason, '框架缺检查');
+  assert.equal(pairOf(head, 'gitleaks').reason, '合入已超过 90 分钟，框架仍无结论（框架缺检查）');
 });
 
 test('T5 树不同、第二个父提交不是 head、不是两父合并、没有合入提交：判未知写明原因，不读 M 的检查', async () => {
