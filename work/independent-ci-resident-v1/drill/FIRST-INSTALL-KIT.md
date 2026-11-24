@@ -25,6 +25,7 @@
 |---|---|---|---|---|
 | 服务端与 CI 令牌（`kit.json` 的 `server`；kit 里的 `fleet-node-<v>.first-install-kit.json`、`fleet-node-<v>.first-install.SHA256SUMS`、`fleet-node-<v>.acceptance.json` 三份；`C:\drill\fake\ci-admission.token` = Owner 的演练绑定） | 生产服务端（Release 的首装 kit 里 `record.supabaseUrl`、`record.publishableKey` 两个公开字段）与真节点的 CI 绑定 | 演练不得接触生产；现造的令牌打生产只会被答“未授权”（第 17 代候选包的演练），真令牌又不该出现在演练里 | 生产服务端对本包的应答；带 ci-admission 角色节点的首班车 | 不可删；没验到的部分由真机首装承担 |
 | `C:\drill\fake\companion-github.token`（`ghp_CLUEDDRILLFAKE…`，来宾里生成、来宾里读；仅当被演练的包在必需组或可选组列出它时生成并交付，kit 同时登记这一步） | Owner 在凭据窗口给的陪伴 GitHub 经典令牌 | 演练不得使用真凭据 | 令牌被 GitHub 接受；陪伴访问 GitHub 的各个通道 | 不可删；没验到的部分由真机首装后的运行状态承担 |
+| 来宾里的前置下载（包的 `prereq-manifest.json` 每一项：WSL、rootfs、gh、Git for Windows 之外还有 node、python、MinGit、actions-runner、linux-node；kit 的单节点步骤登记“前置由宿主注入替身”） | 来宾按包的前置清单从上游下载每一项前置 | 演练每轮从同样的字节开始；来宾里下载每轮 5.5–7.7 分钟且走外网（Fable 裁定 0e418483 第 3 条） | 来宾从上游下载前置；地址与哈希在建 kit 时由宿主按包的清单验过 | 不可删；没验到的部分由真机首装承担 |
 
 按设计不给的可选凭据：
 
@@ -32,7 +33,7 @@
 |---|---|---|---|
 | `ci-node-heartbeat.token` | 按设计不给（不造假心跳令牌） | 假令牌会让来宾的常驻向生产心跳端点发请求，既改变来宾行为，也会让演练对生产的回读不再是零 | 心跳这条路；它的证据是真机运行后的心跳 |
 
-gh 与 Git for Windows 本身不做替身，按包的前置清单由宿主注入来宾真装（缺一个不建 kit、不开机，来宾不下载）。
+包的前置清单（`prereq-manifest.json` 的 `items`）每一项都由宿主注入来宾，来宾一个都不下载：缺一项不建 kit（`DRILL_PREREQ_TOOLS_INCOMPLETE:<名字>`），入口遇到没注入的一项即停（`DRILL_PREREQ_NOT_INJECTED:<名字>`）。prereq.json 不带的项（node、python、MinGit、actions-runner、linux-node）取自宿主缓存 `D:\clued-drill\prereq\cache\<清单里的文件名>`；缓存没有时，建 kit 那一步按清单里的地址下一次（试 3 次），核清单的 sha256 与字节数，只许新建，清单不变就不再下；缓存里的文件与清单不符即拒（`DRILL_PREREQ_CHANGED:<文件名>`），不覆盖。地址、哈希、字节数只从包的清单读。gh 与 Git for Windows 另须在包的清单里各声明一次（`DRILL_PREREQ_TOOL_NOT_DECLARED`），开机前再核一遍（`DRILL_KIT_TOOL_NOT_INJECTED`），本身不做替身，在来宾里真装。
 kit 的接受文件给角色钉的每个主机工具（`fleetRefs.formalRoles.<角色>.hostTools.<名>`，如 gitleaks 的 `/usr/bin/python3.12`），建 kit 时从暂存的 .deb 里取出该路径核 sha256：凡带这个路径的 .deb 都须是钉住的普通文件，且至少有一个带；否则不建 kit（`DRILL_KIT_HOST_TOOL_NOT_THE_FLEET_PIN:<路径>`、`DRILL_KIT_HOST_TOOL_NOT_IN_THE_DEBS:<路径>`；Fable 裁定 0e418483 §4.1 第 3 步）。核过的结果在 make-drill-kit.mjs 输出的 `hostTools`。
 清空 perNodeSteps 也不能得到 PASS_A_FULL。即使 A1–A9 全通过，仍不能勾掉“新节点首装实测一次”或证明服务端接纳。
 
@@ -143,10 +144,10 @@ pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Versio
 
 候选演练默认跑 A8 并要求它为真；跳过 A8 只能显式带 `-SkipReinstall`（不是默认，Fable 裁定补“候选跳过 A8”）。候选回执的 A1–A7 必须逐项为真，A8 为真或被显式跳过，其他情况都是 `FAIL`。跳过了 A8 的候选，回读后最好只能得到 `PASS_A_REINSTALL_NOT_DRILLED`，A8 的 detail 写“同包重装未演练”；这个值原样写进索引的演练格，永远不会是另外两种 PASS。
 
-演练 kit 平铺存放 `first-install-entry.ps1`、`guest-failure-files.json`（入口失败快照可读的来宾文件清单）、`release-pins.json`、WSL MSI、Ubuntu rootfs、全部 .deb 和 `kit.json`。
+演练 kit 平铺存放 `first-install-entry.ps1`、`guest-failure-files.json`（入口失败快照可读的来宾文件清单）、`release-pins.json`、包的前置清单的每一项（WSL MSI、Ubuntu rootfs、gh、Git for Windows、node、python、MinGit、actions-runner、linux-node）、全部 .deb 和 `kit.json`。
 除 `kit.json` 自身外，每个文件都在 `files` 中钉 sha256。prereq.json 按原始字节绑定；其 WSL/rootfs/debs 与正式
-prereq-manifest 的文件名、sha256、字节数相符才拷入。Node/Python/Git/runner/Linux Node 的正式前置仍由 bootstrap 的
-已钉清单取得；本构建器不联网。
+prereq-manifest 的文件名、sha256、字节数相符才拷入。Node/Python/Git/runner/Linux Node 取自宿主缓存（见上文“前置清单每一项都由宿主注入”）；
+本构建器只在缓存缺项时按清单地址联网取一次。
 
 `prerequisiteMode=first-install-host` 让完整演练从 S0 把发行版、Docker 和账户交给正式主机准备，不提前导入同名发行版。
 旧 kit 仍支持预注入来宾前置条件。`perNodeSteps` 明确列出三处绕过。
