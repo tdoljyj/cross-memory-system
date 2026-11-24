@@ -3,12 +3,13 @@
 # 补充二第 2 条 S2、S4；补充三“读回出错”）。
 # 本轮的 error 字段记最近一次失败的原因；后面重试成了也留着，配合 backstopRetries 看。
 # 一个提权进程从头到尾，只碰 TURING 本机路径（共享目录那份结果文件尽力写）：
-#   0. 放行文件所在目录探针写一次，写不进就退出（不空等）；放行文件事先就在（上一次留下的、或待命前就写的）就删掉，删不掉就退出。
+#   0. 放行文件所在目录探针写一次，写不进就退出（不空等）。
 #   1. 记下状态为 Up 的物理网卡，写状态文件。其中有不是有线（PhysicalMediaType 不是 802.3）的就退出：断了可能连不回，
 #      兜底任务只会启用、救不了（S2）。
 #   2. 注册兜底任务（原地最多试 3 次、间隔 5 秒，补充三；SYSTEM；触发：到点起每 2 分钟重复一天、开机；动作：启用记下的网卡，读回都不是 Disabled 才删掉自己），读回确认。
-#      没注册成就退出，不断网。
-#   3. 待命：每 15 秒看一次放行文件（内容只有演练编号；只认待命之后写的，第 0 步已清掉旧的），最长 8 小时；到时删兜底任务退出。
+#      没注册成就退出，不断网。注册成了，进入待命前最后一步清放行文件：此刻已有的（上一次留下的、待命前或注册重试期间写的）
+#      都删掉，删不掉就删兜底任务退出（只在这一处清）。
+#   3. 待命：每 15 秒看一次放行文件（内容只有演练编号；只认待命之后写的，第 2 步末尾已清掉旧的），最长 8 小时；到时删兜底任务退出。
 #      放行到了先读本机 status.json 核一次（ACTIVE、无在途批次、非 PAUSED、无 HALT、无暂停收单；这几个键和 writtenAt 缺一个
 #      就算不满足，writtenAt 距此刻超过 120 秒也算不满足，S4）：不满足就删掉这份放行文件、
 #      把原因写进状态文件、回到待命；放行文件删不掉才退出。满足就删掉放行文件（用过即删）往下走。
@@ -195,13 +196,9 @@ function Write-DrillLine([string]$Text) { Write-Host ("[{0}] {1}" -f (Format-Dri
 # 第 0–5 步；$r 是结果（有序字典，按引用改），任一步不满足就 return，外层照样写结果文件。
 function Invoke-DrillCutSteps($r, [string]$DrillId, [string]$WorkDir, [string]$StatusFile, [string]$ReleaseFile, [string]$taskName) {
   $stateFile = Join-Path $WorkDir "failover-drill-$DrillId.state.json"
-  # 0. 放行文件：目录写得进；旧的清掉（只认待命之后写的）
+  # 0. 放行文件所在目录写得进（旧放行文件在第 2 步末尾、进入待命前清）
   if (-not (Test-DrillDirWritable (Split-Path -Parent $ReleaseFile))) {
     $r.outcome = 'RELEASE_DIR_NOT_WRITABLE'; $r.detail = "放行文件所在目录写不进：$ReleaseFile"; return
-  }
-  if (Test-Path -LiteralPath $ReleaseFile) {
-    if (-not (Remove-DrillRelease $ReleaseFile)) { $r.outcome = 'RELEASE_PREEXISTS'; $r.detail = "待命前就有放行文件且删不掉：$ReleaseFile"; return }
-    $r.staleReleaseRemoved = $true
   }
 
   # 1. 记下在用的物理网卡；有不是有线的就不断（S2）
@@ -225,6 +222,13 @@ function Invoke-DrillCutSteps($r, [string]$DrillId, [string]$WorkDir, [string]$S
   }
   if (-not $ok) { $r.outcome = 'BACKSTOP_NOT_REGISTERED'; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return }
   $r.backstopRegistered = $true
+  # 进入待命前最后一步：清掉此刻已有的放行文件（上一次留下的、待命前或注册重试期间写的都不算；只在这一处清）
+  if (Test-Path -LiteralPath $ReleaseFile) {
+    if (-not (Remove-DrillRelease $ReleaseFile)) {
+      $r.outcome = 'RELEASE_PREEXISTS'; $r.detail = "待命前就有放行文件且删不掉：$ReleaseFile"; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return
+    }
+    $r.staleReleaseRemoved = $true
+  }
   $r.standbySince = Format-DrillTime (Get-DrillNow)
   Write-DrillJson $stateFile $r
 
