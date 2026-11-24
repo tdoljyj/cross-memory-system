@@ -67,7 +67,8 @@ export function gateParts() {
   const shadow = clone(READINGS.shadow);
   shadow.summary.counts['在跑'] = 0;    // 取样时在跑 4；空闲时是 0
   return {
-    turing: TURING, desk: DESK, source: SOURCE, now: NOW,
+    // finishedAt：现读结束的时刻（补充三 S1）；实跑影子对比约一分钟
+    turing: TURING, desk: DESK, source: SOURCE, now: NOW, finishedAt: plus(NOW, 70),
     snapshot: snapshot(observed, { page: p, candidates: [{ binding_id: DESK, rank: 2, agent_name: 'desk', eligible: true, reasons: [], last_heartbeat_at: plus(NOW, -30), heartbeat_previous_at: plus(NOW, -60) }] }),
     // TURING 当班时 pending 仍可能有展示用的行（取样里 #1240 等是 QUEUED）；I4 只看 current 与 queue.live
     statusTuring: status({ writtenAt: plus(NOW, -10) }),

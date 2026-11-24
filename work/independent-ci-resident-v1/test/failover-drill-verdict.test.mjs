@@ -89,6 +89,18 @@ test('gate M3: a stale snapshot or status.json is undetermined, never released',
   }
 });
 
+test('gate 补充三 S1: live reads that finish more than 120 s after the gate started, or no finish time, are undetermined', () => {
+  for (const mutate of [g => { g.finishedAt = plus(g.now, 180); }, g => { delete g.finishedAt; }]) {
+    const g = gateParts(); mutate(g);
+    const r = gate(g);
+    notPass(r, 'A0');
+    assert.equal(r.checks.A0.ok, null, JSON.stringify(r.checks.A0));
+    assert.equal(r.verdict, 'UNDETERMINED');
+  }
+  const g = gateParts(); g.finishedAt = plus(g.now, 180);
+  assert.match(gate(g).checks.A0.why, /现读耗时 180 秒/);
+});
+
 test('gate: a busy train or an unfit node is never released', () => {
   const cases = [
     ['A1', g => { g.statusDesk.versions.selfcheck.result = 'FAIL'; }],

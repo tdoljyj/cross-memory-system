@@ -15,6 +15,7 @@
 //   S2 在用的物理网卡里有一块不是有线就不断网（第 1 步不注册；第 4 步并集后再核，有就删兜底任务）
 //   S4 status.json 缺键算不满足；writtenAt 超过 120 秒（或解析不了）算不新鲜
 //   S8 禁用到一半抛异常仍全部启用；共享目录写不进时本机结果照写、结论不变
+//   读回出错（补充三）：待命前的第一次注册原地重试 3 次；放行后的第二次注册失败回到待命，兜底任务留着
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -63,7 +64,7 @@ const stubs = (d, { register = '$true', wait = '$null', adapters = "@('Ethernet'
   onWait = `if ($script:waitCount -eq 1) { ${writeRelease()} }`, pre = '', realDisable = false, disableThrows = [] } = {}) => `
   $script:calls = New-Object System.Collections.ArrayList
   $script:rel = ${q(d.releaseFile)}; $script:statusPath = ${q(d.statusFile)}
-  $script:waitCount = 0; $script:listCount = 0; $script:nonWiredCount = 0
+  $script:waitCount = 0; $script:listCount = 0; $script:nonWiredCount = 0; $script:registerCount = 0
   $script:fakeNow = [datetime]${q(T_START)}
   $script:PollSeconds = 15; $script:StandbyLimitSeconds = 60; $script:CutSeconds = 540; $script:ReconnectSeconds = 120
   function Get-DrillNow { $script:fakeNow.ToUniversalTime() }
@@ -74,7 +75,7 @@ const stubs = (d, { register = '$true', wait = '$null', adapters = "@('Ethernet'
     : `function Disable-DrillAdapters([string[]]$Names) { [void]$script:calls.Add('disable:' + ($Names -join ',')) }`}
   function Get-DrillNonWiredUp { $script:nonWiredCount++; ${nonWired} }
   function Enable-DrillAdapters([string[]]$Names) { [void]$script:calls.Add('enable:' + ($Names -join ',')); ${enable} }
-  function Register-DrillBackstop([string]$TaskName, [string[]]$Names, [datetime]$At) { [void]$script:calls.Add('register:' + ($Names -join ',')); ${register} }
+  function Register-DrillBackstop([string]$TaskName, [string[]]$Names, [datetime]$At) { $script:registerCount++; [void]$script:calls.Add('register:' + ($Names -join ',')); ${register} }
   function Remove-DrillBackstop([string]$TaskName) { [void]$script:calls.Add('remove'); $true }
   function Test-DrillConnectivity { [void]$script:calls.Add('probe'); $true }
   ${pre}`;
@@ -282,9 +283,47 @@ test('S8: a shared directory that cannot be written still leaves the local resul
   const r = run(d);
   assert.equal(r.result.outcome, 'CUT_DONE', JSON.stringify(r.result));
   assert.equal(r.result.sharedWritten, false);
-  const local = JSON.parse(fs.readFileSync(path.join(d.work, 'failover-drill-gen18-t.result.json'), 'utf8').replace(/^﻿/, ''));
+  const local = JSON.parse(fs.readFileSync(path.join(d.work, 'failover-drill-gen18-t.result.json'), 'utf8').replace(/^\uFEFF/, ''));
   assert.equal(local.outcome, 'CUT_DONE');
   assert.equal(local.sharedWritten, false);
+});
+
+test('补充三: the second registration failing after release goes back to standby; the next release cuts normally', opts, () => {
+  for (const fails of ['$false', "throw 'read back failed'"]) {
+    const d = caseDirs();
+    const r = run(d, { register: `if ($script:registerCount -eq 2) { ${fails} } else { $true }`,
+      onWait: `if ($script:waitCount -eq 1 -or $script:waitCount -eq 2) { ${writeRelease()} }` });
+    assert.equal(r.result.outcome, 'CUT_DONE', `${fails}: ${JSON.stringify(r.result)}`);
+    assert.deepEqual(systemCalls(r.calls), ['list', 'register:Ethernet,Wi-Fi', 'list', 'register:Ethernet,Wi-Fi', 'list', 'register:Ethernet,Wi-Fi',
+      'disable:Ethernet,Wi-Fi', 'enable:Ethernet,Wi-Fi', 'remove'], fails);
+    assert.equal(r.result.backstopRetries, 1, fails);
+    assert.ok(r.result.error, fails);
+  }
+});
+
+test('补充三: the second registration never succeeding → no cut, standby until the limit, backstop task kept until then', opts, () => {
+  const r = run(caseDirs(), { register: 'if ($script:registerCount -eq 1) { $true } else { $false }',
+    onWait: `if ($script:waitCount -eq 1) { ${writeRelease()} }` });
+  assert.equal(r.result.outcome, 'STANDBY_TIMEOUT', JSON.stringify(r.result));
+  noCut(r);
+  const order = systemCalls(r.calls);
+  assert.equal(order.indexOf('remove'), order.length - 1, order.join(' '));
+  assert.equal(r.result.backstopRetries, 1);
+});
+
+test('补充三: the first registration is retried in place, 3 tries 5 s apart', opts, () => {
+  const ok = run(caseDirs(), { register: 'if ($script:registerCount -le 2) { $false } else { $true }',
+    onWait: `if ($script:waitCount -eq 3) { ${writeRelease()} }` });
+  assert.equal(ok.result.outcome, 'CUT_DONE', JSON.stringify(ok.result));
+  assert.deepEqual(ok.calls.slice(0, 6), ['list', 'register:Ethernet,Wi-Fi', 'wait:5', 'register:Ethernet,Wi-Fi', 'wait:5', 'register:Ethernet,Wi-Fi']);
+  assert.equal(ok.result.backstopRegistered, true);
+  for (const register of ['$false', "throw 'access denied'"]) {
+    const bad = run(caseDirs(), { register });
+    assert.equal(bad.result.outcome, 'BACKSTOP_NOT_REGISTERED', register);
+    assert.deepEqual(bad.calls.filter(c => c.startsWith('register') || c.startsWith('wait')),
+      ['register:Ethernet,Wi-Fi', 'wait:5', 'register:Ethernet,Wi-Fi', 'wait:5', 'register:Ethernet,Wi-Fi'], register);
+    noCut(bad);
+  }
 });
 
 // Stand-ins for the NetAdapter and ScheduledTasks cmdlets (functions win over cmdlets); nothing on this machine is touched.

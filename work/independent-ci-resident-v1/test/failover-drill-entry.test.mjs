@@ -22,17 +22,18 @@ let n = 0;
 const mcpFile = (dir, name, snap) => { const f = path.join(dir, name); fs.writeFileSync(f, JSON.stringify([{ snapshot: snap }])); return f; };
 const jsonFile = (dir, name, v) => { const f = path.join(dir, name); fs.writeFileSync(f, JSON.stringify(v)); return f; };
 
-function readersFrom(idle, { throwOn } = {}) {
+// `clock.ms` is what the injected now() returns; `shadowTakesMs` moves it on while the shadow read runs (补充三 S1).
+function readersFrom(idle, { throwOn, clock, shadowTakesMs = 0 } = {}) {
   const fail = key => { if (throwOn === key) throw new Error(`${key} unreachable`); };
   return {
     runs: async status => { fail('runs'); return status === 'queued' ? idle.runsQueued : idle.runsInProgress; },
     prs: async () => { fail('prs'); return idle.prs; },
-    shadow: async () => { fail('shadow'); return idle.shadow; },
+    shadow: async () => { fail('shadow'); if (clock) clock.ms += shadowTakesMs; return idle.shadow; },
     vms: async () => { fail('vms'); return idle.vms; },
   };
 }
 
-function gateCase({ mutate = () => {}, release = true, throwOn, extra = [] } = {}) {
+function gateCase({ mutate = () => {}, release = true, throwOn, extra = [], shadowTakesMs = 0 } = {}) {
   const dir = path.join(tmp, `g${++n}`); fs.mkdirSync(dir);
   const g = gateParts(); mutate(g);
   const releaseFile = path.join(dir, 'release-gen18-t.txt');
@@ -40,9 +41,29 @@ function gateCase({ mutate = () => {}, release = true, throwOn, extra = [] } = {
     '--status-turing', jsonFile(dir, 'st.json', g.statusTuring), '--status-desk', jsonFile(dir, 'sd.json', g.statusDesk),
     '--turing', g.turing, '--desk', g.desk, '--source', g.source, '--shadow-prs', '1292-', '--out-dir', dir,
     ...(release ? ['--release', releaseFile] : []), ...extra];
-  const lines = [];
-  return { dir, releaseFile, run: () => main(argv, { readers: readersFrom(g.idle, { throwOn }), now: () => Date.parse(NOW), sleep: async () => {}, write: l => lines.push(l) }), lines };
+  const lines = [], clock = { ms: Date.parse(NOW) };
+  return { dir, releaseFile, run: () => main(argv, { readers: readersFrom(g.idle, { throwOn, clock, shadowTakesMs }), now: () => clock.ms, sleep: async () => {}, write: l => lines.push(l) }), lines };
 }
+
+test('gate 补充三 S1: live reads that take 3 minutes → undetermined (exit 3), no release file, finish time recorded', async () => {
+  const c = gateCase({ shadowTakesMs: 180_000 });
+  assert.equal(await c.run(), 3, c.lines.join('\n'));
+  assert.equal(fs.existsSync(c.releaseFile), false);
+  const out = JSON.parse(fs.readFileSync(path.join(c.dir, 'failover-drill-gen18-t-gate.json'), 'utf8'));
+  assert.equal(out.checks.A0.ok, null, JSON.stringify(out.checks.A0));
+  assert.equal(out.finishedAt, new Date(Date.parse(NOW) + 180_000).toISOString());
+});
+
+test('补充三 S1: every live read command has a timeout (gh and Get-VM 60 s, shadow compare 100 s)', async () => {
+  const { defaultReaders } = await import('../drill/failover-drill.mjs');
+  const calls = [];
+  const r = defaultReaders({ exec: async (file, args, options) => {
+    calls.push({ what: args.includes('scripts/ci/shadow-compare.mjs') ? 'shadow' : file === 'gh' ? `gh ${args[0]}` : 'vms', timeout: options?.timeout });
+    return { stdout: args.includes('scripts/ci/shadow-compare.mjs') ? '{"status":"ok"}' : '[]' };
+  } });
+  await r.runs('queued'); await r.prs(); await r.shadow('1292-'); await r.vms();
+  assert.deepEqual(calls, [{ what: 'gh run', timeout: 60_000 }, { what: 'gh pr', timeout: 60_000 }, { what: 'shadow', timeout: 100_000 }, { what: 'vms', timeout: 60_000 }]);
+});
 
 test('gate: all checks pass → exit 0 and the release file holds exactly the drill id', async () => {
   const c = gateCase();
