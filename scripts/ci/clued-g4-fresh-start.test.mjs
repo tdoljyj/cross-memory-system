@@ -180,7 +180,9 @@ test('both G4 routes prove freshness before start, keep every database test, and
   assert.equal(routes.length, 2);
   for (const route of routes) {
     assert.ok(route.indexOf('--prepare') >= 0 && route.indexOf('--prepare') < route.indexOf('supabase start'));
-    assert.ok(route.indexOf('--verify') > route.indexOf('supabase start'));
+    // start only brings the containers up; the chain is applied in production's shape before the history is verified.
+    const migrate = route.indexOf('node ../../scripts/ci/clued-local-migrate.mjs');
+    assert.ok(migrate > route.indexOf('supabase start') && migrate < route.indexOf('--verify'));
     assert.equal(route.includes('supabase db reset'), false);
     for (const command of ['supabase db lint --local', 'supabase test db supabase/tests/m1_runtime_contracts.test.sql',
       'npm run test:project:lifecycle:v2']) assert.ok(route.includes(command));

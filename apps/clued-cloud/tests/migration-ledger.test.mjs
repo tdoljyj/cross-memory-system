@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -602,4 +602,73 @@ test('export --out writes new history-only texts next to that ledger, never into
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// One executor for migration files (FABLE-g4-retention-lock-20261124 §5). The Supabase CLI runs a file as single
+// statements with no transaction block; production runs it as one EXECUTE in one transaction. A file production
+// accepts then fails locally (top-level LOCK TABLE, 25P01: 20261124120000, 20261124130000) and the reverse. So the
+// CLI applies no migration anywhere: scripts/ci/clued-local-migrate.mjs does, in production's shape.
+const LOCAL_MIGRATE = 'scripts/ci/clued-local-migrate.mjs';
+const CLI_START = /\bsupabase(?:@[\w.-]+)?\s+start\b/;
+const CLI_APPLIES = /\bsupabase(?:@[\w.-]+)?\s+(?:db\s+(?:reset|push)|migration\s+up)\b/;
+// A line that only labels or opens a step (or is blank or a comment) is not the command that follows a start.
+const NO_COMMAND = /^\s*(?:#.*|-?\s*name:.*|-?\s*run:\s*[|>]?[+-]?\s*)?$/;
+
+// Every place `text` lets the CLI apply migrations: a reset, push or migration up, or a start whose next command
+// is not the local executor.
+function cliMigrationProblems(text) {
+  const lines = text.split(/\r?\n/);
+  const problems = [];
+  lines.forEach((line, index) => {
+    if (/^\s*#/.test(line)) return;
+    if (CLI_APPLIES.test(line)) problems.push(`line ${index + 1}: the Supabase CLI applies migrations`);
+    const start = CLI_START.exec(line);
+    if (!start) return;
+    const next = line.slice(start.index + start[0].length).includes(LOCAL_MIGRATE)
+      ? line : lines.slice(index + 1).find((candidate) => !NO_COMMAND.test(candidate));
+    if (!next?.includes(LOCAL_MIGRATE)) problems.push(`line ${index + 1}: supabase start is not followed by ${LOCAL_MIGRATE}`);
+  });
+  return problems;
+}
+
+test('the rule finds each way the Supabase CLI could apply migrations', () => {
+  const start = 'npx --yes --package=supabase@2.115.0 supabase start';
+  const migrate = 'node ../../scripts/ci/clued-local-migrate.mjs';
+  assert.deepEqual(cliMigrationProblems(`      - run: ${start}\n      - run: npm run mcp:isolated:fixture\n`),
+    [`line 1: supabase start is not followed by ${LOCAL_MIGRATE}`]);
+  assert.deepEqual(cliMigrationProblems(`        run: |\n          ${start} -x studio\n`),
+    [`line 2: supabase start is not followed by ${LOCAL_MIGRATE}`]);
+  assert.deepEqual(cliMigrationProblems(`          ${start}\n          # then the chain\n          ${migrate}\n`), []);
+  assert.deepEqual(cliMigrationProblems(`        run: ${start} -x studio\n\n      - name: Apply the migration chain\n        run: ${migrate}\n`), []);
+  assert.deepEqual(cliMigrationProblems(`      - run: ${start}\n      - run: ${migrate}\n`), []);
+  assert.deepEqual(cliMigrationProblems(`    "db:start": "npx --yes supabase@2.115.0 start && ${migrate}",\n`), []);
+  assert.deepEqual(cliMigrationProblems('    "db:start": "npx --yes supabase@2.115.0 start",\n    "db:lint": "npx --yes supabase@2.115.0 db lint --local",\n'),
+    [`line 1: supabase start is not followed by ${LOCAL_MIGRATE}`]);
+  for (const command of ['supabase db reset --local --no-seed', 'supabase@2.115.0 db reset --local', 'supabase db push', 'supabase migration up']) {
+    assert.deepEqual(cliMigrationProblems(`      - run: npx ${command}\n`), ['line 1: the Supabase CLI applies migrations'], command);
+  }
+  assert.deepEqual(cliMigrationProblems('          # supabase db reset is not used here\n      - run: npx supabase db lint --local\n      - run: npx supabase stop --no-backup\n'), []);
+});
+
+test('no workflow and no package script lets the Supabase CLI apply migrations', () => {
+  const repository = path.join(appDirectory, '..', '..');
+  const config = readFileSync(path.join(appDirectory, 'supabase', 'config.toml'), 'utf8');
+  const section = /^\[db\.migrations\][ \t]*\r?\n([\s\S]*?)(?=^\[|$(?![\s\S]))/m.exec(config)?.[1] ?? '';
+  assert.deepEqual(section.match(/^[ \t]*enabled[ \t]*=.*$/gm), ['enabled = false'],
+    'supabase/config.toml [db.migrations] enabled must be false: supabase start applies no migration');
+  const workflows = path.join(repository, '.github', 'workflows');
+  const files = [...readdirSync(workflows).filter((name) => /\.ya?ml$/.test(name)).sort().map((name) => path.join(workflows, name)),
+    path.join(appDirectory, 'package.json')];
+  assert.ok(files.length > 10);
+  const problems = files.flatMap((file) => cliMigrationProblems(readFileSync(file, 'utf8'))
+    .map((problem) => `${path.relative(repository, file).split(path.sep).join('/')} ${problem}`));
+  assert.deepEqual(problems, []);
+  const starts = files.filter((file) => CLI_START.test(readFileSync(file, 'utf8'))).map((file) => path.basename(file));
+  assert.deepEqual(starts, ['clued-g4-database.yml', 'information-flow-e2e.yml', 'public-mcp-behavior.yml', 'package.json'],
+    'a new caller of supabase start is read by this rule; list it here');
+  // The Information Flow harness recreates the database through the CLI (which applies nothing) and must fill it.
+  const stack = readFileSync(path.join(appDirectory, 'evals', 'information-flow-e2e', 'stack.mjs'), 'utf8');
+  const reset = /export function resetDatabase\(\) \{([\s\S]*?)\n\}/.exec(stack)?.[1] ?? '';
+  assert.ok(reset.indexOf("'db', 'reset'") >= 0 && reset.indexOf("'db', 'reset'") < reset.indexOf('clued-local-migrate.mjs'),
+    'stack.mjs resetDatabase applies the chain through the local executor after the CLI reset');
 });
