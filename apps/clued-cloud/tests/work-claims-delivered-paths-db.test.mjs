@@ -28,7 +28,7 @@ async function freePort() {
   const p = s.address().port; await new Promise(r => s.close(r)); return p;
 }
 
-test('repository paths of a claim with a live head authorization do not block another claim; everything else still does', { timeout: 300000 }, async t => {
+test('repository paths of a claim with a live head authorization do not block another claim; everything else still does', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-delivered-paths-'));
   const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await freePort(),
     persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
