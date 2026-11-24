@@ -439,6 +439,9 @@ function train() {
       const all = w.heads.get(runs[1])?.runs ?? [];
       return reply({ total_count: all.length, workflow_runs: all.slice((Number(/[?&]page=([0-9]+)/.exec(route)?.[1] ?? 1) - 1) * 100).slice(0, 100) });
     }
+    // The git commit object: its parents, no diff.
+    const object = /^\/repos\/o\/r\/git\/commits\/([0-9a-f]{40})$/.exec(route), g = object && w.heads.get(object[1]);
+    if (method === 'GET' && object) return g ? reply({ sha: g.sha, parents: g.parents.map(s => ({ sha: s })) }) : reply({ message: 'Not Found' }, 404);
     if (method === 'GET' && route === '/repos/o/r/installation') return reply({ id: 42 });
     if (method === 'POST' && route === '/app/installations/42/access_tokens') return reply({ token: 'ghs_app', permissions: body.permissions }, 201);
     const update = /^\/repos\/o\/r\/pulls\/([0-9]+)\/update-branch$/.exec(route), u = update && w.prs.get(Number(update[1]));
@@ -1539,4 +1542,25 @@ test('A4: a head the App brought whose admission failed is not brought again, re
     assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
     assert.match(r.train.members.find(m => m.pr === REBRING).state, new RegExp(String.raw`^red \(.*` + INDEPENDENT_ADMISSION_CHECK), statesOf(r));
   }
+});
+
+// Independent review of 2fb32dc7 A, must-fix 1: counting how many heads in a row the App brought is a helper of the rebring path.
+// When it cannot be read (the first parent's check runs, or the parent itself) that head is not brought again this run; the
+// candidates before it are brought as before, the run is not given up.
+test('A5: a rebring chain that cannot be read only keeps that head back; the candidate before it is still brought', async () => {
+  const redBroughtHead = w => { w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
+    w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID); w.check(sha(0x1156), 'clued-cloud-tests', 'failure'); };
+  // The first parent's check runs cannot be read (BASE is unknown to GitHub here).
+  let w = scene0823(); redBroughtHead(w);
+  let r = await w.run();
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, 1217, JSON.stringify(r)); assert.deepEqual(w.brought(), [1217]);
+  assert.match(r.train.members.find(m => m.pr === 1156).state, /^red \(clued-cloud-tests\)/, JSON.stringify(r.train.members));
+  // The head's commit cannot be read.
+  w = scene0823(); w.head(BASE); redBroughtHead(w);
+  const reads = w.fetchImpl;
+  w.fetchImpl = async (url, init = {}) => (String(url).endsWith(`/commits/${sha(0x1156)}`)
+    ? { ok: false, status: 502, headers: { get: () => null }, json: async () => ({ message: 'Server Error' }), text: async () => '' } : reads(url, init));
+  r = await w.run();
+  assert.equal(r.pr, 1217, JSON.stringify(r)); assert.deepEqual(w.brought(), [1217]);
+  assert.match(r.train.members.find(m => m.pr === 1156).state, /^red \(clued-cloud-tests\)/, JSON.stringify(r.train.members));
 });
