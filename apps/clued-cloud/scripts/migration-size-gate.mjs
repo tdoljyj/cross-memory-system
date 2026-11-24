@@ -122,12 +122,30 @@ function bodyOfDo(tokens, index) {
   return isCode(tokens[index - 2], 'language') && isCode(tokens[index - 3], 'do');
 }
 
+// Both kinds of string literal: the tokenizer marks an escape string (E'...') with
+// a backslash 'escaped literal' and leaves its escapes in place.
+const isLiteral = (token) => token?.kind === 'literal' || token?.kind === 'escaped literal';
+// The text of a literal as PostgreSQL reads it. Escapes are undone (\', \\, octal,
+// hex and Unicode escapes); an escaped or decoded line break, tab, backspace or
+// form feed becomes a space, so the lines reported stay the lines of the file.
+const ESCAPE = /\\(?:([0-7]{1,3})|x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{4})|U([0-9A-Fa-f]{8})|([\s\S]))/g;
+const BLANK = { b: ' ', f: ' ', n: ' ', r: ' ', t: ' ' };
+function literalText(token) {
+  if (token.kind !== 'escaped literal') return token.value;
+  return token.value.replace(ESCAPE, (match, octal, hex, u4, u8, other) => {
+    if (other !== undefined) return BLANK[other] ?? other;
+    const code = parseInt(octal ?? hex ?? u4 ?? u8, octal ? 8 : 16);
+    const char = code <= 0x10ffff ? String.fromCodePoint(code) : '';
+    return /[\n\r\t\b\f]/.test(char) ? ' ' : char;
+  });
+}
+
 // A string literal judged as the SQL it holds. A literal the tokenizer cannot read
 // cannot be judged and counts as an addition, as an unreadable file does.
 function scanLiteral(token, additions) {
   let tokens;
   try {
-    tokens = sqlTokens(token.value, token.line);
+    tokens = sqlTokens(literalText(token), token.line);
   } catch (error) {
     additions.push({ kind: 'unreadable literal', line: token.line, statement: `${render([token])} (${error.message})` });
     return;
@@ -143,15 +161,15 @@ function scanDo(tokens, additions) {
   scan(tokens, true, additions, body);
   if (!body.dynamic) return;
   for (const token of tokens) {
-    if (token.kind === 'literal' && !body.judged.has(token)) scanLiteral(token, additions);
+    if (isLiteral(token) && !body.judged.has(token)) scanLiteral(token, additions);
   }
 }
 
 function scan(tokens, plpgsql, additions, body = null, fromLiteral = false) {
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
-    if (token.kind === 'literal' && bodyOfDo(tokens, index)) {
-      scanDo(sqlTokens(token.value, token.line), additions);
+    if (isLiteral(token) && bodyOfDo(tokens, index)) {
+      scanDo(sqlTokens(literalText(token), token.line), additions);
       continue;
     }
     if (token.kind !== 'code' || !atStatementStart(tokens, index)) continue;
@@ -170,7 +188,7 @@ function scan(tokens, plpgsql, additions, body = null, fromLiteral = false) {
       let stop = statement.findIndex((part, at) => at > 0 && isCode(part, 'using', 'into'));
       if (stop < 0) stop = statement.length;
       const argument = statement.slice(1, stop);
-      if (argument.length === 1 && argument[0].kind === 'literal') {
+      if (argument.length === 1 && isLiteral(argument[0])) {
         body?.judged.add(argument[0]);
         scanLiteral(argument[0], additions);
       } else if (body) {
