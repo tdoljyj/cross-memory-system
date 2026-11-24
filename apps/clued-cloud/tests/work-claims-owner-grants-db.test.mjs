@@ -34,6 +34,38 @@ async function freePort() {
   return port;
 }
 
+const ephemeralCluster = async (port) => new EmbeddedPostgres({
+  databaseDir: await fs.mkdtemp(path.join(os.tmpdir(), 'clued-work-claims-owner-grants-')),
+  user: 'postgres', password: hash(), port,
+  persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
+  onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
+});
+
+// The database suite starts four files' clusters at once (--test-concurrency=4), and a free port is
+// only free until something binds it. Run 45380641278 failed this file 663 ms in with a bare
+// `undefined`: its postmaster exited during start, which embedded-postgres rejects with no reason.
+// Here the port is taken on purpose, by a running cluster; the late cluster starts the way the test
+// below starts its own.
+test('a cluster whose port another cluster already holds still starts', { timeout: 120000 }, async () => {
+  const servers = [];
+  try {
+    const holder = await ephemeralCluster(await freePort());
+    servers.push(holder);
+    await holder.initialise();
+    await holder.start();
+    const late = await ephemeralCluster(holder.options.port);
+    servers.push(late);
+    await late.initialise();
+    await late.start();
+    assert.notEqual(late.options.port, holder.options.port);
+    const client = late.getPgClient();
+    await client.connect();
+    try { assert.equal((await client.query('select 1 as v')).rows[0].v, 1); } finally { await client.end(); }
+  } finally {
+    for (const server of servers.reverse()) await stopCluster(server);
+  }
+});
+
 test('work claims over the per-Task cap consume Owner Grants; refusals carry an Owner Request',
   { timeout: 300000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-work-claims-owner-grants-'));
