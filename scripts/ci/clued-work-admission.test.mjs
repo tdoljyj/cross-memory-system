@@ -4069,8 +4069,7 @@ const denials=[
  ['moved main',f=>f.mainTip=previous],['missing signature',f=>f.commit.commit.verification.verified=false],
  ['different signed tree',f=>f.commit.commit.verification.payload='tree wrong'],['wrong parent',f=>f.commit.parents[1].sha=previous],
  ['wrong platform committer',f=>f.commit.committer.id=1],['wrong native-run head',f=>f.run.head_sha=previous],
- ['missing prior proof',f=>f.priorChecks=[]],['late prior proof',f=>f.prior.completed_at='2026-11-17T07:02:00Z'],
- ['prior proof wrong App',f=>f.prior.app.id=1],['missing attestation',f=>f.attestations=[]],
+ ['missing attestation',f=>f.attestations=[]],
  ['attestation wrong App',f=>f.attestation.app.id=5368905],['attestation wrong PR',f=>f.attestation.external_id=mainMergeExternalId({pr:453,from:previous,main:base})],
  ['newer attestation failure',f=>f.attestations.push({...f.attestation,id:61,conclusion:'failure'})],
  ['newer malformed current proof',f=>f.currentChecks.push({...f.current,id:51,external_id:'wrong'})],
@@ -4106,6 +4105,86 @@ test('Native-source gate does not take a settled legacy check (scaffold open-qs 
  };
  const r=await gate({...f,eventName:'pull_request'});assert.deepEqual([r.admitted,r.verdict,r.automation_self_hosted],[false,'ADMISSION_PENDING',false],JSON.stringify(r));assert.equal(f.epochReads,0);
 });
+// FABLE-scaffold-shadow-fix-20261122 §2 A, §4: under Native the current head's exact admission and the main-only
+// kooyumi-main-merge attestation (from = parent 1, main = parent 2) decide; the earlier head's admission is not
+// required. A behind protected head can never be admitted (protected_change_not_up_to_date), so requiring it
+// refused every bot refresh of such a head. The legacy branch keeps requiring it.
+test('Native refresh no longer needs an earlier-head admission; prior proof shape is not consulted',async()=>{
+ for(const change of [f=>f.priorChecks=[],f=>f.prior.completed_at='2026-11-17T07:02:00Z',f=>f.prior.app.id=1]){
+  const f=fixture();change(f);const r=await qualifyTrustedAutomationRoute(f);
+  assert.deepEqual([r.qualified,r.reason,r.prior_check_id,r.previous_head_sha],[true,'admitted_owner_pr_signed_main_refresh',null,previous],JSON.stringify(r));
+ }
+});
+const legacyDenials=[
+ ['missing prior proof',f=>f.priorChecks=[],'prior_pr_admission_missing'],
+ ['late prior proof',f=>f.prior.completed_at='2026-11-17T07:02:00Z','prior_pr_admission_missing'],
+ ['prior proof wrong App',f=>f.prior.app.id=1,'prior_pr_admission_missing'],
+ ['prior proof from another workflow',f=>f.legacyOrigin.path='.github/workflows/other.yml','prior_admission_origin'],
+];
+for(const [label,change,reason]of legacyDenials)test(`Legacy automation still refuses ${label}`,async()=>{
+ const f=legacyFixture();change(f);assert.deepEqual(await qualifyTrustedAutomationRoute(f),{qualified:false,reason});
+});
+// #1235 b8f6f5d1: real GitHub replies (scripts/ci/fixtures/automation-route-1235-b8f6f5d1.json). The bot merged
+// main c7c16f37 into 8d19f2e8, whose head never got a kooyumi-work-admission; the gate refused the refreshed head
+// with trusted_automation_route:prior_pr_admission_missing although its own Native admission had succeeded.
+const R1235=JSON.parse(fs.readFileSync(path.join(ROOT,'scripts/ci/fixtures/automation-route-1235-b8f6f5d1.json'),'utf8'));
+function replay1235(){
+ const x=structuredClone(R1235),repository=x.repository.full_name,pr=x.pull_request,run=x.run,commit=x.commit;
+ const [from,main]=commit.parents.map(p=>p.sha),current=x.current_admission.check_runs[0];
+ const env={GITHUB_REPOSITORY:repository,GITHUB_REPOSITORY_OWNER:x.repository.owner.login,GITHUB_EVENT_NAME:'pull_request',GITHUB_ACTOR:run.actor.login,GITHUB_TRIGGERING_ACTOR:run.triggering_actor.login,GITHUB_RUN_ID:String(run.id),GITHUB_RUN_ATTEMPT:String(run.run_attempt),GITHUB_REF:`refs/pull/${pr.number}/merge`,GITHUB_HEAD_REF:pr.head.ref,GITHUB_BASE_REF:'main',CLUED_ADMISSION_GATE_SOURCE:INDEPENDENT_GATE_SOURCE,CLUED_ADMISSION_GATE_WAIT_SECONDS:'0',GITHUB_API_URL:'https://api.test',GITHUB_TOKEN:'fixture',GITHUB_WORKSPACE:ROOT};
+ const f={x,env,event:{action:'synchronize',pull_request:pr},run,pr,commit,from,main,currentAdmission:current,epochReads:0};
+ f.read=async route=>{
+  if(route===`/repos/${repository}`)return x.repository;
+  if(route===`/repos/${repository}/pulls/${pr.number}`)return pr;
+  if(route===`/repos/${repository}/branches/main`)return {name:'main',commit:{sha:main}};
+  if(route===`/repos/${repository}/commits/${pr.head.sha}`)return commit;
+  if(route.includes('check_name=kooyumi-main-merge'))return x.main_merge_attestation;
+  if(route.includes(`/commits/${from}/check-runs`))return x.prior_head_admission;
+  if(route.includes(`/commits/${pr.head.sha}/check-runs`))return x.current_admission;
+  if(route===`/repos/${repository}/actions/runs/${run.id}`)return run;
+  if(route.includes('/actions/workflows/clued-work-admission.yml/runs'))return {workflow_runs:[]};
+  throw new Error(`unscripted ${route}`);
+ };
+ f.fetchImpl=async(url,init={})=>{
+  let body;
+  if(init.method==='POST'){f.epochReads++;body={status:'ok',guard_required:true,epoch_current:true};}
+  else body=await f.read(String(url).replace('https://api.test',''));
+  return {ok:true,status:200,headers:{get:()=>null},json:async()=>body,text:async()=>JSON.stringify(body)};
+ };
+ return f;
+}
+test('#1235 b8f6f5d1 replay: bot refresh of a never-admitted head is admitted on its own Native admission and attestation',async()=>{
+ const f=replay1235();
+ assert.equal(f.x.prior_head_admission.total_count,0);
+ const r=await gate({...f,eventName:'pull_request'});
+ assert.deepEqual([r.admitted,r.verdict,r.automation_self_hosted],[true,'ADMITTED',true],JSON.stringify(r.reasons));
+ assert.deepEqual([r.automation_route.previous_head_sha,r.automation_route.main_sha,r.automation_route.prior_check_id,r.automation_route.current_check_id],
+  [f.from,f.main,null,f.currentAdmission.id]);
+ assert.equal(f.epochReads,2);
+});
+const replayDenials=[
+ ['no kooyumi-main-merge attestation',f=>{f.x.main_merge_attestation={total_count:0,check_runs:[]};},'main_refresh_attestation_missing'],
+ ['an attestation whose from is not parent 1',f=>{const a=f.x.main_merge_attestation.check_runs[0];a.external_id=mainMergeExternalId({pr:f.pr.number,from:'0'.repeat(40),main:f.main});},'main_refresh_attestation_missing'],
+ ['an attestation whose main is not parent 2',f=>{const a=f.x.main_merge_attestation.check_runs[0];a.external_id=mainMergeExternalId({pr:f.pr.number,from:f.from,main:'0'.repeat(40)});},'main_refresh_attestation_missing'],
+ ['a moved main tip',f=>{const read=f.read;f.read=async route=>route.endsWith('/branches/main')?{name:'main',commit:{sha:f.from}}:read(route);},'main_tip_changed'],
+ ['a one-parent head',f=>{f.commit.parents=[{sha:f.from}];},'refresh_parents'],
+ ['an unsigned refresh',f=>{f.commit.commit.verification.verified=false;},'refresh_signature'],
+];
+for(const [label,change,reason]of replayDenials)test(`#1235 replay still refuses ${label}`,async()=>{
+ const f=replay1235();change(f);
+ assert.deepEqual(await qualifyTrustedAutomationRoute(f),{qualified:false,reason});
+ const r=await gate({...f,eventName:'pull_request'});
+ assert.deepEqual([r.admitted,r.automation_self_hosted],[false,false]);assert.ok(r.reasons.includes(`trusted_automation_route:${reason}`),JSON.stringify(r.reasons));
+});
+test('#1235 replay without the Native source stays refused for the missing earlier-head admission',async()=>{
+ // Non-Native source: the same head and current check read through the legacy branch must still prove the prior head.
+ const f=replay1235();
+ for(const c of f.x.current_admission.check_runs)Object.assign(c,{name:'kooyumi-admission-verified',app:{id:5164952,slug:'clued-admission'},external_id:`pr:${f.pr.number}:run:77`});
+ f.x.prior_head_admission={total_count:0,check_runs:[]};
+ delete f.env.CLUED_ADMISSION_GATE_SOURCE;
+ const read=f.read;f.read=async route=>route.includes('check_name=kooyumi-admission-verified')&&route.includes(`/commits/${f.from}/`)?f.x.prior_head_admission:read(route);
+ assert.deepEqual(await qualifyTrustedAutomationRoute(f),{qualified:false,reason:'prior_pr_admission_missing'});
+});
 
 
 }
@@ -4116,9 +4195,18 @@ test('Native-source gate does not take a settled legacy check (scaffold open-qs 
 const TREE_REUSE = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1178.json'), 'utf8'));
 // #1202's real GitHub replies: its head is the executor bot's merge of main, so the bot triggered the head's runs.
 const TREE_REUSE_1202 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1202.json'), 'utf8'));
-function treeReuseCase(workflow, mutate = () => {}, fixture = TREE_REUSE) {
+// Both recordings predate R1 (the three scans joined clued-required-tests.yml afterwards): the head's run carries them
+// here as a run does now, each a passing job of that run and attempt; the run as recorded is refused (test below).
+const R1_SCANS = ['gitleaks', 'trivy', 'contract-placement'];
+function withScans(jobs) {
+  const model = jobs.jobs.find((job) => job.name === 'clued-cloud-tests');
+  jobs.jobs.push(...R1_SCANS.map((name, i) => ({ ...model, id: model.id + 1000 + i, name })));
+  jobs.total_count += R1_SCANS.length;
+}
+function treeReuseCase(workflow, mutate = () => {}, fixture = TREE_REUSE, { scans = true } = {}) {
   const f = structuredClone(fixture);
   const w = f.workflows[workflow];
+  if (scans && workflow === 'clued-required-tests.yml') withScans(w.jobs);
   const env = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: f.merge.sha, GITHUB_RUN_ATTEMPT: '1',
     GITHUB_RUN_ID: String(w.push_run.id), GITHUB_ACTOR: w.push_run.actor.login, GITHUB_REPOSITORY_OWNER: f.owner,
     GITHUB_REPOSITORY: f.repository, GITHUB_TOKEN: 'test-only-placeholder',
@@ -4167,6 +4255,14 @@ for (const [label, workflow] of [['T1 Linux', 'clued-required-tests.yml'], ['T1w
     assert.equal(outcome.tree_reuse.current_sha_pass, false);
   });
 }
+
+test('T1 Linux: a head run from before the scans joined the required workflow is not reused; the heavy jobs run', async () => {
+  for (const fixture of [TREE_REUSE, TREE_REUSE_1202]) {
+    const outcome = await treeReuseGate(treeReuseCase('clued-required-tests.yml', undefined, fixture, { scans: false }));
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.ok(outcome.notices.includes('main push tree reuse: required_jobs_not_passed; the heavy jobs run'), JSON.stringify(outcome));
+  }
+});
 
 test('T1: the gate step of #1178 main push exits 0 with admitted=false, so the heavy jobs are skipped', async () => {
   const ctx = treeReuseCase('clued-required-tests.yml');

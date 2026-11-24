@@ -139,7 +139,7 @@ test('the guest side runs every command apart, as root, with a clean environment
   const SYSTEM = ['systemd-failed', 'systemd-is-system-running', 'systemd-version', 'runner-service-enabled', 'guest-nproc', 'guest-meminfo', 'guest-uname',
     'systemd-verify:clued-ci-worker@.service', 'systemd-verify:clued-ci-wsprep@.service', 'systemd-verify:clued-ci-archive@.service'];
   // the readings a docker stuck in activating cannot hold up come first; every docker command last (review F2)
-  assert.deepEqual(ids, ['file:/usr/bin/python3.12', 'file:/usr/bin/gitleaks', ...SYSTEM, ...DOCKER, `image:sha256:${HEX_A}`, `image:sha256:${HEX_B}`]);
+  assert.deepEqual(ids, ['guest-boot', 'file:/usr/bin/python3.12', 'file:/usr/bin/gitleaks', ...SYSTEM, ...DOCKER, `image:sha256:${HEX_A}`, `image:sha256:${HEX_B}`]);
   assert.ok(r.commands.every(x => x.exit === 0 && x.error === null && typeof x.stdout === 'string' && x.stdout.startsWith('ANSWER')));
   const calls = w.calls();
   assert.equal(calls.length, ids.length);
@@ -452,7 +452,7 @@ test('the late probe is called once, at the end of the run: after the reinstall,
   const text = fs.readFileSync(script, 'utf8');
   const run = text.slice(text.indexOf('function Invoke-DrillRun'), text.indexOf('function Save-DrillGuestEvidence'));
   assert.equal(run.split('Save-DrillLateProbe').length, 2);
-  assert.ok(run.indexOf('Save-DrillLateProbe') > run.indexOf('prepareAgainStatus') && run.indexOf('Save-DrillLateProbe') < run.indexOf('$m5 = try { Copy-DrillM5'));
+  assert.ok(run.indexOf('Save-DrillLateProbe') > run.indexOf('prepareAgainStatus') && run.indexOf('Save-DrillLateProbe') < run.indexOf('try { Copy-DrillM5 $RunDir $Cred }'));
   assert.doesNotMatch(text.slice(text.indexOf('function Get-DrillVerdict'), text.indexOf('function Test-DrillAfterBoot')), /guest-probe|probeLate|GuestInspect/);
   // the readiness probe the drill already had keeps its own name and body
   assert.match(text, /\$script:GuestProbe = \{\r?\n\s+\$setup = Get-ItemProperty -Path 'HKLM:\\SYSTEM\\Setup'/);

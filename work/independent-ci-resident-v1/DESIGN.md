@@ -814,7 +814,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 - runner 服务**完全不修改**：安装和卸载都要求它的 SDDL 与安装时记录的一字不差。
 - 真机首装补的两条（2026-10-21，TURING）：
   - `resident\` 根目录给 clued-control 一条只针对本目录的 `0x120080`（READ_CONTROL、SYNCHRONIZE、读属性），不继承。通用助手打开每个输入之前，会先以 READ_CONTROL 打开它的每一级父目录（`FormalPublicBoundaryV2.Parents`），之前根目录不给 clued-control 任何权限，助手在预检里以服务退出码 20 退出。安装计划已包含这一条（`Get-AclPlan ''`）。
-  - v1 的 `C:\ProgramData\CluedIndependentCI\state` 原来给 clued-control 一条 `(A;OICI;0x1301bf;;;clued-control)`，作用于目录本身。v2 助手只允许 clued-control 在 `state\v2` 以下有写权限（v1 允许整个 `state`），它打开 `state\v2` 的父目录 `state` 时，以 `UNTRUSTED_PUBLIC_MUTATION_RIGHT_REFUSED` 拒绝。真机上这条 ACE 已改为仅继承（`OICIIO`，子目录权限不变），另加一条只针对本目录的读和列目录（`0x1200a9`）。改之前，在提权环境下用真实的 `FormalPublicBoundaryV2` 对真实路径跑过一遍，唯一的拒绝就是这一条；改之后通过。代价是 v1 一次性工具不能再在 `state` 本身下新建条目，v1 的角色策略也在 2026-10-21 18:45Z 到期。新主机安装前要满足这条前提：clued-control 在 `state` 本身没有写、删除和改权限的权利。`migrate-acl.ps1` 和 `acl-model.json` 属于 Source 闭包，本次不改。
+  - v1 的 `C:\ProgramData\CluedIndependentCI\state` 原来给 clued-control 一条 `(A;OICI;0x1301bf;;;clued-control)`，作用于目录本身。v2 助手只允许 clued-control 在 `state\v2` 以下有写权限（v1 允许整个 `state`），它打开 `state\v2` 的父目录 `state` 时，以 `UNTRUSTED_PUBLIC_MUTATION_RIGHT_REFUSED` 拒绝。真机上这条 ACE 已改为仅继承（`OICIIO`，子目录权限不变），另加一条只针对本目录的读和列目录（`0x1200a9`）。改之前，在提权环境下用真实的 `FormalPublicBoundaryV2` 对真实路径跑过一遍，唯一的拒绝就是这一条；改之后通过。代价是 v1 一次性工具不能再在 `state` 本身下新建条目，v1 的角色策略也在 2026-10-21 18:45Z 到期。这条由 `install-resident.ps1` 的规则 `state-parent-acl` 保证（r13，Fable 裁定 0e418483）：首装/重装在 `source-v2-acl` 之前跑这一步（`state` 不存在就按上面的终态新建；只有 clued-control 在 `state` 本身能写，就把它那几条改成仅继承并补本目录只读；别的账户能写就以 `STATE_PARENT_ACL_REFUSED` 拒绝），升级时 `verify-resident.ps1` 以 SYSTEM 用同一份规则先收敛再检查（检查项 `state-parent-acl`），手工跑只查不写。`migrate-acl.ps1` 和 `acl-model.json` 属于 Source 闭包，不改：它进场时 `state` 已在，只建 `state\v2` 以下。
   - companion 以 Owner 身份（不提权）运行桥的转交（`relay-public.ps1`，以及 `formal-spool-acl.ps1 -RelayReadOutgoing`）。转交前它要以 READ_CONTROL 打开 spool 的每一级父目录，但 Owner 原来对 `C:\ProgramData\CluedIndependentCI` 和 `formal-spool` 没有任何权限（v1 的转交在每批 UAC 里提权运行）。第一次真实的第 2 段因此以 `RELAY_REFUSED_NO_RETRY`（`PUBLIC_TRANSFER_UNCONFIRMED`）结束。真机上已给这两个目录各加一条 Owner 的 `(A;;0x120080;;;Owner)`，只针对本目录，不继承，不读内容，也没有写权限。之后用 Owner 不提权实测：三处的 `formal-spool-acl.ps1` 转交检查都通过，每一级父目录都能 hold 住。新主机安装前要满足这条前提。
 
 ### 8.4 companion 计划任务
@@ -2445,7 +2445,7 @@ STANDBY 不再写备用提醒、不再为此读任何 head（ADR 0028）。原�
    - 触发照常读进排队表，不丢。方案里的“不取新触发”，在这里的意思是不从队列取行去开批次，和暂停接新（§20）一致。
    - 在途批次照常续跑：停在 A 的批次每个 tick 照常判断，停在 B 的照常尝试第 8 段，去留由实时准入决定。停在 A 的批次仍是 tick 的结果，状态里的 `current` 也不消失（和暂停接新一样）。
 4. **节点闸门排在暂停接新之前**，也排在“队列为空就是 IDLE”之后。所以不是 ACTIVE 的节点显示 `NODE_*` 的原因，探测不会被暂停接新挡住。空队列时仍是 `IDLE`。
-5. **探测间隔**：`UNCERTAIN` 用 `STANDBY` 的 15 分钟，但上一次答案是 uncertain 时按连续不确定次数退避重试：1、2、4、8 分钟，之后 15 分钟（`ROLE_PROBE_UNCERTAIN_BACKOFF_MS`；TURING 2026-11-11 开机后首次探测不确定，节点因此空等了 15 分钟）；`STANDBY` 15 分钟、空闲的 `ACTIVE` 30 分钟不变；`urgent` 时不等。任何一次探测结果（包括 uncertain）都清掉 `urgent`，所以不确定时不会每个 tick 探一次。
+5. **探测间隔**：`UNCERTAIN` 用 `STANDBY` 的间隔，但上一次答案是 uncertain 时按连续不确定次数退避重试：1、2、4 分钟，之后每 5 分钟，任何模式都不短于该模式自己的间隔（`ROLE_PROBE_UNCERTAIN_BACKOFF_MS`；TURING 2026-11-11 开机后首次探测不确定，节点因此空等了 15 分钟）；`STANDBY` 每 1 分钟、空闲的 `ACTIVE` 每 5 分钟（`ROLE_PROBE_INTERVAL_MS`，平滑交接 ADR 0026；原为 15、30 分钟）；`urgent` 时不等。任何一次探测结果（包括 uncertain）都清掉 `urgent`，所以不确定时不会每个 tick 探一次。
    - 探测只在没有 HALT、没有暂停、没有批次正在跑某一段时进行。
    - **停在 A、B 的批次不挡探测，当节点不是 `ACTIVE`，或这次探测是 `urgent` 时**（`probeAtParking()`；2026-10-29 复核 M1）。空闲 `ACTIVE` 节点的定期探测保持 C2 的做法：账本里有任何打开的批次就不探。
    - 为什么可以：C2 要求账本里没有打开的条目，是因为探测要经交换代理切换一次 runner 服务，不能和正式的段抢。但 tick 是串行的，探测只在 tick 里运行，不会与本执行器自己的段重叠。停在 A、B 的批次没有进程，没有 broker 请求，Linux 是空的（§18.1）。不在停靠点的打开条目（崩溃现场）在每个 tick 开头已被恢复处理成 HALT，到不了探测这一步。
@@ -2692,7 +2692,7 @@ Task `088ab175`；设计 v0.4 §7.1–§7.4、§9 C7、§10 P3。
 ### 30.8 公司节点安装清单里的其他项
 
 - **WSL 主机调优**（Task `f995d832`：P1 sysctl 和 P1b 内存保护）：`linux/host-tuning/README.md`。在公司节点的 Linux root 步骤旁做，不属于 Windows 安装脚本。
-- 新节点的基础目录是前提，本安装不建：`C:\ProgramData\CluedControl`（controller 安装，含载体 runner 的原二进制）和 `C:\ProgramData\CluedIndependentCI\{formal-spool,state}`（`migrate-acl.ps1` 要求已存在）。这些由设计 §10 P2 的节点准备步骤负责，C8 手册要写明。
+- 新节点的基础目录是前提，本安装不建：`C:\ProgramData\CluedControl`（controller 安装，含载体 runner 的原二进制）和 `C:\ProgramData\CluedIndependentCI\formal-spool`（`migrate-acl.ps1` 要求已存在；`state` 不是前提，由本安装的 `state-parent-acl` 建立和收敛）。这些由设计 §10 P2 的节点准备步骤负责，C8 手册要写明。
 - **controller 账户必须有「以服务身份登录」**（`SeServiceLogonRight`，本地安全策略「用户权限分配」）。载体 runner 服务以 `.\clued-control`（档案的 `controllerSid`）运行，交换代理每一段都要启动它；没有这项权限，SCM 拒绝启动（事件 7041），第一次角色探测就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`）。DESK-W-591 在 2026-10-30 就是这样停下的。
   - 节点准备时直接授予该账户（例如 `secpol.msc` →「本地策略」→「用户权限分配」→「作为服务登录」）。
   - `install-resident.ps1 -Apply` 在写任何东西之前只读核对：缺这项权限拒绝（`CONTROLLER_SERVICE_LOGON_RIGHT_MISSING`），读不到用户权限也拒绝（`USER_RIGHTS_UNREADABLE`）。
@@ -3396,7 +3396,7 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 - **谁调用、用哪个令牌**：都由通用助手以 clued-control 运行 Source B 的入口，用节点自己的 CI Binding 令牌（`controllerPrincipal`）；每次调用之前，同一次运行里先读 holders，要求不是 `admission_binding_required`，并且（保活以外）这个认领是位置 1、`bound_pr` 是这个 PR：
   - `touch running`：两次。第一次在开车头批次的那一次第 10 段（上一条“硬上限”）；第二次在车头批次的第 1 段（`formal-work-admission-check-v2/startup.mjs:14`），它的检查 settled 之后，刷新 running 时钟；`hard_cap_minutes` 都取 `train.slotHardCapMinutes`（60–180）。第 2–7 段没有令牌，不再刷新：批次从第 1 段起超过 90 分钟时（第 2–7 段上限合计 130 分钟，`layout.mjs:83-88`），位子在第 8 段之前过期，这一批以没就绪结束、不发绿。实际批次约 20 分钟（v0.2 §5），接受这个残余。
   - `touch green`：第 8 段 settled 之后（41.2）。两次 touch running 的第二次和 touch green 认持有者与第 8 段的绿同一个投影（`train-rules.mjs#projectedHolderForJob`）：一个 Task 绑了多个 PR 时 holders 没有单一 `pr`，按 CI head 认这个 PR（ADR 0028 §6）。
-  - `touch failed`：第 3、5、7 段没有令牌，所以由批次结束后的第一次第 10 段报，但依据是执行器自己的账本，不是 GitHub 上的检查：train-run 作业（合同升 `/2`，C# 边界同步）带上 `frontOutcome`（PR、H、S、attempt、终局码；第 10 段只按 PR、H、S 认它指哪一批，§84 第 5 项）。执行器只在这一批是车头批次、账本说它已最终失败（不会再有 attempt 2）、失败属于 PR 本身（失败表 `deterministic-pr`，不是基础设施）时才填。第 10 段再核 holders 里这个认领仍是位置 1、PR 当前 head 仍是 H，才报 failed；服务端退位并发 CI 失败通知（迁移 `20261010112852` 的 failed 分支）。在此之前位子按 running 时钟占着，最多多占一个 `maintenanceEveryMs`。
+  - `touch failed`：第 3、5、7 段没有令牌，所以由批次结束后的第一次第 10 段报，但依据是执行器自己的账本，不是 GitHub 上的检查：train-run 作业（合同升 `/2`，C# 边界同步）带上 `frontOutcome`（PR、H、S、attempt、终局码；第 10 段只按 PR、H、S 认它指哪一批，§85 第 5 项）。执行器只在这一批是车头批次、账本说它已最终失败（不会再有 attempt 2）、失败属于 PR 本身（失败表 `deterministic-pr`，不是基础设施）时才填。第 10 段再核 holders 里这个认领仍是位置 1、PR 当前 head 仍是 H，才报 failed；服务端退位并发 CI 失败通知（迁移 `20261010112852` 的 failed 分支）。在此之前位子按 running 时钟占着，最多多占一个 `maintenanceEveryMs`。
   - adopt：第 10 段看到车头 PR 已合入、合并提交恰好 [T, H]、树等于 S 的树，调 `clued_work_claim_adopt_v1`（`pr_ref`、`merge_sha`）。树不同：`TRAIN_LANDED_TREE_MISMATCH`，写 PAUSE 请求、通知 Owner、不 adopt（v0.2 §3.3 第 2 条）。
   - return：第 10 段看到车头 PR 关闭未合入，调 `clued_work_merge_slot_return_v1`。车头换了 head 不 return：新 head 原位当车头，旧绿撤销。
   - 结束已关闭的绑定（ADR 0028 §6）：持有者绑了多个 PR 时，第 10 段逐个读这些 PR 选车头；其中 GitHub 已合入的调 adopt（`merge_sha` 取 GitHub 的合并提交），已关闭未合入的调 return，本轮落地刚答过的不再问。Native 只在 adopt、return 时把 PR→Task 绑定结束，持有者自己合入就释放认领，没有这一步绑定会一直“进行中”；Task 还有别的打开的 PR 时服务端不还位（`20261108161615`:283）。选车头：CI head 所在的 PR；没有 PR 在这个 head（作者推了新提交）就取最小 PR 号，与没有 CI head 时一样；多于一个才不选。
@@ -5245,7 +5245,7 @@ GitHub 的 `mergeStateStatus` 为 `BEHIND` 时，strict 不会合入车头；需
 
 **修法（只改常驻层 `executor.mjs`）。**
 - `resumeParked`：被新提交取代的 B 点停车批次，先于接管门的过滤就判（`supersededParked`：队列有更新的提交 + 一次实时读确认，`SUPERSEDED_AT_SAFE_POINT`，旧 head 烧掉、rename-only 归档）。结束一个被取代的批次不发布任何东西，所以不受列车门约束。
-- `enqueueFront` → `endSupersededForFront`（§84 起并入 `endRestingForFront`）：该 PR 的行正在跑**别的 head** 的、停在 B 的批次时，一次实时读确认 PR 的当前 head 就是车头的 head，就在安全点以同样的 `SUPERSEDED_AT_SAFE_POINT` 结束它（回执 `train-front-supersedes`），然后照常 `offerFront`。实时读不到或 PR 仍在旧 head：什么都不结束，与以前相同。
+- `enqueueFront` → `endSupersededForFront`（§85 起并入 `endRestingForFront`）：该 PR 的行正在跑**别的 head** 的、停在 B 的批次时，一次实时读确认 PR 的当前 head 就是车头的 head，就在安全点以同样的 `SUPERSEDED_AT_SAFE_POINT` 结束它（回执 `train-front-supersedes`），然后照常 `offerFront`。实时读不到或 PR 仍在旧 head：什么都不结束，与以前相同。
 - `frontRetry`：`offerFront` 只因行忙被拒的车头批次记下来；之后某次第 10 段对同一 PR、同一 head、同一 main 仍说 `TRAIN_FRONT_BATCH_RUNNING` 时（它刚刷新了这个 head 的 strict 观察），再提交一次（回执 `train-front-reoffered`）。成功入队、职责结束时清掉。
 - 第 8 段的实时检查一条没变；停在 A 的旧批次（只在 relay 开时出现）不在本修法内，仍由原路径处理。
 
@@ -5699,6 +5699,7 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - **判定**：`executor.mjs#standing(key, subject, batch, { hint, safePoint })`，返回 `null`（成立，或没有事实说不成立）或 `{ basis, live }`：
   - `not-on-duty`：节点模式 `STANDBY`（第 11 段探测或第 1 段的 `NODE_ROLE_NOT_HELD`），而且 companion 心跳新鲜（结束要 companion 证明 Linux 静止；不新鲜就下一拍再判，不会因此 HALT）。`UNCERTAIN` 不是答案。没有探测能力的引擎没有模式（单节点），视为当班。
   - `pr-closed` / `head-moved`：companion `pr-head` 的一次实时读（§17.5 的已有通道）说 PR 不是 open，或 head 不是批次的 head。
+  - `pr-draft`：同一次读说 PR 开着、head 未变，但是草稿。只结束停在 A、B 的批次，是流程结束（§72.11）。
 - **什么时候读 PR**（`liveReadDue`，按“批次键 + 被点名的 head”节流，`SUPERSEDE_LIVE_READ_MS` = 10 分钟，原有常量）：每个批次每 10 分钟一次；排队表里出现这个 PR 的更新提交、或第 10 段的车头指向这个 PR 的别的 head 时立即读（提示）。第 1 段的准入本身读过 PR，`markStarted` 时记作该批次的第一次读，所以刚开始的批次不多读。
 - **读不到**：不结束。读不到不是事实；结束会烧掉 head（B 上第 3、5、7 段已发布，要推新提交才能再跑），误结束比多停一会儿代价大得多；停留本身有 `park.maxMs` 兜底。只有被点名了别的 head 而读不到时才写回执 `supersede-unconfirmed`（与以前相同），平时的周期读不写，网络断一天也不会刷屏。
 - **读到 head 未变**：排队表里那个“更新的提交”被证伪，退回被替换（`keepRunning`，回执 `supersede-disproved`），与以前相同。
@@ -5710,7 +5711,7 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 |---|---|
 | 停在 A（`waiting`）或 B（`parked`）的批次 | 每个 tick 一次（`endNotStanding` → `endParkedIfNotStanding`），在崩溃恢复、Owner 请求、HALT 与未归档现场检查、回填之后。不暂停时在读完本拍触发之后、任何停靠批次被尝试或继续之前；**PAUSE 期间也判**（在 tick 停在 PAUSED 之前）。一拍结束一个 |
 | 在途批次 | 原来的两个安全点 `before-relay-plan`、`before-workspace`（`endIfNotStanding`，先读一次收件箱）。独占区（ws-prep 到最后一个 Linux 段）内照旧不判 |
-| 第 10 段车头指向别的 head（§65.9） | `endRestingForFront`（原 `endSupersededForFront`，§84）只把车头的 head 作为提示交给 `endParkedIfNotStanding`，结束了就写 `train-front-supersedes`，然后照常 `offerFront` |
+| 第 10 段车头指向别的 head（§65.9） | `endRestingForFront`（原 `endSupersededForFront`，§85）只把车头的 head 作为提示交给 `endParkedIfNotStanding`，结束了就写 `train-front-supersedes`，然后照常 `offerFront` |
 | 第 1 段之前 | 不变：按到达顺序释放（`supersededBeforeStart`，`SUPERSEDED`，不烧号）。那是预留的撤回，什么都没跑，判错可以恢复，所以不需要实时读 |
 | attempt 2（还不是批次） | 预检之后一次实时读：PR 已关闭 → `ATTEMPT2_PR_CLOSED`（并 `closePr`）；head 已变 → `ATTEMPT2_SUPERSEDED`；head 未变且排队表有更新提交 → `keepCurrent` 退回；读不到 → 照常跑，第 1 段决定 |
 
@@ -5724,7 +5725,7 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 
 ### 72.5 保留的兜底：`park.maxMs`
 
-`park.maxMs`（24 小时，`endParkedB`，按上次没就绪的码结束）不能被规则覆盖：规则只回答“还该不该存在”，而一个仍然成立的批次（PR 开着、head 没变、本节点当班，只是作者一直不入队），或一个一直读不到 PR 的批次，不能无限占着停靠名额（`park.maxParked` 满了就 `PARKING_FULL`，不开新批次），也不能在每天的第 8 段重试额度用完后永远停着。它是资源上限，不是存在条件。`endParkedB` 的另一个用途 `TRAIN_FRONT_TAKES_OVER`（§62.5：同一 head 的车头批次接手普通批次；§84 起也结束同一 head 另一个 S 的车头批）三者都成立，也不在规则内，不动。
+`park.maxMs`（24 小时，`endParkedB`，按上次没就绪的码结束）不能被规则覆盖：规则只回答“还该不该存在”，而一个仍然成立的批次（PR 开着、head 没变、本节点当班，只是作者一直不入队），或一个一直读不到 PR 的批次，不能无限占着停靠名额（`park.maxParked` 满了就 `PARKING_FULL`，不开新批次），也不能在每天的第 8 段重试额度用完后永远停着。它是资源上限，不是存在条件。`endParkedB` 的另一个用途 `TRAIN_FRONT_TAKES_OVER`（§62.5：同一 head 的车头批次接手普通批次；§85 起也结束同一 head 另一个 S 的车头批）三者都成立，也不在规则内，不动。
 
 ### 72.6 重装前置
 
@@ -5782,12 +5783,23 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 
 `upgrade-drain` 干净结束后，原实现的三层去重把 head 永久挡住：`supersededEnd` 返回 `burned`，`RunQueue.settle` 把行停为 `STOPPED/burned`，`offer` 忽略已见过的 head；即使重新入队，`precheck` 仍拒绝账本已烧号、已用批次键和 `executed-heads` 中已发布的 head/S。PR 页因此要求推新提交。三层去重对真实失败继续生效，流程性结束通过带前序证据的续跑解决。
 
-- 资格只来自完整的 `FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT`、两端归档、匹配的 `81-self-abort` 与安全点记录。`upgrade-drain`（A/B）以及 `park-max-age`（B）可续跑；PR 关闭、head 改变、Owner 中止、未知清理、测试失败和准入拒绝不因此取得资格。停靠超时只对列车/队列未就绪或读暂不可用的零副作用结果生效；`REQUIRED_CHECK_FAILED`、`RESIDENT_BASE_MOVED` 等仍按原失败路径结束。
+- 资格只来自完整的 `FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT`、两端归档、匹配的 `81-self-abort` 与安全点记录。`upgrade-drain`（A/B）、`pr-draft`（A/B，§72.11）以及 `park-max-age`（B）可续跑；PR 关闭、head 改变、Owner 中止、未知清理、测试失败和准入拒绝不因此取得资格。停靠超时只对列车/队列未就绪或读暂不可用的零副作用结果生效；`REQUIRED_CHECK_FAILED`、`RESIDENT_BASE_MOVED` 等仍按原失败路径结束。
 - 账本把这类完整终态整体改名保存到 `state/ledger-flow-ends/`。原始烧号和已发布记录保留；新预留的 `flowFrom` 消耗精确前序，`flowKeys` 只允许其自身发布链通过去重。队列只是投影：每拍从未消费前序恢复同一 PR/H/base/S，重复触发、队列丢失或重启不产生第二份执行。
 - 新批次仍走节点、列车、intake hold、版本一致性、停车容量、熔断、日额度与实时 PR 校验。升级 hold 或 PAUSE 未撤不续跑；读不到 PR 不放行，已关闭或 head 改变则退役该续跑资格。预留之前崩溃可重试，预留之后崩溃仍是原恢复机制的现场，不额外开 attempt 2。
 - A 尚未扫描，重新走准入。B 的 CI Source 未变时，只重派生当前安装版本的控制包，从第 8 段继续；该 CI Source 的原批次绑定与已完成检查仍有效，原扫描不重跑。CI Source 改变时，job ID 和 sticky batch claim 随之改变，必须重新走正常准入和扫描；既有 Native 发布、scan-start 和列车守卫继续决定能否执行。安装文件 Source 与 CI Source 不混用。
 - 同一 head/S 的其他执行、不可读发布记录或空发布目录仍拒绝续跑。历史尝试仍计入日预算；B 续跑的第一次第 8 段也计重试。流程性结束保持熔断中性；续跑后的真实失败照旧烧号，不继续重排。
 - PR 页对流程结束显示 pending、自动续跑、不用推新提交。`test/safe-point-readmit.test.mjs` 覆盖结束→hold→恢复→一次完成、A/B、超时、安装/CI Source、重启和队列丢失、版本错位、发布链、额度、真实失败及状态文案。冻结升级通道不变。
+
+### 72.11 草稿是搁置，不是终局（D:/w/tmp/PLAN-resident-draft-batch-20261123.md）
+
+现场（2026-11-23 北京时间 15:23:48）：#1253 第一次尝试第 2 段 `REMOTE_REFS_CHANGED_SINCE_BUNDLE` 干净失败后转为草稿，常驻仍在 600 秒后开它的 attempt 2，#1254 排在后面，PR 页预计时刻每分钟后滚，#1253 的页面停在运行中。病根：同一事实各处各判，四处实时读只比 state 与 head，草稿只有轮询器看。
+
+- **一个判定**：`src/pr-candidate.mjs#prCandidate(live, subject)`，纯函数。读不到 → `null`（不是事实）；不 open → `pr-closed`（终局）；head 不同 → `head-moved`（终局）；`draft === true` → `pr-draft`（搁置）；否则成立。预留前（`runRow`、流程续跑）、attempt 2 前、`falsified`、`standing` 都用它；轮询器的草稿过滤用同一个 `isDraft`。实时读带上 `draft`（`companion.mjs` jq、`parsePull`、`mailbox.mjs` 可选布尔键、`service-ports.mjs` 透传）；旧回包没有该键 = 没有草稿事实。
+- **搁置**：`RunQueue.hold(pr, headSha)` 给行记 `{ reason: PR_DRAFT, headSha, at }`。被搁置的行不是候选，它的 attempt 2 意向保留但不调度、不读，流程续跑资格保留。下一次触发（转为可评审会推进 GitHub 的 `updated_at`，轮询器再提议）解除搁置，同一 head 接着跑，不要新提交。
+- **在哪里结束**：只有停在 A、B 的批次在 10 分钟那次读里以 `pr-draft` 结束：同一条 `supersededEnd`，按 §72.10 是流程结束（归还停靠名额，B 上下次从第 8 段续跑，第 2–7 段不重跑），结算时行被搁置。在途安全点（`before-relay-plan`、`before-workspace`）读到草稿不结束，批次走到停靠点再按本条结束（在途结束不是流程结束，会要新提交）；独占区内照旧不判。
+- **第一次读**：只有预留前那次读有回答时，第 1 段才记作批次的第一次实时读；没回答时第一个安全点立即读。
+- **观测**：`reportQueue` 把在跑批次的预计结束（开始 + `ETA_BATCH_MS`）交给 `queue.view`，后面的行不再每分钟后滚；排队文字写“前面 #N 的批次在跑（第 k 段）”。轮询器把跳过的草稿记在 `lastPass.drafts`，本节点在其 head 上写过状态的，改写一次为“草稿：已搁置，转为可评审后自动继续”。
+- **测试**：`test/pr-candidate-hold.test.mjs`（现场回放、转回可评审、队列行、停在 B、停在 A、无回归、结构、状态）。
 
 ## 73. 通用包重装停在半途：续装到完成（分支 `claude/installer-half-install`，[ADR 0029](docs/adr/0029-installer-half-install.md)）
 
@@ -6008,6 +6020,15 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
    - 只是结束（`frontFailed` 为 false）的车头批次记成回执 `train-front-ended`，不用 `train-front-outcome`（FABLE-r3-batch2-followup §1b）：自动回滚到上一代常驻时，它把每张 `train-front-outcome` 都当失败读，会对没失败的 PR 报 failed；重启（`executor.mjs#trainFrontRecover`）读两种里最新的一张。
    - 扫描段被放弃（第 4、6 段 `BRIDGE_ABANDONED_UNPUBLISHED`，`executor.mjs#abandonScannerStage`）也是车头批次的终局，同样上报（FABLE-r3-batch2-followup §2a）：没有 attempt 2 时，下一次第 10 段被告知批次已结束，不再判 `TRAIN_FRONT_BATCH_RUNNING` 空占合并位。
 4. **推送路由与第 8、10 段用同一条钉法**（独审 R3 问题 B，FABLE-r3-open-items-20261122 §2）：`train-landing.mjs#landingRoute` 认主规则集用 `train-rules.mjs#sixPinned`（单项钉法 `pinAllowed`，`rulesetFacts` 也调它），不再自带“六项都钉本 App”的判断。扫描钉 Actions 时推送路由可以是 push；S 上必须有 Actions 出的三项成功才会落地（`externalRequiredChecks` 把不钉本 App 的必需检查都算作 S 上的外部检查），在跑时 `TRAIN_LANDING_CHECKS_PENDING`，失败时 `TRAIN_LANDING_CHECK_FAILED`。准入、控制对仍只能钉本 App，扫描钉在未知 App 或不钉、六项分在两套规则集里，仍是 `main_ruleset_unidentified`（park）；`kooyumi-train-landed` 仍须钉本 App。常驻 `ruleset-backstop.mjs#rulesFacts` 是另一个包，由 `test/ruleset-backstop.test.mjs` 用同一张表锁住三处结论一致。
+5. **规则读不成六项时也认扫描钉在谁身上**（任务 04f9b91b 准入 p90，FABLE-admission-p90-20261122 §3 方案甲）：脚手架期 main 上生效的只有脚手架规则集（27843120：`kooyumi-work-admission` 钉本 App，三项 `hosted-*` 扫描钉 Actions），六项不齐，`rulesetFacts` 判读不出，第 10 段原先把 `rules` 记成 null，`appScans` 跟着缺失，每个批次都白跑第 2–7 段（现场 13–15 分钟），后面的 head 排在后面等准入。改法：
+   - `train-rules.mjs#appScansPinned(rules, appId)`：任一 `required_status_checks` 规则里钉到本 App 的扫描，按 `RULE_SCAN_NAMES` 顺序，和六项齐不齐无关；`rulesetFacts` 的 `appScans` 也由它算，两者在规则读得出时恒相等。读不懂（不是列表、规则形状不对、没有 `required_status_checks` 规则、某项扫描的条目没钉 App）时为 null，不当作 []；
+   - 第 10 段（`train-maintenance.mjs`）在回复完整时先算 `appScans`，再判六项；读失败或回复不完整时为 null。事实顶层带 `appScans`（`train-facts.mjs#trainFacts`，`rules` 为 null 时也带），`rules.appScans` 照旧保留给旧常驻读；
+   - 常驻 `train.mjs#trainSummary` 先读顶层 `appScans`，没有再读 `rules.appScans`；两处都有但不一致时都不认，全跑；
+   - 只钉了部分扫描（例如脚手架加一条 trivy 钉本 App）：只跑钉到的那几项；
+   - 第 8 段当场读规则核扫描（第 3 条）不变；脚手架期第 8 段本就读不出六项、不发绿，跳过扫描不丢任何东西。将来扫描钉回本 App，下一次第 10 段读到就恢复全跑；
+   - 不在岗（`duty.onDuty` 为假）的第 10 段不读规则，没有 `appScans`，照旧全跑；
+   - Source v2 与常驻同包随第 16 代发出：只有新 Source 没有新常驻时，常驻只读 `rules.appScans`（脚手架期为 null），全跑，方向安全；
+   - 测试（修复前必红）：Source `train-sweep.test.mjs` 第 10 段读脚手架规则得 `appScans` []、读不出时没有 `appScans`；`train-rules.test.mjs` 的 `appScansPinned`；常驻 `train-takeover-front.test.mjs` 脚手架规则下没有批次跑第 2–7 段，同一规则回复不完整时全跑，两处不一致时全跑。
 
 ## 83. 批次路由戳：落后 main 的 head 按合并基跑，只由批次出生时的一个事实决定（C3 返修方案“戊”，FABLE-c3-batch-rule-channel-20261122 §3，分支 `claude/push-mode-merge-base`）
 
@@ -6023,7 +6044,50 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
    - 待查、不在本次：切换日里 head 已 started、之后因 main 前进被第 8 段 `RESIDENT_BASE_MOVED` 结束的 PR（账本一次性规则不让重跑），属 C5 切换步骤与 C7 验收，由 DESK 登记缺陷行。
 5. **主规则集的认法。** 见 §82 第 4 条：`landingRoute` 与 `rulesetFacts` 共用 `sixPinned`/`pinAllowed`，扫描钉 Actions 时第 10 段读到 push、`appScans` 为空，第 1 条的条件在现场成立；端到端 `train-landing-e2e.test.mjs` 的 E3、E8、E1（读不到状态）锁住。
 
-## 84. 停放的车头批被新 S 取代：第 10 段一个定义，车头批每种结束都回报（bc982192，分支 `claude/parked-front-v2`，设计 FABLE-parked-front-vs-frontfailed-20261123，按 main 的 `frontFailed` 重做）
+## 84. 首装的令牌被拒与角色没确认：launcher 判成明确失败（任务 `87d330d0`，FABLE-drill-role-probe-20261124 §3、§5 PR-1，分支 `claude/launcher-role-unauthorized`）
+
+### 84.1 为什么
+
+- 令牌被服务端拒绝（吊销、过期、范围不符，或根本没登记）时，角色探测答 uncertain，码 `ROLE_PROBE_CONNECTION_UNAUTHORIZED`，节点一直是 `UNCERTAIN`（§29.2 第 2 条）。
+- launcher 的 first-train 第一阶段只在列车跑完、HALT、“不适用”（STANDBY、not-held）三种情况下提前结束，所以要空等满 1500 秒；等完照常 verify、pause，终态仍写 `R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED`，首装算成功。第 16 代演练 20261123T201433Z 就是这样等了 1505 秒。
+- 常驻这一侧不改：401 只退避、不 HALT（UNCERTAIN 等同 STANDBY，不开批次；HALT 要 Owner 复位，令牌续期后节点本可自己恢复）。
+
+### 84.2 规则
+
+1. **令牌被拒立即结束第一阶段。** 条件全部满足：
+   - 与“不适用”分支同样核对的状态框架：合同、节点名、Source、`writtenAt` 不早于本步开始、执行器 IDLE、无 HALT、无 current、队列无在跑（`Test-FirstTrainStatusFrame`）；
+   - 模式 `UNCERTAIN`，探测结果 uncertain，探测时刻不早于本步开始；
+   - status 的 `notices` 里有一条 `role-probe-connection`、码 `ROLE_PROBE_CONNECTION_UNAUTHORIZED`，时刻不早于同一份 status 的 `probe.failingSince`（当前这段连续失败的起点，须是合法时刻；中间有过 held 或 not-held 就被清空或换成更晚的时刻），且不超过 15 分钟（`role-probe.mjs` observe 发出，执行器并入 status）。
+   - 为什么和 `failingSince` 比、不和本步开始比（PLAN-launcher-role-review-m1m2-20261124 第 1 节，审查中-1）：通知每段失败只发一次，时刻是这段失败里第一次被拒；新常驻在安装尾段就开始探测，首探可能早于本步开始（第 16 代只差 12 秒），和本步开始比，这条通知就永远不算。通知属不属于眼下这段失败，常驻在 status 里已经给出答案。“探测时刻不早于本步开始”保留：它保证 launcher 在本步之内亲眼看到一次新的 uncertain；竞态时要等到下一次探测（约 66 秒），仍在 120 秒以内。
+2. **普通 uncertain 不提前结束。** 网络抖动答 uncertain，一分钟后可能答 held 并开列车，这正是 review M1 要挡的。`FIRST_TRAIN_WAIT_SECONDS`（1500）和它的 assert 都不动。
+3. **为什么令牌被拒可以提前结束。** 列车只在 ACTIVE 时开，ACTIVE 只来自 held；服务端刚拒绝这张令牌，下一次探测至少 60 秒之后，令牌不换就不会变成 held。第二阶段“runner 安静两次”照常执行，verify 仍受它保护。
+4. **步骤的角色。** first-train 报告和 launcher 终态都有 `role`：
+   - `unauthorized`：第 1 条成立；步骤行 `first-train-role-unauthorized`，`result` 为 failed，`rejectCode` 为 `ROLE_PROBE_CONNECTION_UNAUTHORIZED`；
+   - `not-held`：“不适用”分支成立；
+   - `held` 或 `not-held`：否则取最后一次轮询的状态（本节点、本 Source、`writtenAt` 不早于本步开始、探测不超过 15 分钟；ACTIVE+held 或 STANDBY+not-held）；
+   - `unconfirmed`：以上都不成立（普通 uncertain 等满、读不到状态等）。
+5. **之后照常 verify、pause 和后续各步**，它们不依赖角色，节点留在安全的暂停状态。终态 `status` 的取值不变。
+6. **首装判定。** `rollout/fleet/bootstrap.ps1` 的 `Get-LauncherVerdict`（它决定 `BOOTSTRAP_DONE`，演练入口据此给出 `FIRST_INSTALL_DONE`）：launcher 走到 VERIFIED_PAUSED 之后先判角色、再判换账户（PLAN-launcher-role-review-m1m2-20261124 第 2 节，审查中-2：否则令牌被拒又碰上换账户没过时，结论只说换账户，根因不出现在任何结论里），`role` 不是 `held` 或 `not-held` 就不算完成，换账户过没过都一样，状态 `BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED`，码 `FIRST_INSTALL_ROLE_UNAUTHORIZED`（令牌被拒）或 `FIRST_INSTALL_ROLE_UNCONFIRMED`（其余，包括终态没有 `role`）；换账户的状态仍在结论的 `companionSwitch` 里。角色确认之后换账户没过，才是 `BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE`。处理办法：前者换一张有效令牌，两者都重跑同一条首装命令。重装的判定不变。
+7. **续装**（`continue.py`）把 `first-train-role-unauthorized` 与其他三个 first-train 步骤名同样看作“第一阶段已结束”。
+
+### 84.3 步骤开始行（FABLE §3.3）
+
+- launcher 每个 `Step-*` 开始时往 stdout 写一行 `{started, at, ms}`（`Write-StepStart`，调用它的函数名）。第一行就是“首装跳过”的步骤，这一行写在跳过之后。
+- 这一行没有 `name`、`result`：演练把带 `name`+`result` 的行算作步骤，续装只读进度记录（开始行不写进度记录），都不会把它当成完成的步骤。
+- 用处：步骤行只在结束时写，第 16 代最后 3 分钟在跑哪一步没有直接证据；演练的 launcher 段进度门（PR-2）以 launcher.stdout.log 增长为进度。
+
+### 84.4 已知局限
+
+- 通知每轮失败只发一次，记在本地账本（`connectionNotified`），通知本身只在常驻进程的内存里（执行器的角色通知只留最近 10 条，每个 tick 写进 status）。常驻在一段失败中途重启过，通知就没了，账本又记着“已发过”，不再发；老节点重装时账本已记过也是一样。这两种情况 launcher 都退回等满 1500 秒，判 `unconfirmed`。方向安全，只是慢。全新首装账本为空，不受影响。要彻底消掉得在 status 的 `probe` 里加 `code`（改状态合同），这一轮不做。
+- 通知列表截前 50 条（executor.mjs），角色通知排在版本、companion 通知之后；极端情况下被截掉，同样退回 `unconfirmed`。
+
+### 84.5 测试
+
+- `reinstall/test/test_launcher_first_train.py`：带通知的 uncertain 一次轮询结束、`first-train-role-unauthorized`、`role=unauthorized`，通知早于本步但不早于 `failingSince` 也一样；普通 uncertain 等满、`role=unconfirmed`；反例（通知早于 `failingSince`、探测早于本步、别的通知种类或码、模式不是 UNCERTAIN、别的节点或 Source、执行器不空闲、队列有在跑、状态过期或合同未知）不提前结束；“不适用”`role=not-held`，ACTIVE+held `role=held`。
+- `test/first-install-switch.test.mjs`（Windows 必需检查会跑）：真实 `Step-WaitFirstTrain` 与进度处理（真实 `Wait-Until`）下令牌被拒几秒结束、步骤行 failed 带拒绝码、开始行在前；通知早于本步但属于当前这段失败也几秒结束；反例（上一段失败的旧通知、探测早于本步、`failingSince` 为 null 或不是时刻、码是 `ROLE_PROBE_UNCERTAIN`）不提前结束；`Get-LauncherVerdict` 与演练入口的判定表，含换账户 FELL_BACK 时角色未确认仍以 `FIRST_INSTALL_ROLE_*` 停下；终态带 `role`。
+- 端到端：下一代候选包用假令牌演练一次，first-train 步骤 `seconds` 小于 120，入口以 `FIRST_INSTALL_ROLE_UNAUTHORIZED` 结束（修复前：回执 20261123T201433Z-2026.11.24-74bc5ef0-52d496e7，1505 秒，`DRILL_RUN_TIMEOUT`）。
+
+## 85. 停放的车头批被新 S 取代：第 10 段一个定义，车头批每种结束都回报（bc982192，分支 `claude/parked-front-v2`，设计 FABLE-parked-front-vs-frontfailed-20261123，按 main 的 `frontFailed` 重做）
 
 **根因**：第 10 段判“车头批还在跑”有两处定义（`frontBatchPlan` 与 `renewFrontSlot`），前者还拿 S 与 GitHub 上车头单独的试合并比（多成员批永远不等），于是多成员批每轮重开一个新 S；常驻这边旧 S 停在 B，`offerFront` 答 busy，新 S 进不来，行一直跑被替换的 S。R3 第 2 批的 `frontFailed`（train-run /4）只覆盖了回报的一部分。
 

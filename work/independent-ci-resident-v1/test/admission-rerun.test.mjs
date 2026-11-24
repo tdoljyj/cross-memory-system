@@ -28,6 +28,10 @@ const hostedWorkflow = { id: HOSTED_WORKFLOW, path: '.github/workflows/gitleaks.
 const extraSource = 'jobs:\n  admission-gate:\n  extra:\n    needs: admission-gate\n    name: additional-check\n';
 const readWorkflow = file => fs.readFile(new URL(`../../../${file}`, import.meta.url), 'utf8');
 const CHECK_NAMES = HEAVY.map(name => name.replace(/-skipped$/, ''));
+// R1 (FABLE-cicd-framework-v1 :87): the three scans are gated jobs of clued-required-tests.yml too, so the Linux workflow's
+// required set is the heavy three plus the scans (L3 pins it against the real workflow).
+const SCANS = ['gitleaks', 'trivy', 'contract-placement'];
+const LINUX_REQUIRED = [...CHECK_NAMES, ...SCANS];
 const actionCheck = (name, o = {}) => ({ name, head_sha: HEAD, app: { id: 15368 }, ...o });
 const requiredRule = (...names) => ({ type: 'required_status_checks', parameters: {
   required_status_checks: names.map(context => ({ context, integration_id: 15368 })),
@@ -281,11 +285,12 @@ test('6be83331 L1: a settled staging run does not wait for workflows absent from
 test('6be83331 L3: the real workflows use the required-check naming convention', async () => {
   const { gatedCheckNames } = await import('../src/admission-rerun.mjs');
   const sources = await Promise.all(WORKFLOWS.map(w => readWorkflow(w.path)));
-  const required = [...CHECK_NAMES, 'ci-suites-windows'].sort();
+  const required = [...LINUX_REQUIRED, 'ci-suites-windows'].sort();
   for (const ending of ['\n', '\r\n']) {
     assert.deepEqual(sources.flatMap(source => gatedCheckNames(source.replace(/\r?\n/g, ending))).sort(), required);
   }
-  for (const file of ['gitleaks', 'trivy', 'contract-placement']) {
+  // The standalone scan workflows only post *-hosted-executor, never a name of the required set.
+  for (const file of SCANS) {
     const checks = gatedCheckNames(await readWorkflow(`.github/workflows/${file}.yml`));
     assert.ok(checks.length);
     assert.deepEqual(checks.filter(name => required.includes(name)), []);
@@ -1820,24 +1825,26 @@ test('T5: the rules after C: a never-published kooyumi-train-landed changes noth
 
 // 04f9b91b B (Fable 11-22 scaffold shadow fix §2 B, §4): under the hosted scaffold rules (ruleset-scaffold-main-7.json) main pins only
 // hosted-X to Actions; the framework side X is produced by an active gated workflow (clued-required-tests.yml) and is treated as required:
-// a bot head's skipped run is re-dispatched, a heavy job that died in setup is re-run, a lost run is dispatched. A hosted-X whose X no active
-// gated workflow produces (gitleaks, trivy, contract-placement) adds nothing and reports no scope issue.
+// a bot head's skipped run is re-dispatched, a heavy job that died in setup is re-run, a lost run is dispatched. Since R1 the workflow
+// also produces gitleaks, trivy and contract-placement, so the framework side set is LINUX_REQUIRED. A hosted-X whose X no active gated
+// workflow produces (the NO_PRODUCER fixture; none of the real hosted-X since R1) adds nothing and reports no scope issue.
+const NO_PRODUCER = 'hosted-no-producer-fixture';
 const HOSTED_CHECKS = ['hosted-ci-suites', 'hosted-clued-cloud-tests', 'hosted-migration-verify', 'hosted-gitleaks', 'hosted-trivy', 'hosted-contract-placement'];
 const scaffoldRules = () => [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: true, required_status_checks: [
-  ...HOSTED_CHECKS.map(context => ({ context, integration_id: 15368 })), { context: 'kooyumi-work-admission', integration_id: 5368905 }] } }];
+  ...[...HOSTED_CHECKS, NO_PRODUCER].map(context => ({ context, integration_id: 15368 })), { context: 'kooyumi-work-admission', integration_id: 5368905 }] } }];
 const scaffoldWorld = (o = {}) => world({ rules: scaffoldRules(), workflows: [...WORKFLOWS, hostedWorkflow],
-  checks: [nativeCheck(), ...HOSTED_CHECKS.map(name => actionCheck(name))], ...o });
+  checks: [nativeCheck(), ...[...HOSTED_CHECKS, NO_PRODUCER].map(name => actionCheck(name))], ...o });
 
 test('04f9b91b B1: scaffold rules, a bot head whose clued-required-tests skipped every heavy job is re-dispatched once', async t => {
   const w = scaffoldWorld({ runs: [botRun()] });
   const d = await decide({ gh: w.gh, headSha: HEAD });
   assert.equal(d.action, 'redispatch');
-  assert.deepEqual([d.workflowId, d.checks.sort()], [LINUX_WORKFLOW, [...CHECK_NAMES].sort()]);
+  assert.deepEqual([d.workflowId, d.checks.sort()], [LINUX_WORKFLOW, [...LINUX_REQUIRED].sort()]);
   const l = await lane(t, w);
   await l.r.step();
   assert.deepEqual(w.dispatches, ['ref=claude/x']);
   assert.equal(l.state.data.heads[HEAD].scopeIssue, undefined);
-  assert.deepEqual(l.state.data.heads[HEAD].missing.sort(), [...CHECK_NAMES].sort());
+  assert.deepEqual(l.state.data.heads[HEAD].missing.sort(), [...LINUX_REQUIRED].sort());
   assert.equal(l.state.data.heads[HEAD].final, null, 'not settled while the framework side checks are missing');
 });
 
@@ -1845,13 +1852,13 @@ test('04f9b91b B2: scaffold rules, a heavy job that died in Set up job is re-run
   const w = scaffoldWorld({ runs: [run(700, [ran([setupFail, ok, ok])])] });
   const d = await decide({ gh: w.gh, headSha: HEAD });
   assert.deepEqual([d.action, d.runId, d.attempt], ['rerun', 700, 1]);
-  assert.deepEqual(d.checks.sort(), [...CHECK_NAMES].sort());
+  assert.deepEqual(d.checks.sort(), [...LINUX_REQUIRED].sort());
   const l = await lane(t, w);
   await l.r.step();
   assert.deepEqual(w.posts, [700]);
 });
 
-test('04f9b91b B3: scaffold rules, a lost clued-required-tests run is dispatched after 5 minutes; gitleaks with no active gated workflow is no scope issue', async t => {
+test('04f9b91b B3: scaffold rules, a lost clued-required-tests run is dispatched after 5 minutes; a hosted-X with no active gated producer is no scope issue', async t => {
   const w = scaffoldWorld({ runs: [] });
   const d = await decide({ gh: w.gh, headSha: HEAD, headAgeMs: LOST_RUN_AFTER_MS });
   assert.equal(d.action, 'redispatch');
@@ -1863,9 +1870,9 @@ test('04f9b91b B3: scaffold rules, a lost clued-required-tests run is dispatched
   assert.ok(!l.toasts.some(text => /找不到对应工作流|无法核对/.test(text)), l.toasts.join('\n'));
 });
 
-test('04f9b91b B4: scaffold rules, framework checks present settle the head; a hosted-X without a producer is never asked for', async t => {
-  const w = scaffoldWorld({ runs: [run(700, [ran([ok, ok, ok])])], checks: [nativeCheck(), ...HOSTED_CHECKS.map(name => actionCheck(name)),
-    ...CHECK_NAMES.map(name => actionCheck(name))] });
+test('04f9b91b B4: scaffold rules, every framework side X present settles the head; a hosted-X without a producer is never asked for', async t => {
+  const w = scaffoldWorld({ runs: [run(700, [ran([ok, ok, ok])])], checks: [nativeCheck(), ...[...HOSTED_CHECKS, NO_PRODUCER].map(name => actionCheck(name)),
+    ...LINUX_REQUIRED.map(name => actionCheck(name))] });
   const l = await lane(t, w);
   await l.r.step();
   assert.match(l.state.data.heads[HEAD].final, /all appeared/);

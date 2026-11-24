@@ -159,6 +159,35 @@ jobs:
           CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
         run: |
           node -e 'const fs=require("node:fs"),ref="ccxsikzwxlolxqlosril"; function identity(raw){let u;try{u=new URL(raw);}catch{throw new Error("Invalid production database URL");} if(!["postgres:","postgresql:"].includes(u.protocol)||u.pathname!=="/postgres"||[...u.searchParams.keys()].some(k=>["host","hostaddr","port","dbname","database","user","service","servicefile"].includes(k.toLowerCase()))) throw new Error("Unsupported production database routing"); const direct=u.hostname==="db."+ref+".supabase.co"&&(!u.port||u.port==="5432"),pool=/^[a-z0-9-]+\.pooler\.supabase\.com$/.test(u.hostname)&&["5432","6543"].includes(u.port)&&decodeURIComponent(u.username).split(".").at(-1)===ref; if(!direct&&!pool) throw new Error("Production backup and migration target mismatch");return "supabase:"+ref+":postgres";} const a=identity(process.env.CLUED_ATTESTATION_DATABASE_URL),b=identity(process.env.CLUED_MIGRATION_DATABASE_URL); if(a!==b) throw new Error("Production backup and migration target mismatch");fs.appendFileSync(process.env.GITHUB_ENV,"CLUED_PRODUCTION_DATABASE_IDENTITY="+a+"\n");'
+      # Capacity gate (FABLE-prod-db-shrink-v2-20261124 §8): at or above 85% of
+      # the 500 MB database limit, a migration that adds a table, an index or a
+      # column is refused here, before the full backup. The size is read with the
+      # migration login the apply step uses; the threshold is the script's own
+      # constant. The retention sweep reminder only warns, and only for a registered
+      # job without a success in 48 hours (a database without it reads 'absent').
+      - name: Refuse additions while the database is near its size limit
+        if: ${{ inputs.mode == 'migrate' }}
+        timeout-minutes: 5
+        env:
+          CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
+          MIGRATIONS: ${{ inputs.migrations }}
+        run: |
+          set -euo pipefail
+          database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL; URL-encode special characters in the password"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
+          psql_read() { docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine \
+            psql "$database_url" -v ON_ERROR_STOP=1 -X -tA -c "$1"; }
+          size_bytes=$(psql_read 'select pg_database_size(current_database())') \
+            || { echo "::error::容量门：读不到生产库大小；没有备份、没有迁移，生产没有变化"; exit 1; }
+          sweep=$(psql_read "select case when not exists (select 1 from cron.job where jobname = 'clued-retention-sweep') then 'absent' else (select count(*) from cron.job_run_details d join cron.job j on j.jobid = d.jobid where j.jobname = 'clued-retention-sweep' and d.status = 'succeeded' and d.end_time > now() - interval '48 hours')::text end" 2>/dev/null) || sweep=''
+          if [ "$sweep" = 0 ]; then
+            echo "::warning::每日清理 clued-retention-sweep 最近 48 小时没有一次成功（cron.job_run_details）；不影响本次迁移"
+          fi
+          files=''
+          for name in $(printf '%s' "$MIGRATIONS" | tr ',' ' '); do
+            [[ "$name" =~ ^[0-9]{14}_[a-z0-9_]+\.sql$ ]] || { echo "::error::Not a migration file name: $name"; exit 1; }
+            files="${files:+$files,}supabase/migrations/$name"
+          done
+          node scripts/migration-size-gate.mjs --size-bytes "$size_bytes" --files "$files"
       # The connection URLs are written for node-postgres, whose sslmode=no-verify
       # (encrypt, do not verify the certificate) libpq rejects; libpq's require
       # means the same, so the libpq tools below get require instead.
@@ -663,3 +692,41 @@ jobs:
             apps/clued-cloud/.sites-runtime/storage-client-source/registration.json
           if-no-files-found: ignore
           retention-days: ${{ inputs.mode == 'source-capture' && 1 || 30 }}
+      # Drill test project sync (Task 87d330d0; FABLE-drill-test-project-sync-20261124 §2.1 and its ruling).
+      # After a run that succeeded, in every mode: production's applied
+      # migration list (names, md5, order; the facts the committed ledger
+      # holds, no statement text, no secret), read in one read-only transaction
+      # with the attestation login. The drill host brings the test project
+      # clued-auth-test to this list before a drill (scripts/drill-test-sync.mjs);
+      # no workflow does. Both steps continue on error: the export never fails a
+      # release; a missed one is caught up by the next.
+      # Its own artifact, apart from the release evidence and the encrypted backup.
+      - name: Export the applied production history
+        timeout-minutes: 3
+        continue-on-error: true
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
+        run: |
+          set -euo pipefail
+          test -n "$CLUED_ATTESTATION_DATABASE_URL"
+          database_url=$(node -e 'const url = new URL(process.env.CLUED_ATTESTATION_DATABASE_URL); url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
+          out=.sites-runtime/production-applied
+          mkdir -p "$out"
+          docker run --rm -i --user "$(id -u):$(id -g)" \
+            -v "$PWD/supabase/production-schema:/work/supabase/production-schema:ro" -w /work \
+            postgres@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929 \
+            psql "$database_url" -v ON_ERROR_STOP=1 -X -q -tA -c 'begin read only' -f supabase/production-schema/applied.sql -c 'commit' \
+            > "$out/applied.rows" \
+            || { echo "::warning::Could not read the applied production history; the drill test project is not brought up to date by this run"; exit 1; }
+          node -e 'const fs = require("node:fs"); const [from, to] = process.argv.slice(1); const applied = JSON.parse(fs.readFileSync(from, "utf8")); if (!Array.isArray(applied) || applied.length === 0) throw new Error("the applied production history is empty"); fs.writeFileSync(to, JSON.stringify({ contract: "clued.production-applied.v1", source_commit: process.env.GITHUB_SHA, run_id: process.env.GITHUB_RUN_ID, applied }) + "\n"); console.log("Applied production history: " + applied.length + " rows through " + applied.at(-1).version + "_" + applied.at(-1).name);' \
+            "$out/applied.rows" "$out/production-applied.json"
+          rm -f "$out/applied.rows"
+      - name: Publish the applied production history
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: clued-production-applied-${{ github.run_id }}
+          path: apps/clued-cloud/.sites-runtime/production-applied/production-applied.json
+          if-no-files-found: ignore
+          retention-days: 30

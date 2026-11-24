@@ -198,6 +198,8 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     let v = await verifyAs('reader', legacy, { pr_ref: 'o/r#1', head_sha: sha(1) });
     // The verify itself still needs an active relation (only the CI's write resolve makes one).
     assert.deepEqual([v.verdict, v.reasons], ['REJECTED', ['pr_task_binding_required']]);
+    // bound_pr now appears on the rejected result (the wrapper attaches it); the verdict is still REJECTED, so it is not an admission.
+    assert.equal(v.bound_pr, 'o/r#1');
     assert.equal(await relation('o/r#1'), 'unknown');
     assert.equal(await usage(legacyTask), 0);
     committed(await release('claude', legacy));

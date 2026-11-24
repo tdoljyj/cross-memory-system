@@ -327,10 +327,10 @@ try {
 
   # M4: a first install is done only when the M5-b switch moved the distribution to the companion (COMPANION_HEADLESS_QUALIFIED)
   Case 'm4:the-companion-switch-counts-for-a-first-install' {
-    $term = { param($s, $c) [ordered]@{ status = $s; companionHeadless = [ordered]@{ ran = $true; status = $c } } }
+    $term = { param($s, $c) [ordered]@{ status = $s; role = 'not-held'; companionHeadless = [ordered]@{ ran = $true; status = $c } } }   # role: a confirmed one (role-unconfirmed: first-install-switch.test.mjs)
     Yes ((Get-LauncherVerdict $true (& $term 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' 'COMPANION_HEADLESS_QUALIFIED')).status -ceq 'BOOTSTRAP_DONE') 'm4:first-install-done'
     Yes ((Get-LauncherVerdict $true (& $term 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' 'COMPANION_HEADLESS_FELL_BACK')).status -ceq 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE') 'm4:switch-fell-back'
-    Yes ((Get-LauncherVerdict $true ([ordered]@{ status = 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' })).status -ceq 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE') 'm4:switch-not-reported'
+    Yes ((Get-LauncherVerdict $true ([ordered]@{ status = 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED'; role = 'not-held' })).status -ceq 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE') 'm4:switch-not-reported'
     Yes ((Get-LauncherVerdict $false (& $term 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' 'COMPANION_HEADLESS_FELL_BACK')).status -ceq 'BOOTSTRAP_DONE') 'm4:a-reinstall-as-before'
     Yes ((Get-LauncherVerdict $true (& $term 'PAUSE_NOT_CONFIRMED' 'COMPANION_HEADLESS_QUALIFIED')).status -ceq 'BOOTSTRAP_LAUNCHER_ENDED') 'm4:not-verified'
     # the launcher prints its terminal with ConvertTo-Json: the switch's status is read from it

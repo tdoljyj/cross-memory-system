@@ -597,9 +597,9 @@ async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = '
     rulesRead();
     const required = new Set(rules.filter(c => c.integrationId === ACTIONS_APP_ID).map(c => c.context));
     // 04f9b91b B: on a PR head, the counterpart X of a required hosted-X is treated as required when an active gated workflow of this base
-    // supplies it (clued-required-tests.yml supplies ci-suites, clued-cloud-tests, migration-verify). It joins the scope's check filter and
-    // the missing list only. An X no active gated workflow supplies (gitleaks, trivy, contract-placement) is left out here, so it can never
-    // reach unmapped and its "找不到对应工作流" stop; a missing X that is in is always found there (the same inventory).
+    // supplies it (since R1 clued-required-tests.yml supplies ci-suites, clued-cloud-tests, migration-verify, gitleaks, trivy and
+    // contract-placement). It joins the scope's check filter and the missing list only. An X no active gated workflow supplies is left out
+    // here, so it can never reach unmapped and its "找不到对应工作流" stop; a missing X that is in is always found there (the same inventory).
     const counterparts = staging ? [] : [...required].filter(c => c.startsWith(HOSTED_PREFIX))
       .map(c => c.slice(HOSTED_PREFIX.length)).filter(c => c && !required.has(c));
     if (counterparts.length && !(yield* loadInventory(base))) return;

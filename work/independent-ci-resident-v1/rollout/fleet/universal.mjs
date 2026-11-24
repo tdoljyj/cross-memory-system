@@ -12,7 +12,9 @@
 //                               or reinstall/config/: no node's configuration), registration/export-node-registration.ps1 (the first
 //                               install's node keys), rollout/precheck.mjs, rollout/fleet/ (install.mjs,
 //                               upgrade.mjs; without their tests), the CI Source closure (source-closure.json) with the closure file
-//                               itself, prepare-record.mjs and record.mjs, and every file these .mjs reach by relative import;
+//                               itself, prepare-record.mjs and record.mjs, scripts/ci/self-hosted/node-profiles.json at its repository
+//                               path (the capacity profiles wsl-capacity.mjs writes from: their one source, never a copy), and every
+//                               file these .mjs reach by relative import;
 //   bundle/accepted.bundle      the git bundle whose only ref is refs/heads/accepted = the commit (full history, as build-upgrade.ps1),
 //                               packed deterministically (single-threaded full repack, no user or system git configuration);
 //   universal-manifest.json     contract, version, commit, the universal values (facts.mjs), the Source's stateCompat (null: each node keeps its installed one) and every other entry's sha256.
@@ -24,7 +26,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { CIV1, CLOSURE, PREPARE_RECORD, RESIDENT, computeUniversalFacts } from './facts.mjs';
+import { CIV1, CLOSURE, NODE_PROFILES, PREPARE_RECORD, RESIDENT, computeUniversalFacts } from './facts.mjs';
 import { RESIDENT_EXTERNAL } from '../../tools/build-package.mjs';
 import { pyCanonical } from './pyjson.mjs';
 import { extractTar, writeTar } from './tar.mjs';
@@ -50,6 +52,8 @@ export const TREE_FILES = Object.freeze([`${RESIDENT}/rollout/precheck.mjs`, `${
   // its init-keys, which needs no other file (export-node-registration.mjs is its export mode's, run where a node is registered)
   `${RESIDENT}/registration/export-node-registration.ps1`,
   CLOSURE, PREPARE_RECORD, `${CIV1}/src/resident-v2/record.mjs`,
+  // the nodes' capacity profiles (Task 87d330d0): wsl-capacity.mjs writes the Owner's WSL memory limit from it, read where it lives
+  NODE_PROFILES,
   // the resident files whose one source lies outside the resident tree (build-package.mjs RESIDENT_EXTERNAL): the node builds from this tree
   ...RESIDENT_EXTERNAL.map(e => e.source)]);
 const excluded = p => TREE_EXCLUDED.some(x => p.startsWith(x)) || (p.startsWith(`${RESIDENT}/`) && EXCLUDED_PART.test(p.slice(RESIDENT.length + 1)));

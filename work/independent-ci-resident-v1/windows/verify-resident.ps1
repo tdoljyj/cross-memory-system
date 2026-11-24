@@ -539,6 +539,42 @@ function Invoke-CompanionRelayParentsEnsure([string]$root, [string]$sid, [string
     $written
   } $root $sid $installer $installerSha256
 }
+# r13 (Fable ruling 0e418483, option wu): <CiRoot>\state by install-resident.ps1's rule state-parent-acl, here for a node installed or
+# upgraded before that step existed. Same shape as Invoke-CompanionRelayParentsEnsure: the rule is install-resident.ps1's own functions
+# (this generation's copy, its pinned sha256; the bytes read once, hashed, parsed from that read), loaded by exact name into a child scope.
+# -Write (SYSTEM, the upgrade channel's VERIFY): the rule runs (made when missing; the controller's write on state itself made inherit-only;
+# any other writer refused, thrown). Without it: read only. Returns path, action (none|create|converge), before, after, wrote.
+function Invoke-StateParentEnsure([string]$root, [string]$controllerSid, [string]$installer, [string]$installerSha256, [switch]$Write) {
+  & {
+    param([string]$root, [string]$controllerSid, [string]$installer, [string]$installerSha256, [bool]$write)
+    Set-StrictMode -Version 2.0
+    $ErrorActionPreference = 'Stop'
+    if ($controllerSid -cnotmatch '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}\z') { throw 'STATE_PARENT_SID_REFUSED' }
+    if ($installerSha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'STATE_PARENT_RULE_NOT_PINNED' }
+    $bytes = [IO.File]::ReadAllBytes($installer)
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try { $actual = ([BitConverter]::ToString($hasher.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $hasher.Dispose() }
+    if ($actual -cne $installerSha256) { throw 'STATE_PARENT_RULE_HASH_MISMATCH' }
+    $text = (New-Object Text.UTF8Encoding($false, $true)).GetString($bytes)
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($text, [ref]$tokens, [ref]$errors)
+    if (@($errors).Count -ne 0) { throw 'STATE_PARENT_RULE_UNPARSEABLE' }
+    foreach ($name in @('Get-DaclShape', 'Get-StateParentSddl', 'Get-StateParentTarget', 'Get-StateParentState', 'Invoke-StateParentAcl')) {
+      $found = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))
+      if ($found.Count -ne 1) { throw ('STATE_PARENT_RULE_MISSING:' + $name) }
+      . ([scriptblock]::Create($found[0].Extent.Text))
+    }
+    $ciRoot = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($root).TrimEnd('\'))
+    for ($p = $ciRoot; $p; $p = [IO.Path]::GetDirectoryName($p)) {
+      $item = Get-Item -LiteralPath $p -Force
+      if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw ('STATE_PARENT_LINK_OR_NOT_A_DIRECTORY:' + $p) }
+    }
+    $state = Get-StateParentState (Join-Path $ciRoot 'state') $controllerSid
+    if (-not $write) { return [ordered]@{ path = $state.path; action = $state.action; before = $state.before; after = $state.before; wrote = $false } }
+    Invoke-StateParentAcl $state $controllerSid
+  } $root $controllerSid $installer $installerSha256 ([bool]$Write)
+}
 # The verdict (Task 018da927 b). Only a check whose ok is the STRING 'unreadable' asks for an elevated run: with -eq, a
 # boolean on the left converts 'unreadable' to $true, so every passing check counted as unreadable and any failure was
 # reported as RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED (exit 2) instead of RESIDENT_VERIFICATION_FAILED (exit 1).
@@ -888,6 +924,22 @@ elseif ($null -ne $companionAccountRecord) {
   $parentProblem = Get-CompanionRelayParentsProblem ([string]$Node.ownerSid)
   Record 'companion-relay-parents' ($null -eq $parentProblem -and $relayAdded -isnot [string]) $(if ($relayAdded -is [string]) { $relayAdded } elseif ($parentProblem) { $parentProblem } elseif ($relayAdded) { 'ADDED:' + $relayAdded } else { $null })
 }
+# r13 (Fable ruling 0e418483): <CiRoot>\state passes the generic helper's rule, on every node (not only a companion-account one).
+# SYSTEM (the upgrade channel's VERIFY): install-resident.ps1's own rule runs first (Invoke-StateParentEnsure -Write), then the result is
+# checked. Elevated by hand: read and checked, never written. Not elevated: state is admin-only, so it is not read (recorded as such).
+# The rule's bytes are pinned as the relay parents' are: this generation's install-resident.ps1, by the resident manifest's sha256.
+if ($verifyCanFix) {
+  $stateParent = try {
+    $stateManifest = Join-Path $Root 'config\resident-installed-manifest.json'
+    $stateManifestSha = Sha256File $stateManifest
+    if ($stateManifestSha -cne [string]$receipt.residentManifestSha256 -or (Split-Path -Leaf (Split-Path -Parent $PSScriptRoot)) -cne $stateManifestSha) { throw 'STATE_PARENT_RULE_NOT_THIS_GENERATION' }
+    $statePin = @(@((Get-Content -LiteralPath $stateManifest -Raw | ConvertFrom-Json).files) | Where-Object { [string]$_.path -ceq 'windows/install-resident.ps1' })
+    if ($statePin.Count -ne 1 -or [string]$statePin[0].sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'STATE_PARENT_RULE_NOT_PINNED' }
+    Invoke-StateParentEnsure $Root ([string]$Node.controllerSid) (Join-Path $PSScriptRoot 'install-resident.ps1') ([string]$statePin[0].sha256) -Write:($verifyIdentity.User.Value -ceq 'S-1-5-18')
+  } catch { 'STATE_PARENT_ENSURE_REFUSED:' + $_.Exception.Message }
+  if ($stateParent -is [string]) { Record 'state-parent-acl' $false $stateParent }
+  else { Record 'state-parent-acl' ($stateParent.action -ceq 'none' -or $stateParent.wrote) ('action=' + $stateParent.action + ';wrote=' + ([string]$stateParent.wrote).ToLowerInvariant() + ';sddl=' + $stateParent.after) }
+} else { Record 'state-parent-acl' $true 'NOT_ELEVATED_NOT_READ' }
 Record 'not-halted' (-not (Test-Path -LiteralPath (Join-Path $Root 'state\HALT.json')))
 $pausedFile = Join-Path $Root 'state\PAUSED.json'
 if ($ExpectPausedSha256) { Record 'paused-as-expected' ((Test-Path -LiteralPath $pausedFile -PathType Leaf) -and ((Sha256File $pausedFile) -ceq $ExpectPausedSha256)) }

@@ -147,11 +147,11 @@ export async function readRequiredApplicability(options) {
     if(!changedPaths.length||Buffer.byteLength(JSON.stringify(changedPaths))>131072||
       changedPaths.some(p=>migrationPatterns.some(pattern=>pattern.test(p))))return null;
     const body=await get(runRoute+'/attempts/'+subject.runAttempt+'/jobs?per_page=100&page=1');
-    const requiredNames=['admission-gate',...REQUIRED_TESTS_SOURCE.primary_ids];
-    if(body?.total_count!==4||!Array.isArray(body.jobs)||body.jobs.length!==4||
+    const requiredNames=['admission-gate',...REQUIRED_TESTS_SOURCE.primary_ids],count=requiredNames.length;
+    if(body?.total_count!==count||!Array.isArray(body.jobs)||body.jobs.length!==count||
       body.jobs.some(j=>!positive(j?.id)||j.run_id!==subject.runId||j.run_attempt!==subject.runAttempt||
         !requiredNames.includes(j.name)||j.status!=='completed'||j.conclusion!=='success')||
-      new Set(body.jobs.map(j=>j.id)).size!==4||new Set(body.jobs.map(j=>j.name)).size!==4)return null;
+      new Set(body.jobs.map(j=>j.id)).size!==count||new Set(body.jobs.map(j=>j.name)).size!==count)return null;
     const gate=body.jobs.find(j=>j.name==='admission-gate');
     const logSha=gateBase(await call(()=>readLog(gate,nativeRun,{signal:abort.signal})),gate,subject);if(!logSha)return null;
     const selector=sourceBytes(await get('/repos/'+subject.repository+'/contents/'+REQUIRED_SELECTOR_SOURCE.path+'?ref='+subject.base),

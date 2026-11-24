@@ -221,7 +221,9 @@ test('attempt 2: one live read after the precheck closes it when the head moved 
     f.advance(600_000);
     const second = await f.exec.tick();
     assert.deepEqual([second.state, second.reason], want);
-    assert.equal(f.companion.calls.filter(c => c[0] === 'pr-head').length - before, 1, 'one read');
+    // No answer before attempt 2: stage 1 is not the batch's first live read (PLAN-resident-draft-batch-20261123 §2 item 7), so the
+    // first safe point reads once more.
+    assert.equal(f.companion.calls.filter(c => c[0] === 'pr-head').length - before, answer ? 1 : 2, answer ? 'one read' : 'one read, and one at the first safe point');
     assert.deepEqual(await f.ledger.pendingAttempts2(), []);
   }
 });

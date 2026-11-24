@@ -84,6 +84,35 @@ export function suiteFiles(root, { commands = SUITE_COMMANDS, tracked, listUnit 
   return { runs, collects };
 }
 
+// Test files that run: those a command takes, and the test files they import at top level, transitively. Each maps to
+// the file a command takes that brings it in: itself, or the running test that imports it.
+function runningTests(bySuite, trackedSet, source) {
+  const direct = [...bySuite.keys()].filter(isTestFile);
+  const runs = new Map(direct.map((file) => [file, file]));
+  const pending = [...direct];
+  while (pending.length > 0) {
+    const file = pending.pop();
+    if (!NODE_SOURCE.test(file)) continue;
+    for (const target of topLevelImports(source(file)).map((spec) => resolve(file, spec))) {
+      if (!isTestFile(target) || !trackedSet.has(target) || runs.has(target)) continue;
+      runs.set(target, runs.get(file));
+      pending.push(target);
+    }
+  }
+  return runs;
+}
+
+// Where each of files runs, read as the check reads it, for files --run-files refused (ci-required-selection.mjs): the
+// suites and the file a suite command takes (the file itself, or the running test that imports it); null for none.
+export function whereTestsRun(root, files, { tracked = trackedFiles(root), read = (file) => readOr(root, file) } = {}) {
+  const { runs: bySuite } = suiteFiles(root, { tracked });
+  const runs = runningTests(bySuite, new Set(tracked), read);
+  return new Map(files.map((file) => {
+    const through = runs.get(file) ?? (bySuite.has(file) ? file : null);
+    return [file, through ? { suites: [...new Set(bySuite.get(through))], through } : null];
+  }));
+}
+
 export function readTable(root) {
   const text = readOr(root, TABLE_PATH);
   if (text === null) return { tests: [] };
@@ -119,16 +148,7 @@ export function coverage({ root = DEFAULT_ROOT, tracked = trackedFiles(root), re
     if (!sources.has(file)) sources.set(file, read(file) ?? '');
     return sources.get(file);
   };
-  // Test files that run: those a command takes, and the test files they import at top level, transitively.
-  const runs = new Set();
-  const pending = [...bySuite.keys()].filter(isTestFile);
-  while (pending.length > 0) {
-    const file = pending.pop();
-    if (runs.has(file)) continue;
-    runs.add(file);
-    if (!NODE_SOURCE.test(file)) continue;
-    pending.push(...topLevelImports(source(file)).map((spec) => resolve(file, spec)).filter((target) => isTestFile(target) && trackedSet.has(target)));
-  }
+  const runs = runningTests(bySuite, trackedSet, source);
   // Runner files under another name are helpers when a test file or a suite-run file reaches them.
   const reached = new Set();
   const walk = [...tests, ...bySuite.keys()].filter((file) => NODE_SOURCE.test(file));
@@ -157,7 +177,7 @@ export function coverage({ root = DEFAULT_ROOT, tracked = trackedFiles(root), re
     if (seen.has(entry.path)) problems.push(`${entry.path}: listed twice`);
     seen.add(entry.path);
     const pattern = entry.path.includes('*') ? globToRegExp(entry.path) : null;
-    const matches = pattern ? [...new Set([...subjects, ...runs])].filter((file) => pattern.test(file)) : [entry.path];
+    const matches = pattern ? [...new Set([...subjects, ...runs.keys()])].filter((file) => pattern.test(file)) : [entry.path];
     const running = matches.filter((file) => runs.has(file) || bySuite.has(file));
     if (running.length > 0) {
       problems.push(`${entry.path}: ${pattern ? `matches ${running.join(', ')}, which runs` : 'runs'} in a required suite (${[...new Set(running.flatMap((file) => bySuite.get(file) ?? ['imported by a test that runs']))].join(', ')}); ${pattern ? 'narrow' : 'remove'} the entry`);

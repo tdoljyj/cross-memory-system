@@ -55,7 +55,7 @@ import { GreenLedger } from './green-ledger.mjs';
 import { closeGreenLedgerGroups } from './green-ledger-closed.mjs';
 import { APP_ID } from './publisher.mjs';
 import { createMergeSlotNative } from './merge-slot-native.mjs';
-import { RULESET_UNREADABLE, REQUIRED_CHECKS_UNREADABLE, rulesetFacts, requiredCheckFailure } from './train-rules.mjs';
+import { RULESET_UNREADABLE, REQUIRED_CHECKS_UNREADABLE, appScansPinned, rulesetFacts, requiredCheckFailure } from './train-rules.mjs';
 import { decideShadow, frontPullFacts, requiredFailureExcused, requiredYieldReason, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore } from './train-sweep-store.mjs';
@@ -204,11 +204,14 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   }
 
   const mainSha = (await github.readBranchHead('main')).sha;
-  let rules = null, rulesReason = null;
+  // appScans (task 04f9b91b, admission p90): the scans the rules pin to this App, read even when the rules are not the six (the scaffold
+  // ruleset alone: []). Not read (a failed read, a reply not given whole, rules not understood): null, every scan runs.
+  let rules = null, rulesReason = null, appScans = null;
   const landability = { rules: null, appId, onFallback: reason => { rulesReason ??= reason; } };
   try {
     const reply = await github.readBranchRules('main');
     if (reply?.complete !== true) fail(RULESET_UNREADABLE);
+    appScans = appScansPinned(reply.rules, appId);
     rules = rulesetFacts(reply.rules, appId);
     landability.rules = reply.rules;
   } catch { rulesReason = RULESET_UNREADABLE; }
@@ -763,7 +766,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     try { await github.readRateBudget({ until: until.read }); budgetReadFailed = false; } catch { budgetReadFailed = true; }
   }
   const providerBudget = typeof github.rateBudget === 'function' ? github.rateBudget() : null;
-  return facts({ onDuty: true, holders: duty.holders, mainSha, rules, rulesReason, front, revoke: targets.map(t => ({ headSha: t.headSha, checkRunId: t.checkRunId, reason: t.reason, own: t.own })),
+  return facts({ onDuty: true, holders: duty.holders, mainSha, rules, rulesReason, appScans, front, revoke: targets.map(t => ({ headSha: t.headSha, checkRunId: t.checkRunId, reason: t.reason, own: t.own })),
     ledger: summary, decision, openFrontBatch, requestPause, frontBind: decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' ? frontBind : null, landing: landingFacts,
     sweep: { ...sweepFacts({ kind: segment ? 'full-segment' : 'incremental', complete: strictReady || sweepComplete, revoked: revoked.length + (strict?.revoked.length ?? 0),
       unconfirmed: strictReady ? 0 : unconfirmed.length + leftover + (strict?.unconfirmed ?? 0),

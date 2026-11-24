@@ -29,9 +29,13 @@
 //     10 -> 20 -> 40 -> 80 -> 120 minutes, then every 120 (§4.4), or until Native's ci_retry_after. A commit released
 //     policy.limits.releasesPerHeadPer24h times in 24 hours (waits never count) is STOPPED: only a new commit runs the
 //     PR again (§4.5); a new trigger pokes only a row that still waits for its next try.
-//   - A row backing off after a claim refusal (CLAIM_REASONS) whose new trigger comes with another claim in the PR body than the one its
-//     refused evaluation saw is due at once, without the cool-down (claimChanged; field defect 2026-11-08, PR #1039). The same claim
-//     backs off as before.
+//   - A row backing off after a claim refusal (CLAIM_REASONS) is due at once, without the cool-down, when a fresh protected
+//     observation of the same (PR, head, base) says bound under an authorization id the row has not woken for yet (claimChanged,
+//     wokeAuth; Task 30643342, PR #1220). An ordinary edit never hurries it (earlyWakeOf: the queue and the PR page read that one rule).
+//   - A PR a live read showed as a draft (pr-candidate.mjs#prCandidate, PLAN-resident-draft-batch-20261123 §2 item 4) is held: the row
+//     keeps `hold` and nothing of that PR is scheduled (its row, its attempt-2 intent, its flow continuation) or read again. The
+//     intent and the continuation are kept. The PR's next trigger (a new commit, or a newer prUpdatedAt: GitHub moves updated_at when
+//     the PR is marked ready, and the poller proposes it again) lifts the hold; the next live read decides again.
 //   - Depth: at most policy.limits.queueDepth live rows (QUEUED, RUNNING, WAITING, BACKOFF); rows DONE or STOPPED for
 //     24 hours are compacted away.
 import fs from 'node:fs/promises';
@@ -40,6 +44,7 @@ import { HEX40, ResidentError, UUID, canonicalJson, check, isoNow, parseBoundedJ
 import { ensureDir, exists, nonce, readBounded } from './store.mjs';
 import { POSITIONS } from './breaker.mjs';
 import { claimBindingFingerprint } from './train.mjs';
+import { PR_DRAFT_HELD } from './pr-candidate.mjs';
 
 export const QUEUE_CONTRACT = 'clued.independent-ci.resident-queue/1';
 export const QUEUE_FILE = 'queue.json';
@@ -85,7 +90,7 @@ export const CLAIM_REASONS = Object.freeze(['CLAIM_NOT_CURRENT']);
 // Field defect 2026-11-08 (PR #1043, task 9aafd9ec): three claim refusals in a row (no authorize_head yet, the merge-queue place aged,
 // a renew after the push) each counted towards the head's release cap and burned the head, though each is safeToRerun with no side effect
 // and the author or the system fixes it by itself. A claim refusal never counts towards the release cap. It uses the waiting
-// budget and WAITING_BACKOFF_MS on the same head; only a changed protected Native binding wakes it early. A head that has
+// budget and WAITING_BACKOFF_MS on the same head; only a protected Native observation of a new authorization wakes it early. A head that has
 // waited for its claim for CLAIM_WAIT_MAX_MS since it arrived stops (release-cap).
 export const CLAIM_WAIT_MAX_MS = 24 * 60 * MIN;
 const CLAIM_MISSING_REASONS = ['claim_trailer_missing', 'claim_not_found', 'full_admission_claim_missing'];
@@ -104,6 +109,11 @@ export const CLAIM_WHY = Object.freeze([
 const CLAIM_WHY_CODES = Object.freeze(CLAIM_WHY.flatMap(([codes]) => codes));
 // A view only: nothing schedules on it, and whatever does not fit is dropped (never a refusal).
 export const reasonCodeList = v => (Array.isArray(v) ? [...new Set(v.filter(c => CLAIM_WHY_CODES.includes(c)))] : []);
+// How a waiting row can be woken before its next try, the one rule candidates() and the PR page (pr-status.mjs) read (Task 30643342,
+// FABLE-botmerge-auth-carry §1.6): 'authorization' for a claim wait (only a protected observation of a new head authorization wakes it,
+// claimChanged), 'edit' for every other row (a new trigger, after the cool-down). It reads only the row's state and reason, which the
+// queue's view carries as they are (the status board names the reason `deferred`).
+export const earlyWakeOf = row => (['WAITING', 'BACKOFF'].includes(row?.state) && CLAIM_REASONS.includes(row?.reason) ? 'authorization' : 'edit');
 const claimsOk = c => Array.isArray(c) && c.length <= SEEN_MAX && c.every(x => typeof x === 'string' && UUID.test(x));
 // claimsOk validates old snapshots only; current scheduling never consumes them.
 
@@ -142,7 +152,8 @@ export function validateQueue(q) {
       && Number.isSafeInteger(r.order) && Number.isSafeInteger(r.level) && r.level >= 0 && (r.stopKind === null || STOP_KINDS.includes(r.stopKind))
       && (r.origin === null || ORIGINS.includes(r.origin)) && (r.evalClaims === undefined || r.evalClaims === null || claimsOk(r.evalClaims))
       && (r.evalBinding == null || (typeof r.evalBinding === 'string' && r.evalBinding.length <= 512))
-      && (r.evalBindingHead == null || HEX40.test(r.evalBindingHead)), 'QUEUE_FILE_INVALID', r?.pr);
+      && (r.evalBindingHead == null || HEX40.test(r.evalBindingHead)) && (r.wokeAuth == null || UUID.test(r.wokeAuth))
+      && (r.hold == null || (typeof r.hold === 'object' && r.hold.reason === PR_DRAFT_HELD && HEX40.test(r.hold.headSha ?? '') && time(r.hold.at))), 'QUEUE_FILE_INVALID', r?.pr);
     prs.add(r.pr);
   }
   return q;
@@ -251,13 +262,16 @@ export class RunQueue {
     const updatedAt = typeof t.prUpdatedAt === 'string' ? Math.min(Date.parse(t.prUpdatedAt), now) : null;
     const newer = updatedAt !== null && (row.prUpdatedAt === null || updatedAt > row.prUpdatedAt);
     if (newer) row.prUpdatedAt = updatedAt;
+    // A held (draft) PR's next trigger lifts the hold: a new commit, or one that is new by prUpdatedAt. A re-read of an older one does not.
+    const unheld = !!row.hold && (updatedAt === null || newer || !row.seen.includes(t.headSha));
+    if (unheld) { delete row.hold; row.updatedAt = now; }
     if (row.seen.includes(t.headSha)) {
-      if (row.current?.headSha !== t.headSha || row.running?.headSha === t.headSha) return { action: 'seen' };
+      if (row.current?.headSha !== t.headSha || row.running?.headSha === t.headSha) return { action: unheld ? 'unheld' : 'seen' };
       // The current commit asked again: a new trigger pokes a row that waits for its next try.
       // A closed PR that is open again (the poller proposes it): its head is tried again; the ledger decides.
       if (row.state === 'DONE' && row.reason === 'PR_CLOSED') { this.setState(row, 'QUEUED', null, now); row.order = this.seq(); row.origin = 'queued'; return { action: 'reopened' }; }
       const waits = ['WAITING', 'BACKOFF'].includes(row.state);
-      if (!waits || !(updatedAt === null || newer)) return { action: 'seen' };
+      if (!waits || !(updatedAt === null || newer)) return { action: unheld ? 'unheld' : 'seen' };
       row.poke = { at: now, dueAt: Math.max(now, (row.lastEvalAt ?? 0) + cooldownMs) };
       // A row backing off after a claim refusal whose evaluation saw the PR's claims: the executor reads the PR once before its next
       // scheduling pass and makes the poke due now when the PR names other claims (claimChanged; field defect 2026-11-08, PR #1039).
@@ -288,7 +302,7 @@ export class RunQueue {
   // A claim refusal of the current commit, still eligible for bounded rechecking.
   claimRefused(row) {
     // BACKOFF is the persisted shape from before claim waits used the waiting budget.
-    return !!row && ['WAITING', 'BACKOFF'].includes(row.state) && CLAIM_REASONS.includes(row.reason) && !row.running && !!row.current;
+    return !!row && earlyWakeOf(row) === 'authorization' && !row.running && !!row.current;
   }
 
   // A protected read-only observation can recheck these rows without a body edit.
@@ -296,9 +310,11 @@ export class RunQueue {
     return this.data.rows.filter(r => this.claimRefused(r)).map(r => ({ pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha }));
   }
 
-  // Only a changed, confirmed bound generation makes a poke due. A first known
-  // observation establishes the baseline; unknown keeps the original back-off.
-  // Once-only, re-evaluation and daily caps still decide whether it can run.
+  // A confirmed bound observation makes a poke due. The refusal itself proves the head was not bound when it was evaluated, so bound
+  // is the change, with or without a baseline (Task 30643342, PR #1220: the authorization came before the first observation after the
+  // refusal, which used to become the baseline only). Each authorization id wakes the row once (wokeAuth); a bound observation without
+  // one wakes it only when it differs from the baseline (the earlier rule, of which the new one is the general case). Anything not bound,
+  // or unknown, keeps the original back-off. Once-only, re-evaluation and daily caps still decide whether it can run.
   claimChanged(pr, live, now) {
     const r = this.row(pr);
     if (!this.claimRefused(r) || !live || live.pr !== pr || live.headSha !== r.current.headSha || live.baseSha !== r.current.baseSha) return false;
@@ -307,7 +323,10 @@ export class RunQueue {
     if (r.poke) delete r.poke.claimCheck;
     const before = r.evalBindingHead === live.headSha ? r.evalBinding : null;
     r.evalBinding = fingerprint; r.evalBindingHead = live.headSha; r.updatedAt = now;
-    if (before == null || fingerprint === before || live.bindingStatus !== 'bound') return false;
+    if (live.bindingStatus !== 'bound') return false;
+    const auth = live.headAuthorizationId ?? null;
+    if (auth !== null ? auth === (r.wokeAuth ?? null) : before == null || fingerprint === before) return false;
+    if (auth !== null) r.wokeAuth = auth;
     r.poke = { ...r.poke, at: now, dueAt: now, claimChanged: true };
     r.deferUntil = null;
     return true;
@@ -394,9 +413,9 @@ export class RunQueue {
   candidates(now) {
     const first = [], rest = [];
     for (const r of this.data.rows) {
-      if (!r.current || r.running || (time(r.deferUntil) && r.deferUntil > now)) continue;
+      if (!r.current || r.running || r.hold || (time(r.deferUntil) && r.deferUntil > now)) continue;
       const poked = !!r.poke && r.poke.dueAt <= now;
-      if (this.claimRefused(r)) {
+      if (earlyWakeOf(r) === 'authorization') {
         // Ordinary edits do not change Native authority and cannot bypass the
         // exponential wait or switch its budget back to normal evaluations.
         if (poked && r.poke.claimChanged === true) first.push({ r, origin: 'new-trigger', at: r.poke.dueAt, poked: true });
@@ -576,6 +595,24 @@ export class RunQueue {
     return true;
   }
 
+  // A live read showed the PR as a draft (pr-candidate.mjs, basis pr-draft): nothing of it is scheduled or read until its next trigger
+  // (offer). A PR without a row (an attempt 2 whose row was compacted) gets a row that only carries the hold. true when it was not held.
+  hold(pr, headSha, now) {
+    let r = this.row(pr);
+    if (!r) {
+      r = { pr, current: null, running: null, superseded: [], seen: [], state: 'DONE', reason: null, since: now, nextAt: null, level: 0, levelKind: null,
+        order: 0, poke: null, prUpdatedAt: null, lastEvalAt: null, stopKind: null, stopClass: null, origin: null, deferred: null, deferUntil: null, updatedAt: now };
+      this.data.rows.push(r);
+      this.data.rows.sort((a, b) => a.pr - b.pr);
+    }
+    if (r.hold) return false;
+    r.hold = { reason: PR_DRAFT_HELD, headSha, at: now };
+    r.poke = null;
+    r.updatedAt = now;
+    return true;
+  }
+  held(pr) { return !!this.row(pr)?.hold; }
+
   // The PR is closed (a live read): nothing of it runs any more.
   closePr(pr, now) {
     const r = this.row(pr);
@@ -658,7 +695,7 @@ export class RunQueue {
       pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, state: r.state === 'PARKED' && !parkedHere(r) ? 'RUNNING' : r.state,
       // The companion can begin checking the staging run while the executor is still running stages 1-7.
       ...(testSha(r) ? { testSha: testSha(r) } : {}),
-      reason: r.state === 'PARKED' && !parkedHere(r) ? null : own(r) ? (r.reason ?? null) : r.state === 'QUEUED' ? queuedReason(r) : (r.deferred ?? r.reason ?? null),
+      reason: r.hold ? PR_DRAFT_HELD : r.state === 'PARKED' && !parkedHere(r) ? null : own(r) ? (r.reason ?? null) : r.state === 'QUEUED' ? queuedReason(r) : (r.deferred ?? r.reason ?? null),
       heldBy: held(r), since: r.since ?? null,
       ...(reasonCodes(r).length > 0 ? { reasonCodes: reasonCodes(r) } : {}),
       nextAt: parkedHere(r) ? (r.parked?.nextAt ?? null) : r.state === 'PARKED' ? null : time(r.nextAt) ? r.nextAt : (r.poke ? r.poke.dueAt : null), level: r.level, origin: r.origin ?? null, stopKind: r.stopKind ?? null,

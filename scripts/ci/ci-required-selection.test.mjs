@@ -14,7 +14,7 @@ import {
   PLATFORMS, SUITE_PLATFORMS, hostPlatform, runSelected, suitePlatforms,
 } from './ci-required-selection.mjs';
 import * as selection from './ci-required-selection.mjs';
-import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
+import reporterStream, { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
@@ -346,6 +346,82 @@ test('G3 required-tests exposes pr/head dispatch and keeps all three self-hosted
   }
 });
 
+// S1b (ported from the Codex draft of 11-18, D:/w/tmp/speed-s1b): the trusted checkouts are sparse.
+// Its own import keeps this block apart from the import list other selector changes edit.
+import { KNOWN_FAILURES_PATH } from './ci-required-selection.mjs';
+
+const requiredWorkflowJobs = () => ['clued-required-tests.yml', 'clued-required-tests-windows.yml']
+  .flatMap((file) => [...readFileSync(path.join(ROOT, '.github/workflows', file), 'utf8')
+    .replaceAll('\r\n', '\n').matchAll(/^  ([a-z][a-z-]+):\n((?:.*\n)*?)(?=^  [a-z][a-z-]+:\n|(?![\s\S]))/gm)]
+    .filter(([, id]) => ['clued-cloud-tests', 'ci-suites', 'migration-verify', 'ci-suites-windows'].includes(id)));
+
+test('all four trusted checkouts use the same sparse directories and cover their runtime files', () => {
+  const jobs = requiredWorkflowJobs();
+  assert.equal(jobs.length, 4);
+  for (const [, id, job] of jobs) {
+    const trusted = /\n      - name: Check out the trusted base[^\n]*\n([\s\S]*?)(?=\n      - )/.exec(job);
+    assert.ok(trusted, `${id}: trusted checkout step`);
+    const checkout = trusted[1];
+    const sparse = /^ {10}sparse-checkout: \|\n((?: {12}[^\n]+(?:\n|$))+)/m.exec(checkout);
+    assert.ok(sparse, `${id}: trusted checkout must declare sparse-checkout`);
+    assert.equal(sparse[1].trimEnd(), '            scripts/ci\n            config\n            .github', `${id}: sparse directory list`);
+    const directories = sparse[1].trim().split(/\s+/);
+    const action = /uses: \.\/trusted\/([^\s]+)/.exec(job);
+    assert.ok(action, `${id}: temporary storage action must come from the trusted tree`);
+    const actionFile = `${action[1]}/action.yml`;
+    const actionSource = readFileSync(path.join(ROOT, actionFile), 'utf8');
+    const actionScripts = [...actionSource.matchAll(/\$(?:env:)?GITHUB_ACTION_PATH\/([\w./-]+)/g)]
+      .map(([, file]) => `${action[1]}/${file}`);
+    const files = [
+      ...closure([path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), REPORTER_PATH]),
+      path.relative(ROOT, KNOWN_FAILURES_PATH).split(path.sep).join('/'),
+      'config/clued-mechanical-files.json', actionFile, ...actionScripts,
+    ];
+    for (const file of files) {
+      assert.ok(existsSync(path.join(ROOT, file)), `${id}: runtime file ${file} exists`);
+      assert.ok(directories.some((directory) => file.startsWith(`${directory}/`)), `${id}: sparse checkout includes ${file}`);
+    }
+  }
+});
+
+test('Linux required jobs fail before invoking the selector when the trusted copy is missing', () => {
+  for (const [, id, job] of requiredWorkflowJobs().filter(([, id]) => id !== 'ci-suites-windows')) {
+    assert.doesNotMatch(job, /candidate\/scripts\/ci\/ci-required-selection\.mjs/, id);
+    assert.match(job, /selector=trusted\/scripts\/ci\/ci-required-selection\.mjs\n +if \[ ! -f "\$selector" \]; then\n(?: +[^\n]+\n)*? +exit 1\n +fi\n/, id);
+  }
+});
+
+test('the migration candidate checkout only fetches full history for lost-run dispatches and staging pushes', () => {
+  const migration = requiredWorkflowJobs().find(([, id]) => id === 'migration-verify');
+  assert.ok(migration);
+  assert.match(migration[2], /\n      - name: Check out the candidate\n(?:(?!      - )[^\n]*\n)*? {10}fetch-depth: \$\{\{ \(github\.event_name == 'workflow_dispatch' \|\| \(github\.event_name == 'push' && github\.ref == 'refs\/heads\/clued-train\/staging'\)\) && '0' \|\| '2' \}\}\n/);
+});
+
+// A lost-run dispatch (git merge-base origin/main <head>) and a staging push (the chain root T) both walk main's history in
+// train-base, so the candidate checkout must hold it; a depth-2 clone has no origin/main and the step fails. Only the
+// other events may stay shallow. The expression is evaluated, not matched, so any job that adds train-base is covered.
+test('every Linux required job with train-base checks the candidate out with full history for a dispatch and a staging push', () => {
+  const text = readFileSync(path.join(ROOT, '.github/workflows/clued-required-tests.yml'), 'utf8').replaceAll('\r\n', '\n');
+  const jobs = [...text.matchAll(/^  ([a-z][a-z-]+):\n((?:.*\n)*?)(?=^  [a-z][a-z-]+:\n|(?![\s\S]))/gm)]
+    .filter(([, , job]) => job.includes('        id: train-base\n'));
+  assert.deepEqual(jobs.map(([, id]) => id), ['clued-cloud-tests', 'ci-suites', 'migration-verify', 'gitleaks', 'trivy', 'contract-placement']);
+  const depthFor = (value, eventName, ref) => {
+    const expression = /^\$\{\{ (.+) \}\}$/.exec(value);
+    if (!expression) return value;
+    const js = expression[1].replaceAll('github.event_name', JSON.stringify(eventName)).replaceAll('github.ref', JSON.stringify(ref));
+    assert.match(js, /^[\s"'a-z0-9_/.=&|()-]+$/i, value);
+    return String(Function(`return (${js});`)());
+  };
+  for (const [, id, job] of jobs) {
+    const checkout = /\n      - name: Check out the candidate\n((?:(?!      - )[^\n]*\n)*)/.exec(job);
+    assert.ok(checkout, `${id}: candidate checkout step`);
+    const depth = /^ {10}fetch-depth: (.+)$/m.exec(checkout[1]);
+    assert.ok(depth, `${id}: candidate checkout declares fetch-depth`);
+    assert.equal(depthFor(depth[1], 'workflow_dispatch', 'refs/heads/claude/some-branch'), '0', `${id}: lost-run dispatch`);
+    assert.equal(depthFor(depth[1], 'push', 'refs/heads/clued-train/staging'), '0', `${id}: staging push`);
+  }
+});
+
 test('glob patterns match across and within segments', () => {
   assert.ok(globToRegExp('work/independent-ci-resident-v1/**').test('work/independent-ci-resident-v1/src/executor.mjs'));
   assert.ok(globToRegExp('apps/clued-cloud/scripts/production-schema-*.mjs').test('apps/clued-cloud/scripts/production-schema-drift.mjs'));
@@ -619,6 +695,30 @@ for (const [cpus, concurrency] of [[16, 4], [4, 2], [64, 4], [15, 3]]) {
       [[`--test-concurrency=${concurrency}`], [`--test-concurrency=${concurrency}`]]);
   });
 }
+
+// FABLE-ci-10min-20261119 7.3: the unit tests run at the database tests' concurrency in a hosted job (GITHUB_ACTIONS) and at
+// run-tests.mjs's default 2 elsewhere, as the local limits assume.
+for (const [actions, cpus, concurrency] of [[true, 16, 4], [false, 16, 2], [true, 4, 2]]) {
+  test(`clued-cloud runs its unit tests at concurrency ${concurrency} with ${cpus} CPUs ${actions ? 'in a hosted job' : 'outside Actions'}`, (t) => {
+    t.mock.method(os, 'availableParallelism', () => cpus);
+    const unit = SUITE_COMMANDS['clued-cloud'].find((command) => command.known === 'clued-cloud');
+    assert.deepEqual(unit.argv.slice(0, 3), ['node', 'scripts/run-tests.mjs', '--test']);
+    const argv = selection.commandArgv(unit, { cwd: path.join(ROOT, unit.cwd), root: ROOT, hosted: actions,
+      listUnit: () => ['tests/u.test.mjs'] });
+    assert.deepEqual(argv.filter((arg) => arg.startsWith('--test-concurrency')), [`--test-concurrency=${concurrency}`]);
+    assert.equal(selection.testConcurrency(cpus), Math.max(2, Math.min(4, Math.floor(cpus / 4))));
+  });
+}
+test('the candidate expands {unit-concurrency} as the trusted side does in a hosted job: the command adds nothing', (t) => {
+  // The candidate's child has no GITHUB_ACTIONS (test-env.mjs): the trusted side passes the job's kind and core count.
+  t.mock.method(os, 'availableParallelism', () => 16);
+  const { root, dir, change } = candidateSelector(t);
+  writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), '');
+  const command = { cwd: '.', argv: ['node', '--test', '{unit-concurrency}', 'scripts/ci/retrigger-counter.test.mjs'] };
+  change('retrigger-counter', [command]);
+  assert.deepEqual([...selection.requiredCommands('retrigger-counter', root, { baseline: [command], env: { GITHUB_ACTIONS: 'true' } })], [command]);
+  assert.deepEqual(expandArgv(command.argv, { cwd: root, hosted: true }).slice(2, 3), ['--test-concurrency=4']);
+});
 
 test('outputs name every suite of the check', () => {
   const lines = outputLines('ci-suites', { suites: ['offline-drill'] });
@@ -954,6 +1054,20 @@ test("under Actions a suite child gets the fake token, not the job's, and keeps 
   assert.equal(seen[0].GITHUB_TOKEN, selection.FAKE_GITHUB_TOKEN);
   assert.equal(seen[0].RUNNER_TRACKING_ID, 'github_1234');
   assert.equal(seen[0].GITHUB_ACTIONS, undefined, 'a test runs the same in Actions and locally');
+});
+
+// Task 3435f8bf: the hosted windows image points PSModuleAnalysisCachePath at a warmed Windows PowerShell module analysis
+// cache; a suite child without it rebuilds the cache, about 20 s more for every powershell.exe. It is passed as given, in any
+// case of its name.
+test('a suite child keeps the PowerShell module analysis cache path, in any case of its name', () => {
+  const cache = 'C:\PSModuleAnalysisCachePath\ModuleAnalysisCache';
+  for (const name of ['PSModuleAnalysisCachePath', 'psmoduleanalysiscachepath', 'PSMODULEANALYSISCACHEPATH']) {
+    const seen = [];
+    const spawn = (command, args, options) => { seen.push(options.env); return { status: 0 }; };
+    assert.equal(executeSuite('retrigger-counter', { root: ROOT, env: { [name]: cache, CI_BASE_SHA: 'b', PATH: '/bin' }, spawn, log }), 0);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0][name], cache, `${name} reaches the suite child unchanged`);
+  }
 });
 
 // Codex review of 2ee162c2, medium 5: a proxy URL may carry a user name and password; such a variable is not passed.
@@ -1701,6 +1815,7 @@ test('bors staging, Windows side: T is resolved on main before the trusted selec
 // change's runner hook (the step's walk is the hook's, read from main).
 const LINUX_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'clued-required-tests.yml');
 const BASELINE_JOBS = [[LINUX_WORKFLOW, 'clued-cloud-tests'], [LINUX_WORKFLOW, 'ci-suites'], [LINUX_WORKFLOW, 'migration-verify'],
+  [LINUX_WORKFLOW, 'gitleaks'], [LINUX_WORKFLOW, 'trivy'], [LINUX_WORKFLOW, 'contract-placement'],
   [WINDOWS_WORKFLOW, 'ci-suites-windows']];
 function baselineStep(file, id) {
   const text = readFileSync(file, 'utf8');
@@ -2062,6 +2177,44 @@ test('run-files 12: a refused file names the suite that runs it or why none does
   assert.match(check.stdout + check.stderr, /migration-verify is a required check, not a suite; its suites: production-schema/);
 });
 
+// 11-22, 11-24 (task 0d2fb345): the entry, named a file clued-cloud refuses, printed nothing and exited 13 ("unsettled
+// top-level await"). The refusal loads check-tests-covered.mjs, which imports this module, while the entry awaited main at
+// top level: each waited for the other. run-files 12 calls runSuite in this process and never saw it; here the entry runs
+// as a process. The refused file a running test imports (main-entry-realpath.test.mjs, imported by local-dev-tools.test.mjs,
+// which clued-cloud runs) was also said to run in no suite.
+test('run-files 13: the entry refuses with its reason and exit 2 a file no suite runs and one only a running test imports', () => {
+  const quote = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const { tests } = JSON.parse(readFileSync(path.join(ROOT, 'scripts/ci/ci-uncovered-tests.json'), 'utf8'));
+  const uncovered = tests.find((entry) => !entry.path.includes('*') && entry.path.endsWith('.test.mjs') && existsSync(path.join(ROOT, entry.path))).path;
+  const imported = 'scripts/ci/main-entry-realpath.test.mjs';
+  const importer = 'apps/clued-cloud/tests/local-dev-tools.test.mjs';
+  assert.match(readFileSync(path.join(ROOT, importer), 'utf8'), /import '\.\.\/\.\.\/\.\.\/scripts\/ci\/main-entry-realpath\.test\.mjs';/);
+  const run = spawnSync(process.execPath, ['scripts/ci/ci-required-selection.mjs', '--run-files', 'clued-cloud', uncovered, imported],
+    { cwd: ROOT, encoding: 'utf8', input: '', timeout: 120_000, env: { ...process.env, GITHUB_ACTIONS: '' } });
+  const output = run.stdout + run.stderr;
+  assert.equal(run.status, 2, output);
+  assert.doesNotMatch(output, /unsettled top-level await/);
+  assert.match(output, new RegExp(`^run-files clued-cloud: suite clued-cloud does not run: ${quote(uncovered)}, ${quote(imported)}$`, 'm'));
+  assert.match(output, new RegExp(`^${quote(uncovered)}: no required suite runs it \\(scripts/ci/ci-uncovered-tests\\.json: `, 'm'));
+  assert.match(output, new RegExp(`^${quote(imported)} runs in clued-cloud imported by ${quote(importer)}: --run-files clued-cloud ${quote(importer)}$`, 'm'));
+});
+
+// What the entry awaits may never settle (a module cycle, a promise nothing resolves): Node then ends the process with the
+// event loop empty. The entry says so and exits 1, not 13 or 0 with nothing said; a result or an error still decides the exit.
+test('the entry reports an exit before its run settled, and exits with the run\'s result or error otherwise', () => {
+  const entry = pathToFileURL(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')).href;
+  const run = (body) => spawnSync(process.execPath, ['--input-type=module', '-e', `import { runEntry } from ${JSON.stringify(entry)};\n${body}`],
+    { encoding: 'utf8', input: '', timeout: 60_000, env: { ...process.env, GITHUB_ACTIONS: '' } });
+  const hung = run('runEntry(() => new Promise(() => {}));');
+  assert.equal(hung.status, 1, hung.stdout + hung.stderr);
+  assert.match(hung.stderr, /^ci-required-selection: ended before the run finished: a step it awaited never settled/m);
+  const refused = run('runEntry(async () => 2);');
+  assert.deepEqual([refused.status, refused.stderr], [2, '']);
+  const failed = run("runEntry(async () => { throw new Error('no such checkout'); });");
+  assert.equal(failed.status, 1);
+  assert.match(failed.stderr, /^ci-required-selection: no such checkout$/m);
+});
+
 // 11-21 17:03: four suite entries on the machine at once (a clued-cloud run, then three resident-node runs within a
 // minute) were read as four running suites. Their logs show two holders and two queued. Entries that start together
 // hold at most two slots; the others wait and say so, and one starts per freed slot.
@@ -2172,4 +2325,553 @@ test('a CLUED_CI_HOST_LACKS value the entry does not know runs nothing (exit 2) 
   assert.equal(await runSelected(['retrigger-counter'], { root: ROOT, env: { CLUED_CI_HOST_LACKS: 'non-elevated' }, log,
     run: async () => 0, summary: (text) => okSummary.push(text) }), 0);
   assert.match(okSummary.join(''), /\[needs:non-elevated\]/);
+});
+
+// --shard i/n (PLAN-hosted-windows-speed-20261123 block 3, V2). Every suite this file has runs through the real runSelected
+// and executeSuite with a recording spawn: the shards of each n together run the unsharded plan's units, each exactly once
+// (a test file operand of a listing command, or a whole command), in its order; 1/1 runs today's plan command for command.
+const shardRecord = (calls) => (command, args, options) => {
+  // The reporter's destination is a fresh temporary directory per command: not part of the plan.
+  calls.push({ cwd: path.relative(ROOT, options.cwd).replaceAll('\\', '/'),
+    argv: [command, ...args].filter((arg) => !arg.startsWith('--test-reporter')) });
+  return { status: 0 };
+};
+function shardUnits(calls) {
+  const units = [];
+  for (const { cwd, argv } of calls) {
+    const testAt = argv.indexOf('--test');
+    const unittestAt = argv.findIndex((arg, i) => arg === 'unittest' && argv[i - 1] === '-m');
+    const anchor = testAt >= 0 ? testAt : unittestAt >= 0 && argv[unittestAt + 1] !== 'discover' ? unittestAt : -1;
+    const operands = anchor < 0 ? [] : argv.filter((arg, i) => i > anchor && !arg.startsWith('-'));
+    if (operands.length === 0) {
+      units.push(JSON.stringify([cwd, argv]));
+      continue;
+    }
+    const switches = argv.filter((arg, i) => i <= anchor || arg.startsWith('-'));
+    for (const file of operands) units.push(JSON.stringify([cwd, switches, file]));
+  }
+  return units;
+}
+async function shardRun(suites, shard, env) {
+  const calls = [];
+  const run = (id, options) => executeSuite(id, { ...options, spawn: shardRecord(calls), platform: 'linux', known: {},
+    readReportFile: () => JSON.stringify({ type: 'summary', counts: {}, success: true }) });
+  assert.equal(await runSelected(suites, { root: ROOT, env, log, run, ...(shard ? { shard } : {}) }), 0);
+  return calls;
+}
+
+test('--shard i/n: the shards together run every unit of the plan once, in its order; 1/1 is the plan as it runs today', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp };
+  const all = Object.keys(SUITE_COMMANDS);
+  // Any selection: every suite, one suite, and orders that put the listing suites at other places.
+  const selections = [all, ['resident-node'], [...all].reverse(), all.filter((id, i) => i % 3 !== 1),
+    ['offline-drill', 'selection', 'retrigger-counter']];
+  for (const suites of selections) {
+    const plan = await shardRun(suites, null, env);
+    const planUnits = shardUnits(plan);
+    for (const total of [1, 2, 3, 4, 7]) {
+      const shards = [];
+      for (let index = 1; index <= total; index += 1) shards.push(await shardRun(suites, { index, total }, env));
+      if (total === 1) assert.deepEqual(shards[0], plan, `1/1 runs today's plan command for command (${suites.join(' ')})`);
+      const units = shards.map(shardUnits);
+      // Each unit once: no shard leaves one out, no two shards run the same one.
+      assert.deepEqual(units.flat().sort(), [...planUnits].sort(), `the ${total} shards of ${suites.join(' ')} run the plan's units once`);
+      for (const part of units) {
+        let at = 0;
+        for (const unit of part) {
+          while (at < planUnits.length && planUnits[at] !== unit) at += 1;
+          assert.ok(at < planUnits.length, `a shard runs ${unit} out of the plan's order`);
+          at += 1;
+        }
+      }
+      if (planUnits.length >= total * 4) {
+        const sizes = units.map((part) => part.length);
+        assert.ok(Math.min(...sizes) > 0, `every one of ${total} shards runs something: ${sizes}`);
+      }
+    }
+  }
+});
+
+test('--shard: a listing command runs its shard\'s files with its own switches; its known failures are those files\'', () => {
+  const command = { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: [] };
+  const argv = ['node', 'scripts/run-tests.mjs', '--test', '--test-concurrency=2', 'tests/a.test.mjs', 'tests/b.test.mjs', 'tests/c.test.mjs'];
+  const only = (file) => ['node', 'scripts/run-tests.mjs', '--test', '--test-concurrency=2', file];
+  const listed = new Set(['apps/clued-cloud/tests/a.test.mjs', 'apps/clued-cloud/tests/b.test.mjs', 'apps/clued-cloud/tests/c.test.mjs']);
+  assert.deepEqual(selection.shardCommand(command, argv, { index: 2, total: 2 }, 0),
+    { argv: only('tests/b.test.mjs'), units: 3, files: new Set(['apps/clued-cloud/tests/b.test.mjs']), listed });
+  assert.deepEqual(selection.shardCommand(command, argv, { index: 1, total: 4 }, 3),
+    { argv: only('tests/b.test.mjs'), units: 3, files: new Set(['apps/clued-cloud/tests/b.test.mjs']), listed });
+  assert.deepEqual(selection.shardCommand(command, argv, { index: 2, total: 4 }, 3),
+    { argv: only('tests/c.test.mjs'), units: 3, files: new Set(['apps/clued-cloud/tests/c.test.mjs']), listed });
+  assert.deepEqual(selection.shardCommand(command, argv, { index: 3, total: 4 }, 3), { argv: null, units: 3, files: null, listed: null });
+  // Not a list of test files: the command is one unit.
+  const discover = ['python', '-m', 'unittest', 'discover', '-s', 'test', '-p', 'test_*.py'];
+  assert.deepEqual(selection.shardCommand({ cwd: '.' }, discover, { index: 2, total: 3 }, 4), { argv: discover, units: 1, files: null, listed: null });
+  assert.deepEqual(selection.shardCommand({ cwd: '.' }, ['node', 'scripts/ci/check-cron-budget.mjs'], { index: 1, total: 3 }, 4),
+    { argv: null, units: 1, files: null, listed: null });
+
+  // admission-self-tests lists its files: of 2 shards, the one its number (shardOffset) gives has the first file, the other the second.
+  const [first, second] = SUITE_COMMANDS['admission-self-tests'][0].argv.slice(2);
+  const firstShard = (selection.shardOffset('admission-self-tests') % 2) + 1;
+  const known = { 'admission-self-tests': [{ file: first, path: ['a'], fingerprint: 'a'.repeat(16), reason: 'r' },
+    { file: second, path: ['b'], fingerprint: 'b'.repeat(16), reason: 'r' }] };
+  const summary = { type: 'summary', counts: {}, success: false };
+  const shardOf = (index, events, status) => {
+    const lines = [];
+    let ran;
+    const code = executeSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, known, log: (line) => lines.push(line),
+      spawn: (command, args) => { ran = args; return { status }; }, shard: { index, total: 2 },
+      readReportFile: () => [...events, summary].map((event) => JSON.stringify(event)).join('\n') });
+    return { code, lines: lines.join('\n'), ran };
+  };
+  const one = shardOf(firstShard, [], 0);
+  assert.equal(one.code, 0);
+  assert.ok(one.ran.includes(first) && !one.ran.includes(second));
+  assert.match(one.lines, new RegExp(`known failure no longer runs::${first} :: a`));
+  assert.doesNotMatch(one.lines, new RegExp(second), 'the other shard\'s known failure is not this shard\'s');
+  const two = shardOf(3 - firstShard, [{ type: 'fail', file: path.join(ROOT, second), path: ['b'], fingerprint: 'b'.repeat(16) }], 1);
+  assert.equal(two.code, 0);
+  assert.ok(two.ran.includes(second) && !two.ran.includes(first));
+  assert.match(two.lines, new RegExp(`known failure::${second} :: b`));
+  assert.doesNotMatch(two.lines, new RegExp(`${first} :: a`), 'the other shard\'s known failure is not this shard\'s');
+});
+
+test('--shard takes i/n with 1 <= i <= n, splits --run-selected only and runs only in a CI job', async () => {
+  assert.deepEqual(selection.parseShard('2/4'), { index: 2, total: 4 });
+  assert.deepEqual(selection.parseShard('1/1'), { index: 1, total: 1 });
+  for (const bad of ['0/4', '5/4', '1/0', '04/4', '1', '1/2/3', 'a/b', '', undefined]) {
+    assert.throws(() => selection.parseShard(bad), /--shard takes i\/n/, String(bad));
+  }
+  const lines = [];
+  const shard = { index: 1, total: 2 };
+  assert.equal(await selection.runSuite('retrigger-counter', { root: ROOT, env: {}, log: (line) => lines.push(line), shard }), 2);
+  assert.match(lines.join('\n'), /--shard runs only in a CI job/);
+  assert.throws(() => executeSuite('retrigger-counter', { root: ROOT, env: {}, log, files: ['scripts/ci/retrigger-counter.test.mjs'], shard }),
+    /--shard splits a suite run/);
+  const cli = (...args) => spawnSync(process.execPath, [path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), ...args],
+    { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '' } });
+  for (const [args, message] of [[['--run-selected', 'ci-suites', '--shard', '3/2'], /--shard takes i\/n/],
+    [['--run', 'retrigger-counter', '--shard', '1/2'], /--shard goes with --run-selected only/],
+    [['--run-selected', 'ci-suites', '--shard', '1/2'], /--shard runs only in a CI job/]]) {
+    const result = cli(...args);
+    assert.equal(result.status, 2, `${args.join(' ')}: ${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, message);
+  }
+});
+
+// Review of f574bab16 (REVIEW-hosted-speed-b3-20261124). Each shard selects on its own: one whose list of changed files
+// cannot be read runs every suite, the others the real selection. A suite's units go to the same shards whatever else a
+// shard selected, so each unit of the real selection still runs exactly once (H1: 39 of 157 files left out, 39 twice).
+async function shardRunById(suites, shard, env, { fail = () => false, summary = () => {} } = {}) {
+  const calls = [];
+  const run = (id, options) => executeSuite(id, { ...options, platform: 'linux', known: {},
+    spawn: (command, args, opts) => {
+      const call = { id, cwd: path.relative(ROOT, opts.cwd).replaceAll('\\', '/'),
+        argv: [command, ...args].filter((arg) => !arg.startsWith('--test-reporter')) };
+      calls.push(call);
+      return { status: fail(call) ? 1 : 0 };
+    },
+    readReportFile: () => JSON.stringify({ type: 'summary', counts: {}, success: true }) });
+  const status = await runSelected(suites, { root: ROOT, env, log, run, summary, ...(shard ? { shard } : {}) });
+  return { status, calls };
+}
+const unitsOf = (calls) => shardUnits(calls.map(({ cwd, argv }) => ({ cwd, argv })));
+
+test('--shard: shards that select differently (one runs every suite) still run each unit of the real selection once', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp };
+  const all = Object.keys(SUITE_COMMANDS);
+  for (const real of [['resident-node'], ['selection', 'offline-drill', 'source-v2-node']]) {
+    const plan = unitsOf((await shardRunById(real, null, env)).calls);
+    for (const total of [2, 4]) {
+      for (let fallback = 1; fallback <= total; fallback += 1) {
+        const ran = [];
+        for (let index = 1; index <= total; index += 1) {
+          const { status, calls } = await shardRunById(index === fallback ? all : real, { index, total }, env);
+          assert.equal(status, 0);
+          ran.push(...calls.filter((call) => real.includes(call.id)));
+        }
+        assert.deepEqual(unitsOf(ran).sort(), [...plan].sort(),
+          `${real.join(' ')}, ${total} shards, shard ${fallback} runs every suite: each unit of the selection once`);
+      }
+    }
+  }
+});
+
+test('--shard: a python -m unittest command with an operand that is not a file runs whole, in one shard', () => {
+  const argv = ['python', '-m', 'unittest', 'tests/test_a.py', 'tests'];
+  for (const total of [2, 3]) {
+    const parts = [];
+    for (let index = 1; index <= total; index += 1) parts.push(selection.shardCommand({ cwd: '.' }, argv, { index, total }, 0));
+    const runs = parts.filter((part) => part.argv);
+    assert.equal(runs.length, 1, `one of ${total} shards runs it`);
+    assert.deepEqual(runs[0].argv, argv, 'the package operand is not dropped');
+    assert.ok(parts.every((part) => part.units === 1));
+  }
+  // Every operand a file: split by file as before.
+  const files = ['python', '-m', 'unittest', 'tests/test_a.py', 'tests.test_b'];
+  assert.deepEqual(selection.shardCommand({ cwd: '.' }, files, { index: 2, total: 2 }, 0).argv, ['python', '-m', 'unittest', 'tests.test_b']);
+});
+
+test('--shard: the summary tells a suite this shard ran no unit of from one it ran and passed', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp };
+  const texts = [];
+  for (let index = 1; index <= 2; index += 1) {
+    const lines = [];
+    const { status, calls } = await shardRunById(['retrigger-counter'], { index, total: 2 }, env, { summary: (text) => lines.push(text) });
+    assert.equal(status, 0);
+    texts.push({ ran: calls.length, text: lines.join('') });
+  }
+  const idle = texts.find((part) => part.ran === 0);
+  const busy = texts.find((part) => part.ran === 1);
+  assert.ok(idle && busy, 'retrigger-counter is one unit: one shard runs it');
+  assert.doesNotMatch(idle.text, /retrigger-counter`: passed/);
+  assert.match(idle.text, /retrigger-counter`: not run in this shard \(0 of 1 units?\b/);
+  assert.match(busy.text, /retrigger-counter`: passed \(1 of 1 units? in this shard\)/);
+});
+
+test('--shard: a known failure of a file no longer in its command is reported by exactly one shard, as without --shard', () => {
+  const [first] = SUITE_COMMANDS['admission-self-tests'][0].argv.slice(2);
+  const gone = 'scripts/ci/gone-from-the-command.test.mjs';
+  const known = { 'admission-self-tests': [{ file: gone, path: ['g'], fingerprint: 'c'.repeat(16), reason: 'r' },
+    { file: first, path: ['a'], fingerprint: 'a'.repeat(16), reason: 'r' }] };
+  const warned = (shard) => {
+    const lines = [];
+    const code = executeSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, known, log: (line) => lines.push(line),
+      spawn: () => ({ status: 0 }), ...(shard ? { shard } : {}),
+      readReportFile: () => JSON.stringify({ type: 'summary', counts: {}, success: true }) });
+    assert.equal(code, 0);
+    return lines.filter((line) => line.includes(`known failure no longer runs::${gone}`)).length;
+  };
+  assert.equal(warned(null), 1);
+  for (const total of [1, 2, 3]) {
+    let count = 0;
+    for (let index = 1; index <= total; index += 1) count += warned({ index, total });
+    assert.equal(count, 1, `${total} shards: one warning`);
+  }
+});
+
+test('--shard is written --shard i/n, once: --shard=i/n and a second --shard exit 2', () => {
+  const cli = (...args) => spawnSync(process.execPath, [path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), ...args],
+    { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '', GITHUB_EVENT_NAME: '', GITHUB_OUTPUT: '', GITHUB_STEP_SUMMARY: '' } });
+  for (const [args, message] of [[['--check', 'ci-suites', '--shard=1/2'], /--shard takes i\/n as its own argument/],
+    [['--check', 'ci-suites', '--shard', '1/2', '--shard', '2/2'], /--shard is given once/],
+    [['--run-selected', 'ci-suites', '--shard', '1/2', '--shard', '2/2'], /--shard is given once/]]) {
+    const result = cli(...args);
+    assert.equal(result.status, 2, `${args.join(' ')}: ${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, message);
+  }
+});
+
+test('--shard: the changed files are those of the event\'s head; any doubt runs every suite (null)', async () => {
+  const event = { pull_request: { number: 7, head: { sha: 'b'.repeat(40) } } };
+  const env = { GITHUB_TOKEN: 't', GITHUB_REPOSITORY: 'o/r' };
+  const reply = (status, body) => ({ ok: status === 200, status, json: async () => body });
+  const fetcher = (head, { files = 200 } = {}) => async (url) => {
+    if (/\/pulls\/7\/files/.test(url)) return files === 'throw' ? Promise.reject(new Error('reset')) : reply(files, [{ filename: 'a.mjs' }]);
+    if (/\/pulls\/7$/.test(url)) return head === 'throw' ? Promise.reject(new Error('reset')) : reply(head ? 200 : 502, { head: { sha: head } });
+    throw new Error(url);
+  };
+  assert.deepEqual(await selection.shardChangedFiles({ event, env, fetchImpl: fetcher('b'.repeat(40)) }), ['a.mjs']);
+  assert.equal(await selection.shardChangedFiles({ event, env, fetchImpl: fetcher('c'.repeat(40)) }), null, 'a newer push');
+  assert.equal(await selection.shardChangedFiles({ event, env, fetchImpl: fetcher(null) }), null, 'the head cannot be read');
+  assert.equal(await selection.shardChangedFiles({ event, env, fetchImpl: fetcher('throw') }), null);
+  assert.equal(await selection.shardChangedFiles({ event, env, fetchImpl: fetcher('b'.repeat(40), { files: 502 }) }), null);
+  assert.equal(await selection.shardChangedFiles({ event: { pull_request: { number: 7 } }, env, fetchImpl: fetcher('b'.repeat(40)) }), null);
+});
+
+// L5: a shard that stops early, and a command the pull request adds.
+test('--shard: a shard that stops at a failure stops only that suite there; every other assignment is unchanged', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp };
+  const suites = ['components', 'retrigger-counter', 'selection'];
+  const total = 3;
+  const clean = [];
+  for (let index = 1; index <= total; index += 1) clean.push((await shardRunById(suites, { index, total }, env)).calls);
+  const stopping = clean.findIndex((calls) => calls.filter((call) => call.id === 'components').length >= 2);
+  assert.ok(stopping >= 0, 'a shard runs two components commands');
+  const target = JSON.stringify(clean[stopping].find((call) => call.id === 'components'));
+  for (let index = 1; index <= total; index += 1) {
+    const { status, calls } = await shardRunById(suites, { index, total }, env, { fail: (call) => JSON.stringify(call) === target });
+    if (index - 1 !== stopping) {
+      assert.equal(status, 0);
+      assert.deepEqual(calls, clean[index - 1]);
+      continue;
+    }
+    assert.equal(status, 1, 'the stopped shard fails');
+    assert.deepEqual(calls.filter((call) => call.id === 'components').map((call) => JSON.stringify(call)), [target]);
+    assert.deepEqual(calls.filter((call) => call.id !== 'components'), clean[index - 1].filter((call) => call.id !== 'components'),
+      'the next suites run their own units as before');
+  }
+});
+
+test('--shard: the test files and the command a pull request adds to a suite are split as the trusted ones are', async (t) => {
+  const { root, change } = candidateSelector(t);
+  const baseline = SUITE_COMMANDS['retrigger-counter'];
+  change('retrigger-counter', [{ cwd: '.', argv: [...baseline[0].argv, 'scripts/ci/extra-a.test.mjs', 'scripts/ci/extra-b.test.mjs',
+    'scripts/ci/extra-c.test.mjs'] }, { cwd: 'scripts/ci', argv: ['node', '-e', 'process.exit(0)'] }]);
+  const commands = [...selection.requiredCommands('retrigger-counter', root)];
+  assert.ok(commands.some((command) => command.files) && commands.some((command) => command.expanded), 'both kinds of addition');
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: root };
+  const record = (calls) => (command, args, opts) => {
+    calls.push({ cwd: path.relative(root, opts.cwd).replaceAll('\\', '/'), argv: [command, ...args].filter((arg) => !arg.startsWith('--test-reporter')) });
+    return { status: 0 };
+  };
+  const plan = [];
+  assert.equal(executeSuite('retrigger-counter', { root, env, log, spawn: record(plan), platform: 'linux', known: {} }), 0);
+  assert.equal(plan.length, 3);
+  for (const total of [1, 2, 3, 4]) {
+    const ran = [];
+    for (let index = 1; index <= total; index += 1) {
+      assert.equal(executeSuite('retrigger-counter', { root, env, log, spawn: record(ran), platform: 'linux', known: {}, shard: { index, total } }), 0);
+    }
+    if (total === 1) assert.deepEqual(ran, plan);
+    assert.deepEqual(shardUnits(ran).sort(), shardUnits(plan).sort(), `${total} shards`);
+  }
+});
+
+// Block 5 (FABLE-hosted-win-shard-balance-20261124 §2): --shard packs a listing command's files by their seconds
+// (ci-shard-seconds.json, passed to shardCommand here, never the repository's table), heaviest first into the lightest
+// shard. The table only moves files between shards: each file still runs in exactly one.
+const bySeconds = (files, total, position, seconds) => {
+  const parts = [];
+  for (let index = 1; index <= total; index += 1) {
+    const part = selection.shardCommand({ cwd: '.' }, ['node', '--test', '--test-concurrency=2', ...files], { index, total }, position, seconds);
+    assert.equal(part.units, files.length);
+    parts.push({ argv: part.argv, files: part.files ? [...part.files] : [] });
+  }
+  return parts;
+};
+
+test('--shard by seconds: two heavy files whose numbers agree mod n land in different shards (block 5 root cause)', () => {
+  const files = 'abcdefgh'.split('').map((letter) => `t/${letter}.test.mjs`);
+  const weights = [100, 1, 1, 1, 100, 1, 1, 1];
+  const seconds = Object.fromEntries(files.map((file, i) => [file, weights[i]]));
+  const sum = weights.reduce((a, b) => a + b, 0);
+  for (let position = 0; position < 4; position += 1) {
+    const parts = bySeconds(files, 4, position, seconds);
+    const loads = parts.map((part) => part.files.reduce((total, file) => total + seconds[file], 0));
+    const heavy = parts.find((part) => part.files.includes(files[0]));
+    assert.ok(!heavy.files.includes(files[4]), `position ${position}: the two 100-second files share a shard (${loads})`);
+    // One file alone weighs 100: no partition gets the heaviest shard under it.
+    assert.ok(Math.max(...loads) <= Math.max(1.15 * (sum / 4), Math.max(...weights)), `position ${position}: shards ${loads}`);
+  }
+});
+
+test('--shard by seconds: any table, any n, the shards split the command\'s files: disjoint, all of them, in order', () => {
+  let seed = 0x3435f8bf;
+  const random = () => {
+    seed = (seed + 0x6d2b79f5) >>> 0;
+    let t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const pick = (list) => list[Math.floor(random() * list.length)];
+  for (let trial = 0; trial < 300; trial += 1) {
+    const count = 1 + Math.floor(random() * 24);
+    const files = Array.from({ length: count }, (_, i) => `d${i % 3}/f${String(i).padStart(2, '0')}.test.mjs`);
+    // Empty, keys missing, ties, huge values, values that are no seconds at all (they weigh 1), keys of other commands.
+    const seconds = {};
+    const kind = trial % 4;
+    for (const file of files) {
+      if (kind === 0 || random() < 0.3) continue;
+      seconds[file] = kind === 1 ? pick([3, 3, 7]) : kind === 2 ? pick([3, 50, 1e9, Number.MAX_SAFE_INTEGER]) : pick([4, 0, -5, 2.5, '9', null, 12]);
+    }
+    seconds['elsewhere/x.test.mjs'] = 999;
+    const total = 1 + (trial % 8);
+    const position = Math.floor(random() * 40);
+    const parts = bySeconds(files, total, position, seconds);
+    const ran = parts.flatMap((part) => part.files);
+    assert.deepEqual([...ran].sort(), [...files].sort(), `trial ${trial}: every file once`);
+    for (const part of parts) {
+      assert.deepEqual(part.files, files.filter((file) => part.files.includes(file)), `trial ${trial}: a shard keeps the command's order`);
+      if (part.files.length === 0) assert.equal(part.argv, null);
+      else assert.deepEqual(part.argv, ['node', '--test', '--test-concurrency=2', ...part.files], `trial ${trial}: its own switches`);
+    }
+    if (total === 1) assert.deepEqual(parts[0].argv, ['node', '--test', '--test-concurrency=2', ...files], 'n = 1: the command as it is');
+  }
+});
+
+test('--shard by seconds: with no table (or none of its files in it) a file goes where (position + unit) mod n puts it', () => {
+  for (let count = 1; count <= 12; count += 1) {
+    const files = Array.from({ length: count }, (_, i) => `t/f${String(i).padStart(2, '0')}.test.mjs`);
+    for (let total = 1; total <= 8; total += 1) {
+      for (let position = 0; position <= 10; position += 1) {
+        for (const seconds of [undefined, {}, { 'elsewhere/x.test.mjs': 300 }]) {
+          const parts = bySeconds(files, total, position, seconds);
+          parts.forEach((part, i) => assert.deepEqual(part.files, files.filter((file, unit) => (position + unit) % total === i),
+            `${count} files, ${total} shards, from ${position}, table ${JSON.stringify(seconds)}`));
+        }
+      }
+    }
+  }
+});
+
+test('--shard by seconds: the checked-in table spreads resident-node over 4 shards (heaviest within 1.15 of the mean or one file)', () => {
+  const { table, problem } = selection.readShardSeconds();
+  assert.equal(problem, null, 'the checked-in table reads');
+  const [command] = SUITE_COMMANDS['resident-node'];
+  const argv = expandArgv(command.argv, { cwd: path.join(ROOT, command.cwd), root: ROOT, base: 'a'.repeat(40), report: '' });
+  const position = selection.shardOffset('resident-node');
+  const loads = [];
+  const ran = [];
+  let listed = null;
+  for (let index = 1; index <= 4; index += 1) {
+    const part = selection.shardCommand(command, argv, { index, total: 4 }, position, table);
+    listed ??= part.listed;
+    const mine = part.files ? [...part.files] : [];
+    ran.push(...mine);
+    loads.push(mine.reduce((total, file) => total + (table.get(file) ?? 0), 0));
+  }
+  assert.ok(listed && listed.size > 100, 'resident-node lists its files');
+  assert.deepEqual(ran.sort(), [...listed].sort(), 'every resident-node file once');
+  const weights = [...listed].map((file) => table.get(file) ?? 0);
+  const bound = Math.max(1.15 * (weights.reduce((a, b) => a + b, 0) / 4), ...weights);
+  assert.ok(Math.max(...loads) <= bound, `table seconds per shard ${loads}, bound ${bound}`);
+});
+
+test('ci-shard-seconds.json is the writer\'s output: repository path -> whole seconds >= 3, keys sorted', () => {
+  const text = readFileSync(selection.SHARD_SECONDS_PATH, 'utf8');
+  const data = JSON.parse(text);
+  assert.ok(data && typeof data === 'object' && !Array.isArray(data));
+  const keys = Object.keys(data);
+  assert.deepEqual(keys, [...keys].sort(), 'keys sorted');
+  for (const [file, seconds] of Object.entries(data)) {
+    assert.match(file, /^(?!\/)[^\\]+$/, `${file}: a repository path with forward slashes`);
+    assert.ok(Number.isSafeInteger(seconds) && seconds >= 3, `${file}: ${seconds}`);
+  }
+  assert.equal(text, `${JSON.stringify(data, null, 2)}\n`, 'written as --write-shard-seconds writes it');
+  // It is read only by --shard: neither every-suite selection nor the local selector files name it.
+  assert.ok(!SELECT_ALL.includes('scripts/ci/ci-shard-seconds.json'));
+  assert.ok(SUITES['ci-suites'].selection.includes('scripts/ci/ci-shard-seconds.json'), 'a change to the table runs its tests');
+});
+
+test('--shard by seconds: a missing or broken table is an empty one, with a notice; the shard still runs', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-seconds-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const write = (name, text) => { const file = path.join(temp, name); writeFileSync(file, text); return file; };
+  const bad = [path.join(temp, 'missing.json'), write('corrupt.json', '{"a":'), write('array.json', '[1]'), write('null.json', 'null'),
+    write('negative.json', '{"t/a.test.mjs":-3}'), write('fraction.json', '{"t/a.test.mjs":3.5}'), write('text.json', '{"t/a.test.mjs":"9"}'),
+    write('backslash.json', JSON.stringify({ 't\\a.test.mjs': 9 })), write('absolute.json', '{"/t/a.test.mjs":9}')];
+  for (const file of bad) {
+    const { table, problem } = selection.readShardSeconds(file);
+    assert.equal(table.size, 0, file);
+    assert.ok(problem, `${file}: says why`);
+  }
+  assert.deepEqual([...selection.readShardSeconds(write('good.json', '{"t/a.test.mjs":9}')).table], [['t/a.test.mjs', 9]]);
+  for (const file of bad.slice(0, 2)) {
+    const lines = [];
+    let ran = null;
+    const code = executeSuite('retrigger-counter', { root: ROOT, env: { RUNNER_TEMP: temp }, log: (line) => lines.push(line), platform: 'linux',
+      known: {}, spawn: (command, args) => { ran = args; return { status: 0 }; }, shard: { index: 1, total: 1 }, shardSecondsFile: file,
+      readReportFile: () => JSON.stringify({ type: 'summary', counts: {}, success: true }) });
+    assert.equal(code, 0);
+    assert.ok(ran.includes('scripts/ci/retrigger-counter.test.mjs'));
+    assert.match(lines.join('\n'), /::notice title=retrigger-counter shard seconds::/);
+    assert.match(lines.join('\n'), /按秒数分片，表里命中 0 \/ 本命令 1 个文件/);
+  }
+});
+
+test('--shard by seconds: a listing command says how much of the table it hit and logs each of its files\' seconds', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-seconds-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const files = SUITE_COMMANDS['admission-self-tests'][0].argv.slice(2);
+  const table = path.join(temp, 'table.json');
+  writeFileSync(table, `${JSON.stringify({ [files[0]]: 40, [files[1]]: 7, 'elsewhere/x.test.mjs': 5 })}\n`);
+  const at = (file) => path.join(ROOT, file);
+  const events = [{ type: 'pass', file: at(files[0]), path: ['a'], ms: 1500 }, { type: 'pass', file: at(files[0]), path: ['a', 'inner'] },
+    { type: 'fail', file: at(files[1]), path: ['b'], fingerprint: 'b'.repeat(16), ms: 2049 }, { type: 'pass', file: at(files[0]), path: ['c'], ms: 250 },
+    { type: 'summary', counts: {}, success: false }];
+  const known = { 'admission-self-tests': [{ file: files[1], path: ['b'], fingerprint: 'b'.repeat(16), reason: 'r' }] };
+  const lines = [];
+  const code = executeSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: temp }, known, log: (line) => lines.push(line),
+    platform: 'linux', spawn: () => ({ status: 1 }), shard: { index: 1, total: 1 }, shardSecondsFile: table,
+    readReportFile: () => events.map((event) => JSON.stringify(event)).join('\n') });
+  assert.equal(code, 0);
+  const text = lines.join('\n');
+  assert.match(text, new RegExp(`admission-self-tests: 按秒数分片，表里命中 2 / 本命令 ${files.length} 个文件`));
+  const logged = lines.filter((line) => line.startsWith('admission-self-tests: shard-seconds '));
+  assert.equal(logged.length, 1);
+  assert.deepEqual(JSON.parse(logged[0].slice('admission-self-tests: shard-seconds '.length)), { [files[0]]: 1.8, [files[1]]: 2 });
+  // The suite's first line names the table it read, so the shards' logs show they read the same one.
+  assert.match(lines[0], /^admission-self-tests: shard 1\/1, units numbered from \d+; 按秒数分片，表 3 条（[0-9a-f]{12}）$/);
+});
+
+test('--write-shard-seconds: the median of each file\'s samples in the shard logs, under 3 seconds dropped, keys sorted', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-seconds-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const one = path.join(temp, 'shard-1.log');
+  const two = path.join(temp, 'shard-2.log');
+  writeFileSync(one, ['2026-11-24T02:00:00.0000000Z resident-node: shard 1/4, units numbered from 3; 按秒数分片，表 0 条（e3b0c44298fc）',
+    '2026-11-24T02:03:00.0000000Z resident-node: shard-seconds {"w/z.test.mjs":10,"w/b.test.mjs":2,"w/d.test.mjs":4}',
+    'some other line: shard-seconds are fun', '2026-11-24T02:04:00.0000000Z selection: shard-seconds {"s/c.test.mjs":3.4}'].join('\r\n'));
+  writeFileSync(two, ['resident-node: shard-seconds {"w/z.test.mjs":30,"w/b.test.mjs":2.9,"w/d.test.mjs":5}',
+    'resident-node: shard-seconds {"w/z.test.mjs":20}'].join('\n'));
+  const out = path.join(temp, 'table.json');
+  writeFileSync(out, '{"old/gone.test.mjs":50}\n');
+  const expected = '{\n  "s/c.test.mjs": 3,\n  "w/d.test.mjs": 5,\n  "w/z.test.mjs": 20\n}\n';
+  const lines = [];
+  assert.equal(selection.writeShardSeconds([one, two], { file: out, log: (line) => lines.push(line) }), 0);
+  assert.equal(readFileSync(out, 'utf8'), expected);
+  assert.match(lines.join('\n'), /3 files written/);
+  // Nothing to write from (no shard-seconds line, an unreadable log, no log): the table stays as it was.
+  const none = path.join(temp, 'none.log');
+  writeFileSync(none, 'resident-node: shard 1/4\n');
+  for (const logs of [[none], [one, path.join(temp, 'missing.log')], []]) {
+    assert.notEqual(selection.writeShardSeconds(logs, { file: out, log: () => {} }), 0, logs.join(' '));
+    assert.equal(readFileSync(out, 'utf8'), expected);
+  }
+  const cli = spawnSync(process.execPath, [path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), '--write-shard-seconds'],
+    { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '' } });
+  assert.equal(cli.status, 2, `${cli.stdout}${cli.stderr}`);
+  assert.match(cli.stderr, /--write-shard-seconds <log>/);
+});
+
+test('the reporter gives a top-level test its whole milliseconds (ms), a nested one none', async () => {
+  const file = path.join(ROOT, 'x.test.mjs');
+  async function* source() {
+    yield { type: 'test:start', data: { file, nesting: 0, name: 'top' } };
+    yield { type: 'test:start', data: { file, nesting: 1, name: 'inner' } };
+    yield { type: 'test:pass', data: { file, nesting: 1, name: 'inner', details: { duration_ms: 12.6 } } };
+    yield { type: 'test:pass', data: { file, nesting: 0, name: 'top', details: { duration_ms: 1234.4 } } };
+    yield { type: 'test:start', data: { file, nesting: 0, name: 'bad' } };
+    yield { type: 'test:fail', data: { file, nesting: 0, name: 'bad', details: { duration_ms: 99.5, error: new Error('x') } } };
+    yield { type: 'test:start', data: { file, nesting: 0, name: 'skipped' } };
+    yield { type: 'test:pass', data: { file, nesting: 0, name: 'skipped', skip: true, details: { duration_ms: 0.2 } } };
+  }
+  const lines = [];
+  for await (const line of reporterStream(source())) lines.push(JSON.parse(line));
+  assert.deepEqual(lines.map(({ path: at, ms }) => [at.join(' > '), ms]),
+    [['top > inner', undefined], ['top', 1234], ['bad', 100], ['skipped', 0]]);
+});
+
+test('the reporter counts a test\'s child process in the test\'s own file (fleet-node-children: its fleet tests are its seconds)', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-seconds-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  // Named like another file, as fleet-node-children names each fleet test it starts.
+  writeFileSync(path.join(temp, 'parent.test.mjs'), [
+    "import { spawnSync } from 'node:child_process';",
+    "import test from 'node:test';",
+    "test('rollout/fleet/test/other.test.mjs', () => {",
+    "  const r = spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1200)']);",
+    "  if (r.status !== 0) throw new Error('child failed');",
+    '});', ''].join('\n'));
+  const out = path.join(temp, 'report.jsonl');
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const run = spawnSync(process.execPath, ['--test', `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`, `--test-reporter-destination=${out}`,
+    'parent.test.mjs'], { cwd: temp, env, encoding: 'utf8' });
+  assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+  const { events } = readReport(readFileSync(out, 'utf8'), temp);
+  const top = events.filter((event) => event.type === 'pass');
+  assert.equal(top.length, 1);
+  assert.equal(top[0].file, 'parent.test.mjs');
+  assert.ok(top[0].ms >= 1100, `the child's time is the parent file's: ${top[0].ms} ms`);
 });

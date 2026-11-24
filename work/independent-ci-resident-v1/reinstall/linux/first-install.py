@@ -214,32 +214,52 @@ MODS = ['worker/qualification-v2.mjs', 'src/worker-v2.mjs', 'src/job-v2.mjs', 's
 CI = 'work/actions-hosted-migration/independent-ci-v1'
 
 DOCKER_READY = r"""# Docker may still be starting after the WSL cold boot. Observe only: never
-# start/restart a unit. One read of ActiveState and Job decides (Fable ruling 0e418483, 1.2):
+# start/restart a unit. One read of ActiveState and Job decides (Fable ruling 0e418483, 1.2, with
+# the phase A systemd ruling, task 87d330d0, 1.1):
 #   active                          -> ready
 #   activating, any job             -> not settled: read again after a second
 #   any other state, a queued job   -> not settled (systemd keeps a start job queued behind
 #                                      network-online.target and containerd as inactive)
 #   any other state, no job         -> final: refused at once (a failed job lands here)
-# One bound for all unsettled reads together. A refusal writes the scene to stderr first;
-# a query of the scene that fails changes no code.
+#   the query itself fails          -> not settled (on a cold boot systemd's bus may not be up
+#                                      yet; a failure's cause is never told by its message)
+# One bound for all unsettled reads together, on the boot clock (/proc/uptime; bash's SECONDS is
+# the wall clock, which a suspended guest steps). At the bound the last read gives the code:
+# SYSTEMCTL_FAILED after a failed query, else DOCKER_SERVICE_ACTIVATION_TIMEOUT. A refusal writes
+# the scene to stderr first: the long parts first, then the unit, the job queue and the boot
+# state, then a short block (uptime, the manager's private socket, PID 1's state, memory,
+# pressure) and the code last, so that the launcher's last 2000 characters keep them; a query of
+# the scene that fails changes no code. Passing, one line: the seconds waited, the seconds until
+# the first query that answered, and the boot clock at the start (null when unreadable).
 # Active, the image store decides (Fable ruling 0e418483, r7 phase B, 2.2): an image ID means
 # the containerd store's .Id, so docker info's DriverStatus must name io.containerd.snapshotter,
 # else DOCKER_IMAGE_STORE_NOT_CONTAINERD, the Driver and DriverStatus on stderr first.
+# The boot clock's file, set once here; a test sets UPTIME after this text. docker_ready takes no
+# argument: root-run passes none.
+UPTIME=/proc/uptime
 docker_ready() {
-  local limit=180 started=$SECONDS remaining out state job code= waited store
+  local limit=180 up=$UPTIME boot t0 now mark=0 marked=$SECONDS remaining out state job code= last=DOCKER_SERVICE_ACTIVATION_TIMEOUT waited failed= store k v p
+  # the boot clock in whole seconds; unreadable, the last reading moved on by SECONDS
+  docker_ready_now() { local s; if { IFS=. read -r s _ <"$up"; } 2>/dev/null && [[ $s =~ ^[0-9]+$ ]]; then now=$s mark=$s marked=$SECONDS; else now=$((mark + SECONDS - marked)); fi; }
+  if { IFS=. read -r boot _ <"$up"; } 2>/dev/null && [[ $boot =~ ^[0-9]+$ ]]; then :; else boot=null; fi
+  docker_ready_now; t0=$now
   while :; do
-    remaining=$((limit - (SECONDS - started)))
-    if [ "$remaining" -le 0 ]; then code=DOCKER_SERVICE_ACTIVATION_TIMEOUT; break; fi
-    if ! out=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --property=Job docker.service); then code=SYSTEMCTL_FAILED; break; fi
-    state=$(printf '%s\n' "$out" | sed -n 's/^ActiveState=//p'); job=$(printf '%s\n' "$out" | sed -n 's/^Job=//p')
-    if [ "$state" = active ]; then waited=$((SECONDS - started)); break; fi
-    if [ "$state" != activating ] && [ -z "$job" ]; then code=DOCKER_SERVICE_NOT_ACTIVE; break; fi
-    if [ "$((SECONDS - started))" -ge "$limit" ]; then code=DOCKER_SERVICE_ACTIVATION_TIMEOUT; break; fi
+    docker_ready_now; remaining=$((limit - (now - t0)))
+    if [ "$remaining" -le 0 ]; then code=$last; break; fi
+    if out=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --property=Job docker.service); then
+      docker_ready_now; [ -n "$failed" ] || failed=$((now - t0)); last=DOCKER_SERVICE_ACTIVATION_TIMEOUT
+      state=$(printf '%s\n' "$out" | sed -n 's/^ActiveState=//p'); job=$(printf '%s\n' "$out" | sed -n 's/^Job=//p')
+      if [ "$state" = active ]; then waited=$((now - t0)); break; fi
+      if [ "$state" != activating ] && [ -z "$job" ]; then code=DOCKER_SERVICE_NOT_ACTIVE; break; fi
+    else
+      docker_ready_now; last=SYSTEMCTL_FAILED
+    fi
+    if [ "$((now - t0))" -ge "$limit" ]; then code=$last; break; fi
     if ! sleep 1; then code=DOCKER_SERVICE_WAIT_FAILED; break; fi
   done
   if [ -z "$code" ]; then
     store=$(timeout --signal=KILL 60s docker info --format '{{json .DriverStatus}}' 2>/dev/null) || store="(docker info: exit $?)"
-    case "$store" in *io.containerd.snapshotter*) echo "{\"dockerReady\":\"active\",\"waitedSeconds\":$waited}"; return 0 ;; esac
+    case "$store" in *io.containerd.snapshotter*) echo "{\"dockerReady\":\"active\",\"waitedSeconds\":$waited,\"queryFailedSeconds\":$failed,\"bootSeconds\":$boot}"; return 0 ;; esac
     {
       echo "docker_ready: DOCKER_IMAGE_STORE_NOT_CONTAINERD; the store:"
       echo "Driver=$(timeout --signal=KILL 10s docker info --format '{{.Driver}}' 2>&1 || echo "(docker info: exit $?)")"
@@ -248,10 +268,24 @@ docker_ready() {
     refuse DOCKER_IMAGE_STORE_NOT_CONTAINERD
   fi
   {
-    echo "docker_ready: $code after $((SECONDS - started))s; the scene:"
+    echo "docker_ready: $code; the scene:"
+    echo "-- journalctl -b 0, its last 40 lines:"
+    { timeout --signal=KILL 10s journalctl -b 0 -o short-monotonic --no-pager || echo "(journalctl: exit $?)"; } | tail -n 40
+    echo "-- ps, its first 25 lines:"
+    { timeout --signal=KILL 10s ps -eo pid,ppid,etimes,stat,comm --sort=start_time || echo "(ps: exit $?)"; } | head -n 25
+    echo "-- dmesg, its last 15 lines:"
+    { timeout --signal=KILL 10s dmesg || echo "(dmesg: exit $?)"; } | tail -n 15
     timeout --signal=KILL 10s systemctl show -p ActiveState,SubState,Result,Job docker.service || echo "(systemctl show: exit $?)"
     { timeout --signal=KILL 10s systemctl list-jobs --no-legend || echo "(systemctl list-jobs: exit $?)"; } | head -n 20
     timeout --signal=KILL 10s systemctl is-system-running || echo "(systemctl is-system-running: exit $?)"
+    echo "uptime=$(timeout --signal=KILL 10s cat "$up" 2>&1 || echo "(cat: exit $?)")"
+    if [ -S /run/systemd/private ]; then echo private=socket; elif [ -e /run/systemd/private ]; then echo private=not-a-socket; else echo private=absent; fi
+    echo "pid1=$(timeout --signal=KILL 10s sed -n 's/^State:[[:space:]]*//p' /proc/1/status 2>&1 || echo "(sed: exit $?)")"
+    v=$(timeout --signal=KILL 10s free -m 2>&1) && v=$(printf '%s\n' "$v" | awk '/^Mem:/ { print $7 }') || v="(free: exit $?)"
+    echo "mem=$v"
+    p=; for k in cpu memory io; do v=$(timeout --signal=KILL 10s sed -n 's/^some avg10=\([0-9.]*\).*/\1/p' "/proc/pressure/$k" 2>/dev/null) && [ -n "$v" ] || v='?'; p="$p${p:+ }$k:$v"; done
+    echo "psi=$p"
+    echo "docker_ready: $code after $((now - t0))s"
   } >&2 || :
   refuse "$code"
 }

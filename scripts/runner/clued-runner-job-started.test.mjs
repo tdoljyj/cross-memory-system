@@ -1216,7 +1216,7 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
 
 // Since the loader (runner-hook-loader-v1) the component is this file itself, run from main: no immutable per-version copy is added.
 test("the hook component is the file runners load from main; the earlier immutable sources stay for their pins", () => {
-  assert.equal(COMPONENT_VERSION, "1.0.7");
+  assert.equal(COMPONENT_VERSION, "1.0.8");
   const manifest = JSON.parse(fs.readFileSync(new URL("../../config/clued-components.json", import.meta.url), "utf8"));
   const component = manifest.components.find((c) => c.id === "hook.runner-job-started");
   assert.deepEqual([component.version, component.files, component.version_marker.file], [COMPONENT_VERSION, ["clued-runner-job-started.mjs"], "clued-runner-job-started.mjs"]);
@@ -1312,7 +1312,7 @@ test("transient reads: the App token mint and the execution_current observation 
   const rejecting = retryingFetch(async () => { throw new TypeError("fetch failed"); }, { sleep: async () => {} });
   await assert.rejects(rejecting("https://api.github.com/x", {}), (error) => error.transient === true && /fetch failed/.test(error.message));
   assert.equal(READ_RETRY_DELAYS_MS.length, READ_ATTEMPTS - 1);
-  assert.equal(waitLimitSeconds({}), 480);
+  assert.equal(waitLimitSeconds({}), 780);
   assert.equal(waitLimitSeconds({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "20" }), 20);
 });
 
@@ -1332,6 +1332,33 @@ function clockedFetch(script, intercept) {
 }
 const decideAt = (h, fake, overrides = {}) => decide({ env: env(overrides), fetchImpl: fake.fetchImpl, now: h.now, sleep: h.sleep, timeoutSignal: h.timeoutSignal,
   readFile: (p) => (p === "/token" ? "ghp_read\n" : prEvent()) });
+
+// #1236 593ee2ec (FABLE-scaffold-shadow-fix-20261122 §2 C, §4): a pull request that changes a workflow, pushed
+// 22:40:46 Beijing; the hook waited its default 480 s and refused in Set up runner at 22:49:03; the Native
+// admission arrived 22:50:09, 563 s after the run was created. The default wait is 780 s, the longest wait the
+// registered gate job holds (clued-work-admission.mjs), so that head now starts; one that has none by 780 s does not.
+const AT_1236 = "2026-11-22T14:40:46Z";
+const arrivesAt = (h, seconds) => () => {
+  const at = Date.parse(AT_1236) + seconds * 1000;
+  const check = h.now() >= at ? nativeCheck({ started_at: AT_1236, completed_at: new Date(at).toISOString() })
+    : nativeCheck({ started_at: AT_1236, status: "in_progress", conclusion: null, completed_at: null });
+  return { body: { total_count: 1, check_runs: [check] } };
+};
+test("#1236 593ee2ec replay: with the default wait a workflow-changing head whose Native admission arrives at 563 s starts", async () => {
+  const h = clockFor(Date.parse(AT_1236));
+  const fake = clockedFetch({ [RUN]: thisRun({ created_at: AT_1236 }), ...nativeScript(), [NATIVE]: arrivesAt(h, 563) }, () => undefined);
+  const result = await decideAt(h, fake, { CLUED_RUNNER_HOOK_WAIT_SECONDS: undefined });
+  assert.equal(result.allow, true, result.reason);
+  assert.ok(h.elapsed() >= 563_000 && h.elapsed() < 600_000, `${h.elapsed()} ms`);
+});
+test("#1236 replay: with the default wait a head with no Native admission by 780 s is refused, and not earlier", async () => {
+  const h = clockFor(Date.parse(AT_1236));
+  const fake = clockedFetch({ [RUN]: thisRun({ created_at: AT_1236 }), ...nativeScript(), [NATIVE]: arrivesAt(h, 10_000) }, () => undefined);
+  const result = await decideAt(h, fake, { CLUED_RUNNER_HOOK_WAIT_SECONDS: undefined });
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /Native admission 80: not admitted/);
+  assert.ok(h.elapsed() >= 780_000 && h.elapsed() < 800_000, `${h.elapsed()} ms`);
+});
 
 test("clock: a Native check that completed while its read was tried again is judged at the time it was seen, and admits (MAJOR-1)", async () => {
   const h = clockFor(Date.parse(RUN_CREATED) + 1_000);

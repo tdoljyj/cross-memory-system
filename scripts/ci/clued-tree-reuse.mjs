@@ -32,7 +32,7 @@ export const TARGETS = Object.freeze({
     job: 'Information Flow E2E over the local Worker and Supabase stack',
     steps: ['Run the Information Flow E2E harness', 'Recompute normalized evidence digests'],
   },
-  'clued-required-tests.yml': { proof: 'ancestry', jobs: Object.freeze(['clued-cloud-tests', 'ci-suites', 'migration-verify']) },
+  'clued-required-tests.yml': { proof: 'ancestry', jobs: Object.freeze(['clued-cloud-tests', 'ci-suites', 'migration-verify', 'gitleaks', 'trivy', 'contract-placement']) },
   'clued-required-tests-windows.yml': { proof: 'ancestry', jobs: Object.freeze(['ci-suites-windows']) },
 });
 const GATE_JOB = 'admission-gate';
