@@ -978,6 +978,19 @@ test('P6 窗口内也不放过：合入后 9 分钟，能确定没有结论或�
   }
 });
 
+test('P6b 框架侧缺、托管侧 in_progress（M 上还没有框架检查，合入后 9 分钟）：托管未完成不算框架结论未出，判未知', async () => {
+  const t = at(24);
+  const headRuns = runsAt(t, (check, side) => side === 'framework' ? undefined
+    : check === 'trivy' ? [run('hosted-trivy', 15368, null, { status: 'in_progress', started: t })] : null);
+  const { report, head } = await justMerged({ minutes: 9, lead: 2, ...SHAPES.P2, headRuns });
+  assert.equal(head.role, 'final');
+  assert.equal(head.verdict, '未知');
+  assert.equal(pairOf(head, 'trivy').verdict, '未知');
+  assert.equal(pairOf(head, 'trivy').reason, '框架缺检查');
+  assert.equal(report.summary.streak.heads, 0);
+  assert.ok(!(report.summary.pendingMergedHeads > 0));
+});
+
 test('P7 自愈：框架跑完后再读按真实结果判（合入后 120 分钟）', async () => {
   const t = at(24);
   const green = await justMerged({ minutes: 120, lead: 2, mRuns: frameworkOnly(t) });
