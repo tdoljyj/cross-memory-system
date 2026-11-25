@@ -80,6 +80,20 @@ test('T1：Broker 解析层拒绝旧式自拉请求形状', { skip: process.plat
   t.diagnostic(stdout.trim());
 });
 
+test('组装入口接受带 UTF-8 BOM 的 Broker 握手，拒绝其他内容', async () => {
+  const script = path.join(RES, 'src', 'fleet-assemble-main.mjs');
+  for (const [input, expected] of [
+    ['assemble\n', '{"code":"FLEET_BROKER_PATH_REFUSED"}'],
+    ['\uFEFFassemble\n', '{"code":"FLEET_BROKER_PATH_REFUSED"}'],
+    ['\uFEFFassemble\r\n', ''],
+  ]) {
+    // Relative paths make an accepted handshake reach the path guard without touching the filesystem.
+    const child = exec(process.execPath, [script, '--root', 'fixture-root', '--run', 'fixture-run'], { windowsHide: true });
+    child.child.stdin.end(input);
+    assert.equal((await child).stdout.trim(), expected, JSON.stringify(input));
+  }
+});
+
 async function fixtureLanes({ node, release, broker, onDuty = false, peers = [], failVerify = false,
   runBroker = args => exec(broker, args, { windowsHide: true }), upload, clockNow = () => now }) {
   const { companionSelfPull, residentSelfPull } = await lanes();
