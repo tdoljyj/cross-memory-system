@@ -282,9 +282,9 @@ test('the kit registers a stand-in step for every name the drill makes, required
   const { companionToken, ...noCompanion } = PACKAGE_CREDENTIALS.required;
   const optionalCompanion = { required: noCompanion, optional: { ...PACKAGE_CREDENTIALS.optional, companionToken: 'companion-github.token' } };
   const steps = c => drillKitManifest({ ...inputs, credentials: c }).perNodeSteps;
-  assert.equal(steps(optionalCompanion).length, 4, 'made and handed over as an optional name: registered');
+  assert.equal(steps(optionalCompanion).length, 5, 'made and handed over as an optional name: registered');
   assert.match(steps(optionalCompanion)[3], /^陪伴 GitHub 经典令牌替身/);
-  assert.equal(steps({ required: noCompanion, optional: PACKAGE_CREDENTIALS.optional }).length, 3);
+  assert.equal(steps({ required: noCompanion, optional: PACKAGE_CREDENTIALS.optional }).length, 4);
   // the run makes the same names (its plan) from the same table: the table the run holds is the file the builder reads
   assert.ok(planOf(optionalCompanion).fake.includes('companion-github.token'));
   const table = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../drill/credential-decisions.json', import.meta.url)), 'utf8'));
@@ -294,10 +294,11 @@ test('the kit registers a stand-in step for every name the drill makes, required
     assert.equal(held[name].give, d.give, name);
     if (d.give) assert.equal(held[name].fake, d.fake, name); else assert.equal(held[name].reason, d.reason, name);
   }
-  // a stand-in step is registered for exactly the names the plan makes that carry one
+  // a stand-in step is registered for exactly the names the plan makes that carry one (the last step is the host-injected prerequisites')
   for (const c of [PACKAGE_CREDENTIALS, optionalCompanion, { required: noCompanion, optional: PACKAGE_CREDENTIALS.optional }]) {
     const made = planOf(c).given.filter(n => table.decisions[n].perNodeStep);
-    assert.deepEqual(steps(c).slice(3), made.map(n => table.decisions[n].perNodeStep));
+    assert.deepEqual(steps(c).slice(3, -1), made.map(n => table.decisions[n].perNodeStep));
+    assert.equal(steps(c).at(-1), drillKit.PREREQ_STAND_IN_STEP);
   }
 });
 
@@ -420,7 +421,7 @@ test('the decision table is looked up ordinally and case-sensitively at both end
     prereqBytes: Buffer.from('{"contract":"clued.drill.prereq/1"}\r\n') };
   const respelt = { ...PACKAGE_CREDENTIALS, required: { ...PACKAGE_CREDENTIALS.required, companionToken: 'Companion-GitHub.token' } };
   assert.deepEqual(planOf(respelt), { code: 'DRILL_CREDENTIAL_REQUIRED_NOT_MADE', detail: 'Companion-GitHub.token' });
-  assert.equal(drillKitManifest({ ...inputs, credentials: respelt }).perNodeSteps.length, 3);
+  assert.equal(drillKitManifest({ ...inputs, credentials: respelt }).perNodeSteps.length, 4);
   const optional = { ...PACKAGE_CREDENTIALS, optional: { heartbeatToken: 'CI-Node-Heartbeat.token' } };
   assert.deepEqual(planOf(optional), { code: 'DRILL_CREDENTIAL_OPTIONAL_UNDECIDED', detail: 'CI-Node-Heartbeat.token' });
   assert.equal(ps(`$script:DrillCredentialDecisions.Contains('Companion-GitHub.token')`), false);
