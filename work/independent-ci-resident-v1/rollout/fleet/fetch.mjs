@@ -128,7 +128,7 @@ export async function fetchPackage({ version, dir, repo = DEFAULT_REPO, from = n
   // the small files: the second source when it has them, else the release
   const small = async n => { if (!(await fromDir(n))) await fromRelease(n); return fs.readFile(out(n)); };
 
-  const acc = JSON.parse((await small(name.acceptance)).toString('utf8').replace(/^﻿/, ''));
+  const acc = JSON.parse((await small(name.acceptance)).toString('utf8').replace(/^\uFEFF/, ''));
   check(HEX64.test(acc?.archive_sha256 ?? '') && acc.version === version, 'FETCH_ACCEPTANCE_NOT_THIS_VERSION', { version: acc?.version ?? null });
   const sums = (await small(name.sums)).toString('utf8').split(/\r?\n/).map(l => /^([0-9a-fA-F]{64}) [ *]?(.+)$/.exec(l)).filter(Boolean);
   const listed = sums.find(m => m[2] === name.tar)?.[1]?.toLowerCase();
