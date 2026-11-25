@@ -334,7 +334,7 @@ const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = '
     if (door.answer) return door.answer(resource, base);
     const opens = opensNow();
     if (opens > door.opensSeen) { door.opensSeen = opens; if (['none', 'rejected', 'expired'].includes(door.status)) door.status = door.openTo; }
-    if (door.status === 'pending') return { ...base, status: 'pending', owner_request: { request_id: requestId, status: 'pending', confirm_path: `/confirm/${requestId}`, expires_at: door.expiresAt } };
+    if (door.status === 'pending') return { ...base, status: 'pending', request_id: requestId, confirm_path: `/confirm/${requestId}`, expires_at: door.expiresAt };
     if (door.status === 'accepted') return { ...base, status: 'accepted', grant_id: door.grant, receipt_id: door.receipt, accepted_at: door.acceptedAt, nodes: door.nodes };
     return { ...base, status: door.status };
   };
@@ -1275,8 +1275,8 @@ test('seal refuses a door answer that is not one of the five, not of this reques
   await w.prep();
   const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
   const okOf = base => ({ ...base, status: 'accepted', grant_id: GRANT, receipt_id: GRANT_RECEIPT, accepted_at: '2026-11-25T01:02:03Z' });
-  const pendingOf = (base, over = {}) => ({ ...base, status: 'pending', owner_request: { request_id: '0b0b0b0b-1111-4111-8111-000000000001',
-    confirm_path: '/confirm/0b0b0b0b-1111-4111-8111-000000000001', expires_at: '2099-01-01T00:00:00Z', ...over } });
+  const pendingOf = (base, over = {}) => ({ ...base, status: 'pending', request_id: '0b0b0b0b-1111-4111-8111-000000000001',
+    confirm_path: '/confirm/0b0b0b0b-1111-4111-8111-000000000001', expires_at: '2099-01-01T00:00:00Z', ...over });
   const cases = [
     [b => ({ ...okOf(b), status: 'ok' }), 'ACCEPT_DOOR_ANSWER_REFUSED'],
     [() => null, 'ACCEPT_DOOR_ANSWER_REFUSED'],
@@ -1387,7 +1387,7 @@ test('accept-door: the anonymous read is one POST of the resource with the repos
   // the answer: five statuses, each naming the request (request_sha256) and, when it says, the resource
   const of = { resource, requestSha256: '2'.repeat(64) };
   for (const st of ['none', 'rejected', 'expired']) assert.deepEqual(door.readAnswer({ status: st, request_sha256: '2'.repeat(64), resources: [resource] }, of), { kind: st });
-  assert.deepEqual(door.readAnswer({ status: 'pending', request_sha256: '2'.repeat(64), owner_request: { confirm_path: '/confirm/0b0b0b0b-1111-4111-8111-000000000001', expires_at: '2099-01-01T00:00:00Z' } }, of),
+  assert.deepEqual(door.readAnswer({ status: 'pending', request_sha256: '2'.repeat(64), confirm_path: '/confirm/0b0b0b0b-1111-4111-8111-000000000001', expires_at: '2099-01-01T00:00:00Z' }, of),
     { kind: 'pending', confirmUrl: 'https://kooyumi.pixelgrav.com/confirm/0b0b0b0b-1111-4111-8111-000000000001', expiresAt: '2099-01-01T00:00:00Z' });
 });
 
@@ -1446,6 +1446,66 @@ test('accept-door readFleet: the accepted answer\'s registered nodes as [{ node,
   for (const nodes of [undefined, [{ name: '', source_sha256: null, paused: false }], [{ name: 'X', source_sha256: 'zz', paused: false }], [{ name: 'X', source_sha256: null }]]) {
     await assert.rejects(door.readFleet({ resource, readStatus: async () => ({ ...accepted, nodes }) }), { code: 'ACCEPT_DOOR_ANSWER_REFUSED' }, JSON.stringify(nodes));
   }
+});
+
+// Task 87d330d0 alignment: part A's answers exactly as migration 20261125100000_fleet_accept_door_v1.sql writes them (fleet_accept_answer_v1;
+// owner-grants-fleet-accept-door-db.test.mjs pins the same keys on a real database): every answer carries the resource's parts, pending and
+// the decided ones their request at the top, times as Postgres writes a timestamptz, the nodes as { name, source_sha256, paused }.
+const A_ID = '0b0b0b0b-1111-4111-8111-000000000007';
+const aAnswers = resource => {
+  const [owner, repo, version, archive, request] = resource.slice('fleet-node:'.length).split('/');
+  const repository = `${owner}/${repo}`;
+  const base = { action: 'fleet.accept', resources: [resource], repository, version, archive_sha256: archive, request_sha256: request };
+  return {
+    base,
+    none: { ...base, status: 'none' },
+    conflict: { ...base, status: 'none', conflict: 'fleet_accept_version_already_accepted' },
+    pending: { ...base, status: 'pending', request_id: A_ID, confirm_path: `/confirm/${A_ID}`, expires_at: '2026-11-26T04:45:12.345678+00:00' },
+    accepted: { ...base, status: 'accepted', grant_id: GRANT, receipt_id: GRANT_RECEIPT, accepted_at: '2026-11-25T04:45:12.345678+00:00',
+      nodes: [{ name: 'desk', source_sha256: '5'.repeat(64), paused: false }, { name: 'turing', source_sha256: null, paused: true }] },
+    rejected: { ...base, status: 'rejected', request_id: A_ID, decided_at: '2026-11-25T05:00:00.1+00:00', expires_at: '2026-11-26T04:45:12.345678+00:00' },
+    expired: { ...base, status: 'expired', request_id: A_ID, decided_at: null, expires_at: '2026-11-26T04:45:12.345678+00:00' },
+  };
+};
+
+test("accept-door takes part A's answers as the migration writes them: pending's link at the top, accepted with its nodes, the decided ones; a version accepted otherwise is refused", async () => {
+  const door = await import('../accept-door.mjs');
+  const resource = `fleet-node:${REPO}/${VERSION}/${'1'.repeat(64)}/${'2'.repeat(64)}`;
+  const a = aAnswers(resource), of = { resource, requestSha256: '2'.repeat(64) };
+  assert.equal(a.base.repository, REPO);
+  assert.equal(a.base.request_sha256, '2'.repeat(64));
+  assert.deepEqual(door.readAnswer(a.none, of), { kind: 'none' });
+  assert.deepEqual(door.readAnswer(a.pending, of), { kind: 'pending', confirmUrl: `https://kooyumi.pixelgrav.com/confirm/${A_ID}`, expiresAt: '2026-11-26T04:45:12.345678+00:00' });
+  assert.deepEqual(door.readAnswer(a.rejected, of), { kind: 'rejected' });
+  assert.deepEqual(door.readAnswer(a.expired, of), { kind: 'expired' });
+  const ok = door.readAnswer(a.accepted, of);
+  assert.deepEqual([ok.kind, ok.grantId, ok.receiptId, ok.acceptedAt], ['accepted', GRANT, GRANT_RECEIPT, '2026-11-25T04:45:12Z']);
+  assert.deepEqual(await door.readFleet({ resource, readStatus: async r => (r === resource ? a.accepted : null) }),
+    [{ node: 'desk', ciSourceManifestSha256: '5'.repeat(64), paused: false }, { node: 'turing', ciSourceManifestSha256: null, paused: true }]);
+  // none with conflict: this version is accepted under another package or request, and this request never will be
+  assert.throws(() => door.readAnswer(a.conflict, of), { code: 'ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED' });
+});
+
+test('seal on a version the door has accepted under another request: refused before any workflow run, nothing written', async t => {
+  const w = await prepWorld(t);
+  await w.prep();
+  w.door.answer = resource => aAnswers(resource).conflict;
+  const time = fakeTime('2026-11-25T01:00:00Z');
+  const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
+  await assert.rejects(timed(w, time), { code: 'ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED' });
+  assert.deepEqual(await w.opens(), [], 'no workflow run: the door would refuse it');
+  assert.deepEqual(time.slept, [], 'no wait for a link that cannot come');
+  await sealedNothing(w, before, n);
+});
+
+test("seal's refusals that asking again cannot change are one exported list (accept.mjs stops on them at once), each a code seal or the door client throws", async () => {
+  const list = publishModule.SEAL_INPUT_ERRORS;
+  assert.ok(Array.isArray(list) && Object.isFrozen(list) && list.length > 0);
+  const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const text = ['publish.mjs', 'accept-door.mjs'].map(n => readFileSync(path.join(dir, n), 'utf8')).join('\n');
+  for (const code of list) assert.match(text, new RegExp(String.raw`(check|fail)\([^;]*'${code}'`), code);
+  for (const code of ['USAGE', 'REQUEST_REFUSED', 'SEAL_REQUEST_REFUSED', 'ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED']) assert.ok(list.includes(code), code);
+  for (const code of ['ACCEPT_DOOR_UNAVAILABLE', 'ACCEPT_DOOR_OPEN_FAILED', 'PUBLISH_GH_RELEASE_DOWNLOAD_FAILED']) assert.ok(!list.includes(code), `${code}: asking again may help`);
 });
 
 // review 87d330d0 B, "要改" 5: no invisible character in the fleet scripts (a literal U+FEFF an editor drops fails silently)

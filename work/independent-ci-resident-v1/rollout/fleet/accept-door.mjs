@@ -13,7 +13,9 @@
 // commit, Source, kit and fleetRefs). Every answer names the request it answers (request_sha256, and the resource when it lists
 // `resources`); readAnswer refuses one that names another or none:
 //   { status: 'none' }                                           no request of this resource yet
-//   { status: 'pending', owner_request: { confirm_path, expires_at } }   not approved yet: the page the Owner opens, the request's expiry
+//   { status: 'none', conflict: 'fleet_accept_version_already_accepted' }   the version is accepted under another package or request:
+//                                                                this one never will be (ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED, no request)
+//   { status: 'pending', request_id, confirm_path, expires_at }   not approved yet: the page the Owner opens, the request's expiry
 //   { status: 'accepted', grant_id, receipt_id, accepted_at, nodes }    approved; the door's one row of the version, replayed on every read
 //   { status: 'rejected' } | { status: 'expired' }                the Owner said "not yet", or the request ran out
 // The Grant is never approved automatically and only on the page (the server's rule); nothing here can approve.
@@ -118,11 +120,12 @@ export function readAnswer(answer, { resource, requestSha256 }) {
     { status: answer.status, request_sha256: answer.request_sha256 ?? null, note: 'the answer names another request, or none' });
   check(answer.resources === undefined || (Array.isArray(answer.resources) && answer.resources.length === 1 && answer.resources[0] === resource), 'ACCEPT_DOOR_ANSWER_REFUSED',
     { status: answer.status, resources: answer.resources, note: 'the answer is of another resource' });
+  // part A's fleet_accept_answer_v1: the version accepted under another package or request; the door refuses to open this one
+  check(!(answer.status === 'none' && answer.conflict !== undefined), 'ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED', { conflict: answer.conflict, note: 'this version is accepted under another package or request: publish another version' });
   if (answer.status === 'pending') {
-    const o = plain(answer.owner_request) ? answer.owner_request : {};
-    check(CONFIRM_PATH.test(o.confirm_path ?? '') && TIME.test(o.expires_at ?? '') && Number.isFinite(Date.parse(o.expires_at)), 'ACCEPT_DOOR_ANSWER_REFUSED',
-      { status: 'pending', confirm_path: o.confirm_path ?? null, expires_at: o.expires_at ?? null });
-    return { kind: 'pending', confirmUrl: `${CONFIRM_ORIGIN}${o.confirm_path}`, expiresAt: o.expires_at };
+    check(CONFIRM_PATH.test(answer.confirm_path ?? '') && TIME.test(answer.expires_at ?? '') && Number.isFinite(Date.parse(answer.expires_at)), 'ACCEPT_DOOR_ANSWER_REFUSED',
+      { status: 'pending', confirm_path: answer.confirm_path ?? null, expires_at: answer.expires_at ?? null });
+    return { kind: 'pending', confirmUrl: `${CONFIRM_ORIGIN}${answer.confirm_path}`, expiresAt: answer.expires_at };
   }
   if (answer.status !== 'accepted') return { kind: answer.status };
   check(UUID.test(answer.grant_id ?? '') && UUID.test(answer.receipt_id ?? '') && answer.grant_id !== answer.receipt_id, 'ACCEPT_DOOR_ANSWER_REFUSED',

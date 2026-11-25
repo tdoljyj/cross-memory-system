@@ -731,6 +731,12 @@ export const OPEN_STEP_MS = 15_000;
 export const READ_RETRY_MS = 30_000;
 export const CLOCK_SKEW_MAX_MS = 120_000;
 const NOT_OPEN = ['none', 'rejected', 'expired'];
+// seal's refusals that asking again cannot change (the request, its file name, the repository, the index row, the drill receipt, a version
+// the door has accepted otherwise): accept.mjs stops on them at once and asks again on any other (the one list; Task 87d330d0 alignment).
+export const SEAL_INPUT_ERRORS = Object.freeze(['USAGE', 'REQUEST_REFUSED', 'REQUEST_FILE_NAME_REFUSED', 'PUBLISH_REPO_REFUSED', 'ACCEPTANCE_NOT_THIS_REPOSITORY',
+  'ACCEPTANCE_REFUSED', 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN', 'ACCEPTANCE_NOT_THIS_RELEASE', 'PUBLISH_INDEX_LACKS_VERSION', 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED',
+  'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', 'SEAL_REQUEST_REFUSED', 'SEAL_DRILL_RECEIPT_REFUSED', 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE', 'SEAL_DRILL_RECEIPT_NOT_PASS',
+  'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE', 'SEAL_DRILL_RECEIPT_NOT_THE_RECORDED', 'ACCEPT_RESOURCE_REFUSED', 'ACCEPT_DOOR_NOT_CONFIGURED', 'ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED']);
 
 // The second half of an acceptance (see the head of this file). `deps` is for tests only (a stand-in for the archive's source-hash, the door's
 // anonymous read, the clock and the sleep of --wait); the command line cannot reach it and reads the door with the repository's public

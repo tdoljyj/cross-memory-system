@@ -176,10 +176,11 @@ node R/rollout/fleet/publish.mjs seal --request <目录>\fleet-node-<version>.ac
 | 门答 | `seal` 答 | 做了什么 |
 |---|---|---|
 | `none` | 开请求（上面那一次 `gh workflow run`），再读 | 每 15 秒读一次，最多 5 分钟（或 `--wait` 更长）；仍没开出来，答 `FLEET_ACCEPTANCE_WAITING_OWNER`，`opened: false`、无链接，原样重跑即可看到链接 |
-| `pending`（`owner_request.confirm_path`、`owner_request.expires_at`） | `FLEET_ACCEPTANCE_WAITING_OWNER`，带 `confirmUrl`（`https://kooyumi.pixelgrav.com` + `confirm_path`）、`expiresAt`；退出码 0 | 什么都不写。Owner 打开链接批准后，原样重跑同一条命令 |
+| `pending`（`confirm_path`、`expires_at`，与 `request_id` 同在顶层） | `FLEET_ACCEPTANCE_WAITING_OWNER`，带 `confirmUrl`（`https://kooyumi.pixelgrav.com` + `confirm_path`）、`expiresAt`；退出码 0 | 什么都不写。Owner 打开链接批准后，原样重跑同一条命令 |
 | `accepted`（`grant_id`、`receipt_id`、`accepted_at`） | `FLEET_ACCEPTANCE_SEALED` | 封存，见下 |
 | `rejected` / `expired`：本次见过待批之后 | `FLEET_ACCEPTANCE_REJECTED`，`answer` 写明是哪一种；退出码 1 | 什么都不写，候选留在未接受。请求过期了，原样重跑同一条命令重开 |
 | `rejected` / `expired`：一开始就是 | 同 `none`：开一次新请求 | 同 `none` |
+| `none` 带 `conflict`（这个版本已以另一份请求或另一个包被接受） | 报错 `ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED`，不开请求 | 什么都不写；换版本号重新发布 |
 
 `--wait <分钟>`（1–1440）：门答待批时按 30、60、120、120… 秒再读，直到批、拒、过期或等满；等满仍待批，答 `FLEET_ACCEPTANCE_WAITING_OWNER`。读失败（`ACCEPT_DOOR_UNAVAILABLE`：连不上、超时、5xx）在还有时间时每 30 秒重读，时间用完仍失败才报错。门给的 `accepted_at` 比本机钟快 2 分钟以内的，等过去再封一次；更快的拒绝。不给 `--wait` 只读一次（`seal` 刚开了请求的，等它开出来，见上表）。
 
