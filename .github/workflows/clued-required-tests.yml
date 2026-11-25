@@ -733,8 +733,8 @@ jobs:
           # In that case the protected workflow pins the exact local blob and checks its bytes.
           helper=trusted/scripts/ci/trivy-cache.mjs
           if [ ! -f "$helper" ]; then
-            git -C candidate cat-file blob 3d1473a247f59b2c8d7af70c36210fcb23e3bd65 > "$helper"
-            printf '%s  %s\n' 2d8f016bca5668c62f2024cebf820f155835c4c54ef8b757fd572eaf8726d938 "$helper" | sha256sum --check --status
+            git -C candidate cat-file blob ab6e8e120274eefada13480e342fb9dcaca72520 > "$helper"
+            printf '%s  %s\n' 16aa81c1824d4965387ed2279d256ded48587901993f9e2dcbf11d672501bfc6 "$helper" | sha256sum --check --status
           fi
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage

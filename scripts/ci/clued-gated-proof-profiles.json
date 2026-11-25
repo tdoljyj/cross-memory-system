@@ -6887,7 +6887,7 @@
         {
           "command_digests": {
             "Export the trusted base (temporary storage)": [
-              "42d8687bb0083e50662d1adb82e6febba8e41e55b5a226ca92daa978067cb6fa"
+              "c4269f347049f8914b7d795b7549cc7800cd485c1fd5b1478f55bd7a9318f822"
             ],
             "Misconfiguration (HIGH/CRITICAL)": [
               "9f0705bc17731ba331ad9ece175e25c24517fb503e6cae85d4d71537eca10f4b"
@@ -6963,7 +6963,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "e03a964a81ee95731f999dcc83285ef7b7cffb50e49c9c97349d502430130b8b",
+      "source_sha256": "d5e8005f966fec200ed8affd3daf8b2821618243fd1d3094dd618120049dda11",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "run-name: ${{ github.event_name == 'workflow_dispatch' && (inputs.resident_node && inputs.resident_dispatch_id && format('clued-resident-dispatch/v1 {0} {1}', inputs.resident_node, inputs.resident_dispatch_id) || 'clued-required-tests') || '' }}",
@@ -7700,8 +7700,8 @@
 "          # In that case the protected workflow pins the exact local blob and checks its bytes.",
 "          helper=trusted/scripts/ci/trivy-cache.mjs",
 "          if [ ! -f \"$helper\" ]; then",
-"            git -C candidate cat-file blob 3d1473a247f59b2c8d7af70c36210fcb23e3bd65 > \"$helper\"",
-"            printf '%s  %s\\n' 2d8f016bca5668c62f2024cebf820f155835c4c54ef8b757fd572eaf8726d938 \"$helper\" | sha256sum --check --status",
+"            git -C candidate cat-file blob ab6e8e120274eefada13480e342fb9dcaca72520 > \"$helper\"",
+"            printf '%s  %s\\n' 16aa81c1824d4965387ed2279d256ded48587901993f9e2dcbf11d672501bfc6 \"$helper\" | sha256sum --check --status",
 "          fi",
 "      - name: Configure job temporary storage",
 "        uses: ./trusted/.github/actions/ci-temporary-storage",
@@ -7929,7 +7929,7 @@
 "        run: python3 -I -B scripts/ci/check_contract_placement.py --base \"$CI_BASE_SHA\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\"",
 ""
       ],
-      "workflow_blob": "1ec8af06e9891f8436441a6661130cfb915cca38"
+      "workflow_blob": "44b2a88bd74b987f81fa55066046166c4fe87ec2"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -8,8 +8,9 @@ const SOURCES = ['ghcr.io/aquasecurity/trivy-db:2', 'mirror.gcr.io/aquasec/trivy
 // Upstream publishes about every 6h, with NextUpdate = UpdatedAt + 24h.
 // From 6h until expiry, a failed refresh only warns. The generation's metadata sets the actual expiry.
 const REFRESH_AGE_MS = 6 * 60 * 60 * 1000;
-// Keep an expired generation around past the longest scan job that could still be using it.
-const EXPIRED_RETENTION_MS = 60 * 60 * 1000;
+// Give running scans (job limit: 25 minutes) an hour after a replacement is published.
+const RECLAIM_AGE_MS = 60 * 60 * 1000;
+const PUBLISHED_AT = 'published-at';
 const PREPARE_BUDGET_MS = 570_000;
 // Reserve a 60s checks download, two 10s read-backs and up to 5s for container cleanup.
 const CHECKS_RESERVE_MS = 85_000;
@@ -62,6 +63,7 @@ async function stageIn(root, job, action) {
 
 function publish(stage, destination) {
   if (existsSync(destination)) return false;
+  writeFileSync(path.join(stage, PUBLISHED_AT), `${new Date(Date.now()).toISOString()}\n`, { flag: 'wx' });
   try {
     renameSync(stage, destination);
     return true;
@@ -69,6 +71,37 @@ function publish(stage, destination) {
     // The other process can only publish a nonempty directory. Never copy over it.
     if (!['EEXIST', 'ENOTEMPTY', 'EPERM'].includes(error.code) || !lstatSync(destination, { throwIfNoEntry: false })?.isDirectory()) throw error;
     return false;
+  }
+}
+
+function publicationOldEnough(directory, now) {
+  try {
+    const marker = path.join(directory, PUBLISHED_AT);
+    return lstatSync(marker).isFile() && now - timestamp(readFileSync(marker, 'utf8').trim()) >= RECLAIM_AGE_MS;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+function reclaimDatabases(initial, available, now) {
+  let replacementOldEnough = false;
+  for (const db of initial) {
+    // The newest generation is visited first. A mature publication only proves
+    // that generations older than itself have had their grace period.
+    if (replacementOldEnough && db !== available) {
+      rmSync(db.directory, { recursive: true, force: true });
+    } else if (db.complete && db.updated <= now && publicationOldEnough(db.directory, now)) {
+      replacementOldEnough = true;
+    }
+  }
+}
+
+function reclaimChecks(root, selected, now) {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === selected || !/^checks-[0-9a-f]{64}$/.test(entry.name)) continue;
+    const directory = path.join(root, entry.name);
+    if (publicationOldEnough(directory, now)) rmSync(directory, { recursive: true, force: true });
   }
 }
 
@@ -123,7 +156,7 @@ function reclaimStages(root, now) {
     if (!entry.name.startsWith('.stage-') || !(entry.isDirectory() || (entry.isFile() && entry.name.endsWith('.cid')))) continue;
     const target = path.join(root, entry.name);
     const stat = lstatSync(target, { throwIfNoEntry: false });
-    if (stat && now - stat.mtimeMs > EXPIRED_RETENTION_MS) rmSync(target, { recursive: entry.isDirectory(), force: true });
+    if (stat && now - stat.mtimeMs > RECLAIM_AGE_MS) rmSync(target, { recursive: entry.isDirectory(), force: true });
   }
 }
 
@@ -132,9 +165,7 @@ async function prepareDatabase(root, job, container, deadline) {
   reclaimStages(root, now);
   const initial = generations(root);
   const available = initial.find((db) => db.complete && current(db, now));
-  for (const db of initial) {
-    if (now - db.next >= EXPIRED_RETENTION_MS) rmSync(db.directory, { recursive: true, force: true });
-  }
+  reclaimDatabases(initial, available, now);
   if (available && now - available.updated <= REFRESH_AGE_MS) return available;
 
   // Optional refresh tries each source once. Cold downloads visit the mirror before retrying GHCR.
@@ -251,6 +282,7 @@ async function main() {
   const label = job.replace(/[^A-Za-z0-9_-]/g, '_');
   let db = await prepareDatabase(root, label, container, deadline - CHECKS_RESERVE_MS);
   const policy = await prepareChecks(root, label, container, digest);
+  reclaimChecks(root, path.basename(path.dirname(policy)), Date.now());
   // A DB near NextUpdate can expire while checks are being prepared.
   if (!current(db, Date.now())) db = await prepareDatabase(root, label, container, deadline);
   appendFileSync(output, `CLUED_TRIVY_DB=${path.join(db.directory, 'db')}\nCLUED_TRIVY_POLICY=${policy}\n`);

@@ -94,7 +94,7 @@ const TRUSTED_ARCHIVES = {
     "ci-suites": REQUIRED_TESTS_EXPORT,
     "migration-verify": REQUIRED_TESTS_EXPORT,
     gitleaks: "0b1aaeb20af7dd104e7d2bebd8f0f519e87583b9e91b7ff603ed6a35bbf709b6",
-    trivy: "b1644ead9851d6552e2fb96822354bee89c443bd67a1bc1bae69f165578dff0d",
+    trivy: "1d272c7e2327fa6b3406e28421c63b8433cfe3f1b48bfcd8cbeaf154fbcf8726",
     "contract-placement": "6008bbce98a79d4e55cde4265071e227575deafb8bb2e1d50197c0e43ab75ed8",
   },
   "clued-required-tests-windows.yml": {

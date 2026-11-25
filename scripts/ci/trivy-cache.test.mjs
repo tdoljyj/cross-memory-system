@@ -144,7 +144,7 @@ if (process.argv[1]?.endsWith('trivy-cache.mjs')) {
   syncBuiltinESMExports();
   process.getuid ??= () => 1976;
   process.getgid ??= () => 1976;
-  Date.now = () => Date.parse(${JSON.stringify(now)});
+  Date.now = () => Date.parse(process.env.FAKE_NOW);
   Object.defineProperty(performance, 'now', {
     value: () => Number(readFileSync(process.env.FAKE_ELAPSED, 'utf8')),
   });
@@ -152,7 +152,7 @@ if (process.argv[1]?.endsWith('trivy-cache.mjs')) {
 `);
   const barrier = concurrent ? path.join(dir, 'barrier') : '';
   if (barrier) mkdirSync(barrier);
-  const run = (id) => {
+  const run = (id, clock = now) => {
     const cwd = path.join(dir, id);
     const temp = path.join(cwd, 'temp');
     const log = path.join(cwd, 'calls.log');
@@ -173,7 +173,7 @@ if (process.argv[1]?.endsWith('trivy-cache.mjs')) {
           RUNNER_TEMP: forward(temp), GITHUB_ENV: forward(output), GITHUB_RUN_ID: id,
           NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(loader).href}`,
           FAKE_BIN: forward(bin), FAKE_LOG: log, FAKE_SOURCES: sources, FAKE_BARRIER: barrier,
-          FAKE_ELAPSED: elapsed, FAKE_FAIL_CHECKS: failChecks ? '1' : '',
+          FAKE_ELAPSED: elapsed, FAKE_FAIL_CHECKS: failChecks ? '1' : '', FAKE_NOW: clock,
           FAKE_UPDATED: !existsSync(helper) ? '2020-01-01T00:00:00Z' : stamp(-1),
           FAKE_NEXT: !existsSync(helper) ? '2999-01-01T00:00:00Z' : stamp(12) },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -206,6 +206,23 @@ test('T2 7h old but valid DB: one warning, reuse after both refresh attempts fai
   assert.deepEqual(r.calls.filter((call) => call.startsWith('db ')), [`db ${ghcr} 3m`, `db ${mirror} 3m`]);
 });
 
+test('W1/W2 DB generations get one hour from replacement before reclamation', async (t) => {
+  const f = cacheFixture(t);
+  for (const [updated, published] of [[-4, -3], [-3, -1], [-1, -1 / 6]]) {
+    const directory = path.join(f.cache, generation(updated));
+    put(path.join(directory, 'db/metadata.json'), { Version: 2, UpdatedAt: stamp(updated), NextUpdate: stamp(12) });
+    put(path.join(directory, 'db/trivy.db'), 'cached db');
+    put(path.join(directory, 'published-at'), `${stamp(published)}\n`);
+  }
+  const r = await f.run('replacement-grace');
+  assert.equal(r.code, 0, JSON.stringify(r));
+  assert.match(r.env, /db-2026-11-25T11-00-00\.000Z/);
+  assert.deepEqual(readdirSync(f.cache).filter((entry) => entry.startsWith('db-')).sort(), [generation(-3), generation(-1)]);
+  const settled = await f.run('replacement-grace-elapsed', stamp(1));
+  assert.equal(settled.code, 0, JSON.stringify(settled));
+  assert.deepEqual(readdirSync(f.cache).filter((entry) => entry.startsWith('db-')), [generation(-1)]);
+});
+
 test('T3 expired DB with both sources down: fails with expiry and both sources', async (t) => {
   const f = cacheFixture(t, { db: -20, next: -2 });
   const r = await f.run('expired');
@@ -214,6 +231,7 @@ test('T3 expired DB with both sources down: fails with expiry and both sources',
   for (const value of ['NextUpdate', stamp(-2), ghcr, mirror]) assert.ok(r.text.includes(value), r.text);
   assert.deepEqual(r.calls.filter((call) => call.startsWith('db ')).map((call) => call.split(' ')[1]), [ghcr, mirror, ghcr, mirror]);
   assert.equal(r.env, '');
+  assert.ok(existsSync(path.join(f.cache, generation(-20), 'db/trivy.db')), 'the latest DB stays even if expired');
 });
 
 test('T4 expired DB: ghcr times out, mirror publishes a new generation', async (t) => {
@@ -221,7 +239,8 @@ test('T4 expired DB: ghcr times out, mirror publishes a new generation', async (
   const r = await f.run('mirror');
   assert.equal(r.code, 0, JSON.stringify(r));
   assert.deepEqual(r.calls.filter((call) => call.startsWith('db ')).map((call) => call.split(' ')[1]), [ghcr, mirror]);
-  assert.deepEqual(readdirSync(f.cache).filter((entry) => entry.startsWith('db-')), [generation(-1)]);
+  assert.deepEqual(readdirSync(f.cache).filter((entry) => entry.startsWith('db-')).sort(), [generation(-20), generation(-1)].sort());
+  assert.equal(readFileSync(path.join(f.cache, generation(-1), 'published-at'), 'utf8'), `${stamp(0)}\n`);
   assert.equal(readFileSync(path.join(f.cache, generation(-1), 'db/trivy.db'), 'utf8'), 'complete db');
 });
 
@@ -266,6 +285,20 @@ test('T5 two processes publish the same DB and checks generations atomically', a
   assert.deepEqual(readdirSync(f.cache).sort(), [path.basename(path.dirname(f.policy)), generation(-1)].sort());
   assert.equal(readFileSync(path.join(f.cache, generation(-1), 'db/trivy.db'), 'utf8'), 'complete db');
   assert.equal(readFileSync(path.join(f.policy, 'content/check.rego'), 'utf8'), 'package check');
+  assert.equal(readFileSync(path.join(path.dirname(f.policy), 'published-at'), 'utf8'), `${stamp(0)}\n`);
+});
+
+test('W checks keep the pinned digest and reclaim other digests published at least an hour ago', async (t) => {
+  const f = cacheFixture(t, { db: -1 });
+  const old = `checks-${'1'.repeat(64)}`;
+  const recent = `checks-${'2'.repeat(64)}`;
+  const selected = path.basename(path.dirname(f.policy));
+  for (const [name, published] of [[old, -1], [recent, -1 / 6], [selected, -2]]) {
+    put(path.join(f.cache, name, 'published-at'), `${stamp(published)}\n`);
+  }
+  const r = await f.run('checks-grace');
+  assert.equal(r.code, 0, JSON.stringify(r));
+  assert.deepEqual(readdirSync(f.cache).filter((entry) => entry.startsWith('checks-')).sort(), [recent, selected].sort());
 });
 
 test('T6 cached checks: no download, validate digest, major version, custom flag and Rego', async (t) => {
