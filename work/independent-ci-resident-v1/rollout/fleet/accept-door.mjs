@@ -6,7 +6,7 @@
 // Two ways out, neither holding a token:
 //   openRequest  one `gh workflow run` of the release workflow's fleet-accept mode (RELEASE_WORKFLOW, on main): the workflow's database login
 //                calls the private door function, which replays an accepted row, reuses a pending request or opens a new one. Asked
-//                once by seal when the door knows no open request of this resource (none, expired, rejected).
+//                once by seal when the door knows no open request of this resource (none, expired; never on rejected, which is final).
 //   readStatus   the anonymous read public.<ACCEPT_STATUS_RPC>(p_resource) with the repository's public Supabase address and publishable key
 //                (PUBLIC_CONFIG_SOURCE, the one source the web app and scripts/ci read; never the environment, so no other host can answer).
 // The resource: fleet-node:<owner>/<repo>/<version>/<tar sha256>/<acceptance-request file sha256> (the request's sha256 already binds tar,
@@ -17,7 +17,7 @@
 //                                                                this one never will be (ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED, no request)
 //   { status: 'pending', request_id, confirm_path, expires_at }   not approved yet: the page the Owner opens, the request's expiry
 //   { status: 'accepted', grant_id, receipt_id, accepted_at, nodes }    approved; the door's one row of the version, replayed on every read
-//   { status: 'rejected' } | { status: 'expired' }                the Owner said "not yet", or the request ran out
+//   { status: 'rejected' } | { status: 'expired' }                the Owner rejected it (final: the door never opens it again), or it ran out
 // The Grant is never approved automatically and only on the page (the server's rule); nothing here can approve.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';

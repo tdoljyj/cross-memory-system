@@ -323,7 +323,8 @@ const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = '
   // the fake acceptance door (PLAN-accept-binding-20261125 section 3, the contract with part A): the anonymous read of one resource
   // (public.clued_fleet_accept_status_v1) as the door would answer it now, every answer echoing the request's sha256; `status` is flipped
   // by a test (none, pending, accepted, rejected, expired). A `gh workflow run` (the release workflow's fleet-accept mode) the door has not
-  // seen yet opens a request: none, rejected or expired become `openTo` (pending) on the next read. accepted replays the same row on every read.
+  // seen yet opens a request: none or expired become `openTo` (pending) on the next read; rejected stays rejected (part A: final, never
+  // opened again; PLAN-accept-align-open-20261125 1.2). accepted replays the same row on every read.
   const requestId = '0b0b0b0b-1111-4111-8111-000000000001';
   const door = { status: 'accepted', grant: FIX_DECISION, receipt: FIX_RECEIPT, acceptedAt: '2026-11-19T12:22:39.628169+00:00', reads: [],
     confirmUrl: `https://kooyumi.pixelgrav.com/confirm/${requestId}`, expiresAt: '2099-01-01T00:00:00Z', answer: null, openTo: 'pending', opensSeen: 0, fail: 0,
@@ -333,7 +334,7 @@ const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = '
     const base = { action: 'fleet.accept', resources: [resource], request_sha256: resource.split('/').pop() };
     if (door.answer) return door.answer(resource, base);
     const opens = opensNow();
-    if (opens > door.opensSeen) { door.opensSeen = opens; if (['none', 'rejected', 'expired'].includes(door.status)) door.status = door.openTo; }
+    if (opens > door.opensSeen) { door.opensSeen = opens; if (['none', 'expired'].includes(door.status)) door.status = door.openTo; }
     if (door.status === 'pending') return { ...base, status: 'pending', request_id: requestId, confirm_path: `/confirm/${requestId}`, expires_at: door.expiresAt };
     if (door.status === 'accepted') return { ...base, status: 'accepted', grant_id: door.grant, receipt_id: door.receipt, accepted_at: door.acceptedAt, nodes: door.nodes };
     return { ...base, status: door.status };
@@ -1109,9 +1110,9 @@ test('seal through the door: not approved yet it answers WAITING_OWNER with the 
   assert.deepEqual(await w.opens(), []);
 });
 
-// PLAN-accept-binding-20261125 section 3, part B: none, expired or rejected at the start: one dispatch, then reads only
-test('seal opens the request itself: none, expired or rejected at the start is exactly one gh workflow run of the fleet-accept mode, then only reads; the link once the door has it', async t => {
-  for (const start of ['none', 'expired', 'rejected']) {
+// PLAN-accept-binding-20261125 section 3, part B: none or expired at the start: one dispatch, then reads only (rejected is final: next test)
+test('seal opens the request itself: none or expired at the start is exactly one gh workflow run of the fleet-accept mode, then only reads; the link once the door has it', async t => {
+  for (const start of ['none', 'expired']) {
     const w = await prepWorld(t);
     await w.prep();
     w.door.status = start;
@@ -1133,20 +1134,49 @@ test('seal opens the request itself: none, expired or rejected at the start is e
   }
 });
 
-test('seal: a request the workflow has not opened within the open wait answers WAITING_OWNER without a link, after one run only; a run gh refuses is ACCEPT_DOOR_OPEN_FAILED, nothing written', async t => {
-  const w = await prepWorld(t);
-  await w.prep();
-  Object.assign(w.door, { status: 'none', openTo: 'none' });
-  const time = fakeTime('2026-11-25T01:00:00Z');
-  const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
-  const r = await timed(w, time);
-  assert.equal(r.status, 'FLEET_ACCEPTANCE_WAITING_OWNER');
-  assert.equal(r.confirmUrl, null);
-  assert.equal(r.opened, false);
-  assert.equal((await w.opens()).length, 1, 'one workflow run, never a second in one seal');
-  assert.ok(time.now - Date.parse('2026-11-25T01:00:00Z') <= 5 * 60_000, 'the open wait is bounded (5 minutes)');
-  assert.ok(w.door.reads.length >= 3, 'read again while waiting for the link');
-  await sealedNothing(w, before, n);
+// PLAN-accept-align-open-20261125 1.2 (red before: a rejected request was opened again, one gh workflow run, and answered WAITING_OWNER)
+// the Owner's "reject" is final (the door replays rejected and never opens it again): seal reading rejected, at the start or after waiting,
+// with or without --wait, answers REJECTED at once; no workflow run, no sleep, nothing written, the command exits non-zero
+test('seal on a rejected request: FLEET_ACCEPTANCE_REJECTED at once, at the start and with --wait; never a gh workflow run, nothing written, exit non-zero', async t => {
+  for (const wait of [0, 30]) {
+    const w = await prepWorld(t);
+    await w.prep();
+    w.door.status = 'rejected';
+    const time = fakeTime('2026-11-25T01:00:00Z');
+    const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
+    const r = await timed(w, time, { wait });
+    assert.deepEqual([r.status, r.answer, (await w.opens()).length], ['FLEET_ACCEPTANCE_REJECTED', 'rejected', 0], `wait ${wait}: rejected is final, never opened again`);
+    assert.deepEqual(time.slept, [], `wait ${wait}: answered at once`);
+    assert.equal(w.door.reads.length, 1, `wait ${wait}: one read`);
+    assert.match(r.next, /new version/, `wait ${wait}: next names a new version, not the same seal again`);
+    await sealedNothing(w, before, n);
+    assert.notEqual(publishModule.exitCodeOf(r), 0);
+  }
+});
+
+// PLAN-accept-align-open-20261125 2.2 (red before: WAITING_OWNER opened:false after 5 minutes, or after the whole --wait, and a door that
+// could not be read after the run threw ACCEPT_DOOR_UNAVAILABLE, so the caller ran seal again and dispatched again). The run is given
+// OPEN_WAIT_MS = 15 minutes from the moment it was dispatched (--wait waits for the Owner, not for the workflow); no link by then is the
+// fourth answer FLEET_ACCEPTANCE_NOT_OPENED, after exactly one run, nothing written, exit non-zero
+test('seal: a request the workflow has not opened 15 minutes after its one run answers FLEET_ACCEPTANCE_NOT_OPENED, with or without --wait, also when the door cannot be read; a run gh refuses is ACCEPT_DOOR_OPEN_FAILED, nothing written', async t => {
+  const start = Date.parse('2026-11-25T01:00:00Z');
+  for (const [label, wait, unreadable] of [['wait 0', 0, false], ['wait 60', 60, false], ['door unreadable after the run', 0, true]]) {
+    const w = await prepWorld(t);
+    await w.prep();
+    Object.assign(w.door, { status: 'none', openTo: 'none' });
+    const time = fakeTime('2026-11-25T01:00:00Z', () => { if (unreadable) w.door.fail = 1e9; });
+    const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
+    const r = await timed(w, time, { wait });
+    assert.equal(r.status, 'FLEET_ACCEPTANCE_NOT_OPENED', label);
+    assert.equal(r.resource, await resourceOf(w), label);
+    assert.match(r.next, /fleet-accept/, `${label}: next points at the workflow's run`);
+    assert.equal((await w.opens()).length, 1, `${label}: one workflow run, never a second in one seal`);
+    assert.equal(time.now - start, 15 * 60_000, `${label}: the run is given 15 minutes from its dispatch, not the --wait`);
+    assert.ok(w.door.reads.length >= 3, `${label}: read again while waiting for the link`);
+    await sealedNothing(w, before, n);
+    assert.notEqual(publishModule.exitCodeOf(r), 0, label);
+  }
+  assert.equal(publishModule.OPEN_WAIT_MS, 15 * 60_000);
   // gh refuses the run (no permission, a dropped connection): refused, nothing written
   const w2 = await prepWorld(t);
   await w2.prep();
