@@ -71,7 +71,18 @@ function fixture(initial = session('owner'), locale = 'zh-CN', initialDevelopmen
     } },
   };
   React.useLayoutEffect = React.useEffect;
-  const supabase = { rpc(name, args) {
+  const authCallbacks = new Set(), authTokens = [];
+  const supabase = { auth: {
+    async getUser(token) {
+      authTokens.push(token);
+      return token === who.access_token ? { data: { user: who.user }, error: null }
+        : { data: { user: null }, error: { code: 'invalid_auth' } };
+    },
+    onAuthStateChange(callback) {
+      authCallbacks.add(callback);
+      return { data: { subscription: { unsubscribe() { authCallbacks.delete(callback); } } } };
+    },
+  }, rpc(name, args) {
     let resolve, reject;
     const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
     const call = { name, args, resolve, reject, headers: {} }; calls.push(call); notifyRpc();
@@ -143,6 +154,8 @@ function fixture(initial = session('owner'), locale = 'zh-CN', initialDevelopmen
     async respond(index, data) { calls[index].resolve({ data, error: null }); await settle(); },
     async fail(index) { calls[index].reject(new Error('lost response')); await settle(); },
     setSession(next) { who = next; render(); },
+    authTokens,
+    authEvent(event, next) { for (const callback of [...authCallbacks]) callback(event, next); render(); },
     setDevelopmentContext(next) { developmentContextId = next; render(); },
     unmount() {
       if (unmounted) return;
@@ -1166,4 +1179,180 @@ test('restoring the shared batch displays its original scope rather than the cur
   f.change('查询范围', 'global'); await f.respond(1, page()); f.click('读取已保存进度');
   await f.respond(2, bulkBatch({ selection: { scope: 'project:' + PROJECT } }));
   assert.ok(f.text().includes('预演范围：个人记录')); assert.ok(f.text().includes('原批次范围：Design project'));
+});
+
+const DATE_SCOPE = "project:" + PROJECT;
+const LAUNCH_CURRENT = "青芽现定周五上线。";
+const LAUNCH_OLD = "青芽原定周三上线。";
+const SOURCE_CURRENT = "签署正文：周五。";
+const SOURCE_OLD = "旧附件正文：周三。";
+const OLD_SOURCE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const LOCATOR = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const SEARCH_LEGACY = "saved_title_content_literal";
+const SEARCH_CURRENT = "qualified_saved_source_and_retained_body_literal";
+function launchRow(historical = false, extra = {}) {
+  return record({
+    id: historical ? OTHER : ID, title: "青芽上线日期决定", content: historical ? LAUNCH_OLD : LAUNCH_CURRENT,
+    scope: DATE_SCOPE, canonical_scope: DATE_SCOPE, project_id: PROJECT, record_type: "decision",
+    source_semantics: "canonical_record", source_refs: historical ? [OLD_SOURCE] : [EVIDENCE, LOCATOR],
+    record_currentness: historical ? "HISTORY" : "CURRENT", authoritative: !historical,
+    lifecycle_status: historical ? "superseded" : "active", version: historical ? 7 : 3,
+    relations: historical ? {} : { supersedes: [OTHER] }, ...extra,
+  });
+}
+function launchPage(rows, history = false, mode = SEARCH_CURRENT, cursor = 0, next = null) {
+  return { ...page(rows, next, "strict_current"), search_mode: mode,
+    coverage: { latest_saved_objects: true, diagnostic_history_requested: history },
+    current_projection_unavailable: false, projection_rebuild_required: false,
+    page: { cursor, next_cursor: next, complete: next === null } };
+}
+function launchSource(historical = false, extra = {}) {
+  const row = launchRow(historical);
+  return { status: "ok", available: true, complete: true, record_id: row.id, record_version: row.version,
+    source_record_version: row.version, authoritative: false, current_input_eligible: false,
+    record_currentness: row.record_currentness, evidence_status: "retained",
+    source_semantics: historical ? "historical_evidence" : "linked_evidence",
+    evidence: { id: historical ? OLD_SOURCE : EVIDENCE }, content: historical ? SOURCE_OLD : SOURCE_CURRENT, ...extra };
+}
+async function openLaunchLookup(f) {
+  assert.equal(f.nodes("summary").some(n => f.text(n) === "上线日期问答"), false);
+  await f.respond(0, page());
+  f.click("决策"); await f.respond(1, launchPage([]));
+  const panel = f.nodes("details").find(n => f.nodes("summary", n).some(s => f.text(s) === "上线日期问答"));
+  assert.ok(panel, "entry is mounted on the maintained Imprints decision tab");
+  f.fire(panel, "onToggle", { currentTarget: { open: true } });
+  assert.match(f.text(), /先在查询范围中选择一个有权查看的项目/);
+  assert.equal(f.nodes("input").some(n => n.props["aria-label"] === "你的问题"), false);
+  f.change("查询范围", DATE_SCOPE); await f.respond(2, launchPage([]));
+  f.change("你的问题", "青芽什么时候上线？");
+  const i = f.calls.length;
+  const asked = f.submit("查询");
+  await f.untilCalls(i + 1);
+  assert.equal(f.calls[i].headers.Authorization, "Bearer fixture-owner");
+  assert.deepEqual(plain(f.calls[i].args.p_input), {
+    scope: DATE_SCOPE, view: "decision", record_type: "decision", include_history: false, limit: 30, cursor: 0, query: "青芽",
+  });
+  return { i, asked };
+}
+async function answerLaunchLookup(f, mode = SEARCH_CURRENT) {
+  const { i, asked } = await openLaunchLookup(f);
+  await f.respond(i, launchPage([launchRow()], false, mode));
+  for (const [offset, id, historical] of [[1, ID, false], [2, OTHER, true], [3, ID, false]]) {
+    const call = f.calls[i + offset];
+    assert.equal(call.name, "clued_imprint_read_v1");
+    assert.equal(call.headers.Authorization, "Bearer fixture-owner");
+    assert.deepEqual(plain(call.args.p_input), {
+      scope: DATE_SCOPE, view: "decision", record_type: "decision", include_history: historical, limit: 1, cursor: 0, id,
+    });
+    await f.respond(i + offset, launchPage([launchRow(historical)], historical, mode));
+  }
+  await asked;
+  assert.match(f.text(), /当前决定原文/); assert.match(f.text(), /已核实的关联历史/);
+  assert.ok(f.text().includes(LAUNCH_CURRENT)); assert.ok(f.text().includes(LAUNCH_OLD));
+  assert.ok(!f.text().includes(SOURCE_CURRENT));
+}
+function openLaunchSource(f, heading, button = "打开出处 1") {
+  const card = f.nodes("article").find(n => f.nodes("h5", n).some(h => f.text(h) === heading));
+  const source = card && f.nodes("button", card).find(n => f.text(n) === button);
+  assert.ok(source);
+  return f.fire(source, "onClick");
+}
+
+test("Imprints decision entry opens exact current and linked originals; locator and wrong version never become a body", async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await answerLaunchLookup(f);
+  const i = f.calls.length;
+  openLaunchSource(f, "当前决定原文"); await f.untilCalls(i + 1);
+  assert.equal(f.calls[i].headers.Authorization, "Bearer fixture-owner");
+  assert.equal(f.calls[i].name, "clued_imprint_source_v1");
+  assert.deepEqual(plain(f.calls[i].args.p_input), {
+    record_id: ID, evidence_id: EVIDENCE, include_history: false, record_version: 3,
+  });
+  await f.respond(i, launchSource());
+  assert.ok(f.text().includes(SOURCE_CURRENT)); assert.match(f.text(), /出处仅供核对/);
+
+  openLaunchSource(f, "已核实的关联历史（不保证完整）"); await f.untilCalls(i + 2);
+  assert.deepEqual(plain(f.calls[i + 1].args.p_input), {
+    record_id: OTHER, evidence_id: OLD_SOURCE, include_history: true, record_version: 7,
+  });
+  assert.equal(Object.hasOwn(f.calls[i + 1].args.p_input, "historical_record_version"), false);
+  await f.respond(i + 1, launchSource(true, { source_record_version: 6, content: "not the linked version" }));
+  assert.match(f.text(), /暂时无法核实出处全文/);
+  assert.ok(!f.text().includes("not the linked version")); assert.ok(!f.text().includes(SOURCE_CURRENT));
+  openLaunchSource(f, "已核实的关联历史（不保证完整）"); await f.untilCalls(i + 3);
+  await f.respond(i + 2, launchSource(true));
+  assert.ok(f.text().includes(SOURCE_OLD));
+
+  openLaunchSource(f, "当前决定原文", "打开出处 2"); await f.untilCalls(i + 4);
+  await f.respond(i + 3, launchSource(false, { available: false, complete: undefined, content: undefined,
+    evidence: { id: LOCATOR }, unavailable_reason: "external_source_content_not_stored" }));
+  assert.match(f.text(), /只有出处记录，没有保存可读取的全文/);
+  assert.ok(!f.text().includes(SOURCE_OLD));
+  assert.ok(f.authTokens.length >= 8 && f.authTokens.every(x => x === "fixture-owner"));
+});
+
+test("Imprints decision lane rejects an ambiguous exact title, unrelated search matches, and an unknown envelope", async t => {
+  for (const [rows, mode, message] of [
+    [[launchRow(), launchRow(false, { id: OTHER })], SEARCH_CURRENT, /多条同名/],
+    [[launchRow(false, { title: "提到青芽的其他决定", match_source: "qualified_source" })], SEARCH_CURRENT, /未找到可核实/],
+    [[launchRow()], "inferred", /暂时无法核实决定/],
+  ]) {
+    const f = fixture(); t.after(() => f.unmount());
+    const { i, asked } = await openLaunchLookup(f);
+    await f.respond(i, launchPage(rows, false, mode)); await asked;
+    assert.match(f.text(), message);
+    assert.ok(!f.text().includes(LAUNCH_CURRENT)); assert.equal(f.calls.length, i + 1);
+    f.unmount();
+  }
+});
+
+test("Imprints decision lane cannot merge pages from different published search modes", async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  const { i, asked } = await openLaunchLookup(f);
+  const unrelated = Array.from({ length: 30 }, (_, n) => launchRow(false, {
+    id: "dddddddd-dddd-4ddd-8ddd-" + String(n).padStart(12, "0"), title: "不是所询决定",
+  }));
+  await f.respond(i, launchPage(unrelated, false, SEARCH_CURRENT, 0, 30));
+  await f.untilCalls(i + 2);
+  assert.equal(f.calls[i + 1].args.p_input.cursor, 30);
+  await f.respond(i + 1, launchPage([launchRow()], false, SEARCH_LEGACY, 30)); await asked;
+  assert.match(f.text(), /暂时无法核实决定/); assert.ok(!f.text().includes(LAUNCH_CURRENT));
+  assert.equal(f.calls.length, i + 2);
+});
+
+test("same-tab account change aborts the open source and discards the old response even if it still arrives", async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await answerLaunchLookup(f, SEARCH_LEGACY);
+  const i = f.calls.length;
+  openLaunchSource(f, "当前决定原文"); await f.untilCalls(i + 1);
+  const request = f.calls[i];
+  assert.equal(request.headers.Authorization, "Bearer fixture-owner");
+  const incoming = session("next");
+  f.authEvent("SIGNED_OUT", null); assert.equal(request.signal.aborted, true);
+  assert.ok(!f.text().includes(LAUNCH_CURRENT));
+  f.setSession(incoming); f.authEvent("SIGNED_IN", incoming);
+  await f.respond(i, launchSource());
+  assert.ok(!f.text().includes(SOURCE_CURRENT)); assert.ok(!f.text().includes(LAUNCH_OLD));
+  assert.equal(f.calls.filter(c => c.name === "clued_imprint_source_v1").length, 1);
+});
+
+test("a same-project supersedes edge to a different product does not disclose or traverse that history", async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  const { i, asked } = await openLaunchLookup(f);
+  await f.respond(i, launchPage([launchRow()]));
+  await f.respond(i + 1, launchPage([launchRow()]));
+  assert.equal(f.calls[i + 2].args.p_input.id, OTHER);
+  await f.respond(i + 2, launchPage([launchRow(true, {
+    title: "橙果上线日期决定", content: "不相干的同项目历史原文",
+    relations: { supersedes: ["cccccccc-cccc-4ccc-8ccc-cccccccccccc"] },
+  })], true));
+  const final = f.calls[i + 3];
+  assert.equal(final.args.p_input.id, ID);
+  assert.equal(final.args.p_input.include_history, false);
+  await f.respond(i + 3, launchPage([launchRow()])); await asked;
+  assert.equal(f.calls.length, i + 4);
+  assert.ok(f.text().includes(LAUNCH_CURRENT));
+  assert.ok(!f.text().includes("不相干的同项目历史原文"));
+  assert.match(f.text(), /未核实到关联历史/);
+  assert.equal(f.nodes("button").filter(n => /^打开出处 /.test(f.text(n))).length, 2);
 });
