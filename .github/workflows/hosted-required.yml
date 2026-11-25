@@ -103,10 +103,18 @@ jobs:
           CLUED_UNDER_TEST: "1"
         run: node trusted/scripts/ci/ci-required-selection.mjs --run clued-cloud --root candidate
 
-  ci-suites:
-    name: hosted-ci-suites
+  ci-suites-shard:
+    # In shards (task 3435f8bf 件甲, PLAN-ci-p90-next-20261125 §3.1, the shape of FABLE-ci-duration-target-20261124 §2.5):
+    # each shard runs the i-th of n parts of the same --run-selected plan (ci-required-selection.mjs --shard, from the
+    # trusted base). The number of shards is written in the matrix list only. A shard's check name is
+    # hosted-ci-suites-shard-<n>, which no ruleset names: the required hosted-ci-suites is the summary job below.
+    name: ${{ format('hosted-ci-suites-shard-{0}', matrix.shard) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     permissions:
       contents: read
       pull-requests: read
@@ -170,28 +178,44 @@ jobs:
           echo "CLUED_CI_APP_DEPS=1" >> "$GITHUB_ENV"
       - name: Run the selected suites
         env:
-          SUITES: ${{ steps.select.outputs.suites }}
+          GITHUB_TOKEN: ${{ github.token }}
           PYTHONDONTWRITEBYTECODE: "1"
           CLUED_UNDER_TEST: "1"
-        run: |
-          failed=""
-          for suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do
-            if node trusted/scripts/ci/ci-required-selection.mjs --run "$suite" --root candidate; then
-              echo "- \`$suite\`: passed" >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "- \`$suite\`: **failed**" >> "$GITHUB_STEP_SUMMARY"
-              failed="$failed $suite"
-            fi
-          done
-          if [ -n "$failed" ]; then
-            echo "::error title=hosted-ci-suites::failed:$failed"
-            exit 1
-          fi
+        run: node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
-  migration-verify:
-    name: hosted-migration-verify
+  # The required check hosted-ci-suites: green only when every shard succeeded, judged as hosted-ci-suites-windows is.
+  ci-suites:
+    name: hosted-ci-suites
+    needs: ci-suites-shard
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every Linux suite shard succeeded
+        env:
+          RESULT: ${{ needs.ci-suites-shard.result }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        run: |
+          echo "hosted-ci-suites-shard-*: $RESULT"
+          test "$RESULT" = success
+
+  migration-verify-shard:
+    # In shards (task 3435f8bf 件甲, PLAN-ci-p90-next-20261125 §3.1, the shape of FABLE-ci-duration-target-20261124 §2.5):
+    # each shard runs the i-th of n parts of the same --run-selected plan (ci-required-selection.mjs --shard, from the
+    # trusted base). The number of shards is written in the matrix list only. A shard's check name is
+    # hosted-migration-verify-shard-<n>, which no ruleset names: the required hosted-migration-verify is the summary job below.
+    name: ${{ format('hosted-migration-verify-shard-{0}', matrix.shard) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     permissions:
       contents: read
       pull-requests: read
@@ -248,11 +272,33 @@ jobs:
       - name: Verify migrations on the production schema
         if: steps.select.outputs.run_production_schema == 'true'
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           CLUED_UNDER_TEST: "1"
-        run: node trusted/scripts/ci/ci-required-selection.mjs --run production-schema --root candidate
+        run: node trusted/scripts/ci/ci-required-selection.mjs --run-selected migration-verify --root candidate --shard ${{ matrix.shard }}/${{ strategy.job-total }}
       - name: Not affected
         if: steps.select.outputs.run_production_schema != 'true'
         run: echo "No migration, ledger, snapshot or drift-check file changed; nothing to verify." >> "$GITHUB_STEP_SUMMARY"
+
+  # The required check hosted-migration-verify: green only when every shard succeeded, judged as hosted-ci-suites-windows is.
+  migration-verify:
+    name: hosted-migration-verify
+    needs: migration-verify-shard
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every migration verification shard succeeded
+        env:
+          RESULT: ${{ needs.migration-verify-shard.result }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        run: |
+          echo "hosted-migration-verify-shard-*: $RESULT"
+          test "$RESULT" = success
 
   ci-suites-windows-shard:
     # The Windows suites in shards (task 3435f8bf block 4, PLAN-hosted-windows-speed-20261123 §3.2): one 4-core machine ran
@@ -266,7 +312,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     permissions:
       contents: read
       pull-requests: read
