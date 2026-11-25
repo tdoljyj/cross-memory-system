@@ -1494,6 +1494,41 @@ test('B20 #1307 同秒常驻补发结果不确定：唯一对上 45503124414 并
   assert.match(bypass.ignored.find(e => e.kind === 'Z2')?.why ?? '', /59818221959.*45503124414.*自动补发结果不确定/);
 });
 
+test('B21 07:38 回放：补发三秒后 head 被取代，运行标记独立证明自动补发', async () => {
+  const oldHead = `25c4ed286${'0'.repeat(31)}`, newHead = `6bafd6489${'0'.repeat(31)}`;
+  const p = bypassPull(1323, newHead, { created_at: '2026-11-24T23:00:00Z', updated_at: '2026-11-24T23:38:14Z' });
+  const title = 'clued-resident-dispatch/v1 turing 3f9b8957-8ee6-4d70-b45c-75679e476714';
+  const run = { ...dispatchRun(4602, '2026-11-24T23:38:11Z'), head_sha: oldHead, head_branch: p.head.ref,
+    status: 'completed', conclusion: 'cancelled', updated_at: '2026-11-24T23:38:27Z', display_title: title };
+  const pushes = [creation(1, p.head.ref, oldHead, '2026-11-24T23:16:00Z'),
+    activity(2, p.head.ref, oldHead, newHead, '2026-11-24T23:38:14Z', { actor: robot })];
+  const replay = (run, routes = {}) => bypassReplay({ pulls: [p], picked: [{ ...p, heads: [oldHead, newHead] }], pushes,
+    now: '2026-11-25T00:00:00Z', routes: { [allRunsRoute(oldHead)]: workflowRuns(run), ...routes } });
+  const staleStatus = [hint('当班：等必需测试', '2026-11-24T23:35:33Z')];
+  const withStatus = replay(run, { [statusesRoute(oldHead)]: staleStatus });
+  for (const sample of [withStatus, replay(run)]) {
+    const { summary: { bypass } } = await sample.compare();
+    assert.equal(bypass.state, '已判', bypass.reason);
+    assert.deepEqual(bypass.events, []);
+    assert.match(bypass.ignored.find(e => e.kind === 'Z2')?.why ?? '', /4602:1.*自动补发.*turing.*3f9b8957/);
+    assert.ok(!sample.stub.calls.includes(statusesRoute(oldHead)));
+  }
+
+  const attempt2 = { ...run, path: `${run.path}@refs/heads/${p.head.ref}`, run_attempt: 2,
+    run_started_at: '2026-11-24T23:39:00Z' };
+  const decide = async (run, routes = {}) => (await replay(run, { [statusesRoute(oldHead)]: staleStatus, ...routes }).compare()).summary.bypass;
+  for (const manual of [{ ...run, display_title: 'clued-required-tests' }, { ...run, display_title: `${title} extra` },
+    { ...run, display_title: 'clued-resident-dispatch/v1 turing' }, { ...run, path: '.github/workflows/other.yml' }]) {
+    const bypass = await decide(manual);
+    assert.equal(bypass.state, '已判', bypass.reason);
+    assert.deepEqual(bypass.events.map(e => [e.kind, e.evidence.attempt]), [['Z2', 1]]);
+  }
+  const rerun = await decide(attempt2, { [`/actions/runs/${run.id}/attempts/1`]: run, [`/actions/runs/${run.id}/attempts/2`]: attempt2 });
+  assert.equal(rerun.state, '已判', rerun.reason);
+  assert.deepEqual(rerun.events.map(e => [e.kind, e.evidence.attempt]), [['Z2', 2]]);
+  assert.match(rerun.ignored.find(e => e.kind === 'Z2')?.why ?? '', /4602:1.*自动补发/);
+});
+
 function mergeFixture(t) {
   const cwd = mkdtempSync(join(tmpdir(), 'shadow-merge-test-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
