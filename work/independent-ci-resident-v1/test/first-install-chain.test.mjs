@@ -309,7 +309,10 @@ foreach ($rel in $files) {
       $callee = $fns[$name.ToLowerInvariant()]; & $add $c 'call' ((& $resolve $c 2) + $NL + (& $resolve $callee.Body 1)) $callee.Name }
   }
   foreach ($a in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left -is [Management.Automation.Language.MemberExpressionAst] -and $n.Left.Member.Extent.Text -match '^(?i)(FileName|Path)$' }, $true)) {
-    if (@($a.Right.FindAll({ param($n) & $isRef $n }, $true)).Count) { $f = Get-Fn $a; & $add $a 'start-info' $(if ($f) { $f.Extent.Text } else { $a.Parent.Extent.Text }) $null }
+    if (@($a.Right.FindAll({ param($n) & $isRef $n }, $true)).Count) { $f = Get-Fn $a; $scope = $(if ($f) { $f } else { $a.Parent }); $ev = $scope.Extent.Text
+      # the Arguments the same start gets, resolved like a call's arguments (a task action's arguments kept in one variable)
+      foreach ($g in $scope.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left -is [Management.Automation.Language.MemberExpressionAst] -and $n.Left.Member.Extent.Text -match '^(?i)Arguments$' }, $true)) { $ev += $NL + (& $resolve $g.Right 2) }
+      & $add $a 'start-info' $ev $null }
   }
 }
 ConvertTo-Json -Depth 4 -Compress -InputObject $sites.ToArray()`;

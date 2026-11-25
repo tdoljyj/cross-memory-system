@@ -329,7 +329,7 @@ Source v2（S11）之后，阶段的失败码来自已安装 Source 的稳定目
 |---|---|
 | 未准入（只在第 1 段） | `NATIVE_NOT_ADMITTED`、`OWNER_REVIEW_REQUIRED`、`PROTECTED_CHANGE_NOT_UP_TO_DATE`、`PATHS_OUTSIDE_WRITE_SET`、`CLAIM_NOT_CURRENT`、`TASK_CI_HEAD_CAP_REACHED`、`CLAIM_HEAD_CAP_REACHED`、`CI_BUDGET_EXHAUSTED`、`WORKFLOW_CHANGE_NOT_AUTHORIZED`、`PR_NOT_OPEN_OR_CHANGED` |
 | 干净、暂时性 | `NATIVE_ADMISSION_UNAVAILABLE`、`GITHUB_TRANSIENT_UNAVAILABLE`、`BRIDGE_TRANSPORT_TIMEOUT`、`REMOTE_REFS_CHANGED_SINCE_BUNDLE`、`ARCHIVE_PRECONDITION_NOT_MET` |
-| 干净、终局 | `STAGE_PACKAGE_REFUSED`、`STAGE_INPUT_RESULT_MISSING`、`BROKER_RUNNER_NOT_ORIGINAL_STOPPED`、`BROKER_REQUEST_EXPIRED`、`BROKER_REQUEST_REFUSED`、`STAGE_HELPER_PREFLIGHT_REFUSED`、`STAGE_CHILD_REFUSED`、`STAGE_CHILD_TIMEOUT`、`RESIDENT_QUEUE_HEAD_NOT_REACHED`、`BATCH_CLAIM_CHANGED`、`NATIVE_POLICY_UNSUPPORTED`、`PUBLICATION_BLOCKED`、`PUBLICATION_REVOKED`、`EVIDENCE_REFUSED`、`WORKSPACE_PREPARATION_REFUSED` |
+| 干净、终局 | `STAGE_PACKAGE_REFUSED`、`STAGE_INPUT_RESULT_MISSING`、`BROKER_RUNNER_NOT_ORIGINAL_STOPPED`、`BROKER_REQUEST_EXPIRED`、`BROKER_REQUEST_REFUSED`、`STAGE_CHILD_REFUSED`、`STAGE_CHILD_TIMEOUT`、`RESIDENT_QUEUE_HEAD_NOT_REACHED`、`BATCH_CLAIM_CHANGED`、`NATIVE_POLICY_UNSUPPORTED`、`PUBLICATION_BLOCKED`、`PUBLICATION_REVOKED`、`EVIDENCE_REFUSED`、`WORKSPACE_PREPARATION_REFUSED` |
 | 永远未知 | `BROKER_RESPONSE_UNCONFIRMED`、`STAGE_HELPER_NOT_STOPPED_IN_TIME`、`STAGE_ORIGINAL_NOT_RESTORED`、`BROKER_CONFIGURATION_CONFLICT`、`NATIVE_RECEIPT_UNCONFIRMED`、`STAGE_CHILD_TREE_UNCONFIRMED`、`STAGE_OUTCOME_MISSING`、`PUBLICATION_UNCERTAIN`、`RECONCILIATION_REQUIRED`、`EVIDENCE_IDENTITY_CONFLICT`、`ADMISSION_CONFIGURATION_REFUSED`、`BROKER_UNCONFIRMED`、`BROKER_BUSY` |
 | 第 R 段（v0.7） | 干净、终局：`RELAY_STAGE_REFUSED`（转发入口在观察和写入之前拒绝，或第 R 段的包导出被拒）；永远未知：`RELAY_PUBLICATION_UNCERTAIN`、`ROLE_ALREADY_PUBLISHED_ON_HEAD`、`RELAY_PLAN_UNCONFIRMED`。崩溃恢复时，有 `20-plan-intent` 而没有 `25-plan` 的条目以 `RELAY_STAGE_INTERRUPTED` 关闭并 HALT |
 | PR-A 复审（v0.7） | 本地发布被 K 拒绝（`role_already_published_on_head`）在任何段都映射为 `ROLE_ALREADY_PUBLISHED_ON_HEAD`（未知）。发布者对没有码的异常给出的默认原因（`publication_operation_unconfirmed`、`*_OPERATION_UNCONFIRMED`）不再算暂时性，只有明确的传输事实才映射为 `GITHUB_TRANSIENT_UNAVAILABLE` 或 `NATIVE_ADMISSION_UNAVAILABLE`。refs 闸门没有明确答复时是 `REFS_GATE_UNCONFIRMED`（干净、终局，常驻侧码）；Windows 段成功而 companion 没确认泵时，只接受固定的泵码（`engine-windows.mjs#PUMP_CODES`，都不是暂时性码），其余一律 `COMPANION_PUMP_UNCONFIRMED`（未知） |
@@ -1525,7 +1525,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 ### 18.5 退避、名额与额度（设计 §4.7、§4.9）
 
 - **退避**：第 n 次没就绪之后等 10 → 20 → 40 → 80 → 120 分钟（之后每 120 分钟）。上次尝试时 claim 已是合并队列第 1 位：1 分钟后再试（`PARK_HEAD_RETRY_MS`）；连续在第 1 位的尝试最多这样持续 15 分钟（`PARK_HEAD_STREAK_MS`），之后回到退避。在第 1 位的尝试不计入 `park.stage8MaxTries`（否则还没轮到队首就用完次数、白白烧号），但计入每天的第 8 段重试额度和账本的 99 次上限。退避按计入的尝试次数算，所以一段第 1 位的连续尝试之后，下一次是 10 分钟后，不是 2 小时后。代价：claim 一直停在第 1 位却总不成为队首时，这个批次大约每 10 分钟试一次，约 14 小时后到 99 次结束，最多用掉本 PR 一天 100 次重试额度里的 98 次，同一 PR 的其他停靠批次就要等额度的滚动窗口，其他 PR 的车头复查不受影响（可能到 `park.maxMs` 才结束）。第 1 位停这么久本身就不正常，状态页和通知会显示额度用完。
-- **提示**：poller 的触发（带 `prUpdatedAt`）带着这个停靠批次还没因它提示过的 main 尖端（main 移动了），或是该批次自己的 PR 的新触发（作者入队后又改了 PR，重读已经见过的触发不算），就让那个批次的下一次尝试马上到期；每个批次最多每 5 分钟一次（`PARK_NUDGE_MS`），每个 main 尖端只提示一次。Agent 自己写的触发可以带任何 base，不用来提示。提示只会提前尝试，从不结束什么；结论只来自尝试本身读到的 main 和队列。
+- **提示**：poller 的触发（带 `prUpdatedAt`）带着这个停靠批次还没因它提示过的 main 尖端（main 移动了），或是该批次自己的 PR 的新触发（作者入队后又改了 PR，重读已经见过的触发不算），就让那个批次的下一次尝试马上到期；每个批次最多每 5 分钟一次（`PARK_NUDGE_MS`），每个 main 尖端只提示一次。Agent 自己写的触发可以带任何 base，不用来提示。提示只会提前尝试，从不结束什么；结论只来自尝试本身读到的 main 和队列。推送路由下（`batchRoute()` 为 push）不从触发推断 main 移动（看板第 266 行）：那时触发的 base 是各 PR 的合并基而不是 main 尖端，main 真动了轮询器也不发新触发；main 移动只认第 10 段自己读到的那一份（`hintParkedHead`），触发只保留“PR 被编辑”和 `parkEvent` 两种提示。github-merge 下不变；G2 删掉 github-merge 落地时，这一支连同 `parkNudgeBase` 一起删。
 - **名额**：停在 A 的、以及停在 B 且上次尝试时在合并队列前 2 位的批次，合计最多 `park.maxParked`（4）个；B 上不在前 2 位的另有上限 `park.maxParkedOutsideTop2`（8）。任一个满了就不开新批次（含 attempt 2），状态 `DEFERRED PARKING_FULL`，只挡开新批次，停靠批次照常尝试（否则新批次跑完整个独占区，在第一次尝试就以 `PARKED_OVER_CAPACITY` 结束、白白烧号）。前 2 位之外的上限设为 0 时什么都不挡：那里不停靠，某次尝试后不在前 2 位的批次以 `PARKED_OVER_CAPACITY` 中性结束。main 每次移动都会让停靠批次在下一次尝试以 `RESIDENT_BASE_MOVED` 结束，所以名额一般很快空出来。
 - **熔断半开时**：有批次停在 A（等托管）就不开试跑批次，一次只有一个试跑。
 - **额度**：一个批次只在开始时计一次执行（72）；第 8 段的再次尝试不算执行也不算评估，按 PR 单独计数：同一 PR 所有停靠批次的第 2 次及以后的尝试，滚动 24 小时合计不超过 `park.stage8RetriesPer24h`（100），从账本的 `71` 记录数（`ledger.usage(since, { stage8Pr: pr }).stage8Retries`，含安全点续跑的首次复查）。历史账本按持久预留中的 PR 重算；缺失主体仍保守计数。额度用完只阻止这个 PR，继续寻找其他到期批次，队列观察也按同一 PR 额度判断；通知明确标出 PR。无过滤的 `ledger.usage().stage8Retries` 保留全局诊断合计。
@@ -1951,7 +1951,7 @@ Owner Decision `2eea28a1` 把 3c 拆成两步。3c-1 只做影子模式（设计
 
 第 2 轮（预览树 b18f30bd）：ACCEPT-WITH-FIXES，2 MINOR、6 NIT，不挡今晚装。第 1 轮的 M1、m2、m3、m4、m5 已关；m6 部分关；m7 的复位理由成立。新的失败规则对追到的每种结局都对：GitHub 或 KooYomi 暂时读不到（绑定的 BLOCKED）、broker 启动前拒绝、助手预检拒绝、没有结果的子进程超时、引擎自己推导被拒，都保持干净；只有未知或没证实的结局 HALT。
 
-- m1 干净规则里走 classify 的那一支没有测试：补了 `BROKER_REQUEST_EXPIRED`、`BROKER_REQUEST_REFUSED`、`STAGE_HELPER_PREFLIGHT_REFUSED`、无结果的 `STAGE_CHILD_TIMEOUT`（都不 HALT），以及证明不齐的一例（HALT）。
+- m1 干净规则里走 classify 的那一支没有测试：补了 `BROKER_REQUEST_EXPIRED`、`BROKER_REQUEST_REFUSED`、`STAGE_HELPER_PREFLIGHT_REFUSED`、无结果的 `STAGE_CHILD_TIMEOUT`（都不 HALT），以及证明不齐的一例（HALT）。（看板第 271 行后来删掉了 `STAGE_HELPER_PREFLIGHT_REFUSED`：预检拒绝时交换代理读出的是 started=false，本来就走 `NATIVE_RECEIPT_UNCONFIRMED`；助手已起而无回执可能起过子进程，也改判 `NATIVE_RECEIPT_UNCONFIRMED`、进程树未确认、HALT。旧回执里出现该码按表外码 HALT。该例随之去掉。）
 - m2 §22.7 m7 说第 10 段的文件由 `retention.mjs` 管，不对：已更正，保留办法列入 §22.5。
 - NIT：写完 TRAIN_FACTS 后撞上限的运行不再 HALT；授权余量不低于助手固定的 180 秒，策略里的 300000 也加了测试；SwapBroker 和 C# 边界的阶段表加了一致性测试（第 1 轮 m6.3 的理由不对，已补）；已经停着时发现的中断当场收尾，复位一次就够；过时的注释和本节文字已改；回执链暂读不到的那几分钟里，停在 A 点的批次暂时不显示在 PR 页面上，只在进程启动时遇到暂时性读错误才会发生，接受。
 - 补测：调度推迟（companion 没就绪）时第 10 段照跑、已停机启动时什么都不跑。
@@ -5697,11 +5697,11 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 **一个批次只在三者同时成立时存在：PR 仍开着、PR 的 head 仍是批次的 head、本节点当班（持有 ci-admission）。** 任一不成立，下一拍经唯一一条终结路径结束并写回执。
 
 - **判定**：`executor.mjs#standing(key, subject, batch, { hint, safePoint })`，返回 `null`（成立，或没有事实说不成立）或 `{ basis, live }`：
-  - `not-on-duty`：节点模式 `STANDBY`（第 11 段探测或第 1 段的 `NODE_ROLE_NOT_HELD`），而且 companion 心跳新鲜（结束要 companion 证明 Linux 静止；不新鲜就下一拍再判，不会因此 HALT）。`UNCERTAIN` 不是答案。没有探测能力的引擎没有模式（单节点），视为当班。
+  - `not-on-duty`：节点模式 `STANDBY`（第 11 段探测或第 1 段的 `NODE_ROLE_NOT_HELD`），而且 companion 心跳新鲜（结束要 companion 证明 Linux 静止；不新鲜就下一拍再判，不会因此 HALT，按下面“读不到”一条写回执）。`UNCERTAIN` 不是答案。没有探测能力的引擎没有模式（单节点），视为当班。
   - `pr-closed` / `head-moved`：companion `pr-head` 的一次实时读（§17.5 的已有通道）说 PR 不是 open，或 head 不是批次的 head。
   - `pr-draft`：同一次读说 PR 开着、head 未变，但是草稿。只结束停在 A、B 的批次，是流程结束（§72.11）。
 - **什么时候读 PR**（`liveReadDue`，按“批次键 + 被点名的 head”节流，`SUPERSEDE_LIVE_READ_MS` = 10 分钟，原有常量）：每个批次每 10 分钟一次；排队表里出现这个 PR 的更新提交、或第 10 段的车头指向这个 PR 的别的 head 时立即读（提示）。第 1 段的准入本身读过 PR，`markStarted` 时记作该批次的第一次读，所以刚开始的批次不多读。
-- **读不到**：不结束。读不到不是事实；结束会烧掉 head（B 上第 3、5、7 段已发布，要推新提交才能再跑），误结束比多停一会儿代价大得多；停留本身有 `park.maxMs` 兜底。只有被点名了别的 head 而读不到时才写回执 `supersede-unconfirmed`（与以前相同），平时的周期读不写，网络断一天也不会刷屏。
+- **读不到**：不结束。读不到不是事实；结束会烧掉 head（B 上第 3、5、7 段已发布，要推新提交才能再跑），误结束比多停一会儿代价大得多；停留本身有 `park.maxMs` 兜底。读不到不能无声（2026-11-25，D:/w/tmp/PLAN-executor-standing-read-20261125.md）：规则的两种读（PR 的 `pr-head`、companion 心跳）各按节点计一段，段首写一条 `standing-unread`（`read`、`failureCode`、为哪一条规则读的 `basis`、段首批次的 `key`/`pr`/`safePoint`，心跳另带 `heartbeatAgeMs`），读到后写一条 `standing-read-restored`（`since`、`failedReads`）；段内不重复写，同一种读 60 分钟内最多一段有回执（`STANDING_UNREAD_QUIET_MS`；窗口内开始的段先不写，到窗口满仍读不到时补写段首一条），网络断一天是两条。码：companion 没答 `PR_HEAD_NO_ANSWER`，答了但读不出 `PR_HEAD_UNAVAILABLE`，心跳 `COMPANION_NOT_READY`；只在回执里，不进失败表。回执写不进去不影响这一拍。被点名了别的 head 而读不到时另写 `supersede-unconfirmed`（与以前相同，加 `failureCode`）。
 - **读到 head 未变**：排队表里那个“更新的提交”被证伪，退回被替换（`keepRunning`，回执 `supersede-disproved`），与以前相同。
 - **结束只有一条路**：`supersededEnd`（原有，Owner 中止的路径）：先只新建 `81-self-abort`（新记 `basis`），两端静止证明（最多 5 分钟复查），烧号，两端只改名归档（原因 `superseded`），`FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT`，终态记 `basis`、`safePoint`、`stage`（A 上 1，B 上 8），对熔断中性，从不 attempt 2。不新增失败码，失败表不变。
 
@@ -5732,7 +5732,7 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - 不当班节点按规则不留任何批次：转 STANDBY 后的下一拍结束停在 A、B 的批次；PAUSE 下也一样。重装本来只对不当班节点做（`rollout/fleet/README.md`：先待命、再移交、后原当班），所以“必须无未结批次”由规则保证，不再要 Owner 先 rearm、Abort 或排空。
 - `reinstall/rehearse.py`：不再比较卸载计划的 `openBatches`（以前的 `UNINSTALL_PLAN_OPEN_BATCHES`）。它是预演那一刻的瞬时状态，不是包或配置的性质；字段本身仍要求存在（模板要读）。
 - W1（`reinstall/tools/pause-old-resident.py`）不改：它写暂停请求后最多等 90 分钟，直到“已暂停、无当前批次、无未终结条目”。规则在暂停下照样结束残留，所以这一步就是重装的收尾阶段。
-- `reinstall/launcher/template.ps1`（`Test-OldRootQuiet`、卸载前置检查）、`generate.py`（`OPEN_BATCH`）、已装的 `windows/uninstall-resident.ps1`：检查保留，作为规则保证的断言，错的路仍然走不通；码不再指示手工动作：`OLD_RESIDENT_OPEN_BATCH`、`UNINSTALL_REQUIRES_NO_OPEN_BATCH`。真出现时说明规则没能运行（节点当班、HALT、companion 不在），按那个原因处理。模板钉值 `generate.py#TEMPLATE_SHA` 同步。`install-resident.ps1` 的 `INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST` 不在本分支改（它被另一分支要删的按台修复脚本钉住）。
+- `reinstall/launcher/template.ps1`（`Test-OldRootQuiet`、卸载前置检查）、`generate.py`（`OPEN_BATCH`）、已装的 `windows/uninstall-resident.ps1`：检查保留，作为规则保证的断言，错的路仍然走不通；码不再指示手工动作：`OLD_RESIDENT_OPEN_BATCH`、`UNINSTALL_REQUIRES_NO_OPEN_BATCH`。真出现时说明规则没能运行（节点当班、HALT、companion 不在），按那个原因处理；companion 不在或 PR 读不到时，原因在回执 `standing-unread` 里（§72.2）。模板钉值 `generate.py#TEMPLATE_SHA` 同步。`install-resident.ps1` 的 `INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST` 不在本分支改（它被另一分支要删的按台修复脚本钉住）。
 - Owner 排空（`request-drain`，§18.6）保留，是 Owner 在当班节点上主动放弃仍成立批次的工具，不再是重装的步骤。
 
 ### 72.7 安全性质逐条
@@ -5761,8 +5761,8 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 
 - PR 关闭：停在 B 的批次在第 1 段之后第 10 分钟的读里结束（`pr-closed`，第 8 段终态，一次只改名归档，不再试第 8 段，不 attempt 2）；10 分钟之内不读。
 - PR 新提交：没有触发时按批次自己的 10 分钟读结束（`head-moved`）；有触发时下一拍就读、就结束，新提交接着跑。
-- 节点失去当班：STANDBY 下一拍结束 B 上（第 8 段终态）和 A 上（第 1 段终态，未发布）的批次，不读 PR，不再试第 8 段；`UNCERTAIN` 不结束；companion 心跳过期时不结束、不 HALT，心跳恢复后结束。
-- 读不到 PR 状态：一小时里每 10 分钟读一次，批次一直停着，不写回执、不 HALT；被触发点名别的 head 而读不到时写一次 `supersede-unconfirmed`；到 `park.maxMs` 由兜底结束。
+- 节点失去当班：STANDBY 下一拍结束 B 上（第 8 段终态）和 A 上（第 1 段终态，未发布）的批次，不读 PR，不再试第 8 段；`UNCERTAIN` 不结束；companion 心跳过期时不结束、不 HALT，写一条 `standing-unread`（`read: heartbeat`、`basis: not-on-duty`）；心跳恢复后结束，并写 `standing-read-restored`。
+- 读不到 PR 状态：一小时里每 10 分钟读一次，批次一直停着、不 HALT，六次读不到只写一条 `standing-unread`（带码），读到后写一条 `standing-read-restored`；读到与读不到交替时一小时内仍只有这两条；被触发点名别的 head 而读不到时写一次 `supersede-unconfirmed`；到 `park.maxMs` 由兜底结束。
 - 重装：已暂停的节点转 STANDBY 后，规则在暂停下结束残留，账本里没有未终结条目（卸载与 W1 数的就是这个），暂停记录字节不变，期间没有第 8 段尝试。
 - attempt 2：预检后一次读，head 已变 → `ATTEMPT2_SUPERSEDED`；读不到 → 照常跑完。
 
@@ -5774,7 +5774,7 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 
 病根：冻结的升级代理（`upgrader/src/resident-ports.mjs#openBatches`）把账本里所有没有 `90-terminal.json` 的条目都算未结批次，排空要它为 0；§72.6 让重装前的停靠残留由规则结束，原地升级这条路漏了。停靠批次等的是本节点之外的东西（托管、合并队列、列车），而启动它的 Source 正要离开。
 
-- **规则**：停在 A 或 B 的批次，还要求本节点的升级代理没有在为它排空。判定是 `executor.mjs#upgradeDraining()`，两样都是升级代理自己的话、本拍读到的：`upgrade\status.json` 的 op 状态是 `WAITING_DRAIN`（versions 端口；由升级代理写，不是 Owner 会话），而且它的 intake hold（holder `resident-upgrade`，`executor.mjs#UPGRADE_HOLDER`，测试钉住与冻结的 `HOLDER_UPGRADE` 相等）在生效；再加 companion 心跳新鲜（同 `not-on-duty`）。排空超时后升级代理撤 hold，残留的状态文件结束不了任何批次；hold 最长两小时自动失效。
+- **规则**：停在 A 或 B 的批次，还要求本节点的升级代理没有在为它排空。判定是 `executor.mjs#upgradeDraining()`，两样都是升级代理自己的话、本拍读到的：`upgrade\status.json` 的 op 状态是 `WAITING_DRAIN`（versions 端口；由升级代理写，不是 Owner 会话），而且它的 intake hold（holder `resident-upgrade`，`executor.mjs#UPGRADE_HOLDER`，测试钉住与冻结的 `HOLDER_UPGRADE` 相等）在生效；再加 companion 心跳新鲜（同 `not-on-duty`；不新鲜时不结束，写 `standing-unread`（`basis: upgrade-drain`））。排空超时后升级代理撤 hold，残留的状态文件结束不了任何批次；hold 最长两小时自动失效。
 - **结束**：同一条 `supersededEnd`，`basis: upgrade-drain`；B 上第 8 段终态，A 上第 1 段终态。此类流程性结束按 §72.10 自动重新接纳同一 head/S，不要求空提交；下一拍排空看到 0，往下走暂停。
 - **不判的**：在途批次照旧跑到下一个停靠点（排空本来就等它），到点再按本条结束；Owner 的 hold、只有状态没有 hold、只有 hold 没有 `WAITING_DRAIN`，都不结束。冻结通道不改。
 - **测试**：`test/upgrade-drain-parked.test.mjs` 用冻结升级代理自己的 drain 步骤（`STEPS.drain`）、冻结观察面（`ResidentPort` 的 hold 与 `openBatches`）和升级代理自己的状态文件（`buildStatus`/`writeStatus`），对真实执行器复现 #1130：修复前 120 分钟内排空一直等（`openBatches=1`），修复后一两分钟内通过，终态 `SUPERSEDED_AT_SAFE_POINT`/`upgrade-drain`，不再试第 8 段、不 attempt 2、不 HALT；以及上面四种不结束的情形。

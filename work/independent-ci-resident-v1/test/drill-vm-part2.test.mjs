@@ -37,10 +37,11 @@ test('seal takes the candidate receipt drill-vm.ps1 finalized and refuses the on
   assert.equal(r.drill, `PASS_A_PER_NODE_STEPS_REMAIN receipt ${sha(fs.readFileSync(done.receiptFile))}`);
 });
 
-// Integration of branch one (seal's main-ancestor gate) and branch two (three PASS conclusions): each PASS receipt is still stopped by the
-// gate while the candidate's commit is not on main -- the index untouched -- and seals with its value as it is once the commit is on main.
-test('each of the three PASS drill receipts is refused off main and seals on main (merged gate and conclusions)', opts, async t => {
-  assert.deepEqual(DRILL_PASS_CONCLUSIONS, ['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN', 'PASS_A_REINSTALL_NOT_DRILLED']);
+// Integration of branch one (seal's main-ancestor gate) and branch two (the PASS conclusions, two since FABLE-drill-r13-a8-m5 1.3): each
+// PASS receipt is still stopped by the gate while the candidate's commit is not on main -- the index untouched -- and seals with its value
+// as it is once the commit is on main.
+test('each of the two PASS drill receipts is refused off main and seals on main (merged gate and conclusions)', opts, async t => {
+  assert.deepEqual(DRILL_PASS_CONCLUSIONS, ['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN']);
   for (const conclusion of DRILL_PASS_CONCLUSIONS) {
     const w = await sealWorld(t);
     const setCompare = c => { const f = process.env.FAKE_GH_STATE; const st = JSON.parse(fs.readFileSync(f, 'utf8')); st.compare = c; fs.writeFileSync(f, JSON.stringify(st)); };
@@ -1214,7 +1215,7 @@ test('the guest evidence is collected after a timed-out first install too, and a
     'host-result.json': JSON.stringify({ exit: 1, terminal: null }) });
   const r = ps(`
     $script:steps = [Collections.Generic.List[string]]::new()
-    $script:Interactive = $false; $script:SkipReinstall = $true
+    $script:Interactive = $false
     function New-PSSession { param($VMName, $Credential) 'session' }
     function Remove-PSSession { param($Session) }
     function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
@@ -1266,7 +1267,6 @@ test('the returned entry output is kept when the stage files cannot be collected
   const runDir2 = path.join(tmp, 'evidence-interactive'); fs.mkdirSync(runDir2, { recursive: true });
   const r = ps(`
     $script:steps = [Collections.Generic.List[string]]::new()
-    $script:SkipReinstall = $true
     function New-PSSession { param($VMName, $Credential) 'session' }
     function Remove-PSSession { param($Session) }
     function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
@@ -1401,35 +1401,28 @@ test('the verdict fails what the plan says fails', opts, () => {
   assert.equal(pass(verdictOf(evidence({ reboot: { ok: false, status: e.status, readAt: NOW } }))).A7, false);
   assert.equal(pass(verdictOf(evidence({ reinstall: { ...e.reinstall, upgradeStatus: 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL' } }))).A8, false);
   assert.equal(verdictOf(evidence({ verify: { status: 'X' } })).conclusion, 'FAIL');
-  const skipped = verdictOf(evidence({ reinstall: { skipped: true }, skipReinstall: true }));
-  assert.equal(pass(skipped).A8, null); assert.equal(skipped.conclusion, 'PENDING_PRODUCTION_READBACK');
 });
 
-// Codex review of 58136df61, medium 2: the operator's choice (-SkipReinstall) and the run's A8 result reach the verdict apart. Only the
-// choice makes A8 "skipped"; an A8 result that is missing, or says skipped without the choice, is FAIL and never named -SkipReinstall.
-test('A8 is skipped only by the explicit option; a missing or unchosen skip is FAIL, through the real receipt', opts, () => {
-  const e = JSON.parse(evidence());
+// FABLE-drill-r13-a8-m5 1.3: A8 has no skip. A run that handed over no A8 result, or an old record that says skipped, is FAIL like any
+// other A8 that is not the two refusals, through the real receipt.
+test('A8 without the two refusals is FAIL, a missing result and an old skipped record included, through the real receipt', opts, () => {
   const a8 = over => { const r = verdictOf(evidence(over)); return { pass: pass(r).A8, detail: r.items.find(i => i.id === 'A8').detail, conclusion: r.conclusion }; };
   for (const [reason, over] of [
     ['no A8 result', { reinstall: null }],
-    ['skipped without the option', { reinstall: { skipped: true } }],
-    ['the option, but A8 ran', { reinstall: e.reinstall, skipReinstall: true }],
+    ['an old skipped record', { reinstall: { skipped: true } }],
   ]) {
     const r = a8(over);
     assert.equal(r.pass, false, reason);
     assert.doesNotMatch(r.detail, /^skipped/, reason);
     assert.equal(r.conclusion, 'FAIL', reason);
   }
-  assert.doesNotMatch(a8({ reinstall: null }).detail, /SkipReinstall/);
   // the real conversion: Invoke-DrillPreparedRun over a run that handed over no A8 result, a candidate whose other items all pass
   const absent = m5DrillReceipt('cand-a8-absent', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, reinstall: 'absent' });
   const item = absent.items.find(i => i.id === 'A8');
   assert.equal(item.pass, false);
-  assert.doesNotMatch(item.detail, /SkipReinstall/);
   assert.equal(absent.conclusion, 'FAIL');
   assert.equal(finalize('cand-a8-absent-finalize', absent, notTheDrillsSource()).output.code, 'DRILL_RECEIPT_NOT_FINALIZABLE');
-  // a run whose A8 says skipped without the option: the same
-  const unchosen = m5DrillReceipt('cand-a8-unchosen', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, reinstall: { skipped: true } });
-  assert.equal(unchosen.items.find(i => i.id === 'A8').pass, false);
-  assert.equal(unchosen.conclusion, 'FAIL');
+  const old = m5DrillReceipt('cand-a8-old-skip', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, reinstall: { skipped: true } });
+  assert.equal(old.items.find(i => i.id === 'A8').pass, false);
+  assert.equal(old.conclusion, 'FAIL');
 });

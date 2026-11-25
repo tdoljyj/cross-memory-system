@@ -700,8 +700,8 @@ test('seal refuses a candidate whose commit is not on main, or whose place canno
 });
 
 // blocking 4: a candidate drill's receipt is taken only with one of two conclusions and candidate true; the set is defined once and exported
-test('seal --drill-receipt: one of the three PASS conclusions of a candidate with these three hashes; anything else is refused first; the cell is never replaced', async t => {
-  assert.deepEqual(publishModule.DRILL_PASS_CONCLUSIONS, ['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN', 'PASS_A_REINSTALL_NOT_DRILLED']);
+test('seal --drill-receipt: one of the two PASS conclusions of a candidate with these three hashes; anything else is refused first; the cell is never replaced', async t => {
+  assert.deepEqual(publishModule.DRILL_PASS_CONCLUSIONS, ['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN']);
   assert.ok(Object.isFrozen(publishModule.DRILL_PASS_CONCLUSIONS));
   const w = await prepWorld(t);
   await w.prep();
@@ -714,6 +714,7 @@ test('seal --drill-receipt: one of the three PASS conclusions of a candidate wit
   const before = await fs.readFile(w.index), n = (await w.calls()).length;
   for (const [over, code] of [[{ conclusion: 'FAIL' }, 'SEAL_DRILL_RECEIPT_NOT_PASS'], [{ conclusion: 'PENDING_PRODUCTION_READBACK' }, 'SEAL_DRILL_RECEIPT_NOT_PASS'],
     [{ conclusion: 'PASS_A_PENDING_PRODUCTION_READBACK' }, 'SEAL_DRILL_RECEIPT_NOT_PASS'], [{ conclusion: 'PASS_ANYTHING' }, 'SEAL_DRILL_RECEIPT_NOT_PASS'],
+    [{ conclusion: 'PASS_A_REINSTALL_NOT_DRILLED' }, 'SEAL_DRILL_RECEIPT_NOT_PASS'],
     [{ candidate: undefined }, 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE'], [{ candidate: false }, 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE'], [{ candidate: 'true' }, 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE'],
     [{ firstInstallKitSha256: 'f'.repeat(64) }, 'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE'], [{ tarSha256: 'f'.repeat(64) }, 'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE'],
     [{ ciSourceManifestSha256: 'f'.repeat(64) }, 'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE'], [{ firstInstallKitSha256: undefined }, 'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE'],
