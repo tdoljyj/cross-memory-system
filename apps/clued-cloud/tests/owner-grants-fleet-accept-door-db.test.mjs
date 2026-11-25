@@ -223,6 +223,9 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
     result = await ask(R1);
     assert.deepEqual([result.status, result.action, result.resources, result.request_sha256, result.confirm_path],
       ['pending', ACTION, [R1], hex('b'), `/confirm/${result.request_id}`]);
+    // The whole answer, key for key: rollout/fleet/accept-door.mjs readAnswer reads confirm_path and expires_at at the top.
+    assert.deepEqual(Object.keys(result).sort(), ['action', 'archive_sha256', 'confirm_path', 'expires_at', 'repository', 'request_id',
+      'request_sha256', 'resources', 'status', 'version']);
     const pending = result;
     const stored = (await admin.query(`select r.binding_id,r.suggested_max_uses,r.agent_note,
         round(extract(epoch from r.expires_at-r.created_at))::int seconds,r.expires_at
@@ -323,9 +326,11 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
       ['accepted', ACTION, [R1], given.grant.grant_id, rows[0].receipt_id]);
     assert.equal(Date.parse(result.accepted_at), grantRow.granted_at.getTime());
     assert.deepEqual([result.repository, result.version, result.archive_sha256, result.request_sha256], [REPO, '18.0.0', hex('a'), hex('b')]);
-    assert.deepEqual(result.nodes.map((n) => [n.name, n.state, n.source_sha256, n.reported_state, n.paused, typeof n.last_heartbeat_at]),
-      [['desk', 'active', hex('5'), 'NORMAL', false, 'string'], ['silent', 'pending', null, null, false, 'object'],
-        ['turing', 'active', null, 'PAUSED', true, 'string']]);
+    // The whole answer, key for key, and each node exactly what accept-door.mjs readFleet uses: its name, its reported Source, paused.
+    assert.deepEqual(Object.keys(result).sort(), ['accepted_at', 'action', 'archive_sha256', 'grant_id', 'nodes', 'receipt_id', 'repository',
+      'request_sha256', 'resources', 'status', 'version']);
+    assert.deepEqual(result.nodes, [{ name: 'desk', source_sha256: hex('5'), paused: false }, { name: 'silent', source_sha256: null, paused: false },
+      { name: 'turing', source_sha256: null, paused: true }]);
     // The door replays the same answer and writes nothing, also after the Owner revokes the used grant.
     const written = async () => [await requests(), await grants(), await count('fleet_accepted_v1')];
     const before = await written();

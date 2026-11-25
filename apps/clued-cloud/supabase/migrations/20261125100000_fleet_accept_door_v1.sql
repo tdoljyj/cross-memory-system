@@ -208,10 +208,10 @@ begin
   if found and v_row.archive_sha256=v_parts[3] and v_row.request_sha256=v_parts[4] then
     return v_base||jsonb_build_object('status','accepted','grant_id',v_row.grant_id,'receipt_id',v_row.receipt_id,
       'accepted_at',v_row.accepted_at,
-      'nodes',coalesce((select jsonb_agg(jsonb_build_object('name',n.name,'state',n.state,
-          'source_sha256',l.reported_source_sha256,'reported_state',l.reported_state,
-          'paused',coalesce(l.reported_state in ('PAUSED','INTAKE_PAUSED'),false),
-          'last_heartbeat_at',l.last_heartbeat_at) order by n.name,n.created_at,n.node_id)
+      -- Each node exactly what rollout/fleet/accept-door.mjs readFleet uses: name, reported Source, paused.
+      'nodes',coalesce((select jsonb_agg(jsonb_build_object('name',n.name,
+          'source_sha256',l.reported_source_sha256,
+          'paused',coalesce(l.reported_state in ('PAUSED','INTAKE_PAUSED'),false)) order by n.name,n.created_at,n.node_id)
         from clued_private.ci_nodes_v1 n left join clued_private.ci_node_liveness_v1 l on l.node_id=n.node_id
         where n.user_id=p_user and n.state not in ('retired','revoked')),'[]'::jsonb));
   end if;
