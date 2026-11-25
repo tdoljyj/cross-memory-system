@@ -39,7 +39,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.ref == 'refs/heads/clued-train/staging' && github.sha) || github.ref }}
   # Staging has one group per S, so later batches cannot replace queued CI.
   # Main pushes never cancel a running main run.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && !github.event.pull_request.merged }}
 
 jobs:
   # Work Claim Admission v0.1 §4.6 L0b: admit on the independent CI's own App

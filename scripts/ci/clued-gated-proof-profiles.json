@@ -6572,7 +6572,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "d29f33377802e716225b27d14fe5da02774e43ead7d17f5087b832d3c0f61701",
+      "source_sha256": "883b62798a9d9a07e68c665b2b0fb55d717837148106867cc7e8478a2ea1f015",
       "source_yaml_lines": [
 "name: clued-required-tests-windows",
 "",
@@ -6615,7 +6615,7 @@
 "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.ref == 'refs/heads/clued-train/staging' && github.sha) || github.ref }}",
 "  # Staging has one group per S, so later batches cannot replace queued CI.",
 "  # Main pushes never cancel a running main run.",
-"  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+"  cancel-in-progress: ${{ github.event_name == 'pull_request' && !github.event.pull_request.merged }}",
 "",
 "jobs:",
 "  # Work Claim Admission v0.1 §4.6 L0b: admit on the independent CI's own App",
@@ -6747,7 +6747,7 @@
 "          exit $LASTEXITCODE",
 ""
       ],
-      "workflow_blob": "85fe5d6f8c84b00fe268b3ed0ec2970c203c83f6"
+      "workflow_blob": "a1b1a14328b68c5efc364b4e74dec93854229633"
     },
     ".github/workflows/clued-required-tests.yml": {
       "execution_mode": "all_required_primaries",
@@ -6965,7 +6965,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "3c4d30fa5876d0534300bdef980c6ef980bbdcd64466a08d368636cfdbc4e1ff",
+      "source_sha256": "bca4f6bc8807dc8dfec9a0d6fb4d5fff836fb5a679e10ac3a3dd8c85b9ab1e9a",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "run-name: ${{ github.event_name == 'workflow_dispatch' && (inputs.resident_node && inputs.resident_dispatch_id && format('clued-resident-dispatch/v1 {0} {1}', inputs.resident_node, inputs.resident_dispatch_id) || 'clued-required-tests') || '' }}",
@@ -7037,7 +7037,7 @@
 "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr || (github.ref == 'refs/heads/clued-train/staging' && github.sha) || github.ref }}",
 "  # Staging has one group per S, so later batches cannot replace queued CI.",
 "  # Main pushes never cancel a running main run.",
-"  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+"  cancel-in-progress: ${{ github.event_name == 'pull_request' && !github.event.pull_request.merged }}",
 "",
 "jobs:",
 "  # Work Claim Admission v0.1 §4.6 L0b: admit on the independent CI's own App",
@@ -7933,7 +7933,7 @@
 "        run: python3 -I -B scripts/ci/check_contract_placement.py --base \"$CI_BASE_SHA\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\"",
 ""
       ],
-      "workflow_blob": "27b43473d13a1c26749c4f32a27be0d593476c29"
+      "workflow_blob": "bd23cd06692ff010ac31b209e2ac7ca0db7b6d9a"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [

@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-export const COMPONENT_VERSION = "1.0.8";
+export const COMPONENT_VERSION = "1.0.9";
 
 // /3 changes only the on-disk representation. Each original LF-delimited YAML
 // line remains a separate plaintext JSON string on a separate physical line.
@@ -195,10 +195,10 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'27b43473d13a1c26749c4f32a27be0d593476c29',
-  source_sha256:'3c4d30fa5876d0534300bdef980c6ef980bbdcd64466a08d368636cfdbc4e1ff',
-  workflow_definition_sha256:'5badf0dfed0981dc546a949ec408875e152b392aa7664554787dcc41e1eac2e7',
-  profile_sha256:'d4e9d189df883775a34da0adef80b88a205739199f4909ed886fd0ab080f93b5',
+  workflow_blob:'bd23cd06692ff010ac31b209e2ac7ca0db7b6d9a',
+  source_sha256:'bca4f6bc8807dc8dfec9a0d6fb4d5fff836fb5a679e10ac3a3dd8c85b9ab1e9a',
+  workflow_definition_sha256:'13f9cd76b44e26e8df8089b38062ff5c6001b09a9b5b91834b6ab7bebc7f1616',
+  profile_sha256:'09d1539aaebe74bd094c61cce2526356e48835e1c888240febfd30a5217f851a',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
   role_sha256:Object.freeze({
     'clued-cloud-tests':'c34d55c18fa85fea715c4f972de0e106ef355e1d1487b42c636918eda39888ee',
@@ -411,13 +411,30 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
       'contract-placement':'08be4e9f9d7c58c0ddca5bdb2621f31afde460a2c14c6ce3714ccc2a26fd6ce8',
     }),
   }),
+  // Before preserving framework runs on the merged PR's closed event (Task 04f9b91b).
+  Object.freeze({
+    file:'.github/workflows/clued-required-tests.yml',
+    workflow_blob:'27b43473d13a1c26749c4f32a27be0d593476c29',
+    source_sha256:'3c4d30fa5876d0534300bdef980c6ef980bbdcd64466a08d368636cfdbc4e1ff',
+    workflow_definition_sha256:'5badf0dfed0981dc546a949ec408875e152b392aa7664554787dcc41e1eac2e7',
+    profile_sha256:'d4e9d189df883775a34da0adef80b88a205739199f4909ed886fd0ab080f93b5',
+    primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
+    role_sha256:Object.freeze({
+      'clued-cloud-tests':'c34d55c18fa85fea715c4f972de0e106ef355e1d1487b42c636918eda39888ee',
+      'ci-suites':'714cfad8a014072f83d8f5ec67f1ee66a725eb746cb331339987873bc00a6234',
+      'migration-verify':'ff03a97c7add0aaebc140ff7662dc61bc10f8af6f51296c74fbc520c440c4069',
+      'gitleaks':'db2d6957cc30f4b06035197d261bd266f35134895f090e74e58cb8eb64da1b32',
+      'trivy':'84163225be96a1aaecb8341bba0043298ff08b9a503b4910415cdb35a6dee298',
+      'contract-placement':'08be4e9f9d7c58c0ddca5bdb2621f31afde460a2c14c6ce3714ccc2a26fd6ce8',
+    }),
+  }),
 ]);
 const requiredTestsPin=blob=>[REQUIRED_TESTS_SOURCE,...REQUIRED_TESTS_PREVIOUS_SOURCES].find(pin=>pin.workflow_blob===blob)??null;
 // The Windows successor has only one primary and uses the ordinary profile.
 const WINDOWS_CANCEL_SOURCE=Object.freeze({
-  workflow_blob:'85fe5d6f8c84b00fe268b3ed0ec2970c203c83f6',
-  source_sha256:'d29f33377802e716225b27d14fe5da02774e43ead7d17f5087b832d3c0f61701',
-  workflow_definition_sha256:'7264d99e97d56ee5ffda0c7aa1717c5150ba0f442a866a60dbf510c319644de6',
+  workflow_blob:'a1b1a14328b68c5efc364b4e74dec93854229633',
+  source_sha256:'883b62798a9d9a07e68c665b2b0fb55d717837148106867cc7e8478a2ea1f015',
+  workflow_definition_sha256:'5a8a5215f258efcdcd8bb69f12e93f1a605f6b8aace09b3712990d879f9fe497',
 });
 export function isExactAllRequiredPrimariesProfile(profile,file) {
   try {

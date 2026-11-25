@@ -900,24 +900,67 @@ test('3576b29c: the hosted copy annotates none with the reason and runs no branc
   assert.match(error.mock.calls.map(call => call.arguments[0]).join('\n'), /::notice .*none: #1349 contains main and is under way.*#1344.*conflict/);
 });
 
-for (const file of ['clued-required-tests.yml', 'clued-required-tests-windows.yml', 'hosted-required.yml']) {
-  test(`3576b29c: ${file} uses PR close to cancel the same PR's runs without starting jobs`, () => {
-    const source = fs.readFileSync(path.join(ROOT, '.github/workflows', file), 'utf8');
-    assert.match(source.slice(source.indexOf('\non:\n'), source.indexOf('\npermissions:')), /^  pull_request:\n    types: \[opened, synchronize, reopened, closed\]/m);
-    assert.match(source, /^  group: \$\{\{ github.workflow \}\}-\$\{\{ github.event.pull_request.number \|\| /m);
-    assert.match(source, /^  cancel-in-progress: \$\{\{ github.event_name == 'pull_request' \}\}$/m);
-    const jobs = [...source.split('\njobs:\n')[1].matchAll(/^  ([a-z0-9-]+):\n([\s\S]*?)(?=^  [a-z0-9-]+:\n|(?![\s\S]))/gm)];
-    assert.ok(jobs.length > 1);
-    for (const [, id, job] of jobs) {
-      if (id === 'admission-gate' || file === 'hosted-required.yml') {
-        assert.match(job, /^    if: (?:always\(\) && )?github.event.action != 'closed'$/m, id);
-      } else {
-        assert.match(job, /^    needs: admission-gate$/m, id);
-        assert.match(job, /^    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&/m, id);
-      }
+const frameworkRequiredWorkflows = ['clued-required-tests.yml', 'clued-required-tests-windows.yml'];
+const requiredWorkflow = file => fs.readFileSync(path.join(ROOT, '.github/workflows', file), 'utf8');
+const concurrencyLine = (source, key) =>
+  new RegExp(`^  ${key}: .+$`, 'm').exec(/^concurrency:\n(?:[ \t].*\n)*/m.exec(source)?.[0] ?? '')?.[0];
+const cancelOnPr = "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
+const cancelOnUnmergedPr = "  cancel-in-progress: ${{ github.event_name == 'pull_request' && !github.event.pull_request.merged }}";
+
+function assertClosedJobs(source, hosted) {
+  assert.match(source.slice(source.indexOf('\non:\n'), source.indexOf('\npermissions:')), /^  pull_request:\n    types: \[opened, synchronize, reopened, closed\]/m);
+  const jobs = [...source.split('\njobs:\n')[1].matchAll(/^  ([a-z0-9-]+):\n([\s\S]*?)(?=^  [a-z0-9-]+:\n|(?![\s\S]))/gm)];
+  assert.ok(jobs.length > 1);
+  for (const [, id, job] of jobs) {
+    if (id === 'admission-gate' || hosted) {
+      assert.match(job, /^    if: (?:always\(\) && )?github.event.action != 'closed'$/m, id);
+    } else {
+      assert.match(job, /^    needs: admission-gate$/m, id);
+      assert.match(job, /^    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&/m, id);
     }
-  });
+  }
 }
+
+test('R1: framework concurrency keeps its groups and cancels only for unmerged PRs', () => {
+  const sources = frameworkRequiredWorkflows.map(requiredWorkflow);
+  const group = "(github.ref == 'refs/heads/clued-train/staging' && github.sha) || github.ref }}";
+  assert.deepEqual(sources.map(source => concurrencyLine(source, 'group')), [
+    '  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr || ' + group,
+    '  group: ${{ github.workflow }}-${{ github.event.pull_request.number || ' + group,
+  ]);
+  for (const source of sources) assertClosedJobs(source, false);
+  assert.deepEqual(sources.map(source => concurrencyLine(source, 'cancel-in-progress')),
+    [cancelOnUnmergedPr, cancelOnUnmergedPr]);
+});
+
+function evaluateCancel(line, event) {
+  if (line === cancelOnPr) return event.name === 'pull_request';
+  if (line === cancelOnUnmergedPr) return event.name === 'pull_request' && !event.merged;
+  assert.fail(`unexpected cancel-in-progress line: ${line}`);
+}
+
+test('R2: merged close keeps framework runs alive, while synchronize and unmerged close cancel them', () => {
+  const cases = [
+    { name: 'pull_request', action: 'synchronize', merged: false, expected: true },
+    { name: 'pull_request', action: 'closed', merged: false, expected: true },
+    { name: 'pull_request', action: 'closed', merged: true, expected: false },
+    { name: 'push', expected: false },
+    { name: 'workflow_dispatch', expected: false },
+  ];
+  const outcomes = frameworkRequiredWorkflows.map(file => {
+    const line = concurrencyLine(requiredWorkflow(file), 'cancel-in-progress');
+    return cases.map(event => evaluateCancel(line, event));
+  });
+  const expected = cases.map(event => event.expected);
+  assert.deepEqual(outcomes, [expected, expected]);
+});
+
+test('R3: hosted-required still cancels PR runs and skips all jobs on close', () => {
+  const source = requiredWorkflow('hosted-required.yml');
+  assert.match(source, /^  group: \$\{\{ github.workflow \}\}-\$\{\{ github.event.pull_request.number \|\| /m);
+  assert.equal(concurrencyLine(source, 'cancel-in-progress'), cancelOnPr);
+  assertClosedJobs(source, true);
+});
 
 const minted = w => w.calls.filter(c => c.route?.startsWith('/app/installations/')).length;
 const phaseOutput = async (w) => {
