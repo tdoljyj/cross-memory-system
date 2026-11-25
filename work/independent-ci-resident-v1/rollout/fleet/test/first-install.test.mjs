@@ -361,8 +361,7 @@ async function releaseWorld(t, w) {
   // values (Grant c556370f, receipt 7ccaefca) for the resource read, naming its request; the door replays the same row on every read
   const readStatus = async resource => ({ status: 'accepted', request_sha256: resource.split('/').pop(), resources: [resource],
     grant_id: 'c556370f-b0fc-404b-b164-0f06699e4c7a', receipt_id: '7ccaefca-5fda-4bc8-9747-2a8101b92342', accepted_at: '2026-11-19T12:22:39.628169+00:00' });
-  const door = async input => readStatus(input.resources[0]);   // TEMPORARY, the red run only (a16b708c5's deps.door)
-  const seal = async (request, over = {}) => publishModule.seal({ request, index, ghCommand, deps: { readStatus, door }, ...over });
+  const seal = async (request, over = {}) => publishModule.seal({ request, index, ghCommand, deps: { readStatus }, ...over });
   return { d, index, assets, kitName, out, prepare, seal, outDir };
 }
 // the companion writes its version facts again (a new observedAt): the next kit taken from this node is other bytes

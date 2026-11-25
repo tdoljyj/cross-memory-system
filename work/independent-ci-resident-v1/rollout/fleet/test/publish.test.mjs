@@ -344,10 +344,7 @@ const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = '
     return answerOf(resource);
   };
   const deps = { kitOf, readKit: () => ({}), fleetMaterial: async () => ({ formalRoles, installed: { ...carried, ciSourceManifestSha256: templateSource } }),
-    sourceHash: async args => { s.sourceDrafts.push(args); return { ciSourceManifestSha256: s.sourceOf }; }, readStatus,
-    // TEMPORARY, the red run only (removed with the change): the same fake in the shape of the door a16b708c5 asks (deps.door), so the tests
-    // below fail on what that head does, not on a missing dependency
-    door: async input => { const a = await readStatus(input.resources[0]); return a.status === 'pending' ? { status: 'pending', confirmUrl: door.confirmUrl, expiresAt: a.owner_request.expires_at } : a; } };
+    sourceHash: async args => { s.sourceDrafts.push(args); return { ciSourceManifestSha256: s.sourceOf }; }, readStatus };
   const opens = async () => (await w.calls()).filter(c => c.args[0] === 'workflow');
   const gh = [process.execPath, w.fake];
   const prep = (over = {}) => prepare({ version: VERSION, dir: w.out, out, images: [image], index: w.index, ghCommand: gh, deps, ...over });
@@ -624,7 +621,7 @@ test('attach-acceptance refuses the stand-in acceptance file of the drill', asyn
 test('seal refuses a request whose Source is well formed but not the Release tar\'s, whose commit is not the Release\'s metadata, or whose tar or kit is not the Release\'s', async t => {
   const w = await prepWorld(t);
   await w.prep();
-  const request = JSON.parse(await fs.readFile(w.requestFile, 'utf8'));
+  const original = await fs.readFile(w.requestFile), request = JSON.parse(original.toString('utf8'));
   const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
   const cases = [
     [{ ciSourceManifestSha256: 'c'.repeat(64) }, 'ACCEPTANCE_SOURCE_NOT_THE_RELEASES'],
@@ -646,7 +643,7 @@ test('seal refuses a request whose Source is well formed but not the Release tar
   await fs.writeFile(w.index, text.replace(`| ${COMMIT} |`, `| ${'b2'.repeat(20)} |`));
   await assert.rejects(w.sealIt(), { code: 'ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS' });
   await fs.writeFile(w.index, text);
-  await fs.writeFile(w.requestFile, JSON.stringify(request));
+  await fs.writeFile(w.requestFile, original);
   // the Release's SHA256SUMS names another tar
   let kept;
   await w.setState(st => { const s0 = st.assets.find(a => a.name === 'SHA256SUMS'); kept = s0.b64; s0.b64 = b64Of(Buffer.from(kept, 'base64').toString('utf8').replace(w.source.archive_sha256, '9'.repeat(64))); });
@@ -658,7 +655,8 @@ test('seal refuses a request whose Source is well formed but not the Release tar
   assert.ok((await fs.readFile(w.index)).equals(before));
   assert.equal((await uploadsOf(w)).length, n, 'nothing uploaded');
   await assert.rejects(fs.access(path.join(w.out, `${TAG}.acceptance.json`)));
-  // the request as prepare wrote it still seals
+  // the request as prepare wrote it (the bytes on the Release) still seals
+  await fs.writeFile(w.requestFile, original);
   assert.equal((await w.sealIt()).status, 'FLEET_ACCEPTANCE_SEALED');
 });
 
@@ -1234,7 +1232,7 @@ test('seal --wait: a failed anonymous read is read again at the next step; appro
   const w = await prepWorld(t);
   await w.prep();
   Object.assign(w.door, { status: 'pending', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: '2026-11-25T01:00:30Z' });
-  const time = fakeTime('2026-11-25T01:00:00Z', tt => { if (tt.slept.length === 1) w.door.fail = 2; if (tt.slept.length === 3) w.door.status = 'accepted'; });
+  const time = fakeTime('2026-11-25T01:00:00Z', tt => { if (tt.slept.length === 1) w.door.fail = 2; if (tt.slept.length === 4) w.door.status = 'accepted'; });
   const r = await timed(w, time, { wait: 60 });
   assert.equal(r.status, 'FLEET_ACCEPTANCE_SEALED');
   assert.equal(r.grantId, GRANT);

@@ -110,8 +110,7 @@ test('a candidate from its build alone: prepare makes the Release and the index 
   const grant = 'c556370f-b0fc-404b-b164-0f06699e4c7a';
   const readStatus = async resource => ({ status: 'accepted', request_sha256: resource.split('/').pop(), resources: [resource],
     grant_id: grant, receipt_id: '7ccaefca-5fda-4bc8-9747-2a8101b92342', accepted_at: '2026-11-19T12:22:39.628169+00:00' });
-  const door = async input => readStatus(input.resources[0]);   // TEMPORARY, the red run only (a16b708c5's deps.door)
-  const sealed = await seal({ request: p.request, drillReceipt: done.receiptFile, index, repo, ghCommand: gh, deps: { ...deps, readStatus, door } });
+  const sealed = await seal({ request: p.request, drillReceipt: done.receiptFile, index, repo, ghCommand: gh, deps: { ...deps, readStatus } });
   assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
   // the Release: the five package assets, the kit, the image, the first-install sums and the acceptance, once each
   const names = JSON.parse(fs.readFileSync(state, 'utf8')).assets.map(a => a.name).sort();

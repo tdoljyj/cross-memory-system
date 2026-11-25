@@ -359,8 +359,7 @@ export async function sealWorld(t) {
   // of 3bc571a6's values for the resource read, naming its request
   const readStatus = async resource => ({ status: 'accepted', request_sha256: resource.split('/').pop(), resources: [resource],
     grant_id: 'c556370f-b0fc-404b-b164-0f06699e4c7a', receipt_id: '7ccaefca-5fda-4bc8-9747-2a8101b92342', accepted_at: '2026-11-19T12:22:39.628169+00:00' });
-  const door = async input => readStatus(input.resources[0]);   // TEMPORARY, the red run only (a16b708c5's deps.door)
-  const sealIt = drillReceipt => seal({ request: requestFile, index, ghCommand: gh, deps: { ...deps, readStatus, door }, drillReceipt });
+  const sealIt = drillReceipt => seal({ request: requestFile, index, ghCommand: gh, deps: { ...deps, readStatus }, drillReceipt });
   return { d, version, request, index, sealIt };
 }
 
