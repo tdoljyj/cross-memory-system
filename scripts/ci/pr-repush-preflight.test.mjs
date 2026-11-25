@@ -223,7 +223,7 @@ test('unexpected output failures are unconfirmed exit 2 without a stack or raw e
 });
 
 const TOOL = fileURLToPath(new URL('./pr-repush-preflight.mjs', import.meta.url));
-const runNode = args => spawnSync(process.execPath, args, { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+const runNode = args => spawnSync(process.execPath, args, { encoding: 'utf8', windowsHide: true });
 test('direct and junction entry points run the check; importing from existing or missing importer paths runs nothing', () => {
   const direct = runNode([TOOL]);
   assert.equal(direct.status, 2, direct.stderr); assert.match(direct.stderr, /--repo is required/);

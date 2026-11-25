@@ -30,7 +30,7 @@ function fixture(options = {}) {
     if (options.lost) throw new Proxy({}, { get() { throw Error('foreign error must not be rendered'); } });
     return Response.json(options.reply ?? { status: 'committed', contract: 'clued.ci-scan-start-grant/1', launch_allowed: true,
       execution_id: execution, receipt_id: receipt, repository_id: 1334673495, head_sha: H, role: 'trivy',
-      provider: 'github-actions', start_requested_at: new Date().toISOString() });
+      provider: 'github-actions', start_requested_at: '2026-11-01T00:00:00.000Z' });
   };
   return { env, event, calls, row, metadata, execution, receipt, gh, fetchImpl, run: () => obtainScanStart({ env, event, fetchImpl, newId: () => execution }) };
 }
@@ -43,7 +43,7 @@ test('consumed, malformed, wrong-role and wrong-subject grants never let a scann
   const g = fixture();
   for (const reply of [{ status: 'consumed', launch_allowed: false }, { status: 'committed', launch_allowed: true },
     { status: 'committed', contract: 'clued.ci-scan-start-grant/1', launch_allowed: true, execution_id: g.execution,
-      receipt_id: g.receipt, repository_id: 1334673495, head_sha: B, role: 'gitleaks', provider: 'github-actions', start_requested_at: new Date().toISOString() }]) {
+      receipt_id: g.receipt, repository_id: 1334673495, head_sha: B, role: 'gitleaks', provider: 'github-actions', start_requested_at: '2026-11-01T00:00:00.000Z' }]) {
     const f = fixture({ reply }); await assert.rejects(f.run()); assert.equal(f.calls.filter(([url]) => url === ENDPOINT).length, 1);
   }
 });
