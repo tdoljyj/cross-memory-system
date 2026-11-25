@@ -75,7 +75,7 @@ export const NOTICE_KINDS = Object.freeze(['budget', 'new-trigger', 'stopped', '
   // was rolled back (the node stays paused), or its rollback failed (the Owner must act).
   'version-skew', 'upgrade-grant-pending', 'upgrade-deferred', 'upgrade-rolled-back', 'upgrade-rollback-failed',
   // Task 4a: the node's own self-check (selfcheck.mjs) ran and failed.
-  'selfcheck-failed', 'renewal-failed',
+  'selfcheck-failed', 'renewal-failed', 'fleet-pull-refused',
   // Step 3c-2b: stage 10's decisions for the Owner (code: the decision).
   'train-owner',
   // Generation 12 (DESIGN §56.3): the claim of a running or parked batch is about to end (or has ended); its holder must renew.
@@ -379,6 +379,7 @@ export function parseVersions(v) {
     consistent: [true, false].includes(v.consistent) ? v.consistent : null,
     // Task 4a: the node's self-check (selfcheck.mjs); null before the first one. Only shown, nothing decides on it.
     ...(v.renewal ? {renewal:parseRenewalStatus(v.renewal)} : {}),
+    ...(v.fleetPull ? { fleetPull: fleetPullView(v.fleetPull) } : {}),
     selfcheck: parseSelfcheckView(v.selfcheck),
     upgrade: u ? { opId: u.opId, state: u.state, phase: typeof u.phase === 'string' && PHASE.test(u.phase) ? u.phase : null, since: isoMs(u.since),
       code: codeOrNull(u.code), confirmUrl: typeof u.confirmUrl === 'string' && CONFIRM_URL.test(u.confirmUrl) ? u.confirmUrl : null } : null,
@@ -387,6 +388,12 @@ export function parseVersions(v) {
 
 async function readJsonLenient(file) {
   try { return JSON.parse((await readBounded(file, VERSION_FILE_MAX_BYTES, 'VERSION_FILE_REFUSED')).toString('utf8')); } catch { return null; }
+}
+
+function fleetPullView(v) {
+  if (!plain(v) || !UUID.test(v.grantId ?? '') || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,88}$/.test(v.targetVersion ?? '')
+    || !['DOWNLOADING', 'WAITING_FOR_PEERS', 'PREPARING', 'PREPARE_FAILED', 'REQUESTED', 'REFUSED', 'NEEDS_REINSTALL', 'ROLLED_BACK', 'CURRENT'].includes(v.phase)) return null;
+  return { grantId: v.grantId, targetVersion: v.targetVersion, phase: v.phase, code: codeOrNull(v.code) };
 }
 
 // The three files of one root as raw values (null for a file that cannot be read now).
@@ -425,6 +432,8 @@ export async function readVersionState({ root, policy, policySha256 = null, cloc
   const view = versionsView(inputs, { policy, policySha256, now: clock() });
   const renewal=await renewalStatus(root,clock());
   if(renewal) view.renewal=renewal;
+  const fleetPull = fleetPullView(await readJsonLenient(path.join(root, 'state', 'fleet-pull.json')));
+  if (fleetPull) view.fleetPull = fleetPull;
   const notices=versionNotices(view, inputs.status);
   if(renewal) {
     // 等回包（未满一小时）不是失败：状态视图显示等待码，不发续期失败通知。
@@ -443,6 +452,8 @@ export function versionNotices(view, upgradeStatus = null) {
   if (!view) return out;
   const failed = selfcheckNotice(view.selfcheck);
   if (failed) out.push(failed);
+  if (['REFUSED', 'NEEDS_REINSTALL'].includes(view.fleetPull?.phase)) out.push({ key: `fleet-pull:${view.fleetPull.grantId}`,
+    kind: 'fleet-pull-refused', code: view.fleetPull.code, pr: null, headSha: null, at: null, until: null });
   if (view.consistent === false) out.push({ key: `version-skew:w${view.generation ?? 'x'}:l${view.linux?.generation ?? 'x'}`, kind: 'version-skew', pr: null, headSha: null, code: 'UPGRADE_VERSION_SKEW', at: view.linux?.observedAt ?? null, until: null });
   const u = view.upgrade;
   if (u?.state === 'WAITING_GRANT') out.push({ key: `upgrade-grant-pending:${u.opId}`, kind: 'upgrade-grant-pending', pr: null, headSha: null, code: null, at: u.since, until: null });
