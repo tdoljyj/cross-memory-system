@@ -294,9 +294,9 @@ export const REQUEST_CONTRACT = 'clued.independent-ci.fleet-node-acceptance-requ
 export const DRILL_RECEIPT_CONTRACT = 'clued.independent-ci.drill-receipt/1';
 export const NOT_DRILLED = '首装未演练';
 // a candidate drill's conclusions seal takes (FABLE-renew-key-algorithm-ruling-20261119.md section 4.3): defined here only; drill/drill-vm.ps1's
-// conclusion function is held to the same three by PR-甲's test. PASS_A_REINSTALL_NOT_DRILLED: a candidate that skipped A8 (supplement
-// "candidate skips A8"), written into the index as it is. PASS_A_PENDING_PRODUCTION_READBACK and every other value are refused.
-export const DRILL_PASS_CONCLUSIONS = Object.freeze(['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN', 'PASS_A_REINSTALL_NOT_DRILLED']);
+// conclusion function is held to the same two by PR-甲's test. A8 has no skip (FABLE-drill-r13-a8-m5-20261125.md section 1.2), so the
+// value a skipped one ended in is gone and refused like PASS_A_PENDING_PRODUCTION_READBACK and every other value.
+export const DRILL_PASS_CONCLUSIONS = Object.freeze(['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN']);
 // the line prepare gives for the Decision's text, and seal finds in the Decision record: the request file's sha256 binds tar, commit, Source,
 // kit and fleetRefs at once
 export const requestLineOf = (version, requestSha256) => `acceptance-request ${tagOf(version)} sha256:${requestSha256}`;

@@ -28,10 +28,11 @@ if ($InheritedPipeProbe) {
   $CompanionInjectVariables = '^M5B_TEST_UNUSED$'
   function Get-CluedMachineWslClient { [pscustomobject]@{ path = 'C:\Program Files\WSL\wsl.exe' } } # transport fixture only; no WSL process
   . ([scriptblock]::Create($definitions['Invoke-CompanionWslControl']))
-  $watch = [Diagnostics.Stopwatch]::StartNew()
   $r = Invoke-CompanionWslControl 'list-running'
-  if ($r.completed -or $watch.ElapsedMilliseconds -gt 4000) { throw 'INHERITED_PIPE_TIMEOUT_NOT_ENFORCED' }
-  [ordered]@{ result = 'PASS'; boundedInheritedPipe = $true; elapsedMs = $watch.ElapsedMilliseconds; actualWslCalls = 0 } | ConvertTo-Json -Compress
+  # The branch, not an elapsed time: an unfinished result carrying the client's exit code (the fake's 0) is the bounded stream drain;
+  # the start, exit-wait and catch returns carry none, and the oversize return needs a finished stdout this probe never gives.
+  if (-not (-not $r.completed -and $r.exitCode -eq 0)) { throw 'INHERITED_PIPE_TIMEOUT_NOT_ENFORCED' }
+  [ordered]@{ result = 'PASS'; boundedInheritedPipe = $true; drainBoundTaken = $true; actualWslCalls = 0 } | ConvertTo-Json -Compress
   exit 0
 }
 foreach ($name in @('Get-CompanionRunningWslDistros', 'Assert-CompanionWslVhdxReleased')) {

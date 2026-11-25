@@ -29,6 +29,12 @@ const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, b
 const KEY = batchKey(subject);
 const iso = ms => new Date(ms).toISOString();
 const stage8Tries = f => f.engine.calls.filter(c => c[0] === 'stage' && c[1] === 8).length;
+const receiptBodies = async (f, type) => {
+  const dir = path.join(f.root, 'state', 'receipts');
+  const out = [];
+  for (const n of (await fs.readdir(dir)).sort()) if (n.endsWith(`-${type}.json`)) out.push(JSON.parse(await fs.readFile(path.join(dir, n), 'utf8')).body);
+  return out;
+};
 // Stage 8 as at #1130: zero side effects, the claim first in the merge queue, the single green not proven.
 const notProven = () => ({ ok: false, code: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', proof: WINDOWS_CLEAN, brokerNoLaunch: false,
   outcome: { status: 'BLOCKED', reason: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', sideEffects: 0, mayHavePublished: false, diagnostic: null,
@@ -129,4 +135,7 @@ test('only the upgrader\'s drain ends it: an Owner hold, the upgrader\'s status 
   await d.exec.tick();
   assert.ok(Ledger.parkedAt(await d.ledger.state(KEY)), 'no fresh heartbeat: not yet');
   assert.equal(await d.ledger.halted(), null);
+  // ... but not silently (PLAN-executor-standing-read-20261125 item 6): the drain's reason is in the receipts
+  assert.deepEqual((await receiptBodies(d, 'standing-unread')).map(b => [b.read, b.basis, b.failureCode, b.key, b.safePoint]),
+    [['heartbeat', UPGRADE_DRAIN_BASIS, 'COMPANION_NOT_READY', KEY, 'parked']]);
 });

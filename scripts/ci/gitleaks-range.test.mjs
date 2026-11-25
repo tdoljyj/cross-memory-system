@@ -255,9 +255,10 @@ test('the gitleaks job runs the trusted range script over the change, from a fre
   assert.match(scan, /--pull=never/);
   assert.match(scan, /ghcr\.io\/gitleaks\/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f/);
   assert.doesNotMatch(scan, /--log-opts|--gitleaks-ignore-path/, 'the script appends the log options; no ignore file');
-  for (const id of ['gitleaks', 'contract-placement']) {
-    assert.equal(step(jobs[id], 'Resolve the changed range').run, step(job, 'Resolve the changed range').run, id);
-  }
+  // contract-placement no longer shares this range: it compares the candidate with CI_BASE_SHA (scripts/ci/ci-base.mjs),
+  // the merge's own first parent; the range's pull_request base is the head's old merge base (task 6cd46765, #1292).
+  assert.equal(jobs['contract-placement'].steps.some((s) => s.id === 'range'), false);
+  assert.match(step(jobs['contract-placement'], 'Enforce placement and one-time production gate').run, /--base "\$CI_BASE_SHA" --head "\$CANDIDATE"/);
 });
 
 // The job's own steps (range, copy, scan) run against a pull request whose conflict resolution adds a secret, with a

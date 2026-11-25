@@ -30,9 +30,21 @@
 //                 that have auto-merge on (auto-merge on is the one way aboard);
 //   the front   = one of them that contains main's tip and is under way: no
 //                 required check failed on its head, and it is not idle;
-//   a candidate = one of them behind main, not reported as a conflict, no
-//                 required check failed on its head, and its head is not one the
-//                 App brought up that the independent CI never admitted.
+//   a candidate = one of them behind main, not reported as a conflict, and its
+//                 head is not one the App brought up: neither one red (a true
+//                 red) nor one the independent CI never admitted. A red head the
+//                 App did not bring up is a candidate too, once (FABLE-defect-
+//                 remediation-plan-20261124 §3.1, #1258): its red may be the
+//                 pipeline's (an old base's gitleaks) and main may carry the fix;
+//                 the head made from it runs everything. Not when an admission
+//                 failed: main does not change that. A red head the App brought up
+//                 is a candidate again (第二轮规划 A, 任务 2fb32dc7, #1298), after
+//                 every other candidate, when it was admitted, the red is
+//                 not the admission and its first parent is not one the App brought
+//                 (REBRING_RED_MAX in a row): main may have fixed that red since.
+// Every run without inputs also names, once per head, a pull request on the train
+// whose required checks are not all there with nothing queued or running for
+// STALLED_AFTER_MS (§3.11 item 3; nameStalled below).
 // With a front it does nothing. Without one it brings the candidate whose
 // auto-merge was enabled first (ties: the lower number) exactly as a named run
 // does, one per run, unless BROUGHT_UNADMITTED_LIMIT heads on the train are ones
@@ -44,8 +56,9 @@
 //
 // The hosted copy (.github/workflows/clued-front-main-merge-hosted.yml; framework v1 §2.3, hosted scaffold report §1.4) runs this
 // same entry with CLUED_FRONT_MERGE_PHASE=scaffold. It acts only while the hosted scaffold ruleset is the one in force on main
-// (scaffoldInForce below: main requires hosted- checks pinned to GitHub Actions and none of the independent CI App 5368905, so
-// #292 is disabled and the train does not land). Before that, and from the trial switch on (#292 enabled again), it changes nothing.
+// (scaffoldInForce below: main requires hosted- checks pinned to GitHub Actions and the independent CI App 5368905's main ruleset
+// is not there by train-rules.mjs#sixPinned (修订 6: the scaffold's admission is pinned to 5368905 as well), so #292 is disabled and
+// the train does not land). Before that, and from the trial switch on (#292 enabled again), it changes nothing.
 // The two copies are exclusive on that one fact (FABLE-scaffold-s5-pre §1): the self-hosted workflow (no phase) changes nothing
 // while the scaffold ruleset is in force, named or not, so exactly one of them brings fronts up in each state of the rules.
 // Until migration 6b809301 is on the nodes (Decision 85effa31) the admission does not carry the authorization to the merge
@@ -57,6 +70,7 @@ import { ADMISSION_APP_ID, APP_CHECK_NAME, INDEPENDENT_ADMISSION_APP_ID, INDEPEN
   githubPaged, mainMergeExternalId } from './clued-work-admission.mjs';
 import { appRequest } from './clued-managed-auto-merge.mjs';
 import { resolveMode } from './merge-admission-policy.mjs';
+import { sixPinned } from '../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
 
 export const FRONT_MERGE_PERMISSIONS = Object.freeze({ contents: 'write', pull_requests: 'write', checks: 'write' });
 // update-branch with a main that changed a workflow file needs workflows: write (FABLE-scaffold-s5-pre §3). It is asked for only
@@ -98,15 +112,15 @@ const TRAIN_QUERY = 'query($owner:String!,$name:String!,$after:String){repositor
   + 'nodes{number isDraft baseRefName headRefOid mergeable updatedAt autoMergeRequest{enabledAt} headRepository{nameWithOwner}}}}}';
 
 // An installation token of the clued-admission App with exactly these permissions (and workflows: write when the installation
-// holds it), or the reason there is none.
-export async function frontMergeToken({ env, fetchImpl, now = () => Date.now() }) {
+// holds it), or the reason there is none. With only, exactly those and nothing more (a comment needs pull_requests: write alone).
+export async function frontMergeToken({ env, fetchImpl, now = () => Date.now(), only = null }) {
   const appId = (env.CLUED_ADMISSION_APP_ID ?? '').trim(), key = (env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? '').trim();
   if (!appId || !key) return { token: null, reason: 'the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY)' };
   const jwt = appJwt(appId, key, Math.floor(now() / 1000));
   const installation = await appRequest(fetchImpl, env, 'GET', `/repos/${env.GITHUB_REPOSITORY}/installation`, jwt);
   if (installation.status !== 200 || !installation.body?.id) return { token: null, reason: `GET installation returned ${installation.status}` };
-  const workflows = installation.body.permissions?.workflows === 'write';
-  const permissions = workflows ? { ...FRONT_MERGE_PERMISSIONS, ...WORKFLOWS_PERMISSION } : FRONT_MERGE_PERMISSIONS;
+  const workflows = !only && installation.body.permissions?.workflows === 'write';
+  const permissions = only ?? (workflows ? { ...FRONT_MERGE_PERMISSIONS, ...WORKFLOWS_PERMISSION } : FRONT_MERGE_PERMISSIONS);
   const minted = await appRequest(fetchImpl, env, 'POST', `/app/installations/${installation.body.id}/access_tokens`, jwt,
     { repositories: [env.GITHUB_REPOSITORY.split('/')[1]], permissions });
   if (minted.status === 201 && minted.body?.token) return { token: minted.body.token, reason: null, workflows };
@@ -134,7 +148,7 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
   const statuses = await listedInFull(fetchImpl, env, `/repos/${repository}/commits/${head}/status`, 'statuses', `the statuses of ${head}`);
   const contexts = new Map();
   const newer = (a, b) => String(a.started_at ?? '') > String(b.started_at ?? '') || (a.started_at === b.started_at && Number(a.id) > Number(b.id));
-  const newest = ({ context, integration_id }) => runs.filter(run => run.name === context
+  const newest = ({ context, integration_id, contains = false }) => runs.filter(run => (contains ? String(run.name ?? '').includes(context) : run.name === context)
     && (integration_id === null || Number(run.app?.id) === integration_id)).reduce((best, run) => (!best || newer(run, best) ? run : best), null);
   for (const status of statuses) if (!contexts.has(status.context)) contexts.set(status.context, status);
   const withdrawn = run => String(run.output?.title ?? '').startsWith(WITHDRAWN);
@@ -149,8 +163,22 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
   });
   const unfinished = runs.filter(run => run.status !== 'completed').length
     + statuses.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED)).length;
-  const by = (name, app) => runs.some(run => run.name === name && Number(run.app?.id) === app && run.status === 'completed' && run.conclusion === 'success');
-  return { failed, green, unfinished, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID),
+  const by = (name, app) => succeeded(runs, name, app);
+  // What each required check that is not green last did, as wait-pr's exit 5 lists it: a job GitHub skipped keeps its unexpanded
+  // name ("... && 'ci-suites' || 'ci-suites-skipped'"), so the required name never appears: that is "job-skipped".
+  const missing = required.filter(check => {
+    const run = newest(check);
+    return !((run?.status === 'completed' && GREEN.has(run.conclusion) && !withdrawn(run)) || stateOf(check) === 'success');
+  }).map(check => {
+    const run = newest(check), state = stateOf(check);
+    const job = run ? null : newest({ context: `'${check.context}' ||`, integration_id: check.integration_id, contains: true });
+    const last = run ? (run.status !== 'completed' ? run.status : withdrawn(run) ? 'withdrawn' : String(run.conclusion ?? 'none'))
+      : state ? `status ${state}` : job ? `job-${job.conclusion ?? job.status}` : 'missing';
+    return { context: check.context, last };
+  });
+  const times = [...runs.map(run => run.completed_at ?? run.started_at), ...statuses.map(status => status.updated_at ?? status.created_at)]
+    .map(t => Date.parse(t ?? '')).filter(Number.isFinite);
+  return { failed, green, unfinished, missing, lastActivity: times.length ? Math.max(...times) : 0, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID),
     admitted: admitters.every(({ context, integration_id }) => by(context, integration_id)) };
 }
 
@@ -180,9 +208,10 @@ export async function scaffoldInForce({ env, fetchImpl }) {
   if (!main) throw new Error('the default branch could not be read');
   const checks = requiredChecks(await branchRules({ env, fetchImpl, repository, branch: main }));
   const hosted = checks.filter(check => check.context.startsWith(HOSTED_CHECK_PREFIX) && check.integration_id === GITHUB_ACTIONS_APP_ID);
-  const framework = checks.filter(check => check.integration_id === INDEPENDENT_ADMISSION_APP_ID);
   if (!hosted.length) return { inForce: false, reason: `${main} requires no hosted- check of GitHub Actions: the hosted scaffold ruleset is not in force` };
-  if (framework.length) return { inForce: false, reason: `${main} still requires ${framework.length} check(s) of the independent CI App ${INDEPENDENT_ADMISSION_APP_ID} (#292 in force): the train brings its front up` };
+  // 修订 6 (Decision c8c4d565): the scaffold ruleset pins its admission to App 5368905 too, so "some check of that App" is no sign
+  // of #292. #292 is in force when the main ruleset is, by the one rule that names it (train-rules.mjs#sixPinned, stages 8 and 10).
+  if (sixPinned(checks, INDEPENDENT_ADMISSION_APP_ID)) return { inForce: false, reason: `${main} has the independent CI App ${INDEPENDENT_ADMISSION_APP_ID}'s main ruleset (#292 in force, train-rules.mjs#sixPinned): the train brings its front up` };
   return { inForce: true, reason: `${main} requires ${hosted.length} hosted- check(s) of GitHub Actions and none of the independent CI: the hosted scaffold ruleset is in force` };
 }
 
@@ -199,6 +228,45 @@ async function phaseGate(env, fetchImpl) {
   }
   if (phase === SCAFFOLD_PHASE) return inForce ? null : { result: 'none', reason };
   return inForce ? { result: 'none', reason: `脚手架规则集在用，由托管副本带车头 (${reason})` } : null;
+}
+
+// 第二轮规划 A (任务 2fb32dc7): #1298's head, which the App brought up, went red on a test of main that read the real base; main fixed
+// that test 38 minutes later and the head stayed red, behind and passed over until a person merged main. A red head the App brought
+// is brought again while fewer than this many heads in a row (it and its first parents) are ones the App brought; the count is read
+// from GitHub each run (the App's kooyumi-main-merge success on each), nothing kept. A true red costs one more round at most.
+export const REBRING_RED_MAX = 2;
+const succeeded = (runs, name, app) => runs.some(run => run.name === name && Number(run.app?.id) === app && run.status === 'completed' && run.conclusion === 'success');
+const admissionRed = (records, admitters) => records.failed.some(context => admitters.some(row => row.context === context));
+// A head the App brought, admitted, red on a required check that is not the admission: main may have changed that red.
+const redBrought = (records, admitters) => records.failed.length > 0 && records.brought && records.admitted && !admissionRed(records, admitters);
+
+// How many heads in a row, this one first, the App brought up (this one is): its first parents read while each carries the App's
+// kooyumi-main-merge success, at most REBRING_RED_MAX deep. The parent is read from the git commit object (parents only, no diff
+// against a merge of all of main). Throws when GitHub cannot be read: then that head is not brought again, the rest goes on.
+async function broughtInARow({ env, fetchImpl, repository, head }) {
+  let count = 1;
+  for (let at = head; count < REBRING_RED_MAX;) {
+    const parent = (await githubJson(fetchImpl, env, `/repos/${repository}/git/commits/${at}`))?.parents?.[0]?.sha;
+    if (!SHA.test(parent ?? '')) throw new Error(`the first parent of ${at} could not be read`);
+    if (!succeeded(await githubPaged(fetchImpl, env, `/repos/${repository}/commits/${parent}/check-runs`, 'check_runs'), MAIN_MERGE_CHECK, ADMISSION_APP_ID)) break;
+    count++; at = parent;
+  }
+  return count;
+}
+
+// What the train does with a head behind main, one rule for choosing the front and for naming the stalled: a candidate is brought
+// up to main once there is no front; anything else stays where it is. §3.1: a failed admission is not something main changes; a
+// head the App brought that is not admitted is not brought again. A red head the App brought is brought again (last) while
+// records.inARow (read by chooseFront for such a head only) is below REBRING_RED_MAX; unread, it is not (red, not a candidate)
+// and every other member is decided as before.
+function behindVerdict(member, records, admitters) {
+  if (member.mergeable === 'CONFLICTING') return { state: 'conflict', candidate: false };
+  if (redBrought(records, admitters) && (records.inARow ?? REBRING_RED_MAX) < REBRING_RED_MAX)
+    return { state: `candidate, red (${records.failed.join(', ')}) on a head the App brought: main is merged in again, after the others`, candidate: true, last: true };
+  if (records.failed.length && (records.brought || admissionRed(records, admitters)))
+    return { state: `red (${records.failed.join(', ')})`, candidate: false };
+  if (records.brought && !records.admitted) return { state: 'brought up before and not admitted', candidate: false };
+  return { state: records.failed.length ? `candidate, red (${records.failed.join(', ')}): main is merged in once` : 'candidate', candidate: true };
 }
 
 // The train of this moment (see the head of this file): every pull request on it with what it is, and the candidates in
@@ -244,26 +312,96 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
     if (records.failed.length) { member.state = `red (${records.failed.join(', ')})`; continue; }
     member.state = 'front';
     if (records.green || records.unfinished + running.filter(run => run.status !== 'completed').length > 0) continue;
-    // Quiet and not green. The head appeared with its commit or, for an older commit pushed later, with the push (the PR's last change).
-    const committed = Date.parse((await githubJson(fetchImpl, env, `/repos/${repository}/commits/${member.head}`))?.commit?.committer?.date);
-    const appeared = Math.max(Number.isFinite(committed) ? committed : 0, Number.isFinite(member.updated) ? member.updated : 0);
-    if (!(appeared > 0)) throw new Error(`the age of ${member.head} could not be read`);
-    if (now() - appeared >= IDLE_AFTER_MS) member.state = 'idle';
+    // Quiet and not green.
+    if (now() - await appearedAt({ env, fetchImpl, repository, member }) >= IDLE_AFTER_MS) member.state = 'idle';
   }
-  const candidates = [];
+  const candidates = [], last = [];
   const nofront = !train.some(member => member.state === 'front');
   // Without a front every member's head is read, a conflict's too: each one the App brought up and not admitted counts.
   if (nofront) for (const member of train.filter(member => member.behind > 0)) {
     const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
-    if (member.mergeable === 'CONFLICTING') member.state = 'conflict';
-    else if (records.failed.length) member.state = `red (${records.failed.join(', ')})`;
-    else if (records.brought && !records.admitted) member.state = 'brought up before and not admitted';
-    else { member.state = 'candidate'; candidates.push(member); }
+    let unread = null;
+    if (member.mergeable !== 'CONFLICTING' && redBrought(records, admitters)) {
+      try {
+        records.inARow = await broughtInARow({ env, fetchImpl, repository, head: member.head });
+      } catch (error) {
+        unread = error instanceof Error ? error.message : String(error);
+      }
+    }
+    const verdict = behindVerdict(member, records, admitters);
+    member.state = unread ? `${verdict.state}; 连带次数未读到 (${unread}): not brought again this run` : verdict.state;
+    if (verdict.candidate) (verdict.last ? last : candidates).push(member);
   }
+  candidates.push(...last);
   for (const member of train) member.state ??= 'behind';
   const stranded = nofront ? train.filter(member => member.records?.brought && !member.records.admitted) : [];
   if (stranded.length >= BROUGHT_UNADMITTED_LIMIT) { for (const member of candidates) member.state = 'candidate, held'; candidates.length = 0; }
-  return { main, tip, train, candidates, stranded };
+  return { main, tip, train, candidates, stranded, required, admitters };
+}
+
+// When a head appeared: with its commit or, for an older commit pushed later, with the push (the PR's last change).
+async function appearedAt({ env, fetchImpl, repository, member }) {
+  const committed = Date.parse((await githubJson(fetchImpl, env, `/repos/${repository}/commits/${member.head}`))?.commit?.committer?.date);
+  const appeared = Math.max(Number.isFinite(committed) ? committed : 0, Number.isFinite(member.updated) ? member.updated : 0);
+  if (!(appeared > 0)) throw new Error(`the age of ${member.head} could not be read`);
+  return appeared;
+}
+
+// FABLE-defect-remediation-plan-20261124 §3.11 item 3: a pull request on the train that nothing will move. Its head has no required
+// check failed (a red one is seen on the PR and by wait-pr) and not all of them green, is not reported as a conflict, and nothing has
+// been queued, running or pending on it for STALLED_AFTER_MS: the rule of wait-pr's exit 5, the length a parameter. A head behind
+// main is one of these only when the train will not bring it up (behindVerdict: the App brought it and it is not admitted); a
+// candidate waits for the front and is brought up, naming it would send someone to merge main by hand. Such a head is
+// named on its pull request, once: which required checks are missing and how each last ended. Nothing is kept between runs: the
+// comment carries the head, and a comment that already names it (stalledMark) means it was named. A helper: whatever it cannot read
+// or post it only reports, per pull request; it never changes what the run decided.
+export const COMMENT_PERMISSIONS = Object.freeze({ pull_requests: 'write' });
+export const STALLED_AFTER_MS = 30 * 60_000;
+export const STALLED_MARK = 'clued-front-main-merge: stalled';
+export const stalledMark = head => `<!-- ${STALLED_MARK} ${head} -->`;
+export const stalledComment = (head, missing) => `${stalledMark(head)}\n`
+  + `head \`${head}\` 的必需检查没齐，且 ${STALLED_AFTER_MS / 60_000} 分钟没有排队或在跑的运行：没有东西会让它合入。\n\n`
+  + missing.map(({ context, last }) => `- ${context}: ${last}\n`).join('')
+  + '\n要一个新 head；原因在流水线就登记一条缺陷。车头机器人每个 head 只点名一次。';
+
+// Whether a comment on the pull request already names this head; read to the end, 100 a page.
+async function commentsName({ env, fetchImpl, repository, pr, head }) {
+  for (let page = 1; page <= PAGES; page++) {
+    const list = await githubJson(fetchImpl, env, `/repos/${repository}/issues/${pr}/comments?per_page=100&page=${page}`);
+    if (!Array.isArray(list)) throw new Error(`the comments of #${pr} could not be read`);
+    if (list.some(comment => String(comment?.body ?? '').includes(stalledMark(head)))) return true;
+    if (list.length < 100) return false;
+  }
+  throw new Error(`the comments of #${pr} fill more than ${PAGES} pages`);
+}
+
+export async function nameStalled({ env, fetchImpl, chosen, skip = new Set(), now = () => Date.now() }) {
+  const repository = env.GITHUB_REPOSITORY, named = [];
+  let token = null, refused = null;
+  for (const member of chosen.train) {
+    if (skip.has(member.pr) || member.mergeable === 'CONFLICTING') continue;
+    let missing = null;
+    try {
+      const records = member.records ??= await headRecords({ env, fetchImpl, repository, head: member.head, required: chosen.required, admitters: chosen.admitters });
+      if (records.failed.length || records.green || records.unfinished > 0) continue;
+      // Behind main and a candidate: the train brings it up once there is no front, so something will move it (review 2fb32dc7 §5).
+      if (member.behind > 0 && behindVerdict(member, records, chosen.admitters).candidate) continue;
+      const runs = await listedInFull(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${member.head}`, 'workflow_runs', `the workflow runs of ${member.head}`);
+      if (runs.some(run => run.status !== 'completed')) continue;
+      const ran = runs.map(run => Date.parse(run.updated_at ?? '')).filter(Number.isFinite);
+      const quiet = Math.max(await appearedAt({ env, fetchImpl, repository, member }), records.lastActivity, ...ran);
+      if (now() - quiet < STALLED_AFTER_MS) continue;
+      missing = records.missing;
+      if (await commentsName({ env, fetchImpl, repository, pr: member.pr, head: member.head })) continue;
+      if (!token && !refused) ({ token, reason: refused } = await frontMergeToken({ env, fetchImpl, now, only: COMMENT_PERMISSIONS }));
+      if (!token) { named.push({ pr: member.pr, head: member.head, missing, comment: `not posted (${refused})` }); continue; }
+      const posted = await appRequest(fetchImpl, env, 'POST', `/repos/${repository}/issues/${member.pr}/comments`, token, { body: stalledComment(member.head, missing) });
+      named.push({ pr: member.pr, head: member.head, missing, comment: posted.status === 201 ? 'posted' : `not posted (HTTP ${posted.status})` });
+    } catch (error) {
+      named.push({ pr: member.pr, head: member.head, missing, comment: `not named (${error instanceof Error ? error.message : String(error)})` });
+    }
+  }
+  return named;
 }
 
 const unreadable = error => `GitHub could not be read (${error instanceof Error ? error.message : String(error)}); nothing is changed, the next run looks again`;
@@ -283,6 +421,14 @@ async function runFrontChoice(ports) {
     return done('skipped', unreadable(error));
   }
   const train = trainOf(chosen);
+  // What was decided, then the stalled heads named (a head brought up this run is no longer the pull request's head).
+  const decided = await decide(ports, chosen, train, done);
+  const named = await nameStalled({ env, fetchImpl, chosen, now, skip: new Set(train.members.filter(m => m.state === 'chosen').map(m => m.pr)) });
+  for (const { pr, comment } of named) { const member = train.members.find(m => m.pr === pr); member.state += `; stalled: ${comment}`; }
+  return named.length ? { ...decided, named } : decided;
+}
+
+async function decide(ports, chosen, train, done) {
   const front = chosen.train.find(member => member.state === 'front');
   if (front) return done('none', `#${front.pr} contains ${chosen.main} and is under way`, train);
   if (chosen.stranded.length >= BROUGHT_UNADMITTED_LIMIT) return done('held', heldReason(chosen), train);
@@ -402,7 +548,9 @@ export function renderSummary(r) {
   // A run without inputs: what it did, then everyone on the train and why each was or was not the one.
   return (r.pr === null ? `## clued-front-main-merge\n\n- nobody brought up: **${r.result}**: ${r.reason}\n` : named)
     + `\nThe train (auto-merge on) at main \`${String(r.train.main).slice(0, 12)}\`, in order:\n\n`
-    + (r.train.members.map(m => `- #${m.pr} \`${String(m.head).slice(0, 12)}\`: ${m.behind === 0 ? 'contains main' : `behind by ${m.behind}`}, ${m.state}\n`).join('') || '- nobody\n');
+    + (r.train.members.map(m => `- #${m.pr} \`${String(m.head).slice(0, 12)}\`: ${m.behind === 0 ? 'contains main' : `behind by ${m.behind}`}, ${m.state}\n`).join('') || '- nobody\n')
+    + (r.named?.length ? `\nStalled (§3.11: required checks not all there, nothing queued or running for ${STALLED_AFTER_MS / 60_000} minutes):\n\n`
+      + r.named.map(n => `- #${n.pr} \`${String(n.head).slice(0, 12)}\`: ${(n.missing ?? []).map(m => `${m.context} ${m.last}`).join(', ') || '?'}; ${n.comment}\n`).join('') : '');
 }
 
 // clock: { now, sleep } for tests.

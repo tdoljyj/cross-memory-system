@@ -4185,6 +4185,87 @@ test('#1235 replay without the Native source stays refused for the missing earli
  const read=f.read;f.read=async route=>route.includes('check_name=kooyumi-admission-verified')&&route.includes(`/commits/${f.from}/`)?f.x.prior_head_admission:read(route);
  assert.deepEqual(await qualifyTrustedAutomationRoute(f),{qualified:false,reason:'prior_pr_admission_missing'});
 });
+// 戊 (FABLE-main-push-same-tree-parallel-20261123 §7): when the admission is the last required check, GitHub merges
+// within seconds, and the gate polling every 30 s reads the PR already merged. A PR merged with this very head, by a
+// merge whose parents are exactly [base, head], is the after-the-fact proof of "still open and main at base".
+// #1239 fff02b115 (scripts/ci/fixtures/automation-route-1239-fff02b11.json): merged 16:20:52Z, its gate ended 16:21:09Z.
+// The fixture's _source says which fields are GitHub's replies and which are constructed. The admission as GitHub
+// keeps it (recorded_admission) was withdrawn to failure after the merge: the real replay reads that one and refuses.
+// constructed_admission_after_1244 is the admission as it would look had it stayed success after #1244; the tests
+// that read it are named constructed scenarios, not replays.
+const R1239=JSON.parse(fs.readFileSync(path.join(ROOT,'scripts/ci/fixtures/automation-route-1239-fff02b11.json'),'utf8'));
+function replay1239({admission='constructed_admission_after_1244'}={}){
+ const x=structuredClone(R1239),repository=x.repository.full_name,pr=x.pull_request,run=x.run,commit=x.commit;
+ x.current_admission=x[admission];
+ const [from,main]=commit.parents.map(p=>p.sha),current=x.current_admission.check_runs[0];
+ const env={GITHUB_REPOSITORY:repository,GITHUB_REPOSITORY_OWNER:x.repository.owner.login,GITHUB_EVENT_NAME:'pull_request',GITHUB_ACTOR:run.actor.login,GITHUB_TRIGGERING_ACTOR:run.triggering_actor.login,GITHUB_RUN_ID:String(run.id),GITHUB_RUN_ATTEMPT:String(run.run_attempt),GITHUB_REF:`refs/pull/${pr.number}/merge`,GITHUB_HEAD_REF:pr.head.ref,GITHUB_BASE_REF:'main',CLUED_ADMISSION_GATE_SOURCE:INDEPENDENT_GATE_SOURCE,CLUED_ADMISSION_GATE_WAIT_SECONDS:'0',GITHUB_API_URL:'https://api.test',GITHUB_TOKEN:'fixture',GITHUB_WORKSPACE:ROOT};
+ const f={x,env,event:{action:'synchronize',pull_request:pr},run,pr,commit,from,main,currentAdmission:current,epochReads:0,liveReads:0};
+ // Each read of the PR answers with the next entry of f.lives (the last repeats): merged at once by default.
+ f.lives=[x.live_pull_request];
+ f.read=async route=>{
+  if(route===`/repos/${repository}`)return x.repository;
+  if(route===`/repos/${repository}/pulls/${pr.number}`)return f.lives[Math.min(f.liveReads++,f.lives.length-1)];
+  if(route===`/repos/${repository}/branches/main`)return {name:'main',commit:{sha:x.merge_commit.sha}};
+  if(route===`/repos/${repository}/commits/${x.merge_commit.sha}`)return x.merge_commit;
+  if(route===`/repos/${repository}/commits/${pr.head.sha}`)return commit;
+  if(route.includes('check_name=kooyumi-main-merge'))return x.main_merge_attestation;
+  if(route.includes(`/commits/${from}/check-runs`))return x.prior_head_admission;
+  if(route.includes(`/commits/${pr.head.sha}/check-runs`))return x.current_admission;
+  if(route===`/repos/${repository}/actions/runs/${run.id}`)return run;
+  throw new Error(`unscripted ${route}`);
+ };
+ f.fetchImpl=async(url,init={})=>{
+  let body;
+  if(init.method==='POST'){f.epochReads++;body={status:'ok',guard_required:true,epoch_current:true};}
+  else body=await f.read(String(url).replace('https://api.test',''));
+  return {ok:true,status:200,headers:{get:()=>null},json:async()=>body,text:async()=>JSON.stringify(body)};
+ };
+ return f;
+}
+test('[§8-8] #1239 fff02b115 real replay (戊): the admission GitHub keeps (withdrawn to failure, no PR named) is refused, no automation route',async()=>{
+ const f=replay1239({admission:'recorded_admission'});
+ assert.deepEqual([f.currentAdmission.id,f.currentAdmission.conclusion],[137272320595,'failure']);
+ const r=await gate({...f,eventName:'pull_request'});
+ assert.deepEqual([r.admitted,r.verdict,r.automation_self_hosted],[false,'REJECTED',false],JSON.stringify(r.reasons));
+ assert.ok(r.reasons.some(reason=>reason.includes('does not bind this pull request')),JSON.stringify(r.reasons));
+ assert.equal(r.automation_route,undefined,JSON.stringify(r.automation_route));
+});
+test('#1239 constructed scenario (戊, admission as after #1244): the PR merged with this head while the gate polled; the bot refresh is admitted and self-hosted',async()=>{
+ const f=replay1239();
+ assert.deepEqual([f.x.live_pull_request.state,f.x.live_pull_request.merged,f.x.live_pull_request.head.sha],['closed',true,f.pr.head.sha]);
+ assert.deepEqual(f.x.merge_commit.parents.map(p=>p.sha),[f.pr.base.sha,f.pr.head.sha]);
+ const r=await gate({...f,eventName:'pull_request'});
+ assert.deepEqual([r.admitted,r.verdict,r.automation_self_hosted],[true,'ADMITTED',true],JSON.stringify(r.reasons));
+ assert.deepEqual([r.automation_route.reason,r.automation_route.previous_head_sha,r.automation_route.main_sha],['admitted_owner_pr_signed_main_refresh',f.from,f.main]);
+});
+test('#1239 constructed scenario (戊, admission as after #1244): open at the first read and merged with this head by the last read is admitted too',async()=>{
+ const f=replay1239();f.lives=[{...f.pr},f.x.live_pull_request];
+ const read=f.read;f.read=async route=>route.endsWith('/branches/main')?{name:'main',commit:{sha:f.pr.base.sha}}:read(route);
+ const r=await gate({...f,eventName:'pull_request'});
+ assert.deepEqual([r.admitted,r.verdict,r.automation_self_hosted],[true,'ADMITTED',true],JSON.stringify(r.reasons));
+});
+// 戊 keeps every refusal it does not prove (green before and after the fix).
+const mergedDenials=[
+ ['a PR closed without merging',f=>{Object.assign(f.x.live_pull_request,{merged:false,merged_at:null});}],
+ ['a PR merged with another head',f=>{f.x.live_pull_request.head={...f.x.live_pull_request.head,sha:'0'.repeat(40)};}],
+ ['a merge whose first parent is not the base (main had moved)',f=>{f.x.merge_commit.parents[0].sha='1'.repeat(40);}],
+ ['a merge whose second parent is not the head',f=>{f.x.merge_commit.parents[1].sha='2'.repeat(40);}],
+ ['a squash merge (one parent)',f=>{f.x.merge_commit.parents=[{sha:f.pr.base.sha}];}],
+ ['a merge reply naming another commit',f=>{f.x.merge_commit.sha='3'.repeat(40);}],
+ ['a PR merged into another branch',f=>{f.x.live_pull_request.base={...f.x.live_pull_request.base,ref:'release'};}],
+ ['a merged PR of another author',f=>{f.x.live_pull_request.user={...f.x.live_pull_request.user,id:1};}],
+ ['open at the first read, then closed without merging',f=>{f.lives=[{...f.pr},{...f.x.live_pull_request,merged:false,merged_at:null}];
+  const read=f.read;f.read=async route=>route.endsWith('/branches/main')?{name:'main',commit:{sha:f.pr.base.sha}}:read(route);}],
+];
+for(const [label,change]of mergedDenials)test(`#1239 constructed scenario (戊, admission as after #1244) still refuses ${label}`,async()=>{
+ const f=replay1239();change(f);
+ const route=await qualifyTrustedAutomationRoute(f);
+ assert.equal(route.qualified,false,JSON.stringify(route));
+ f.liveReads=0;
+ const r=await gate({...f,eventName:'pull_request'});
+ assert.deepEqual([r.admitted,r.automation_self_hosted],[false,false],JSON.stringify(r.reasons));
+ assert.ok(r.reasons.some(reason=>reason.startsWith('trusted_automation_route:')),JSON.stringify(r.reasons));
+});
 
 
 }
@@ -4197,10 +4278,18 @@ const TREE_REUSE = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtur
 const TREE_REUSE_1202 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1202.json'), 'utf8'));
 // Both recordings predate R1 (the three scans joined clued-required-tests.yml afterwards): the head's run carries them
 // here as a run does now, each a passing job of that run and attempt; the run as recorded is refused (test below).
+// Constructed, after the real lists since R1: the three scans are copies of the list's clued-cloud-tests job with that
+// name replaced by the scan's. An admitted recording has it under its real name and gets real-named scans; a refused
+// recording (#1233, #1239: the expression name ending 'clued-cloud-tests' || 'clued-cloud-tests-skipped') gets the
+// three refused expression names, as #1287's refused run 45346386008 lists them. So a refused list counts the gate
+// and every required job, as an admitted one does, and only the names refuse it.
 const R1_SCANS = ['gitleaks', 'trivy', 'contract-placement'];
+const REFUSED_CLOUD_TESTS = "'clued-cloud-tests' || 'clued-cloud-tests-skipped'";
 function withScans(jobs) {
-  const model = jobs.jobs.find((job) => job.name === 'clued-cloud-tests');
-  jobs.jobs.push(...R1_SCANS.map((name, i) => ({ ...model, id: model.id + 1000 + i, name })));
+  const model = jobs.jobs.find((job) => job.name === 'clued-cloud-tests') ??
+    jobs.jobs.find((job) => job.name.endsWith(REFUSED_CLOUD_TESTS));
+  if (!model) assert.fail(`withScans: no clued-cloud-tests job, real-named or refused, to copy the scans from; jobs: ${JSON.stringify(jobs.jobs.map((job) => job.name))}`);
+  jobs.jobs.push(...R1_SCANS.map((name, i) => ({ ...model, id: model.id + 1000 + i, name: model.name.replaceAll('clued-cloud-tests', name) })));
   jobs.total_count += R1_SCANS.length;
 }
 function treeReuseCase(workflow, mutate = () => {}, fixture = TREE_REUSE, { scans = true } = {}) {
@@ -4225,6 +4314,7 @@ function treeReuseCase(workflow, mutate = () => {}, fixture = TREE_REUSE, { scan
   const api = `https://api.github.com/repos/${f.repository}`;
   const head = f.pr.head.sha;
   ctx.runsRoute = `${api}/actions/workflows/${workflow}/runs?event=pull_request&head_sha=${head}&per_page=100`;
+  ctx.jobsRoute = `${api}/actions/runs/${w.runs.workflow_runs[0].id}/attempts/${w.runs.workflow_runs[0].run_attempt}/jobs?per_page=100`;
   // Routes read the (possibly mutated) fixture objects at call time.
   Object.assign(routes, {
     [`${api}/commits/${f.merge.sha}`]: f.merge,
@@ -4232,14 +4322,15 @@ function treeReuseCase(workflow, mutate = () => {}, fixture = TREE_REUSE, { scan
     [`${api}/pulls/${f.pr.number}`]: f.pr,
     [`${api}/commits/${head}`]: f.source,
     [ctx.runsRoute]: () => w.runs,
-    [`${api}/actions/runs/${w.runs.workflow_runs[0].id}/attempts/${w.runs.workflow_runs[0].run_attempt}/jobs?per_page=100`]: w.jobs,
+    [ctx.jobsRoute]: () => w.jobs,
     [`${api}/compare/${f.merge.parents[0].sha}...${head}`]: f.compare,
   });
   mutate(ctx);
   return ctx;
 }
+// Every pause the gate asks for is recorded (ctx.sleeps), none is waited.
 const treeReuseGate = (ctx) => admissionModule.gate({ env: ctx.env, event: ctx.event, eventName: ctx.env.GITHUB_EVENT_NAME,
-  fetchImpl: ctx.fetchImpl, sleep: async () => {} });
+  fetchImpl: ctx.fetchImpl, sleep: async (ms) => { (ctx.sleeps ??= []).push(ms); } });
 
 for (const [label, workflow] of [['T1 Linux', 'clued-required-tests.yml'], ['T1w Windows', 'clued-required-tests-windows.yml']]) {
   test(`${label}: #1178's main push is not run again; the head's passing run of the same tree decides`, async () => {
@@ -4310,6 +4401,269 @@ test('R1: the gate step of #1202 main push exits 0 with admitted=false, so the h
     assert.match(out, /^admitted=false$/m);
     assert.match(out, /^verdict=TREE_ALREADY_TESTED$/m);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// 甲2 (FABLE-same-tree-main-push-redesign-20261123 §3): during the scaffold the merge can land while the head's
+// same-tree PR run is still going (its gate waits for the admission, its heavy jobs start after the merge). The main
+// push runs no heavy job only when it sees that run's gate admitted: the gate job passed and every required job is
+// there under its real name, not failed. A gate still waiting is read again every 10 s, 6 times at most; anything
+// else runs the heavy jobs with its code. So the tree always has at least one real run.
+// Fixtures: #1233's and #1178's real replies (latest run set in_progress here), #1239's real main push
+// (main-push-tree-reuse-1239.json; its in-flight state is constructed, named in_flight_at_push, see _source) and
+// #1242's PR runs read after their gates admitted and before they ended (pr-run-admitted-in-flight-1242.json).
+const TREE_REUSE_1233 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1233.json'), 'utf8'));
+const TREE_REUSE_1239 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1239.json'), 'utf8'));
+const ADMITTED_1242 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/pr-run-admitted-in-flight-1242.json'), 'utf8'));
+const IN_FLIGHT_REASON = 'pr_run_in_flight';
+const TREE_RUN_POLL_MS = 10_000;
+const TREE_RUN_POLLS = 6;
+const pollSleeps = (ctx) => (ctx.sleeps ?? []).filter((ms) => ms === TREE_RUN_POLL_MS).length;
+const workflowOfCase = (c) => c.w.runs.workflow_runs[0].path.replace('.github/workflows/', '');
+// #1242's job list of the same workflow, verbatim but for run_id, rewritten to this case's run (a constructed field);
+// #1242 predates R1, so the Linux list also gets the three scans (withScans, constructed: queued, real-named).
+const admittedJobs = (c) => {
+  const workflow = workflowOfCase(c);
+  const jobs = structuredClone(ADMITTED_1242.workflows[workflow].jobs);
+  if (workflow === 'clued-required-tests.yml') withScans(jobs);
+  for (const job of jobs.jobs) job.run_id = c.w.runs.workflow_runs[0].id;
+  return jobs;
+};
+// The gate still waiting: #1239's constructed list (only the gate job, in_progress), for this case's run.
+const gateWaitingJobs = (c) => {
+  const jobs = structuredClone(TREE_REUSE_1239.workflows[workflowOfCase(c)].in_flight_at_push.jobs_while_gate_waits);
+  for (const job of jobs.jobs) job.run_id = c.w.runs.workflow_runs[0].id;
+  return jobs;
+};
+// The gate passed and nothing else listed yet: #1239's recorded gate job alone (its real completed_at 16:21:09Z;
+// the other jobs were created a second later), for this case's run. Constructed: the list without the other jobs.
+const gatePassedAloneJobs = (c) => {
+  const gate = structuredClone(TREE_REUSE_1239.workflows[workflowOfCase(c)].jobs.jobs.find((job) => job.name === 'admission-gate'));
+  gate.run_id = c.w.runs.workflow_runs[0].id;
+  return { total_count: 1, jobs: [gate] };
+};
+const inFlight = (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); c.w.jobs = admittedJobs(c); };
+// #1239 at its main push: the PR run in flight (constructed status); its job list is the case's to choose.
+const inFlight1239 = (c) => { Object.assign(c.w.runs.workflow_runs[0], c.f.workflows[workflowOfCase(c)].in_flight_at_push.run_status); };
+const WORKFLOWS = ['clued-required-tests.yml', 'clued-required-tests-windows.yml'];
+
+// The eight cases of FABLE-same-tree-main-push-redesign-20261123 §8 are titled [§8-n]; [§8-8] is the 戊 real replay above.
+for (const workflow of WORKFLOWS) {
+  // Constructed: the run in_progress and the first list (in_flight_at_push); the second list is the recorded reply.
+  test(`[§8-1] #1239 549789505 replies, in-flight state constructed (${workflow}): the PR run's gate was waiting, then refused (heavy jobs "-skipped") -> the heavy jobs run, pr_run_not_admitted`, async () => {
+    let reads = 0;
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); const recorded = c.w.jobs;
+      c.routes[c.jobsRoute] = () => (++reads === 1 ? gateWaitingJobs(c) : recorded); }, TREE_REUSE_1239);
+    assert.ok(ctx.w.jobs.jobs.slice(1).every((job) => job.conclusion === 'skipped' && job.name.endsWith("-skipped'")), 'the recorded list is a refusal');
+    // As many jobs as an admitted list (the gate and every required job), so only the names can refuse it.
+    const { TARGETS } = await import('./clued-tree-reuse.mjs');
+    assert.equal(ctx.w.jobs.jobs.length, 1 + TARGETS[workflow].jobs.length, 'the refusal lists the gate and every required job');
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_not_admitted')]);
+    assert.deepEqual([reads, pollSleeps(ctx)], [2, 1]);
+  });
+  test(`[§8-2] #1239 (${workflow}): the PR run's gate stays in_progress -> read ${TREE_RUN_POLLS + 1} times, 10 s apart, then the heavy jobs run, pr_run_gate_undecided`, async () => {
+    let reads = 0;
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.routes[c.jobsRoute] = () => { reads += 1; return gateWaitingJobs(c); }; }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_gate_undecided')]);
+    assert.deepEqual([reads, pollSleeps(ctx)], [TREE_RUN_POLLS + 1, TREE_RUN_POLLS]);
+    const reuse = await import('./clued-tree-reuse.mjs');
+    assert.deepEqual([reuse.TREE_RUN_POLL_INTERVAL_MS, reuse.TREE_RUN_POLLS], [TREE_RUN_POLL_MS, TREE_RUN_POLLS]);
+  });
+  test(`[§8-3] #1239 (${workflow}): admitted, but a required job already failed -> the heavy jobs run, pr_run_not_admitted`, async () => {
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.w.jobs = admittedJobs(c);
+      Object.assign(c.w.jobs.jobs.at(-1), { status: 'completed', conclusion: 'failure', completed_at: '2026-11-22T18:50:00Z' }); }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_not_admitted')]);
+  });
+  test(`[§8-4] #1239 (${workflow}): the PR run's job list answers 502 -> the heavy jobs run, github_request_failed@jobs:502`, async () => {
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.routes[c.jobsRoute] = { status: 502 }; }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('github_request_failed@jobs:502')]);
+  });
+  test(`[§8-5] #1239 (${workflow}): the PR run's gate admitted (#1242's real in-flight job list) -> TREE_RUN_IN_FLIGHT`, async () => {
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.w.jobs = admittedJobs(c); }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict, outcome.tree_reuse?.reason], [false, 'TREE_RUN_IN_FLIGHT', IN_FLIGHT_REASON], JSON.stringify(outcome));
+    assert.deepEqual([outcome.tree_reuse.run_heavy, outcome.tree_reuse.current_sha_pass, outcome.tree_reuse.source_pr], [true, false, 1239]);
+  });
+  test(`[§8-6] #1239 (${workflow}): the gate waits at the first read and has admitted at the second -> TREE_RUN_IN_FLIGHT, two reads and one pause`, async () => {
+    let reads = 0;
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); const admitted = admittedJobs(c);
+      c.routes[c.jobsRoute] = () => (++reads === 1 ? gateWaitingJobs(c) : admitted); }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict, outcome.tree_reuse?.reason], [false, 'TREE_RUN_IN_FLIGHT', IN_FLIGHT_REASON], JSON.stringify(outcome));
+    assert.deepEqual([reads, pollSleeps(ctx)], [2, 1]);
+  });
+  test(`[§8-7] S2 guard #1239 (${workflow}): the in-flight run's pull_requests names another PR -> the heavy jobs run, pr_run_identity`, async () => {
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.w.jobs = admittedJobs(c); c.w.runs.workflow_runs[0].pull_requests = [{ number: 1240 }]; }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_identity')]);
+  });
+
+  // Review M6: the gate has passed but its jobs are not listed yet (#1239: gate completed 16:21:09Z, the "-skipped"
+  // jobs created 16:21:10Z). That is no admission: it is read again, and the refusal that follows is seen.
+  test(`甲2 review M6 #1239 (${workflow}, constructed): only the gate listed, passed, then the "-skipped" list -> read twice, pr_run_not_admitted`, async () => {
+    let reads = 0;
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); const recorded = c.w.jobs;
+      c.routes[c.jobsRoute] = () => (++reads === 1 ? gatePassedAloneJobs(c) : recorded); }, TREE_REUSE_1239);
+    const { TARGETS } = await import('./clued-tree-reuse.mjs');
+    assert.equal(ctx.w.jobs.jobs.length, 1 + TARGETS[workflow].jobs.length, 'the refusal lists the gate and every required job');
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_not_admitted')]);
+    assert.deepEqual([reads, pollSleeps(ctx)], [2, 1]);
+  });
+  test(`甲2 review M6 #1239 (${workflow}, constructed): only the gate listed and passed at every read -> read ${TREE_RUN_POLLS + 1} times, pr_run_gate_undecided`, async () => {
+    let reads = 0;
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.routes[c.jobsRoute] = () => { reads += 1; return gatePassedAloneJobs(c); }; }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_gate_undecided')]);
+    assert.deepEqual([reads, pollSleeps(ctx)], [TREE_RUN_POLLS + 1, TREE_RUN_POLLS]);
+  });
+  // Review M4: an admitted list of another run (only run_id differs) is not this run's admission.
+  test(`甲2 review M4 #1239 (${workflow}): the admitted job list belongs to another run -> the heavy jobs run, pr_run_not_admitted`, async () => {
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.w.jobs = admittedJobs(c);
+      for (const job of c.w.jobs.jobs) job.run_id = c.w.runs.workflow_runs[0].id + 1; }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_not_admitted')]);
+  });
+  // Review M3: an admitted list with one more job (a "-skipped" copy or a job the table does not know) is not the
+  // run the table describes.
+  for (const [label, extra] of [
+    ['a "-skipped" copy of a required job', (job) => ({ ...job, id: 1, name: `${job.name}-skipped`, status: 'completed', conclusion: 'skipped' })],
+    ['a job the table does not know', (job) => ({ ...job, id: 1, name: 'new-required-job' })],
+  ]) {
+    test(`甲2 review M3 #1239 (${workflow}): the admitted job list has ${label} as well -> the heavy jobs run, pr_run_not_admitted`, async () => {
+      const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.w.jobs = admittedJobs(c);
+        c.w.jobs.jobs.push(extra(c.w.jobs.jobs.at(-1))); c.w.jobs.total_count += 1; }, TREE_REUSE_1239);
+      const outcome = await treeReuseGate(ctx);
+      assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+      assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_not_admitted')]);
+    });
+  }
+  // Review M7: the in-flight branch refuses a job list it did not read whole.
+  for (const [label, change] of [
+    ['is at its limit (total_count 100)', (jobs) => { jobs.total_count = 100; }],
+    ['counts more jobs than it lists', (jobs) => { jobs.total_count += 1; }],
+  ]) {
+    test(`甲2 review M7 #1239 (${workflow}): the admitted job list ${label} -> the heavy jobs run, job_listing_incomplete`, async () => {
+      const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.w.jobs = admittedJobs(c); change(c.w.jobs); }, TREE_REUSE_1239);
+      const outcome = await treeReuseGate(ctx);
+      assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+      assert.deepEqual(reuseNotices(outcome), [reuseNotice('job_listing_incomplete')]);
+    });
+  }
+}
+
+// Admitted and in flight, the order of the reads, and the absence of any pause.
+for (const [workflow, sourceRun, jobCount] of [['clued-required-tests.yml', 45028759952, 7], ['clued-required-tests-windows.yml', 45028759940, 2]]) {
+  test(`甲2 (${workflow}, #1233 41c281a50): the head's same-tree PR run is in flight and its gate admitted -> TREE_RUN_IN_FLIGHT, the heavy jobs do not run`, async () => {
+    const ctx = treeReuseCase(workflow, inFlight, TREE_REUSE_1233);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, 'TREE_RUN_IN_FLIGHT'], JSON.stringify(outcome));
+    assert.equal(outcome.head_sha, TREE_REUSE_1233.merge.sha);
+    assert.deepEqual([outcome.tree_reuse.run_heavy, outcome.tree_reuse.reason, outcome.tree_reuse.source_run_id,
+      outcome.tree_reuse.source_pr, outcome.tree_reuse.tested_tree, outcome.tree_reuse.current_sha_pass, outcome.tree_reuse.source_jobs],
+    [true, IN_FLIGHT_REASON, sourceRun, 1233, TREE_REUSE_1233.merge.commit.tree.sha, false, jobCount]);
+    const why = outcome.reasons.join(' ');
+    assert.match(why, new RegExp(`run ${sourceRun} attempt 1 of PR #1233`));
+    assert.match(why, new RegExp(`its gate admitted, ${jobCount} jobs listed`));
+    // Identity, tree, actor and ancestry first; then the job list, once (the gate had admitted), and no pause.
+    const api = `https://api.github.com/repos/${TREE_REUSE_1233.repository}`;
+    assert.deepEqual(ctx.calls, [`${api}/commits/${TREE_REUSE_1233.merge.sha}`, `${api}/commits/${TREE_REUSE_1233.merge.sha}/pulls?per_page=100`,
+      `${api}/pulls/1233`, `${api}/commits/${TREE_REUSE_1233.pr.head.sha}`, ctx.runsRoute,
+      `${api}/compare/${TREE_REUSE_1233.merge.parents[0].sha}...${TREE_REUSE_1233.pr.head.sha}`, ctx.jobsRoute]);
+    assert.equal(pollSleeps(ctx), 0);
+  });
+}
+
+// #1284 dcfa1cdb6 (scripts/ci/fixtures/main-push-tree-reuse-1284.json): the bot's merge of main, merged 07:12:59Z
+// while both PR runs were going (gates admitted 07:06:54Z, 07:07:15Z); both main pushes ran their heavy jobs again
+// (pr_run_not_passed). The recorded replies are R1's six required Linux jobs already, so no scans are added. The
+// in-flight state is constructed from the recorded timestamps at each main push gate's start (in_flight_at_push, _source).
+const TREE_REUSE_1284 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1284.json'), 'utf8'));
+const inFlight1284 = (c) => { const at = c.f.workflows[workflowOfCase(c)].in_flight_at_push;
+  Object.assign(c.w.runs.workflow_runs[0], at.run_status); c.w.jobs = structuredClone(at.jobs); };
+for (const [workflow, sourceRun, jobCount] of [['clued-required-tests.yml', 45344782001, 7], ['clued-required-tests-windows.yml', 45344781867, 2]]) {
+  test(`甲2 #1284 replies, in-flight state constructed (${workflow}): merged while the head's PR run was going, its gate admitted -> TREE_RUN_IN_FLIGHT, the heavy jobs do not run`, async () => {
+    const ctx = treeReuseCase(workflow, inFlight1284, TREE_REUSE_1284, { scans: false });
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, 'TREE_RUN_IN_FLIGHT'], JSON.stringify(outcome));
+    assert.deepEqual([outcome.tree_reuse.reason, outcome.tree_reuse.source_run_id, outcome.tree_reuse.source_pr,
+      outcome.tree_reuse.source_jobs, outcome.tree_reuse.tested_tree, outcome.tree_reuse.run_heavy, outcome.tree_reuse.current_sha_pass],
+    [IN_FLIGHT_REASON, sourceRun, 1284, jobCount, TREE_REUSE_1284.merge.commit.tree.sha, true, false]);
+    assert.equal(pollSleeps(ctx), 0);
+  });
+  test(`甲2 #1284 replies as recorded (${workflow}): the head's PR run has passed -> TREE_ALREADY_TESTED (#1217 reuse)`, async () => {
+    const outcome = await treeReuseGate(treeReuseCase(workflow, undefined, TREE_REUSE_1284, { scans: false }));
+    assert.deepEqual([outcome.admitted, outcome.verdict, outcome.tree_reuse?.source_run_id], [false, 'TREE_ALREADY_TESTED', sourceRun], JSON.stringify(outcome));
+  });
+}
+
+// withScans meets a list it cannot extend (no real-named and no refused clued-cloud-tests): it fails naming the jobs.
+test('withScans: a job list with neither a real-named nor a refused clued-cloud-tests fails with the job names', () => {
+  const jobs = { total_count: 2, jobs: [{ id: 1, name: 'admission-gate' }, { id: 2, name: 'ci-suites-skipped' }] };
+  assert.throws(() => withScans(jobs), (error) => error instanceof assert.AssertionError &&
+    error.message.includes('admission-gate') && error.message.includes('ci-suites-skipped'));
+});
+
+test('甲2 (#1178): an owner-triggered head run in flight whose gate admitted is TREE_RUN_IN_FLIGHT too', async () => {
+  const outcome = await treeReuseGate(treeReuseCase('clued-required-tests.yml', inFlight));
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.tree_reuse?.reason], [false, 'TREE_RUN_IN_FLIGHT', IN_FLIGHT_REASON], JSON.stringify(outcome));
+});
+
+test('甲2: the gate step of #1233 main push with the PR run in flight and admitted exits 0 with admitted=false, so the heavy jobs are skipped', async () => {
+  const ctx = treeReuseCase('clued-required-tests.yml', inFlight, TREE_REUSE_1233);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tree-reuse-'));
+  try {
+    const eventPath = path.join(dir, 'event.json');
+    fs.writeFileSync(eventPath, JSON.stringify(ctx.event));
+    const code = await mainWith(['--mode', 'gate'], { ...ctx.env, GITHUB_EVENT_PATH: eventPath,
+      GITHUB_OUTPUT: path.join(dir, 'out'), GITHUB_STEP_SUMMARY: path.join(dir, 'summary') }, ctx.fetchImpl);
+    assert.equal(code, 0);
+    const out = fs.readFileSync(path.join(dir, 'out'), 'utf8');
+    assert.match(out, /^admitted=false$/m);
+    assert.match(out, /^verdict=TREE_RUN_IN_FLIGHT$/m);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// 甲2 keeps the real run (S3: each guard names its code): an in-flight run proves nothing it cannot prove when green.
+const IN_FLIGHT_GUARDS = [
+  ['the PR run ended and failed', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'completed', conclusion: 'failure' }); }, 'pr_run_not_passed'],
+  ['the PR run ended and was cancelled', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'completed', conclusion: 'cancelled' }); }, 'pr_run_not_passed'],
+  ['the tree differs', (c) => { inFlight(c); c.f.source.commit.tree.sha = 'f'.repeat(40); }, 'merged_tree_differs'],
+  ['the merge is not a two-parent merge of the head', (c) => { inFlight(c); c.f.merge.parents[1].sha = 'e'.repeat(40); }, 'merged_tree_differs'],
+  ['the run was triggered by someone other than the owner or the executor bot', (c) => { inFlight(c); c.w.runs.workflow_runs[0].actor.login = 'someone'; }, 'pr_run_actor'],
+  ['the run was triggered by a bot with the executor login but another id', (c) => { inFlight(c); c.w.runs.workflow_runs[0].actor.id = 337003646; }, 'pr_run_actor'],
+  ['main\'s old tip is not an ancestor of the head', (c) => { inFlight(c); Object.assign(c.f.compare, { status: 'diverged', behind_by: 1 }); }, 'base_not_ancestor'],
+  ['the head run is not a pull_request run', (c) => { inFlight(c); c.w.runs.workflow_runs[0].event = 'workflow_dispatch'; }, 'pr_run_identity'],
+  ['the head run is another workflow\'s', (c) => { inFlight(c); c.w.runs.workflow_runs[0].path = '.github/workflows/other.yml'; }, 'pr_run_identity'],
+  ['the PR author is not the owner', (c) => { inFlight(c); c.f.pr.user.login = 'someone'; }, 'merged_pr_identity'],
+  ['the compare cannot be read', (c) => { inFlight(c); c.routes[`https://api.github.com/repos/${c.f.repository}/compare/${c.f.merge.parents[0].sha}...${c.f.pr.head.sha}`] = { status: 502 }; }, 'github_request_failed@compare:502'],
+];
+for (const [label, mutate, code] of IN_FLIGHT_GUARDS) {
+  for (const workflow of WORKFLOWS) {
+    test(`甲 guard (${workflow}, #1233): ${label} -> the heavy jobs run, reason ${code}`, async () => {
+      const outcome = await treeReuseGate(treeReuseCase(workflow, mutate, TREE_REUSE_1233));
+      assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+      assert.deepEqual(reuseNotices(outcome), [reuseNotice(code)]);
+    });
+  }
+}
+
+test('甲 guard: a re-run (attempt 2) of the main push with the PR run in flight reads nothing and runs the heavy jobs', async () => {
+  const ctx = treeReuseCase('clued-required-tests.yml', (c) => { inFlight(c); c.env.GITHUB_RUN_ATTEMPT = '2'; }, TREE_REUSE_1233);
+  const outcome = await treeReuseGate(ctx);
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE']);
+  assert.deepEqual(ctx.calls, []);
 });
 
 // R1 guards: green before and after the fix. Only the exact executor identity counts, and only a run whose heavy
@@ -4464,7 +4818,7 @@ const STILL_RUNS = [
   ['a required job was skipped', (c) => { const job = c.w.jobs.jobs.at(-1); job.name += '-skipped'; job.conclusion = 'skipped'; }, 'required_jobs_not_passed'],
   ['the gate job did not pass', (c) => { c.w.jobs.jobs[0].conclusion = 'skipped'; }, 'required_jobs_not_passed'],
   ['the run has a job the table does not know', (c) => { c.w.jobs.jobs.push({ ...c.w.jobs.jobs.at(-1), id: 1, name: 'new-required-job' }); c.w.jobs.total_count += 1; }, 'required_jobs_not_passed'],
-  ['the latest run is still running', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); }, 'pr_run_not_passed'],
+  // A latest run still running is no longer here: with the same tree, actor and ancestry it is TREE_RUN_IN_FLIGHT (甲).
   ['the latest run failed', (c) => { c.w.runs.workflow_runs[0].conclusion = 'failure'; }, 'pr_run_not_passed'],
   ['a newer run of the head exists', (c) => { c.w.runs.workflow_runs.push({ ...c.w.runs.workflow_runs[0], id: 1, run_number: 99999, conclusion: 'failure' }); c.w.runs.total_count += 1; }, 'pr_run_not_passed'],
   ['the run changed while the proof was read', (c) => { let reads = 0; const runs = c.w.runs;
@@ -4587,7 +4941,8 @@ test('R3c: the reason vocabulary is closed - every code is in REASONS, and every
   const report = literals('clued-push-reuse.mjs');
   for (const code of [...own, ...report]) assert.ok(reuse.REASONS.includes(code), `${code} is in REASONS`);
   for (const code of reuse.REASONS) assert.ok(own.includes(code) || report.includes(code), `${code} is still produced`);
-  const guarded = new Set([...STILL_RUNS.map((row) => row[2]), ...DIRECT_REASONS.map((row) => row[0].split('@')[0]),
+  const guarded = new Set([...STILL_RUNS.map((row) => row[2]), ...DIRECT_REASONS.map((row) => row[0].split('@')[0]), IN_FLIGHT_REASON,
+    ...IN_FLIGHT_GUARDS.map((row) => row[2].split('@')[0]), 'pr_run_gate_undecided', 'pr_run_not_admitted',
     'github_request_failed', 'github_request_threw', 'unexpected_error']);
   for (const code of own) assert.ok(guarded.has(code), `${code} has a guard that expects it`);
   for (const family of ['github_request_failed', 'github_request_threw', 'unexpected_error']) assert.ok(own.includes(family), family);
@@ -4711,4 +5066,94 @@ test("independent gate, Native only (scaffold open-qs 1.2): a legacy success wit
   const { outcome, calls } = await independentGate([appCheckRun()], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" } });
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [false, "ADMISSION_PENDING", INDEPENDENT_GATE_SOURCE]);
   assert.equal(calls.some((call) => call.url.includes("/actions/workflows/clued-work-admission.yml/runs")), false);
+});
+
+// --- Task 2fb32dc7 (PLAN-train-full-and-gate-poll-20261125 §2.3, §2.4): the admission side says on the PR page, under
+// resident-queue/<node>, when it will not propose a head (pr-status.mjs#heldHintOf); the gate then ends at once, not admitted,
+// instead of holding a Linux runner for the whole 600-second wait (11-24 22:18 to 11-25 03:56: 24 of 40 gates waited ~636 s for an
+// admission that never came). Only ever stricter: an admission still admits, anything unread or unrecognised waits as before.
+const STATUSES = `GET https://api.test/repos/o/r/commits/${HEAD}/statuses`;
+// #1317 head d4dc68f3e as GitHub listed its statuses on 11-25 (newest first); App 5368905 posted no check for it.
+const FIELD_STATUSES = [
+  { id: 4004, context: "resident-queue/turing (info only)", state: "pending", created_at: "2026-11-24T20:11:53Z",
+    description: "落后 main 119 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）" },
+  { id: 4003, context: "resident-queue/turing (info only)", state: "pending", created_at: "2026-11-24T19:39:08Z",
+    description: "落后 main 110 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）" },
+  { id: 4002, context: "resident-queue/turing (info only)", state: "pending", created_at: "2026-11-24T19:03:48Z",
+    description: "落后 main 98 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）" },
+  { id: 4001, context: "resident-queue/turing (info only)", state: "pending", created_at: "2026-11-24T18:56:11Z",
+    description: "落后 main 94 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）" },
+];
+const statusesScript = (statuses) => ({ [STATUSES]: typeof statuses === "function" ? statuses : { body: statuses } });
+const waitedSeconds = (slept) => slept.reduce((sum, ms) => sum + ms, 0) / 1000;
+
+test("G-1 independent gate: a head the admission side will not propose (merge-main, #1317's field text) ends at once, not admitted", async () => {
+  const { outcome, slept, calls } = await independentGate([], { script: statusesScript(FIELD_STATUSES) });
+  assert.ok(waitedSeconds(slept) <= INDEPENDENT_GATE_POLL_SECONDS, `waited ${waitedSeconds(slept)}s of ${INDEPENDENT_GATE_WAIT_SECONDS}s`);
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [false, "ADMISSION_PENDING", INDEPENDENT_GATE_SOURCE]);
+  assert.ok(outcome.reasons.some((reason) => reason.includes("准入方不提议") && reason.includes("落后 main 119 个提交")), JSON.stringify(outcome.reasons));
+  assert.ok(calls.every((call) => call.method === "GET" || call.url === EPOCH_URL), "read-only");
+});
+
+test("G-2 independent gate: a head with a stale PR base (push-any-commit) ends at once, not admitted", async () => {
+  const statuses = [{ id: 5001, context: "resident-queue/node-b (info only)", state: "failure", created_at: "2026-11-25T01:00:00Z",
+    description: "已包含 main，但 PR 的基准还是旧的：推一个任意提交即可" }];
+  const { outcome, slept } = await independentGate([], { script: statusesScript(statuses) });
+  assert.ok(waitedSeconds(slept) <= INDEPENDENT_GATE_POLL_SECONDS, `waited ${waitedSeconds(slept)}s`);
+  assert.deepEqual([outcome.admitted, outcome.verdict], [false, "ADMISSION_PENDING"]);
+  assert.ok(outcome.reasons.some((reason) => reason.includes("准入方不提议") && reason.includes("推一个任意提交即可")), JSON.stringify(outcome.reasons));
+});
+
+test("G-3 independent gate: without a held text the gate waits for the admission as before; a held text never outweighs an admission", async () => {
+  let reads = 0;
+  const lateAdmission = () => ({ body: { check_runs: ++reads > 10 ? [nativeCheck()] : [] } });
+  const others = [
+    { id: 6002, context: "resident-queue/turing (info only)", state: "pending", created_at: "2026-11-25T01:00:00Z", description: "当班：运行中：第 1 段（准入）" },
+    { id: 6001, context: "ci/other", state: "pending", created_at: "2026-11-25T00:59:00Z",
+      description: "落后 main 3 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）" },
+  ];
+  for (const statuses of [[], others]) {
+    reads = 0;
+    const { outcome, slept } = await independentGate(lateAdmission, { script: statusesScript(statuses) });
+    assert.deepEqual([outcome.admitted, outcome.verdict, waitedSeconds(slept)], [true, "ADMITTED", 300], JSON.stringify(outcome.reasons));
+  }
+  const admittedAnyway = await independentGate([nativeCheck()], { script: statusesScript(FIELD_STATUSES) });
+  assert.deepEqual([admittedAnyway.outcome.admitted, admittedAnyway.outcome.verdict, admittedAnyway.slept], [true, "ADMITTED", []]);
+});
+
+test("G-4 independent gate: an unrecognised text, an older held text under a newer one, or a statuses read that fails waits the whole time", async () => {
+  const resident = (id, description) => ({ id, context: "resident-queue/turing (info only)", state: "pending",
+    created_at: `2026-11-25T01:00:${String(id % 60).padStart(2, "0")}Z`, description });
+  const heldText = FIELD_STATUSES[0].description;
+  for (const [label, script] of [
+    ["an older sentence", statusesScript([resident(7001, "落后 main 3 个提交：请先手工合入 main")])],
+    ["a clipped text", statusesScript([resident(7002, `${heldText.slice(0, 20)}…`)])],
+    ["a text around the sentence", statusesScript([resident(7003, `注意${heldText}`)])],
+    ["a newer text over an older held one", statusesScript([resident(7005, "当班：运行中：第 2 段（gitleaks 扫描）"), resident(7004, heldText)])],
+    ["a 403", statusesScript(() => ({ status: 403, body: { message: "Resource not accessible by integration" } }))],
+    ["a 502", statusesScript(() => ({ status: 502, body: {} }))],
+    ["an unexpected body", statusesScript({ statuses: FIELD_STATUSES })],
+    ["no statuses route", {}],
+  ]) {
+    const { outcome, slept } = await independentGate([], { script });
+    assert.deepEqual([label, outcome.admitted, outcome.verdict, waitedSeconds(slept)], [label, false, "ADMISSION_PENDING", INDEPENDENT_GATE_WAIT_SECONDS]);
+    assert.ok(!outcome.reasons.some((reason) => reason.includes("准入方不提议")), `${label}: ${JSON.stringify(outcome.reasons)}`);
+  }
+});
+
+test("G-5 gate side: the gate holds pr-status.mjs's held-texts block byte for byte and reads every text describe writes as its hint", async () => {
+  const source = (relative) => fs.readFileSync(new URL(relative, import.meta.url), "utf8").replaceAll("\r\n", "\n");
+  const block = (text) => {
+    const begin = text.indexOf("// held-texts: begin"), end = text.indexOf("// held-texts: end");
+    assert.ok(begin >= 0 && end > begin && text.indexOf("// held-texts: begin", begin + 1) < 0, "one held-texts block");
+    return text.slice(begin, end);
+  };
+  assert.equal(block(source("./clued-work-admission.mjs")), block(source("../../work/independent-ci-resident-v1/src/pr-status.mjs")),
+    "the gate's held texts are pr-status.mjs's, byte for byte");
+  const prStatus = await import("../../work/independent-ci-resident-v1/src/pr-status.mjs");
+  const gateModule = await import("./clued-work-admission.mjs");
+  for (const [hint, behindBy] of [["merge-main", 1], ["merge-main", 119], ["push-any-commit", 0]]) {
+    const written = prStatus.describe({ pull: { pr: 1317, headSha: "d".repeat(40), eligible: false, hint, behindBy }, status: null, now: 0 });
+    assert.deepEqual(gateModule.heldPartOf(prStatus.withWatchdogLine(written, true).description), { hint, text: written.description });
+  }
 });
