@@ -15,6 +15,7 @@ import { ciWorkflows } from './clued-merge-slot-ci.mjs';
 import { NON_PR_CONTROL_FILES, NON_PR_CONTROL_SOURCE_PATH, classifyNonPrControlWorkflowSource, parseNonPrControlCatalogue } from './clued-non-pr-control-source.mjs';
 import { recognizeCatalogueWorkflow } from './clued-source-only-workflow.mjs';
 import { parseWorkflowProfiles, roleDefinitionDigest, workflowBlob } from './clued-workflow-profile.mjs';
+import { TARGETS } from './clued-tree-reuse.mjs';
 import { describe as describePrStatus } from '../../work/independent-ci-resident-v1/src/pr-status.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -905,61 +906,47 @@ const requiredWorkflow = file => fs.readFileSync(path.join(ROOT, '.github/workfl
 const concurrencyLine = (source, key) =>
   new RegExp(`^  ${key}: .+$`, 'm').exec(/^concurrency:\n(?:[ \t].*\n)*/m.exec(source)?.[0] ?? '')?.[0];
 const cancelOnPr = "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
-const cancelOnUnmergedPr = "  cancel-in-progress: ${{ github.event_name == 'pull_request' && !github.event.pull_request.merged }}";
 
-function assertClosedJobs(source, hosted) {
-  assert.match(source.slice(source.indexOf('\non:\n'), source.indexOf('\npermissions:')), /^  pull_request:\n    types: \[opened, synchronize, reopened, closed\]/m);
-  const jobs = [...source.split('\njobs:\n')[1].matchAll(/^  ([a-z0-9-]+):\n([\s\S]*?)(?=^  [a-z0-9-]+:\n|(?![\s\S]))/gm)];
-  assert.ok(jobs.length > 1);
-  for (const [, id, job] of jobs) {
-    if (id === 'admission-gate' || hosted) {
-      assert.match(job, /^    if: (?:always\(\) && )?github.event.action != 'closed'$/m, id);
-    } else {
-      assert.match(job, /^    needs: admission-gate$/m, id);
-      assert.match(job, /^    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&/m, id);
-    }
-  }
-}
+test('Q1: 树复用的 ancestry 工作流不触发 closed', () => {
+  const ancestryWorkflows = Object.keys(TARGETS).filter(file => TARGETS[file].proof === 'ancestry');
+  const closedWorkflows = ancestryWorkflows.filter(file => {
+    const source = requiredWorkflow(file).replace(/\s+#.*$/gm, '');
+    const triggers = /^on:\n(?:[ \t].*\n|\n)*/m.exec(source)?.[0] ?? '';
+    const pullRequest = /^  ['"]?pull_request['"]?:[^\n]*(?:\n {4}[^\n]*)*/m.exec(triggers);
+    assert.ok(pullRequest, `${file} 必须在 on 下声明 pull_request`);
+    const types = /(?:^ {4}|[{,][ \t]*)['"]?types['"]?:\s*(\[[^\]]*\]|(?:-[^\n]+(?:\n[ \t]+-[^\n]+)*))/m.exec(pullRequest[0])?.[1];
+    return /(?:^|[\s[,'"])closed(?=$|[\s\],'"])/.test(types ?? '');
+  });
+  assert.deepEqual(closedWorkflows, [], '树复用按 run_number 取该 head 最新的 PR 运行；closed 运行建在合入之后，会被当成最新运行，甲2 的让位就走不到');
+});
 
-test('R1: framework concurrency keeps its groups and cancels only for unmerged PRs', () => {
+test('Q2: 框架门没有作业级 if，并发组和 PR 取消条件符合约定', () => {
   const sources = frameworkRequiredWorkflows.map(requiredWorkflow);
   const group = "(github.ref == 'refs/heads/clued-train/staging' && github.sha) || github.ref }}";
   assert.deepEqual(sources.map(source => concurrencyLine(source, 'group')), [
     '  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr || ' + group,
     '  group: ${{ github.workflow }}-${{ github.event.pull_request.number || ' + group,
   ]);
-  for (const source of sources) assertClosedJobs(source, false);
-  assert.deepEqual(sources.map(source => concurrencyLine(source, 'cancel-in-progress')),
-    [cancelOnUnmergedPr, cancelOnUnmergedPr]);
-});
-
-function evaluateCancel(line, event) {
-  if (line === cancelOnPr) return event.name === 'pull_request';
-  if (line === cancelOnUnmergedPr) return event.name === 'pull_request' && !event.merged;
-  assert.fail(`unexpected cancel-in-progress line: ${line}`);
-}
-
-test('R2: merged close keeps framework runs alive, while synchronize and unmerged close cancel them', () => {
-  const cases = [
-    { name: 'pull_request', action: 'synchronize', merged: false, expected: true },
-    { name: 'pull_request', action: 'closed', merged: false, expected: true },
-    { name: 'pull_request', action: 'closed', merged: true, expected: false },
-    { name: 'push', expected: false },
-    { name: 'workflow_dispatch', expected: false },
-  ];
-  const outcomes = frameworkRequiredWorkflows.map(file => {
-    const line = concurrencyLine(requiredWorkflow(file), 'cancel-in-progress');
-    return cases.map(event => evaluateCancel(line, event));
-  });
-  const expected = cases.map(event => event.expected);
-  assert.deepEqual(outcomes, [expected, expected]);
+  assert.deepEqual(sources.map(source => {
+    const gateJob = admission.workflowJobs(source).find(job => job.name === 'admission-gate');
+    assert.ok(gateJob, '框架工作流必须有 admission-gate');
+    return {
+      gateHasIf: gateJob.lines.some(line => /^    ['"]?if['"]?:/.test(line)),
+      cancel: concurrencyLine(source, 'cancel-in-progress'),
+    };
+  }), frameworkRequiredWorkflows.map(() => ({ gateHasIf: false, cancel: cancelOnPr })));
 });
 
 test('R3: hosted-required still cancels PR runs and skips all jobs on close', () => {
   const source = requiredWorkflow('hosted-required.yml');
   assert.match(source, /^  group: \$\{\{ github.workflow \}\}-\$\{\{ github.event.pull_request.number \|\| /m);
   assert.equal(concurrencyLine(source, 'cancel-in-progress'), cancelOnPr);
-  assertClosedJobs(source, true);
+  assert.match(source.slice(source.indexOf('\non:\n'), source.indexOf('\npermissions:')), /^  pull_request:\n    types: \[opened, synchronize, reopened, closed\]/m);
+  const jobs = [...source.split('\njobs:\n')[1].matchAll(/^  ([a-z0-9-]+):\n([\s\S]*?)(?=^  [a-z0-9-]+:\n|(?![\s\S]))/gm)];
+  assert.ok(jobs.length > 1);
+  for (const [, id, job] of jobs) {
+    assert.match(job, /^    if: (?:always\(\) && )?github.event.action != 'closed'$/m, id);
+  }
 });
 
 const minted = w => w.calls.filter(c => c.route?.startsWith('/app/installations/')).length;

@@ -39,7 +39,6 @@ run-name: ${{ github.event_name == 'workflow_dispatch' && (inputs.resident_node 
 # The concurrency group is shared with PR events; a recovery cancels no run.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
     inputs:
       pr:
@@ -68,7 +67,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr || (github.ref == 'refs/heads/clued-train/staging' && github.sha) || github.ref }}
   # Staging has one group per S, so later batches cannot replace queued CI.
   # Main pushes never cancel a running main run.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' && !github.event.pull_request.merged }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Work Claim Admission v0.1 §4.6 L0b: admit on the independent CI's own App
@@ -77,7 +76,6 @@ jobs:
   # no Clued token. Its exact bytes are registered in GATE_JOB_SHA256
   # (scripts/ci/clued-work-admission.mjs) before this workflow can be admitted.
   admission-gate:
-    if: github.event.action != 'closed'
     name: admission-gate
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
     timeout-minutes: 15
