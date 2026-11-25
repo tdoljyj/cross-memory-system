@@ -34,6 +34,8 @@ export const WORKER_DUE_SIGNATURE = 'clued_worker_due_v1(text)';
 export const PR_MERGED_EVENT_SIGNATURE = 'clued_work_pr_merged_event_v1(jsonb)';
 // The resident's PR lifecycle report (20261119140000): one more anon CI door, ci-admission only inside.
 export const PR_LIFECYCLE_REPORT_SIGNATURE = 'clued_work_pr_lifecycle_report_v1(text,jsonb)';
+// Whether a universal node package is accepted (20261125100000): one anon reader, no token, read only.
+export const FLEET_ACCEPT_STATUS_SIGNATURE = 'clued_fleet_accept_status_v1(text)';
 export const RENEW_SIGNATURES = ['clued_ci_connection_renew_trust_v1(uuid,uuid,text,text)', 'clued_ci_connection_renew_v1(jsonb)'];
 
 export async function findGatewayCloseoutMigration(cloudRoot=cloud) {
@@ -69,7 +71,7 @@ export async function snapshotCallerCatalog(db) {
 // doors for the Worker gateway (20261102151506), the two CI node gateway
 // doors (20261106090000), the Worker due query (20261118090000), the anon
 // connection-self reader (20261118100000), the PR merge event (20261118213000) and the anon PR lifecycle report
-// (20261119140000). These are exactly those
+// (20261119140000) and the anon fleet acceptance reader (20261125100000). These are exactly those
 // privileges; a later successor that adds one names it here.
 export const CLOSEOUT_SUCCESSOR_GRANTS = [
   ...RENEW_SIGNATURES.map(s => ['public.' + s, GATEWAY_ROLE]),
@@ -81,6 +83,7 @@ export const CLOSEOUT_SUCCESSOR_GRANTS = [
   ['public.' + PR_MERGED_EVENT_SIGNATURE, GATEWAY_ROLE],
   ['public.' + CONNECTION_SELF_SIGNATURE, 'anon'],
   ['public.' + PR_LIFECYCLE_REPORT_SIGNATURE, 'anon'],
+  ['public.' + FLEET_ACCEPT_STATUS_SIGNATURE, 'anon'],
 ];
 // Replays the sealed closeout SQL unchanged. Where a successor is installed,
 // its own privilege is set aside for the replay and put back afterwards (same
@@ -117,7 +120,9 @@ export async function assertGatewayCloseoutBoundary(db) {
     'Gateway grants match the historical closeout and the installed successor RPCs');
   const self = (await db.query('select to_regprocedure($1) is not null present', ['public.' + CONNECTION_SELF_SIGNATURE])).rows[0].present;
   const lifecycle = (await db.query('select to_regprocedure($1) is not null present', ['public.' + PR_LIFECYCLE_REPORT_SIGNATURE])).rows[0].present;
-  const anonymous = [...CI_SIGNATURES, ...(self ? [CONNECTION_SELF_SIGNATURE] : []), ...(lifecycle ? [PR_LIFECYCLE_REPORT_SIGNATURE] : [])].sort();
+  const fleetAccept = (await db.query('select to_regprocedure($1) is not null present', ['public.' + FLEET_ACCEPT_STATUS_SIGNATURE])).rows[0].present;
+  const anonymous = [...CI_SIGNATURES, ...(self ? [CONNECTION_SELF_SIGNATURE] : []), ...(lifecycle ? [PR_LIFECYCLE_REPORT_SIGNATURE] : []),
+    ...(fleetAccept ? [FLEET_ACCEPT_STATUS_SIGNATURE] : [])].sort();
   assert.deepEqual(await signatures('anon',true), anonymous, '匿名角色的函数授权必须与该迁移阶段逐项一致');
 }
 
