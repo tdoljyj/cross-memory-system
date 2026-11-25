@@ -167,12 +167,13 @@ test('5: the reporter writes begin and end lines; unfinishedTests counts them; t
     event('test:dequeue', { nesting: 0, name: 'no file' }),
   ]);
   const lines = text.trim().split('\n').map((line) => JSON.parse(line));
-  assert.deepEqual(lines.filter((line) => line.type === 'begin' || line.type === 'end').slice(0, 3), [
+  const lifecycle = lines.filter((line) => line.type === 'begin' || line.type === 'end');
+  assert.deepEqual(lifecycle.slice(0, 3), [
     { type: 'begin', file: fileA, nesting: 0, name: fileA },
     { type: 'begin', file: fileA, nesting: 0, name: 'done' },
     { type: 'end', file: fileA, nesting: 0, name: 'done' },
   ]);
-  assert.deepEqual(lines.at(-1), { type: 'begin', file: null, nesting: 0, name: 'no file' });
+  assert.deepEqual(lifecycle.at(-1), { type: 'begin', file: null, nesting: 0, name: 'no file' });
   assert.equal(typeof selection.unfinishedTests, 'function', 'unfinishedTests is exported');
   // A file begun and not ended, a test begun and not ended, a test begun twice and ended once; a cut-off last line is ignored.
   assert.deepEqual(selection.unfinishedTests(`${text}{"type":"beg`, ROOT), [
