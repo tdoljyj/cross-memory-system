@@ -183,6 +183,10 @@ public static class RegistrarCore {
   // (NetUserSetInfo level 1003, an administrator may) and hands the same buffer to the Task Scheduler; then it is zeroed.
   public const int RandomPasswordChars = 32;
   public const string ImportTaskName = "CluedCIResidentCompanionWslImport";
+  // The import program exits with this, and only from its complete branch (task 87d330d0, drill r11: an instance that never ran leaves
+  // the Task Scheduler's LastTaskResult 0, which was taken for success). No queued, cancelled or stopped instance and no Task Scheduler
+  // status (0x413xx, 0x8004xxxx) gives it. companion-headless.ps1 $CompanionImportDoneExitCode; tests hold the two equal.
+  public const int ImportDoneExitCode = 0x434C4901;
   public const string ImportTaskSddl = "D:P(A;;FA;;;SY)(A;;FA;;;BA)";
   public const string WslExe = @"C:\Program Files\WSL\wsl.exe";
   public const string MachineWslClientScript = @"# Shared with RegistrarCore.MachineWslClientScript; tests hold the resolver identical.
@@ -237,7 +241,7 @@ function Get-CluedMachineWslClient {
   }
   // The one-shot task that registers the moved distribution for the companion account (wsl --import-in-place, which only registers
   // the existing ext4.vhdx: nothing is copied or unpacked). On demand only: no trigger; the same random password as the companion task.
-  // Review r1 m1/m11: its action is ImportScript as -EncodedCommand (no quoting through cmd or the task XML): exit 0 only when the
+  // Review r1 m1/m11: its action is ImportScript as -EncodedCommand (no quoting through cmd or the task XML): exit ImportDoneExitCode only when the
   // distribution is registered for the account and runs; an import that fails because a cut-off earlier run already registered it is
   // accepted when the distribution then starts; the Owner's DefaultUid is written back (it was 1000 on TURING; import-in-place gives 0).
   public static string ImportScript(string distro, string vhdx, long defaultUid) {
@@ -416,7 +420,7 @@ finally {
   $record.exitCode = $code; $record.finishedAt = [DateTimeOffset]::UtcNow.ToString('o')
   try { Write-ImportDiagnostic } catch { $code = 7; [Console]::Error.WriteLine('WSL_IMPORT_DIAGNOSTICS_UNWRITABLE') }
 }
-exit $code
+if ($code -eq 0) { exit __DONE__ }; exit $code
 ";
     // Fixed source only: drop indentation to retain the Win32 EncodedCommand limit, including the maximum validated VHDX path.
     script = Regex.Replace(script.Replace("__WSL_CLIENT__", MachineWslClientScript), @"(?m)^[ \t]+", "");
@@ -434,7 +438,9 @@ exit $code
       new string[] { "Invoke-ImportWsl", "Invoke-IW" }, new string[] { "Convert-ImportOutput", "Convert-IO" }, new string[] { "Get-ImportDiagnosticAcl", "Get-DiagAcl" }, new string[] { "Assert-ImportDiagnosticAcl", "Assert-DiagAcl" },
       new string[] { "Protect-ImportDiagnostic", "Protect-Diag" }, new string[] { "Write-ImportDiagnostic", "Write-Diag" }
     }) script = script.Replace(pair[0], pair[1]);
-    return script.Replace("__DISTRO__", distro).Replace("__VHDX__", vhdx)
+    // the fixed code first, before any input is in the text
+    return script.Replace("__DONE__", ImportDoneExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture))
+      .Replace("__DISTRO__", distro).Replace("__VHDX__", vhdx)
       .Replace("__UID__", defaultUid.ToString(System.Globalization.CultureInfo.InvariantCulture));
   }
   public const string PowerShellExe = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";

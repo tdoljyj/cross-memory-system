@@ -235,6 +235,8 @@ test('sees no mark', async () => {
   }
 });
 `,
+    // It waits for real time: a test on the debt list (Task 11092b8b), which the guard lets through.
+    'config/test-clock-debt.txt': `${SEES_MARK}\n`,
   });
   const { status, calls, out } = run(root, base);
   assert.equal(status, 1, out);
@@ -277,7 +279,7 @@ test('needs what the first run left', () => {
 
 test('O: a run again that times out leaves the command red', (t) => {
   // The second run waits until the runner that started it is gone (the timeout ends the runner, not its test processes).
-  const { root, base, runsOf } = checkout(t, suite({ 'hangs the second run': `test('hangs the second run', async () => {
+  const { root, base, runsOf } = checkout(t, { ...suite({ 'hangs the second run': `test('hangs the second run', async () => {
   if (run === 1) throw new Error('the first run fails');
   await new Promise(() => setInterval(() => {
     try {
@@ -287,7 +289,7 @@ test('O: a run again that times out leaves the command red', (t) => {
     }
   }, 100));
 });
-` }));
+` }), 'config/test-clock-debt.txt': `${FLAKY}\n` });
   const { status, calls, out } = run(root, base, { rerunMinTimeoutMs: 0 });
   assert.equal(status, 1, out);
   assert.equal(calls.length, 2, out);
@@ -339,4 +341,33 @@ test('--shard: the run again in full is the shard\'s narrower command', (t) => {
   assert.equal(other.calls.length, 1);
   assert.equal(runsOf(FLAKY), 2);
   assert.equal(runsOf(STEADY), 1, 'the other shard\'s file runs once');
+});
+
+// Task 11092b8b (FABLE-no-real-clock-20261122 §2.1, §2.2, §5 cases 1, 6, 8): the entry preloads the real-clock guard into
+// every command and reads its record when the command ends. A test that reads the real clock fails the command, also when
+// it swallows the refusal and its runner exits 0, and is not run again (a run again would only hide it); the same test on
+// the debt list passes.
+const SWALLOWS = "test('reads the clock', () => {\n  try { Date.now(); } catch { /* swallowed */ }\n});\n";
+test('clock: a test that reads the real clock fails the command through the record, swallowed or not, and is not run again', (t) => {
+  const swallowed = checkout(t, suite({ 'reads the clock': SWALLOWS }));
+  const quiet = run(swallowed.root, swallowed.base);
+  assert.equal(quiet.status, 1, quiet.out);
+  assert.equal(quiet.calls.length, 1, `not run again:\n${quiet.out}`);
+  assert.equal(swallowed.runsOf(FLAKY), 1);
+  assert.ok(quiet.lines.includes(`${SUITE}: 1 real-clock use in test code`), quiet.out);
+  assert.ok(quiet.lines.some((line) => line.startsWith(`  ${FLAKY}:`) && line.endsWith(' Date.now()')), quiet.out);
+  const thrown = checkout(t, suite({ 'reads the clock': "test('reads the clock', () => { Date.now(); });\n" }));
+  const red = run(thrown.root, thrown.base);
+  assert.equal(red.status, 1, red.out);
+  assert.equal(red.calls.length, 1, `not run again:\n${red.out}`);
+  assert.ok(red.lines.includes(`${SUITE}: 1 real-clock use in test code`), red.out);
+  assert.doesNotMatch(`${quiet.out}\n${red.out}`, /flaky::/);
+});
+
+test('clock: the same test on the debt list passes', (t) => {
+  const { root, base } = checkout(t, { ...suite({ 'reads the clock': SWALLOWS }), 'config/test-clock-debt.txt': `${FLAKY}\n` });
+  const { status, calls, out } = run(root, base);
+  assert.equal(status, 0, out);
+  assert.equal(calls.length, 1, out);
+  assert.doesNotMatch(out, /real-clock use/);
 });
