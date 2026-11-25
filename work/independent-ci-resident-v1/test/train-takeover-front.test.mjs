@@ -135,11 +135,12 @@ function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true, sc
     const { mode: m, ...params } = input;
     const runId = `${(++run).toString(16).padStart(16, '0')}-0123456789ab`;
     const job = makeTrainRun({ repo: REPO, runId, mode: m, sourceManifestSha256: CI_SOURCE, createdAt: iso(e.now), ...params });
-    const created = () => e.gh.world.calls.filter(c => c === 'pulls-created').length, before = created(), began = e.now;
+    const calls = e.gh.world.calls, before = calls.length, began = e.now;
     const r = await runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
       claimScope: SCOPE });
+    const created = calls.slice(before).filter(c => c === 'pulls-created').length;
     (engine.trainInputs ??= []).push(input);
-    engine.trainRuns.push({ decision: r.facts.decision, frontBind: r.facts.frontBind ?? null, open: r.facts.openFrontBatch !== null, created: created() - before,
+    engine.trainRuns.push({ decision: r.facts.decision, frontBind: r.facts.frontBind ?? null, open: r.facts.openFrontBatch !== null, created,
       ms: e.now - began, full: r.facts.sweep?.fullSweep?.state ?? null });
     // Board 269: the store stamps each record after the newest one, so a burst of writes in one standing millisecond lands ahead
     // of this clock. The run ends no earlier than its last write (train-strict-fixtures.mjs#settle).
