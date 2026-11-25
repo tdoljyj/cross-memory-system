@@ -887,6 +887,25 @@ test('3576b29c: the hosted copy annotates none with the reason and runs no branc
   assert.match(error.mock.calls.map(call => call.arguments[0]).join('\n'), /::notice .*none: #1349 contains main and is under way.*#1344.*conflict/);
 });
 
+for (const file of ['clued-required-tests.yml', 'clued-required-tests-windows.yml', 'hosted-required.yml']) {
+  test(`3576b29c: ${file} uses PR close to cancel the same PR's runs without starting jobs`, () => {
+    const source = fs.readFileSync(path.join(ROOT, '.github/workflows', file), 'utf8');
+    assert.match(source.slice(source.indexOf('\non:\n'), source.indexOf('\npermissions:')), /^  pull_request:\n    types: \[opened, synchronize, reopened, closed\]/m);
+    assert.match(source, /^  group: \$\{\{ github.workflow \}\}-\$\{\{ github.event.pull_request.number \|\| /m);
+    assert.match(source, /^  cancel-in-progress: \$\{\{ github.event_name == 'pull_request' \}\}$/m);
+    const jobs = [...source.split('\njobs:\n')[1].matchAll(/^  ([a-z0-9-]+):\n([\s\S]*?)(?=^  [a-z0-9-]+:\n|(?![\s\S]))/gm)];
+    assert.ok(jobs.length > 1);
+    for (const [, id, job] of jobs) {
+      if (id === 'admission-gate' || file === 'hosted-required.yml') {
+        assert.match(job, /^    if: (?:always\(\) && )?github.event.action != 'closed'$/m, id);
+      } else {
+        assert.match(job, /^    needs: admission-gate$/m, id);
+        assert.match(job, /^    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&/m, id);
+      }
+    }
+  });
+}
+
 const minted = w => w.calls.filter(c => c.route?.startsWith('/app/installations/')).length;
 const phaseOutput = async (w) => {
   const dir = fs.mkdtempSync(path.join(process.env.TEMP ?? process.env.TMPDIR ?? '.', 'front-merge-phase-'));

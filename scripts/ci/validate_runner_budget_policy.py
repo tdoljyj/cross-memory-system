@@ -361,20 +361,20 @@ HOSTED_SCAFFOLD_SOURCE = "61b65d61"
 HOSTED_SCAFFOLD_PREFIX = "hosted-"
 HOSTED_SCAFFOLD_JOBS = {
     "hosted-required.yml": {
-        "control_sha256": "9a057883ee2ed3562058c81812778c539a19dda2afc1571c5cf1d50ae1c6ac76",
+        "control_sha256": "2f80faac1c7b3870adde2afc404357bd316ff37ceb184ba7c2c580c37fc85ce6",
         "jobs": {
-            "clued-cloud-tests-shard": "7072edfd59f1921d7e6a11ac31b7b5b770374bc596221e44aee0963db3c4bd2f",
-            "clued-cloud-tests": "9295baf8533a3197af1d035808646c483a9f9c5377cef25a488114980396ccfd",
-            "ci-suites-shard": "edd6c47f6dff6d04342c86a344cc3026ae742ec08bafa17f7f7128b4bc9adc79",
-            "ci-suites": "2e6f5d27c93d7091e94d0ae58cc850805a26bc5db4cd3e5f2d48da47fb0fe0ca",
-            "migration-verify-shard": "c6584e7a599fa3a52eb096299c73b10a099d9ff3e61a1d96fa134950e4e4fc23",
-            "migration-verify": "9ef23182692d9b5a985c0e675d1f892a2bb8038f9bd726a0c624424b73ff468f",
-            "ci-suites-windows-shard": "430e1b8a64471073126547ab78e5ace4b69777f2995e3f37c759814d34d7f985",
-            "ci-suites-windows": "5071b13bdf66b49332eb45beefc7b4941f9666a6f4d5659606d232ce61e901a4",
-            "ci-suites-windows-duration": "9cfd47298e34cea4eca39a7ad78e5a4b4dfd08c356ee42ccd511066b73a99653",
-            "gitleaks": "da5e2dfe2648d4472f45977fbef4d7b4e95824c5dec27d3095d336fb06ba5eef",
-            "trivy": "7a5b2fee28fb2304c03a4d70c35832b64cbac60d70dc0a8c6f26eafc04bbb18a",
-            "contract-placement": "c7aefc109446652549e01ba4b659416446ba2aae4b86e4c722d6f428bfcc6e15"
+            "clued-cloud-tests-shard": "a854461e015da29eca6f1fa86838c0d340ae7fe991a13d3615ab5e584ad189af",
+            "clued-cloud-tests": "d4e5797402f3914d5ca5287ef94290a2c4be171e2f96f92a0184e2c49f890288",
+            "ci-suites-shard": "333a19665423152c8f95950f3dc533d749b7ae5affc6e67a4dfa6dbd8b718148",
+            "ci-suites": "e94c56206ef4f4eeeae64c78be97db8b752ef0322ee0177c694b2495857805c3",
+            "migration-verify-shard": "93216a639f104fa15c74ec39ba9e1dd5e728e23a9ee2acb12c9f0e472074a024",
+            "migration-verify": "24e2cf81f4c3c672961db8fd7b385d57b9d1872e9397ce527f2875da5322386b",
+            "ci-suites-windows-shard": "3a212b51fe984835cd19eb56f2bd28f34aca87bf24b9679a6290f7a9cb0fff49",
+            "ci-suites-windows": "4e9fc891e940350f6dc47bc5c4a86e4e21d6f0b90cab0f74ceef598909dcc92f",
+            "ci-suites-windows-duration": "ddc24fc7fc39b157309edfb48451673cf0862387e3b778aeb9b63b38f07a8efd",
+            "gitleaks": "e9946feaef7c44aece9c65d067cacf65ed54b92356280e1906f046cd59de5cd8",
+            "trivy": "1626d64a8d44f76845c97fcd57d5b57b536f18f953df50aa1a25e81881971094",
+            "contract-placement": "86692591154cc7ce58b9318e5e5ca722f0be8dce26fd03a589e8957af937b98a"
         }
     },
     "clued-front-main-merge-hosted.yml": {

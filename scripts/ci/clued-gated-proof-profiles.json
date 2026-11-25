@@ -6568,7 +6568,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "5a091237a6295d78008e6339e068d265493b84a7455ba338ed5199fe5824c824",
+      "source_sha256": "5bdf5d1f8c9fd7fb2067b5c744fb20b59cdb5d58ca1ae4a8c3bc5e28c182dc05",
       "source_yaml_lines": [
 "name: clued-required-tests-windows",
 "",
@@ -6600,6 +6600,7 @@
 "# trusted command loads.",
 "on:",
 "  pull_request:",
+"    types: [opened, synchronize, reopened, closed]",
 "  push:",
 "    branches: [main, clued-train/staging]",
 "",
@@ -6619,6 +6620,7 @@
 "  # no Clued token. Its exact bytes are registered in GATE_JOB_SHA256",
 "  # (scripts/ci/clued-work-admission.mjs) before this workflow can be admitted.",
 "  admission-gate:",
+"    if: github.event.action != 'closed'",
 "    name: admission-gate",
 "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]",
 "    timeout-minutes: 15",
@@ -6733,7 +6735,7 @@
 "          exit $LASTEXITCODE",
 ""
       ],
-      "workflow_blob": "4b6590f1101e18d426023db81d3499f8c36f7b4d"
+      "workflow_blob": "b1f0f447868d4f40fb3201d25abfa8bf9d8b93df"
     },
     ".github/workflows/clued-required-tests.yml": {
       "execution_mode": "all_required_primaries",
@@ -6927,7 +6929,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "4fb7a84e68461e57e2d10651bcbe8c9dc70721e985de4182f7e55f281b466251",
+      "source_sha256": "312b96b8bdd1c4c9baef422ffd68c17aec26e5021154fcdb0a524693b31db55b",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "run-name: ${{ github.event_name == 'workflow_dispatch' && (inputs.resident_node && inputs.resident_dispatch_id && format('clued-resident-dispatch/v1 {0} {1}', inputs.resident_node, inputs.resident_dispatch_id) || 'clued-required-tests') || '' }}",
@@ -6970,6 +6972,7 @@
 "# The concurrency group is shared with PR events; a recovery cancels no run.",
 "on:",
 "  pull_request:",
+"    types: [opened, synchronize, reopened, closed]",
 "  workflow_dispatch:",
 "    inputs:",
 "      pr:",
@@ -7007,6 +7010,7 @@
 "  # no Clued token. Its exact bytes are registered in GATE_JOB_SHA256",
 "  # (scripts/ci/clued-work-admission.mjs) before this workflow can be admitted.",
 "  admission-gate:",
+"    if: github.event.action != 'closed'",
 "    name: admission-gate",
 "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]",
 "    timeout-minutes: 15",
@@ -7876,7 +7880,7 @@
 "        run: python3 -I -B scripts/ci/check_contract_placement.py --base \"$CI_BASE_SHA\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\"",
 ""
       ],
-      "workflow_blob": "d044a9124ae24721d510ad6bf1100d608501efbe"
+      "workflow_blob": "db64cd16a9b7b627446ebd9ac3c5983061bfd44e"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [

@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-export const COMPONENT_VERSION = "1.0.7";
+export const COMPONENT_VERSION = "1.0.8";
 
 // /3 changes only the on-disk representation. Each original LF-delimited YAML
 // line remains a separate plaintext JSON string on a separate physical line.
@@ -195,10 +195,10 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'d044a9124ae24721d510ad6bf1100d608501efbe',
-  source_sha256:'4fb7a84e68461e57e2d10651bcbe8c9dc70721e985de4182f7e55f281b466251',
-  workflow_definition_sha256:'b168205d5a87daad0ba9944b2cab93410d59980c190be981463ff5f868e998e8',
-  profile_sha256:'65319f2ddec89830beb5ec1e4e6aba69e73bad8a31975d12fb021cf07fabad36',
+  workflow_blob:'db64cd16a9b7b627446ebd9ac3c5983061bfd44e',
+  source_sha256:'312b96b8bdd1c4c9baef422ffd68c17aec26e5021154fcdb0a524693b31db55b',
+  workflow_definition_sha256:'16bb929be9f42f68f750b4bb03c40c66ce0a2b419384cf39187fc7a099c02839',
+  profile_sha256:'4a3fed915e882c9368c5fd0b5c9db0a1522bc2344d9c76ee32bde3e35679095e',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
   role_sha256:Object.freeze({
     'clued-cloud-tests':'44925327ac3a3771b7c41bb548a265bf1020e3fcaecfb47fa7056241a4332c6d',
@@ -377,8 +377,31 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
       'contract-placement':'9c0dd24d80b5d317259689fc709fc61a52ab73a11e1a321f9a1f9c4421e6022d',
     }),
   }),
+  // Before the cancel-only pull_request closed event (Task 3576b29c).
+  Object.freeze({
+    file:'.github/workflows/clued-required-tests.yml',
+    workflow_blob:'d044a9124ae24721d510ad6bf1100d608501efbe',
+    source_sha256:'4fb7a84e68461e57e2d10651bcbe8c9dc70721e985de4182f7e55f281b466251',
+    workflow_definition_sha256:'b168205d5a87daad0ba9944b2cab93410d59980c190be981463ff5f868e998e8',
+    profile_sha256:'65319f2ddec89830beb5ec1e4e6aba69e73bad8a31975d12fb021cf07fabad36',
+    primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
+    role_sha256:Object.freeze({
+      'clued-cloud-tests':'44925327ac3a3771b7c41bb548a265bf1020e3fcaecfb47fa7056241a4332c6d',
+      'ci-suites':'4cc5da241cb6a501790ed2a865367831c741ed3f6195454449c8c7a14a2438d0',
+      'migration-verify':'817a962d0bda284cc42c124926182558e2f34fa14be094fa33329e6bf0502e4f',
+      'gitleaks':'8d16964d9257e512a88bf4baa617c87f5c184e2ea039b81351cc002814a28270',
+      'trivy':'3928538bd2214e658804adde40c33c5697db7d67776c51b13b099ee99fef052a',
+      'contract-placement':'9c0dd24d80b5d317259689fc709fc61a52ab73a11e1a321f9a1f9c4421e6022d',
+    }),
+  }),
 ]);
 const requiredTestsPin=blob=>[REQUIRED_TESTS_SOURCE,...REQUIRED_TESTS_PREVIOUS_SOURCES].find(pin=>pin.workflow_blob===blob)??null;
+// The Windows successor has only one primary and uses the ordinary profile.
+const WINDOWS_CANCEL_SOURCE=Object.freeze({
+  workflow_blob:'b1f0f447868d4f40fb3201d25abfa8bf9d8b93df',
+  source_sha256:'5bdf5d1f8c9fd7fb2067b5c744fb20b59cdb5d58ca1ae4a8c3bc5e28c182dc05',
+  workflow_definition_sha256:'795ce1616c644cf10ff088e379a2c49dae8c7b11bbda923ab36a65744d35c3f3',
+});
 export function isExactAllRequiredPrimariesProfile(profile,file) {
   try {
     if(file!==REQUIRED_TESTS_SOURCE.file||!profile||typeof profile!=='object'||Array.isArray(profile))return false;
@@ -528,7 +551,8 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
     reject('source/parser/primary roles missing');
   if(/\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/.test(text))reject('source character domain');
   const value=parseYaml(text);
-  const pin=requiredTestsPin(workflowBlob(text)),compound=!!pin&&digest(text)===pin.source_sha256;
+  const blob=workflowBlob(text),sourceSha=digest(text);
+  const pin=requiredTestsPin(blob),compound=!!pin&&sourceSha===pin.source_sha256;
   if(compound&&(!same(primary_ids,pin.primary_ids)||
     roleDefinitionDigest(value)!==pin.workflow_definition_sha256||
     accepted_roles.some(role=>!exactKeys(role,['job_id','definition_sha256','definition'])||
@@ -539,7 +563,15 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
   const unsupportedKeys=Object.keys(value).filter(key=>!['name','on','permissions','concurrency','jobs'].includes(key)&&
     !(compound&&key==='run-name'));
   if(unsupportedKeys.length)reject('unsupported top-level key: '+unsupportedKeys.join(','));
-  const trigger=value.on.pull_request??null;
+  const pullRequest=value.on.pull_request??null;
+  // These exact Sources use closed only to cancel a run. Their executable PR
+  // events are still the default three, without path filters.
+  const windowsCancelSource=blob===WINDOWS_CANCEL_SOURCE.workflow_blob&&sourceSha===WINDOWS_CANCEL_SOURCE.source_sha256&&
+    roleDefinitionDigest(value)===WINDOWS_CANCEL_SOURCE.workflow_definition_sha256;
+  const cancellationOnly=(compound||windowsCancelSource)&&exactKeys(pullRequest,['types'])&&
+    same(pullRequest.types,['opened','synchronize','reopened','closed'])&&
+    value.jobs['admission-gate']?.if==="github.event.action != 'closed'";
+  const trigger=cancellationOnly?null:pullRequest;
   if(trigger!==null && (typeof trigger!=='object' || Array.isArray(trigger) ||
     Object.keys(trigger).some(key=>key!=='paths') || !Array.isArray(trigger.paths) || !trigger.paths.length))
     reject('unsupported trigger');
@@ -586,7 +618,7 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
   }
   if(!compound&&(routes.length>2 || new Set(routes.map(route=>route.self_hosted)).size!==routes.length))
     reject('unsupported multiple logical primaries or duplicate routes');
-  return {registration_status:'registered',workflow_blob:workflowBlob(text),source_sha256:digest(text),
+  return {registration_status:'registered',workflow_blob:blob,source_sha256:sourceSha,
     source_yaml:text,primary_ids:[...primary_ids],pull_request:trigger,gated:Object.hasOwn(value.jobs,'admission-gate'),routes,
     ...(compound?{execution_mode:ALL_REQUIRED_PRIMARIES_MODE}:{})};
 }

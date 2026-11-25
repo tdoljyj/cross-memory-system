@@ -158,8 +158,8 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
   delete profileBefore.workflows[REQUIRED_TESTS_SOURCE.file];
   delete rolesBefore.workflows[REQUIRED_TESTS_SOURCE.file];
   // Resident ADR 0032 step 2: the Windows side of the required tests is registered after this generation, additive too
-  // (its current bytes: the clued-train/staging route, D6 N1; the sparse trusted checkout, R1; CI_BASE_SHA by scripts/ci/ci-base.mjs, 6cd46765).
-  const WINDOWS = '.github/workflows/clued-required-tests-windows.yml', WINDOWS_BLOB = '4b6590f1101e18d426023db81d3499f8c36f7b4d';
+  const WINDOWS = '.github/workflows/clued-required-tests-windows.yml';
+  const WINDOWS_BLOB = workflowBlob(fs.readFileSync(new URL(WINDOWS, ROOT), 'utf8'));
   assert.equal(profileBefore.workflows[WINDOWS].workflow_blob, WINDOWS_BLOB);
   assert.deepEqual(rolesBefore.workflows[WINDOWS].sources[WINDOWS_BLOB].map(role => [role.job_id, role.definition_sha256]),
     [['ci-suites-windows', 'd81fcaadc8081aa8952d5457dd844198be7c9c132ea15c7bcc979ed925e6668d']]);

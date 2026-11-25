@@ -2087,7 +2087,7 @@
     },
     ".github/workflows/clued-required-tests.yml": {
       "sources": {
-        "d044a9124ae24721d510ad6bf1100d608501efbe": [
+        "db64cd16a9b7b627446ebd9ac3c5983061bfd44e": [
           {
             "job_id": "clued-cloud-tests",
             "definition_sha256": "44925327ac3a3771b7c41bb548a265bf1020e3fcaecfb47fa7056241a4332c6d",
@@ -2686,7 +2686,7 @@
     },
     ".github/workflows/clued-required-tests-windows.yml": {
       "sources": {
-        "4b6590f1101e18d426023db81d3499f8c36f7b4d": [
+        "b1f0f447868d4f40fb3201d25abfa8bf9d8b93df": [
           {
             "job_id": "ci-suites-windows",
             "definition_sha256": "d81fcaadc8081aa8952d5457dd844198be7c9c132ea15c7bcc979ed925e6668d",
