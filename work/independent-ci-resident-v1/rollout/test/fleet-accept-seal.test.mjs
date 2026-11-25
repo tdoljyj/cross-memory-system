@@ -213,8 +213,8 @@ test('返修 2c：GitHub 校验子进程受绝对终点约束', async t => {
     spawn.mock.restore();
     syncBuiltinESMExports();
   }
-  assert.deepEqual(w.door.reads, []);
-  assert.deepEqual(await w.opens(), []);
+  assert.deepEqual(w.door.reads, [], 'GitHub 校验超时后不得读门');
+  assert.deepEqual(await w.opens(), [], 'GitHub 校验超时后不得派发工作流');
 });
 
 test('返修 6a：run 派发后在结束前告知首个有效确认链接', async t => {
