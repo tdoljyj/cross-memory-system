@@ -191,7 +191,8 @@ test('M5-b import failure records bounded separate exit/output and exact subject
 
 test('M5-b already-registered retry succeeds only after the real runnable probe and matching registration [needs:non-elevated]', { skip: !windows }, async t => {
   const { result, diagnostic: d, uidFile } = await execute(t, { probeExit: 0, extendedBase: true });
-  assert.equal(result.status, 0); assert.equal(d.exitCode, 0);
+  // task 87d330d0: the import program's own success code 0x434C4901 (RegistrarCore.ImportDoneExitCode), never 0
+  assert.equal(result.status, 1129072897); assert.equal(d.exitCode, 0);
   assert.equal(d.commands.find(c => c.phase === 'import').exitCode, 9);
   assert.equal(d.commands.find(c => c.phase === 'probe').exitCode, 0);
   assert.equal(d.registration.matches, 1); assert.equal(d.registration.basePathMatches, true);

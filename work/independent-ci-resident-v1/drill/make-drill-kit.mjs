@@ -1,4 +1,5 @@
-// Local, create-only assembly. No network, Git, credentials or machine preparation. A CANDIDATE (a From directory with no acceptance:
+// Local, create-only assembly. No Git, credentials or machine preparation; no network but one fetch of a prerequisite the host cache
+// lacks, from the package's own manifest address (makeDrillKit, PREREQ_CACHE). A CANDIDATE (a From directory with no acceptance:
 // the Owner has not accepted the version yet) also reads the acceptance request publish.mjs prepare wrote for it (--request).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -60,8 +61,37 @@ export function candidateAcceptance({ from, version, request, now = Date.now() }
 // Get-DrillCredentialPlan then refuses before any boot a required name the drill cannot make, and an optional name it has no decision for.
 export const CREDENTIAL_FILES = 'tree/work/independent-ci-resident-v1/windows/credential-files.json';
 export const CREDENTIAL_FILES_CONTRACT = 'clued.independent-ci.credential-files/1';
-// The prerequisite items (by name in the package's prereq-manifest.json) the drill injects and the guest never downloads.
+// The drill injects every item of the package's prereq-manifest.json and the guest downloads none (Fable ruling 0e418483, node-install
+// batch section 3.3 A). These two the package's bootstrap requires, so its manifest must declare each exactly once.
 export const INJECTED_TOOLS = Object.freeze(['gh', 'git-for-windows']);
+// The host cache of the prerequisites prereq.json does not stage: <prereq.json's directory>\cache\<the manifest's file name>, create-only.
+export const PREREQ_CACHE = 'cache';
+// Registered as a stand-in (FIRST-INSTALL-KIT.md): every kit carries the host's prerequisites, so the guest's own download is not drilled.
+export const PREREQ_STAND_IN_STEP = '前置由宿主注入替身（替的是来宾按包的前置清单从上游下载每一项前置；因为演练每轮从同样的字节开始，不在来宾里走外网；因此没验到来宾从上游下载；地址与哈希在建 kit 时由宿主按包的清单验过；不可删，没验到的部分由真机首装承担）';
+// One fetch of a manifest item from its own address (https only), the bytes as they came; the caller holds them to the manifest.
+async function fetchPrereqBytes(item) {
+  const r = await fetch(item.url, { redirect: 'follow', signal: AbortSignal.timeout(15 * 60_000) });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return Buffer.from(await r.arrayBuffer());
+}
+// The item's bytes from `fetchPrereq`, held to the manifest's sha256 and size: three tries (the network is flaky), else null.
+async function fetchedPrereq(item, fetchPrereq) {
+  if (typeof item.url !== 'string' || !/^https:\/\//.test(item.url)) return null;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const bytes = await fetchPrereq(item);
+      if (Buffer.isBuffer(bytes) && bytes.length === item.bytes && sha256(bytes) === item.sha256) return bytes;
+    } catch { /* tried again */ }
+  }
+  return null;
+}
+// Creates the cache file with held bytes, never replacing one: written aside, then linked into place (an existing file stays as it is).
+function createCached(file, bytes) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const part = `${file}.${process.pid}.part`;
+  fs.writeFileSync(part, bytes, { flag: 'wx' });
+  try { fs.linkSync(part, file); } finally { fs.rmSync(part, { force: true }); }
+}
 // The first key written twice in one object of a JSON text -- by case too, as for file names -- or null. Scanned as JSON (strings with their
 // escapes, objects and arrays nested), never counted by a pattern: JSON.parse keeps the last of a key given twice and cannot show it
 // (8th review round, medium 2 and low 1). Called on a text JSON.parse has taken.
@@ -289,7 +319,7 @@ export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, 
     files: names.map(name => ({ path: name, sha256: sha256(payloads[name]) })),
     entry: { file: 'first-install-entry.ps1', arguments: ['-From', '{from}', '-Kit', '{kit}', '-Fake', '{fake}', '-Work', '{work}', '-Version', '{version}'] },
     // a stand-in step for every name the package names and the drill makes and hands over (the decision table), required or optional
-    timeoutMinutes, perNodeSteps: ['未验证原入口的非提权检查', '绕过 RunAs 提权', '绕过凭据窗口', ...standInSteps(credentials), ...(server ? [SERVER_STAND_IN_STEP] : [])], prereqSha256: sha256(prereqBytes),
+    timeoutMinutes, perNodeSteps: ['未验证原入口的非提权检查', '绕过 RunAs 提权', '绕过凭据窗口', ...standInSteps(credentials), ...(server ? [SERVER_STAND_IN_STEP] : []), PREREQ_STAND_IN_STEP], prereqSha256: sha256(prereqBytes),
     // The real first-install host owns WSL import, Docker and accounts, from S0.
     prerequisiteMode: 'first-install-host', ...(candidate ? { candidate } : {}), ...(server ? { server } : {}), ...(credentials ? { credentials } : {}), ...(credentialFilesSha256 ? { credentialFilesSha256 } : {}) };
 }
@@ -415,7 +445,8 @@ export const KIT_DRILL_FILES = ['first-install-entry.ps1', 'guest-failure-files.
 
 // `request`: a candidate's acceptance request (publish.mjs prepare's --out); required for a candidate, refused for an accepted version.
 // `server`: the drill's server (default: drill-server.json, the one source; tests give their own).
-export async function makeDrillKit({ from, version, prereq, out, request, timeoutMinutes = 240, now = Date.now(), server }) {
+// `fetchPrereq`: how an item missing from the host cache is fetched (item => bytes; default: its manifest address; tests give their own).
+export async function makeDrillKit({ from, version, prereq, out, request, timeoutMinutes = 240, now = Date.now(), server, fetchPrereq = fetchPrereqBytes }) {
   const { candidate: isCandidate, ...pins } = releasePins(from, version);
   const here = path.dirname(fileURLToPath(import.meta.url));
   const payloads = Object.fromEntries(KIT_DRILL_FILES.map(name => [name, read(here, name)]));
@@ -451,14 +482,30 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
     check(!Object.hasOwn(payloads, name), 'DRILL_PREREQ_DUPLICATE');
     payloads[name] = bytes;
   }
-  // the package's gh and Git for Windows installers are injected, both and with the package's hashes, or no kit (Codex review of
-  // e0a3cded5, high 3): the guest never fetches them. Each is a prerequisite the package's bootstrap requires, so its manifest must
-  // declare each exactly once: one missing (or twice) is refused, never taken as nothing to check (Codex review of f33fc33e5, medium 3).
-  for (const tool of INJECTED_TOOLS) {
-    const declared = (pm.items ?? []).filter(i => i?.name === tool);
-    check(declared.length === 1, `DRILL_PREREQ_TOOL_NOT_DECLARED:${tool}`);
-    const need = declared[0];
-    check(Object.hasOwn(payloads, need.fileName) && sha256(payloads[need.fileName]) === need.sha256, `DRILL_PREREQ_TOOLS_INCOMPLETE:${tool}`);
+  // gh and Git for Windows are prerequisites the package's bootstrap requires, so its manifest must declare each exactly once: one
+  // missing (or twice) is refused, never taken as nothing to check (Codex review of f33fc33e5, medium 3).
+  for (const tool of INJECTED_TOOLS) check((pm.items ?? []).filter(i => i?.name === tool).length === 1, `DRILL_PREREQ_TOOL_NOT_DECLARED:${tool}`);
+  // every item of the package's manifest is injected with the manifest's hash, or no kit: the guest downloads none (Fable ruling 0e418483,
+  // node-install batch 3.3 A; before it node, python, git, actions-runner and linux-node were fetched in the guest, 5.5-7.7 minutes a run).
+  // One prereq.json does not stage comes from the host cache; missing there, it is fetched once from the manifest's own address, held to
+  // the manifest's sha256 and size, and only then created in the cache. Address, hash and size are only the manifest's.
+  const cache = path.join(path.dirname(prereq), PREREQ_CACHE);
+  for (const item of pm.items ?? []) {
+    const label = item?.name ?? item?.fileName;
+    check(typeof item?.fileName === 'string' && nameOK(item.fileName) && /^[0-9a-f]{64}$/.test(item.sha256 ?? '') && Number.isInteger(item.bytes),
+      `DRILL_PREREQ_TOOLS_INCOMPLETE:${label}`);
+    if (!Object.hasOwn(payloads, item.fileName)) {
+      const file = path.join(cache, item.fileName);
+      let bytes = fs.existsSync(file) ? fs.readFileSync(file) : null;
+      if (bytes) check(bytes.length === item.bytes && sha256(bytes) === item.sha256, `DRILL_PREREQ_CHANGED:${item.fileName}`);
+      else {
+        bytes = await fetchedPrereq(item, fetchPrereq);
+        check(bytes, `DRILL_PREREQ_TOOLS_INCOMPLETE:${label}`);
+        createCached(file, bytes);
+      }
+      payloads[item.fileName] = bytes;
+    }
+    check(sha256(payloads[item.fileName]) === item.sha256, `DRILL_PREREQ_TOOLS_INCOMPLETE:${label}`);
   }
   const hostTools = kitHostTools(acceptance, (p.debs ?? []).map(item => { const name = path.win32.basename(item.path); return { name, bytes: payloads[name] }; }));
   const manifest = drillKitManifest({ payloads, prereqBytes, timeoutMinutes, candidate, credentials, credentialFilesSha256, server: standIn.record });

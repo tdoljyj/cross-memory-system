@@ -244,7 +244,7 @@ function Write-EntryStageLine($Line) {
     try { $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Dispose() }
   } catch { }
 }
-# The steps inside a stage (the prereq stage: each item's sha, copy, get, expand; the tools found last): one line as a step starts and one
+# The steps inside a stage (the prereq stage: each item's sha, copy, expand; the tools found last): one line as a step starts and one
 # as it ends -- stage, item, step, bytes (the item's size from the manifest), startedAt, endedAt, result, code -- so a stage cut off says
 # which item and which step it was in (coordinator, item 6 of the fix round of 87d330d0).
 $script:EntryStepOpen = $null
@@ -288,8 +288,29 @@ function Start-EntryStage([string]$Stage, [string]$Log = $null) {
   Write-EntryStageLine ([ordered]@{ stage = $Stage; event = 'start'; startedAt = $script:EntryStageOpen.startedAt; endedAt = $null; result = 'running'; code = $null; tail = $null })
 }
 
-function Write-EntryStageTimings([string]$Output, $Measurements) {
-  [IO.File]::WriteAllText((Join-Path $Output 'stage-timings.json'), ($Measurements | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+# r12 (task 87d330d0, FABLE-drill-companion-queued-20261124 2.3): beside the phases, the companion switch's own watch of its WSL import
+# (importWatch in companion-headless's answer, the last JSON line of prepare\launch-*\companion-headless.stdout.json under the bootstrap's
+# work directory) as companionImport; null when there is no work directory yet, no answer, a torn one, or one without the watch. Never throws.
+function Read-EntryCompanionImport([string]$WorkRoot) {
+  try {
+    if (-not $WorkRoot) { return $null }
+    $prepare = Join-Path $WorkRoot 'prepare'
+    if (-not [IO.Directory]::Exists($prepare)) { return $null }
+    $file = @(Get-ChildItem -LiteralPath $prepare -Directory -Filter 'launch-*' -ErrorAction Stop | Sort-Object Name -Descending | ForEach-Object { Join-Path $_.FullName 'companion-headless.stdout.json' } |
+      Where-Object { [IO.File]::Exists($_) } | Select-Object -First 1)
+    if (-not $file.Count) { return $null }
+    $line = @([IO.File]::ReadAllLines($file[0]) | Where-Object { $_.Trim().StartsWith('{') } | Select-Object -Last 1)
+    if (-not $line.Count) { return $null }
+    $answer = $line[0] | ConvertFrom-Json -ErrorAction Stop
+    $watch = Get-EntryField (Get-EntryField $answer 'result') 'importWatch'
+    if ($null -eq $watch) { $null } else { $watch }
+  } catch { $null }
+}
+function Write-EntryStageTimings([string]$Output, $Measurements, [string]$WorkRoot = $null) {
+  $timings = [ordered]@{}
+  foreach ($k in @($Measurements.Keys)) { $timings[$k] = $Measurements[$k] }
+  $timings['companionImport'] = Read-EntryCompanionImport $WorkRoot
+  [IO.File]::WriteAllText((Join-Path $Output 'stage-timings.json'), (ConvertTo-Json -InputObject $timings -Compress -Depth 10), (New-Object Text.UTF8Encoding($false)))
 }
 
 # r9 follow-up (FABLE-drill-r9-followup 1.3 B): a first install that did not end FIRST_INSTALL_DONE leaves resident-failure-snapshot.json
@@ -480,12 +501,12 @@ function Get-EntryLogonEventsXPath([DateTimeOffset]$Since) {
   "*[System[(EventID=4624 or EventID=4625) and " + (Get-EntryEventSinceXPath $Since) + "]] and *[EventData[Data[@Name='TargetUserName']='" + $script:EntryCompanionAccount + "']]"
 }
 # The named fields of one logon event (its EventData, by name), nothing else of it.
-function ConvertFrom-EntryLogonEvent($Event) {
+function ConvertFrom-EntryLogonEvent($Event, $Fields = $script:EntryLogonFields) {
   $x = [xml]$Event.ToXml()
   $item = [ordered]@{ at = (Get-EntryEventAt $Event); id = [int]$Event.Id }
   foreach ($d in @($x.GetElementsByTagName('Data'))) {
     $name = [string]$d.GetAttribute('Name')
-    if (@($script:EntryLogonFields) -ccontains $name) { $item[$name] = Get-EntryEventText $d.InnerText }
+    if (@($Fields) -ccontains $name) { $item[$name] = Get-EntryEventText $d.InnerText }
   }
   $item
 }
@@ -510,17 +531,328 @@ function Read-EntryWslService([scriptblock]$Query = { Get-Service -Name WslServi
   try { $s = & $Query; [ordered]@{ state = 'read'; error = $null; status = [string]$s.Status; startType = [string]$s.StartType } }
   catch { [ordered]@{ state = 'unreadable'; error = (Get-EntryEventText $_.Exception.Message) } }
 }
+# Drill r12 (task 87d330d0, FABLE-drill-companion-queued-20261124 2.3): r11's companion password task stayed queued (325 -> 110 -> 325) with
+# no process, no failure event, and the snapshot could not say why. Two more layers, read only on the guest and only when the first install
+# did not end done, each on its own (one that cannot be read is named unreadable with its error, never taking the others with it, never
+# changing the entry's result), and never a credential (events by fixed fields only; the probe account's password lives in this process's
+# memory only, while the probe runs):
+#   probes    (third layer, run first so its own events are in the logs read after it) six tasks in \CluedDrillProbe\, each cmd.exe /c
+#             exit 0, run at once and watched 30 seconds, 60 seconds for all of it; see Invoke-EntryProbes
+#   evidence  (second layer) the 15 minutes before the snapshot: the scheduler's whole Operational log, the User Profile Service log, the
+#             Application log's profile events and errors, the System log's errors, clock and power events, the companion account's
+#             logon sessions in the Security log; and now: the loaded hives, the account's ProfileList entry, whether its NTUSER.DAT is
+#             held, the Windows build, the logon sessions, the power state, six services, the running tasks, the account's processes
+$script:EntryEvidenceWindowMinutes = 15
+$script:EntryProfileServiceLogName = 'Microsoft-Windows-User Profile Service/Operational'
+$script:EntryEvidenceServiceNames = @('Schedule', 'ProfSvc', 'UserManager', 'SystemEventsBroker', 'TimeBrokerSvc', 'seclogon')
+$script:EntrySecurityEventIds = @(4624, 4625, 4634, 4647, 4648, 4672)
+# the named fields of a Security event: who, which logon session (TargetLogonId, SubjectLogonId pair a logon with its logoff), how
+$script:EntrySecurityFields = @('TargetUserSid', 'TargetUserName', 'TargetDomainName', 'TargetLogonId', 'LogonType', 'LogonProcessName', 'AuthenticationPackageName',
+  'ProcessName', 'Status', 'SubStatus', 'FailureReason', 'SubjectUserName', 'SubjectLogonId', 'TargetServerName')
+$script:EntryHiveNameMax = 200
+$script:EntryRunningTaskMax = 50
+$script:EntryAccountProcessMax = 20
+
+# The innermost error's text (a .NET or COM call's own words, not PowerShell's wrapper), cut as an event's.
+function Get-EntryErrorText($ErrorOrException) {
+  $e = if ($ErrorOrException -is [Management.Automation.ErrorRecord]) { $ErrorOrException.Exception } else { $ErrorOrException }
+  while ($null -ne $e -and $null -ne $e.InnerException) { $e = $e.InnerException }
+  if ($null -eq $e) { return $null }
+  Get-EntryEventText $e.Message
+}
+
+# What the second layer reads through (a test stands each in): read only, every one.
+function Get-EntryWinEvents([string]$LogName, [string]$XPath, [int]$Max) {
+  try { @(Get-WinEvent -LogName $LogName -FilterXPath $XPath -MaxEvents $Max -ErrorAction Stop) }
+  catch { if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { @() } else { throw } }
+}
+function Get-EntryHiveNames { @([Microsoft.Win32.Registry]::Users.GetSubKeyNames()) }
+function Get-EntryAccountSid([string]$Name) { (New-Object Security.Principal.NTAccount($Name)).Translate([Security.Principal.SecurityIdentifier]).Value }
+# The named values of a key under HKLM, opened read-only; $null when the key is not there.
+function Get-EntryRegistryValues([string]$SubKey, [string[]]$Names) {
+  $k = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($SubKey, $false)
+  if ($null -eq $k) { return $null }
+  try { $v = [ordered]@{}; foreach ($n in $Names) { $v[$n] = $k.GetValue($n) }; $v } finally { $k.Dispose() }
+}
+# Whether a file opens for reading beside others reading it: a hive Windows (or anyone) holds loaded does not.
+function Test-EntryFileShareRead([string]$Path) {
+  try { $fs = New-Object IO.FileStream -ArgumentList $Path, ([IO.FileMode]::Open), ([IO.FileAccess]::Read), ([IO.FileShare]::Read); $fs.Dispose(); [ordered]@{ opened = $true; error = $null } }
+  catch { [ordered]@{ opened = $false; error = (Get-EntryErrorText $_) } }
+}
+function Get-EntryCim([string]$Class) { @(Get-CimInstance -ClassName $Class -ErrorAction Stop) }
+function Get-EntryAcLine { Add-Type -AssemblyName System.Windows.Forms; [string][Windows.Forms.SystemInformation]::PowerStatus.PowerLineStatus }
+function Get-EntryServiceFacts([string]$Name) { $s = Get-Service -Name $Name -ErrorAction Stop; [ordered]@{ status = [string]$s.Status; startType = [string]$s.StartType } }
+# The running tasks, hidden ones too (TASK_ENUM_HIDDEN).
+function Get-EntryRunningTasks { $s = New-Object -ComObject Schedule.Service; $s.Connect(); @($s.GetRunningTasks(1)) }
+function Get-EntryAccountProcesses([string]$Account) { @(Get-Process -IncludeUserName -ErrorAction Stop | Where-Object { ([string]$_.UserName).Split('\')[-1] -ceq $Account }) }
+
+function Get-EntryUtcText($Value) { try { if ($null -eq $Value) { $null } else { ([DateTimeOffset][DateTime]$Value).ToUniversalTime().ToString('o') } } catch { $null } }
+# One event of a log in the window: time, id, level, provider, thread, activity and 300 characters of its message.
+function ConvertFrom-EntryWindowEvent($Event) {
+  [ordered]@{ at = (Get-EntryEventAt $Event); id = [int]$Event.Id
+    level = $(try { $l = [string]$Event.LevelDisplayName; if ($l) { $l } else { [string]$Event.Level } } catch { [string]$Event.Level })
+    provider = [string]$Event.ProviderName; threadId = $(if ($null -ne $Event.ThreadId) { [int]$Event.ThreadId } else { $null })
+    activityId = $(if ($null -ne $Event.ActivityId) { [string]$Event.ActivityId } else { $null }); message = $(try { Get-EntryEventText $Event.Message } catch { $null }) }
+}
+function Read-EntryWindowEvents([string]$LogName, [string]$XPath, [int]$Max) {
+  [ordered]@{ items = @(Get-EntryWinEvents $LogName $XPath $Max | Select-Object -First $Max | ForEach-Object { ConvertFrom-EntryWindowEvent $_ }) }
+}
+function Get-EntrySecurityEventsXPath([DateTimeOffset]$Window) {
+  "*[System[(" + ((@($script:EntrySecurityEventIds) | ForEach-Object { 'EventID=' + $_ }) -join ' or ') + ") and " + (Get-EntryEventSinceXPath $Window) + "]] and *[EventData[Data[@Name='TargetUserName']='" +
+    $script:EntryCompanionAccount + "' or Data[@Name='SubjectUserName']='" + $script:EntryCompanionAccount + "']]"
+}
+
+# The second layer's parts, in this order, each a reader of the window's start that answers a dictionary (Read-EntryEvidence adds state
+# and error). A test replaces one to see the others stand.
+$script:EntryEvidenceReaders = [ordered]@{
+  schedulerAll = { param([DateTimeOffset]$w) Read-EntryWindowEvents $script:EntryTaskSchedulerLogName ('*[System[' + (Get-EntryEventSinceXPath $w) + ']]') 500 }
+  profileService = { param([DateTimeOffset]$w) Read-EntryWindowEvents $script:EntryProfileServiceLogName ('*[System[' + (Get-EntryEventSinceXPath $w) + ']]') 150 }
+  applicationProfile = { param([DateTimeOffset]$w) Read-EntryWindowEvents 'Application' ("*[System[Provider[@Name='Microsoft-Windows-User Profiles Service'] or ((Level=1 or Level=2 or Level=3) and " + (Get-EntryEventSinceXPath $w) + ")]]") 100 }
+  systemEvents = { param([DateTimeOffset]$w) Read-EntryWindowEvents 'System' ('*[System[' + (Get-EntryEventSinceXPath $w) + " and ((Level=1 or Level=2 or Level=3) or (Provider[@Name='Microsoft-Windows-Kernel-General'] and EventID=1) or Provider[@Name='Microsoft-Windows-Kernel-Power'])]]") 100 }
+  securityLogons = { param([DateTimeOffset]$w) [ordered]@{ items = @(Get-EntryWinEvents 'Security' (Get-EntrySecurityEventsXPath $w) 100 | Select-Object -First 100 | ForEach-Object { ConvertFrom-EntryLogonEvent $_ $script:EntrySecurityFields }) } }
+  hiveKeys = { param([DateTimeOffset]$w) $names = @(Get-EntryHiveNames | ForEach-Object { [string]$_ } | Select-Object -First $script:EntryHiveNameMax)
+    [ordered]@{ names = $names; cluedP1 = @($names | Where-Object { $_ -like 'clued-p1-*' }) } }
+  profileList = { param([DateTimeOffset]$w) $sid = [string](Get-EntryAccountSid $script:EntryCompanionAccount)
+    $v = Get-EntryRegistryValues ('SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\' + $sid) @('State', 'RefCount', 'Flags', 'ProfileImagePath')
+    [ordered]@{ sid = $sid; present = ($null -ne $v); values = $v } }
+  ntuserDat = { param([DateTimeOffset]$w) $p = 'C:\Users\' + $script:EntryCompanionAccount + '\NTUSER.DAT'; $r = Test-EntryFileShareRead $p
+    [ordered]@{ path = $p; opened = [bool]$r['opened']; openError = $r['error'] } }
+  osVersion = { param([DateTimeOffset]$w) [ordered]@{ values = (Get-EntryRegistryValues 'SOFTWARE\Microsoft\Windows NT\CurrentVersion' @('CurrentBuild', 'UBR', 'DisplayVersion', 'EditionID')) } }
+  logonSessions = { param([DateTimeOffset]$w) $sessions = @(Get-EntryCim 'Win32_LogonSession'); $links = @(Get-EntryCim 'Win32_LoggedOnUser')
+    $byType = [ordered]@{}
+    foreach ($g in @($sessions | Group-Object { [int]$_.LogonType } | Sort-Object { [int]$_.Name })) { $byType[[string]$g.Name] = $g.Count }
+    $mine = @($links | Where-Object { [string]$_.Antecedent.Name -ceq $script:EntryCompanionAccount } | ForEach-Object { [string]$_.Dependent.LogonId })
+    [ordered]@{ byType = $byType; companion = @($sessions | Where-Object { $mine -ccontains [string]$_.LogonId } | ForEach-Object {
+      [ordered]@{ logonId = [string]$_.LogonId; type = [int]$_.LogonType; start = (Get-EntryUtcText $_.StartTime) } }) } }
+  power = { param([DateTimeOffset]$w) [ordered]@{ batteries = @(Get-EntryCim 'Win32_Battery').Count; acLine = [string](Get-EntryAcLine) } }
+  services = { param([DateTimeOffset]$w) [ordered]@{ items = @(foreach ($n in $script:EntryEvidenceServiceNames) {
+    try { $f = Get-EntryServiceFacts $n; [ordered]@{ name = $n; status = $f['status']; startType = $f['startType']; error = $null } }
+    catch { [ordered]@{ name = $n; status = $null; startType = $null; error = (Get-EntryErrorText $_) } } }) } }
+  runningTasks = { param([DateTimeOffset]$w) [ordered]@{ items = @(Get-EntryRunningTasks | Select-Object -First $script:EntryRunningTaskMax | ForEach-Object {
+    [ordered]@{ path = [string]$_.Path; state = [int]$_.State; enginePid = [int]$_.EnginePID } }) } }
+  companionProcesses = { param([DateTimeOffset]$w) [ordered]@{ items = @(Get-EntryAccountProcesses $script:EntryCompanionAccount | Select-Object -First $script:EntryAccountProcessMax | ForEach-Object {
+    [ordered]@{ name = [string]$_.Name; pid = [int]$_.Id; sessionId = [int]$_.SessionId; start = $(try { Get-EntryUtcText $_.StartTime } catch { $null }) } }) } }
+}
+# Every part read on its own: read (with what it answered) or unreadable (with its error). Never throws.
+function Read-EntryEvidence([DateTimeOffset]$Window, $Readers = $script:EntryEvidenceReaders) {
+  $out = [ordered]@{}
+  foreach ($name in @($Readers.Keys)) {
+    $part = [ordered]@{ state = 'read'; error = $null }
+    try {
+      $r = & $Readers[$name] $Window
+      if ($r -is [Collections.IDictionary]) { foreach ($k in @($r.Keys)) { $part[$k] = $r[$k] } }
+    } catch { $part = [ordered]@{ state = 'unreadable'; error = (Get-EntryErrorText $_) } }
+    $out[$name] = $part
+  }
+  $out
+}
+
+# The third layer: six probe tasks, each C:\Windows\System32\cmd.exe /c exit 0, in their own folder \CluedDrillProbe\ (nothing under
+# \Clued\ is touched, so the product's end is never changed and the drill is never "saved" by a probe; it runs only after the first
+# install has stopped):
+#   P1  SYSTEM, service account, Run                      can the scheduler start anything on demand now
+#   P2  the entry's account (drill), S4U, Run             can a non-SYSTEM batch task start in session 0
+#   P3  the companion account, S4U, Run                   can this account (its profile, its rights) start
+#   P4  the companion account, S4U, RunEx ignoring the constraints (TASK_RUN_IGNORE_CONSTRAINTS 2)    P3 but for the constraints
+#   P5  a new local account clued-drill-probe, password, Run    does a password task start on this guest at all
+#   P6  the same account, password, RunEx ignoring the constraints    K3 (FABLE-drill-companion-k3-20261124 section 5): P5 queued beside
+#       P6 ran is a password task held by a start constraint outside its XML (experiments R1/R3), not by its account or its definition
+# P2-P6 take the Settings of the guest's own \Clued\CluedCIResidentCompanion (settings: companion), the defaults when it cannot be read
+# (settings: default); P1 the defaults. All six are run at once and watched together for 30 seconds (each second the task's state, its
+# instances and its last result), 60 seconds for all of it: past that the rest is given up, and the tasks, the folder and the account are
+# removed in any case. Each probe's outcome: ran (event 129, or ready again with result 0 after it was seen started), queued, failed:<the
+# failure event's id, or the last result>, logon-refused (0x80070569: the account may not log on as a batch job: no conclusion, never
+# read as queued), not-registered. The password: random, made here, given to the account and the registration only, never written.
+$script:EntryProbeFolder = 'CluedDrillProbe'
+$script:EntryProbeAccount = 'clued-drill-probe'
+$script:EntryProbeLimitSeconds = 60
+$script:EntryProbeWatchSeconds = 30
+$script:EntryProbeLogonRefused = '0x80070569'
+$script:EntryProbeFailureEvents = @(101, 103, 104, 203, 204, 205)
+$script:EntryProbePlan = @(
+  @{ id = 'P1'; principal = 'system'; logon = 'service-account'; run = 'run' },
+  @{ id = 'P2'; principal = 'entry'; logon = 's4u'; run = 'run' },
+  @{ id = 'P3'; principal = 'companion'; logon = 's4u'; run = 'run' },
+  @{ id = 'P4'; principal = 'companion'; logon = 's4u'; run = 'run-ignore-constraints' },
+  @{ id = 'P5'; principal = 'probe-account'; logon = 'password'; run = 'run' },
+  @{ id = 'P6'; principal = 'probe-account'; logon = 'password'; run = 'run-ignore-constraints' })
+$script:EntryProbeAccounts = @{
+  New = { param([string]$Name, [string]$Password)
+    [void](New-LocalUser -Name $Name -Password (ConvertTo-SecureString -String $Password -AsPlainText -Force) -AccountNeverExpires -PasswordNeverExpires -Description 'Clued drill probe: removed when the probe ends' -ErrorAction Stop) }
+  Remove = { param([string]$Name) if ($null -ne (Get-LocalUser -Name $Name -ErrorAction SilentlyContinue)) { Remove-LocalUser -Name $Name -ErrorAction Stop } }
+}
+# Only ever on the drill guest: anywhere else the probe does nothing at all.
+function Test-EntryProbeHost { $env:COMPUTERNAME -ceq 'CLUED-DRILL' }
+function New-EntryProbePassword {
+  $b = New-Object byte[] 24; $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+  try { $rng.GetBytes($b) } finally { $rng.Dispose() }
+  [Convert]::ToBase64String($b) + 'aA1!'
+}
+# The HRESULT an error carries (the innermost exception's), as 0x%08X; $null when there is none.
+function Get-EntryHResult($ErrorRecord) {
+  $e = $ErrorRecord.Exception; while ($null -ne $e.InnerException) { $e = $e.InnerException }
+  if ($null -eq $e -or 0 -eq $e.HResult) { return $null }
+  '0x{0:X8}' -f ([int64]$e.HResult -band 0xFFFFFFFFL)
+}
+function Get-EntryProbeEventsXPath([string]$TaskPath, [DateTimeOffset]$Since) { "*[System[" + (Get-EntryEventSinceXPath $Since) + "]] and *[EventData[Data[@Name='TaskName']='" + $TaskPath + "']]" }
+function Read-EntryProbeEvents([string]$TaskPath, [DateTimeOffset]$Since) { @(Get-EntryWinEvents $script:EntryTaskSchedulerLogName (Get-EntryProbeEventsXPath $TaskPath $Since) 100 | ForEach-Object { [int]$_.Id }) }
+function New-EntryProbeTaskXml($Probe, [string]$UserId, $Settings, [string]$Version) {
+  $logon = switch ($Probe.logon) { 's4u' { '<LogonType>S4U</LogonType>' } 'password' { '<LogonType>Password</LogonType>' } default { '' } }
+  $xml = '<?xml version="1.0" encoding="UTF-16"?><Task version="' + $Version + '" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><RegistrationInfo><Description>Clued drill probe ' + $Probe.id +
+    ': removed when the probe ends</Description></RegistrationInfo><Principals><Principal id="Author"><UserId>' + [Security.SecurityElement]::Escape($UserId) + '</UserId>' + $logon +
+    '<RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled></Settings><Actions Context="Author"><Exec><Command>C:\Windows\System32\cmd.exe</Command><Arguments>/c exit 0</Arguments></Exec></Actions></Task>'
+  if ($null -eq $Settings) { return $xml }
+  $doc = New-Object Xml.XmlDocument; $doc.LoadXml($xml)
+  $ns = New-Object Xml.XmlNamespaceManager($doc.NameTable); $ns.AddNamespace('t', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
+  $mine = $doc.SelectSingleNode('/t:Task/t:Settings', $ns)
+  [void]$doc.DocumentElement.ReplaceChild($doc.ImportNode($Settings, $true), $mine)
+  $doc.OuterXml
+}
+# One reading of a probe task: its state, its instances, its last result; whether it was ever seen started.
+function Read-EntryProbeTask($Item, $Task) {
+  $state = [int]$Task.State
+  $instances = @(@($Task.GetInstances(0)) | Where-Object { $null -ne $_ } | ForEach-Object { [ordered]@{ state = [int]$_.State; enginePid = [int]$_.EnginePID } })
+  if ($state -eq 4 -or @($instances | Where-Object { $_.state -eq 4 -or $_.enginePid -ne 0 }).Count) { $Item.startedSeen = $true }
+  $Item.finalState = $state; $Item.instances = $instances
+  $Item.lastTaskResult = '0x{0:X8}' -f ([int64]$Task.LastTaskResult -band 0xFFFFFFFFL)
+}
+function Get-EntryProbeOutcome($Item) {
+  $failed = @($Item.events | Where-Object { $script:EntryProbeFailureEvents -contains $_ })
+  if ($Item.lastTaskResult -ceq $script:EntryProbeLogonRefused) { return 'logon-refused' }
+  if ($failed.Count) { return ('failed:' + $failed[0]) }
+  if (@($Item.events) -contains 129) { return 'ran' }
+  $settled = @(2, 4) -notcontains $Item.finalState -and -not @($Item.instances).Count
+  if ($Item.startedSeen -and $settled -and $Item.lastTaskResult -ceq '0x00000000') { return 'ran' }
+  if ($settled -and $Item.lastTaskResult -cne '0x00000000' -and $Item.lastTaskResult -cne '0x00041303') { return ('failed:' + $Item.lastTaskResult) }
+  'queued'
+}
+# The probes' answer. Never throws; anywhere but the drill guest nothing is done. $Service (Schedule.Service), $Accounts (New, Remove), $Sleep,
+# $Now, $NewPassword, $Events (a task path and a start: its event ids), $EntryUser: the guest's own by default; a test gives its own.
+function Invoke-EntryProbes($Service = $null, [hashtable]$Accounts = $script:EntryProbeAccounts, [scriptblock]$Sleep = { Start-Sleep -Seconds 1 },
+    [scriptblock]$Now = { [DateTimeOffset]::UtcNow }, [scriptblock]$NewPassword = { New-EntryProbePassword },
+    [scriptblock]$Events = { param($taskPath, $since) Read-EntryProbeEvents $taskPath $since }, [string]$EntryUser = '') {
+  if (-not (Test-EntryProbeHost)) { return [ordered]@{ state = 'not-run'; error = 'not the drill guest' } }
+  $secret = $null
+  # every text that leaves here passes this: the password is never in it, whatever an error echoed
+  $say = { param($t) $t = [string]$t; if ($secret) { $t = $t.Replace($secret, '[withheld]') }; $t }
+  $started = & $Now; $deadline = $started.AddSeconds($script:EntryProbeLimitSeconds)
+  $result = [ordered]@{ state = 'run'; error = $null; settings = 'default'; startedAt = $started.ToString('o'); timedOut = $false; watchedSeconds = 0; probes = @()
+    cleanup = [ordered]@{ tasks = 'none'; folder = 'none'; account = 'none' } }
+  $items = @(foreach ($p in $script:EntryProbePlan) { [ordered]@{ id = $p.id; principal = $p.principal; logon = $p.logon; run = $p.run; registered = $null; hresult = $null; error = $null
+    startedSeen = $false; finalState = $null; lastTaskResult = $null; instances = @(); events = @(); eventsError = $null; outcome = 'not-run' } })
+  $tasks = @{}; $root = $null; $folder = $null; $accountTried = $false
+  try {
+    if ($null -eq $Service) { $Service = New-Object -ComObject Schedule.Service }
+    $Service.Connect()
+    $settings = $null; $version = '1.2'
+    try {
+      $doc = New-Object Xml.XmlDocument; $doc.LoadXml([string]$Service.GetFolder('\Clued').GetTask('CluedCIResidentCompanion').Xml)
+      $ns = New-Object Xml.XmlNamespaceManager($doc.NameTable); $ns.AddNamespace('t', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
+      $settings = $doc.SelectSingleNode('/t:Task/t:Settings', $ns)
+      if ($null -ne $settings) { $result.settings = 'companion'; $v = [string]$doc.DocumentElement.GetAttribute('version'); if ($v -cmatch '^1\.[0-9]$') { $version = $v } }
+    } catch { $settings = $null }
+    $root = $Service.GetFolder('\')
+    try { $folder = $Service.GetFolder('\' + $script:EntryProbeFolder) } catch { $folder = $root.CreateFolder($script:EntryProbeFolder) }
+    if (-not $EntryUser) { $EntryUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name }
+    $users = @{ system = 'SYSTEM'; entry = $EntryUser; companion = ($env:COMPUTERNAME + '\' + $script:EntryCompanionAccount); 'probe-account' = ($env:COMPUTERNAME + '\' + $script:EntryProbeAccount) }
+    $accountTried = $true
+    try { & $Accounts.Remove $script:EntryProbeAccount } catch { }
+    try { $secret = [string](& $NewPassword); & $Accounts.New $script:EntryProbeAccount $secret }
+    catch {
+      $why = & $say ('account: ' + (Get-EntryErrorText $_))
+      foreach ($probeItem in @($items | Where-Object { $_.principal -ceq 'probe-account' })) { $probeItem.registered = 'failed'; $probeItem.error = $why; $probeItem.outcome = 'not-registered' }
+    }
+    foreach ($it in $items) {
+      if ($it.outcome -cne 'not-run') { continue }
+      if ((& $Now) -ge $deadline) { $result.timedOut = $true; break }
+      $xmlUser = if ($it.principal -ceq 'system') { 'S-1-5-18' } else { $users[$it.principal] }
+      $xml = New-EntryProbeTaskXml $it $xmlUser $(if ($it.principal -ceq 'system') { $null } else { $settings }) $(if ($it.principal -ceq 'system') { '1.2' } else { $version })
+      $logonType = @{ 'service-account' = 5; 's4u' = 2; 'password' = 1 }[$it.logon]
+      try {
+        $tasks[$it.id] = $folder.RegisterTask($it.id, $xml, 6, $users[$it.principal], $(if ($it.logon -ceq 'password') { $secret } else { $null }), $logonType)
+        $it.registered = 'ok'
+      } catch {
+        $it.registered = 'failed'; $it.hresult = Get-EntryHResult $_; $it.error = & $say (Get-EntryErrorText $_)
+        $it.outcome = $(if ($it.hresult -ceq $script:EntryProbeLogonRefused) { 'logon-refused' } else { 'not-registered' })
+      }
+    }
+    $runAt = & $Now
+    $watching = New-Object Collections.ArrayList
+    foreach ($it in $items) {
+      $t = $tasks[$it.id]; if ($null -eq $t -or $result.timedOut) { continue }
+      try { if ($it.run -ceq 'run-ignore-constraints') { [void]$t.RunEx($null, 2, 0, $null) } else { [void]$t.Run($null) }; [void]$watching.Add($it) }
+      catch {
+        $it.hresult = Get-EntryHResult $_; $it.error = & $say ('run: ' + (Get-EntryErrorText $_))
+        $it.outcome = $(if ($it.hresult -ceq $script:EntryProbeLogonRefused) { 'logon-refused' } else { 'failed:run' })
+      }
+    }
+    for ($second = 0; $watching.Count; $second++) {
+      $open = $false
+      foreach ($it in $watching) {
+        try { Read-EntryProbeTask $it $tasks[$it.id] } catch { $it.error = & $say ('read: ' + (Get-EntryErrorText $_)) }
+        if (@(2, 4) -contains $it.finalState -or @($it.instances).Count) { $open = $true }
+      }
+      if (-not $open -or $second -ge $script:EntryProbeWatchSeconds) { break }
+      if ((& $Now) -ge $deadline) { $result.timedOut = $true; break }
+      & $Sleep
+      $result.watchedSeconds = $second + 1
+    }
+    foreach ($it in $watching) {
+      try { $it.events = @(& $Events ('\' + $script:EntryProbeFolder + '\' + $it.id) $runAt | ForEach-Object { [int]$_ }) } catch { $it.eventsError = & $say (Get-EntryErrorText $_) }
+      $it.outcome = Get-EntryProbeOutcome $it
+    }
+  } catch { $result.state = 'failed'; $result.error = & $say (Get-EntryErrorText $_) }
+  finally {
+    # removed in any case: the tasks (stopped first when still queued or running), their folder, the account
+    $errors = New-Object Collections.ArrayList
+    foreach ($it in $items) { $t = $tasks[$it.id]; if ($null -eq $t) { continue }
+      try { if (@(2, 4) -contains [int]$t.State -or @(@($t.GetInstances(0)) | Where-Object { $null -ne $_ }).Count) { [void]$t.Stop(0) } } catch { [void]$errors.Add($it.id + ' stop: ' + (& $say (Get-EntryErrorText $_))) } }
+    foreach ($it in $items) { if ($null -eq $tasks[$it.id]) { continue }
+      try { [void]$folder.DeleteTask($it.id, 0) } catch { [void]$errors.Add($it.id + ': ' + (& $say (Get-EntryErrorText $_))) } }
+    if ($tasks.Count) { $result.cleanup.tasks = $(if ($errors.Count) { @($errors) -join '; ' } else { 'removed' }) }
+    if ($null -ne $folder -and $null -ne $root) { try { [void]$root.DeleteFolder($script:EntryProbeFolder, 0); $result.cleanup.folder = 'removed' } catch { $result.cleanup.folder = & $say (Get-EntryErrorText $_) } }
+    if ($accountTried) { try { & $Accounts.Remove $script:EntryProbeAccount; $result.cleanup.account = 'removed' } catch { $result.cleanup.account = & $say (Get-EntryErrorText $_) } }
+  }
+  $result.probes = $items
+  # the last guard: an answer that holds the password anyway is not given
+  if ($secret -and (ConvertTo-Json -InputObject $result -Compress -Depth 8).Contains($secret)) { $result = [ordered]@{ state = 'failed'; error = 'PROBE_ANSWER_WITHHELD:held-the-password' } }
+  $secret = $null
+  $result
+}
+# The probe as the guest reader runs it (a test gives its stand-ins here).
+$script:EntryProbeRunner = { Invoke-EntryProbes }
+
 $script:EntryFailureGuestReader = {
   param([DateTimeOffset]$Since, [int]$Max)
+  # the probes first: their own events then fall in the logs read after them
+  $probes = try { & $script:EntryProbeRunner } catch { [ordered]@{ state = 'failed'; error = (Get-EntryErrorText $_) } }
+  $window = [DateTimeOffset]::UtcNow.AddMinutes(-$script:EntryEvidenceWindowMinutes)
   [ordered]@{ taskSchedulerLog = $script:EntryTaskLog; taskEvents = (Read-EntryTaskEvents $Since $Max); engineEvents = (Read-EntryTaskEngineEvents $Since $Max)
     logons = (Read-EntryLogonEvents $Since $Max)
-    memory = (Read-EntryGuestMemory); processes = (Read-EntryGuestProcesses $Max); wslService = (Read-EntryWslService) }
+    memory = (Read-EntryGuestMemory); processes = (Read-EntryGuestProcesses $Max); wslService = (Read-EntryWslService)
+    probes = $probes; evidence = (Read-EntryEvidence $window) }
+}
+
+# A guest account over the snapshot's room (every log part at its limit, in a language of long characters): the longest list of the
+# second layer is halved, again and again, each part cut saying how many it had (cut); with no list left the account is named over the limit.
+function Limit-EntryGuestSize($Guest, [long]$Budget, [scriptblock]$Cost) {
+  $evidence = Get-EntryField $Guest 'evidence'
+  while ((& $Cost $Guest) -gt $Budget) {
+    $biggest = $null; $n = 0
+    if ($evidence -is [Collections.IDictionary]) {
+      foreach ($k in @($evidence.Keys)) { $p = $evidence[$k]; if ($p -is [Collections.IDictionary] -and $p.Contains('items')) { $c = @($p['items']).Count; if ($c -gt $n) { $n = $c; $biggest = $p } } }
+    }
+    if ($null -eq $biggest) { return [ordered]@{ state = 'over-total-limit'; error = $null } }
+    if (-not $biggest.Contains('cut')) { $biggest['cut'] = $n }
+    $biggest['items'] = @(@($biggest['items']) | Select-Object -First ([int][Math]::Floor($n / 2)))
+  }
+  $Guest
 }
 
 # Writes the snapshot and returns it. Never throws and never changes the entry's result: what could not be read is named in its place.
 function Write-EntryFailureSnapshot([string]$Output, [string]$ListFile, [hashtable]$Roots, [DateTimeOffset]$Since, $Result, [scriptblock]$EventReader = $script:EntryFailureEventReader, [scriptblock]$GuestReader = $script:EntryFailureGuestReader) {
   $utf8 = New-Object Text.UTF8Encoding($false)
-  $cost = { param($v) $utf8.GetByteCount((ConvertTo-Json -InputObject $v -Compress -Depth 6)) }
+  $cost = { param($v) $utf8.GetByteCount((ConvertTo-Json -InputObject $v -Compress -Depth 8)) }
   $snapshot = [ordered]@{ contract = $script:EntryFailureSnapshotContract; at = [DateTimeOffset]::UtcNow.ToString('o'); since = $Since.ToString('o')
     entry = [ordered]@{ status = (Get-EntryProperty $Result 'status'); stopCode = (Get-EntryProperty $Result 'stopCode') }
     limits = [ordered]@{ fileBytes = [int]$script:EntryFailureFileBytes; totalBytes = [int]$script:EntryFailureTotalBytes; events = $script:EntryFailureEventMax; eventChars = $script:EntryFailureEventChars }
@@ -542,6 +874,8 @@ function Write-EntryFailureSnapshot([string]$Output, [string]$ListFile, [hashtab
     $left -= (& $cost $snapshot.events)
     # then the guest's own account (bounded the same way), before any file
     try { $snapshot.guest = & $GuestReader $Since $script:EntryFailureEventMax } catch { $snapshot.guest = [ordered]@{ state = 'unreadable'; error = [string]$_.Exception.Message } }
+    # r12: the second layer can outgrow the room; it is cut to it, a file's worth kept for the records after it
+    try { $snapshot.guest = Limit-EntryGuestSize $snapshot.guest ($left - [long]$script:EntryFailureFileBytes) $cost } catch { $snapshot.guest = [ordered]@{ state = 'over-total-limit'; error = [string]$_.Exception.Message } }
     $left -= (& $cost $snapshot.guest)
     $list = @()
     try { $list = Read-EntryFailureFiles $ListFile } catch { $snapshot.list = [ordered]@{ state = 'refused'; code = [string]$_.Exception.Message } }
@@ -575,7 +909,7 @@ function Write-EntryFailureSnapshot([string]$Output, [string]$ListFile, [hashtab
     }
     $snapshot.files = @($records)
   } catch { $snapshot['error'] = [string]$_.Exception.Message }
-  try { [IO.File]::WriteAllText((Join-Path $Output 'resident-failure-snapshot.json'), (ConvertTo-Json -InputObject $snapshot -Compress -Depth 6), $utf8) } catch { }
+  try { [IO.File]::WriteAllText((Join-Path $Output 'resident-failure-snapshot.json'), (ConvertTo-Json -InputObject $snapshot -Compress -Depth 8), $utf8) } catch { }
   return $snapshot
 }
 
@@ -627,18 +961,15 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     $pre = Join-Path $script:Work 'prereq'; [void][IO.Directory]::CreateDirectory($pre)
     $tools = @{}
     foreach ($item in $manifest['items']) {
-      # Prefer the injected, release-pinned WSL/rootfs. Get-Prereq still verifies size and sha256.
+      # Every item is injected by the host (make-drill-kit.mjs puts each item of the manifest into the kit) and held here to the manifest's
+      # size and sha256; the guest downloads none (Fable ruling 0e418483, node-install batch 3.3 A): one not injected stops here by name.
       $injected = Join-Path $Payload $item['fileName']
       $itemName = [string]$item['name']
-      # a download (not injected, and not one that must be): its own step
-      if (-not [IO.File]::Exists($injected) -and @('gh', 'git-for-windows') -cnotcontains $itemName) { Start-EntryStep $itemName 'get' $item['bytes'] }
-      if ([IO.File]::Exists($injected)) {
-        Start-EntryStep $itemName 'sha' $item['bytes']
-        if ((Sha256File $injected) -cne $item['sha256'] -or (Get-Item -LiteralPath $injected).Length -ne $item['bytes']) { throw 'DRILL_PREREQ_CHANGED' }
-        Start-EntryStep $itemName 'copy' $item['bytes']
-        $file = Join-Path $pre $item['fileName']; [IO.File]::Copy($injected, $file, $false)
-      } elseif (@('gh', 'git-for-windows') -ccontains [string]$item['name']) { throw ('DRILL_PREREQ_NOT_INJECTED:' + $item['name']) }
-      else { $file = Get-Prereq $item $pre }
+      if (-not [IO.File]::Exists($injected)) { throw ('DRILL_PREREQ_NOT_INJECTED:' + $itemName) }
+      Start-EntryStep $itemName 'sha' $item['bytes']
+      if ((Sha256File $injected) -cne $item['sha256'] -or (Get-Item -LiteralPath $injected).Length -ne $item['bytes']) { throw 'DRILL_PREREQ_CHANGED' }
+      Start-EntryStep $itemName 'copy' $item['bytes']
+      $file = Join-Path $pre $item['fileName']; [IO.File]::Copy($injected, $file, $false)
       # the package's own Expand-Cached, called as its bootstrap calls it (rollout/fleet/bootstrap.ps1): the zip's longest entry path from the
       # pinned manifest is its fourth argument, without which it refuses (PREREQ_ZIP_MAX_ENTRY_PATH_LENGTH)
       if (@('node', 'python', 'git') -ccontains $itemName) {
@@ -786,7 +1117,7 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     throw
   } finally {
     Enter-EntryPhase $measurements $phase ''   # a phase a stop cut off keeps the time it ran
-    Write-EntryStageTimings $Output $measurements
+    Write-EntryStageTimings $Output $measurements $script:EntryFailureRoots.work
     # Both the injected input and the host's transient token directory die on every end.
     foreach ($directory in @($inputCredentials, $CredentialDirectory)) {
       if (-not (Clear-CredentialDirectory $directory).cleared) { throw 'DRILL_CREDENTIAL_CLEANUP_FAILED' }

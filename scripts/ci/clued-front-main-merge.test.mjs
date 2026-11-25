@@ -415,6 +415,10 @@ function train() {
       w.comments.push({ pr: Number(comment[1]), body: body.body, app: init.headers.authorization === 'Bearer ghs_app' });
       return reply({ id: w.comments.length }, 201);
     }
+    // A pull request's comments, 100 a page, as GitHub answers (a plain list, no count).
+    const comments = /^\/repos\/o\/r\/issues\/([0-9]+)\/comments\?(?:.*&)?page=([0-9]+)/.exec(route);
+    if (method === 'GET' && comments) return reply(w.comments.filter(c => c.pr === Number(comments[1])).map((c, i) => ({ id: i + 1, body: c.body }))
+      .slice((Number(comments[2]) - 1) * 100).slice(0, 100));
     if (method === 'GET' && route === '/repos/o/r/branches/main') return reply({ name: 'main', commit: { sha: w.tip } });
     const pull = /^\/repos\/o\/r\/pulls\/([0-9]+)$/.exec(route), p = pull && w.prs.get(Number(pull[1]));
     if (method === 'GET' && pull) return p ? reply({ number: p.number, state: 'open', draft: p.draft, updated_at: iso(p.updatedAt),
@@ -435,6 +439,9 @@ function train() {
       const all = w.heads.get(runs[1])?.runs ?? [];
       return reply({ total_count: all.length, workflow_runs: all.slice((Number(/[?&]page=([0-9]+)/.exec(route)?.[1] ?? 1) - 1) * 100).slice(0, 100) });
     }
+    // The git commit object: its parents, no diff.
+    const object = /^\/repos\/o\/r\/git\/commits\/([0-9a-f]{40})$/.exec(route), g = object && w.heads.get(object[1]);
+    if (method === 'GET' && object) return g ? reply({ sha: g.sha, parents: g.parents.map(s => ({ sha: s })) }) : reply({ message: 'Not Found' }, 404);
     if (method === 'GET' && route === '/repos/o/r/installation') return reply({ id: 42 });
     if (method === 'POST' && route === '/app/installations/42/access_tokens') return reply({ token: 'ghs_app', permissions: body.permissions }, 201);
     const update = /^\/repos\/o\/r\/pulls\/([0-9]+)\/update-branch$/.exec(route), u = update && w.prs.get(Number(update[1]));
@@ -572,10 +579,25 @@ test('only candidates are brought: not a conflict, a red head, a head the App br
   w.prs.get(1156).mergeable = 'UNKNOWN';
   r = await w.run();
   assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, 1217); assert.deepEqual(w.brought(), [1217]);
-  // A required check failed on the behind head: not brought (its holder has to push anyway).
+  // A required check failed on the behind head, the author's own: brought once, main may carry the fix (§3.1, #1258).
   w = scene0823();
   w.check(sha(0x1156), 'clued-cloud-tests', 'failure');
-  assert.equal((await w.run()).pr, 1217); assert.deepEqual(w.brought(), [1217]);
+  r = await w.run();
+  assert.equal(r.pr, 1156, JSON.stringify(r)); assert.deepEqual(w.brought(), [1156]);
+  // The admission failed on the behind head (#292 requires it): main does not change that, not brought (its holder has to push anyway).
+  w = rulesOf(scene0823(), 'framework');
+  w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'failure', INDEPENDENT_ADMISSION_APP_ID);
+  r = await w.run();
+  assert.equal(r.pr, 1217, JSON.stringify(r)); assert.deepEqual(w.brought(), [1217]);
+  assert.match(r.train.members.find(m => m.pr === 1156).state, /^red \(kooyumi-work-admission\)$/);
+  // Red on a head the App brought up (its first parent the author's, BASE): brought again only after every candidate that is
+  // not red (第二轮规划 A, 任务 2fb32dc7).
+  w = scene0823(); w.head(BASE);
+  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID);
+  w.check(sha(0x1156), 'clued-cloud-tests', 'failure');
+  r = await w.run();
+  assert.equal(r.pr, 1217, JSON.stringify(r)); assert.deepEqual(w.brought(), [1217]);
+  assert.match(r.train.members.find(m => m.pr === 1156).state, /^candidate, red \(clued-cloud-tests\) on a head the App brought/, JSON.stringify(r.train.members));
   // The App brought this head earlier and the admission never admitted it: not brought again.
   w = scene0823();
   w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
@@ -932,12 +954,86 @@ test('hosted copy: the workflow runs the same entry on a hosted machine, only fr
   assert.match(merge, /\n          CLUED_FRONT_MERGE_PHASE: scaffold\n/);
   assert.match(merge, /\n        run: node scripts\/ci\/clued-front-main-merge\.mjs\n/, 'the same entry as the self-hosted workflow');
   assert.match(original, /\n        run: node scripts\/ci\/clued-front-main-merge\.mjs\n/);
-  assert.match(merge, /\n    concurrency:\n      group: clued-front-main-merge\n      cancel-in-progress: false\n/, 'one at a time across both workflows');
+  // Each copy has its own group (task 2fb32dc7): the copies take turns by phase, not by a group, so the self-hosted no-op that
+  // waits for a Linux node during the scaffold can neither hold the hosted copy back nor push its waiting run out.
+  assert.match(merge, /\n    concurrency:\n      group: clued-front-main-merge-hosted\n      cancel-in-progress: false\n/, 'one at a time within the hosted workflow');
   assert.match(original, /\n      group: clued-front-main-merge\n/);
+  assert.notEqual(mergeMainGroup(text), mergeMainGroup(original), 'the two copies never share a group');
   // Default-branch code, no credential left in the checkout, nothing written with this run's token, no push of any kind.
   assert.equal((jobs.match(/\n          ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}\n          persist-credentials: false\n/g) ?? []).length, 2);
   const code = text.split('\n').filter(line => !/^\s*#/.test(line)).join('\n');
   assert.doesNotMatch(code, /: write\b|git push|rebase|--force|CLUED_ADMISSION_CLUED_TOKEN|CLUED_CONTEXT_READ_TOKEN/);
+});
+
+// The concurrency group of a workflow's merge-main job, read from the file.
+function mergeMainGroup(text) {
+  const found = text.slice(text.indexOf('\n  merge-main:\n')).match(/\n    concurrency:\n      group: ([^\n#]+)\n/);
+  assert.ok(found, 'merge-main has a literal concurrency group');
+  return found[1].trim();
+}
+
+// GitHub's concurrency group: one request runs, one waits, and a new waiting request cancels the one already waiting. Each
+// request holds its group for `holds` seconds once it gets it. Returns, per request, when it got its group or who cancelled it.
+function replayConcurrency(requests, groupOf) {
+  const groups = new Map(), outcome = new Map();
+  const advance = (group, now) => {
+    while (group.running && group.running.end <= now) {
+      const next = group.waiting, start = group.running.end;
+      group.running = null, group.waiting = null;
+      if (next) { outcome.set(next.id, { started: start }); group.running = { id: next.id, end: start + next.holds }; }
+    }
+  };
+  for (const request of [...requests].sort((a, b) => a.at - b.at)) {
+    const name = groupOf(request.copy);
+    if (!groups.has(name)) groups.set(name, { running: null, waiting: null });
+    const group = groups.get(name);
+    advance(group, request.at);
+    if (!group.running) {
+      outcome.set(request.id, { started: request.at });
+      group.running = { id: request.id, end: request.at + request.holds };
+      continue;
+    }
+    if (group.waiting) outcome.set(group.waiting.id, { cancelledBy: request.id });
+    group.waiting = request;
+  }
+  for (const group of groups.values()) advance(group, Infinity);
+  return outcome;
+}
+
+// Task 2fb32dc7 (PLAN-front-bot-concurrency-20261125 §4 T3): the night of 11-25 (Beijing) from the cancelled-run diagnosis. At
+// 02:56:53 the self-hosted copy's merge-main (a no-op during the scaffold) took the group and waited for a Linux node until
+// 03:14:14; every self-hosted request after it waits as long. A hosted run holds the group about a minute (28-80 s before 02:55).
+test('replay of 11-25 02:56: each copy has its own group, so no hosted request waits behind or is cancelled by the self-hosted no-op', () => {
+  const read = file => fs.readFileSync(path.join(ROOT, '.github/workflows', file), 'utf8');
+  const groups = { hosted: mergeMainGroup(read('clued-front-main-merge-hosted.yml')), 'self-hosted': mergeMainGroup(read('clued-front-main-merge.yml')) };
+  const at = clock => { const [h, m, s] = clock.split(':').map(Number); return h * 3600 + m * 60 + s; };
+  const SELF_HOLDS = at('03:14:14') - at('02:56:53'), HOSTED_HOLDS = 60;
+  const night = [
+    ['45460908558', 'self-hosted', '02:56:53'], ['45464948504', 'hosted', '02:57:21'], ['45462209918', 'self-hosted', '03:00:24'],
+    ['45465890520', 'hosted', '03:02:49'], ['45463563123', 'self-hosted', '03:05:50'], ['45466539575', 'hosted', '03:06:09'],
+    ['45467487837', 'hosted', '03:11:31'], ['45463925866', 'self-hosted', '03:12:20'],
+  ].map(([id, copy, clock]) => ({ id, copy, at: at(clock), holds: copy === 'hosted' ? HOSTED_HOLDS : SELF_HOLDS }));
+  // The model is the one GitHub ran that night: one shared group gives exactly the recorded cancellations.
+  const shared = replayConcurrency(night, () => 'one group');
+  assert.deepEqual(Object.fromEntries([...shared].filter(([, o]) => o.cancelledBy)), {
+    45464948504: { cancelledBy: '45462209918' }, 45462209918: { cancelledBy: '45465890520' },
+    45465890520: { cancelledBy: '45463563123' }, 45463563123: { cancelledBy: '45466539575' },
+    45466539575: { cancelledBy: '45467487837' }, 45467487837: { cancelledBy: '45463925866' },
+  });
+  assert.deepEqual(shared.get('45463925866'), { started: at('03:14:14') });
+  // The groups the two workflow files name: every hosted request runs or is cancelled by another hosted one, never by the
+  // self-hosted copy, and the first hosted request runs within a minute of asking.
+  const replay = replayConcurrency(night, copy => groups[copy]);
+  const copyOf = new Map(night.map(r => [r.id, r.copy]));
+  for (const request of night.filter(r => r.copy === 'hosted')) {
+    const o = replay.get(request.id);
+    assert.ok(o, `hosted ${request.id} has an outcome`);
+    if (o.cancelledBy) assert.equal(copyOf.get(o.cancelledBy), 'hosted', `hosted ${request.id} cancelled by the self-hosted ${o.cancelledBy}`);
+    else assert.ok(o.started >= request.at, `hosted ${request.id} started`);
+  }
+  const first = night.find(r => r.copy === 'hosted');
+  assert.ok(replay.get(first.id).started !== undefined && replay.get(first.id).started - first.at <= 60,
+    `the first hosted request runs within 60 s of asking: ${JSON.stringify(replay.get(first.id))}`);
 });
 
 // FABLE-scaffold-s5-pre §3: the clued-admission App 5164952 had no workflows permission, so update-branch answered 403 for every
@@ -1270,4 +1366,275 @@ test('gate-leak kept: an unpinned required check still reads its status: a failu
   r = await w.run();
   assert.equal(r.train.members.find(m => m.pr === A).state, 'front', statesOf(r));
   assert.equal(r.result, 'none', JSON.stringify(r));
+});
+
+// FABLE-defect-remediation-plan-20261124 §3.1 (#1258): a red head behind main was passed over for good. Its red came from the
+// pipeline (hosted-gitleaks against an old base), and once the fix was on main the head stayed red, behind and passed over from
+// 11-23 18:32 on. A red head behind main that the App did not bring up is brought up once; a head the App brought that is red again
+// is truly red and passed over as before.
+function scene1258() {
+  const w = rulesOf(train(), 'scaffold');
+  w.open(1258, { head: sha(0x1258), auto: '2026-11-23T10:17:00Z' });
+  for (const name of HOSTED) w.check(sha(0x1258), name, name === 'hosted-gitleaks' ? 'failure' : 'success');
+  return w;
+}
+
+test('§3.1 #1258: red, behind main and alone on the train, it is brought up to main once; red again on that head, it is passed over', async () => {
+  const w = scene1258();
+  const first = await w.run({}, SCAFFOLD);
+  assert.equal(first.result, 'merged', JSON.stringify(first)); assert.equal(first.pr, 1258); assert.deepEqual(w.brought(), [1258]);
+  // The App's head runs everything and is red again: a true red. Nobody else is on the train; nothing is done.
+  const made = w.headOf(1258);
+  w.check(made, 'hosted-gitleaks', 'failure');
+  w.now += 10 * MIN;
+  let again = await w.run({}, SCAFFOLD);
+  assert.equal(again.result, 'none', JSON.stringify(again)); assert.deepEqual(w.brought(), [1258]);
+  // main moves on: the App's head is behind and red, and it is the App's own: passed over, not brought a second time.
+  w.tip = sha(0x7258); w.now += 10 * MIN;
+  again = await w.run({}, SCAFFOLD);
+  assert.equal(again.result, 'none', JSON.stringify(again)); assert.deepEqual(w.brought(), [1258]);
+  assert.match(again.train.members.find(m => m.pr === 1258).state, /^red \(hosted-gitleaks\)$/, statesOf(again));
+  // The self-hosted copy under #292 the same: the author's red head behind main is brought up once.
+  const framework = rulesOf(train(), 'framework');
+  framework.open(1258, { head: sha(0x1258), auto: '2026-11-23T10:17:00Z' });
+  for (const name of FRAMEWORK) framework.check(sha(0x1258), name, name === 'gitleaks' ? 'failure' : 'success', INDEPENDENT_ADMISSION_APP_ID);
+  const r = await framework.run();
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(framework.brought(), [1258]);
+});
+
+// 修订 6 (Decision c8c4d565): the scaffold ruleset's eighth check is kooyumi-work-admission pinned to App 5368905. The phase is read
+// by the one rule that names the main ruleset (train-rules.mjs#sixPinned), not by "main requires some check of 5368905" (搁19).
+const SCAFFOLD_R6 = [...HOSTED.map(context => ({ context, integration_id: GITHUB_ACTIONS_APP_ID })),
+  { context: INDEPENDENT_ADMISSION_CHECK, integration_id: INDEPENDENT_ADMISSION_APP_ID }];
+
+test('修订 6: the scaffold ruleset pinning kooyumi-work-admission to App 5368905 is in force; only the hosted copy brings the front up', async () => {
+  const w = scene0823(); w.pins = {}; w.required = SCAFFOLD_R6;
+  assert.equal((await phaseOutput(w)).output, 'in_force=true\n');
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [1156]);
+  const self = scene0823(); self.pins = {}; self.required = SCAFFOLD_R6;
+  const s = await self.run();
+  assert.equal(s.result, 'none', JSON.stringify(s)); assert.match(s.reason, /脚手架规则集在用，由托管副本带车头/); assert.deepEqual(self.brought(), []);
+  // With #292 enabled as well (the trial switch) it is not in force: the self-hosted copy brings the front up.
+  const both = scene0823(); both.pins = {}; both.required = [...SCAFFOLD_R6, ...BOTH];
+  assert.equal((await phaseOutput(both)).output, 'in_force=false\n');
+});
+
+// FABLE-defect-remediation-plan-20261124 §3.11 item 3: a head on the train whose required checks are not all there, with nothing
+// queued or running on it for 30 minutes, is named on its pull request once: which required checks are missing and how each last ended.
+const STALLED = 1300;
+function sceneStalled() {
+  const w = rulesOf(train(), 'framework');
+  const head = sha(0x1300);
+  w.open(STALLED, { head, auto: '2026-11-24T01:00:00Z', contains: T, at: w.now - 40 * MIN });
+  for (const name of FRAMEWORK.filter(n => n !== 'kooyumi-merge-slot' && n !== 'kooyumi-admission-verified'))
+    w.check(head, name, 'success', INDEPENDENT_ADMISSION_APP_ID, { started_at: iso(w.now - 39 * MIN) });
+  return w;
+}
+const namings = w => w.comments.filter(c => c.body.includes('clued-front-main-merge: stalled'));
+
+test('§3.11: a head missing two required checks with nothing run for 40 minutes is named once on its pull request', async () => {
+  const w = sceneStalled();
+  const r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  const named = namings(w);
+  assert.equal(named.length, 1, JSON.stringify(w.comments));
+  assert.equal(named[0].pr, STALLED); assert.equal(named[0].app, true, 'posted by the clued-admission App');
+  assert.match(named[0].body, new RegExp(sha(0x1300)));
+  assert.match(named[0].body, /kooyumi-merge-slot: missing/); assert.match(named[0].body, /kooyumi-admission-verified: missing/);
+  assert.doesNotMatch(named[0].body, /gitleaks: /, 'a green required check is not listed');
+  // The schedule 10 minutes later: the same head is not named again.
+  w.now += 10 * MIN;
+  await w.run();
+  assert.equal(namings(w).length, 1, 'once per head');
+});
+
+test('§3.11: not named before 30 quiet minutes, nor a red, conflicting or busy head; what it cannot read or post changes nothing else', async () => {
+  const head = sha(0x1300);
+  // The last required check finished 20 minutes ago: quiet for 20 minutes only.
+  let w = sceneStalled();
+  w.heads.get(head).checks.at(-1).started_at = iso(w.now - 20 * MIN);
+  let r = await w.run();
+  assert.equal(namings(w).length, 0, JSON.stringify(r)); assert.equal(r.named, undefined);
+  for (const change of [
+    x => x.check(head, 'kooyumi-merge-slot', 'failure', INDEPENDENT_ADMISSION_APP_ID, { started_at: iso(x.now - 39 * MIN) }),   // red
+    x => { x.prs.get(STALLED).mergeable = 'CONFLICTING'; },
+    x => x.heads.get(head).runs.push({ id: 1, status: 'queued', conclusion: null }),
+    x => x.heads.get(head).statuses.push({ context: 'resident-queue/turing', state: 'pending', description: '排队中' }),
+  ]) {
+    w = sceneStalled(); change(w);
+    r = await w.run();
+    assert.equal(namings(w).length, 0, JSON.stringify(r));
+  }
+  // GitHub refuses the comment: reported in the run, the decision stands, the next run tries again.
+  w = sceneStalled();
+  const fetch = w.fetchImpl;
+  let refuse = true;
+  w.fetchImpl = async (url, init = {}) => (refuse && init.method === 'POST' && String(url).endsWith(`/issues/${STALLED}/comments`))
+    ? { ok: false, status: 403, headers: { get: () => null }, json: async () => ({}), text: async () => '' } : fetch(url, init);
+  r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(r.named.map(n => [n.pr, n.comment]), [[STALLED, 'not posted (HTTP 403)']]);
+  assert.match(renderSummary(r), /#1300 .*kooyumi-admission-verified missing, kooyumi-merge-slot missing; not posted \(HTTP 403\)/);
+  refuse = false; w.now += 10 * MIN;
+  await w.run();
+  assert.equal(namings(w).length, 1);
+  // The comments cannot be read: not named, the run is not failed.
+  w = sceneStalled(); w.failing = `/issues/${STALLED}/comments`;
+  r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.named[0].comment, /^not named/); assert.equal(namings(w).length, 0);
+});
+
+test('§3.11: #1258 unadmitted (heavy jobs skipped under their unexpanded names, the admission never posted) is named once, under the scaffold', async () => {
+  const w = scene0823(); w.pins = {}; w.required = SCAFFOLD_R6; w.prs.clear();
+  const head = sha(0x12580);
+  w.open(1258, { head, auto: '2026-11-23T10:17:00Z', contains: T, at: w.now - 45 * MIN });
+  for (const name of HOSTED) {
+    const job = ['hosted-ci-suites', 'hosted-clued-cloud-tests'].includes(name)
+      ? `\${{ needs.admission-gate.outputs.admitted == 'true' && '${name}' || '${name}-skipped' }}` : name;
+    w.check(head, job, job === name ? 'success' : 'skipped', GITHUB_ACTIONS_APP_ID, { started_at: iso(w.now - 44 * MIN) });
+  }
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', JSON.stringify(r));
+  const [named] = namings(w);
+  assert.equal(named?.pr, 1258, JSON.stringify(w.comments));
+  assert.match(named.body, /- hosted-ci-suites: job-skipped\n- hosted-clued-cloud-tests: job-skipped\n- kooyumi-work-admission: missing\n/);
+  w.now += 10 * MIN; await w.run({}, SCAFFOLD); w.now += 10 * MIN; await w.run({}, SCAFFOLD);
+  assert.equal(namings(w).length, 1);
+});
+
+// Review 2fb32dc7 §5: a head behind main that the App did not bring up is a candidate; the train brings it up once the front is done.
+// Naming it ("nothing will move it, a new head is needed") would send someone to push or merge main by hand: it is not named.
+test('§3.11: an author’s head behind main is not named while another pull request is the front; the train brings it up once that is done', async () => {
+  const w = sceneStalled();
+  const front = sha(0x1301);
+  w.open(1301, { head: front, auto: '2026-11-24T00:30:00Z', contains: T, at: w.now - 5 * MIN }); w.check(front, 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);
+  w.heads.get(sha(0x1300)).contains = BASE;   // #1300 behind main
+  let r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#1301 contains main/);
+  assert.equal(namings(w).length, 0, JSON.stringify(w.comments)); assert.equal(r.named, undefined);
+  // An hour on, the front still under way: still not named.
+  w.now += 60 * MIN;
+  r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.equal(namings(w).length, 0, JSON.stringify(w.comments));
+  // The front leaves the train: #1300 is the candidate and brought up, not named.
+  w.prs.delete(1301);
+  r = await w.run();
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [STALLED]); assert.equal(namings(w).length, 0);
+  // Without a front the stalled head behind main is the candidate: brought up, and its old head is not named.
+  const alone = sceneStalled(); alone.heads.get(sha(0x1300)).contains = BASE;
+  r = await alone.run();
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(alone.brought(), [STALLED]); assert.equal(namings(alone).length, 0);
+});
+
+// What nothing moves behind main: a head the App brought up that is not admitted (the train does not bring it again). It is named
+// once, with or without a front; a brought head that is admitted is a candidate again and not named.
+test('§3.11: a head the App brought up, behind main and not admitted, is named once; admitted, it is a candidate and not named', async () => {
+  const head = sha(0x1300);
+  const brought = x => {
+    x.heads.get(head).contains = BASE;
+    x.heads.get(head).checks = x.heads.get(head).checks.filter(c => c.name !== INDEPENDENT_ADMISSION_CHECK);
+    x.check(head, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID, { started_at: iso(x.now - 40 * MIN) });
+  };
+  let w = sceneStalled(); brought(w);
+  let r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  assert.deepEqual(namings(w).map(c => c.pr), [STALLED], JSON.stringify(w.comments));
+  assert.match(namings(w)[0].body, new RegExp(`- ${INDEPENDENT_ADMISSION_CHECK}: missing\n`));
+  // Review §6: the comment is posted with a token that can only write pull requests.
+  assert.deepEqual(w.calls.filter(c => c.route?.endsWith('/access_tokens')).map(c => c.body.permissions), [{ pull_requests: 'write' }]);
+  w.now += 10 * MIN; await w.run();
+  assert.equal(namings(w).length, 1, 'once per head');
+  // The same with another pull request the front.
+  w = sceneStalled(); brought(w);
+  w.open(1301, { head: sha(0x1301), auto: '2026-11-24T00:30:00Z', contains: T, at: w.now - 5 * MIN }); w.check(sha(0x1301), 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);
+  r = await w.run();
+  assert.match(r.reason, /#1301 contains main/); assert.deepEqual(namings(w).map(c => c.pr), [STALLED], JSON.stringify(w.comments));
+  // Brought and admitted: a candidate again, not named.
+  w = sceneStalled(); brought(w);
+  w.check(head, INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID, { started_at: iso(w.now - 39 * MIN) });
+  w.open(1301, { head: sha(0x1301), auto: '2026-11-24T00:30:00Z', contains: T, at: w.now - 5 * MIN }); w.check(sha(0x1301), 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);
+  r = await w.run();
+  assert.match(r.reason, /#1301 contains main/); assert.equal(namings(w).length, 0, JSON.stringify(w.comments));
+});
+
+// 第二轮规划 A（任务 2fb32dc7，#1298）: a head the App brought up went red for the pipeline's own reason (a test on main that read the
+// real base, fixed on main 38 minutes later), then fell behind: passed over for good, and only a person merging main moved it. A
+// red head the App brought, admitted and red on something else than the admission, behind main, is brought up again: after every
+// candidate that is not red. Not when its first parent is one the App brought as well (two in a row, REBRING_RED_MAX).
+const REBRING = 1298, AUTHOR = sha(0x1298a), MADE = sha(0x1298b);
+function scene1298({ parentBrought = false, admission = 'success', red = ['hosted-clued-cloud-tests'] } = {}) {
+  const w = train(); w.pins = {}; w.required = SCAFFOLD_R6;
+  w.head(AUTHOR, {});
+  if (parentBrought) w.check(AUTHOR, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
+  w.open(REBRING, { head: MADE, auto: '2026-11-24T08:00:00Z', parents: [AUTHOR, BASE] });
+  w.check(MADE, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
+  w.check(MADE, INDEPENDENT_ADMISSION_CHECK, admission, INDEPENDENT_ADMISSION_APP_ID);
+  for (const name of HOSTED) w.check(MADE, name, red.includes(name) ? 'failure' : 'success', GITHUB_ACTIONS_APP_ID);
+  return w;
+}
+const redAgain = (w, head) => { w.check(head, INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID);
+  for (const name of HOSTED) w.check(head, name, name === 'hosted-clued-cloud-tests' ? 'failure' : 'success', GITHUB_ACTIONS_APP_ID); };
+
+test('A1 #1298: a head the App brought, admitted, red on a required check and behind main, alone on the train, is brought up again', async () => {
+  const w = scene1298();
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, REBRING); assert.deepEqual(w.brought(), [REBRING]);
+  assert.deepEqual(w.updates.map(u => u.from), [MADE]);
+  // The second head the App made is red again and main moves on: two in a row, passed over as before.
+  const second = w.headOf(REBRING); redAgain(w, second);
+  w.tip = sha(0x7298); w.now += 40 * MIN;
+  const again = await w.run({}, SCAFFOLD);
+  assert.equal(again.result, 'none', JSON.stringify(again)); assert.deepEqual(w.brought(), [REBRING]);
+  assert.match(again.train.members.find(m => m.pr === REBRING).state, /^red \(hosted-clued-cloud-tests\)$/, statesOf(again));
+});
+
+test('A2: a red head the App brought whose first parent the App brought as well is not brought again', async () => {
+  const w = scene1298({ parentBrought: true });
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  assert.match(r.train.members.find(m => m.pr === REBRING).state, /^red \(hosted-clued-cloud-tests\)$/, statesOf(r));
+});
+
+test('A3: a candidate that is not red is brought before a red head the App brought; once it merged, the red one is brought', async () => {
+  const w = scene1298();
+  w.open(1311, { head: sha(0x1311), auto: '2026-11-24T09:00:00Z' });
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [1311]);
+  // #1311 is the front and under way: nobody else is brought.
+  w.check(w.headOf(1311), 'hosted-ci-suites', null, GITHUB_ACTIONS_APP_ID); w.now += 5 * MIN;
+  assert.equal((await w.run({}, SCAFFOLD)).result, 'none'); assert.deepEqual(w.brought(), [1311]);
+  // #1311 merged, main moved: the red head the App brought is the one candidate left.
+  w.merged(1311); w.now += 5 * MIN;
+  const last = await w.run({}, SCAFFOLD);
+  assert.equal(last.result, 'merged', JSON.stringify(last)); assert.deepEqual(w.brought(), [1311, REBRING]);
+});
+
+test('A4: a head the App brought whose admission failed is not brought again, red elsewhere or not', async () => {
+  for (const red of [[], ['hosted-clued-cloud-tests']]) {
+    const w = scene1298({ admission: 'failure', red });
+    const r = await w.run({}, SCAFFOLD);
+    assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+    assert.match(r.train.members.find(m => m.pr === REBRING).state, new RegExp(String.raw`^red \(.*` + INDEPENDENT_ADMISSION_CHECK), statesOf(r));
+  }
+});
+
+// Independent review of 2fb32dc7 A, must-fix 1: counting how many heads in a row the App brought is a helper of the rebring path.
+// When it cannot be read (the first parent's check runs, or the parent itself) that head is not brought again this run; the
+// candidates before it are brought as before, the run is not given up.
+test('A5: a rebring chain that cannot be read only keeps that head back; the candidate before it is still brought', async () => {
+  const redBroughtHead = w => { w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
+    w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID); w.check(sha(0x1156), 'clued-cloud-tests', 'failure'); };
+  // The first parent's check runs cannot be read (BASE is unknown to GitHub here).
+  let w = scene0823(); redBroughtHead(w);
+  let r = await w.run();
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, 1217, JSON.stringify(r)); assert.deepEqual(w.brought(), [1217]);
+  assert.match(r.train.members.find(m => m.pr === 1156).state, /^red \(clued-cloud-tests\)/, JSON.stringify(r.train.members));
+  // The head's commit cannot be read.
+  w = scene0823(); w.head(BASE); redBroughtHead(w);
+  const reads = w.fetchImpl;
+  w.fetchImpl = async (url, init = {}) => (String(url).endsWith(`/commits/${sha(0x1156)}`)
+    ? { ok: false, status: 502, headers: { get: () => null }, json: async () => ({ message: 'Server Error' }), text: async () => '' } : reads(url, init));
+  r = await w.run();
+  assert.equal(r.pr, 1217, JSON.stringify(r)); assert.deepEqual(w.brought(), [1217]);
+  assert.match(r.train.members.find(m => m.pr === 1156).state, /^red \(clued-cloud-tests\)/, JSON.stringify(r.train.members));
 });
