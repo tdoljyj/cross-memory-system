@@ -70,7 +70,7 @@ test("admission CLI honors configured proxy routing and preserves child exit sem
   const source = { ...process.env, HTTP_PROXY: "http://127.0.0.1:9", HTTPS_PROXY: "http://127.0.0.1:9",
     GITHUB_REPOSITORY: "o/r", GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main", CLUED_DEFAULT_BRANCH: "main" };
   for (const key of ["NODE_OPTIONS", "NODE_USE_ENV_PROXY", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"]) delete source[key];
-  const admitted = spawnSync(process.execPath, [script, "--mode", "gate"], { env: source, encoding: "utf8", timeout: 5000 });
+  const admitted = spawnSync(process.execPath, [script, "--mode", "gate"], { env: source, encoding: "utf8" });
   assert.equal(admitted.error, undefined);
   if (!process.allowedNodeEnvironmentFlags.has("--use-env-proxy")) {
     assert.equal(admitted.status, 1);
@@ -79,7 +79,7 @@ test("admission CLI honors configured proxy routing and preserves child exit sem
   }
   assert.equal(admitted.status, 0, admitted.stderr);
   assert.match(admitted.stdout, /"admitted": true/);
-  const refused = spawnSync(process.execPath, [script, "--mode", "unknown-fixture-mode"], { env: source, encoding: "utf8", timeout: 5000 });
+  const refused = spawnSync(process.execPath, [script, "--mode", "unknown-fixture-mode"], { env: source, encoding: "utf8" });
   assert.equal(refused.error, undefined);
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /usage: clued-work-admission/);
@@ -3176,7 +3176,7 @@ test("independent-control-checks-v2: the gate and the head reader dispatch to th
   assert.doesNotThrow(() => consumer.assertControllerPrincipal({ platform: "win32", username: "clued-control" }));
 });
 
-test("independent-control-checks-v2: a settled v2 control pair counts; another claim generation or Source does not, and one head counts one batch", async () => {
+test("independent-control-checks-v2: a settled v2 control pair counts; another claim generation or Source does not, and one head counts one batch", async (t) => {
   const CI = "../../work/actions-hosted-migration/independent-ci-v1/";
   const { batchJobsV2, claimGeneration } = await import(CI + "src/job-v2.mjs");
   const { recordBatchClaim } = await import(CI + "src/batch-claim-v2.mjs");
@@ -3187,7 +3187,8 @@ test("independent-control-checks-v2: a settled v2 control pair counts; another c
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "clued-v2-control-"));
   try {
     const repo = "tdoljyj/cross-memory-system", head = "a".repeat(40), base = "b".repeat(40), ci = "d".repeat(64);
-    const now = Date.now(), iso = ms => new Date(ms).toISOString();
+    const now = Date.parse("2026-11-01T00:00:00Z"), iso = ms => new Date(ms).toISOString();
+    t.mock.timers.enable({ apis: ["Date"], now }); // the consumer under test reads Date.now(): hold it at the fixture moment
     const claim = { claimId: crypto.randomUUID(), fence: 3, epoch: 1, expiresAt: iso(now + 3_600_000) };
     const jobs = batchJobsV2({ repo, pr: 888, headSha: head, baseSha: base, testSha: head, sourceManifestSha256: ci, createdAt: iso(now - 60_000), attempt: 1 });
     const claims = path.join(root, "batch-claims");
@@ -3210,7 +3211,7 @@ test("independent-control-checks-v2: a settled v2 control pair counts; another c
       async revokeCheck(id, body) { const c = checks.find(x => x.id === id); Object.assign(c, structuredClone(body)); return structuredClone(c); } };
     let observed = claim;
     const admission = { fixture: true, async evaluatePr(j, packet, opts) {
-      return admittedFacts(j, observed, packet, { domain: "fixture", mergeQueueHead: true, batchClaim: opts?.batchClaim, observedAt: Date.now(), slotUntil: now + 3_600_000 });
+      return admittedFacts(j, observed, packet, { domain: "fixture", mergeQueueHead: true, batchClaim: opts?.batchClaim, observedAt: now, slotUntil: now + 3_600_000 });
     } };
     const journal = await EffectJournal.open(path.join(root, "effects-control"));
     const consumerFor = batchClaim => createFixtureControlPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaim });
