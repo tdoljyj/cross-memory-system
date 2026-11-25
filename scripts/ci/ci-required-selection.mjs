@@ -236,7 +236,12 @@ export const SUITES = {
       // The release door flow test runs the release workflow steps and the grant script (FABLE-release-identity-autonomous §3.1).
       '.github/workflows/clued-cloud-production-release.yml', 'scripts/ci/clued-release-door.mjs',
       'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...MIGRATION_DB_TESTS, ...AUTHORIZATION_DB_TESTS, ...MIGRATION_DB_TEST_INPUTS, 'apps/clued-cloud/package.json',
-      'apps/clued-cloud/package-lock.json'],
+      'apps/clued-cloud/package-lock.json',
+      // The real database command (Task 4432ee9b): its script and test, the database start it reuses, the local migration
+      // executor, and the backup coverage test with the script it tests.
+      'scripts/ci/clued-real-database.mjs', 'scripts/ci/clued-real-database.test.mjs', 'scripts/ci/clued-g4-fresh-start.mjs',
+      'scripts/ci/clued-local-migrate.mjs', 'apps/clued-cloud/scripts/verify-production-backup-scope.mjs',
+      'apps/clued-cloud/tests/production-backup-scope-db.test.mjs'],
   },
 };
 
@@ -390,6 +395,10 @@ export const SUITE_COMMANDS = {
       ...MIGRATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
     { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{db-concurrency}', '--test-force-exit',
       ...AUTHORIZATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
+    // The checks only clued-g4-database.yml ran, on a real Supabase database: plpgsql_check lint, pgTAP and the PostgreSQL
+    // 17 backup coverage test named here (PLAN-g4-red-merged-20261125 §2.2, Task 4432ee9b). Observed first: a failure is a
+    // warning until --observe is removed.
+    { cwd: 'apps/clued-cloud', argv: ['node', '../../scripts/ci/clued-real-database.mjs', '--observe', 'tests/production-backup-scope-db.test.mjs'] },
   ],
 };
 
@@ -799,12 +808,14 @@ export function filterCommand(command, argv, named) {
       result.matched = [...kept].map((arg) => repo(fileOf(arg)));
     }
   } else {
+    // A script, alone or followed by the test files it runs (clued-real-database.mjs): naming any of them runs the command.
     const operands = operandsAfter(argv, 0);
-    if (operands.length === 1 && /\.(mjs|py)$/.test(operands[0])) {
-      result.accepts = [repo(operands[0])];
-      if (named.has(repo(operands[0]))) {
+    if (operands.length >= 1 && /\.(mjs|py)$/.test(operands[0]) && operands.slice(1).every((operand) => /\.test\.mjs$/.test(operand))) {
+      result.accepts = operands.map(repo);
+      const kept = operands.filter((operand) => named.has(repo(operand)));
+      if (kept.length > 0) {
         result.runs = [argv];
-        result.matched = [repo(operands[0])];
+        result.matched = kept.map(repo);
       }
     }
   }
