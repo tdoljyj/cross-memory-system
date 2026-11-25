@@ -374,7 +374,8 @@ HOSTED_SCAFFOLD_JOBS = {
         }
     },
     "clued-front-main-merge-hosted.yml": {
-        "control_sha256": "5f732deb1d366951e326ad41fb74df57a56db845b79be95956c25352346cd8a7",
+        # Task 3576b29c: on: workflow_run of hosted-required (completed) as well (was 5f732deb…; PLAN-train-held-deadlock §3.3).
+        "control_sha256": "32f928fb5cfc4a7bd399013d44f8ccc5ea298810f1b8ef76d4b1f2f2fc09e14a",
         "jobs": {
             "scaffold-phase": "973b475909436bd551f30f1cfc8d64d06178c340d89f4ceeb98725169edac16c",
             # Task 2fb32dc7: its own concurrency group clued-front-main-merge-hosted (was fcaa51b2…, the shared group).
