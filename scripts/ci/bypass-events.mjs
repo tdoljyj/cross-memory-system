@@ -33,7 +33,7 @@ const actorKind = actor => {
 export function localMergeTree(before, parent, { cwd = process.cwd() } = {}) {
   if (!validSha(before) || !validSha(parent)) fail('merge-tree 收到无效提交');
   const opts = { cwd, encoding: 'utf8', timeout: 30_000, windowsHide: true };
-  // 不懒取对象用环境变量：Git 2.44 起认 GIT_NO_LAZY_FETCH，旧版忽略；全局选项 --no-lazy-fetch 在 2.43 上直接报错。
+  // 不懒取对象用环境变量：Git 2.45 起认 GIT_NO_LAZY_FETCH，旧版忽略；全局选项 --no-lazy-fetch 在 2.43 上直接报错。
   const git = (args, env = {}) => spawnSync('git', ['--no-replace-objects', ...args],
     { ...opts, env: { ...process.env, GIT_NO_LAZY_FETCH: '1', ...env } });
   const objects = git(['rev-parse', '--path-format=absolute', '--git-path', 'objects']);

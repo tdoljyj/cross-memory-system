@@ -1519,7 +1519,7 @@ function mergeFixture(t) {
   return { cwd, shellGit, git, topic, main };
 }
 
-// Git 2.43 不认 2.44 才有的全局选项 --no-lazy-fetch，报 unknown option 退出 129；其余参数原样交给真 git。
+// Git 2.43 不认 2.45 才有的全局选项 --no-lazy-fetch，报 unknown option 退出 129；其余参数原样交给真 git。
 // 垫片同时要求 GIT_NO_LAZY_FETCH=1，防止改掉选项后丢了“不懒取对象”。Linux 用 sh 脚本；
 // Windows 上 spawnSync 只按 PATH 找 .exe/.com，故用系统自带 csc 现编一个 git.exe。
 function git243Shim(t) {
