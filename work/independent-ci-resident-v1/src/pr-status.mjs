@@ -84,15 +84,18 @@ export const POST_RETRY_MS = 2 * 60_000;
 // rows (PR, head, state, reason, next time, watched, lease end, network, the deferral holding the row), whether the parking places
 // are full, whether a daily budget is used up, and a global deferral of the scheduling pass.
 export const REPORT_MIN_GAP_MS = 5_000;
-export function statusSignature(status) {
-  if (!status || typeof status !== 'object') return null;
+export function statusSignature(status, pulls) {
+  // Only hints the gate can read count. Sort the tuples so poll order does not matter; the minute pass updates behindBy.
+  const held = Array.isArray(pulls) ? pulls.filter(p => !p.eligible && Object.hasOwn(HELD_TEXTS, p.hint))
+    .map(p => [p.pr, p.headSha, p.hint]).sort() : [];
+  if (!status || typeof status !== 'object') return held.length ? canonicalJson({ held }) : null;
   const c = status.current;
   // Generation 12 (defect 050560ac): the queue rows too (state, reason, next time, hold, ...), so a batch that did not run, a back-off,
   // a stop or a retry reaches the PR page at once, not at the next minute pass; and the parking places, a gate the page names
   // (review round 22, NIT 2).
   const rows = Array.isArray(status.pending) ? status.pending.slice(0, 100).map(r => [r.pr ?? null, r.headSha ?? null, r.state ?? null, r.deferred ?? null, r.nextAt ?? null,
     r.watched === true, r.claimExpiresAt ?? null, r.network === true, r.heldBy ?? null]) : [];
-  return canonicalJson({ current: c ? { pr: c.pr ?? null, headSha: c.headSha ?? null, attempt: c.attempt ?? null, stage: c.stage ?? null } : null, rows,
+  return canonicalJson({ current: c ? { pr: c.pr ?? null, headSha: c.headSha ?? null, attempt: c.attempt ?? null, stage: c.stage ?? null } : null, rows, held,
     breaker: status.breaker ? { state: status.breaker.state ?? null, nextTrialAt: status.breaker.nextTrialAt ?? null } : null,
     intakePause: status.intakePause ? canonicalJson(status.intakePause) : null, halt: status.halt?.code ?? null, paused: status.paused === true,
     parkingFull: status.queue?.parkingFull === true, quota: [quotaFull(status, 'batches'), quotaFull(status, 'evaluations')], hold: globalDefer(status), budgets: status.notices?.filter(n => n.budget).map(n => [n.key, n.budget]) ?? [] });

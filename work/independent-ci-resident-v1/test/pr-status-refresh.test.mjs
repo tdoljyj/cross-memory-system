@@ -52,6 +52,23 @@ test('the status signature moves with the queue rows, so the companion posts at 
   }
 });
 
+test('the status signature tracks only PR number, head and hint for reportable held heads', () => {
+  const status = { pending: [] };
+  const behind = { pr: 998, headSha: H(6), eligible: false, hint: 'merge-main', behindBy: 2 };
+  const oldBase = { pr: 999, headSha: H(7), eligible: false, hint: 'push-any-commit', behindBy: 0 };
+  const held = statusSignature(status, [behind, oldBase]);
+  assert.equal(statusSignature(status, [oldBase, { ...behind, behindBy: 3 }]), held);
+  assert.notEqual(statusSignature(status, [behind]), held);
+  for (const changed of [{ pr: 1000 }, { headSha: H(8) }, { hint: 'push-any-commit' }]) {
+    assert.notEqual(statusSignature(status, [{ ...behind, ...changed }, oldBase]), held);
+  }
+  const empty = statusSignature(status);
+  assert.equal(statusSignature(status, null), empty);
+  assert.equal(statusSignature(status, [{ ...behind, hint: 'compare-unavailable' }, pull]), empty);
+  assert.equal(statusSignature(null, null), null);
+  assert.notEqual(statusSignature(null, [behind]), null);
+});
+
 test('a write lost to the outage is tried again at the next pass once the text changed; the same text after POST_RETRY_MS', async t => {
   const root = await tempRoot(t);
   let now = T0, up = false;
