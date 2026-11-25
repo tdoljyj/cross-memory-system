@@ -14,6 +14,14 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const quiet = () => {};
 const childEnv = () => { const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; for (const name of ['GITHUB_EVENT_PATH', 'GITHUB_EVENT_NAME', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY']) delete env[name]; return env; };
 
+test('lanes: a plan with clued-cloud build runs serially on the shared checkout', async () => {
+  const ran = [];
+  const status = await runSelected(['clued-cloud'], { root: ROOT, env: { GITHUB_ACTIONS: 'true' }, cores: 28, log: quiet,
+    run: (id) => { ran.push(id); return 0; }, runPart: () => assert.fail('a shared build cannot run concurrently') });
+  assert.equal(status, 0);
+  assert.deepEqual(ran, ['clued-cloud']);
+});
+
 // The units a recorded command list runs (as the --shard property test counts them): each test file operand of a listing
 // command, every other command whole. The reporter switches are not part of the plan; neither is the lane's concurrency.
 function unitsOf(calls) {

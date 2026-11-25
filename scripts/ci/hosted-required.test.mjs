@@ -184,14 +184,15 @@ test('块 4：hosted-ci-suites-windows 是汇总作业，只有一步，只判�
 // ---- 任务 3435f8bf 件甲（PLAN-ci-p90-next-20261125 §3.1；形状同 FABLE-ci-duration-target-20261124 §2.5）：三个长作业分片 ----
 // 检查名不变：hosted-<检查名> 是同名汇总作业（needs 自己的矩阵作业、if: always()，判定照抄 Windows 汇总作业）；
 // 分片作业 <作业名>-shard、检查名 hosted-<检查名>-shard-<i>，跑同一份 --run-selected 计划的第 i/n 片，n 只写在矩阵列表。
-// 片数：migration-verify 4、ci-suites 3、Windows 6；hosted-clued-cloud-tests 不拆。S8 删托管工作流时本节一起删。
+// S8 删托管工作流时本节一起删。
 const SHARDED = [
   { id: 'migration-verify', check: 'migration-verify', name: 'hosted-migration-verify', shards: 4, step: 'Every migration verification shard succeeded' },
-  { id: 'ci-suites', check: 'ci-suites', name: 'hosted-ci-suites', shards: 3, step: 'Every Linux suite shard succeeded' },
-  { id: 'ci-suites-windows', check: 'ci-suites', name: 'hosted-ci-suites-windows', shards: 6, step: 'Every Windows suite shard succeeded' },
+  { id: 'ci-suites', check: 'ci-suites', name: 'hosted-ci-suites', shards: 4, step: 'Every Linux suite shard succeeded' },
+  { id: 'ci-suites-windows', check: 'ci-suites', name: 'hosted-ci-suites-windows', shards: 7, step: 'Every Windows suite shard succeeded' },
+  { id: 'clued-cloud-tests', check: 'clued-cloud-tests', name: 'hosted-clued-cloud-tests', shards: 2, step: 'Every application test shard succeeded' },
 ];
 const SHARD_RUN = check => new RegExp(`ci-required-selection\\.mjs --run-selected ${check} --root candidate --shard \\$\\{\\{ matrix\\.shard \\}\\}/\\$\\{\\{ strategy\\.job-total \\}\\}(?:\\n|$)`);
-test('件甲：三个分片作业跑 --run-selected <检查名> --shard i/n，片号正好 1..n，片数 4、3、6 只写在矩阵列表', () => {
+test('分片作业跑 --run-selected <检查名> --shard i/n，片号正好 1..n，片数 4、4、7、2 只写在矩阵列表', () => {
   for (const { id, check, name, shards } of SHARDED) {
     const block = jobs(text).get(`${id}-shard`) ?? '';
     assert.ok(block, `${id}-shard 作业在`);
@@ -206,10 +207,10 @@ test('件甲：三个分片作业跑 --run-selected <检查名> --shard i/n，�
     // 各片自己读 PR 的改动文件：没有令牌就读不到，每片都跑全部套件。
     assert.match(runs[0], /\n {10}GITHUB_TOKEN: \$\{\{ github\.token \}\}\n/, `${id}-shard 跑套件那一步带 GITHUB_TOKEN`);
   }
-  assert.equal(text.split('--shard ').length, SHARDED.length + 1, '整个工作流只有这三处 --shard');
+  assert.equal(text.split('--shard ').length, SHARDED.length + 1, '每个矩阵只有一个分片入口');
 });
 
-test('件甲：hosted-ci-suites、hosted-migration-verify 与 hosted-ci-suites-windows 同形：汇总作业只判分片作业的 result', () => {
+test('各矩阵的同名必需检查只汇总分片作业的 result', () => {
   for (const { id, name, step } of SHARDED) assert.equal(jobLines(id), summaryJob(name, `${id}-shard`, step), id);
 });
 
@@ -219,13 +220,6 @@ test('件甲：未选中时 migration-verify 各片走 Not affected，不装依�
   assert.match(at('Install the application dependencies'), /\n {8}if: steps\.select\.outputs\.run_production_schema == 'true'\n/);
   assert.match(at('Verify migrations on the production schema'), /\n {8}if: steps\.select\.outputs\.run_production_schema == 'true'\n/);
   assert.match(at('Not affected'), /\n {8}if: steps\.select\.outputs\.run_production_schema != 'true'\n/);
-});
-
-test('件甲：hosted-clued-cloud-tests 不拆片', () => {
-  const block = jobs(text).get('clued-cloud-tests') ?? '';
-  assert.match(block, /^    name: hosted-clued-cloud-tests$/m);
-  assert.doesNotMatch(block, /strategy:|matrix|--shard/);
-  assert.ok(!jobs(text).has('clued-cloud-tests-shard'));
 });
 
 // 时长作业只显红、不挡合入：名字不是任何必需检查（规则集要的是 hosted-ci-suites-windows，影子比对按名字配对七项）。

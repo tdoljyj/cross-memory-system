@@ -2663,6 +2663,43 @@ async function shardRun(suites, shard, env) {
   return calls;
 }
 
+test('--shard: heavy files in different commands stay below the modeled shard limit', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-binpack-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const id = 'retrigger-counter';
+  const original = SUITE_COMMANDS[id];
+  t.after(() => { SUITE_COMMANDS[id] = original; });
+  SUITE_COMMANDS[id] = [
+    { cwd: '.', argv: ['node', '--test', 'first.test.mjs', 'light.test.mjs'] },
+    { cwd: '.', argv: ['node', '--test', 'second.test.mjs'] },
+  ];
+  const weights = { 'first.test.mjs': 100, 'second.test.mjs': 100, 'light.test.mjs': 1 };
+  const shardSecondsFile = path.join(temp, 'table.json');
+  writeFileSync(shardSecondsFile, JSON.stringify(weights));
+  const loads = [];
+  for (const index of [1, 2]) {
+    const calls = [];
+    const run = (suite, options) => executeSuite(suite, { ...options, platform: 'linux', known: {},
+      shardSecondsFile, spawn: shardRecord(calls) });
+    assert.equal(await runSelected([id], { root: ROOT, env: { RUNNER_TEMP: temp }, log, run,
+      shardSecondsFile, shard: { index, total: 2 } }), 0);
+    loads.push(calls.flatMap(({ argv }) => argv).reduce((sum, arg) => sum + (weights[arg] ?? 0), 0));
+  }
+  assert.deepEqual(loads.sort((a, b) => a - b), [100, 101]);
+});
+
+test('--shard: both clued-cloud shards build before their tests', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-cloud-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp };
+  for (const index of [1, 2]) {
+    const calls = await shardRun(['clued-cloud'], { index, total: 2 }, env);
+    const build = calls.findIndex(({ argv }) => argv.join(' ') === 'npm run build');
+    const tests = calls.findIndex(({ argv }) => argv.includes('scripts/run-tests.mjs'));
+    assert.ok(build >= 0 && build < tests, `shard ${index}: build at ${build}, unit tests at ${tests}`);
+  }
+});
+
 async function assertShardsRunPlanOnce(suites, totals, env) {
   const plan = await shardRun(suites, null, env);
   const planUnits = shardUnits(plan);
@@ -3177,6 +3214,34 @@ test('the reporter gives a top-level test its whole milliseconds (ms), a nested 
   for await (const line of reporterStream(source())) lines.push(JSON.parse(line));
   assert.deepEqual(lines.map(({ path: at, ms }) => [at.join(' > '), ms]),
     [['top > inner', undefined], ['top', 1234], ['bad', 100], ['skipped', 0]]);
+});
+
+test('the reporter uses the file wall clock ahead of the sum of its tests', async () => {
+  const file = path.join(ROOT, 'shard-timing.test.mjs');
+  const source = [
+    { type: 'test:pass', data: { file, nesting: 0, name: 'case', details: { duration_ms: 1000 } } },
+    { type: 'test:complete', data: { file, nesting: 0, name: 'case', details: { duration_ms: 1000 } } },
+    { type: 'test:complete', data: { nesting: 0, name: file, details: { duration_ms: 5000 } } },
+  ];
+  const lines = [];
+  for await (const line of reporterStream(source)) lines.push(line);
+  const report = readReport(lines.join(''), ROOT);
+  assert.equal(selection.shardSecondsOf(report, new Set(['shard-timing.test.mjs']))['shard-timing.test.mjs'], 5);
+  assert.equal(JSON.parse(lines.at(-1)).ms, 5000);
+});
+
+test('--write-shard-seconds takes the median of three whole-command samples', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-whole-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const key = 'runner-budget-policy (.) python3 scripts/ci/validate_runner_budget_policy.py';
+  const logs = [8, 40, 12].map((seconds, index) => {
+    const file = path.join(temp, `round-${index}.log`);
+    writeFileSync(file, `runner-budget-policy: whole-seconds ${JSON.stringify({ [key]: seconds })}\n`);
+    return file;
+  });
+  const file = path.join(temp, 'table.json');
+  assert.equal(selection.writeShardSeconds(logs, { file, log }), 0);
+  assert.deepEqual([...selection.readShardSeconds(file).table], [[key, 12]]);
 });
 
 test('the reporter counts a test\'s child process in the test\'s own file (fleet-node-children: its fleet tests are its seconds)', (t) => {
