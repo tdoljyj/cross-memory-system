@@ -1,29 +1,27 @@
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import net from 'node:net';
 import test from 'node:test';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {build,stop} from 'esbuild';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url)),cloud=path.resolve(here,'..');
 const transportMigration='20261012030548_merge_admission_clock_audit_transport_v1.sql';
 const {allowRawTestBindings}=await import(pathToFileURL(path.join(cloud,'tests/raw-binding-grants-fixture.mjs')));
 const {workerGatewayRpc}=await import(pathToFileURL(path.join(cloud,'tests/worker-gateway-caller-fixture.mjs')));
 const hash=value=>crypto.createHash('sha256').update(value).digest('hex'),uuid=()=>crypto.randomUUID();
 const queue='merge:tdoljyj/cross-memory-system:main',counterexample=false;
-async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 
 test('typed C1 audit transport: actual database authorization and transaction boundaries',{timeout:300000},async t=>{
  const parent=await fs.realpath(process.env.CLUED_TEST_TMP_ROOT??os.tmpdir()),directory=await fs.mkdtemp(path.join(parent,'clued-clock-audit-'));
  const workerDirectory=await fs.mkdtemp(path.join(parent,'clued-clock-audit-worker-'));
- const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:crypto.randomBytes(32).toString('hex'),port:await port(),
+ const server=newCluster({databaseDir:directory,user:'postgres',password:crypto.randomBytes(32).toString('hex'),
    persistent:true,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(){}}),clients=[];let db;
  try{
-  await server.initialise();await server.start();db=server.getPgClient();clients.push(db);await db.connect();
+  await startCluster(server);db=server.getPgClient();clients.push(db);await db.connect();
   await db.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;
    create schema auth;create schema extensions;create extension pgcrypto with schema extensions;
    create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz);

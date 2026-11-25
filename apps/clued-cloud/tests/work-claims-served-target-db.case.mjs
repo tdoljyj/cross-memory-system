@@ -6,16 +6,15 @@
 // authorizations named the PR's own branch; none named a real non-main target.
 // Invariant: a committed pull-request authorization makes the same head resolve as bound when CI asks with main.
 // Imported by work-claims-lease-pin-db.test.mjs, so it runs in the production-schema suite.
-import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
@@ -23,18 +22,14 @@ const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 const repo = 'fixture/served-target';
-async function freePort() {
-  const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r));
-  const p = s.address().port; await new Promise(r => s.close(r)); return p;
-}
 
 test('a committed pull-request head authorization always resolves bound against main', { timeout: 300000 }, async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-served-target-'));
-  const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await freePort(),
+  const server = newCluster({ databaseDir: dir, user: 'postgres', password: hash(), 
     persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
   const clients = [];
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     process.stderr.write('served-target fixture started own PostgreSQL pid=' + server.process?.pid + '\n');
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;

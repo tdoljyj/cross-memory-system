@@ -1,14 +1,13 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { build, stop as stopEsbuild } from 'esbuild';
 import { presentCluedLogCard } from '../app/record-presentation.ts';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
@@ -112,14 +111,6 @@ function record(file, scenario, details) {
   if (!evidence.has(file)) evidence.set(file, []);
   evidence.get(file).push(row);
   raw.push({ gate: scenario, result: 'PASS', evidence_file: file });
-}
-
-async function unusedPort() {
-  const socket = net.createServer();
-  await new Promise((resolve, reject) => socket.listen(0, '127.0.0.1', resolve).once('error', reject));
-  const { port } = socket.address();
-  await new Promise((resolve) => socket.close(resolve));
-  return port;
 }
 
 function deployedProductionPr8Sql(repairedMigrationSql) {
@@ -587,17 +578,15 @@ async function writeEvidence(summary) {
 }
 
 test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, and RLS', async () => {
-  const port = await unusedPort();
   const databaseDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-p5-pg-'));
   const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-p5-worker-'));
   const localPassword = crypto.randomBytes(24).toString('hex');
-  const server = new EmbeddedPostgres({ databaseDir, user: 'postgres', password: localPassword, port,
+  const server = newCluster({ databaseDir, user: 'postgres', password: localPassword,
     persistent: false, onLog: () => {}, onError: (message) => process.stderr.write(`${message}\n`) });
   const clients = [];
   let admin;
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     admin = server.getPgClient();
     clients.push(admin);
     await admin.connect();
@@ -688,7 +677,7 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
       await expectRpcPermissionDenied(directAuthenticated, 'authenticated', name, params);
     }
     equal(await row(admin, IDS.recordAuth), { version: '1', content: 'recordAuth-v1' });
-    const advisorOutput = runSupabaseSecurityAdvisors(port, localPassword);
+    const advisorOutput = runSupabaseSecurityAdvisors(server.options.port, localPassword);
     check(typeof advisorOutput === 'string', 'Supabase security advisors executed');
     check(!/clued_p5_[^\n]*(anon|authenticated)[^\n]*(execute|security definer)/i.test(advisorOutput),
       'Supabase advisors report no P5 executable SECURITY DEFINER finding');

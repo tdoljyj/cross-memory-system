@@ -3,33 +3,24 @@
 // ("EXECUTE of SELECT ... INTO is not implemented"), so a migration cannot create a table that way.
 // If this test turns red, PostgreSQL has started to accept it: the gate must then count SELECT ... INTO in the literal of
 // an EXECUTE again (tighten the rule in the same change).
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const { port } = listener.address();
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 test('EXECUTE of SELECT ... INTO fails with 0A000 and creates no table', { timeout: 300000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-size-gate-db-'));
-  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: crypto.randomUUID(),
-    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
+  const server = newCluster({ databaseDir: directory, user: 'postgres', password: crypto.randomUUID(),
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
   let db;
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     db = server.getPgClient();
     await db.connect();
     for (const sql of [

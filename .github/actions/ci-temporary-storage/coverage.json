@@ -945,7 +945,9 @@
             }
           ],
           "retained_artifacts": [],
-          "persistent_action_caches": []
+          "persistent_action_caches": [
+            "${{ runner.temp }}/clued-ci-mingit.zip"
+          ]
         },
         "ci-suites-windows": {
           "mode": "step-env",

@@ -1,14 +1,13 @@
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import pg from 'pg';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import { assertGatewayCloseoutBoundary, setWorkerGatewayCaller } from './worker-gateway-caller-fixture.mjs';
 
@@ -16,13 +15,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
 const proof = () => crypto.randomBytes(32).toString('hex');
 const md5 = bytes => crypto.createHash('md5').update(bytes).digest('hex');
-async function freePort() {
-  const socket = net.createServer();
-  await new Promise((resolve, reject) => { socket.once('error', reject); socket.listen(0, '127.0.0.1', resolve); });
-  const port = socket.address().port;
-  await new Promise(resolve => socket.close(resolve));
-  return port;
-}
 
 // The publisher's actual COPY/LF/MD5/EXECUTE boundary, not pg.query(file).
 // This fixture uses only a disposable server and random, synthetic credentials.
@@ -60,12 +52,12 @@ async function applyPublisherMigration(admin, filename, bytes) {
 test('D01 optional Binding expiry matches the production schema and retains actual Agent authorization',
   { timeout: 300000 }, async suite => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-task-production-schema-'));
-  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: proof(),
-    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {},
+  const server = newCluster({ databaseDir: directory, user: 'postgres', password: proof(),
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {},
     onError(message) { process.stderr.write(message + '\n'); } });
   const clients = [];
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
     await admin.query([
       'create role anon nologin; create role authenticated nologin;',

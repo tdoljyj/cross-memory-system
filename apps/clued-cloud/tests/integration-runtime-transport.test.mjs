@@ -1,15 +1,14 @@
-import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { build, stop } from 'esbuild';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 
 // S2c Integration Runtime PR-5 (IntegrationRuntime v0.1.8 §13.5 T-A11-4b (a)(d)): the real Host-disconnect
@@ -61,13 +60,6 @@ class MemoryKV {
   }
 }
 
-async function freePort() {
-  const socket = net.createServer();
-  await new Promise((resolve) => socket.listen(0, '127.0.0.1', resolve));
-  const { port } = socket.address();
-  await new Promise((resolve) => socket.close(resolve));
-  return port;
-}
 
 test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and Worker', { timeout: 600_000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-integration-transport-'));
@@ -78,8 +70,8 @@ test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and W
     } }] });
   stop();
   const { handleDelegatedOAuth } = await import(pathToFileURL(path.join(directory, 'delegated-oauth.mjs')).href);
-  const server = new EmbeddedPostgres({
-    databaseDir: path.join(directory, 'db'), user: 'postgres', password: sha(crypto.randomUUID()), port: await freePort(),
+  const server = newCluster({
+    databaseDir: path.join(directory, 'db'), user: 'postgres', password: sha(crypto.randomUUID()), 
     persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
@@ -93,8 +85,7 @@ test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and W
     return client;
   };
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = await connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;
