@@ -1038,9 +1038,9 @@ export class ResidentExecutor {
 
   // The status board is a view: a failure to update it never changes what the executor does.
   report(fn) { try { fn(this.status); } catch { /* advisory */ } }
-  reportOutcome(subject, outcome, { code = null, row = null, key = null, retry = row?.retry ?? null } = {}) {
+  reportOutcome(subject, outcome, { code = null, row = null, key = null, retry = row?.retry ?? null, reasonCodes = null } = {}) {
     this.report(s => s.outcome({ pr: subject?.pr, headSha: subject?.headSha, attempt: subject?.attempt ?? 1, outcome, code, klass: row?.class ?? null, retry, key,
-      pushedAt: outcome === 'COMPLETED' ? this.firstSeenAt(subject) : null }));
+      pushedAt: outcome === 'COMPLETED' ? this.firstSeenAt(subject) : null, reasonCodes }));
   }
   // The head's first sighting by the queue (ms), the push as far as the resident sees it (status timing: push to first green).
   firstSeenAt(subject) {
@@ -4514,10 +4514,13 @@ export class ResidentExecutor {
         // Task 0ca0479d: the stage fact's reason codes, for the PR page only (queue.mjs#reasonCodeList).
         reasonCodes: [facts.reasonCodes, facts.nativeReasonCodes].flatMap(c => (Array.isArray(c) ? c : [])),
         ...(typeof failure.windowsOnly === 'boolean' ? { windowsOnly: failure.windowsOnly } : {}) };
+      const reasonCodes = failure.stageNumber === 1 && failure.code === 'NATIVE_NOT_ADMITTED' ? settle.reasonCodes : null;
       if (!started && release) {
         // R3 batch 2 §3: the reservation (its origin and subject) is read before the release moves the entry away.
         let reserved = null;
         try { reserved = (await this.ledger.state(key)).reserved ?? null; } catch { reserved = null; }
+        const reportRefusal = release === 'NOT_ADMITTED' && reasonCodes !== null;
+        if (reportRefusal) this.reportOutcome(reserved?.subject ?? this.current, 'NOT_ADMITTED', { code: failure.code, row, key, reasonCodes });
         await this.closeOrThrow(batch);
         await this.ledger.releaseUnexecuted(key, release, { failureCode: failure.code, basis, ...facts, breakerState });
         await this.receipt('batch-unexecuted', { key, failureCode: failure.code, release, class: facts.class });
@@ -4529,13 +4532,15 @@ export class ResidentExecutor {
         if ((row?.class === 'node-role' || STAGE1_TRANSIENT_RELEASE_CODES.includes(failure.code)) && this.current?.key === key && reserved?.origin === 'attempt2') {
           await this.reopenAttempt2(key, failure.code, reserved.subject);
         }
-        this.reportOutcome(await subjectOf() ?? this.current, release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', { code: failure.code, row, key });
+        if (!reportRefusal) this.reportOutcome(await subjectOf() ?? this.current, release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', { code: failure.code, row, key });
         return { state: release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', key, failureCode: failure.code, release, settle: { ...settle, kind: 'released', reason: release } };
       }
       // Every other failure burns the head, also before 10-started (stage 1 may have published). Risk tier (Task 12ada80e,
       // DESIGN §36): a stage-1 ending that proves it published nothing (clean on both hosts, bound outcome with zero side
       // effects and mayHavePublished false) still burns the head, but uses the evaluation budget, not the execution one.
       const lowRisk = !started && failure.stageNumber === 1 && klass === 'CLEAN' && failure.outcome?.sideEffects === 0 && failure.outcome?.mayHavePublished === false;
+      if (klass === 'CLEAN' && reasonCodes !== null)
+        this.reportOutcome(await subjectOf() ?? this.current, 'FAILED_CLEAN', { code: failure.code, row, key, retry: facts.retry, reasonCodes });
       await this.ledger.burnHead(key, { failureCode: failure.code, ...(lowRisk ? { quotaTier: QUOTA_TIER_EVALUATION } : {}) });
       // DESIGN §27: a scanner-issuer stage that would HALT is closed clean when its abandonment can be proven.
       if (klass !== 'CLEAN' && await this.scannerAbandonable(key, failure)) return await this.abandonScannerStage(key, batch, failure, settle);
@@ -4547,7 +4552,7 @@ export class ResidentExecutor {
         await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: failure.code, basis, stage: failure.stageNumber, batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory, ...facts });
         await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: failure.code, class: facts.class });
         const subject = (await this.ledger.state(key)).reserved?.subject;
-        this.reportOutcome(subject, 'FAILED_CLEAN', { code: failure.code, row, key, retry: facts.retry });
+        if (reasonCodes === null) this.reportOutcome(subject, 'FAILED_CLEAN', { code: failure.code, row, key, retry: facts.retry });
         const key2 = await this.attempt2IfEligible(key, subject, failure);
         // DESIGN §41.4: a front batch that finally ended is owed to the next on-mode stage 10; every caller hands this ending to
         // afterBatch, which notes it (bc982192 parked-front: one place, one report).

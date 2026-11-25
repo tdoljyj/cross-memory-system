@@ -30,7 +30,7 @@ const trigger = updatedAt => Buffer.from(JSON.stringify({ contract: TRIGGER_CONT
 const receiptTypes = async f => (await fs.readdir(path.join(f.root, 'state', 'receipts'))).map(n => n.replace(/^\d+-|\.json$/g, ''));
 
 // Stage 1 refuses the claim until the PR names `good`; the claim the PR body names is `body.claim` (read live by the fake companion).
-async function field(t, { good, refusal = CLAIM_REFUSAL, limits = {}, status = undefined }) {
+async function field(t, { good, refusal = CLAIM_REFUSAL, refusalCode = 'CLAIM_NOT_CURRENT', limits = {}, status = undefined }) {
   const body = { claim: OLD_CLAIM, status: 'bound', authorization: null, epoch: 1 };
   const engine = fakeEngine();
   const run = engine.runStage;
@@ -38,7 +38,7 @@ async function field(t, { good, refusal = CLAIM_REFUSAL, limits = {}, status = u
   engine.runStage = async (batch, stage, o) => {
     if (stage.number === 1) {
       stage1.push(body.claim);
-      if (body.claim !== good || body.status !== 'bound') { engine.calls.push(['stage', 1]); return notAdmitted('CLAIM_NOT_CURRENT', refusal); }
+      if (body.claim !== good || body.status !== 'bound') { engine.calls.push(['stage', 1]); return notAdmitted(refusalCode, refusal); }
     }
     return run(batch, stage, o);
   };
@@ -305,6 +305,59 @@ const NOT_AUTHORIZED_TEXT = '当前提交未授权：认领持有人对这个提
 // queue.mjs#earlyWakeOf), the whole text still pinned.
 const OLD_WAIT_TEXT = /^等待中（CLAIM_NOT_CURRENT）：约 \d\d:\d\dZ 自动重试；认领持有人授权此提交后，约 10 分钟内自动重试（编辑 PR 不会提前）$/;
 const refusalWith = (reasonCodes, extra = {}) => ({ ...SAFE_REFUSAL, diagnostic: { ...SAFE_REFUSAL.diagnostic, reasonCodes, ...extra } });
+
+test('stage 1 shows the Native refusal and fix before closing the batch and throughout backoff', async t => {
+  let now = () => 0;
+  const board = new StatusBoard({ clock: () => now() });
+  const { f, stage1 } = await field(t, { good: NEW_CLAIM, refusalCode: 'NATIVE_NOT_ADMITTED',
+    refusal: refusalWith(['workflow_missing_admission_gate']), status: board });
+  now = f.clock;
+  const page = () => prPage({ pull: { pr: PR, headSha: HEAD, eligible: true },
+    status: parseStatus(Buffer.from(JSON.stringify(board.snapshot()))), now: now() });
+  const close = f.exec.closeOrThrow.bind(f.exec);
+  let beforeClose;
+  f.exec.closeOrThrow = (...args) => {
+    beforeClose = page();
+    return close(...args);
+  };
+
+  await f.drop(trigger(now() - MIN));
+  const result = await f.exec.tick();
+  assert.deepEqual([result.state, result.failureCode], ['NOT_ADMITTED', 'NATIVE_NOT_ADMITTED']);
+  assert.equal(f.queue.row(PR).state, 'BACKOFF');
+  const refusalText = '未准入（workflow_missing_admission_gate）：补齐工作流准入门后推送修正';
+  assert.deepEqual(beforeClose, { state: 'pending', description: refusalText });
+  const backoff = page();
+  assert.deepEqual(backoff, { state: 'pending', description: `${refusalText}；约 03:15Z 自动重试` });
+  board.update({ recent: [] }); // The bounded recent outcomes may be evicted during backoff.
+  f.advance(MIN);
+  await f.exec.tick();
+  assert.deepEqual(page(), backoff);
+  assert.deepEqual(stage1, [OLD_CLAIM]);
+});
+
+test('stage 1 shows a deterministic Native refusal before archiving the failed batch', async t => {
+  let now = () => 0;
+  const board = new StatusBoard({ clock: () => now() });
+  const { f } = await field(t, { good: NEW_CLAIM, refusalCode: 'NATIVE_NOT_ADMITTED',
+    refusal: { ...refusalWith(['policy_file_invalid']), safeToRerun: false }, status: board });
+  now = f.clock;
+  const page = () => prPage({ pull: { pr: PR, headSha: HEAD, eligible: true },
+    status: parseStatus(Buffer.from(JSON.stringify(board.snapshot()))), now: now() });
+  const burn = f.ledger.burnHead.bind(f.ledger);
+  let beforeBurn;
+  f.ledger.burnHead = (...args) => {
+    beforeBurn = page();
+    return burn(...args);
+  };
+
+  await f.drop(trigger(now() - MIN));
+  const result = await f.exec.tick();
+  assert.deepEqual([result.state, result.failureCode], ['FAILED_CLEAN', 'NATIVE_NOT_ADMITTED']);
+  assert.deepEqual(beforeBurn, { state: 'failure', description: '未准入（policy_file_invalid）：修正准入策略文件后推送修正' });
+  assert.deepEqual(page(), beforeBurn);
+});
+
 async function boardField(t, refusal) {
   let now = () => 0;
   const board = new StatusBoard({ clock: () => now() });

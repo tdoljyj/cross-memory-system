@@ -449,12 +449,12 @@ test("enforced: a claim taken on a newer base than the PR targets is admitted wi
   }
 });
 
-test("enforced: a claim whose base_commit is not in the repository is rejected", async () => {
+test("enforced: compare 404 admits an otherwise valid PR with a claim_base_unknown notice", async () => {
   const { fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { status: 404, body: { message: "Not Found" } }, [VERIFY]: { body: admittedPayload } });
   const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
-  assert.equal(outcome.admitted, false);
-  assert.deepEqual(outcome.reasons, [`claim_base_unknown:${CLAIM_BASE}`]);
-  assert.deepEqual(outcome.notices, []);
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.reasons], [true, "ADMITTED", []]);
+  assert.deepEqual(outcome.notices, [`claim_base_unknown:${CLAIM_BASE}`]);
+  assert.match(renderSummary(outcome), /Notices \(not blocking\):\n- claim_base_unknown/);
 });
 
 test("enforced: fail closed on missing token, missing RPC, refused Binding, rejection envelope, transport error", async () => {

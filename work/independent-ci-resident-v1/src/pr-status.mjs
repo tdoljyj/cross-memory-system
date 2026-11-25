@@ -195,6 +195,33 @@ const EARLY_WAKE_TEXT = Object.freeze({ authorization: '认领持有人授权此
 const earlyWakeOfPage = row => earlyWakeOf({ state: row.state, reason: row.deferred });
 const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MAX - 1)}…`;
 
+const NATIVE_REFUSAL_FIX = Object.freeze({
+  admission_binding_required: '请 Owner 核对当班节点与准入绑定',
+  workflow_gate: '补齐工作流准入门后推送修正',
+  workflow_missing_admission_gate: '补齐工作流准入门后推送修正',
+  authorization_revoked_or_expired: '请认领持有人重新授权当前提交',
+  binding_not_authorized: '请 Owner 核对准入绑定权限',
+  resource_action_not_authorized: '请 Owner 核对该资源的准入权限',
+  work_claim_conflict: '等冲突的认领释放后重新授权当前提交',
+  copy_not_adopted: '请已采纳副本的持有人继续处理',
+  pr_task_binding_conflict: '请核对 PR 关联的任务及当前认领',
+  merge_slot_required: '等本 PR 排到合并队首后自动重试',
+  merge_slot_missing: '等本 PR 排到合并队首后自动重试',
+  evaluation_not_completed: '等准入评估完成后自动重试',
+  changed_files_truncated: '缩小 PR 的改动范围后推送修正',
+  policy_file_removed: '恢复准入策略文件后推送修正',
+  policy_file_invalid: '修正准入策略文件后推送修正',
+  protected_change_not_up_to_date: '将 main 合入分支后推送修正',
+});
+
+function nativeRefusal(state, codes = [], retry = '') {
+  const knownReason = codes.find(code => Object.hasOwn(NATIVE_REFUSAL_FIX, code));
+  const reason = knownReason ?? codes[0] ?? 'NATIVE_NOT_ADMITTED';
+  const fix = knownReason ? NATIVE_REFUSAL_FIX[knownReason] : '请核对当前提交的认领、授权与准入回执';
+  const more = codes.length > 1 ? `等 ${codes.length} 项` : '';
+  return { state, description: clip(`未准入（${reason}${more}）：${fix}${retry}`) };
+}
+
 // DESIGN §41.6a: while the heartbeat's answer shows the failover watchdog has not ticked for more than 5 minutes
 // (companion-heartbeat.mjs#watchdogStale), every text this node writes for a PR head ends with this, never clipped away. At
 // the end, so the duty words that start a text (node-duty.mjs) stay where the other nodes read them.
@@ -320,10 +347,23 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
   }
   if (!status) return null;
   if (now - status.writtenAt > staleMs) return { state: 'error', description: `执行器状态自 ${hhmm(status.writtenAt)} 起未更新，可能已停止` };
+  const mine = x => x && x.pr === pull.pr && x.headSha === pull.headSha;
+  const row = status.pending.find(mine);
+  const recent = status.recent.find(mine);
+  if (!mine(status.current) && !status.halt && !status.paused) {
+    // The queue keeps the reasons throughout backoff, even after the recent outcome is evicted.
+    if (row?.deferred === 'NATIVE_NOT_ADMITTED' && ['BACKOFF', 'WAITING'].includes(row.state)) {
+      const retry = row.nextAt > now ? `；约 ${hhmm(row.nextAt)} 自动重试` : '';
+      return nativeRefusal('pending', row.reasonCodes, retry);
+    }
+    // While the refused batch closes, the queue row can still say RUNNING.
+    if (recent?.code === 'NATIVE_NOT_ADMITTED' && Array.isArray(recent.reasonCodes)
+      && (!row || row.state === 'RUNNING' || (row.state === 'STOPPED' && row.deferred === recent.code && row.stopKind === 'burned')))
+      return nativeRefusal(recent.outcome === 'NOT_ADMITTED' ? 'pending' : 'failure', recent.reasonCodes);
+  }
   const budget = budgetForPull(status, pull, now);
   if (budget && !status.halt && !status.paused && !(status.current?.pr === pull.pr && status.current?.headSha === pull.headSha))
     return { state: 'pending', description: clip(budgetText(budget)) };
-  const mine = x => x && x.pr === pull.pr && x.headSha === pull.headSha;
   if (mine(status.current)) {
     const stage = status.current.stage;
     const text = stage === null ? '运行中：等待托管信号' : `运行中：第 ${stage} 段（${STAGE_NAMES[stage] ?? '?'}）`;
@@ -334,7 +374,6 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     return { state: 'pending', description: clip(text + timingText(status, now, DESCRIPTION_MAX - text.length - lease.length - TIMING_HEADROOM) + lease) };
   }
   // The run queue (phase 2): a row that waits for its turn or its next try says so; nothing runs while HALTed or paused.
-  const row = status.pending.find(mine);
   // Generation 12 (DESIGN §56.3): a batch resting at parking point A that is not the status's current one (several may wait at A):
   // it waits for the hosted signals, with the renewal reminder (its whole run is still ahead).
   // Under HALT or PAUSE it says that, like a row of the queue (review round 5, MINOR 1).
@@ -420,7 +459,6 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
   if (row && row.state === 'STOPPED' && row.stopKind === 'release-cap') {
     return { state: 'failure', description: clip(`24 小时内已多次未准入或未执行（${codeWhy(row.deferred ?? '?', row.reasonCodes)}）：请修正后推新提交`) };
   }
-  const recent = status.recent.find(mine);
   if (recent) {
     const code = recent.code ?? '?';
     switch (recent.outcome) {
