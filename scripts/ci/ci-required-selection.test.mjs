@@ -366,26 +366,26 @@ test('G3 required-tests exposes pr/head dispatch and keeps all three self-hosted
   }
 });
 
-// S1b (ported from the Codex draft of 11-18, D:/w/tmp/speed-s1b): the trusted checkouts are sparse.
 // Its own import keeps this block apart from the import list other selector changes edit.
 import { KNOWN_FAILURES_PATH } from './ci-required-selection.mjs';
 
-const requiredWorkflowJobs = () => ['clued-required-tests.yml', 'clued-required-tests-windows.yml']
+const requiredWorkflowJobs = (ids = ['clued-cloud-tests', 'ci-suites', 'migration-verify', 'ci-suites-windows']) =>
+  ['clued-required-tests.yml', 'clued-required-tests-windows.yml']
   .flatMap((file) => [...readFileSync(path.join(ROOT, '.github/workflows', file), 'utf8')
     .replaceAll('\r\n', '\n').matchAll(/^  ([a-z][a-z-]+):\n((?:.*\n)*?)(?=^  [a-z][a-z-]+:\n|(?![\s\S]))/gm)]
-    .filter(([, id]) => ['clued-cloud-tests', 'ci-suites', 'migration-verify', 'ci-suites-windows'].includes(id)));
+    .filter(([, id]) => ids.includes(id)));
 
-test('all four trusted checkouts use the same sparse directories and cover their runtime files', () => {
-  const jobs = requiredWorkflowJobs();
-  assert.equal(jobs.length, 4);
+test('all seven trusted exports use the same three directories and cover their runtime files', () => {
+  const jobs = requiredWorkflowJobs(['clued-cloud-tests', 'ci-suites', 'migration-verify', 'gitleaks', 'trivy', 'contract-placement', 'ci-suites-windows']);
+  assert.equal(jobs.length, 7);
   for (const [, id, job] of jobs) {
-    const trusted = /\n      - name: Check out the trusted base[^\n]*\n([\s\S]*?)(?=\n      - )/.exec(job);
-    assert.ok(trusted, `${id}: trusted checkout step`);
-    const checkout = trusted[1];
-    const sparse = /^ {10}sparse-checkout: \|\n((?: {12}[^\n]+(?:\n|$))+)/m.exec(checkout);
-    assert.ok(sparse, `${id}: trusted checkout must declare sparse-checkout`);
-    assert.equal(sparse[1].trimEnd(), '            scripts/ci\n            config\n            .github', `${id}: sparse directory list`);
-    const directories = sparse[1].trim().split(/\s+/);
+    const trusted = /\n      - name: Export the trusted base[^\n]*\n([\s\S]*?)(?=\n      - )/.exec(job);
+    assert.ok(trusted, `${id}: trusted export step`);
+    assert.doesNotMatch(trusted[1], /uses:|\bgit\s+(?:fetch|clone)\b/);
+    assert.match(trusted[1], /GIT_NO_LAZY_FETCH: "1"\n +GIT_NO_REPLACE_OBJECTS: "1"/);
+    const archive = /git -C candidate archive "\$base" -- (.+) \| tar -xf - -C trusted$/m.exec(trusted[1]);
+    assert.equal(archive?.[1], 'scripts/ci config .github', `${id}: archive directory list`);
+    const directories = archive[1].split(' ');
     const action = /uses: \.\/trusted\/([^\s]+)/.exec(job);
     assert.ok(action, `${id}: temporary storage action must come from the trusted tree`);
     const actionFile = `${action[1]}/action.yml`;
@@ -399,7 +399,7 @@ test('all four trusted checkouts use the same sparse directories and cover their
     ];
     for (const file of files) {
       assert.ok(existsSync(path.join(ROOT, file)), `${id}: runtime file ${file} exists`);
-      assert.ok(directories.some((directory) => file.startsWith(`${directory}/`)), `${id}: sparse checkout includes ${file}`);
+      assert.ok(directories.some((directory) => file.startsWith(`${directory}/`)), `${id}: archive includes ${file}`);
     }
   }
 });
@@ -2011,10 +2011,10 @@ test('the Windows job of the workflow selects and runs with the trusted selectio
   for (const label of ['self-hosted', 'Windows', 'trust-internal', 'cap-node24', 'cap-python312']) assert.ok(labels.includes(label), label);
   assert.ok(!labels.includes('Linux') && !/ubuntu|windows-latest/.test(job), 'no Linux route and no GitHub-hosted runner');
   assert.match(job, /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected ci-suites --root candidate\n {10}exit \$LASTEXITCODE\n/);
-  // Two commands: the push baseline (git only, before any trusted code loads) and the selection's own entry point.
+  // Resolve the base, export its trusted files locally, and run the selection's own entry point.
   assert.deepEqual([...job.matchAll(/\n {6}- name: (.+)\n(?:(?! {6}- ).*\n)*? {8}run: /g)].map((m) => m[1]),
-    ['Resolve push baseline before loading trusted commands', 'Select and run the suites declared for Windows'],
-    'nothing else can pass or fail the job');
+    ['Resolve push baseline before loading trusted commands', 'Export the trusted base (selection and commands)',
+      'Select and run the suites declared for Windows'], 'only the trusted selection flow runs');
   assert.doesNotMatch(job, /continue-on-error|setup-node|npm /);
 });
 
@@ -2047,7 +2047,7 @@ test('bors staging, Windows side: T is resolved on main before the trusted selec
   const job = text.slice(text.indexOf('\n  ci-suites-windows:\n') + 1);
   const candidate = job.indexOf('path: candidate');
   const resolver = job.indexOf('id: train-base');
-  const trusted = job.indexOf('path: trusted');
+  const trusted = job.indexOf('name: Export the trusted base');
   assert.ok(candidate > 0 && candidate < resolver && resolver < trusted, 'candidate, then the baseline, then trusted');
   assert.match(job.slice(0, resolver), /fetch-depth: 0/);
   const verification = job.slice(resolver, trusted);
@@ -2056,7 +2056,7 @@ test('bors staging, Windows side: T is resolved on main before the trusted selec
   // with its status.
   assert.match(verification, /git\('show', 'origin\/main:scripts\/ci\/ci-base\.mjs'\)/);
   assert.match(verification, /process\.exitCode = await writeCiBase\(\);"\n {10}exit \$LASTEXITCODE\n/);
-  assert.match(job, /ref: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}\n {10}path: trusted\n/);
+  assert.match(job.slice(trusted), /TRUSTED_REF: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}/);
   // CI_BASE_SHA comes from the GITHUB_ENV train-base writes; a step env would override it.
   assert.doesNotMatch(job, /^ +CI_BASE_SHA:/m);
 });
