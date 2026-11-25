@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
+import fsSync, { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -319,19 +320,35 @@ const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = '
     return { contract: 'clued.independent-ci.fleet-node-first-install-kit/1', template: { versionFacts: Buffer.from(JSON.stringify({ observedAt })).toString('base64') },
       config: { ciSourceManifestSha256: templateSource }, images: { pull: [], local: [{ id: IMAGE, asset: `role-image-${IMAGE}.tar.gz` }] } };
   };
-  // the fake acceptance door (PLAN-accept-auto-seal-20261125 section 5, the contract with part A): what seal asks, and the answer as the door
-  // would give it now; `status` is flipped by a test (pending -> accepted, rejected, expired). accepted replays the same row on every ask.
-  const door = { status: 'accepted', grant: FIX_DECISION, receipt: FIX_RECEIPT, acceptedAt: '2026-11-19T12:22:39.628169+00:00', asked: [],
-    confirmUrl: 'https://kooyumi.pixelgrav.com/confirm/0b0b0b0b-1111-4111-8111-000000000001', expiresAt: '2099-01-01T00:00:00Z', answer: null };
-  const askDoor = async input => {
-    door.asked.push(structuredClone(input));
-    if (door.answer) return door.answer(input);
-    if (door.status === 'pending') return { status: 'pending', confirmUrl: door.confirmUrl, expiresAt: door.expiresAt };
-    if (door.status === 'accepted') return { status: 'accepted', grant_id: door.grant, receipt_id: door.receipt, accepted_at: door.acceptedAt };
-    return { status: door.status };
+  // the fake acceptance door (PLAN-accept-binding-20261125 section 3, the contract with part A): the anonymous read of one resource
+  // (public.clued_fleet_accept_status_v1) as the door would answer it now, every answer echoing the request's sha256; `status` is flipped
+  // by a test (none, pending, accepted, rejected, expired). A `gh workflow run` (the release workflow's fleet-accept mode) the door has not
+  // seen yet opens a request: none, rejected or expired become `openTo` (pending) on the next read. accepted replays the same row on every read.
+  const requestId = '0b0b0b0b-1111-4111-8111-000000000001';
+  const door = { status: 'accepted', grant: FIX_DECISION, receipt: FIX_RECEIPT, acceptedAt: '2026-11-19T12:22:39.628169+00:00', reads: [],
+    confirmUrl: `https://kooyumi.pixelgrav.com/confirm/${requestId}`, expiresAt: '2099-01-01T00:00:00Z', answer: null, openTo: 'pending', opensSeen: 0, fail: 0,
+    nodes: [{ name: 'TURING', source_sha256: 'b'.repeat(64), paused: false }] };
+  const opensNow = () => { try { return JSON.parse(readFileSync(path.join(w.d, 'gh-state.json'), 'utf8')).calls.filter(c => c.args[0] === 'workflow').length; } catch { return 0; } };
+  const answerOf = resource => {
+    const base = { action: 'fleet.accept', resources: [resource], request_sha256: resource.split('/').pop() };
+    if (door.answer) return door.answer(resource, base);
+    const opens = opensNow();
+    if (opens > door.opensSeen) { door.opensSeen = opens; if (['none', 'rejected', 'expired'].includes(door.status)) door.status = door.openTo; }
+    if (door.status === 'pending') return { ...base, status: 'pending', owner_request: { request_id: requestId, status: 'pending', confirm_path: `/confirm/${requestId}`, expires_at: door.expiresAt } };
+    if (door.status === 'accepted') return { ...base, status: 'accepted', grant_id: door.grant, receipt_id: door.receipt, accepted_at: door.acceptedAt, nodes: door.nodes };
+    return { ...base, status: door.status };
+  };
+  const readStatus = async resource => {
+    door.reads.push(resource);
+    if (door.fail > 0) { door.fail--; throw Object.assign(new Error('ACCEPT_DOOR_UNAVAILABLE'), { code: 'ACCEPT_DOOR_UNAVAILABLE', detail: { http: 503, message: null } }); }
+    return answerOf(resource);
   };
   const deps = { kitOf, readKit: () => ({}), fleetMaterial: async () => ({ formalRoles, installed: { ...carried, ciSourceManifestSha256: templateSource } }),
-    sourceHash: async args => { s.sourceDrafts.push(args); return { ciSourceManifestSha256: s.sourceOf }; }, door: askDoor };
+    sourceHash: async args => { s.sourceDrafts.push(args); return { ciSourceManifestSha256: s.sourceOf }; }, readStatus,
+    // TEMPORARY, the red run only (removed with the change): the same fake in the shape of the door a16b708c5 asks (deps.door), so the tests
+    // below fail on what that head does, not on a missing dependency
+    door: async input => { const a = await readStatus(input.resources[0]); return a.status === 'pending' ? { status: 'pending', confirmUrl: door.confirmUrl, expiresAt: a.owner_request.expires_at } : a; } };
+  const opens = async () => (await w.calls()).filter(c => c.args[0] === 'workflow');
   const gh = [process.execPath, w.fake];
   const prep = (over = {}) => prepare({ version: VERSION, dir: w.out, out, images: [image], index: w.index, ghCommand: gh, deps, ...over });
   const requestFile = path.join(out, `${TAG}.acceptance-request.json`);
@@ -340,7 +357,7 @@ const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = '
   // seal through the door: no Decision record, no Decision, receipt or time anywhere
   const sealDoor = async (over = {}) => seal({ request: requestFile, index: w.index, ghCommand: gh, deps, ...over });
   const sealIt = sealDoor;
-  return { ...w, image, out, s, deps, prep, requestFile, sealIt, sealDoor, door, kitAssets, carried, formalRoles, setState };
+  return { ...w, image, out, s, deps, prep, requestFile, sealIt, sealDoor, door, opens, kitAssets, carried, formalRoles, setState };
 };
 const noRequest = async w => { await assert.rejects(fs.access(w.requestFile)); };
 const uploadsOf = async w => (await w.calls()).filter(c => c.args[1] === 'upload');
@@ -366,6 +383,12 @@ test('prepare: no Decision, receipt or time goes in; the request the Owner revie
   const requestSha = sha(await fs.readFile(w.requestFile));
   assert.equal(r.requestSha256, requestSha);
   assert.ok(!('decisionLine' in r));
+  // the request goes up as a Release asset (the release workflow's fleet-accept mode reads it there, PLAN-accept-binding-20261125 section 3),
+  // these very bytes, once, never --clobber
+  const requestAssets = (await w.assets()).filter(a => a.name === `${TAG}.acceptance-request.json`);
+  assert.deepEqual(requestAssets.map(a => a.sha256), [requestSha]);
+  assert.equal((await uploadsOf(w)).filter(c => path.basename(c.args[3]) === `${TAG}.acceptance-request.json`).length, 1);
+  assert.ok((await w.calls()).every(c => !c.args.includes('--clobber')), 'never --clobber');
   // the Source: first on the build's own tar (the bytes that go up), then again on the tar downloaded from the Release (the check seal makes),
   // with the drill's stand-in Decision and receipt (they do not enter it)
   assert.ok(w.s.sourceDrafts.length >= 2);
@@ -382,6 +405,10 @@ test('prepare: no Decision, receipt or time goes in; the request the Owner revie
   assert.ok(!(await w.assets()).some(a => a.name.endsWith('.acceptance.json')));
   assert.match((await fs.readFile(w.index, 'utf8')).split('\r\n')[2], /\|  \|  \|  \|$/);
   await assert.rejects(fs.access(path.join(w.out, `${TAG}.acceptance.json`)));
+  // prepare again: the same request is on the Release already, nothing goes up again
+  const n0 = (await uploadsOf(w)).length;
+  await w.prep();
+  assert.equal((await uploadsOf(w)).length, n0);
 });
 
 // ruling test 2 (red before: acceptance-draft refused PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT)
@@ -1018,11 +1045,14 @@ test('prepare refuses an index row without its Release at once: no kit taken, no
   await nothingWritten(w, before);
 });
 
-// ---------------------------------------------------------------- seal through the acceptance door (PLAN-accept-auto-seal-20261125 2.2, part B)
-// The Owner's acceptance is one fleet.accept Grant approved on the confirm page; seal opens the request itself and reads Grant id, receipt id and
-// the time from the door's answer. The Decision record (clued_record_mutate's return, saved by hand) has no way in.
-const UUID_RE = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+
+// ---------------------------------------------------------------- seal through the acceptance door (PLAN-accept-auto-seal-20261125 2.2, part B;
+// PLAN-accept-binding-20261125 section 3: who calls the door)
+// The Owner's acceptance is one fleet.accept Grant approved on the confirm page. seal never holds a token: it opens the request with one
+// `gh workflow run` of the release workflow's fleet-accept mode (whose database login calls the door) and reads the answer anonymously
+// (public.clued_fleet_accept_status_v1); Grant id, receipt id and the time come from that answer only. The Decision record has no way in.
 const GRANT = 'a5a5a5a5-1111-4111-8111-0000000000a1', GRANT_RECEIPT = 'b6b6b6b6-2222-4222-8222-0000000000b2';
+const REQUEST_ASSET = `${TAG}.acceptance-request.json`;
 const resourceOf = async w => `fleet-node:${REPO}/${VERSION}/${w.source.archive_sha256}/${sha(await fs.readFile(w.requestFile))}`;
 const sealedNothing = async (w, indexBefore, uploadsBefore) => {
   assert.ok((await fs.readFile(w.index)).equals(indexBefore), 'the index is as it was');
@@ -1030,8 +1060,17 @@ const sealedNothing = async (w, indexBefore, uploadsBefore) => {
   assert.ok(!(await w.assets()).some(a => a.name.endsWith('.acceptance.json')), 'no acceptance on the Release');
   await assert.rejects(fs.access(path.join(w.out, `${TAG}.acceptance.json`)), 'no acceptance next to the request');
 };
+// a clock and a sleep for seal (deps.clock, deps.sleep): sleeping moves the clock; `onSleep` runs after each sleep
+const fakeTime = (start, onSleep = () => {}) => {
+  const t = { now: Date.parse(start), slept: [] };
+  t.clock = () => t.now;
+  t.sleep = async ms => { t.slept.push(ms); t.now += ms; onSleep(t); };
+  return t;
+};
+const timed = (w, time, over = {}) => w.sealDoor({ deps: { ...w.deps, clock: time.clock, sleep: time.sleep }, now: time.now, ...over });
+const tokenVars = () => Object.keys(process.env).filter(k => /TOKEN|CLUED_SUPABASE|CLUED_FLEET/i.test(k));
 
-test('seal through the door: not approved yet it answers WAITING_OWNER with the link, Release and index untouched; approved, the same call seals with the door\'s three values; again already, the same bytes', async t => {
+test('seal through the door: not approved yet it answers WAITING_OWNER with the link, no workflow run, Release and index untouched; approved, the same call seals with the door\'s three values; again already, the same bytes', async t => {
   const w = await prepWorld(t);
   await w.prep();
   w.s.kitBroken = true;
@@ -1039,21 +1078,19 @@ test('seal through the door: not approved yet it answers WAITING_OWNER with the 
   const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
   const waiting = await w.sealDoor();
   assert.equal(waiting.status, 'FLEET_ACCEPTANCE_WAITING_OWNER');
-  assert.equal(waiting.confirmUrl, w.door.confirmUrl);
+  assert.equal(waiting.confirmUrl, w.door.confirmUrl, 'the confirm page\'s origin and the door\'s confirm_path');
   assert.equal(waiting.expiresAt, w.door.expiresAt);
+  assert.equal(waiting.resource, await resourceOf(w));
   await sealedNothing(w, before, n);
-  // what the door was asked: fleet.accept, exactly one resource binding version, tar and the request file's sha256, an op id
-  assert.equal(w.door.asked.length, 1);
-  const [asked] = w.door.asked;
-  assert.deepEqual(Object.keys(asked).sort(), ['action', 'op_id', 'resources']);
-  assert.equal(asked.action, 'fleet.accept');
-  assert.deepEqual(asked.resources, [await resourceOf(w)]);
-  assert.match(asked.op_id, UUID_RE);
-  // the Owner approves on the page: the same call seals
+  // what was read: exactly the one resource binding version, tar and the request file's sha256; a request already open is not opened again
+  assert.deepEqual(w.door.reads, [await resourceOf(w)]);
+  assert.deepEqual(await w.opens(), [], 'pending: no workflow run');
+  // the Owner approves on the page: the same call seals, still no workflow run
   w.door.status = 'accepted';
   const r = await w.sealDoor();
   assert.equal(r.status, 'FLEET_ACCEPTANCE_SEALED');
   assert.equal(r.already, false);
+  assert.deepEqual(await w.opens(), [], 'accepted: no workflow run');
   const request = JSON.parse(await fs.readFile(w.requestFile, 'utf8'));
   const bytes = await fs.readFile(path.join(w.out, `${TAG}.acceptance.json`));
   const a = JSON.parse(bytes.toString('utf8'));
@@ -1071,23 +1108,73 @@ test('seal through the door: not approved yet it answers WAITING_OWNER with the 
   assert.ok((await fs.readFile(path.join(w.out, `${TAG}.acceptance.json`))).equals(bytes));
   assert.ok((await fs.readFile(w.index)).equals(index));
   assert.equal((await uploadsOf(w)).length, m);
+  assert.deepEqual(await w.opens(), []);
 });
 
-test('seal through the door: rejected or expired answers REJECTED, writes nothing, and the command exits non-zero', async t => {
+// PLAN-accept-binding-20261125 section 3, part B: none, expired or rejected at the start: one dispatch, then reads only
+test('seal opens the request itself: none, expired or rejected at the start is exactly one gh workflow run of the fleet-accept mode, then only reads; the link once the door has it', async t => {
+  for (const start of ['none', 'expired', 'rejected']) {
+    const w = await prepWorld(t);
+    await w.prep();
+    w.door.status = start;
+    const time = fakeTime('2026-11-25T01:00:00Z');
+    const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
+    const r = await timed(w, time);
+    assert.equal(r.status, 'FLEET_ACCEPTANCE_WAITING_OWNER', start);
+    assert.equal(r.confirmUrl, w.door.confirmUrl, start);
+    const runs = await w.opens();
+    assert.equal(runs.length, 1, `${start}: one workflow run`);
+    assert.deepEqual(runs[0].args, ['workflow', 'run', 'clued-cloud-production-release.yml', '--repo', REPO, '--ref', 'main', '-f', 'mode=fleet-accept',
+      '-f', `fleet_version=${VERSION}`, '-f', `fleet_request_sha256=${sha(await fs.readFile(w.requestFile))}`], start);
+    assert.deepEqual(runs[0].tokenSeen, [], 'gh sees no token variable');
+    assert.ok(w.door.reads.length >= 2 && w.door.reads.every(x => x === w.door.reads[0]), `${start}: read before and after, one resource`);
+    await sealedNothing(w, before, n);
+    // the same seal again: the request is open, no second run
+    await timed(w, time);
+    assert.equal((await w.opens()).length, 1, `${start}: still one workflow run`);
+  }
+});
+
+test('seal: a request the workflow has not opened within the open wait answers WAITING_OWNER without a link, after one run only; a run gh refuses is ACCEPT_DOOR_OPEN_FAILED, nothing written', async t => {
+  const w = await prepWorld(t);
+  await w.prep();
+  Object.assign(w.door, { status: 'none', openTo: 'none' });
+  const time = fakeTime('2026-11-25T01:00:00Z');
+  const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
+  const r = await timed(w, time);
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_WAITING_OWNER');
+  assert.equal(r.confirmUrl, null);
+  assert.equal(r.opened, false);
+  assert.equal((await w.opens()).length, 1, 'one workflow run, never a second in one seal');
+  assert.ok(time.now - Date.parse('2026-11-25T01:00:00Z') <= 5 * 60_000, 'the open wait is bounded (5 minutes)');
+  assert.ok(w.door.reads.length >= 3, 'read again while waiting for the link');
+  await sealedNothing(w, before, n);
+  // gh refuses the run (no permission, a dropped connection): refused, nothing written
+  const w2 = await prepWorld(t);
+  await w2.prep();
+  w2.door.status = 'none';
+  await w2.setState(st => { st.workflowFail = true; });
+  const before2 = await fs.readFile(w2.index), n2 = (await uploadsOf(w2)).length;
+  await assert.rejects(w2.sealDoor(), { code: 'ACCEPT_DOOR_OPEN_FAILED' });
+  await sealedNothing(w2, before2, n2);
+});
+
+test('seal through the door: pending, then rejected or expired answers REJECTED, writes nothing, and the command exits non-zero', async t => {
   for (const answer of ['rejected', 'expired']) {
     const w = await prepWorld(t);
     await w.prep();
-    w.door.status = answer;
+    w.door.status = 'pending';
+    const time = fakeTime('2026-11-25T01:00:00Z', () => { w.door.status = answer; });
     const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
-    const r = await w.sealDoor();
+    const r = await timed(w, time, { wait: 10 });
     assert.equal(r.status, 'FLEET_ACCEPTANCE_REJECTED', answer);
     assert.equal(r.answer, answer);
+    assert.deepEqual(await w.opens(), [], `${answer} after pending: the Owner's answer, not opened again`);
     await sealedNothing(w, before, n);
-    assert.equal(typeof publishModule.exitCodeOf, 'function', 'the command line sets its exit code from the answer');
     assert.notEqual(publishModule.exitCodeOf(r), 0, answer);
   }
-  assert.equal(publishModule.exitCodeOf?.({ status: 'FLEET_ACCEPTANCE_SEALED' }), 0);
-  assert.equal(publishModule.exitCodeOf?.({ status: 'FLEET_ACCEPTANCE_WAITING_OWNER' }), 0);
+  assert.equal(publishModule.exitCodeOf({ status: 'FLEET_ACCEPTANCE_SEALED' }), 0);
+  assert.equal(publishModule.exitCodeOf({ status: 'FLEET_ACCEPTANCE_WAITING_OWNER' }), 0);
 });
 
 // the shape of D:/agent-temp/gen18-seal/decision-return.json (the hand-written Decision of generation 18: authority observed, the Owner's words
@@ -1110,126 +1197,262 @@ test('a Decision record has no way in: seal with --decision-record (the generati
   await assert.rejects(seal({ request: w.requestFile, decisionRecord: record, index: w.index, ghCommand: [process.execPath, w.fake], deps: w.deps }), { code: 'USAGE' });
   await sealedNothing(w, before, n);
   assert.equal((await w.calls()).length, calls, 'refused before gh');
-  assert.deepEqual(w.door.asked, [], 'refused before the door');
-  // the command line: the option is gone (a bad --repo shows the command would otherwise have gone on)
+  assert.deepEqual(w.door.reads, [], 'refused before the door');
   await assert.rejects(main(['seal', '--request', w.requestFile, '--decision-record', record, '--repo', 'not a repo']), { code: 'USAGE' });
   await assert.rejects(main(['seal', '--request', w.requestFile, '--decision-record', record]), { code: 'USAGE' });
   await sealedNothing(w, before, n);
 });
 
-test('seal --wait: asks again at 30 to 120 second steps with the same op id until approved; the wait runs out as WAITING_OWNER; a bad --wait is USAGE', async t => {
+test('seal --wait: reads again at 30 to 120 second steps until approved; the wait runs out as WAITING_OWNER; a bad --wait is USAGE', async t => {
   const w = await prepWorld(t);
   await w.prep();
   Object.assign(w.door, { status: 'pending', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: '2026-11-25T01:02:03Z' });
-  let clock = Date.parse('2026-11-25T01:00:00Z');
-  const slept = [];
-  const deps = { ...w.deps, clock: () => clock, sleep: async ms => { slept.push(ms); clock += ms; if (slept.length === 3) w.door.status = 'accepted'; } };
-  const r = await w.sealDoor({ wait: 30, deps, now: clock });
+  const time = fakeTime('2026-11-25T01:00:00Z', tt => { if (tt.slept.length === 3) w.door.status = 'accepted'; });
+  const r = await timed(w, time, { wait: 30 });
   assert.equal(r.status, 'FLEET_ACCEPTANCE_SEALED');
-  assert.equal(w.door.asked.length, 4);
-  assert.equal(new Set(w.door.asked.map(x => x.op_id)).size, 1, 'one op id through the wait');
-  assert.ok(slept.length === 3 && slept.every(ms => ms >= 30_000 && ms <= 120_000), JSON.stringify(slept));
+  assert.equal(w.door.reads.length, 4);
+  assert.ok(time.slept.length === 3 && time.slept.every(ms => ms >= 30_000 && ms <= 120_000), JSON.stringify(time.slept));
+  assert.deepEqual(await w.opens(), []);
   // never approved: the wait runs out (never past it), WAITING_OWNER, nothing written
   const w2 = await prepWorld(t);
   await w2.prep();
   w2.door.status = 'pending';
   const before = await fs.readFile(w2.index), n = (await uploadsOf(w2)).length;
-  let c2 = Date.parse('2026-11-25T01:00:00Z');
-  const start = c2, slept2 = [];
-  const r2 = await w2.sealDoor({ wait: 5, deps: { ...w2.deps, clock: () => c2, sleep: async ms => { slept2.push(ms); c2 += ms; } }, now: c2 });
+  const t2 = fakeTime('2026-11-25T01:00:00Z'), start = t2.now;
+  const r2 = await timed(w2, t2, { wait: 5 });
   assert.equal(r2.status, 'FLEET_ACCEPTANCE_WAITING_OWNER');
   assert.equal(r2.confirmUrl, w2.door.confirmUrl);
-  assert.ok(c2 - start <= 5 * 60_000 && slept2.length >= 2, JSON.stringify(slept2));
-  assert.ok(slept2.every(ms => ms > 0 && ms <= 120_000), JSON.stringify(slept2));
+  assert.ok(t2.now - start <= 5 * 60_000 && t2.slept.length >= 2, JSON.stringify(t2.slept));
+  assert.ok(t2.slept.every(ms => ms > 0 && ms <= 120_000), JSON.stringify(t2.slept));
   await sealedNothing(w2, before, n);
-  // the command line takes --wait <minutes>; anything else is USAGE (a bad --repo shows the option itself was taken)
   await assert.rejects(main(['seal', '--request', 'r', '--wait', '5', '--repo', 'not a repo']), { code: 'PUBLISH_REPO_REFUSED' });
   for (const bad of ['0', '-1', 'x', '1441', '']) await assert.rejects(main(['seal', '--request', 'r', '--wait', bad]), { code: 'USAGE' }, bad);
 });
 
-test('seal refuses a door answer that is not one of the four, an accepted one whose ids or time cannot stand, the drill\'s ids: nothing written', async t => {
+// review 87d330d0 B, "要改" 1: a read of the door that fails once (a 503, a dropped connection, a timeout) does not end the wait
+test('seal --wait: a failed anonymous read is read again at the next step; approved after it, SEALED; without --wait a failed read is refused, nothing written', async t => {
+  const w = await prepWorld(t);
+  await w.prep();
+  Object.assign(w.door, { status: 'pending', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: '2026-11-25T01:00:30Z' });
+  const time = fakeTime('2026-11-25T01:00:00Z', tt => { if (tt.slept.length === 1) w.door.fail = 2; if (tt.slept.length === 3) w.door.status = 'accepted'; });
+  const r = await timed(w, time, { wait: 60 });
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_SEALED');
+  assert.equal(r.grantId, GRANT);
+  assert.equal(w.door.reads.length, 5, 'pending, two failed reads, pending, accepted');
+  assert.ok(time.slept.every(ms => ms > 0 && ms <= 120_000), JSON.stringify(time.slept));
+  // no --wait: the one read fails, refused as it is
+  const w2 = await prepWorld(t);
+  await w2.prep();
+  w2.door.fail = 1;
+  const before = await fs.readFile(w2.index), n = (await uploadsOf(w2)).length;
+  await assert.rejects(w2.sealDoor(), { code: 'ACCEPT_DOOR_UNAVAILABLE' });
+  await sealedNothing(w2, before, n);
+  assert.deepEqual(await w2.opens(), [], 'nothing opened on a read that failed');
+});
+
+// review 87d330d0 B, "要改" 3: the door's clock is the server's; a local clock a few seconds behind is not a refusal after the Owner approved
+test('seal: an accepted_at a few seconds after the local clock is waited out, then sealed with the door\'s time; one far ahead is refused', async t => {
+  for (const wait of [0, 30]) {
+    const w = await prepWorld(t);
+    await w.prep();
+    const time = fakeTime('2026-11-25T01:00:00Z');
+    Object.assign(w.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: '2026-11-25T01:00:03.250+00:00' });
+    const r = await timed(w, time, { wait });
+    assert.equal(r.status, 'FLEET_ACCEPTANCE_SEALED', `wait ${wait}`);
+    assert.equal(JSON.parse(await fs.readFile(r.acceptance, 'utf8')).acceptedAt, '2026-11-25T01:00:03Z');
+    assert.ok(time.now >= Date.parse('2026-11-25T01:00:03.250Z'), 'sealed only once the local clock is past the door\'s time');
+    assert.ok(time.slept.reduce((x, y) => x + y, 0) <= 10_000, JSON.stringify(time.slept));
+  }
+  const w = await prepWorld(t);
+  await w.prep();
+  const time = fakeTime('2026-11-25T01:00:00Z');
+  Object.assign(w.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: '2026-11-25T01:10:00Z' });
+  const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
+  await assert.rejects(timed(w, time, { wait: 30 }), { code: 'ACCEPT_DOOR_ANSWER_REFUSED' });
+  await sealedNothing(w, before, n);
+});
+
+test('seal refuses a door answer that is not one of the five, not of this request, an accepted one whose ids or time cannot stand, the drill\'s ids: nothing written', async t => {
   const w = await prepWorld(t);
   await w.prep();
   const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
-  const ok = { status: 'accepted', grant_id: GRANT, receipt_id: GRANT_RECEIPT, accepted_at: '2026-11-25T01:02:03Z' };
+  const okOf = base => ({ ...base, status: 'accepted', grant_id: GRANT, receipt_id: GRANT_RECEIPT, accepted_at: '2026-11-25T01:02:03Z' });
+  const pendingOf = (base, over = {}) => ({ ...base, status: 'pending', owner_request: { request_id: '0b0b0b0b-1111-4111-8111-000000000001',
+    confirm_path: '/confirm/0b0b0b0b-1111-4111-8111-000000000001', expires_at: '2099-01-01T00:00:00Z', ...over } });
   const cases = [
-    [{ ...ok, status: 'ok' }, 'ACCEPT_DOOR_ANSWER_REFUSED'],
-    [null, 'ACCEPT_DOOR_ANSWER_REFUSED'],
-    [{ ...ok, grant_id: 'nope' }, 'ACCEPT_DOOR_ANSWER_REFUSED'],
-    [{ ...ok, receipt_id: undefined }, 'ACCEPT_DOOR_ANSWER_REFUSED'],
-    [{ ...ok, receipt_id: GRANT }, 'ACCEPT_DOOR_ANSWER_REFUSED'],
-    [{ ...ok, accepted_at: 'yesterday' }, 'ACCEPT_DOOR_ANSWER_REFUSED'],
-    [{ ...ok, accepted_at: '2999-01-01T00:00:00Z' }, 'ACCEPT_DOOR_ANSWER_REFUSED'],
-    [{ status: 'pending', confirmUrl: 'http://kooyumi.pixelgrav.com/confirm/0b0b0b0b-1111-4111-8111-000000000001', expiresAt: '2099-01-01T00:00:00Z' }, 'ACCEPT_DOOR_ANSWER_REFUSED'],
-    [{ status: 'pending', expiresAt: '2099-01-01T00:00:00Z' }, 'ACCEPT_DOOR_ANSWER_REFUSED'],
-    [{ ...ok, grant_id: DRILL_RESERVED.decision }, 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN'],
-    [{ ...ok, receipt_id: DRILL_RESERVED.receipt }, 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN'],
+    [b => ({ ...okOf(b), status: 'ok' }), 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [() => null, 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [b => [okOf(b)], 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    // the answer names the request it answers (part A echoes request_sha256): another request's, or none at all, is refused
+    [b => ({ ...okOf(b), request_sha256: 'e'.repeat(64) }), 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [b => { const a = okOf(b); delete a.request_sha256; return a; }, 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [b => ({ ...pendingOf(b), request_sha256: 'e'.repeat(64) }), 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [b => ({ ...okOf(b), resources: [`fleet-node:${REPO}/${VERSION}/${'e'.repeat(64)}/${b.request_sha256}`] }), 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [b => ({ ...okOf(b), grant_id: 'nope' }), 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [b => ({ ...okOf(b), receipt_id: undefined }), 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [b => ({ ...okOf(b), receipt_id: GRANT }), 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [b => ({ ...okOf(b), accepted_at: 'yesterday' }), 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [b => ({ ...okOf(b), accepted_at: '2999-01-01T00:00:00Z' }), 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [b => pendingOf(b, { confirm_path: 'https://elsewhere.example/confirm/0b0b0b0b-1111-4111-8111-000000000001' }), 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [b => pendingOf(b, { confirm_path: undefined }), 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [b => pendingOf(b, { expires_at: 'soon' }), 'ACCEPT_DOOR_ANSWER_REFUSED'],
+    [b => ({ ...okOf(b), grant_id: DRILL_RESERVED.decision }), 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN'],
+    [b => ({ ...okOf(b), receipt_id: DRILL_RESERVED.receipt }), 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN'],
   ];
   for (const [i, [answer, code]] of cases.entries()) {
-    w.door.answer = () => answer;
+    w.door.answer = (resource, base) => answer(base);
     await assert.rejects(w.sealDoor(), { code }, `case ${i}`);
   }
   await sealedNothing(w, before, n);
-  // what seal refuses on its own is refused before the Owner is asked: a request that is not the Release's, a drill receipt that is not a PASS,
-  // a commit not on main
-  w.door.answer = null;
-  w.door.asked.length = 0;
+  assert.deepEqual(await w.opens(), []);
+});
+
+// review 87d330d0 B, "要改" 4: what seal refuses on its own is refused before the Owner is asked, the request's own fleetRefs among them
+test('seal refuses before the door is read or a request opened: fleetRefs naming the drill\'s stand-in, a request the acceptance contract refuses, one not the Release\'s, a request asset missing or other, a drill receipt that is not a PASS, a commit not on main', async t => {
+  const w = await prepWorld(t);
+  await w.prep();
+  w.door.status = 'none';
+  const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
   const request = JSON.parse(await fs.readFile(w.requestFile, 'utf8'));
   const requestBytes = await fs.readFile(w.requestFile);
-  await fs.writeFile(w.requestFile, JSON.stringify({ ...request, ciSourceManifestSha256: 'c'.repeat(64) }));
-  await assert.rejects(w.sealDoor(), { code: 'ACCEPTANCE_SOURCE_NOT_THE_RELEASES' });
+  const withRefs = refs => JSON.stringify({ ...request, fleetRefs: { ...request.fleetRefs, ...refs } }, null, 2) + '\n';
+  for (const [text, code] of [
+    [withRefs({ hostQualificationRef: DRILL_RESERVED.decision }), 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN'],
+    [withRefs({ ownerAuthorizationRef: DRILL_RESERVED.receipt }), 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN'],
+    [withRefs({ sourceAcceptanceRef: '00000000-0000-4000-8000-000000000001' }), 'SEAL_REQUEST_REFUSED'],
+    [withRefs({ formalRoles: { gitleaks: {} } }), 'SEAL_REQUEST_REFUSED'],
+    [JSON.stringify({ ...request, ciSourceManifestSha256: 'c'.repeat(64) }), 'ACCEPTANCE_SOURCE_NOT_THE_RELEASES'],
+  ]) {
+    await fs.writeFile(w.requestFile, text);
+    await assert.rejects(w.sealDoor(), { code }, text.slice(0, 80));
+  }
   await fs.writeFile(w.requestFile, requestBytes);
   const receipt = path.join(w.d, 'fail-receipt.json');
   await fs.writeFile(receipt, JSON.stringify({ contract: 'clued.independent-ci.drill-receipt/1', version: VERSION, candidate: true, conclusion: 'FAIL' }));
   await assert.rejects(w.sealDoor({ drillReceipt: receipt }), { code: 'SEAL_DRILL_RECEIPT_NOT_PASS' });
+  // the request the workflow reads is the Release's asset: missing there, or other bytes, is refused before anything is opened
+  await w.setState(st => { st.assets = st.assets.filter(a => a.name !== REQUEST_ASSET); });
+  await assert.rejects(w.sealDoor(), { code: 'SEAL_REQUEST_NOT_ON_RELEASE' });
+  const otherBytes = Buffer.from(requestBytes.toString('utf8').replace(/\n$/, '\r\n'));
+  await w.setState(st => { st.assets.push({ name: REQUEST_ASSET, size: otherBytes.length, sha256: sha(otherBytes), b64: otherBytes.toString('base64') }); });
+  await assert.rejects(w.sealDoor(), { code: 'SEAL_REQUEST_NOT_ON_RELEASE' });
   await w.setState(st => { st.compare = 'ahead'; });
   await assert.rejects(w.sealDoor(), { code: 'SEAL_COMMIT_NOT_ON_MAIN' });
-  assert.deepEqual(w.door.asked, [], 'the door was never asked');
+  assert.deepEqual(w.door.reads, [], 'the door was never read');
+  assert.deepEqual(await w.opens(), [], 'no request opened');
   await sealedNothing(w, before, n);
 });
 
-// the door client (accept-door.mjs, its own small file: not the frozen upgrader's grant-client.mjs): one POST to the Clued database's PostgREST
-// endpoint with the publishable key and the SHA-256 of the publisher's Binding token, which is never sent, logged or kept
-test('accept-door: the input goes as one POST with the token\'s hash only; door not deployed, refused, garbled are told apart; no configuration, no call', async () => {
-  const door = await import('../accept-door.mjs');
-  assert.equal(door.ACCEPT_ACTION, 'fleet.accept');
-  assert.equal(door.acceptResourceOf({ repository: REPO, version: VERSION, archiveSha256: '1'.repeat(64), requestSha256: '2'.repeat(64) }),
-    `fleet-node:${REPO}/${VERSION}/${'1'.repeat(64)}/${'2'.repeat(64)}`);
-  const token = 'fake-binding-token-0123456789abcdef';
-  const seen = [];
-  let reply = { status: 200, body: { status: 'pending', confirmUrl: 'https://kooyumi.pixelgrav.com/confirm/0b0b0b0b-1111-4111-8111-000000000001', expiresAt: '2099-01-01T00:00:00Z' } };
-  const fetchImpl = async (url, init) => {
-    seen.push({ url, init });
-    if (reply.throws) throw new Error('ECONNRESET');
-    return { status: reply.status, text: async () => (typeof reply.body === 'string' ? reply.body : JSON.stringify(reply.body)) };
-  };
-  const ask = door.httpDoor({ supabaseUrl: 'https://db.example.test/', publishableKey: 'sb_publishable_test', token, fetchImpl });
-  const input = { action: 'fleet.accept', resources: [`fleet-node:${REPO}/${VERSION}/${'1'.repeat(64)}/${'2'.repeat(64)}`], op_id: '0c0c0c0c-1111-4111-8111-000000000003' };
-  assert.deepEqual(await ask(input), reply.body);
-  const [call] = seen;
-  assert.equal(call.url, `https://db.example.test/rest/v1/rpc/${door.ACCEPT_DOOR_RPC}`);
-  assert.equal(call.init.method, 'POST');
-  assert.deepEqual(JSON.parse(call.init.body), { p_token_hash: sha(Buffer.from(token)), p_input: input });
-  assert.ok(!JSON.stringify(call.init).includes(token), 'the token itself never leaves');
-  for (const [r, code] of [[{ status: 404, body: { code: 'PGRST202' } }, 'ACCEPT_DOOR_UNAVAILABLE'], [{ status: 503, body: '' }, 'ACCEPT_DOOR_UNAVAILABLE'],
-    [{ throws: true }, 'ACCEPT_DOOR_UNAVAILABLE'], [{ status: 200, body: 'not json' }, 'ACCEPT_DOOR_UNAVAILABLE'],
-    [{ status: 403, body: { code: '42501', message: 'owner_grant_door_binding_not_authorized' } }, 'ACCEPT_DOOR_REFUSED'],
-    [{ status: 400, body: { message: 'fleet_accept_request_hash_changed' } }, 'ACCEPT_DOOR_REFUSED']]) {
-    reply = r;
-    await assert.rejects(ask(input), e => e.code === code && !JSON.stringify(e.detail ?? null).includes(token), JSON.stringify(r));
-  }
-  // configuration from the environment only (CLUED_SUPABASE_URL, CLUED_SUPABASE_PUBLISHABLE_KEY, CLUED_FLEET_ACCEPT_TOKEN); missing: refused, no call
-  const n = seen.length;
-  for (const env of [{}, { CLUED_SUPABASE_URL: 'https://db.example.test', CLUED_SUPABASE_PUBLISHABLE_KEY: 'k' }, { CLUED_FLEET_ACCEPT_TOKEN: token }]) {
-    assert.throws(() => door.doorFromEnv(env, fetchImpl), { code: 'ACCEPT_DOOR_NOT_CONFIGURED' });
-  }
-  assert.equal(seen.length, n);
-  assert.equal(typeof door.doorFromEnv({ CLUED_SUPABASE_URL: 'https://db.example.test', CLUED_SUPABASE_PUBLISHABLE_KEY: 'k', CLUED_FLEET_ACCEPT_TOKEN: token }, fetchImpl), 'function');
+test('prepare refuses a Release that holds another acceptance request of this version: never replaced (the door may have opened it), no request written', async t => {
+  const w = await prepWorld(t);
+  await w.prep();
+  const bytes = Buffer.from((await fs.readFile(w.requestFile)).toString('utf8').replace(/\n$/, '\r\n'));
+  await w.setState(st => { Object.assign(st.assets.find(x => x.name === REQUEST_ASSET), { size: bytes.length, sha256: sha(bytes), b64: bytes.toString('base64') }); });
+  await fs.rm(w.requestFile);
+  const n = (await uploadsOf(w)).length;
+  await assert.rejects(w.prep(), { code: 'PREPARE_REQUEST_ON_RELEASE_DIFFERENT' });
+  await noRequest(w);
+  assert.equal((await uploadsOf(w)).length, n);
+  assert.ok((await w.calls()).every(c => c.args[1] !== 'delete-asset' || c.args[3] !== REQUEST_ASSET), 'never deleted');
 });
 
-test('seal on the command line with no door configured is refused before the request is read or gh is called', async t => {
-  const saved = Object.fromEntries(['CLUED_SUPABASE_URL', 'CLUED_SUPABASE_PUBLISHABLE_KEY', 'CLUED_FLEET_ACCEPT_TOKEN'].map(k => [k, process.env[k]]));
+// the door client (accept-door.mjs, its own small file: not the frozen upgrader's grant-client.mjs)
+test('accept-door: the anonymous read is one POST of the resource with the repository\'s public key, no token; not deployed, refused, garbled are told apart; a network error names its cause', async () => {
+  const door = await import('../accept-door.mjs');
+  assert.equal(door.ACCEPT_ACTION, 'fleet.accept');
+  assert.equal(door.ACCEPT_STATUS_RPC, 'clued_fleet_accept_status_v1');
+  const resource = door.acceptResourceOf({ repository: REPO, version: VERSION, archiveSha256: '1'.repeat(64), requestSha256: '2'.repeat(64) });
+  assert.equal(resource, `fleet-node:${REPO}/${VERSION}/${'1'.repeat(64)}/${'2'.repeat(64)}`);
+  const seen = [];
+  let reply = { status: 200, body: { status: 'none', request_sha256: '2'.repeat(64) } };
+  const fetchImpl = async (url, init) => {
+    seen.push({ url, init });
+    if (reply.throws) throw reply.throws;
+    return { status: reply.status, text: async () => (typeof reply.body === 'string' ? reply.body : JSON.stringify(reply.body)) };
+  };
+  const read = door.httpStatus({ supabaseUrl: 'https://db.example.test/', publishableKey: 'sb_publishable_test', fetchImpl });
+  assert.deepEqual(await read(resource), reply.body);
+  const [call] = seen;
+  assert.equal(call.url, 'https://db.example.test/rest/v1/rpc/clued_fleet_accept_status_v1');
+  assert.equal(call.init.method, 'POST');
+  assert.deepEqual(JSON.parse(call.init.body), { p_resource: resource });
+  assert.equal(call.init.headers.apikey, 'sb_publishable_test');
+  const refused = cause => Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(cause), { code: cause }) });
+  for (const [r, code, check] of [[{ status: 404, body: { code: 'PGRST202' } }, 'ACCEPT_DOOR_UNAVAILABLE'], [{ status: 503, body: '' }, 'ACCEPT_DOOR_UNAVAILABLE'],
+    [{ throws: refused('ECONNREFUSED') }, 'ACCEPT_DOOR_UNAVAILABLE', d => d.cause === 'ECONNREFUSED' && d.error === 'TypeError'],
+    [{ throws: refused('ENOTFOUND') }, 'ACCEPT_DOOR_UNAVAILABLE', d => d.cause === 'ENOTFOUND'],
+    [{ status: 200, body: 'not json' }, 'ACCEPT_DOOR_UNAVAILABLE'],
+    [{ status: 401, body: { message: 'Invalid API key' } }, 'ACCEPT_DOOR_REFUSED']]) {
+    reply = r;
+    await assert.rejects(read(resource), e => e.code === code && (!check || check(e.detail)), JSON.stringify(r));
+  }
+  // the answer: five statuses, each naming the request (request_sha256) and, when it says, the resource
+  const of = { resource, requestSha256: '2'.repeat(64) };
+  for (const st of ['none', 'rejected', 'expired']) assert.deepEqual(door.readAnswer({ status: st, request_sha256: '2'.repeat(64), resources: [resource] }, of), { kind: st });
+  assert.deepEqual(door.readAnswer({ status: 'pending', request_sha256: '2'.repeat(64), owner_request: { confirm_path: '/confirm/0b0b0b0b-1111-4111-8111-000000000001', expires_at: '2099-01-01T00:00:00Z' } }, of),
+    { kind: 'pending', confirmUrl: 'https://kooyumi.pixelgrav.com/confirm/0b0b0b0b-1111-4111-8111-000000000001', expiresAt: '2099-01-01T00:00:00Z' });
+});
+
+test('accept-door: the Supabase address and key are the repository\'s one source (apps/clued-cloud/app/supabase-public-config.ts), never the environment; no token anywhere', async t => {
+  const door = await import('../accept-door.mjs');
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const { resolvePublicSupabaseConfig } = await import(new URL('../../../../../scripts/ci/clued-work-admission.mjs', import.meta.url));
+  const same = resolvePublicSupabaseConfig({}, path.resolve(here, '../../../../..'));
+  assert.deepEqual(door.publicConfigOf(), { url: same.url, key: same.key });
+  // an address in the environment (another host answering "accepted") changes nothing
+  const saved = { CLUED_SUPABASE_URL: process.env.CLUED_SUPABASE_URL, CLUED_SUPABASE_PUBLISHABLE_KEY: process.env.CLUED_SUPABASE_PUBLISHABLE_KEY };
+  process.env.CLUED_SUPABASE_URL = 'https://elsewhere.example'; process.env.CLUED_SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_elsewhere';
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  const seen = [];
+  const read = door.statusReader({ fetchImpl: async (url, init) => { seen.push({ url, init }); return { status: 200, text: async () => '{"status":"none"}' }; } });
+  await read(`fleet-node:${REPO}/${VERSION}/${'1'.repeat(64)}/${'2'.repeat(64)}`);
+  assert.equal(seen[0].url, `${same.url}/rest/v1/rpc/clued_fleet_accept_status_v1`);
+  assert.equal(seen[0].init.headers.apikey, same.key);
+  // a checkout without the file: refused, nothing read
+  assert.throws(() => door.publicConfigOf({ root: path.join(os.tmpdir(), 'no-such-checkout-87d330d0') }), { code: 'ACCEPT_DOOR_NOT_CONFIGURED' });
+  // the old door's token variable is named nowhere in the resident tree
+  const name = ['CLUED', 'FLEET', 'ACCEPT', 'TOKEN'].join('_');
+  const hits = [];
+  const walk = dir => {
+    for (const e of fsSync.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (!['node_modules', '.git'].includes(e.name)) walk(p); } else if (/\.(mjs|js|md|ps1|json|py)$/.test(e.name) && readFileSync(p, 'utf8').includes(name)) hits.push(p);
+    }
+  };
+  walk(path.resolve(here, '../../..'));
+  assert.deepEqual(hits, []);
+});
+
+test('seal runs to SEALED with no token variable in its environment: the request opened by gh, the answer read anonymously', async t => {
+  const w = await prepWorld(t);
+  await w.prep();
+  const saved = Object.fromEntries(tokenVars().map(k => [k, process.env[k]]));
   for (const k of Object.keys(saved)) delete process.env[k];
-  t.after(() => { for (const [k, v] of Object.entries(saved)) if (v !== undefined) process.env[k] = v; });
-  await assert.rejects(main(['seal', '--request', path.join(os.tmpdir(), 'no-such-dir-87d330d0', `${TAG}.acceptance-request.json`)]), { code: 'ACCEPT_DOOR_NOT_CONFIGURED' });
+  t.after(() => { for (const [k, v] of Object.entries(saved)) process.env[k] = v; });
+  assert.deepEqual(tokenVars(), []);
+  Object.assign(w.door, { status: 'none', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: '2026-11-25T01:00:00Z' });
+  const time = fakeTime('2026-11-25T01:00:00Z', tt => { if (tt.slept.length === 2) w.door.status = 'accepted'; });
+  const r = await timed(w, time, { wait: 10 });
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_SEALED');
+  assert.equal((await w.opens()).length, 1);
+});
+
+test('accept-door readFleet: the accepted answer\'s registered nodes as [{ node, ciSourceManifestSha256, paused }]; not accepted or not of this shape, refused', async () => {
+  const door = await import('../accept-door.mjs');
+  const resource = `fleet-node:${REPO}/${VERSION}/${'1'.repeat(64)}/${'2'.repeat(64)}`;
+  const accepted = { status: 'accepted', request_sha256: '2'.repeat(64), resources: [resource], grant_id: GRANT, receipt_id: GRANT_RECEIPT, accepted_at: '2026-11-25T01:00:00Z',
+    nodes: [{ name: 'TURING', source_sha256: 'b'.repeat(64), paused: false }, { name: 'DESK', source_sha256: null, paused: true }] };
+  assert.deepEqual(await door.readFleet({ resource, readStatus: async () => accepted }),
+    [{ node: 'TURING', ciSourceManifestSha256: 'b'.repeat(64), paused: false }, { node: 'DESK', ciSourceManifestSha256: null, paused: true }]);
+  await assert.rejects(door.readFleet({ resource, readStatus: async () => ({ status: 'none', request_sha256: '2'.repeat(64) }) }), { code: 'FLEET_NOT_ACCEPTED' });
+  for (const nodes of [undefined, [{ name: '', source_sha256: null, paused: false }], [{ name: 'X', source_sha256: 'zz', paused: false }], [{ name: 'X', source_sha256: null }]]) {
+    await assert.rejects(door.readFleet({ resource, readStatus: async () => ({ ...accepted, nodes }) }), { code: 'ACCEPT_DOOR_ANSWER_REFUSED' }, JSON.stringify(nodes));
+  }
+});
+
+// review 87d330d0 B, "要改" 5: no invisible character in the fleet scripts (a literal U+FEFF an editor drops fails silently)
+test('the fleet scripts hold no literal U+FEFF: the BOM is written as an escape', async () => {
+  const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const bad = fsSync.readdirSync(dir).filter(n => n.endsWith('.mjs') && readFileSync(path.join(dir, n), 'utf8').includes('\uFEFF'));
+  assert.deepEqual(bad, []);
 });

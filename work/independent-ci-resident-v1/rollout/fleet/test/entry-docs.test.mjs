@@ -70,6 +70,11 @@ test('the acceptance in the README: seal asks the acceptance door (one fleet.acc
   assert.ok(!/^node [^\n]*publish\.mjs seal [^\n]*--(decision|decision-record|receipt|accepted-at|grant) /m.test(readme), 'no Decision record, Grant, receipt or time on seal\'s command line');
   assert.match(readme, /`fleet\.accept`/);
   assert.match(readme, /FLEET_ACCEPTANCE_WAITING_OWNER/);
+  // PLAN-accept-binding-20261125: seal opens the request through the release workflow's fleet-accept mode and reads the answer anonymously;
+  // no token of a publisher Binding, no op id
+  assert.match(readme, /mode=fleet-accept/);
+  assert.match(readme, /clued_fleet_accept_status_v1/);
+  assert.ok(!/op_id|CLUED_SUPABASE_URL/.test(readme), 'no op id, no Supabase address in the environment');
   assert.match(readme, /PASS_A_FULL/);
   assert.match(readme, /PASS_A_PER_NODE_STEPS_REMAIN/);
   assert.ok(!/可直接交给 `install\.mjs first-install-check --from` 和 `bootstrap\.ps1 -From`/.test(readme), 'prepare\'s --out is not the delivery directory');
@@ -101,5 +106,8 @@ test('the README\'s delivery directory: its one command takes every asset bootst
   const patterns = [...commands[0].matchAll(/--pattern "([^"]+)"/g)].map(m => m[1].replaceAll('<version>', v));
   const glob = p => new RegExp(`^${p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*').replaceAll('?', '.')}$`);
   for (const n of [...required, `role-image-${'c'.repeat(64)}.tar.gz`]) assert.ok(patterns.some(p => glob(p).test(n)), `${n} is fetched`);
+  // the acceptance request is a Release asset too (the release workflow's fleet-accept mode reads it there); bootstrap refuses a file neither
+  // sums file lists (ASSET_NOT_LISTED), so the delivery directory never fetches it
+  assert.ok(!patterns.some(p => glob(p).test(`${t}.acceptance-request.json`)), 'the acceptance request is not fetched into the delivery directory');
   assert.match(commands[0], /^gh release download fleet-node-<version> /);
 });

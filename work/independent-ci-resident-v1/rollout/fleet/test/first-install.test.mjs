@@ -357,11 +357,12 @@ async function releaseWorld(t, w) {
   const out = path.join(d, 'accept');
   const prepare = (over = {}) => publishModule.prepare({ version: VERSION, dir: outDir, out, images: w.kit.images.local.map(l => path.join(w.from, l.asset)), index,
     root: w.template.root, ghCommand, ...over });
-  // the Owner's acceptance: a stand-in of the acceptance door (accept-door.mjs) answering the fleet.accept Grant of 3bc571a6's values
-  // (Grant c556370f, receipt 7ccaefca); the door replays the same row on every ask
-  const door = async () => ({ status: 'accepted', grant_id: 'c556370f-b0fc-404b-b164-0f06699e4c7a', receipt_id: '7ccaefca-5fda-4bc8-9747-2a8101b92342',
-    accepted_at: '2026-11-19T12:22:39.628169+00:00' });
-  const seal = async (request, over = {}) => publishModule.seal({ request, index, ghCommand, deps: { door }, ...over });
+  // the Owner's acceptance: a stand-in of the acceptance door's anonymous read (accept-door.mjs) answering the fleet.accept Grant of 3bc571a6's
+  // values (Grant c556370f, receipt 7ccaefca) for the resource read, naming its request; the door replays the same row on every read
+  const readStatus = async resource => ({ status: 'accepted', request_sha256: resource.split('/').pop(), resources: [resource],
+    grant_id: 'c556370f-b0fc-404b-b164-0f06699e4c7a', receipt_id: '7ccaefca-5fda-4bc8-9747-2a8101b92342', accepted_at: '2026-11-19T12:22:39.628169+00:00' });
+  const door = async input => readStatus(input.resources[0]);   // TEMPORARY, the red run only (a16b708c5's deps.door)
+  const seal = async (request, over = {}) => publishModule.seal({ request, index, ghCommand, deps: { readStatus, door }, ...over });
   return { d, index, assets, kitName, out, prepare, seal, outDir };
 }
 // the companion writes its version facts again (a new observedAt): the next kit taken from this node is other bytes
