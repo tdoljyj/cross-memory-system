@@ -4,6 +4,7 @@
 using System;
 using System.IO;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
@@ -94,6 +95,11 @@ public static class BrokerPureTests
         if ((args.Length==6 || args.Length==7) && args[0]=="--fleet-pull-fixture") {
             string root=Path.GetFullPath(args[1]), scratch=Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\')+"\\";
             if (!root.StartsWith(scratch,StringComparison.OrdinalIgnoreCase) || !Renewal.Id(args[2])) return 2;
+            // .NET Framework uses Console.InputEncoding for the child stdin writer.
+            // Reproduce the UTF-8 BOM regardless of the host's console code page.
+            typeof(Console).GetField("_inputEncoding", BindingFlags.NonPublic | BindingFlags.Static)
+                .SetValue(null, Encoding.UTF8);
+            Yes(Console.InputEncoding.GetPreamble().Length == 3, "fleet-child-stdin-utf8-bom");
             var requestBytes=File.ReadAllBytes(Path.Combine(root,"broker","requests",args[2]+".json"));
             var payload=FleetPull.Parse(requestBytes);
             var grant=Renewal.Str(payload,"grantId");
