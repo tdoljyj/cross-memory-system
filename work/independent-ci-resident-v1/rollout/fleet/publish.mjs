@@ -108,8 +108,9 @@ import { RESIDENT } from './facts.mjs';
 import { DEFAULT_ROOT, firstInstallKitOf, installedFleetMaterial, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
 import { readTar } from './tar.mjs';
 import { RELEASE_CONTRACT, VERSION, tagOf } from './universal.mjs';
+import { ACCEPTANCE_CONTRACT, REQUEST_CONTRACT, REQUEST_FLEET_REFS, acceptanceOf, acceptanceBytes } from '../../src/fleet-acceptance.mjs';
 
-export const ACCEPTANCE_CONTRACT = 'clued.independent-ci.fleet-node-acceptance/1';
+export { ACCEPTANCE_CONTRACT, REQUEST_CONTRACT, REQUEST_FLEET_REFS, acceptanceOf };
 export const DEFAULT_REPO = 'tdoljyj/cross-memory-system';
 export const DEFAULT_INDEX = 'G:\\我的云端硬盘\\Clued_资料中心\\10_E_工程与平台\\CI基础设施\\通用节点包_归档索引.md';
 // the drill column (seal): the candidate drill's conclusion and receipt sha256, or 首装未演练; an older table is completed with an empty cell
@@ -308,7 +309,6 @@ async function publishAssets({ ghCommand, repo, index, idx, s, assets }) {
 // such a file never reaches a Release and no real node (which reads the Release, or the operator's own --from) can read one. acceptedAt is a
 // stand-in time, not reserved. Shapes a node accepts: UUIDs, not 00000000- (validateAcceptance) nor dddddddd-/eeeeeeee- (generate.py).
 export const DRILL_RESERVED = Object.freeze({ decision: 'ca7d1da7-d2e1-4c1d-8000-000000000001', receipt: 'ca7d1da7-d2e1-4c1d-8000-000000000002', acceptedAt: '2026-01-01T00:00:00Z' });
-export const REQUEST_CONTRACT = 'clued.independent-ci.fleet-node-acceptance-request/1';
 export const DRILL_RECEIPT_CONTRACT = 'clued.independent-ci.drill-receipt/1';
 export const NOT_DRILLED = '首装未演练';
 // a candidate drill's conclusions seal takes (FABLE-renew-key-algorithm-ruling-20261119.md section 4.3): defined here only; drill/drill-vm.ps1's
@@ -316,23 +316,9 @@ export const NOT_DRILLED = '首装未演练';
 // value a skipped one ended in is gone and refused like PASS_A_PENDING_PRODUCTION_READBACK and every other value.
 export const DRILL_PASS_CONCLUSIONS = Object.freeze(['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN']);
 // the request's fleetRefs: what a node carries into every acceptance; the other three (ownerDecisionRef, installationReceiptRef, ownerReceiptRef) are seal's
-export const REQUEST_FLEET_REFS = Object.freeze(['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ownerPackageAcceptanceRef', 'formalRoles']);
 const REQUEST_KEYS = ['contract', 'version', 'archive_sha256', 'commit', 'repository', 'ciSourceManifestSha256', 'firstInstallKitSha256', 'fleetRefs'];
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const exactKeys = (o, keys) => o !== null && typeof o === 'object' && !Array.isArray(o) && Object.keys(o).length === keys.length && keys.every(k => Object.hasOwn(o, k));
-
-// The acceptance a request becomes: its fields and the five the acceptance makes (seal with the door's fleet.accept Grant, receipt and time; the drill with DRILL_RESERVED).
-export function acceptanceOf(request, { decision, receipt, acceptedAt }) {
-  const f = request.fleetRefs;
-  const a = { contract: ACCEPTANCE_CONTRACT, version: request.version, archive_sha256: request.archive_sha256, commit: request.commit, repository: request.repository,
-    ciSourceManifestSha256: request.ciSourceManifestSha256, cluedDecision: decision, acceptedAt,
-    fleetRefs: { sourceAcceptanceRef: f.sourceAcceptanceRef, hostQualificationRef: f.hostQualificationRef, ownerAuthorizationRef: f.ownerAuthorizationRef,
-      publisherQualificationRef: f.publisherQualificationRef, ownerPackageAcceptanceRef: f.ownerPackageAcceptanceRef, installationReceiptRef: receipt,
-      ownerDecisionRef: decision, ownerReceiptRef: receipt, formalRoles: f.formalRoles },
-    firstInstallKitSha256: request.firstInstallKitSha256 };
-  if (request.ciSourceManifestSha256 === undefined) delete a.ciSourceManifestSha256;
-  return a;
-}
 
 export function readRequest(r) {
   check(exactKeys(r, REQUEST_KEYS) && r.contract === REQUEST_CONTRACT, 'REQUEST_REFUSED', 'shape');
@@ -928,7 +914,7 @@ export async function seal(options) {
     const a = acceptanceOf(r, { decision: answer.grantId, receipt: answer.receiptId, acceptedAt: answer.acceptedAt });
     check(!namesDrillReserved(a), 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN', { grant: answer.grantId, receipt: answer.receiptId });
     try { validateAcceptance(a, nowAt()); } catch (e) { fail('ACCEPTANCE_REFUSED', e?.detail ?? e?.code ?? String(e)); }
-    const bytes = Buffer.from(JSON.stringify(a, null, 2) + '\n');
+    const bytes = acceptanceBytes(a);
     const readOrNull = async f => { try { return await fs.readFile(f); } catch (e) { if (e?.code === 'ENOENT') return null; throw e; } };
     const there = await readOrNull(final);
     check(there === null || there.equals(bytes), 'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', final);

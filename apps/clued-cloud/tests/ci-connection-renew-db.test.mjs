@@ -798,3 +798,66 @@ test('connection renewal from serving Worker through the migrated database', {ti
     });
   } finally { await f.close(); }
 });
+
+test('fleet target on the CI probe follows the latest approval and survives an older door replay', async () => {
+  const f = await schedulingFixture();
+  try {
+    const repository = 'tdoljyj/cross-memory-system';
+    const sql = async (q, args) => (await f.admin.query(q, args)).rows[0];
+    const receipt = await sql(`insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
+      values($1,$2,'global','binding_role_set','binding_role','fixture',1,'{}') returning id`, [f.user, f.binding]);
+    await sql(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
+      values($1,$2,'release-door',now(),$3)`, [f.user, f.binding, receipt.id]);
+    await sql('select clued_private.release_door_install_v1($1)', [repository]);
+
+    async function node(label) {
+      const selected = [{ resource_kind: 'scope', resource_id: 'project:' + f.project, environment: 'canonical', actions: ['read'] }];
+      const p = await f.native('clued_headless_binding_confirmation_issue_v1', { label, days: 30, selected });
+      const binding = f.committed(await f.native('clued_headless_binding_issue_v1', { confirmation_token: p.confirmation_token, view_digest: p.view_digest }));
+      const n = f.committed(await f.native('clued_ci_node_registration_v1', { ...f.registration(), name: label, binding_id: binding.binding_id }));
+      await f.approve(n.node_id);
+      const { identity_fingerprint } = await sql('select identity_fingerprint from clued_private.ci_nodes_v1 where node_id=$1', [n.node_id]);
+      return { id: n.node_id, binding, identity_fingerprint };
+    }
+    const caller = await node('fleet-probe');
+    const peer = await node('fleet-peer');
+    await setWorkerGatewayCaller(f.gateway);
+    async function probe(n = caller) {
+      const response = (await f.gateway.query('select public.clued_ci_connection_renew_v1($1) v', [{
+        contract: 'clued.ci-connection-renew/1', kind: 'ci', project_id: f.project, node_id: n.id,
+        identity_fingerprint: n.identity_fingerprint, old_binding_id: n.binding.binding_id, old_token_hash: digest(n.binding.token),
+        generation: 1, new_token_hash: null, issued_at: new Date().toISOString(),
+      }])).rows[0].v;
+      assert.equal(response.status, 'ok');
+      return response.fleet_target;
+    }
+    assert.equal(await probe(), null);
+    const resource = v => `fleet-node:${repository}/${v}/${digest(v)}/${digest('request-' + v)}`;
+    const ask = async v => (await sql('select clued_private.fleet_accept_door_v1($1) v', [{ action: 'fleet.accept', resources: [resource(v)] }])).v;
+    async function approve(v) {
+      const pending = await ask(v);
+      assert.equal(pending.status, 'pending');
+      const p = await f.native('clued_owner_grant_confirmation_issue_v1', { request_id: pending.request_id, choice: 'once' });
+      assert.equal(p.status, 'issued');
+      f.committed(await f.native('clued_owner_grant_v1', { confirmation_token: p.confirmation_token, view_digest: p.view_digest }));
+      return ask(v);
+    }
+    const n = await approve('18.0.0');
+    assert.deepEqual([ (await probe()).version, (await probe()).grant_id ], ['18.0.0', n.grant_id]);
+    const n1 = await approve('19.0.0');
+    const newest = await probe();
+    assert.deepEqual(newest, { repository, version: n1.version, archive_sha256: n1.archive_sha256, request_sha256: n1.request_sha256,
+      grant_id: n1.grant_id, receipt_id: n1.receipt_id, accepted_at: n1.accepted_at, other_sources: [null] });
+    assert.equal((await ask('18.0.0')).grant_id, n.grant_id);
+    assert.deepEqual(await probe(), newest);
+    await f.live(peer.id);
+    const peerSource = digest('peer-source');
+    await sql('update clued_private.ci_node_liveness_v1 set reported_source_sha256=$2 where node_id=$1', [peer.id, peerSource]);
+    assert.deepEqual((await probe()).other_sources, [peerSource]);
+    await f.live(peer.id, '21 minutes');
+    assert.deepEqual((await probe()).other_sources, [null]);
+    await f.live(peer.id);
+    await sql("update clued_private.ci_node_liveness_v1 set reported_state='PAUSED' where node_id=$1", [peer.id]);
+    assert.deepEqual((await probe()).other_sources, [null]);
+  } finally { await f.close(); }
+});

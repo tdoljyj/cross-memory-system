@@ -38,6 +38,7 @@ import { pruneArchivedGenerations } from './generation-retention.mjs';
 import { SETTINGS_FILE, readRetentionSettings } from './retention-settings.mjs';
 import { assertGhIsolation, assertNotElevated, sessionFacts, writeSessionFacts } from './companion-session.mjs';
 import { companionKeyWatch } from './connection-renewal.mjs';
+import { companionSelfPull } from './fleet-self-pull.mjs';
 import { resolveCompanionWslClient } from './wsl-client.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
@@ -404,6 +405,9 @@ export async function main(args = process.argv.slice(2)) {
   // r3 implementation review MAJOR 2). The beat stops with the lanes; the entry below exits outright, so no timer keeps a
   // companion alive that answers nothing.
   const renewKeyCheck=companionKeyWatch(values.root);
+  const selfPullRunner = new Runner({ env: { ...process.env }, jobHost });
+  const selfPull = companionSelfPull({ root: values.root, repository: raw.repo, upload: ({ tag, file }) =>
+    selfPullRunner.run([raw.ghExe, 'release', 'upload', tag, file, '--repo', raw.repo], { timeoutMs: 60_000 }) });
   // The poller and its lane, and the advisory lane (advisoryLanes): built before any lane starts (the re-run lane reads poller.lastPass).
   const { poller, lanes: advisorySpecs } = advisoryLanes({ advisory, pollRunner, repo: raw.repo, ghExe: raw.ghExe, clock: Date.now,
     writeTrigger: v => Inbox.drop(inboxDir, v), // a create-only drop box: the reader waits for a file still being written (DESIGN §31.3)
@@ -427,6 +431,7 @@ export async function main(args = process.argv.slice(2)) {
       lane({ runner: upgradeRunner, work: async () => { const r = await upgradeLane.step(); await upgradeLane.selfcheckStep(); return r; }, everyMs: UPGRADE_LANE_EVERY_MS }),
       ...(heartbeat ? [lane({ runner: heartbeatRunner, work: () => heartbeat.step(), everyMs: HEARTBEAT_LANE_EVERY_MS })] : []),
       lane({ runner: fleetRunner, work: async () => { fleetLag ??= await openFleetLag(); await fleetLag?.step(); }, everyMs: 60000 }),
+      lane({ runner: selfPullRunner, work: selfPull, everyMs: 15_000 }),
       ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),
       ...(mergeReconcile?[lane({runner:mergeRunner,work:()=>mergeReconcile.step(),everyMs:MERGE_RECONCILE_LANE_EVERY_MS})]:[]),
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
