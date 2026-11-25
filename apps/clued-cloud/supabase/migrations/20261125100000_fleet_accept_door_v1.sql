@@ -40,14 +40,18 @@
 --    by its owner only (the migration login); not on PostgREST. Input
 --    {action:'fleet.accept', resources:[<one>], run_id?, run_attempt?}. The
 --    resource names the registered repository. It replays an accepted row,
---    refuses the version under other hashes
---    (fleet_accept_version_already_accepted), or reuses or opens the pending
---    request on the identity's anchor. It never consumes and never approves.
+--    replays a request the Owner rejected (final: it never asks the Owner
+--    about that package again; accepting it takes a new version), refuses the
+--    version under other hashes (fleet_accept_version_already_accepted), or
+--    reuses or opens the pending request on the identity's anchor (a new one
+--    only when there is none or the last one expired). It never consumes and
+--    never approves.
 -- 6. public.clued_fleet_accept_status_v1(p_resource): anonymous, read only.
 --    Answers none, pending, accepted, rejected or expired for exactly that
 --    resource; every answer carries request_sha256 (the resource's last
 --    part). What it shows is what the Release publishes as acceptance.json
---    plus the registered nodes' names and reported Source; the confirmation
+--    plus the in-service nodes' (state active or draining) names and reported
+--    Source; the confirmation
 --    page it points at needs the Owner's session.
 --
 -- Anchored patches: each replaces one piece of text and fails unless the
@@ -59,7 +63,7 @@ insert into clued_private.work_claim_resource_kinds(kind,doors,note) values
   ('fleet-node',array['fleet-accept'],
    'fleet-node:<owner>/<repo>/<version>/<archive sha256>/<acceptance request sha256>; one universal node package accepted by the Owner for every registered node');
 insert into clued_private.owner_grant_actions(action,doors,title,risk,auto_approvable) values
-  ('fleet.accept',array['fleet-accept'],'接受通用节点包（版本与哈希见范围）：全部登记节点原地升级，当班节点升级时 CI 暂停几分钟','high',false);
+  ('fleet.accept',array['fleet-accept'],'接受通用节点包（版本与哈希见范围）：全部登记节点原地升级，当班节点升级时 CI 暂停几分钟。拒绝即这个包不要了，此包不再询问，要接受须出新版本；只是先不接受就不点，请求 24 小时后过期可重开','high',false);
 alter table clued_private.owner_grant_actions drop constraint owner_grant_actions_auto_approvable_check;
 alter table clued_private.owner_grant_actions add constraint owner_grant_actions_auto_approvable_check
   check (not auto_approvable or action not in ('connection.permission','fleet.accept'));
@@ -208,12 +212,14 @@ begin
   if found and v_row.archive_sha256=v_parts[3] and v_row.request_sha256=v_parts[4] then
     return v_base||jsonb_build_object('status','accepted','grant_id',v_row.grant_id,'receipt_id',v_row.receipt_id,
       'accepted_at',v_row.accepted_at,
-      -- Each node exactly what rollout/fleet/accept-door.mjs readFleet uses: name, reported Source, paused.
+      -- The fleet is the in-service nodes (active or draining, as the gateway and the duty holder count them;
+      -- a registered node not yet approved is not in it). Each node exactly what rollout/fleet/accept-door.mjs
+      -- readFleet uses: name, reported Source, paused.
       'nodes',coalesce((select jsonb_agg(jsonb_build_object('name',n.name,
           'source_sha256',l.reported_source_sha256,
           'paused',coalesce(l.reported_state in ('PAUSED','INTAKE_PAUSED'),false)) order by n.name,n.created_at,n.node_id)
         from clued_private.ci_nodes_v1 n left join clued_private.ci_node_liveness_v1 l on l.node_id=n.node_id
-        where n.user_id=p_user and n.state not in ('retired','revoked')),'[]'::jsonb));
+        where n.user_id=p_user and n.state in ('active','draining')),'[]'::jsonb));
   end if;
   if found then
     -- This version is accepted as another package or request: this one never will be.
@@ -266,7 +272,9 @@ begin
     raise exception 'fleet_accept_door_resources_invalid' using errcode='22023'; end if;
   perform clued_private.owner_grant_lock_v1(v_identity.user_id);
   v_answer:=clued_private.fleet_accept_answer_v1(v_identity.user_id,v_anchor.id,v_resource);
-  if v_answer->>'status'='accepted' then return v_answer; end if;
+  -- Accepted, or rejected by the Owner: both final. The Owner's no is never asked again for this
+  -- package; accepting it takes a new version. Only none and expired open a request.
+  if v_answer->>'status' in ('accepted','rejected') then return v_answer; end if;
   if v_answer ? 'conflict' then
     raise exception 'fleet_accept_version_already_accepted' using errcode='22023'; end if;
   -- Ask the Owner: the pending request for this resource, or a new one. Never

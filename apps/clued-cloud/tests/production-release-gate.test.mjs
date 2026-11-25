@@ -651,6 +651,11 @@ test('the fleet-accept script lets only a checked request of this repository on 
   for (const status of ['none', 'rejected', 'expired']) {
     assert.equal(fleet.explain({ answerText: JSON.stringify({ ...pending, status }), errorText: '', env: {} }).ok, false, status);
   }
+  // The Owner's no is final: the door replays it and the run says what to do (a new version), not "unreadable".
+  const rejected = fleet.explain({ answerText: JSON.stringify({ ...pending, status: 'rejected', confirm_path: undefined }), errorText: '', env: {} });
+  assert.deepEqual([rejected.ok, rejected.status, rejected.confirm_url], [false, 'rejected', null]);
+  assert.match(rejected.reason, /Owner 已拒绝.*不再询问.*新版本/);
+  assert.match(fleet.renderSummary(rejected), /Owner 已拒绝/);
   // The command line: exit codes, and no credential read by the input side.
   const out = []; const err = [];
   const io = { stdin: `${JSON.stringify(pending)}\n`, write: (text) => out.push(text), error: (text) => err.push(text) };

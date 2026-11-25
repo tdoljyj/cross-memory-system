@@ -18,13 +18,15 @@ import { GATEWAY_ROLE, assertGatewayCloseoutBoundary, setWorkerGatewayCaller, wo
 // approval writes the accepted row (one per version) in its own transaction, and anyone reads the
 // result anonymously. The automatic approval never approves it, the Owner cannot grant it without the
 // door's request, another request for an accepted version is refused, and a rejected request reads
-// rejected.
+// rejected for good: the door never asks the Owner about that package again.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATION = '20261125100000_fleet_accept_door_v1.sql';
 const ACTION = 'fleet.accept';
 const REPO = 'tdoljyj/cross-memory-system';
-const TITLE = '接受通用节点包（版本与哈希见范围）：全部登记节点原地升级，当班节点升级时 CI 暂停几分钟';
+// The meaning of "reject" is on the page the Owner clicks (plan PLAN-accept-align-open-20261125 section 0): no is final.
+const TITLE = '接受通用节点包（版本与哈希见范围）：全部登记节点原地升级，当班节点升级时 CI 暂停几分钟。'
+  + '拒绝即这个包不要了，此包不再询问，要接受须出新版本；只是先不接受就不点，请求 24 小时后过期可重开';
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 // The sign-in time in the session claims: a constant (grants need no recent sign-in, Decision 667f588b).
@@ -89,7 +91,7 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
       ids[name] = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
         values($1,'synthetic',$2,$3,$4,array['*']) returning id`, [user, name, tokens[name], scopes])).rows[0].id;
     };
-    for (const name of ['reader', 'node-a', 'node-b']) await bind(name, ['context:read']);
+    for (const name of ['reader', 'node-a', 'node-b', 'node-c']) await bind(name, ['context:read']);
     await bind('old-release', ['context:write']);
     await bind('claude', ['context:read', 'context:write']);
     await bind('foreign', ['context:read'], stranger);
@@ -151,6 +153,7 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
     const R1 = resource('18.0.0', 'a', 'b');
     const R1_OTHER_REQUEST = resource('18.0.0', 'a', 'e');
     const V19 = resource('19.0.0-rc.1+build_2', 'c', 'd');
+    const V20 = resource('20.0.0', '1', '2');
 
     // --- Before the release identity is registered the door and the read answer nothing. ---
     await fails(ask(R1), '55000', /release_door_identity_missing/);
@@ -279,7 +282,8 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
     }
     assert.equal(await grants(), 0);
 
-    // Registered nodes of this account report their Source and state; a retired one is not listed.
+    // The fleet is the in-service nodes (state active or draining, the server's one meaning everywhere): a retired one and
+    // a registered one not yet approved (pending) are not listed.
     const project = uuid();
     await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key) values($1,$2,'Fleet','fleet',$3)`,
       [project, owner, `project:${project}`]);
@@ -298,6 +302,7 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
     await node('turing', 'node-b', 'active', null, 'PAUSED');
     await node('gone', 'reader', 'retired', hex('6'));
     await node('silent', 'claude', 'pending', undefined);
+    await node('leaving', 'node-c', 'draining', hex('5'));
 
     // --- 4. The Owner approves on the page: that transaction writes the accepted row and the use receipt. ---
     const receiptsBefore = (await admin.query('select count(*)::int n from public.clued_audit_receipts')).rows[0].n;
@@ -329,7 +334,7 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
     // The whole answer, key for key, and each node exactly what accept-door.mjs readFleet uses: its name, its reported Source, paused.
     assert.deepEqual(Object.keys(result).sort(), ['accepted_at', 'action', 'archive_sha256', 'grant_id', 'nodes', 'receipt_id', 'repository',
       'request_sha256', 'resources', 'status', 'version']);
-    assert.deepEqual(result.nodes, [{ name: 'desk', source_sha256: hex('5'), paused: false }, { name: 'silent', source_sha256: null, paused: false },
+    assert.deepEqual(result.nodes, [{ name: 'desk', source_sha256: hex('5'), paused: false }, { name: 'leaving', source_sha256: hex('5'), paused: false },
       { name: 'turing', source_sha256: null, paused: true }]);
     // The door replays the same answer and writes nothing, also after the Owner revokes the used grant.
     const written = async () => [await requests(), await grants(), await count('fleet_accepted_v1')];
@@ -343,7 +348,7 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
     await admin.query(`update clued_private.ci_node_liveness_v1 set reported_source_sha256=$1,reported_state='NORMAL'
       where reported_source_sha256 is null`, [hex('5')]);
     assert.deepEqual((await read(R1)).nodes.map((n) => [n.name, n.source_sha256, n.paused]),
-      [['desk', hex('5'), false], ['silent', null, false], ['turing', hex('5'), false]]);
+      [['desk', hex('5'), false], ['leaving', hex('5'), false], ['turing', hex('5'), false]]);
 
     // --- 5. The same version under another request or archive: refused, nothing opened, never approved. ---
     for (const res of [R1_OTHER_REQUEST, resource('18.0.0', 'f', 'b')]) {
@@ -364,7 +369,7 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
         /owner_grants_v1_fleet_accept_check/, change);
     }
 
-    // --- 6. Rejected: it reads rejected and nothing is accepted. Asking again opens a new request. ---
+    // --- 6. Rejected is final: it reads rejected, nothing is accepted, and asking again replays rejected and opens nothing. ---
     const toReject = await ask(V19);
     assert.equal(toReject.status, 'pending');
     committed(await native('clued_owner_request_reject_v1', { request_id: toReject.request_id }));
@@ -373,21 +378,25 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
       ['rejected', ACTION, [V19], toReject.request_id, hex('d')]);
     assert.equal(result.confirm_path, undefined);
     assert.equal(await count('fleet_accepted_v1', 'version=$1', ['19.0.0-rc.1+build_2']), 0);
-    const again = await ask(V19);
-    assert.equal(again.status, 'pending');
-    assert.notEqual(again.request_id, toReject.request_id);
-    // Expired: it reads expired; asking again opens a new request, which the Owner can accept.
+    const opened = await requests();
+    for (let i = 0; i < 2; i += 1) assert.deepEqual(await ask(V19), result, 'the door replays the Owner\'s no');
+    assert.equal(await requests(), opened, 'asking again after the Owner rejected opens no request');
+    assert.deepEqual(await read(V19), result);
+    // Expired (a version never rejected): it reads expired; asking again opens a new request, which the Owner can accept.
+    const lapsed = await ask(V20);
+    assert.equal(lapsed.status, 'pending');
     await admin.query(`update clued_private.owner_requests_v1 set expires_at=greatest(created_at+interval '1 millisecond',clock_timestamp())
-      where id=$1`, [again.request_id]);
-    result = await read(V19);
-    assert.deepEqual([result.status, result.request_id, result.request_sha256], ['expired', again.request_id, hex('d')]);
-    const reopened = await ask(V19);
+      where id=$1`, [lapsed.request_id]);
+    result = await read(V20);
+    assert.deepEqual([result.status, result.request_id, result.request_sha256], ['expired', lapsed.request_id, hex('2')]);
+    const reopened = await ask(V20);
     assert.equal(reopened.status, 'pending');
-    assert.notEqual(reopened.request_id, again.request_id);
+    assert.notEqual(reopened.request_id, lapsed.request_id);
     committed(await approve(reopened.request_id));
-    result = await read(V19);
-    assert.deepEqual([result.status, result.version, result.request_sha256], ['accepted', '19.0.0-rc.1+build_2', hex('d')]);
+    result = await read(V20);
+    assert.deepEqual([result.status, result.version, result.request_sha256], ['accepted', '20.0.0', hex('2')]);
     assert.equal(await count('fleet_accepted_v1'), 2);
+    assert.equal((await read(V19)).status, 'rejected');
 
     // --- The surface: one more anonymous definer RPC (the read), named in the boundary fixture; nothing else. ---
     await assertGatewayCloseoutBoundary(admin);

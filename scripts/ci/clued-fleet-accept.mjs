@@ -175,6 +175,13 @@ export function explain({ answerText, errorText, env }) {
     result.reason = "这个包已经被接受，没有再开请求。";
     return result;
   }
+  if (answer && answer.status === "rejected") {
+    // The Owner's no is final; the door replays it and never opens another request for this package.
+    result.status = "rejected";
+    result.request_id = typeof answer.request_id === "string" ? answer.request_id : null;
+    result.reason = "Owner 已拒绝这个包：此包不再询问，没有开出请求。要接受须出新版本。";
+    return result;
+  }
   const text = String(errorText ?? "");
   for (const [pattern, say] of REFUSALS) {
     const match = text.match(pattern);
