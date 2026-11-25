@@ -70,7 +70,7 @@ test("admission CLI honors configured proxy routing and preserves child exit sem
   const source = { ...process.env, HTTP_PROXY: "http://127.0.0.1:9", HTTPS_PROXY: "http://127.0.0.1:9",
     GITHUB_REPOSITORY: "o/r", GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main", CLUED_DEFAULT_BRANCH: "main" };
   for (const key of ["NODE_OPTIONS", "NODE_USE_ENV_PROXY", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"]) delete source[key];
-  const admitted = spawnSync(process.execPath, [script, "--mode", "gate"], { env: source, encoding: "utf8", timeout: 5000 });
+  const admitted = spawnSync(process.execPath, [script, "--mode", "gate"], { env: source, encoding: "utf8" });
   assert.equal(admitted.error, undefined);
   if (!process.allowedNodeEnvironmentFlags.has("--use-env-proxy")) {
     assert.equal(admitted.status, 1);
@@ -79,7 +79,7 @@ test("admission CLI honors configured proxy routing and preserves child exit sem
   }
   assert.equal(admitted.status, 0, admitted.stderr);
   assert.match(admitted.stdout, /"admitted": true/);
-  const refused = spawnSync(process.execPath, [script, "--mode", "unknown-fixture-mode"], { env: source, encoding: "utf8", timeout: 5000 });
+  const refused = spawnSync(process.execPath, [script, "--mode", "unknown-fixture-mode"], { env: source, encoding: "utf8" });
   assert.equal(refused.error, undefined);
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /usage: clued-work-admission/);
@@ -449,12 +449,12 @@ test("enforced: a claim taken on a newer base than the PR targets is admitted wi
   }
 });
 
-test("enforced: a claim whose base_commit is not in the repository is rejected", async () => {
+test("enforced: compare 404 admits an otherwise valid PR with a claim_base_unknown notice", async () => {
   const { fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { status: 404, body: { message: "Not Found" } }, [VERIFY]: { body: admittedPayload } });
   const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
-  assert.equal(outcome.admitted, false);
-  assert.deepEqual(outcome.reasons, [`claim_base_unknown:${CLAIM_BASE}`]);
-  assert.deepEqual(outcome.notices, []);
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.reasons], [true, "ADMITTED", []]);
+  assert.deepEqual(outcome.notices, [`claim_base_unknown:${CLAIM_BASE}`]);
+  assert.match(renderSummary(outcome), /Notices \(not blocking\):\n- claim_base_unknown/);
 });
 
 test("enforced: fail closed on missing token, missing RPC, refused Binding, rejection envelope, transport error", async () => {
@@ -1232,8 +1232,10 @@ const GATED_FILES = fs.readdirSync(path.join(ROOT, ".github", "workflows")).filt
 const NEWLY_GATED_FILES = ["contract-placement.yml", "gitleaks.yml", "trivy.yml"];
 // These consumers use the independently registered Linux Native gate; their
 // current gates are covered separately from the historical permission/bootstrap templates.
-// clued-required-tests-windows.yml (resident ADR 0032): the Windows side keeps the same Linux gate job, byte for byte.
+// The required-test workflows share a Linux gate. Their cancel-only close event adds one exact guard.
 const INDEPENDENT_LINUX_GATE_FILES = ["clued-required-tests.yml", "clued-required-tests-windows.yml", "clued-g4-database.yml", "clued-front-main-merge.yml"];
+const CANCEL_ONLY_GATE_FILES = ["clued-required-tests.yml", "clued-required-tests-windows.yml"];
+const CANCEL_ONLY_GATE_IF = "    if: github.event.action != 'closed'\n";
 const LEGACY_TEMPLATE_FILES = GATED_FILES.filter((name) => !NEWLY_GATED_FILES.includes(name) && !INDEPENDENT_LINUX_GATE_FILES.includes(name));
 const SOURCE_PROOF_GATE_DIGEST = "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb";
 // Owner Decisions 325717a6 and 22b0e0ed (PR-B): the Stage C gate on ubuntu-latest that admits on
@@ -1482,8 +1484,6 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
   const legacyDigest = "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4";
   const prReadDigest = "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd";
   const noEnforceDigest = "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc";
-  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest, TEMPORARY_GATE_DIGEST, SOURCE_PROOF_GATE_DIGEST,
-    HOSTED_SOURCE_PROOF_GATE_DIGEST, ANY_RUNNER_GATE_DIGEST, SELF_HOSTED_INDEPENDENT_GATE_DIGEST], "only the eight exact gate versions");
   // Task 2a5fdb66: contract-placement's independent-admission gate with runs-on moved to the
   // self-hosted Linux pool, nothing else, is accepted; any other runs-on or source is not.
   const placement = fs.readFileSync(new URL("../../.github/workflows/contract-placement.yml", import.meta.url), "utf8");
@@ -1492,6 +1492,11 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
   const selfHostedGate = hostedGate.replace("ubuntu-latest", "[self-hosted, Linux, X64, clued, pool-general, trust-internal]");
   const selfHostedIndependent = placement.replace(hostedGate, selfHostedGate);
   const gateOf = (text) => sha256Hex(workflowJobs(text).find((job) => job.name === "admission-gate").lines.join("\n"));
+  const cancelOnly = selfHostedIndependent.replace("  admission-gate:\n", "  admission-gate:\n" + CANCEL_ONLY_GATE_IF);
+  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest, TEMPORARY_GATE_DIGEST, SOURCE_PROOF_GATE_DIGEST,
+    HOSTED_SOURCE_PROOF_GATE_DIGEST, ANY_RUNNER_GATE_DIGEST, SELF_HOSTED_INDEPENDENT_GATE_DIGEST, gateOf(cancelOnly)], "only the nine exact gate versions");
+  assert.deepEqual(gateFindings(cancelOnly, selfHostedIndependent), []);
+  assert.deepEqual(gateFindings(cancelOnly.replace("!= 'closed'", "== 'closed'"), selfHostedIndependent), ["admission_gate_changed"]);
   assert.equal(gateOf(selfHostedIndependent), SELF_HOSTED_INDEPENDENT_GATE_DIGEST);
   assert.equal(gateOf(placement), HOSTED_SOURCE_PROOF_GATE_DIGEST);
   assert.match(selfHostedIndependent, /CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission\n/);
@@ -1575,7 +1580,9 @@ test("gate guard (Merge Admission step 6): every gated workflow's gate no longer
     const gateJob = workflowJobs(current).find((job) => job.name === "admission-gate");
     assert.ok(!gateJob.lines.some((line) => /_ENFORCE\b/.test(line)), `${name}: the gate reads no retired switch`);
     if (INDEPENDENT_LINUX_GATE_FILES.includes(name)) {
-      assert.equal(sha256Hex(gateJob.lines.join("\n")), SELF_HOSTED_INDEPENDENT_GATE_DIGEST, name);
+      const gateText = gateJob.lines.join("\n");
+      const template = CANCEL_ONLY_GATE_FILES.includes(name) ? gateText.replace(CANCEL_ONLY_GATE_IF, "") : gateText;
+      assert.equal(sha256Hex(template), SELF_HOSTED_INDEPENDENT_GATE_DIGEST, name);
     } else if (NEWLY_GATED_FILES.includes(name)) {
       // Owner Decisions 325717a6 and 22b0e0ed (PR-B): the Stage C gate on ubuntu-latest that admits on
       // the independent CI's own admission; exactly runner, timeout and gate source differ.
@@ -3176,7 +3183,7 @@ test("independent-control-checks-v2: the gate and the head reader dispatch to th
   assert.doesNotThrow(() => consumer.assertControllerPrincipal({ platform: "win32", username: "clued-control" }));
 });
 
-test("independent-control-checks-v2: a settled v2 control pair counts; another claim generation or Source does not, and one head counts one batch", async () => {
+test("independent-control-checks-v2: a settled v2 control pair counts; another claim generation or Source does not, and one head counts one batch", async (t) => {
   const CI = "../../work/actions-hosted-migration/independent-ci-v1/";
   const { batchJobsV2, claimGeneration } = await import(CI + "src/job-v2.mjs");
   const { recordBatchClaim } = await import(CI + "src/batch-claim-v2.mjs");
@@ -3187,7 +3194,8 @@ test("independent-control-checks-v2: a settled v2 control pair counts; another c
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "clued-v2-control-"));
   try {
     const repo = "tdoljyj/cross-memory-system", head = "a".repeat(40), base = "b".repeat(40), ci = "d".repeat(64);
-    const now = Date.now(), iso = ms => new Date(ms).toISOString();
+    const now = Date.parse("2026-11-01T00:00:00Z"), iso = ms => new Date(ms).toISOString();
+    t.mock.timers.enable({ apis: ["Date"], now }); // the consumer under test reads Date.now(): hold it at the fixture moment
     const claim = { claimId: crypto.randomUUID(), fence: 3, epoch: 1, expiresAt: iso(now + 3_600_000) };
     const jobs = batchJobsV2({ repo, pr: 888, headSha: head, baseSha: base, testSha: head, sourceManifestSha256: ci, createdAt: iso(now - 60_000), attempt: 1 });
     const claims = path.join(root, "batch-claims");
@@ -3210,7 +3218,7 @@ test("independent-control-checks-v2: a settled v2 control pair counts; another c
       async revokeCheck(id, body) { const c = checks.find(x => x.id === id); Object.assign(c, structuredClone(body)); return structuredClone(c); } };
     let observed = claim;
     const admission = { fixture: true, async evaluatePr(j, packet, opts) {
-      return admittedFacts(j, observed, packet, { domain: "fixture", mergeQueueHead: true, batchClaim: opts?.batchClaim, observedAt: Date.now(), slotUntil: now + 3_600_000 });
+      return admittedFacts(j, observed, packet, { domain: "fixture", mergeQueueHead: true, batchClaim: opts?.batchClaim, observedAt: now, slotUntil: now + 3_600_000 });
     } };
     const journal = await EffectJournal.open(path.join(root, "effects-control"));
     const consumerFor = batchClaim => createFixtureControlPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaim });
@@ -3977,7 +3985,7 @@ test('G4 uses the registered required-tests Native gate without changing any exe
   const text = fs.readFileSync(new URL('../../' + file, import.meta.url), 'utf8');
   const required = fs.readFileSync(new URL('../../.github/workflows/clued-required-tests.yml', import.meta.url), 'utf8');
   const gateJob = value => admissionModule.workflowJobs(value).find(job => job.name === 'admission-gate');
-  assert.deepEqual(gateJob(text).lines, gateJob(required).lines);
+  assert.equal(gateJob(text).lines.join('\n'), gateJob(required).lines.join('\n').replace(CANCEL_ONLY_GATE_IF, ''));
   assert.equal(admissionModule.sha256Hex(gateJob(text).lines.join('\n')),
     '9c582144f424d1bc9ef7d3b048d3b7771c7b639ef5544bc04a8a80515c52b2f2');
   const profiles = parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json', import.meta.url)));

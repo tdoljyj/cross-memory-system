@@ -74,7 +74,9 @@ test('托管每个跑 ci-required-selection --run* 的步骤都在 train-base �
 // 影子对比要比的是同一选择：托管的 --check 与自托管 clued-required-tests.yml 逐字同参数（--check 带 --root 会多选候选自加的套件）。
 test('选择套件的 --check 参数与自托管一致', () => {
   const selfHosted = readFileSync(new URL('../../.github/workflows/clued-required-tests.yml', import.meta.url), 'utf8');
-  const checks = source => [...source.matchAll(/--check [^"'`;|&\n]*/g)].map(m => m[0].trim()).sort();
+  // Trivy 的 sha256sum 也使用 --check；这里只比较选择器的调用。
+  const invocation = /\bnode (?:[^\s"']*ci-required-selection\.mjs|"\$selector") (--check [^"'`;|&\n]*)/g;
+  const checks = source => [...source.matchAll(invocation)].map(m => m[1].trim()).sort();
   assert.deepEqual(checks(text), checks(selfHosted));
 });
 
@@ -369,9 +371,11 @@ function staleBaseRun(headFiles) {
     const origin = path.join(tmp, 'origin');
     mkdirSync(origin);
     git(origin, 'init', '-q', '-b', 'main');
-    const A = commit(origin, { 'src/a.txt': 'a\n' }, 'A');
+    const root = fileURLToPath(new URL('../../', import.meta.url));
+    const policy = readFileSync(path.join(root, '.gitleaks.toml'), 'utf8');
+    const A = commit(origin, { '.gitleaks.toml': policy, 'src/a.txt': 'a\n' }, 'A');
     git(origin, 'checkout', '-q', '-b', 'work');
-    const H = commit(origin, headFiles, 'H');
+    const H = commit(origin, { '.gitleaks.toml': `${policy}\n# candidate change\n`, ...headFiles }, 'H');
     git(origin, 'checkout', '-q', 'main');
     const B = commit(origin, { 'src/main.txt': 'main moves\n' }, 'B');
     const ws = path.join(tmp, 'ws');
@@ -384,8 +388,6 @@ function staleBaseRun(headFiles) {
     git(candidate, 'checkout', '-q', '--detach', B);
     git(candidate, 'merge', '-q', '--no-ff', '--no-edit', H);
     const M = git(candidate, 'rev-parse', 'HEAD');
-    const root = fileURLToPath(new URL('../../', import.meta.url));
-    copyFileSync(path.join(root, '.gitleaks.toml'), path.join(ws, 'trusted', '.gitleaks.toml'));
     copyFileSync(path.join(root, 'scripts', 'ci', 'gitleaks-range.sh'), path.join(ws, 'trusted', 'scripts', 'ci', 'gitleaks-range.sh'));
     const bin = path.join(tmp, 'bin');
     mkdirSync(bin);
@@ -400,7 +402,7 @@ function staleBaseRun(headFiles) {
     const shared = { ...env, MSYS_NO_PATHCONV: '1', GITHUB_WORKSPACE: fwd(ws), RUNNER_TEMP: fwd(temp), GITHUB_SHA: M,
       GITHUB_OUTPUT: fwd(output), PATH: `${bin}${path.delimiter}${process.env.PATH}` };
     const run = (script, cwd, extra) => {
-      const r = spawnSync(BASH, ['-e', '-c', script], { cwd, encoding: 'utf8', env: { ...shared, ...extra }, timeout: 240000 });
+      const r = spawnSync(BASH, ['-e', '-c', script], { cwd, encoding: 'utf8', env: { ...shared, ...extra } });
       return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
     };
     const block = jobs(text).get('gitleaks');
@@ -410,8 +412,9 @@ function staleBaseRun(headFiles) {
     assert.equal(r.code, 0, r.out);
     const out = Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(l => l.split('=')));
     assert.deepEqual(out, { base: A, head: H });
-    r = run(copyStep.run, ws, { BASE: A, HEAD: H });
+    r = run(copyStep.run, ws, { BASE: A, HEAD: H, TRUSTED_BASE_SHA: A });
     assert.equal(r.code, 0, r.out);
+    assert.equal(readFileSync(path.join(temp, 'clued-gitleaks', 'repo', '.gitleaks.toml'), 'utf8'), policy);
     return run(scanStep.run, ws, { BASE: A, HEAD: H });
   } finally {
     rmSync(tmp, { recursive: true, force: true });

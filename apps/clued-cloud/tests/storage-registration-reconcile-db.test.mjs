@@ -1,16 +1,15 @@
 // Real disposable PostgreSQL. Synthetic identities/time/Drive transport only;
 // these tests never query production, change a real grant or mutate Google.
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import net from 'node:net';
 import crypto from 'node:crypto';
 import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import {createStorageCredentialVault} from '../worker/storage-credential-vault.ts';
 import {scopeString} from '../worker/storage-google-scopes.ts';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
@@ -20,16 +19,14 @@ import {createGoogleDriveMetadataApi} from '../../../kernel/host/resource-center
 import {createGoogleDriveRegistrationRecovery} from '../../../kernel/host/resource-center-google-drive-registration-recovery.mjs';
 const cloud=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const uuid=()=>crypto.randomUUID();
-async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));
- const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 
 test('registration reconciliation: actual program authority, independent of the original Agent',{timeout:240000},async t=>{
  const parent=await fs.realpath(os.tmpdir()),directory=await fs.mkdtemp(path.join(parent,'kooyumi-registration-db-'));
- const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:uuid(),port:await port(),persistent:true,
+ const server=newCluster({databaseDir:directory,user:'postgres',password:uuid(),persistent:true,
   initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],onLog(){},onError(){}});
  let db,native,started=false;
  try{
-  await server.initialise();await server.start();started=true;db=server.getPgClient();await db.connect();
+  await startCluster(server);started=true;db=server.getPgClient();await db.connect();
   await db.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;
    create role authenticator nologin noinherit;create schema auth;create schema extensions;create extension pgcrypto with schema extensions;
    create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz);

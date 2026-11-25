@@ -8,7 +8,7 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
+  FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SELECTOR_IMPORTS, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
   knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, resolveCommand, executeSuite, selectSuites,
   unitTestFiles,
   PLATFORMS, SUITE_PLATFORMS, hostPlatform, runSelected, suitePlatforms,
@@ -16,12 +16,20 @@ import {
 import * as selection from './ci-required-selection.mjs';
 import reporterStream, { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
 
-// What a copy of the selector needs beside it: the modules it imports (test-env since Task 2ee162c2, the real-clock scan,
-// guard and their shared imports since Task 11092b8b).
-const SELECTOR_IMPORTS = ['test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'test-clock-imports.mjs'];
-
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
+
+test('U6 真时钟欠账清单和许可清单分别触发全选', () => {
+  for (const file of ['config/test-clock-debt.txt', 'scripts/ci/test-clock-allow.json']) {
+    assert.ok(selectSuites('migration-verify', [file]).suites.includes('production-schema'), file);
+    assert.deepEqual(selectSuites('ci-suites', [file]).suites, Object.keys(SUITES['ci-suites']), file);
+  }
+});
+
+function copyToolchain(root) {
+  mkdirSync(path.join(root, 'config'), { recursive: true });
+  copyFileSync(path.join(ROOT, 'config/ci-toolchain.json'), path.join(root, 'config/ci-toolchain.json'));
+}
 
 // Launch the real CLI in separate processes and use a different checkout for
 // each suite. Inject the queue location and short timing budgets.
@@ -358,26 +366,26 @@ test('G3 required-tests exposes pr/head dispatch and keeps all three self-hosted
   }
 });
 
-// S1b (ported from the Codex draft of 11-18, D:/w/tmp/speed-s1b): the trusted checkouts are sparse.
 // Its own import keeps this block apart from the import list other selector changes edit.
 import { KNOWN_FAILURES_PATH } from './ci-required-selection.mjs';
 
-const requiredWorkflowJobs = () => ['clued-required-tests.yml', 'clued-required-tests-windows.yml']
+const requiredWorkflowJobs = (ids = ['clued-cloud-tests', 'ci-suites', 'migration-verify', 'ci-suites-windows']) =>
+  ['clued-required-tests.yml', 'clued-required-tests-windows.yml']
   .flatMap((file) => [...readFileSync(path.join(ROOT, '.github/workflows', file), 'utf8')
     .replaceAll('\r\n', '\n').matchAll(/^  ([a-z][a-z-]+):\n((?:.*\n)*?)(?=^  [a-z][a-z-]+:\n|(?![\s\S]))/gm)]
-    .filter(([, id]) => ['clued-cloud-tests', 'ci-suites', 'migration-verify', 'ci-suites-windows'].includes(id)));
+    .filter(([, id]) => ids.includes(id)));
 
-test('all four trusted checkouts use the same sparse directories and cover their runtime files', () => {
-  const jobs = requiredWorkflowJobs();
-  assert.equal(jobs.length, 4);
+test('all seven trusted exports use the same three directories and cover their runtime files', () => {
+  const jobs = requiredWorkflowJobs(['clued-cloud-tests', 'ci-suites', 'migration-verify', 'gitleaks', 'trivy', 'contract-placement', 'ci-suites-windows']);
+  assert.equal(jobs.length, 7);
   for (const [, id, job] of jobs) {
-    const trusted = /\n      - name: Check out the trusted base[^\n]*\n([\s\S]*?)(?=\n      - )/.exec(job);
-    assert.ok(trusted, `${id}: trusted checkout step`);
-    const checkout = trusted[1];
-    const sparse = /^ {10}sparse-checkout: \|\n((?: {12}[^\n]+(?:\n|$))+)/m.exec(checkout);
-    assert.ok(sparse, `${id}: trusted checkout must declare sparse-checkout`);
-    assert.equal(sparse[1].trimEnd(), '            scripts/ci\n            config\n            .github', `${id}: sparse directory list`);
-    const directories = sparse[1].trim().split(/\s+/);
+    const trusted = /\n      - name: Export the trusted base[^\n]*\n([\s\S]*?)(?=\n      - )/.exec(job);
+    assert.ok(trusted, `${id}: trusted export step`);
+    assert.doesNotMatch(trusted[1], /uses:|\bgit\s+(?:fetch|clone)\b/);
+    assert.match(trusted[1], /GIT_NO_LAZY_FETCH: "1"\n +GIT_NO_REPLACE_OBJECTS: "1"/);
+    const archive = /git -C candidate archive "\$base" -- (.+) \| tar -xf - -C trusted$/m.exec(trusted[1]);
+    assert.equal(archive?.[1], 'scripts/ci config .github', `${id}: archive directory list`);
+    const directories = archive[1].split(' ');
     const action = /uses: \.\/trusted\/([^\s]+)/.exec(job);
     assert.ok(action, `${id}: temporary storage action must come from the trusted tree`);
     const actionFile = `${action[1]}/action.yml`;
@@ -391,7 +399,7 @@ test('all four trusted checkouts use the same sparse directories and cover their
     ];
     for (const file of files) {
       assert.ok(existsSync(path.join(ROOT, file)), `${id}: runtime file ${file} exists`);
-      assert.ok(directories.some((directory) => file.startsWith(`${directory}/`)), `${id}: sparse checkout includes ${file}`);
+      assert.ok(directories.some((directory) => file.startsWith(`${directory}/`)), `${id}: archive includes ${file}`);
     }
   }
 });
@@ -1402,6 +1410,7 @@ function candidateSelector(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const dir = path.join(root, 'scripts/ci');
   mkdirSync(dir, { recursive: true });
+  copyToolchain(root);
   const source = readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8');
   for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
   const change = (id, commands) => writeFileSync(path.join(dir, 'ci-required-selection.mjs'),
@@ -1484,6 +1493,7 @@ test('a command added by a module the candidate selector imports runs although t
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const dir = path.join(root, 'scripts/ci');
     mkdirSync(dir, { recursive: true });
+    copyToolchain(root);
     for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
     writeFileSync(path.join(dir, 'ci-required-selection.mjs'), `${readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8')}
 import { ADDED } from './suite-additions.mjs';
@@ -1516,7 +1526,7 @@ test('a candidate with scripts/ci but no selector fails the suite after its trus
 });
 
 // Gap A review finding 4: a test file added to a trusted command's explicit list runs alone, planned as --run-files plans it,
-// after the trusted command ran as it is.
+// after the trusted command ran as it is. The candidate entry then runs its own whole command.
 test('a test file added to a trusted command list runs alone after the trusted command', (t) => {
   const { root, dir, change } = candidateSelector(t);
   writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), "console.log('baseline executed');\n");
@@ -1526,9 +1536,13 @@ test('a test file added to a trusted command list runs alone after the trusted c
   const run = runCandidate(root);
   assert.equal(run.status, 0, run.stdout + run.stderr);
   assert.deepEqual(groupLines(run.stdout), ['::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter.test.mjs',
-    '::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter-new.test.mjs']);
-  assert.equal(run.stdout.split('baseline executed').length - 1, 1);
-  assert.equal(run.stdout.split('new file executed').length - 1, 1);
+    '::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter-new.test.mjs',
+    '::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter-new.test.mjs scripts/ci/retrigger-counter.test.mjs']);
+  const [firstPass, secondPass] = run.stdout.split('可信入口已通过，开始用候选入口再跑一遍');
+  for (const output of [firstPass, secondPass]) {
+    assert.equal(output.split('baseline executed').length - 1, 1);
+    assert.equal(output.split('new file executed').length - 1, 1);
+  }
 });
 
 test('an added test file runs without the trusted allowance, which still covers the old files; an added switch runs the whole command', (t) => {
@@ -1997,10 +2011,10 @@ test('the Windows job of the workflow selects and runs with the trusted selectio
   for (const label of ['self-hosted', 'Windows', 'trust-internal', 'cap-node24', 'cap-python312']) assert.ok(labels.includes(label), label);
   assert.ok(!labels.includes('Linux') && !/ubuntu|windows-latest/.test(job), 'no Linux route and no GitHub-hosted runner');
   assert.match(job, /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected ci-suites --root candidate\n {10}exit \$LASTEXITCODE\n/);
-  // Two commands: the push baseline (git only, before any trusted code loads) and the selection's own entry point.
+  // Resolve the base, export its trusted files locally, and run the selection's own entry point.
   assert.deepEqual([...job.matchAll(/\n {6}- name: (.+)\n(?:(?! {6}- ).*\n)*? {8}run: /g)].map((m) => m[1]),
-    ['Resolve push baseline before loading trusted commands', 'Select and run the suites declared for Windows'],
-    'nothing else can pass or fail the job');
+    ['Resolve push baseline before loading trusted commands', 'Export the trusted base (selection and commands)',
+      'Select and run the suites declared for Windows'], 'only the trusted selection flow runs');
   assert.doesNotMatch(job, /continue-on-error|setup-node|npm /);
 });
 
@@ -2033,7 +2047,7 @@ test('bors staging, Windows side: T is resolved on main before the trusted selec
   const job = text.slice(text.indexOf('\n  ci-suites-windows:\n') + 1);
   const candidate = job.indexOf('path: candidate');
   const resolver = job.indexOf('id: train-base');
-  const trusted = job.indexOf('path: trusted');
+  const trusted = job.indexOf('name: Export the trusted base');
   assert.ok(candidate > 0 && candidate < resolver && resolver < trusted, 'candidate, then the baseline, then trusted');
   assert.match(job.slice(0, resolver), /fetch-depth: 0/);
   const verification = job.slice(resolver, trusted);
@@ -2042,7 +2056,7 @@ test('bors staging, Windows side: T is resolved on main before the trusted selec
   // with its status.
   assert.match(verification, /git\('show', 'origin\/main:scripts\/ci\/ci-base\.mjs'\)/);
   assert.match(verification, /process\.exitCode = await writeCiBase\(\);"\n {10}exit \$LASTEXITCODE\n/);
-  assert.match(job, /ref: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}\n {10}path: trusted\n/);
+  assert.match(job.slice(trusted), /TRUSTED_REF: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}/);
   // CI_BASE_SHA comes from the GITHUB_ENV train-base writes; a step env would override it.
   assert.doesNotMatch(job, /^ +CI_BASE_SHA:/m);
 });
@@ -2245,8 +2259,9 @@ for (const [file, id] of BASELINE_JOBS) {
 test('in a CI job, --run and --run-selected without a base commit start no command and name CI_BASE_SHA', (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-no-base-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const tools = path.join(dir, 'tools');
-  mkdirSync(tools);
+  const tools = path.join(dir, 'scripts/ci');
+  mkdirSync(tools, { recursive: true });
+  copyToolchain(dir);
   for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(tools, name));
   const tail = `for (const key of Object.keys(SUITES['ci-suites'])) delete SUITES['ci-suites'][key];
 SUITES['ci-suites']['retrigger-counter'] = ['**'];

@@ -10,7 +10,7 @@ const record={config:{scope,repository,sourceManifestSha256:'d'.repeat(64)}};
 const page=(revocations=[],publications=[])=>({status:'ok',revocations,publications,next_outbox_cursor:null,next_publication_cursor:null});
 function physicalFixture(item){
  const job=makeJobV2({repo:repository,pr:937,headSha:head,baseSha:'b'.repeat(40),testSha:head,sourceManifestSha256:record.config.sourceManifestSha256,
-  role:'gitleaks',attempt:1,createdAt:new Date().toISOString()});
+  role:'gitleaks',attempt:1,createdAt:'2026-11-01T00:00:00.000Z'});
  const identity=makeIndependentPublicationIdentity({job,claim:{claim_id:item.claim_id,fence:1,execution_epoch:3},controller_id:randomUUID()});
  const nonce='a'.repeat(32),sid='S-1-5-21-1-2-3-1015',requestId=randomUUID(),bytes=v=>Buffer.from(canonical(v));
  const plan={contract:'clued.independent-ci.fixed-formal-windows-entry/3',enabled:true,stage:3,entryRole:'check-publisher',batchKey:'b'.repeat(64),
@@ -20,7 +20,7 @@ function physicalFixture(item){
  const configSha256=digest(plan),outcome={contract:'clued.independent-ci.entry-outcome/2',nonce,stage:3,entryRole:plan.entryRole,
   status:'BLOCKED',reason:'authorization_changed',sideEffects:0,mayHavePublished:false,jobIds:[job.id]};
  const bundle={requestId,planBytes:bytes(plan),jobsBytes:bytes([job]),outcomeBytes:bytes(outcome),
-  requestBytes:bytes({contract:'clued.independent-ci.swap-broker-request/2',stage:3,nonce,configSha256,deadline:new Date().toISOString()}),
+  requestBytes:bytes({contract:'clued.independent-ci.swap-broker-request/2',stage:3,nonce,configSha256,deadline:'2026-11-01T00:00:00.000Z'}),
   responseBytes:bytes({contract:'clued.independent-ci.swap-broker-response/2',requestId,ok:true,code:null,started:true,startCallIssued:true,
    helperPid:12345,stoppedInTime:true,restored:true,accountUnchanged:true,stableBefore:true,stableAfter:true,configurationConflict:false}),
   receiptBytes:bytes({contract:'clued.independent-ci.windows-formal-entry-receipt/2',nonce,state:'FIXED_CHILD_REFUSED',failure_code:'FIXED_NODE_EXIT_NONZERO',

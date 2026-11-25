@@ -355,7 +355,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 一个无路径过滤的 workflow，GitHub 托管 runner，只做一次 HTTPS 调用 `clued_work_verify`（只读 Binding 放在 GitHub secret）。
 - 输入：PR head SHA、base SHA、变更文件集（`gh api .../files`）、PR body 或最后一个 commit trailer 中的 `Clued-Work-Claim: <claim_id>`。
 - 判定：claim ACTIVE 或 DRAINING 且未过期；holder 不校验 GitHub 身份（都是 Owner），校验 fence 为该 task 当前最大；变更文件集 ⊆ write_set；base_sha 等于或晚于 claim.base_commit。任一不满足 → 失败并写明原因。
-  - **实现（2026-10-02，Owner Decision `36b50981`，Task `d95ee6ea`）**：「base_sha 等于或晚于 claim.base_commit」改为只提示。claim 的 base_commit 比 PR 的 base 新时，检查摘要写一条 `base_behind_claim` 提示，仍放行。原因：base_commit 由 Agent 自报，这条比较拦不住错误的 claim；Codex 在新 main 上重新认领而分支仍基于旧 main 时，#441 因此被拒三次。base_commit 在仓库里找不到（`claim_base_unknown`）仍拒绝。
+  - **实现（Owner Decision `36b50981`，Task `d95ee6ea`、`3576b29c`）**：claim 的 base_commit 比 PR 的 base 新时，检查摘要写 `base_behind_claim` 提示。GitHub compare 返回 404 时写 `claim_base_unknown` 提示。两条提示均不改变准入结论。base_commit 由 Agent 自报，这项比较无法识别认领错配。
 - **Owner 在 GitHub 网页直接改文件开的 PR**（Owner Decision `36b50981`）：同样需要 claim，没有豁免。Agent 与 Owner 共用一个 GitHub 账号，CI 分不出是谁改的，豁免会被 Agent 用来绕过。做法：网页改动前让任一 Agent 为该 Task 建 claim，把 `Clued-Work-Claim: <claim_id>` 贴进 PR 正文；改正文会重跑检查。
 - 范围扩张（变更文件超出 write_set）→ 失败，提示先 `clued_work_renew` 携带扩大的 write_set（扩大时重新做冲突判定）。
 - 加入 ruleset required 列表后，这条和 gitleaks、trivy 一样是无过滤 check，不会出现"等不到"的问题。

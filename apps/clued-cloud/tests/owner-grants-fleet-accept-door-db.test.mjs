@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { GATEWAY_ROLE, assertGatewayCloseoutBoundary, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
@@ -37,18 +36,11 @@ const session = (sub, sessionId = 'sess-main', extra = {}) =>
 const hex = (c) => c.repeat(64);
 const resource = (version, tar, request, repo = REPO) => `fleet-node:${repo}/${version}/${hex(tar)}/${hex(request)}`;
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
-test('owner grants: fleet.accept is asked by the release login, given only on the page, and recorded by the approval', async () => {
+test('owner grants: fleet.accept is asked by the release login, given only on the page, and recorded by the approval', async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-fleet-accept-door-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: hash(), 
     persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
@@ -59,8 +51,7 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
     return client;
   };
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = await connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;
@@ -282,8 +273,6 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
     }
     assert.equal(await grants(), 0);
 
-    // The fleet is the in-service nodes (state active or draining, the server's one meaning everywhere): a retired one and
-    // a registered one not yet approved (pending) are not listed.
     const project = uuid();
     await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key) values($1,$2,'Fleet','fleet',$3)`,
       [project, owner, `project:${project}`]);
@@ -298,11 +287,9 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
           values($1,$2,clock_timestamp(),$3,1,$5,true,$4)`, [id, owner, ids[binding], source, reported]);
       }
     };
-    await node('desk', 'node-a', 'active', hex('5'));
-    await node('turing', 'node-b', 'active', null, 'PAUSED');
+    await node('desk', 'node-a', 'pending', hex('5'));
+    await node('turing', 'node-b', 'pending', hex('7'), 'PAUSED');
     await node('gone', 'reader', 'retired', hex('6'));
-    await node('silent', 'claude', 'pending', undefined);
-    await node('leaving', 'node-c', 'draining', hex('5'));
 
     // --- 4. The Owner approves on the page: that transaction writes the accepted row and the use receipt. ---
     const receiptsBefore = (await admin.query('select count(*)::int n from public.clued_audit_receipts')).rows[0].n;
@@ -325,6 +312,21 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
     // Two receipts: the grant and its use.
     assert.equal((await admin.query('select count(*)::int n from public.clued_audit_receipts')).rows[0].n, receiptsBefore + 2);
 
+    await t.test('已接受版本的匿名查询列出两台待批准节点，排除已退役节点', async () => {
+      const accepted = await read(R1);
+      assert.equal(accepted.status, 'accepted');
+      assert.deepEqual(accepted.nodes, [
+        { name: 'desk', source_sha256: hex('5'), paused: false },
+        { name: 'turing', source_sha256: hex('7'), paused: true },
+      ]);
+    });
+
+    await admin.query("update clued_private.ci_nodes_v1 set state='active' where user_id=$1 and state='pending'", [owner]);
+    await admin.query('update clued_private.ci_node_liveness_v1 set reported_source_sha256=null where last_sender_binding_id=$1',
+      [ids['node-b']]);
+    await node('silent', 'claude', 'pending', undefined);
+    await node('leaving', 'node-c', 'draining', hex('5'));
+
     // The anonymous read answers accepted: the grant, the receipt, the time of the approval, the nodes.
     result = await read(R1);
     assert.deepEqual([result.status, result.action, result.resources, result.grant_id, result.receipt_id],
@@ -335,7 +337,7 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
     assert.deepEqual(Object.keys(result).sort(), ['accepted_at', 'action', 'archive_sha256', 'grant_id', 'nodes', 'receipt_id', 'repository',
       'request_sha256', 'resources', 'status', 'version']);
     assert.deepEqual(result.nodes, [{ name: 'desk', source_sha256: hex('5'), paused: false }, { name: 'leaving', source_sha256: hex('5'), paused: false },
-      { name: 'turing', source_sha256: null, paused: true }]);
+      { name: 'silent', source_sha256: null, paused: false }, { name: 'turing', source_sha256: null, paused: true }]);
     // The door replays the same answer and writes nothing, also after the Owner revokes the used grant.
     const written = async () => [await requests(), await grants(), await count('fleet_accepted_v1')];
     const before = await written();
@@ -348,7 +350,9 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
     await admin.query(`update clued_private.ci_node_liveness_v1 set reported_source_sha256=$1,reported_state='NORMAL'
       where reported_source_sha256 is null`, [hex('5')]);
     assert.deepEqual((await read(R1)).nodes.map((n) => [n.name, n.source_sha256, n.paused]),
-      [['desk', hex('5'), false], ['leaving', hex('5'), false], ['turing', hex('5'), false]]);
+      [['desk', hex('5'), false], ['leaving', hex('5'), false], ['silent', null, false], ['turing', hex('5'), false]]);
+    await admin.query("update clued_private.ci_nodes_v1 set state='revoked',revoked_at=clock_timestamp() where binding_id=$1", [ids['node-a']]);
+    assert.deepEqual((await read(R1)).nodes.map((n) => n.name), ['leaving', 'silent', 'turing']);
 
     // --- 5. The same version under another request or archive: refused, nothing opened, never approved. ---
     for (const res of [R1_OTHER_REQUEST, resource('18.0.0', 'f', 'b')]) {

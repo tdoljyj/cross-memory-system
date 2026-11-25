@@ -48,9 +48,10 @@
 // STALLED_AFTER_MS (§3.11 item 3; nameStalled below). The resident's own page status that
 // it does not propose a head (heldPartOf: "落后 main N 个提交：轮到时机器人合入 main…")
 // is neither under way nor activity there (PLAN-unadmitted-silent-20261125 §2.2).
-// With a front it does nothing. Without one it brings the candidate whose
-// auto-merge was enabled first (ties: the lower number) exactly as a named run
-// does, one per run. There is no hold (PLAN-train-held-deadlock-20261125 §2.1: the hold
+// Normally a front under way holds the train. In scaffold, an earlier candidate whose hosted
+// checks passed can go first, including when the separate admission check is still missing
+// after two updates. With no front, bring the earliest eligible candidate (ties: the lower
+// number), one per run, as in a named run. There is no hold (PLAN-train-held-deadlock-20261125 §2.1: the hold
 // of FABLE-scaffold-s5-pre §2 counted heads with no way out, and two of them stopped
 // the train until someone stepped in): a run brings nobody only with a front under way,
 // frozen, GitHub unread, or update-branch refusing every candidate; each of those ends by
@@ -162,19 +163,19 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
     const run = newest(check), state = stateOf(check);
     return (run && FAILED.has(run.conclusion) && !withdrawn(run)) || state === 'failure' || state === 'error';
   }).map(check => check.context))];
-  const green = required.every(check => {
+  const isGreen = check => {
     const run = newest(check);
     return (run?.status === 'completed' && GREEN.has(run.conclusion) && !withdrawn(run)) || stateOf(check) === 'success';
-  });
+  };
+  const green = required.every(isGreen);
+  const hosted = required.filter(({ context, integration_id }) => context.startsWith(HOSTED_CHECK_PREFIX) && integration_id === GITHUB_ACTIONS_APP_ID);
+  const scaffoldReady = env.CLUED_FRONT_MERGE_PHASE === SCAFFOLD_PHASE && hosted.length > 0 && hosted.every(isGreen) && failed.length === 0;
   const unfinished = runs.filter(run => run.status !== 'completed').length
     + statuses.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED) && !residentHeld(status)).length;
   const by = (name, app) => succeeded(runs, name, app);
   // What each required check that is not green last did, as wait-pr's exit 5 lists it: a job GitHub skipped keeps its unexpanded
   // name ("... && 'ci-suites' || 'ci-suites-skipped'"), so the required name never appears: that is "job-skipped".
-  const missing = required.filter(check => {
-    const run = newest(check);
-    return !((run?.status === 'completed' && GREEN.has(run.conclusion) && !withdrawn(run)) || stateOf(check) === 'success');
-  }).map(check => {
+  const missing = required.filter(check => !isGreen(check)).map(check => {
     const run = newest(check), state = stateOf(check);
     const job = run ? null : newest({ context: `'${check.context}' ||`, integration_id: check.integration_id, contains: true });
     const last = run ? (run.status !== 'completed' ? run.status : withdrawn(run) ? 'withdrawn' : String(run.conclusion ?? 'none'))
@@ -183,7 +184,7 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
   });
   const times = [...runs.map(run => run.completed_at ?? run.started_at), ...statuses.filter(status => !residentHeld(status)).map(status => status.updated_at ?? status.created_at)]
     .map(t => Date.parse(t ?? '')).filter(Number.isFinite);
-  return { failed, green, unfinished, missing, lastActivity: times.length ? Math.max(...times) : 0, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID),
+  return { failed, green, scaffoldReady, unfinished, missing, lastActivity: times.length ? Math.max(...times) : 0, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID),
     admitted: admitters.every(({ context, integration_id }) => by(context, integration_id)) };
 }
 
@@ -248,7 +249,10 @@ const admissionRed = (records, admitters) => records.failed.some(context => admi
 // A head the App brought that has not passed, the admission not failed on it: red on a required check, or not admitted (no answer
 // yet, or never). Main may have changed the red; the admission of the head made from it may come. A head the App brought that is
 // admitted and not red is a candidate as any other.
-const broughtNotPassed = (records, admitters) => records.brought && !admissionRed(records, admitters) && (records.failed.length > 0 || !records.admitted);
+// In scaffold the hosted checks are independent of the admission verdict. A tested head
+// can be refreshed again while admission is missing, since that verdict is for an exact head.
+const broughtNotPassed = (records, admitters) => records.brought && !records.scaffoldReady
+  && !admissionRed(records, admitters) && (records.failed.length > 0 || !records.admitted);
 
 // How many heads in a row, this one first, the App brought up (this one is): its first parents read while each carries the App's
 // kooyumi-main-merge success, at most BROUGHT_IN_A_ROW_MAX deep. The parent is read from the git commit object (parents only, no diff
@@ -318,27 +322,34 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
     if (!Number.isSafeInteger(compare?.behind_by)) throw new Error(`#${member.pr} could not be compared with ${main}`);
     member.behind = compare.behind_by;
   }
+  let front = null;
   for (const member of train.filter(member => member.behind === 0)) {
     const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
     const running = await listedInFull(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${member.head}`, 'workflow_runs', `the workflow runs of ${member.head}`);
     if (records.failed.length) { member.state = `red (${records.failed.join(', ')})`; continue; }
-    member.state = 'front';
-    if (records.green || records.unfinished + running.filter(run => run.status !== 'completed').length > 0) continue;
-    // Quiet and not green.
-    if (now() - await appearedAt({ env, fetchImpl, repository, member }) >= IDLE_AFTER_MS) member.state = 'idle';
+    const active = records.green || records.unfinished > 0 || running.some(run => run.status !== 'completed');
+    const idle = !active && now() - await appearedAt({ env, fetchImpl, repository, member }) >= IDLE_AFTER_MS;
+    member.state = idle ? 'idle' : 'front';
+    if (!idle) front ??= member;
   }
   const candidates = [], last = [];
-  // Without a front every member behind main is read and decided (behindVerdict); a conflict is read too, for its naming.
-  if (!train.some(member => member.state === 'front')) for (const member of train.filter(member => member.behind > 0)) {
+  // In scaffold, consider earlier heads even when a later head contains main and has CI under way.
+  const eligible = !front ? train : env.CLUED_FRONT_MERGE_PHASE === SCAFFOLD_PHASE ? train.slice(0, train.indexOf(front)) : [];
+  for (const member of eligible.filter(member => member.behind > 0)) {
     const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
     const unread = await readInARow({ env, fetchImpl, repository, member, records, admitters });
     const verdict = behindVerdict(member, records, admitters);
     member.state = unread ? `${verdict.state}; 连带次数未读到 (${unread}): not brought again this run` : verdict.state;
-    if (verdict.candidate) (verdict.last ? last : candidates).push(member);
+    if (!verdict.candidate) continue;
+    if (front && !records.scaffoldReady) {
+      member.state += '; waiting for hosted checks or the current front';
+      continue;
+    }
+    (verdict.last ? last : candidates).push(member);
   }
   candidates.push(...last);
   for (const member of train) member.state ??= 'behind';
-  return { main, tip, train, candidates, required, admitters };
+  return { main, tip, train, front, candidates, required, admitters };
 }
 
 // records.inARow of a head behind main the App brought that has not passed (nothing for any other head); the reason when GitHub
@@ -447,8 +458,8 @@ async function runFrontChoice(ports) {
 }
 
 async function decide(ports, chosen, train, done) {
-  const front = chosen.train.find(member => member.state === 'front');
-  if (front) return done('none', `#${front.pr} contains ${chosen.main} and is under way`, train);
+  const { front } = chosen;
+  if (front && !chosen.candidates.length) return done('none', `#${front.pr} contains ${chosen.main} and is under way`, train);
   if (!chosen.candidates.length)
     return done('none', chosen.train.length ? 'no pull request on the train can be brought up now' : 'no open pull request has auto-merge on', train);
   for (const candidate of chosen.candidates) {
@@ -560,6 +571,15 @@ export function renderSummary(r) {
       + r.named.map(n => `- #${n.pr} \`${String(n.head).slice(0, 12)}\`: ${(n.missing ?? []).map(m => `${m.context} ${m.last}`).join(', ') || '?'}; ${n.comment}\n`).join('') : '');
 }
 
+function announceNoMerge(result) {
+  if (result.result === 'merged') return;
+  const members = result.train?.members ?? [];
+  const details = members.slice(0, 10).map(({ pr, behind, state }) => `#${pr} (behind ${behind}): ${state}`);
+  if (members.length > details.length) details.push('see train members in the run summary');
+  const message = [result.reason, ...details].join(' | ').replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
+  console.error(`::notice title=clued-front-main-merge::${result.result}: ${message}`);
+}
+
 // clock: { now, sleep } for tests.
 export async function main(env = process.env, fetchImpl = globalThis.fetch, clock = {}, argv = process.argv.slice(2)) {
   if (argv[0] === '--phase') return phaseMain(env, fetchImpl);
@@ -567,7 +587,7 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch, cloc
   const result = await runFrontMainMerge({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE, input: event.inputs ?? {}, ...clock });
   console.log(JSON.stringify(result, null, 2));
   if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, renderSummary(result));
-  if (!['merged', 'none'].includes(result.result)) console.error(`::notice title=clued-front-main-merge::${result.result}: ${result.reason}`);
+  announceNoMerge(result);
   return result.result === 'error' ? 1 : 0;
 }
 
@@ -578,6 +598,7 @@ async function phaseMain(env, fetchImpl) {
   console.log(off ? `${line} (${off.result}: ${off.reason})` : line);
   if (env.GITHUB_OUTPUT) fs.appendFileSync(env.GITHUB_OUTPUT, `${line}\n`);
   if (env.GITHUB_STEP_SUMMARY && off) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `## clued-front-main-merge-hosted\n\n- not in force, **${off.result}**: ${off.reason}\n`);
+  if (off) announceNoMerge(off);
   return 0;
 }
 

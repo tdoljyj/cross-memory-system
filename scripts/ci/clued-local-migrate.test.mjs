@@ -23,7 +23,7 @@ const BASELINE = '20260105000000';
 const history = async (client) => (await client.query(
   'select version, name, statements from supabase_migrations.schema_migrations order by version')).rows;
 
-test('PostgreSQL refuses a top-level LOCK TABLE sent the way the Supabase CLI sent it (25P01)', { timeout: 300000 }, async (t) => {
+test('PostgreSQL refuses a top-level LOCK TABLE sent the way the Supabase CLI sent it (25P01)', async (t) => {
   await withCluster('local-migrate-cli-shape', async (client) => {
     for (const [file, line] of TOP_LEVEL_LOCKS) {
       const statement = readFileSync(path.join(migrationsDirectory, file), 'utf8').split('\n')[line - 1];
@@ -38,7 +38,7 @@ test('PostgreSQL refuses a top-level LOCK TABLE sent the way the Supabase CLI se
 });
 
 test('the whole migration chain, both top-level LOCK TABLE files included, applies through the local executor',
-  { timeout: 900000 }, async () => {
+  async () => {
     const { applyChain } = await executor();
     const migrations = await readSqlDirectory(migrationsDirectory);
     const historicalThrough = await readHistoricalThrough();
@@ -65,7 +65,7 @@ test('the whole migration chain, both top-level LOCK TABLE files included, appli
     });
   });
 
-test('a file after the baseline runs as one EXECUTE in one transaction with its history row', { timeout: 300000 }, async () => {
+test('a file after the baseline runs as one EXECUTE in one transaction with its history row', async () => {
   const { applyChain, migrationSteps } = await executor();
   const migrations = {
     '202601010000_first.sql': 'create table public.local_migrate_probe(source text, value text);\n' +

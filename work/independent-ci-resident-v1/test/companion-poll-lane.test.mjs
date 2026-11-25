@@ -10,8 +10,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { advisoryLanes, lane } from '../src/companion-main.mjs';
 import { Inbox } from '../src/inbox.mjs';
+import { heldHintOf, PrStatusReporter } from '../src/pr-status.mjs';
 import { Runner } from '../src/runner.mjs';
 import { restPolls } from './gh-rest-stub.mjs';
+import { rulesReply } from './helpers.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const MAIN = 'd'.repeat(40);
@@ -50,17 +52,18 @@ function fakeTime(start) {
 const pull = (number, head) => ({ number, headRefOid: head, baseRefOid: MAIN, isDraft: false, body: '', updatedAt: '2026-11-24T04:00:00Z' });
 
 // The parts of main() the poller and the two lanes are built from, all fakes but the inbox.
-async function companionParts(t, ft, { advisory, retentionStep = async () => ({}), readStatus = async () => ({ queue: { generation: 'g1' }, pending: [] }) } = {}) {
+async function companionParts(t, ft, { advisory, retentionStep = async () => ({}),
+  readStatus = async () => ({ queue: { generation: 'g1' }, pending: [] }), behindBy = 0 } = {}) {
   const dir = await fs.mkdtemp(path.join(process.env.TEMP || os.tmpdir(), 'poll-lane-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const inboxDir = path.join(dir, 'inbox');
   await fs.mkdir(inboxDir);
   const pulls = [];
-  const gh = { calls: [], compares: 0, statuses: [] };
+  const gh = { calls: [], compares: 0, statuses: [], main: MAIN, behindBy };
   const stub = restPolls(async argv => {
-    if (argv.some(a => a.includes('/compare/'))) { gh.compares += 1; return { code: 0, stdout: JSON.stringify({ behind_by: 0, base: MAIN, merge_base: MERGE_BASE }) }; }
+    if (argv.some(a => a.includes('/compare/'))) { gh.compares += 1; return { code: 0, stdout: JSON.stringify({ behind_by: gh.behindBy, base: gh.main, merge_base: MERGE_BASE }) }; }
     return { code: 9, stdout: '' };
-  }, { main: () => MAIN, pulls: () => pulls });
+  }, { main: () => gh.main, pulls: () => pulls });
   const pollRunner = { get busy() { return false; }, run: async (argv, o) => {
     gh.calls.push(argv);
     const r = await stub(argv, o);
@@ -96,6 +99,188 @@ function startLanes(parts, ft) {
   const lanes = specs.map(spec => lane({ ...spec, sleep: ft.sleep, stop: () => stopped }));
   return { poller, lanes, stop: () => { stopped = true; } };
 }
+
+test('H-1: a newly held head is reported within 10 s of the poll with unchanged executor status', async t => {
+  const ft = fakeTime(T0);
+  t.mock.method(Date, 'now', ft.clock);
+  // The first report runs at +9 s, six seconds before the poll lane's next pass.
+  const status = { queue: { generation: 'g1' }, pending: [] };
+  const c = await companionParts(t, ft, { behindBy: 3, readStatus: async () => status,
+    retentionStep: async () => { if (ft.clock() === T0) await ft.sleep(9_000); } });
+  const writes = [];
+  const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: c.parts.ghExe, clock: ft.clock, notifications: false,
+    store: { data: { posted: {}, notified: {} }, save: async () => {} },
+    run: async argv => {
+      if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(['kooyumi-work-admission']);
+      if (argv.includes('POST')) writes.push(argv);
+      return { code: 0, stdout: '{}' };
+    } });
+  const pass = t.mock.method(reporter, 'pass');
+  c.parts.reporter = reporter;
+  const run = startLanes(c.parts, ft);
+  t.after(run.stop);
+  await ft.runUntil(T0 + 9_000);
+  assert.equal(pass.mock.callCount(), 1);
+  assert.equal(writes.length, 0);
+
+  const head = 'a'.repeat(40);
+  c.pulls.push(pull(1306, head));
+  await ft.runUntil(T0 + 15_000);
+  assert.deepEqual(run.poller.lastPass.pulls.map(p => [p.pr, p.headSha, p.hint]), [[1306, head, 'merge-main']]);
+
+  await ft.runUntil(T0 + 25_000);
+  assert.equal(pass.mock.callCount(), 2, 'reporter.pass runs again within 10 s of the poll');
+  assert.equal(writes.length, 1);
+  assert.ok(writes[0].includes(`repos/${REPO}/statuses/${head}`));
+  assert.ok(writes[0].includes('state=pending'));
+  assert.equal(heldHintOf(writes[0].find(a => a.startsWith('description=')).slice('description='.length)), 'merge-main');
+});
+
+test('H-2: a change in behindBy alone waits for the minute report', async t => {
+  const ft = fakeTime(T0);
+  t.mock.method(Date, 'now', ft.clock);
+  const c = await companionParts(t, ft, { behindBy: 3 });
+  c.pulls.push(pull(1307, 'b'.repeat(40)));
+  const { poller, lanes: [poll, report] } = advisoryLanes(c.parts);
+  const pass = t.mock.method(c.parts.reporter, 'pass');
+  await poll.work();
+  await report.work();
+  assert.equal(pass.mock.callCount(), 1);
+  assert.equal(pass.mock.calls[0].arguments[0].pulls[0].behindBy, 3);
+
+  await ft.runUntil(T0 + 15_000);
+  c.gh.main = 'e'.repeat(40);
+  c.gh.behindBy = 4;
+  await poll.work();
+  assert.equal(poller.lastPass.pulls[0].behindBy, 4);
+  await report.work();
+  assert.equal(pass.mock.callCount(), 1);
+
+  await ft.runUntil(T0 + 60_001);
+  await report.work();
+  assert.equal(pass.mock.callCount(), 2);
+  assert.equal(pass.mock.calls[1].arguments[0].pulls[0].behindBy, 4);
+});
+
+test('H-3: failed polls before the first success leave the regular reports running', async t => {
+  const ft = fakeTime(T0);
+  t.mock.method(Date, 'now', ft.clock);
+  const c = await companionParts(t, ft, { behindBy: 3 });
+  const { poller, lanes: [poll, report] } = advisoryLanes(c.parts);
+  const pass = t.mock.method(c.parts.reporter, 'pass');
+  assert.equal(poller.lastPass, null);
+  await report.work();
+  assert.equal(pass.mock.callCount(), 1);
+  assert.deepEqual(pass.mock.calls[0].arguments[0].pulls, []);
+
+  await ft.runUntil(T0 + 15_000);
+  c.pulls.push(pull(1308, 'c'.repeat(40)));
+  const fail = t.mock.method(c.parts.pollRunner, 'run', async () => ({ code: 1, stdout: '' }));
+  await poll.work();
+  assert.ok(fail.mock.callCount() > 0);
+  assert.equal(poller.lastPass, null);
+  await report.work();
+  assert.equal(pass.mock.callCount(), 1);
+
+  await ft.runUntil(T0 + 60_001);
+  await report.work();
+  assert.equal(pass.mock.callCount(), 2);
+  assert.deepEqual(pass.mock.calls[1].arguments[0].pulls, []);
+});
+
+test('H-4: a failed poll and its recovery do not report an unchanged held head again', async t => {
+  const ft = fakeTime(T0);
+  t.mock.method(Date, 'now', ft.clock);
+  const c = await companionParts(t, ft, { behindBy: 3 });
+  c.pulls.push(pull(1309, 'a'.repeat(40)));
+  const { poller, lanes: [poll, report] } = advisoryLanes(c.parts);
+  const pass = t.mock.method(c.parts.reporter, 'pass');
+  await poll.work();
+  await report.work();
+  const lastPass = poller.lastPass;
+  assert.equal(pass.mock.callCount(), 1);
+  assert.equal(pass.mock.calls[0].arguments[0].pulls[0].hint, 'merge-main');
+
+  await ft.runUntil(T0 + 15_000);
+  const fail = t.mock.method(c.parts.pollRunner, 'run', async () => ({ code: 1, stdout: '' }));
+  await poll.work();
+  assert.ok(fail.mock.callCount() > 0);
+  assert.equal(poller.lastPass, lastPass);
+  await report.work();
+  const afterFailure = pass.mock.callCount();
+
+  await ft.runUntil(T0 + 30_000);
+  fail.mock.restore();
+  await poll.work();
+  assert.notEqual(poller.lastPass, lastPass);
+  assert.equal(poller.lastPass.pulls[0].hint, 'merge-main');
+  await report.work();
+  assert.deepEqual([afterFailure, pass.mock.callCount()], [1, 1], 'report counts after failure and recovery');
+});
+
+test('H-5: compare-unavailable and its recovery do not report an unchanged held head again', async t => {
+  const ft = fakeTime(T0);
+  t.mock.method(Date, 'now', ft.clock);
+  const c = await companionParts(t, ft, { behindBy: 3 });
+  c.pulls.push(pull(1310, 'b'.repeat(40)));
+  const { poller, lanes: [poll, report] } = advisoryLanes(c.parts);
+  const pass = t.mock.method(c.parts.reporter, 'pass');
+  await poll.work();
+  await report.work();
+  assert.equal(pass.mock.callCount(), 1);
+  assert.equal(pass.mock.calls[0].arguments[0].pulls[0].hint, 'merge-main');
+
+  await ft.runUntil(T0 + 15_000);
+  c.gh.main = 'e'.repeat(40);
+  const run = c.parts.pollRunner.run;
+  const timeout = t.mock.method(c.parts.pollRunner, 'run', (argv, opts) =>
+    argv.some(a => a.includes('/compare/')) ? { timedOut: true } : run(argv, opts));
+  await poll.work();
+  assert.equal(poller.lastPass.pulls[0].hint, 'compare-unavailable');
+  await report.work();
+  const afterTimeout = pass.mock.callCount();
+
+  await ft.runUntil(T0 + 30_000);
+  timeout.mock.restore();
+  // A new main tip allows a fresh compare within the report window.
+  c.gh.main = 'f'.repeat(40);
+  await poll.work();
+  assert.equal(poller.lastPass.pulls[0].hint, 'merge-main');
+  await report.work();
+  assert.deepEqual([afterTimeout, pass.mock.callCount()], [1, 1], 'report counts after compare timeout and recovery');
+});
+
+test('H-6: an executor status read failure and recovery do not report an unchanged held head again', async t => {
+  const ft = fakeTime(T0);
+  t.mock.method(Date, 'now', ft.clock);
+  const status = { queue: { generation: 'g1' }, pending: [] };
+  let statusReadable = true;
+  const c = await companionParts(t, ft, {
+    behindBy: 3,
+    readStatus: async () => {
+      if (!statusReadable) throw new Error('executor status unreadable');
+      return status;
+    },
+  });
+  c.pulls.push(pull(1311, 'c'.repeat(40)));
+  const { lanes: [poll, report] } = advisoryLanes(c.parts);
+  const pass = t.mock.method(c.parts.reporter, 'pass');
+  await poll.work();
+  await report.work();
+  assert.equal(pass.mock.callCount(), 1);
+  assert.equal(pass.mock.calls[0].arguments[0].pulls[0].hint, 'merge-main');
+
+  await ft.runUntil(T0 + 10_000);
+  statusReadable = false;
+  await report.work();
+  const afterFailure = pass.mock.callCount();
+
+  await ft.runUntil(T0 + 20_000);
+  statusReadable = true;
+  await report.work();
+  assert.equal(c.statusReads.n, 4);
+  assert.deepEqual([afterFailure, pass.mock.callCount()], [1, 1], 'report counts after executor status read failure and recovery');
+});
 
 test('a retention notice that never returns: a new PR head is in the inbox within 15 s (fake clock) and one poll', async t => {
   const ft = fakeTime(T0);
