@@ -71,10 +71,12 @@ test('kit manifest is deterministic, pins exact bytes and uses only guest placeh
   // the three bypassed shell points and the companion GitHub token stand-in (Fable renew-key ruling, supplement "token pending"
   // section 1C): what it replaces, why, what it leaves unverified, and that it is never removed. The Expand-Cached stand-in is gone
   // (#1154 fixed the package's function; supplement "companion account and evidence" section 3).
-  assert.equal(manifest.perNodeSteps.length, 4);
+  // ... and, last, the host-injected prerequisites (Fable ruling 0e418483, node-install batch 3.3 A)
+  assert.equal(manifest.perNodeSteps.length, 5);
+  assert.match(manifest.perNodeSteps.at(-1), /^前置由宿主注入替身/);
   // a package that does not require it: no stand-in, no step for it
   const { companionToken, ...noCompanion } = PACKAGE_CREDENTIALS.required;
-  assert.equal(drillKitManifest({ ...inputs, credentials: { ...PACKAGE_CREDENTIALS, required: noCompanion } }).perNodeSteps.length, 3);
+  assert.equal(drillKitManifest({ ...inputs, credentials: { ...PACKAGE_CREDENTIALS, required: noCompanion } }).perNodeSteps.length, 4);
   assert.match(manifest.perNodeSteps.join(" "), /非提权.*RunAs.*凭据窗口.*陪伴 GitHub 经典令牌替身/);
   assert.match(manifest.perNodeSteps[3], /凭据窗口.*真凭据.*GitHub 接受.*通道.*不可删.*真机首装/);
   assert.doesNotMatch(manifest.perNodeSteps.join(" "), /Expand-Cached|短路径/);
@@ -133,7 +135,7 @@ test('the shipped credential list: the kit records companionToken as required, t
   const manifest = JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json')));
   assert.equal(manifest.credentials.required.companionToken, 'companion-github.token');
   assert.deepEqual(manifest.credentials.optional, { heartbeatToken: 'ci-node-heartbeat.token' });
-  assert.equal(manifest.perNodeSteps.length, 5);
+  assert.equal(manifest.perNodeSteps.length, 6);
   assert.match(manifest.perNodeSteps[3], /^陪伴 GitHub 经典令牌替身/);
   assert.match(manifest.perNodeSteps[4], /^服务端与 CI 令牌替身/);   // the drill's server and binding (drill-server-stand-in.test.mjs)
   // the run's plan from that kit: the companion token given and made; the heartbeat withheld by design, nothing made for it
@@ -1327,7 +1329,7 @@ test('gh and Git for Windows: in the kit with the package\'s hashes or no kit, n
   fs.writeFileSync(kitFile, JSON.stringify({ ...kit, files: kit.files.filter(i => i.path !== 'gh.msi') }, null, 2));
   assert.equal(ps(`try { Assert-DrillKitToolsBound (Read-DrillKit ${q(f.out)}) ${q(manifest)}; 'bound' } catch { (Get-DrillCode $_).detail }`), 'gh');
   assert.equal(gate(), 'DRILL_KIT_TOOL_NOT_INJECTED');
-  // a prerequisite list without one of them: no kit
+  // a prerequisite list without one of them, not in the host cache and with no address in the manifest to fetch it from: no kit
   const short = firstInstallAssets('tools-short');
   const p = JSON.parse(fs.readFileSync(short.prereq, 'utf8'));
   fs.writeFileSync(short.prereq, JSON.stringify({ ...p, tools: p.tools.filter(t => t.path !== 'git.exe') }));
@@ -1335,7 +1337,7 @@ test('gh and Git for Windows: in the kit with the package\'s hashes or no kit, n
   await assert.rejects(() => makeDrillKit(short), /DRILL_PREREQ_TOOLS_INCOMPLETE:git-for-windows/);
   // the run calls the gate; the entry stops on a missing injected one instead of downloading it
   assert.match(fs.readFileSync(script, 'utf8'), /Assert-DrillKitToolsBound \$kitInfo \(Join-Path \$From "fleet-node-\$Version\.prereq-manifest\.json"\)/);
-  assert.match(fs.readFileSync(entryScript, 'utf8'), /\} elseif \(@\('gh', 'git-for-windows'\) -ccontains \[string\]\$item\['name'\]\) \{ throw \('DRILL_PREREQ_NOT_INJECTED:' \+ \$item\['name'\]\) \}\s*else \{ \$file = Get-Prereq \$item \$pre \}/);
+  assert.match(fs.readFileSync(entryScript, 'utf8'), /if \(-not \[IO\.File\]::Exists\(\$injected\)\) \{ throw \('DRILL_PREREQ_NOT_INJECTED:' \+ \$itemName\) \}/);
 });
 
 test('the repository\'s package and the drill: required names the drill makes, optional names it decides; the hand-over agrees', opts, async () => {
