@@ -66,7 +66,7 @@ test('the status signature tracks only PR number, head and hint for reportable h
   assert.equal(statusSignature(status, null), empty);
   assert.equal(statusSignature(status, [{ ...behind, hint: 'compare-unavailable' }, pull]), empty);
   assert.equal(statusSignature(null, null), null);
-  assert.notEqual(statusSignature(null, [behind]), null);
+  assert.equal(statusSignature(null, [behind]), null);
 });
 
 test('an unavailable compare keeps only the matching held head while the poll updates other PRs', () => {

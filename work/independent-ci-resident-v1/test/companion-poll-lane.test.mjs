@@ -250,6 +250,38 @@ test('H-5: compare-unavailable and its recovery do not report an unchanged held 
   assert.deepEqual([afterTimeout, pass.mock.callCount()], [1, 1], 'report counts after compare timeout and recovery');
 });
 
+test('H-6: an executor status read failure and recovery do not report an unchanged held head again', async t => {
+  const ft = fakeTime(T0);
+  t.mock.method(Date, 'now', ft.clock);
+  const status = { queue: { generation: 'g1' }, pending: [] };
+  let statusReadable = true;
+  const c = await companionParts(t, ft, {
+    behindBy: 3,
+    readStatus: async () => {
+      if (!statusReadable) throw new Error('executor status unreadable');
+      return status;
+    },
+  });
+  c.pulls.push(pull(1311, 'c'.repeat(40)));
+  const { lanes: [poll, report] } = advisoryLanes(c.parts);
+  const pass = t.mock.method(c.parts.reporter, 'pass');
+  await poll.work();
+  await report.work();
+  assert.equal(pass.mock.callCount(), 1);
+  assert.equal(pass.mock.calls[0].arguments[0].pulls[0].hint, 'merge-main');
+
+  await ft.runUntil(T0 + 10_000);
+  statusReadable = false;
+  await report.work();
+  const afterFailure = pass.mock.callCount();
+
+  await ft.runUntil(T0 + 20_000);
+  statusReadable = true;
+  await report.work();
+  assert.equal(c.statusReads.n, 4);
+  assert.deepEqual([afterFailure, pass.mock.callCount()], [1, 1], 'report counts after executor status read failure and recovery');
+});
+
 test('a retention notice that never returns: a new PR head is in the inbox within 15 s (fake clock) and one poll', async t => {
   const ft = fakeTime(T0);
   const c = await companionParts(t, ft, { retentionStep: never });

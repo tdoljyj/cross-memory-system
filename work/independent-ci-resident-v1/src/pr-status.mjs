@@ -107,7 +107,7 @@ export function statusSignature(status, pulls) {
   // Only hints the gate can read count. Sort the tuples so poll order does not matter; the minute pass updates behindBy.
   const held = Array.isArray(pulls) ? pulls.filter(isHeldPull)
     .map(p => [p.pr, p.headSha, p.hint]).sort() : [];
-  if (!status || typeof status !== 'object') return held.length ? canonicalJson({ held }) : null;
+  if (!status || typeof status !== 'object') return null;
   const c = status.current;
   // Generation 12 (defect 050560ac): the queue rows too (state, reason, next time, hold, ...), so a batch that did not run, a back-off,
   // a stop or a retry reaches the PR page at once, not at the next minute pass; and the parking places, a gate the page names
