@@ -6,14 +6,15 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import test from 'node:test';
-import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { until } from '../../../../scripts/ci/test-clock-guard.mjs';
 import { serviceLoop } from '../../src/service-main.mjs';
 import { LINUX_SCRIPTS, prepareInstall, sourceHashOf } from '../fleet/install.mjs';
 import { acceptanceOf, REQUEST_CONTRACT } from '../fleet/publish.mjs';
 import { buildUniversal } from '../fleet/universal.mjs';
 import { CHECKOUT, RES, fixtureRepo, fleetFacts, git, nodeSite, sha, tempDir } from '../fleet/test/fleet-fixtures.mjs';
 import { fetchFleetReleaseAsset } from '../fleet/fetch.mjs';
+import { readTar } from '../fleet/tar.mjs';
 import { Upgrader } from '../../upgrader/src/upgrader-main.mjs';
 import { FakeDoor, FakeLinux, FakeResident, FakeWindows, fakeClock, installGeneration1, testConfig } from '../../upgrader/test/fixtures.mjs';
 import { renewalWatch } from '../../src/connection-renewal.mjs';
@@ -69,7 +70,18 @@ async function brokerFixture(t) {
   return out;
 }
 
-async function fixtureLanes({ t, node, release, broker, onDuty = false, peers = [], failVerify = false, runUpgrade, upload, clockNow = () => now }) {
+test('T1：Broker 解析层拒绝旧式自拉请求形状', { skip: process.platform !== 'win32' }, async t => {
+  const broker = await brokerFixture(t);
+  const legacy = { kind: 'fleet-pull', grantId: randomUUID(), requestSha256: '1'.repeat(64),
+    sourceSha256: '2'.repeat(64), packageManifestSha256: '3'.repeat(64), fromGeneration: 1,
+    packageDirectory: 'unused-fixture-directory' };
+  const { stdout } = await exec(broker, ['--fleet-request-shape-fixture', JSON.stringify(legacy)], { windowsHide: true });
+  assert.equal(stdout.trim(), 'FLEET_BROKER_REQUEST_REFUSED');
+  t.diagnostic(stdout.trim());
+});
+
+async function fixtureLanes({ node, release, broker, onDuty = false, peers = [], failVerify = false,
+  runBroker = args => exec(broker, args, { windowsHide: true }), upload, clockNow = () => now }) {
   const { companionSelfPull, residentSelfPull } = await lanes();
   if (!residentSelfPull) return null;
   const root = node.root;
@@ -79,7 +91,7 @@ async function fixtureLanes({ t, node, release, broker, onDuty = false, peers = 
   const probe = async (fleetTarget = release.target, { active = onDuty, otherSources = peers } = {}) =>
     fs.writeFile(observed, json({ at: new Date(clockNow()).toISOString(), code: null, onDuty: active,
       fleetTarget: fleetTarget && { ...fleetTarget, other_sources: otherSources } }));
-  const clock = fakeClock(now);
+  const clock = fakeClock(clockNow());
   const resident = new FakeResident(clock);
   const windows = new FakeWindows(root, resident, { failVerify: generation => failVerify && generation > 1 });
   const up = await new Upgrader({ root, clock: clock.fn,
@@ -90,20 +102,11 @@ async function fixtureLanes({ t, node, release, broker, onDuty = false, peers = 
   const companion = companionSelfPull({ root, repository, clock: clockNow, download,
     upload: upload ?? (async ({ file }) => { const bytes = await fs.readFile(file); uploaded.push(bytes); release.assets.set(path.basename(file), bytes); }) });
   const answers = [];
-  const assemble = runUpgrade ?? (async ([file, ...argv]) => {
-    // The production CLI pins the production root. Invoke its main in a child with the fixture port.
-    const script = `const { main } = await import(process.argv[1]);
-      const [root, now, ...argv] = process.argv.slice(2);
-      console.log(JSON.stringify(await main(argv, { root, now: Number(now) })));`;
-    const { stdout } = await exec(process.execPath, ['--input-type=module', '-e', script, pathToFileURL(file).href, root, String(clockNow()), ...argv],
-      { windowsHide: true });
-    return JSON.parse(stdout.trim());
-  });
-  const residentLane = residentSelfPull({ root, repository, clock: clockNow,
-    runUpgrade: async args => { const answer = await assemble(args); answers.push(answer); return answer; } });
+  const residentLane = residentSelfPull({ root, repository, clock: clockNow });
   const posted = [];
+  const submitted = [];
   let step;
-  return { probe, companion, uploaded, posted, up, clock, answers, fakeResident: resident,
+  return { probe, companion, uploaded, posted, submitted, up, clock, answers, fakeResident: resident,
     state: () => read(path.join(root, 'state', 'fleet-pull.json')),
     resident: { tick: idle => { step = residentLane.tick(idle); }, stop: () => residentLane.stop() },
     async tick({ downloadAssets = true } = {}) {
@@ -111,10 +114,14 @@ async function fixtureLanes({ t, node, release, broker, onDuty = false, peers = 
       if (downloadAssets) await companion();
       for (const file of await fs.readdir(path.join(root, 'broker', 'requests'))) {
         const id = path.basename(file, '.json');
-        if (posted.includes(id) || await fs.access(path.join(root, 'broker', 'responses', file)).then(() => true, () => false)) continue;
-        posted.push(id);
-        const { stdout } = await exec(broker, ['--fleet-pull-fixture', root, id, node.profile.nodeName, node.pkg.manifest.nodeProfileSha256,
-          new Date(clock.now).toISOString()], { windowsHide: true });
+        if (await fs.access(path.join(root, 'broker', 'responses', file)).then(() => true, () => false)) continue;
+        submitted.push(id);
+        assert.deepEqual(Object.keys(await read(path.join(root, 'broker', 'requests', file))).sort(), ['grantId', 'kind']);
+        const { stdout } = await runBroker(['--fleet-pull-fixture', root, id, node.profile.nodeName, process.execPath,
+          new Date(clock.now).toISOString()]);
+        const answer = JSON.parse(stdout.trim());
+        answers.push(answer);
+        if (answer.delivered && answer.ok) posted.push(id);
         await fs.writeFile(path.join(root, 'broker', 'responses', file), stdout);
       }
       clock.advance(Math.max(await up.tick(), 1000));
@@ -134,7 +141,9 @@ test('场景 1：登记目标后，无人发命令，待命节点升到目标 So
 
   // The service ticks with an empty queue. The fake gate advertises a target after the service starts.
   let ticks = 0;
-  const automatic = (await lanes()).residentSelfPull ? await fixtureLanes({ node, release: targetRelease, t, broker: await brokerFixture(t) }) : null;
+  const broker = await brokerFixture(t);
+  const automatic = (await lanes()).residentSelfPull ? await fixtureLanes({ node, release: targetRelease, broker }) : null;
+  await applyFixtureAcl(t, node.root);
   await serviceLoop({
     exec: { tick: async () => { ticks += 1; return { state: 'IDLE' }; } }, lock: { touch: async () => {} },
     stopRequested: async () => ticks >= 8 || automatic?.up.recent.some(row => row.outcome === 'SUCCEEDED'),
@@ -150,6 +159,32 @@ test('场景 1：登记目标后，无人发命令，待命节点升到目标 So
   assert.deepEqual(automatic.uploaded, [json(acceptanceOf(targetRelease.request,
     { decision: targetRelease.target.grant_id, receipt: targetRelease.target.receipt_id, acceptedAt: '2026-11-01T00:00:00Z' }))]);
   t.diagnostic(`第 ${before.generation} 代 → 第 ${after.generation} 代，两侧 Source ${after.ciSourceManifestSha256}，请求 ${automatic.posted.length} 条`);
+  const processed = path.join(node.root, 'upgrade', 'inbox-archive', 'processed');
+  const [requestFile] = await fs.readdir(processed);
+  const { packageDirectory } = await read(path.join(processed, requestFile));
+  const { stdout } = await exec(broker, ['--fleet-package-acl-fixture', node.root, packageDirectory, residentSid, companionSid],
+    { windowsHide: true });
+  t.diagnostic(`T2：${stdout.trim()}`);
+  const archive = readTar(await fs.readFile(targetRelease.tar));
+  const brokerEntry = archive.find(entry => entry.path === 'tree/work/independent-ci-resident-v1/windows/SwapBroker.cs');
+  const staged = path.join(node.root, 'upgrade', 'staged', after.packageManifestSha256);
+  const manifest = await read(path.join(staged, 'package-manifest.json'));
+  const brokerSlot = manifest.files.find(file => file.target === 'bin\\SwapBroker.cs');
+  const stagedBroker = path.join(staged, brokerSlot.path);
+  assert.equal(sha(await fs.readFile(stagedBroker)), sha(brokerEntry.data));
+  t.diagnostic('T3：升级暂存包的 Broker 源码哈希与已接受 tar 一致。');
+
+  const duplicate = randomUUID();
+  const runParent = path.join(node.root, 'broker', 'fleet-pull');
+  const runs = await fs.readdir(runParent);
+  await fs.writeFile(path.join(node.root, 'broker', 'requests', duplicate + '.json'),
+    json({ kind: 'fleet-pull', grantId: targetRelease.target.grant_id }));
+  const repeated = JSON.parse((await exec(broker, ['--fleet-pull-fixture', node.root, duplicate, node.profile.nodeName,
+    process.execPath, new Date(now).toISOString()], { windowsHide: true })).stdout);
+  assert.equal(repeated.delivered, true);
+  assert.equal(repeated.code, 'FLEET_TARGET_ALREADY_REQUESTED');
+  assert.deepEqual(await fs.readdir(runParent), runs, '已投递的目标不能再次创建组装目录');
+  assert.deepEqual(await fs.readdir(path.join(node.root, 'upgrade', 'inbox')), []);
 });
 
 const source = release => release.request.ciSourceManifestSha256;
@@ -157,10 +192,10 @@ const accepted = release => acceptanceOf(release.request,
   { decision: release.target.grant_id, receipt: release.target.receipt_id, acceptedAt: '2026-11-01T00:00:00Z' });
 const current = node => read(path.join(node.root, 'upgrade', 'current.json'));
 const residentSid = 'S-1-5-80-1873410639-838332518-375536672-3951882173-2447812046'; // fixture principal with the Windows service SID shape
+const companionSid = 'S-1-5-21-1-2-3-2001';
 
-async function checkFixtureAcl(t, broker) {
-  const root = await tempDir(t, 'd2acl');
-  const script = path.join(root, 'shape.ps1');
+async function applyFixtureAcl(t, root) {
+  const script = path.join(await tempDir(t, 'd2acl'), 'shape.ps1');
   await fs.writeFile(script, String.raw`param($FixtureRoot,$Installer,$Resident)
 $ErrorActionPreference='Stop'
 $ast=[System.Management.Automation.Language.Parser]::ParseFile($Installer,[ref]$null,[ref]$null)
@@ -171,7 +206,7 @@ $OperatorSid='S-1-5-21-1-2-3-3001'
 $ControllerSid='S-1-5-21-1-2-3-4001'
 $mine=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $plan=Get-AclPlan $Resident
-foreach ($part in @('work','bundles','broker\requests','upgrade\inbox','install','upgrade')) {
+foreach ($part in @('work','bundles','broker','broker\requests','upgrade','upgrade\inbox','install')) {
   $dir=Join-Path $FixtureRoot $part
   [IO.Directory]::CreateDirectory($dir) | Out-Null
   $acl=Get-Acl -LiteralPath $dir
@@ -183,7 +218,12 @@ foreach ($part in @('work','bundles','broker\requests','upgrade\inbox','install'
   await exec(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, root,
     path.join(RES, 'windows', 'install-resident.ps1'), residentSid], { windowsHide: true,
     env: { ...process.env, PSModulePath: path.join(path.dirname(ps), 'Modules') } });
-  const answer = await exec(broker, ['--fleet-acl-fixture', root, residentSid, 'S-1-5-21-1-2-3-2001'], { windowsHide: true });
+}
+
+async function checkFixtureAcl(t, broker) {
+  const root = await tempDir(t, 'd2acl-check');
+  await applyFixtureAcl(t, root);
+  const answer = await exec(broker, ['--fleet-acl-fixture', root, residentSid, companionSid], { windowsHide: true });
   assert.match(answer.stdout, /D2 ACL: 5 AuthzAccessCheck cases/);
   t.diagnostic('Windows AuthzAccessCheck 验证夹具 DACL，companion 无权写 broker 或升级 inbox。');
 }
@@ -263,11 +303,60 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
   const target = await release(t, fleet, repo, newerCommit, '2026.11.25-zzz');
   olderContent.target.accepted_at = '2026-11-02T00:00:00.000Z';
 
+  await t.test('T4：组装期间 Broker 中断，重启答未投递，常驻换编号且只投递一次', async t => {
+    const node = await nodeSite(t, 'i', fleet, { now });
+    const childScript = path.join(await tempDir(t, 'd2interrupted'), 'pause.mjs');
+    await fs.writeFile(childScript, `import fs from 'node:fs';
+      import path from 'node:path';
+      for await (const chunk of process.stdin) {}
+      fs.writeFileSync(path.join(process.argv.at(-1), 'fixture-started'), '');
+      setInterval(() => {}, 1000);
+    `);
+    const runParent = path.join(node.root, 'broker', 'fleet-pull');
+    let time = now;
+    let interruptedRun;
+    const lane = await fixtureLanes({ node, release: target, broker, clockNow: () => time, runBroker: async args => {
+      if (!interruptedRun) {
+        const running = exec(broker, [...args, childScript], { windowsHide: true });
+        let exited = false;
+        const outcome = running.catch(error => error);
+        outcome.then(() => { exited = true; });
+        try {
+          interruptedRun = await until(async () => {
+            assert.equal(exited, false, 'Broker 须保持运行至测试触发中断');
+            const runs = await fs.readdir(runParent).catch(() => []);
+            for (const run of runs) {
+              if (await fs.stat(path.join(runParent, run, 'fixture-started')).then(() => true, () => false)) return run;
+            }
+            return null;
+          }, '组装子进程写入夹具标记');
+        } finally { running.child.kill(); }
+        assert.ok((await outcome) instanceof Error);
+      }
+      return exec(broker, args, { windowsHide: true });
+    } });
+    await lane.probe();
+    await drive(lane, 3);
+    assert.equal(lane.answers[0].delivered, false);
+    assert.equal(lane.answers[0].code, 'BROKER_REQUEST_INTERRUPTED_NOT_REPEATED');
+    assert.equal((await lane.state()).phase, 'PREPARE_FAILED');
+    assert.deepEqual(await fs.readdir(path.join(node.root, 'upgrade', 'inbox')), []);
+    time += 61_000;
+    await lane.probe();
+    await drive(lane, 6);
+    assert.ok(lane.answers[1]?.delivered, JSON.stringify(lane.answers));
+    assert.equal(lane.submitted.length, 2);
+    assert.notEqual(lane.submitted[0], lane.submitted[1]);
+    assert.equal(lane.posted.length, 1);
+    assert.equal((await fs.readdir(path.join(node.root, 'upgrade', 'inbox-archive', 'processed'))).length, 1);
+    assert.equal((await fs.readdir(runParent)).includes(interruptedRun), false);
+    t.diagnostic('Broker 重启答 delivered:false，常驻以新编号重投，升级服务只处理一个请求。');
+  });
+
   await t.test('场景 2：Release 文件不授予升级权，坏哈希在运行包内代码之前被拒', async t => {
     await checkFixtureAcl(t, broker);
     const node = await nodeSite(t, 'b', fleet, { now });
-    let invoked = 0;
-    const lane = await fixtureLanes({ t, node, release: target, broker, runUpgrade: async () => { invoked++; } });
+    const lane = await fixtureLanes({ node, release: target, broker });
     target.assets.set(`${target.tag}.acceptance.json`, json(accepted(target)));
     await lane.probe(null);
     await drive(lane, 2);
@@ -280,7 +369,8 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
     await fs.appendFile(tar, Buffer.alloc(512)); // A valid ustar with a different digest.
     lane.resident.tick({ queueEmpty: true });
     await lane.tick({ downloadAssets: false });
-    assert.equal(invoked, 0, '哈希不符的包不得运行包内代码');
+    await drive(lane, 1);
+    assert.equal(lane.answers[0].status, null, '哈希不符的包未进入组装入口');
     assert.equal((await lane.state()).code, 'FLEET_ARCHIVE_SHA_MISMATCH');
     assert.equal(lane.posted.length, 0);
     assert.deepEqual(await fs.readdir(path.join(node.root, 'upgrade', 'inbox')), []);
@@ -290,8 +380,8 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
   await t.test('场景 3：当班等到待命报告目标 Source 才投递，旧内容用新版本号', async t => {
     const a = await nodeSite(t, 'c', fleet, { now });
     const b = await nodeSite(t, 'd', fleet, { now });
-    const active = await fixtureLanes({ t, node: a, release: target, broker, onDuty: true, peers: [b.pkg.ciSource] });
-    const standby = await fixtureLanes({ t, node: b, release: target, broker });
+    const active = await fixtureLanes({ node: a, release: target, broker, onDuty: true, peers: [b.pkg.ciSource] });
+    const standby = await fixtureLanes({ node: b, release: target, broker });
     await active.probe(); await standby.probe();
     await drive(active, 3);
     assert.equal((await active.state()).phase, 'WAITING_FOR_PEERS');
@@ -308,7 +398,7 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
     assert.ok(olderContent.target.version < target.target.version);
     assert.notEqual(source(olderContent), source(target));
     let failedUploads = 0;
-    const back = await fixtureLanes({ t, node: b, release: olderContent, broker,
+    const back = await fixtureLanes({ node: b, release: olderContent, broker,
       upload: async () => { failedUploads++; throw new Error('fixture Release upload refused'); } });
     await refreshLinuxFacts(b);
     await back.probe(); await drive(back, 12);
@@ -321,8 +411,8 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
   await t.test('场景 4：核验失败回滚并保持暂停，当班继续，重启也不重投', async t => {
     const a = await nodeSite(t, 'e', fleet, { now });
     const b = await nodeSite(t, 'f', fleet, { now });
-    const active = await fixtureLanes({ t, node: a, release: target, broker, onDuty: true, peers: [b.pkg.ciSource] });
-    const standby = await fixtureLanes({ t, node: b, release: target, broker, failVerify: true });
+    const active = await fixtureLanes({ node: a, release: target, broker, onDuty: true, peers: [b.pkg.ciSource] });
+    const standby = await fixtureLanes({ node: b, release: target, broker, failVerify: true });
     await active.probe(); await standby.probe();
     await drive(standby, 8); await drive(active);
     assert.equal((await current(b)).ciSourceManifestSha256, b.pkg.ciSource);
@@ -333,7 +423,7 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
     const status = await read(path.join(b.root, 'upgrade', 'status.json'));
     const notices = versionNotices({}, status).filter(n => n.kind === 'upgrade-rolled-back');
     assert.equal(notices.length, 1);
-    const restart = await fixtureLanes({ t, node: b, release: target, broker });
+    const restart = await fixtureLanes({ node: b, release: target, broker });
     await restart.probe(); await drive(restart, 2);
     assert.equal((await fs.readdir(path.join(b.root, 'upgrade', 'inbox-archive', 'processed'))).length, 1);
     assert.equal(restart.posted.length, 0);
@@ -344,7 +434,7 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
     await fs.appendFile(path.join(repo, 'work', 'independent-ci-resident-v1', 'upgrader', 'src', 'codes.mjs'), '\n// Frozen channel fixture.\n');
     git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'change fixture frozen channel');
     const frozen = await release(t, fleet, repo, git(repo, 'rev-parse', 'HEAD').toString().trim(), '2026.11.25-frozen');
-    const lane = await fixtureLanes({ t, node, release: frozen, broker });
+    const lane = await fixtureLanes({ node, release: frozen, broker });
     await lane.probe(); await drive(lane);
     const first = await lane.state();
     assert.equal(first.phase, 'NEEDS_REINSTALL');
@@ -359,12 +449,10 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
   await t.test('场景 6：无目标、下载无包、组装子进程失败均不阻断批次和续期', async t => {
     const node = await nodeSite(t, 'h', fleet, { now });
     let time = now;
-    let childExit;
-    const lane = await fixtureLanes({ t, node, release: olderContent, broker, clockNow: () => time,
-      runUpgrade: async () => {
-        try { return await exec(process.execPath, ['-e', 'process.exit(17)']); }
-        catch (error) { childExit = error.code; throw error; }
-      } });
+    const childScript = path.join(await tempDir(t, 'd2failed'), 'failed.mjs');
+    await fs.writeFile(childScript, 'for await (const chunk of process.stdin) {}\nprocess.exit(17);\n');
+    const lane = await fixtureLanes({ node, release: olderContent, broker, clockNow: () => time,
+      runBroker: args => exec(broker, [...args, childScript], { windowsHide: true }) });
     const saved = new Map(olderContent.assets);
     let batches = 0, renewals = 0;
     const renew = renewalWatch({ root: node.root, profile: node.profile, source: node.pkg.ciSource, clock: () => now, uptime: () => 0,
@@ -386,8 +474,8 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
         } });
       assert.equal(batches, 8);
       assert.equal(renewals, 8);
-      assert.equal(childExit, 17);
-      assert.equal((await lane.state()).code, 'FLEET_PREPARE_FAILED');
+      assert.equal(lane.answers[0].code, 'FLEET_UPGRADE_CHILD_FAILED');
+      assert.equal((await lane.state()).code, 'FLEET_UPGRADE_CHILD_FAILED');
       assert.equal(lane.posted.length, 0);
     } finally { for (const [name, bytes] of saved) olderContent.assets.set(name, bytes); }
   });

@@ -8,7 +8,6 @@ import { acceptanceBytes, acceptanceOf, REQUEST_CONTRACT, REQUEST_FLEET_REFS } f
 import { refuseUnderTest } from './production-root-guard.mjs';
 import { readBounded } from './store.mjs';
 import { fetchFleetReleaseAsset, sha256File } from '../rollout/fleet/fetch.mjs';
-import { extractTar, readTar } from '../rollout/fleet/tar.mjs';
 
 const VERSION = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,88}$/;
 const REPO = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/;
@@ -17,10 +16,7 @@ const RETRY = 60_000;
 const LIMIT = 30 * 60_000;
 const SMALL = 256 * 1024;
 const ARCHIVE_MAX = 512 * 1024 * 1024;
-const SCRIPT = path.join('tree', 'work', 'independent-ci-resident-v1', 'rollout', 'fleet', 'upgrade.mjs');
 const MOVING = new Set(['WAITING_GRANT', 'WAITING_DRAIN', 'DEFERRED', 'RUNNING', 'ROLLING_BACK']);
-const BEFORE_INBOX = new Set(['FLEET_BROKER_BUSY', 'FLEET_WAITING_FOR_PEERS', 'FLEET_GENERATION_CHANGED',
-  'RENEW_GATEWAY_UNAVAILABLE', 'RENEW_GATEWAY_REFUSED']);
 const read = async (filename, limit = SMALL) => {
   try { return JSON.parse(await readBounded(filename, limit, 'FLEET_READ_REFUSED')); }
   catch { return null; }
@@ -58,8 +54,8 @@ export function acceptanceFromTarget(target, bytes) {
   return acceptanceOf(r, { decision: target.grant_id, receipt: target.receipt_id, acceptedAt });
 }
 
-const byTarget = (root, target) => path.join(root, 'bundles', 'fleet-pull', target.request_sha256);
-const names = target => {
+export const byTarget = (root, target) => path.join(root, 'bundles', 'fleet-pull', target.request_sha256);
+export const names = target => {
   const tag = `fleet-node-${target.version}`;
   return { tag, tar: `${tag}.tar`, request: `${tag}.acceptance-request.json`, acceptance: `${tag}.acceptance.json` };
 };
@@ -112,71 +108,18 @@ export function companionSelfPull({ root, repository, clock = Date.now, download
 
 const codeOf = (error, fallback) => typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(error.code) ? error.code : fallback;
 
-// Copy held, verified bytes into a resident-write-only tree before interpreting or executing the archive.
-// The returned package stays in work for the existing upgrader, which validates and stages it itself.
-export async function prepareSelfPull({ root, bundle, target, requestBytes, acceptance, onDuty, runUpgrade }) {
-  const files = names(target);
-  refuseUnderTest(root);
-  const dir = path.join(root, 'work', 'fleet-pull');
-  await fs.mkdir(dir, { recursive: true });
-  const run = await fs.mkdtemp(path.join(dir, 'pull-'));
-  let retained = false;
-  try {
-    const tar = path.join(run, files.tar);
-    const source = path.join(bundle, files.tar);
-    const stat = await fs.lstat(source);
-    check(stat.isFile() && stat.size > 0 && stat.size <= ARCHIVE_MAX, 'FLEET_ARCHIVE_REFUSED');
-    const bytes = await readBounded(source, stat.size, 'FLEET_ARCHIVE_REFUSED');
-    check(sha256(bytes) === target.archive_sha256, 'FLEET_ARCHIVE_SHA_MISMATCH');
-    await fs.writeFile(tar, bytes, { flag: 'wx' });
-    await fs.writeFile(path.join(run, 'request.json'), requestBytes, { flag: 'wx' });
-    const acceptanceFile = path.join(run, files.acceptance);
-    await fs.writeFile(acceptanceFile, acceptanceBytes(acceptance), { flag: 'wx' });
-    const tree = path.join(run, 'unpacked');
-    const entries = readTar(bytes);
-    const archive = JSON.parse(entries.find(entry => entry.path === 'universal-manifest.json')?.data ?? 'null');
-    const current = await read(path.join(root, 'upgrade', 'current.json'));
-    const facts = await read(path.join(root, 'upgrade', 'mailbox', 'responses', 'version-facts.json'));
-    const sourceSha = acceptance.ciSourceManifestSha256;
-    if (HEX64.test(archive?.facts?.residentManifestSha256 ?? '') && current?.residentManifestSha256 === archive.facts.residentManifestSha256
-      && current.ciSourceManifestSha256 === sourceSha && current.linux?.ciSourceManifestSha256 === sourceSha
-      && facts?.ciSourceManifestSha256 === sourceSha && facts.staged === null) return { status: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE' };
-    await extractTar(entries, tree);
-    const work = path.join(run, 'assemble');
-    const answer = await runUpgrade([path.join(tree, SCRIPT), '--artifact', tar, '--artifact-sha', target.archive_sha256,
-      '--acceptance', acceptanceFile, '--work', work, '--no-request', ...(onDuty ? ['--allow-active-upgrade'] : [])]);
-    if (answer?.status === 'FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED') {
-      const child = path.relative(work, answer.workDir);
-      check(/^run-[A-Za-z0-9]{6}$/.test(child) && answer.packageDir === path.join(work, child, 'package')
-        && HEX64.test(answer.packageManifestSha256 ?? '') && Number.isSafeInteger(answer.fromGeneration) && answer.fromGeneration > 0,
-      'FLEET_PREPARED_PACKAGE_REFUSED');
-      // Keep the validated package and signed request. The verifier and rebuild scratch are no longer needed.
-      await fs.rm(tree, { recursive: true, force: true });
-      await fs.rm(tar, { force: true });
-      await fs.rm(acceptanceFile, { force: true });
-      for (const name of ['x', 'inputs']) await fs.rm(path.join(answer.workDir, name), { recursive: true, force: true });
-      retained = true;
-    }
-    if (answer?.code === 'FLEET_UPGRADE_CHILD_TIMEOUT') retained = true; // The exact child may still be using its tree.
-    return answer;
-  } finally {
-    if (!retained) await fs.rm(run, { recursive: true, force: true });
-  }
-}
-
 export async function dropFleetRequest(root, id, payload) {
   const dir = path.join(root, 'broker', 'requests');
   refuseUnderTest(dir);
   await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify(payload), { flag: 'wx' });
 }
 
-export function residentSelfPull({ root, repository, clock = Date.now, runUpgrade, prepare = prepareSelfPull,
+export function residentSelfPull({ root, repository, clock = Date.now,
   submit = (id, payload) => dropFleetRequest(root, id, payload) }) {
   const at = (...parts) => path.join(root, ...parts);
   const ledger = at('state', 'fleet-pull.json');
   let next = 0;
   let relayed;
-  let assembly;
   let active;
   let idle = null;
   let stopped = false;
@@ -198,15 +141,17 @@ export function residentSelfPull({ root, repository, clock = Date.now, runUpgrad
     const op = upgrade?.op;
     if (last?.grantId === target.grant_id && last.requestId) {
       const answer = await read(at('broker', 'responses', `${last.requestId}.json`));
-      if (last.phase === 'REQUESTED' && answer?.requestId === last.requestId && answer.ok === false) {
-        // Only explicit pre-effect refusals may retry. An unconfirmed delivery might already be in the upgrader's inbox.
-        if (BEFORE_INBOX.has(answer.code)) {
-          if (answer.code === 'FLEET_GENERATION_CHANGED') assembly = null;
-          await show(target, answer.code === 'FLEET_WAITING_FOR_PEERS' ? 'WAITING_FOR_PEERS' : 'PREPARE_FAILED', answer.code);
+      if (last.phase === 'REQUESTED' && answer?.requestId === last.requestId && answer.delivered === false) {
+        if (answer.status === 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE') {
+          await show(target, 'CURRENT');
+        } else if (answer.status === 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL') {
+          await show(target, 'NEEDS_REINSTALL', codeOf(answer, 'FLEET_NEEDS_REINSTALL'));
+        } else {
+          const code = codeOf(answer, 'FLEET_PREPARE_FAILED');
+          await show(target, code === 'FLEET_WAITING_FOR_PEERS' ? 'WAITING_FOR_PEERS' : 'PREPARE_FAILED', code);
           next = clock() + RETRY;
-          return;
         }
-        await show(target, 'REFUSED', codeOf(answer, 'FLEET_BROKER_REFUSED'), last.requestId);
+        return;
       }
       if (last.phase === 'REQUESTED') {
         const completed = upgrade?.recent?.find(r => r.opId === last.requestId);
@@ -236,25 +181,12 @@ export function residentSelfPull({ root, repository, clock = Date.now, runUpgrad
       await show(target, 'WAITING_FOR_PEERS');
       return;
     }
-    if (!assembly || assembly.grantId !== target.grant_id || assembly.onDuty !== onDuty) {
-      await show(target, 'PREPARING');
-      const answer = await prepare({ root, bundle, target, requestBytes, acceptance, onDuty, runUpgrade });
-      switch (answer?.status) {
-        case 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE': await show(target, 'CURRENT'); return;
-        case 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL': await show(target, 'NEEDS_REINSTALL', codeOf(answer, 'FLEET_NEEDS_REINSTALL')); return;
-        case 'FLEET_NODE_UPGRADE_IN_PROGRESS': return;
-        case 'FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED': assembly = { grantId: target.grant_id, onDuty, answer }; return;
-        default: await show(target, 'PREPARE_FAILED', codeOf(answer, 'FLEET_PREPARE_FAILED')); next = clock() + RETRY; return;
-      }
-    }
     if (!idle || (onDuty && !idle.queueEmpty) || stopped) return;
-    const a = assembly.answer;
     const id = randomUUID();
     // Persist before sending. An interrupted or unknown delivery may already have produced an inbox file.
     await show(target, 'REQUESTED', null, id);
     try {
-      await submit(id, { kind: 'fleet-pull', grantId: target.grant_id, requestSha256: target.request_sha256,
-        sourceSha256: source, packageDirectory: a.packageDir, packageManifestSha256: a.packageManifestSha256, fromGeneration: a.fromGeneration });
+      await submit(id, { kind: 'fleet-pull', grantId: target.grant_id });
     } catch (error) { await show(target, 'REFUSED', codeOf(error, 'FLEET_BROKER_DELIVERY_UNKNOWN'), id); }
   }
   return {

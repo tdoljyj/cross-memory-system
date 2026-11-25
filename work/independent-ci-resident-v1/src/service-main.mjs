@@ -142,14 +142,7 @@ export async function main(argv = process.argv.slice(2), ports = {}) {
   const renew = renewalWatch({root,profile:policy.node,source:policy.ciSourceManifestSha256,clock,mode:()=>exec.renewalMode(),
     onHandover:()=>exec.requestHandoverProbe(),
     drained:async()=>!runner.busy && (await ledger.open()).length===0});
-  const upgradeRunner = new Runner({ env: serviceEnv(tempDir, policy.node, policy.nodeProfileSha256) });
-  const selfPull = residentSelfPull({ root, repository: policy.repo, clock, runUpgrade: async args => {
-    const timeoutMs = 30 * 60_000;
-    upgradeRunner.env = { ...upgradeRunner.env, FLEET_UPGRADE_DEADLINE_MS: String(clock() + timeoutMs - 30_000) };
-    const answer = await upgradeRunner.run([process.execPath, ...args], { timeoutMs });
-    if (answer.timedOut) return { code: 'FLEET_UPGRADE_CHILD_TIMEOUT' };
-    try { return JSON.parse(answer.stdout.trim()); } catch { return { code: 'FLEET_UPGRADE_CHILD_FAILED' }; }
-  } });
+  const selfPull = residentSelfPull({ root, repository: policy.repo, clock });
   const spool = path.join(path.dirname(root), 'formal-spool');
   const retention = new RetentionWatch({ policy, receipts, clock,
     readSettings: () => readRetentionSettings(path.join(root, 'owner', SETTINGS_FILE)),
@@ -187,7 +180,7 @@ export async function main(argv = process.argv.slice(2), ports = {}) {
   await recordServiceStart({ receipts, root, policySha256: values['policy-sha256'], pid: process.pid });
   const stopFile = path.join(state, 'STOP-REQUESTED');
   return serviceLoop({ exec, lock, sleep, once: values.once === true, selfPull,
-    upgradeIdle: async () => !runner.busy && !upgradeRunner.busy && (await ledger.open()).length === 0
+    upgradeIdle: async () => !runner.busy && (await ledger.open()).length === 0
       ? { queueEmpty: queue.live().length === 0 } : null,
     // A request left from an earlier boot is renamed with a receipt and does not stop us (src/stop-request.mjs).
     stopRequested: stopRequestCheck({ stopFile, locksDir: path.join(state, 'locks'), receipts, clock }),

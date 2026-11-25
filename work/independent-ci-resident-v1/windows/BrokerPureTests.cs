@@ -59,6 +59,26 @@ public static class BrokerPureTests
     }
     public static int Main(string[] args)
     {
+        if (args.Length==2 && args[0]=="--fleet-request-shape-fixture") {
+            try {
+                Console.WriteLine(FleetPull.Parse(System.Text.Encoding.UTF8.GetBytes(args[1]))==null ? "UNRECOGNIZED" : "PARSED");
+            } catch (BrokerRefusal e) { Console.WriteLine(e.Code); }
+            return 0;
+        }
+        if (args.Length==5 && args[0]=="--fleet-package-acl-fixture") {
+            string root=Path.GetFullPath(args[1]), package=Path.GetFullPath(args[2]);
+            string scratch=Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\')+"\\";
+            if (!root.StartsWith(scratch,StringComparison.OrdinalIgnoreCase) ||
+                !package.StartsWith(root.TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase)) return 2;
+            foreach (string packagePath in new[]{package,Path.GetDirectoryName(package)}) {
+                foreach (string sid in new[]{args[3],args[4]}) {
+                    foreach (uint right in new uint[]{2,4,16,64,256,65536,262144,524288})
+                        Yes(!Access(packagePath,sid,right),"fleet-package-directory-write-denied: "+sid+" "+packagePath+" "+right);
+                }
+            }
+            Console.WriteLine("D2 ACL: package and parent deny writes by resident and companion");
+            return 0;
+        }
         if (args.Length==4 && args[0]=="--fleet-acl-fixture") {
             var root=Path.GetFullPath(args[1]);
             if (!root.StartsWith(Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase)) return 2;
@@ -71,16 +91,29 @@ public static class BrokerPureTests
             Console.WriteLine("D2 ACL: "+n+" AuthzAccessCheck cases");
             return 0;
         }
-        if (args.Length==6 && args[0]=="--fleet-pull-fixture") {
+        if ((args.Length==6 || args.Length==7) && args[0]=="--fleet-pull-fixture") {
             string root=Path.GetFullPath(args[1]), scratch=Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\')+"\\";
-            if (!root.StartsWith(scratch,StringComparison.OrdinalIgnoreCase)) return 2;
+            if (!root.StartsWith(scratch,StringComparison.OrdinalIgnoreCase) || !Renewal.Id(args[2])) return 2;
+            var requestBytes=File.ReadAllBytes(Path.Combine(root,"broker","requests",args[2]+".json"));
+            var payload=FleetPull.Parse(requestBytes);
+            var grant=Renewal.Str(payload,"grantId");
+            var taken=Path.Combine(root,"broker","responses",args[2]+".taken");
+            if (File.Exists(taken)) {
+                Console.WriteLine(Renewal.Json(FleetPull.Interrupted(root,args[2],requestBytes,"BROKER_REQUEST_INTERRUPTED_NOT_REPEATED")));
+                return 0;
+            }
+            File.WriteAllBytes(taken,new byte[]{1});
+            string code=null,status=null;
             try {
                 var v=Renewal.Object(File.ReadAllText(Path.Combine(root,"broker","renew-ci.json")));
                 var probe=new Renewal.Connection { OnDuty=(bool)v["onDuty"], FleetTarget=v["fleetTarget"] as Dictionary<string,object> };
-                var payload=FleetPull.Parse(File.ReadAllBytes(Path.Combine(root,"broker","requests",args[2]+".json")));
-                FleetPull.Submit(root,args[2],args[3],args[4],probe,payload,DateTime.Parse(args[5]).ToUniversalTime().AddMilliseconds(1));
-                Console.WriteLine(Renewal.Json(new { requestId=args[2], ok=true, code=(string)null }));
-            } catch (BrokerRefusal e) { Console.WriteLine(Renewal.Json(new { requestId=args[2], ok=false, code=e.Code })); }
+                var now=DateTime.Parse(args[5]).ToUniversalTime().AddMilliseconds(1);
+                var answer=FleetPull.Submit(root,args[2],args[3],()=>probe,payload,()=>now,(run,script)=>
+                    FleetPull.Assemble(root,run,args.Length==7?args[6]:script,args[4],null,scratch));
+                code=Renewal.Str(answer,"code"); status=Renewal.Str(answer,"status");
+            } catch (BrokerRefusal e) { code=e.Code; }
+            catch (Exception e) { Console.Error.WriteLine(e); code="FLEET_BROKER_UNCONFIRMED"; }
+            Console.WriteLine(Renewal.Json(FleetPull.Answer(root,args[2],grant,code,status)));
             return 0;
         }
         string dir = Path.Combine(Path.GetTempPath(), "clued-broker-pure-" + Guid.NewGuid().ToString("N"));

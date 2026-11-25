@@ -2,8 +2,7 @@
 // elevated install. It is the only principal that changes the runner service's configuration, and it
 // does exactly one thing: point the runner at the ONE installed generic helper (Source v2 S12), start it
 // once with (nonce, configSha256), wait for it to stop, and point it back at the original binary. It
-// never changes the account (always .\clued-control), start type, dependencies or DACL, never kills
-// anything, and runs nothing that is not the allow-listed helper. The one stop it ever sends is the Owner
+// never changes the account (always .\clued-control), start type, dependencies or DACL. The one stop it sends to the runner is the Owner
 // abort of DESIGN §6.5: a single SERVICE_CONTROL_STOP to the runner while it runs the helper of the swap in
 // flight, asked for by a stop request bound to exactly that swap (StopRequest); the helper handles it on its
 // own (STOP_REQUESTED: it drains the job object it created), and the swap then ends as usual.
@@ -17,9 +16,11 @@
 //   broker\responses\<uuid>.json  writable by the broker only (plus <uuid>.taken claim markers)
 //   broker\requests\<uuid>.stop   Owner abort: stop request of the swap <uuid>, written by the resident
 //   broker\responses\<uuid>.stop.json  the broker's receipt of that stop request (create-only)
+// Fleet assembly runs in its own job, inside broker\fleet-pull, after a signed target probe.
 // Every request is executed at most once, also across crashes and reboots: a request that predates this
 // broker process, or one whose claim marker exists without an answer, is answered and never executed.
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -160,10 +161,18 @@ public sealed class SwapBroker : ServiceBase
                 Dictionary<string, object> answer;
                 var taken = Path.Combine(res, id + ".taken");
                 if (File.Exists(taken)) {
-                    try { answer = InterruptedRenewal(id,ReadBounded(file)); } catch { answer = null; }
+                    try {
+                        var bytes = ReadBounded(file);
+                        answer = FleetPull.Interrupted(root,id,bytes,"BROKER_REQUEST_INTERRUPTED_NOT_REPEATED")
+                            ?? InterruptedRenewal(id,bytes);
+                    } catch { answer = null; }
                     if(answer==null) answer = Refused(id,"BROKER_REQUEST_INTERRUPTED_NOT_REPEATED");
                 }
-                else if (File.GetCreationTimeUtc(file) < startedAt) answer = Refused(id, "BROKER_REQUEST_PREDATES_START");
+                else if (File.GetCreationTimeUtc(file) < startedAt) {
+                    try { answer = FleetPull.Interrupted(root,id,ReadBounded(file),"BROKER_REQUEST_PREDATES_START"); }
+                    catch { answer = null; }
+                    if (answer==null) answer = Refused(id,"BROKER_REQUEST_PREDATES_START");
+                }
                 else
                 {
                     // Create-only, written through to disk, before any effect.
@@ -248,25 +257,34 @@ public sealed class SwapBroker : ServiceBase
     readonly Renewal.StandbyConfirmation standbyConfirmation = new Renewal.StandbyConfirmation();
     volatile string renewalRequestId;
     volatile string fleetPullRequestId;
+    Renewal.Connection ProbeFleet(BrokerConfig config) {
+        Renewal.Require(Interlocked.CompareExchange(ref renewalBusy,1,0)==0,"RENEW_BUSY");
+        try {
+            using (var key = RenewalKey.Open()) {
+                var store = new RenewalFiles(root,"ci",config.Node.ControllerSid);
+                var gateway = RenewalGateway.Open(root,config,"ci",key);
+                return gateway.Probe(Renewal.Digest(Renewal.Token(store.Read("token"))));
+            }
+        } finally { Interlocked.Exchange(ref renewalBusy,0); }
+    }
     Dictionary<string,object> StartFleetPull(string id, Dictionary<string,object> request, string outFile) {
-        if (fleetPullRequestId != null) return new Dictionary<string,object>{{"requestId",id},{"ok",false},{"code","FLEET_BROKER_BUSY"}};
+        string grant = Renewal.Str(request,"grantId");
+        if (fleetPullRequestId != null) return FleetPull.Answer(root,id,grant,"FLEET_BROKER_BUSY",null);
         fleetPullRequestId = id;
         try {
             new Thread(delegate() {
-                string code = null;
+                string code = null, status = null;
                 try {
                     var config = LoadConfig();
-                    // Read the current target again. A cached probe must not authorize a request after a newer acceptance.
-                    using (var key = RenewalKey.Open()) {
-                        var store = new RenewalFiles(root,"ci",config.Node.ControllerSid);
-                        var gateway = RenewalGateway.Open(root,config,"ci",key);
-                        var probe = gateway.Probe(Renewal.Digest(Renewal.Token(store.Read("token"))));
-                        FleetPull.Submit(root, id, config.Node.NodeName, profileSha, probe, request, DateTime.UtcNow);
-                    }
+                    var answer = FleetPull.Submit(root,id,config.Node.NodeName,() => ProbeFleet(config),request,
+                        () => DateTime.UtcNow,(run,script) => FleetPull.Assemble(root,run,script,
+                            Path.Combine(root,"runtime","node.exe"),stopped));
+                    code = Renewal.Str(answer,"code");
+                    status = Renewal.Str(answer,"status");
                 } catch (BrokerRefusal error) { code = error.Code; }
                 catch (Exception) { code = "FLEET_BROKER_UNCONFIRMED"; }
                 try {
-                    var bytes = Encoding.UTF8.GetBytes(Renewal.Json(new { requestId=id, ok=code==null, code=code }));
+                    var bytes = Encoding.UTF8.GetBytes(Renewal.Json(FleetPull.Answer(root,id,grant,code,status)));
                     using (var file = new FileStream(outFile,FileMode.CreateNew,FileAccess.Write,FileShare.None,4096,FileOptions.WriteThrough)) {
                         file.Write(bytes,0,bytes.Length); file.Flush(true);
                     }
@@ -474,23 +492,29 @@ public sealed class SwapBroker : ServiceBase
 }
 
 
-// The resident can ask for a normal upgrade request, using only a prepared package in its own work tree.
-// The signed CI probe, not the resident request or a Release asset, determines which package is eligible.
+// The resident names a grant. The signed CI probe authorizes assembly inside the Broker's ACL.
 internal static class FleetPull {
     const string Kind = "fleet-pull";
     const string RequestContract = "clued.independent-ci.resident-upgrade-request/1";
-    static readonly Regex PackageLocation = new Regex(@"^pull-[a-zA-Z0-9]{6}\\assemble\\run-[a-zA-Z0-9]{6}\\package$");
+    const string Prepared = "FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED";
+    static readonly Regex Version = new Regex(@"\A[A-Za-z0-9][A-Za-z0-9._+-]{0,88}\z");
     static readonly Regex NodeName = new Regex("^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$");
     internal static Dictionary<string,object> Parse(byte[] bytes) {
         Dictionary<string,object> request;
         try { request = Renewal.Object(new UTF8Encoding(false,true).GetString(bytes)); }
         catch (Exception) { return null; } // The existing routes still own their invalid requests.
         if (Renewal.Str(request,"kind") != Kind) return null;
-        Renewal.Require(request.Count==7 && Renewal.Id(Renewal.Str(request,"grantId")) &&
-            NodeProfileV2.Hash(Renewal.Str(request,"requestSha256")) && NodeProfileV2.Hash(Renewal.Str(request,"sourceSha256")) &&
-            NodeProfileV2.Hash(Renewal.Str(request,"packageManifestSha256")) && Renewal.Number(request,"fromGeneration")>0 &&
-            Renewal.Str(request,"packageDirectory")!=null,"FLEET_BROKER_REQUEST_REFUSED");
+        Renewal.Require(request.Count==2 && Renewal.Id(Renewal.Str(request,"grantId")),"FLEET_BROKER_REQUEST_REFUSED");
         return request;
+    }
+    static string Taken(string root, string grant) { return Path.Combine(root,"broker","responses","fleet-"+grant+".taken"); }
+    internal static Dictionary<string,object> Answer(string root, string id, string grant, string code, string status) {
+        return new Dictionary<string,object> {{"requestId",id},{"ok",code==null},{"code",code},{"status",status},
+            {"delivered",File.Exists(Taken(root,grant))}};
+    }
+    internal static Dictionary<string,object> Interrupted(string root, string id, byte[] bytes, string code) {
+        var request = Parse(bytes);
+        return request==null ? null : Answer(root,id,Renewal.Str(request,"grantId"),code,null);
     }
     static Dictionary<string,object> ReadJson(string file, int max, string expectedHash) {
         Renewal.Require((File.GetAttributes(file)&(FileAttributes.Directory|FileAttributes.ReparsePoint))==0,"FLEET_BROKER_PATH_REFUSED");
@@ -507,47 +531,136 @@ internal static class FleetPull {
             return new JavaScriptSerializer { MaxJsonLength=max }.Deserialize<Dictionary<string,object>>(new UTF8Encoding(false,true).GetString(bytes));
         }
     }
-    static Dictionary<string,object> Child(Dictionary<string,object> v, string key) {
-        object value;
-        return v!=null && v.TryGetValue(key,out value) ? value as Dictionary<string,object> : null;
-    }
-    internal static void Submit(string root, string id, string node, string profileSha, Renewal.Connection probe,
-        Dictionary<string,object> request, DateTime now) {
-        string requestSha=Renewal.Str(request,"requestSha256"), decision=Renewal.Str(request,"grantId"), source=Renewal.Str(request,"sourceSha256");
-        var target=probe.FleetTarget;
-        Renewal.Require(Renewal.Id(id) && NodeName.IsMatch(node) && target!=null && Renewal.Str(target,"grant_id")==decision &&
-            Renewal.Str(target,"request_sha256")==requestSha,"FLEET_TARGET_CHANGED");
-        var package=Renewal.Str(request,"packageDirectory");
-        var work=Path.Combine(root,"work","fleet-pull") + "\\";
-        Renewal.Require(package.Length<=260 && Path.GetFullPath(package)==package && package.StartsWith(work,StringComparison.OrdinalIgnoreCase) &&
-            PackageLocation.IsMatch(package.Substring(work.Length)),"FLEET_BROKER_PATH_REFUSED");
-        for (var dir = package; !string.Equals(dir,root,StringComparison.OrdinalIgnoreCase); dir = Path.GetDirectoryName(dir)) {
-            var attr=File.GetAttributes(dir);
+    static void VerifyDirectory(string root, string directory) {
+        Renewal.Require(directory.StartsWith(root.TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase),"FLEET_BROKER_PATH_REFUSED");
+        for (var dir = directory; !string.Equals(dir,root,StringComparison.OrdinalIgnoreCase); dir = Path.GetDirectoryName(dir)) {
+            var attr = File.GetAttributes(dir);
             Renewal.Require((attr&(FileAttributes.Directory|FileAttributes.ReparsePoint))==FileAttributes.Directory,"FLEET_BROKER_PATH_REFUSED");
         }
-        var run = Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(package)));
-        var accepted = ReadJson(Path.Combine(run,"request.json"),262144,requestSha);
-        Renewal.Require(Renewal.Str(accepted,"contract")=="clued.independent-ci.fleet-node-acceptance-request/1" &&
-            Renewal.Str(accepted,"archive_sha256")==Renewal.Str(target,"archive_sha256") && Renewal.Str(accepted,"version")==Renewal.Str(target,"version") &&
-            Renewal.Str(accepted,"repository")==Renewal.Str(target,"repository") &&
-            Renewal.Str(accepted,"ciSourceManifestSha256")==source,"FLEET_BROKER_ACCEPTANCE_MISMATCH");
-        if (probe.OnDuty) {
-            object otherSources;
-            Renewal.Require(target.TryGetValue("other_sources",out otherSources) && otherSources is System.Collections.IList,"FLEET_WAITING_FOR_PEERS");
-            foreach (object peer in (System.Collections.IList)otherSources)
-                Renewal.Require((peer as string)==source,"FLEET_WAITING_FOR_PEERS");
+    }
+    [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr CreateJobObjectW(IntPtr security, IntPtr name);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job, int kind, byte[] info, int length);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+
+    internal static Dictionary<string,object> Assemble(string root, string run, string script, string runtime, WaitHandle stopped,
+        string testTemp = null) {
+        const int timeoutMs = 30 * 60 * 1000;
+        if (testTemp==null) {
+            foreach (var file in new[]{script,runtime}) {
+                VerifyDirectory(root,Path.GetDirectoryName(file));
+                Renewal.Require((File.GetAttributes(file)&(FileAttributes.Directory|FileAttributes.ReparsePoint))==0,
+                    "FLEET_BROKER_PATH_REFUSED");
+            }
         }
-        var current = ReadJson(Path.Combine(root,"upgrade","current.json"),65536,null);
-        Renewal.Require(Renewal.Number(current,"generation")==Renewal.Number(request,"fromGeneration"),"FLEET_GENERATION_CHANGED");
-        string sha=Renewal.Str(request,"packageManifestSha256");
-        var manifest=ReadJson(Path.Combine(package,"package-manifest.json"),16*1024*1024,sha);
-        var policy=ReadJson(Path.Combine(package,"config","policy.json"),65536,null);
-        Renewal.Require(Renewal.Str(manifest,"contract")=="clued.independent-ci.resident-package/4" &&
-            Renewal.Str(manifest,"ciSourceManifestSha256")==source && Renewal.Str(manifest,"nodeProfileSha256")==profileSha &&
-            Renewal.Str(Child(manifest,"acceptance"),"decisionRef")==decision &&
-            Renewal.Str(Child(policy,"ownerAcceptance"),"installReceiptRef")==Renewal.Str(target,"receipt_id"),"FLEET_BROKER_PACKAGE_MISMATCH");
-        var mark=Path.Combine(root,"broker","responses","fleet-"+decision+".taken");
+        var start = new ProcessStartInfo(runtime,"\""+script+"\" --root \""+root+"\" --run \""+run+"\"") {
+            WorkingDirectory=run, UseShellExecute=false, CreateNoWindow=true,
+            RedirectStandardInput=true, RedirectStandardOutput=true, RedirectStandardError=true,
+            StandardOutputEncoding=Encoding.UTF8
+        };
+        var env = start.EnvironmentVariables;
+        env.Clear();
+        string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        env["SystemRoot"] = windows;
+        env["WINDIR"] = windows;
+        env["PATH"] = Environment.SystemDirectory;
+        env["TEMP"] = env["TMP"] = testTemp ?? run;
+        if (testTemp!=null) env["CLUED_UNDER_TEST"] = "1";
+        env["FLEET_UPGRADE_DEADLINE_MS"] = (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + timeoutMs - 30000)
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        // The Broker holds the only job handle. Closing it ends this child and its descendants.
+        IntPtr job = CreateJobObjectW(IntPtr.Zero,IntPtr.Zero);
+        Renewal.Require(job!=IntPtr.Zero,"FLEET_UPGRADE_CHILD_JOB_FAILED");
+        try {
+            var limits = new byte[IntPtr.Size==8 ? 144 : 112];
+            limits[17] = 0x20; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE at offset 16
+            Renewal.Require(SetInformationJobObject(job,9,limits,limits.Length),"FLEET_UPGRADE_CHILD_JOB_FAILED");
+            var elapsed = Stopwatch.StartNew();
+            using (var child = Process.Start(start)) {
+                if (!AssignProcessToJobObject(job,child.Handle)) {
+                    if (!child.HasExited) child.Kill();
+                    throw new BrokerRefusal("FLEET_UPGRADE_CHILD_JOB_FAILED");
+                }
+                var output = child.StandardOutput.ReadToEndAsync();
+                child.BeginErrorReadLine();
+                child.StandardInput.Write("assemble\n");
+                child.StandardInput.Close();
+                while (!child.WaitForExit(250)) {
+                    Renewal.Require(stopped==null || !stopped.WaitOne(0),"BROKER_REQUEST_INTERRUPTED_NOT_REPEATED");
+                    Renewal.Require(elapsed.ElapsedMilliseconds<timeoutMs,"FLEET_UPGRADE_CHILD_TIMEOUT");
+                }
+                CloseHandle(job);
+                job = IntPtr.Zero;
+                Renewal.Require(child.ExitCode==0 && output.Wait(5000),"FLEET_UPGRADE_CHILD_FAILED");
+                var line = output.Result.TrimEnd('\r','\n');
+                Renewal.Require(line.Length>0 && line.Length<=4096 && line.IndexOfAny(new[]{'\r','\n'})<0,"FLEET_UPGRADE_CHILD_FAILED");
+                return Renewal.Object(line);
+            }
+        } finally { if (job!=IntPtr.Zero) CloseHandle(job); }
+    }
+    static void CheckPeers(string root, Dictionary<string,object> target) {
+        string version = Renewal.Str(target,"version"), requestSha = Renewal.Str(target,"request_sha256");
+        Renewal.Require(Version.IsMatch(version ?? "") && NodeProfileV2.Hash(requestSha),"FLEET_TARGET_CHANGED");
+        var bundle = Path.Combine(root,"bundles","fleet-pull",requestSha);
+        VerifyDirectory(root,bundle);
+        var accepted = ReadJson(Path.Combine(bundle,"fleet-node-"+version+".acceptance-request.json"),262144,requestSha);
+        string source = Renewal.Str(accepted,"ciSourceManifestSha256");
+        object otherSources = null;
+        Renewal.Require(NodeProfileV2.Hash(source) && target.TryGetValue("other_sources",out otherSources) &&
+            otherSources is System.Collections.IList,"FLEET_WAITING_FOR_PEERS");
+        foreach (object peer in (System.Collections.IList)otherSources)
+            Renewal.Require((peer as string)==source,"FLEET_WAITING_FOR_PEERS");
+    }
+    internal static Dictionary<string,object> Submit(string root, string id, string node, Func<Renewal.Connection> probe,
+        Dictionary<string,object> request, Func<DateTime> clock, Func<string,string,Dictionary<string,object>> assemble) {
+        string decision = Renewal.Str(request,"grantId");
+        Renewal.Require(Renewal.Id(id) && Renewal.Id(decision) && NodeName.IsMatch(node),"FLEET_BROKER_REQUEST_REFUSED");
+        var mark = Taken(root,decision);
         Renewal.Require(!File.Exists(mark),"FLEET_TARGET_ALREADY_REQUESTED");
+        var observed = probe();
+        var target = observed.FleetTarget;
+        Renewal.Require(Renewal.Str(target,"grant_id")==decision,"FLEET_TARGET_CHANGED");
+        if (observed.OnDuty) CheckPeers(root,target);
+
+        var currentFile = Path.Combine(root,"upgrade","current.json");
+        var current = ReadJson(currentFile,65536,null);
+        var residentSha = Renewal.Str(current,"residentManifestSha256");
+        var generation = Renewal.Number(current,"generation");
+        Renewal.Require(NodeProfileV2.Hash(residentSha) && generation>0,"FLEET_GENERATION_CHANGED");
+        var src = Path.Combine(root,"resident",residentSha,"src");
+        var parent = Path.Combine(root,"broker","fleet-pull");
+        Directory.CreateDirectory(parent);
+        VerifyDirectory(root,parent);
+        var run = Path.Combine(parent,Guid.NewGuid().ToString("N").Substring(0,16));
+        Directory.CreateDirectory(run);
+        using (var input = new FileStream(Path.Combine(run,"target.json"),FileMode.CreateNew,FileAccess.Write,FileShare.None)) {
+            var bytes = Encoding.UTF8.GetBytes(Renewal.Json(new { at=Renewal.Stamp(clock()), code=(string)null,
+                onDuty=observed.OnDuty, fleetTarget=target }));
+            input.Write(bytes,0,bytes.Length);
+        }
+        var answer = assemble(run,Path.Combine(src,"fleet-assemble-main.mjs"));
+        if (Renewal.Str(answer,"status")!=Prepared) return answer;
+
+        string package = Renewal.Str(answer,"packageDir"), sha = Renewal.Str(answer,"packageManifestSha256");
+        Renewal.Require(package!=null && package.Length<=260 && Path.GetFullPath(package)==package &&
+            package.StartsWith(run+"\\",StringComparison.OrdinalIgnoreCase) && NodeProfileV2.Hash(sha),"FLEET_BROKER_PATH_REFUSED");
+        VerifyDirectory(root,package);
+        ReadJson(Path.Combine(package,"package-manifest.json"),16*1024*1024,sha);
+
+        // Assembly can take minutes. Recheck the signed target and role before committing to the inbox.
+        var latest = probe();
+        Renewal.Require(Renewal.Str(latest.FleetTarget,"grant_id")==decision &&
+            Renewal.Str(latest.FleetTarget,"request_sha256")==Renewal.Str(target,"request_sha256") &&
+            Renewal.Str(latest.FleetTarget,"archive_sha256")==Renewal.Str(target,"archive_sha256"),"FLEET_TARGET_CHANGED");
+        if (latest.OnDuty) {
+            Renewal.Require(observed.OnDuty,"FLEET_ROLE_CHANGED");
+            CheckPeers(root,latest.FleetTarget);
+        }
+        current = ReadJson(currentFile,65536,null);
+        Renewal.Require(Renewal.Number(answer,"fromGeneration")==generation && Renewal.Number(current,"generation")==generation &&
+            Renewal.Str(current,"residentManifestSha256")==residentSha,"FLEET_GENERATION_CHANGED");
+        var now = clock();
         using (var claim = new FileStream(mark,FileMode.CreateNew,FileAccess.Write,FileShare.None,1,FileOptions.WriteThrough)) {
             claim.WriteByte(1); claim.Flush(true);
         }
@@ -559,6 +672,7 @@ internal static class FleetPull {
         using (var inbox = new FileStream(Path.Combine(root,"upgrade","inbox",name),FileMode.CreateNew,FileAccess.Write,FileShare.None,4096,FileOptions.WriteThrough)) {
             inbox.Write(requestBytes,0,requestBytes.Length); inbox.Flush(true);
         }
+        return answer;
     }
 }
 
