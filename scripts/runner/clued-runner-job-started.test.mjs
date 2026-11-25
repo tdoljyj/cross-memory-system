@@ -624,7 +624,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "native-only-admission-v1");
+  assert.equal(HOOK_VERSION, "refusal-reason-v1");
   assert.ok(lines.length >= 5);
   const observations = lines.filter((line) => line.startsWith("clued-r9-pre-job: "));
   const diagnostics = lines.filter((line) => !line.startsWith("clued-r9-pre-job: "));
@@ -1511,4 +1511,81 @@ test("戊 hook: refusals stay (closed unmerged, another head, another base, stil
   const { result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...nativeScript(nativeCheck({ conclusion: "failure" })),
     [COMPARE]: mergedMeanwhile(), [`${API}/pulls/9`]: { body: MERGED } });
   assert.equal(result.allow, false, `merged, admission failed: ${result.reason}`);
+});
+
+// 提交 D (PLAN-claim-pr-binding-20261125 §3): with no Native admission on the head, the refusal says why, in the admission
+// side's own words: the newest resident-queue/<node> status of the head. #1320's head f052a0bc6 on 11-25 08:32 (Beijing): the
+// resident wrote CLAIM_NOT_CURRENT, the job said only "Native admission absent: not admitted (...)". Only the text changes:
+// a read that fails, or no such status, leaves the reason word for word, and the verdict never depends on it.
+const STATUSES = `${API}/commits/${HEAD}/statuses?per_page=100`;
+const FIELD_RESIDENT = "当班：等待中（CLAIM_NOT_CURRENT，当前提交未授权：认领持有人对这个提交做 authorize_head 后自动继续）…";
+const ABSENT_REASON = "pull request #9 changes .github/workflows/gitleaks.yml; Native admission absent: not admitted "
+  + "(binding, current head, conclusion, freshness or rerun)";
+const residentStatus = (id, description, context = "resident-queue/turing (info only)") => ({ id, context, state: "pending",
+  created_at: `2026-11-25T00:${String(id % 60).padStart(2, "0")}:00Z`, description });
+test("提交 D hook: Native admission absent, the refusal carries the resident's newest resident-queue text (#1320, CLAIM_NOT_CURRENT)", async () => {
+  const statuses = [residentStatus(46, FIELD_RESIDENT), residentStatus(45, "当班：运行中：第 1 段（准入）"),
+    residentStatus(44, "unrelated", "ci/other")];
+  const { result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...nativeScript(), [STATUSES]: { body: statuses } });
+  assert.equal(result.allow, false, result.reason);
+  assert.ok(result.reason.startsWith(ABSENT_REASON), result.reason);
+  assert.ok(result.reason.includes("当前提交未授权"), result.reason);
+  assert.ok(result.reason.includes("CLAIM_NOT_CURRENT"), result.reason);
+  assert.ok(!result.reason.includes("第 1 段") && !result.reason.includes("unrelated"), "only the newest resident-queue text: " + result.reason);
+  // Two nodes: each node's newest text.
+  const two = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...nativeScript(),
+    [STATUSES]: { body: [residentStatus(47, "当班：运行中：第 1 段（准入）", "resident-queue/desk (info only)"), ...statuses] } });
+  assert.ok(two.result.reason.includes("当前提交未授权") && two.result.reason.includes("resident-queue/desk"), two.result.reason);
+  // A description never breaks the one-line annotation.
+  const multi = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...nativeScript(),
+    [STATUSES]: { body: [residentStatus(48, "第一行\r\n::error::第二行")] } });
+  assert.equal(/[\r\n]/.test(multi.result.reason), false, multi.result.reason);
+});
+test("提交 D hook: a statuses read that fails, or no resident-queue status, leaves the refusal word for word; no read otherwise", async () => {
+  for (const [label, answer] of [
+    ["thrown", () => { throw new Error("ECONNRESET"); }], ["403", { status: 403, body: { message: "Resource not accessible by integration" } }],
+    ["502", { status: 502, body: null }], ["not a list", { body: { statuses: [] } }], ["none", { body: [] }],
+    ["another context", { body: [residentStatus(50, FIELD_RESIDENT, "ci/other")] }], ["no description", { body: [residentStatus(51, null)] }],
+  ]) {
+    const { result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...nativeScript(), [STATUSES]: answer });
+    assert.deepEqual([label, result.allow, result.reason], [label, false, ABSENT_REASON]);
+  }
+  const unscripted = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, nativeScript());
+  assert.deepEqual([unscripted.result.allow, unscripted.result.reason], [false, ABSENT_REASON]);
+  // An admission that exists decides as before, and its text is not read: admitted, or a refusal naming the check.
+  for (const check of [nativeCheck(), nativeCheck({ conclusion: "failure" })]) {
+    const { result, calls } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...nativeScript(check), [STATUSES]: { body: [residentStatus(52, FIELD_RESIDENT)] } });
+    assert.equal(result.reason.includes("当前提交未授权"), false, result.reason);
+    assert.equal(calls.some((c) => c.url.startsWith(STATUSES)), false);
+  }
+});
+test("提交 D hook: with the read-only App, the statuses are read with the hook's own token: no new mint, no new permission", async () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" });
+  const INSTALLATION = "https://api.github.com/repos/o/r/installation";
+  const MINT = "https://api.github.com/app/installations/77/access_tokens";
+  let minted = 0;
+  const withApp = async (statuses) => {
+    const fake = fakeFetch({ [INSTALLATION]: { body: { id: 77 } }, [MINT]: () => ({ status: 201, body: { token: `ghs_app${++minted}` } }),
+      [RUN]: thisRun(), ...nativeScript(), [STATUSES]: statuses });
+    const result = await decide({ env: env({ CLUED_RUNNER_HOOK_APP_ID: "4242", CLUED_RUNNER_HOOK_APP_KEY_FILE: "/app.pem", CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }),
+      fetchImpl: fake.fetchImpl, readFile: (p) => (p === "/app.pem" ? pem : prEvent()), sleep: async () => {} });
+    return { result, calls: fake.calls };
+  };
+  const read = await withApp({ body: [residentStatus(46, FIELD_RESIDENT)] });
+  assert.ok(read.result.reason.includes("当前提交未授权"), read.result.reason);
+  const mints = read.calls.filter((c) => c.url === MINT);
+  assert.equal(mints.length, 2, "the two mints as before (contents/actions/pull requests; plus checks)");
+  assert.equal(mints.some((c) => JSON.parse(c.body).permissions.statuses !== undefined), false);
+  assert.equal(read.calls.find((c) => c.url === STATUSES).auth, read.calls.find((c) => c.url.startsWith(`${COMPARE}`)).auth, "the hook's own token");
+  const forbidden = await withApp({ status: 403, body: { message: "Resource not accessible by integration" } });
+  assert.deepEqual([forbidden.result.allow, forbidden.result.reason], [false, ABSENT_REASON]);
+});
+test("提交 D: the hook and the gate word the resident's text alike (two copies: the hook is installed alone)", async () => {
+  const gateModule = await import("../ci/clued-work-admission.mjs");
+  const hookModule = await import("./clued-runner-job-started.mjs");
+  assert.equal(hookModule.RESIDENT_STATUS_CONTEXT_PREFIX, gateModule.RESIDENT_STATUS_CONTEXT_PREFIX);
+  for (const statuses of [[residentStatus(46, FIELD_RESIDENT), residentStatus(45, "旧"), residentStatus(47, "另一节点", "resident-queue/desk (info only)")],
+    [residentStatus(48, "第一行\r\n第二行"), residentStatus(49, "x".repeat(400))], [], [residentStatus(50, FIELD_RESIDENT, "ci/other")], "x", null])
+    assert.equal(hookModule.residentSaying(statuses), gateModule.residentSaying(statuses), JSON.stringify(statuses));
 });

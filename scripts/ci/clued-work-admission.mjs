@@ -2799,6 +2799,28 @@ export async function residentHeldHint(fetchImpl, env, repository, headSha) {
     return null;
   }
 }
+// 提交 D (PLAN-claim-pr-binding-20261125 §3): a gate that ends with no Native check at all quotes why, in the admission side's own
+// words: each resident-queue/<node>'s newest text on the head (CLAIM_NOT_CURRENT and what to do, a wait, a stop), into the reason,
+// so the annotation and the step summary say it. Text only, like residentHeldHint: never admits, never ends a wait; one read
+// without retries; a failure or no such status leaves the reason word for word. scripts/runner/clued-runner-job-started.mjs holds
+// the same residentSaying (a test compares them).
+export function residentSaying(statuses) {
+  if (!Array.isArray(statuses)) return "";
+  const oneLine = (value, max) => { const text = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+    return text.length <= max ? text : `${text.slice(0, max - 1)}…`; };
+  const newest = new Map();
+  for (const status of statuses.filter((s) => s && typeof s.context === "string" && s.context.startsWith(RESIDENT_STATUS_CONTEXT_PREFIX))
+    .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0))) if (!newest.has(status.context)) newest.set(status.context, status.description);
+  return [...newest].filter(([, description]) => typeof description === "string" && description.trim()).slice(0, 3)
+    .map(([context, description]) => `${oneLine(context, 80)}: ${oneLine(description, 200)}`).join("; ");
+}
+export async function residentStatusSaying(fetchImpl, env, repository, headSha) {
+  try {
+    return residentSaying(await githubJson(fetchImpl[RETRY_ORIGINAL] ?? fetchImpl, env, `/repos/${repository}/commits/${headSha}/statuses?per_page=100`));
+  } catch {
+    return "";
+  }
+}
 
 export async function independentRepairRerun({ fetchImpl, env, pr, head = pr?.head.sha, attempt, self }) {
   const repository = env.GITHUB_REPOSITORY;
@@ -2820,7 +2842,12 @@ async function independentGateOutcome({ env, event, fetchImpl, outcome, pr, atte
   if (!independent || !independent.settled) {
     outcome.verdict = "ADMISSION_PENDING";
     if (held) outcome.reasons.push(`${what}: 准入方不提议（${held.hint}）：${held.text}；机器人带上来后新 head 重新跑`);
-    else outcome.reasons.push(`${what}: ${check ? `check ${check.id} still ${check.status}` : "has posted no check"} after ${limit}s`);
+    else {
+      // 提交 D: no check at all; the admission side's own words say why (residentStatusSaying). Text only.
+      const saying = check ? "" : await residentStatusSaying(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha);
+      outcome.reasons.push(`${what}: ${check ? `check ${check.id} still ${check.status}` : "has posted no check"} after ${limit}s`
+        + `${saying ? `; admission side's status: ${saying}` : ""}`);
+    }
   } else if (!independent.bound) {
     outcome.verdict = "REJECTED";
     outcome.reasons.push(`${what}: check ${check.id} does not bind this pull request (external_id or summary)`);

@@ -331,7 +331,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "native-only-admission-v1";
+export const HOOK_VERSION = "refusal-reason-v1";
 export const COMPONENT_VERSION = "1.0.9";
 
 // Transient reads (see the header).
@@ -562,6 +562,33 @@ export async function nativeAdmissionCheck(fetchImpl, token, repository, headSha
     && Number.isFinite(started) && Number.isFinite(completed) && completed >= started
     && completed <= observed + SAME_EVENT_MS && Number.isFinite(since) && started >= since - SAME_EVENT_MS;
   return { settled: true, check: newest, admitted: bound && newest.conclusion === "success" };
+}
+
+// 提交 D (PLAN-claim-pr-binding-20261125 §3): why a head has no Native admission is said once, by the admission side, in its
+// resident-queue/<node> status on the head (the resident package's src/pr-status.mjs: CLAIM_NOT_CURRENT and what to do, a wait, a
+// stop). A refusal for an absent admission quotes each node's newest text. Text only: it never admits or refuses anything, so who
+// posted the status does not matter, and a read that fails, or no such status, leaves the refusal word for word. Installed alone:
+// keep RESIDENT_STATUS_CONTEXT_PREFIX and residentSaying identical to scripts/ci/clued-work-admission.mjs (a test compares them).
+export const RESIDENT_STATUS_CONTEXT_PREFIX = "resident-queue/";
+export function residentSaying(statuses) {
+  if (!Array.isArray(statuses)) return "";
+  const oneLine = (value, max) => { const text = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+    return text.length <= max ? text : `${text.slice(0, max - 1)}…`; };
+  const newest = new Map();
+  for (const status of statuses.filter((s) => s && typeof s.context === "string" && s.context.startsWith(RESIDENT_STATUS_CONTEXT_PREFIX))
+    .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0))) if (!newest.has(status.context)) newest.set(status.context, status.description);
+  return [...newest].filter(([, description]) => typeof description === "string" && description.trim()).slice(0, 3)
+    .map(([context, description]) => `${oneLine(context, 80)}: ${oneLine(description, 200)}`).join("; ");
+}
+// The read for it, with the hook's token as it is: no new token and no new App permission. The repository is public, so its
+// statuses read like any public data (the gate's residentHeldHint reads them the same way); were it not, the read fails and the
+// refusal stays as it was. Any failure is "".
+async function residentStatusSaying(fetchImpl, token, repository, headSha) {
+  try {
+    return residentSaying(await github(fetchImpl, token, `/repos/${repository}/commits/${headSha}/statuses?per_page=100`));
+  } catch {
+    return "";
+  }
 }
 
 // The workflows whose required checks the train needs on S (ADR 0018 §8):
@@ -1111,6 +1138,11 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
     result.allow = Boolean(native.admitted && live && repair.ok);
     result.reason = `pull request #${pr.number} changes ${[...new Set(changed)].join(", ")}; Native admission ${native.check?.id ?? "absent"}: `
       + `${result.allow ? `succeeded${merged ? "; merged with this head meanwhile" : ""}` : `not admitted (binding, current head, conclusion, freshness or rerun${repair.why ? `: ${repair.why}` : ""})`}${rerun}`;
+    // 提交 D: no admission at all; the admission side's own words say why (CLAIM_NOT_CURRENT, a wait, a stop). Text only.
+    if (!result.allow && !native.check) {
+      const saying = await residentStatusSaying(fetchImpl, token, repository, pr.head.sha);
+      if (saying) result.reason += `; admission side's status: ${saying}`;
+    }
     return result;
   }
   throw new Error(`unreachable event ${event}`);

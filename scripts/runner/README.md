@@ -18,6 +18,17 @@ Task `869d2db7`, Owner Decision `b0c53143`. Every self-hosted runner that serves
 
 ## What it allows
 
+### 拒绝文案带上准入方给的原因（PLAN-claim-pr-binding-20261125 提交 D）
+
+`refusal-reason-v1` 只改文案：改了工作流的 PR，本 head 上**没有任何** Native 准入检查
+（`Native admission absent: not admitted (...)`）时，钩子再读一次本 head 的提交状态，把每个
+`resident-queue/<节点>` 最新一条的描述接在拒绝原因后面（`; admission side's status: resident-queue/turing (info only): 当班：等待中（CLAIM_NOT_CURRENT，当前提交未授权：…）`）。
+原因只有常驻准入发布器写的那一处，钩子只照抄。用钩子现有的令牌读（仓库公开，状态同其他公开数据一样可读），不新取令牌、
+不加 App 权限；读失败、没有这条状态或描述为空，原因逐字照旧。判定一个字不改：准入存在（成功、失败或未完成）时不读状态。
+admission-gate 作业（`scripts/ci/clued-work-admission.mjs` 的 `independentGateOutcome`）同样把这段接在
+`has posted no check` 后面，进注解和作业摘要；两边的 `residentSaying` 逐字一致（测试比对）。
+合入即发布（loader 从 main 读）；拒绝时 “Set up runner” 显示 `[hook refusal-reason-v1]`。
+
 ### fork 来源一律拒（04f9b91b 题 1）
 
 `fork-refusal-v1` 只增加一条：`pull_request` 与 `pull_request_target` 两个分支里，
