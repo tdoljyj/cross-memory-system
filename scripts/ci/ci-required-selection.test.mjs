@@ -8,7 +8,7 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
+  FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SELECTOR_IMPORTS, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
   knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, resolveCommand, executeSuite, selectSuites,
   unitTestFiles,
   PLATFORMS, SUITE_PLATFORMS, hostPlatform, runSelected, suitePlatforms,
@@ -16,12 +16,20 @@ import {
 import * as selection from './ci-required-selection.mjs';
 import reporterStream, { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
 
-// What a copy of the selector needs beside it: the modules it imports (test-env since Task 2ee162c2, the real-clock scan,
-// guard and their shared imports since Task 11092b8b).
-const SELECTOR_IMPORTS = ['test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'test-clock-imports.mjs'];
-
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
+
+test('U6 真时钟欠账清单和许可清单分别触发全选', () => {
+  for (const file of ['config/test-clock-debt.txt', 'scripts/ci/test-clock-allow.json']) {
+    assert.ok(selectSuites('migration-verify', [file]).suites.includes('production-schema'), file);
+    assert.deepEqual(selectSuites('ci-suites', [file]).suites, Object.keys(SUITES['ci-suites']), file);
+  }
+});
+
+function copyToolchain(root) {
+  mkdirSync(path.join(root, 'config'), { recursive: true });
+  copyFileSync(path.join(ROOT, 'config/ci-toolchain.json'), path.join(root, 'config/ci-toolchain.json'));
+}
 
 // Launch the real CLI in separate processes and use a different checkout for
 // each suite. Inject the queue location and short timing budgets.
@@ -1402,6 +1410,7 @@ function candidateSelector(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const dir = path.join(root, 'scripts/ci');
   mkdirSync(dir, { recursive: true });
+  copyToolchain(root);
   const source = readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8');
   for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
   const change = (id, commands) => writeFileSync(path.join(dir, 'ci-required-selection.mjs'),
@@ -1484,6 +1493,7 @@ test('a command added by a module the candidate selector imports runs although t
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const dir = path.join(root, 'scripts/ci');
     mkdirSync(dir, { recursive: true });
+    copyToolchain(root);
     for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
     writeFileSync(path.join(dir, 'ci-required-selection.mjs'), `${readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8')}
 import { ADDED } from './suite-additions.mjs';
@@ -1516,7 +1526,7 @@ test('a candidate with scripts/ci but no selector fails the suite after its trus
 });
 
 // Gap A review finding 4: a test file added to a trusted command's explicit list runs alone, planned as --run-files plans it,
-// after the trusted command ran as it is.
+// after the trusted command ran as it is. The candidate entry then runs its own whole command.
 test('a test file added to a trusted command list runs alone after the trusted command', (t) => {
   const { root, dir, change } = candidateSelector(t);
   writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), "console.log('baseline executed');\n");
@@ -1526,9 +1536,13 @@ test('a test file added to a trusted command list runs alone after the trusted c
   const run = runCandidate(root);
   assert.equal(run.status, 0, run.stdout + run.stderr);
   assert.deepEqual(groupLines(run.stdout), ['::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter.test.mjs',
-    '::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter-new.test.mjs']);
-  assert.equal(run.stdout.split('baseline executed').length - 1, 1);
-  assert.equal(run.stdout.split('new file executed').length - 1, 1);
+    '::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter-new.test.mjs',
+    '::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter-new.test.mjs scripts/ci/retrigger-counter.test.mjs']);
+  const [firstPass, secondPass] = run.stdout.split('可信入口已通过，开始用候选入口再跑一遍');
+  for (const output of [firstPass, secondPass]) {
+    assert.equal(output.split('baseline executed').length - 1, 1);
+    assert.equal(output.split('new file executed').length - 1, 1);
+  }
 });
 
 test('an added test file runs without the trusted allowance, which still covers the old files; an added switch runs the whole command', (t) => {
@@ -2245,8 +2259,9 @@ for (const [file, id] of BASELINE_JOBS) {
 test('in a CI job, --run and --run-selected without a base commit start no command and name CI_BASE_SHA', (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-no-base-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const tools = path.join(dir, 'tools');
-  mkdirSync(tools);
+  const tools = path.join(dir, 'scripts/ci');
+  mkdirSync(tools, { recursive: true });
+  copyToolchain(dir);
   for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(tools, name));
   const tail = `for (const key of Object.keys(SUITES['ci-suites'])) delete SUITES['ci-suites'][key];
 SUITES['ci-suites']['retrigger-counter'] = ['**'];

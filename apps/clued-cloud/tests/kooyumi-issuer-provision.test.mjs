@@ -1,16 +1,15 @@
 // issuer-credentials: disposable embedded PostgreSQL with extracted issuer tables/functions only.
 // Synthetic verifiers use real stage/activate paths; expired/staged/retired cases test refusal.
 // This fixture never enables test credential grants or accesses a live service.
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import {
   validateMetadata, buildProvisionSql, buildVerificationSql, safeSummary,
 } from '../scripts/kooyumi-issuer-provision.mjs';
@@ -107,16 +106,6 @@ test('the safe summary excludes identity, verifier and unexpected credential val
   assert.ok(!summary.includes('verifier'));
 });
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve, reject) => {
-    listener.once('error', reject);
-    listener.listen(0, '127.0.0.1', resolve);
-  });
-  const port = listener.address().port;
-  await new Promise((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
-  return port;
-}
 
 function statement(source, start) {
   const begin = source.indexOf(start);
@@ -177,16 +166,15 @@ async function snapshot(client) {
 
 test('provision SQL enforces ownership, isolated registration and immutable replay in local PostgreSQL', { timeout: 120000 }, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kooyumi-provision-test-'));
-  const server = new EmbeddedPostgres({
+  const server = newCluster({
     databaseDir: directory, user: 'postgres', password: crypto.randomBytes(32).toString('hex'),
-    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS, '--locale=C'], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS, '--locale=C'], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError() {},
   });
   const clients = [];
   let databaseIndex = 0;
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const control = server.getPgClient(); clients.push(control); await control.connect();
     await control.query(`create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;`);

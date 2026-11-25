@@ -1,13 +1,12 @@
-import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import EmbeddedPostgres from "embedded-postgres";
+import { newCluster } from "./pg-cluster-fixture.mjs";
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { setWorkerGatewayCaller, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
@@ -15,21 +14,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString("hex");
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
-  const value = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return value;
-}
 
 test("task depends_on accepts only readable tasks of the same user", { timeout: 180000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-task-dependency-"));
-  const server = new EmbeddedPostgres({
+  const server = newCluster({
     databaseDir: directory,
     user: "postgres",
     password: hash(),
-    port: await freePort(),
     persistent: false,
     initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {},
@@ -37,8 +28,7 @@ test("task depends_on accepts only readable tasks of the same user", { timeout: 
   });
   const clients = [];
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = server.getPgClient();
     clients.push(admin);
     await admin.connect();

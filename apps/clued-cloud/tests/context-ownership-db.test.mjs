@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { build, stop } from 'esbuild';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
@@ -23,26 +22,18 @@ const tokens = Array.from({ length: 8 }, () => crypto.randomBytes(32).toString('
 const evidence = [];
 const key = () => crypto.randomUUID();
 const future = () => new Date(Date.now() + 3600000).toISOString();
-async function port() {
-  const s = net.createServer();
-  await new Promise((resolve) => s.listen(0, '127.0.0.1', resolve));
-  const p = s.address().port;
-  await new Promise((resolve) => s.close(resolve));
-  return p;
-}
 
 for (const profile of ['production-m1', 'all-repository-migrations']) {
   test(`Context v1.1 real PostgreSQL: ${profile}`, { timeout: 180000 }, async (t) => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-context-v11-'));
-    const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: crypto.randomBytes(24).toString('hex'),
-      port: await port(), persistent: false, onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
+    const server = newCluster({ databaseDir: directory, user: 'postgres', password: crypto.randomBytes(24).toString('hex'),
+      persistent: false, onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
     const clients = [];
     let admin;
     let cid;
     const check = (condition, name, details = {}) => { assert.ok(condition, name); evidence.push({ profile, name, result: 'PASS', ...details }); };
     try {
-      await server.initialise();
-      await server.start();
+      await startCluster(server);
       admin = server.getPgClient(); clients.push(admin); await admin.connect();
       await admin.query(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
         create role authenticator nologin noinherit; create schema auth; create schema extensions;

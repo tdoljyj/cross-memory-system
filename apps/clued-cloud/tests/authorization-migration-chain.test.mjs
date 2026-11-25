@@ -1,23 +1,20 @@
-import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, startCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import net from 'node:net';
 import crypto from 'node:crypto';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 
 // Compatibility of the complete committed migration order, separate from the
 // authorization suite's deliberately small M1 fixture. Never targets a service.
 for (const profile of ['complete-repository', 'production-installed-shape']) test(profile + ': retired baseline upgrades to successor without reviving old surfaces', { timeout: 180000 }, async () => {
-  const listener = net.createServer(); await new Promise(r => listener.listen(0, '127.0.0.1', r));
-  const port = listener.address().port; await new Promise(r => listener.close(r));
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-migration-chain-'));
-  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: crypto.randomBytes(32).toString('hex'), port, persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(message + '\n'); } });
+  const server = newCluster({ databaseDir: directory, user: 'postgres', password: crypto.randomBytes(32).toString('hex'), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(message + '\n'); } });
   let db;
   try {
-    await server.initialise(); await server.start(); db = server.getPgClient(); await db.connect();
+    await startCluster(server); db = server.getPgClient(); await db.connect();
     await db.query(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls; create role authenticator nologin noinherit;
       create schema auth; create schema extensions; create extension pgcrypto with schema extensions;
       create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz);
