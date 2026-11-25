@@ -146,11 +146,11 @@ test('Windows 分片由 PowerShell 运行并传回选择器退出码', () => {
 });
 
 // 必需检查 hosted-ci-suites-windows 是汇总作业：一个判断，别的都没有（裁定“块 4 汇总作业的要求”）。逐字钉住整个作业：
-// 多一步、多一个条件、换成读产物或调 API、把 always() 改掉（跳过的必需检查会被当成通过），都红。
+// 汇总作业在普通事件上用 always() 检查分片结果。关闭事件只取消旧运行，汇总作业也跳过。
 const summaryJob = (name, needs, step) => [
   `    name: ${name}`,
   `    needs: ${needs}`,
-  '    if: always()',
+  "    if: always() && github.event.action != 'closed'",
   '    runs-on: ubuntu-24.04',
   '    timeout-minutes: 5',
   '    permissions: {}',
@@ -179,7 +179,7 @@ test('块 4：hosted-ci-suites-windows 是汇总作业，只有一步，只判�
 });
 
 // ---- 任务 3435f8bf 件甲（PLAN-ci-p90-next-20261125 §3.1；形状同 FABLE-ci-duration-target-20261124 §2.5）：三个长作业分片 ----
-// 检查名不变：hosted-<检查名> 是同名汇总作业（needs 自己的矩阵作业、if: always()，判定照抄 Windows 汇总作业）；
+// 检查名不变：hosted-<检查名> 是同名汇总作业。除关闭事件外，它总是检查自己矩阵的结果。
 // 分片作业 <作业名>-shard、检查名 hosted-<检查名>-shard-<i>，跑同一份 --run-selected 计划的第 i/n 片，n 只写在矩阵列表。
 // S8 删托管工作流时本节一起删。
 const SHARDED = [
@@ -224,7 +224,7 @@ test('块 4：时长作业非必需，不在影子比对的七项里，只读 ac
   const block = jobs(text).get('ci-suites-windows-duration') ?? '';
   assert.match(block, /^    name: hosted-ci-suites-windows-duration$/m);
   assert.match(block, /^    needs: ci-suites-windows-shard$/m);
-  assert.match(block, /^    if: always\(\)$/m);
+  assert.match(block, /^    if: always\(\) && github\.event\.action != 'closed'$/m);
   assert.match(block, /\n    permissions:\n      actions: read\n      contents: read\n    steps:\n/);
   assert.match(block, /\n {8}run: node candidate\/scripts\/ci\/hosted-windows-duration\.mjs(?:\n|$)/);
   const { PAIRS } = await import('./shadow-compare.mjs');
