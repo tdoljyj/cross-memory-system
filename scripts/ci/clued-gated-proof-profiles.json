@@ -8717,6 +8717,181 @@
 ""
           ],
           "workflow_blob": "0d5575fdabf9f2e811b893d6a09eb4b36d2e7600"
+        },
+        {
+          "gated": true,
+          "primary_ids": [
+            "design-refs-trusted-self-hosted",
+            "design-refs-untrusted-hosted"
+          ],
+          "pull_request": {
+            "paths": [
+              "development/contracts/**",
+              "scripts/ci/check_design_refs.py",
+              "scripts/ci/test_check_design_refs.py",
+              ".github/workflows/design-refs.yml"
+            ]
+          },
+          "registration_status": "registered",
+          "routes": [
+            {
+              "command_digests": {
+                "Run python3 -m unittest scripts/ci/test_check_design_refs.py": [
+                  "8e8cdd0e4f81b7f06735c5cfe2635d35164258537d5eb9c8b18d1ba02388d912"
+                ],
+                "Run python3 scripts/ci/check_design_refs.py": [
+                  "370a11c8b3ca9d0c349f50b1062b5425327bb02a27c60ced09b14e79247947cc"
+                ]
+              },
+              "job_id": "design-refs-trusted-self-hosted",
+              "name": "design-refs",
+              "required_steps": {
+                "Run python3 -m unittest scripts/ci/test_check_design_refs.py": 1,
+                "Run python3 scripts/ci/check_design_refs.py": 1
+              },
+              "self_hosted": true
+            },
+            {
+              "command_digests": {
+                "Run python3 -m unittest scripts/ci/test_check_design_refs.py": [
+                  "8e8cdd0e4f81b7f06735c5cfe2635d35164258537d5eb9c8b18d1ba02388d912"
+                ],
+                "Run python3 scripts/ci/check_design_refs.py": [
+                  "370a11c8b3ca9d0c349f50b1062b5425327bb02a27c60ced09b14e79247947cc"
+                ]
+              },
+              "job_id": "design-refs-untrusted-hosted",
+              "name": "design-refs",
+              "required_steps": {
+                "Run python3 -m unittest scripts/ci/test_check_design_refs.py": 1,
+                "Run python3 scripts/ci/check_design_refs.py": 1
+              },
+              "self_hosted": false
+            }
+          ],
+          "source_sha256": "21c4929e18bfeb1bec877fe2c43c31b7c1200073248008b82389c164c2fad0eb",
+          "source_yaml_lines": [
+"env:",
+"  REGISTRATION_TEST: enabled",
+"# Design-gap prevention, rule B (Task b896173e): every step-list item and",
+"# every deferral sentence in development/contracts/** names its Clued Task or",
+"# Decision. See scripts/ci/check_design_refs.py.",
+"name: design-refs",
+"",
+"on:",
+"  pull_request:",
+"    paths:",
+"      - 'development/contracts/**'",
+"      - 'scripts/ci/check_design_refs.py'",
+"      - 'scripts/ci/test_check_design_refs.py'",
+"      - '.github/workflows/design-refs.yml'",
+"  push:",
+"    branches: [main]",
+"    paths:",
+"      - 'development/contracts/**'",
+"      - 'scripts/ci/check_design_refs.py'",
+"      - 'scripts/ci/test_check_design_refs.py'",
+"      - '.github/workflows/design-refs.yml'",
+"",
+"permissions:",
+"  contents: read",
+"",
+"concurrency:",
+"  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
+"  cancel-in-progress: true",
+"",
+"jobs:",
+"  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when",
+"  # Clued admits this pull request. The gate does not call Clued and gets no",
+"  # Clued token (this job runs PR code): it waits for the trusted",
+"  # pull_request_target run of clued-work-admission.yml on this head and reads",
+"  # its result, always enforced (Merge Admission step 6 retired the advisory",
+"  # switch CLUED_WORK_ADMISSION_ENFORCE); non-PR events are admitted.",
+"  # Self-hosted Linux pool, pinned Node (Decision f86179b3).",
+"  admission-gate:",
+"    name: admission-gate",
+"    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]",
+"    timeout-minutes: 10",
+"    permissions:",
+"      actions: read",
+"      checks: read",
+"      contents: read",
+"      pull-requests: read",
+"    outputs:",
+"      admitted: ${{ steps.gate.outputs.admitted }}",
+"      enforced: ${{ steps.gate.outputs.enforced }}",
+"      verdict: ${{ steps.gate.outputs.verdict }}",
+"    steps:",
+"      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+"        with:",
+"          persist-credentials: false",
+"          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+"      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
+"        with:",
+"          node-version: 24.19.0",
+"      - name: Configure job temporary storage",
+"        uses: ./.github/actions/ci-temporary-storage",
+"      - id: gate",
+"        env:",
+"          GITHUB_TOKEN: ${{ github.token }}",
+"        run: node scripts/ci/clued-work-admission.mjs --mode gate",
+"",
+"  design-refs-trusted-self-hosted:",
+"    name: >-",
+"      ${{ ((github.event_name == 'push' &&",
+"                     github.actor == github.repository_owner) ||",
+"                    (github.event_name == 'pull_request' &&",
+"                     github.event.pull_request.head.repo.full_name == github.repository &&",
+"                     github.actor == github.repository_owner))",
+"          && 'design-refs' || 'design-refs-self-hosted-skipped' }}",
+"    needs: admission-gate",
+"    if: >-",
+"      needs.admission-gate.outputs.admitted == 'true' &&",
+"      ((github.event_name == 'push' &&",
+"       github.actor == github.repository_owner) ||",
+"      (github.event_name == 'pull_request' &&",
+"       github.event.pull_request.head.repo.full_name == github.repository &&",
+"       github.actor == github.repository_owner))",
+"    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]",
+"    timeout-minutes: 5",
+"    steps:",
+"      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+"        with:",
+"          persist-credentials: false",
+"      - name: Configure job temporary storage",
+"        uses: ./.github/actions/ci-temporary-storage",
+"      - run: python3 -m unittest scripts/ci/test_check_design_refs.py",
+"      - run: python3 scripts/ci/check_design_refs.py",
+"",
+"  design-refs-untrusted-hosted:",
+"    name: >-",
+"      ${{ ((github.event_name == 'push' &&",
+"                     github.actor != github.repository_owner) ||",
+"                    (github.event_name == 'pull_request' &&",
+"                     (github.event.pull_request.head.repo.full_name != github.repository ||",
+"                      github.actor != github.repository_owner)))",
+"          && 'design-refs' || 'design-refs-hosted-skipped' }}",
+"    needs: admission-gate",
+"    if: >-",
+"      needs.admission-gate.outputs.admitted == 'true' &&",
+"      ((github.event_name == 'push' &&",
+"       github.actor != github.repository_owner) ||",
+"      (github.event_name == 'pull_request' &&",
+"       (github.event.pull_request.head.repo.full_name != github.repository ||",
+"        github.actor != github.repository_owner)))",
+"    runs-on: ubuntu-24.04",
+"    timeout-minutes: 5",
+"    steps:",
+"      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+"        with:",
+"          persist-credentials: false",
+"      - name: Configure job temporary storage",
+"        uses: ./.github/actions/ci-temporary-storage",
+"      - run: python3 -m unittest scripts/ci/test_check_design_refs.py",
+"      - run: python3 scripts/ci/check_design_refs.py",
+""
+          ],
+          "workflow_blob": "bda674347c57966ab6f0d1ad118e3260fd1302dc"
         }
       ],
       "gated": true,

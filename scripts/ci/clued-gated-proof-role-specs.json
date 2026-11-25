@@ -446,6 +446,16 @@
             "job_id": "design-refs-untrusted-hosted",
             "definition_sha256": "7b6618632196ea0b9e89a001a8ff126b8248ffb7c6d03920546c0f002ebfcc09"
           }
+        ],
+        "bda674347c57966ab6f0d1ad118e3260fd1302dc": [
+          {
+            "job_id": "design-refs-trusted-self-hosted",
+            "definition_sha256": "5ecc628ffdfd0ff03a02a25e3bf1895f15f73e6bbb806deec548109813c0524f"
+          },
+          {
+            "job_id": "design-refs-untrusted-hosted",
+            "definition_sha256": "7b6618632196ea0b9e89a001a8ff126b8248ffb7c6d03920546c0f002ebfcc09"
+          }
         ]
       }
     },
