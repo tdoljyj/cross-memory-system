@@ -19,7 +19,7 @@ import { Poller } from './poller.mjs';
 import { Inbox } from './inbox.mjs';
 import os from 'node:os';
 import { readStatus, pollerLandingOf } from './status.mjs';
-import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, reportDue, statusSignature, toastArgv, validateStatusConfig } from './pr-status.mjs'; // toastArgv: the tests' fallback in companionHeartbeat only
+import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, heldPullsAfterPoll, reportDue, statusSignature, toastArgv, validateStatusConfig } from './pr-status.mjs'; // toastArgv: the tests' fallback in companionHeartbeat only
 import { companionBackstop } from './ruleset-backstop.mjs';
 import { NODE_STATUS_FILE, readCapacityAlert, resourceHoldAlert } from './host-capacity.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
@@ -108,26 +108,31 @@ export function within(promise, ms, { schedule = setTimeout, cancel = clearTimeo
 // the tests run the very poller and lanes main() runs. The poll lane (f79929d9) has its own Runner, pollRunner, and the Poller is
 // built here on it (every gh read of the poll runs there): a retention notice, a bundle retention, a backstop or a PR page pass that
 // does not return, or an advisory child that never ended, delays only the advisory lane, never finding a new PR head. The PR page
-// and the re-run lane read poller.lastPass only. -> { poller, lanes }
+// and the re-run lane use poller.lastPass; the report signature uses the last known held heads. -> { poller, lanes }
 // writeTrigger(v): the inbox drop box; readStatus(): the executor's status board; pruneOldBundles(), backstop(): one bundle retention
 // and one ruleset backstop pass.
 // One pass of the poll lane (f79929d9): the executor's status board read (at most POLL_STATUS_READ_MS, never a second read on top of
 // an outstanding one), the PR pass on it, then one sleeping batch observed (poller.parkedPass, the rows of that read). Exported so the
 // train's property test runs the very pass main() runs (task bd07449b r2). -> { work(): one pass, status(): what the last pass's status
-// read gave (null: not read within POLL_STATUS_READ_MS, or unreadable) }
+// read gave (null: not read within POLL_STATUS_READ_MS, or unreadable), signaturePulls(): the last known held heads }
 export function pollLane({ poller, readStatus, schedule = setTimeout, cancel = clearTimeout }) {
   let statusRead = null; // the status read while it is outstanding
   let passStatus = null;
+  let signaturePulls = [];
   return {
     status: () => passStatus,
+    signaturePulls: () => signaturePulls,
     work: async () => {
       // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
       statusRead ??= Promise.resolve().then(readStatus).catch(() => null).finally(() => { statusRead = null; });
       const status = passStatus = await within(statusRead, POLL_STATUS_READ_MS, { schedule, cancel });
       try {
         await poller.pass({ generation: status?.queue?.generation ?? null });
-        await poller.parkedPass(status?.pending ?? []);
-      } catch { /* next pass */ }
+      } catch {
+        return;
+      }
+      signaturePulls = heldPullsAfterPoll(signaturePulls, poller.lastPass?.pulls);
+      try { await poller.parkedPass(status?.pending ?? []); } catch { /* next pass */ }
     },
   };
 }
@@ -157,14 +162,13 @@ export function advisoryLanes({ advisory, pollRunner, repo, ghExe, writeTrigger,
         try { await backstop(); } catch { /* next time */ }
       }
       // Generation 10 (DESIGN 53.5): status.json is read at most every REPORT_MIN_GAP_MS; the PR page is posted every minute as before,
-      // and also at once when the batch, its stage, the breaker, the intake pause or HALT/PAUSE changed (a claimed batch or a started
-      // trial is on the page within seconds, not after the next minute or the batch's end). reporter.pass still writes only what
-      // changed, within its own bounds.
+      // and also at once when the executor's visible status or the poller's set of held heads changes. reporter.pass still writes
+      // only what changed, within its own bounds.
       if (Date.now() - lastReport > REPORT_MIN_GAP_MS && Date.now() - lastStatusRead > REPORT_MIN_GAP_MS) {
         lastStatusRead = Date.now();
         let status = null, statusError = false;
         try { status = await readStatus(); } catch { statusError = true; }
-        const signature = statusSignature(status);
+        const signature = statusSignature(status, poll.signaturePulls());
         if (reportDue({ now: Date.now(), lastReport, lastSignature, signature, everyMs: REPORT_EVERY_MS })) {
           lastReport = Date.now();
           lastSignature = signature;
