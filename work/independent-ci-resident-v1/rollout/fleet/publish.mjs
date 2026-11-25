@@ -294,9 +294,9 @@ export const REQUEST_CONTRACT = 'clued.independent-ci.fleet-node-acceptance-requ
 export const DRILL_RECEIPT_CONTRACT = 'clued.independent-ci.drill-receipt/1';
 export const NOT_DRILLED = '首装未演练';
 // a candidate drill's conclusions seal takes (FABLE-renew-key-algorithm-ruling-20261119.md section 4.3): defined here only; drill/drill-vm.ps1's
-// conclusion function is held to the same three by PR-甲's test. PASS_A_REINSTALL_NOT_DRILLED: a candidate that skipped A8 (supplement
-// "candidate skips A8"), written into the index as it is. PASS_A_PENDING_PRODUCTION_READBACK and every other value are refused.
-export const DRILL_PASS_CONCLUSIONS = Object.freeze(['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN', 'PASS_A_REINSTALL_NOT_DRILLED']);
+// conclusion function is held to the same two by PR-甲's test. A8 has no skip (FABLE-drill-r13-a8-m5-20261125.md section 1.2), so the
+// value a skipped one ended in is gone and refused like PASS_A_PENDING_PRODUCTION_READBACK and every other value.
+export const DRILL_PASS_CONCLUSIONS = Object.freeze(['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN']);
 // the line prepare gives for the Decision's text, and seal finds in the Decision record: the request file's sha256 binds tar, commit, Source,
 // kit and fleetRefs at once
 export const requestLineOf = (version, requestSha256) => `acceptance-request ${tagOf(version)} sha256:${requestSha256}`;
@@ -617,6 +617,9 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     readRequest(request);
     // the request becomes an acceptance every node reads (the five fields seal fills aside)
     try { validateAcceptance(acceptanceOf(request, DRILL_RESERVED), now); } catch (e) { fail('PREPARE_REQUEST_REFUSED', e?.detail ?? e?.code ?? String(e)); }
+    // steps 3, 4 and 5 each print one line of when they started and ended, on stderr (Fable ruling 0e418483, node-install batch 3.3 B: what
+    // prepare's 8-9 minutes are made of is not known yet)
+    let lapAt = Date.now(); const lap = n => { const t = Date.now(); console.error(JSON.stringify({ prepareStep: n, startedAt: new Date(lapAt).toISOString(), endedAt: new Date(t).toISOString(), seconds: (t - lapAt) / 1000 })); lapAt = t; };
     // 3. every local role image: given, else the previous Release's
     const given = new Map();
     for (const f of images) { const mm = ROLE_IMAGE.exec(path.basename(f)); check(mm, 'FIRST_INSTALL_IMAGE_FILE_NAME_REFUSED', path.basename(f)); given.set(mm[1], f); }
@@ -630,8 +633,10 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
       check(f, 'PREPARE_IMAGE_MISSING', { id, asset: `role-image-${id}.tar.gz`, note: 'give it with --image; the previous Release has none of that id' });
       files.set(id, f);
     }
+    lap(3);
     // 4. all checks passed: the Release and the index row of this build, made or completed (only the tag fleet-node-<v> and this row)
     await ensureRelease({ ghCommand, repo, index, s, assets: releaseAssets, stage });
+    lap(4);
     // 5. the directory, the kit and the images in it, what the Release lacks uploaded, the whole request held to the Release (the same check
     //    as seal's); 6. only then the request
     await fs.mkdir(out, { recursive: true });
@@ -641,6 +646,7 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     for (const [id, f] of files) { const to = path.join(out, `role-image-${id}.tar.gz`); if (path.resolve(f) !== path.resolve(to)) await fs.copyFile(f, to); placed.push(to); }
     const attached = await attachFirstInstallKit({ version, kit: kitFile, images: placed, repo, ghCommand, resume: true });
     await checkRequestOnRelease({ ghCommand, repo, request, stage, kit: true, deps, now });
+    lap(5);
     const requestFile = path.join(out, `${tag}.acceptance-request.json`);
     const requestBytes = Buffer.from(JSON.stringify(request, null, 2) + '\n');
     await writeAtomic(requestFile, requestBytes);

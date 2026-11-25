@@ -73,9 +73,10 @@ jobs:
       contents: read
       pull-requests: read
       statuses: read
-    # The group of the self-hosted workflow: one at a time across both, a second run reads the state the first one left.
+    # Its own group (task 2fb32dc7): the two copies take turns by phase, not by a group; the group keeps this workflow to one
+    # at a time, and a second run reads the state the first one left.
     concurrency:
-      group: clued-front-main-merge
+      group: clued-front-main-merge-hosted
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2

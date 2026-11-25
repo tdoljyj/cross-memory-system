@@ -5068,3 +5068,93 @@ test("independent gate, Native only (scaffold open-qs 1.2): a legacy success wit
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [false, "ADMISSION_PENDING", INDEPENDENT_GATE_SOURCE]);
   assert.equal(calls.some((call) => call.url.includes("/actions/workflows/clued-work-admission.yml/runs")), false);
 });
+
+// --- Task 2fb32dc7 (PLAN-train-full-and-gate-poll-20261125 §2.3, §2.4): the admission side says on the PR page, under
+// resident-queue/<node>, when it will not propose a head (pr-status.mjs#heldHintOf); the gate then ends at once, not admitted,
+// instead of holding a Linux runner for the whole 600-second wait (11-24 22:18 to 11-25 03:56: 24 of 40 gates waited ~636 s for an
+// admission that never came). Only ever stricter: an admission still admits, anything unread or unrecognised waits as before.
+const STATUSES = `GET https://api.test/repos/o/r/commits/${HEAD}/statuses`;
+// #1317 head d4dc68f3e as GitHub listed its statuses on 11-25 (newest first); App 5368905 posted no check for it.
+const FIELD_STATUSES = [
+  { id: 4004, context: "resident-queue/turing (info only)", state: "pending", created_at: "2026-11-24T20:11:53Z",
+    description: "落后 main 119 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）" },
+  { id: 4003, context: "resident-queue/turing (info only)", state: "pending", created_at: "2026-11-24T19:39:08Z",
+    description: "落后 main 110 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）" },
+  { id: 4002, context: "resident-queue/turing (info only)", state: "pending", created_at: "2026-11-24T19:03:48Z",
+    description: "落后 main 98 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）" },
+  { id: 4001, context: "resident-queue/turing (info only)", state: "pending", created_at: "2026-11-24T18:56:11Z",
+    description: "落后 main 94 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）" },
+];
+const statusesScript = (statuses) => ({ [STATUSES]: typeof statuses === "function" ? statuses : { body: statuses } });
+const waitedSeconds = (slept) => slept.reduce((sum, ms) => sum + ms, 0) / 1000;
+
+test("G-1 independent gate: a head the admission side will not propose (merge-main, #1317's field text) ends at once, not admitted", async () => {
+  const { outcome, slept, calls } = await independentGate([], { script: statusesScript(FIELD_STATUSES) });
+  assert.ok(waitedSeconds(slept) <= INDEPENDENT_GATE_POLL_SECONDS, `waited ${waitedSeconds(slept)}s of ${INDEPENDENT_GATE_WAIT_SECONDS}s`);
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [false, "ADMISSION_PENDING", INDEPENDENT_GATE_SOURCE]);
+  assert.ok(outcome.reasons.some((reason) => reason.includes("准入方不提议") && reason.includes("落后 main 119 个提交")), JSON.stringify(outcome.reasons));
+  assert.ok(calls.every((call) => call.method === "GET" || call.url === EPOCH_URL), "read-only");
+});
+
+test("G-2 independent gate: a head with a stale PR base (push-any-commit) ends at once, not admitted", async () => {
+  const statuses = [{ id: 5001, context: "resident-queue/node-b (info only)", state: "failure", created_at: "2026-11-25T01:00:00Z",
+    description: "已包含 main，但 PR 的基准还是旧的：推一个任意提交即可" }];
+  const { outcome, slept } = await independentGate([], { script: statusesScript(statuses) });
+  assert.ok(waitedSeconds(slept) <= INDEPENDENT_GATE_POLL_SECONDS, `waited ${waitedSeconds(slept)}s`);
+  assert.deepEqual([outcome.admitted, outcome.verdict], [false, "ADMISSION_PENDING"]);
+  assert.ok(outcome.reasons.some((reason) => reason.includes("准入方不提议") && reason.includes("推一个任意提交即可")), JSON.stringify(outcome.reasons));
+});
+
+test("G-3 independent gate: without a held text the gate waits for the admission as before; a held text never outweighs an admission", async () => {
+  let reads = 0;
+  const lateAdmission = () => ({ body: { check_runs: ++reads > 10 ? [nativeCheck()] : [] } });
+  const others = [
+    { id: 6002, context: "resident-queue/turing (info only)", state: "pending", created_at: "2026-11-25T01:00:00Z", description: "当班：运行中：第 1 段（准入）" },
+    { id: 6001, context: "ci/other", state: "pending", created_at: "2026-11-25T00:59:00Z",
+      description: "落后 main 3 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）" },
+  ];
+  for (const statuses of [[], others]) {
+    reads = 0;
+    const { outcome, slept } = await independentGate(lateAdmission, { script: statusesScript(statuses) });
+    assert.deepEqual([outcome.admitted, outcome.verdict, waitedSeconds(slept)], [true, "ADMITTED", 300], JSON.stringify(outcome.reasons));
+  }
+  const admittedAnyway = await independentGate([nativeCheck()], { script: statusesScript(FIELD_STATUSES) });
+  assert.deepEqual([admittedAnyway.outcome.admitted, admittedAnyway.outcome.verdict, admittedAnyway.slept], [true, "ADMITTED", []]);
+});
+
+test("G-4 independent gate: an unrecognised text, an older held text under a newer one, or a statuses read that fails waits the whole time", async () => {
+  const resident = (id, description) => ({ id, context: "resident-queue/turing (info only)", state: "pending",
+    created_at: `2026-11-25T01:00:${String(id % 60).padStart(2, "0")}Z`, description });
+  const heldText = FIELD_STATUSES[0].description;
+  for (const [label, script] of [
+    ["an older sentence", statusesScript([resident(7001, "落后 main 3 个提交：请先手工合入 main")])],
+    ["a clipped text", statusesScript([resident(7002, `${heldText.slice(0, 20)}…`)])],
+    ["a text around the sentence", statusesScript([resident(7003, `注意${heldText}`)])],
+    ["a newer text over an older held one", statusesScript([resident(7005, "当班：运行中：第 2 段（gitleaks 扫描）"), resident(7004, heldText)])],
+    ["a 403", statusesScript(() => ({ status: 403, body: { message: "Resource not accessible by integration" } }))],
+    ["a 502", statusesScript(() => ({ status: 502, body: {} }))],
+    ["an unexpected body", statusesScript({ statuses: FIELD_STATUSES })],
+    ["no statuses route", {}],
+  ]) {
+    const { outcome, slept } = await independentGate([], { script });
+    assert.deepEqual([label, outcome.admitted, outcome.verdict, waitedSeconds(slept)], [label, false, "ADMISSION_PENDING", INDEPENDENT_GATE_WAIT_SECONDS]);
+    assert.ok(!outcome.reasons.some((reason) => reason.includes("准入方不提议")), `${label}: ${JSON.stringify(outcome.reasons)}`);
+  }
+});
+
+test("G-5 gate side: the gate holds pr-status.mjs's held-texts block byte for byte and reads every text describe writes as its hint", async () => {
+  const source = (relative) => fs.readFileSync(new URL(relative, import.meta.url), "utf8").replaceAll("\r\n", "\n");
+  const block = (text) => {
+    const begin = text.indexOf("// held-texts: begin"), end = text.indexOf("// held-texts: end");
+    assert.ok(begin >= 0 && end > begin && text.indexOf("// held-texts: begin", begin + 1) < 0, "one held-texts block");
+    return text.slice(begin, end);
+  };
+  assert.equal(block(source("./clued-work-admission.mjs")), block(source("../../work/independent-ci-resident-v1/src/pr-status.mjs")),
+    "the gate's held texts are pr-status.mjs's, byte for byte");
+  const prStatus = await import("../../work/independent-ci-resident-v1/src/pr-status.mjs");
+  const gateModule = await import("./clued-work-admission.mjs");
+  for (const [hint, behindBy] of [["merge-main", 1], ["merge-main", 119], ["push-any-commit", 0]]) {
+    const written = prStatus.describe({ pull: { pr: 1317, headSha: "d".repeat(40), eligible: false, hint, behindBy }, status: null, now: 0 });
+    assert.deepEqual(gateModule.heldPartOf(prStatus.withWatchdogLine(written, true).description), { hint, text: written.description });
+  }
+});

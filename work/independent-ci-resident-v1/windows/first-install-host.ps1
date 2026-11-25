@@ -804,19 +804,45 @@ function Write-Secrets([string]$controllerSid) {
   }
 }
 # The companion account's WSL registrations, read elevated: its loaded hive, else its NTUSER.DAT loaded for this read and unloaded.
-function Get-CompanionDistributionState {
+# Task 87d330d0 line C (FABLE-drill-companion-queued-20261124 2.4): a hive this read leaves loaded keeps the account's profile from loading,
+# so the loaded copy is read by reg.exe (this process holds no handle in it), this process's own handles are let go first, and the unload
+# is held to its exit code: three tries $Pause apart; a hive still loaded stops the host by name (FIRST_INSTALL_COMPANION_HIVE_NOT_UNLOADED).
+# $ProfileRoot, $Pause: the machine's own by default; a test gives its own.
+function Get-CompanionDistributionState([string]$ProfileRoot = 'C:\Users', [scriptblock]$Pause = { Start-Sleep -Seconds 1 }) {
   $u = Get-LocalUser -Name $CompanionAccountName -ErrorAction SilentlyContinue
   if ($null -eq $u) { return 'no-account' }
   $sid = $u.SID.Value
-  $read = { param([string]$hive) $k = "Registry::$hive\Software\Microsoft\Windows\CurrentVersion\Lxss"; if (-not (Test-Path -LiteralPath $k)) { return 'absent' }
-    if (@(Get-ChildItem -LiteralPath $k | ForEach-Object { [string](Get-ItemProperty -LiteralPath $_.PSPath -Name DistributionName -ErrorAction SilentlyContinue).DistributionName } | Where-Object { $_ -ceq $Distribution }).Count) { 'present' } else { 'absent' } }
-  if (Test-Path -LiteralPath "Registry::HKEY_USERS\$sid") { try { return (& $read "HKEY_USERS\$sid") } catch { return 'unknown' } }
-  $dat = 'C:\Users\' + $CompanionAccountName + '\NTUSER.DAT'
+  $lxss = '\Software\Microsoft\Windows\CurrentVersion\Lxss'
+  if (Test-Path -LiteralPath "Registry::HKEY_USERS\$sid") {
+    try {
+      $k = "Registry::HKEY_USERS\$sid$lxss"; if (-not (Test-Path -LiteralPath $k)) { return 'absent' }
+      if (@(Get-ChildItem -LiteralPath $k | ForEach-Object { [string](Get-ItemProperty -LiteralPath $_.PSPath -Name DistributionName -ErrorAction SilentlyContinue).DistributionName } | Where-Object { $_ -ceq $Distribution }).Count) { return 'present' }
+      return 'absent'
+    } catch { return 'unknown' }
+  }
+  $dat = Join-Path $ProfileRoot ($CompanionAccountName + '\NTUSER.DAT')
   if (-not [IO.File]::Exists($dat)) { return 'absent' }   # never logged on and no profile: no registration can exist
   $mount = 'HKU\clued-p1-' + [Guid]::NewGuid().ToString('N')
-  $l = Invoke-Native 'C:\Windows\System32\reg.exe' @('load', $mount, $dat) 60
+  $reg = 'C:\Windows\System32\reg.exe'
+  $l = Invoke-Native $reg @('load', $mount, $dat) 60
   if ($l.exit -ne 0) { return 'unknown' }
-  try { & $read ('HKEY_USERS\' + $mount.Substring(4)) } catch { 'unknown' } finally { [GC]::Collect(); $null = Invoke-Native 'C:\Windows\System32\reg.exe' @('unload', $mount) 60 }
+  $state = 'unknown'
+  try {
+    # exit 0 with the lines it found; 1 when the key or the value is not there
+    $q = Invoke-Native $reg @('query', ($mount + $lxss), '/s', '/v', 'DistributionName') 60
+    $names = @(([string]$q.stdout) -split "`r?`n" | ForEach-Object { if ($_ -match '^\s+DistributionName\s+REG_SZ\s+(.*?)\s*$') { $Matches[1] } })
+    $state = if ($names -ccontains $Distribution) { 'present' } elseif ($q.exit -eq 0 -or $q.exit -eq 1) { 'absent' } else { 'unknown' }
+  } catch { $state = 'unknown' }
+  finally {
+    [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect()
+    $unloaded = $false
+    for ($try = 1; $try -le 3 -and -not $unloaded; $try++) {
+      if ($try -gt 1) { & $Pause }
+      $unloaded = ((Invoke-Native $reg @('unload', $mount) 60).exit -eq 0)
+    }
+    if (-not $unloaded) { Stop-Host 'FIRST_INSTALL_COMPANION_HIVE_NOT_UNLOADED' $mount }
+  }
+  $state
 }
 # The companion account script's answer (one JSON document on stdout): prepared, or P1 ends refused with the evidence inline. Its log file
 # lies in P1's stage, which is removed when P1 ends: the refusal names no file there and carries the log's error and steps (the script's
