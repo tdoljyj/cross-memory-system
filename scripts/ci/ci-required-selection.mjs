@@ -126,7 +126,7 @@ const AUTHORIZATION_DB_TESTS = [
   'integration-runtime-verification-db',
   'issuer-credentials-db', 'k-cont-db', 'model-domain-bootstrap-db', 'mtpe-frontier-eligibility-v2-1-db', 'mtpe-frontier-eligibility-v2-db',
   'mtpe-owner-pin-consistency-db', 'mtpe-universal-intake-db', 'now-conflict-null-project-db', 'owner-grants-db', 'owner-grants-release-door-db',
-  'owner-grants-resident-upgrade-door-db', 'owner-grants-scope-db', 'owner-request-bundles-db', 'priority-projection-db', 'production-release-door-flow-db',
+  'owner-grants-resident-upgrade-door-db', 'owner-grants-fleet-accept-door-db', 'owner-grants-scope-db', 'owner-request-bundles-db', 'priority-projection-db', 'production-release-door-flow-db',
   'project-invitations-db',
   'project-list-authorization-db', 'projection-refresh-pipeline-db', 'record-update-field-merge-db', 'resource-center-authority-db',
   'migration-size-gate-db', 'resume-constraint-index-db', 'retention-classes-db', 'retention-sweep-db', 'search-context-cross-scope-db', 'search-context-rereview-db', 'session-context-from-token-db',
