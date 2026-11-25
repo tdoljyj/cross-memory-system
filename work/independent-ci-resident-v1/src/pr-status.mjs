@@ -166,7 +166,8 @@ const WAIT_TEXT = Object.freeze({ OWNER_REVIEW_REQUIRED: '等 Owner 批准受保
 // Phase 2, step 3a: a batch parked before stage 8 because of main's live rules, GitHub's test merge or the green ledger.
 const PARKED_TEXT = Object.freeze({ REQUIRED_CHECK_FAILED: '必需检查失败，已停止入队和延长；等待检查重跑',
   REQUIRED_CHECKS_UNREADABLE: '暂时无法确认必需检查，等待重新核对',
-  RULESET_UNREADABLE: '已测通：读不到 main 的规则，或必需检查不再钉在本执行器上',
+  RULESET_UNREADABLE: '已测通：main 的必需检查没有全部钉在本执行器上',
+  RULESET_READ_FAILED: '已测通：暂时读不到 main 的规则',
   STRICT_OFF_WITHOUT_TRAIN: '已测通：main 的 strict 已关而列车未开，暂不发合并位（已通知 Owner）',
   MERGE_METHODS_NOT_MERGE_ONLY: '已测通：strict 已关，但合并方式不只有 merge，暂不发合并位（已通知 Owner）',
   TRAIN_TEST_MERGE_NOT_READY: '已测通：等 GitHub 算好试合并', GREEN_LEDGER_UNAVAILABLE: '已测通：本机绿色台账暂时写不进',
@@ -351,6 +352,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // Parked before stage 8 (phase 2, step 2): its checks are published; it waits for the merge queue.
     if (row.state === 'PARKED') {
       const lease = leaseText(row, now, { running: false }), latest = row.nextAt ? `（最晚约 ${hhmm(row.nextAt)}）` : '';
+      if (row.nextAt === null && row.deferred === 'RULESET_UNREADABLE') return { state: 'pending', description: clip(`${PARKED_TEXT[row.deferred]}，规则钉回后再查第 8 段${lease}`) };
       if (row.nextAt === null) return { state: 'pending', description: clip(`休眠停靠（${row.deferred ?? '第 8 段未就绪'}）：有变化后再查第 8 段${lease}`) };
       // Generation 12 (DESIGN §56.2): a watched row (row.watched) tries stage 8 within minutes once its claim holds the merge slot;
       // an unwatched one (an older Source, a STANDBY node, the watch or try budget used up) keeps the generation-11 text.

@@ -837,7 +837,7 @@
     },
     "hosted-required.yml": {
       "jobs": {
-        "clued-cloud-tests": {
+        "clued-cloud-tests-shard": {
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./trusted/.github/actions/ci-temporary-storage",
@@ -857,6 +857,12 @@
               "repository": null
             }
           ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "clued-cloud-tests": {
+          "mode": "step-env",
+          "purpose": "application or repository control",
           "retained_artifacts": [],
           "persistent_action_caches": []
         },

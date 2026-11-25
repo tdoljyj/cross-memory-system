@@ -38,6 +38,7 @@ const POINTS = Object.freeze({
   'ledger.list': ['8', '10'],
   'native.holders': ['8', '10'],
   'native.nodesStatus': ['8', '10'],
+  'companion.readBranchRules': ['poller'],
   'poller.gh': ['poller'],
   'poller.status': ['poller'],
   'stage-file.batch-route': ['1', '8'],
@@ -85,10 +86,15 @@ const KNOWN_RED = Object.freeze({
 const ARMS = ['mid'];
 const FROM_START = new Set(['github.readForcePushes', 'github.readPullCommitsBounded']);
 const armOf = (point, arm) => (FROM_START.has(point) ? 'start' : arm);
-const nameOf = c => `${c.point} | ${c.scope === 'tick' ? 'every stage of one round' : c.scope === 'poller' ? 'the poller' : `stage ${c.scope}`} | ${c.mode} | ${c.arm === 'mid' ? 'after the first landing' : 'from the start'}${c.stage8Code ? ` | stage 8 answers ${c.stage8Code}` : ''}`;
+const nameOf = c => `${c.point} | ${c.scope === 'tick' ? 'every stage of one round' : c.scope === 'poller' ? 'the poller' : `stage ${c.scope}`} | ${c.mode}${c.times === 2 ? ' twice' : ''} | ${c.arm === 'mid' ? 'after the first landing' : 'from the start'}${c.stage8Code ? ` | stage 8 answers ${c.stage8Code}` : ''}`;
+// The companion's read of main's rules (its ruleset backstop, every 5 minutes) only wakes a batch asleep on them: it is no read of the
+// stages and is injected nowhere (task bd07449b r2: "one failed read" stays a read of stage 1, 8 or 10); it is in POINTS so that the
+// census still names every read of the scene.
+const NOT_INJECTED = new Set(['companion.readBranchRules']);
 const cases = [];
 for (const arm of ARMS) {
   for (const [point, stages] of Object.entries(POINTS)) for (const mode of ['error', 'empty']) {
+    if (NOT_INJECTED.has(point)) continue;
     if (mode === 'empty' && (ALREADY_EMPTY.has(point) || NO_EMPTY.has(point))) continue;
     for (const scope of stages) cases.push({ point, scope, mode, arm: armOf(point, arm) });
     if (stages.length > 1) cases.push({ point, scope: 'tick', mode, arm: armOf(point, arm) });
@@ -101,6 +107,10 @@ for (const arm of ARMS) {
 // 43e2c3baa (1 of 3 landed, the two behind PARKED for ever) and lands on main 12e8a3dea (parked front v2, #1291): it stays here as
 // the guard of that fix (decisions §1).
 cases.push({ point: 'github.readBranchRules', scope: 'tick', mode: 'error', arm: 'mid', stage8Code: 'TRAIN_SINGLE_GREEN_NOT_PROVEN' });
+// Task bd07449b (PLAN-ruleset-unreadable-park-r2 §3): main's rules read whole but empty put a batch to sleep at once (RULESET_UNREADABLE);
+// the companion, reading the rules pinned, wakes it. The same batch answered empty again on the try it was woken for sleeps again, with
+// the world unchanged: it must be woken again, or the train behind it stands for ever.
+cases.push({ point: 'github.readBranchRules', scope: '8', mode: 'empty', arm: 'mid', times: 2 });
 
 // The four files' parts. Every case is in exactly one (the census case of the same-ms file checks it).
 const GROUPS = Object.freeze({

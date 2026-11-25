@@ -264,3 +264,15 @@ test('every release reason is registered with its cool-down and the budget that 
   // generation 10 (DESIGN 53.3): a bundle or broker release keeps the head's cap; only a network release under /9 has its own cap
   assert.deepEqual([UNEXECUTED_REASON_RULES.BUNDLE_UNAVAILABLE.cap, UNEXECUTED_REASON_RULES.BROKER_NOT_LAUNCHED.cap], [{ waiting: null, other: 'releasesPerHeadPer24h' }, { waiting: null, other: 'releasesPerHeadPer24h' }]);
 });
+
+// Task bd07449b: a failed read of main's rules has its own code, in the Source's catalogue and the resident's, and parks like the
+// other stage-8 not-ready answers (zero effects, neutral for the breaker).
+test('bd07449b: RULESET_READ_FAILED is a stage-8 not-ready code of its own: catalogued on both sides, one park row', () => {
+  assert.ok(source.ALL_STAGE_CODES.includes('RULESET_READ_FAILED'));
+  assert.ok(CLEAN_FINAL_CODES.includes('RULESET_READ_FAILED'));
+  const blocked = { status: 'BLOCKED', reason: 'RULESET_READ_FAILED', sideEffects: 0, mayHavePublished: false };
+  assert.equal(source.outcomeFailureCode(blocked, 8), 'RULESET_READ_FAILED');
+  assert.deepEqual(rowsOf('RULESET_READ_FAILED').map(r => [r.stages, r.class, r.disposition, r.retry, r.breaker]), [['any', 'queue', 'park', 'park', 'neutral']]);
+  assert.deepEqual(rowsOf('RULESET_UNREADABLE').map(r => [r.class, r.disposition, r.retry, r.breaker]), [['queue', 'park', 'park', 'neutral']]);
+  assert.match(rowsOf('RULESET_UNREADABLE')[0].note, /sleeps at once/);
+});

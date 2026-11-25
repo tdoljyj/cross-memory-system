@@ -1126,7 +1126,7 @@ for (const incomplete of [false, true]) test(`p90: the scaffold ruleset alone${i
   const { e, f, engine } = await permanentArrival(t, { prepare: e => { e.gh.world.rules = scaffoldRules(); e.gh.world.rulesIncomplete = incomplete; } });
   for (let i = 0; i < 30 && !engine.stages.some(s => s.pr === 910 && s.stage === 8); i++) { await f.exec.tick(); f.advance(MIN); }
   assert.ok(engine.stages.some(s => s.pr === 910 && s.stage === 8), `stage 10 said ${engine.lastFacts?.decision}/${engine.lastFacts?.rulesReason}; stages ${JSON.stringify(engine.stages)}`);
-  assert.deepEqual([engine.lastFacts.rules, engine.lastFacts.rulesReason], [null, 'RULESET_UNREADABLE']);
+  assert.deepEqual([engine.lastFacts.rules, engine.lastFacts.rulesReason], [null, incomplete ? 'RULESET_READ_FAILED' : 'RULESET_UNREADABLE']);
   const skipped = (await f.receipts.latest(['scans-not-app-required'], 10)).map(r => r.value.body.roles);
   if (incomplete) {
     assert.equal(Object.hasOwn(f.exec.trainLast, 'appScans'), false, JSON.stringify(f.exec.trainLast));

@@ -102,6 +102,8 @@ export const PROBE_RESULTS = Object.freeze(['held', 'not-held', 'uncertain']);
 const iso = ms => new Date(ms).toISOString();
 const isoOrNull = v => (Number.isSafeInteger(v) && v > 0) ? iso(v) : (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? iso(Date.parse(v)) : null);
 const codeOrNull = v => typeof v === 'string' && CODE.test(v) ? v : null;
+// A parked row's ended stage-8 tries (queue.mjs#park; task bd07449b r2), null when none is named.
+const parkTryOf = v => (Number.isSafeInteger(v) && v >= 0 ? v : null);
 const key12 = key => (typeof key === 'string' && HEX64.test(key)) ? key.slice(0, 12) : null;
 
 export class StatusBoard {
@@ -205,6 +207,7 @@ export class StatusBoard {
       level: Number.isSafeInteger(p.level) ? p.level : 0, origin: typeof p.origin === 'string' && /^[a-z0-9-]{1,20}$/.test(p.origin) ? p.origin : null,
       stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null,
       queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null, claimExpiresAt: isoOrNull(p.claimExpiresAt ?? null), watched: p.watched === true, network: p.network === true,
+      parkTry: parkTryOf(p.parkTry),
       ...(HEX40.test(p.testSha ?? '') ? { testSha: p.testSha } : {}),
       heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true,
       // Task 0ca0479d: the row's last release reason codes (queue.mjs#view), for the PR page only.
@@ -285,7 +288,7 @@ export function parseStatus(bytes) {
         ...(head(p.baseSha) ? { baseSha: p.baseSha } : {}), ...(head(p.testSha) ? { testSha: p.testSha } : {}),
         deferred: codeOrNull(p.deferred), since: ms(p.since), nextAt: ms(p.nextAt), eta: ms(p.eta), level: Number.isSafeInteger(p.level) ? p.level : 0,
         stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null, queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null,
-        claimExpiresAt: ms(p.claimExpiresAt), watched: p.watched === true, network: p.network === true, heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true,
+        parkTry: parkTryOf(p.parkTry), claimExpiresAt: ms(p.claimExpiresAt), watched: p.watched === true, network: p.network === true, heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true,
         ...(reasonCodeList(p.reasonCodes).length > 0 ? { reasonCodes: reasonCodeList(p.reasonCodes) } : {}) })) : [],
     recent: Array.isArray(v.recent) ? v.recent.filter(r => Number.isSafeInteger(r?.pr) && head(r.headSha) && RECENT_OUTCOMES.includes(r.outcome)).slice(0, RECENT_MAX)
       .map(r => ({ pr: r.pr, headSha: r.headSha, attempt: r.attempt, outcome: r.outcome, code: typeof r.code === 'string' && CODE.test(r.code) ? r.code : null,

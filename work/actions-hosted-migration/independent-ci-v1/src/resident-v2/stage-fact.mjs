@@ -61,6 +61,8 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   // all before any journal write. The last one is final for the head (STAGE8_FINAL_REASONS).
   'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',
   'TRAIN_TEST_MERGE_TREE_DIFFERS',
+  // Task bd07449b: main's rules were not read (train-rules.mjs#readMainRules); zero side effects, the resident reads again soon.
+  'RULESET_READ_FAILED',
   // App 5368905 already published on this head (primary/standby design v0.4 §6.2, C4; published-on-github-v2.mjs):
   // stage 1 found a role or control check before Native was asked, or a role this node knew nothing of was already
   // there before its first publication. Nothing was published for that role (an earlier
@@ -71,7 +73,7 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   // the stage-10 decisions; the relay's reason for keeping a front batch local (not a failure).
   ...TRAIN_CODES]);
 // The stage-8 answers that travel as their own code (publisher.mjs STAGE8_NOT_READY_REASONS and STAGE8_FINAL_REASONS).
-const STAGE8_OWN_CODES = new Set(['RESIDENT_QUEUE_HEAD_NOT_REACHED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED', 'REQUIRED_CHECK_FAILED', 'REQUIRED_CHECKS_UNREADABLE', 'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN',
+const STAGE8_OWN_CODES = new Set(['RESIDENT_QUEUE_HEAD_NOT_REACHED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED', 'REQUIRED_CHECK_FAILED', 'REQUIRED_CHECKS_UNREADABLE', 'RULESET_UNREADABLE', 'RULESET_READ_FAILED', 'STRICT_OFF_WITHOUT_TRAIN',
   'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE', 'TRAIN_TEST_MERGE_TREE_DIFFERS', 'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_TEST_COMMIT_GONE',
   'TRAIN_MODE_UNREADABLE', 'TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_RULES_MISSING', 'TRAIN_LANDING_REFUSED', 'TRAIN_LANDING_CHECK_FAILED', 'TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH']);
 // Never clean: something may still run, or a publication may exist unsettled, or an identity conflicts.

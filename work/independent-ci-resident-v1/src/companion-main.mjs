@@ -112,20 +112,16 @@ export function within(promise, ms, { schedule = setTimeout, cancel = clearTimeo
 // and the re-run lane read poller.lastPass only. -> { poller, lanes }
 // writeTrigger(v): the inbox drop box; readStatus(): the executor's status board; pruneOldBundles(), backstop(): one bundle retention
 // and one ruleset backstop pass.
-export function advisoryLanes({ advisory, pollRunner, repo, ghExe, writeTrigger, clock = Date.now, readStatus, renewKeyCheck, retentionNotifier,
-  pruneOldBundles, backstop, reporter, schedule = setTimeout, cancel = clearTimeout }) {
-  let lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0, lastBundlePrune = 0;
-  let statusRead = null; // the poll lane's status read while it is outstanding: never a second one on top of it
-  let passStatus = null; // what this pass's status read gave (null: not read within POLL_STATUS_READ_MS, or unreadable)
-  // bc982192: the batch route the service stamps a batch born now with (its status board's train.batchRoute, executor.mjs#batchRoute:
-  // the train on, stage 10's effective route push and no scan required from this App) proposes a head behind main on its merge
-  // base; no such field, or a status not read, is github-merge (status.mjs#pollerLandingOf). From the pass's own read (f79929d9
-  // round 2): poller.pass reads status.json no second time, so a stalled read holds it up at most POLL_STATUS_READ_MS.
-  // A `hints` key an older companion.json still carries (the removed hosted relay, DESIGN §76) is never read.
-  const poller = new Poller({ repo, ghExe, run: (a, o) => pollRunner.run(a, o), clock, writeTrigger,
-    landing: async () => pollerLandingOf(passStatus) });
-  return { poller, lanes: [
-    { runner: pollRunner, everyMs: POLL_EVERY_MS, work: async () => {
+// One pass of the poll lane (f79929d9): the executor's status board read (at most POLL_STATUS_READ_MS, never a second read on top of
+// an outstanding one), the PR pass on it, then one sleeping batch observed (poller.parkedPass, the rows of that read). Exported so the
+// train's property test runs the very pass main() runs (task bd07449b r2). -> { work(): one pass, status(): what the last pass's status
+// read gave (null: not read within POLL_STATUS_READ_MS, or unreadable) }
+export function pollLane({ poller, readStatus, schedule = setTimeout, cancel = clearTimeout }) {
+  let statusRead = null; // the status read while it is outstanding
+  let passStatus = null;
+  return {
+    status: () => passStatus,
+    work: async () => {
       // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
       statusRead ??= Promise.resolve().then(readStatus).catch(() => null).finally(() => { statusRead = null; });
       const status = passStatus = await within(statusRead, POLL_STATUS_READ_MS, { schedule, cancel });
@@ -133,7 +129,24 @@ export function advisoryLanes({ advisory, pollRunner, repo, ghExe, writeTrigger,
         await poller.pass({ generation: status?.queue?.generation ?? null });
         await poller.parkedPass(status?.pending ?? []);
       } catch { /* next pass */ }
-    } },
+    },
+  };
+}
+
+export function advisoryLanes({ advisory, pollRunner, repo, ghExe, writeTrigger, clock = Date.now, readStatus, renewKeyCheck, retentionNotifier,
+  pruneOldBundles, backstop, reporter, schedule = setTimeout, cancel = clearTimeout }) {
+  let lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0, lastBundlePrune = 0;
+  let poll = null; // the poll lane (pollLane): its pass's status read is what the landing port reads
+  // bc982192: the batch route the service stamps a batch born now with (its status board's train.batchRoute, executor.mjs#batchRoute:
+  // the train on, stage 10's effective route push and no scan required from this App) proposes a head behind main on its merge
+  // base; no such field, or a status not read, is github-merge (status.mjs#pollerLandingOf). From the pass's own read (f79929d9
+  // round 2): poller.pass reads status.json no second time, so a stalled read holds it up at most POLL_STATUS_READ_MS.
+  // A `hints` key an older companion.json still carries (the removed hosted relay, DESIGN §76) is never read.
+  const poller = new Poller({ repo, ghExe, run: (a, o) => pollRunner.run(a, o), clock, writeTrigger,
+    landing: async () => pollerLandingOf(poll.status()) });
+  poll = pollLane({ poller, readStatus, schedule, cancel });
+  return { poller, lanes: [
+    { runner: pollRunner, everyMs: POLL_EVERY_MS, work: poll.work },
     { runner: advisory, work: async () => {
       await renewKeyCheck();
       try { await retentionNotifier.step(); } catch { /* advisory; retry without marking an undelivered notice */ }

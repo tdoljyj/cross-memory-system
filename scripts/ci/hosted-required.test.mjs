@@ -111,7 +111,7 @@ test(`跑 ci-required-selection --run/--run-selected 套件的托管作业 timeo
     assert.ok(Number(m[1]) >= SUITE_TIMEOUT_FLOOR, `${id} 的 timeout-minutes 是 ${m[1]}，低于 ${SUITE_TIMEOUT_FLOOR}`);
     checked.push(id);
   }
-  assert.deepEqual(checked.sort(), ['ci-suites-shard', 'ci-suites-windows-shard', 'clued-cloud-tests']);
+  assert.deepEqual(checked.sort(), ['ci-suites-shard', 'ci-suites-windows-shard', 'clued-cloud-tests-shard']);
 });
 
 // 任务 3435f8bf 块 1：托管 Windows 作业在跑套件前把镜像预热好的模块分析缓存复制到默认位置（快不快由非必需的
@@ -132,16 +132,11 @@ test('托管 Windows 作业在跑套件前预热默认分析缓存，且这一�
 // ---- 任务 3435f8bf 块 4：Windows 套件分片（PLAN-hosted-windows-speed-20261123 §3.2、§4 V5；裁定 FABLE-hosted-b3-L2-ruling-20261124） ----
 // 分片作业跑同一份 --run-selected 计划的第 i/n 片；n 取 strategy.job-total，只在矩阵列表写一处。列表必须正好是 1..n：
 // 少写一个号（如 [1, 2, 4]）那一片就没人跑，汇总照样绿。S8 删托管工作流时这几条一起删。
-test('块 4：Windows 套件分片跑同一份 --run-selected 计划，片号正好 1..n，片数只写在矩阵列表', () => {
+test('Windows 分片由 PowerShell 运行并传回选择器退出码', () => {
   const shard = jobs(text).get('ci-suites-windows-shard') ?? '';
   assert.match(shard, /^    name: \$\{\{ format\('hosted-ci-suites-windows-shard-\{0\}', matrix\.shard\) \}\}$/m);
   assert.match(shard, /^    runs-on: windows-2025$/m);
   assert.match(shard, /^    timeout-minutes: 90$/m);
-  const matrix = /\n    strategy:\n      fail-fast: false\n      matrix:\n        shard: \[([0-9, ]+)\]\n/.exec(shard);
-  assert.ok(matrix, '矩阵是 strategy.fail-fast: false 加 matrix.shard 列表');
-  const shards = matrix[1].split(',').map(n => Number(n.trim()));
-  assert.deepEqual(shards, shards.map((_, i) => i + 1), `片号应为 1..n：${matrix[1]}`);
-  assert.equal(shards.length, 6);
   const at = shard.indexOf('- name: Select and run the suites declared for Windows');
   assert.ok(at >= 0, 'Windows 套件步骤还在');
   const step = shard.slice(at).split(/\n {6}- /)[0];
@@ -184,18 +179,19 @@ test('块 4：hosted-ci-suites-windows 是汇总作业，只有一步，只判�
 // ---- 任务 3435f8bf 件甲（PLAN-ci-p90-next-20261125 §3.1；形状同 FABLE-ci-duration-target-20261124 §2.5）：三个长作业分片 ----
 // 检查名不变：hosted-<检查名> 是同名汇总作业（needs 自己的矩阵作业、if: always()，判定照抄 Windows 汇总作业）；
 // 分片作业 <作业名>-shard、检查名 hosted-<检查名>-shard-<i>，跑同一份 --run-selected 计划的第 i/n 片，n 只写在矩阵列表。
-// 片数：migration-verify 4、ci-suites 3、Windows 6；hosted-clued-cloud-tests 不拆。S8 删托管工作流时本节一起删。
+// S8 删托管工作流时本节一起删。
 const SHARDED = [
   { id: 'migration-verify', check: 'migration-verify', name: 'hosted-migration-verify', shards: 4, step: 'Every migration verification shard succeeded' },
-  { id: 'ci-suites', check: 'ci-suites', name: 'hosted-ci-suites', shards: 3, step: 'Every Linux suite shard succeeded' },
-  { id: 'ci-suites-windows', check: 'ci-suites', name: 'hosted-ci-suites-windows', shards: 6, step: 'Every Windows suite shard succeeded' },
+  { id: 'ci-suites', check: 'ci-suites', name: 'hosted-ci-suites', shards: 4, step: 'Every Linux suite shard succeeded' },
+  { id: 'ci-suites-windows', check: 'ci-suites', name: 'hosted-ci-suites-windows', shards: 7, step: 'Every Windows suite shard succeeded' },
+  { id: 'clued-cloud-tests', check: 'clued-cloud-tests', name: 'hosted-clued-cloud-tests', shards: 2, step: 'Every application test shard succeeded' },
 ];
 const SHARD_RUN = check => new RegExp(`ci-required-selection\\.mjs --run-selected ${check} --root candidate --shard \\$\\{\\{ matrix\\.shard \\}\\}/\\$\\{\\{ strategy\\.job-total \\}\\}(?:\\n|$)`);
-test('件甲：三个分片作业跑 --run-selected <检查名> --shard i/n，片号正好 1..n，片数 4、3、6 只写在矩阵列表', () => {
+test('分片作业跑 --run-selected <检查名> --shard i/n，片号正好 1..n，片数 4、4、7、2 只写在矩阵列表', () => {
   for (const { id, check, name, shards } of SHARDED) {
     const block = jobs(text).get(`${id}-shard`) ?? '';
     assert.ok(block, `${id}-shard 作业在`);
-    assert.ok(block.includes(`\n    name: \${{ format('${name}-shard-{0}', matrix.shard) }}\n`), `${id}-shard 的检查名是 ${name}-shard-<i>`);
+    assert.ok(block.split('\n').includes(`    name: \${{ format('${name}-shard-{0}', matrix.shard) }}`), `${id}-shard 的检查名是 ${name}-shard-<i>`);
     const matrix = /\n    strategy:\n      fail-fast: false\n      matrix:\n        shard: \[([0-9, ]+)\]\n/.exec(block);
     assert.ok(matrix, `${id}-shard：矩阵是 strategy.fail-fast: false 加 matrix.shard 列表`);
     const list = matrix[1].split(',').map(n => Number(n.trim()));
@@ -206,10 +202,10 @@ test('件甲：三个分片作业跑 --run-selected <检查名> --shard i/n，�
     // 各片自己读 PR 的改动文件：没有令牌就读不到，每片都跑全部套件。
     assert.match(runs[0], /\n {10}GITHUB_TOKEN: \$\{\{ github\.token \}\}\n/, `${id}-shard 跑套件那一步带 GITHUB_TOKEN`);
   }
-  assert.equal(text.split('--shard ').length, SHARDED.length + 1, '整个工作流只有这三处 --shard');
+  assert.equal(text.split('--shard ').length, SHARDED.length + 1, '每个矩阵只有一个分片入口');
 });
 
-test('件甲：hosted-ci-suites、hosted-migration-verify 与 hosted-ci-suites-windows 同形：汇总作业只判分片作业的 result', () => {
+test('各矩阵的同名必需检查只汇总分片作业的 result', () => {
   for (const { id, name, step } of SHARDED) assert.equal(jobLines(id), summaryJob(name, `${id}-shard`, step), id);
 });
 
@@ -219,13 +215,6 @@ test('件甲：未选中时 migration-verify 各片走 Not affected，不装依�
   assert.match(at('Install the application dependencies'), /\n {8}if: steps\.select\.outputs\.run_production_schema == 'true'\n/);
   assert.match(at('Verify migrations on the production schema'), /\n {8}if: steps\.select\.outputs\.run_production_schema == 'true'\n/);
   assert.match(at('Not affected'), /\n {8}if: steps\.select\.outputs\.run_production_schema != 'true'\n/);
-});
-
-test('件甲：hosted-clued-cloud-tests 不拆片', () => {
-  const block = jobs(text).get('clued-cloud-tests') ?? '';
-  assert.match(block, /^    name: hosted-clued-cloud-tests$/m);
-  assert.doesNotMatch(block, /strategy:|matrix|--shard/);
-  assert.ok(!jobs(text).has('clued-cloud-tests-shard'));
 });
 
 // 时长作业只显红、不挡合入：名字不是任何必需检查（规则集要的是 hosted-ci-suites-windows，影子比对按名字配对七项）。
@@ -286,8 +275,8 @@ test('hosted-gitleaks 的三步与自托管 R1 gitleaks 作业逐字一致，受
     assert.equal(a.run, b.run, `${name} 的 run 与自托管不一致`);
     assert.deepEqual(a.env, b.env, `${name} 的 env 与自托管不一致`);
   }
-  const want = trustedRef(jobs(text).get('clued-cloud-tests'));
-  assert.ok(want, 'clued-cloud-tests 的受信检出没有 ref');
+  const want = trustedRef(jobs(text).get('clued-cloud-tests-shard'));
+  assert.ok(want, 'clued-cloud-tests-shard 的受信检出没有 ref');
   for (const id of ['ci-suites-shard', 'migration-verify-shard']) assert.equal(trustedRef(jobs(text).get(id)), want, id);
   assert.equal(trustedRef(hosted), want, 'hosted-gitleaks 的受信检出 ref 与其他托管作业不同');
   assert.match(hosted, /\n {6}- name: Check out the candidate\n[\s\S]*?\n {10}fetch-depth: 0\n {10}path: candidate\n/, '候选检出要全历史');
@@ -314,6 +303,26 @@ function gitBash() {
 const BASH = gitBash();
 const noBash = BASH ? false : '找不到 Git for Windows 的 bash';
 const fwd = p => p.replace(/\\/g, '/');
+
+test('应用分片仅在可信选择器尚未声明每片构建时预构建 dist', { skip: noBash }, (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'clued-hosted-shard-build-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const trusted = path.join(root, 'trusted', 'scripts', 'ci');
+  mkdirSync(trusted, { recursive: true });
+  const buildStep = 'Build application for a trusted selector predating per-shard build';
+  const steps = jobs(text).get('clued-cloud-tests-shard');
+  assert.ok(steps.indexOf('Install the application dependencies') < steps.indexOf(buildStep));
+  assert.ok(steps.indexOf(buildStep) < steps.indexOf('Run the selected application shard'));
+  const { run } = stepOf(steps, buildStep);
+  for (const every of [false, true]) {
+    writeFileSync(path.join(trusted, 'ci-required-selection.mjs'), `export const SUITE_COMMANDS = { 'clued-cloud': [{ every: ${every} }] };\n`);
+    const r = spawnSync(BASH, ['--noprofile', '--norc', '-eo', 'pipefail', '-c', `npm() { echo "$*"; }\n${run}`],
+      { cwd: root, encoding: 'utf8' });
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    assert.equal(r.stdout.trim(), every ? '' : '--prefix candidate/apps/clued-cloud run build');
+  }
+});
+
 // 仓库 generic-api-key 规则命中的样子；运行时拼出，本文件自身不带命中。
 const LEAK = ['const k = { policy', "Key: 'park.stage8Retries", "Per24h' };\n"].join('');
 const STUB = `import { spawnSync } from 'node:child_process';
@@ -422,7 +431,7 @@ test('hosted-gitleaks 在旧 base 下 PR 带假密钥则红', { skip: noBash }, 
 });
 
 // 块 4：汇总作业那一步原文真跑（与 GitHub 的 bash 同参数）：分片作业的 result 只有 success 退出 0；失败、取消、跳过、空值都红。
-test('块 4、件甲：三个汇总作业的判断真跑，只有分片作业 result 为 success 才退出 0', { skip: noBash }, () => {
+test('汇总步骤实际执行，只有分片作业 result 为 success 才退出 0', { skip: noBash }, () => {
   for (const { id, step } of SHARDED) {
     const { run } = stepOf(jobs(text).get(id), step);
     for (const [result, code] of [['success', 0], ['failure', 1], ['cancelled', 1], ['skipped', 1], ['', 1]]) {
