@@ -198,3 +198,29 @@ test('5: the reporter writes begin and end lines; unfinishedTests counts them; t
   const files = new Set(['a.test.mjs']);
   assert.deepEqual(shardSecondsOf(readReport(failing, ROOT), files), shardSecondsOf(readReport(bare, ROOT), files));
 });
+
+test('6: file wall clock includes module load and child exit, attributed to the test file', (t) => {
+  const file = 'parent.test.mjs';
+  const root = fixture(t, { [file]: `
+    import { spawnSync } from 'node:child_process';
+    import test from 'node:test';
+    const child = () => {
+      const result = spawnSync(process.execPath, ['-e', '']);
+      if (result.status !== 0) throw new Error('child failed');
+    };
+    child();
+    test('rollout/fleet/test/other.test.mjs', child);
+  ` });
+  const out = path.join(root, 'report.jsonl');
+  const result = spawnSync(process.execPath, ['--test', `--test-reporter=${pathToFileURL(selection.REPORTER_PATH).href}`,
+    `--test-reporter-destination=${out}`, file], { cwd: root, env: suiteEnv(root), encoding: 'utf8' });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  const raw = readFileSync(out, 'utf8');
+  const report = readReport(raw, root);
+  const top = report.events.filter((event) => event.type === 'pass');
+  assert.equal(top.length, 1);
+  assert.equal(top[0].file, file);
+  const wall = report.events.find((event) => event.wallFile === file);
+  assert.ok(wall?.ms > top[0].ms, `file wall clock includes the module load: ${raw}`);
+  assert.deepEqual(shardSecondsOf(report, new Set([file])), { [file]: Math.round(wall.ms / 100) / 10 });
+});

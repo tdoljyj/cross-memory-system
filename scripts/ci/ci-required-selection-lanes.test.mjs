@@ -71,13 +71,15 @@ test('lanes: the Windows ci-suites plan in 3 lanes runs each unit once, a file i
   const calls = [];
   const parts = [];
   const serialRun = [];
-  const status = await runSelected(suites, { root: ROOT, env, log: quiet, cores: 28,
+  const status = await runSelected(suites, { root: ROOT, env, log: quiet, cores: 28, check: 'ci-suites', platform: 'win32',
     run: (id) => { serialRun.push(id); return 0; },
     runPart: async (id, { root, env: partEnv, lane }) => {
-      parts.push({ id, lane: { ...lane } });
+      const { plan, ...laneIdentity } = lane;
+      assert.ok(plan.steps.length > 0, `${id} receives its part of the shared plan`);
+      parts.push({ id, lane: laneIdentity });
       const tally = { units: 0, ran: 0 };
       const { status: partStatus, lines } = recordingSuite(calls, lane.index)(id, { root, env: partEnv,
-        shard: { index: lane.index, total: lane.total, tally, lane: true, concurrency: lane.concurrency } });
+        shard: { ...lane, tally, lane: true } });
       return { status: partStatus, output: lines.join('\n'), tally };
     } });
   assert.equal(status, 0);

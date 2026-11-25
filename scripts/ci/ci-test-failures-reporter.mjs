@@ -5,7 +5,8 @@
 //   {"type":"fail","file":<abs>,"path":[names...],"failure_type":...,"fingerprint":...,"ms":...?}
 //   {"type":"pass","file":<abs>,"path":[names...],"skip":true?,"ms":...?}   (skip only for a skipped test)
 //   {"type":"summary","counts":{...},"success":bool}   (the run's own summary)
-//   {"type":"begin"|"end","file":<abs>|null,"nesting":n,"name":...}   (Node's test:dequeue / test:complete)
+//   {"type":"begin"|"end","file":<abs>|null,"nesting":n,"name":...,"ms":...?,"wallFile":<abs>?}
+//      (Node's test:dequeue / test:complete, wallFile only on a file's completion)
 // begin and end come as Node runs the tests, not in report order, and Node sends
 // both for each test file itself (its name is the file's path): what began and
 // did not end when the entry ended a command at its limit is what hung there
@@ -19,9 +20,10 @@
 // (subtestsFailed; the subtest carries the failure) and a todo test (Node
 // does not fail the run for it). The fingerprint identifies why a test
 // failed, so a known test failing for another reason is a new failure.
-// ms, whole milliseconds, only on a top-level test (nesting 0): their sum is
-// what the file took, the seconds --shard packs files by (ci-shard-seconds.json).
+// The top-level file's completion includes loading, hooks and process exit. Its
+// ms is the shard weight, with top-level test ms as a fallback.
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 
 const ASYNC_AFTER_END = /generated asynchronous activity after the test ended|triggered an? (?:uncaughtException|unhandledRejection) event/;
 
@@ -91,7 +93,12 @@ export default async function* reporter(source) {
       const skipped = data.skip !== undefined && data.skip !== false;
       yield `${JSON.stringify({ type: 'pass', file: data.file ?? null, path: pathOf(data), ...(skipped ? { skip: true } : {}), ...timed(data) })}\n`;
     } else if (event.type === 'test:dequeue' || event.type === 'test:complete') {
-      yield `${JSON.stringify({ type: event.type === 'test:dequeue' ? 'begin' : 'end', file: data.file ?? null, nesting: data.nesting, name: data.name })}\n`;
+      const complete = event.type === 'test:complete';
+      // Node can use the relative operand as the wrapper's name. Resolve it in the reporter's command cwd.
+      const fileEnd = complete && data.nesting === 0 && !data.entryFile && typeof data.name === 'string'
+        && (data.file ? path.relative(data.file, data.name) === '' : path.isAbsolute(data.name));
+      yield `${JSON.stringify({ type: complete ? 'end' : 'begin', file: data.file ?? null, nesting: data.nesting, name: data.name,
+        ...(complete ? timed(data) : {}), ...(fileEnd ? { wallFile: data.file ?? data.name } : {}) })}\n`;
     } else if (event.type === 'test:summary' && data.file === undefined) {
       yield `${JSON.stringify({ type: 'summary', counts: data.counts ?? null, success: data.success === true })}\n`;
     }
