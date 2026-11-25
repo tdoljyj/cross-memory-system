@@ -124,7 +124,7 @@ node R/rollout/fleet/universal.mjs build --repo <git 目录> --commit <40 位 he
 
 索引文件默认：`G:\我的云端硬盘\Clued_资料中心\10_E_工程与平台\CI基础设施\通用节点包_归档索引.md`，表头：版本 | Release | tar sha256 | commit | 接受时间 | Decision | 首装演练。
 
-## 4. 接受：接受前 prepare、接受后 seal（Owner 只说一次“接受”）
+## 4. 接受：接受前 prepare、接受后 seal（Owner 在确认页点一次批准）
 
 接受分两段，各是一条命令、都可以原样重跑；**首装 kit 的检查在 `prepare` 里**（缺 kit 的包造不出可接受的东西）。把 kit 或接受文件挂上 Release 只有这两条命令：挂 kit、挂接受文件的步骤没有单独的命令，手写的接受文件没有入口。两条命令对“请求与 Release 是否对应”用同一个核对（`checkRequestOnRelease`）：Release 的 `SHA256SUMS` 与 `release.json` 指名请求里的 tar，`release.json` 的 commit 等于请求的，用从 Release 下载的 tar 由包自带的 `source-hash` 重算 Source 并与请求比，再核 kit。`prepare` 在往 GitHub 写任何东西之前，先用构建输出里的同一个 tar 算出 Source。`prepare` 写出的请求，`seal` 不会因这一核对而拒。
 
@@ -148,36 +148,53 @@ node R/rollout/fleet/publish.mjs prepare --version <version> --dir <构建输出
    - 已有 Release（上次中途停下，或停在写索引之前）：Release 上已有的每个资产都与构建输出**按字节**核（大小相同不等于同一次构建：tar 按 512 字节对齐）：`SHA256SUMS` 与暂存的那份比，`release.json` 和两个节点入口文件下载后比，tar 下载后核 sha256 并留给第 6 步复用，不再下载第二次；任何一个不同即在补传之前拒绝（`ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES` / `ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS`），说明那是另一次构建的 Release，不覆盖；相同则只补传缺的资产（不覆盖已有的）、补上缺的索引行。
 6. 把 kit 与镜像放进 `--out`，Release 上缺的 kit、镜像与 `fleet-node-<version>.first-install.SHA256SUMS` 补传。Release 上已有的按**内容**比，不按大小：相同不重传，不同的镜像或 sums 替换；Release 上是另一份 kit 则拒绝。sums 读回整份比对，整个请求再按同一核对比一遍 Release，最后写 `fleet-node-<version>.acceptance-request.json`（文件整份写成或不写）。
 
-接受请求（合同 `clued.independent-ci.fleet-node-acceptance-request/1`）只有这些字段：`version`、`archive_sha256`、`commit`、`repository`、`ciSourceManifestSha256`、`firstInstallKitSha256`，以及上面六项 `fleetRefs`。**没有 Decision 字段**：这就是摆给 Owner 的那一份。输出里还有 `requestSha256` 和一行 `decisionLine`（`acceptance-request fleet-node-<version> sha256:<请求文件的 sha256>`），写 Decision 时把这一行原样放进正文。上传中途断了，原样重跑同一条命令（同一个 `--out`）即可。
+接受请求（合同 `clued.independent-ci.fleet-node-acceptance-request/1`）只有这些字段：`version`、`archive_sha256`、`commit`、`repository`、`ciSourceManifestSha256`、`firstInstallKitSha256`，以及上面六项 `fleetRefs`。**没有 Decision 字段**：这就是摆给 Owner 的那一份。输出里还有 `requestSha256`（请求文件的 sha256）：`seal` 向接受门开的那条请求就绑在它上面（4.3）。上传中途断了，原样重跑同一条命令（同一个 `--out`）即可。
 
 ### 4.2 候选演练（接受之前）
 
-Owner 接受的，应当是已经在干净机器上装通过的东西：候选演练（`drill/`，见 `drill/FIRST-INSTALL-KIT.md`）用接受请求和该版的 kit、镜像组装自己的来宾目录。演练给来宾用的接受文件由接受请求加**演练保留值**生成（`publish.mjs` 的 `DRILL_RESERVED` 与 `acceptanceOf`，仓库里只此一处）。`seal` 与挂接受文件的步骤见到保留值即拒绝（`namesDrillReserved`），所以这份文件上不了 Release，真实节点拿不到。演练结束立刻 `-Finalize`（只回读 A9），回执定稿。`seal --drill-receipt` 只收 `candidate` 为 `true`、结论是 `PASS_A_FULL` 或 `PASS_A_PER_NODE_STEPS_REMAIN`（`DRILL_PASS_CONCLUSIONS`）的回执（A8 只验同一个包对已装节点两条入口都不动它：升级答“已到位”、prepare 以 `NEW_SOURCE_IS_THE_INSTALLED_ONE` 拒绝；旧包到新包的重装不在首装演练内，A8 的 detail 如实写着），`PASS_A_PENDING_PRODUCTION_READBACK` 等一律拒绝。顺序是**演练 → `-Finalize` → 把请求与终稿回执摆给 Owner → 接受 → seal**，接受之后不开机、不再回读。演练失败不找 Owner：修、出新候选、重跑。首装演练不是原地升级的门，只走升级路径的紧急包可以不带演练回执。
+Owner 接受的，应当是已经在干净机器上装通过的东西：候选演练（`drill/`，见 `drill/FIRST-INSTALL-KIT.md`）用接受请求和该版的 kit、镜像组装自己的来宾目录。演练给来宾用的接受文件由接受请求加**演练保留值**生成（`publish.mjs` 的 `DRILL_RESERVED` 与 `acceptanceOf`，仓库里只此一处）。`seal` 与挂接受文件的步骤见到保留值即拒绝（`namesDrillReserved`），所以这份文件上不了 Release，真实节点拿不到。演练结束立刻 `-Finalize`（只回读 A9），回执定稿。`seal --drill-receipt` 只收 `candidate` 为 `true`、结论是 `PASS_A_FULL` 或 `PASS_A_PER_NODE_STEPS_REMAIN`（`DRILL_PASS_CONCLUSIONS`）的回执（A8 只验同一个包对已装节点两条入口都不动它：升级答“已到位”、prepare 以 `NEW_SOURCE_IS_THE_INSTALLED_ONE` 拒绝；旧包到新包的重装不在首装演练内，A8 的 detail 如实写着），`PASS_A_PENDING_PRODUCTION_READBACK` 等一律拒绝。顺序是**演练 → `-Finalize` → `seal`（开请求，把请求与终稿回执摆给 Owner）→ Owner 在确认页批准 → `seal` 封存**，接受之后不开机、不再回读。演练失败不找 Owner：修、出新候选、重跑。首装演练不是原地升级的门，只走升级路径的紧急包可以不带演练回执。
 
-### 4.3 接受后：seal（填 Decision、挂上 Release、写索引）
+### 4.3 接受：seal 开请求、Owner 在确认页批准、seal 封存
 
-Owner 说“接受”之后，协调者写 Decision，正文放 4.1 的那一行。写的那一次 `clued_record_mutate` 的**完整返回当场原样存成文件**（Decision 记录），之后补不回来，没存下就只能再写一条 Decision。然后：
+“接受”不是聊天里的一句话，是 Owner 在 Clued 确认页批准一条 `fleet.accept` Grant（不可自动批准，只认页面上的确认；Binding 与委托 OAuth 批不了）。`seal` 自己向接受门开这条请求、自己等，批了就封存。口头“接受”和手写的 Decision 记录在代码里没有入口：`--decision-record` 已撤，给了就是 `USAGE`。
 
 ```
-node R/rollout/fleet/publish.mjs seal --request <目录>\fleet-node-<version>.acceptance-request.json --decision-record <那次 clued_record_mutate 的返回文件> [--drill-receipt <候选演练定稿的 receipt.json>] [--repo tdoljyj/cross-memory-system] [--index <索引文件>]
+node R/rollout/fleet/publish.mjs seal --request <目录>\fleet-node-<version>.acceptance-request.json [--drill-receipt <候选演练定稿的 receipt.json>] [--wait <分钟>] [--repo tdoljyj/cross-memory-system] [--index <索引文件>]
 ```
 
-只读接受请求和 Decision 记录，**不碰节点、不取 kit**。Decision、回执与接受时间都只从 Decision 记录里读：
+接受门的配置只从环境读：`CLUED_SUPABASE_URL`、`CLUED_SUPABASE_PUBLISHABLE_KEY`、`CLUED_FLEET_ACCEPT_TOKEN`（发布机 Binding 的令牌，每次只把它的 SHA-256 发给门，不打印、不落盘）。缺一个即 `ACCEPT_DOOR_NOT_CONFIGURED`，什么都不读、不调。
 
-- Decision id 取 `target_refs[0].id`；
-- 回执 id 取 `receipt_id`；
-- 接受时间取 `supplemental.record.created_at`，截到秒，以 Z 结尾。
+只读接受请求，**不碰节点、不取 kit**。先做它自己能拒的全部核对：请求的合同与文件名、`--drill-receipt`、索引行（tar 与 commit）、候选 commit 已在 main 上、同一个“请求对 Release”的核对。都过了才问门，所以 Owner 不会被请去批一个 `seal` 会拒的东西。门的输入（`rollout/fleet/accept-door.mjs`）：
 
-命令行上没有这三个值的参数。
+```
+{ "action": "fleet.accept", "resources": ["fleet-node:<owner>/<repo>/<version>/<tar sha256>/<接受请求文件的 sha256>"], "op_id": "<uuid>" }
+```
 
-Decision 记录要满足：已提交（`status: committed`）、恰一个目标、回执与目标是两个不同的 UUID；`supplemental.record` 是 Decision，它自带的 `id`、`receipt_id` 与上面两个相同；正文含本次请求的那一行（给别的候选写的 Decision 封不了这一个）；时间不在未来。
+请求文件的 sha256 已经绑住 tar、commit、Source、kit 与 `fleetRefs`。门的回答与 `seal` 的回答：
 
-`seal` 用这三个值填接受才有的五处：`cluedDecision` = `fleetRefs.ownerDecisionRef` = Decision，`installationReceiptRef` = `ownerReceiptRef` = 回执，`acceptedAt`。然后按节点 `prepare` 的同一份规则核整份合同，核索引行，再做同一个“请求对 Release”的核对。演练保留值即拒绝。都过了才把 `fleet-node-<version>.acceptance.json` 作为追加资产上传（不加 `--clobber`，tar 不变），补全索引行的接受时间、Decision、首装演练三格。最后把接受文件和 Decision 记录（`fleet-node-<version>.decision-record.json`，不上传）写到接受请求旁边。
+| 门答 | `seal` 答 | 做了什么 |
+|---|---|---|
+| `pending`（`confirmUrl`、`expiresAt`） | `FLEET_ACCEPTANCE_WAITING_OWNER`，带 `confirmUrl`、`expiresAt`；退出码 0 | 什么都不写。Owner 打开链接批准后，原样重跑同一条命令 |
+| `accepted`（`grant_id`、`receipt_id`、`accepted_at`） | `FLEET_ACCEPTANCE_SEALED` | 封存，见下 |
+| `rejected` / `expired` | `FLEET_ACCEPTANCE_REJECTED`，`answer` 写明是哪一种；退出码 1 | 什么都不写，候选留在未接受。请求过期了，原样重跑同一条命令重开 |
+
+`--wait <分钟>`（1–1440）：门答待批时按 30、60、120、120… 秒再问（同一个 `op_id`），直到批、拒、过期或等满；等满仍待批，答 `FLEET_ACCEPTANCE_WAITING_OWNER`。不给 `--wait` 只问一次。
+
+接受才有的三个值只从门的回答取：
+
+- `cluedDecision` = `fleetRefs.ownerDecisionRef` = Grant id（`grant_id`）；
+- `installationReceiptRef` = `ownerReceiptRef` = 使用回执 id（`receipt_id`）；
+- `acceptedAt` = 接受时间（`accepted_at`），截到秒，以 Z 结尾。
+
+两个 id 须是不同的 UUID，时间不在未来，演练保留值即拒绝；命令行上没有这三个值的参数。Owner 的原话不进任何记录：权威来自 Owner 登录会话在页面上的批准，由服务端写 Grant 与审计回执。索引的“Decision”列填 Grant id。
+
+然后按节点 `prepare` 的同一份规则核整份合同，核索引行，都过了才把 `fleet-node-<version>.acceptance.json` 作为追加资产上传（不加 `--clobber`，tar 不变），补全索引行的接受时间、Decision、首装演练三格，最后把接受文件写到接受请求旁边。接受文件是“请求 + 门的那一行”的纯函数：谁在哪台机器上重跑都得到同样的字节。
 
 - `--drill-receipt`：要求见 4.2，且三项哈希与这份接受相同。索引“首装演练”格记它的结论与回执 sha256；没给，记“首装未演练”。已封的行，这一格不再改：换回执或去掉回执重跑都拒绝。
-- 同样的参数再跑一次：已挂上、已写索引就什么都不改；上传后、写索引前断了的，补写索引。同一版本换一个 Decision 再 seal：拒绝，且在上传之前。
+- 同样的参数再跑一次：门回放同一行，接受文件字节相同；已挂上、已写索引就什么都不改（`already: true`）；上传后、写索引前断了的，补写索引。同一版本换一个接受请求：门拒绝（`ACCEPT_DOOR_REFUSED`）；目录或索引里已有另一份接受：在上传之前拒绝。
+- 门连不上、没上线或答得不成形：`ACCEPT_DOOR_UNAVAILABLE` / `ACCEPT_DOOR_ANSWER_REFUSED`，什么都不写，原样重跑；门拒绝（Binding 不是发布机的等）：`ACCEPT_DOOR_REFUSED`。
 
-**交付目录**（给新节点 `bootstrap.ps1 -From`，第 5 节）就是该版 Release 的全部资产，在 `seal` 之后用 `gh release download fleet-node-<version> --pattern "fleet-node-<version>.*" --pattern "SHA256SUMS" --pattern "role-image-*.tar.gz"` 取进一个新目录（只取这一条，它取的就是 bootstrap 首装要的全部资产）。`prepare` 的 `--out`（含接受请求、Decision 记录）不是交付目录：bootstrap 会把其中没列在两份 sums 里的文件当作多出的文件拒绝。
+**交付目录**（给新节点 `bootstrap.ps1 -From`，第 5 节）就是该版 Release 的全部资产，在 `seal` 之后用 `gh release download fleet-node-<version> --pattern "fleet-node-<version>.*" --pattern "SHA256SUMS" --pattern "role-image-*.tar.gz"` 取进一个新目录（只取这一条，它取的就是 bootstrap 首装要的全部资产）。`prepare` 的 `--out`（含接受请求）不是交付目录：bootstrap 会把其中没列在两份 sums 里的文件当作多出的文件拒绝。
 
 接受文件（合同 `clued.independent-ci.fleet-node-acceptance/1`，文件名 `fleet-node-<version>.acceptance.json`）由 `seal` 写出，形如：
 

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { drillKitManifest, prepareFrom, makeDrillKit } from '../drill/make-drill-kit.mjs';
-import { DRILL_PASS_CONCLUSIONS, prepare, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
+import { DRILL_PASS_CONCLUSIONS, prepare, seal } from '../rollout/fleet/publish.mjs';
 import { FAKE_GH } from '../rollout/fleet/test/fleet-fixtures.mjs';
 import {
   script, powershell, tmp, sha, q, PACKAGE_CREDENTIALS, ps, psCode, opts, idleHostStatus, activeHostStatus, entryScript,
@@ -106,11 +106,10 @@ test('a candidate from its build alone: prepare makes the Release and the index 
     pkg: { tarSha256: request.archive_sha256, firstInstallKitSha256: request.firstInstallKitSha256 } });
   const done = finalize('candidate-from-build-finalize', cand, notTheDrillsSource());
   assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
-  // 5. the Owner accepts (the Decision record naming this request), seal --drill-receipt
-  const record = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../rollout/fleet/test/fixtures/clued-decision-mutate-3bc571a6.json', import.meta.url)), 'utf8'));
-  record.supplemental.record.content = `TEST TEXT: the Owner accepts.\n${requestLineOf(version, sha(fs.readFileSync(p.request)))}\n`;
-  const decisionRecord = path.join(f.root, 'decision-record.json'); fs.writeFileSync(decisionRecord, JSON.stringify(record, null, 2));
-  const sealed = await seal({ request: p.request, decisionRecord, drillReceipt: done.receiptFile, index, repo, ghCommand: gh, deps });
+  // 5. the Owner approves the fleet.accept Grant (a stand-in of the acceptance door, 3bc571a6's values), seal --drill-receipt
+  const grant = 'c556370f-b0fc-404b-b164-0f06699e4c7a';
+  const door = async () => ({ status: 'accepted', grant_id: grant, receipt_id: '7ccaefca-5fda-4bc8-9747-2a8101b92342', accepted_at: '2026-11-19T12:22:39.628169+00:00' });
+  const sealed = await seal({ request: p.request, drillReceipt: done.receiptFile, index, repo, ghCommand: gh, deps: { ...deps, door } });
   assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
   // the Release: the five package assets, the kit, the image, the first-install sums and the acceptance, once each
   const names = JSON.parse(fs.readFileSync(state, 'utf8')).assets.map(a => a.name).sort();
@@ -120,7 +119,7 @@ test('a candidate from its build alone: prepare makes the Release and the index 
   const drill = `PASS_A_PER_NODE_STEPS_REMAIN receipt ${sha(fs.readFileSync(done.receiptFile))}`;
   assert.equal(sealed.drill, drill);
   assert.deepEqual(fs.readFileSync(index, 'utf8').split('\r\n').slice(2),
-    [`| ${version} | https://github.com/${repo}/releases/tag/${tag} | ${sha(tar)} | ${commit} | 2026-11-19T12:22:39Z | ${record.target_refs[0].id} | ${drill} |`, '']);
+    [`| ${version} | https://github.com/${repo}/releases/tag/${tag} | ${sha(tar)} | ${commit} | 2026-11-19T12:22:39Z | ${grant} | ${drill} |`, '']);
 });
 
 test('abort cleanup checks VM ownership, stops before restore and never acts on a different marker', opts, () => {

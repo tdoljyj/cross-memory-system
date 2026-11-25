@@ -51,7 +51,7 @@ test('L4: continue.py says how a stopped first install continues (the same boots
 test('the acceptance has two commands in the README, prepare before the Owner and seal after; no draft entry, no hand-attached kit or acceptance', () => {
   // Fable 3bc571a6 ruling section 3 (Task 758989fa): the two halves, each one command; the steps under them have no command of their own
   assert.match(readme, /^node [^\n]*publish\.mjs prepare --version <version> --dir /m);
-  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--decision-record /m);
+  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--wait </m);
   assert.ok(!/acceptance-draft/.test(readme), 'the old entry is gone from the README');
   assert.ok(!/attach-acceptance|attach-first-install-kit/.test(readme), 'no manual attach step is named in the README');
   assert.ok(!/install\.mjs first-install-kit/.test(readme), 'the manual take-the-kit step is gone from the README');
@@ -63,11 +63,13 @@ test('the acceptance has two commands in the README, prepare before the Owner an
   assert.match(readme, /候选 commit 必须已在远端/);
 });
 
-test('the acceptance in the README: seal takes the Decision record, not three hand-copied values; the delivery directory is the Release\'s assets, not prepare\'s --out', () => {
+test('the acceptance in the README: seal asks the acceptance door (one fleet.accept Grant), no Decision record and no three hand-copied values; the delivery directory is the Release\'s assets, not prepare\'s --out', () => {
   // FABLE-renew-key-algorithm-ruling-20261119.md section 4 and its supplement; review suggestions 3 and 4
-  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--decision-record /m);
-  assert.ok(!/^node [^\n]*publish\.mjs seal [^\n]*--(decision|receipt|accepted-at) /m.test(readme), 'no Decision, receipt or time on seal\'s command line');
-  assert.match(readme, /clued_record_mutate/);
+  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--wait </m);
+  // PLAN-accept-auto-seal-20261125 2.2: the acceptance is the Owner's fleet.accept Grant; the Decision record has no way in
+  assert.ok(!/^node [^\n]*publish\.mjs seal [^\n]*--(decision|decision-record|receipt|accepted-at|grant) /m.test(readme), 'no Decision record, Grant, receipt or time on seal\'s command line');
+  assert.match(readme, /`fleet\.accept`/);
+  assert.match(readme, /FLEET_ACCEPTANCE_WAITING_OWNER/);
   assert.match(readme, /PASS_A_FULL/);
   assert.match(readme, /PASS_A_PER_NODE_STEPS_REMAIN/);
   assert.ok(!/可直接交给 `install\.mjs first-install-check --from` 和 `bootstrap\.ps1 -From`/.test(readme), 'prepare\'s --out is not the delivery directory');
