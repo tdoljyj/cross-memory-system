@@ -9,25 +9,26 @@
 //   - main: push, schedule, workflow_run, pull_request_target, or a hand
 //     dispatch on main. Those workflow files are main's own. A
 //     pull_request_target run counts only for a pull request into main
-//     (re-review 7, m1).
-//   - clued-train/staging: only clued-required-tests.yml pushed by the
+//     (re-review 7, m1) whose head is this repository's (04f9b91b).
+//   - clued-train/staging: only clued-required-tests.yml or
+//     clued-required-tests-windows.yml (STAGING_WORKFLOWS) pushed by the
 //     App 5368905 bot (ADR 0018), with a merge chain rooted at live main T.
 //     Every second-parent member must be an open, current, same-repository
 //     PR into main with exact-head Native admission from App 5368905.
 //     This deliberately requires admission for every member, so workflow
 //     and protected-path changes cannot take a weaker staging exception.
 //     Missing, ambiguous or unreadable evidence refuses before any step.
+//   Neither pull request event ever starts a job for a fork's head, or for a
+//   head repository GitHub no longer names (forkRefusal, 04f9b91b 题 1).
 //   - a pull request into main that changes no file under .github/workflows/.
 //     Its workflows are main's, so each keeps its admission-gate job, which
 //     waits for the Clued admission of the pull request.
-//   - a pull request into main that changes a workflow, once the current
-//     admission producer has admitted this head and event. The active legacy
-//     workflow uses its pull_request_target run; explicit manual retirement
-//     selects the exact Native App/PR/head check and the current epoch guard.
+//   - a pull request into main that changes a workflow, once the Native
+//     admission has admitted this head and event: the exact App 5368905/PR/
+//     head kooyumi-work-admission check and the current epoch guard.
 //     (Re-review 3, N-R1, and re-review 5, n1: an older success on the same
-//     head cannot stand in.) Task b979d5a2: the hook reads that run, not the
-//     clued-admission App's check, because a fine-grained token cannot read
-//     the Checks API. See admissionRun below.
+//     head cannot stand in.) The legacy clued-work-admission.yml is not read,
+//     whether it is enabled or not (FABLE-scaffold-open-qs 问题 1 改法 1).
 //   - a hand dispatch on another branch of one of DISPATCH_GATED_WORKFLOWS,
 //     whose .github/workflows directory is exactly main's. That workflow keeps
 //     the dispatch gate, which needs a Clued admission run for the dispatched
@@ -53,7 +54,7 @@
 //         checks, such as runner-budget-policy) whose file at the head is the
 //         default branch's, byte for byte (Task 26cced7e, Owner Decision
 //         661f8c36). A pull request that changes a workflow has every job of
-//         its first run refused until its admission run succeeds, so without
+//         its first run refused until its Native admission succeeds, so without
 //         this its short checks could only run again on a new commit or a
 //         close and reopen;
 //       - every other job starts only when this attempt's admission-gate job
@@ -82,12 +83,8 @@
 //                                  a read-only GitHub token (actions, contents
 //                                  and pull requests: read); used only when no App is set
 //   CLUED_RUNNER_HOOK_ENFORCE      "true" refuses; anything else only reports
-//   CLUED_RUNNER_HOOK_WAIT_SECONDS how long to wait for the admission run, and
-//                                  separately for a re-run's admission-gate
-//                                  job (480 each). A heavy job of a re-run of a
-//                                  pull request that changes a workflow can
-//                                  wait for both: up to twice this, plus at
-//                                  most READ_ALLOWANCE_MS of reads.
+//   CLUED_RUNNER_HOOK_WAIT_SECONDS how long a re-run's heavy job can wait for its
+//                                  admission-gate job (780 seconds by default).
 // It needs Node 18 or newer (the runner bundles one under externals/).
 //
 // Transient reads (work-handover-native-admission-retry-v1, component 1.0.2;
@@ -99,16 +96,208 @@
 // are tried again: every GET, and the two POSTs their callers mark as reads
 // (the installation-token mint: a new token is harmless; the read-only
 // execution_current observation). Any other answer (401, 403, 404, 429, a
-// malformed body) is final at once, as before. While the hook waits for the
-// admission run, the Native kooyumi-work-admission check or a re-run's
-// admission-gate job, a poll that still fails transiently is "not settled
-// yet", never a refusal, until the wait ends; then the last failure refuses.
-// Every wait ends by the clock (CLUED_RUNNER_HOOK_WAIT_SECONDS), however long
-// its reads take, and all reads of one hook run end within twice that plus
-// READ_ALLOWANCE_MS. The Native check is judged at the time its pages were
-// read, never at a time taken before the retries. Fail closed is unchanged:
-// nothing is admitted on a failure.
+// malformed body) is final at once. The hook reads Native admission once,
+// including pagination and per-request retries, then refuses if the check is
+// missing or incomplete. The resident lane can re-run the workflow when
+// admission succeeds. The check is judged at the time its pages were read.
+// While a re-run's heavy job waits for its admission-gate, a transient failure
+// counts as pending until the wait ends. All reads share the hook deadline
+// (twice the configured wait plus READ_ALLOWANCE_MS).
 //
+// The pinned gate and resident lane carry the same failure classifier.
+export const SETUP_STEPS = ["Set up job", "Set up runner"];
+// A log longer than this is never classified (the tail with the verdict may be missing): not environment.
+export const MAX_LOG_CHARS = 3_500_000;
+const NETWORK_FAILURE = [
+  /\bECONNRESET\b/, /\bETIMEDOUT\b/, /\bEAI_AGAIN\b/, /\bENOTFOUND\b/, /\bECONNREFUSED\b/, /\bEPIPE\b/,
+  /socket hang up/i, /network (?:aborted|timeout|socket disconnected)/i, /connection reset by peer/i, /TLS handshake timeout/i,
+  /could not resolve host/i, /temporary failure in name resolution/i, /unexpected disconnect while reading sideband/i,
+  /RPC failed; curl \d+/, /early EOF/i, /\b429 Too Many Requests\b/i,
+  /npm (?:ERR!|error) network/i, /request to https?:\/\/\S+ failed, reason:/i,
+];
+const TEST_FAILURE = [
+  /\bnot ok \d+/, /# fail [1-9]\d*/, /\bAssertionError\b/, /✖/, /\b[1-9]\d* (?:failed|failing)\b/i, /(?:^|\s)FAIL(?:\s|$)/,
+];
+export function failedSteps(job) {
+  return Array.isArray(job?.steps) ? job.steps.filter((step) => step && step.conclusion === "failure") : null;
+}
+// Did the job die in the runner's own setup, before any workflow step ran?
+export function diedInSetup(job) {
+  if (!job || job.status !== "completed" || job.conclusion !== "failure") return false;
+  const failed = failedSteps(job);
+  return failed !== null && failed.length > 0 && failed.every((step) => SETUP_STEPS[job.steps.indexOf(step)] === step.name);
+}
+// Did GitHub end the job before any runner took it (9aba97c1)? No step ran and the record says no runner (runner_id 0 or null and runner_name
+// null or empty, as GitHub records it); a record without those fields proves nothing.
+export function neverAssigned(job) {
+  return !!job && job.status === "completed" && ["failure", "cancelled"].includes(job.conclusion) && Array.isArray(job.steps)
+    && job.steps.length === 0 && [0, null].includes(job.runner_id) && [null, ""].includes(job.runner_name);
+}
+// The timeout annotation is emitted on the cancelled job's check run, independently of its log.
+function hasTimeoutAnnotation(annotations) {
+  return Array.isArray(annotations) && annotations.some(note =>
+    typeof note?.message === "string" && note.message.startsWith("The job has exceeded the maximum execution time of "));
+}
+export function jobFailureKind(job, log = null, annotations = null) {
+  const no = (why) => ({ environment: false, kind: "unknown", why });
+  if (job?.status !== "completed" || !["failure", "cancelled"].includes(job.conclusion)) return no("the job did not fail or cancel");
+  if (diedInSetup(job)) return { environment: true, kind: "setup", why: `the runner's ${failedSteps(job).map((step) => step.name).join(", ")} step failed` };
+  if (neverAssigned(job)) return { environment: true, kind: "unassigned", why: "no runner took the job and no step ran" };
+  const failed = failedSteps(job);
+  const cancelled = job.conclusion === "cancelled";
+  if (cancelled) {
+    if (failed === null || !job.steps.length || failed.length > 0
+      || job.steps.some(step => typeof step?.conclusion !== "string")) return no("the cancelled job lacks a complete record without failed steps");
+    if (!hasTimeoutAnnotation(annotations)) return no("the cancelled job has no timeout annotation");
+  } else if (!failed?.length) return no("the job record names no failed step");
+  if (typeof log !== "string" || log.length === 0 || log.length > MAX_LOG_CHARS) return no("the job log is missing or too long to judge");
+  if (TEST_FAILURE.some((pattern) => pattern.test(log))) return { environment: false, kind: "test", why: "the log shows a failed test" };
+  if (cancelled) return { environment: true, kind: "timeout", why: "the job exceeded its maximum execution time and the log shows no failed test" };
+  const network = NETWORK_FAILURE.find((pattern) => pattern.test(log));
+  return network ? { environment: true, kind: "network", why: `the log shows a network failure (${network.source.slice(0, 40)}) and no failed test` } : no("the log shows no network failure");
+}
+
+// GitHub's earlier attempts are the repair budget. Skipped jobs after a
+// known gate refusal or setup death do not consume it.
+const REPAIR_GATE_JOB = "admission-gate";
+const REPAIR_NOT_ADMITTED = /^(?:ADMISSION_PENDING|RERUN_REFUSED):/;
+const REPAIR_TRANSIENT_API_ERROR = /^GitHub API \S+ (?:returned 5[0-9]{2}|could not be reached after [0-9]+ attempts)/;
+// Fable 11-20 (补：车头缺必需检查, and 补：补跑上限的范围): the budget is counted per run ID: at most three attempts of one run (the first and
+// two re-runs), whatever made them (this rule, the companion's lane, a person's re-run of it) and for both kinds of process cause together (a
+// run that produced no result, and the environment failures below). A new run of the workflow on the head (the PR reopened, a new event, a
+// re-dispatch) is a new run ID and counts from 1. The smaller of it and the environment limit holds.
+export const REPAIR_ATTEMPTS_MAX = 3;
+
+async function repairAnnotations(read, repository, jobId) {
+  if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error("the job has no check run ID");
+  const notes = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const batch = await read(`/repos/${repository}/check-runs/${jobId}/annotations?per_page=100&page=${page}`);
+    if (!Array.isArray(batch) || batch.length > 100) throw new Error("the job annotations are unreadable");
+    notes.push(...batch);
+    if (batch.length < 100) return notes;
+  }
+  throw new Error("the job annotations are incomplete");
+}
+
+async function repairEnvironmentFailures({ read, readLog, repository, heavy }) {
+  if (heavy.some(job => job.status !== "completed" || !["success", "skipped", "failure", "cancelled"].includes(job.conclusion))) return null;
+  const failures = [];
+  for (const job of heavy) {
+    if (job.conclusion === "success" || job.conclusion === "skipped") continue;
+    // A job no runner took (9aba97c1) ran nothing, like a setup death: no log, no annotation.
+    const unassigned = neverAssigned(job);
+    const setup = diedInSetup(job) || unassigned;
+    const cancelled = job.conclusion === "cancelled" && !unassigned;
+    const steps = failedSteps(job);
+    if (!setup && (!Number.isSafeInteger(job.id) || job.id <= 0 || !steps || (cancelled ? steps.length > 0 : steps.length === 0))) return null;
+    const annotations = cancelled ? await repairAnnotations(read, repository, job.id) : null;
+    if (cancelled && !hasTimeoutAnnotation(annotations)) return null;
+    const log = setup ? null : await readLog(`/repos/${repository}/actions/jobs/${job.id}/logs`);
+    const evidence = jobFailureKind(job, log, annotations);
+    if (!evidence.environment || typeof job.name !== "string" || !job.name) return null;
+    failures.push({ name: job.name, kind: evidence.kind });
+  }
+  return failures.length > 0 ? failures : null;
+}
+
+async function hasRepairRecovery({ read, repository, runId, workflowId, head, after, jobs }) {
+  if (!Number.isSafeInteger(workflowId) || workflowId <= 0 || !Number.isFinite(after)) return false;
+  const needed = new Set(jobs);
+  // Include old attempts of other runs and successes in runs that failed a
+  // different job. A run may have started before the failed attempt ended.
+  for (let page = 1; page <= 50; page += 1) {
+    const listing = await read(`/repos/${repository}/actions/workflows/${workflowId}/runs?per_page=100&page=${page}`);
+    const runs = listing?.workflow_runs;
+    if (!Array.isArray(runs) || runs.length > 100) return false;
+    for (const run of runs) {
+      if (run?.workflow_id !== workflowId || !Number.isSafeInteger(run.id) || run.id <= 0 || String(run.id) === String(runId)
+        || !/^[a-f0-9]{40}$/.test(run.head_sha ?? "") || run.head_sha === head
+        || (run.status === "completed" && Date.parse(run.updated_at) <= after)) continue;
+      for (let jobPage = 1; jobPage <= 50; jobPage += 1) {
+        const { jobs: candidates } = await read(`/repos/${repository}/actions/runs/${run.id}/jobs?filter=all&per_page=100&page=${jobPage}`) ?? {};
+        if (!Array.isArray(candidates) || candidates.length > 100) return false;
+        for (const job of candidates) {
+          if (job?.head_sha === run.head_sha && job.status === "completed" && job.conclusion === "success"
+            && Date.parse(job.completed_at) > after) needed.delete(job.name);
+        }
+        if (needed.size === 0) return true;
+        if (candidates.length < 100) break;
+      }
+    }
+    if (runs.length < 100) break;
+  }
+  return false;
+}
+
+// The attempts the budget counts: this run's attempt number (GitHub's own count of the run ID, a person's re-runs of it included). An attempt
+// number that cannot be proven is the budget reached (Infinity). What a check cannot close: a person's re-run made between the lane's read
+// and its request is counted from the next read on.
+function runAttempts({ attempt }) {
+  return Number.isSafeInteger(attempt) && attempt > 0 ? attempt : Infinity;
+}
+
+// The one answer to "may this attempt be a repair" (the gate imports it, the companion's lane calls it, the runner hook holds a copy the
+// admission self-tests lock byte for byte). Refusals carry why for the lane: unreadable (read again later), waiting (no recovery evidence
+// yet), exhausted (three real attempts, with the last failures), budget (three attempts of the workflow on the head).
+export async function requiredTestsRepairHistory({ read, readLog, repository, runId, head, attempt, workflowId }) {
+  const refuse = (reason, more = {}) => ({ allowed: false, reason, ...more });
+  const attempts = [];
+  let realAttempts = 0;
+  let lastFailures = [];
+  let lastKinds = [];
+  let completedAt;
+  try {
+    for (let earlier = 1; earlier < attempt; earlier += 1) {
+      const body = await read(`/repos/${repository}/actions/runs/${runId}/attempts/${earlier}/jobs?per_page=100`);
+      const jobs = body?.jobs;
+      if (!Array.isArray(jobs) || body.total_count !== jobs.length || jobs.length > 100 || jobs.some(job => !job || typeof job !== "object"))
+        return refuse(`attempt ${earlier}'s job list is incomplete`);
+      const gates = jobs.filter(job => job.name === REPAIR_GATE_JOB);
+      const heavy = jobs.filter(job => job.name !== REPAIR_GATE_JOB);
+      if (gates.length !== 1 || heavy.length === 0)
+        return refuse(`attempt ${earlier} does not list one ${REPAIR_GATE_JOB} job and its heavy jobs`);
+      if (jobs.some(job => job.head_sha !== head))
+        return refuse(`attempt ${earlier} has a job of another head than ${head}`);
+      if (jobs.some(job => job.run_attempt != null && Number(job.run_attempt) !== earlier))
+        return refuse(`attempt ${earlier} has a job of another attempt`);
+      const [gateJob] = gates;
+      // A job no runner took (9aba97c1) ran nothing, like a skipped one.
+      const ran = heavy.filter(job => (job.status !== "completed" || job.conclusion !== "skipped") && !neverAssigned(job));
+      if (ran.length > 0) {
+        realAttempts += 1;
+        if (realAttempts === 3) return refuse("three real attempts have already run", { exhausted: lastKinds });
+        const failures = gateJob.status === "completed" && gateJob.conclusion === "success"
+          ? await repairEnvironmentFailures({ read, readLog, repository, heavy }) : null;
+        if (!failures)
+          return refuse(`attempt ${earlier} already ran ${ran.map(job => `${String(job.name).slice(0, 80)}: ${job.status}/${job.conclusion ?? "none"}`).join(", ")}; its gate or environment evidence does not allow repair`);
+        lastFailures = failures.map(job => job.name);
+        lastKinds = failures.map(job => ({ name: job.name, kind: job.kind }));
+        completedAt = Math.max(...jobs.map(job => Date.parse(job.completed_at)));
+        attempts.push({ attempt: earlier, heavy_jobs: heavy.length, environment_failure: lastFailures,
+          environment_failure_kinds: Object.fromEntries(failures.map(job => [job.name, job.kind])) });
+        continue;
+      }
+      // Nothing ran: the gate died in setup, or no runner took it or a job after it (GitHub then records them all cancelled, unrun).
+      const setup = diedInSetup(gateJob) || neverAssigned(gateJob) || heavy.some(neverAssigned);
+      const notes = !setup && gateJob.status === "completed" ? await repairAnnotations(read, repository, gateJob.id) : [];
+      if (!setup && !notes.some(note =>
+        (note?.title === REPAIR_GATE_JOB && REPAIR_NOT_ADMITTED.test(note.message ?? "")) ||
+        (note?.title === "kooyumi-work-admission" && REPAIR_TRANSIENT_API_ERROR.test(note.message ?? ""))))
+        return refuse(`the ${REPAIR_GATE_JOB} job of attempt ${earlier} did not end in ADMISSION_PENDING, RERUN_REFUSED or a GitHub API outage`);
+      attempts.push({ attempt: earlier, heavy_jobs: heavy.length });
+    }
+    const total = runAttempts({ attempt });
+    if (total > REPAIR_ATTEMPTS_MAX)
+      return refuse(`three attempts of this run have already been made (${Number.isFinite(total) ? `${total} with this one` : "the count cannot be proven"})`, { budget: true });
+    if (realAttempts === 2 && !await hasRepairRecovery({ read, repository, runId, workflowId, head, after: completedAt, jobs: lastFailures }))
+      return refuse("the second repair needs recovery evidence: a later success of each failed job in the same workflow on another commit", { waiting: true });
+  } catch (error) {
+    return refuse(`the earlier attempts could not be read (${error instanceof Error ? error.message : String(error)})`, { unreadable: true });
+  }
+  return { allowed: true, attempts };
+}
+
 // Late Native admission (required-tests-late-admission-v1, component 1.0.3;
 // defect B, 2026-11-15, PR #1121 run 43720693841): Native admits a pull
 // request only once it is the train's front, often long after the push, so
@@ -134,8 +323,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "required-tests-dispatch-v1";
-export const COMPONENT_VERSION = "1.0.6";
+export const HOOK_VERSION = "native-admission-no-wait-v1";
+export const COMPONENT_VERSION = "1.0.9";
 
 // Transient reads (see the header).
 export const READ_ATTEMPTS = 3;
@@ -151,10 +340,10 @@ const markTransient = (failure) => {
   error.transient = true;
   return error;
 };
-// CLUED_RUNNER_HOOK_WAIT_SECONDS (480 when unset or not a whole number of seconds).
+// The re-run gate wait defaults to 780 seconds.
 export function waitLimitSeconds(env) {
   const seconds = Number.parseInt(env.CLUED_RUNNER_HOOK_WAIT_SECONDS ?? "", 10);
-  return Number.isInteger(seconds) && seconds >= 0 ? seconds : 480;
+  return Number.isInteger(seconds) && seconds >= 0 ? seconds : 780;
 }
 // fetchImpl with bounded retries of transient read failures. A request is a read when its method is GET, or when its caller marks it
 // (init.retryRead, a POST that only reads). Each attempt gets its own time bound (init.attemptMs, else READ_ATTEMPT_MS, never past
@@ -230,7 +419,7 @@ export function workflowPathOf(env) {
   return match ? match[1] : null;
 }
 
-async function github(fetchImpl, token, url, { allowMissing = false, method = "GET", body, expect = 200, retryRead = false } = {}) {
+async function github(fetchImpl, token, url, { allowMissing = false, method = "GET", body, expect = 200, retryRead = false, asText = false } = {}) {
   const response = await fetchImpl(`https://api.github.com${url}`, {
     method, ...(retryRead ? { retryRead: true } : {}),
     headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "user-agent": "clued-runner-hook",
@@ -243,7 +432,7 @@ async function github(fetchImpl, token, url, { allowMissing = false, method = "G
     error.transient = TRANSIENT_STATUS.has(response.status);
     throw error;
   }
-  return response.json();
+  return asText ? response.text() : response.json();
 }
 
 // Owner Decision d8bc893c: the hook calls GitHub as its own read-only App, on
@@ -326,32 +515,10 @@ async function workflowsDifferFromMain(fetchImpl, token, repository, base, sha) 
   return [...names].filter((name) => mine.get(name) !== main.get(name)).sort();
 }
 
-// The admission run of this run's own event (re-review 5, n1; the same
-// selection as eventAdmissionCheck in scripts/ci/clued-work-admission.mjs).
-// The runs of one event are created together, so it is the newest
-// pull_request_target run of the admission workflow on this head created no
-// earlier than SAME_EVENT_MS before this run. A run's creation time, not a
-// later posting time, tells a closed and reopened pull request's events apart.
-// Skipped runs are passed over: the admission job skips a pull request into
-// another branch, and an Agent can open one on the same head.
-//
-// The run stands in for the clued-admission App's check, which a fine-grained
-// token cannot read (Task b979d5a2):
-//   - pull_request_target always runs the default branch's copy of the
-//     workflow, whatever the pull request's base, and that copy admits only
-//     pull requests into the default branch (re-review 6, B1). No branch's
-//     edited copy of the file runs on pull_request_target. Runs are listed by
-//     the workflow's file name, so a workflow another file adds under the same
-//     display name does not count.
-//   - The run succeeds only when its admit step does, the same condition on
-//     which it posts a successful check.
-// The check also named its pull request (re-review 4, m1); a run does not
-// (its pull_requests list names every open pull request with the same head).
-// Another pull request into main with the same head and an event within
-// SAME_EVENT_MS can therefore stand in. Its run judged the same commit and the
-// same workflow changes.
+// A Native check started no earlier than SAME_EVENT_MS before this run and
+// completed no later than SAME_EVENT_MS after it was read belongs to this
+// run's event (re-review 5, n1).
 export const SAME_EVENT_MS = 15_000;
-const ADMISSION_WORKFLOW = "clued-work-admission.yml";
 // Installed standalone: keep these producer bindings identical to the
 // independent gate in scripts/ci/clued-work-admission.mjs. A status/name alone
 // and the negative-only execution_current observation never admit a job.
@@ -388,14 +555,59 @@ export async function nativeAdmissionCheck(fetchImpl, token, repository, headSha
   return { settled: true, check: newest, admitted: bound && newest.conclusion === "success" };
 }
 
-async function admissionRun(fetchImpl, token, repository, headSha, since) {
-  const runs = (await github(fetchImpl, token,
-    `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${headSha}&event=pull_request_target&per_page=100`))
-    ?.workflow_runs ?? [];
-  return runs
-    .filter((run) => run && run.event === "pull_request_target" && run.head_sha === headSha && run.conclusion !== "skipped"
-      && Date.parse(run.created_at) >= since - SAME_EVENT_MS)
-    .sort((a, b) => (Date.parse(b.created_at) - Date.parse(a.created_at)) || (Number(b.id) - Number(a.id)))[0] ?? null;
+// The workflows whose required checks the train needs on S (ADR 0018 §8):
+// every required check of main must succeed there, and ci-suites-windows is
+// one (D6 N1). Each reads its own member PR runs below.
+const STAGING_WORKFLOWS = new Set(['.github/workflows/clued-required-tests.yml',
+  '.github/workflows/clued-required-tests-windows.yml']);
+
+// The train's member chain (ADR 0019 §3), one copy for every reader: from S
+// along first parents, each step a merge of exactly two distinct parents whose
+// second parent is the next member head and not a root, until a root T. The
+// hook reads commits from GitHub and roots at live main; the required
+// workflows' push-baseline step (stagingBaseFromCheckout) reads its checkout
+// and roots at any commit on main. Bounded reads; a malformed, cyclic or
+// oversized chain, or one without members, never yields a root.
+export async function trainMemberChain(sha, { isRoot, readCommit, limit = 20 }) {
+  const heads = [], seen = new Set();
+  let at = sha;
+  while (!(await isRoot(at))) {
+    if (heads.length >= limit || seen.has(at)) return { error: 'merge chain is cyclic, oversized or not rooted at main' };
+    seen.add(at);
+    const commit = await readCommit(at);
+    if (commit?.sha !== at || !Array.isArray(commit.parents) || commit.parents.length !== 2
+      || commit.parents.some(parent => !/^[a-f0-9]{40}$/.test(parent?.sha ?? ''))
+      || commit.parents[0].sha === commit.parents[1].sha || await isRoot(commit.parents[1].sha)
+      || heads.includes(commit.parents[1].sha)) return { error: 'invalid merge chain' };
+    heads.push(commit.parents[1].sha);
+    at = commit.parents[0].sha;
+  }
+  if (!heads.length) return { error: 'S has no PR members' };
+  return { root: at, heads };
+}
+
+// The trusted base T of a push of S to clued-train/staging, for the required
+// workflows' push-baseline step: it reads this file from origin/main (as the
+// loader reads it from main), before any trusted command loads, and walks the
+// job's own full-history checkout. A root is any commit on main, so a
+// one-member S keeps T = S^1. Throws when there is no such T.
+export async function stagingBaseFromCheckout(sha, { mainRef = 'origin/main', cwd = process.cwd() } = {}) {
+  if (!/^[a-f0-9]{40}$/.test(String(sha ?? ''))) throw new Error('staging: invalid S');
+  const git = (...args) => spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const isRoot = (at) => {
+    const result = git('merge-base', '--is-ancestor', at, mainRef);
+    if (result.status === 0 || result.status === 1) return result.status === 0;
+    throw new Error(`staging: cannot compare ${at} with ${mainRef}`);
+  };
+  const readCommit = (at) => {
+    const result = git('rev-list', '--parents', '-n', '1', at);
+    if (result.status !== 0) return null;
+    const [self, ...parents] = result.stdout.trim().split(' ');
+    return { sha: self, parents: parents.map(parent => ({ sha: parent })) };
+  };
+  const chain = await trainMemberChain(sha, { isRoot, readCommit });
+  if (chain.error) throw new Error(`staging: ${chain.error}`);
+  return chain.root;
 }
 
 // Installed alone and loaded from main: do not import candidate policy/code.
@@ -403,7 +615,7 @@ async function admissionRun(fetchImpl, token, repository, headSha, since) {
 // additions in main's policy), changed workflow bytes and unavailable diffs.
 // S carries the heads as second parents of the train's first-parent chain;
 // neither the push payload nor a candidate-authored member list is authority.
-async function stagingAdmission({ env, fetchImpl, readFile, now, repository, defaultBranch, workflow, result }) {
+async function stagingAdmission({ env, fetchImpl, readFile, now, sleep, repository, defaultBranch, workflow, result }) {
   const refuse = reason => ({ ...result, allow: false, reason: `staging: ${reason}` });
   const sha = env.GITHUB_SHA ?? '', runId = env.GITHUB_RUN_ID ?? '';
   if (!/^[a-f0-9]{40}$/.test(sha) || !/^[0-9]{1,20}$/.test(runId)) return refuse('invalid S or run id');
@@ -414,25 +626,20 @@ async function stagingAdmission({ env, fetchImpl, readFile, now, repository, def
     || run.path !== workflow || run.actor?.login !== env.GITHUB_ACTOR
     || attempt === null || run.run_attempt !== attempt || !Number.isFinite(Date.parse(run.created_at)))
     return refuse('run does not bind the workflow, App actor, attempt and S');
+  if (attempt > 1 && env.GITHUB_JOB !== GATE_JOB) {
+    const attemptStarted = Date.parse(run.run_started_at);
+    if (!Number.isFinite(attemptStarted)) return refuse("the run has no run_started_at; re-run refused");
+    const gate = await waitForAttemptGate({ fetchImpl, token, repository, runId, attempt, attemptStarted, limit: waitLimitSeconds(env), sleep, now });
+    if (gate.state !== "ok") return refuse(`run attempt ${attempt} needs a fresh successful ${GATE_JOB} job: ${gate.detail}`);
+  }
   const mainPath = `/repos/${repository}/git/ref/heads/${encodeURIComponent(defaultBranch)}`;
   const main = await github(fetchImpl, token, mainPath);
   const base = main?.object?.sha;
   if (main?.object?.type !== 'commit' || !/^[a-f0-9]{40}$/.test(base ?? '')) return refuse('live main is unavailable');
-  const heads = [], seen = new Set();
-  let at = sha;
-  // Bounded reads; a malformed, cyclic or oversized chain never admits.
-  while (at !== base) {
-    if (heads.length >= 20 || seen.has(at)) return refuse('merge chain is cyclic, oversized or not rooted at main');
-    seen.add(at);
-    const commit = await github(fetchImpl, token, `/repos/${repository}/git/commits/${at}`);
-    if (commit?.sha !== at || !Array.isArray(commit.parents) || commit.parents.length !== 2
-      || commit.parents.some(parent => !/^[a-f0-9]{40}$/.test(parent?.sha ?? ''))
-      || commit.parents[0].sha === commit.parents[1].sha || commit.parents[1].sha === base
-      || heads.includes(commit.parents[1].sha)) return refuse('invalid merge chain');
-    heads.push(commit.parents[1].sha);
-    at = commit.parents[0].sha;
-  }
-  if (!heads.length) return refuse('S has no PR members');
+  const chain = await trainMemberChain(sha, { isRoot: at => at === base,
+    readCommit: at => github(fetchImpl, token, `/repos/${repository}/git/commits/${at}`) });
+  if (chain.error) return refuse(chain.error);
+  const { heads } = chain;
   const memberIsLive = (pr, head) => Number.isSafeInteger(pr?.number) && pr.number > 0
     && pr.state === 'open' && pr.draft === false && pr.head?.sha === head
     && pr.head?.repo?.full_name === repository && pr.base?.repo?.full_name === repository
@@ -446,7 +653,7 @@ async function stagingAdmission({ env, fetchImpl, readFile, now, repository, def
     const pr = candidates[0];
     // Preserve the PR route's same-event lower bound: an older success on
     // the same head must not authorize a close/reopen or a new workflow run.
-    const runs = await github(fetchImpl, token, `/repos/${repository}/actions/workflows/clued-required-tests.yml/runs?head_sha=${head}&event=pull_request&per_page=100`);
+    const runs = await github(fetchImpl, token, `/repos/${repository}/actions/workflows/${workflow.slice('.github/workflows/'.length)}/runs?head_sha=${head}&event=pull_request&per_page=100`);
     if (!Array.isArray(runs?.workflow_runs) || !Number.isSafeInteger(runs.total_count)
       || runs.total_count !== runs.workflow_runs.length || runs.total_count >= 100)
       return refuse('member PR workflow runs are unavailable or truncated');
@@ -580,6 +787,21 @@ async function gateInAttempt(fetchImpl, token, repository, runId, attempt, attem
   return { state: "ok", job: gate };
 }
 
+async function waitForAttemptGate({ fetchImpl, token, repository, runId, attempt, attemptStarted, limit, sleep, now }) {
+  const waitUntil = now() + limit * 1000;
+  for (let waited = 0; ; waited += 10) {
+    let seen;
+    try {
+      seen = await gateInAttempt(fetchImpl, token, repository, runId, attempt, attemptStarted);
+    } catch (error) {
+      if (!transient(error) || waited >= limit || now() >= waitUntil) throw error;
+      seen = { state: "pending" };
+    }
+    if (seen.state !== "pending" || waited >= limit || now() >= waitUntil) return seen;
+    await sleep(10_000);
+  }
+}
+
 // Late Native admission (required-tests-late-admission-v1, defect B): a pull
 // request that changes a workflow writes its own admission-gate job, so the
 // gate's re-run rules are its own to forge, and this hook alone bounds how
@@ -646,20 +868,13 @@ async function rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, 
   const attemptStarted = Date.parse(run && run.run_started_at);
   if (!Number.isFinite(attemptStarted)) return refuse("the run has no run_started_at; re-run refused");
   // A heavy job needs the gate, so a gate job of this attempt still shown as
-  // not started or not completed is the API's lag: wait for it, like for the
-  // admission run below, and refuse at the end of the wait.
+  // not started or not completed is the API's lag: wait for it and refuse at
+  // the end of the wait.
   let seen;
-  // The wait ends by the clock as well as by the count of polls, however long a poll's reads take.
-  const waitUntil = now() + limit * 1000;
-  for (let waited = 0; ; waited += 10) {
-    try {
-      seen = await gateInAttempt(fetchImpl, token, repository, runId, attempt, attemptStarted);
-    } catch (error) {
-      if (!transient(error) || waited >= limit || now() >= waitUntil) return refuse(`cannot read attempt ${attempt}'s jobs (${errorText(error)}); re-run refused`);
-      seen = { state: "pending" };
-    }
-    if (seen.state !== "pending" || waited >= limit || now() >= waitUntil) break;
-    await sleep(10_000);
+  try {
+    seen = await waitForAttemptGate({ fetchImpl, token, repository, runId, attempt, attemptStarted, limit, sleep, now });
+  } catch (error) {
+    return refuse(`cannot read attempt ${attempt}'s jobs (${errorText(error)}); re-run refused`);
   }
   if (seen.state === "ok") {
     return { allow: true, reason: `run attempt ${attempt} on the current head: ${GATE_JOB} job ${seen.job.id} ran again in this attempt and succeeded` };
@@ -690,6 +905,19 @@ function hookReads({ env, fetchImpl, sleep, now, timeoutSignal }) {
   const deadline = now() + 2 * waitLimitSeconds(env) * 1000 + READ_ALLOWANCE_MS;
   return retryingFetch(fetchImpl, { sleep, now, deadlineAt: () => deadline, ...(timeoutSignal ? { timeoutSignal } : {}) });
 }
+// 04f9b91b 题 1: a pull request's code runs on this runner only when its head and its base are both this
+// repository. A fork's head, or one GitHub no longer names (a deleted fork: head.repo is null), is refused on
+// pull_request and pull_request_target alike, whatever the workflow's own if says; this is the one place
+// that holds for every self-hosted job. "" when the pull request is this repository's own.
+export function forkRefusal(pr, repository) {
+  const own = repository.toLowerCase();
+  const name = (side) => { const value = pr?.[side]?.repo?.full_name; return typeof value === "string" && value ? value : null; };
+  const head = name("head"), base = name("base");
+  if (head?.toLowerCase() === own && base?.toLowerCase() === own) return "";
+  const from = head === null ? "an unreadable head repository (a deleted fork?)"
+    : head.toLowerCase() !== own ? `fork ${head}` : `base repository ${base ?? "(unreadable)"}`;
+  return `pull request #${pr?.number ?? "(unknown)"} comes from ${from}, not ${repository}; a fork's head never runs on this runner`;
+}
 export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileSync, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   now = () => Date.now(), timeoutSignal = null }) {
   const fetchImpl = hookReads({ env, fetchImpl: rawFetch, sleep, now, timeoutSignal });
@@ -707,9 +935,9 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
   if (!workflow) throw new Error(`GITHUB_WORKFLOW_REF is not a workflow path: ${env.GITHUB_WORKFLOW_REF}`);
   const event = result.event;
   if (event === 'push' && result.ref === 'refs/heads/clued-train/staging' &&
-    workflow === '.github/workflows/clued-required-tests.yml' &&
+    STAGING_WORKFLOWS.has(workflow) &&
     env.GITHUB_ACTOR === 'clued-ci-checks-turing-20261018[bot]') {
-    return stagingAdmission({ env, fetchImpl, readFile, now, repository, defaultBranch, workflow, result });
+    return stagingAdmission({ env, fetchImpl, readFile, now, sleep, repository, defaultBranch, workflow, result });
   }
   const requiredDispatch = event === 'workflow_dispatch' && workflow === '.github/workflows/clued-required-tests.yml';
   if (MAIN_EVENTS.has(event) && result.ref === mainRef && !requiredDispatch) {
@@ -721,6 +949,11 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
       const base = payload && payload.pull_request && payload.pull_request.base;
       if (!base || base.ref !== defaultBranch) {
         result.reason = `pull_request_target for a pull request into ${base ? base.ref : "(unknown)"}, not ${defaultBranch}`;
+        return result;
+      }
+      const fork = forkRefusal(payload.pull_request, repository);
+      if (fork) {
+        result.reason = `pull_request_target for ${fork}`;
         return result;
       }
     }
@@ -762,6 +995,8 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
         result.reason = 'required-tests dispatch PR is closed, foreign or moved';
         return result;
       }
+      // Fable 11-20 补“补跑上限的范围”: the re-run budget is per run ID; this dispatch is a new run, its first attempt (attempt > 1 is
+      // refused above), so earlier runs' attempts do not count here.
       // Retain the branch-dispatch rule: workflow bytes must match main.
       // The unchanged trusted gate then judges the Native PR admission.
       const differing = await workflowsDifferFromMain(fetchImpl, token, repository, defaultBranch, sha);
@@ -786,6 +1021,11 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
     if (!pr || !pr.base || !pr.head) throw new Error("pull_request payload is missing.");
     if (pr.base.ref !== defaultBranch) {
       result.reason = `pull request into ${pr.base.ref}, not ${defaultBranch}`;
+      return result;
+    }
+    const fork = forkRefusal(pr, repository);
+    if (fork) {
+      result.reason = fork;
       return result;
     }
     const limit = waitLimitSeconds(env);
@@ -816,55 +1056,40 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
     }
     const since = Date.parse(run && run.created_at);
     if (!Number.isFinite(since)) throw new Error(`run ${runId} has no created_at.`);
-    // GitHub's workflow state is an Owner-controlled producer switch. Only
-    // explicit manual retirement selects Native. Unknown/404/403 fail closed;
-    // a failed Native check never falls back to legacy success.
-    const producer = await github(fetchImpl, token, `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}`);
-    if (producer?.path !== `.github/workflows/${ADMISSION_WORKFLOW}`
-      || !["active", "disabled_manually"].includes(producer.state)) throw new Error("Admission producer state is unavailable or unsupported.");
-    if (producer.state === "disabled_manually") {
-      const nativeToken = await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true });
-      let native;
-      const waitUntil = now() + limit * 1000;
-      for (let waited = 0; ; waited += 10) {
-        try {
-          native = await nativeAdmissionCheck(fetchImpl, nativeToken, repository, pr.head.sha, pr.number, since, now);
-        } catch (error) {
-          // Not settled yet while the wait lasts; the last transient failure refuses at its end (fail closed).
-          if (!transient(error) || waited >= limit || now() >= waitUntil) throw error;
-          native = { settled: false, check: null, admitted: false };
-        }
-        if (native.settled || waited >= limit || now() >= waitUntil) break;
-        await sleep(10_000);
-      }
-      const current = await github(fetchImpl, token, `/repos/${repository}/pulls/${pr.number}`);
-      const live = current?.state === "open" && current.base?.ref === defaultBranch
-        && current.base?.repo?.full_name?.toLowerCase() === repository.toLowerCase() && current.head?.sha === pr.head.sha;
-      // One run per admitted head: a later attempt only when no earlier attempt of this run ran anything (see ranNothing).
-      const first = !(native.admitted && live) || runnerAttempt === 1 ? { ok: runnerAttempt === 1, why: "" }
-        : await earlierAttemptsRanNothing(fetchImpl, token, repository, runId, runnerAttempt);
-      result.allow = Boolean(native.admitted && live && first.ok);
-      result.reason = `pull request #${pr.number} changes ${[...new Set(changed)].join(", ")}; Native admission ${native.check?.id ?? "absent"}: `
-        + `${result.allow ? "succeeded" : `not admitted (binding, current head, conclusion, freshness or rerun${first.why ? `: ${first.why}` : ""})`}${rerun}`;
-      return result;
+    // Native admission only (FABLE-scaffold-open-qs 问题 1 改法 1): the one admission publisher is the
+    // independent CI's App 5368905. The legacy clued-work-admission.yml's state is not read and its
+    // pull_request_target run never stands in, whether or not that workflow is enabled again.
+    const nativeToken = await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true });
+    const native = await nativeAdmissionCheck(fetchImpl, nativeToken, repository, pr.head.sha, pr.number, since, now);
+    const current = native.admitted ? await github(fetchImpl, token, `/repos/${repository}/pulls/${pr.number}`) : null;
+    const same = current?.base?.ref === defaultBranch
+      && current.base?.repo?.full_name?.toLowerCase() === repository.toLowerCase() && current.head?.sha === pr.head.sha;
+    let live = same && current.state === "open";
+    // 戊 (FABLE-main-push-same-tree-parallel-20261123 §7): when this admission is the last required check, GitHub
+    // can merge before the hook re-reads the PR. The same PR merged with this very head is still
+    // this PR once main contains the head: read again then, its job changes no workflow and starts on the
+    // "changes no workflow" path above with no admission at all, so this admits nothing that path does not.
+    let merged = false;
+    if (!live && same && native.admitted && current.state === "closed" && current.merged === true) {
+      merged = (await changedWorkflows(fetchImpl, token, repository, defaultBranch, pr.head.sha)).length === 0;
+      live = merged;
     }
-    let found = null;
-    const waitUntil = now() + limit * 1000;
-    for (let waited = 0; ; waited += 10) {
-      try {
-        found = await admissionRun(fetchImpl, token, repository, pr.head.sha, since);
-      } catch (error) {
-        if (!transient(error) || waited >= limit || now() >= waitUntil) throw error;
-        found = null;
+    let repair = { ok: true, why: "" };
+    if (native.admitted && live && runnerAttempt > 1) {
+      if (workflow !== ".github/workflows/clued-required-tests.yml") {
+        repair = await earlierAttemptsRanNothing(fetchImpl, token, repository, runId, runnerAttempt);
+      } else if (run.head_sha !== pr.head.sha || run.path !== workflow || run.event !== "pull_request") {
+        repair = { ok: false, why: "the run does not bind this workflow and PR head" };
+      } else {
+        const history = await requiredTestsRepairHistory({ repository, runId, head: pr.head.sha, attempt: runnerAttempt,
+          workflowId: run.workflow_id, read: route => github(fetchImpl, nativeToken, route),
+          readLog: route => github(fetchImpl, nativeToken, route, { asText: true }) });
+        repair = { ok: history.allowed, why: history.reason };
       }
-      if ((found && found.status === "completed") || waited >= limit || now() >= waitUntil) break;
-      await sleep(10_000);
     }
-    result.allow = Boolean(found && found.status === "completed" && found.conclusion === "success");
-    const what = [...new Set(changed)].join(", ");
-    const seen = !found ? "no admission run" : `admission run ${found.id}: ${found.status}/${found.conclusion ?? "none"}`;
-    result.reason = result.allow ? `pull request #${pr.number} changes ${what}; admission run ${found.id} succeeded${rerun}`
-      : `pull request #${pr.number} changes ${what}; no successful ${ADMISSION_WORKFLOW} run on ${pr.head.sha} from this event (created since ${run.created_at} less ${SAME_EVENT_MS / 1000}s; ${seen})${rerun}`;
+    result.allow = Boolean(native.admitted && live && repair.ok);
+    result.reason = `pull request #${pr.number} changes ${[...new Set(changed)].join(", ")}; Native admission ${native.check?.id ?? "absent"}: `
+      + `${result.allow ? `succeeded${merged ? "; merged with this head meanwhile" : ""}` : `not admitted (binding, current head, conclusion, freshness or rerun${repair.why ? `: ${repair.why}` : ""})`}${rerun}`;
     return result;
   }
   throw new Error(`unreachable event ${event}`);

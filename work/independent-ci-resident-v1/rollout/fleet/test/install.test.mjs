@@ -20,6 +20,7 @@ import { FLEET_REF_KEYS, FORMAL_ROLES, LINUX_SCRIPTS, OWN_MODULES, PLAN_CONTRACT
 import { rolesDerived } from '../ports.mjs';
 import { readTar, writeTar } from '../tar.mjs';
 import { buildUniversal } from '../universal.mjs';
+import { upgradeNode } from '../upgrade.mjs';
 import { readPackageOnce } from '../../../upgrader/src/package.mjs';
 import { assembleRecord } from '../../../../actions-hosted-migration/independent-ci-v1/src/resident-v2/prepare-record.mjs';
 import { roles } from '../../../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
@@ -38,7 +39,7 @@ export function acceptanceOf(release, over = {}) {
   const fleetRefs = { sourceAcceptanceRef: decision, hostQualificationRef: randomUUID(), ownerAuthorizationRef: decision, publisherQualificationRef: decision,
     ownerPackageAcceptanceRef: decision, installationReceiptRef: receipt, ownerDecisionRef: decision, ownerReceiptRef: receipt, formalRoles: roles() };
   return { contract: 'clued.independent-ci.fleet-node-acceptance/1', version: release.source.version, archive_sha256: release.source.archive_sha256,
-    commit: release.source.commit, repository: 'tdoljyj/cross-memory-system', cluedDecision: decision.slice(0, 8), acceptedAt: '2026-11-12T00:00:00Z', fleetRefs, ...over };
+    commit: release.source.commit, repository: 'tdoljyj/cross-memory-system', cluedDecision: decision.slice(0, 8), acceptedAt: '2026-11-12T00:00:00Z', fleetRefs, firstInstallKitSha256: 'd'.repeat(64), ...over };
 }
 
 // The package's Python tools: rehearse.py always a stub (it reads the real C:\ProgramData root and runs the installed tools; a fixture
@@ -151,7 +152,9 @@ test('install: one archive and one acceptance, two nodes: one Source, two packag
       const work = path.join(n.dir, 'install');
       const r = await prepare(w, n, work, { python: py.fn });
       // the result line
-      assert.deepEqual(Object.keys(r).sort(), ['installPlan', 'launcher', 'node', 'runCommand', 'status', 'version', 'workDir']);
+      assert.deepEqual(Object.keys(r).sort(), ['installPlan', 'launcher', 'node', 'runCommand', 'status', 'version', 'workDir', 'wslCapacity']);
+      // the WSL memory step (wsl-capacity.mjs): under the test marker it never writes outside the temporary directory
+      assert.equal(r.wslCapacity.status, 'skipped', JSON.stringify(r.wslCapacity));
       assert.equal(r.status, 'FLEET_NODE_INSTALL_PREPARED');
       assert.equal(r.node, n.profile.nodeName);
       assert.equal(r.launcher.sha256, sha(await fs.readFile(path.join(work, 'launcher.ps1'))));
@@ -480,8 +483,13 @@ test('install refuses: archive sha, acceptance, tampered entry, climbing path, a
     await assert.rejects(run({ selfDir: other }), { code: 'FLEET_INSTALLER_NOT_THE_ARCHIVES' });
     // nothing is written before the node checks out: stale facts, no installed package, a missing token file
     const sw = path.join(d, `early${k++}`);
-    await assert.rejects(prepare(w, w.a, sw, { now: Date.now() + 2 * 3_600_000 }), { code: 'LINUX_VERSION_FACTS_NOT_FRESH' });
+    // a refusal writes nothing, the Owner's .wslconfig neither (review of Task 87d330d0, medium 1: a write is always in the answer)
+    const home = path.join(d, 'stale-home');
+    await fs.mkdir(home);
+    await fs.writeFile(path.join(home, '.wslconfig'), '[wsl2]\r\nmemory=28GB\r\n');
+    await assert.rejects(prepare(w, w.a, sw, { now: Date.now() + 2 * 3_600_000, wslConfigPath: path.join(home, '.wslconfig'), hostname: () => 'DESK-W-591' }), { code: 'LINUX_VERSION_FACTS_NOT_FRESH' });
     await assert.rejects(fs.access(sw));
+    assert.deepEqual([await fs.readFile(path.join(home, '.wslconfig'), 'utf8'), await fs.readdir(home)], ['[wsl2]\r\nmemory=28GB\r\n', ['.wslconfig']]);
     // a root without an install receipt is not a node to reinstall; it is not a first install either while the root is there (residue)
     const empty = path.join(d, 'empty-root');
     await fs.mkdir(empty);
@@ -560,3 +568,77 @@ test('ports: the upgrader configuration is upgrader-config.py\'s bytes; the rein
   assert.equal(r.status, 0, r.stderr);
   assert.ok((await upgraderConfigFor({ recordDir: path.join(w.a.root, 'record'), residentTree: RES })).equals(await fs.readFile(out)));
 });
+
+test('H1 续期公开记录覆盖安装回执，prepare 将新指纹钉入 launcher 输入',async () => {
+  const w=await getWorld();
+  const n=await nodeSite(keep,'a',fleetFacts());
+  const receipt=readJson(path.join(n.root,'install','install-receipt.json'));
+  const sample='clued_bnd_reinstall_fixture_123';
+  const renewedPin=sha(Buffer.from('clued.independent-ci.ci-binding-pin/1\0'+sample));
+  const pin={contract:'clued.independent-ci.upgrade-connection/1',baseNodeIdentitySha256:receipt.nodeIdentitySha256,
+    bindingId:randomUUID(),bindingGeneration:2,receiptId:randomUUID(),tokenPinSha256:renewedPin};
+  const recordFile=path.join(n.root,'install','resident-upgrade.connection.json');
+  await fs.writeFile(recordFile,JSON.stringify(pin));
+  const py=pythonTools();
+  await prepare(w,n,path.join(n.dir,'renewed-install'),{python:py.fn});
+  const prepared=py.calls.find(c=>c.name==='generate.py').plan.secrets.upgradeToken;
+  const sampleFile=path.join(n.dir,'resident-upgrade.token');
+  await fs.writeFile(sampleFile,sample);
+  // Run only the launcher's carry step, with fresh temporary inputs and its prepared fingerprint.
+  const script=String.raw`
+    $ErrorActionPreference='Stop'
+    $errors=$null; $tokens=$null
+    $ast=[Management.Automation.Language.Parser]::ParseFile($env:CARRY_TEMPLATE,[ref]$tokens,[ref]$errors)
+    foreach($name in 'Sha256Bytes','Write-New','Get-FleetTokenFingerprint','Step-CarryTokens','Remove-FleetCarry') {
+      $fn=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$false)
+      . ([scriptblock]::Create($fn.Extent.Text))
+    }
+    function Stop-Launch($code,$detail) { throw $code }
+    $CarryParent=$env:CARRY_ROOT; $UpgradeTokenTarget=$env:CARRY_FILE; $FleetUpgradeTokenFingerprint=$env:CARRY_PIN
+    $U8=$Strict8=New-Object Text.UTF8Encoding($false,$true)
+    $StageSddl='D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;'+[Security.Principal.WindowsIdentity]::GetCurrent().User.Value+')'
+    $Done=New-Object Collections.Generic.List[string]; $CarriedTokens=@{}
+    $copies=Step-CarryTokens
+    if(-not [IO.File]::Exists($copies.upgradeToken)) { throw 'MISSING_CARRIED_COPY' }
+    Remove-FleetCarry
+  `;
+  const carry=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{encoding:'utf8',windowsHide:true,
+    env:{...process.env,CARRY_TEMPLATE:path.join(RES,'reinstall/launcher/template.ps1'),CARRY_ROOT:n.dir,CARRY_FILE:sampleFile,CARRY_PIN:prepared.fingerprint}});
+  assert.equal(carry.status,0,carry.stderr);
+  assert.equal(prepared.fingerprint,pin.tokenPinSha256);
+  await fs.writeFile(recordFile,'null');
+  await assert.rejects(prepare(w,n,path.join(n.dir,'invalid-pin'),{python:py.fn}),{code:'INSTALLED_UPGRADE_PIN_REFUSED'});
+});
+
+// ---------------------------------------------------------------- the kit is part of every acceptance a node installs or upgrades to
+test('guard: a node installed before the kit field existed (its record\'s acceptance.json has none) is read and reinstalled to a version whose acceptance has the kit', { timeout: 600_000 }, async () => {
+  const w = await getWorld();
+  const installed = readJson(path.join(w.a.root, 'record', 'acceptance.json'));
+  assert.ok(!('firstInstallKitSha256' in installed), 'the installed record is an older one: no kit field');
+  assert.ok(w.acceptance.firstInstallKitSha256, 'the target version\'s acceptance has it');
+  const node = await readNode({ root: w.a.root });
+  assert.equal(node.profile.nodeName, w.a.profile.nodeName);
+  const r = await prepare(w, w.a, path.join(w.a.dir, 'install-guard'), { python: pythonTools().fn });
+  assert.equal(r.status, 'FLEET_NODE_INSTALL_PREPARED');
+});
+
+test('the target version\'s acceptance without firstInstallKitSha256 is refused by prepare and by upgrade before anything is written; only the draft source-hash reads may lack it',
+  { timeout: 600_000 }, async t => {
+    const w = await getWorld();
+    const d = await tempDir(t, 'fleetnokit');
+    const { firstInstallKitSha256, ...noKit } = w.acceptance;
+    const notReached = () => { throw new Error('not reached'); };
+    const work = path.join(d, 'prepare-work');
+    await assert.rejects(prepare(w, w.a, work, { acceptance: noKit, python: notReached }), { code: 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT' });
+    await assert.rejects(fs.access(work), 'nothing written');
+    const upWork = path.join(d, 'upgrade-work');
+    await assert.rejects(upgradeNode({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: noKit, root: w.a.root, workDir: upWork, request: notReached }),
+      { code: 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT' });
+    await assert.rejects(fs.access(upWork), 'nothing written');
+    assert.throws(() => validateAcceptance(noKit), { code: 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT' });
+    assert.throws(() => validateAcceptance({ ...noKit, firstInstallKitSha256: undefined }), { code: 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT' });
+    assert.throws(() => validateAcceptance({ ...noKit, firstInstallKitSha256: 'xyz' }), { code: 'FLEET_ACCEPTANCE_REFUSED' });
+    const { ciSourceManifestSha256, ...draft } = noKit;
+    validateAcceptance(draft, Date.now(), { draft: true });   // source-hash reads the draft before the kit exists
+    validateAcceptance(w.acceptance);
+  });

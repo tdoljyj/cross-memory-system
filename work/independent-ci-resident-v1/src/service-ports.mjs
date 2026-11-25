@@ -2,7 +2,7 @@
 // integrity. Both are deliberately thin; all decisions stay in executor.mjs.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { HEX64, check, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
+import { CODE, HEX64, ResidentError, check, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
 
 // Timeouts are upper bounds for one companion action; no answer by then is never success.
@@ -67,11 +67,14 @@ export function mailboxCompanion(mailbox, sleep, { abandon = null } = {}) {
       if (!r) return { ok: false, code: 'LINUX_ARCHIVE_PRUNE_UNCONFIRMED' };
       return { ok: r.ok === true, code: r.ok === true ? null : (r.code ?? 'LINUX_ARCHIVE_PRUNE_UNCONFIRMED'), prune: r.prune ?? null, usage: r.usage ?? null };
     },
-    // Phase 2, step 1: one live read of the PR (state, head) for the run queue, or null (no answer is never a fact).
+    // Phase 2, step 1: one live read of the PR (state, head) for the run queue. Without a pull it throws with the code: PR_HEAD_NO_ANSWER
+    // (the companion did not answer by the deadline), else the companion's own (PR_HEAD_UNAVAILABLE: gh could not read it). The caller,
+    // executor.mjs#livePull, still takes that as no answer (never a fact); standingRead() puts the code in its receipt (DESIGN §72.2).
     async prHead(pr, batch = null) {
       const r = await ask('pr-head', { batchId: batch?.batchId ?? NO_BATCH, pr });
       const p = r?.ok === true ? r.pull : null;
-      return p ? { number: p.number, state: p.state, headSha: p.headSha, ...(p.mergeSha ? { mergeSha: p.mergeSha } : {}) } : null;
+      if (!p) throw new ResidentError(r == null ? 'PR_HEAD_NO_ANSWER' : (r.ok !== true && typeof r.code === 'string' && CODE.test(r.code) ? r.code : 'PR_HEAD_UNAVAILABLE'));
+      return { number: p.number, state: p.state, headSha: p.headSha, ...(p.mergeSha ? { mergeSha: p.mergeSha } : {}), ...(typeof p.draft === 'boolean' ? { draft: p.draft } : {}) };
     },
     async archiveLinux(batch, reason) {
       const r = await ask('archive-linux', { batchId: batch.batchId, reason });

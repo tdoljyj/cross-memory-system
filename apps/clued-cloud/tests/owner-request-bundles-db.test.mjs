@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { installReleaseIdentityFixture, releaseDoor } from './release-identity-fixture.mjs';
 import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
 import { CI_SIGNATURES, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
@@ -94,7 +95,7 @@ test('owner request bundles: one link for several actions, each member granted a
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-owner-request-bundles-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
@@ -165,7 +166,9 @@ test('owner request bundles: one link for several actions, each member granted a
     const grant = (issued, claims, digest = issued.view_digest) =>
       native('clued_owner_grant_v1', { confirmation_token: issued.confirmation_token, view_digest: digest }, claims);
 
-    const door = (who, input) => agent(who, 'clued_owner_grant_door_consume_v1', input);
+    // The release workflow is the database login (20261119130000_release_door_db_identity_v1).
+    await installReleaseIdentityFixture(admin, bindingIds.release);
+    const door = (_who, input) => releaseDoor(admin, input);
     const bundle = (who, input) => agent(who, 'clued_owner_request_bundle_v1', input);
     const sha = 'a'.repeat(40);
     const commit = `repo:tdoljyj/cross-memory-system/${sha}`;
@@ -267,11 +270,11 @@ test('owner request bundles: one link for several actions, each member granted a
       { action: 'release.production', resources: [commit] }, { action: 'migration.production', resources: migrations }] }),
       /binding_not_authorized/);
     await assert.rejects(() => door('release', { action: 'migration.production', resources: files2,
-      with: [{ action: 'migration.production', resources: files2 }] }), /owner_grant_door_action_invalid/);
+      with: [{ action: 'migration.production', resources: files2 }] }), /release_door_action_invalid/);
     await assert.rejects(() => door('release', { action: 'migration.production', resources: files2,
-      with: [{ action: 'work_claim.extra_claims', resources: ['record:x'] }] }), /owner_grant_door_action_invalid/);
+      with: [{ action: 'work_claim.extra_claims', resources: ['record:x'] }] }), /release_door_action_invalid/);
     await assert.rejects(() => door('release', { action: 'migration.production', resources: files2, with: [] }),
-      /owner_grant_door_input_invalid/);
+      /release_door_input_invalid/);
     await assert.rejects(() => anon.query('select clued_private.owner_request_bundle_join_v1($1,$2)',
       [userId, [lead.request_id]]), /permission denied/);
     await assert.rejects(() => human.query('select public.clued_owner_request_bundle_v1($1,$2)',

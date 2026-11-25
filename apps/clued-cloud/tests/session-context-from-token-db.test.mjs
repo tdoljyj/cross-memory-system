@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -35,7 +35,7 @@ test("checkpoint and reconcile take the context from the session token", { timeo
     port: await freePort(),
     persistent: false,
     // track_functions lets the test count binding_read_scopes_v2 calls.
-    postgresFlags: ["-c", "io_method=sync", "-c", "track_functions=all"],
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, "-c", "track_functions=all"],
     onLog() {},
     onError(message) { process.stderr.write(`${message}\n`); },
   });

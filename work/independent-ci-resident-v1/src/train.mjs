@@ -16,21 +16,24 @@
 // revoke-only a run with side effects is a normal ending. A run is due at once (urgent) when the node just became eligible
 // for on-mode duty (the take-over sweep comes before any batch).
 import { fail } from './canonical.mjs';
+import { HEAVY_ROLES } from './policy.mjs';
 
 export const TRAIN_FACTS_CONTRACT = 'clued.independent-ci.train-facts/1';
 export const TRAIN_FACTS_CONTRACT_V2 = 'clued.independent-ci.train-facts/2';
 export const WOULD_DO = Object.freeze(['NOT_ON_DUTY', 'NO_FRONT', 'FRONT_AMBIGUOUS', 'FRONT_NOT_BOUND', 'FRONT_NOT_RUNNABLE', 'FRONT_NEEDS_MAIN_MERGE',
-  'FRONT_TEST_MERGE_NOT_READY', 'FRONT_GREEN_WAIT_MERGE', 'OPEN_FRONT_BATCH']);
+  'FRONT_TEST_MERGE_NOT_READY', 'FRONT_GREEN_WAIT_MERGE', 'OPEN_FRONT_BATCH', 'FRONT_CHECKS_WAIT', 'FRONT_CHECKS_MISSING']);
 export const RUN_MODES = Object.freeze(['shadow', 'on', 'revoke-only']);
 export const DECISIONS = Object.freeze([...WOULD_DO, 'TRAIN_REVOKE_UNCONFIRMED', 'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH',
   'TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_FRONT_BUDGET_SHORT', 'TRAIN_FRONT_ATTEMPTS_USED', 'FRONT_ADOPTED', 'FRONT_RETURNED', 'FRONT_FAILED_REPORTED', 'REVOKE_ONLY_DONE',
-  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING', 'TRAIN_STRICT_OFF', 'TRAIN_FRONT_NOT_PROVEN']);
+  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING', 'TRAIN_STRICT_OFF', 'TRAIN_FRONT_NOT_PROVEN', 'TRAIN_LANDING_STATE_UNREADABLE',
+  'FRONT_CHECKS_MISSING_YIELDED']);
 // Stage 10's decisions after which the executor starts no new batch (DESIGN §41.6: no publication of any stage before the
 // take-over sweep; no on-mode duty while another node runs another Source, or while the nodes' Sources cannot be read).
 export const TRAIN_SCHEDULE_DEFERRALS = Object.freeze(['TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE']);
 // The decisions the Owner hears of (a notice, one per key).
 // DESIGN §65: TRAIN_STRICT_OFF, strict read off in strict-permanent mode (sweep audit or off): PAUSE and an Owner notice.
-export const TRAIN_OWNER_NOTICE_DECISIONS = Object.freeze(['TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_STRICT_OFF']);
+// D6 §8.4 (b): TRAIN_LANDING_STATE_UNREADABLE, push mode cannot read this node's landing state beside its landing batches (no batch opens).
+export const TRAIN_OWNER_NOTICE_DECISIONS = Object.freeze(['TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_STRICT_OFF', 'TRAIN_LANDING_STATE_UNREADABLE']);
 export const REQUEST_PAUSE_CODES = Object.freeze(['TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_STRICT_OFF']);
 export const TRAIN_RUN_SWEEPS = Object.freeze(['gate', 'audit', 'off']);
 // Front batches per head (DESIGN §41.4: attempt 2 and both kinds of re-open count).
@@ -142,6 +145,20 @@ export function trainDue({ train, now, runs = [], busy, urgent = false, recheck 
   const last = recent.length ? Math.max(...recent) : null;
   return last === null || urgent === true || now - last >= (recheck === true ? Math.min(TRAIN_RECHECK_MS, train.maintenanceEveryMs) : train.maintenanceEveryMs);
 }
+// Field 2026-11-19 09:15-09:35 (#1172, FABLE-ci-10min §3.2 P1a): a bound front whose batch this run was to open but did not, where one
+// more run moves it on (an incomplete sweep, a returned slot), waited three full maintenanceEveryMs with the executor idle. Such a run's
+// next one comes TRAIN_RECHECK_MS later too, at most TRAIN_FRONT_RECHECK_MAX times per front head (the 7th goes back to the normal cadence),
+// so one stuck head can never spend the daily cap. The streak is per head: a run with another decision does not refill it.
+// FRONT_CHECKS_MISSING_YIELDED is a returned slot too (independent review of 051b7d585): the next front is looked at as soon.
+export const TRAIN_FRONT_RECHECK_DECISIONS = Object.freeze(['TRAIN_SWEEP_INCOMPLETE', 'FRONT_RETURNED', 'FRONT_CHECKS_MISSING_YIELDED']);
+export const TRAIN_FRONT_RECHECK_MAX = 6;
+// previous: the last streak or null; summary: the newest clean on-mode run's summary, or null (any other run). Returns { key, count, due } or null.
+export function trainFrontRecheckNext(previous, summary) {
+  const f = summary?.mode === 'on' && TRAIN_FRONT_RECHECK_DECISIONS.includes(summary.decision) ? summary.front : null;
+  if (!Number.isSafeInteger(f?.pr) || !SHA.test(f?.headSha ?? '')) return previous ? Object.freeze({ ...previous, due: false }) : null;
+  const key = `${f.pr}:${f.headSha}`, count = previous?.key === key ? previous.count + 1 : 1;
+  return Object.freeze({ key, count, due: count <= TRAIN_FRONT_RECHECK_MAX });
+}
 
 // A finite cadence exception for an already-required all/current round, not a new sweep or an urgent flag.
 // Reserve the number of normal cadence calls that fit in one day; every extra also pays the unchanged total cap.
@@ -178,12 +195,12 @@ export function providerBudgetOf(v, now = null) {
   return Object.freeze({ ...v, rest: v.rest ? Object.freeze({ ...v.rest }) : null, graphql: v.graphql ? Object.freeze({ ...v.graphql }) : null });
 }
 
-// The resident's part of the train-run job /3 (INTERFACES §2; /2 plus sweep, DESIGN §65): every field the derivation does not take from the install
+// The resident's part of the train-run job /4 (INTERFACES §2; /2 plus sweep, DESIGN §65; /4 plus frontFailed, R3 batch 2): every field the derivation does not take from the install
 // record (contract, id, repo, runId, sourceManifestSha256 and createdAt are the derivation's), in the job's order. settings:
-// policy.mjs#trainSettings; onSince: ms or null (null in shadow); frontOutcome: { pr, headSha, testSha, attempt, code } or null
-// (mode on only); revokeHeadRequestId: uuid or null (on and revoke-only); sweep: policy.mjs#trainSweepMode (train-run /3, DESIGN §65).
+// policy.mjs#trainSettings; onSince: ms or null (null in shadow); frontOutcome: { pr, headSha, testSha, attempt, code, failed } or null
+// (mode on only; failed: frontFailed, true only for a failure of the PR itself, R3 batch 2); revokeHeadRequestId: uuid or null (on and revoke-only); sweep: policy.mjs#trainSweepMode (train-run /3, DESIGN §65).
 export const TRAIN_RUN_INPUT_FIELDS = Object.freeze(['mode', 'slotHardCapMinutes', 'frontBatchBudgetMs', 'sweepFreshMs', 'fullSweepMaxMs', 'onSince',
-  'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'revokeHeadRequestId', 'sweep']);
+  'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'frontFailed', 'revokeHeadRequestId', 'sweep']);
 const FRONT_CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
 export function trainRunInput({ mode, settings, onSince = null, frontOutcome = null, revokeHeadRequestId = null, sweep = 'gate' }) {
   const on = mode === 'on', acting = mode !== 'shadow';
@@ -191,18 +208,19 @@ export function trainRunInput({ mode, settings, onSince = null, frontOutcome = n
   const input = { mode, slotHardCapMinutes: settings.slotHardCapMinutes, frontBatchBudgetMs: settings.frontBatchBudgetMs, sweepFreshMs: settings.sweepFreshMs,
     fullSweepMaxMs: settings.fullSweepMaxMs, onSince: acting && Number.isSafeInteger(onSince) ? new Date(onSince).toISOString() : null,
     frontPr: f?.pr ?? null, frontHeadSha: f?.headSha ?? null, frontTestSha: f?.testSha ?? null, frontAttempt: f?.attempt ?? null, frontCode: f?.code ?? null,
+    frontFailed: f?.failed ?? null,
     revokeHeadRequestId: acting ? revokeHeadRequestId : null, sweep };
   return validateTrainRunInput(input);
 }
-// The same rules as the job /3 (train-run.mjs#validateTrainRun, C# ValidateTrainRun) for the resident's part of it.
+// The same rules as the job /4 (train-run.mjs#validateTrainRun, C# ValidateTrainRun) for the resident's part of it.
 export function validateTrainRunInput(v) {
-  const flat = [v?.frontPr, v?.frontHeadSha, v?.frontTestSha, v?.frontAttempt, v?.frontCode];
+  const flat = [v?.frontPr, v?.frontHeadSha, v?.frontTestSha, v?.frontAttempt, v?.frontCode, v?.frontFailed];
   const int = (x, lo, hi) => Number.isSafeInteger(x) && x >= lo && x <= hi;
   const ok = plain(v) && Object.keys(v).length === TRAIN_RUN_INPUT_FIELDS.length && TRAIN_RUN_INPUT_FIELDS.every(k => Object.hasOwn(v, k)) && RUN_MODES.includes(v.mode)
     && int(v.slotHardCapMinutes, 60, 180) && int(v.frontBatchBudgetMs, 60_000, 10_800_000) && int(v.sweepFreshMs, 60_000, 3_600_000) && int(v.fullSweepMaxMs, 600_000, 86_400_000)
     && (v.onSince === null ? v.mode === 'shadow' : isoOrNull(v.onSince) !== null && v.mode !== 'shadow')
     && (flat.every(x => x === null) || (v.mode === 'on' && Number.isSafeInteger(v.frontPr) && v.frontPr > 0 && SHA.test(v.frontHeadSha ?? '') && SHA.test(v.frontTestSha ?? '')
-      && v.frontTestSha !== v.frontHeadSha && [1, 2].includes(v.frontAttempt) && FRONT_CODE.test(v.frontCode ?? '')))
+      && v.frontTestSha !== v.frontHeadSha && [1, 2].includes(v.frontAttempt) && FRONT_CODE.test(v.frontCode ?? '') && typeof v.frontFailed === 'boolean'))
     && (v.revokeHeadRequestId === null || (v.mode !== 'shadow' && UUID.test(v.revokeHeadRequestId))) && TRAIN_RUN_SWEEPS.includes(v.sweep);
   if (!ok) fail('TRAIN_RUN_INPUT_INVALID');
   return Object.freeze({ ...v });
@@ -224,10 +242,12 @@ export function openFrontBatchOf(o) {
   const members = membersOf(o);
   // headTree (rule 41ab823a, DESIGN §75): H's own tree, which stage 10 names for a front of one member only; anything else names none.
   const headTree = !members && SHA.test(o.headTree ?? '') ? o.headTree : null;
+  // baseInHead (rule 41ab823a, DESIGN §75): stage 10's own compare of exactly this (T, H) said T is in H; one member only, only true.
+  const baseInHead = !members && o.baseInHead === true;
   const ok = Number.isSafeInteger(o.pr) && o.pr > 0 && SHA.test(o.headSha ?? '') && SHA.test(o.baseSha ?? '') && SHA.test(o.testSha ?? '') && SHA.test(o.testTree ?? '')
     && o.testSha !== o.headSha && typeof o.claimId === 'string' && CLAIM.test(o.claimId) && isoOrNull(o.since) !== null && [1, 2].includes(o.attempt) && members !== null;
   return ok ? Object.freeze({ pr: o.pr, headSha: o.headSha, baseSha: o.baseSha, testSha: o.testSha, testTree: o.testTree, claimId: o.claimId, since: o.since, attempt: o.attempt,
-    ...(members ? { members } : {}), ...(headTree ? { headTree } : {}) }) : null;
+    ...(members ? { members } : {}), ...(headTree ? { headTree } : {}), ...(baseInHead ? { baseInHead: true } : {}) }) : null;
 }
 
 // ADR 0019 (engine-windows.mjs#derive, executor.mjs#drive): the front batch's members and S's tree as the descriptor /4 names them,
@@ -264,6 +284,30 @@ export function sweepOf(s) {
     ...(s.providerBudget !== undefined ? { providerBudget: providerBudgetOf(s.providerBudget) } : {}) });
 }
 
+// D6 §8.4 (b): of stage 10's landing facts (push mode) the summary and state\status.json keep the error code, and (ADR 0018 §2 L2 item 7,
+// three ways) the route main's rules gave that round, so the status does not read the policy's landing 'push' as "pushing"; or nothing.
+// Fable 11-21 open points §5: and bypass, this App's bypass state of the main and the independent ruleset as stage 10 read them that
+// round, which the landing precheck's P3 reads from state\status.json without elevation; a bypass of another shape is dropped (the rest
+// stays). Open points §10 point 2: the resident only keeps what stage 10 wrote and knows no list of the states (that list is Source v2's
+// train-landing.mjs#BYPASS_STATES alone; the two may be of different generations), so it checks the shape only: exactly the keys main
+// and independent, each a short string of lower-case letters and underscores. Which values are right is the reader's (P3).
+const LANDING_ROUTES = Object.freeze(['push', 'github-merge', 'park']);
+const BYPASS_STATE = /^[a-z_]{1,32}$/;
+const bypassOf = b => (plain(b) && Object.keys(b).sort().join('|') === 'independent|main' && typeof b.main === 'string' && BYPASS_STATE.test(b.main)
+  && typeof b.independent === 'string' && BYPASS_STATE.test(b.independent) ? Object.freeze({ main: b.main, independent: b.independent }) : null);
+// Task 04f9b91b (Fable s7-landing-gaps 11-22): and missing, what push still lacks as stage 10 read it that round, which P3 --before reads
+// (exactly what the save of C adds); the shape only, as Source v2's train-landing.mjs#validLandingMissing: at most 16 distinct items, each
+// a lower-case word with an optional :suffix. Another shape drops the list, the rest stays.
+const MISSING_ITEM = /^[a-z][a-z_]{1,59}(?::[A-Za-z0-9_.-]{1,40})?$/;
+const missingOf = m => (Array.isArray(m) && m.length <= 16 && m.every(x => typeof x === 'string' && MISSING_ITEM.test(x)) && new Set(m).size === m.length
+  ? Object.freeze([...m]) : null);
+const landingOf = l => {
+  if (!plain(l)) return null;
+  const bypass = bypassOf(l.bypass), missing = missingOf(l.missing);
+  const out = { ...(typeof l.error === 'string' && SWEEP_CODE.test(l.error) ? { error: l.error } : {}), ...(LANDING_ROUTES.includes(l.route) ? { route: l.route } : {}),
+    ...(missing ? { missing } : {}), ...(bypass ? { bypass } : {}) };
+  return Object.keys(out).length ? Object.freeze(out) : null;
+};
 const actionsOf = a => (plain(a) ? Object.freeze({ touchedRunning: a.touchedRunning === true, adopted: a.adopted === true, returned: a.returned === true, failedReported: a.failedReported === true,
   keptAlive: count(a.keptAlive) ?? 0, watermarkReported: a.watermarkReported === true,
   revokeHead: plain(a.revokeHead) && UUID.test(a.revokeHead.requestId ?? '') ? Object.freeze({ requestId: a.revokeHead.requestId, done: a.revokeHead.done === true }) : null }) : null);
@@ -281,10 +325,13 @@ export function trainSummary(f) {
   if (!claimBindings || claimBindings.some(b => b === null) || new Set(claimBindings.map(b => b.pr)).size !== claimBindings.length
     || new Set(claimBindings.map(b => JSON.stringify([b.repository,b.scope,b.sourceManifestSha256]))).size > 1) return null;
   if (v2 ? !RUN_MODES.includes(f.mode) : f.mode !== 'shadow') return null;
-  const front = f.front && Number.isSafeInteger(f.front.pr) ? { pr: f.front.pr, headSha: SHA.test(f.front.headSha ?? '') ? f.front.headSha : null } : null;
+  const front = f.front && Number.isSafeInteger(f.front.pr) ? { pr: f.front.pr, headSha: SHA.test(f.front.headSha ?? '') ? f.front.headSha : null,
+    ...frontChecksOf({ ...f.front.required, checksUnreadable: f.front.checksUnreadable }) } : null;
   const base = { at: f.at, mode: f.mode, wouldDo: f.wouldDo, onDuty: f.onDuty === true, front, mainSha: SHA.test(f.mainSha ?? '') ? f.mainSha : null,
     ...(f.claimBindings === undefined ? {} : { claimBindings }),
-    strict: typeof f.rules?.strict === 'boolean' ? f.rules.strict : null, wouldRevokeCount: Number.isSafeInteger(f.wouldRevokeCount) ? f.wouldRevokeCount : 0 };
+    strict: typeof f.rules?.strict === 'boolean' ? f.rules.strict : null, wouldRevokeCount: Number.isSafeInteger(f.wouldRevokeCount) ? f.wouldRevokeCount : 0,
+    // R3 lean: the scans main's rules still require from App 5368905 (absent: not read, or a Source before R3: every scan runs).
+    ...(summaryAppScans(f) ? { appScans: summaryAppScans(f) } : {}) };
   if (!v2) return Object.freeze(base);
   const decision = DECISIONS.includes(f.decision) ? f.decision : null;
   const acting = f.mode !== 'shadow';
@@ -296,8 +343,25 @@ export function trainSummary(f) {
   if ((f.sweep?.strictCoverage !== undefined || f.sweep?.strictFrontReadiness !== undefined) && !sweep) return null;
   // DESIGN §62.4: the take-over front binding observation, kept by the executor only (a malformed one is none: no exception).
   const frontBind = f.mode === 'on' && decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && f.wouldDo === 'FRONT_NOT_BOUND' ? frontBindOf(f.frontBind, f.front) : null;
+  const landing = f.mode === 'on' ? landingOf(f.landing) : null;
   return Object.freeze({ ...base, decision, sweep, actions: actionsOf(f.actions), requestPause: acting ? (f.requestPause ?? null) : null, openFrontBatch,
-    ...(frontBind ? { frontBind } : {}) });
+    ...(frontBind ? { frontBind } : {}), ...(landing ? { landing } : {}) });
+}
+
+// Task 04f9b91b (admission p90): stage 10's top-level appScans (any rule's scans pinned to this App, read also when the six are not: the
+// scaffold ruleset alone gives []) first; a Source without it, rules.appScans. Both given and not the same (one read gives both): neither,
+// every scan runs.
+function summaryAppScans(f) {
+  const inRules = f.rules?.appScans === undefined ? undefined : appScansOf(f.rules.appScans);
+  if (f.appScans === undefined) return inRules ?? null;
+  const top = appScansOf(f.appScans);
+  return top && (inRules === undefined || (inRules && inRules.join() === top.join())) ? top : null;
+}
+
+// R3 lean: Source v2 train-rules.mjs#RULE_SCAN_NAMES (= policy.mjs HEAVY_ROLES), in that order, each once; anything else is unknown (null).
+export function appScansOf(v) {
+  if (!Array.isArray(v) || v.length > HEAVY_ROLES.length || v.some(n => !HEAVY_ROLES.includes(n)) || new Set(v).size !== v.length) return null;
+  return Object.freeze(HEAVY_ROLES.filter(n => v.includes(n)));
 }
 
 function frontBindOf(b, front) {
@@ -305,12 +369,53 @@ function frontBindOf(b, front) {
     && front?.pr === null && front.claimId === b.claimId ? Object.freeze({ pr: b.pr, headSha: b.headSha, claimId: b.claimId }) : null;
 }
 
+// The green-front words come from main's own required checks, never from a count or a list kept here: gap is null (not read: only
+// the merge slot is known green), [] (every required check of main is green on this head) or the missing / unfinished ones, as words.
+// The first missing check is always named in full; further ones are added while they fit GAP_NAMES_MAX, and the count says how many there are.
+export const GAP_NAMES_MAX = 90;
+const gapList = gap => {
+  let names = gap[0], shown = 1;
+  while (shown < gap.length && names.length + 1 + gap[shown].length <= GAP_NAMES_MAX) names += `、${gap[shown++]}`;
+  return `缺 ${gap.length} 项：${names}${shown < gap.length ? '…' : ''}`;
+};
+export function frontGreenText(gap) {
+  if (!Array.isArray(gap)) return '合并位已绿，等合并';
+  if (gap.length === 0) return '全部必需检查已绿，等合并';
+  return `合并位已绿；${gapList(gap)}`;
+}
+// Fable 11-20 补“车头缺必需检查” (#1192): a front whose merge slot is green is never "等合并" while a required check is missing. Words differ
+// by what the gap is: queued or running (等检查); missing with nothing running (缺检查: the companion's repair lane re-runs it, 补跑中（第 n 次）
+// counts its accepted re-runs of this head); the front gave the slot away after the grace time (FRONT_CHECKS_MISSING_YIELDED).
+export const FRONT_CHECKS_DECISIONS = Object.freeze(['FRONT_CHECKS_WAIT', 'FRONT_CHECKS_MISSING', 'FRONT_CHECKS_MISSING_YIELDED']);
+// Independent review of 051b7d585: the count is what stage 10 read on GitHub (attempts of the missing checks' jobs beyond the first, a re-run's
+// gate in flight, a person's re-runs included; train-facts.mjs#requiredOnHead), carried in the summary's front; it goes first so a clipped
+// line keeps it. The yield says which limit was reached (train-facts.mjs REQUIRED_YIELD_REASONS).
+const YIELD_REASONS = ['REQUIRED_RERUNS_EXHAUSTED', 'REQUIRED_CHECKS_DEADLINE', 'REQUIRED_CHECK_NOT_RERUN'];
+function frontChecksOf(v) {
+  const out = {};
+  if (v?.checksUnreadable === true) out.checksUnreadable = true;
+  if (Number.isSafeInteger(v?.reruns) && v.reruns > 0 && v.reruns <= 2) out.reruns = v.reruns;
+  if (YIELD_REASONS.includes(v?.yieldReason)) out.yieldReason = v.yieldReason;
+  return out;
+}
+export function frontChecksText(key, gap = null, front = null) {
+  const list = Array.isArray(gap) && gap.length ? `；${gapList(gap)}` : '';
+  const n = Number.isSafeInteger(front?.reruns) && front.reruns > 0 ? front.reruns : 0;
+  const then = '；补跑用完或到时限即让出车头';
+  // Review 3 medium 2: with the checks unreadable nothing is known to be green.
+  if (key === 'FRONT_CHECKS_WAIT' && front?.checksUnreadable === true) return '检查暂时读不出，下一轮再看';
+  if (key === 'FRONT_CHECKS_WAIT') return n ? `合并位已绿，补跑中（第 ${n} 次）${list}` : `合并位已绿，等检查${list}`;
+  if (key === 'FRONT_CHECKS_MISSING') return n ? `合并位已绿，第 ${n} 次补跑后仍缺${list}；等再补跑${then}` : `合并位已绿，缺检查${list}；等自动补跑${then}`;
+  if (key === 'FRONT_CHECKS_MISSING_YIELDED') return front?.yieldReason === 'REQUIRED_RERUNS_EXHAUSTED' ? '必需检查缺失，补跑两次仍缺，已让出车头，列车继续下一个'
+    : front?.yieldReason === 'REQUIRED_CHECKS_DEADLINE' ? '必需检查缺失，到时限仍无结果，已让出车头，列车继续下一个'
+    : front?.yieldReason === 'REQUIRED_CHECK_NOT_RERUN' ? '必需检查缺失，观察窗内没有补跑，已让出车头，列车继续下一个' : '必需检查缺失，重跑无效，已让出车头，列车继续下一个';
+  return null;
+}
 // The PR page line on the front PR (info only: in shadow mode the train does nothing).
 const TEXT = {
   FRONT_NOT_RUNNABLE: '车头 PR 现在不能跑（草稿、已关闭或不是合到 main）',
   FRONT_NEEDS_MAIN_MERGE: '开车后会请作者先把 main 合进分支（冲突，或 strict 开着而 head 落后）',
   FRONT_TEST_MERGE_NOT_READY: '开车后会等 GitHub 算好试合并',
-  FRONT_GREEN_WAIT_MERGE: '车头六项已绿，等合并',
   OPEN_FRONT_BATCH: '开车后会在 GitHub 的试合并提交上跑车头批次',
 };
 // The train on (DESIGN §41.2-41.4): stage 10's decision on the front PR, in words.
@@ -318,9 +423,8 @@ const ON_TEXT = {
   FRONT_NOT_RUNNABLE: '车头 PR 现在不能跑（草稿、已关闭或不是合到 main）',
   FRONT_NEEDS_MAIN_MERGE: '请先把 main 合进分支再推送（冲突，或 head 不含 main 尖端）',
   FRONT_TEST_MERGE_NOT_READY: '等 GitHub 算好试合并',
-  FRONT_GREEN_WAIT_MERGE: '车头六项已绿，等合并',
   OPEN_FRONT_BATCH: '车头批次已开，在 GitHub 的试合并提交上跑',
-  TRAIN_FRONT_BUDGET_SHORT: '位子剩余时间不够跑一批：请让位子过期后重新入队',
+  TRAIN_FRONT_BUDGET_SHORT: '位子剩余时间不够跑一批：系统会自动重新排队，无需操作',
   TRAIN_FRONT_ATTEMPTS_USED: '这个 head 的两次车头批次已用完：请推新提交',
   TRAIN_SWEEP_INCOMPLETE: '清扫未完成，暂不发绿',
   TRAIN_REVOKE_UNCONFIRMED: '有撤销未确认，暂不发绿',
@@ -330,19 +434,24 @@ const ON_TEXT = {
   TRAIN_SOURCE_UNREADABLE: '读不到各常驻节点的 Source，暂不开车',
   TRAIN_STRICT_OFF: 'main 的 strict 被关了：strict 永久开模式下不发绿，已停车，等 Owner 把 strict 开回',
   TRAIN_FRONT_NOT_PROVEN: '这一轮没能确认车头的严格检查条件，暂不开车头批次，下一轮再看',
+  TRAIN_LANDING_STATE_UNREADABLE: '本节点的落地状态读不出、又已有落地批次，暂不开车头批次，已告知 Owner',
 };
 // Generation 15 (DESIGN 60.2): why nothing goes green while the train re-sweeps everything after main was rewritten.
 export const MAIN_REWRITTEN_TEXT = 'main 被改写，合并列车在重扫全部 PR 和提交，扫完前不发绿';
-export function trainPageLine(summary, pr) {
+export function trainPageLine(summary, pr, gap = null) {
   if (!summary || summary.front?.pr !== pr) return null;
-  if (summary.mode === 'shadow') return TEXT[summary.wouldDo] ? `列车影子（只记录，不执行）：你是合并队列车头。${TEXT[summary.wouldDo]}。` : null;
+  const words = (table, key) => key === 'FRONT_GREEN_WAIT_MERGE' ? frontGreenText(gap)
+    : FRONT_CHECKS_DECISIONS.includes(key) ? frontChecksText(key, gap, summary.front) : table[key];
+  if (summary.mode === 'shadow') return words(TEXT, summary.wouldDo) ? `列车影子（只记录，不执行）：你是合并队列车头。${words(TEXT, summary.wouldDo)}。` : null;
   const text = summary.decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && summary.sweep?.fullSweep?.allPending === 'TRAIN_MAIN_REWRITTEN' ? MAIN_REWRITTEN_TEXT
-    : ON_TEXT[summary.decision] ?? null;
+    : words(ON_TEXT, summary.decision) ?? null;
   const background = summary.sweep?.strictFrontReadiness?.state === 'ready'
     ? '车头采用严格检查路径，历史清扫仍单独进行。'
     : summary.sweep?.strictCoverage?.state === 'ready' && summary.sweep.strictCoverage.backgroundAllPending !== null
       ? '车头严格屏障已核验，后台全量清扫仍未完成。' : '';
-  return text ? `合并列车：你是车头。${text}。${background}` : null;
+  // D6 §8.4 (b): why the landing state could not be read or written (facts landing.error), named on the line.
+  const landingError = summary.landing?.error ? `（落地状态：${summary.landing.error}）` : '';
+  return text ? `合并列车：你是车头。${text}${landingError}。${background}` : null;
 }
 
 // The status reader's copy of a summary (untrusted bytes in state\status.json): the same fields with `at` in ms, or null.
@@ -353,12 +462,13 @@ export function parseTrainLast(l) {
   const v2 = Object.hasOwn(l, 'decision');
   if (!v2 && l.mode !== 'shadow') return null;
   const base = { at: Date.parse(l.at), mode: l.mode, wouldDo: l.wouldDo, onDuty: l.onDuty === true,
-    front: l.front && Number.isSafeInteger(l.front.pr) ? { pr: l.front.pr, headSha: SHA.test(l.front.headSha ?? '') ? l.front.headSha : null } : null,
+    front: l.front && Number.isSafeInteger(l.front.pr) ? { pr: l.front.pr, headSha: SHA.test(l.front.headSha ?? '') ? l.front.headSha : null, ...frontChecksOf(l.front) } : null,
     mainSha: SHA.test(l.mainSha ?? '') ? l.mainSha : null, strict: typeof l.strict === 'boolean' ? l.strict : null,
     wouldRevokeCount: Number.isSafeInteger(l.wouldRevokeCount) && l.wouldRevokeCount >= 0 ? l.wouldRevokeCount : 0 };
   if (!v2) return Object.freeze(base);
+  const landing = landingOf(l.landing);
   return Object.freeze({ ...base, decision: DECISIONS.includes(l.decision) ? l.decision : null, sweep: sweepOf(l.sweep),
-    requestPause: REQUEST_PAUSE_CODES.includes(l.requestPause) ? l.requestPause : null });
+    requestPause: REQUEST_PAUSE_CODES.includes(l.requestPause) ? l.requestPause : null, ...(landing ? { landing } : {}) });
 }
 
 // The status snapshot's `train.sweep` (DESIGN §41.7): when this node last completed a full sweep, whether that was after it
@@ -389,8 +499,8 @@ export function parseRevokeHead(v) {
 }
 
 // Defect 15894c2a: the nodes stage 10 compared in its §41.6 Source check (ci_nodes_status, train-maintenance.mjs; facts /2 `nodes`),
-// kept as the status snapshot's `train.nodes` so that the upgrade precheck (rollout/precheck.mjs, NON-elevated: it cannot call Native
-// with this node's ci-admission token) reads the very list the runtime guard reads. A view only: nothing in the executor decides on it.
+// kept as the status snapshot's `train.nodes` for the readers that cannot call Native with this node's ci-admission token: the fleet-lag
+// alert (fleet-lag-alert.mjs) and the landing precheck (rollout/landing-precheck.mjs). A view only: nothing in the executor decides on it.
 // Only an on-mode run on duty reads the nodes (every other run says nothing: nodes null), so `at` tells the reader how old the list is.
 // { at, sourceManifestSha256 (this node's Source at that run), nodes: [{ node, sourceManifestSha256, state, lastHeartbeatAt }], dropped }
 export const TRAIN_NODES_MAX = 64;
@@ -413,14 +523,48 @@ export function trainNodesView(f, sourceManifestSha256) {
 // The status reader's copy of train.nodes, or null.
 export function parseTrainNodes(v) { return plain(v) ? nodesOf(v.nodes, v.dropped, v.at, v.sourceManifestSha256) : null; }
 
+// Moved from rollout/precheck.mjs (task 0b1516c0: the upgrade precheck compares no Source across nodes any more); read by the landing
+// precheck (rollout/landing-precheck.mjs). Stage 10's §41.6 Source check (train-maintenance.mjs SOURCE_HEARTBEAT_WINDOW_MS): every node
+// heard within 24 hours must run the Source the on-duty node runs, or the train stops (TRAIN_SOURCE_MISMATCH).
+export const FLEET_HEARTBEAT_WINDOW_MS = 24 * 3_600_000;
+// A list older than this says too little about now (stage 10 on duty reads it every maintenanceEveryMs, 10 minutes by default).
+export const FLEET_VIEW_FRESH_MS = 60 * 60_000;
+// Pure: does the list (parseTrainNodes of a status.json; null: none) show every node heard within 24 hours on `target`? selfNames: this
+// node's names (its own entry is never compared).
+//   PASS        every other node heard within 24 hours runs `target` (or reports no Source: §41.6 "no record");
+//   MISMATCH    some do not (upgradeFirst, mismatchedNodes);
+//   UNVERIFIED  no usable list (none, older than FLEET_VIEW_FRESH_MS, or this node is not in it), or this node not on duty now (onDuty
+//               false): only the holder's list says what stage 10 compares now; then mismatchedNodes is what the older list showed.
+// A node not heard within 24 hours is not compared (as stage 10) and is named in staleNodesIgnored.
+export function fleetSourceCheck({ view, target, selfNames = [], now, onDuty = false }) {
+  const base = { targetCiSourceManifestSha256: target, viewAt: view?.at ?? null };
+  const row = n => ({ node: n.node, sourceManifestSha256: n.sourceManifestSha256, lastHeartbeatAt: n.lastHeartbeatAt });
+  if (!view) return { ...base, status: 'UNVERIFIED', reason: 'NODES_VIEW_ABSENT' };
+  if (!(Math.abs(now - Date.parse(view.at)) <= FLEET_VIEW_FRESH_MS)) return { ...base, status: 'UNVERIFIED', reason: 'NODES_VIEW_STALE' };
+  const names = new Set(selfNames.filter(s => typeof s === 'string' && s.length > 0).map(s => s.toLowerCase()));
+  const isSelf = n => typeof n.node === 'string' && names.has(n.node.toLowerCase());
+  if (!view.nodes.some(isSelf)) return { ...base, status: 'UNVERIFIED', reason: 'SELF_NOT_IN_NODES_VIEW', nodes: view.nodes.map(row) };
+  const differ = view.nodes.filter(n => !isSelf(n) && n.sourceManifestSha256 !== null && n.sourceManifestSha256 !== target);
+  const heard = n => n.lastHeartbeatAt !== null && now - Date.parse(n.lastHeartbeatAt) <= FLEET_HEARTBEAT_WINDOW_MS;
+  const blocking = differ.filter(heard), stale = differ.filter(n => !heard(n));
+  const extra = { staleNodesIgnored: stale.map(row), ...(view.dropped > 0 ? { droppedEntries: view.dropped } : {}) };
+  if (onDuty !== true) return { ...base, status: 'UNVERIFIED', reason: 'NOT_ON_DUTY', mismatchedNodes: blocking.map(row), ...extra };
+  if (blocking.length) return { ...base, status: 'MISMATCH', upgradeFirst: blocking.map(n => n.node), mismatchedNodes: blocking.map(row), ...extra };
+  return { ...base, status: 'PASS', ...extra };
+}
+
 // The PR page (pr-status.mjs): the front PR's own description, with the shadow line appended when the newest run (at most
 // TRAIN_PAGE_MAX_AGE_MS old) saw this very head at the front. Never on a failure or an error, never instead of the
 // executor's own words.
 export const TRAIN_PAGE_MAX_AGE_MS = 30 * 60_000;
-export function withTrainLine(want, last, pull, now, max = 140) {
+export function withTrainLine(want, last, pull, now, max = 140, gap = null) {
   if (!want || ['failure', 'error'].includes(want.state) || !last || now - last.at > TRAIN_PAGE_MAX_AGE_MS || !last.front?.headSha || last.front.headSha !== pull?.headSha) return want;
-  const line = trainPageLine(last, pull.pr);
+  const line = trainPageLine(last, pull.pr, gap);
   if (!line) return want;
-  const d = `${want.description}；${line}`;
+  // A gap goes first (a clipped text keeps its start), and the duty word another node reads is added before it by node-duty.mjs; all green or
+  // unknown goes after the text as before.
+  // The missing-check lines go first too (review 2, low): a clipped text keeps the reason.
+  const first = (Array.isArray(gap) && gap.length > 0) || FRONT_CHECKS_DECISIONS.includes(last.decision);
+  const d = first ? `${line}；${want.description}` : `${want.description}；${line}`;
   return { ...want, description: d.length <= max ? d : `${d.slice(0, max - 1)}…` };
 }

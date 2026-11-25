@@ -66,7 +66,9 @@ test('only listed workflow lines pass; against the base the list only shrinks; n
   const hit = (file, line, number = 1) => ({ file, line, number });
   const legacy = [{ file: '.github/workflows/a.yml', line: 'run: npm ci' }];
   assert.deepEqual(verdict([hit('.github/workflows/a.yml', 'run: npm ci')], legacy), []);
-  const unlisted = verdict([hit('.github/workflows/a.yml', 'run: npm ci'), hit('.github/workflows/a.yml', 'run: npm ci', 9)], legacy);
+  const block = hit('.github/workflows/a.yml', 'npm ci', 9);
+  assert.deepEqual(verdict([block], legacy, legacy), [], 'the same install in a run block still counts');
+  const unlisted = verdict([hit('.github/workflows/a.yml', 'run: npm ci'), block], legacy);
   assert.equal(unlisted.length, 1, 'a second copy of a listed line is new');
   assert.match(unlisted[0], /a\.yml:9: installs dependencies without scripts\/ci\/ci-deps\.mjs/);
   assert.match(unlisted[0], /use: node scripts\/ci\/ci-deps\.mjs install <app-dir>/);
@@ -79,7 +81,7 @@ test('only listed workflow lines pass; against the base the list only shrinks; n
   assert.deepEqual(verdict(found.slice(0, 1), legacy, two), [], 'shrinking is fine');
   const grown = verdict(found, two, legacy);
   assert.equal(grown.length, 1);
-  assert.match(grown[0], /may only shrink; the base does not list: \.github\/workflows\/b\.yml: run: npm i x/);
+  assert.match(grown[0], /may only shrink; the base does not list: \.github\/workflows\/b\.yml: npm i x/);
   assert.throws(() => readLegacy(JSON.stringify({ entries: [{ file: 'scripts/ci/x.py', line: 'npm ci' }] })), /only a line of a protected workflow file/);
   assert.throws(() => readLegacy('{}'), /entries must be a list/);
 });

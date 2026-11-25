@@ -243,6 +243,32 @@ test('terminal admission removed: no renew command advertises or accepts termina
   assert.equal(JSON.stringify(tools).includes('terminal_release_ready'),false);
 });
 
+// Task 0ca0479d (Fable 2026-11-20 §2.1, §3 T2): a pull request's target branch is the server's, so authorize_head does not
+// require it, and a call without it reaches the RPC unchanged for Binding and OAuth callers.
+test('authorize_head does not require target_branch and a call without it reaches the RPC',async()=>{
+  const worker=await loadContinuityWorker();
+  const tools=(await (await worker.fetch(list(bindingToken),enabled,ctx)).json()).result.tools;
+  const schema=tools.find(tool=>tool.name==='clued_work_renew').inputSchema;
+  const branch=schema.anyOf.find(alternative=>alternative.properties.action.const==='authorize_head');
+  assert.deepEqual(branch.required,['action','claim_id','fence','lease_version','lease_key','repository','head_sha','idempotency_key']);
+  assert.match(schema.properties.target_branch.description,/work_claim_target_branch_not_served/);
+  const Ajv=require('ajv'),ajv=new Ajv({allErrors:true,formats:{uuid:/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i}});
+  const validate=ajv.compile(schema);
+  const business={action:'authorize_head',scope:'global',claim_id:'22222222-2222-4222-8222-222222222222',fence:1,lease_version:1,
+    lease_key:'clued_lk_'+'e'.repeat(64),repository:'owner/repository',head_sha:'f'.repeat(40),pr_number:12,idempotency_key:'served-target-fixture'};
+  assert.equal(validate(business),true,JSON.stringify(validate.errors));
+  assert.equal(validate({...business,target_branch:'main'}),true,'older clients that send main stay valid');
+  const {calls,restore}=mockFetch(()=>Response.json({status:'committed',authorization_id:'fixture'}));
+  try{
+    for(const token of [bindingToken,oauthToken]){
+      const result=(await (await worker.fetch(mcp(token,'clued_work_renew',business),enabled,ctx)).json()).result;
+      assert.equal(result.structuredContent.status,'committed',JSON.stringify(result));
+      const command=calls.findLast(call=>call.rpc==='clued_work_renew_v1'||call.tool==='clued_work_renew');
+      assert.deepEqual(command.body.p_input,business);
+    }
+  }finally{restore();}
+});
+
 test('real Worker Binding and OAuth preserve holder edit and authorize business fields but never use Host metadata as proof',async()=>{
   const worker=await loadContinuityWorker();
   const editing={action:'verify_edit',scope:'global',claim_id:'22222222-2222-4222-8222-222222222222',fence:1,execution_epoch:2,
@@ -412,7 +438,8 @@ test('Binding and OAuth callers reach the same step-1 RPCs with the arguments pa
   };
   const { calls, restore } = mockFetch(({ rpc, body }) =>
     Response.json({ status: 'committed', echo: rpc ?? body.p_tool, lease_key: `clued_lk_${'b'.repeat(64)}`,
-      claim: { claim_id: '22222222-2222-4222-8222-222222222222', holder_binding_id: 'b-1' } }));
+      claim: { claim_id: '22222222-2222-4222-8222-222222222222', holder_binding_id: 'b-1',
+        released_by: 'pr_end', released_evidence_ref: 'owner/repo#12@' + 'f'.repeat(40), released_at: '2026-11-18T01:00:00Z' } }));
   try {
     for (const name of WORK_TOOLS) {
       for (const token of [bindingToken, oauthToken]) {
@@ -423,6 +450,9 @@ test('Binding and OAuth callers reach the same step-1 RPCs with the arguments pa
         assert.equal(result.structuredContent.status, 'committed');
         // holder_binding_id is a different key from binding_id and survives sanitization.
         assert.equal(result.structuredContent.claim.holder_binding_id, 'b-1');
+        assert.equal(result.structuredContent.claim.released_by, 'pr_end');
+        assert.equal(result.structuredContent.claim.released_evidence_ref, 'owner/repo#12@' + 'f'.repeat(40));
+        assert.equal(result.structuredContent.claim.released_at, '2026-11-18T01:00:00Z');
         // The lease key reaches the caller that took the claim.
         assert.equal(result.structuredContent.lease_key, `clued_lk_${'b'.repeat(64)}`);
         const call = calls.at(-1);
@@ -476,6 +506,7 @@ test('a conflict or budget rejection is a structured result, not a transport err
     claim_id: '33333333-3333-4333-8333-333333333333', task_id: '11111111-1111-4111-8111-111111111111',
     holder_binding_id: 'b-2', holder_session_ref: 'session-b', status: 'ACTIVE', fence: 1,
     expires_at: '2026-10-01T08:00:00+00:00',
+    released_by: null, released_evidence_ref: null, released_at: null,
     overlap: { same_task: false, paths: ['apps/clued-cloud/package-lock.json'], trigger_refs: ['ghsa:GHSA-vcvr-r3jv-pc5j'] },
   }] };
   const { restore } = mockFetch(() => Response.json(rejection));

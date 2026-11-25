@@ -7,14 +7,6 @@ on:
       - "tests/test_model_program_m0.py"
       - "tests/fixtures/model-program-m0/**"
       - ".github/workflows/model-program-m0.yml"
-  push:
-    branches: [main]
-    paths:
-      - "development/contracts/model-program/**"
-      - "scripts/model-program/**"
-      - "tests/test_model_program_m0.py"
-      - "tests/fixtures/model-program-m0/**"
-      - ".github/workflows/model-program-m0.yml"
 
 permissions:
   contents: read

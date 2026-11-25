@@ -122,15 +122,15 @@ test('stages 4 and 6: two runs again in the batch (DESIGN 54), then FAILED_CLEAN
     assert.deepEqual(f.engine.calls.filter(c => c[0] === 'archive-windows' && c[1].startsWith('retry-stage-')).map(c => c[1]), [`retry-stage-${stage}-1`, `retry-stage-${stage}-2`],
       'each run again its own archive instance (never a replay of the one before)');
     const s = await f.ledger.state(KEY);
-    assert.deepEqual([s.terminal.facts.stage, s.terminal.facts.retry, s.terminal.facts.outcomeReason], [stage, 'new-commit', 'BRIDGE_RESULT_DEADLINE']);
+    assert.deepEqual([s.terminal.facts.stage, s.terminal.facts.retry, s.terminal.facts.outcomeReason], [stage, 'continuation', 'BRIDGE_RESULT_DEADLINE']);
     assert.equal(mayHavePublished({}, s).published, true);
     assert.equal(await f.executedHeads.published(subject()), true, 'recorded before stage 3, as always');
   }
   assert.deepEqual(attempt2Decision({ policy: { automaticAttempt2: { enabled: true } }, subject: { attempt: 1 }, outcome: 'FAILED_CLEAN', failure: { code: BRIDGE_ABANDONED_UNPUBLISHED, stageNumber: 4, relayedRoles: 0 } }),
     { eligible: false, reason: 'ATTEMPT2_ROLE_MAY_BE_PUBLISHED' });
-  // DESIGN §32 adds the memory gate's stage-2 refusal to the same list, at stage 2 only; DESIGN §71 the reboot's clean end, at stages 1 and 2
-  assert.deepEqual({ ...ATTEMPT2_RESIDENT_CODES }, { [BRIDGE_ABANDONED_UNPUBLISHED]: [2], LINUX_MEMORY_NOT_READY: [2], EXECUTOR_RESTARTED_UNPUBLISHED: [1, 2] });
-  assert.deepEqual([failureRow({ code: BRIDGE_ABANDONED_UNPUBLISHED, stage: 2 }).retry, failureRow({ code: BRIDGE_ABANDONED_UNPUBLISHED, stage: 6 }).retry], ['attempt2', 'new-commit']);
+  assert.deepEqual({ ...ATTEMPT2_RESIDENT_CODES }, { [BRIDGE_ABANDONED_UNPUBLISHED]: [2], LINUX_MEMORY_NOT_READY: [2],
+    EXECUTOR_RESTARTED_UNPUBLISHED: [1, 2], REFS_GATE_UNCONFIRMED: [2], UPGRADE_VERSION_SKEW: [2] });
+  assert.deepEqual([failureRow({ code: BRIDGE_ABANDONED_UNPUBLISHED, stage: 2 }).retry, failureRow({ code: BRIDGE_ABANDONED_UNPUBLISHED, stage: 6 }).retry], ['attempt2', 'continuation']);
 });
 
 test('quiescence not proven within 5 minutes HALTs with the original code; the scene stays', async t => {

@@ -16,7 +16,9 @@ using Microsoft.Win32.SafeHandles;
 //   - the boundary is FormalPublicBoundaryV2 (no compiled per-batch constant);
 //   - the child command passes --stage <nonce> --config-sha256 <sha> to the v2 entry;
 //   - the receipt (contract /2) also binds the entry's outcome record by its SHA-256 and grants the
-//     resident read access to it, so the resident can classify the ending (S11).
+//     resident read access to it, so the resident can classify the ending (S11);
+//   - a refusal before the boundary is ready (no receipt, the SCM exit code only) also writes one Application
+//     event under the service name, best effort: the code, the path being opened, the stage (r13 PR-2).
 // No installer, dispatcher loop, credential API, network probe, worker launcher, output capture or
 // desktop API. The job object still drains the whole tree before any receipt claims cleanup.
 public static class CluedWindowsFormalEntryV2 {
@@ -51,9 +53,25 @@ public static class CluedWindowsFormalEntryV2 {
  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern uint GetFinalPathNameByHandleW(SafeFileHandle h,StringBuilder text,uint length,uint flags);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetFileInformationByHandle(SafeFileHandle h,out FormalPublicBoundaryV2.Info info);
+ [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr RegisterEventSourceW(string server,string source);
+ [DllImport("advapi32.dll",SetLastError=true)] static extern bool DeregisterEventSource(IntPtr log);
+ [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool ReportEventW(IntPtr log,ushort type,ushort category,uint id,IntPtr user,ushort count,uint size,string[] strings,IntPtr data);
  static readonly MainDelegate ServiceMain=RunService;static readonly HandlerDelegate Handler=Control;static readonly object Gate=new object();
  static IntPtr statusHandle,jobHandle;static bool cancelled;static ServiceStatus status;static uint checkpoint;
  static void Fail(string code){throw new InvalidOperationException(code);}
+ // A refusal before ready leaves no receipt (only a validated boundary may write one), so the SCM exit code is all the resident sees.
+ // One Application event says which check refused, at which path, in which stage. The source is the service name, unregistered:
+ // RegisterEventSourceW/ReportEventW need no registration and no administrator (EventLog.WriteEntry would create the source and
+ // throw); the Application log grants write to SERVICE (SU), which AssertIdentity requires. Best effort: a write that fails is
+ // not retried and changes nothing, neither the exit code nor the receipt rule. The writer is a field only so the pure tests can
+ // stand it in.
+ internal static Func<string,string,bool> PreflightEventWriter=WriteApplicationEvent;
+ static bool WriteApplicationEvent(string source,string text){IntPtr log=RegisterEventSourceW(null,source);if(log==IntPtr.Zero)return false;
+  try{return ReportEventW(log,1,0,20,IntPtr.Zero,1,0,new[]{text},IntPtr.Zero);}finally{DeregisterEventSource(log);}}
+ public static bool ReportRefusedBeforeReady(bool ready,string failure,FormalPublicBoundaryV2 boundary){
+  if(ready||failure==null)return false;
+  try{return PreflightEventWriter(ServiceName,"formal helper refused before ready: code="+failure+" path="+(boundary.LastOpenPath??"none")+" stage="+boundary.Stage);}catch{return false;}
+ }
  public static string SafeFailure(string s){if(s==null||s.Length<2||s.Length>80)return "ONE_SHOT_OPERATION_UNCONFIRMED";foreach(char c in s)if(!((c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'))return "ONE_SHOT_OPERATION_UNCONFIRMED";return s;}
  static void Report(uint state,uint failure){lock(Gate){status.Type=16;status.State=state;status.Accept=state==4?1u:0u;status.Exit=failure==0?0u:1066u;status.Specific=failure;status.Check=(state==2||state==3)?++checkpoint:0;status.Hint=state==2?120000u:state==3?10000u:0u;if(!SetServiceStatus(statusHandle,ref status))Fail("SCM_STATUS_UNCONFIRMED");}}
  static void Check(){lock(Gate){if(cancelled)Fail("STOP_REQUESTED");}if(status.State==2)Report(2,0);}
@@ -104,6 +122,17 @@ public static class CluedWindowsFormalEntryV2 {
    FormalPublicBoundaryV2.Info i;var final=new StringBuilder(32768);uint n=GetFinalPathNameByHandleW(f.SafeFileHandle,final,32768,0);if(!GetFileInformationByHandle(f.SafeFileHandle,out i)||i.Links!=1||(i.Attributes&0x410)!=0||n==0||n>=32768||!String.Equals(final.ToString(),"\\\\?\\"+path,StringComparison.OrdinalIgnoreCase))Fail("PUBLIC_RECEIPT_HANDLE_UNCONFIRMED");f.Write(bytes,0,bytes.Length);f.Flush(true);
   }
  }
+ // Use the identity of the actual, validated role-probe service. Only a public observation is written.
+ static void ObserveRenewalKey() {
+  string target=Path.Combine(FormalPublicBoundaryV2.Receipts,"renew-key-controller.json");
+  string tmp=target+"."+Guid.NewGuid().ToString("N");
+  try {
+   var bytes=Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(RenewalKeyAccessV2.Observation()));
+   using(var f=new FileStream(tmp,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {f.Write(bytes,0,bytes.Length);f.Flush(true);}
+   if(File.Exists(target)) File.Replace(tmp,target,null);else File.Move(tmp,target);
+  } catch { /* The original role probe and its receipt are independent. */ }
+  finally {try {File.Delete(tmp);}catch{}}
+ }
  static void RunService(uint argc,IntPtr argv){
   string nonce=null,config=null,failure=null,cleanupFailure=null;bool identity=false,ready=false,timeout=false,exitKnown=false,cleanupConfirmed=false;uint pid=0,exit=uint.MaxValue,scmFailure=0,activeProcesses=uint.MaxValue;var boundary=new FormalPublicBoundaryV2(Check);
   statusHandle=RegisterServiceCtrlHandlerExW(ServiceName,Handler,IntPtr.Zero);if(statusHandle==IntPtr.Zero)return;
@@ -115,7 +144,9 @@ public static class CluedWindowsFormalEntryV2 {
   finally{
    if(cleanupFailure!=null){if(failure==null)failure=cleanupFailure;scmFailure=96;}
    // Only a fully validated boundary may write a receipt; a preflight refusal is the SCM exit code.
+   if(ready && identity && boundary.Stage==11) ObserveRenewalKey();
    if(ready)try{Receipt(nonce,failure,identity,boundary,pid,exit,timeout,exitKnown,cleanupConfirmed,cleanupFailure,activeProcesses);}catch{scmFailure=93;}
+   ReportRefusedBeforeReady(ready,failure,boundary);
    boundary.Dispose();try{Report(1,scmFailure);}catch{}
   }
  }

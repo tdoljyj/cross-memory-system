@@ -1,4 +1,5 @@
-# verify-resident.ps1's Invoke-CompanionRelayParentsEnsure (the M5-b relay-parent ACE in the generic install and in-place upgrade) on
+# verify-resident.ps1's Invoke-CompanionRelayParentsEnsure (the M5-b relay-parent ACE in the generic install and in-place upgrade) and
+# Invoke-StateParentEnsure (r13: <CiRoot>\state by the installer's rule state-parent-acl) on
 # real NTFS in a new TEMP scratch, NOT elevated: the function itself (with install-resident.ps1's own rule) against temp parents, and
 # the verify body's wiring by AST. No production path is read or written; nothing runs as SYSTEM.
 param([Parameter(Mandatory)][string]$Scratch)
@@ -106,7 +107,7 @@ foreach ($c in @(
 $n = New-Node 'toctou'
 $plans = & {
   $ast2 = [Management.Automation.Language.Parser]::ParseFile($installer, [ref]$t, [ref]$e)
-  foreach ($x in @('Get-DaclPart', 'Get-ParentAce', 'Get-AceKeys', 'Get-ParentAclState', 'Add-ParentAce', 'Get-RelayParentAclPresence', 'Assert-CompanionRelayParentPlan', 'Add-CompanionRelayParentAce', 'Get-CompanionRelayParentsPlan')) {
+  foreach ($x in @('Get-DaclPart', 'Get-DaclShape', 'Get-ParentAce', 'Get-AceKeys', 'Get-ParentAclState', 'Add-ParentAce', 'Get-RelayParentAclPresence', 'Assert-CompanionRelayParentPlan', 'Add-CompanionRelayParentAce', 'Get-CompanionRelayParentsPlan')) {
     . ([scriptblock]::Create(@($ast2.FindAll({ param($y) $y -is [Management.Automation.Language.FunctionDefinitionAst] -and $y.Name -ceq $x }, $true))[0].Extent.Text)) }
   $OwnerSid = $companion; $CiRoot = $n.ci
   $p = Get-CompanionRelayParentsPlan ([ordered]@{ present = $true })
@@ -129,5 +130,50 @@ Yes ((Refused { Ensure $n $companion $installer ('0' * 64) } 'RELAY_PARENT_RULE_
 Yes ((Refused { Ensure $n $companion $broken $installerSha } 'RELAY_PARENT_RULE_HASH_MISMATCH') -and (Dacl $n.ci) -ceq $d[0]) 'changed-installer-refused'
 foreach ($bad in @('', 'ABC', ('A' * 64), ($installerSha + '0'))) { Yes ((Refused { Ensure $n $companion $installer $bad } 'RELAY_PARENT_RULE_NOT_PINNED') -and (Dacl $n.ci) -ceq $d[0]) ('malformed-pin-refused-' + $bad.Length) }
 Yes ((Ensure $n) -eq 2) 'pinned-installer-accepted'
+
+# 10. r13 (Fable ruling 0e418483): <CiRoot>\state by the installer's rule state-parent-acl, through verify's Invoke-StateParentEnsure.
+# The wiring: on every node (after the companion-account branch, before not-halted); SYSTEM writes, elevated by hand reads, never writes.
+$stateCall = $body.IndexOf('Invoke-StateParentEnsure $Root ([string]$Node.controllerSid) (Join-Path $PSScriptRoot ''install-resident.ps1'') ([string]$statePin[0].sha256) -Write:($verifyIdentity.User.Value -ceq ''S-1-5-18'')')
+$stateGen = $body.IndexOf('$stateManifestSha -cne [string]$receipt.residentManifestSha256 -or (Split-Path -Leaf (Split-Path -Parent $PSScriptRoot)) -cne $stateManifestSha')
+$statePinRead = $body.IndexOf('$statePin = @(@((Get-Content -LiteralPath $stateManifest -Raw | ConvertFrom-Json).files) | Where-Object { [string]$_.path -ceq ''windows/install-resident.ps1'' })')
+$stateGate = $body.IndexOf("if (`$verifyCanFix) {`n  `$stateParent = try {")
+$stateRecord = $body.IndexOf('Record ''state-parent-acl'' ($stateParent.action -ceq ''none'' -or $stateParent.wrote)')
+Yes ($stateGate -gt $record -and $stateGen -gt $stateGate -and $statePinRead -gt $stateGen -and $stateCall -gt $statePinRead -and $stateRecord -gt $stateCall -and $body.IndexOf("Record 'not-halted'") -gt $stateRecord) 'state-parent-every-node-pinned-rule-then-record'
+Yes (@([regex]::Matches($body, 'Invoke-StateParentEnsure \$')).Count -eq 1 -and $body.Contains("} else { Record 'state-parent-acl' `$true 'NOT_ELEVATED_NOT_READ' }")) 'state-parent-one-call-site-not-elevated-not-read'
+$sfn = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Invoke-StateParentEnsure' }, $true))
+Yes ($sfn.Count -eq 1) 'one-state-ensure-function'
+. ([scriptblock]::Create($sfn[0].Extent.Text))
+foreach ($n in @('Get-DaclShape', 'Get-StateParentSddl')) { . ([scriptblock]::Create(@($ia.FindAll({ param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -ceq $n }, $true))[0].Extent.Text)) }
+$controller = 'S-1-5-21-1-2-3-1007'
+$wide = "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;$controller)"
+function New-StateNode([string]$name, [string]$dacl) {
+  $ci = Join-Path $Scratch $name; [void][IO.Directory]::CreateDirectory((Join-Path $ci 'resident')); $s = Join-Path $ci 'state'; [void][IO.Directory]::CreateDirectory($s)
+  Set-Dacl $s $dacl; [ordered]@{ ci = $ci; root = (Join-Path $ci 'resident'); state = $s }
+}
+function StateEnsure($n, [switch]$Write, [string]$inst = $installer, [string]$pin = $installerSha) { Invoke-StateParentEnsure $n.root $controller $inst $pin -Write:$Write }
+$stateDirs = @()
+# a. the r13 state (the controller's modify on state itself): by hand nothing is written; as SYSTEM the rule converges it, then nothing more.
+$n = New-StateNode 'state-wide' $wide; $stateDirs += $n.state
+$d = Dacl $n.state; $r = StateEnsure $n
+Yes ($r.action -ceq 'converge' -and $r.wrote -eq $false -and (Dacl $n.state) -ceq $d) 'state-read-only-without-write'
+$r = StateEnsure $n -Write
+Yes ($r.action -ceq 'converge' -and $r.wrote -eq $true -and (Get-DaclShape (Dacl $n.state)) -ceq (Get-DaclShape (Get-StateParentSddl $controller))) 'state-converged-with-write'
+$d = Dacl $n.state; $r = StateEnsure $n -Write
+Yes ($r.action -ceq 'none' -and $r.wrote -eq $false -and (Dacl $n.state) -ceq $d) 'state-passing-not-written'
+# b. another writer: refused by the installer's rule, nothing written.
+$n = New-StateNode 'state-other' ($wide + '(A;;0x1301bf;;;S-1-5-21-1-2-3-1099)'); $stateDirs += $n.state; $d = Dacl $n.state
+Yes ((Refused { StateEnsure $n -Write } 'STATE_PARENT_ACL_REFUSED:OTHER_WRITER:S-1-5-21-1-2-3-1099') -and (Dacl $n.state) -ceq $d) 'state-other-writer-refused'
+# c. the rule's bytes: another hash, a copy without one of its functions, a malformed pin or SID: refused before anything is written.
+$n = New-StateNode 'state-pin' $wide; $stateDirs += $n.state; $d = Dacl $n.state
+$brokenState = Join-Path $Scratch 'install-resident-state.ps1'
+[IO.File]::WriteAllText($brokenState, ([IO.File]::ReadAllText($installer) -replace 'function Invoke-StateParentAcl', 'function Renamed-Away'))
+Yes ((Refused { StateEnsure $n -Write -pin ('0' * 64) } 'STATE_PARENT_RULE_HASH_MISMATCH') -and (Dacl $n.state) -ceq $d) 'state-other-hash-refused'
+Yes ((Refused { StateEnsure $n -Write -inst $brokenState -pin (ShaOf $brokenState) } 'STATE_PARENT_RULE_MISSING:Invoke-StateParentAcl') -and (Dacl $n.state) -ceq $d) 'state-installer-rule-required'
+Yes ((Refused { StateEnsure $n -Write -pin 'ABC' } 'STATE_PARENT_RULE_NOT_PINNED') -and (Refused { Invoke-StateParentEnsure $n.root 'S-1-5-18' $installer $installerSha -Write } 'STATE_PARENT_SID_REFUSED') -and (Dacl $n.state) -ceq $d) 'state-malformed-pin-or-sid-refused'
+# d. the CI root reached through a junction: refused, the real state untouched.
+$alias = Join-Path $Scratch 'alias-state-ci'; New-Item -ItemType Junction -Path $alias -Value $n.ci | Out-Null
+Yes ((Refused { Invoke-StateParentEnsure (Join-Path $alias 'resident') $controller $installer $installerSha -Write } 'STATE_PARENT_LINK_OR_NOT_A_DIRECTORY') -and (Dacl $n.state) -ceq $d) 'state-junction-ancestor-refused'
+[IO.Directory]::Delete($alias)
+foreach ($s in $stateDirs) { Set-Dacl $s ('D:(A;OICI;FA;;;' + $me + ')') }   # owner rights: the scratch can be removed
 
 [ordered]@{ status = 'VERIFY_RELAY_PARENTS_ENSURE_TEMP_PASS'; assertions = $count; verifySha256 = (Get-FileHash -LiteralPath $verify -Algorithm SHA256).Hash.ToLowerInvariant(); productionReadOrWrite = $false; elevated = $false } | ConvertTo-Json -Compress

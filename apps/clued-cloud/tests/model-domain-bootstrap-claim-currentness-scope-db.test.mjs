@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -43,7 +43,7 @@ test('Bootstrap claim admits a Global intent only with the same Binding actual G
   for (const key of Object.keys(oldTemp)) process.env[key] = directory;
   const server = new EmbeddedPostgres({ databaseDir: path.join(directory, 'database'), user: 'postgres',
     password: hash(), port: await freePort(), persistent: true, createPostgresUser: false,
-    postgresFlags: ['-c', 'io_method=sync', '-c', 'listen_addresses=127.0.0.1'], onLog() {}, onError() {} });
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'], onLog() {}, onError() {} });
   let db, child;
   try {
     await server.initialise(); await server.start(); child = server.process;

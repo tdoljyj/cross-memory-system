@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { COMPARE_RETRY_MS, COMPARE_TIMEOUT_MS, MAX_COMPARES_PER_PASS, Poller, SLOW_COMPARE_SKIP_MS, upToDate } from '../src/poller.mjs';
 import { ADVISORY_TIMEOUT_MS, LocalStore, PASS_BUDGET_MS, POST_RETRY_MS, PrStatusReporter, contextFree, contextShapeSafe, describe, events, toastArgv, validateStatusConfig } from '../src/pr-status.mjs';
-import { nodeContext, standbyContext } from '../src/node-duty.mjs';
+import { nodeContext, parseDutyStatus, standbyContext } from '../src/node-duty.mjs';
 // Task 9cac75be A3: no default node; these reporters are the node named node-b (node: 'node-b').
 const PR_STATUS_CONTEXT = nodeContext('node-b');
 
@@ -29,7 +29,7 @@ test('C2 role notices are fixed local notifications without a PR status or retry
 });
 import { Runner } from '../src/runner.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
-import { tempRoot } from './helpers.mjs';
+import { rulesReply, tempRoot } from './helpers.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const MAIN = 'd'.repeat(40), OLD = 'e'.repeat(40);
@@ -100,7 +100,7 @@ test('the advisory work is bounded: short calls, at most MAX_COMPARES_PER_PASS c
   let postOk = false, cost = 0;
   const run2 = async (argv, o) => {
     calls.push([argv, o.timeoutMs]); now += cost;
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
     return { code: postOk ? 0 : 1, stdout: '{}' };
   };
   const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
@@ -135,7 +135,7 @@ test('a stalled advisory call ends the pass: nothing it could not do is recorded
     calls.push(argv);
     if (mode === 'busy') return { code: null, stdout: '', stderr: '', refused: 'RUNNER_BUSY_WITH_UNFINISHED_CHILD' };
     if (mode === 'slow-rules' && argv.some(a => a.includes('/rules/branches/main'))) return { code: null, stdout: '', stderr: '', timedOut: true };
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
     return { code: 0, stdout: '{}' };
   };
   const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now) });
@@ -195,7 +195,7 @@ const boardStatus = (fn, now) => { const b = new StatusBoard({ clock: () => now 
 test('the PR page text per head: running stage, queue position, outcome, HALT, stale; generic texts are weak', () => {
   const now = Date.parse('2026-10-22T09:00:00Z');
   const pull = (o = {}) => ({ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0, ...o });
-  assert.deepEqual(describe({ pull: pull({ eligible: false, hint: 'merge-main', behindBy: 4 }), status: null, now }).state, 'failure');
+  assert.deepEqual(describe({ pull: pull({ eligible: false, hint: 'merge-main', behindBy: 4 }), status: null, now }).state, 'pending');
   assert.match(describe({ pull: pull({ eligible: false, hint: 'push-any-commit' }), status: null, now }).description, /推一个任意提交即可/);
   assert.equal(describe({ pull: pull({ eligible: false, hint: 'compare-unavailable' }), status: null, now }), null);
   const s = fn => boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); fn(b); }, now);
@@ -252,8 +252,8 @@ test('notifications: HALT, a stopped status, a head waiting over an hour; each k
   assert.deepEqual(events({ status: null, statusError: true, now, startedAt: now }).map(x => x.key), [], 'not right after the companion starts');
   // the toast: a fixed script, the texts only as Base64
   const argv = toastArgv('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', 'T\'"<x>', 'B; Remove-Item C:\\');
-  assert.deepEqual(argv.slice(0, 6), ['C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand']);
-  const script = Buffer.from(argv[6], 'base64').toString('utf16le');
+  assert.deepEqual(argv.slice(0, 8), ['C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand']);
+  const script = Buffer.from(argv[8], 'base64').toString('utf16le');
   assert.ok(!script.includes('Remove-Item') && !script.includes('<x>'), 'no text is spliced into the script');
   assert.ok(script.includes(Buffer.from('B; Remove-Item C:\\', 'utf8').toString('base64')));
 });
@@ -266,7 +266,7 @@ test('the reporter writes a status only when it changes, never over a required c
   let required = REQUIRED;
   const run = async argv => {
     calls.push(argv);
-    if (argv.some(a => a.includes('/rules/branches/main'))) return required ? { code: 0, stdout: required.join('\n') + '\n' } : { code: 1, stdout: '' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return required ? rulesReply(required) : { code: 1, stdout: '' };
     return { code: 0, stdout: '{}' };
   };
   const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now, store });
@@ -275,7 +275,7 @@ test('the reporter writes a status only when it changes, never over a required c
   const posts = () => calls.filter(a => a.includes('POST'));
   assert.deepEqual(await reporter.pass({ pulls, status }), { posted: 2, toasts: 0, collision: false, stalled: false });
   const first = posts();
-  assert.deepEqual(first.map(a => a[a.indexOf('-f') + 1]), ['state=success', 'state=failure']);
+  assert.deepEqual(first.map(a => a[a.indexOf('-f') + 1]), ['state=success', 'state=pending']);
   assert.ok(first.every(a => a.includes(`context=${PR_STATUS_CONTEXT}`) && a.includes(`repos/${REPO}/statuses/${a[4].split('/').pop()}`)));
   assert.ok(first.every(a => !a.some(x => /comments/.test(x))), 'never a comment');
   assert.equal((await reporter.pass({ pulls, status })).posted, 0, 'unchanged: nothing written');
@@ -295,11 +295,16 @@ test('the reporter writes a status only when it changes, never over a required c
   assert.equal(r.toasts, 1, 'the HALT (the notifications run first, before the rules are read)');
   assert.equal((await reporter.pass({ pulls, status: halted })).toasts, 1, 'the collision, one pass later');
   assert.equal((await reporter.pass({ pulls, status: halted })).toasts, 0, 'each key once');
-  // unknown rules: nothing is written
+  // unknown rules: the failure is said once per head (a status is auxiliary), nothing else is written
   required = null; now += 31 * 60_000;
   const fresh = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 'other.json'), () => now), notifications: false });
-  assert.equal((await fresh.pass({ pulls, status })).posted, 0);
+  assert.equal((await fresh.pass({ pulls, status })).posted, 0, 'a first failure is a flap: nothing is said');
+  now += 11 * 60_000;
+  const before2 = posts().length;
+  assert.equal((await fresh.pass({ pulls, status })).posted, 2, 'a lasting failure is said, once per head');
+  assert.ok(posts().slice(before2).every(a => a.some(x => x.startsWith('description=无法读取 main 规则集'))));
+  assert.equal((await fresh.pass({ pulls, status })).posted, 0, 'said once');
   // Task 9cac75be A3: no default node (the companion names its pinned node profile's)
   assert.deepEqual(validateStatusConfig(undefined), { prStatus: true, notifications: true, node: null });
   assert.deepEqual(validateStatusConfig({ notifications: false }), { prStatus: true, notifications: false, node: null });
@@ -318,7 +323,7 @@ test('§41.6a: while the heartbeat shows the failover watchdog stale, the PR pag
   const hb = new CompanionHeartbeat({ nodeName: 'node-b', clock: () => now, readToken: async () => 'clued_hb_x', readStatus: async () => null, serviceRunning: async () => true,
     transport: async () => ({ ok: true, tokenRefused: false, autoHandover: null, watchdogTickAt: tick }), notify: async (k, title) => { notes.push(title); },
     memory: { get: async () => 0, set: async () => {} }, handover: {} });
-  const run = async argv => { calls.push(argv); return argv.some(a => a.includes('/rules/branches/main')) ? { code: 0, stdout: REQUIRED.join('\n') } : { code: 0, stdout: '{}' }; };
+  const run = async argv => { calls.push(argv); return argv.some(a => a.includes('/rules/branches/main')) ? rulesReply(REQUIRED) : { code: 0, stdout: '{}' }; };
   const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 's.json'), () => now), notifications: false });
   reporter.watchdogStale = () => hb.watchdogStale === true; // as companion-main.mjs wires it
@@ -354,7 +359,7 @@ test('phase 2: the PR page says where the run queue has the head: its place and 
   assert.equal(describe({ pull: pull(), status: s(b => b.setPending([row({ state: 'WAITING', position: null, reason: 'OWNER_REVIEW_REQUIRED', nextAt: now + 40 * 60_000 })])), now }).description,
     '等 Owner 批准受保护改动：约 09:40Z 自动重试，批准或修正后编辑 PR 可提前');
   const back = describe({ pull: pull(), status: s(b => b.setPending([row({ state: 'BACKOFF', position: null, reason: 'CLAIM_NOT_CURRENT', nextAt: now + 10 * 60_000, level: 1 })])), now });
-  assert.deepEqual([back.state, back.description], ['pending', '未准入或未执行（CLAIM_NOT_CURRENT）：约 09:10Z 自动重试（第 1 次），修正后编辑 PR 可提前']);
+  assert.deepEqual([back.state, back.description], ['pending', '未准入或未执行（CLAIM_NOT_CURRENT）：约 09:10Z 自动重试（第 1 次）；认领持有人授权此提交后，约 10 分钟内自动重试（编辑 PR 不会提前）']);
   assert.equal(describe({ pull: pull(), status: s(b => b.setPending([row({ state: 'STOPPED', position: null, reason: 'CLAIM_NOT_CURRENT', stopKind: 'release-cap' })])), now }).state, 'failure');
   assert.match(describe({ pull: pull(), status: s(b => b.setPending([row({ state: 'STOPPED', position: null, reason: 'PROTECTED_CHANGE_NOT_UP_TO_DATE', stopKind: 'burned' })])), now }).description, /请推新提交/);
   assert.match(describe({ pull: pull(), status: s(b => { b.setPending([row()]); b.update({ breaker: { state: 'open', nextTrialAt: now + 30 * 60_000 } }); }), now }).description, /熔断中，约 09:30Z 试跑/);
@@ -388,7 +393,7 @@ test('C5: the node writes its own context on its own commits; duty texts are wri
   const calls = [];
   const run = async argv => {
     calls.push(argv);
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
     if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
     if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
     return { code: 0, stdout: '{}' };
@@ -426,7 +431,7 @@ test('C5: another node on duty locks this one: the dual-active hold goes into re
   const calls = [];
   const run = async argv => {
     calls.push(argv);
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: required.join('\n') + '\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(required);
     if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
     if (argv[4]?.includes(`/commits/${H(9)}/statuses?`)) return { code: 0, stdout: JSON.stringify(other) };
     if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
@@ -469,7 +474,7 @@ test('ADR 0028: a STANDBY writes no reminder under resident-standby/<node>; one 
   const other = [paused(now)];
   const run = async argv => {
     calls.push(argv);
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
     if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
     if (argv[4]?.includes(`/commits/${H(7)}/statuses?`)) return { code: 0, stdout: JSON.stringify([...other].reverse()) };
     if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
@@ -503,7 +508,7 @@ test('C5 review: notifications before the duty reads; a pass whose duty fails wr
   const calls = [];
   const run = async argv => {
     calls.push(argv);
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
     if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
     if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
     return { code: 0, stdout: '{}' };
@@ -545,7 +550,7 @@ test('node governance: a red status becomes one line of the PR page text; gone, 
   const marker = path.join(root, 'status.json');
   let now = NOW;
   const calls = [];
-  const run = async argv => { calls.push(argv); return argv.some(a => a.includes('/rules/branches/main')) ? { code: 0, stdout: REQUIRED.join('\n') } : { code: 0, stdout: '{}' }; };
+  const run = async argv => { calls.push(argv); return argv.some(a => a.includes('/rules/branches/main')) ? rulesReply(REQUIRED) : { code: 0, stdout: '{}' }; };
   const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 's.json'), () => now), notifications: false });
   reporter.hostCapacity = () => readCapacityAlert(marker, () => now); // as companion-main.mjs wires it (with NODE_STATUS_FILE)
@@ -606,20 +611,136 @@ test('node governance: companion-main.mjs hands the reporter the node status', a
   assert.ok(src.includes("import { NODE_STATUS_FILE, readCapacityAlert, resourceHoldAlert } from './host-capacity.mjs';"), 'companion-main.mjs imports the status read');
 });
 
-// Defect C (2026-11-15): strict means only the PR about to merge must contain main. Telling every behind PR to merge main
-// after each merge made N queued PRs push O(N^2) merge-only heads (Task 570bd3e3 hit its 40 heads/24 h). A behind PR that
-// is not the train's front (seen in the last 30 minutes) is told to wait; the front, or any PR when no front is known, is
-// still told to take main in.
-test('a behind PR that is not the front is not asked to merge main; the front is', () => {
-  const now = Date.parse('2026-11-15T12:00:00Z');
+// Task 484bddac (FABLE-front-merge-stale-summary §2.3): the page never asks anyone to merge main by hand. A behind head gets one pending
+// sentence whatever the train summary says: stale (defect 甲), no front in it (乙), another PR named, or this PR named. Before the fix the
+// first two said "请合入最新 main 并推送" (a failure): 34 hand merges of main came from it. A conflict is GitHub's own DIRTY, not this line.
+test('484bddac: a behind PR gets the same pending line under every train summary, never "请合入"', () => {
+  const now = Date.parse('2026-11-22T02:00:00Z');
   const behind = pr => ({ pr, headSha: H(pr), eligible: false, hint: 'merge-main', behindBy: 3 });
   const status = (front, at = now - 60_000) => ({ writtenAt: now, current: null, pending: [], recent: [],
-    train: { enabled: 'shadow', last: { at, mode: 'shadow', wouldDo: 'FRONT_NEEDS_MAIN_MERGE', front: { pr: front, headSha: H(front) } } } });
-  const waiting = describe({ pull: behind(8), status: status(7), now });
-  assert.equal(waiting.state, 'pending');
-  assert.match(waiting.description, /落后 main 3 个提交：排队中，不必现在合 main/);
-  assert.equal(describe({ pull: behind(7), status: status(7), now }).state, 'failure', 'the front takes main in');
-  assert.match(describe({ pull: behind(7), status: status(7), now }).description, /请合入最新 main 并推送/);
-  assert.equal(describe({ pull: behind(8), status: null, now }).state, 'failure', 'no front known: as before');
-  assert.equal(describe({ pull: behind(8), status: status(7, now - 31 * 60_000), now }).state, 'failure', 'a stale front is not known');
+    train: { enabled: 'on', last: { at, mode: 'on', wouldDo: front ? 'FRONT_NEEDS_MAIN_MERGE' : 'NO_FRONT', front: front ? { pr: front, headSha: H(front) } : null } } });
+  const LINE = '落后 main 3 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）';
+  const inputs = {
+    'summary stale': status(7, now - 31 * 60_000),
+    'no front in the summary': status(null),
+    'summary names another PR': status(7),
+    'summary names this PR': status(8),
+    'no status at all': null,
+  };
+  for (const [name, s] of Object.entries(inputs)) {
+    const d = describe({ pull: behind(8), status: s, now });
+    assert.deepEqual(d, { state: 'pending', description: LINE }, name);
+    assert.equal(JSON.stringify(d).includes('请合入'), false, name);
+  }
+});
+
+// Field defect 2026-11-23 (FABLE-resident-halt-merge-race-20261123 C): both residents were HALTed (PUBLICATION_UNCERTAIN) and the
+// compute panel showed them idle: a node wrote only on the commits it had queued or run, the PRs that ended the HALT were merged, and
+// the open PRs it never queued carried nothing. While HALTed, the node on duty says so on every eligible open PR head.
+test('HALT: the node on duty writes 执行器已停机（码） on every eligible open PR head, also one it never queued; a STANDBY writes none', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-11-23T00:30:00Z');
+  const calls = [];
+  const run = async argv => {
+    calls.push(argv);
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
+    if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
+    if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
+    return { code: 0, stdout: '{}' };
+  };
+  const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const field = (a, k) => a.find(x => x.startsWith(`${k}=`))?.slice(k.length + 1);
+  const written = () => calls.filter(a => a.includes('POST')).map(a => [a.find(x => x.includes('/statuses/')).split('/').at(-1), field(a, 'state'), field(a, 'context'), field(a, 'description')]);
+  const nodeAs = mode => ({ name: 'node-b', mode, probe: { at: new Date(now - 30_000).toISOString(), result: mode === 'ACTIVE' ? 'held' : 'not-held', failures: 0, failingSince: null } });
+  const halted = mode => boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node: nodeAs(mode), halt: { code: 'PUBLICATION_UNCERTAIN', at: '2026-11-23T00:21:05Z' } }); }, now);
+  // Neither head was ever queued or run by this node (status.json names no row for them).
+  const pulls = [{ pr: 1240, headSha: H(4), eligible: true, hint: null, behindBy: 0 }, { pr: 1241, headSha: H(5), eligible: true, hint: null, behindBy: 0 }];
+  const TEXT = '执行器已停机（PUBLICATION_UNCERTAIN），等 Owner 复位';
+  const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now), notifications: false, writeRequest: async () => {} });
+  await reporter.pass({ pulls, status: halted('ACTIVE') });
+  assert.deepEqual(written(), [[H(4), 'error', PR_STATUS_CONTEXT, TEXT], [H(5), 'error', PR_STATUS_CONTEXT, TEXT]]);
+  // It is no duty word: another node never reads it as on duty, and it is not written again while unchanged.
+  assert.equal(parseDutyStatus({ context: PR_STATUS_CONTEXT, description: TEXT, created_at: new Date(now).toISOString(), login: 'tdoljyj' }, 'tdoljyj').word, null);
+  now += 20 * 60_000;
+  await reporter.pass({ pulls, status: halted('ACTIVE') });
+  assert.equal(written().length, 2, 'not refreshed');
+  // A STANDBY (the watchdog handed its role over) writes nothing under its queue context, HALTed or not.
+  const before = written().length;
+  const standby = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 'b.json'), () => now), notifications: false, writeRequest: async () => {} });
+  await standby.pass({ pulls, status: halted('STANDBY') });
+  assert.equal(written().length, before);
+});
+
+// FABLE-resident-halt-merge-race-followup-20261123 §2: the HALT rows are executor-wide and owed their end. Once the Owner's reset is
+// seen (a fresh status without a halt), every HALT row this node left on a still-open head that it does not describe again in the
+// pass is rewritten as a non-error row without a duty word, whatever the node's mode now (still on duty but the PR was never queued
+// here; or STANDBY after the role moved). Otherwise the panel kept reading the node as HALTed and the PR as stalled until it closed.
+test('HALT rows end after the reset: rewritten non-error on every still-open head, on duty or STANDBY; not while HALTed or stale', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-11-23T00:30:00Z');
+  const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const field = (a, k) => a.find(x => x.startsWith(`${k}=`))?.slice(k.length + 1);
+  const nodeAs = mode => ({ name: 'node-b', mode, probe: { at: new Date(now - 30_000).toISOString(), result: mode === 'ACTIVE' ? 'held' : 'not-held', failures: 0, failingSince: null } });
+  const board = (mode, halt) => boardStatus(b => { if (!halt) b.setState('IDLE'); b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node: nodeAs(mode), ...(halt ? { halt: { code: 'PUBLICATION_UNCERTAIN', at: '2026-11-23T00:21:05Z' } } : {}) }); }, now);
+  const TEXT = '执行器已停机（PUBLICATION_UNCERTAIN），等 Owner 复位';
+  for (const after of ['ACTIVE', 'STANDBY']) {
+    const calls = [];
+    const run = async argv => {
+      calls.push(argv);
+      if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
+      if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
+      if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
+      return { code: 0, stdout: '{}' };
+    };
+    const written = () => calls.filter(a => a.includes('POST')).map(a => [a.find(x => x.includes('/statuses/')).split('/').at(-1), field(a, 'state'), field(a, 'context'), field(a, 'description')]);
+    const pulls = [{ pr: 1240, headSha: H(4), eligible: true, hint: null, behindBy: 0 }, { pr: 1241, headSha: H(5), eligible: true, hint: null, behindBy: 0 }];
+    const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, `${after}.json`), () => now), notifications: false, writeRequest: async () => {} });
+    await reporter.pass({ pulls, status: board('ACTIVE', true) });
+    assert.deepEqual(written(), [[H(4), 'error', PR_STATUS_CONTEXT, TEXT], [H(5), 'error', PR_STATUS_CONTEXT, TEXT]], after);
+    // Still HALTed, also as a STANDBY: the rows stay. A status that is not fresh is no reset either.
+    now += 60_000;
+    await reporter.pass({ pulls, status: board(after, true) });
+    const stale = board(after, false);
+    now += 60 * 60_000;
+    await reporter.pass({ pulls, status: stale });
+    assert.equal(written().length, 2, `${after}: nothing while HALTed or on a stale status`);
+    // PR 1241 closed meanwhile: forgotten, never written. PR 1240 is still open: its HALT row ends.
+    const open = pulls.slice(0, 1);
+    await reporter.pass({ pulls: open, status: board(after, false) });
+    const rows = written().slice(2);
+    assert.equal(rows.length, 1, `${after}: ${JSON.stringify(rows)}`);
+    assert.deepEqual(rows[0].slice(0, 3), [H(4), 'success', PR_STATUS_CONTEXT], after);
+    assert.equal(parseDutyStatus({ context: PR_STATUS_CONTEXT, description: rows[0][3], created_at: new Date(now).toISOString(), login: 'tdoljyj' }, 'tdoljyj').word, null, 'no duty word');
+    assert.doesNotMatch(rows[0][3], /运行中|排队|已完成|停机|停摆/, 'not read by the panel as progress, HALT or stall');
+    now += 20 * 60_000;
+    await reporter.pass({ pulls: open, status: board(after, false) });
+    assert.equal(written().length, 3, `${after}: once`);
+  }
+});
+
+// G-5, Task 2fb32dc7 (PLAN-train-full-and-gate-poll-20261125 §2.3): the two texts of a head the poller does not propose are written
+// and read back by this one module; the PR gate (scripts/ci/clued-work-admission.mjs) reads them through heldHintOf. A sentence changed
+// without its reader fails here.
+test('G-5 the held texts describe writes read back as their hint, with the lines added around them; nothing else does', async () => {
+  const m = await import('../src/pr-status.mjs');
+  assert.equal(typeof m.heldHintText, 'function', 'pr-status.mjs exports heldHintText');
+  assert.equal(typeof m.heldHintOf, 'function', 'pr-status.mjs exports heldHintOf');
+  const { CAPACITY_ALERT_TEXT } = await import('../src/host-capacity.mjs');
+  const now = Date.parse('2026-11-25T04:00:00Z');
+  for (const [hint, behindBy] of [['merge-main', 1], ['merge-main', 110], ['merge-main', 123456], ['push-any-commit', 0]]) {
+    const pull = { pr: 1317, headSha: 'd'.repeat(40), eligible: false, hint, behindBy };
+    const written = describe({ pull, status: null, now });
+    assert.equal(written.description, m.heldHintText(hint, behindBy), `${hint}: describe writes the generator's sentence`);
+    assert.equal(m.heldHintOf(written.description), hint);
+    for (const around of [m.withRerunLine(written, true), m.withRerunLine(written, '补跑道：已为此提交重新派发一次'), m.withWatchdogLine(written, true),
+      m.withCapacityLine(written, CAPACITY_ALERT_TEXT), m.withWatchdogLine(m.withCapacityLine(written, CAPACITY_ALERT_TEXT), true)])
+      assert.equal(m.heldHintOf(around.description), hint, around.description);
+  }
+  // The field text (#1317 head d4dc68f3e, resident-queue/turing, 11-24 19:39:08Z).
+  assert.equal(m.heldHintOf('落后 main 110 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）'), 'merge-main');
+  const merge = m.heldHintText('merge-main', 3);
+  for (const other of [null, undefined, 42, '', '当班：运行中：第 1 段（准入）', 'DRAFT', `x${merge}`, `${merge}x`, merge.slice(0, -1), `${merge.slice(0, 30)}…`,
+    merge.replace('3', 'three'), '落后 main  个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）', `${merge}\n::set-output name=admitted::true`])
+    assert.equal(m.heldHintOf(other), null, String(other));
+  assert.equal(m.heldHintText('compare-unavailable', 0), null);
 });

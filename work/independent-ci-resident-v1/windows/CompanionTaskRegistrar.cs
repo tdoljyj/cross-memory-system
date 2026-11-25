@@ -52,6 +52,12 @@
 //       owned by Administrators with a protected DACL of SYSTEM and Administrators only.
 //   CluedCompanionTaskRegistrar.exe account-facts <sid>
 //       Read-only facts of the account: local, enabled, administrator, rights held directly, profile directory.
+//   CluedCompanionTaskRegistrar.exe grant-service-logon <sid>
+//       Elevated only. SeServiceLogonRight for one local account (the first install's clued-control), by the account-rights interface:
+//       the same grant prepare-account gives the companion its batch logon with (GrantRights), never by writing back the security policy
+//       (Fable renew-key ruling, supplement "service logon grant"). RIGHT_GRANTED, or RIGHT_NOT_GRANTED with the step it stopped in and
+//       the system's raw status: "resolve" (not a local account), "open:<NTSTATUS>:<win32>" (LsaOpenPolicy), "grant:<NTSTATUS>:<win32>"
+//       (LsaAddAccountRights). The caller reads the account's rights back (account-facts) before it counts the grant.
 //   CluedCompanionTaskRegistrar.exe vtable-selftest
 //       Read-only: proves the vtable slots this program calls by reading the root folder's Path (slot 8) and asking for a task that
 //       does not exist (GetTask, slot 13). RegistrarPureTests.cs runs it offline.
@@ -177,6 +183,10 @@ public static class RegistrarCore {
   // (NetUserSetInfo level 1003, an administrator may) and hands the same buffer to the Task Scheduler; then it is zeroed.
   public const int RandomPasswordChars = 32;
   public const string ImportTaskName = "CluedCIResidentCompanionWslImport";
+  // The import program exits with this, and only from its complete branch (task 87d330d0, drill r11: an instance that never ran leaves
+  // the Task Scheduler's LastTaskResult 0, which was taken for success). No queued, cancelled or stopped instance and no Task Scheduler
+  // status (0x413xx, 0x8004xxxx) gives it. companion-headless.ps1 $CompanionImportDoneExitCode; tests hold the two equal.
+  public const int ImportDoneExitCode = 0x434C4901;
   public const string ImportTaskSddl = "D:P(A;;FA;;;SY)(A;;FA;;;BA)";
   public const string WslExe = @"C:\Program Files\WSL\wsl.exe";
   public const string MachineWslClientScript = @"# Shared with RegistrarCore.MachineWslClientScript; tests hold the resolver identical.
@@ -231,7 +241,7 @@ function Get-CluedMachineWslClient {
   }
   // The one-shot task that registers the moved distribution for the companion account (wsl --import-in-place, which only registers
   // the existing ext4.vhdx: nothing is copied or unpacked). On demand only: no trigger; the same random password as the companion task.
-  // Review r1 m1/m11: its action is ImportScript as -EncodedCommand (no quoting through cmd or the task XML): exit 0 only when the
+  // Review r1 m1/m11: its action is ImportScript as -EncodedCommand (no quoting through cmd or the task XML): exit ImportDoneExitCode only when the
   // distribution is registered for the account and runs; an import that fails because a cut-off earlier run already registered it is
   // accepted when the distribution then starts; the Owner's DefaultUid is written back (it was 1000 on TURING; import-in-place gives 0).
   public static string ImportScript(string distro, string vhdx, long defaultUid) {
@@ -410,7 +420,7 @@ finally {
   $record.exitCode = $code; $record.finishedAt = [DateTimeOffset]::UtcNow.ToString('o')
   try { Write-ImportDiagnostic } catch { $code = 7; [Console]::Error.WriteLine('WSL_IMPORT_DIAGNOSTICS_UNWRITABLE') }
 }
-exit $code
+if ($code -eq 0) { exit __DONE__ }; exit $code
 ";
     // Fixed source only: drop indentation to retain the Win32 EncodedCommand limit, including the maximum validated VHDX path.
     script = Regex.Replace(script.Replace("__WSL_CLIENT__", MachineWslClientScript), @"(?m)^[ \t]+", "");
@@ -428,7 +438,9 @@ exit $code
       new string[] { "Invoke-ImportWsl", "Invoke-IW" }, new string[] { "Convert-ImportOutput", "Convert-IO" }, new string[] { "Get-ImportDiagnosticAcl", "Get-DiagAcl" }, new string[] { "Assert-ImportDiagnosticAcl", "Assert-DiagAcl" },
       new string[] { "Protect-ImportDiagnostic", "Protect-Diag" }, new string[] { "Write-ImportDiagnostic", "Write-Diag" }
     }) script = script.Replace(pair[0], pair[1]);
-    return script.Replace("__DISTRO__", distro).Replace("__VHDX__", vhdx)
+    // the fixed code first, before any input is in the text
+    return script.Replace("__DONE__", ImportDoneExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture))
+      .Replace("__DISTRO__", distro).Replace("__VHDX__", vhdx)
       .Replace("__UID__", defaultUid.ToString(System.Globalization.CultureInfo.InvariantCulture));
   }
   public const string PowerShellExe = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
@@ -788,6 +800,7 @@ public static class CluedCompanionTaskRegistrar {
       if (args.Length == 2 && args[0] == "remove-account" && RegistrarCore.ValidAccountName(args[1])) return RemoveAccount(args[1]);
       if (args.Length == 2 && args[0] == "prepare-account" && RegistrarCore.ValidAccountName(args[1])) return PrepareAccount(args[1]);
       if (args.Length == 2 && args[0] == "account-facts" && RegistrarCore.ValidSid(args[1])) return AccountFacts(args[1]);
+      if (args.Length == 2 && args[0] == "grant-service-logon" && RegistrarCore.ValidSid(args[1])) return GrantServiceLogon(args[1]);
       if (args.Length == 3 && args[0] == "capture-file") {
         string[] pair = RegistrarCore.ParseCaptureFile(args);
         if (pair == null) { Print("REGISTRAR_ARGS_REFUSED", null); return 2; }
@@ -975,13 +988,33 @@ public static class CluedCompanionTaskRegistrar {
     return h;
   }
   static byte[] SidBytes(string sid) { SecurityIdentifier s = new SecurityIdentifier(sid); byte[] b = new byte[s.BinaryLength]; s.GetBinaryForm(b, 0); return b; }
-  static int AddRights(string sid, string[] rights) {
-    IntPtr h = OpenLsa(0x10 | 0x800);   // POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES
+  // The one grant of account rights in the package (prepare-account's batch logon, grant-service-logon's service logon): the step it
+  // stopped in (open, grant) and the system's raw NTSTATUS, 0 when done.
+  static uint GrantRights(string sid, string[] rights, out string step) {
+    step = "open";
+    LSA_OBJECT_ATTRIBUTES oa = new LSA_OBJECT_ATTRIBUTES(); oa.Length = Marshal.SizeOf(typeof(LSA_OBJECT_ATTRIBUTES)); IntPtr h;
+    uint st = LsaOpenPolicy(IntPtr.Zero, ref oa, 0x10 | 0x800, out h);   // POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES
+    if (st != 0) return st;
+    step = "grant";
     LSA_UNICODE_STRING[] r = new LSA_UNICODE_STRING[rights.Length];
     try {
       for (int i = 0; i < rights.Length; i++) { r[i].Buffer = Marshal.StringToHGlobalUni(rights[i]); r[i].Length = (ushort)(rights[i].Length * 2); r[i].MaximumLength = (ushort)(rights[i].Length * 2 + 2); }
-      return LsaNtStatusToWinError(LsaAddAccountRights(h, SidBytes(sid), r, r.Length));
+      return LsaAddAccountRights(h, SidBytes(sid), r, r.Length);
     } finally { foreach (LSA_UNICODE_STRING s in r) if (s.Buffer != IntPtr.Zero) Marshal.FreeHGlobal(s.Buffer); LsaClose(h); }
+  }
+  // prepare-account's use, as before: a policy that does not open throws (LSA_OPEN), a grant that fails returns its win32 code
+  static int AddRights(string sid, string[] rights) {
+    string step; uint st = GrantRights(sid, rights, out step);
+    if (st != 0 && step == "open") throw new InvalidOperationException("LSA_OPEN:" + LsaNtStatusToWinError(st));
+    return LsaNtStatusToWinError(st);
+  }
+  // grant-service-logon <sid>: one local account's SeServiceLogonRight by GrantRights; the step and the raw status when it is not done.
+  static int GrantServiceLogon(string sid) {
+    string[] a = SplitAccount(sid);
+    if (a == null || !string.Equals(a[0], Environment.MachineName, StringComparison.OrdinalIgnoreCase)) { Print("RIGHT_NOT_GRANTED", "resolve"); return 1; }
+    string step; uint st = GrantRights(sid, new[] { "SeServiceLogonRight" }, out step);
+    if (st != 0) { Print("RIGHT_NOT_GRANTED", step + ":0x" + st.ToString("X8") + ":" + LsaNtStatusToWinError(st)); return 1; }
+    Print("RIGHT_GRANTED", null); return 0;
   }
   static List<string> RightsOf(string sid) {
     IntPtr h = OpenLsa(0x800 | 0x1), p; int count; List<string> o = new List<string>();   // POLICY_LOOKUP_NAMES | POLICY_VIEW_LOCAL_INFORMATION

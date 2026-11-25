@@ -6,14 +6,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS, TRAIN_SWEEP_DEFAULT, trainSettings, trainSweepMode, trainLandingMode, trainBatchMax, installedTrainLanding, validatePolicy } from '../src/policy.mjs';
 import { DECISIONS, trainDue, TRAIN_RUN_INPUT_FIELDS, chainOfFront, openFrontBatchOf, trainRunInput, trainRunMode, trainSummary, trainSweepView, parseTrainSweep, validateTrainRunInput,
-  trainNodesView, parseTrainNodes } from '../src/train.mjs';
-import { fleetSourceCheck } from '../rollout/precheck.mjs';
+  trainNodesView, parseTrainNodes, fleetSourceCheck } from '../src/train.mjs';
 import { RELAY_TRAIN_FRONT_LOCAL, TRAIN_CLEAN_CODES, failureRow } from '../src/classify.mjs';
 import { PROBE_REQUEST_CONTRACT, REVOKE_HEAD_REQUEST_CONTRACT, probeRequest, revokeHeadRequest, validateResidentRequest } from '../src/resident-requests.mjs';
 import { installedTrainMode } from '../src/engine-windows.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
-import { executorFixture, fakeCompanion, fakeEngine, rawPolicy, triggerBytes, HEAD, BASE } from './helpers.mjs';
+import { executorFixture, fakeCompanion, fakeEngine, notAdmitted, rawPolicy, triggerBytes, HEAD, BASE, SAFE_REFUSAL } from './helpers.mjs';
 import { breakerOf } from '../src/breaker.mjs';
+import { ResidentExecutor } from '../src/executor.mjs';
 import { makeTrainRun, TRAIN_RUN_PARAMS } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/train-run.mjs';
 import { DECISIONS as SOURCE_DECISIONS, NO_ACTIONS, NO_SWEEP, trainFacts } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
 import { TRAIN_CODES as SOURCE_TRAIN_CODES } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
@@ -55,7 +55,7 @@ test('policy /8: on, the four train settings and their bounds; /7 refuses on exa
 
 // DESIGN §65 (strict-permanent mode, Owner decision 9e2511fe): train.sweep is optional in /8 and later; without it the Owner's default
 // 'audit'; the policy digest of an installed policy without it is unchanged; the train-run input carries it next to the clocks.
-test('policy train.sweep: optional gate | audit | off, default audit; carried by the train-run input and the job /3', () => {
+test('policy train.sweep: optional gate | audit | off, default audit; carried by the train-run input and the job /4', () => {
   assert.equal(TRAIN_SWEEP_DEFAULT, 'audit');
   const { sweep, ...without } = onTrain(); void sweep;
   const p = validatePolicy(rawPolicy({ contract: POLICY_CONTRACT_V8, train: without }));
@@ -98,14 +98,16 @@ test('train-run /2: the resident part is exactly the job\'s params plus the mode
   const shadow = trainRunInput({ mode: 'shadow', settings, onSince: T0 });
   assert.equal(shadow.onSince, null, 'never an onSince in shadow');
   assert.equal(job(shadow).mode, 'shadow');
-  const front = { pr: 910, headSha: HEAD, testSha: S, attempt: 1, code: 'STAGE_CHILD_REFUSED' };
+  const front = { pr: 910, headSha: HEAD, testSha: S, attempt: 1, code: 'STAGE_CHILD_REFUSED', failed: true };
   const on = trainRunInput({ mode: 'on', settings, onSince: T0, frontOutcome: front, revokeHeadRequestId: CLAIM });
   assert.deepEqual([on.onSince, on.frontPr, on.frontAttempt, on.revokeHeadRequestId], [new Date(T0).toISOString(), 910, 1, CLAIM]);
-  assert.equal(job(on).frontCode, 'STAGE_CHILD_REFUSED');
+  assert.deepEqual([job(on).frontCode, job(on).frontFailed], ['STAGE_CHILD_REFUSED', true]);
+  const ended = trainRunInput({ mode: 'on', settings, onSince: T0, frontOutcome: { ...front, code: 'TRAIN_BATCH_CHANGED', failed: false }, revokeHeadRequestId: null });
+  assert.deepEqual([job(ended).frontCode, job(ended).frontFailed], ['TRAIN_BATCH_CHANGED', false], 'R3 batch 2: an ended front batch that did not fail for the PR');
   const revokeOnly = trainRunInput({ mode: 'revoke-only', settings, onSince: T0, frontOutcome: front, revokeHeadRequestId: CLAIM });
   assert.deepEqual([revokeOnly.frontPr, revokeOnly.revokeHeadRequestId], [null, CLAIM], 'no failed report under PAUSE');
   assert.equal(job(revokeOnly).mode, 'revoke-only');
-  for (const bad of [{ ...on, onSince: null }, { ...shadow, revokeHeadRequestId: CLAIM }, { ...on, frontTestSha: HEAD }, { ...on, frontCode: null }, { ...on, extra: 1 }])
+  for (const bad of [{ ...on, onSince: null }, { ...shadow, revokeHeadRequestId: CLAIM }, { ...on, frontTestSha: HEAD }, { ...on, frontCode: null }, { ...on, frontFailed: null }, { ...on, frontFailed: 'true' }, { ...shadow, frontFailed: false }, { ...on, extra: 1 }])
     assert.throws(() => validateTrainRunInput(bad), { code: 'TRAIN_RUN_INPUT_INVALID' });
 });
 
@@ -330,14 +332,14 @@ test('executor, on: a front batch that finally failed for the PR itself is the n
   const e = withInput({ inputs: [], engine: fakeEngine({ train: mode => answer(mode, {}, 0) }) });
   const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
   await f.exec.tick();
-  const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: f.ports.policy.sourceManifestSha256, attempt: 1, testSha: S };
-  f.exec.frontKeys.set('k'.repeat(64), 2);
-  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'STAGE_CHILD_REFUSED');
-  await f.exec.noteFrontOutcome({ ...subject, testSha: undefined }, 'x'.repeat(64), 'STAGE_CHILD_REFUSED'); // not a front batch: nothing
+  // its front number is the subject's own (bc982192 parked-front v2 §2.2 D): front batch 2 here
+  const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: f.ports.policy.sourceManifestSha256, attempt: 2, testSha: S };
+  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'STAGE_CHILD_REFUSED', true);
+  await f.exec.noteFrontOutcome({ ...subject, testSha: undefined }, 'x'.repeat(64), 'STAGE_CHILD_REFUSED', true); // not a front batch: nothing
   f.advance(MIN);
   await f.exec.tick();
   const carried = e.inputs.at(-1).input;
-  assert.deepEqual([carried.frontPr, carried.frontHeadSha, carried.frontTestSha, carried.frontAttempt, carried.frontCode], [884, HEAD, S, 2, 'STAGE_CHILD_REFUSED']);
+  assert.deepEqual([carried.frontPr, carried.frontHeadSha, carried.frontTestSha, carried.frontAttempt, carried.frontCode, carried.frontFailed], [884, HEAD, S, 2, 'STAGE_CHILD_REFUSED', true]);
   assert.equal((await ofType(f.receipts, 'train-run')).at(-1).frontOutcomeSeq, (await f.receipts.latest(['train-front-outcome'], 1))[0].seq);
   f.advance(10 * MIN);
   await f.exec.tick();
@@ -347,6 +349,32 @@ test('executor, on: a front batch that finally failed for the PR itself is the n
   await g.receipts.append('train-front-outcome', { key: 'k'.repeat(64), frontOutcome: { pr: 884, headSha: HEAD, testSha: S, attempt: 1, code: 'STAGE_CHILD_REFUSED' } });
   assert.equal(await g.exec.trainRecover(), null);
   assert.equal(g.exec.trainFrontOutcome.pr, 884);
+  assert.equal(g.exec.trainFrontOutcome.failed, true, 'R3 batch 2: a receipt from before frontFailed was a failed report');
+});
+
+// FABLE-r3-batch2-followup §1b (修复前必红): a front batch that only ended (frontFailed false) is receipted as 'train-front-ended', never
+// as 'train-front-outcome': a resident of the generation before (an automatic roll-back) reads every 'train-front-outcome' as failed and
+// its stage 10 would touch failed on a PR that did not fail. A restart reads the newest of the two types; the next stage 10 is told.
+test('R3 batch 2 1b: an ended front batch is a train-front-ended receipt, not a train-front-outcome; a restart carries it with frontFailed false', async t => {
+  const e = withInput({ inputs: [], engine: fakeEngine({ train: mode => answer(mode, {}, 0) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick();
+  const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: f.ports.policy.sourceManifestSha256, attempt: 1, testSha: S };
+  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'TRAIN_BATCH_CHANGED', false);
+  assert.deepEqual(await f.receipts.latest(['train-front-outcome'], 1), [], 'what an older resident reads as failed is not written');
+  assert.deepEqual((await f.receipts.latest(['train-front-ended'], 1)).map(r => [r.value.body.frontOutcome.code, r.value.body.frontOutcome.failed]), [['TRAIN_BATCH_CHANGED', false]]);
+  const ge = withInput({ inputs: [], engine: fakeEngine({ train: mode => answer(mode, {}, 0) }) });
+  const g = await executorFixture(t, { policy: policyV8(), root: f.root, engine: ge.engine });
+  await g.exec.trainRecover();
+  assert.deepEqual([g.exec.trainFrontOutcome?.pr, g.exec.trainFrontOutcome?.failed], [884, false], 'a restart finds it');
+  await g.exec.tick();
+  assert.deepEqual([ge.inputs.at(-1)?.input.frontPr, ge.inputs.at(-1)?.input.frontCode, ge.inputs.at(-1)?.input.frontFailed], [884, 'TRAIN_BATCH_CHANGED', false]);
+  // a failure of the PR itself is a train-front-outcome as before, and the newest of the two is the one a restart carries
+  await f.exec.noteFrontOutcome({ ...subject, attempt: 2 }, 'm'.repeat(64), 'PR_NOT_OPEN_OR_CHANGED', true);
+  assert.deepEqual((await f.receipts.latest(['train-front-outcome'], 1)).map(r => [r.value.body.frontOutcome.attempt, r.value.body.frontOutcome.failed]), [[2, true]]);
+  const h = await executorFixture(t, { policy: policyV8(), root: f.root });
+  await h.exec.trainRecover();
+  assert.deepEqual([h.exec.trainFrontOutcome?.attempt, h.exec.trainFrontOutcome?.failed], [2, true]);
 });
 
 test('requests\\: the probe request only marks the probe urgent; the revoke-head request goes to stage 10 and its result to the status', async t => {
@@ -563,7 +591,7 @@ test('review R3 M5: attempt 2 of a front batch is the head\'s second front batch
   const r = await f.exec.tick();
   assert.deepEqual([r.state, typeof r.attempt2], ['FAILED_CLEAN', 'string'], 'a transient stage-2 failure: attempt 2');
   assert.deepEqual(f.exec.frontBatches.get(`884:${HEAD}`).map(x => x.attempt), [1, 2]);
-  assert.equal(f.exec.frontKeys.get(r.attempt2), 2);
+  assert.deepEqual((await f.ledger.pendingAttempts2()).map(a => a.subject.attempt), [2], 'attempt 2 is front batch 2: its subject says so');
   assert.deepEqual((await ofType(f.receipts, 'train-front-enqueued')).map(b => [b.attempt, b.auto === true]), [[1, false], [2, true]]);
   // stage 10 cannot open a third front batch of this head
   assert.equal(await f.exec.enqueueFront({ ...FRONT1, testSha: '9'.repeat(40), attempt: 2 }), null);
@@ -574,7 +602,7 @@ test('review R3 M5: attempt 2 of a front batch is the head\'s second front batch
   const r2 = await f.exec.tick();
   assert.deepEqual([r2.state, r2.failureCode], ['FAILED_CLEAN', 'PR_NOT_OPEN_OR_CHANGED']);
   const fo = (await ofType(f.receipts, 'train-front-outcome')).at(-1);
-  assert.deepEqual([fo.frontOutcome.attempt, fo.frontOutcome.testSha, fo.frontOutcome.code], [2, S, 'PR_NOT_OPEN_OR_CHANGED']);
+  assert.deepEqual([fo.frontOutcome.attempt, fo.frontOutcome.testSha, fo.frontOutcome.code, fo.frontOutcome.failed], [2, S, 'PR_NOT_OPEN_OR_CHANGED', true]);
   f.advance(10 * MIN);
   await f.exec.tick();
   assert.deepEqual([e.inputs.at(-1).input.frontPr, e.inputs.at(-1).input.frontAttempt], [884, 2]);
@@ -585,9 +613,100 @@ test('review R3 M5: attempt 2 of a front batch is the head\'s second front batch
   // no attempt 2 when the head's two front batches are used up (the second one failing transiently)
   const h = await executorFixture(t, { policy: policyV8() });
   h.exec.frontBatches.set(`884:${HEAD}`, [{ testSha: S, attempt: 1 }, { testSha: '8'.repeat(40), attempt: 2 }]);
-  h.exec.frontKeys.set('b'.repeat(64), 2);
   const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: h.ports.policy.sourceManifestSha256, attempt: 1, testSha: '8'.repeat(40) };
   assert.equal(await h.exec.attempt2IfEligible('b'.repeat(64), subject, { code: 'BRIDGE_TRANSPORT_TIMEOUT', stageNumber: 2 }), null);
+});
+
+// FABLE-r3-batch2-gate R5 (防回归): front batch 1 fails transiently, its automatic attempt 2 is scheduled, and stage 10 opens front
+// number 2 of the same S as well: both are attempt 2 of the same (H, S), one batch key; enqueueFront takes it only once (S + attempt), so
+// attempt 2 runs once.
+test('R3 batch 2 R5: an automatic attempt 2 and stage 10\'s front number 2 of the same S are one batch: it runs once', async t => {
+  const stages = { 2: { ok: false, code: 'BRIDGE_TRANSPORT_TIMEOUT', proof } };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: FRONT1 }, 1), m => answer(m, DONE, 0)];
+  const f = await executorFixture(t, { policy: policyV8(), engine: fakeEngine({ stages, train: m => list[Math.min(i++, list.length - 1)](m) }) });
+  await f.exec.tick(); // opens the front batch
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, typeof r.attempt2], ['FAILED_CLEAN', 'string'], 'a transient stage-2 failure: attempt 2');
+  assert.equal(await f.exec.enqueueFront({ ...FRONT1, attempt: 2 }), null, 'front number 2 of the same S is the attempt 2 already scheduled');
+  stages[2] = { ok: true, factsSha256: 'd'.repeat(64) };
+  for (let n = 0; n < 6; n++) { f.advance(10 * MIN); await f.exec.tick(); }
+  const reserved = (await ofType(f.receipts, 'batch-reserved')).filter(b => b.subject?.testSha === S);
+  assert.deepEqual(reserved.map(b => [b.subject.attempt, b.origin]), [[1, 'queued'], [2, 'attempt2']], JSON.stringify(reserved));
+  assert.equal(reserved[1].key, r.attempt2);
+  assert.equal(f.engine.calls.filter(c => c[0] === 'derive').length, 2, JSON.stringify(f.engine.calls));
+  assert.deepEqual((await ofType(f.receipts, 'train-front-enqueued')).map(b => [b.attempt, b.auto === true]), [[1, false], [2, true]]);
+});
+
+// R6 (防回归): a batch of several PRs that fails transiently still gets its automatic attempt 2, the same members and S, as before.
+test('R3 batch 2 R6: a batch of several PRs that fails transiently still gets its automatic attempt 2 (same members, same S)', async t => {
+  const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: '3'.repeat(40) }];
+  const stages = { 2: { ok: false, code: 'BRIDGE_TRANSPORT_TIMEOUT', proof } };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: { ...FRONT1, members } }, 1), m => answer(m, DONE, 0)];
+  const f = await executorFixture(t, { policy: policyV8(), engine: fakeEngine({ stages, train: m => list[Math.min(i++, list.length - 1)](m) }) });
+  await f.exec.tick();
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, typeof r.attempt2], ['FAILED_CLEAN', 'string']);
+  stages[2] = { ok: true, factsSha256: 'd'.repeat(64) };
+  for (let n = 0; n < 6; n++) { f.advance(10 * MIN); await f.exec.tick(); }
+  const reserved = (await ofType(f.receipts, 'batch-reserved')).filter(b => b.subject?.testSha === S);
+  assert.deepEqual(reserved.map(b => [b.subject.attempt, b.origin]), [[1, 'queued'], [2, 'attempt2']], JSON.stringify(reserved));
+  const derives = f.engine.calls.filter(c => c[0] === 'derive');
+  assert.ok(derives.length === 2 && derives.every(c => JSON.stringify(c[2]?.members) === JSON.stringify(members)), JSON.stringify(derives));
+});
+
+// FABLE-r3-batch2-gate §3 A1 (修复前必红): a front batch fails transiently, its automatic attempt 2 is scheduled, and stage 1 of attempt 2
+// releases it for the node role. The same attempt 2 is given back: an `attempt2-reopened` receipt whose attempt1 is the front batch's key
+// (the subject with S), and the intent is pending again. Before the fix reopenAttempt2 built key1 from this.current, which has no S: the
+// ledger refused it and attempt 2 stayed spent.
+const NO_ROLE_HERE = { ...SAFE_REFUSAL, diagnostic: { ...SAFE_REFUSAL.diagnostic, reasonCodes: ['admission_binding_required'] } };
+test('R3 batch 2 A1: a front batch\'s automatic attempt 2 released for the node role at stage 1 is given back (key1 with S)', async t => {
+  const stages = { 2: { ok: false, code: 'BRIDGE_TRANSPORT_TIMEOUT', proof } };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: FRONT1 }, 1), m => answer(m, DONE, 0)];
+  const e = withInput({ inputs: [], engine: fakeEngine({ stages, train: m => list[Math.min(i++, list.length - 1)](m) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick(); // opens the front batch
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, typeof r.attempt2], ['FAILED_CLEAN', 'string'], 'a transient stage-2 failure: attempt 2');
+  const key1 = (await ofType(f.receipts, 'batch-reserved')).find(b => b.key === r.key);
+  assert.equal(key1.subject.testSha, S, 'attempt 1 is the front batch, its subject names S');
+  stages[1] = notAdmitted('NODE_ROLE_NOT_HELD', NO_ROLE_HERE);
+  f.advance(11 * MIN);
+  const second = await f.exec.tick();
+  assert.deepEqual([second.state, second.key, second.failureCode], ['NOT_ADMITTED', r.attempt2, 'NODE_ROLE_NOT_HELD'], JSON.stringify(second));
+  assert.deepEqual((await ofType(f.receipts, 'attempt2-reopened')).map(b => [b.key, b.attempt1]), [[r.attempt2, r.key]]);
+  assert.deepEqual((await f.ledger.pendingAttempts2()).map(a => a.key2), [r.attempt2], 'the same attempt 2 is pending again');
+});
+
+// A2 (防回归): stage 10's front number 2 is a queue row (origin not 'attempt2'), not an attempt-2 intent. Released for the node role at
+// stage 1, it gives nothing back (no `attempt2-reopened`); the row stays queued and runs again.
+test('R3 batch 2 A2: stage 10\'s front number 2 released for the node role at stage 1 gives back no attempt 2; its row stays and retries', async t => {
+  const stages = { 1: notAdmitted('NODE_ROLE_NOT_HELD', NO_ROLE_HERE) };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: { ...FRONT1, attempt: 2 } }, 1), m => answer(m, DONE, 0)];
+  const e = withInput({ inputs: [], engine: fakeEngine({ stages, train: m => list[Math.min(i++, list.length - 1)](m) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick(); // opens front number 2
+  assert.deepEqual([f.queue.row(884)?.current?.testSha, f.queue.row(884)?.current?.frontAttempt], [S, 2]);
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['NOT_ADMITTED', 'NODE_ROLE_NOT_HELD'], JSON.stringify(r));
+  const reserved = (await ofType(f.receipts, 'batch-reserved')).find(b => b.key === r.key);
+  assert.deepEqual([reserved.subject.attempt, reserved.subject.testSha, reserved.origin === 'attempt2'], [2, S, false]);
+  assert.deepEqual(await ofType(f.receipts, 'attempt2-reopened'), []);
+  assert.deepEqual(await f.ledger.pendingAttempts2(), []);
+  const row = f.queue.row(884);
+  assert.deepEqual([row?.current?.testSha, row?.current?.frontAttempt], [S, 2], 'the row is still queued');
+  delete stages[1];
+  const ranBefore = e.engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length;
+  for (let k = 0; k < 10 && e.engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length === ranBefore; k++) { f.advance(11 * MIN); await f.exec.tick(); }
+  assert.ok(e.engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length > ranBefore, 'the row runs again');
+  assert.equal((await ofType(f.receipts, 'batch-reserved')).at(-1).key, r.key, 'with the same key');
 });
 
 test('ADR 0019 review blocker 1: batches of several PRs never use up the front\'s two attempts (bisection reaches the front alone); attempt 2 keeps /4', async t => {
@@ -690,8 +809,7 @@ test('review R3 MINOR 3: the front outcome is carried again until stage 10 repor
   const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
   await f.exec.tick();
   const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: f.ports.policy.sourceManifestSha256, attempt: 1, testSha: S };
-  f.exec.frontKeys.set('k'.repeat(64), 1);
-  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'PR_NOT_OPEN_OR_CHANGED');
+  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'PR_NOT_OPEN_OR_CHANGED', true);
   f.advance(MIN);
   await f.exec.tick();
   assert.deepEqual([e.inputs.at(-1).input.frontPr, (await ofType(f.receipts, 'train-run')).at(-1).frontOutcomeCleared], [884, false]);
@@ -710,7 +828,7 @@ test('review R3 MINOR 3: the front outcome is carried again until stage 10 repor
   assert.equal(e.inputs.at(-1).input.frontPr, null, 'reported: cleared');
   // moot: the front is another head now
   failed = false;
-  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'PR_NOT_OPEN_OR_CHANGED');
+  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'PR_NOT_OPEN_OR_CHANGED', true);
   front = { pr: 884, headSha: '9'.repeat(40) };
   f.advance(MIN);
   await f.exec.tick();
@@ -1004,9 +1122,10 @@ test('push codes (ADR 0018): every stage-8 landing code is in the resident table
 });
 
 // Defect 15894c2a (end to end, resident side): the nodes an on-mode stage 10 compared in its §41.6 Source check reach the status snapshot
-// (train.nodes) the NON-elevated upgrade precheck reads; there the precheck's comparison against a target refuses while another node heard
-// within 24 hours runs another Source, and passes once it runs the target. A run that read no nodes (shadow, not on duty) keeps the list.
-test('defect 15894c2a: stage 10\'s nodes list reaches status.json train.nodes; the precheck compares the target against it', async t => {
+// (train.nodes) the NON-elevated readers read (the landing precheck, the fleet-lag alert); there fleetSourceCheck against a target says
+// MISMATCH while another node heard within 24 hours runs another Source, and PASS once it runs the target. A run that read no nodes
+// (shadow, not on duty) keeps the list.
+test('defect 15894c2a: stage 10\'s nodes list reaches status.json train.nodes; fleetSourceCheck compares a target against it', async t => {
   const status = new StatusBoard({ clock: () => T0, pid: 1 });
   const target = 'd'.repeat(64), heard = new Date(T0 - 5 * MIN).toISOString();
   let peerSource = null, mode = 'on';
@@ -1032,6 +1151,28 @@ test('defect 15894c2a: stage 10\'s nodes list reaches status.json train.nodes; t
   assert.equal(parseTrainNodes(onDisk()).at, new Date(T0).toISOString(), 'facts carry the run time the fixture gave');
 });
 
+// fleetSourceCheck, pure (moved with it from rollout/precheck.mjs, task 0b1516c0; the landing precheck reads it): which nodes are
+// compared, which are not, and when there is no list to compare on.
+test('fleetSourceCheck: own entry never compared (any letter case); no Source is not compared; over 24 hours not compared; no usable list is UNVERIFIED', () => {
+  const target = 'd'.repeat(64), other = 'c'.repeat(64), HOUR = 60 * MIN;
+  const peer = (node, source, heardAgo) => ({ node, sourceManifestSha256: source, state: 'NORMAL', lastHeartbeatAt: heardAgo === null ? null : new Date(T0 - heardAgo).toISOString() });
+  const view = (nodes, at = T0, dropped = 0) => parseTrainNodes({ at: new Date(at).toISOString(), sourceManifestSha256: other, nodes, dropped });
+  const check = (v, onDuty = true) => fleetSourceCheck({ view: v, target, selfNames: ['desk', null, ''], now: T0, onDuty });
+  const pass = check(view([peer('DESK', other, MIN), peer('node-b', target, 5 * MIN), peer('fresh', null, MIN)]));
+  assert.deepEqual([pass.status, pass.staleNodesIgnored, pass.viewAt, pass.targetCiSourceManifestSha256], ['PASS', [], new Date(T0).toISOString(), target]);
+  const m = check(view([peer('desk', other, MIN), peer('node-b', other, 23 * HOUR), peer('fresh', null, MIN)], T0, 3));
+  assert.deepEqual([m.status, m.upgradeFirst, m.mismatchedNodes, m.droppedEntries],
+    ['MISMATCH', ['node-b'], [{ node: 'node-b', sourceManifestSha256: other, lastHeartbeatAt: new Date(T0 - 23 * HOUR).toISOString() }], 3]);
+  const old = check(view([peer('desk', other, MIN), peer('node-b', other, 25 * HOUR), peer('never', other, null)]));
+  assert.deepEqual([old.status, old.staleNodesIgnored.map(n => n.node)], ['PASS', ['node-b', 'never']]);
+  assert.deepEqual([check(null).status, check(null).reason], ['UNVERIFIED', 'NODES_VIEW_ABSENT']);
+  assert.equal(check(view([peer('desk', other, MIN)], T0 - 2 * HOUR)).reason, 'NODES_VIEW_STALE');
+  const notSelf = check(view([peer('someone-else', other, MIN), peer('node-b', other, MIN)]));
+  assert.deepEqual([notSelf.reason, notSelf.nodes.map(n => n.node)], ['SELF_NOT_IN_NODES_VIEW', ['someone-else', 'node-b']]);
+  const off = check(view([peer('desk', other, MIN), peer('node-b', other, MIN)], T0 - 20 * MIN), false);
+  assert.deepEqual([off.status, off.reason, off.mismatchedNodes.map(n => n.node)], ['UNVERIFIED', 'NOT_ON_DUTY', ['node-b']]);
+});
+
 test('defect 15894c2a: trainNodesView takes on-mode facts /2 with a nodes list only; a malformed list is none', () => {
   const own = 'e'.repeat(64);
   const facts = o => answer('on', { decision: 'NO_FRONT', nodes: [{ node: 'node-b', sourceManifestSha256: 'c'.repeat(64), state: 'NORMAL', lastHeartbeatAt: new Date(T0).toISOString() }], nodesDropped: 2, ...o }, 0).train;
@@ -1042,4 +1183,318 @@ test('defect 15894c2a: trainNodesView takes on-mode facts /2 with a nodes list o
   assert.equal(trainNodesView(facts(), 'not-a-hash'), null);
   assert.equal(parseTrainNodes({ ...v, nodes: [{ node: 'x', sourceManifestSha256: 'zz', state: null, lastHeartbeatAt: null }] }), null);
   assert.deepEqual(parseTrainNodes(JSON.parse(JSON.stringify(v))), v);
+});
+
+// D6 §8.4 (b), field 2026-11-19: a landing state stage 10 cannot read while this node has landing batches is its own decision, no longer
+// TRAIN_SWEEP_INCOMPLETE; the Owner is told (one notice a day) and the error stays in state\status.json's train.last.
+test('executor, on: TRAIN_LANDING_STATE_UNREADABLE tells the Owner and keeps landing.error in the status', async t => {
+  const status = new StatusBoard({ clock: () => T0, pid: 1 });
+  const landing = { error: 'TRAIN_LANDING_STATE_UNREADABLE' };
+  const f = await executorFixture(t, { policy: policyV8(), status,
+    engine: fakeEngine({ train: mode => answer(mode, mode === 'on' ? { ...DONE, decision: 'TRAIN_LANDING_STATE_UNREADABLE', landing } : DONE, 1) }) });
+  assert.ok(DECISIONS.includes('TRAIN_LANDING_STATE_UNREADABLE') && SOURCE_DECISIONS.includes('TRAIN_LANDING_STATE_UNREADABLE'));
+  await f.exec.tick();
+  assert.equal(await f.ledger.halted(), null);
+  assert.ok(f.queue.notices.some(n => n.kind === 'train-owner' && n.code === 'TRAIN_LANDING_STATE_UNREADABLE'), JSON.stringify(f.queue.notices));
+  const last = parseStatus(Buffer.from(JSON.stringify(status.snapshot()))).train.last;
+  assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', landing]);
+  assert.equal(trainSummary({ ...answer('on', { ...DONE, decision: 'NO_FRONT' }).train, landing: { error: 'not a code' } })?.landing, undefined, 'only a code is kept');
+});
+
+// Fable 11-21 open points §5: stage 10's landing.bypass (this App's bypass state of the main and the independent ruleset) is kept in the
+// summary and state\status.json's train.last, for the landing precheck's P3 (no elevation needed); a bypass of another shape is dropped.
+test('open points §5: trainSummary and status.json keep landing.bypass; another shape is dropped, the route stays', async () => {
+  const status = new StatusBoard({ clock: () => T0, pid: 1 });
+  const on = landing => ({ ...answer('on', { ...DONE, decision: 'NO_FRONT' }).train, landing });
+  const kept = { route: 'github-merge', bypass: { main: 'never', independent: 'never' } };
+  assert.deepEqual(trainSummary(on(kept))?.landing, kept);
+  status.update({ train: { enabled: 'on', last: trainSummary(on(kept)) } });
+  assert.deepEqual(parseStatus(Buffer.from(JSON.stringify(status.snapshot()))).train.last.landing, kept, 'status.json keeps it');
+  assert.deepEqual(trainSummary(on({ route: 'push', bypass: { main: 'always', independent: 'absent' } }))?.landing, { route: 'push', bypass: { main: 'always', independent: 'absent' } });
+  for (const bypass of [{ main: 'never' }, { main: 'never', independent: 'never', more: 'never' }, 'never'])
+    assert.deepEqual(trainSummary(on({ route: 'push', bypass }))?.landing, { route: 'push' }, JSON.stringify(bypass));
+});
+
+// Task 04f9b91b (Fable s7-landing-gaps 11-22, 改动 3): the landing precheck's P3 --before reads what push still lacks (landing.missing) from
+// state\status.json: the resident keeps stage 10's list as written, checking the shape only (at most 16 distinct items, each a lower-case
+// word with an optional :suffix, as train-landing.mjs#validLandingMissing); another shape drops the list, the rest stays.
+test('task 04f9b91b: trainSummary and status.json keep landing.missing; another shape is dropped, the route and bypass stay', async () => {
+  const status = new StatusBoard({ clock: () => T0, pid: 1 });
+  const on = landing => ({ ...answer('on', { ...DONE, decision: 'NO_FRONT' }).train, landing });
+  const kept = { route: 'github-merge', missing: ['train_landed_check_missing', 'main_app_cannot_bypass'], bypass: { main: 'never', independent: 'never' } };
+  assert.deepEqual(trainSummary(on(kept))?.landing, kept);
+  status.update({ train: { enabled: 'on', last: trainSummary(on(kept)) } });
+  assert.deepEqual(parseStatus(Buffer.from(JSON.stringify(status.snapshot()))).train.last.landing, kept, 'status.json keeps it');
+  assert.deepEqual(trainSummary(on({ route: 'park', missing: ['ruleset_app_cannot_bypass:27843120'] }))?.landing, { route: 'park', missing: ['ruleset_app_cannot_bypass:27843120'] });
+  assert.deepEqual(trainSummary(on({ route: 'push', missing: [] }))?.landing, { route: 'push', missing: [] });
+  const wrong = [['not an array', 'x'], ['a number', [7]], ['upper case', ['Main']], ['a space', ['a b']], ['twice', ['main_x', 'main_x']],
+    ['seventeen', Array.from({ length: 17 }, (_, i) => `item_${String.fromCharCode(97 + i)}`)]]
+    .filter(([, missing]) => JSON.stringify(trainSummary(on({ route: 'push', missing }))?.landing) !== JSON.stringify({ route: 'push' })).map(([label]) => label);
+  assert.deepEqual(wrong, [], 'every other shape dropped, the route stays');
+});
+
+// Fable 11-21 open points §10 point 2: the resident only keeps what stage 10 wrote; it knows no list of bypass states (that list is
+// Source v2's train-landing.mjs#BYPASS_STATES alone, and the two may be of different generations). It checks the shape only: exactly the
+// keys main and independent, each a short string of lower-case letters and underscores. Which values are right is the reader's (P3).
+test('open points §10: a bypass state the resident never heard of is kept as written; only the shape drops one', async () => {
+  const status = new StatusBoard({ clock: () => T0, pid: 1 });
+  const on = landing => ({ ...answer('on', { ...DONE, decision: 'NO_FRONT' }).train, landing });
+  const newer = { route: 'push', bypass: { main: 'some_new_state', independent: 'absent' } };
+  assert.deepEqual(trainSummary(on(newer))?.landing, newer, 'a value of a newer Source generation is kept');
+  status.update({ train: { enabled: 'on', last: trainSummary(on(newer)) } });
+  assert.deepEqual(parseStatus(Buffer.from(JSON.stringify(status.snapshot()))).train.last.landing, newer, 'status.json keeps it');
+  assert.deepEqual(trainSummary(on({ route: 'push', bypass: { main: 'absent', independent: 'x' } }))?.landing, { route: 'push', bypass: { main: 'absent', independent: 'x' } });
+  const bad = [
+    ['not a string', { main: 7, independent: 'never' }], ['null', { main: 'never', independent: null }], ['empty', { main: '', independent: 'never' }],
+    ['too long', { main: 'a'.repeat(33), independent: 'never' }], ['upper case', { main: 'Never', independent: 'never' }],
+    ['a hyphen', { main: 'never', independent: 'not-read' }], ['a space', { main: 'never ', independent: 'never' }], ['a digit', { main: 'never2', independent: 'never' }],
+    ['one key more', { main: 'never', independent: 'never', more: 'never' }], ['one key fewer', { main: 'never' }], ['not an object', 'never'], ['an array', ['never', 'never']],
+  ];
+  const wrong = bad.filter(([, bypass]) => JSON.stringify(trainSummary(on({ route: 'push', bypass }))?.landing) !== JSON.stringify({ route: 'push' })).map(([label]) => label);
+  assert.deepEqual(wrong, [], 'every other shape dropped, the route stays');
+  assert.deepEqual(trainSummary(on({ route: 'push', bypass: { main: 'a'.repeat(32), independent: 'never' } }))?.landing?.bypass?.main, 'a'.repeat(32), '32 characters is short enough');
+});
+
+// ---- bc982192 parked-front, redone on frontFailed: every end of a front batch reaches stage 10 (D:/w/tmp/FABLE-parked-front-vs-frontfailed-20261123.md §1 items 3a-3c) ----
+// R1 (3a): a batch of several whose member moved on before stage 1 is released and its S dropped from the run queue (ADR 0019 review 2):
+// that is its end. The next on-mode stage 10 carries it (frontFailed false), so it counts the batch ended and composes the next one;
+// otherwise train-maintenance.mjs#liveFrontBatch counts it running and the merge slot is renewed up to its hard cap.
+test('parked-front R1: a batch of several dropped before stage 1 (TRAIN_BATCH_MEMBER_MOVED) is reported ended to the next stage 10, frontFailed false', async t => {
+  const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: '3'.repeat(40) }];
+  const FRONTM = { ...FRONT1, members };
+  const e = withInput(scripted([m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: FRONTM }, 1), m => answer(m, DONE, 0)]));
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine, companion: fakeCompanion({ bundle: { ok: false, code: 'TRAIN_BATCH_MEMBER_MOVED' } }) });
+  await f.exec.tick(); // opens the batch of two
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['NOT_EXECUTED', 'TRAIN_BATCH_MEMBER_MOVED'], JSON.stringify(r));
+  assert.equal(f.queue.row(884).current, null, 'the S is dropped');
+  f.advance(10 * MIN);
+  await f.exec.tick();
+  const carried = e.inputs.at(-1).input;
+  assert.deepEqual([carried.frontPr, carried.frontHeadSha, carried.frontTestSha, carried.frontAttempt, carried.frontCode, carried.frontFailed],
+    [884, HEAD, S, 1, 'TRAIN_BATCH_MEMBER_MOVED', false], JSON.stringify(carried));
+  assert.equal((await ofType(f.receipts, 'train-front-ended')).length, 1, 'reported once');
+});
+
+// R2 (3b): a front batch an earlier boot left open before stage 1 is closed at the restart (DESIGN §71, restartedUnpublished), before
+// trainRecover. The front book (frontBatches) is read first and the batch's subject keeps its front attempt: the head's second front
+// batch gets no attempt 2 (never a third), and its end reaches the first on-mode stage 10 of the new process (frontFailed false).
+const HANG = () => new Promise(() => {});
+test('parked-front R2: the head\'s second front batch interrupted by a reboot closes without attempt 2, its end reported to the new process\'s stage 10', async t => {
+  const FRONT2 = { ...FRONT1, attempt: 2 };
+  const e = scripted([m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: FRONT2 }, 1), m => answer(m, DONE, 0)]);
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick(); // opens the front batch (attempt 2 of the head)
+  f.advance(MIN);
+  let died;
+  const reached = new Promise(resolve => { died = resolve; });
+  f.companion.buildBundle = () => { died(); return HANG(); };
+  f.exec.tick(); // dies in the bundle: the entry is left RESERVED
+  await reached;
+  f.exec.sleep = HANG;
+  const g = withInput({ inputs: [], engine: fakeEngine({ train: m => answer(m, DONE, 0) }) });
+  const exec = new ResidentExecutor({ ...f.ports, engine: g.engine, companion: fakeCompanion({}, f.clock), lockFromEarlierBoot: true });
+  f.advance(10 * MIN);
+  const r = await exec.tick();
+  assert.notEqual(r.state, 'HALTED', JSON.stringify(r));
+  const terminal = (await ofType(f.receipts, 'batch-terminal')).at(-1);
+  assert.deepEqual([terminal?.outcome, terminal?.failureCode], ['FAILED_CLEAN', 'EXECUTOR_RESTARTED_UNPUBLISHED'], JSON.stringify(terminal));
+  assert.deepEqual(await ofType(f.receipts, 'attempt2-scheduled'), [], 'its front attempt was 2: no third front batch of the head');
+  f.advance(10 * MIN);
+  await exec.tick();
+  const carried = g.inputs.find(x => x.input.frontPr !== null)?.input ?? null;
+  assert.ok(carried, `a stage 10 of the new process carries the end: ${JSON.stringify(g.inputs.map(x => x.input.frontPr))}`);
+  assert.deepEqual([carried.frontPr, carried.frontHeadSha, carried.frontTestSha, carried.frontAttempt, carried.frontCode, carried.frontFailed],
+    [884, HEAD, S, 2, 'EXECUTOR_RESTARTED_UNPUBLISHED', false], JSON.stringify(carried));
+});
+
+// 3c: stage 10 counted a front batch and touched running before enqueueFront refused it; the batch never runs, so its end is owed to
+// the next stage 10 (frontFailed false) instead of a TRAIN_FRONT_BATCH_RUNNING until the running clock runs out. Not urgent (§1 item 3d):
+// the cadence's run carries it. A refusal for a busy row is kept for frontRetry and not reported.
+test('parked-front 3c: a front batch refused as TRAIN_FRONT_ATTEMPTS_USED is reported ended to the next stage 10, frontFailed false', async t => {
+  const e = withInput({ inputs: [], engine: fakeEngine({ train: mode => answer(mode, DONE, 0) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick();
+  f.exec.frontBatches.set(`884:${HEAD}`, [{ testSha: S, attempt: 1 }, { testSha: '8'.repeat(40), attempt: 2 }]);
+  const third = { ...FRONT1, testSha: '9'.repeat(40), attempt: 2 };
+  assert.equal(await f.exec.enqueueFront(third), null);
+  assert.equal((await ofType(f.receipts, 'train-front-refused')).at(-1).failureCode, 'TRAIN_FRONT_ATTEMPTS_USED');
+  assert.equal(f.exec.trainUrgent, false, 'not urgent');
+  f.advance(10 * MIN);
+  await f.exec.tick();
+  const carried = e.inputs.at(-1).input;
+  assert.deepEqual([carried.frontPr, carried.frontHeadSha, carried.frontTestSha, carried.frontAttempt, carried.frontCode, carried.frontFailed],
+    [884, HEAD, '9'.repeat(40), 2, 'TRAIN_FRONT_ATTEMPTS_USED', false], JSON.stringify(carried));
+});
+
+test('parked-front 3c: a front batch refused because the queue is full (QUEUE_DEPTH_EXCEEDED) is reported ended to the next stage 10, frontFailed false', async t => {
+  const e = withInput({ inputs: [], engine: fakeEngine({ train: mode => answer(mode, DONE, 0) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick();
+  f.exec.policy.limits.queueDepth = 1;
+  assert.equal(f.queue.offer({ pr: 990, headSha: '2'.repeat(40), baseSha: BASE }, f.clock(), { depth: 1, cooldownMs: 0 }).action, 'new', 'the queue is full now');
+  assert.equal(await f.exec.enqueueFront(FRONT1), null);
+  assert.equal((await ofType(f.receipts, 'train-front-refused')).at(-1).failureCode, 'QUEUE_DEPTH_EXCEEDED');
+  // PR 990's batch may take a tick first; the report is held until a stage 10 carries it (and cleared after): the run that carried it
+  let carried = null;
+  for (let i = 0; i < 4 && !carried; i++) {
+    f.advance(10 * MIN);
+    await f.exec.tick();
+    carried = e.inputs.map(x => x.input).find(x => x.frontPr !== null) ?? null;
+  }
+  assert.deepEqual([carried?.frontPr, carried?.frontHeadSha, carried?.frontTestSha, carried?.frontAttempt, carried?.frontCode, carried?.frontFailed],
+    [884, HEAD, S, 1, 'QUEUE_DEPTH_EXCEEDED', false], JSON.stringify({ carried, runs: e.inputs.map(x => [x.mode, x.input.frontPr]), outcome: f.exec.trainFrontOutcome ?? null }));
+});
+
+// ---- bc982192 parked-front v2 rework (D:/w/tmp/FABLE-parked-front-attempt2-number-20261123.md §4) ----
+// A front batch whose attempt 1 fails transiently at stage 2 (BRIDGE_TRANSPORT_TIMEOUT) gets its automatic attempt 2; transient: a list
+// of stage-10 answers, the first opening `front`. attempt2Front: the fixture after attempt 1 ended (its attempt 2 scheduled).
+async function attempt2Front(t, front, { stage2 = { ok: false, code: 'BRIDGE_TRANSPORT_TIMEOUT', proof } } = {}) {
+  const stages = { 2: stage2 };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: front }, 1), m => answer(m, DONE, 0)];
+  const e = withInput({ inputs: [], engine: fakeEngine({ stages, train: m => list[Math.min(i++, list.length - 1)](m) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick(); // opens the front batch
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, typeof r.attempt2], ['FAILED_CLEAN', 'string'], `a transient stage-2 failure: attempt 2 (${JSON.stringify(r)})`);
+  assert.deepEqual(await ofType(f.receipts, 'train-front-ended'), [], 'attempt 1 has an attempt 2: not an end');
+  return { e, f, r, stages };
+}
+const endedOf = async f => (await ofType(f.receipts, 'train-front-ended')).map(b => [b.frontOutcome.pr, b.frontOutcome.testSha, b.frontOutcome.attempt, b.frontOutcome.code, b.frontOutcome.failed]);
+const carriedOf = e => e.inputs.map(x => x.input).findLast(x => x.frontPr !== null) ?? null;
+
+// N1 (executor side; the stage-10 side is train-landing-e2e N1): push mode, a batch of two; attempt 1 and its automatic attempt 2 both
+// fail transiently at stage 2. That end (no attempt 2 of its own) is reported once, naming S (frontFailed false), and carried to stage 10.
+test('parked-front N1: a batch of two whose automatic attempt 2 ended (not failed) is reported naming its S to the next stage 10', async t => {
+  const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: '3'.repeat(40) }];
+  const { e, f } = await attempt2Front(t, { ...FRONT1, members });
+  f.advance(10 * MIN);
+  const r2 = await f.exec.tick();
+  assert.deepEqual([r2.state, r2.failureCode, r2.attempt2 ?? null], ['FAILED_CLEAN', 'BRIDGE_TRANSPORT_TIMEOUT', null], JSON.stringify(r2));
+  assert.deepEqual(await endedOf(f), [[884, S, 2, 'BRIDGE_TRANSPORT_TIMEOUT', false]]);
+  f.advance(10 * MIN);
+  await f.exec.tick();
+  const carried = carriedOf(e);
+  assert.deepEqual([carried?.frontPr, carried?.frontTestSha, carried?.frontCode, carried?.frontFailed], [884, S, 'BRIDGE_TRANSPORT_TIMEOUT', false], JSON.stringify(carried));
+});
+
+// N2 (修复前必红, executor side; FABLE §1.3): the front alone, the same two failures; stage 10 then opens its own number 2 of the same S,
+// which is the automatic attempt 2 that already ran. enqueueFront never returns silently: with nothing here left to run (H, S) it reports
+// the batch ended (TRAIN_FRONT_ATTEMPTS_USED, frontFailed false, not urgent), so stage 10 counts it ended instead of running.
+test('parked-front N2: stage 10\'s number 2 of an S whose automatic attempt 2 already ran is reported ended, not urgent (enqueueFront never returns silently)', async t => {
+  const { e, f } = await attempt2Front(t, FRONT1);
+  f.advance(10 * MIN);
+  const r2 = await f.exec.tick();
+  assert.deepEqual([r2.state, r2.failureCode, r2.attempt2 ?? null], ['FAILED_CLEAN', 'BRIDGE_TRANSPORT_TIMEOUT', null], JSON.stringify(r2));
+  f.exec.trainUrgent = false;
+  assert.equal(await f.exec.enqueueFront({ ...FRONT1, attempt: 2 }), null, 'the same (S, 2) ran already');
+  assert.equal(f.exec.trainUrgent, false, 'not urgent');
+  assert.deepEqual(await endedOf(f), [[884, S, 2, 'BRIDGE_TRANSPORT_TIMEOUT', false], [884, S, 2, 'TRAIN_FRONT_ATTEMPTS_USED', false]]);
+  f.advance(10 * MIN);
+  await f.exec.tick();
+  const carried = carriedOf(e);
+  assert.deepEqual([carried?.frontTestSha, carried?.frontAttempt, carried?.frontCode, carried?.frontFailed], [S, 2, 'TRAIN_FRONT_ATTEMPTS_USED', false], JSON.stringify(carried));
+});
+
+// N3 (修复前必红; review must-fix 1, the same chain): attempt 1 carried an attempt 2, so afterBatch did not report it; the attempt 2 is then
+// closed unrun for another installed Source (ATTEMPT2_SOURCE_CHANGED). That is the batch's end: reported, and the next stage 10 told.
+test('parked-front N3: a front batch whose attempt 2 is closed unrun (ATTEMPT2_SOURCE_CHANGED) is reported ended to the next stage 10', async t => {
+  const { f } = await attempt2Front(t, FRONT1);
+  const NEW = 'c'.repeat(64);
+  const g = withInput({ inputs: [], engine: fakeEngine({ train: m => answer(m, DONE, 0) }) });
+  const h = await executorFixture(t, { root: f.root, policy: policyV8({}, { sourceManifestSha256: NEW }), engine: g.engine, now: f.clock() + 10 * MIN,
+    integrity: { ok: true, sourceManifestSha256: NEW, residentManifestSha256: 'b'.repeat(64) } });
+  let ignored = [];
+  for (let n = 0; n < 4 && ignored.length === 0; n++) { await h.exec.tick(); ignored = await ofType(h.receipts, 'attempt2-ignored'); h.advance(MIN); }
+  assert.deepEqual(ignored.map(b => b.failureCode), ['ATTEMPT2_SOURCE_CHANGED']);
+  assert.deepEqual(await endedOf(h), [[884, S, 2, 'ATTEMPT2_SOURCE_CHANGED', false]]);
+  h.advance(10 * MIN);
+  await h.exec.tick();
+  const carried = carriedOf(g);
+  assert.deepEqual([carried?.frontTestSha, carried?.frontCode, carried?.frontFailed], [S, 'ATTEMPT2_SOURCE_CHANGED', false], JSON.stringify(carried));
+});
+
+// N4 (修复前必红): as N3, the attempt 2 refused for good by its precheck (pre.ignore).
+test('parked-front N4: a front batch whose attempt 2 the precheck ignores is reported ended to the next stage 10', async t => {
+  const { e, f } = await attempt2Front(t, FRONT1);
+  const precheck = f.exec.precheck.bind(f.exec);
+  f.exec.precheck = async (key, hk, subject, o = {}) => (o.origin === 'attempt2' ? { ignore: 'HEAD_ALREADY_EXECUTED_NO_RETRY' } : precheck(key, hk, subject, o));
+  f.advance(10 * MIN);
+  const r2 = await f.exec.tick();
+  assert.deepEqual([r2.state, r2.reason], ['IGNORED', 'HEAD_ALREADY_EXECUTED_NO_RETRY'], JSON.stringify(r2));
+  assert.deepEqual(await endedOf(f), [[884, S, 2, 'HEAD_ALREADY_EXECUTED_NO_RETRY', false]]);
+  f.advance(10 * MIN);
+  await f.exec.tick();
+  const carried = carriedOf(e);
+  assert.deepEqual([carried?.frontTestSha, carried?.frontCode, carried?.frontFailed], [S, 'HEAD_ALREADY_EXECUTED_NO_RETRY', false], JSON.stringify(carried));
+});
+
+// N5 (修复前必红; FABLE §1.5): the automatic attempt 2's 'train-front-enqueued' receipt could not be written, then the service restarts;
+// the attempt 2 runs in the new process and ends (transient again). Its end is still reported: its number is its subject's own.
+test('parked-front N5: an automatic attempt 2 whose train-front-enqueued receipt was lost, after a restart, still reports its end', async t => {
+  const stages = { 2: { ok: false, code: 'BRIDGE_TRANSPORT_TIMEOUT', proof } };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: FRONT1 }, 1), m => answer(m, DONE, 0)];
+  const f = await executorFixture(t, { policy: policyV8(), engine: fakeEngine({ stages, train: m => list[Math.min(i++, list.length - 1)](m) }) });
+  const receipt = f.exec.receipt.bind(f.exec);
+  f.exec.receipt = async (type, body) => { if (type === 'train-front-enqueued' && body?.auto === true) throw new Error('disk full'); return receipt(type, body); };
+  await f.exec.tick();
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, typeof r.attempt2], ['FAILED_CLEAN', 'string'], JSON.stringify(r));
+  assert.deepEqual((await ofType(f.receipts, 'train-front-enqueued')).map(b => b.auto === true), [false], 'the automatic one was not receipted');
+  const g = withInput({ inputs: [], engine: fakeEngine({ stages, train: m => answer(m, DONE, 0) }) });
+  const h = await executorFixture(t, { root: f.root, policy: policyV8(), engine: g.engine, now: f.clock() + 10 * MIN });
+  await h.exec.trainRecover();
+  let r2 = null;
+  for (let n = 0; n < 4 && r2?.state !== 'FAILED_CLEAN'; n++) { r2 = await h.exec.tick(); h.advance(MIN); }
+  assert.deepEqual([r2?.state, r2?.failureCode], ['FAILED_CLEAN', 'BRIDGE_TRANSPORT_TIMEOUT'], JSON.stringify(r2));
+  assert.deepEqual(await endedOf(h), [[884, S, 2, 'BRIDGE_TRANSPORT_TIMEOUT', false]]);
+});
+
+// N7 (防回归, R3 batch 2 R5): the automatic attempt 2 is scheduled and not run yet when stage 10 opens its number 2 of the same S: the
+// executor holds a run of (H, S) (the pending intent), so it reports nothing; when that attempt 2 ends it reports once, naming S.
+test('parked-front N7: number 2 of an S whose automatic attempt 2 is still pending is not reported; the attempt 2\'s end is, once', async t => {
+  const { f } = await attempt2Front(t, FRONT1);
+  assert.equal(await f.exec.enqueueFront({ ...FRONT1, attempt: 2 }), null, 'the attempt 2 already scheduled');
+  assert.deepEqual(await endedOf(f), [], 'the pending attempt 2 runs (H, S): no end yet');
+  f.advance(10 * MIN);
+  const r2 = await f.exec.tick();
+  assert.deepEqual([r2.state, r2.failureCode], ['FAILED_CLEAN', 'BRIDGE_TRANSPORT_TIMEOUT'], JSON.stringify(r2));
+  for (let n = 0; n < 3; n++) { f.advance(10 * MIN); await f.exec.tick(); }
+  assert.deepEqual(await endedOf(f), [[884, S, 2, 'BRIDGE_TRANSPORT_TIMEOUT', false]]);
+});
+
+// ---- bc982192 parked-front v2, review 2 must-fix 1: holdsFront's live-row branch (DESIGN §85 item 2: a release that runs the same S
+// again is not an end) ----
+// H2: the A2 scene. Stage 10's front number 2 is released for the node role at stage 1; the row stays queued with (H, S) and runs it
+// again. That release passes afterBatch but is no end: nothing is reported (a report would make stage 10 count the batch ended and open
+// the next one while this one still runs). Stage 10 naming the same (S, 2) again meanwhile is the dedup in enqueueFront: the row still
+// holds (H, S), so nothing is reported there either. The batch then passes: still no report (a success is not an end to report).
+test('parked-front H2: a front batch released with its row still holding (H, S) is not reported ended, nor is a dedup of it', async t => {
+  const stages = { 1: notAdmitted('NODE_ROLE_NOT_HELD', NO_ROLE_HERE) };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: { ...FRONT1, attempt: 2 } }, 1), m => answer(m, DONE, 0)];
+  const e = withInput({ inputs: [], engine: fakeEngine({ stages, train: m => list[Math.min(i++, list.length - 1)](m) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick(); // opens front number 2
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['NOT_ADMITTED', 'NODE_ROLE_NOT_HELD'], JSON.stringify(r));
+  const row = f.queue.row(884);
+  assert.deepEqual([row?.current?.testSha, row?.current?.frontAttempt], [S, 2], 'the row still holds (H, S)');
+  const ended = async () => (await f.receipts.latest(['train-front-ended', 'train-front-outcome'], 10)).map(x => x.value.body.frontOutcome.code);
+  assert.deepEqual(await ended(), [], 'a release that runs the same S again is not an end');
+  f.exec.trainUrgent = false;
+  assert.equal(await f.exec.enqueueFront({ ...FRONT1, attempt: 2 }), null, 'the same (S, 2) is in already');
+  assert.deepEqual(await ended(), [], 'its row still holds (H, S): the dedup reports nothing');
+  assert.equal(f.exec.trainUrgent, false);
+  delete stages[1];
+  const ranBefore = e.engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length;
+  for (let k = 0; k < 10 && e.engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length === ranBefore; k++) { f.advance(11 * MIN); await f.exec.tick(); }
+  assert.ok(e.engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length > ranBefore, 'the row runs (H, S) again');
+  assert.deepEqual(await ended(), []);
 });

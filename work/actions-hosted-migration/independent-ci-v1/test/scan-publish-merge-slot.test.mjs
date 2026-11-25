@@ -17,12 +17,12 @@ import { EffectJournal } from '../src/effect-journal.mjs';
 import { createStagedCheckPublisherV2, slotBindingFor } from '../src/staged-check-publisher-v2.mjs';
 import { createFixtureControlPublisherV2, QUEUE_POLL_MS } from '../src/independent-control-checks-v2/publisher.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
-import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fixtures.mjs';
+import { HEAD, BASE, NOW, tempDir, fixtureRecord, signResult, FAR_FUTURE } from './resident-v2-fixtures.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const SLOT_REF = `merge:${REPO}:main`;
 const iso = ms => new Date(ms).toISOString();
-const SLOT_UNTIL = iso(Date.now() + 3600_000); // fixed: an unchanged slot reads alike twice
+const SLOT_UNTIL = iso(FAR_FUTURE); // fixed: an unchanged slot reads alike twice
 const jobsFor = (attempt = 1) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt });
 const claim = (o = {}) => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000), ...o });
 const blocked = reason => ({ contract: 'clued.independent-ci.full-admission/2', status: 'BLOCKED', admitted: false, reason });
@@ -87,9 +87,9 @@ const withAfter = (before, after) => (j, c, packet, opts, n) => admitted(j, c, p
 const SLOT_CHANGES = {
   'the claim joins the merge queue': [{ slot: { state: 'missing', until: null }, mergeQueueHead: false }, { slot: { state: 'held' }, mergeQueueHead: true }],
   'the claim leaves the merge queue': [{ slot: { state: 'held' }, mergeQueueHead: true }, { slot: { state: 'missing', until: null }, mergeQueueHead: false }],
-  'the slot lapses (held until 45 minutes, then missing)': [{ slot: { state: 'held', until: iso(Date.now() + 1000) }, mergeQueueHead: true }, { slot: { state: 'missing', until: iso(Date.now() - 1000) }, mergeQueueHead: false }],
+  'the slot lapses (held until 45 minutes, then missing)': [{ slot: { state: 'held', until: SLOT_UNTIL }, mergeQueueHead: true }, { slot: { state: 'missing', until: iso(NOW) }, mergeQueueHead: false }],
   'the head of the queue changes while the claim only waits': [{ slot: { state: 'missing', until: null }, mergeQueueHead: true }, { slot: { state: 'missing', until: null }, mergeQueueHead: false }],
-  'a renewal or touch moves the slot clock (until only)': [{ slot: { until: iso(Date.now() + 1_000_000) } }, { slot: { until: iso(Date.now() + 3_000_000) } }],
+  'a renewal or touch moves the slot clock (until only)': [{ slot: { until: iso(FAR_FUTURE + 1_000_000) } }, { slot: { until: iso(FAR_FUTURE + 3_000_000) } }],
   'the slot goes from not_needed to held (the head now contains main\'s tip)': [{ slot: { state: 'not_needed', until: null } }, { slot: { state: 'held' } }],
   'the policy advises the slot (not_required, observed state changes)': [{ slot: { state: 'not_required', observed: 'missing', until: null } }, { slot: { state: 'not_required', observed: 'held' } }],
 };

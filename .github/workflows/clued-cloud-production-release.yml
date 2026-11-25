@@ -5,11 +5,20 @@ on:
     inputs:
       mode:
         description: >-
-          Release mode. Only deploy and migrate change production, and both first consume
-          an Owner Grant for this commit. preflight runs the read-only gate, backup creates
-          the encrypted pre-migration backup, source-capture captures one reviewed storage
-          client source, migrate applies the named migration files. deploy publishes the
-          PDF, main application and Kooyumi Connect Workers as one controlled release.
+          Release mode. Only deploy, migrate and release change production, and each first
+          consumes an Owner Grant for this commit. preflight runs the read-only gate, backup
+          creates the encrypted pre-migration backup, source-capture captures one reviewed
+          storage client source, migrate applies the named migration files. deploy publishes
+          the PDF, main application and Kooyumi Connect Workers as one controlled release.
+          release is the same deploy from one approval for a commit whose every change a
+          Worker version rollback undoes: it takes no migrations (apply them with migrate
+          first) and runs only when the three wrangler production configurations are byte for
+          byte those of the commit the edge serves (otherwise use deploy). deploy and release
+          roll the Workers back to the versions they served if a deploy or verification fails.
+          fleet-accept changes nothing but one pending request: it checks the acceptance
+          request of the published universal node package fleet-node-<fleet_version> and
+          opens the Owner's fleet.accept request for it; the Owner's approval on the
+          confirmation page is the acceptance.
         type: choice
         required: true
         default: preflight
@@ -19,6 +28,8 @@ on:
           - source-capture
           - deploy
           - migrate
+          - release
+          - fleet-accept
       source_request_id:
         description: Exact approved authorization request UUID; source-capture mode only
         type: string
@@ -33,12 +44,32 @@ on:
           comma-separated, in the order to apply
         type: string
         default: ''
+      fleet_version:
+        description: >-
+          fleet-accept mode only: the version of the published universal node package
+          (Release tag fleet-node-<version>)
+        type: string
+        default: ''
+      fleet_request_sha256:
+        description: >-
+          fleet-accept mode only: SHA-256 of that Release's
+          fleet-node-<version>.acceptance-request.json, 64 lowercase hex characters
+        type: string
+        default: ''
+      rollback_drill:
+        description: >-
+          release mode only: after every verification has passed, fail on purpose before
+          the G6 attestation is written, so the Workers roll back through the real path
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# fleet-accept opens a request and changes nothing else in production: it has
+# its own group, so it neither waits for a release nor holds one up.
 concurrency:
-  group: clued-cloud-production-release
+  group: ${{ inputs.mode == 'fleet-accept' && 'clued-cloud-fleet-accept' || 'clued-cloud-production-release' }}
   cancel-in-progress: false
 
 jobs:
@@ -48,31 +79,44 @@ jobs:
       github.actor == github.repository_owner &&
       github.triggering_actor == github.repository_owner
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    # OwnerCredential §6.1: CLUED_RELEASE_TOKEN and CLUED_MIGRATION_DATABASE_URL
-    # live in this environment (Owner setting: deployment branches main only).
+    # deploy and release: at least every step plus the rollback (each has its
+    # own timeout-minutes; tests/production-release-gate.test.mjs checks the sum).
+    # Every other mode keeps 45: the migrate steps have no step timeout, and a
+    # stalled migration must not hold the concurrency group longer than before.
+    # fleet-accept reads two small files and makes one database call: 10.
+    timeout-minutes: ${{ (inputs.mode == 'deploy' || inputs.mode == 'release') && 165 || inputs.mode == 'fleet-accept' && 10 || 45 }}
+    # OwnerCredential §6.1: CLUED_MIGRATION_DATABASE_URL lives in this
+    # environment (Owner setting: deployment branches main only). Its database
+    # login is also the release identity: only it may call the release door.
     environment: clued-release
     defaults:
       run:
         working-directory: apps/clued-cloud
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 3
         with:
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        timeout-minutes: 5
         with:
           node-version: 24.19.0
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
       - name: Configure job temporary storage
+        timeout-minutes: 2
         uses: ./.github/actions/ci-temporary-storage
       - name: Validate exclusive release mode
+        timeout-minutes: 1
         env:
           RELEASE_MODE: ${{ inputs.mode }}
           SOURCE_REQUEST_ID: ${{ inputs.source_request_id }}
           SOURCE_REQUEST_DIGEST: ${{ inputs.source_request_digest }}
           MIGRATIONS: ${{ inputs.migrations }}
+          ROLLBACK_DRILL: ${{ inputs.rollback_drill }}
+          FLEET_VERSION: ${{ inputs.fleet_version }}
+          FLEET_REQUEST_SHA256: ${{ inputs.fleet_request_sha256 }}
         run: |
           set -euo pipefail
           # Deploy is never implied: an unknown or missing mode stops here, before any
@@ -90,13 +134,45 @@ jobs:
               test -z "$SOURCE_REQUEST_ID"
               test -z "$SOURCE_REQUEST_DIGEST"
               test -n "${MIGRATIONS:-}" ;;
+            release)
+              test -z "$SOURCE_REQUEST_ID"
+              test -z "$SOURCE_REQUEST_DIGEST"
+              # A release carries only what a Worker version rollback undoes; a
+              # migration cannot be rolled back with the Workers.
+              if [ -n "${MIGRATIONS:-}" ]; then
+                echo "::error::release takes no migrations: apply them with migrate mode first, then release" >&2
+                exit 1
+              fi ;;
+            fleet-accept)
+              test -z "$SOURCE_REQUEST_ID"
+              test -z "$SOURCE_REQUEST_DIGEST"
+              test -z "${MIGRATIONS:-}"
+              # The two values are checked here as fixed shapes and travel on as
+              # environment values only, never as shell or SQL text.
+              if ! [[ "${FLEET_VERSION:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,88}$ ]]; then
+                echo "::error::fleet_version is not a universal node package version" >&2
+                exit 1
+              fi
+              if ! [[ "${FLEET_REQUEST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]; then
+                echo "::error::fleet_request_sha256 is not 64 lowercase hex characters" >&2
+                exit 1
+              fi ;;
             *)
               echo "::error::Unknown release mode '$RELEASE_MODE'" >&2
               exit 1 ;;
           esac
+          if [ "$RELEASE_MODE" != "fleet-accept" ] && [ -n "${FLEET_VERSION:-}${FLEET_REQUEST_SHA256:-}" ]; then
+            echo "::error::fleet_version and fleet_request_sha256 are fleet-accept inputs" >&2
+            exit 1
+          fi
+          if [ "${ROLLBACK_DRILL:-false}" != "false" ] && [ "$RELEASE_MODE" != "release" ]; then
+            echo "::error::rollback_drill is a release-mode switch" >&2
+            exit 1
+          fi
           echo "Release mode: $RELEASE_MODE"
       - name: Check production database credential
         if: ${{ inputs.mode != 'source-capture' }}
+        timeout-minutes: 1
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
         run: |
@@ -123,6 +199,35 @@ jobs:
           CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
         run: |
           node -e 'const fs=require("node:fs"),ref="ccxsikzwxlolxqlosril"; function identity(raw){let u;try{u=new URL(raw);}catch{throw new Error("Invalid production database URL");} if(!["postgres:","postgresql:"].includes(u.protocol)||u.pathname!=="/postgres"||[...u.searchParams.keys()].some(k=>["host","hostaddr","port","dbname","database","user","service","servicefile"].includes(k.toLowerCase()))) throw new Error("Unsupported production database routing"); const direct=u.hostname==="db."+ref+".supabase.co"&&(!u.port||u.port==="5432"),pool=/^[a-z0-9-]+\.pooler\.supabase\.com$/.test(u.hostname)&&["5432","6543"].includes(u.port)&&decodeURIComponent(u.username).split(".").at(-1)===ref; if(!direct&&!pool) throw new Error("Production backup and migration target mismatch");return "supabase:"+ref+":postgres";} const a=identity(process.env.CLUED_ATTESTATION_DATABASE_URL),b=identity(process.env.CLUED_MIGRATION_DATABASE_URL); if(a!==b) throw new Error("Production backup and migration target mismatch");fs.appendFileSync(process.env.GITHUB_ENV,"CLUED_PRODUCTION_DATABASE_IDENTITY="+a+"\n");'
+      # Capacity gate (FABLE-prod-db-shrink-v2-20261124 §8): at or above 85% of
+      # the 500 MB database limit, a migration that adds a table, an index or a
+      # column is refused here, before the full backup. The size is read with the
+      # migration login the apply step uses; the threshold is the script's own
+      # constant. The retention sweep reminder only warns, and only for a registered
+      # job without a success in 48 hours (a database without it reads 'absent').
+      - name: Refuse additions while the database is near its size limit
+        if: ${{ inputs.mode == 'migrate' }}
+        timeout-minutes: 5
+        env:
+          CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
+          MIGRATIONS: ${{ inputs.migrations }}
+        run: |
+          set -euo pipefail
+          database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL; URL-encode special characters in the password"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
+          psql_read() { docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine \
+            psql "$database_url" -v ON_ERROR_STOP=1 -X -tA -c "$1"; }
+          size_bytes=$(psql_read 'select pg_database_size(current_database())') \
+            || { echo "::error::容量门：读不到生产库大小；没有备份、没有迁移，生产没有变化"; exit 1; }
+          sweep=$(psql_read "select case when not exists (select 1 from cron.job where jobname = 'clued-retention-sweep') then 'absent' else (select count(*) from cron.job_run_details d join cron.job j on j.jobid = d.jobid where j.jobname = 'clued-retention-sweep' and d.status = 'succeeded' and d.end_time > now() - interval '48 hours')::text end" 2>/dev/null) || sweep=''
+          if [ "$sweep" = 0 ]; then
+            echo "::warning::每日清理 clued-retention-sweep 最近 48 小时没有一次成功（cron.job_run_details）；不影响本次迁移"
+          fi
+          files=''
+          for name in $(printf '%s' "$MIGRATIONS" | tr ',' ' '); do
+            [[ "$name" =~ ^[0-9]{14}_[a-z0-9_]+\.sql$ ]] || { echo "::error::Not a migration file name: $name"; exit 1; }
+            files="${files:+$files,}supabase/migrations/$name"
+          done
+          node scripts/migration-size-gate.mjs --size-bytes "$size_bytes" --files "$files"
       # The connection URLs are written for node-postgres, whose sslmode=no-verify
       # (encrypt, do not verify the certificate) libpq rejects; libpq's require
       # means the same, so the libpq tools below get require instead.
@@ -207,10 +312,10 @@ jobs:
           BACKUP_OUTCOME: ${{ steps.pre_migration_backup.outcome }}
         run: |
           node -e 'const fs=require("node:fs"),crypto=require("node:crypto"); if(process.env.BACKUP_OUTCOME!=="success") throw new Error("Migration backup did not succeed"); const root=".sites-runtime/release-evidence/",m=JSON.parse(fs.readFileSync(root+"production-backup-manifest.json","utf8")),identity=process.env.CLUED_PRODUCTION_DATABASE_IDENTITY; if(identity!=="supabase:ccxsikzwxlolxqlosril:postgres"||m.database_identity!==identity||m.contract!=="clued.production-pre-migration-backup.v1"||m.source_commit!==process.env.GITHUB_SHA||m.database_project!=="clued-prod"||m.scope_verification?.verified!==true||!Number.isSafeInteger(m.dump_bytes)||m.dump_bytes<1||!/^[0-9a-f]{64}$/.test(m.dump_sha256)) throw new Error("Unverified migration backup manifest"); const digest=crypto.createHash("sha256").update(fs.readFileSync(root+"clued-production-pre-migration.dump.enc")).digest("hex"); if(digest!==m.encrypted_sha256) throw new Error("Encrypted migration backup differs from its manifest");'
-      # It connects once (select 1), so a wrong password or host fails here,
-      # before the grant step uses one of the Owner's grants (trial run
-      # 37155374056 used its grant and then failed to authenticate).
-      - name: Check migration database credential
+      # It connects once and records the database login role (a name, not a
+      # secret), so a wrong password or host fails here with a clear message.
+      # That login is the release identity (release door v1).
+      - name: Record migration database login role
         if: ${{ inputs.mode == 'migrate' }}
         env:
           CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
@@ -220,27 +325,11 @@ jobs:
           # A malformed URL (for example an unencoded @ or # in the password)
           # is reported without echoing the value.
           database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL; URL-encode special characters in the password"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
-          connected=$(docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine \
-            psql "$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select 1') \
-            || { echo "::error::Cannot connect with CLUED_MIGRATION_DATABASE_URL; no grant was used"; exit 1; }
-          [ "$connected" = "1" ] || { echo "::error::Unexpected answer from the migration database; no grant was used"; exit 1; }
-          echo "Migration database connection works"
-      # OwnerCredential §6.1 (Task 2a31ca2a): before anything changes production,
-      # consume one use of the Owner's grant for the named migration files of
-      # this commit. Advisory until the Owner sets CLUED_RELEASE_GRANT_ENFORCE=true;
-      # then no grant, no run. It runs after the credential check, so a run that
-      # cannot proceed uses no grant. deploy consumes its grant further down,
-      # after the release gate.
-      - name: Consume the Owner Grant for the named migrations
-        if: ${{ inputs.mode == 'migrate' }}
-        working-directory: .
-        env:
-          RELEASE_MODE: ${{ inputs.mode }}
-          MIGRATIONS: ${{ inputs.migrations }}
-          CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
-          CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
-          CLUED_RELEASE_GRANT_ENFORCE: ${{ vars.CLUED_RELEASE_GRANT_ENFORCE }}
-        run: node scripts/ci/clued-release-grant.mjs --mode "$RELEASE_MODE"
+          role=$(docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine \
+            psql "$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select current_user') \
+            || { echo "::error::Cannot connect with CLUED_MIGRATION_DATABASE_URL; nothing changed"; exit 1; }
+          [ -n "$role" ] || { echo "::error::Unexpected answer from the migration database; nothing changed"; exit 1; }
+          echo "Migration database login role: $role"
       # OwnerCredential §6.1: each named file from this commit is applied in its
       # own transaction together with its schema_migrations row (statements =
       # the file's exact text), then md5(statements) is checked against the file.
@@ -253,11 +342,26 @@ jobs:
       # EXECUTE, so a file may not hold transaction control (begin, commit,
       # savepoint, rollback) or end with SELECT ... INTO; either fails and rolls
       # back, leaving no record.
+      #
+      # Release door v1 (FABLE-release-identity-autonomous-20261119 §1.2, §2):
+      # the Owner Grant for every named file (with the deploy of this commit) is
+      # consumed by clued_private.release_door_v1 inside the first file's
+      # transaction, before the file runs; its input is the first COPY line, not
+      # SQL text. No grant: the transaction rolls back, a request_only call
+      # leaves the pending request and its link, and the run fails. Every file's
+      # transaction probes the door before it commits, so a file that breaks the
+      # door cannot commit. Only while the door does not exist may a first file
+      # whose md5 is RELEASE_DOOR_INSTALL_MD5 (the install migration) run first;
+      # its transaction must then hold the door and consume through it.
       - name: Apply the named migrations
         if: ${{ inputs.mode == 'migrate' }}
         env:
           CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
           MIGRATIONS: ${{ inputs.migrations }}
+          CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
+          # md5 of 20261119130000_release_door_db_identity_v1.sql (PR-A, 4f4e7f6ee);
+          # production-release-gate.test.mjs checks it against the file.
+          RELEASE_DOOR_INSTALL_MD5: '7eedb34f524fb01e621815cea9901346'
         run: |
           set -euo pipefail
           evidence_dir=.sites-runtime/release-evidence
@@ -265,7 +369,17 @@ jobs:
           database_url=$(node -e 'const url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL); url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
           psql() { docker run --rm -i --user "$(id -u):$(id -g)" -e DATABASE_URL="$database_url" \
             -v "$PWD:/work:ro" -w /work postgres:17-alpine psql "$database_url" -v ON_ERROR_STOP=1 -X "$@"; }
+          grant() { node ../../scripts/ci/clued-release-door.mjs "$@"; }
+          door_call() { psql -q -tA -v VERBOSITY=terse \
+            -c "create temp table door_input(line text)" \
+            -c "copy door_input(line) from stdin with (format csv, delimiter e'\x01', quote e'\x02')" \
+            -c "select clued_private.release_door_v1(line::jsonb)::text from door_input"; }
+          door_input=$(grant input --mode migrate)
+          door=$(psql -tA -c "select to_regprocedure('clued_private.release_door_v1(jsonb)') is not null")
+          err=$(mktemp "$RUNNER_TEMP/clued-release-door-XXXXXX")
+          trap 'rm -- "$err"' EXIT
           applied='[]'
+          first=yes
           for name in $(printf '%s' "$MIGRATIONS" | tr ',' ' '); do
             [[ "$name" =~ ^[0-9]{14}_[a-z0-9_]+\.sql$ ]] || { echo "::error::Not a migration file name: $name"; exit 1; }
             file="supabase/migrations/$name"
@@ -283,33 +397,125 @@ jobs:
             fi
             expected=$(md5sum "$file" | cut -d' ' -f1)
             [[ "$expected" =~ ^[0-9a-f]{32}$ ]] || { echo "::error::no md5 for $name"; exit 1; }
+            # consume: the door exists; the first file consumes before it runs.
+            # install: no door yet; only the pinned install migration, which must
+            # bring the door and consume through it. probe: every later file.
+            if [ "$first" = no ]; then order=probe
+            elif [ "$door" = t ]; then order=consume
+            elif [ "$expected" = "$RELEASE_DOOR_INSTALL_MD5" ]; then order=install
+            else
+              echo "::error title=发布门::发布门 clued_private.release_door_v1 不在生产库里。只有钉死的安装迁移（md5 $RELEASE_DOOR_INSTALL_MD5）能作为第一条完成自举；$name 的 md5 是 $expected。生产没有变化。"
+              exit 1
+            fi
             version=$(date -u +%Y%m%d%H%M%S)
-            psql -q -v VERBOSITY=terse \
+            if ! answer=$({ printf '%s\n' "$door_input"; cat -- "$file"; } | psql -q -tA -v VERBOSITY=terse \
               -c "create temp table migration_lines(n bigserial primary key, line text)" \
               -c "copy migration_lines(line) from stdin with (format csv, delimiter e'\x01', quote e'\x02')" \
+              -c "create temp table door_answer(answer jsonb)" \
               -c "begin;
-          do \$apply\$ declare s text := (select string_agg(coalesce(line, ''), e'\n' order by n) from migration_lines) || e'\n';
+          do \$apply\$ declare
+            door_input jsonb := (select line from migration_lines where n = 1)::jsonb;
+            s text := (select string_agg(coalesce(line, ''), e'\n' order by n) from migration_lines where n > 1) || e'\n';
+            answer jsonb;
           begin
             if md5(s) is distinct from '$expected' then raise exception 'migration text differs from the file'; end if;
+            if '$order' = 'consume' then
+              answer := clued_private.release_door_v1(door_input);
+              insert into door_answer values (answer);
+              if answer->>'consumed' is distinct from 'true' then raise exception 'release_grant_not_consumed'; end if;
+            end if;
             execute s;
+            if '$order' = 'install' then
+              if to_regprocedure('clued_private.release_door_v1(jsonb)') is null then raise exception 'release_door_not_installed'; end if;
+              answer := clued_private.release_door_v1(door_input);
+              insert into door_answer values (answer);
+              if answer->>'consumed' is distinct from 'true' then raise exception 'release_grant_not_consumed'; end if;
+            end if;
             -- Scheduler readiness is an activation dependency of storage I9.
             -- Check inside this same transaction, before the migration ledger
             -- can record success. Earlier schemas have no such dependency.
             if to_regprocedure('clued_private.storage_conflict_require_scheduler_v1()') is not null then
               perform clued_private.storage_conflict_require_scheduler_v1();
             end if;
+            -- The door must still work before this file can commit.
+            if to_regprocedure('clued_private.release_door_v1(jsonb)') is null then raise exception 'release_door_probe_failed'; end if;
+            if clued_private.release_door_v1(jsonb_build_object('probe', true))->>'status' is distinct from 'ok' then
+              raise exception 'release_door_probe_failed';
+            end if;
             insert into supabase_migrations.schema_migrations(version, name, statements) values ('$version', '$short', array[s]);
           end \$apply\$;
-          commit;" < "$file"
+          commit;" \
+              -c "select answer::text from door_answer" 2>"$err"); then
+              cat -- "$err" >&2
+              if [ "$first" = yes ] && grep -q 'release_grant_not_consumed' "$err"; then
+                # Rolled back: no grant used, nothing changed. Leave the pending request and its link.
+                grant input --mode migrate --request-only | door_call 2>"$err" | grant report --mode migrate --error-file "$err" || true
+              else
+                grant report --mode migrate --error-file "$err" < /dev/null || true
+              fi
+              echo "::error::$short was not applied; its transaction rolled back"
+              exit 1
+            fi
+            cat -- "$err" >&2
+            if [ "$first" = yes ]; then printf '%s\n' "$answer" | grant report --mode migrate; fi
             stored=$(psql -tA -c "select md5(array_to_string(statements,'')) from supabase_migrations.schema_migrations where version='$version' and name='$short'")
             [ "$stored" = "$expected" ] || { echo "::error::$short md5 $stored differs from the file $expected"; exit 1; }
             echo "Applied $short as $version (md5 $expected)"
             applied=$(node -e 'const a=JSON.parse(process.argv[1]);a.push({file:process.argv[2],name:process.argv[3],version:process.argv[4],md5:process.argv[5]});process.stdout.write(JSON.stringify(a))' "$applied" "$name" "$short" "$version" "$expected")
+            first=no
             sleep 1
           done
           node -e 'process.stdout.write(JSON.stringify({contract:"clued.production-migration-apply.v1",source_commit:process.env.GITHUB_SHA,applied:JSON.parse(process.argv[1]),finished_at:new Date().toISOString()},null,2)+"\n")' "$applied" \
             > "$evidence_dir/production-migrations.json"
-      - if: ${{ inputs.mode != 'backup' && inputs.mode != 'migrate' }}
+      # fleet-accept (Task 87d330d0; migration 20261125100000_fleet_accept_door_v1.sql).
+      # The first step holds no secret: it downloads the package's acceptance
+      # request and SHA256SUMS from its public Release without a token, checks
+      # them against the two inputs, this repository and main, and writes the
+      # door's input. The second gives that input to the door as COPY data. The
+      # door opens (or returns) the Owner's pending request and never approves:
+      # the run ends green with the confirmation link in its summary, and the
+      # Owner's approval on that page is the acceptance. Neither step installs
+      # or runs dependency code; scripts/ci/clued-fleet-accept.mjs uses Node only.
+      - name: Check the published acceptance request
+        if: ${{ inputs.mode == 'fleet-accept' }}
+        timeout-minutes: 3
+        working-directory: .
+        env:
+          NODE_OPTIONS: ''
+          FLEET_VERSION: ${{ inputs.fleet_version }}
+          FLEET_REQUEST_SHA256: ${{ inputs.fleet_request_sha256 }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/clued-fleet-accept.mjs input > "$RUNNER_TEMP/clued-fleet-accept-input.json"
+      - name: Open the Owner request to accept the package
+        if: ${{ inputs.mode == 'fleet-accept' }}
+        timeout-minutes: 3
+        working-directory: .
+        env:
+          NODE_OPTIONS: ''
+          CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
+          CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
+        run: |
+          set -euo pipefail
+          database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
+          psql() { docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine psql "$database_url" -v ON_ERROR_STOP=1 -X "$@"; }
+          err=$(mktemp "$RUNNER_TEMP/clued-fleet-accept-XXXXXX")
+          trap 'rm -f -- "$err"' EXIT
+          # The door comes with a migration; say so plainly when it is not there yet.
+          door=$(psql -q -tA -c "select to_regprocedure('clued_private.fleet_accept_door_v1(jsonb)') is not null" 2>"$err") || true
+          if [ "$door" = "f" ]; then
+            echo "::error title=接受通用节点包::接受门不在这个数据库里。先触发一次 mode=migrate，migrations 填 20261125100000_fleet_accept_door_v1.sql，再重跑本次。" >&2
+            exit 1
+          fi
+          answer=$(psql -q -tA -v VERBOSITY=terse \
+            -c "create temp table door_input(line text)" \
+            -c "copy door_input(line) from stdin with (format csv, delimiter e'\x01', quote e'\x02')" \
+            -c "select clued_private.fleet_accept_door_v1(line::jsonb)::text from door_input" \
+            < "$RUNNER_TEMP/clued-fleet-accept-input.json" 2>"$err") || true
+          cat -- "$err" >&2
+          printf '%s\n' "$answer" | node scripts/ci/clued-fleet-accept.mjs report --error-file "$err"
+      - if: ${{ inputs.mode != 'backup' && inputs.mode != 'migrate' && inputs.mode != 'fleet-accept' }}
+        timeout-minutes: 10
         run: npm ci --ignore-scripts
       - name: Capture exact nonsecret registration source
         if: ${{ inputs.mode == 'source-capture' }}
@@ -327,7 +533,8 @@ jobs:
             --expected-release-sha "$GITHUB_SHA" \
             --output .sites-runtime/storage-client-source/registration.json
       - name: Install embedded PostgreSQL ICU compatibility runtime
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           icu_deb=$(mktemp "$RUNNER_TEMP/clued-libicu60-XXXXXX.deb")
@@ -335,19 +542,22 @@ jobs:
           curl -fsSLo "$icu_deb" https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
           sudo dpkg -i "$icu_deb"
       - name: Verify projection and MTPE behavior
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 10
         run: |
           node --test tests/production-release-gate.test.mjs tests/served-agent-contract.test.mjs
           npm run test:projection:refresh
           npm run test:mtpe:intake
           npm run typecheck
       - name: Build exact Worker source
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 5
         # Builds the main Worker and the PDF extractor Worker (dist/pdf-extractor),
         # and fails if the main Worker's bundle contains pdf.js.
         run: npm run build
       - name: Verify and build Kooyumi Connect release source
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           node --test tests/oauth-origin.test.mjs
@@ -358,8 +568,9 @@ jobs:
             --out-dir "$RUNNER_TEMP/kooyumi-connect-build" \
             --evidence-out .sites-runtime/release-evidence/connect-build.json
           node --check "$RUNNER_TEMP/kooyumi-connect-build/worker.mjs"
-      - name: Block release unless database and Worker heartbeat are ready
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
+      - name: Verify database prerequisites and record projection state
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 5
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
         run: |
@@ -367,42 +578,83 @@ jobs:
           node scripts/production-release-gate.mjs --pre-deploy \
             --evidence-out .sites-runtime/release-evidence/production-preflight.json
       - name: Check Cloudflare deployment credential
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 1
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: |
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
-      # OwnerCredential §6.1: consume one use of the Owner's grant for this
-      # commit before anything changes production. It runs after the release
-      # gate and the credential checks, so a deploy the gate stops uses no grant
-      # (run 37329072487 used its grant and then stopped at the gate).
+      # Before the grant and the first change to the Workers: the version each one
+      # serves and the commit the public edge serves (main /healthz, Connect
+      # smoke), so a failed deploy or verification below rolls back to exactly
+      # that and reads it back. A Worker without a single version at 100% stops
+      # here. A release also stops here unless the three wrangler production
+      # configurations are byte for byte those of the commit the edge serves
+      # (git diff): a version rollback undoes code, bindings and vars, not
+      # Cron, routes or queue consumers. deploy publishes such commits.
+      - name: Record the Worker versions production serves
+        id: worker_versions
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 8
+        env:
+          RELEASE_MODE: ${{ inputs.mode }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/release-worker-versions.mjs record --mode "$RELEASE_MODE" --out .sites-runtime/release-evidence/worker-versions.json
+      # OwnerCredential §6.1, release door v1: consume one use of the Owner's
+      # grant for this commit before anything changes production, through
+      # clued_private.release_door_v1 with the migration database login (the
+      # release identity; no token). The input is COPY data, not SQL text. It
+      # runs after the release gate and the credential checks, so a deploy the
+      # gate stops uses no grant (run 37329072487 used its grant and then
+      # stopped at the gate). Without the door it fails. A release
+      # consumes it as deploy: one grant, used once.
       - name: Consume the Owner Grant for this commit
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 3
         working-directory: .
         env:
           # Steps before this one ran dependency code (npm ci, tests, build);
           # none of it may preload code into the grant check.
           NODE_OPTIONS: ''
-          RELEASE_MODE: ${{ inputs.mode }}
-          CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
+          CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
           CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
-          CLUED_RELEASE_GRANT_ENFORCE: ${{ vars.CLUED_RELEASE_GRANT_ENFORCE }}
-        run: node scripts/ci/clued-release-grant.mjs --mode "$RELEASE_MODE"
+        run: |
+          set -euo pipefail
+          database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
+          psql() { docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine psql "$database_url" -v ON_ERROR_STOP=1 -X "$@"; }
+          err=$(mktemp "$RUNNER_TEMP/clued-release-door-XXXXXX")
+          trap 'rm -f -- "$err"' EXIT
+          answer=$(node scripts/ci/clued-release-door.mjs input --mode deploy | psql -q -tA -v VERBOSITY=terse \
+            -c "create temp table door_input(line text)" \
+            -c "copy door_input(line) from stdin with (format csv, delimiter e'\x01', quote e'\x02')" \
+            -c "select clued_private.release_door_v1(line::jsonb)::text from door_input" 2>"$err") || true
+          cat -- "$err" >&2
+          printf '%s\n' "$answer" | node scripts/ci/clued-release-door.mjs report --mode deploy --error-file "$err"
       - name: Ensure Storage job queue exists
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 3
         env:
+          RELEASE_MODE: ${{ inputs.mode }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           # The Worker's producer and consumer bindings need the queue before deploy.
           if ! npx wrangler queues info clued-storage-jobs >/dev/null; then
+            # A Worker rollback would not remove a queue: release only reads.
+            if [ "$RELEASE_MODE" = "release" ]; then
+              echo "::error::clued-storage-jobs is missing or unreadable; release creates nothing a rollback cannot undo (use deploy)" >&2
+              exit 1
+            fi
             npx wrangler queues create clued-storage-jobs
           fi
       - name: Deploy Clued PDF extractor Worker
-        if: ${{ inputs.mode == 'deploy' }}
+        id: first_deploy
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 5
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
@@ -412,32 +664,33 @@ jobs:
         # service binding names it.
         run: npx wrangler deploy --config wrangler.pdf-extractor.jsonc
       - name: Deploy Clued production Worker
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 8
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --config wrangler.production.jsonc --keep-vars
-      - name: Record deployment completion time
-        if: ${{ inputs.mode == 'deploy' }}
-        id: deployment_completion
-        run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$GITHUB_OUTPUT"
-      - name: Verify exact live commit and currentness transport
-        if: ${{ inputs.mode == 'deploy' }}
-        env:
-          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
-        run: node scripts/verify-currentness-transport.mjs --production --evidence-out .sites-runtime/release-evidence/currentness-attestation.json
+      - name: Wait until production serves this commit
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 4
+        run: >-
+          node --input-type=module -e "const { waitForLiveSourceCommit } = await import('./scripts/currentness-live-build.mjs');
+          await waitForLiveSourceCommit(process.env.GITHUB_SHA, { log: (line) => console.error(line) });"
       - name: Verify production serves the repository Agent contract
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 3
         run: node scripts/verify-served-agent-contract.mjs --evidence-out .sites-runtime/release-evidence/served-agent-contract.json
       - name: Verify the PDF extractor service binding
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 3
         run: node scripts/verify-pdf-extractor.mjs --evidence-out .sites-runtime/release-evidence/pdf-extractor.json
       # The existing service binding already names clued-cloud. Publish Connect only
       # after the main application's exact commit, contract and PDF binding pass.
       # The same commit's Owner Grant above covers this explicit release cohort.
       - name: Deploy Kooyumi Connect Worker
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 5
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
@@ -445,24 +698,68 @@ jobs:
           npx wrangler deploy "$RUNNER_TEMP/kooyumi-connect-build/worker.mjs"
           --config ../kooyumi-connect/wrangler.production.jsonc --no-bundle --keep-vars
       - name: Verify Kooyumi Connect production release
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 4
         run: node ../kooyumi-connect/verify-production.mjs --evidence-out .sites-runtime/release-evidence/connect-postflight.json
+      # Calls the unchanged gate's --post-deploy until one Cron period plus two
+      # minutes has passed, while its only findings are a backlog; a failed
+      # job, a digest mismatch or a stalled call ends it at once. The step
+      # timeout is that window plus five minutes.
       - name: Verify projection currentness after deployment
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 17
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
+        run: >-
+          node scripts/projection-postflight.mjs
+          --evidence-out .sites-runtime/release-evidence/production-postflight.json
+      # Rollback drill: every check above passed. Failing here rolls the
+      # Workers back through the real path; the G6 step below then does not run.
+      # It can only fail a run; off (the default) it is not on the path.
+      - name: Fail the rollback drill after every verification passed
+        if: ${{ inputs.mode == 'release' && inputs.rollback_drill }}
+        timeout-minutes: 1
         run: |
-          for attempt in 1 2 3 4 5 6; do
-            if node scripts/production-release-gate.mjs --pre-deploy \
-              --min-heartbeat-at '${{ steps.deployment_completion.outputs.timestamp }}' \
-              --evidence-out .sites-runtime/release-evidence/production-postflight.json; then
-              exit 0
-            fi
-            sleep 30
-          done
+          echo "::error title=Rollback drill::Every verification passed; failing on purpose so the Workers roll back to the recorded versions"
           exit 1
+      # Any failure from the first deploy on (a deploy, the live commit,
+      # contract, PDF, Connect or projection check, a step timeout, the drill)
+      # rolls each changed Worker back to its recorded version, then reads all
+      # three versions and the edge commits once, after one propagation window;
+      # only that reading decides "restored". The run still fails. A failure
+      # before the first deploy (the grant, the queue) changed no Worker and
+      # rolls nothing back. The database is forward-only; a release carries no
+      # migration.
+      - name: Roll back the Workers after a failed deploy or verification
+        if: ${{ failure() && (inputs.mode == 'deploy' || inputs.mode == 'release') && steps.worker_versions.outcome == 'success' && (steps.first_deploy.outcome == 'success' || steps.first_deploy.outcome == 'failure') }}
+        timeout-minutes: 35
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/release-worker-versions.mjs rollback --from .sites-runtime/release-evidence/worker-versions.json --out .sites-runtime/release-evidence/worker-rollback.json
+      # Outside the rollback: it runs only when everything above succeeded, and
+      # its failure does not roll production back. Written or not, the
+      # attestation and the live Worker then name the same commit.
+      - name: Verify exact live commit and currentness transport
+        id: g6
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 15
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
+        run: node scripts/verify-currentness-transport.mjs --production --evidence-out .sites-runtime/release-evidence/currentness-attestation.json
+      - name: Report an unconfirmed G6 attestation
+        if: ${{ failure() && steps.g6.outcome == 'failure' }}
+        timeout-minutes: 1
+        run: |
+          {
+            echo '## G6 attestation not confirmed'
+            echo
+            echo 'The release completed and passed every verification; the Workers were not rolled back.'
+            echo 'The G6 currentness attestation is not confirmed: run the Clued currentness production post-deploy attestation workflow.'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve release evidence
         if: always()
+        timeout-minutes: 5
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: clued-cloud-production-release-${{ github.run_id }}
@@ -474,9 +771,49 @@ jobs:
             apps/clued-cloud/.sites-runtime/release-evidence/connect-build.json
             apps/clued-cloud/.sites-runtime/release-evidence/connect-postflight.json
             apps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json
+            apps/clued-cloud/.sites-runtime/release-evidence/worker-versions.json
+            apps/clued-cloud/.sites-runtime/release-evidence/worker-rollback.json
             apps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc
             apps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json
             apps/clued-cloud/.sites-runtime/release-evidence/production-migrations.json
             apps/clued-cloud/.sites-runtime/storage-client-source/registration.json
           if-no-files-found: ignore
           retention-days: ${{ inputs.mode == 'source-capture' && 1 || 30 }}
+      # Drill test project sync (Task 87d330d0; FABLE-drill-test-project-sync-20261124 §2.1 and its ruling).
+      # After a run that succeeded, in every mode: production's applied
+      # migration list (names, md5, order; the facts the committed ledger
+      # holds, no statement text, no secret), read in one read-only transaction
+      # with the attestation login. The drill host brings the test project
+      # clued-auth-test to this list before a drill (scripts/drill-test-sync.mjs);
+      # no workflow does. Both steps continue on error: the export never fails a
+      # release; a missed one is caught up by the next.
+      # Its own artifact, apart from the release evidence and the encrypted backup.
+      - name: Export the applied production history
+        timeout-minutes: 3
+        continue-on-error: true
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
+        run: |
+          set -euo pipefail
+          test -n "$CLUED_ATTESTATION_DATABASE_URL"
+          database_url=$(node -e 'const url = new URL(process.env.CLUED_ATTESTATION_DATABASE_URL); url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
+          out=.sites-runtime/production-applied
+          mkdir -p "$out"
+          docker run --rm -i --user "$(id -u):$(id -g)" \
+            -v "$PWD/supabase/production-schema:/work/supabase/production-schema:ro" -w /work \
+            postgres@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929 \
+            psql "$database_url" -v ON_ERROR_STOP=1 -X -q -tA -c 'begin read only' -f supabase/production-schema/applied.sql -c 'commit' \
+            > "$out/applied.rows" \
+            || { echo "::warning::Could not read the applied production history; the drill test project is not brought up to date by this run"; exit 1; }
+          node -e 'const fs = require("node:fs"); const [from, to] = process.argv.slice(1); const applied = JSON.parse(fs.readFileSync(from, "utf8")); if (!Array.isArray(applied) || applied.length === 0) throw new Error("the applied production history is empty"); fs.writeFileSync(to, JSON.stringify({ contract: "clued.production-applied.v1", source_commit: process.env.GITHUB_SHA, run_id: process.env.GITHUB_RUN_ID, applied }) + "\n"); console.log("Applied production history: " + applied.length + " rows through " + applied.at(-1).version + "_" + applied.at(-1).name);' \
+            "$out/applied.rows" "$out/production-applied.json"
+          rm -f "$out/applied.rows"
+      - name: Publish the applied production history
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: clued-production-applied-${{ github.run_id }}
+          path: apps/clued-cloud/.sites-runtime/production-applied/production-applied.json
+          if-no-files-found: ignore
+          retention-days: 30

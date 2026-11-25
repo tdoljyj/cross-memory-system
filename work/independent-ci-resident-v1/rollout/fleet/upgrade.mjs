@@ -3,8 +3,9 @@
 // the installed upgrader's ACCEPT run beforehand (the archive's precheck.mjs), and ONE request file in the installed upgrade inbox,
 // written by the INSTALLED request-upgrade.ps1. Everything after that is the installed upgrader's (CluedCIUpgrader): the Grant, the
 // drain, both sides' switch, the verify, the rollback. NON-elevated, Owner session; no UAC anywhere; writes only under a new work
-// directory of its own under --work (run-*, one per run that assembles a package: the same --work can be given again) and that one
-// inbox file; no Python, no git, no WSL, no network.
+// directory of its own under --work (run-*, one per run that assembles a package: the same --work can be given again), that one
+// inbox file, and the Owner's %USERPROFILE%\.wslconfig: only the [wsl2] memory= value, from the node's capacity profile in the
+// package, after a backup next to it (wsl-capacity.mjs; ADR 0030 revision 1); no Python, no git, no WSL, no network.
 //
 //   node upgrade.mjs fetch --version <v> --work <new dir> [--from <dir>] [--repo <owner/name>] [--no-request] [--allow-active-upgrade]
 //        the whole node step in ONE command: fetch.mjs takes fleet-node-<v>.tar, its acceptance and SHA256SUMS from the release (resumed
@@ -23,6 +24,9 @@
 // same three files (the node has two ways only, Decision b5d041d2).
 //
 //   1. the acceptance and the archive (install.mjs readArchive); this file and the modules it imports are the archive's bytes.
+//      The Owner's WSL memory limit (wsl-capacity.mjs) is written only by a run that requests the upgrade (after the request) or finds
+//      the node already at this package; every other answer (--no-request, an open operation, a reinstall, a hand-over) writes nothing
+//      and says skipped NOT_REQUESTED; a refusal writes nothing. So a write is always in the answer's wslCapacity; it never refuses.
 //   2. the upgrader's status (an open operation ends here), current.json and the Linux facts (already this package ends here).
 //   3. the node (install.mjs readNode); the two sides must be one Source.
 //   4. the channel: the archive's upgrader manifest is the receipt's, its Linux upgrade tool the facts', the installed Source-entering
@@ -46,13 +50,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CLOSURE, PREPARE_RECORD, RESIDENT, universalFilesSha256 } from './facts.mjs';
-import { DEFAULT_ROOT, FLEET_REF_KEYS, FORMAL_ROLES, OWN_MODULES, configInputsFor, linuxExternalPins, readArchive, readNode, recordInputsFor,
-  validateAcceptance } from './install.mjs';
+import { DEFAULT_ROOT, FLEET_REF_KEYS, FORMAL_ROLES, OWN_MODULES, configInputsFor, defaultHostname, linuxExternalPins, readArchive, readNode,
+  recordInputsFor, validateAcceptance } from './install.mjs';
 import { Refused, TOOL_PATH, rolesDerived } from './ports.mjs';
 import { pyCanonical, pyDumps } from './pyjson.mjs';
 import { DEFAULT_REPO, fetchPackage } from './fetch.mjs';
 import { extractTar } from './tar.mjs';
 import { BUNDLE_NAME, bundleHeads } from './universal.mjs';
+import { defaultWslConfigPath, wslCapacityNotApplied, wslCapacityOfArchive } from './wsl-capacity.mjs';
 
 export const UPGRADE_CONTRACT = 'clued.independent-ci.fleet-node-upgrade/1';
 // upgrade\status.json op states in which the upgrader still owns an operation (rollout/precheck.mjs OP_MOVING)
@@ -64,8 +69,15 @@ const SOURCE_REFS = Object.freeze(['sourceAcceptanceRef', 'hostQualificationRef'
 const HEX64 = /^[0-9a-f]{64}$/;
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const DEADLINE_ENV = 'FLEET_UPGRADE_DEADLINE_MS';
 const sha = b => createHash('sha256').update(b).digest('hex');
 const need = (ok, code, detail) => { if (!ok) throw new Refused(code, detail); };
+const timeLeft = deadline => {
+  if (deadline === undefined) return undefined;
+  const left = deadline - Date.now();
+  need(Number.isSafeInteger(left) && left > 0, 'FLEET_ACCEPTANCE_DEADLINE');
+  return left;
+};
 // The node's other way (Decision b5d041d2): the same package and acceptance file, install.mjs prepare.
 const needUpgradable = (ok, code, detail) => { if (!ok) throw Object.assign(new Refused(code, detail), { reinstall: true }); };
 const jsonOf = b => JSON.parse(Buffer.from(b).toString('utf8').replace(/^\uFEFF/, ''));
@@ -75,8 +87,9 @@ const failureOf = r => ({ exit: r.status, stderr: r.stderr.slice(-400), stdout: 
 async function readOrNull(file) {
   try { return await fs.readFile(file); } catch (e) { if (e?.code === 'ENOENT') return null; throw e; }
 }
-function run(exe, args, { cwd } = {}) {
-  const r = spawnSync(exe, args, { cwd, maxBuffer: 1 << 26, windowsHide: true });
+function run(exe, args, { cwd, deadline, env } = {}) {
+  const r = spawnSync(exe, args, { cwd, env, timeout: timeLeft(deadline), killSignal: 'SIGKILL', maxBuffer: 1 << 26, windowsHide: true });
+  need(r.error?.code !== 'ETIMEDOUT', 'FLEET_ACCEPTANCE_DEADLINE');
   const stdout = String(r.stdout ?? '');
   return { status: r.status, stdout, last: stdout.split(/\r?\n/).filter(l => l.trim()).at(-1) ?? null, stderr: String(r.stderr ?? r.error ?? '').trim().slice(-600) };
 }
@@ -96,16 +109,17 @@ export function carriedRecord(node, commit) {
 }
 
 // The installed request-upgrade.ps1 (Owner session, not elevated): one create-only file in upgrade\inbox; its JSON answer.
-export function defaultRequest({ script, packageDir, packageManifestSha256, decisionRef }) {
+export function defaultRequest({ script, packageDir, packageManifestSha256, decisionRef, deadline }) {
   const r = run(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-PackageRoot', packageDir,
-    '-ExpectedPackageManifestSha256', packageManifestSha256, '-AcceptanceDecisionRef', decisionRef]);
+    '-ExpectedPackageManifestSha256', packageManifestSha256, '-AcceptanceDecisionRef', decisionRef], { deadline });
   const answer = parsed(r.stdout.trim());
   need(r.status === 0 && answer?.status === 'UPGRADE_REQUESTED', 'UPGRADE_REQUEST_FAILED', { stderr: r.stderr, stdout: r.stdout.trim().slice(-300) });
   return answer;
 }
 
 export async function upgradeNode({ artifactPath, artifactSha256, acceptance, root = DEFAULT_ROOT, workDir, now = Date.now(), node: nodeBin = process.execPath,
-  request = defaultRequest, noRequest = false, allowActiveUpgrade = false, selfDir = HERE }) {
+  request = defaultRequest, noRequest = false, allowActiveUpgrade = false, selfDir = HERE, hostname = defaultHostname, wslConfigPath = defaultWslConfigPath(), deadline }) {
+  timeLeft(deadline);
   validateAcceptance(acceptance, now);
   need(typeof workDir === 'string', 'USAGE');   // the package directory's shape is the installed request tool's to judge (A3)
   const { entries, universal } = readArchive(await fs.readFile(artifactPath), artifactSha256, acceptance);
@@ -116,7 +130,16 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   }
   const at = (...p) => path.join(root, ...p);
   const accepted = acceptance.ciSourceManifestSha256;
-  const base = { contract: UPGRADE_CONTRACT, version: universal.version, commit: universal.commit, ciSourceManifestSha256: accepted, statusFile: at('upgrade', 'status.json') };
+  // the Owner's WSL memory limit from this package's capacity profile: a file write only (no WSL, no restart; the limit takes effect when
+  // the Owner's WSL VM next starts), by a run that goes on (requested, or already at this package) and nothing before it can refuse;
+  // a host it cannot place is skipped, never refused. Every other answer: not written (a drill's --no-request writes nothing).
+  const host = hostname();
+  const applyWslCapacity = () => {
+    timeLeft(deadline);
+    return wslCapacityOfArchive(byPath, { hostname: host, configPath: wslConfigPath, now });
+  };
+  const base = { contract: UPGRADE_CONTRACT, version: universal.version, commit: universal.commit, ciSourceManifestSha256: accepted, statusFile: at('upgrade', 'status.json'),
+    wslCapacity: wslCapacityNotApplied(byPath, { hostname: host, reason: 'NOT_REQUESTED' }) };
 
   // 2. safe to run again: an operation the upgrader still owns, or both sides already this package
   let op = null;
@@ -131,7 +154,7 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   try { liveFacts = jsonOf(await fs.readFile(at('upgrade', 'mailbox', 'responses', 'version-facts.json'))); } catch { liveFacts = null; }
   if (cur.ciSourceManifestSha256 === accepted && cur.residentManifestSha256 === universal.facts.residentManifestSha256
     && cur.linux?.ciSourceManifestSha256 === accepted && liveFacts?.ciSourceManifestSha256 === accepted && liveFacts.staged === null) {
-    return { ...base, status: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', generation: cur.generation, packageManifestSha256: cur.packageManifestSha256 };
+    return { ...base, status: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', generation: cur.generation, packageManifestSha256: cur.packageManifestSha256, wslCapacity: applyWslCapacity() };
   }
 
   // 3. the node, as a reinstall reads it; an upgrade also needs its two sides to be one Source
@@ -197,7 +220,7 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   const build = out => {
     const r = run(nodeBin, [path.join(R, 'tools', 'build-package.mjs'), '--out', out, '--policy', path.join(inputs, 'policy.input.json'), '--companion', path.join(inputs, 'companion.input.json'),
       '--node', node.nodeExe, '--record', record, '--source-root', tree, '--source-files', path.join(inputs, 'source-files.txt'),
-      '--linux-external-pins', path.join(inputs, 'linux-external-pins.json'), '--source-v2', path.join(inputs, 'source-v2.json'), '--state-compat', path.join(inputs, 'state-compat.json')], { cwd: R });
+      '--linux-external-pins', path.join(inputs, 'linux-external-pins.json'), '--source-v2', path.join(inputs, 'source-v2.json'), '--state-compat', path.join(inputs, 'state-compat.json')], { cwd: R, deadline });
     need(r.status === 0 && HEX64.test(parsed(r.last)?.packageManifestSha256 ?? ''), 'BUILD_PACKAGE_FAILED', failureOf(r));
     return parsed(r.last);
   };
@@ -222,7 +245,7 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   const staged = at('upgrade', 'staged', node.current.packageManifestSha256);
   const stagedManifest = await readOrNull(path.join(staged, 'package-manifest.json')).catch(() => null);
   const pre = run(nodeBin, [path.join(R, 'rollout', 'precheck.mjs'), '--root', root, '--package', packageDir, '--package-sha', first.packageManifestSha256, '--acceptance', decisionRef,
-    ...(stagedManifest && sha(stagedManifest) === node.current.packageManifestSha256 ? ['--installed-package', staged] : [])]);
+    ...(stagedManifest && sha(stagedManifest) === node.current.packageManifestSha256 ? ['--installed-package', staged] : [])], { deadline });
   const precheck = parsed(pre.last) ?? { status: 'PRECHECK_FAILED', detail: pre.stderr };
   const result = { ...base, node: node.profile.nodeName, workDir: work, packageDir, packageManifestSha256: first.packageManifestSha256,
     grantResource: `ci-resident:${node.profile.nodeName}/${first.packageManifestSha256}`, fromGeneration: node.current.generation, precheck };
@@ -237,8 +260,10 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
 
   // 9. the request, by the installed tool
   const script = at('resident', node.current.residentManifestSha256, 'windows', 'request-upgrade.ps1');
-  const answer = await request({ script, packageDir, packageManifestSha256: first.packageManifestSha256, decisionRef });
-  return { ...result, status: 'FLEET_NODE_UPGRADE_REQUESTED', request: { requestId: answer.requestId ?? null, requestFile: answer.requestFile ?? null },
+  timeLeft(deadline);
+  const answer = await request({ script, packageDir, packageManifestSha256: first.packageManifestSha256, decisionRef,
+    ...(deadline === undefined ? {} : { deadline }) });
+  return { ...result, status: 'FLEET_NODE_UPGRADE_REQUESTED', request: { requestId: answer.requestId ?? null, requestFile: answer.requestFile ?? null }, wslCapacity: applyWslCapacity(),
     ownerNextStep: 'Nothing while the Owner\'s automatic approval is on. Otherwise statusFile shows op.grant.confirmUrl at WAITING_GRANT: approve once there. Run this command again to see where the node is.' };
 }
 
@@ -252,9 +277,12 @@ export async function fetchAndUpgrade(argv, deps = {}) {
     'no-request': { type: 'boolean' }, 'allow-active-upgrade': { type: 'boolean' } } });
   need(values.version && values.work, 'USAGE');
   const work = path.resolve(values.work);
-  const fetched = await fetchPackage({ ...deps.fetch, version: values.version, dir: path.join(work, 'dl'), from: values.from ? path.resolve(values.from) : null, repo: values.repo ?? DEFAULT_REPO });
+  const { deadline, expectedArchiveSha256 } = deps;
+  const fetched = await fetchPackage({ ...deps.fetch, version: values.version, dir: path.join(work, 'dl'),
+    from: values.from ? path.resolve(values.from) : null, repo: values.repo ?? DEFAULT_REPO, deadline, expectedArchiveSha256 });
   const acceptance = jsonOf(await fs.readFile(fetched.acceptance));
-  validateAcceptance(acceptance, deps.now ?? Date.now());
+  // shape only, no kit rule: this copy may be newer than the package (a rollback to one with no kit field); the unpacked package's own upgrade.mjs holds its own rule
+  validateAcceptance(acceptance, deps.now ?? Date.now(), { requireKit: false });
   const { entries } = readArchive(await fs.readFile(fetched.artifact), fetched.artifactSha256, acceptance);   // the hash again, then the strict read
   const unpacked = path.join(work, 'unpacked');
   await fs.rm(unpacked, { recursive: true, force: true });   // this command's own scratch, so the same --work can be run again
@@ -262,7 +290,9 @@ export async function fetchAndUpgrade(argv, deps = {}) {
   const script = path.join(unpacked, 'tree', ...RESIDENT.split('/'), 'rollout', 'fleet', 'upgrade.mjs');
   const args = [script, '--artifact', fetched.artifact, '--artifact-sha', fetched.artifactSha256, '--acceptance', fetched.acceptance, '--work', path.join(work, 'upgrade'),
     ...(values['no-request'] ? ['--no-request'] : []), ...(values['allow-active-upgrade'] ? ['--allow-active-upgrade'] : [])];
-  const r = (deps.runChild ?? run)(process.execPath, args);
+  timeLeft(deadline);
+  const env = deadline === undefined ? undefined : { ...process.env, [DEADLINE_ENV]: String(deadline) };
+  const r = (deps.runChild ?? run)(process.execPath, args, { deadline, env });
   const answer = parsed(r.last ?? '') ?? { contract: UPGRADE_CONTRACT, status: 'FLEET_NODE_UPGRADE_REFUSED', code: 'FLEET_UNPACKED_UPGRADE_NO_ANSWER', detail: failureOf({ status: r.status, stderr: r.stderr ?? '', stdout: r.stdout ?? '' }) };
   return { ...answer, fetched: { artifact: fetched.artifact, artifactSha256: fetched.artifactSha256, source: fetched.source, attempts: fetched.attempts, resumed: fetched.resumed, unpacked } };
 }
@@ -286,5 +316,6 @@ export async function main(argv, deps = {}) {
 if (import.meta.main) {
   // the Windows PowerShell 5.1 children (request-upgrade.ps1, the precheck's Get-Acl) get their own module path (install.mjs)
   process.env.PSModulePath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules';
-  main(process.argv.slice(2)).then(r => { console.log(JSON.stringify(r)); process.exitCode = OK_STATUSES.includes(r.status) ? 0 : 1; });
+  const deadline = process.env[DEADLINE_ENV] === undefined ? undefined : Number(process.env[DEADLINE_ENV]);
+  main(process.argv.slice(2), { deadline }).then(r => { console.log(JSON.stringify(r)); process.exitCode = OK_STATUSES.includes(r.status) ? 0 : 1; });
 }

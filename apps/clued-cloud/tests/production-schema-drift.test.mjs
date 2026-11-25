@@ -4,7 +4,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { productionChain, catalogSqlPath, readSnapshot, SNAPSHOT_CONTRACT } from '../scripts/production-schema-chain.mjs';
@@ -284,5 +287,95 @@ test('the base migrations are read from the base commit tree, relative to the ap
   const names = await readBaseMigrations({ CI_BASE_SHA: head.stdout.trim() }, noTrusted);
   assert.ok(names instanceof Set && names.size > 100, 'the base tree lists the committed migrations');
   assert.equal(names.has('20261113151000_work_claim_terminal_admission_removed_v1.sql'), true);
-  assert.equal(await readBaseMigrations({}, noTrusted), undefined);
+});
+
+// S1b: migration-verify checks the trusted base out with only scripts/ci, config and .github (sparse, cone mode, as
+// actions/checkout does), so its migrations directory is not on disk; the names still come from its HEAD tree.
+test('a sparse trusted checkout gives the same base migration names as a full one', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'drift-sparse-trusted-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const trusted = path.join(root, 'trusted');
+  const git = (...args) => {
+    const run = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', '-C', trusted, ...args], { encoding: 'utf8' });
+    assert.equal(run.status, 0, `git ${args.join(' ')}: ${run.stderr}`);
+  };
+  const migrations = path.join(trusted, 'apps', 'clued-cloud', 'supabase', 'migrations');
+  await mkdir(migrations, { recursive: true });
+  await mkdir(path.join(trusted, 'scripts', 'ci'), { recursive: true });
+  for (const name of ['20260901120000_one.sql', '20260902120000_two.sql', '20261101000000_three.sql']) await writeFile(path.join(migrations, name), `-- ${name}` + String.fromCharCode(10));
+  await writeFile(path.join(trusted, 'scripts', 'ci', 'ci-required-selection.mjs'), String.fromCharCode(10));
+  spawnSync('git', ['init', '-q', trusted]);
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  const full = await readBaseMigrations({}, trusted);
+  assert.deepEqual([...full].sort(), ['20260901120000_one.sql', '20260902120000_two.sql', '20261101000000_three.sql']);
+  git('sparse-checkout', 'set', 'scripts/ci', 'config', '.github');
+  assert.equal(existsSync(migrations), false, 'the sparse checkout leaves the migrations directory off disk');
+  assert.deepEqual([...await readBaseMigrations({}, trusted)].sort(), [...full].sort());
+});
+
+// Task 700f2b68 (PLAN-main-red-real-repo-20261124 §4.3, PR-A): the check takes its base from the command table's
+// --base {base}. A base given that way is the one read, before CI_BASE_SHA; one that cannot be read is an error, never a
+// fallback to the environment.
+test('the base given with --base is read before CI_BASE_SHA, and an unreadable one is an error', async () => {
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: new URL('..', import.meta.url), encoding: 'utf8' });
+  if (head.status !== 0) return;
+  const noTrusted = fileURLToPath(new URL('./no-trusted-checkout', import.meta.url));
+  const names = await readBaseMigrations({ CI_BASE_SHA: '0'.repeat(40) }, noTrusted, head.stdout.trim());
+  assert.ok(names instanceof Set && names.size > 100, 'the --base tree lists the committed migrations');
+  const unreadable = 'e'.repeat(40);
+  await assert.rejects(readBaseMigrations({ CI_BASE_SHA: head.stdout.trim() }, noTrusted, unreadable), new RegExp(`--base ${unreadable}`));
+});
+
+test('check --base hands that base to the base migration read', async () => {
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: new URL('..', import.meta.url), encoding: 'utf8' });
+  if (head.status !== 0) return;
+  const { main } = await import('../scripts/production-schema-drift.mjs');
+  assert.equal(typeof main, 'function', 'the command entry is exported');
+  const noTrusted = fileURLToPath(new URL('./no-trusted-checkout', import.meta.url));
+  const unreadable = 'd'.repeat(40);
+  // The environment's base is readable: only the --base one, unreadable, makes the check stop before any database starts.
+  await assert.rejects(main(['check', '--base', unreadable], { env: { CI_BASE_SHA: head.stdout.trim() }, trustedRoot: noTrusted }),
+    new RegExp(`--base ${unreadable}`));
+});
+
+test('unknown base migrations are an error, never an empty judgement', async () => {
+  const noTrusted = fileURLToPath(new URL('./no-trusted-checkout', import.meta.url));
+  await assert.rejects(readBaseMigrations({}, noTrusted), /base migrations are unknown/);
+  await assert.rejects(readBaseMigrations({ CI_BASE_SHA: '0'.repeat(40) }, noTrusted), /base migrations are unknown/);
+});
+
+// Board row 281: the platform image newer than production's grants PUBLIC SELECT on pg_cron's own sequence. A pending
+// migration that copies the worker gateway rows' "no privilege on any sequence" assertion fails in migration-verify,
+// whatever its wording; one that limits the same check to the application's schema passes.
+test('a pending migration that refuses any privilege on any sequence fails on the newer platform image', async () => {
+  const catalogSql = `select jsonb_build_object('objects', '[]'::jsonb) as catalog`;
+  const snapshotFor = (repo) => ({ contract: SNAPSHOT_CONTRACT, objects: [], catalog_sql_sha256: createHash('sha256').update(catalogSql).digest('hex'),
+    applied: [appliedRow('20260901120000', 'one', sql('one').replace(/\n/g, '\r\n')), appliedRow('20260902120000', 'two', sql('two')),
+      appliedRow('20261031000000', 'applied_late', repo.migrations['20261102000000_applied_late.sql'])] });
+  const check = (pendingText) => {
+    const repo = repository();
+    if (pendingText !== undefined) repo.migrations['20261101000000_pending.sql'] = pendingText;
+    return runCheck({ repository: repo, snapshot: snapshotFor(repo), catalogSql });
+  };
+  // The predicate is the one in 20261009070002_worker_gateway_transition_v1.sql and 20261010161848_worker_gateway_closeout_v1.sql.
+  const refuse = (from) => `create role clued_worker_gateway nologin;
+do $check$ declare found text; begin
+  select string_agg(c.oid::regclass::text, ',') into found from ${from}
+    where case when c.relkind='S' then
+      pg_catalog.has_sequence_privilege('clued_worker_gateway',c.oid,'USAGE,SELECT,UPDATE') else false end;
+  if found is not null then raise exception 'worker_gateway_role_unexpected_privileges' using errcode='42501', detail=found; end if;
+end $check$;
+`;
+  const copied = await check(refuse('pg_catalog.pg_class c'));
+  assert.equal(copied.status, 'FAIL', JSON.stringify(copied));
+  assert.deepEqual(copied.errors, ['pending_migration_failed:migrations/20261101000000_pending.sql']);
+  assert.match(copied.pending_failure.message, /^worker_gateway_role_unexpected_privileges \(detail: cron\.job_jobid_seq\)$/);
+
+  const limited = await check(refuse(`pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace and n.nspname='public'`));
+  assert.equal(limited.status, 'PASS', JSON.stringify(limited));
+
+  const plain = await check();
+  assert.equal(plain.status, 'PASS', JSON.stringify(plain));
+  assert.equal(plain.errors.some((error) => /^(?:repository|production)_chain_failed:/.test(error)), false);
 });

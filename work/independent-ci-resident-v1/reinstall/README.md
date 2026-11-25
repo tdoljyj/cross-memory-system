@@ -115,7 +115,7 @@ python -I launcher\generate.py --fleet-plan <install-plan.json> --out <launcher.
 
 **停在"节点尚未改动"时自动解除 W1 暂停（`Restore-W1Pause`）**：从进入通用包步骤到 A 启动之前（Windows 预检、令牌带入、文件锁、registrar 构建、写入探针），以及 registrar 在运行任何东西之前就拒绝了 A 的情况，停止时 launcher 通过已装常驻自己的恢复入口（`rearm-resident.ps1 -Request Resume -ExpectedPausedSha256`，服务端自己核对）解除暂停。只在 `state\PAUSED.json` 的 sha 等于钉住的本次 W1 暂停、且 reason 等于 plan 的 `reasons.w1Pause` 时才动，别的暂停绝不碰。结局的 `w1Pause` 写明 `restored` 或原因（`PAUSE_NOT_THIS_LAUNCHS_LEFT_AS_IT_IS`、`INSTALLED_RESUME_DOOR_NOT_AS_REVIEWED`、`RESUME_REQUEST_REFUSED`、`RESUME_REQUESTED_NOT_CONFIRMED_IN_TIME`）。A 启动之后的停止不解除暂停，走续行。两点限制：
 - 只有 registrar 在**改口令之前**的拒绝才算"节点未改动"（`Test-FleetRefusedBeforeAnyChange` 白名单：参数、提权、节点档案、账户、WSL 客户端、`ROOT_RUN_SCRIPT_*`、`ROOT_RUN_DIRECTORY_*`、`ROOT_RUN_PATH_REPARSE_REFUSED`、`TASK_FOLDER_MISSING`、`COMPANION_SWITCH_IN_PROGRESS`、`COMPANION_TASK_*`、`ROOT_RUN_TASK_DEFINITION_DIFFERS`）。任务被停放（`*_PARKED`）、退出码读不到、口令没设上、回读不符等一律不解除，结局写 `w1Pause.reason = NOT_LIFTED:<原因>`；写入探针同样按码区分（探针进程确实跑了、只是写入或 ACL 不过的，属于可解除）。
-- `Step-Package`、`Step-Stage` 在通用包步骤之前，它们失败时（包被改动、暂存目录 ACL 不符）暂停**不会**自动解除：重跑 prepare 即可（`pause-old-resident.py` 认得自己的暂停）。
+- 启动器在清扫旧运行前检查当前连接记录，包校验和暂存完成后再查一次。发现记录即以 `CI_CONNECTION_REINSTALL_BASELINE_REQUIRED` 停止。普通重装首次启动可通过已安装的恢复入口解除本次 W1 暂停。重跑时若已有本轮输出或进度，或使用任一种续作，入口拒绝都保留暂停。包校验、暂存本身失败时，下一次 prepare 可识别并沿用原暂停。
 
 **`--check`**：`generate.py --fleet-plan <plan> --check` 在 W1 之前做生成前的全部检查（此时 plan 的 `w1Paused` 必须为 null），不要求已暂停、不写启动器，输出 `FLEET_PLAN_CHECK_PASSED` 或拒绝原因。不带 `--check` 时要求节点已被 plan 的 W1 暂停所暂停：`PAUSED.json` 存在、sha 等于 `w1Paused.sha256`、reason 相同（否则 `OLD_RESIDENT_NOT_PAUSED`、`OLD_RESIDENT_PAUSE_NOT_THE_PLANS`、`OLD_RESIDENT_PAUSE_NOT_THE_W1_ONE`）。
 
@@ -349,7 +349,7 @@ python -I linux/first-install.py <config> <commit> <package> <suffix> <in-dir> <
     wsl -d <模板发行版> -u root -- docker save <hex> -o <in-dir 的 WSL 路径>/images/<hex>.tar
     ```
     也可以放 gzip 压缩的 `images/<hex>.tar.gz`。生成器在生成时钉住压缩包的 sha256；B 先核这个 sha，再用 `docker load` 载入，最后核对镜像 id 等于 `sha256:<hex>`。
-    镜像 ID 以源节点 `docker image inspect --format '{{.Id}}'` 的完整值为准：旧存储通常是 config 摘要，containerd 存储是目标 index 或 manifest 摘要。`tools/export-role-image.ps1` 同时支持经典归档与 OCI 布局，核对每级 descriptor 的摘要、大小、config 和所有 layer（含 gzip 解压后的 diff_id）；存在 `manifest.json` 时还核对它与 OCI 链的一致性。B 始终核对原 ID，不把它改成 config ID 或 tag；目标后端不能保持这个 ID 时拒绝，不能据加载成功文本视为已通过。
+    镜像 ID 只有一种含义：containerd 镜像存储下 `docker image inspect` 的 `.Id`（OCI index 或 manifest 的摘要）；经典存储不受支持（Fable 裁定 0e418483，r7 阶段 B，2.1）。首装 host 准备把 docker 钉成 containerd 存储，A 的 `docker_ready` 拒绝其他存储（`DOCKER_IMAGE_STORE_NOT_CONTAINERD`）。`tools/export-role-image.ps1` 只接受 OCI 布局、index 目标摘要等于 ID 的归档（ID 是 config 摘要或经典归档：`ROLE_IMAGE_ID_NOT_A_CONTAINERD_STORE_ID`），核对每级 descriptor 的摘要、大小、config 和所有 layer（含 gzip 解压后的 diff_id）；存在 `manifest.json` 时还核对它与 OCI 链的一致性。B 始终核对原 ID，不把它改成 config ID 或 tag；载入后按原 ID 查不到时拒绝 `IMAGE_ID_NOT_KEPT_BY_THIS_STORE:<hex>`（stderr 带 load 输出、镜像列表与存储读数），成功时输出存储与每个本地镜像的 `.Id`。
 
 **6. 现场（Owner，root）：先跑 A，审核其输出后再跑 B。**
 - **A**：不读私钥，只写 `$BASE`。

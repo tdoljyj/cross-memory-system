@@ -15,6 +15,7 @@ import path from 'node:path';
 import { BATCH_ID, validatePrune } from './mailbox.mjs';
 import { HEX64, check, exactKeys, fail } from './canonical.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
+import { powershellArgv } from './powershell-argv.mjs';
 import { TOOL_NOT_RUN, UPGRADE_TIMEOUT_MS, UPGRADE_TOOL_PATH, VERSION_FACTS_REFRESH_MS, responseFromTool, upgradeMailboxRequest, upgradeToolArgs, validateVersionFacts } from './upgrade-mailbox.mjs';
 import { SELFCHECK_BUSY_RETRY_MS, SELFCHECK_REFRESH_MS, SELFCHECK_TIMEOUT_MS, selfcheckDocument, writeSelfcheck } from './selfcheck.mjs';
 import { ROLES_PUBLIC_LINUX_DIR, ROLES_PUBLIC_NAMES, ROLES_PUBLIC_TIMEOUT_MS, readRolesPublic, rolePublicBytes, rolesPublicCurrent, rolesPublicDocument, rolesPublicWanted, writeRolesPublic } from './roles-public.mjs';
@@ -413,11 +414,11 @@ export function argv(cfg) {
     archiveStatus: instance => { check(/^[0-9a-f]{16}-[0-9a-f]{12}_[a-z0-9][a-z0-9-]{0,39}$/.test(instance), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, 'archive-status', '--instance', instance); },
     relay: (mode, seq) => {
       check(['SendIssue', 'ReceiveChallenge', 'SendResponse', 'ReceiveResult', 'ReceiveBlocked'].includes(mode) && Number.isSafeInteger(seq) && seq >= 0 && seq <= 32, 'COMPANION_RELAY_ARGS_INVALID');
-      return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.relayScript, '-Mode', mode, '-Sequence', String(seq), '-ExpectedBundleSha256', cfg.bridgeManifestSha256, '-ExpectedNodeProfileSha256', cfg.nodeProfileSha256];
+      return powershellArgv(cfg.powershellExe, '-File', cfg.relayScript, '-Mode', mode, '-Sequence', String(seq), '-ExpectedBundleSha256', cfg.bridgeManifestSha256, '-ExpectedNodeProfileSha256', cfg.nodeProfileSha256);
     },
-    bundle: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id]; },
-    checkRefs: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id, '-CheckRefs']; },
-    rebundle: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id, '-Rebundle']; },
+    bundle: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return powershellArgv(cfg.powershellExe, '-File', cfg.bundleScript, '-BatchId', id); },
+    checkRefs: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return powershellArgv(cfg.powershellExe, '-File', cfg.bundleScript, '-BatchId', id, '-CheckRefs'); },
+    rebundle: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return powershellArgv(cfg.powershellExe, '-File', cfg.bundleScript, '-BatchId', id, '-Rebundle'); },
     keepalive: () => [cfg.wslExe, '--distribution', cfg.distribution, '--exec', '/bin/sleep', 'infinity'],
     // DESIGN §34: the frozen upgrade tool, as root, with the fixed path and arguments that pass upgradeToolArgvOk only.
     upgradeTool: args => { check(upgradeToolArgvOk(args), 'COMPANION_UPGRADE_TOOL_ARGS_INVALID'); return wsl(UPGRADE_TOOL_PATH, ...args); },
@@ -448,7 +449,7 @@ export const CHECK_REFS_SECOND_TRY_MAX_MS = 3 * 60_000; // the refs gate: a seco
 export const timedOutGone = r => r?.timedOut === true && r.tree !== 'unconfirmed';
 export function readPullArgv(ghExe, repo, pr) {
   check(typeof ghExe === 'string' && /^[A-Z]:\\/.test(ghExe) && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '') && Number.isSafeInteger(pr) && pr > 0 && pr < 1e9, 'COMPANION_PR_HEAD_ARGS_INVALID');
-  return [ghExe, 'api', '--method', 'GET', `repos/${repo}/pulls/${pr}`, '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha, mergeSha: .merge_commit_sha}'];
+  return [ghExe, 'api', '--method', 'GET', `repos/${repo}/pulls/${pr}`, '--jq', '{number: .number, state: .state, merged: .merged, head: .head.sha, mergeSha: .merge_commit_sha, draft: .draft}'];
 }
 // GitHub's PR state/ref only. PR text carries no Task or claim authority.
 export function parsePull(stdout, pr) {
@@ -456,8 +457,11 @@ export function parsePull(stdout, pr) {
   if (!v || v.number !== pr || !['open', 'closed'].includes(v.state) || typeof v.merged !== 'boolean' || !/^[0-9a-f]{40}$/.test(v.head ?? '')) return null;
   // Advisory only: it may defer a qualification read, never authorize one.
   // Older companion answers have no mergeSha; absence is not ref movement.
+  // PLAN-resident-draft-batch-20261123 §2 item 2: GitHub's draft flag, kept only as a boolean (pr-candidate.mjs judges it). An older
+  // reply without it is no draft fact.
   return { number: pr, state: v.merged ? 'merged' : v.state, headSha: v.head,
-    ...(typeof v.mergeSha === 'string' && /^[0-9a-f]{40}$/.test(v.mergeSha) ? { mergeSha: v.mergeSha } : {}) };
+    ...(typeof v.mergeSha === 'string' && /^[0-9a-f]{40}$/.test(v.mergeSha) ? { mergeSha: v.mergeSha } : {}),
+    ...(typeof v.draft === 'boolean' ? { draft: v.draft } : {}) };
 }
 
 // DESIGN §24: the answer's jobTree from what the job host said about each child of one request that did not simply end

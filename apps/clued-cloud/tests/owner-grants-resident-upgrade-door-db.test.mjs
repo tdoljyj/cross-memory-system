@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -46,7 +46,7 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-resident-upgrade-door-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
@@ -258,9 +258,9 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
       [false, pending.request_id, 'pending']);
     assert.equal(await requests(ids['node-a']), 1);
     await fails(upgrade('node-a', [A2], op1), '22023', /owner_grant_door_input_invalid/);
-    // With the switch off nothing is approved automatically, release.production included.
-    result = await door('release', { action: 'release.production', resources: [`repo:tdoljyj/cross-memory-system/${'c'.repeat(40)}`] });
-    assert.equal(result.consumed, false);
+    // The release actions are no token's any more (the release workflow is its database login).
+    await assert.rejects(() => door('release', { action: 'release.production', resources: [`repo:tdoljyj/cross-memory-system/${'c'.repeat(40)}`] }),
+      /owner_grant_door_release_token_retired/);
     assert.equal((await admin.query(`select count(*)::int n from clued_private.owner_grants_v1 where action=$1`, [ACTION])).rows[0].n, 0,
       'no automatic grant for ci.resident_upgrade with the switch off');
 
@@ -362,7 +362,7 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
       actions: [{ action: ACTION, resources: [A1] }, { action: 'release.production', resources: ['repo:tdoljyj/cross-memory-system/x'] }],
       idempotency_key: 'resident-upgrade-bundle' }), /owner_request_bundle_invalid/);
     await assert.rejects(() => door('release', { action: 'migration.production', resources: ['repo:tdoljyj/cross-memory-system/y'],
-      with: [{ action: ACTION, resources: [A1] }] }), /owner_grant_door_action_invalid/);
+      with: [{ action: ACTION, resources: [A1] }] }), /owner_grant_door_release_token_retired/);
     assert.equal((await admin.query(`select count(*)::int n from clued_private.owner_requests_v1 where action=$1 and binding_id=$2`,
       [ACTION, ids.claude])).rows[0].n, 0);
 

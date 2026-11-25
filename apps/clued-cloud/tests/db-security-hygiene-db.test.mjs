@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -8,6 +8,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { checkDatabaseMaintenance } from './database-io-maintenance-db.case.mjs';
+import { checkWorkerDue } from './worker-due-db.case.mjs';
 
 // Database permission hygiene, P0-4 (migration 20261007120000, Clued Task 9a4d6d2c, Owner Decision
 // eed7154f; docs/maintenance/database-security.md). Two databases on one server: "plain" is what
@@ -140,7 +142,7 @@ test('database permission hygiene: exact privilege changes, Worker RPCs stay cal
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), `clued-db-security-hygiene-${label}-`));
     const server = new EmbeddedPostgres({
       databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-      persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+      persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
       onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
     });
     servers.push({ server, directory });
@@ -363,6 +365,15 @@ test('database permission hygiene: exact privilege changes, Worker RPCs stay cal
       await apply(prod, [MIGRATION]);
       assert.deepEqual(await snapshot(prod), prodAfter);
     });
+
+    // Reuse the local server with an isolated database for the retention and index fixtures.
+    await plain.query('create database io_maintenance');
+    const maintenance = servers[0].server.getPgClient('io_maintenance');
+    clients.push(maintenance);
+    await maintenance.connect();
+    await checkDatabaseMaintenance(t, maintenance);
+    await apply(plain, migrations.filter(name => name > MIGRATION));
+    await checkWorkerDue(t, plain);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     for (const { server, directory } of servers) {

@@ -18,6 +18,11 @@ const terminalRelease = JSON.parse(await readFile(new URL('./fixtures/agent-cont
 const leasePin = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v57-v58-map.json', import.meta.url), 'utf8'));
 const prEndRelease = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v58-v59-map.json', import.meta.url), 'utf8'));
 const holderPreflight = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v59-v60-map.json', import.meta.url), 'utf8'));
+const servedTarget = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v60-v61-map.json', import.meta.url), 'utf8'));
+const sessionCapInHand = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v61-v62-map.json', import.meta.url), 'utf8'));
+const ciJoinOnly = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v62-v63-map.json', import.meta.url), 'utf8'));
+const sessionCapOpenBinding = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v63-v64-map.json', import.meta.url), 'utf8'));
+const mainMergeDiscovery = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v64-v65-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
@@ -27,10 +32,125 @@ const sha256 = text => createHash('sha256').update(text).digest('hex');
 // the v55 queue participation and explicit holder removal, and the v56 Native
 // PR/Task identity successor, the v57 holder-edit/terminal successor, then the v58 lease pin by authorize_head, and the v59 PR-end release that
 // replaces holder readiness and terminal admission. The v60 successor corrects
-// only the existing A.4 holder preflight and its retired readiness wording.
+// only the existing A.4 holder preflight and its retired readiness wording. The v61 successor lets a pull-request
+// authorize_head omit the target branch the service decides (Task 0ca0479d). The v62 successor says the session
+// cap counts only claims in hand (Task e642d087). The v63 successor makes the resident CI the only way into a served
+// repository's merge queue (Task 05ff5174). The v64 successor says a claim whose Task's pull request is open
+// counts as delivered whether the CI confirmed it or the holder's authorize_head named it (Task e642d087).
+// The v65 successor adds the verified main merge source to PR discovery in A.5.
 // Undo only these declared
 // successors before checking all 24 original normative blocks against the unchanged frozen proof.
+// The v63 successor makes the resident CI the only way into a served repository's merge queue (A.6): the holder no
+// longer joins by renewing with the merge ref, and no longer renews hourly to keep a place. The three other places that
+// said a merge ref "joins" or "queues" (§1.7, the refusal table of §4, A.1) now only say that it never conflicts.
+function v64Source() {
+  assert.equal(mainMergeDiscovery.schema, 'clued.agent-contract-main-merge-discovery-successor/1');
+  assert.equal(mainMergeDiscovery.source_version, 64);
+  assert.equal(mainMergeDiscovery.target_version, 65);
+  assert.deepEqual(mainMergeDiscovery.edits.map(edit => edit.id), ['version', 'source-head-discovery']);
+  assert.deepEqual(mainMergeDiscovery.edits[0], { id: 'version', before: 'Contract version: 64', after: 'Contract version: 65' });
+  assert.equal(sha256(source), mainMergeDiscovery.target_document_normalized_sha256);
+  const edit = mainMergeDiscovery.edits[1];
+  const section = source.split('### A.5 Pull requests and protected changes')[1].split('<a id="appendix-a6"></a>')[0];
+  assert.ok(section.includes(edit.after));
+  assert.equal(/[\r\n]/.test(edit.before + edit.after), false, 'only one sentence in A.5 changes');
+  let restored = source;
+  for (const { id, before, after } of [...mainMergeDiscovery.edits].reverse()) {
+    assert.equal(restored.split(after).length - 1, 1, `${id}: exact main-merge discovery successor text`);
+    restored = restored.replace(after, before);
+  }
+  assert.equal(sha256(restored), mainMergeDiscovery.source_document_normalized_sha256);
+  return restored;
+}
+
+// The v64 successor widens the one parenthesis of the work_claim_budget_exhausted row: a pull request the
+// holder's own authorize_head named counts as open too (20261124190000).
+function v63Source() {
+  const source=v64Source();
+  assert.equal(sessionCapOpenBinding.schema,'clued.agent-contract-session-cap-open-binding-successor/1');
+  assert.equal(sessionCapOpenBinding.source_version,63);assert.equal(sessionCapOpenBinding.target_version,64);
+  assert.deepEqual(sessionCapOpenBinding.edits.map(row=>row.id),['version','session-cap-open-binding']);
+  assert.deepEqual(sessionCapOpenBinding.edits[0],{id:'version',before:'Contract version: 63',after:'Contract version: 64'});
+  assert.equal(sha256(source),sessionCapOpenBinding.target_document_normalized_sha256);
+  const edit=sessionCapOpenBinding.edits[1];
+  for(const text of [edit.before,edit.after]) {
+    assert.ok(text.startsWith('claims in hand per session ('));
+    assert.equal(/\n|### |<a id=/.test(text),false,'the edit stays inside one line');
+  }
+  assert.ok(edit.after.includes('confirmed by the CI')&&edit.after.includes('authorize_head'));
+  let restored=source;
+  for(const {id,before,after} of [...sessionCapOpenBinding.edits].reverse()) {
+    assert.equal(restored.split(after).length-1,1,`${id}: exact open-binding successor text`);
+    restored=restored.replace(after,before);
+  }
+  assert.equal(sha256(restored),sessionCapOpenBinding.source_document_normalized_sha256);
+  return restored;
+}
+function v62Source() {
+  const source=v63Source();
+  assert.equal(ciJoinOnly.schema,'clued.agent-contract-ci-join-only-successor/1');
+  assert.equal(ciJoinOnly.source_version,62);assert.equal(ciJoinOnly.target_version,63);
+  assert.deepEqual(ciJoinOnly.edits.map(row=>row.id),['version','core-names-queue','conflict-row','resume-claims','ci-join-only','unmarked-ref-dropped','no-hourly-renewal']);
+  assert.deepEqual(ciJoinOnly.edits[0],{id:'version',before:'Contract version: 62',after:'Contract version: 63'});
+  assert.equal(sha256(source),ciJoinOnly.target_document_normalized_sha256);
+  for(const edit of ciJoinOnly.edits.slice(1)) for(const text of [edit.before,edit.after])
+    assert.equal(/\n|### |<a id=/.test(text),false,`${edit.id}: the edit stays inside one line`);
+  const after=Object.fromEntries(ciJoinOnly.edits.map(row=>[row.id,row.after]));
+  assert.ok(after['ci-join-only'].includes('you do not join it yourself')&&after['ci-join-only'].includes('never puts you into that queue'));
+  assert.equal(ciJoinOnly.edits.some(row=>row.after.includes('has no effect')),false);
+  assert.equal(after['no-hourly-renewal'].includes('once an hour'),false);
+  let restored=source;
+  for(const {id,before,after} of [...ciJoinOnly.edits].reverse()) {
+    assert.equal(restored.split(after).length-1,1,`${id}: exact CI-join-only successor text`);
+    restored=restored.replace(after,before);
+  }
+  assert.equal(sha256(restored),ciJoinOnly.source_document_normalized_sha256);
+  return restored;
+}
+function v61Source() {
+  const source=v62Source();
+  assert.equal(sessionCapInHand.schema,'clued.agent-contract-session-cap-in-hand-successor/1');
+  assert.equal(sessionCapInHand.source_version,61);assert.equal(sessionCapInHand.target_version,62);
+  assert.deepEqual(sessionCapInHand.edits.map(row=>row.id),['version','session-cap-in-hand']);
+  assert.deepEqual(sessionCapInHand.edits[0],{id:'version',before:'Contract version: 61',after:'Contract version: 62'});
+  assert.equal(sha256(source),sessionCapInHand.target_document_normalized_sha256);
+  const edit=sessionCapInHand.edits[1];
+  for(const text of [edit.before,edit.after]) {
+    assert.ok(text.startsWith('| `work_claim_budget_exhausted` |'));
+    assert.equal(/(?:^|\n)(?:### |<a id=)/.test(text),false,'the edit cannot consume another section');
+  }
+  assert.ok(edit.after.includes('claims in hand per session')&&edit.after.includes('confirmed open does not count'));
+  let restored=source;
+  for(const {id,before,after} of [...sessionCapInHand.edits].reverse()) {
+    assert.equal(restored.split(after).length-1,1,`${id}: exact session-cap successor text`);
+    restored=restored.replace(after,before);
+  }
+  assert.equal(sha256(restored),sessionCapInHand.source_document_normalized_sha256);
+  return restored;
+}
+function v60Source() {
+  const source=v61Source();
+  assert.equal(servedTarget.schema,'clued.agent-contract-served-target-successor/1');
+  assert.equal(servedTarget.source_version,60);assert.equal(servedTarget.target_version,61);
+  assert.deepEqual(servedTarget.edits.map(row=>row.id),['version','served-target']);
+  assert.deepEqual(servedTarget.edits[0],{id:'version',before:'Contract version: 60',after:'Contract version: 61'});
+  assert.equal(sha256(source),servedTarget.target_document_normalized_sha256);
+  const edit=servedTarget.edits[1];
+  for(const text of [edit.before,edit.after]) {
+    assert.ok(text.startsWith('- A guarded holder authorizes each exact full head SHA'));
+    assert.equal(/(?:^|\n)(?:### |<a id=)/.test(text),false,'the edit cannot consume another section');
+  }
+  assert.ok(edit.after.includes('omit `target_branch`')&&edit.after.includes('`work_claim_target_branch_not_served`'));
+  let restored=source;
+  for(const {id,before,after} of [...servedTarget.edits].reverse()) {
+    assert.equal(restored.split(after).length-1,1,`${id}: exact served-target successor text`);
+    restored=restored.replace(after,before);
+  }
+  assert.equal(sha256(restored),servedTarget.source_document_normalized_sha256);
+  return restored;
+}
 function v59Source() {
+  const source=v60Source();
   assert.equal(holderPreflight.schema,'clued.agent-contract-holder-preflight-successor/1');
   assert.equal(holderPreflight.source_version,59);assert.equal(holderPreflight.target_version,60);
   assert.deepEqual(holderPreflight.edits.map(row=>row.id),['version','holder-preflight']);
@@ -286,7 +406,7 @@ test('the mandatory work-claim core remains within 500 words', () => {
   assert.ok(words > 0 && words <= 500, `§1.7 has ${words} words`);
 });
 
-test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v60 successor edits', () => {
+test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v65 successor edits', () => {
   assert.equal(map.schema, 'clued.agent-contract-claim-move/1');
   assert.equal(map.blocks.length, 24);
   assert.equal(map.blocks.reduce((count, row) => count + row.reference_edits.length, 0), 9);

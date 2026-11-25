@@ -89,9 +89,32 @@ ledger with the live history.
   Owner chose to keep for now (the `mtpe_m0_test` and `mtpe_m0_work` schemas,
   the apply-time versioning).
 
-CI's `db reset` still applies every file in `supabase/migrations/` in file
+Local and CI databases still get every file in `supabase/migrations/` in file
 order, repository-only and pending files included; the ledger records that
-difference, it does not change it. Retiring or applying the never-applied
+difference, it does not change it. The Supabase CLI applies none of them
+(`[db.migrations] enabled = false`): `scripts/ci/clued-local-migrate.mjs` does,
+after `supabase start`, each file in one transaction with its history row —
+files after the release baseline as `migrate` mode runs them (one plpgsql
+`EXECUTE`), earlier files as one simple query. A file that `migrate` mode
+would refuse (transaction control) is refused locally too, and one it accepts
+(a top-level `LOCK TABLE`) is accepted. Each caller of
+`supabase start` applies the chain inside the entry it already runs next, so
+the registered workflow files keep their bytes:
+
+- `clued-g4-database.yml`: `clued-g4-fresh-start.mjs --verify`, after it has
+  proven the container is the run's own and before it compares the history.
+  The comment above that step in the workflow ("start applies the full
+  migration chain…") predates this and stays because the file is registered
+  byte for byte; this document is the current statement.
+- `information-flow-e2e.yml`: `npm run test:information-flow:e2e`, whose
+  `resetDatabase()` runs the script after the CLI reset.
+- `public-mcp-behavior.yml`: `npm run mcp:isolated:fixture`, which begins with
+  the script. The `supabase db reset` step before it only recreates an empty
+  database.
+- a developer machine: `npm run db:start` and `npm run db:reset`.
+
+`tests/migration-ledger.test.mjs` fails when the CLI could apply migrations or
+when a caller of `supabase start` has no such entry. Retiring or applying the never-applied
 files is a separate decision (P1-5), as is removing the test schema (P0-4).
 
 ## Checks

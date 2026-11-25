@@ -17,6 +17,7 @@ import { closeGreenLedgerGroups, CLOSE_AFTER_MS } from '../src/independent-contr
 import { validateTrainFacts } from '../src/independent-control-checks-v2/train-facts.mjs';
 import { TRAIN_RUN_SHADOW_DEFAULTS, makeTrainRun } from '../src/resident-v2/train-run.mjs';
 import { tempDir } from './resident-v2-fixtures.mjs';
+import { s7Rules, scaffoldRules, mainRules, ACTIONS } from './s7-rules-fixture.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system', APP = 5368905, SLOT = 'kooyumi-merge-slot';
 const sha = n => n.toString(16).padStart(40, '0');
@@ -696,6 +697,7 @@ test('a front batch longer than sweepFreshMs: the next stage 10 refreshes the pr
   const frontJob = { repo: REPO, pr: 910, headSha: H, baseSha: T, testSha: S };
   const stage8 = async () => trainHeadDecision({ job: frontJob, claimId: CLAIM, holders: { onDuty: true, holders: [e.native.holder] }, proof: await e.store.latestProof(),
     storeRefused: e.store.refused, front: (await e.store.frontBatches({ pr: 910, headSha: H }))[0], ledger: await e.ledger.list(), pulls: { complete: true, pulls: [] }, now: e.now });
+  e.now += 1000; // stage 8 runs after stage 10's records (the store stamps them strictly increasing, board 269)
   assert.equal(await stage8(), null, 'fresh at first');
   e.now += 20 * 60_000;
   assert.equal(await stage8(), TRAIN_SINGLE_GREEN_NOT_PROVEN, 'older than sweepFreshMs: parked in B');
@@ -705,6 +707,7 @@ test('a front batch longer than sweepFreshMs: the next stage 10 refreshes the pr
     ['TRAIN_FRONT_BATCH_RUNNING', null, false, false]);
   validateTrainFacts(again.facts);
   assert.equal((await e.store.frontBatches({ pr: 910, headSha: H })).length, 1, 'no attempt 2');
+  e.now += 1000;
   assert.equal(await stage8(), null, 'the refreshed proof covers the running batch');
   // a new S (main moved), a finished attempt (frontOutcome) or a clock no longer running: not the running batch
   e.native.holder = { ...e.native.holder, ciState: null };
@@ -736,6 +739,51 @@ test('incremental sweep: a backlog advances run by run; the head bound counts on
   big.gh.pull(3001, { head: sha(0x80000 + 249), commits: Array.from({ length: 250 }, (_, i) => sha(0x80000 + i)),
     forcePushes: Array.from({ length: 200 }, (_, i) => ({ before: sha(0x90000 + i), after: sha(0x80000 + 249) })), updated: iso(NOW - 1000) });
   assert.equal((await big.run()).facts.sweep.complete, true);
+});
+
+// Task 04f9b91b (must-red 5): in S7 #292 (strict on) is enabled again next to the scaffold ruleset, which pins
+// kooyumi-admission-verified to App 5164952 as well. Stage 10 reads those rules, so a code-layer front behind main needs main
+// merged in under strict (the companion's front-merge dispatch acts on exactly this decision).
+test('stage 10: S7 rules read; a code-layer front behind main under strict needs main merged in', async t => {
+  const e = await setup(t);
+  e.gh.world.behindHeads = new Set([H]);
+  e.gh.readBranchRules = async () => { e.gh.world.calls.push('rules'); return { complete: true, branch: 'main', rules: s7Rules() }; };
+  e.gh.readChangedPaths = async () => { e.gh.world.calls.push('paths'); return { complete: true, paths: ['apps/x.ts'] }; };
+  const r = await runTrain({ job: jobOf(), github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
+    layerOfPaths: paths => (paths.some(p => p.startsWith('scripts/ci/')) ? 'protected' : 'code') });
+  assert.deepEqual([r.facts.decision, r.facts.rules, r.facts.rulesReason], ['FRONT_NEEDS_MAIN_MERGE', { strict: true, mergeOnly: false, appScans: ['gitleaks', 'trivy', 'contract-placement'] }, null]);
+});
+
+// Task 04f9b91b (admission p90, 修复前必红): in the scaffold phase main's only rules are the scaffold ruleset (27843120, as read back
+// live: kooyumi-work-admission pinned to this App, the three hosted-* scans pinned to GitHub Actions). The six are not all there, so the
+// rules stay unreadable (stage 8 publishes nothing), but no scan is pinned to this App: stage 10 says appScans [] and the resident runs none.
+// Rules that cannot be read (an incomplete reply, a failed read, a scan required from no App) carry no appScans: every scan runs.
+test('stage 10: the scaffold ruleset alone pins no scan to this App -> facts.appScans [] while the rules stay unreadable', async t => {
+  const run = async (reply, o = {}) => {
+    const e = await setup(t);
+    e.gh.readBranchRules = async () => { e.gh.world.calls.push('rules'); if (reply instanceof Error) throw reply; return reply; };
+    return (await runTrain({ job: jobOf(), github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep, ...o })).facts;
+  };
+  const scaffold = await run({ complete: true, branch: 'main', rules: scaffoldRules() });
+  assert.deepEqual([scaffold.rules, scaffold.rulesReason, scaffold.appScans], [null, 'RULESET_UNREADABLE', []]);
+  // #292 enabled (S7, or today): the six on this App, the scans run as before; the two fields agree.
+  for (const rules of [s7Rules(), mainRules()]) {
+    const f = await run({ complete: true, branch: 'main', rules });
+    assert.deepEqual([f.rules?.appScans, f.appScans, f.rulesReason], [['gitleaks', 'trivy', 'contract-placement'], ['gitleaks', 'trivy', 'contract-placement'], null]);
+  }
+  // only some scans pinned to this App (here the scaffold plus trivy pinned to this App): only those run.
+  const part = scaffoldRules().map(r => r.type !== 'required_status_checks' ? r
+    : { ...r, parameters: { ...r.parameters, required_status_checks: [...r.parameters.required_status_checks, { context: 'trivy', integration_id: 5368905 }, { context: 'gitleaks', integration_id: ACTIONS }] } });
+  assert.deepEqual((await run({ complete: true, branch: 'main', rules: part })).appScans, ['trivy']);
+  // not read (task bd07449b: RULESET_READ_FAILED), or read and a scan required from no App: no appScans at all (every scan runs, the safe side)
+  const noScan = scaffoldRules().map(r => r.type !== 'required_status_checks' ? r
+    : { ...r, parameters: { ...r.parameters, required_status_checks: [...r.parameters.required_status_checks, { context: 'gitleaks' }] } });
+  for (const [reply, reason] of [[{ complete: false, branch: 'main', rules: scaffoldRules() }, 'RULESET_READ_FAILED'], [new Error('rules read failed'), 'RULESET_READ_FAILED'],
+    [{ complete: true, branch: 'main', rules: 'x' }, 'RULESET_READ_FAILED'],
+    [{ complete: true, branch: 'main', rules: noScan }, 'RULESET_UNREADABLE'], [{ complete: true, branch: 'main', rules: [{ type: 'deletion' }] }, 'RULESET_UNREADABLE']]) {
+    const f = await run(reply);
+    assert.deepEqual([f.rules, f.rulesReason, Object.hasOwn(f, 'appScans')], [null, reason, false], JSON.stringify(reply));
+  }
 });
 
 test('the protected layer: a front whose H does not contain T needs main merged in first, in mode on only (review R2 M4)', async t => {
@@ -806,7 +854,7 @@ test('a compare GitHub answers 404 for (gone or unrelated history) is "not in ma
 });
 
 test('touch failed only from frontOutcome, while this claim is the front and the head is still H', async t => {
-  const outcome = { frontPr: 910, frontHeadSha: H, frontTestSha: S, frontAttempt: 2, frontCode: 'GITLEAKS_FINDINGS' };
+  const outcome = { frontPr: 910, frontHeadSha: H, frontTestSha: S, frontAttempt: 2, frontCode: 'GITLEAKS_FINDINGS', frontFailed: true };
   const e = await setup(t, { job: outcome });
   const { facts } = await e.run();
   assert.deepEqual([facts.decision, facts.actions.failedReported, e.native.calls.find(c => c[0] === 'touch')[1]], ['FRONT_FAILED_REPORTED', true,
@@ -817,6 +865,28 @@ test('touch failed only from frontOutcome, while this claim is the front and the
     await x.run();
     assert.ok(!x.native.calls.some(c => c[0] === 'touch' && c[1].ciState === 'failed'), JSON.stringify(o));
   }
+});
+
+// FABLE-r3-batch2-gate F2 (修复前必红) and F3: frontFailed false (the front batch ended clean, or its row was ignored) never touches failed and
+// does not keep the plan at TRAIN_FRONT_BATCH_RUNNING: the batch is finished, the head's next front batch opens (attempt 2). frontFailed true:
+// as today (the test above).
+test('R3 batch 2 F2: frontOutcome with frontFailed false ends the running front batch: no touch failed, not TRAIN_FRONT_BATCH_RUNNING', async t => {
+  // A short batch budget, so the slot's hard cap leaves room for a second batch in the same tenure (otherwise turn_short, §2.2).
+  const e = await setup(t, { job: { frontBatchBudgetMs: 600_000 } });
+  const first = await e.run();
+  assert.deepEqual([first.facts.decision, first.facts.openFrontBatch?.attempt], ['OPEN_FRONT_BATCH', 1]);
+  e.native.calls.length = 0;
+  const running = await e.run();
+  assert.equal(running.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', 'without a frontOutcome the batch is running');
+  e.native.calls.length = 0;
+  e.now += 5 * 60_000; // the batch ended a few minutes later: a new touch running moves the clock on
+  const ended = await e.run(jobOf({ frontBatchBudgetMs: 600_000, frontPr: 910, frontHeadSha: H, frontTestSha: S, frontAttempt: 1, frontCode: 'TRAIN_BATCH_CHANGED', frontFailed: false }));
+  validateTrainFacts(ended.facts);
+  assert.notEqual(ended.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(ended.facts));
+  assert.notEqual(ended.facts.decision, 'FRONT_FAILED_REPORTED');
+  assert.ok(!e.native.calls.some(c => c[0] === 'touch' && c[1].ciState === 'failed'), JSON.stringify(e.native.calls));
+  assert.equal(ended.facts.actions.failedReported, false);
+  assert.deepEqual([ended.facts.decision, ended.facts.openFrontBatch?.attempt], ['OPEN_FRONT_BATCH', 2], 'the second front batch of the head');
 });
 
 // ---- generation 28 (resident ADR 0017): the 45-minute gap between becoming the queue head and the front batch's touch ----
@@ -879,6 +949,8 @@ test('gen 28: an idle front is not renewed (green, needs main, closed, unbound, 
   const soon = { holder: { mergeSlotUntil: iso(NOW + 10 * 60_000) } };
   const green = await setup(t, { native: soon });
   green.gh.green(31, H);
+  // Fable 11-20 (#1192): green, wait for merge needs every check main's rules require on the head, not the merge slot alone.
+  for (const [i, name] of ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified'].entries()) green.gh.green(32 + i, H, { name });
   assert.deepEqual([(await green.run()).facts.decision, touchesOf(green)], ['FRONT_GREEN_WAIT_MERGE', []]);
   const greenClock = await setup(t, { native: { holder: { ...soon.holder, ciState: 'green', ciHeadSha: H } } });
   greenClock.streamDown = true;
@@ -909,6 +981,92 @@ test('gen 28: an idle front is not renewed (green, needs main, closed, unbound, 
   lost.native.port = { ...lost.native.port, async touch(i) { await touch(i); return { onDuty: false, touched: false, until: null, claims: [], returned: null }; } };
   const l = await lost.run();
   assert.deepEqual([l.facts.decision, l.facts.actions.touchedRunning, l.sideEffects], ['NOT_ON_DUTY', false, 1]);
+});
+
+// ---- turn_short (Fable 2026-11-19, field #1169 -> #1173): a turn too short for the front batch is ended by the train itself ----
+// Production 2026-11-19 (Beijing): claim 28ab365c took the slot at 07:32:36 (hard cap 120 minutes), used it for #1169, was rebound to
+// #1173 at 08:38:46 and from 08:40:24 every round ended TRAIN_FRONT_BUDGET_SHORT (68 minutes used, 52 left, a batch needs 64.5) until a
+// person gave the claim up, claimed again, authorized the head again and edited the PR body. Now the round that finds the hard cap too
+// short for the batch asks Native (merge_queue_yield, reason turn_short) to end the turn: the same claim joins again (behind any waiting
+// claim; alone, head again at once with a whole turn), and the next round opens the batch.
+const PROD_BUDGET = { frontBatchBudgetMs: 3_600_000 };
+const landablePulls = e => { const read = e.gh.readPullRequest; e.gh.readPullRequest = async n => ({ ...(await read(n)), auto_merge: { merge_method: 'merge' } }); };
+const yieldsOf = e => e.native.calls.filter(c => c[0] === 'yield').map(c => c[1]);
+// Native's merge_queue_yield as the fake sees it: turn_short alone in the queue starts a whole new turn for the same claim now.
+const yielding = (e, answer = null) => {
+  e.native.port.yieldSlot = async i => {
+    e.native.calls.push(['yield', i]);
+    if (answer) return answer;
+    if (i.reason === 'turn_short') e.native.holder = { ...e.native.holder, takenAt: iso(e.now), mergeSlotUntil: iso(e.now + 45 * 60_000), ciState: null, ciHeadSha: null, hardCapUntil: null };
+    return { onDuty: true, yielded: true };
+  };
+};
+
+test('turn_short: a front the hard cap leaves too little for its batch ends its turn and joins again; the next round opens the batch', async t => {
+  const e = await setup(t, { job: PROD_BUDGET, native: { holder: { takenAt: iso(NOW - 68 * 60_000), mergeSlotUntil: iso(NOW + 40 * 60_000) } } });
+  landablePulls(e); yielding(e);
+  const first = await e.run();
+  validateTrainFacts(first.facts);
+  assert.deepEqual(yieldsOf(e), [{ pr: 910, headSha: H, reason: 'turn_short' }], JSON.stringify(first.facts));
+  assert.deepEqual([first.facts.decision, first.facts.actions.returned, first.facts.openFrontBatch, touchesOf(e), first.sideEffects],
+    ['FRONT_RETURNED', true, null, [], 2], 'keepalive + the yield; no touch, no attempt counted');
+  assert.equal((await e.store.frontBatches({ pr: 910, headSha: H })).length, 0);
+  e.now += 5 * 60_000;
+  e.native.calls.length = 0;
+  const second = await e.run();
+  validateTrainFacts(second.facts);
+  assert.equal(second.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(second.facts));
+  assert.deepEqual(second.facts.openFrontBatch, { pr: 910, headSha: H, baseSha: T, testSha: S, testTree: TREE, claimId: CLAIM, since: iso(NOW), attempt: 1 });
+  assert.deepEqual(yieldsOf(e), [], 'the new turn is not given up again');
+});
+
+test('turn_short is asked only when the hard cap is why: not for a short lease, a cap no batch fits, a running batch, a server without it', async t => {
+  await t.test('lease too short', async t => {
+    const e = await setup(t, { job: PROD_BUDGET, native: { expiresAt: iso(NOW + 20 * 60_000), holder: { mergeSlotUntil: iso(NOW + 40 * 60_000) } } });
+    landablePulls(e); yielding(e);
+    const r = await e.run();
+    assert.deepEqual([r.facts.decision, yieldsOf(e)], ['TRAIN_FRONT_BUDGET_SHORT', []]);
+  });
+  await t.test('a 60-minute cap that no 64.5-minute batch fits', async t => {
+    const e = await setup(t, { job: { ...PROD_BUDGET, slotHardCapMinutes: 60 }, native: { holder: { takenAt: iso(NOW - 40 * 60_000), mergeSlotUntil: iso(NOW + 10 * 60_000) } } });
+    landablePulls(e); yielding(e);
+    const r = await e.run();
+    assert.deepEqual([r.facts.decision, yieldsOf(e), touchesOf(e)], ['TRAIN_FRONT_BUDGET_SHORT', [], []], 'a new turn could not open it either');
+  });
+  await t.test('a front batch running', async t => {
+    const e = await setup(t);
+    landablePulls(e); yielding(e);
+    assert.equal((await e.run()).facts.decision, 'OPEN_FRONT_BATCH');
+    e.now += 85 * 60_000; // 30 minutes of the cap left, less than the batch's 34.5: the batch already running keeps its turn
+    e.native.calls.length = 0;
+    const r = await e.run();
+    assert.deepEqual([r.facts.decision, yieldsOf(e)], ['TRAIN_FRONT_BATCH_RUNNING', []]);
+  });
+  await t.test('a server without turn_short', async t => {
+    const e = await setup(t, { job: PROD_BUDGET, native: { holder: { takenAt: iso(NOW - 68 * 60_000), mergeSlotUntil: iso(NOW + 40 * 60_000) } } });
+    landablePulls(e); yielding(e, { onDuty: null, yielded: false });
+    const r = await e.run();
+    assert.deepEqual(yieldsOf(e), [{ pr: 910, headSha: H, reason: 'turn_short' }]);
+    assert.deepEqual([r.facts.decision, r.facts.actions.returned, r.sideEffects], ['TRAIN_FRONT_BUDGET_SHORT', false, 1], 'nothing written: as before');
+  });
+  await t.test('a front that cannot land yields as before, without a reason', async t => {
+    const e = await setup(t, { job: PROD_BUDGET, native: { holder: { takenAt: iso(NOW - 68 * 60_000), mergeSlotUntil: iso(NOW + 40 * 60_000) } } });
+    yielding(e); // auto-merge off
+    const r = await e.run();
+    assert.deepEqual([r.facts.decision, yieldsOf(e)], ['FRONT_RETURNED', [{ pr: 910, headSha: H }]]);
+  });
+});
+
+test('merge-slot-native yieldSlot: the reason is sent only when given, and only turn_short or cannot_land', async () => {
+  const { createMergeSlotNative } = await import('../src/independent-control-checks-v2/merge-slot-native.mjs');
+  const sent = [];
+  const native = createMergeSlotNative({ config: { supabaseUrl: 'https://x.supabase.co', publishableKey: 'pk', scope: 'project:p', repository: REPO }, nativeToken: 'clued_bnd_secret',
+    fetchImpl: async (url, init) => { sent.push(JSON.parse(init.body).p_input); return new Response(JSON.stringify({ status: 'ok', yielded: true }), { status: 200 }); } });
+  assert.deepEqual(await native.yieldSlot({ pr: 910, headSha: H }), { onDuty: true, yielded: true });
+  assert.deepEqual(await native.yieldSlot({ pr: 910, headSha: H, reason: 'turn_short' }), { onDuty: true, yielded: true });
+  assert.deepEqual(await native.yieldSlot({ pr: 910, headSha: H, reason: 'whatever' }), { onDuty: null, yielded: false });
+  assert.deepEqual(sent, [{ action: 'merge_queue_yield', scope: 'project:p', pr_ref: `${REPO}#910`, head_sha: H },
+    { action: 'merge_queue_yield', scope: 'project:p', pr_ref: `${REPO}#910`, head_sha: H, reason: 'turn_short' }]);
 });
 
 test('adopt when merged as [T, H] with S\'s tree; a different tree pauses the train; return only when closed unmerged', async t => {

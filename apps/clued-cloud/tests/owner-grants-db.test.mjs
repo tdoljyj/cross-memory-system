@@ -1,4 +1,4 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -92,7 +92,7 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-owner-grants-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
@@ -231,7 +231,8 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
     assert.equal(view.view.expires_seconds, 86400);
     assert.equal(view.view.max_uses, 1);
     assert.deepEqual((await admin.query(`select action,risk from clued_private.owner_grant_actions order by action`)).rows,
-      [{ action: 'ci.resident_upgrade', risk: 'high' }, { action: 'connection.permission', risk: 'high' }, { action: 'migration.production', risk: 'high' },
+      [{ action: 'ci.connection_renew', risk: 'high' }, { action: 'ci.resident_upgrade', risk: 'high' },
+        { action: 'connection.permission', risk: 'high' }, { action: 'fleet.accept', risk: 'high' }, { action: 'migration.production', risk: 'high' },
         { action: 'model.dataset_split.bootstrap', risk: 'high' },
         { action: 'model.dataset_split.producer', risk: 'high' }, { action: 'model.dataset_split.recognize', risk: 'high' },
         { action: 'model.dataset_split.verify', risk: 'high' },

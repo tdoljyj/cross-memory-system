@@ -1,0 +1,143 @@
+{
+  "_source": "GitHub GET replies read 2026-11-22 (Beijing) for #1235 head b8f6f5d1 (the clued-admission[bot] main refresh of 8d19f2e8). The gate at 23:07 Beijing refused it with trusted_automation_route:prior_pr_admission_missing (jobs 137250152418, 137250152276). Reconstructed to the moment of that gate run: pull_request.state is open (merged later at 15:09:33Z) and main tip is the base c7c16f37. Everything else is verbatim, trimmed to the fields the route reads.",
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "default_branch": "main",
+    "owner": {
+      "id": 52366662,
+      "login": "tdoljyj",
+      "type": "User"
+    }
+  },
+  "pull_request": {
+    "number": 1235,
+    "state": "open",
+    "user": {
+      "id": 52366662,
+      "login": "tdoljyj",
+      "type": "User"
+    },
+    "head": {
+      "sha": "b8f6f5d1f805098dabebe7280efe39c6e45d1207",
+      "ref": "claude/r3-batch2",
+      "repo": {
+        "full_name": "tdoljyj/cross-memory-system"
+      }
+    },
+    "base": {
+      "sha": "c7c16f3753852bf245bd4e2d55eda4c17e7b7e90",
+      "ref": "main",
+      "repo": {
+        "full_name": "tdoljyj/cross-memory-system",
+        "default_branch": "main"
+      }
+    }
+  },
+  "run": {
+    "id": 45036123576,
+    "run_attempt": 1,
+    "event": "pull_request",
+    "head_sha": "b8f6f5d1f805098dabebe7280efe39c6e45d1207",
+    "head_branch": "claude/r3-batch2",
+    "path": ".github/workflows/clued-required-tests.yml",
+    "repository": {
+      "full_name": "tdoljyj/cross-memory-system"
+    },
+    "head_repository": {
+      "full_name": "tdoljyj/cross-memory-system"
+    },
+    "actor": {
+      "id": 337003645,
+      "login": "clued-admission[bot]",
+      "type": "Bot"
+    },
+    "triggering_actor": {
+      "id": 337003645,
+      "login": "clued-admission[bot]",
+      "type": "Bot"
+    },
+    "created_at": "2026-11-22T15:03:03Z",
+    "workflow_id": 402974661
+  },
+  "commit": {
+    "sha": "b8f6f5d1f805098dabebe7280efe39c6e45d1207",
+    "parents": [
+      {
+        "sha": "8d19f2e8c6a7b728fe39519c79ddf4ef61449e05"
+      },
+      {
+        "sha": "c7c16f3753852bf245bd4e2d55eda4c17e7b7e90"
+      }
+    ],
+    "author": {
+      "id": 337003645,
+      "login": "clued-admission[bot]",
+      "type": "Bot"
+    },
+    "committer": {
+      "id": 19864447,
+      "login": "web-flow",
+      "type": "User"
+    },
+    "commit": {
+      "tree": {
+        "sha": "c543bdd27813f9f9cbd4b088b5b719d75f8b4597"
+      },
+      "committer": {
+        "date": "2026-11-22T15:02:52Z"
+      },
+      "verification": {
+        "verified": true,
+        "reason": "valid",
+        "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJrAwQcCRC1aQ7uu5UhlAAAOUEQADlrPHkjOJUdAgzu4SqYUTEX\n/T6TDKZhUHJzIZ9tjmK/oxOMWHDT4KKMDNIlwf4z8JAs811EYiJBKHUeVg0mCFlO\nnJ+tIbMDJZOeohfOh5K7QbxZRIlvAHrLC6HyD+48WnbhlDGBg3hFeRoBDwXGTt48\nDiLeCOwfaOmqAhfaqF9ligajPw9ndovKuGS4S2+W4QBy4m/jsDOcgeMjs3WK3XpN\nlY+s1cKq4ZS39H8i1OD8HRynA69J6XtXyvp5qeQVCRGj+K0TwNifESP7Qow2lY0A\nrKn6uPdNY/H0XMds3Q1jCczsQtuacjr5/434Y/3GXMhBjDiyv2lWVm5AXwpoigH5\nXJ9jTDYNQ2xXnYld6BJ+Bx4JnCRcgetfBf8dKjBjGvCXw4mgUMTbA7kcgW5JzA8v\n/wQNiCvCeuC+I/JOZyiB2ltkkY1LfhQbJV2mX4El8ZDLfZ/1PPJmciXjWQF8fOTf\nxQpZPpCikumdVPSz5TyWQzCk0H/39kBNEKNIfwPBFtqqLCnqO2RY0Ij5lDXDrB1h\nQG85YcME0JgwHz5a4Is36BoJfY5ooH5O3FzLAesMM3jbhth/c5DwjDoJm2P959XO\nR0MA6CO2Gq8lb/q3S4UF4kpOf4na74I4KirLFsFDnQG8drD9SwzhMGiHqq+DAYlV\n7cVQXy0lW7o8nulOeU6J\n=0Mr2\n-----END PGP SIGNATURE-----\n",
+        "payload": "tree c543bdd27813f9f9cbd4b088b5b719d75f8b4597\nparent 8d19f2e8c6a7b728fe39519c79ddf4ef61449e05\nparent c7c16f3753852bf245bd4e2d55eda4c17e7b7e90\nauthor clued-admission[bot] <337003645+clued-admission[bot]@users.noreply.github.com> 1795359772 +0000\ncommitter GitHub <noreply@github.com> 1795359772 +0000\n\nMerge branch 'main' into claude/r3-batch2"
+      }
+    }
+  },
+  "current_admission": {
+    "total_count": 1,
+    "check_runs": [
+      {
+        "id": 137251530971,
+        "name": "kooyumi-work-admission",
+        "app": {
+          "id": 5368905,
+          "slug": "clued-ci-checks-turing-20261018"
+        },
+        "head_sha": "b8f6f5d1f805098dabebe7280efe39c6e45d1207",
+        "status": "completed",
+        "conclusion": "success",
+        "completed_at": "2026-11-22T15:07:44Z",
+        "external_id": "independent-ci:native-work-admission:v2:2bed2e6cf6cf3b15bb94df2098b4ed8a83f0ea3512d74627e3932a61e2b4fa61:a1:c55a557d4:f2:e1",
+        "output": {
+          "summary": "Independent Native control check for tdoljyj/cross-memory-system#1235 (attempt 1); observation sha256 810bab576a890e421de1b2eda49b0a637988cee551c21ba4043882314907074b. This is not a scanner execution, Native publication ticket, Receipt or qualification.\nclued-scan-start-subject/1 {\"claim_id\":\"55a557d4-b3e7-4cbd-a51b-f748ca8b6def\",\"fence\":2,\"epoch\":1,\"source_manifest_sha256\":\"78a7a1668ea0e853238c676aed183bb154abe03d9cc4848e9c89dee992539fbc\",\"registry_sha256\":\"ed0965a16350ad8b43264dadc35d049d2ce9f91adaa148ac250742c261cde7fd\"}"
+        }
+      }
+    ]
+  },
+  "main_merge_attestation": {
+    "total_count": 1,
+    "check_runs": [
+      {
+        "id": 137250159762,
+        "name": "kooyumi-main-merge",
+        "app": {
+          "id": 5164952,
+          "slug": "clued-admission"
+        },
+        "head_sha": "b8f6f5d1f805098dabebe7280efe39c6e45d1207",
+        "status": "completed",
+        "conclusion": "success",
+        "completed_at": "2026-11-22T15:03:05Z",
+        "external_id": "main-merge:1:1235:8d19f2e8c6a7b728fe39519c79ddf4ef61449e05:c7c16f3753852bf245bd4e2d55eda4c17e7b7e90",
+        "output": {
+          "summary": "The merge train's front was behind main. The clued-admission App brought main in (update-branch, GitHub's own merge); nothing else changed. The admission carries the holder's authorization of 8d19f2e8c6a7b728fe39519c79ddf4ef61449e05 to this commit."
+        }
+      }
+    ]
+  },
+  "prior_head_admission": {
+    "total_count": 0,
+    "check_runs": []
+  }
+}

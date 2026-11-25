@@ -145,6 +145,53 @@ test('invoke-stage (DESIGN §41.2): stages 1 and 8 get the installed train mode 
   assert.equal(await main(['--batch-dir', f.batchDir, '--stage', '1', '--train-mode', 'on', '--train-mode', 'off'], out), 2, 'given twice: refused');
 });
 
+// bc982192 (C3, plan 戊): the batch's route stamp reaches stages 1 and 8 as batch-route.json (batch-route.mjs), create-only, exactly its
+// bytes; no other stage, no stamp: no file, and the stage reads null (main's tip is the batch base).
+test('invoke-stage (bc982192): stages 1 and 8 of a batch stamped push get batch-route.json; no other stage, no stamp: no file; anything else is refused', async t => {
+  const { readStageBatchRoute, stageBatchRouteText, STAGE_BATCH_ROUTE_FILE } = await import('../src/independent-control-checks-v2/batch-route.mjs');
+  const { main } = await import('../src/resident-v2/invoke-stage.mjs');
+  const f = await fixture(t);
+  const newest = async before => (await fs.readdir(f.roots.stageRoot)).filter(d => !before.includes(d));
+  for (const [stage, batchRoute, expected] of [[1, 'push', 'push'], [8, 'push', 'push'], [1, null, null], [8, null, null], [2, 'push', null], [4, 'push', null], [6, 'push', null]]) {
+    const before = await fs.readdir(f.roots.stageRoot);
+    const fact = await run(f, stage, fakeBroker(f), { batchRoute });
+    assert.equal(fact.state, 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION', `${stage} ${batchRoute}`);
+    const [dir] = await newest(before);
+    const files = (await fs.readdir(path.join(f.roots.stageRoot, dir))).sort();
+    if (expected === null) assert.ok(!files.includes(STAGE_BATCH_ROUTE_FILE), `${stage} ${batchRoute}`);
+    else assert.equal(await fs.readFile(path.join(f.roots.stageRoot, dir, STAGE_BATCH_ROUTE_FILE), 'utf8'), stageBatchRouteText(expected));
+    assert.equal(await readStageBatchRoute(path.join(f.roots.stageRoot, dir)), expected);
+  }
+  for (const bad of ['PUSH', 'github-merge', '']) assert.equal((await run(f, 1, fakeBroker(f), { batchRoute: bad })).failure_code, 'STAGE_PACKAGE_REFUSED', bad);
+  const out = { text: '', write(s) { this.text += s; } };
+  assert.equal(await main(['--batch-dir', f.batchDir, '--stage', '1', '--batch-route', 'push', '--batch-route', 'push'], out), 2, 'given twice: refused');
+});
+
+test('batch-route.json (bc982192): only the exact record reads push; missing, oversized, unknown, not the exact bytes or not a plain file is null', async t => {
+  const B = await import('../src/independent-control-checks-v2/batch-route.mjs');
+  assert.equal(B.stageBatchRouteText('push'), '{"contract":"clued.independent-ci.stage-batch-route/1","batchRoute":"push"}');
+  assert.deepEqual(B.BATCH_ROUTE_STAGES, [1, 8]);
+  for (const bad of [null, 'github-merge', 'Push', undefined]) assert.throws(() => B.stageBatchRouteText(bad), /BATCH_ROUTE_REFUSED/);
+  assert.equal(B.parseStageBatchRoute(Buffer.from(B.stageBatchRouteText('push'))), 'push');
+  const variants = ['{"contract":"clued.independent-ci.stage-batch-route/1","batchRoute":"github-merge"}',
+    '{"batchRoute":"push","contract":"clued.independent-ci.stage-batch-route/1"}', `${B.stageBatchRouteText('push')}
+`,
+    '{"contract":"clued.independent-ci.stage-batch-route/2","batchRoute":"push"}', ' '.repeat(300), 'not json', ''];
+  for (const v of variants) assert.equal(B.parseStageBatchRoute(Buffer.from(v)), null, v.slice(0, 40));
+  assert.equal(B.parseStageBatchRoute(null), null);
+  const dir = await tempDir(t);
+  assert.equal(await B.readStageBatchRoute(dir), null, 'no file');
+  for (const v of variants) {
+    await fs.writeFile(path.join(dir, B.STAGE_BATCH_ROUTE_FILE), v);
+    assert.equal(await B.readStageBatchRoute(dir), null, v.slice(0, 40));
+  }
+  await fs.writeFile(path.join(dir, B.STAGE_BATCH_ROUTE_FILE), B.stageBatchRouteText('push'));
+  assert.equal(await B.readStageBatchRoute(dir), 'push');
+  await fs.rm(path.join(dir, B.STAGE_BATCH_ROUTE_FILE));
+  await fs.mkdir(path.join(dir, B.STAGE_BATCH_ROUTE_FILE));
+  assert.equal(await B.readStageBatchRoute(dir), null, 'a directory');
+});
+
 test('invoke-stage: a changed package, a missing broker answer, a running helper and a broken restore are never success', async t => {
   const f = await fixture(t);
   assert.equal((await invokeStage({ batchDir: f.batchDir, stage: 2, workManifestSha256: 'f'.repeat(64), batchKey: f.key, ...f.roots })).failure_code, 'STAGE_PACKAGE_REFUSED');
@@ -190,9 +237,26 @@ test('every v2 entry finds the same Source root whatever its depth (the check-pu
   assert.throws(() => sourceRootOfModule(pathToFileURL('C:\\elsewhere\\x.mjs').href), { code: 'ENTRY_OUTSIDE_HELD_SOURCE_REFUSED' });
 });
 
-test('invoke-stage: helper preflight refusal, tree unknown, unbound outcome and a not-admitted stage 1', async t => {
+// Board 271 (FABLE-backlog-batch-design-20261124 §4): the broker reads `started` only once the helper reached RUNNING, which it
+// reports after its boundary validated. A started helper without a receipt passed its preflight and may have run a child, so its
+// tree is not confirmed; a helper that never started is unchanged.
+test('invoke-stage: a started helper (PID) without a receipt is NATIVE_RECEIPT_UNCONFIRMED and its tree is not confirmed', async t => {
   const f = await fixture(t);
-  assert.equal((await run(f, 1, fakeBroker(f, { writeReceipt: false, outcome: null }))).failure_code, 'STAGE_HELPER_PREFLIGHT_REFUSED');
+  const fact = await run(f, 1, fakeBroker(f, { writeReceipt: false, outcome: null }));
+  assert.deepEqual([fact.failure_code, fact.tree_cleanup_confirmed, fact.tree_active_processes, fact.root_exit_confirmed],
+    ['NATIVE_RECEIPT_UNCONFIRMED', false, null, false]);
+});
+
+test('invoke-stage guard: a helper stopped before RUNNING (its preflight refused, as r13) wrote no receipt: as before (NATIVE_RECEIPT_UNCONFIRMED, a zero tree)', async t => {
+  const f = await fixture(t);
+  const fact = await run(f, 1, fakeBroker(f, { writeReceipt: false, outcome: null,
+    response: { ok: false, code: 'BROKER_PID_HANDSHAKE_UNCONFIRMED', started: false, helperPid: null } }));
+  assert.deepEqual([fact.failure_code, fact.tree_cleanup_confirmed, fact.tree_active_processes, fact.root_exit_confirmed],
+    ['NATIVE_RECEIPT_UNCONFIRMED', true, 0, true]);
+});
+
+test('invoke-stage: tree unknown, unbound outcome and a not-admitted stage 1', async t => {
+  const f = await fixture(t);
   assert.equal((await run(f, 1, fakeBroker(f, { receipt: { tree_cleanup_confirmed: false, tree_active_processes: 1 } }))).failure_code, 'STAGE_CHILD_TREE_UNCONFIRMED');
   assert.equal((await run(f, 1, fakeBroker(f, { receipt: { outcome_sha256: 'f'.repeat(64), state: 'FIXED_CHILD_REFUSED', node_exit_code: 2 } }))).failure_code, 'STAGE_OUTCOME_MISSING');
   const na = await run(f, 1, fakeBroker(f, { receipt: { state: 'FIXED_CHILD_REFUSED', node_exit_code: 2 },
@@ -220,6 +284,9 @@ test('invoke-stage: a publisher stage needs the ready-marked signed result for e
   assert.equal(canonical(JSON.parse((await readSpoolResult(f.roots.spoolRoot, job)).toString())), canonical(envelope));
   const fact = await run(f, 3, fakeBroker(f));
   assert.equal(fact.state, 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION');
+  const missing = await run(f, 3, fakeBroker(f, { outcome: null }));
+  assert.equal(missing.failure_code, 'STAGE_OUTCOME_MISSING');
+  assert.equal(missing.outcome, null);
   const other = JSON.parse(f.d.files['stage-05/jobs.json'])[0];
   await assert.rejects(readSpoolResult(f.roots.spoolRoot, other), { code: 'STAGE_INPUT_RESULT_MISSING' });
 });

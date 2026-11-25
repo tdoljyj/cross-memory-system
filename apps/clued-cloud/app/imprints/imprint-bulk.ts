@@ -34,6 +34,10 @@ export function validBulkBatch(value: unknown): BulkBatch {
   if (!rows.length || new Set(rows.map(row => row.ordinal)).size !== rows.length) throw new ImprintFailure("unknown");
   return { ...value, items: rows } as BulkBatch;
 }
+// Shared by previews in this browser module, including overlapping scans.
+let lastPreviewTimeout: { at: number } | undefined;
+const retryQuietPeriodMs = 30_000;
+
 export async function previewBulk(rpc: NativeRpc, selection: BulkSelection, options: {
   owner: string; isCurrent: () => boolean; onProgress?: (scanned: number, total: number, ready: number) => void;
 }): Promise<BulkPreview> {
@@ -42,19 +46,30 @@ export async function previewBulk(rpc: NativeRpc, selection: BulkSelection, opti
   let ready = 0, review = 0, readyCharacters = 0, reviewCharacters = 0;
   const seen = new Set<string>(), planned: BulkItem[] = [], samples: { record_id: string; title: string }[] = [];
   const identities = (rows: BulkItem[]) => JSON.stringify(rows.map(row => [row.record_id, row.record_version, row.domains]));
-  let timeoutRetries = 0;
-  // A failed read has not advanced the signed chain. Retry only PostgreSQL's
-  // statement timeout, with the exact same request and a bounded scan budget.
-  // Semantic conflicts, transport uncertainty and all writes remain single-shot.
+  let retried = false;
   const previewRpc: NativeRpc = async (name, args) => {
-    for (let attempt = 0; ; attempt++) {
+    const readPage = async () => {
       if (!options.isCurrent()) throw new ImprintFailure("unknown", "bulk_selection_changed");
       const result = await rpc(name, args);
       if (!options.isCurrent()) throw new ImprintFailure("unknown", "bulk_selection_changed");
-      if (result.error?.code !== "57014" || attempt >= 2 || timeoutRetries >= 6) return result;
-      timeoutRetries++;
-      await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
-    }
+      return result;
+    };
+    const result = await readPage();
+    if (!isStatementTimeout(result.error)) return result;
+
+    const timeout = { at: Date.now() };
+    const quiet = !lastPreviewTimeout || timeout.at - lastPreviewTimeout.at >= retryQuietPeriodMs;
+    lastPreviewTimeout = timeout;
+    // Only probe after verified progress. Another timeout during backoff
+    // withdraws the probe, even if both timeouts had the same timestamp.
+    if (!proof || retried || !quiet) return result;
+    retried = true;
+    await new Promise(resolve => setTimeout(resolve, 500));
+    if (!options.isCurrent()) throw new ImprintFailure("unknown", "bulk_selection_changed");
+    if (lastPreviewTimeout !== timeout) return result;
+    const retry = await readPage();
+    if (isStatementTimeout(retry.error)) lastPreviewTimeout = { at: Date.now() };
+    return retry;
   };
   // The bound fails explicitly rather than silently claiming a complete scan.
   for (let page = 0; page < 10000; page++) {
@@ -114,6 +129,9 @@ export async function previewBulk(rpc: NativeRpc, selection: BulkSelection, opti
       counts: { ...base, ready, needs_review: review, ready_characters: readyCharacters, review_characters: reviewCharacters } as BulkPreview["counts"], items: planned, review_sample: samples };
   }
   throw new ImprintFailure("unknown", "bulk_preview_limit_incomplete");
+}
+function isStatementTimeout(error: { code?: string; message?: string } | null): boolean {
+  return error?.code === "57014" && error.message === "canceling statement due to statement timeout";
 }
 export async function readBulk(rpc: NativeRpc): Promise<BulkBatch> {
   const value = await call(rpc, "clued_imprint_bulk_status_v1", {});

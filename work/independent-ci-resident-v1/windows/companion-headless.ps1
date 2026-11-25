@@ -263,6 +263,7 @@ function Invoke-CompanionFallback([string]$root, [string]$ownerSid) {
   $xml = Register-CompanionTaskInteractive $root $ownerSid
   Remove-Item -LiteralPath (Join-Path $root $CompanionPendingFile) -Force -ErrorAction SilentlyContinue
   Remove-CompanionFallbackTask
+  Remove-CompanionStartTask
   [ordered]@{ fellBack = $true; taskXmlSha256 = $xml }
 }
 # Review round 2 MINOR 5: every roll-back first ends the running instance and waits until it no longer counts as running.
@@ -292,6 +293,39 @@ function Register-CompanionFallbackTask([string]$root, [string]$residentSha) {
   $a = $def.Actions.Create(0); $a.Path = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
   $a.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $script + '"'
   $null = $folder.RegisterTaskDefinition($CompanionFallbackTaskName, $def, 6, $null, $null, 5, 'D:P(A;;FA;;;SY)(A;;FA;;;BA)')
+}
+# K3: the password definition's own boot and time triggers only queue on a node with nobody logged on (drill r11 guest), a SYSTEM task's
+# run. So a SYSTEM task starts it, ignoring constraints, at boot (+30 s) and every 15 minutes: one fixed PowerShell line that calls the
+# Task Scheduler's RunEx(ignore constraints) as Start-CompanionTask does (schtasks /Run /I was only seen to work after the constraint
+# had gone, drill repro 2026-11-24), no input, no credential; IgnoreNew on the companion task drops the start while it runs. Registered with the password definition (both switches,
+# after the registrar, before the first start), deleted with it (Invoke-CompanionFallback; uninstall). No parameters, create or update;
+# any failure is COMPANION_START_TASK_REGISTER_FAILED.
+# Its DACL: SYSTEM and Administrators full, nothing else (verify-resident.ps1 Get-CompanionStartTaskProblems). Drill r14 A2 (guest,
+# 2026-11-25): registered with flags 6 the Task Scheduler drops P and appends (A;;FR;;;SY) (the principal's read, absent from this SDDL),
+# so verify read sddl; TASK_DONT_ADD_PRINCIPAL_ACE (0x10) keeps it (read back D:PAI). Updating an existing task ignores the SDDL passed,
+# so it is also set on the task itself with SetSecurityDescriptor(..., 0x10): that corrects a task registered the old way (verify's
+# SYSTEM repair calls this function on it).
+$CompanionStartTaskName = 'CluedCIResidentCompanionStart'
+$CompanionStartTaskSddl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)'
+$CompanionStartTaskAction = [ordered]@{ path = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+  arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$s = New-Object -ComObject ''Schedule.Service''; $s.Connect(); $null = $s.GetFolder(''\Clued'').GetTask(''CluedCIResidentCompanion'').RunEx($null, 2, 0, $null)"' }
+function Register-CompanionStartTask {
+  try {
+    $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
+    $folder = $svc.GetFolder('\Clued')
+    $def = $svc.NewTask(0)
+    $def.Principal.UserId = 'S-1-5-18'; $def.Principal.LogonType = 5; $def.Principal.RunLevel = 1
+    $b = $def.Triggers.Create(8); $b.Delay = 'PT30S'
+    $t = $def.Triggers.Create(1); $t.StartBoundary = '2026-01-01T00:00:00'; $t.Repetition.Interval = 'PT15M'
+    $def.Settings.MultipleInstances = 2; $def.Settings.ExecutionTimeLimit = 'PT1M'; $def.Settings.StartWhenAvailable = $true
+    $def.Settings.DisallowStartIfOnBatteries = $false; $def.Settings.StopIfGoingOnBatteries = $false
+    $a = $def.Actions.Create(0); $a.Path = $CompanionStartTaskAction.path; $a.Arguments = $CompanionStartTaskAction.arguments
+    $task = $folder.RegisterTaskDefinition($CompanionStartTaskName, $def, 0x16, $null, $null, 5, $CompanionStartTaskSddl)
+    $task.SetSecurityDescriptor($CompanionStartTaskSddl, 0x10)
+  } catch { throw 'COMPANION_START_TASK_REGISTER_FAILED' }
+}
+function Remove-CompanionStartTask {
+  try { $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect(); $svc.GetFolder('\Clued').DeleteTask($CompanionStartTaskName, 0) } catch { }
 }
 function Remove-CompanionFallbackTask {
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
@@ -444,10 +478,21 @@ function Get-ProcessTokenFacts([string]$root, [int]$processId, [string]$registra
   $out = Invoke-CompanionRegistrar $root @('token-facts', [string]$processId) $registrar
   try { $out | ConvertFrom-Json } catch { $null }
 }
+# A process as the qualification saw it (Win32_Process): its id, its parent, its session and when it started. No command line.
+function Get-CompanionProcessFacts($processes) {
+  @(foreach ($p in @($processes)) {
+    if ($null -eq $p) { continue }
+    [ordered]@{ pid = [int]$p.ProcessId; parentPid = [int]$p.ParentProcessId; sessionId = [int]$p.SessionId
+      created = $(try { ([DateTimeOffset][DateTime]$p.CreationDate).ToUniversalTime().ToString('o') } catch { $null }) }
+  })
+}
 # One look: $null when everything holds, else the first check that does not. since: when the switch began (UTC).
-function Test-CompanionQualifiedOnce([string]$root, [string]$ownerSid, [DateTimeOffset]$since, [string]$registrar = (Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe')) {
+# look (optional, a dictionary): filled with the supervisors and companion children this look counted (Get-CompanionProcessFacts).
+function Test-CompanionQualifiedOnce([string]$root, [string]$ownerSid, [DateTimeOffset]$since, [string]$registrar = (Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe'), [Collections.IDictionary]$look = $null) {
   $launch = try { Get-Content -LiteralPath (Join-Path $root 'config\companion-launch.json') -Raw | ConvertFrom-Json } catch { return 'launch-file' }
   $tree = Get-CompanionProcessTree $root
+  # evidence only: a look it cannot be taken for stays empty (counted -1), never changing the verdict (review of 36a20badc S4)
+  if ($null -ne $look) { try { $look['supervisors'] = @(Get-CompanionProcessFacts $tree.supervisors); $look['children'] = @(Get-CompanionProcessFacts $tree.children) } catch { $look.Clear() } }
   if (@($tree.supervisors).Count -ne 1) { return 'supervisor-process' }
   $child = @($tree.children | Where-Object { ([string]$_.CommandLine).Contains('--config-sha256 ' + [string]$launch.configSha256) -and ([string]$_.CommandLine).Contains([string]$launch.entry) })
   if ($child.Count -ne 1) { return 'companion-process' }
@@ -470,13 +515,54 @@ function Test-CompanionQualifiedOnce([string]$root, [string]$ownerSid, [DateTime
   if (-not (Test-Path -LiteralPath $facts -PathType Leaf) -or (Get-Item -LiteralPath $facts).LastWriteTimeUtc -lt $since.UtcDateTime) { return 'linux-facts' }
   $null
 }
+# The task as the Task Scheduler runs it (2026-11-24, drill r10: state 2, queued, for the whole 480 s, and nothing said why): its state,
+# last and next run, last result, missed runs, and each instance it holds (queued or running). Read-only; never throws.
+function Get-CompanionTaskRunFacts([scriptblock]$Service = { $s = New-Object -ComObject 'Schedule.Service'; $s.Connect(); $s }) {
+  $when = { param($d) try { $t = [DateTime]$d; if ($t.Year -lt 1900) { $null } else { ([DateTimeOffset]$t).ToUniversalTime().ToString('o') } } catch { $null } }
+  try {
+    $svc = & $Service
+    $task = $svc.GetFolder('\Clued').GetTask($CompanionTaskName)
+    $instances = @(foreach ($i in @($task.GetInstances(0))) {
+      if ($null -eq $i) { continue }
+      [ordered]@{ instanceGuid = [string]$i.InstanceGuid; state = [int]$i.State; enginePid = [int]$i.EnginePID; currentAction = [string]$i.CurrentAction }
+    })
+    [ordered]@{ state = [int]$task.State; enabled = [bool]$task.Enabled; lastRunTime = (& $when $task.LastRunTime); nextRunTime = (& $when $task.NextRunTime)
+      lastTaskResult = ([int64]$task.LastTaskResult -band 0xFFFFFFFFL); numberOfMissedRuns = [int]$task.NumberOfMissedRuns; instances = $instances }
+  } catch { [ordered]@{ error = 'TASK_RUN_FACTS_UNREADABLE:' + $_.Exception.GetType().Name } }
+}
+# The machine's memory when the qualification gave up (KiB, Win32_OperatingSystem). Read-only; never throws.
+function Get-CompanionMemoryFacts([scriptblock]$Query = { Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop }) {
+  try {
+    $os = & $Query
+    [ordered]@{ totalVisibleKb = [int64]$os.TotalVisibleMemorySize; freePhysicalKb = [int64]$os.FreePhysicalMemory; totalVirtualKb = [int64]$os.TotalVirtualMemorySize; freeVirtualKb = [int64]$os.FreeVirtualMemory }
+  } catch { [ordered]@{ error = 'MEMORY_FACTS_UNREADABLE:' + $_.Exception.GetType().Name } }
+}
+# What a switch's result carries when the qualification fails (2026-11-24, drill r10: 'supervisor-process' alone could not tell none from
+# two): the code, how many supervisors each look counted (-1: that look stopped before counting), the last look's supervisors and
+# children, the task's run facts and the memory, taken before anything is stopped or rolled back. Wait-CompanionQualified leaves it in
+# $script:CompanionQualifyEvidence ($null while it runs and when the qualification held); Get-CompanionQualifyEvidence reads it.
+$script:CompanionQualifyEvidence = $null
+function New-CompanionQualifyEvidence([string]$why, [Collections.IDictionary]$look, [int[]]$counts) {
+  # assigned, not through $(...): a subexpression would unroll an empty list to nothing (written {}) and one item to the item itself
+  $supervisors = $null; $children = $null
+  if ($null -ne $look -and $look.Contains('supervisors')) { $supervisors = @($look['supervisors']) }
+  if ($null -ne $look -and $look.Contains('children')) { $children = @($look['children']) }
+  [ordered]@{ why = $why; at = [DateTimeOffset]::UtcNow.ToString('o'); looks = @($counts).Count; supervisorCounts = (@($counts) -join ',')
+    supervisors = $supervisors; children = $children; task = (Get-CompanionTaskRunFacts); memory = (Get-CompanionMemoryFacts) }
+}
+function Get-CompanionQualifyEvidence { if (Test-Path -LiteralPath 'variable:script:CompanionQualifyEvidence') { $script:CompanionQualifyEvidence } else { $null } }
 function Wait-CompanionQualified([string]$root, [string]$ownerSid, [DateTimeOffset]$since, [int]$seconds = $CompanionQualifySeconds, [string]$registrar = (Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe')) {
+  $script:CompanionQualifyEvidence = $null
   $until = [DateTime]::UtcNow.AddSeconds($seconds); $why = 'not-started'
+  $counts = New-Object 'Collections.Generic.List[int]'; $look = [ordered]@{}
   while ([DateTime]::UtcNow -lt $until) {
-    $why = Test-CompanionQualifiedOnce $root $ownerSid $since $registrar
+    $look = [ordered]@{}
+    $why = Test-CompanionQualifiedOnce $root $ownerSid $since $registrar $look
     if ($null -eq $why) { return $null }
+    $counts.Add($(if ($look.Contains('supervisors')) { @($look['supervisors']).Count } else { -1 }))
     Start-Sleep -Seconds 10
   }
+  $script:CompanionQualifyEvidence = New-CompanionQualifyEvidence $why $look $counts.ToArray()
   $why
 }
 # Ends the companion processes of this root (node children and job hosts), not the task: the supervisor starts the child again.
@@ -501,9 +587,27 @@ function Wait-CompanionTaskNotRunning {
     Start-Sleep -Milliseconds 500
   }
 }
+# The instance the last Run returned (its guid, state and engine), for Watch-CompanionTaskRun; reading it never fails the Run.
+# K3 (task 87d330d0, FABLE-drill-companion-k3-20261124.md): every start of the companion account's tasks ignores constraints
+# (RunEx flag 2 TASK_RUN_IGNORE_CONSTRAINTS, no session, no user): on a node with nobody logged on a plain Run of the password task only
+# queues (drill r11 guest: State 2, no engine, LastTaskResult 0), RunEx(2) runs it.
+$script:CompanionLastRun = $null
 function Start-CompanionTask {
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
-  $null = $svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanion').Run($null)
+  $run = $svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanion').RunEx($null, 2, 0, $null)
+  try { if ($null -ne $run) { $script:CompanionLastRun = [ordered]@{ instanceGuid = [string]$run.InstanceGuid; state = [int]$run.State; enginePid = [int]$run.EnginePID } } } catch { }
+}
+# The qualification's Run, watched (2026-11-24, review of 36a20badc S1): the task's run facts just before and just after it and the
+# instance it returned, so whether IgnoreNew dropped this Run (an instance already queued before it, none of its own) is read without
+# the Operational log, which is off on a node. Never throws: the Run's own error is in runError, the caller decides as before.
+function Watch-CompanionTaskRun([scriptblock]$Run) {
+  $facts = { try { Get-CompanionTaskRunFacts } catch { [ordered]@{ error = 'TASK_RUN_FACTS_UNREADABLE:' + $_.Exception.GetType().Name } } }
+  $watch = [ordered]@{ before = (& $facts); returned = $null; after = $null; runError = $null }
+  $script:CompanionLastRun = $null
+  try { $null = & $Run } catch { $watch.runError = [string]$_.Exception.Message }
+  try { $watch.returned = $script:CompanionLastRun } catch { }
+  $watch.after = & $facts
+  $watch
 }
 
 # The whole switch: -CompanionHeadless (mode 'headless') and -CompanionCredential (mode 'credential') are the same steps; the
@@ -547,6 +651,11 @@ function Invoke-CompanionHeadless([string]$root, $node, [string]$mode) {
       $result.fellBack = $true; $result.failed = $result.registrar
       return $result
     }
+    try { Register-CompanionStartTask } catch {
+      $null = Invoke-CompanionFallback $root $ownerSid
+      $result.fellBack = $true; $result.failed = 'COMPANION_START_TASK_REGISTER_FAILED'
+      return $result
+    }
     # The old instance (the interactive session's supervisor, and with its job the companion) ends; the password task is then run from
     # the elevated side (IgnoreNew would ignore a Run while an instance still counts as running).
     Stop-CompanionTask
@@ -555,7 +664,8 @@ function Invoke-CompanionHeadless([string]$root, $node, [string]$mode) {
     Wait-CompanionTaskNotRunning
     # Review B1: from here on; the old instance has ended, so nothing it wrote counts.
     $since = [DateTimeOffset]::UtcNow
-    try { Start-CompanionTask } catch { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
+    $runWatch = Watch-CompanionTaskRun { Start-CompanionTask }
+    if ($null -ne $runWatch.runError) { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
     $why = Wait-CompanionQualified $root $ownerSid $since -registrar $build.registrar.exe
     $result.task = Get-CompanionTaskFacts $root $ownerSid
     if ($null -eq $why -and $result.task.mode -ceq 'password') {
@@ -565,6 +675,9 @@ function Invoke-CompanionHeadless([string]$root, $node, [string]$mode) {
       return $result
     }
     $result.failed = 'COMPANION_HEADLESS_QUALIFICATION_FAILED:' + $(if ($why) { $why } else { 'task-' + $result.task.mode })
+    $qualifyEvidence = Get-CompanionQualifyEvidence
+    if ($null -ne $qualifyEvidence) { $result.qualification = $qualifyEvidence }
+    $result.taskRun = $runWatch
     $null = Invoke-CompanionStopAndFallback $root $ownerSid
     # The interactive task runs in the Owner's session (it is there: he started this); without a session it starts at the next log-on.
     try { Start-CompanionTask } catch { }
@@ -583,6 +696,12 @@ $CompanionAccountContract = 'clued.independent-ci.companion-account/1'
 $CompanionWslFile = 'install\companion-wsl.json'
 $CompanionWslContract = 'clued.independent-ci.companion-wsl/1'
 $CompanionImportTaskName = 'CluedCIResidentCompanionWslImport'
+# The import program's exit code when, and only when, it reached its complete branch: RegistrarCore.ImportDoneExitCode, tests hold the two
+# equal (task 87d330d0). No queued, cancelled or stopped instance and no Task Scheduler status (0x413xx, 0x8004xxxx) gives it; an instance
+# that never ran leaves LastTaskResult 0 (drill r11). How long its instance may stay queued, and run, from Run before it is stopped.
+$CompanionImportDoneExitCode = 0x434C4901
+$CompanionImportStartSeconds = 120
+$CompanionImportRunSeconds = 600
 $CompanionSidPattern = '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}\z'
 # The registrar's ValidVhdx (CompanionTaskRegistrar.cs), here for the directory: a drive, 1 to 15 plain names.
 $CompanionVhdxDirPattern = '^[A-Z]:\\(?:[A-Za-z0-9._-]{1,64}\\){0,14}[A-Za-z0-9._-]{1,64}\z'
@@ -631,15 +750,37 @@ function Get-WslRegistrations {
 }
 # The registry steps of the move, each its own function (the offline tests replace them). The export is reg.exe's own full copy of the
 # key (every value with its type), written to the admin-only install\ before anything changes.
-function Export-CompanionLxssKey([string]$guid, [string]$file) {
-  $null = & 'C:\Windows\System32\reg.exe' export ('HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss\' + $guid) $file /y 2>&1
-  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $file -PathType Leaf)) { throw 'WSL_OWNER_REGISTRATION_NOT_EXPORTED' }
+# H1, one rule for every child a package script starts (first-install-host.ps1's own; test/native-child.test.mjs holds every copy the same
+# text and no package .ps1 merging a stream into its output): stdout, stderr and the exit code read apart; never an error from stderr.
+function Invoke-NativeChild([string]$exe, [string[]]$arguments, [int]$seconds = 3600, [Text.Encoding]$encoding = (New-Object Text.UTF8Encoding($false)), [bool]$shareConsole = $false, [byte[]]$stdin = $null) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $exe; $psi.Arguments = (($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = ($null -ne $stdin); $psi.CreateNoWindow = (-not $shareConsole)
+  $psi.StandardOutputEncoding = $encoding; $psi.StandardErrorEncoding = $encoding
+  # Windows PowerShell 5.1 (.NET Framework) opens a redirected stdin as a StreamWriter in Console.InputEncoding and writes that
+  # encoding's preamble at once: on a UTF-8 console (code page 65001) the child reads a BOM before $stdin (run 44705707829). While the
+  # child starts, Console's cached input encoding (what its getter returns) is a UTF-8 without one; .NET Core has no such field and
+  # writes no preamble. Our bytes go to the base stream, so the writer's encoding is otherwise unused.
+  $cie = if ($psi.RedirectStandardInput) { [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static') } else { $null }
+  $was = if ($null -ne $cie) { $cie.GetValue($null) } else { $null }
+  if ($null -ne $cie) { $cie.SetValue($null, (New-Object Text.UTF8Encoding($false))) }
+  try { $p = [Diagnostics.Process]::Start($psi) } finally { if ($null -ne $cie) { $cie.SetValue($null, $was) } }
+  $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+  if ($null -ne $stdin) { try { $p.StandardInput.BaseStream.Write($stdin, 0, $stdin.Length); $p.StandardInput.BaseStream.Flush() } finally { $p.StandardInput.Close() } }   # a secret: never a command line
+  if (-not $p.WaitForExit($seconds * 1000)) { return [ordered]@{ exit = $null; stdout = ''; stderr = ''; timedOut = $true } }
+  $p.WaitForExit()   # the asynchronous reads end with the child
+  $tail = { param($t) $t = ([string]$t) -replace "`0", ''; if ($t.Length -gt 1500) { $t.Substring($t.Length - 1500) } else { $t } }
+  [ordered]@{ exit = $p.ExitCode; stdout = ([string]$o.Result -replace "`0", ''); stderr = (& $tail $e.Result); timedOut = $false }
 }
-function Import-CompanionLxssKey([string]$file) { $null = & 'C:\Windows\System32\reg.exe' import $file 2>&1; if ($LASTEXITCODE -ne 0) { throw 'WSL_OWNER_REGISTRATION_NOT_IMPORTED' } }
+function Export-CompanionLxssKey([string]$guid, [string]$file) {
+  $r = Invoke-NativeChild 'C:\Windows\System32\reg.exe' @('export', ('HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss\' + $guid), $file, '/y') 600
+  if ($r.exit -ne 0 -or -not (Test-Path -LiteralPath $file -PathType Leaf)) { throw 'WSL_OWNER_REGISTRATION_NOT_EXPORTED' }
+}
+function Import-CompanionLxssKey([string]$file) { $r = Invoke-NativeChild 'C:\Windows\System32\reg.exe' @('import', $file) 600; if ($r.exit -ne 0) { throw 'WSL_OWNER_REGISTRATION_NOT_IMPORTED' } }
 function Remove-CompanionLxssKey([string]$guid) { Remove-Item -LiteralPath (Join-Path $CompanionLxssKey $guid) -Recurse -Force }
 function Get-CompanionLxssDefault { try { [string](Get-ItemProperty -LiteralPath $CompanionLxssKey -Name 'DefaultDistribution' -ErrorAction Stop).DefaultDistribution } catch { $null } }
 function Remove-CompanionLxssDefault { Remove-ItemProperty -LiteralPath $CompanionLxssKey -Name 'DefaultDistribution' -Force }
-function Invoke-CompanionWslTerminate([string]$distro) { $client = Get-CluedMachineWslClient; $null = & $client.path --terminate $distro 2>&1 }
+function Invoke-CompanionWslTerminate([string]$distro) { $client = Get-CluedMachineWslClient; $null = Invoke-NativeChild $client.path @('--terminate', $distro) 600 }
 # Only the account-switch maintenance option can request a whole-VM stop.
 # These two fixed management commands never run a distribution or arbitrary code.
 function Invoke-CompanionWslControl([ValidateSet('list-running', 'shutdown')][string]$operation) {
@@ -912,7 +1053,7 @@ function Write-CompanionWslRecord([string]$root, $record) {
 function Set-CompanionWslStage($record, [string]$stage) { if ($record -is [Collections.IDictionary]) { $record['stage'] = $stage } else { $record.stage = $stage } }
 # The move (review r1 M4), as stages kept in install\companion-wsl.json (admin-only) so a cut-off switch resumes and a roll-back finds
 # everything: exported (the Owner's full registration key, reg.exe's own copy, in install\ and its values in the record) -> moved
-# (ext4.vhdx in targetDir, protected) -> imported (the account's import task returned 0) -> forgotten (the Owner's key removed) ->
+# (ext4.vhdx in targetDir, protected) -> imported (the account's import program exited $CompanionImportDoneExitCode) -> forgotten (the Owner's key removed) ->
 # qualified. This function does exported and moved; nothing of the Owner's registration is removed here. Returns the record.
 function Invoke-CompanionWslMove([string]$root, [string]$distro, [string]$targetDir, [string]$companionSid, [switch]$AllowVmShutdown, [string]$MaintenanceContextFile, [string]$ExpectedMaintenanceContextSha256) {
   $target = Join-Path $targetDir 'ext4.vhdx'; $partial = $target + '.partial'
@@ -1008,7 +1149,7 @@ function ConvertTo-CompanionOrdered($o) {
   if ($o -is [Collections.IDictionary]) { $h = [ordered]@{}; foreach ($k in $o.Keys) { $h[$k] = $o[$k] }; return $h }
   $h = [ordered]@{}; foreach ($p in $o.PSObject.Properties) { $h[$p.Name] = $p.Value }; $h
 }
-# After the account's import returned 0 (review r1 M4): the Owner's registration key goes, and the default distribution when it named it.
+# After the account's import program exited $CompanionImportDoneExitCode (review r1 M4; task 87d330d0): the Owner's registration key goes, and the default distribution when it named it.
 function Remove-CompanionOwnerRegistration([string]$root, $record) {
   $record = ConvertTo-CompanionOrdered $record
   $guid = if ($record.Contains('ownerRegistration') -and $null -ne $record.ownerRegistration) { [string]$record.ownerRegistration.guid } else { $null }
@@ -1021,20 +1162,93 @@ function Remove-CompanionOwnerRegistration([string]$root, $record) {
   Write-CompanionWslRecord $root $record
   $record
 }
-# Runs the one-shot import task once and deletes it: its last result (the import script's exit code), 'timeout' or 'not-registered'.
-function Invoke-CompanionWslImportTask {
-  $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
+# What the last Invoke-CompanionWslImportTask saw (the switch's result.importWatch; nodes keep the Operational log off): the instance Run
+# returned, when the task first ran and when it ended (ms after Run), why the wait ended ('ended', 'ended:instances-unreadable',
+# 'not-started', 'timeout', each of the last two with ':instances-unreadable' when the last look could not read the instances, or
+# 'unreadable' with the innermost exception's type and HRESULT in error), how many looks could not read the instances, and each change of the task's state,
+# last result and instances (at most 40). Taking it never changes the import's answer: a failure leaves it $null.
+$script:CompanionImportWatch = $null
+function Get-CompanionImportWatch { if (Test-Path -LiteralPath 'variable:script:CompanionImportWatch') { $script:CompanionImportWatch } else { $null } }
+# Milliseconds on the monotonic clock: a wall-clock step (a time sync) neither stops an import nor shifts its timings.
+function Get-CompanionMonotonicMs { [double]([Diagnostics.Stopwatch]::GetTimestamp() * 1000.0 / [Diagnostics.Stopwatch]::Frequency) }
+# Runs the one-shot import task once and deletes it (task 87d330d0, drill r11: an instance still queued was taken for an end two seconds
+# after Run, its LastTaskResult 0 for the program's exit 0, and the task deleted under it). Started with RunEx(ignore constraints, K3).
+# Every 500 ms after Run (-Now: milliseconds on
+# a monotonic clock) it reads the task's State, LastRunTime and LastTaskResult, and its instances (State, EnginePID). Started: only an
+# instance running (State 4) or with an engine (EnginePID not 0), never the task's State (after a RunEx instance ended the task is back to
+# 2 while an older queued instance stays: drill repro 2026-11-24). Ended (the task not running, LastRunTime not the one before Run, no
+# instance running or with an engine, and either seen started or a last result that is no Task Scheduler status: never 0, which a
+# queued instance shows; or, the instances unreadable, a last result that is $CompanionImportDoneExitCode): the last result, unsigned.
+# Never started within $CompanionImportStartSeconds: stopped, 'not-started'. Not ended within $CompanionImportRunSeconds: stopped, 'timeout'. A look
+# that cannot read the task: stopped, 'unreadable'. A RunEx that throws: 'run-failed:0x<HRESULT>'. No task: 'not-registered'. The task is deleted on every way out. Whether the last
+# result is an import is the caller's ($CompanionImportDoneExitCode), never this function's.
+function Invoke-CompanionWslImportTask([scriptblock]$Service = { $s = New-Object -ComObject 'Schedule.Service'; $s.Connect(); $s },
+    [scriptblock]$Sleep = { Start-Sleep -Milliseconds 500 }, [scriptblock]$Now = { Get-CompanionMonotonicMs }) {
+  $script:CompanionImportWatch = $null
+  $svc = & $Service
   $folder = $svc.GetFolder('\Clued')
   $task = try { $folder.GetTask($CompanionImportTaskName) } catch { $null }
   if ($null -eq $task) { return 'not-registered' }
+  $watch = [ordered]@{ returned = $null; startedAfterMs = $null; endedAfterMs = $null; why = $null; error = $null; instancesUnreadable = 0; transitions = @() }
+  $startedAt = $null; $endedAt = $null; $last = $null; $why = $null; $err = $null; $unreadable = 0
   try {
     $before = $task.LastRunTime
-    $null = $task.Run($null)
-    $until = [DateTime]::UtcNow.AddMinutes(10)
-    do { Start-Sleep -Seconds 2; $t = $folder.GetTask($CompanionImportTaskName) } while ([DateTime]::UtcNow -lt $until -and ([int]$t.State -eq 4 -or $t.LastRunTime -eq $before))
-    if ([int]$t.State -eq 4) { try { $t.Stop(0) } catch { }; return 'timeout' }
-    ([int64]$t.LastTaskResult -band 0xFFFFFFFFL)
-  } finally { try { $folder.DeleteTask($CompanionImportTaskName, 0) } catch { } }
+    # K3: ignore constraints, as Start-CompanionTask. A RunEx that throws (review of K3, 5a): 'run-failed:0x<HRESULT>', the task deleted
+    # (finally), never thrown out of the switch: WSL_IMPORT_FAILED and its fall-back as any failed import.
+    $run = $null
+    try { $run = $task.RunEx($null, 2, 0, $null) } catch {
+      $why = 'run-failed'
+      $hr = 0
+      $err = try { $x = $_.Exception; while ($null -ne $x.InnerException) { $x = $x.InnerException }; $hr = $x.HResult; $x.GetType().Name + ':0x' + $x.HResult.ToString('X8') } catch { $null }
+      return 'run-failed:0x' + ([int]$hr).ToString('X8')
+    }
+    $t0 = [double](& $Now)
+    try { if ($null -ne $run) { $watch.returned = [ordered]@{ instanceGuid = [string]$run.InstanceGuid; state = [int]$run.State; enginePid = [int]$run.EnginePID } } } catch { }
+    while ($true) {
+      $null = & $Sleep
+      $ms = [int64]([double](& $Now) - $t0)
+      try {
+        $t = $folder.GetTask($CompanionImportTaskName)
+        $state = [int]$t.State
+        $result = [int64]$t.LastTaskResult -band 0xFFFFFFFFL
+        $ran = $t.LastRunTime -ne $before
+      } catch {
+        $why = 'unreadable'
+        $err = try { $x = $_.Exception; while ($null -ne $x.InnerException) { $x = $x.InnerException }; $x.GetType().Name + ':0x' + $x.HResult.ToString('X8') } catch { $null }
+        try { $task.Stop(0) } catch { }
+        return 'unreadable'
+      }
+      # $null: the instances could not be read (never counted as none)
+      $instances = $null
+      try { $instances = @(foreach ($i in @($t.GetInstances(0))) { if ($null -ne $i) { [ordered]@{ state = [int]$i.State; enginePid = [int]$i.EnginePID } } }) } catch { }
+      $tail = ''
+      if ($null -eq $instances) { $unreadable++; $tail = ':instances-unreadable' }
+      try {
+        if ($null -ne $watch) {
+          $seen = [string]$state + '|' + [string]$result + '|' + $(if ($null -eq $instances) { '?' } else { @($instances | ForEach-Object { [string]$_.state + '/' + [string]$_.enginePid }) -join ',' })
+          if ($seen -cne $last -and @($watch.transitions).Count -lt 40) { $watch.transitions += , ([ordered]@{ ms = $ms; state = $state; lastTaskResult = $result; instances = $instances }) }
+          $last = $seen
+        }
+      } catch { $watch = $null }
+      $up = $null -ne $instances -and @($instances | Where-Object { $_.state -eq 4 -or $_.enginePid -ne 0 }).Count -gt 0
+      if ($up -and $null -eq $startedAt) { $startedAt = $ms }
+      if ($state -ne 4 -and $ran) {
+        $status = @(0L, 0x41301L, 0x41303L, 0x41325L) -contains $result   # none, running, never run, queued
+        if ($null -ne $instances -and -not $up -and ($null -ne $startedAt -or -not $status)) { $endedAt = $ms; $why = 'ended'; return $result }
+        if ($null -eq $instances -and $result -eq $CompanionImportDoneExitCode) { $endedAt = $ms; $why = 'ended' + $tail; return $result }
+      }
+      if ($null -eq $startedAt -and $ms -ge $CompanionImportStartSeconds * 1000L) { try { $task.Stop(0) } catch { }; $why = 'not-started' + $tail; return 'not-started' }
+      if ($ms -ge $CompanionImportRunSeconds * 1000L) { try { $task.Stop(0) } catch { }; $why = 'timeout' + $tail; return 'timeout' }
+    }
+  } finally {
+    try {
+      if ($null -ne $watch) {
+        $watch.startedAfterMs = $startedAt; $watch.endedAfterMs = $endedAt; $watch.why = $why; $watch.error = $err; $watch.instancesUnreadable = $unreadable
+        $script:CompanionImportWatch = $watch
+      }
+    } catch { }
+    try { $folder.DeleteTask($CompanionImportTaskName, 0) } catch { }
+  }
 }
 # The registrar's account-facts for the companion account.
 function Get-CompanionAccountFacts([string]$root, [string]$sid, [string]$registrar) {
@@ -1070,7 +1284,7 @@ function Get-CompanionAccountPreflight([string]$root, $node, $facts, [string]$vh
 # The account switch (rearm-resident.ps1 -CompanionAccount, the reinstall's last step; again with -CompanionCredential): elevated, by
 # the operator. The same marker, fall-back task, registrar build and qualification as Invoke-CompanionHeadless. In between, the stages of
 # Invoke-CompanionWslMove, then the registrar (a new random password, the task, the import task with the Owner's DefaultUid), the import
-# (exit 0 or WSL_IMPORT_FAILED:<code>), only then the Owner's registration key goes. A run that was cut off resumes from the record
+# ($CompanionImportDoneExitCode, else WSL_IMPORT_FAILED:<code|not-started|timeout|unreadable|not-registered>), only then the Owner's registration key goes. A run that was cut off resumes from the record
 # (no -WslVhdxDirectory needed). Not qualified: the task goes back to the account's interactive definition (the companion stays off).
 # Shared pure rule with install-resident.ps1; tests require identical function text.
 function Get-RelayParentAclPresence([string]$sddl, [string]$sid) {
@@ -1102,7 +1316,7 @@ function Get-CompanionRelayParentsProblem([string]$sid) {
 }
 function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [string]$mode, [switch]$AllowWslVmShutdown, [string]$MaintenanceContextFile, [string]$ExpectedMaintenanceContextSha256) {
   $sid = [string]$node.ownerSid; $distro = [string]$node.wslDistribution
-  $result = [ordered]@{ mode = $mode; preflight = $null; wsl = $null; importResult = $null; registrar = $null; qualified = $false; failed = $null; fellBack = $false; task = $null }
+  $result = [ordered]@{ mode = $mode; preflight = $null; wsl = $null; importResult = $null; importWatch = $null; registrar = $null; qualified = $false; failed = $null; fellBack = $false; task = $null }
   $maintenance = $null
   if ($MaintenanceContextFile -or $ExpectedMaintenanceContextSha256) {
     if (-not $MaintenanceContextFile -or $ExpectedMaintenanceContextSha256 -cnotmatch '^[0-9a-f]{64}$' -or -not $AllowWslVmShutdown -or $mode -cne 'account' -or -not $vhdxDir -or
@@ -1172,7 +1386,9 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
     }
     if ($needImport) {
       $result.importResult = Invoke-CompanionWslImportTask
-      if (-not (($result.importResult -is [long] -or $result.importResult -is [int]) -and [int64]$result.importResult -eq 0)) {
+      $result.importWatch = Get-CompanionImportWatch
+      # Only the program's own success code is an import (task 87d330d0): 0 is what an instance that never ran leaves.
+      if (-not (($result.importResult -is [long] -or $result.importResult -is [int]) -and [int64]$result.importResult -eq $CompanionImportDoneExitCode)) {
         $result.failed = 'WSL_IMPORT_FAILED:' + [string]$result.importResult
         if ($MaintenanceContextFile) { $result.manualRecovery = $true }
         else { $null = Invoke-CompanionFallback $root $sid; $result.fellBack = $true }
@@ -1189,8 +1405,30 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
         return $result
       }
     }
+    # Review of K3, item 4: the start task only now, after the import and the Owner's key (it fires at boot and every quarter hour,
+    # ignoring constraints: registered earlier it could start the companion during the import, and IgnoreNew drop the start below).
+    # A failed registration falls back as a failed qualification. Whatever it (or the password task's own triggers) started ends before
+    # $since: stopped and waited for; a maintenance switch stops nothing, a supervisor up there is its own failure.
+    $quiet = $null
+    try { Register-CompanionStartTask } catch { $quiet = 'COMPANION_START_TASK_REGISTER_FAILED' }
+    if ($null -eq $quiet) {
+      if ($MaintenanceContextFile) {
+        if (@((Get-CompanionProcessTree $root).supervisors).Count) { $quiet = 'WSL_MAINTENANCE_SUPERVISOR_NOT_QUIET' }
+      } else {
+        Stop-CompanionTask
+        foreach ($p in @((Get-CompanionProcessTree $root).supervisors)) { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue }
+      }
+    }
+    if ($null -ne $quiet) {
+      $result.failed = $quiet
+      if ($MaintenanceContextFile) { $result.manualRecovery = $true }
+      else { $null = Invoke-CompanionStopAndFallback $root $sid; $result.fellBack = $true }
+      return $result
+    }
+    Wait-CompanionTaskNotRunning
     $since = [DateTimeOffset]::UtcNow
-    try { Start-CompanionTask } catch { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
+    $runWatch = Watch-CompanionTaskRun { Start-CompanionTask }
+    if ($null -ne $runWatch.runError) { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
     $why = Wait-CompanionQualified $root $sid $since -registrar $build.registrar.exe
     $result.task = Get-CompanionTaskFacts $root $sid
     if ($null -eq $why) { $why = Get-CompanionRelayParentsProblem $sid }
@@ -1207,6 +1445,9 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
       return $result
     }
     $result.failed = 'COMPANION_HEADLESS_QUALIFICATION_FAILED:' + $(if ($why) { $why } else { 'task-' + $result.task.mode })
+    $qualifyEvidence = Get-CompanionQualifyEvidence
+    if ($null -ne $qualifyEvidence) { $result.qualification = $qualifyEvidence }
+    $result.taskRun = $runWatch
     if ($MaintenanceContextFile) { $result.manualRecovery = $true }
     else { $null = Invoke-CompanionStopAndFallback $root $sid; $result.fellBack = $true }
     $result

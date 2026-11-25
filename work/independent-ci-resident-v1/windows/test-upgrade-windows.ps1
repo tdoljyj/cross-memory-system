@@ -216,7 +216,7 @@ Yes (Test-Refused { Find-PlanSlot $plan 'bin\Other.cs' } 'UPGRADE_PLAN_SLOT_MISS
 Yes (Test-Refused { Read-UpgradePlan $Root '99999999-2222-4333-8444-555555555555' $planSha } 'DIRECTORY_MISSING:99999999-2222-4333-8444-555555555555') 'plan-other-op-missing'
 $slotEdit = { param([string]$target, [hashtable]$set) $s = New-Slots; foreach ($x in $s) { if ($x.target -ceq $target) { foreach ($k in $set.Keys) { $x[$k] = $set[$k] } } }; ,$s }
 $extraSlot = New-Slots; $extraSlot += ,([ordered]@{ target = 'upgrader\config\upgrader.json'; kind = 'package'; from = 'x'; sha256 = (& $h 'b'); oldSha256 = (& $h '1') })
-$missingSlot = @(New-Slots | Where-Object { $_.target -cne 'record\signers.json' })
+$missingSlot = @((New-Slots) | Where-Object { $_.target -cne 'record\signers.json' })
 $cases = @(
   @(@{ contract = 'clued.independent-ci.resident-upgrade-plan/2' }, @{}, $null, 'UPGRADE_PLAN_REFUSED:contract'),
   @(@{ opId = '99999999-2222-4333-8444-555555555555' }, @{}, $null, 'UPGRADE_PLAN_REFUSED:opId'),

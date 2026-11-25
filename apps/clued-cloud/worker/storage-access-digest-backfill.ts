@@ -3,7 +3,7 @@
  * registered directories that have neither a sharing nor an access digest get
  * their access digest, one directory at a time.
  *
- * Every minute this run asks `clued_storage_access_digest_backfill_v1` for up
+ * Every ten minutes this run asks `clued_storage_access_digest_backfill_v1` for up
  * to five such directories under quiet, undenied roots. For each it loads the
  * connection's credential, reads the folder's version and permissions in one
  * Drive request, and commits the outcome. The database stores the digest only
@@ -30,6 +30,7 @@ import { resolveSupabasePublicConfig } from "../app/supabase-public-config";
 import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
 import { scopeProfile } from "./storage-google-scopes";
+import { storageScheduleEnabled } from "./storage-scheduled-flags";
 import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
 import { createStorageDemandRuntime } from "./storage-demand-runtime";
 
@@ -73,8 +74,7 @@ async function sha256(value: string) {
 
 export async function runStorageAccessDigestBackfillScheduled(env: StorageAccessDigestBackfillEnv,
   deps: { fetch?: typeof fetch; clock?: () => number } = {}): Promise<StorageAccessDigestBackfillResult> {
-  if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true" ||
-      env.CLUED_STORAGE_JOBS_V2 !== "true" || env.CLUED_STORAGE_EXECUTOR_V1 !== "true") return { status: "disabled" };
+  if (!storageScheduleEnabled.accessDigestBackfill(env)) return { status: "disabled" };
   const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
   const gatewayToken = databaseGatewayToken(env);
   const clientId = env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "";

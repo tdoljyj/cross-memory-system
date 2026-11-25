@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -48,7 +48,7 @@ test('resident upgrade: six automatic approvals per node in 24 hours, held after
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-resident-upgrade-auto-v2-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
@@ -205,7 +205,7 @@ test('resident upgrade: six automatic approvals per node in 24 hours, held after
     await t.test('connection.permission and dataset_split stay manual', async () => {
       const manual = (await admin.query(`select action from clued_private.owner_grant_actions where not auto_approvable order by action`)).rows
         .map((r) => r.action);
-      assert.deepEqual(manual, ['connection.permission', 'model.dataset_split.bootstrap', 'model.dataset_split.producer',
+      assert.deepEqual(manual, ['connection.permission', 'fleet.accept', 'model.dataset_split.bootstrap', 'model.dataset_split.producer',
         'model.dataset_split.recognize', 'model.dataset_split.verify']);
       await assert.rejects(() => admin.query(`update clued_private.owner_grant_actions set auto_approvable=true where action='connection.permission'`),
         /owner_grant_actions_auto_approvable_check/);

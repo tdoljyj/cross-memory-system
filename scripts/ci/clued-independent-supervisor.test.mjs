@@ -1,10 +1,12 @@
-import test from 'node:test';
+import test,{mock} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import os from 'node:os';
 import {createWindowsIndependentSupervisor,createFixtureWindowsIndependentSupervisor} from './clued-independent-supervisor.mjs';
+const NOW=Date.parse('2026-11-01T00:00:00Z');
+mock.timers.enable({apis:['Date'],now:NOW}); // the code under test reads Date.now(): hold it at NOW
 import {makeJobV2,batchRefV2} from '../../work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
 import {canonical,digest} from '../../work/actions-hosted-migration/independent-ci-v1/src/proof.mjs';
 import {observeIndependentControllerStop} from './clued-independent-revoker.mjs';
@@ -15,7 +17,7 @@ const witness=()=>({contract:'clued.independent-ci.controller-supervision/1',con
 const reply=()=>({contract:'clued.independent-ci.protected-stop-bundle/1',nonce,controllerSid:sid,requestId,
  files:Object.fromEntries(names.map((name,i)=>[name,Buffer.from(JSON.stringify({name,sequence:i})).toString('base64')]))});
 const maintenance=()=>({nonce,configSha256:sha,stage:12,controllerSid:sid,nodeId:'FIXTURE-NODE',runnerService:'actions.runner.tdoljyj-cross-memory-system.fixture',nodePid:1234});
-const maintenanceReply=()=>({contract:'clued.independent-ci.scm-maintenance-window/1',...maintenance(),helperPid:1233,sourceManifestSha256:'c'.repeat(64),observedAt:new Date().toISOString()});
+const maintenanceReply=()=>({contract:'clued.independent-ci.scm-maintenance-window/1',...maintenance(),helperPid:1233,sourceManifestSha256:'c'.repeat(64),observedAt:new Date(NOW).toISOString()});
 function legacyFixture(){
  const job=makeJobV2({repo:'tdoljyj/cross-memory-system',pr:937,headSha:'a'.repeat(40),baseSha:'b'.repeat(40),testSha:'a'.repeat(40),sourceManifestSha256:'c'.repeat(64),role:'gitleaks',createdAt:'2026-10-29T05:00:00.000Z',attempt:1});
  const input={repository:job.repo,heads:[job.headSha],claimId:'11111111-2222-4333-8444-555555555555',beforeExecutionEpoch:3};
@@ -84,7 +86,7 @@ test('maintenance accepts no idle/stopped assertion, arbitrary service, stale ob
   const input=maintenance();change(input);await assert.rejects(()=>port.assertMaintenanceWindow(input),/window_input_invalid/);
  }assert.equal(reads,0);
  for(const change of [r=>r.helperPid=r.nodePid,r=>r.nonce='d'.repeat(32),r=>r.sourceManifestSha256+='\n',r=>r.nodeId='OTHER',
-  r=>r.observedAt=new Date(Date.now()-10000).toISOString(),r=>r.observedAt=new Date(Date.now()+10000).toISOString(),r=>r.running=true]){
+  r=>r.observedAt=new Date(NOW-10000).toISOString(),r=>r.observedAt=new Date(NOW+10000).toISOString(),r=>r.running=true]){
   const packet=maintenanceReply();change(packet);const wrong=createFixtureWindowsIndependentSupervisor({controllerSid:sid,readBundle:async()=>packet});
   await assert.rejects(()=>wrong.assertMaintenanceWindow(maintenance()),/window_unconfirmed/);
  }
@@ -120,14 +122,14 @@ test('the exact embedded Windows reader parses and its handle/DACL primitive com
  const script=source.match(/String\.raw`([\s\S]*?)`;\n}/)[1];
  const operation=promisify(execFile)('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
   ['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop';$inputCode=[Console]::In.ReadToEnd()|ConvertFrom-Json;[void][ScriptBlock]::Create($inputCode.script);Add-Type -TypeDefinition $inputCode.sharp|Out-Null;[Console]::Out.Write('WINDOWS_READER_COMPILED')"],
-  {windowsHide:true,timeout:15000,maxBuffer:4096});
+  {windowsHide:true,maxBuffer:4096});
  operation.child.stdin.end(JSON.stringify({sharp,script}));assert.equal((await operation).stdout,'WINDOWS_READER_COMPILED');
 });
 test('the actual PowerShell legacy batch reference equals the job/3 canonical reference',{skip:process.platform!=='win32'},async()=>{
  const source=fs.readFileSync(new URL('./clued-independent-supervisor.mjs',import.meta.url),'utf8'),functionSource=source.match(/function Batch-Ref\(\$job\){[\s\S]*?\n}/)[0],f=legacyFixture();
  const operation=promisify(execFile)('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
   ['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop';$fixtureInput=[Console]::In.ReadToEnd()|ConvertFrom-Json;. ([ScriptBlock]::Create($fixtureInput.functionSource));[Console]::Out.Write((Batch-Ref $fixtureInput.job))"],
-  {windowsHide:true,timeout:10000,maxBuffer:4096});operation.child.stdin.end(JSON.stringify({functionSource,job:f.job}));assert.equal((await operation).stdout,batchRefV2(f.job));
+  {windowsHide:true,maxBuffer:4096});operation.child.stdin.end(JSON.stringify({functionSource,job:f.job}));assert.equal((await operation).stdout,batchRefV2(f.job));
 });
 test('the actual PowerShell inventory cannot hide a second publisher by tampering its public head or repository',{skip:process.platform!=='win32'},async()=>{
  const source=fs.readFileSync(new URL('./clued-independent-supervisor.mjs',import.meta.url),'utf8');
@@ -164,7 +166,7 @@ function Read-Fixed([string]$file,[int]$max){
 . ([ScriptBlock]::Create($fixtureInput.functions))
 & ([ScriptBlock]::Create($fixtureInput.legacyBranch))`;
   const operation=promisify(execFile)('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',['-NoProfile','-NonInteractive','-Command',bootstrap],
-   {windowsHide:true,timeout:10000,maxBuffer:1024*1024});
+   {windowsHide:true,maxBuffer:1024*1024});
   operation.child.stdin.end(JSON.stringify({requests,responses,stageRoot,receipts,v2,files,requestPaths,functions,legacyBranch,
    controllerSid:sid,...f.input,batchRecord:Object.values(f.entry.batchClaims)[0]}));
   const packet=JSON.parse((await operation).stdout),port=createFixtureWindowsIndependentSupervisor({controllerSid:sid,nodeId:os.hostname(),readBundle:async()=>packet});

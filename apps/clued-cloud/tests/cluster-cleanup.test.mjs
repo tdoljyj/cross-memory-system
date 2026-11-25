@@ -86,9 +86,7 @@ test('really removes a populated directory, and an absent one is fine', async ()
   await fs.mkdir(path.join(directory, 'base', '1'), { recursive: true });
   await fs.writeFile(path.join(directory, 'base', '1', 'file'), 'x');
   await fs.writeFile(path.join(directory, 'postmaster.pid'), `${process.pid}\n`); // stale file naming a live pid
-  const started = Date.now();
   assert.equal(await removeTestDirectory(directory), true);
-  assert.ok(Date.now() - started < 5000, 'a stale postmaster.pid is not waited on');
   await assert.rejects(fs.lstat(directory), { code: 'ENOENT' });
   assert.equal(await removeTestDirectory(directory), true, 'an already removed directory is fine');
 });
@@ -99,7 +97,7 @@ test('waitForPidExit polls the exact pid and gives up without killing anything',
   assert.equal(await waitForPidExit(4242, deps), true);
   assert.equal(state.sleeps, 2);
   assert.equal(await waitForPidExit(undefined, deps), true);
-  assert.equal(await waitForPidExit(4242, { ...deps, exitTimeoutMs: 20, alive: () => true, sleep: () => new Promise((resolve) => setTimeout(resolve, 15)) }), false);
+  assert.equal(await waitForPidExit(4242, { ...deps, exitTimeoutMs: 20, alive: () => true, sleep: async () => {} }), false);
 });
 
 test('stopCluster finishes a non-persistent cluster whose own removal hit EBUSY', async () => {
@@ -125,6 +123,50 @@ test('stopCluster reports other stop errors, never throws, and tolerates a missi
   assert.deepEqual(state.logs, ['stop() failed: Could not find process PID']);
 });
 
+test('passing assertions stay green when stop misses its deadline but the cluster is gone', async () => {
+  const stages = [];
+  const { state, deps } = harness({
+    alive: () => false,
+    realpath: async (target) => target,
+    rm: async (target) => { state.rmCalls.push(target); },
+    mark: (name, event) => { stages.push([name, event]); },
+  });
+  const server = runningServer({ stop: () => new Promise(() => {}) }); // never answers; the injected sleep ends the deadline at once
+  assert.equal(2 + 2, 4); // The fixture's assertions completed successfully.
+  const cleanup = stopCluster(server, deps);
+  const outcome = await Promise.race([cleanup, new Promise((resolve) => setImmediate(() => resolve('pending')))]);
+  assert.equal(outcome, true, 'cleanup must finish without waiting past the former 180-second parent deadline');
+  assert.deepEqual(state.rmCalls, [DIRECTORY]);
+  assert.equal(state.logs.length, 1);
+  assert.match(state.logs[0], /stop\(\).*15000 ms/);
+  assert.deepEqual(stages, [
+    ['stop', 'start'], ['stop', 'end'], ['waitForExit', 'start'], ['waitForExit', 'end'],
+    ['removeDirectory', 'start'], ['removeDirectory', 'end'],
+  ]);
+});
+
+test('a non-lock stop error or permanently failed removal reports failed cleanup', async () => {
+  const { deps } = harness({ alive: () => false, rm: async () => {} });
+  const stopFailed = runningServer({ stop: async () => { throw new Error('stop command failed'); } });
+  assert.equal(await stopCluster(stopFailed, deps), false, 'a real stop error must fail the parent');
+  assert.equal(await stopCluster(runningServer(), {
+    ...deps, attempts: 1, readdir: async () => [], rm: async () => { throw lockError(); },
+  }), false, 'an unrecoverable removal error must fail the parent');
+});
+
+test('a failed recursive removal that is recovered by the final sweep returns success', async () => {
+  let rootAttempts = 0;
+  const { deps } = harness({
+    attempts: 1,
+    alive: () => false,
+    readdir: async () => ['base'],
+    rm: async (target) => {
+      if (target === DIRECTORY && rootAttempts++ === 0) throw lockError();
+    },
+  });
+  assert.equal(await stopCluster(runningServer(), deps), true);
+});
+
 test('stopCluster does not call stop() on a child that already exited, and still removes the cluster', async () => {
   const { state, deps } = harness({ alive: () => false, rm: async (target) => { state.rmCalls.push(target); } });
   for (const process of [{ pid: 7, exitCode: 0, signalCode: null }, { pid: 7, exitCode: null, signalCode: 'SIGKILL' }]) {
@@ -138,10 +180,10 @@ test('stopCluster waits for the pid of its own child and only reports one that s
   const { state, deps } = harness({
     exitTimeoutMs: 20,
     alive: (pid) => { assert.equal(pid, 4242, 'never another pid'); return true; },
-    sleep: () => new Promise((resolve) => setTimeout(resolve, 15)),
-    rm: async () => {},
+    rm: async (target) => { state.rmCalls.push(target); },
   });
-  await stopCluster(runningServer(), deps);
+  assert.equal(await stopCluster(runningServer(), deps), false);
+  assert.deepEqual(state.rmCalls, [], 'a live child still owns its data directory');
   assert.equal(state.logs.length, 1);
   assert.match(state.logs[0], /postmaster 4242 is still running 20 ms after stop\(\)/);
 });

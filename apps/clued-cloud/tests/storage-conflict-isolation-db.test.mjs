@@ -1,7 +1,7 @@
 // issuer-credentials: disposable PostgreSQL only. Synthetic issuer credentials,
 // users and provider metadata exercise the actual migration and caller boundary;
 // no production connection, Google request, secret or file body is used.
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
@@ -25,7 +25,7 @@ async function port(){const s=net.createServer();await new Promise(r=>s.listen(0
 test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts',{timeout:240000},async t=>{
  const dir=await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()),'kooyumi-conflict-db-'));
  const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:sha(id()),port:await port(),persistent:true,
-  postgresFlags:['-c','listen_addresses=127.0.0.1'],onLog(){},onError(){}});
+  initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],onLog(){},onError(){}});
  const clients=[];let started=false;
  try{
   await server.initialise();await server.start();started=true;

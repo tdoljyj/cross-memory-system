@@ -1,3 +1,4 @@
+import { budgetForPull, budgetText } from './budget-alert.mjs';
 // The executor's status on the PR page, and Windows notifications for the big events (resident quota redesign v0.6
 // + §9, phase 1, item 7; Owner Decision 38936534). Runs in the companion (the Owner's own session and gh login).
 //
@@ -31,8 +32,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
+import { FAILURE_TABLE } from './classify.mjs';
+import { powershellArgv } from './powershell-argv.mjs';
 import { STATUS_STALE_MS, leaseShort } from './status.mjs';
-import { MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
+import { ghPort } from './admission-rerun.mjs';
+import { CLAIM_REASONS, CLAIM_WHY, earlyWakeOf } from './queue.mjs';
+import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
+export { RULES_UNREADABLE_REPORT_AFTER_MS };
+import { FRONT_CHECKS_DECISIONS, MAIN_REWRITTEN_TEXT, withTrainLine } from './train.mjs';
 import { CAPACITY_ALERT_TEXT } from './host-capacity.mjs';
 import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
 
@@ -41,6 +48,30 @@ export const MAX_POSTS_PER_PASS = 20;
 export const MAX_TOASTS_PER_PASS = 5;
 export const WAIT_NOTIFY_MS = 3_600_000;
 export const REQUIRED_CACHE_MS = 30 * 60_000;
+export const HEAD_CHECKS_CACHE_MS = 60_000;
+// The train decisions whose PR page line lists the front head's required-check gap (frontGap).
+const GAP_DECISIONS = Object.freeze(['FRONT_GREEN_WAIT_MERGE', ...FRONT_CHECKS_DECISIONS.filter(d => d !== 'FRONT_CHECKS_MISSING_YIELDED')]);
+// What the PR page says while main's ruleset cannot be read: a status is auxiliary, so the failure is said, never a silent stop.
+export const RULES_UNREADABLE_TEXT = '无法读取 main 规则集，暂不判断必需检查';
+const RULES_UNREADABLE_WANT = Object.freeze({ state: 'pending', description: RULES_UNREADABLE_TEXT, kind: null });
+// Which of main's required checks (rules: [{ context, integrationId }], the shared reader's answer) are not yet green on a head.
+// seen: [{ name, appId, source: 'run' | 'status', state: 'pass' | 'pending' | 'fail' | 'skipped' }] (headChecks). A rule pinned to an App is met only by
+// that App's check run; an unpinned rule by any run or a commit status. Returns [] when all are green, else words per missing or unfinished one;
+// null when either side is unknown. Skipped is never green (a gated workflow skipped by a late admission ran nothing).
+export function requiredGap(rules, seen) {
+  if (!Array.isArray(rules) || rules.length === 0 || !Array.isArray(seen)) return null;
+  const word = { pending: '进行中', fail: '未通过', skipped: '已跳过' };
+  const gap = [];
+  for (const { context, integrationId = null } of rules) {
+    const mine = seen.filter(o => o.name === context && (integrationId === null || (o.source === 'run' && o.appId === integrationId)));
+    if (mine.some(o => o.state === 'pass')) continue;
+    const why = ['pending', 'fail', 'skipped'].find(k => mine.some(o => o.state === k));
+    gap.push(`${context}（${word[why] ?? '未出现'}）`);
+  }
+  return gap;
+}
+const runState = (status, conclusion) => status !== 'completed' ? 'pending' : ['success', 'neutral'].includes(conclusion) ? 'pass' : conclusion === 'skipped' ? 'skipped' : 'fail';
+const STATUS_STATE = { success: 'pass', pending: 'pending', failure: 'fail', error: 'fail' };
 export const ADVISORY_TIMEOUT_MS = 15_000;
 export const PASS_BUDGET_MS = 60_000;
 // A head whose write failed is tried again after POST_RETRY_MS with the same text, and at the next pass when the text it should
@@ -64,7 +95,7 @@ export function statusSignature(status) {
   return canonicalJson({ current: c ? { pr: c.pr ?? null, headSha: c.headSha ?? null, attempt: c.attempt ?? null, stage: c.stage ?? null } : null, rows,
     breaker: status.breaker ? { state: status.breaker.state ?? null, nextTrialAt: status.breaker.nextTrialAt ?? null } : null,
     intakePause: status.intakePause ? canonicalJson(status.intakePause) : null, halt: status.halt?.code ?? null, paused: status.paused === true,
-    parkingFull: status.queue?.parkingFull === true, quota: [quotaFull(status, 'batches'), quotaFull(status, 'evaluations')], hold: globalDefer(status) });
+    parkingFull: status.queue?.parkingFull === true, quota: [quotaFull(status, 'batches'), quotaFull(status, 'evaluations')], hold: globalDefer(status), budgets: status.notices?.filter(n => n.budget).map(n => [n.key, n.budget]) ?? [] });
 }
 // Whether a daily budget of the whole queue is used up (status.limits, written by the scheduling pass that reached the due rows): the
 // executions (every row) or the evaluations (not a wait's retry: it has its own budget). Review round 23, MINOR 1.
@@ -87,10 +118,12 @@ const KEEP_MS = 14 * 86_400_000;
 
 export const STAGE_NAMES = Object.freeze({ 0: '准备', 1: '准入', 2: 'gitleaks 扫描', 3: 'gitleaks 发布', 4: 'trivy 扫描', 5: 'trivy 发布', 6: 'contract-placement 扫描',
   7: 'contract-placement 发布', 8: '准入复核与合并位', 9: '托管转发' });
+// A draft PR is held, not ended (pr-candidate.mjs; DESIGN §72.11): what its head says on the PR page once, and its held queue row.
+export const DRAFT_HELD_TEXT = '草稿：已搁置，转为可评审后自动继续';
 const DEFERRED_TEXT = Object.freeze({ DAILY_BATCH_LIMIT: '今日执行批次额度已满，明天继续', DAILY_EVALUATION_LIMIT: '今日评估额度已满', UNEXECUTED_COOLDOWN: '冷却中（10 分钟）',
   COMPANION_NOT_READY: '等 companion 就绪', PR_DAILY_BATCH_LIMIT: '本 PR 今日批次已满', WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满，明天继续',
   REEVALUATION_CAP: '本提交今日重新评估次数已满', BREAKER_OPEN: '执行器熔断中', TRAIN_NON_FRONT_RUNS_OFF: '合并列车只跑车头批次，成为车头后再跑',
-  TRAIN_FRONT_BOUND_HEAD: '合并列车：此提交已为队首认领绑定，车头批次在试合并提交上跑' });
+  TRAIN_FRONT_BOUND_HEAD: '合并列车：此提交已为队首认领绑定，车头批次在试合并提交上跑', PR_DRAFT: DRAFT_HELD_TEXT });
 // The global deferrals of a scheduling pass (executor.mjs#precheck, #trainGate; SCHEDULE_HOLDS) that the status keeps as queue.hold
 // until a pass gets past it: no row runs while one holds (review rounds 24 and 25). The daily budgets come from status.limits (quotaFull).
 const GLOBAL_DEFER_TEXT = Object.freeze({ COMPANION_NOT_READY: '等 companion 就绪', VERSION_SKEW: '两端版本不一致，等升级处理完',
@@ -133,7 +166,8 @@ const WAIT_TEXT = Object.freeze({ OWNER_REVIEW_REQUIRED: '等 Owner 批准受保
 // Phase 2, step 3a: a batch parked before stage 8 because of main's live rules, GitHub's test merge or the green ledger.
 const PARKED_TEXT = Object.freeze({ REQUIRED_CHECK_FAILED: '必需检查失败，已停止入队和延长；等待检查重跑',
   REQUIRED_CHECKS_UNREADABLE: '暂时无法确认必需检查，等待重新核对',
-  RULESET_UNREADABLE: '已测通：读不到 main 的规则，或必需检查不再钉在本执行器上',
+  RULESET_UNREADABLE: '已测通：main 的必需检查没有全部钉在本执行器上',
+  RULESET_READ_FAILED: '已测通：暂时读不到 main 的规则',
   STRICT_OFF_WITHOUT_TRAIN: '已测通：main 的 strict 已关而列车未开，暂不发合并位（已通知 Owner）',
   MERGE_METHODS_NOT_MERGE_ONLY: '已测通：strict 已关，但合并方式不只有 merge，暂不发合并位（已通知 Owner）',
   TRAIN_TEST_MERGE_NOT_READY: '已测通：等 GitHub 算好试合并', GREEN_LEDGER_UNAVAILABLE: '已测通：本机绿色台账暂时写不进',
@@ -148,13 +182,24 @@ const LIVE = new Set(['QUEUED', 'PARKED', 'WAITING', 'BACKOFF']);
 const NETWORK_CAUSE_TEXT = Object.freeze({ BUNDLE_UNAVAILABLE: '打包失败', REFS_GATE_UNCONFIRMED: 'refs 闸门没有答复',
   NATIVE_ADMISSION_UNAVAILABLE: '准入服务连不上', ADMISSION_VERIFICATION_UNAVAILABLE: '准入核验没有答复', GITHUB_TRANSIENT_UNAVAILABLE: 'GitHub 暂时不可用' });
 const hhmm = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
+// Task 0ca0479d: the text for CLAIM_NOT_CURRENT's claim reasons (queue.mjs#CLAIM_WHY). Without a reason code (an older status,
+// a reason not named there, anything malformed) the text is the code alone, as before.
+export const claimWhy = (code, reasonCodes) => (CLAIM_REASONS.includes(code) && Array.isArray(reasonCodes)
+  ? CLAIM_WHY.find(([codes]) => codes.some(c => reasonCodes.includes(c)))?.[1] ?? '' : '');
+// The code as the page shows it in parentheses: "CODE" or "CODE，<why>".
+const codeWhy = (code, reasonCodes) => { const why = claimWhy(code, reasonCodes); return why ? `${code}，${why}` : code; };
+// Task 30643342 (FABLE-botmerge-auth-carry §1.6): what wakes a waiting row before its next try is the queue's own rule
+// (queue.mjs#earlyWakeOf, which the queue's candidates() reads too); the page only says it. The status board carries the queue view's
+// reason as `deferred`.
+const EARLY_WAKE_TEXT = Object.freeze({ authorization: '认领持有人授权此提交后，约 10 分钟内自动重试（编辑 PR 不会提前）' });
+const earlyWakeOfPage = row => earlyWakeOf({ state: row.state, reason: row.deferred });
 const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MAX - 1)}…`;
 
 // DESIGN §41.6a: while the heartbeat's answer shows the failover watchdog has not ticked for more than 5 minutes
 // (companion-heartbeat.mjs#watchdogStale), every text this node writes for a PR head ends with this, never clipped away. At
 // the end, so the duty words that start a text (node-duty.mjs) stay where the other nodes read them.
 export const WATCHDOG_STALE_TEXT = '自动接班看门狗未运行';
-// Generation 12 (DESIGN §56.5): the companion re-ran this head's required tests once (admission-rerun.mjs). Applied to the base text
+// DESIGN §56.5: show the companion's latest required-tests recovery receipt (admission-rerun.mjs). Applied to the base text
 // (describe), before the duty word and the other lines are added: at the start of the base, so a clipped text keeps it; never in front
 // of a duty word (当班, 双活停机, 已交班, 停摆), which another node reads at the start of the text. A weak (generic) text gets none.
 // The lost-run lane's line (a head GitHub created no run for, AdmissionRerunner#line) goes in the same place. line: true (the re-run
@@ -211,7 +256,7 @@ export function leaseText(row, now, { running, since = null }) {
 }
 
 // Stage timings on the running line (status /8, stage-timing.mjs): the time the batch has run so far and the finished segments, e.g.
-// "；已跑 12分；备 2分 1:40秒 2:5分". Whole minutes (or seconds below one), so the text changes at most once a minute. It fills only the room
+// "；已跑 12分；备 2分 1:40秒 2:5分" (备: reservation -> stage 1 entered, with or without a bundle; Task f79929d9). Whole minutes (or seconds below one), so the text changes at most once a minute. It fills only the room
 // that is left after the stage text and the lease reminder, minus TIMING_HEADROOM for the words other lines put in front or behind
 // (rerun line, duty word, watchdog): the lease reminder is never cut for it. No room, no timing, or a timing that is not this batch's: ''.
 export const TIMING_HEADROOM = 30;
@@ -235,26 +280,49 @@ export function timingText(status, now, room) {
   return table ? `${out}；${table}`.slice(0, room) : out;
 }
 
-// A train run of the last TRAIN_PAGE_MAX_AGE_MS named a front, and it is another PR. Unknown or stale: false.
-const notTheFront = (last, pr, now) => Number.isFinite(last?.at) && now - last.at <= TRAIN_PAGE_MAX_AGE_MS
-  && Number.isSafeInteger(last?.front?.pr) && last.front.pr !== pr;
+// The two texts of a head the poller does not propose (poller.mjs hints merge-main and push-any-commit): describe writes them and the
+// PR gate (scripts/ci/clued-work-admission.mjs#residentHeldHint, Task 2fb32dc7) reads them back with heldPartOf. Such a head is never
+// admitted (the head is fixed and main only moves on), so the gate ends at once instead of polling its whole wait. A text is held only
+// when one of its "；"-separated parts is exactly a held sentence (the lines withRerunLine, withCapacityLine and withWatchdogLine add
+// around it are other parts); a clipped or any other text is not. The gate imports nothing outside scripts/ci and this package nothing
+// from scripts/ci, so the block between the held-texts marks is in both files byte for byte, the way env-failure.mjs is the gate's failure
+// rule; the admission self-tests lock the two, so a sentence never changes without its reader.
+// held-texts: begin
+const HELD_TEXTS = Object.freeze({
+  'merge-main': behindBy => `落后 main ${behindBy} 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）`,
+  'push-any-commit': () => '已包含 main，但 PR 的基准还是旧的：推一个任意提交即可',
+});
+const HELD_NUMBER = '\u0000';
+const HELD_PATTERNS = Object.entries(HELD_TEXTS).map(([hint, text]) =>
+  [hint, new RegExp(`^${text(HELD_NUMBER).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(HELD_NUMBER, '[0-9]{1,10}')}$`, 'u')]);
+// { hint, text }: the held part of a PR page text (text is that part alone: a fixed sentence and digits), or null.
+export function heldPartOf(description) {
+  if (typeof description !== 'string' || description.length > 1000) return null;
+  for (const part of description.split('；')) for (const [hint, pattern] of HELD_PATTERNS) if (pattern.test(part)) return { hint, text: part };
+  return null;
+}
+// held-texts: end
+export function heldHintText(hint, behindBy) { return Object.hasOwn(HELD_TEXTS, hint) ? HELD_TEXTS[hint](behindBy) : null; }
+export const heldHintOf = description => heldPartOf(description)?.hint ?? null;
 
 // Pure: what the PR page should say for one open PR head, or null (write nothing). weak: a generic text that never
 // replaces what was already written for that head.
 export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
   if (!pull || !HEX40.test(pull.headSha ?? '')) return null;
   if (!pull.eligible) {
-    // Defect C: under strict only the PR about to merge has to contain main. A behind PR that a recent train run did not
-    // see at the front waits instead (each merge used to ask every queued PR for a merge-only head: O(N^2) heads).
-    if (pull.hint === 'merge-main' && notTheFront(status?.train?.last, pull.pr, now)) {
-      return { state: 'pending', description: clip(`落后 main ${pull.behindBy} 个提交：排队中，不必现在合 main（轮到它合入时再合一次）`) };
-    }
-    if (pull.hint === 'merge-main') return { state: 'failure', description: clip(`落后 main ${pull.behindBy} 个提交：请合入最新 main 并推送`) };
-    if (pull.hint === 'push-any-commit') return { state: 'failure', description: '已包含 main，但 PR 的基准还是旧的：推一个任意提交即可' };
+    if (pull.draft === true) return { state: 'pending', description: DRAFT_HELD_TEXT };
+    // Task 484bddac (FABLE-front-merge-stale-summary §2.3): a behind head is never asked to merge main by hand; the robot
+    // (clued-front-main-merge) takes main in when its turn comes. One line, whatever the train summary says (stale, no front, another
+    // PR or this one): the summary-based branch told every PR to merge main whenever it was stale or empty (34 hand merges).
+    if (pull.hint === 'merge-main') return { state: 'pending', description: clip(heldHintText('merge-main', pull.behindBy)) };
+    if (pull.hint === 'push-any-commit') return { state: 'failure', description: heldHintText('push-any-commit') };
     return null;
   }
   if (!status) return null;
   if (now - status.writtenAt > staleMs) return { state: 'error', description: `执行器状态自 ${hhmm(status.writtenAt)} 起未更新，可能已停止` };
+  const budget = budgetForPull(status, pull, now);
+  if (budget && !status.halt && !status.paused && !(status.current?.pr === pull.pr && status.current?.headSha === pull.headSha))
+    return { state: 'pending', description: clip(budgetText(budget)) };
   const mine = x => x && x.pr === pull.pr && x.headSha === pull.headSha;
   if (mine(status.current)) {
     const stage = status.current.stage;
@@ -284,6 +352,8 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // Parked before stage 8 (phase 2, step 2): its checks are published; it waits for the merge queue.
     if (row.state === 'PARKED') {
       const lease = leaseText(row, now, { running: false }), latest = row.nextAt ? `（最晚约 ${hhmm(row.nextAt)}）` : '';
+      if (row.nextAt === null && row.deferred === 'RULESET_UNREADABLE') return { state: 'pending', description: clip(`${PARKED_TEXT[row.deferred]}，规则钉回后再查第 8 段${lease}`) };
+      if (row.nextAt === null) return { state: 'pending', description: clip(`休眠停靠（${row.deferred ?? '第 8 段未就绪'}）：有变化后再查第 8 段${lease}`) };
       // Generation 12 (DESIGN §56.2): a watched row (row.watched) tries stage 8 within minutes once its claim holds the merge slot;
       // an unwatched one (an older Source, a STANDBY node, the watch or try budget used up) keeps the generation-11 text.
       if (row.deferred === 'RESIDENT_MERGE_QUEUE_NOT_JOINED') return { state: 'pending', description: clip(row.watched
@@ -316,10 +386,13 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       }
       if (!(due && gate)) {
         const when = !due ? at : row.eta > now ? `约 ${hhmm(row.eta)} ` : status.current ? '当前批次结束后' : '即将';
-        if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${code}）`}：${when}自动重试，批准或修正后编辑 PR 可提前`) };
+        const wake = EARLY_WAKE_TEXT[earlyWakeOfPage(row)];
+        if (wake && row.state === 'WAITING') return { state: 'pending', description: clip(`等待中（${codeWhy(code, row.reasonCodes)}）：${when}自动重试；${wake}`) };
+        if (wake) return { state: 'pending', description: clip(`未准入或未执行（${codeWhy(code, row.reasonCodes)}）：${when}自动重试（第 ${row.level} 次）；${wake}`) };
+        if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${codeWhy(code, row.reasonCodes)}）`}：${when}自动重试，批准或修正后编辑 PR 可提前`) };
         // Generation 12 (defect 050560ac): a network back-off names the cause and the next try; it needs nothing from the PR.
         if (row.network) return { state: 'pending', description: clip(`网络问题，${NETWORK_CAUSE_TEXT[row.deferred] ?? `未执行（${code}）`}，${when}自动重试，不用推新提交`) };
-        return { state: 'pending', description: clip(`未准入或未执行（${code}）：${when}自动重试（第 ${row.level} 次），修正后编辑 PR 可提前`) };
+        return { state: 'pending', description: clip(`未准入或未执行（${codeWhy(code, row.reasonCodes)}）：${when}自动重试（第 ${row.level} 次），修正后编辑 PR 可提前`) };
       }
     }
     // A row without a place among those that may run now (a deferral holds it) says no place, not "第 ? 位" (review round 22).
@@ -335,14 +408,17 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     if (gate && (DEFERRED_TEXT[gate] || GLOBAL_DEFER_TEXT[gate])) return { state: 'pending', description: clip(`${place}：${DEFERRED_TEXT[gate] ?? globalDeferText(gate, status)}`) };
     if (row.deferred === 'SAFE_POINT_READMISSION') return { state: 'pending', description: `${place}：流程在安全点结束，条件恢复后自动接着跑，不用推新提交` };
     const why = row.deferred ? `：${DEFERRED_TEXT[row.deferred] ?? row.deferred}` : '';
-    return { state: 'pending', description: clip(`${place}${why}${row.eta && !row.deferred ? `，预计 ${hhmm(row.eta)} 开始` : ''}`) };
+    // Another PR's batch runs now (#1254: the PR waited behind it with no word why): say whose and at which stage.
+    const other = status.current && status.current.pr !== pull.pr && Number.isInteger(status.current.stage) ? status.current : null;
+    const behind = !row.deferred && other ? `：前面 #${other.pr} 的批次在跑（第 ${other.stage} 段）` : '';
+    return { state: 'pending', description: clip(`${place}${why}${behind}${row.eta && !row.deferred ? `，预计 ${hhmm(row.eta)} 开始` : ''}`) };
   }
   // Generation 10 (DESIGN 53.3): the network cap is an environment stop, lifted by itself when the outside answers again.
   if (row && row.state === 'STOPPED' && row.stopKind === 'release-cap' && row.deferred === 'NETWORK_RELEASE_CAP_REACHED') {
     return { state: 'pending', description: '网络故障重试次数已达今日上限：网络恢复后自动重试，不用推新提交' };
   }
   if (row && row.state === 'STOPPED' && row.stopKind === 'release-cap') {
-    return { state: 'failure', description: clip(`24 小时内已多次未准入或未执行（${row.deferred ?? '?'}）：请修正后推新提交`) };
+    return { state: 'failure', description: clip(`24 小时内已多次未准入或未执行（${codeWhy(row.deferred ?? '?', row.reasonCodes)}）：请修正后推新提交`) };
   }
   const recent = status.recent.find(mine);
   if (recent) {
@@ -351,7 +427,9 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       case 'COMPLETED': return { state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布' };
       case 'FAILED_CLEAN':
         if (recent.retry === 'safe-point') return { state: 'pending', description: '流程在安全点结束：条件恢复后自动接着跑，不用推新提交' };
-        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' };
+        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'pending', description: 'main 已移动：等待系统更新 PR 的基线' };
+        if (['same-batch', 'continuation', 'new-trigger', 'park'].includes(recent.retry))
+          return { state: 'pending', description: clip(`流程停在（${code}）：等待恢复，不用推新提交`) };
         if (recent.code === 'TRAIN_TEST_MERGE_TREE_DIFFERS') return { state: 'failure', description: '试合并与测过的树不同，未发合并位：请推新提交（已通知 Owner）' };
         // DESIGN §41.4 (review R3 MINOR 10): GitHub recomputed the test merge; the next stage 10 reads S again (the head's second
         // front batch), no new commit is needed. Only after that one is a new commit asked for (TRAIN_FRONT_ATTEMPTS_USED).
@@ -378,12 +456,14 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
         if (recent.code === 'OWNER_REVIEW_REQUIRED') return { state: 'pending', description: '等 Owner 批准受保护改动，批准后编辑 PR 可提前重试' };
         if (recent.code === 'TASK_CI_HEAD_CAP_REACHED') return { state: 'pending', description: 'Task 的 24 小时 CI 额度已满，稍后自动重试' };
         if (recent.class === 'waiting') return { state: 'pending', description: clip(`等待中（${code}），稍后自动重试`) };
+        if (recent.code === 'NATIVE_POLICY_UNSUPPORTED') return { state: 'pending', description: '等待节点更新 Source，当前提交可自动重试' };
         return { state: 'failure', description: clip(`未准入（${code}）：修正后编辑 PR 再试`) };
       case 'NOT_EXECUTED':
         // Defect a8910e41: the binding run is released now (before: burned, FAILED_CLEAN below); the same words.
         if (recent.code === 'TRAIN_FRONT_CLAIM_BOUND') return { state: 'pending', description: '合并列车：已为队首认领绑定此 PR，车头批次随后在试合并提交上跑，不用推新提交' };
-        // Field defect 2026-11-14: the bundle found main moved past this head's base; the row stopped (no retry with that base).
-        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' };
+        // Field defect 2026-11-14: the bundle found main moved past this head's base; the row stopped (no retry with that base). A batch
+        // that builds no bundle (Task f79929d9) meets the same code at stage 8 instead (FAILED_CLEAN above, the same words).
+        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'pending', description: 'main 已移动：等待系统更新 PR 的基线' };
         return recent.code === 'BATCH_SUPERSEDED' ? null : { state: 'pending', description: clip(`未执行（${code}），稍后自动重试`) };
       case 'IGNORED':
         if (recent.code === 'UNEXECUTED_DAILY_CAP') return { state: 'failure', description: '此提交今日评估次数已满：请推新提交' };
@@ -392,7 +472,12 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       default: return null;
     }
   }
-  if (row && row.state === 'STOPPED') return { state: 'failure', description: clip(`此提交不再运行（${row.deferred ?? '?'}）：请推新提交`) };
+  if (row && row.state === 'STOPPED') {
+    if (row.deferred === 'RESIDENT_BASE_MOVED') return { state: 'pending', description: 'main 已移动：等待系统更新 PR 的基线' };
+    if (FAILURE_TABLE.rows.some(r => r.code === row.deferred && ['environment', 'queue'].includes(r.class) && r.retry !== 'new-commit'))
+      return { state: 'pending', description: clip(`流程停在（${row.deferred}）：等待恢复，不用推新提交`) };
+    return { state: 'failure', description: clip(`此提交不再运行（${row.deferred ?? '?'}）：请推新提交`) };
+  }
   if (status.halt) return { state: 'error', description: clip(`执行器已停机（${status.halt.code}），等 Owner 复位`) };
   if (status.paused) return { state: 'pending', description: '执行器已暂停，等 Owner 恢复' };
   if (!status.backfill.complete) return { state: 'pending', description: '执行器启动中：回填已执行记录', weak: true };
@@ -433,11 +518,17 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
     const d = rowHold(status, p, now);
     const reason = d ?? p.state ?? 'QUEUED';
     out.push({ key: `wait:${p.pr}:${p.headSha}:${reason}`, title: `PR #${p.pr} 排队超过 1 小时`,
-      body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[d] ?? GATE_TEXT[d] ?? globalDeferText(d, status) ?? WAIT_TEXT[d] ?? (d ? `等待中（${d}）` : '前面还有批次')}。` });
+      body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[d] ?? GATE_TEXT[d] ?? globalDeferText(d, status) ?? WAIT_TEXT[d] ?? (d ? `等待中（${codeWhy(d, p.reasonCodes)}）` : '前面还有批次')}。` });
   }
   // The executor's own notices (queue.mjs#notice), each key once.
   for (const n of status.notices ?? []) {
     const head = n.headSha ? n.headSha.slice(0, 8) : '';
+    if (n.budget) {
+      if (n.at > now || now - n.at > 86400000 || n.budget.resetsAt !== null && n.budget.resetsAt < now) continue;
+      out.push({ key: `notice:${n.key}`, title: n.code === 'STAGE8_RETRY_BUDGET_EXHAUSTED' ? `PR #${n.pr} 的第 8 段重试额度已用完` : '常驻 CI 额度已用完',
+        body: `${n.pr ? `PR #${n.pr}：` : ''}${budgetText(n.budget)}。额度与所有门禁保持不变。` });
+      continue;
+    }
     switch (n.kind) {
       case 'role-probe-connection': out.push({ key: `notice:${n.key}`, title: '节点角色连接授权已失效', body: '只读探测收到连接授权拒绝，可能已撤销、过期或不再适用。角色状态不确定；请检查连接与角色安排。此通知不启动或重试 CI。' }); break;
       case 'role-probe-interrupted': out.push({ key: `notice:${n.key}`, title: '节点角色探测被中断，已自动恢复', body: '上一次角色探测（或排队观察）进行到一半时执行器重启或断电。已结束那次探测，按上一次完整的结论立即重新探测；如果中断时的进程还占着探测通道，这次探测会停机等你处理。连续中断达到策略上限也会停机。' }); break;
@@ -446,7 +537,10 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'new-trigger': out.push(n.code === 'CLAIM_CHANGED'
         ? { key: `notice:${n.key}`, title: `PR #${n.pr} 认领或授权已更新`, body: `提交 ${head} 上次因认领或授权条件未准入；已确认条件更新，立即重新评估。` }
         : { key: `notice:${n.key}`, title: `PR #${n.pr} 收到新触发`, body: `提交 ${head} 等待中的重试已提前，冷却 10 分钟后重新评估。` }); break;
-      case 'stopped': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
+      case 'stopped':
+        if (status.notices?.some(b => b.budget && b.pr === n.pr && b.headSha === n.headSha
+          && ['RELEASE_CAP_REACHED', 'NETWORK_RELEASE_CAP_REACHED'].includes(b.code))) break;
+        out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${codeWhy(n.code ?? '?', status.pending?.find(p => p.pr === n.pr && p.headSha === n.headSha)?.reasonCodes)}）。请修正后推新提交。` }); break;
       case 'stage8-budget': out.push({ key: `notice:${n.key}`,
         title: n.pr ? `PR #${n.pr} 的第 8 段重试额度已用完` : '今日第 8 段重试额度已用完',
         body: n.pr ? '这个 PR 在过去 24 小时内的重试已达上限，额度恢复后继续；其他 PR 的额度独立计算。' : '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;
@@ -469,6 +563,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'upgrade-deferred': out.push({ key: `notice:${n.key}`, title: '常驻升级已延后', body: `原因：${n.code ?? '?'}。升级代理稍后自动再试，没有改动任何文件。` }); break;
       case 'upgrade-rolled-back': out.push({ key: `notice:${n.key}`, title: '常驻升级已回滚，执行器保持暂停', body: `升级未通过验证（${n.code ?? '?'}），已回到上一代。执行器保持暂停，请检查后由 Owner 恢复。` }); break;
       case 'upgrade-rollback-failed': out.push({ key: `notice:${n.key}`, title: '常驻升级回滚失败，需要 Owner 处理', body: `回滚没有完成（${n.code ?? '?'}）。执行器保持暂停；请用管理员权限按 upgrade-apply.ps1 -Recover 处理。` }); break;
+      case 'renewal-failed': out.push({ key: `notice:${n.key}`, title: '节点连接续期检查未通过', body: `原因：${n.code ?? '?'}。请查看 status.json 的 versions.renewal，核对连接观测与签名权限。` }); break;
       case 'selfcheck-failed': out.push({ key: `notice:${n.key}`, title: '节点用完即弃自检未通过', body: `原因：${n.code ?? '?'}（视图探针或遗留容器，详见 status.json 的 versions.selfcheck）。不影响准入和合入，请查明后处理。` }); break;
       // Step 3c-2b (DESIGN §41.4, §41.6): stage 10's decisions for the Owner.
       case 'train-owner': out.push({ key: `notice:${n.key}`, ...(TRAIN_OWNER_TEXT[n.code] ?? { title: '合并列车需要 Owner 处理', body: n.code ?? '?' }) }); break;
@@ -479,6 +574,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
 }
 const TRAIN_OWNER_TEXT = Object.freeze({
   TRAIN_LANDED_TREE_MISMATCH: { title: '紧急：车头合入的树与测过的不同', body: '第 10 段发现落地的合并树不等于测过的 S 的树，已暂停常驻执行器、没有 adopt。请检查后由 Owner 恢复。' },
+  TRAIN_LANDING_STATE_UNREADABLE: { title: '合并列车的落地状态读不出', body: '第 10 段读不出本节点的落地状态（state\\v2\\train-sweep 下的 landing-state），而本节点已有落地批次，为不丢调度记录不开车头批次；main 不受影响。需要查明该记录。' },
   TRAIN_SOURCE_MISMATCH: { title: '常驻节点的 Source 不一致', body: '24 小时内有心跳的常驻节点里有一个跑着别的 Source，本节点不跑 on 模式的第 10 段。请让全部常驻节点装同一个包。' },
 });
 
@@ -494,7 +590,7 @@ export function toastArgv(powershellExe, title, body) {
     + '$x=New-Object Windows.Data.Xml.Dom.XmlDocument;'
     + "$x.LoadXml('<toast><visual><binding template=\"ToastGeneric\"><text>'+[Security.SecurityElement]::Escape($t)+'</text><text>'+[Security.SecurityElement]::Escape($b)+'</text></binding></visual></toast>');"
     + "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show([Windows.UI.Notifications.ToastNotification]::new($x))";
-  return [powershellExe, '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')];
+  return powershellArgv(powershellExe, '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'));
 }
 
 // The reporter's own memory (the Owner's profile, never the resident's state): the last write per head, and which
@@ -558,16 +654,61 @@ export class PrStatusReporter {
   }
   inBudget() { return !this.stalled && this.clock() - this.passStartedAt < PASS_BUDGET_MS; }
 
-  // main's required status checks (rulesets), read with the Owner's gh login; null when unknown.
-  async requiredContexts() {
+  // The shared REST reader (admission-rerun.mjs#ghPort), over this reporter's own call(), every read as short as the other advisory ones: a stalled call ends the pass like any other.
+  gh() { return this.ghp ??= ghPort({ ghExe: this.ghExe, repo: this.repo, run: (a, o) => this.call(a, { ...o, timeoutMs: ADVISORY_TIMEOUT_MS }) }); }
+
+  // main's required status checks with their App pins, read by the one shared reader (main-required-checks.mjs); null when unknown.
+  async requiredChecks() {
     if (this.required && this.clock() - this.requiredAt < REQUIRED_CACHE_MS) return this.required;
-    const r = await this.call([this.ghExe, 'api', '--method', 'GET', '--paginate', `repos/${this.repo}/rules/branches/main`,
-      '--jq', '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'], { timeoutMs: ADVISORY_TIMEOUT_MS });
-    if (r.code !== 0) return null;
-    const list = String(r.stdout).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    if (list.length === 0) return null; // main always requires checks: an empty answer is no answer
+    let list;
+    try { list = await readMainRequiredChecks((route, key) => this.gh().paged(route, key)); } catch (e) {
+      // A failed read is a flap until it has lasted RULES_UNREADABLE_REPORT_AFTER_MS: the last known rules keep speaking meanwhile. An answer of the
+      // wrong shape is not a flap. Either way an empty or unreadable answer is no answer (null).
+      if (e instanceof RulesShapeError) { this.required = null; this.rulesFailingSince = null; return null; }
+      this.rulesFailingSince ??= this.clock();
+      return this.clock() - this.rulesFailingSince >= RULES_UNREADABLE_REPORT_AFTER_MS ? null : (this.required ?? null);
+    }
+    this.rulesFailingSince = null;
     this.required = list; this.requiredAt = this.clock();
     return list;
+  }
+  // The names only (the collision check of this node's own contexts); null when unknown.
+  async requiredContexts() {
+    const list = await this.requiredChecks();
+    return list ? [...new Set(list.map(c => c.context))] : null;
+  }
+
+  // What one head shows, with where it came from: check runs (latest per name and App; App id kept) and commit statuses (latest per context).
+  // null when a read fails. A status and a run of the same name stay two observations.
+  async headChecks(headSha) {
+    const hit = this.headChecksCache?.get(headSha);
+    if (hit && this.clock() - hit.at < HEAD_CHECKS_CACHE_MS) return hit.value;
+    let value = null;
+    try {
+      const gh = this.gh();
+      const runs = await gh.paged(`/commits/${headSha}/check-runs?filter=latest`, 'check_runs');
+      const statuses = await gh.paged(`/commits/${headSha}/statuses`);
+      const seen = [];
+      for (const c of runs) if (c?.head_sha === headSha && typeof c.name === 'string') seen.push({ name: c.name, appId: Number.isSafeInteger(c.app?.id) ? c.app.id : null, source: 'run', state: runState(c.status, c.conclusion) });
+      const have = new Set();
+      for (const c of statuses) { // newest first: the first of a context is its latest
+        if (typeof c?.context !== 'string' || have.has(c.context)) continue;
+        have.add(c.context);
+        seen.push({ name: c.context, appId: null, source: 'status', state: STATUS_STATE[c.state] ?? 'pending' });
+      }
+      value = seen;
+    } catch { value = null; }
+    (this.headChecksCache ??= new Map()).set(headSha, { at: this.clock(), value });
+    if (this.headChecksCache.size > 64) this.headChecksCache.delete(this.headChecksCache.keys().next().value);
+    return value;
+  }
+
+  // Only the front PR whose train line names the head's required checks needs them: green, wait for merge, or (Fable 11-20, #1192) a
+  // merge-slot-green front still waiting for, or missing, a required check. FRONT_CHECKS_MISSING_YIELDED names none: the slot was given away.
+  async frontGap(pull, last, rules) {
+    const t = last && last.front?.headSha === pull.headSha ? (last.decision ?? last.wouldDo) : null;
+    if (!GAP_DECISIONS.includes(t) || this.stalled || !this.inBudget()) return null;
+    try { return requiredGap(rules, await this.headChecks(pull.headSha)); } catch { return null; }
   }
 
   async post(headSha, want, context) {
@@ -584,6 +725,8 @@ export class PrStatusReporter {
     const r = this.notify ? await this.notify(e.key, e.title, e.body).then(() => ({ code: 0 }), () => ({ code: 1 }))
       : await this.run(toastArgv(this.powershellExe, e.title, e.body), { timeoutMs: ADVISORY_TIMEOUT_MS });
     if (r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD') { this.stalled = true; return false; }
+    // Budget alerts retry a failed enqueue. A failure is auxiliary, never a delivered notification.
+    if (e.key.startsWith('notice:budget:') && r.code !== 0) return false;
     this.store.data.notified[e.key] = { at: new Date(now).toISOString() };
     this.dirty = true;
     if (stalledCall(r)) this.stalled = true;
@@ -605,7 +748,8 @@ export class PrStatusReporter {
   // One pass: the status notifications (local, never behind a slow GitHub), the node's duty (the take-over check and the
   // dual-active lock) and its notifications, then the PR page status of every open PR head the poller looked at, then
   // the duty's own writes (已交班, a restart, the end of a reminder written before ADR 0028).
-  async pass({ pulls = [], status = null, statusError = false }) {
+  // drafts: the open draft PR heads the poller skipped ([{ pr, headSha }]); a head this node wrote on is told once that it is held.
+  async pass({ pulls = [], drafts = [], status = null, statusError = false }) {
     const now = this.clock();
     this.passStartedAt = now;
     this.stalled = false;
@@ -617,12 +761,15 @@ export class PrStatusReporter {
     let prep = null;
     if (!this.stalled) { try { prep = await this.duty.prepare({ status, pulls, now, posted: this.store.data.posted }); } catch { prep = null; } }
     if (prep) toasts = await this.showAll(prep.events, now, toasts);
-    if (prep && this.prStatus !== false && pulls.length > 0 && !this.stalled) {
+    if (prep && this.prStatus !== false && (pulls.length > 0 || drafts.length > 0) && !this.stalled) {
       const context = prep.context;
-      const required = await this.requiredContexts();
+      const requiredRules = await this.requiredChecks();
+      const required = requiredRules ? [...new Set(requiredRules.map(c => c.context))] : null;
       // Both contexts this node may write are checked against main's rules; either one there stops every write.
       if (!this.stalled) this.collision = (Array.isArray(required) ? [context, standbyContext(prep.node.name)].find(c => !contextFree(c, required)) : undefined) ?? false;
-      if (Array.isArray(required) && !this.collision && !this.stalled) {
+      // Said only once the failure has lasted (a flap writes nothing, as before); a wrong-shaped answer is said at once.
+      const rulesUnreadable = !Array.isArray(required) && !this.stalled && (this.rulesFailingSince == null || this.clock() - this.rulesFailingSince >= RULES_UNREADABLE_REPORT_AFTER_MS);
+      if ((Array.isArray(required) || rulesUnreadable) && !this.collision && !this.stalled) {
         const described = new Set();
         const write = async (headSha, want, ctx, key) => {
           const text = `${want.state}|${clip(want.description)}`;
@@ -647,7 +794,7 @@ export class PrStatusReporter {
           // The re-run line goes into the base text, so the duty word stays at the start (node-duty.mjs#parseDutyStatus reads it there)
           // and the watchdog tail stays last (review round 3, BLOCKER 1); the capacity line goes just before it.
           const base = withRerunLine(describe({ pull, status, now }), this.rerunLine?.(pull.headSha) ?? null);
-          const want = withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX)),
+          const want = rulesUnreadable ? RULES_UNREADABLE_WANT : withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX, await this.frontGap(pull, status?.train?.last ?? null, requiredRules))),
             capacity), this.watchdogStale?.() === true);
           if (!want) continue;
           described.add(pull.headSha);
@@ -663,8 +810,21 @@ export class PrStatusReporter {
           if (await write(pull.headSha, want, context, pull.headSha)) remember(pull.headSha, want);
           if (this.stalled) break;
         }
+        // A draft (PLAN-resident-draft-batch-20261123, observation): a head this node wrote on, and only that, is rewritten once to say it
+        // is held (#1253 kept its last running text). A STANDBY writes none (node-duty.mjs#want: an ineligible head is a hint).
+        for (const d of rulesUnreadable ? [] : drafts) {
+          if (posted >= MAX_POSTS_PER_PASS || !this.inBudget() || this.stalled) break;
+          if (!HEX40.test(d?.headSha ?? '') || described.has(d.headSha)) continue;
+          const last = this.store.data.posted[d.headSha];
+          if (!last || last.context !== context) continue;
+          const pull = { pr: d.pr, headSha: d.headSha, eligible: false, draft: true };
+          const want = this.duty.want(pull, status, now, describe({ pull, status, now }));
+          if (!want || (last.state === want.state && last.description === clip(want.description))) continue;
+          described.add(d.headSha);
+          if (await write(d.headSha, want, context, d.headSha)) remember(d.headSha, want);
+        }
         let extra = [];
-        if (!this.stalled) { try { extra = await this.duty.extra({ posted: this.store.data.posted, described, pulls, now }); } catch { extra = []; } }
+        if (!this.stalled && !rulesUnreadable && pulls.length > 0) { try { extra = await this.duty.extra({ posted: this.store.data.posted, described, pulls, now, status }); } catch { extra = []; } }
         for (const x of extra) {
           const ok = !this.stalled && await write(x.headSha, x.want, x.context, `${x.context}|${x.headSha}`);
           if (!ok) continue;

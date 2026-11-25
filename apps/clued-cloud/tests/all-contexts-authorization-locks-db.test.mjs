@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -28,7 +28,7 @@ async function port() {
 test('all-contexts real early writer barriers and preserved caller catalog', { timeout: 420000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-all-contexts-locks-'));
   const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: proof(), port: await port(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
   const clients = [];
   try {
     await server.initialise(); await server.start();
@@ -389,8 +389,9 @@ test('all-contexts real early writer barriers and preserved caller catalog', { t
       }), second, () => finishPermission(second, token));
       assert.equal(result.held.status, 'committed'); assert.equal(result.waited.status, 'committed', JSON.stringify(result.waited));
     });
-    for (const [name, action] of [['clued_owner_grant_door_consume_v1', 'release.production'],
-      ['clued_owner_grant_admission_door_v1', 'repo.protected_change']]) {
+    // The release door is the database login since 20261119130000 and takes no Binding lock; the
+    // public door refuses the release actions before it resolves a Binding.
+    for (const [name, action] of [['clued_owner_grant_admission_door_v1', 'repo.protected_change']]) {
       await t.test(`actual ${name} B SHARE -> GrantLock consumption versus Native permission writer has no inverse lock`, async () => {
         const subject = await approve(first, await prepare());
         if (name === 'clued_owner_grant_admission_door_v1') {

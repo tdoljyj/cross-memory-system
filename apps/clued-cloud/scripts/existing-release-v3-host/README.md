@@ -19,7 +19,7 @@ The fixed sequence reuses the original workflow commands:
 4. Reviewed v3 currentness: isolated original nineteen tests through the unchanged fixed manager, both real health endpoints, durable evidence, actual G6 all-path consumer acceptance before/after commit.
 5. Original served Agent contract and PDF service check.
 6. Original built Connect deploy and original Connect postflight.
-7. Original fresh-heartbeat/postflight command, with the main deployment completion timestamp, at most six original read-only attempts.
+7. 部署后运行一次 `production-release-gate.mjs --post-deploy`。门按投影状态决定是否需要重读。
 
 The fixed manager still permits only its three Git reads and nineteen tests; it is not extended to run deployment commands. Production commands execute in the separately fixed release service with KillMode=control-group, bounded runtime, no delegation/capabilities and NoNewPrivileges. Tests execute as the distinct job subject and receive neither publisher credential files nor its credential group.
 
@@ -100,3 +100,9 @@ Not covered:
 - both units still allow AF_VSOCK;
 - both units can read /mnt (read-only under ProtectSystem=strict; the release unit's DNS goes through /mnt/wsl/resolv.conf), and a Unix socket there stays connectable: the WSLg sockets /mnt/wslg/.X11-unix/X0, /mnt/wslg/runtime-dir/wayland-0 and /mnt/wslg/PulseServer;
 - both units share the Host's System V IPC and, through PrivateDevices, /dev/mqueue (PrivateIPC=yes would separate them). Under v7 the tests' PostgreSQL keeps its dynamic shared memory in System V segments owned by the job user instead of /dev/shm files.
+
+## v8 发布门（2026-11-18）
+
+v8 固定状态制发布门的 SHA-256。部署前快照和告警随本次发布留存，部署后由同一个门在有新积压时限时重读。使用仓库的 `prepare-v8.mjs --write` 重新生成 pin、v7→v8 差异和冻结清单。包回归测试从差异还原 v7 和更早的已固定字节。
+
+该版本是待审核的源码候选。安装及真实 Host 离线验收沿用前述独立授权流程，结果记录在 `offline-source-checks.json`。

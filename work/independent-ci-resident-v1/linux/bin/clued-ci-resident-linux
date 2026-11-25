@@ -12,8 +12,9 @@ Sub-commands (all print one JSON object; exit 0 only on success):
   archive-prune                                        one retention pass of the spool archives (DESIGN S35)
   view-properties --instance <jobId>                   the worker unit's file-system view as systemd-run --property arguments
   view-check --instance <jobId>                        run inside that view: does it hide and expose what DESIGN 70.2 says
-  selfcheck                                            read-only, between batches: the 70.7 probe (view-properties + systemd-run view-check)
-                                                       and the labelled-container count; always one JSON answer, exit 0 when it ran
+  selfcheck                                            between batches, reads only (creates the trivy cache root if absent): the 70.7
+                                                       probe (view-properties + systemd-run view-check) and the labelled-container count;
+                                                       always one JSON answer, exit 0 when it ran
 
 L2, every batch and role starts clean (DESIGN 70): the worker's guard refuses while any container carrying the bridge nonce
 label exists, in any state (EARLIER_CONTAINER_PRESENT, with the ids); a failure-scope archive records each such exited/dead
@@ -744,8 +745,9 @@ MAX_DOCKER_OUT = 1 << 20
 TRIVY_CACHE = '/var/lib/clued-independent-ci-trivy-cache'
 WORKER_UNIT_FILE = '/etc/systemd/system/clued-ci-worker@.service'
 # The [Service] settings that build the worker's file-system view; view-properties hands exactly these to systemd-run.
+# StateDirectory= is one of them: it creates the trivy cache root (TRIVY_CACHE) and is what keeps it writable under ProtectSystem=strict.
 VIEW_KEYS = ('ProtectSystem', 'ProtectHome', 'PrivateTmp', 'PrivateIPC', 'ReadWritePaths', 'ReadOnlyPaths', 'InaccessiblePaths',
-             'TemporaryFileSystem', 'BindPaths')
+             'TemporaryFileSystem', 'BindPaths', 'StateDirectory', 'StateDirectoryMode')
 LEGACY_STATE = ('verify-spool', 'verify-once-state', 'trusted-source')
 
 
@@ -868,9 +870,11 @@ def view_facts(job_id, entries, writable):
     want(not writable(SPOOL) and not writable(f'{STATE}/workspaces'), 'VIEW_ROOT_WRITABLE')
     want(not writable('/etc/clued-independent-ci') and not writable(OPT), 'TRUSTED_TREE_WRITABLE')
     want(writable(STATE), 'STATE_ROOT_NOT_WRITABLE')  # formal-role.lock (Source SERIAL_LOCK) is created here
-    for p in (f'{SPOOL}/incoming', f'{SPOOL}/outgoing', f'{STATE}/runs', f'{STATE}/workspaces/{job_id}', TRIVY_CACHE):
+    for p in (f'{SPOOL}/incoming', f'{SPOOL}/outgoing', f'{STATE}/runs', f'{STATE}/workspaces/{job_id}'):
         if entries(p) is not None:
             want(writable(p), 'NOT_WRITABLE:' + p)
+    # the unit's StateDirectory= creates the trivy cache root before any process of the run starts: it is always there, writable
+    want(entries(TRIVY_CACHE) is not None and writable(TRIVY_CACHE), 'NOT_WRITABLE:' + TRIVY_CACHE)
     return {'contract': VIEW_CONTRACT, 'jobId': job_id, 'ok': not fails, 'failures': fails}
 
 SELFCHECK_CONTRACT = 'clued.independent-ci.resident-linux-selfcheck/1'
@@ -906,7 +910,8 @@ def view_probe(props, run_view):
 
 def selfcheck(units, unit_text, run_view, docker, now):
     """Between batches only: while any clued-ci unit is not inactive/failed (before or after the probes) the answer is BUSY and
-    nothing is judged. Reads only; the probe is a transient systemd unit that is gone when it exits. A container read that fails
+    nothing is judged. Reads only, with one side effect: the probe runs like a worker, so systemd's StateDirectory= creates the trivy cache root
+    (root:root 0700) if it is not there yet; the probe is a transient systemd unit that is gone when it exits. A container read that fails
     says so (count null), it never reports zero."""
     base = {'contract': SELFCHECK_CONTRACT, 'at': now()}
     if other_units_quiet(units(), None):

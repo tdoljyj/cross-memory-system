@@ -1,4 +1,4 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -17,6 +17,8 @@ import './work-claims-owner-handover-db.case.mjs';
 import './work-claims-merge-slot-db.case.mjs';
 // A merged PR ends its claim's merge-slot turn (migration 20261115150000) as well.
 import './merge-slot-turn-per-pr-db.case.mjs';
+// A head whose turn is too short for its front batch ends the turn itself (merge_queue_yield turn_short, migration 20261119120000).
+import './merge-queue-yield-turn-short-db.case.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
@@ -43,7 +45,7 @@ test('work claims: renew, takeover and replay refusals leave rate-limited reject
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-work-claims-reject-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
