@@ -60,7 +60,7 @@ export function openRequest({ runGh, repository, version, requestSha256 }) {
   const r = runGh(['workflow', 'run', RELEASE_WORKFLOW, '--repo', repository, '--ref', 'main', '-f', `mode=${OPEN_MODE}`,
     '-f', `fleet_version=${version}`, '-f', `fleet_request_sha256=${requestSha256}`]);
   check(r?.status === 0, 'ACCEPT_DOOR_OPEN_FAILED', { exit: r?.status ?? null, stderr: r?.stderr ?? null,
-    note: 'the release workflow could not be started; nothing was opened or written: the same seal again' });
+    note: 'dispatch was not confirmed; read the door before deciding whether to open the request again' });
   return { workflow: RELEASE_WORKFLOW, mode: OPEN_MODE };
 }
 
@@ -80,14 +80,14 @@ export function publicConfigOf({ root = CHECKOUT, readFile = readFileSync } = {}
 export function httpStatus({ supabaseUrl, publishableKey, fetchImpl = globalThis.fetch }) {
   check(/^https:\/\/[^\s/]+\/?$/.test(supabaseUrl ?? '') && typeof publishableKey === 'string' && publishableKey !== '', 'ACCEPT_DOOR_NOT_CONFIGURED');
   const endpoint = `${supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/${ACCEPT_STATUS_RPC}`;
-  return async resource => {
+  return async (resource, { timeoutMs = CALL_TIMEOUT_MS } = {}) => {
     let response, text;
     try {
       response = await fetchImpl(endpoint, {
         method: 'POST',
         headers: { apikey: publishableKey, authorization: `Bearer ${publishableKey}`, 'content-type': 'application/json', accept: 'application/json', 'user-agent': 'clued-fleet-accept' },
         body: JSON.stringify({ p_resource: resource }),
-        signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+        signal: AbortSignal.timeout(Math.min(CALL_TIMEOUT_MS, timeoutMs)),
         redirect: 'error',
       });
       text = await response.text();
@@ -138,10 +138,10 @@ export function readAnswer(answer, { resource, requestSha256 }) {
 
 // The registered nodes of an accepted version as the door reads them (part C's accept.mjs run: which nodes are not on the accepted Source
 // yet): [{ node, ciSourceManifestSha256 (null: none reported), paused }]. Not accepted: FLEET_NOT_ACCEPTED; not of this shape: refused.
-export async function readFleet({ resource, readStatus = statusReader() }) {
+export async function readFleet({ resource, readStatus = statusReader(), timeoutMs }) {
   const requestSha256 = String(resource ?? '').split('/').pop();
   check(HEX64.test(requestSha256), 'ACCEPT_RESOURCE_REFUSED', { resource });
-  const answer = await readStatus(resource);
+  const answer = await readStatus(resource, { timeoutMs });
   const a = readAnswer(answer, { resource, requestSha256 });
   check(a.kind === 'accepted', 'FLEET_NOT_ACCEPTED', { answer: a.kind });
   const nodes = answer.nodes;

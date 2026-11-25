@@ -25,18 +25,18 @@ const fail = (code, detail) => { throw Object.assign(new Error(detail === undefi
 const check = (ok, code, detail) => { if (!ok) fail(code, detail); };
 const fatal = (code, detail) => { throw Object.assign(new Error(code), { code, detail, fatal: true }); };
 
-export function ghToken() {
-  const r = spawnSync('gh', ['auth', 'token'], { encoding: 'utf8', windowsHide: true });
+export function ghToken(timeout) {
+  const r = spawnSync('gh', ['auth', 'token'], { encoding: 'utf8', windowsHide: true, timeout, killSignal: 'SIGKILL' });
   const t = String(r.stdout ?? '').trim();
   check(r.status === 0 && t, 'FETCH_NO_GH_LOGIN', 'gh auth token gave nothing: log in with gh, or give --from');
   return t;
 }
 
 // One GET, redirects not followed: { status, headers, res }. An idle connection (no byte for IDLE_MS) is aborted.
-function get(url, headers) {
+function get(url, headers, signal) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
-    const req = (u.protocol === 'http:' ? http : https).get(u, { headers: { 'user-agent': 'fleet-node-fetch', ...headers } }, res => resolve({ status: res.statusCode, headers: res.headers, res }));
+    const req = (u.protocol === 'http:' ? http : https).get(u, { headers: { 'user-agent': 'fleet-node-fetch', ...headers }, signal }, res => resolve({ status: res.statusCode, headers: res.headers, res }));
     req.setTimeout(IDLE_MS, () => req.destroy(new Error('idle timeout')));
     req.on('error', reject);
   });
@@ -48,13 +48,19 @@ export const sha256File = file => new Promise((resolve, reject) => {
 });
 
 export async function fetchPackage({ version, dir, repo = DEFAULT_REPO, from = null, apiBase = 'https://api.github.com', getToken = ghToken,
-  deadlineMs = DEFAULT_DEADLINE_MS, sleep = ms => new Promise(r => setTimeout(r, ms)), now = Date.now, backoffMs = n => Math.min(30000, 1000 * 2 ** n) }) {
+  deadlineMs = DEFAULT_DEADLINE_MS, deadline, expectedArchiveSha256, sleep = ms => new Promise(r => setTimeout(r, ms)), now = Date.now, backoffMs = n => Math.min(30000, 1000 * 2 ** n) }) {
   check(VERSION.test(version ?? ''), 'USAGE', 'version');
   check(REPO.test(repo), 'USAGE', 'repo');
   check(typeof dir === 'string' && dir, 'USAGE', 'dir');
   const tag = `fleet-node-${version}`;
   const name = { tar: `${tag}.tar`, acceptance: `${tag}.acceptance.json`, sums: 'SHA256SUMS' };
-  const stop = now() + deadlineMs;
+  const stop = Math.min(now() + deadlineMs, deadline ?? Infinity);
+  const remaining = () => {
+    const left = stop - now();
+    if (!(left > 0)) fatal('FETCH_DEADLINE');
+    return left;
+  };
+  const signal = () => AbortSignal.timeout(remaining());
   await fs.mkdir(dir, { recursive: true });
   const out = n => path.join(dir, n);
   let token = null, assets = null;
@@ -70,7 +76,7 @@ export async function fetchPackage({ version, dir, repo = DEFAULT_REPO, from = n
       }
     }
   };
-  const apiGet = (p, accept) => { token ??= getToken(); return get(`${apiBase}${p}`, { authorization: `Bearer ${token}`, accept }); };
+  const apiGet = (p, accept) => { token ??= getToken(remaining()); return get(`${apiBase}${p}`, { authorization: `Bearer ${token}`, accept }, signal()); };
   const listAssets = () => retrying('release', async () => {
     const r = await apiGet(`/repos/${repo}/releases/tags/${tag}`, 'application/vnd.github+json');
     const body = await readAll(r.res);
@@ -89,7 +95,7 @@ export async function fetchPackage({ version, dir, repo = DEFAULT_REPO, from = n
     let have = (await fs.stat(part).catch(() => ({ size: 0 }))).size;
     if (have > asset.size) { await fs.rm(part, { force: true }); have = 0; }
     if (have === asset.size) return;
-    const r = await get(target, have > 0 ? { range: `bytes=${have}-` } : {});
+    const r = await get(target, have > 0 ? { range: `bytes=${have}-` } : {}, signal());
     let flags = 'a';
     if (r.status === 206) {
       const m = /^bytes (\d+)-/.exec(r.headers['content-range'] ?? '');
@@ -130,6 +136,8 @@ export async function fetchPackage({ version, dir, repo = DEFAULT_REPO, from = n
 
   const acc = JSON.parse((await small(name.acceptance)).toString('utf8').replace(/^\uFEFF/, ''));
   check(HEX64.test(acc?.archive_sha256 ?? '') && acc.version === version, 'FETCH_ACCEPTANCE_NOT_THIS_VERSION', { version: acc?.version ?? null });
+  check(expectedArchiveSha256 === undefined || acc.archive_sha256 === expectedArchiveSha256, 'FETCH_SUMS_NOT_THE_ACCEPTANCE',
+    { expected: expectedArchiveSha256, acceptance: acc.archive_sha256 });
   const sums = (await small(name.sums)).toString('utf8').split(/\r?\n/).map(l => /^([0-9a-fA-F]{64}) [ *]?(.+)$/.exec(l)).filter(Boolean);
   const listed = sums.find(m => m[2] === name.tar)?.[1]?.toLowerCase();
   check(listed === acc.archive_sha256, 'FETCH_SUMS_NOT_THE_ACCEPTANCE', { sums: listed ?? null, acceptance: acc.archive_sha256 });

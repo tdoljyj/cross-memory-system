@@ -93,3 +93,19 @@ test('a -Request that is no path leaves the PASS and the receipt as they are: NO
   assert.deepEqual(r.calls, []);
   assert.equal(r.receipt.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
 });
+
+test('返修 5：拒绝与过期保留各自结论、下一步及演练 PASS', opts, () => {
+  for (const [answer, next] of [['rejected', 'publish a new version'], ['expired', 'the same command opens a new request']]) {
+    const status = 'FLEET_ACCEPTANCE_REJECTED';
+    const r = finalizeWith('accept-' + answer, candidate(answer + '-run'), { opener: { exit: 0, stdout: JSON.stringify({ status, answer, next }) } });
+    assert.equal(r.out.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+    assert.equal(r.receipt.conclusion, r.out.conclusion);
+    assert.deepEqual([r.out.acceptance.status, r.out.acceptance.answer, r.out.acceptance.next], [status, answer, next]);
+  }
+});
+
+test('返修 6b：候选首装手册定稿命令携带 -Request', () => {
+  const doc = fs.readFileSync(new URL('../drill/FIRST-INSTALL-KIT.md', import.meta.url), 'utf8');
+  const command = doc.split(/\r?\n/).find(line => /-Finalize .* -ProductionReadback /.test(line));
+  assert.match(command ?? '', /-Request .*acceptance-request\.json/);
+});

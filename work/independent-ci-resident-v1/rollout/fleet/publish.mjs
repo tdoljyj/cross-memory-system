@@ -161,11 +161,13 @@ export async function stageNodeEntry({ release, tarBytes, sums }, stage) {
   return { sums: { name: 'SHA256SUMS', file: path.join(stage, 'SHA256SUMS') }, entry: out };
 }
 
-function gh(ghCommand, args) {
+function gh(ghCommand, args, timeout) {
+  if (typeof ghCommand === 'function') return ghCommand(args);
   const env = { ...process.env };
   for (const k of TOKEN_ENV) delete env[k];
   const [cmd, ...pre] = ghCommand;
-  const r = spawnSync(cmd, [...pre, ...args], { env, maxBuffer: 1 << 24, windowsHide: true });
+  const r = spawnSync(cmd, [...pre, ...args], { env, maxBuffer: 1 << 24, windowsHide: true, timeout, killSignal: 'SIGKILL' });
+  if (r.error?.code === 'ETIMEDOUT') fail('FLEET_ACCEPTANCE_DEADLINE', 'GitHub command timed out');
   return { status: r.status, stdout: String(r.stdout ?? ''), stdoutBytes: r.stdout ?? Buffer.alloc(0), stderr: String(r.stderr ?? r.error ?? '').trim().slice(-300) };
 }
 
@@ -173,9 +175,9 @@ function gh(ghCommand, args) {
 const isRow = l => l.startsWith('|');
 const cells = line => line.split('|').slice(1, -1).map(c => c.trim());
 const row = c => `| ${c.join(' | ')} |`;
-async function readIndex(index) {
+async function readIndex(index, readFile = fs.readFile) {
   let text = null;
-  try { text = (await fs.readFile(index)).toString('utf8'); } catch (e) { if (e?.code !== 'ENOENT') throw e; }
+  try { text = (await readFile(index)).toString('utf8'); } catch (e) { if (e?.code !== 'ENOENT') throw e; }
   const eol = text?.includes('\r\n') ? '\r\n' : '\n';
   const lines = text === null ? [row(INDEX_HEADER), `|${INDEX_HEADER.map(() => '---').join('|')}|`] : text.split(/\r?\n/);
   if (lines.length && lines[lines.length - 1] === '') lines.pop();
@@ -366,13 +368,14 @@ export async function readAcceptance(file, version) {
 }
 
 // seal's step (see the head of this file). `drill`: the index row's drill cell.
-export async function attachAcceptance({ version, acceptance, repo = DEFAULT_REPO, index = DEFAULT_INDEX, dir = null, drill = NOT_DRILLED, ghCommand = ['gh'] }) {
+export async function attachAcceptance({ version, acceptance, repo = DEFAULT_REPO, index = DEFAULT_INDEX, dir = null, drill = NOT_DRILLED,
+  ghCommand = ['gh'], checkTime = () => {}, readFile = fs.readFile }) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
   check(VERSION.test(version ?? ''), 'PUBLISH_VERSION_REFUSED');
   const a = await readAcceptance(acceptance, version);
   check(a.repository === repo, 'ACCEPTANCE_NOT_THIS_REPOSITORY', a.repository);
   check(typeof drill === 'string' && drill !== '' && !/[|\r\n]/.test(drill), 'PUBLISH_DRILL_CELL_REFUSED');
-  const idx = await readIndex(index);
+  const idx = await readIndex(index, readFile);
   const at = findRow(idx.lines, version);
   check(at >= 0, 'PUBLISH_INDEX_LACKS_VERSION', version);
   const c = cells(idx.lines[at]);
@@ -405,6 +408,7 @@ export async function attachAcceptance({ version, acceptance, repo = DEFAULT_REP
   const v = viewRelease(ghCommand, repo, tag);
   check(v.assets.some(x => x.name === name && x.size === bytes.length), 'PUBLISH_RELEASE_ASSET_MISSING', name);
   if (!again) {
+    checkTime();
     c[4] = a.acceptedAt;
     c[5] = a.cluedDecision;
     c[6] = drill;
@@ -674,9 +678,12 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
 
 // A candidate drill's receipt for this acceptance (blocking 4): one of DRILL_PASS_CONCLUSIONS, candidate true, and the three hashes of this
 // acceptance; the index row's drill cell (its conclusion and the receipt's sha256), or refused.
-async function drillCellOf(file, a) {
+async function drillCellOf(file, a, readFile) {
   let bytes, r;
-  try { bytes = await fs.readFile(file); r = JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')); } catch { fail('SEAL_DRILL_RECEIPT_REFUSED', 'not a JSON file'); }
+  try { bytes = await readFile(file); r = JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')); } catch (e) {
+    if (e?.code === 'FLEET_ACCEPTANCE_DEADLINE') throw e;
+    fail('SEAL_DRILL_RECEIPT_REFUSED', 'not a JSON file');
+  }
   check(r?.contract === DRILL_RECEIPT_CONTRACT && r.version === a.version, 'SEAL_DRILL_RECEIPT_REFUSED', { contract: r?.contract ?? null, version: r?.version ?? null });
   check(DRILL_PASS_CONCLUSIONS.includes(r.conclusion), 'SEAL_DRILL_RECEIPT_NOT_PASS', { conclusion: r.conclusion ?? null, pass: DRILL_PASS_CONCLUSIONS });
   check(r.candidate === true, 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE', { candidate: r.candidate ?? null });
@@ -731,17 +738,24 @@ async function putRequestOnRelease({ ghCommand, repo, tag, bytes, stage }) {
 export const WAIT_STEPS_MS = Object.freeze([30_000, 60_000, 120_000]);
 export const WAIT_MAX_MINUTES = 1440;
 export const OPEN_WAIT_MS = 15 * 60_000;
+export const OPEN_COMMAND_MS = 20 * 60_000;
+// Leave one minute inside the parent deadline for sealing, output and cleanup.
+const OPEN_RESERVE_MS = 60_000;
+const OPEN_OUTPUT_MS = 5_000;
 export const OPEN_STEP_MS = 15_000;
 export const READ_RETRY_MS = 30_000;
 export const CLOCK_SKEW_MAX_MS = 120_000;
+export const SEAL_UNREADABLE = 'FLEET_ACCEPTANCE_UNREADABLE';
+export const READ_ACCEPTANCE_AGAIN = 'the final answer could not be read; run the same command again to read the door before opening any request';
 // what seal opens a request on: none, or one that ran out; never rejected, the Owner's final answer (the door never opens it again)
 const NOT_OPEN = ['none', 'expired'];
-// seal's refusals that asking again cannot change (the request, its file name, the repository, the index row, the drill receipt, a version
-// the door has accepted otherwise): accept.mjs stops on them at once and asks again on any other (the one list; Task 87d330d0 alignment).
+// Refusals that stop accept.mjs immediately (including a permanent door refusal or exhausted command budget). Other errors can
+// be retried before dispatch or an observed request, within the same command and staging directory.
 export const SEAL_INPUT_ERRORS = Object.freeze(['USAGE', 'REQUEST_REFUSED', 'REQUEST_FILE_NAME_REFUSED', 'PUBLISH_REPO_REFUSED', 'ACCEPTANCE_NOT_THIS_REPOSITORY',
   'ACCEPTANCE_REFUSED', 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN', 'ACCEPTANCE_NOT_THIS_RELEASE', 'PUBLISH_INDEX_LACKS_VERSION', 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED',
   'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', 'SEAL_REQUEST_REFUSED', 'SEAL_DRILL_RECEIPT_REFUSED', 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE', 'SEAL_DRILL_RECEIPT_NOT_PASS',
-  'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE', 'SEAL_DRILL_RECEIPT_NOT_THE_RECORDED', 'ACCEPT_RESOURCE_REFUSED', 'ACCEPT_DOOR_NOT_CONFIGURED', 'ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED']);
+  'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE', 'SEAL_DRILL_RECEIPT_NOT_THE_RECORDED', 'ACCEPT_RESOURCE_REFUSED', 'ACCEPT_DOOR_NOT_CONFIGURED',
+  'ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED', 'ACCEPT_DOOR_REFUSED', 'ACCEPT_DOOR_ANSWER_REFUSED', 'FLEET_ACCEPTANCE_DEADLINE']);
 
 // The second half of an acceptance (see the head of this file). `deps` is for tests only (a stand-in for the archive's source-hash, the door's
 // anonymous read, the clock and the sleep of --wait); the command line cannot reach it and reads the door with the repository's public
@@ -749,14 +763,41 @@ export const SEAL_INPUT_ERRORS = Object.freeze(['USAGE', 'REQUEST_REFUSED', 'REQ
 export async function seal(options) {
   // the Decision record has no way in (PLAN 2.2): given, it is USAGE, before anything is read or asked
   check(!Object.hasOwn(options ?? {}, 'decisionRecord'), 'USAGE', { note: 'the acceptance is the Owner\'s fleet.accept Grant: seal asks the door, no Decision record goes in' });
-  const { request, drillReceipt = null, repo = DEFAULT_REPO, index = DEFAULT_INDEX, ghCommand = ['gh'], now = Date.now(), wait = 0, deps = {} } = options ?? {};
+  const { request, drillReceipt = null, repo = DEFAULT_REPO, index = DEFAULT_INDEX, ghCommand = ['gh'], now = Date.now(), wait = 0,
+    deadline, waitDeadline, openOnly = false, packageDir, onPending, deps = {} } = options ?? {};
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
   check(wait === 0 || (Number.isInteger(wait) && wait >= 1 && wait <= WAIT_MAX_MINUTES), 'USAGE', { wait });
   const readStatus = deps.readStatus ?? statusReader();
   const clock = deps.clock ?? Date.now, sleep = deps.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
   const started = clock(), nowAt = () => now + (clock() - started);
+  const end = deadline ?? started + (wait === 0 ? OPEN_COMMAND_MS : WAIT_MAX_MINUTES * 60_000);
+  const until = waitDeadline ?? started + wait * 60_000;
+  const boundedOpen = openOnly || (deadline === undefined && wait === 0);
+  const preflightEnd = boundedOpen ? end - OPEN_WAIT_MS - OPEN_RESERVE_MS : end;
+  const sealEnd = boundedOpen ? end - OPEN_OUTPUT_MS : end;
+  const remaining = limit => {
+    const left = limit - clock();
+    check(left > 0, 'FLEET_ACCEPTANCE_DEADLINE', 'the acceptance command ran out of time');
+    return left;
+  };
+  const boundedGh = limit => args => gh(ghCommand, args, remaining(limit));
+  const boundedRead = limit => async file => {
+    const signal = AbortSignal.timeout(remaining(limit));
+    try {
+      const bytes = await fs.readFile(file, { signal });
+      remaining(limit);
+      return bytes;
+    } catch (e) {
+      if (signal.aborted) fail('FLEET_ACCEPTANCE_DEADLINE', 'file read timed out');
+      throw e;
+    }
+  };
+  const readInput = boundedRead(preflightEnd);
   let requestBytes, r;
-  try { requestBytes = await fs.readFile(request); r = JSON.parse(requestBytes.toString('utf8').replace(/^\uFEFF/, '')); } catch { fail('REQUEST_REFUSED', 'not a JSON file'); }
+  try { requestBytes = await readInput(request); r = JSON.parse(requestBytes.toString('utf8').replace(/^\uFEFF/, '')); } catch (e) {
+    if (e?.code === 'FLEET_ACCEPTANCE_DEADLINE') throw e;
+    fail('REQUEST_REFUSED', 'not a JSON file');
+  }
   readRequest(r);
   const tag = tagOf(r.version);
   check(path.basename(request) === `${tag}.acceptance-request.json`, 'REQUEST_FILE_NAME_REFUSED', path.basename(request));
@@ -766,57 +807,80 @@ export async function seal(options) {
   // row, the commit on main, the request against the Release and the request asset the workflow reads
   check(!namesDrillReserved({ fleetRefs: r.fleetRefs }), 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN', { note: 'the request\'s fleetRefs name the drill\'s stand-in' });
   try { validateAcceptance(acceptanceOf(r, DRILL_RESERVED), now); } catch (e) { fail('SEAL_REQUEST_REFUSED', e?.detail ?? e?.code ?? String(e)); }
-  const drill = drillReceipt === null ? NOT_DRILLED : await drillCellOf(drillReceipt, r);
+  const drill = drillReceipt === null ? NOT_DRILLED : await drillCellOf(drillReceipt, r, readInput);
   const final = path.join(path.dirname(request), `${tag}.acceptance.json`);
-  const idx = await readIndex(index);
+  const idx = await readIndex(index, readInput);
   const at = findRow(idx.lines, r.version);
   check(at >= 0, 'PUBLISH_INDEX_LACKS_VERSION', r.version);
   const c = cells(idx.lines[at]);
   check(r.archive_sha256 === c[2] && r.commit === c[3], 'ACCEPTANCE_NOT_THIS_RELEASE');
-  checkCommitOnMain(ghCommand, repo, r.commit);
+  const preflightGh = boundedGh(preflightEnd);
+  checkCommitOnMain(preflightGh, repo, r.commit);
   // the file goes up from a directory of its own; it is written next to the request only after the Release and the index hold it
-  const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-seal-'));
+  const stage = packageDir ?? await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-seal-'));
+  let ownsStage = packageDir === undefined;
+  const clearStage = async () => {
+    if (!ownsStage) return;
+    ownsStage = false;
+    await fs.rm(stage, { recursive: true, force: true });
+  };
+  let noRetry = false;
   try {
-    await checkRequestOnRelease({ ghCommand, repo, request: r, stage, kit: true, deps, now });
+    await checkRequestOnRelease({ ghCommand: preflightGh, repo, request: r, stage, kit: true, deps, now });
     const requestSha256 = sha(requestBytes);
-    const onRelease = await requestOnRelease({ ghCommand, repo, tag, stage });
+    const onRelease = await requestOnRelease({ ghCommand: preflightGh, repo, tag, stage });
     check(onRelease !== null && onRelease.equals(requestBytes), 'SEAL_REQUEST_NOT_ON_RELEASE', { asset: `${tag}.acceptance-request.json`,
       release: onRelease === null ? null : sha(onRelease), request: requestSha256, note: 'the release workflow reads the request from the Release: run the same prepare again' });
     // the Owner's acceptance: one fleet.accept Grant on this request (accept-door.mjs), read anonymously; opened once when the door has none open
     const resource = acceptResourceOf({ repository: r.repository, version: r.version, archiveSha256: r.archive_sha256, requestSha256 });
-    const until = started + wait * 60_000;
-    let answer = null, openedAt = null, seenOpen = false, skewWaited = false, waitStep = 0;
-    const openUntil = () => openedAt + OPEN_WAIT_MS;
+    let answer = null, openedAt = null, seenOpen = false, skewWaited = false, waitStep = 0, readFailure = null, dispatchFailure = null;
+    const unreadable = () => ({ status: SEAL_UNREADABLE, code: SEAL_UNREADABLE, version: r.version, resource, next: READ_ACCEPTANCE_AGAIN });
+    const openUntil = () => Math.min(sealEnd, openedAt + OPEN_WAIT_MS);
+    const pendingUntil = () => Math.min(end, until, Date.parse(answer.expiresAt));
+    const pause = async (step, limit) => {
+      const left = limit - clock();
+      if (left > 0) await sleep(Math.min(step, left > 1000 ? left - 1000 : left));
+    };
     for (;;) {
+      const opening = openedAt !== null && !seenOpen;
+      const readEnd = opening ? openUntil() : answer?.kind === 'pending' ? pendingUntil()
+        : skewWaited ? sealEnd : Math.min(preflightEnd, until > clock() ? until : end);
+      if (readEnd <= clock()) {
+        if (opening || answer?.kind === 'pending') break;
+        if (readFailure) throw readFailure;
+        remaining(readEnd);
+      }
       let a;
       try {
-        a = readAnswer(await readStatus(resource), { resource, requestSha256 });
+        a = readAnswer(await readStatus(resource, { timeoutMs: remaining(readEnd) }), { resource, requestSha256 });
+        if (clock() > readEnd) { readFailure = { code: 'ACCEPT_DOOR_UNAVAILABLE' }; break; }
       } catch (e) {
-        // a read that failed (a 503, a dropped connection, a timeout): read again while this seal still waits for something
         if (e?.code !== 'ACCEPT_DOOR_UNAVAILABLE') throw e;
-        // after this seal's run an unreadable door ends as NOT_OPENED, never as a throw its caller would answer with seal (a run) again
-        const opening = openedAt !== null && !seenOpen;
-        const left = (opening ? openUntil() : Math.min(until, answer?.kind === 'pending' ? Date.parse(answer.expiresAt) : Infinity)) - clock();
-        if (left <= 0) { if (opening || answer?.kind === 'pending') break; throw e; }
-        await sleep(Math.min(READ_RETRY_MS, left));
+        readFailure = e;
+        if (!opening && answer?.kind !== 'pending' && (openOnly || until <= clock())) throw e;
+        await pause(READ_RETRY_MS, readEnd);
+        if (clock() >= readEnd && !opening && answer?.kind !== 'pending') throw e;
         continue;
       }
+      readFailure = null;
       answer = a;
       if (a.kind === 'accepted') {
+        noRetry = true;
         // the door's time is the server's: a few seconds ahead of this machine is waited out once, further ahead refused
         const ahead = a.acceptedAtMs - nowAt();
         if (ahead <= 0) break;
         check(ahead <= CLOCK_SKEW_MAX_MS && !skewWaited, 'ACCEPT_DOOR_ANSWER_REFUSED', { status: 'accepted', acceptedAt: a.acceptedAt, aheadMs: ahead,
           note: 'accepted_at is after this machine\'s clock' });
         skewWaited = true;
-        await sleep(ahead + 1000);
+        await sleep(Math.min(ahead + 1000, remaining(sealEnd)));
         continue;
       }
       if (a.kind === 'pending') {
+        noRetry = true;
+        const valid = Date.parse(a.expiresAt) > clock();
+        if (!seenOpen && valid) onPending?.({ confirmUrl: a.confirmUrl, expiresAt: a.expiresAt, resource });
         seenOpen = true;
-        const left = Math.min(until, Date.parse(a.expiresAt)) - clock();
-        if (left <= 0) break;
-        await sleep(Math.min(WAIT_STEPS_MS[Math.min(waitStep++, WAIT_STEPS_MS.length - 1)], left));
+        await pause(WAIT_STEPS_MS[Math.min(waitStep++, WAIT_STEPS_MS.length - 1)], pendingUntil());
         continue;
       }
       // rejected: the Owner's final answer, whenever it is read; nothing is opened again
@@ -827,20 +891,33 @@ export async function seal(options) {
         break;
       }
       if (openedAt === null) {
-        openRequest({ runGh: args => gh(ghCommand, args), repository: r.repository, version: r.version, requestSha256 });
+        remaining(preflightEnd);
+        noRetry = true;   // even a failed dispatch response leaves its delivery uncertain
+        try {
+          openRequest({ runGh: preflightGh, repository: r.repository, version: r.version, requestSha256 });
+        } catch (e) {
+          // An explicit refusal is final for this attempt. A lost response may still have queued the run.
+          const refused = e?.code === 'ACCEPT_DOOR_OPEN_FAILED' && /\bHTTP (401|403|404|422)\b/i.test(e.detail?.stderr ?? '');
+          if (refused || !['ACCEPT_DOOR_OPEN_FAILED', 'FLEET_ACCEPTANCE_DEADLINE'].includes(e?.code)) throw e;
+          dispatchFailure = e.code;
+        }
         openedAt = clock();
       }
       const left = openUntil() - clock();
       if (left <= 0) break;
-      await sleep(Math.min(OPEN_STEP_MS, left));
+      await pause(OPEN_STEP_MS, openUntil());
     }
+    if (answer === null) return unreadable();
     if (answer.kind === 'pending') {
+      await clearStage();
+      if (readFailure || Date.parse(answer.expiresAt) <= clock()) return unreadable();
       return { status: 'FLEET_ACCEPTANCE_WAITING_OWNER', version: r.version, opened: true, confirmUrl: answer.confirmUrl, expiresAt: answer.expiresAt, resource,
         next: 'the Owner approves on confirmUrl; then the same seal again (--wait <minutes> waits for it)' };
     }
     if (NOT_OPEN.includes(answer.kind) && !seenOpen) {
       // only after this seal's one run (none or expired is always opened): the workflow did not open it within OPEN_WAIT_MS
-      return { status: 'FLEET_ACCEPTANCE_NOT_OPENED', version: r.version, resource, dispatchedAt: new Date(now + (openedAt - started)).toISOString(), waitedMs: OPEN_WAIT_MS,
+      return { status: 'FLEET_ACCEPTANCE_NOT_OPENED', version: r.version, resource, dispatchedAt: new Date(now + (openedAt - started)).toISOString(), waitedMs: clock() - openedAt,
+        ...(dispatchFailure ? { dispatchFailure } : {}),
         next: 'the release workflow (mode fleet-accept) did not open the request: read why in its latest run, fix that, then run the same command again' };
     }
     if (answer.kind !== 'accepted') {
@@ -857,19 +934,30 @@ export async function seal(options) {
     check(there === null || there.equals(bytes), 'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', final);
     check((c[4] === '' && c[5] === '') || (c[4] === a.acceptedAt && c[5] === a.cluedDecision), 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED', { acceptedAt: c[4], decision: c[5] });
     const staged = path.join(stage, 'up', `${tag}.acceptance.json`);
+    remaining(sealEnd);
     await fs.mkdir(path.dirname(staged));
     await fs.writeFile(staged, bytes, { flag: 'wx' });
-    const attached = await attachAcceptance({ version: r.version, acceptance: staged, repo, index, drill, ghCommand });
+    const attached = await attachAcceptance({ version: r.version, acceptance: staged, repo, index, drill,
+      ghCommand: boundedGh(sealEnd), checkTime: () => remaining(sealEnd), readFile: boundedRead(sealEnd) });
+    remaining(sealEnd);
     if (there === null) await writeAtomic(final, bytes);
-    return { ...attached, status: 'FLEET_ACCEPTANCE_SEALED', acceptance: final, grantId: answer.grantId, receiptId: answer.receiptId };
+    if (packageDir) {
+      await fs.writeFile(path.join(stage, `${tag}.acceptance.json`), bytes, { flag: 'wx' });
+      await fs.writeFile(path.join(stage, 'SHA256SUMS'), sumsText([[`${tag}.tar`, r.archive_sha256]]), { flag: 'wx' });
+    }
+    return { ...attached, status: 'FLEET_ACCEPTANCE_SEALED', acceptance: final, grantId: answer.grantId, receiptId: answer.receiptId,
+      ...(packageDir ? { packageDir } : {}) };
+  } catch (error) {
+    if (noRetry) error.noSealRetry = true;
+    throw error;
   } finally {
-    await fs.rm(stage, { recursive: true, force: true });
+    await clearStage();
   }
 }
 
 // The command line's exit code of a seal or prepare that answered: non-zero only for an Owner's rejection, an expired request or a request
 // the workflow did not open (a refusal throws and exits 1 as well); waiting for the Owner is not a failure.
-export const exitCodeOf = r => (['FLEET_ACCEPTANCE_REJECTED', 'FLEET_ACCEPTANCE_NOT_OPENED'].includes(r?.status) ? 1 : 0);
+export const exitCodeOf = r => (['FLEET_ACCEPTANCE_REJECTED', 'FLEET_ACCEPTANCE_NOT_OPENED', SEAL_UNREADABLE].includes(r?.status) ? 1 : 0);
 
 export async function main(argv) {
   const [sub, ...rest] = argv;

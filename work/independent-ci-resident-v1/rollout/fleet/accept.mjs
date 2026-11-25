@@ -17,9 +17,9 @@
 //      WAITING_OWNER (always with the link) -> ROLLOUT_WAITING_OWNER. REJECTED -> ROLLOUT_STOPPED at the acceptance: answer rejected is
 //      the Owner's final no (the door never asks again: publish a new version); answer expired, the same command again opens a new
 //      request. NOT_OPENED (the workflow did not open the request seal dispatched) -> ROLLOUT_STOPPED with that code: read why in the
-//      release workflow's latest fleet-accept run; this command never dispatches again. SEALED: on. seal throwing (the door or gh
-//      unreachable: the network flaps) is asked again after 30 s, 60, then every 120 s; an input error (SEAL_INPUT_ERRORS) stops at
-//      once, and errors that last SEAL_ERROR_MINUTES stop with the last code.
+//      release workflow's latest fleet-accept run; this command never dispatches again. An unreadable final answer stops without a
+//      link. SEALED: on. Transient errors before dispatch or a confirmed request are retried after 30 s, 60, then every 120 s, using
+//      the same staging directory. Permanent refusals and errors that last SEAL_ERROR_MINUTES stop with the last code.
 //   2. this node: upgrade.mjs fetch --version <v> --work <work>\node --repo <the request's>, never --allow-active-upgrade at first.
 //      The note <work>\requested-<tag>.json says what this command asked of this node; a run that finds it asks upgrade.mjs nothing
 //      again and only reads (status.json, current.json, the inbox archive), so a rollback is never requested again by this command (a
@@ -59,16 +59,18 @@
 // (record\acceptance.json node.nodeName, the profile install.mjs readNode reads).
 //
 // Writes only under --work (upgrade.mjs's own directory and the note). Reads upgrade\status.json, upgrade\current.json, the request file
-// it put and upgrade\inbox-archive under the resident root, and record\acceptance.json (read-only, as upgrade.mjs does). One JSON line;
+// it put and upgrade\inbox-archive under the resident root, and record\acceptance.json (read-only, as upgrade.mjs does). A pending
+// link is printed promptly to stderr; stdout carries the final JSON line.
 // exit 0 ROLLOUT_DONE, 2 waiting (Owner, other nodes, this node), 1 stopped or refused. `deps` is for tests only (a fixture root, a fake
 // seal, upgrade, fleet read and clock); the command line cannot reach it.
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { DEFAULT_ROOT } from './install.mjs';
 import { acceptResourceOf, readFleet } from './accept-door.mjs';
-import { SEAL_INPUT_ERRORS, WAIT_MAX_MINUTES, readRequest } from './publish.mjs';
+import { OPEN_COMMAND_MS, READ_ACCEPTANCE_AGAIN, SEAL_INPUT_ERRORS, SEAL_UNREADABLE, WAIT_MAX_MINUTES, readRequest, seal } from './publish.mjs';
 import { Refused } from './ports.mjs';
 import { tagOf } from './universal.mjs';
 import { OP_MOVING, main as upgradeMain } from './upgrade.mjs';
@@ -110,17 +112,16 @@ const nextInterval = i => Math.min(i * 2, POLL_MS.max);
 // --- the defaults the command line uses (tests give their own, or reach these with the door's stand-ins: deps.sealOptions, deps.readStatus) ---
 // piece B's seal() with the wait this command gives it (open: 0; run: --wait, default WAIT_MAX_MINUTES): seal reads the door itself. A
 // look that finds no open request dispatches the release workflow once and reads for its link up to publish.mjs OPEN_WAIT_MS.
-const sealOf = (extra = {}) => async ({ request, drillReceipt, repo, wait }) => {
-  const { seal } = await import('./publish.mjs');
-  return seal({ ...extra, request, drillReceipt, repo, wait });
-};
+const sealOf = (extra = {}) => options => seal({ ...extra, ...options });
 // piece B's readFleet reads the door by this request's one resource (accept-door.mjs acceptResourceOf: the request file's own sha256)
-const readFleetOf = readStatus => async ({ request }) => {
+const readFleetOf = (readStatus, now) => async ({ request, deadline }) => {
   const bytes = await fs.readFile(request);
   const r = readRequest(jsonOf(bytes));
   const resource = acceptResourceOf({ repository: r.repository, version: r.version, archiveSha256: r.archive_sha256,
     requestSha256: createHash('sha256').update(bytes).digest('hex') });
-  return readFleet({ resource, ...(readStatus ? { readStatus } : {}) });
+  const timeoutMs = deadline - now();
+  if (timeoutMs <= 0) return null;
+  return readFleet({ resource, timeoutMs, ...(readStatus ? { readStatus } : {}) });
 };
 const defaultSleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -133,10 +134,11 @@ async function selfOf(ctx, named) {
 
 // The fleet as [{ node, ciSourceManifestSha256, paused }], or null when it cannot be read or says nothing about the whole fleet (never
 // guessed): not that shape, empty, a node twice, or without this node.
-async function fleetOf(ctx, self) {
-  if (typeof self !== 'string' || !self) return null;
+async function fleetOf(ctx, self, deadline) {
+  if (typeof self !== 'string' || !self || ctx.now() >= deadline) return null;
   try {
-    const got = await ctx.readFleet({ repo: ctx.request.repository, version: ctx.request.version, request: ctx.requestFile });
+    const got = await ctx.readFleet({ repo: ctx.request.repository, version: ctx.request.version, request: ctx.requestFile, deadline });
+    if (ctx.now() >= deadline) return null;
     const f = Array.isArray(got) ? got : Array.isArray(got?.nodes) ? got.nodes : null;
     const ok = f !== null && f.length > 0 && f.every(n => n && typeof n.node === 'string' && n.node
       && (n.ciSourceManifestSha256 === null || HEX64.test(n.ciSourceManifestSha256 ?? '')) && typeof n.paused === 'boolean');
@@ -154,21 +156,26 @@ function answer(ctx, status, fields = {}) {
 const upgradeCommand = ctx => `node <upgrade.mjs> fetch --version ${ctx.request.version} --work <a new directory>`;
 const rerun = ctx => `run the same accept.mjs run command again (--request ${ctx.requestFile} --work ${ctx.work})`;
 function waitingOthers(ctx, pending, extra = {}) {
-  const names = pending === null ? 'every node (the fleet could not be read)' : pending.map(n => n.node).join(', ');
+  const names = pending?.map(n => n.node).join(', ');
   return answer(ctx, 'ROLLOUT_WAITING_OTHER_NODES', { pending, ...extra,
-    next: `on ${names}: ${upgradeCommand(ctx)} (the node on duty last, with --allow-active-upgrade); then ${rerun(ctx)}` });
+    next: pending === null ? `the fleet could not be read; ${rerun(ctx)} to read it again`
+      : `on ${names}: ${upgradeCommand(ctx)} (the node on duty last, with --allow-active-upgrade); then ${rerun(ctx)}` });
 }
 const sealFailure = e => ({ code: e?.code ?? 'ROLLOUT_SEAL_FAILED', detail: e?.detail ?? String(e?.message ?? e).slice(0, 300) });
 const notOpenedNext = 'the release workflow (mode fleet-accept) did not open the request: read why in its latest run, fix that';
+const nodeDeadline = ctx => ({ stop: answer(ctx, 'ROLLOUT_IN_PROGRESS', { stage: 'node', code: 'FLEET_ACCEPTANCE_DEADLINE', next: rerun(ctx) }) });
 
 // 1. the acceptance: one seal that waits for the Owner itself; asked again only when it throws, bounded
-async function accept(ctx) {
+async function accept(ctx, packageDir) {
   let interval = POLL_MS.first, failingSince = null;
-  const waitEnd = Math.min(ctx.waitMinutes !== null ? ctx.now() + ctx.waitMinutes * 60_000 : Infinity, ctx.lifeEnd);
+  const wait = Math.min(WAIT_MAX_MINUTES, ctx.waitMinutes ?? WAIT_MAX_MINUTES);
+  const waitEnd = Math.min(ctx.started + wait * 60_000, ctx.lifeEnd);
   for (;;) {
-    const wait = Math.max(0, Math.min(WAIT_MAX_MINUTES, Math.floor((waitEnd - ctx.now()) / 60_000)));
-    let s = null, failed = null;
-    try { s = await ctx.seal({ request: ctx.requestFile, drillReceipt: ctx.drillReceipt, repo: ctx.request.repository, wait }); } catch (e) { failed = sealFailure(e); }
+    let s = null, failed = null, noRetry = false;
+    try {
+      s = await ctx.seal({ request: ctx.requestFile, drillReceipt: ctx.drillReceipt, repo: ctx.request.repository, wait,
+        deadline: ctx.lifeEnd, waitDeadline: waitEnd, packageDir, onPending: ctx.onPending });
+    } catch (e) { failed = sealFailure(e); noRetry = e?.noSealRetry === true; }
     if (!failed) {
       if (s?.status === SEAL_SEALED) return { sealed: s };
       if (s?.status === SEAL_WAITING) {
@@ -184,12 +191,15 @@ async function accept(ctx) {
         return { stop: answer(ctx, 'ROLLOUT_STOPPED', { stage: 'accept', code: SEAL_NOT_OPENED, dispatchedAt: s.dispatchedAt ?? null, seal: s,
           next: `${notOpenedNext}, then ${rerun(ctx)}` }) };
       }
+      if (s?.status === SEAL_UNREADABLE) {
+        return { stop: answer(ctx, 'ROLLOUT_STOPPED', { stage: 'accept', code: SEAL_UNREADABLE, next: s.next }) };
+      }
       return { stop: answer(ctx, 'ROLLOUT_STOPPED', { stage: 'accept', code: 'ROLLOUT_SEAL_ANSWER_UNKNOWN', seal: s ?? null, next: rerun(ctx) }) };
     }
     failingSince ??= ctx.now();
     const stop = () => ({ stop: answer(ctx, 'ROLLOUT_STOPPED', { stage: 'accept', ...failed, failingSince: new Date(failingSince).toISOString(),
       next: `fix what code names, then ${rerun(ctx)}` }) });
-    if (SEAL_INPUT_ERRORS.includes(failed.code)) return stop();
+    if (noRetry || SEAL_INPUT_ERRORS.includes(failed.code)) return stop();
     if (ctx.now() + interval > Math.min(waitEnd, failingSince + SEAL_ERROR_MINUTES * 60_000)) return stop();
     await ctx.sleep(interval);
     interval = nextInterval(interval);
@@ -228,6 +238,7 @@ async function follow(ctx, note, rec) {
   const stopped = fields => ({ stop: answer(ctx, 'ROLLOUT_STOPPED', { stage: 'node', node, statusFile, ...fields }) });
   let interval = POLL_MS.first;
   for (;;) {
+    if (ctx.now() >= ctx.lifeEnd) return nodeDeadline(ctx);
     const st = await readJsonOrNull(statusFile);
     const op = st?.op ?? null;
     const moving = op !== null && OP_MOVING.includes(op.state);
@@ -271,7 +282,8 @@ async function follow(ctx, note, rec) {
 }
 
 // 2. this node
-async function upgradeHere(ctx) {
+async function upgradeHere(ctx, from) {
+  if (ctx.now() >= ctx.lifeEnd) return nodeDeadline(ctx);
   const note = path.join(ctx.work, `requested-${tagOf(ctx.request.version)}.json`);
   const noted = await readJsonOrNull(note);
   if (noted) {
@@ -280,22 +292,31 @@ async function upgradeHere(ctx) {
     await fs.rm(note, { force: true });
   }
   const call = async allowActive => {
+    if (ctx.now() >= ctx.lifeEnd) return { a: null };
     const requestedAt = new Date(ctx.now()).toISOString();
     await writeNote(ctx, note, { intent: true, requestedAt });   // a lost process leaves this, not a second request
+    if (ctx.now() >= ctx.lifeEnd) {
+      await fs.rm(note, { force: true });
+      return { a: null };
+    }
     const a = await ctx.upgrade(['fetch', '--version', ctx.request.version, '--work', path.join(ctx.work, 'node'), '--repo', ctx.request.repository,
-      ...(allowActive ? ['--allow-active-upgrade'] : [])]);
-    if (a?.status !== 'FLEET_NODE_UPGRADE_REQUESTED') await fs.rm(note, { force: true });
+      ...(from ? ['--from', from] : []), ...(allowActive ? ['--allow-active-upgrade'] : [])],
+    { deadline: ctx.lifeEnd, expectedArchiveSha256: ctx.request.archive_sha256 });
+    // A child that hit the deadline may have put the request before its answer was lost. Keep the intent for readback.
+    if (a?.status !== 'FLEET_NODE_UPGRADE_REQUESTED' && a?.code !== 'FLEET_ACCEPTANCE_DEADLINE') await fs.rm(note, { force: true });
     return { a, requestedAt };
   };
   let { a, requestedAt } = await call(false);
   if (a?.status === 'FLEET_NODE_UPGRADE_HAND_OVER_FIRST') {
     const self = await selfOf(ctx, a.node);
-    const fleet = await fleetOf(ctx, self);
+    const fleet = await fleetOf(ctx, self, ctx.lifeEnd);
+    if (ctx.now() >= ctx.lifeEnd) return nodeDeadline(ctx);
     if (fleet === null) return { stop: waitingOthers(ctx, null, { node: self, code: 'ROLLOUT_FLEET_UNREADABLE' }) };
     const pending = notThere(fleet.filter(n => n.node !== self), ctx.request.ciSourceManifestSha256);
     if (pending.length > 0) return { stop: waitingOthers(ctx, pending, { node: self }) };
     ({ a, requestedAt } = await call(true));   // every other node is on the accepted Source and running: the node on duty goes
   }
+  if (a === null || a?.code === 'FLEET_ACCEPTANCE_DEADLINE') return nodeDeadline(ctx);
   if (a?.status === 'FLEET_NODE_UPGRADE_REQUESTED') {
     const rec = { node: a.node ?? null, opId: a.request?.requestId ?? null, requestId: a.request?.requestId ?? null, requestFile: a.request?.requestFile ?? null,
       packageManifestSha256: a.packageManifestSha256 ?? null, requestedAt };
@@ -308,7 +329,7 @@ async function upgradeHere(ctx) {
     const f = await follow(ctx, note, rec);
     if (!f.again) return f;
     await fs.rm(note, { force: true });
-    return upgradeHere(ctx);   // the other package's operation is over: this node is asked once (no note: not adopted again)
+    return upgradeHere(ctx, from);   // the other package's operation is over: this node is asked once (no note: not adopted again)
   }
   if (a?.status === 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE') return { done: true, node: a.node ?? null };
   return { stop: answer(ctx, 'ROLLOUT_STOPPED', { stage: 'node', node: a?.node ?? null, nodeAnswer: a?.status ?? null, code: a?.code ?? a?.status ?? 'ROLLOUT_NODE_NO_ANSWER',
@@ -316,10 +337,25 @@ async function upgradeHere(ctx) {
 }
 
 export async function run(ctx) {
-  ctx.lifeEnd = ctx.now() + DAY_MS;   // one request's validity
-  const acc = await accept(ctx);
+  ctx.started ??= ctx.now();
+  ctx.lifeEnd ??= ctx.started + DAY_MS;
+  const packageDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-accept-'));
+  let result;
+  try {
+    result = await runRollout(ctx, packageDir);
+  } finally {
+    await fs.rm(packageDir, { recursive: true, force: true });
+  }
+  if (result.status === 'ROLLOUT_WAITING_OWNER' && Date.parse(result.expiresAt) <= ctx.now()) {
+    return answer(ctx, 'ROLLOUT_STOPPED', { stage: 'accept', code: SEAL_UNREADABLE, next: READ_ACCEPTANCE_AGAIN });
+  }
+  return result;
+}
+
+async function runRollout(ctx, packageDir) {
+  const acc = await accept(ctx, packageDir);
   if (acc.stop) return acc.stop;
-  const here = await upgradeHere(ctx);
+  const here = await upgradeHere(ctx, acc.sealed.packageDir);
   if (here.stop) return here.stop;
   // 3. the fleet
   const self = await selfOf(ctx, here.node);
@@ -327,7 +363,7 @@ export async function run(ctx) {
   const settleEnd = Math.min(ctx.now() + FLEET_SETTLE_MINUTES * 60_000, ctx.lifeEnd);
   let interval = POLL_MS.first, fleet, pending;
   for (;;) {
-    fleet = await fleetOf(ctx, self);
+    fleet = await fleetOf(ctx, self, settleEnd);
     if (fleet === null) return waitingOthers(ctx, null, { code: 'ROLLOUT_FLEET_UNREADABLE', acceptance: acc.sealed.acceptance ?? null });
     pending = notThere(fleet, accepted);
     // only this node, which is on the accepted Source here (step 2): the door's copy lags; read again, bounded
@@ -343,27 +379,40 @@ export async function run(ctx) {
 async function open(ctx) {
   const out = (status, fields) => ({ contract: ROLLOUT_CONTRACT, command: 'open', status, confirmUrl: null, expiresAt: null, code: null, ...fields });
   let s;
-  try { s = await ctx.seal({ request: ctx.requestFile, drillReceipt: ctx.drillReceipt, repo: ctx.request.repository, wait: 0 }); } catch (e) {
+  try { s = await ctx.seal({ request: ctx.requestFile, drillReceipt: ctx.drillReceipt, repo: ctx.request.repository, wait: 0,
+    deadline: ctx.lifeEnd, openOnly: true }); } catch (e) {
     return out('ROLLOUT_REFUSED', sealFailure(e));
   }
   if (s?.status === SEAL_NOT_OPENED) {
     return out('NOT_OPENED', { code: SEAL_NOT_OPENED, dispatchedAt: s.dispatchedAt ?? null,
       next: `${notOpenedNext}, then accept.mjs run --request ${ctx.requestFile} --work <a new directory> (it opens the request once more)` });
   }
-  return out(s?.status ?? null, { confirmUrl: s?.confirmUrl ?? null, expiresAt: s?.expiresAt ?? null, code: s?.code ?? null });
+  if (s?.status === SEAL_WAITING && Date.parse(s.expiresAt) <= ctx.now()) {
+    return out(SEAL_UNREADABLE, { code: SEAL_UNREADABLE, next: READ_ACCEPTANCE_AGAIN });
+  }
+  return out(s?.status ?? null, { confirmUrl: s?.confirmUrl ?? null, expiresAt: s?.expiresAt ?? null, code: s?.code ?? null,
+    ...(s?.answer ? { answer: s.answer } : {}), ...(s?.next ? { next: s.next } : {}) });
 }
 
-async function contextOf(values, deps) {
+async function contextOf(values, deps, started, lifeEnd) {
   if (!values.request) usage();
   const requestFile = path.resolve(values.request);
+  const now = deps.now ?? Date.now;
+  const left = lifeEnd - now();
+  if (left <= 0) throw new Refused('FLEET_ACCEPTANCE_DEADLINE');
+  const signal = AbortSignal.timeout(left);
   let request;
-  try { request = readRequest(jsonOf(await fs.readFile(requestFile))); } catch (e) { throw new Refused(e?.code ?? 'REQUEST_REFUSED', e?.detail ?? 'not a JSON file'); }
-  return { requestFile, request, drillReceipt: values['drill-receipt'] ? path.resolve(values['drill-receipt']) : null,
-    seal: deps.seal ?? sealOf(deps.sealOptions), upgrade: deps.upgrade ?? upgradeMain, readFleet: deps.readFleet ?? readFleetOf(deps.readStatus),
-    sleep: deps.sleep ?? defaultSleep, now: deps.now ?? Date.now, root: deps.root ?? DEFAULT_ROOT, nodeWaitMinutes: deps.nodeWaitMinutes ?? NODE_WAIT_MINUTES };
+  try { request = readRequest(jsonOf(await fs.readFile(requestFile, { signal }))); } catch (e) {
+    if (signal.aborted) throw new Refused('FLEET_ACCEPTANCE_DEADLINE');
+    throw new Refused(e?.code ?? 'REQUEST_REFUSED', e?.detail ?? 'not a JSON file');
+  }
+  return { requestFile, request, started, lifeEnd, drillReceipt: values['drill-receipt'] ? path.resolve(values['drill-receipt']) : null,
+    seal: deps.seal ?? sealOf(deps.sealOptions), upgrade: deps.upgrade ?? upgradeMain, readFleet: deps.readFleet ?? readFleetOf(deps.readStatus, now),
+    onPending: deps.onPending, sleep: deps.sleep ?? defaultSleep, now, root: deps.root ?? DEFAULT_ROOT, nodeWaitMinutes: deps.nodeWaitMinutes ?? NODE_WAIT_MINUTES };
 }
 
 export async function main(argv, deps = {}) {
+  const started = (deps.now ?? Date.now)();
   const [sub, ...rest] = argv;
   try {
     let parsed;
@@ -373,11 +422,11 @@ export async function main(argv, deps = {}) {
     const { values } = parsed;
     if (sub === 'open') {
       if (values.work !== undefined || values.wait !== undefined) usage();
-      return await open(await contextOf(values, deps));
+      return await open(await contextOf(values, deps, started, started + OPEN_COMMAND_MS));
     }
     if (sub !== 'run' || !values.work) usage();
     if (values.wait !== undefined && !/^\d{1,5}$/.test(values.wait)) usage();
-    const ctx = { ...(await contextOf(values, deps)), work: path.resolve(values.work), waitMinutes: values.wait === undefined ? null : Number(values.wait) };
+    const ctx = { ...(await contextOf(values, deps, started, started + DAY_MS)), work: path.resolve(values.work), waitMinutes: values.wait === undefined ? null : Number(values.wait) };
     return await run(ctx);
   } catch (e) {
     return { contract: ROLLOUT_CONTRACT, ...(sub === 'open' ? { command: 'open' } : {}), status: 'ROLLOUT_REFUSED', code: e?.code ?? 'ROLLOUT_FAILED',
@@ -388,5 +437,6 @@ export async function main(argv, deps = {}) {
 if (import.meta.main) {
   // the Windows PowerShell 5.1 children upgrade.mjs starts get their own module path (as upgrade.mjs's own entry does)
   process.env.PSModulePath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules';
-  main(process.argv.slice(2)).then(r => { console.log(JSON.stringify(r)); process.exitCode = exitCodeOf(r); });
+  const onPending = pending => console.error(JSON.stringify({ status: SEAL_WAITING, ...pending }));
+  main(process.argv.slice(2), { onPending }).then(r => { console.log(JSON.stringify(r)); process.exitCode = exitCodeOf(r); });
 }

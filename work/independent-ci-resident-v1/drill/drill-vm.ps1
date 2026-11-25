@@ -1514,6 +1514,14 @@ function Open-DrillAcceptance([string]$Request, [string]$Receipt) {
     $opened = ConvertFrom-Json -InputObject ([string]$last)
   } catch { $opened = $null }
   $status = [string](Get-Prop $opened 'status')
+  $answer = [string](Get-Prop $opened 'answer')
+  $next = [string](Get-Prop $opened 'next')
+  if ((Get-Prop $run 'exit') -eq 0 -and $status -ceq 'FLEET_ACCEPTANCE_REJECTED' -and $answer -cmatch '^(rejected|expired)$' -and $next) {
+    return [ordered]@{ status = $status; answer = $answer; code = $status; confirmUrl = $null; next = $next }
+  }
+  if ((Get-Prop $run 'exit') -eq 1 -and $status -ceq 'FLEET_ACCEPTANCE_UNREADABLE' -and $next) {
+    return [ordered]@{ status = $status; code = $status; confirmUrl = $null; next = $next }
+  }
   if ((Get-Prop $run 'exit') -ne 0 -or $status -cnotmatch '^FLEET_ACCEPTANCE_(WAITING_OWNER|SEALED)$') {
     $code = [string](Get-Prop $opened 'code')
     return (& $notOpened $(if ($code) { $code } elseif ($status) { $status } else { 'DRILL_ACCEPTANCE_OPEN_FAILED' }))

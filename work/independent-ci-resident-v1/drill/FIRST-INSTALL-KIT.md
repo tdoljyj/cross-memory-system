@@ -302,8 +302,10 @@ bootstrapException 标明 README §5 例外，entryMode 区分适配和交互模
 回读由 DESK 用回执内 productionReadbackSql 取得只读结果，写到本次 runs 目录的 readback.json，随后运行下面的命令。候选回执只判 A9（演练一结束就做）；已接受版本的重新演练判 A5 生产半边与 A9：
 
 ```powershell
-pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Finalize <本次receipt.json> -ProductionReadback <本次readback.json>
+pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Finalize <本次receipt.json> -ProductionReadback <本次readback.json> -Request <候选版本的fleet-node-版本.acceptance-request.json>
 ```
+
+候选演练判为 PASS 时，定稿结果会返回开单状态。有可用的确认链接时会一并返回。已接受版本的重新演练可省略 `-Request`。
 
 离线测试只用仓库入口：
 

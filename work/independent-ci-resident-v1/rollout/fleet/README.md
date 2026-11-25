@@ -36,7 +36,7 @@
 
 1. 构建、发布：第 2、3 节，不变。
 2. 接受前：`publish.mjs prepare`（第 4 节），产出给 Owner 看的接受请求。**`fleetRefs` 里进入 Source 的三项 `sourceAcceptanceRef`、`hostQualificationRef`、`formalRoles` 沿用现装值**，由 `prepare` 从本机已装记录只读带入（与 `install.mjs fleet-refs` 同一来源），这一版才能原地升级。三项里有任何一项要换，这一版对所有节点都是重装（`prepare` 不提供改它们的入口，要换先找 Fable）。
-3. 候选演练 `-Finalize` 时带上接受请求：`drill-vm.ps1 -Finalize <receipt.json> -ProductionReadback <readback.json> -Request <接受请求>`。候选回执判 PASS 就开请求（`accept.mjs open`：只调一次 seal（不等 Owner）；门上没有请求时 seal 发一次工作流运行，从发出起最多等 15 分钟出现确认链接；没开出来答 `NOT_OPENED`、`code = FLEET_ACCEPTANCE_NOT_OPENED`，先看发布工作流 `fleet-accept` 模式最近一次运行的失败原因），返回里的 `acceptance.confirmUrl` 就是给 Owner 的确认链接；不 PASS 不开、没有链接。开请求失败不改演练结论，答 `acceptance.status = NOT_OPENED` 和原因（下面这条命令也会开请求）。
+3. 候选演练定稿时带上接受请求：`drill-vm.ps1 -Finalize <receipt.json> -ProductionReadback <readback.json> -Request <接受请求>`。候选回执判为 PASS 后，`accept.mjs open` 在 20 分钟总时限内处理开单。核验和派发共限 4 分钟，随后留出 15 分钟读门，最后 1 分钟用于封存、输出和清理。`acceptance.confirmUrl` 可交给 Owner。拒绝和过期各自返回原因及下一步，读不到结论时返回未判。开单结果独立于演练结论。
 4. 然后在 DESK（本机已装节点、Owner 会话、非提权）用后台方式起**一条命令**，从等 Owner 批准一直走到本机升级、全队读回（0.2a）。Owner 点完之后到封存完成没有 agent 动作。
 
 ### 0.2a 接受之后：一条命令
@@ -45,10 +45,10 @@
 node R/rollout/fleet/accept.mjs run --request <目录>\fleet-node-<version>.acceptance-request.json [--drill-receipt <候选演练定稿的 receipt.json>] --work <目录> [--wait <分钟>]
 ```
 
-有界、可原样重跑（同一个 `--work`），退出时打印一行 JSON（`status`、停在哪、`next` 写下一条命令）。寿命不超过一条请求的有效期：从起跑算 24 小时（seal 自己也不等过请求的 `expiresAt`），下面每一段等待都截在这里。三步：
+有界、可原样重跑（同一个 `--work`），首次读到有效确认链接时，在 stderr 输出一行待批 JSON。退出时在 stdout 打印一行结果 JSON（`status`、停在哪、`next` 写下一条命令）。寿命不超过一条请求的有效期：从起跑算 24 小时（seal 自己也不等过请求的 `expiresAt`），下面每一段等待都截在这里。三步：
 
-1. **封存**：只调**一次**带等待的 `seal`（`--wait` 分钟，不给就用 `publish.mjs` 的 `WAIT_MAX_MINUTES`，不超过本命令寿命），由 seal 自己读门、等 Owner（第 4 节）；本命令不轮询 seal，所以一条命令正常只发一次工作流运行、只下载一次整包。答“待批”（一定带链接）即 `ROLLOUT_WAITING_OWNER`；“已批”即封存（接受文件的 Decision、回执、时间都取自门批准的那条 Grant）；“拒绝”即停：`answer = rejected` 是 Owner 的终局，门不再问，要接受须出新版本；`answer = expired`（请求过期）原样重跑重开请求。`FLEET_ACCEPTANCE_NOT_OPENED`（seal 发出的工作流运行 15 分钟内没开出请求）即停、不再发：先看发布工作流 `fleet-accept` 模式最近一次运行为什么没开出来，修好后原样重跑。seal 抛错（门或 gh 网络抖动）按 30、60、120 秒间隔再调；输入错误（件 B `publish.mjs` 导出的 `SEAL_INPUT_ERRORS`，如请求文件名不对、这个版本已以另一份请求被接受）立即停；连续出错满 30 分钟就停，带最后一次的 `code`。
-2. **本机**：`upgrade.mjs fetch --version <version> --work <work>\node`（0.3 同一条），先**不带** `--allow-active-upgrade`。本命令对本机发过什么记在 `<work>\requested-fleet-node-<version>.json`；找到记录的重跑只读、不再问 `upgrade.mjs`，所以回滚之后重跑不会再投。每次可能发请求之前先写一份“将要请求”的记录：进程在发出请求和写记录之间丢了，重跑先等最多 5 分钟看升级代理是否已接手，接手了就跟着读，看不到才再问。
+1. **封存**：只调**一次**带等待的 `seal`（`--wait` 分钟，不给就用 `publish.mjs` 的 `WAIT_MAX_MINUTES`，不超过本命令寿命），由 seal 自己读门、等 Owner（第 4 节）；本命令不轮询 seal，所以一条命令正常只发一次工作流运行、只下载一次整包。答“待批”（一定带链接）即 `ROLLOUT_WAITING_OWNER`；“已批”即封存（接受文件的 Decision、回执、时间都取自门批准的那条 Grant）；“拒绝”即停：`answer = rejected` 是 Owner 的终局，门不再问，要接受须出新版本；`answer = expired`（请求过期）原样重跑重开请求。`FLEET_ACCEPTANCE_NOT_OPENED`（seal 发出的工作流运行 15 分钟内没开出请求）即停、不再发：先看发布工作流 `fleet-accept` 模式最近一次运行为什么没开出来，修好后原样重跑。到期读不到结论时返回 `FLEET_ACCEPTANCE_UNREADABLE`，原样重跑会先读门。派发前的暂态错误按 30、60、120 秒间隔有界重试，并复用本次已校验的 tar。派发成功或结果不明后只读门，明确拒绝立即判停。
+2. **本机**：`upgrade.mjs fetch --version <version> --work <work>\node`（0.3 同一条），先**不带** `--allow-active-upgrade`。本机从本次封存的暂存目录取包并复验 SHA-256。本命令对本机发过什么记在 `<work>\requested-fleet-node-<version>.json`；找到记录的重跑只读、不再问 `upgrade.mjs`，所以回滚之后重跑不会再投。每次可能发请求之前先写一份“将要请求”的记录：进程在发出请求和写记录之间丢了，重跑先等最多 5 分钟看升级代理是否已接手，接手了就跟着读，看不到才再问。
    - 待命（`FLEET_NODE_UPGRADE_REQUESTED`）：记下请求（请求号就是升级代理的 opId），读 `upgrade\status.json` 到这次操作的终态，再核 `upgrade\current.json` 两侧 Source 等于接受的 Source。
      - 请求被升级代理归档为 `rejected` 或 `ignored`（`upgrade\inbox-archive`：空文件、读不了、当天新开操作已到上限）：答 `ROLLOUT_STOPPED`、`code = ROLLOUT_REQUEST_NOT_TAKEN`、`disposition`；它没有变成操作，记录删掉，原样重跑会再请求一次。
      - 请求还在 `upgrade\inbox`、`status.json` 15 分钟没刷新（升级代理每一轮都重写它，间隔不超过 60 秒）：答 `ROLLOUT_STOPPED`、`code = ROLLOUT_UPGRADER_NOT_RUNNING`；记录保留，CluedCIUpgrader 起来后原样重跑，跟的还是这一个请求。
@@ -214,7 +214,7 @@ node R/rollout/fleet/publish.mjs seal --request <目录>\fleet-node-<version>.ac
 | `expired`：一开始就是 | 同 `none`：开一次新请求 | 同 `none` |
 | `none` 带 `conflict`（这个版本已以另一份请求或另一个包被接受） | 报错 `ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED`，不开请求 | 什么都不写；换版本号重新发布 |
 
-`--wait <分钟>`（1–1440）：门答待批时按 30、60、120、120… 秒再读，直到批、拒、过期或等满；等满仍待批，答 `FLEET_ACCEPTANCE_WAITING_OWNER`。读失败（`ACCEPT_DOOR_UNAVAILABLE`：连不上、超时、5xx）在还有时间时每 30 秒重读，时间用完仍失败才报错（`seal` 已发出请求、还没见到链接的，到 15 分钟答 `FLEET_ACCEPTANCE_NOT_OPENED`，不报错）。门给的 `accepted_at` 比本机钟快 2 分钟以内的，等过去再封一次；更快的拒绝。不给 `--wait` 只读一次（`seal` 刚开了请求的，等它开出来，见上表）。
+`--wait <分钟>`（1–1440）：待批时按 30、60、120、120… 秒再读，每次读限于剩余等待时间和请求有效期。等待结束时仍有有效待批结论才给链接。门暂时读不到时有界重试，待批后到期仍读不到最终结论则返回 `FLEET_ACCEPTANCE_UNREADABLE`（退出码 1），原样重跑先读门。派发后在开单窗口内未观察到请求，返回 `FLEET_ACCEPTANCE_NOT_OPENED`。门给的 `accepted_at` 比本机钟快 2 分钟以内的，可在时限内等过去再封，超过 2 分钟则拒绝。不给 `--wait` 时不等 Owner 批准。
 
 接受才有的三个值只从门的回答取：
 
@@ -228,7 +228,7 @@ node R/rollout/fleet/publish.mjs seal --request <目录>\fleet-node-<version>.ac
 
 - `--drill-receipt`：要求见 4.2，且三项哈希与这份接受相同。索引“首装演练”格记它的结论与回执 sha256；没给，记“首装未演练”。已封的行，这一格不再改：换回执或去掉回执重跑都拒绝。
 - 同样的参数再跑一次：门回放同一行，接受文件字节相同；已挂上、已写索引就什么都不改（`already: true`）；上传后、写索引前断了的，补写索引。同一版本换一个接受请求：Release 上已是另一份，`prepare` 拒绝，`seal` 以 `SEAL_REQUEST_NOT_ON_RELEASE` 拒绝；目录或索引里已有另一份接受：在上传之前拒绝。
-- 门连不上、没上线或答得不成形：`ACCEPT_DOOR_UNAVAILABLE`（`detail` 带 HTTP 状态或网络错误码）/ `ACCEPT_DOOR_ANSWER_REFUSED`，什么都不写，原样重跑；门拒绝读：`ACCEPT_DOOR_REFUSED`；`gh workflow run` 失败：`ACCEPT_DOOR_OPEN_FAILED`，什么都不写，原样重跑。
+- 门连不上、没上线或答得不成形：`ACCEPT_DOOR_UNAVAILABLE`（`detail` 带 HTTP 状态或网络错误码）/ `ACCEPT_DOOR_ANSWER_REFUSED`，什么都不写，原样重跑；门拒绝读：`ACCEPT_DOOR_REFUSED`。派发被明确拒绝时返回 `ACCEPT_DOOR_OPEN_FAILED`。派发响应丢失时，在本次开单窗口内只读门核实。
 
 **交付目录**（给新节点 `bootstrap.ps1 -From`，第 5 节）就是该版 Release 的全部资产，在 `seal` 之后用 `gh release download fleet-node-<version> --pattern "fleet-node-<version>.tar" --pattern "fleet-node-<version>.release.json" --pattern "fleet-node-<version>.bootstrap.ps1" --pattern "fleet-node-<version>.prereq-manifest.json" --pattern "fleet-node-<version>.acceptance.json" --pattern "fleet-node-<version>.first-install*" --pattern "SHA256SUMS" --pattern "role-image-*.tar.gz"` 取进一个新目录（只取这一条，它取的就是 bootstrap 首装要的全部资产；Release 上的接受请求不取，bootstrap 会把它当多出的文件拒绝）。`prepare` 的 `--out`（含接受请求）不是交付目录：bootstrap 会把其中没列在两份 sums 里的文件当作多出的文件拒绝。
 
