@@ -55,7 +55,7 @@ import { GreenLedger } from './green-ledger.mjs';
 import { closeGreenLedgerGroups } from './green-ledger-closed.mjs';
 import { APP_ID } from './publisher.mjs';
 import { createMergeSlotNative } from './merge-slot-native.mjs';
-import { RULESET_UNREADABLE, REQUIRED_CHECKS_UNREADABLE, appScansPinned, rulesetFacts, requiredCheckFailure } from './train-rules.mjs';
+import { RULESET_UNREADABLE, RULESET_READ_FAILED, REQUIRED_CHECKS_UNREADABLE, appScansPinned, readMainRules, requiredCheckFailure } from './train-rules.mjs';
 import { decideShadow, frontPullFacts, requiredFailureExcused, requiredYieldReason, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore } from './train-sweep-store.mjs';
@@ -209,12 +209,11 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   let rules = null, rulesReason = null, appScans = null;
   const landability = { rules: null, appId, onFallback: reason => { rulesReason ??= reason; } };
   try {
-    const reply = await github.readBranchRules('main');
-    if (reply?.complete !== true) fail(RULESET_UNREADABLE);
-    appScans = appScansPinned(reply.rules, appId);
-    rules = rulesetFacts(reply.rules, appId);
-    landability.rules = reply.rules;
-  } catch { rulesReason = RULESET_UNREADABLE; }
+    const read = await readMainRules(github, appId);
+    appScans = appScansPinned(read.rules, appId);
+    rules = read.facts();
+    landability.rules = read.rules;
+  } catch (e) { rulesReason = e?.code === RULESET_READ_FAILED ? RULESET_READ_FAILED : RULESET_UNREADABLE; }
   // ADR 0018 §2 L2 item 7: push behaviour only while main's rules read back as push (the same function as stage 8). Fable 11-21 open
   // points §5: every round reads this App's bypass state of each ruleset too (one GET /rulesets/{id} each), and the facts carry it
   // (landing.bypass -> state\status.json), so the landing precheck's P3 reads it there without elevation.

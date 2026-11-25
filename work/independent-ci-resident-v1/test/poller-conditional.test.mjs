@@ -2,6 +2,7 @@
 // ETag of their last answer; a 304 (gh exits 1 but prints the status line) keeps the last answer and proposes nothing new.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { ETAG, MAIN_REF_ROUTE, PULLS_ROUTE, Poller, parseIncluded } from '../src/poller.mjs';
 import { BACKSTOP_EVERY_MS, POLL_EVERY_MS, REPORT_EVERY_MS } from '../src/companion-main.mjs';
 import { restAnswer, restPolls } from './gh-rest-stub.mjs';
@@ -122,4 +123,103 @@ test('parseIncluded reads gh\'s --include output with CRLF or LF, takes the last
   assert.deepEqual(parseIncluded('HTTP/1.1 304 Not Modified\nETag: "cd"\n\n'), { status: 304, etag: '"cd"', body: '' });
   assert.deepEqual(parseIncluded('HTTP/2.0 200 OK\r\nX-A: 1\r\n\r\n{"etag":"in the body"}'), { status: 200, etag: null, body: '{"etag":"in the body"}' });
   for (const t of [null, '', '[1]', 'gh: HTTP 304', 'HTTP/2.0 OK\r\n\r\n']) assert.equal(parseIncluded(t), null, String(t));
+});
+
+// Task bd07449b (PLAN-ruleset-unreadable-park-20261125 §3.2): a batch asleep on RULESET_UNREADABLE is woken by one thing only, the
+// companion reading main's rules as pinned to this App again. What it has observed lives in memory: a restart must not wake anything.
+const LIVE_SCAFFOLD = JSON.parse(readFileSync(new URL('../../actions-hosted-migration/independent-ci-v1/test/fixtures/main-rules-scaffold-20261125.json', import.meta.url), 'utf8'));
+const SIX = ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot'];
+const sixPinnedTo = app => [{ type: 'required_status_checks', ruleset_id: 24182890, parameters: { strict_required_status_checks_policy: true,
+  required_status_checks: SIX.map(context => ({ context, integration_id: app })) } }];
+function sleepingOn(deferred) {
+  const written = [], reads = [];
+  let main = MAIN;
+  const p = new Poller({ repo: REPO, ghExe: 'gh', clock: () => 0, writeTrigger: async v => written.push(v),
+    run: async argv => { reads.push(argv.at(-1)); return restAnswer(argv, { total_count: 1, check_runs: [{ id: 1, name: 'x', status: 'completed', conclusion: 'failure' }] }); } });
+  const row = { pr: 884, headSha: 'a'.repeat(40), baseSha: MAIN, state: 'PARKED', nextAt: null, deferred };
+  const pass = async () => { p.lastPass = { mainSha: main, pulls: [{ pr: 884, headSha: row.headSha }] }; await p.parkedPass([row]); return written.length; };
+  return { p, pass, written, reads, row, moveMain: () => { main = 'e'.repeat(40); } };
+}
+
+test('bd07449b must-red 2: a restarted companion that reads the same unpinned rules writes no wake for a batch asleep on RULESET_UNREADABLE', async () => {
+  for (let restart = 0; restart < 2; restart++) {
+    const s = sleepingOn('RULESET_UNREADABLE');
+    assert.equal(await s.pass(), 0, 'rules not read yet');
+    s.p.noteBranchRules(LIVE_SCAFFOLD);
+    assert.equal(s.p.rulesPinned, false);
+    assert.equal(await s.pass(), 0, 'rules read, not the six of this App');
+    // the scaffold edited but still not pinned, and main moving: stage 8 would answer the same
+    s.p.noteBranchRules(LIVE_SCAFFOLD.slice(1));
+    s.moveMain();
+    assert.equal(await s.pass(), 0);
+    s.p.noteBranchRules(sixPinnedTo(5164952));
+    assert.equal(await s.pass(), 0, 'pinned to another App (disaster recovery) is not pinned');
+    assert.deepEqual(s.reads, [], 'no check read is spent on a batch that cannot pass');
+  }
+});
+
+test('bd07449b must-red 3: rules read as pinned to this App wake that batch once, also right after a restart; a reply that is no rules list keeps the last reading', async () => {
+  const s = sleepingOn('RULESET_UNREADABLE');
+  s.p.noteBranchRules(LIVE_SCAFFOLD);
+  assert.equal(await s.pass(), 0);
+  s.p.noteBranchRules(sixPinnedTo(5368905));
+  assert.equal(s.p.rulesPinned, true);
+  assert.equal(await s.pass(), 1);
+  assert.deepEqual([s.written[0].pr, s.written[0].headSha, s.written[0].baseSha, typeof s.written[0].parkEvent], [884, s.row.headSha, MAIN, 'string']);
+  assert.equal(await s.pass(), 1, 'the same observation is one wake');
+  s.p.noteBranchRules(null);
+  s.p.noteBranchRules({ message: 'Not Found' });
+  assert.equal(s.p.rulesPinned, true);
+  // the rules leave this App again: nothing more is written for it
+  s.p.noteBranchRules(LIVE_SCAFFOLD);
+  assert.equal(s.p.rulesPinned, false);
+  s.moveMain();
+  assert.equal(await s.pass(), 1);
+  // every other sleeping batch is observed as before: its first look is a baseline, a change of main is a wake
+  const other = sleepingOn('REQUIRED_CHECK_FAILED');
+  other.p.noteBranchRules(LIVE_SCAFFOLD);
+  assert.equal(await other.pass(), 0);
+  other.moveMain();
+  assert.equal(await other.pass(), 1);
+});
+
+// Task bd07449b r2 (PLAN-ruleset-unreadable-park-r2 §2): the wake of a batch asleep on RULESET_UNREADABLE names the sleep it is for
+// (the status row's parkTry: the batch's ended stage-8 tries). Woken once, the batch that stage 8 put to sleep again with the world
+// unchanged is woken again; only for that code, and only while the companion reads the rules pinned.
+test('bd07449b r2 must-red 2: a batch asleep on RULESET_UNREADABLE again (parkTry one more, all else the same) is woken again', async () => {
+  const s = sleepingOn('RULESET_UNREADABLE');
+  s.row.parkTry = 1;
+  s.p.noteBranchRules(sixPinnedTo(5368905));
+  assert.equal(await s.pass(), 1);
+  assert.equal(await s.pass(), 1, 'the same sleep is one wake');
+  s.row.parkTry = 2;
+  assert.equal(await s.pass(), 2, 'stage 8 put it to sleep again: a new wake');
+  assert.notEqual(s.written[1].parkEvent, s.written[0].parkEvent);
+  assert.deepEqual([s.written[1].pr, s.written[1].headSha, s.written[1].baseSha], [884, s.row.headSha, MAIN]);
+  assert.equal(await s.pass(), 2);
+  // the try budget reached: the executor keeps the parkTry that woke the last try (r3), the signal is the last one, it moves only with
+  // the world again. A pass that sees the row not asleep (RUNNING) forgets the observation; seen asleep again, the same signal is
+  // written once more with the same parkEvent, which the executor knows already (executor.mjs#nudgeParked: no wake).
+  s.row.state = 'RUNNING';
+  assert.equal(await s.pass(), 2);
+  s.row.state = 'PARKED';
+  assert.equal(await s.pass(), 3);
+  assert.equal(s.written[2].parkEvent, s.written[1].parkEvent, 'the same signal as the wake of the last try');
+  assert.equal(await s.pass(), 3, 'no wake for the budget reached');
+  s.moveMain();
+  assert.equal(await s.pass(), 4, 'the world still wakes it');
+});
+
+test('bd07449b r2 must-red 5: parkTry wakes nothing while the rules are not pinned, nor for any other code', async () => {
+  const s = sleepingOn('RULESET_UNREADABLE');
+  s.p.noteBranchRules(LIVE_SCAFFOLD);
+  for (const parkTry of [1, 2, 3, null, 4]) { s.row.parkTry = parkTry; assert.equal(await s.pass(), 0, `parkTry ${parkTry}`); }
+  assert.deepEqual(s.reads, []);
+  const other = sleepingOn('REQUIRED_CHECK_FAILED');
+  other.p.noteBranchRules(sixPinnedTo(5368905));
+  other.row.parkTry = 1;
+  assert.equal(await other.pass(), 0, 'its first look is a baseline');
+  for (const parkTry of [2, 3, null]) { other.row.parkTry = parkTry; assert.equal(await other.pass(), 0, `${parkTry}: not a change for another code`); }
+  other.moveMain();
+  assert.equal(await other.pass(), 1);
 });

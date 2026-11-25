@@ -48,6 +48,8 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   // test merge of exactly [T, H] that is not the tested tree (final for the head).
   'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',
   'TRAIN_TEST_MERGE_TREE_DIFFERS',
+  // Task bd07449b: main's rules were not read (parked, read again within minutes); RULESET_UNREADABLE is rules read and not this App's six.
+  'RULESET_READ_FAILED',
   // App 5368905 already published on this head, found on GitHub (primary/standby design v0.4 §6.2, C4): at stage 1
   // before Native was asked, or before a role's first publication that this node knew nothing of. A new commit is needed.
   'HEAD_PUBLISHED_ON_GITHUB', 'ROLE_ALREADY_ON_GITHUB',

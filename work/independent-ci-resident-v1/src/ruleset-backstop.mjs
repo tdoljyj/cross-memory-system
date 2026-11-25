@@ -17,7 +17,7 @@
 //     without an App, or no required_status_checks at all (the ruleset disabled): raise an Owner notification (no pause: stage 8
 //     already writes no green then). The same name pinned to another App as well (the hosted scaffold ruleset next to #292) is one
 //     more requirement, not a lost pin (task 04f9b91b);
-//   - the rules cannot be read: nothing (stage 8 parks on RULESET_UNREADABLE by itself).
+//   - the rules cannot be read: nothing (stage 8 parks on RULESET_READ_FAILED by itself).
 // Each notification is raised once per kind per day; a pause request is written once per kind per day as well.
 // Pure decision plus thin ports; the caller supplies the gh read, the pause writer and the notifier.
 import path from 'node:path';

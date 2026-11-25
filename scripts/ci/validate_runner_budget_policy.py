@@ -352,10 +352,9 @@ OWNER_DECISION_HOSTED_JOBS = {
 # scaffold job can carry starts with "hosted-", so none can stand in for a
 # check of the independent CI. The hosted copy of the front-merge-main workflow
 # (clued-front-main-merge-hosted.yml) belongs to the same scaffold under the same
-# rule: its two jobs carry hosted- names. hosted-ci-suites-windows runs as six Windows
-# shards, a summary job of that name and a non-required duration job (task 3435f8bf
-# block 4); hosted-ci-suites and hosted-migration-verify run as three and four Linux
-# shards and a summary job of that name (task 3435f8bf 件甲); a matrix job's name is a
+# rule: its two jobs carry hosted- names. The required suite checks each summarize a
+# matrix: seven Windows suite shards, four Linux suite shards, four migration shards
+# and two application shards (task 3435f8bf). Windows also reports duration. A matrix job's name is a
 # format() whose literal starts with "hosted-", the one quoted branch job_check_names reads. Temporary: at the switch back (stage S8) the
 # workflows and these entries are deleted in one change; a stale entry fails.
 HOSTED_SCAFFOLD_SOURCE = "61b65d61"
@@ -364,12 +363,13 @@ HOSTED_SCAFFOLD_JOBS = {
     "hosted-required.yml": {
         "control_sha256": "9a057883ee2ed3562058c81812778c539a19dda2afc1571c5cf1d50ae1c6ac76",
         "jobs": {
-            "clued-cloud-tests": "4a34326ddef88ce360a11ddaa513320f7f551a649d615e544f85b1eb2567cf01",
-            "ci-suites-shard": "ba2731b55ac5d25a61d2148194679533f05aa035d9a1ce55ec6dd316d9766e51",
+            "clued-cloud-tests-shard": "6f1ae50a7e0d1e59acaae61a02688d04274c34ac7a480945cb7a8c86cb5a5337",
+            "clued-cloud-tests": "9295baf8533a3197af1d035808646c483a9f9c5377cef25a488114980396ccfd",
+            "ci-suites-shard": "ea0e4e01bc2f7b778f305ef33c4a7456e89b5c3927ffeab638f6987092a1117c",
             "ci-suites": "2e6f5d27c93d7091e94d0ae58cc850805a26bc5db4cd3e5f2d48da47fb0fe0ca",
             "migration-verify-shard": "b20be492f2c0d736a0863a54e4950b354b8cc05784919d631b1414943e2c25b2",
             "migration-verify": "9ef23182692d9b5a985c0e675d1f892a2bb8038f9bd726a0c624424b73ff468f",
-            "ci-suites-windows-shard": "f66613c201262f351105af268542684df7d31037d71b34a0eced08483948c02c",
+            "ci-suites-windows-shard": "c8b95ba5aa52ec8140528035fdf7ec516510fe5b59c10ba7a24c0cc733fa8db0",
             "ci-suites-windows": "5071b13bdf66b49332eb45beefc7b4941f9666a6f4d5659606d232ce61e901a4",
             "ci-suites-windows-duration": "9cfd47298e34cea4eca39a7ad78e5a4b4dfd08c356ee42ccd511066b73a99653",
             "gitleaks": "da5e2dfe2648d4472f45977fbef4d7b4e95824c5dec27d3095d336fb06ba5eef",

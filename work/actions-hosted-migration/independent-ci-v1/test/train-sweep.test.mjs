@@ -775,13 +775,14 @@ test('stage 10: the scaffold ruleset alone pins no scan to this App -> facts.app
   const part = scaffoldRules().map(r => r.type !== 'required_status_checks' ? r
     : { ...r, parameters: { ...r.parameters, required_status_checks: [...r.parameters.required_status_checks, { context: 'trivy', integration_id: 5368905 }, { context: 'gitleaks', integration_id: ACTIONS }] } });
   assert.deepEqual((await run({ complete: true, branch: 'main', rules: part })).appScans, ['trivy']);
-  // not read: no appScans at all (every scan runs, the safe side)
+  // not read (task bd07449b: RULESET_READ_FAILED), or read and a scan required from no App: no appScans at all (every scan runs, the safe side)
   const noScan = scaffoldRules().map(r => r.type !== 'required_status_checks' ? r
     : { ...r, parameters: { ...r.parameters, required_status_checks: [...r.parameters.required_status_checks, { context: 'gitleaks' }] } });
-  for (const reply of [{ complete: false, branch: 'main', rules: scaffoldRules() }, new Error('rules read failed'), { complete: true, branch: 'main', rules: 'x' },
-    { complete: true, branch: 'main', rules: noScan }, { complete: true, branch: 'main', rules: [{ type: 'deletion' }] }]) {
+  for (const [reply, reason] of [[{ complete: false, branch: 'main', rules: scaffoldRules() }, 'RULESET_READ_FAILED'], [new Error('rules read failed'), 'RULESET_READ_FAILED'],
+    [{ complete: true, branch: 'main', rules: 'x' }, 'RULESET_READ_FAILED'],
+    [{ complete: true, branch: 'main', rules: noScan }, 'RULESET_UNREADABLE'], [{ complete: true, branch: 'main', rules: [{ type: 'deletion' }] }, 'RULESET_UNREADABLE']]) {
     const f = await run(reply);
-    assert.deepEqual([f.rules, f.rulesReason, Object.hasOwn(f, 'appScans')], [null, 'RULESET_UNREADABLE', false], JSON.stringify(reply));
+    assert.deepEqual([f.rules, f.rulesReason, Object.hasOwn(f, 'appScans')], [null, reason, false], JSON.stringify(reply));
   }
 });
 

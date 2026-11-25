@@ -71,7 +71,7 @@ import { LANDING_NOT_READY_REASONS, LANDING_FINAL_REASONS, TRAIN_BATCH_CHANGED, 
   TRAIN_LANDING_RULES_MISSING, readLandingRoute, rehearsalOf, externalChecksDecision, readBatchChain, landMain } from './train-landing.mjs';
 import { makeJobV2, validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';
-import { TRAIN_MODES, TRAIN_MODE_DEFAULT, RULESET_UNREADABLE, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY,
+import { TRAIN_MODES, TRAIN_MODE_DEFAULT, RULESET_UNREADABLE, RULESET_READ_FAILED, readMainRules, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY,
   TRAIN_TEST_MERGE_TREE_DIFFERS, TRAIN_FRONT_JOB_WITHOUT_TRAIN, TRAIN_SINGLE_GREEN_NOT_PROVEN, TRAIN_TEST_COMMIT_GONE, TRAIN_MODE_UNREADABLE, trainFrontRefused, trainFrontRefusal,
   trainHeadDecision, strictFrontHeadDecision, rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested,
   requiredCheckFailure, REQUIRED_CHECK_FAILED, REQUIRED_CHECKS_UNREADABLE, REQUIRED_CHECK_NAMES, projectedHolderForJob, appScansNotDone } from './train-rules.mjs';
@@ -97,6 +97,8 @@ export const STAGE8_NOT_READY_REASONS = Object.freeze(['RESIDENT_BASE_MOVED', 'R
   REQUIRED_CHECK_FAILED, REQUIRED_CHECKS_UNREADABLE,
   // Phase 2, step 3a: the live branch rules and test merge, and the green ledger (all before any journal write).
   RULESET_UNREADABLE, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY, GREEN_LEDGER_UNAVAILABLE,
+  // Task bd07449b: main's rules were not read at all (train-rules.mjs#readMainRules); RULESET_UNREADABLE is rules read and not understood.
+  RULESET_READ_FAILED,
   // Merge train (§41.2): the batch waits for the next stage 10; a front job whose stage directory's train mode could not be
   // read parks (review R1 m4).
   TRAIN_SINGLE_GREEN_NOT_PROVEN, TRAIN_MODE_UNREADABLE,
@@ -106,7 +108,7 @@ export const STAGE8_NOT_READY_REASONS = Object.freeze(['RESIDENT_BASE_MOVED', 'R
 // Merge train: a front job without the train; a front S GitHub dropped (§41.4: stage 10 reads S again for a new batch).
 export const STAGE8_FINAL_REASONS = Object.freeze([TRAIN_TEST_MERGE_TREE_DIFFERS, TRAIN_FRONT_JOB_WITHOUT_TRAIN, TRAIN_TEST_COMMIT_GONE, ...LANDING_FINAL_REASONS]);
 // Inside one run these are waited out (polled until the window ends); every other not-ready answer returns at once.
-const TRAIN_WAITED = Object.freeze([RULESET_UNREADABLE, TRAIN_TEST_MERGE_NOT_READY]);
+const TRAIN_WAITED = Object.freeze([RULESET_READ_FAILED, RULESET_UNREADABLE, TRAIN_TEST_MERGE_NOT_READY]);
 const SHA = /^[a-f0-9]{40}$/;
 // Admission answers no wait can change: the run ends at once with the answer (stage-fact.mjs maps each one to its final
 // code). The claim changed or missing; Native rejected; the PR closed or its head or base moved; Native's policy
@@ -186,8 +188,8 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   // by themselves and the resident tries again.
   async function trainFacts(job) {
     let rules;
-    try { const reply = await github.readBranchRules('main'); check(reply?.complete === true, RULESET_UNREADABLE); rules = rulesetFacts(reply.rules, APP_ID); }
-    catch { return { reason: RULESET_UNREADABLE }; }
+    try { rules = (await readMainRules(github, APP_ID)).facts(); }
+    catch (e) { return { reason: e?.code === RULESET_READ_FAILED ? RULESET_READ_FAILED : RULESET_UNREADABLE }; }
     const ruleset = rulesetDecision(rules, trainMode);
     if (ruleset) return { reason: ruleset, ruleset: rules };
     let pull, tested, mergeCommit = null;
@@ -493,9 +495,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         // required checks. Failed work must give the next claim its turn.
         let failures;
         try {
-          let rules;
-          try { rules = await github.readBranchRules('main'); } catch { throw Object.assign(new Error(RULESET_UNREADABLE), { code: RULESET_UNREADABLE }); }
-          check(rules?.complete === true, RULESET_UNREADABLE);
+          const rules = await readMainRules(github, APP_ID);
           const inventory = await github.readChecks(slotJob.headSha);
           headChecks = Array.isArray(inventory?.checks) ? [...inventory.checks] : null;
           // A train front (H,S) has its own Native six-check identity. Project
@@ -504,7 +504,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
           if (ids && Array.isArray(inventory?.checks)) inventory.checks = inventory.checks.filter(c => c?.app?.id !== APP_ID
             || !REQUIRED_CHECK_NAMES.includes(c.name) || ofJobIds(c, ids));
           failures = requiredCheckFailure(rules.rules, inventory, slotJob.headSha, APP_ID);
-        } catch (e) { return { ready: false, reason: e.code === RULESET_UNREADABLE ? RULESET_UNREADABLE : REQUIRED_CHECKS_UNREADABLE, polls, scheduling }; }
+        } catch (e) { return { ready: false, reason: [RULESET_READ_FAILED, RULESET_UNREADABLE].includes(e?.code) ? e.code : REQUIRED_CHECKS_UNREADABLE, polls, scheduling }; }
         if (failures.length) {
           let returned = null;
           if (scheduling?.mergeQueue?.entered === true && slotNative?.returnSlot) {
@@ -619,8 +619,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       const current = await trainHead(job, liveTrain, before.facts.observedClaim, before.facts.mode?.state);
       if (current.reason) return blocked(current.reason);
       // main's rules hold what push relies on: the route read again in this run (ADR 0018 §2 L2 item 7; never pushed on rules not complete)
-      const reply = await github.readBranchRules('main');
-      check(reply?.complete === true, RULESET_UNREADABLE);
+      const reply = await readMainRules(github, APP_ID);
       const route = await readLandingRoute({ github, appId: APP_ID, rules: reply.rules });
       if (route.route !== 'push') return blocked(TRAIN_LANDING_RULES_MISSING, { missing: route.missing });
       // Review of R3, problem A: this App's own scans of the front subject, right before the write, under the rules just read (reply.rules,
