@@ -21,11 +21,13 @@
 // sending. An intent is durable before either kind of request. Only an
 // unsent or unknown rerun may be retried, once, after ten minutes.
 
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { HEX40, canonicalJson, check } from './canonical.mjs';
+import { HEX40, UUID, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS } from './status.mjs';
 import { LIVE_STATES } from './queue.mjs';
+import { NODE_NAME } from './node-duty.mjs';
 import { diedInSetup, failedSteps, jobFailureKind, neverAssigned, requiredTestsRepairHistory } from './env-failure.mjs';
 import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
 
@@ -40,6 +42,18 @@ const STUCK_KIND = 'stuck';
 const BRANCH_REF = /^(?!.*\.\.)(?!\/)(?!.*\/$)[A-Za-z0-9._/-]{1,200}$/;
 const STAGING_BRANCH = 'clued-train/staging';
 const WORKFLOW_PATH = /^\.github\/workflows\/[A-Za-z0-9_.-]+\.ya?ml$/;
+const REQUIRED_TESTS_WORKFLOW = '.github/workflows/clued-required-tests.yml';
+const DISPATCH_MARK = 'clued-resident-dispatch/v1';
+
+export function residentDispatchMark(run) {
+  if (run.event !== 'workflow_dispatch' || run.run_attempt !== 1 || typeof run.workflow !== 'string'
+    || run.workflow.split('@', 1)[0] !== REQUIRED_TESTS_WORKFLOW) return null;
+  const title = run.display_title;
+  if (typeof title !== 'string' || title !== title.trim()) return null;
+  const [prefix, node, id, ...extra] = title.split(' ');
+  return prefix === DISPATCH_MARK && NODE_NAME.test(node ?? '') && UUID.test(id ?? '') && !extra.length ? { node, id } : null;
+}
+
 const ACTIONS_APP_ID = 15368;
 export const ADMISSION_APP_ID = 5368905;
 export const ADMISSION_CHECK = 'kooyumi-work-admission';
@@ -130,7 +144,7 @@ class Unreadable extends Error {}
 const unreadable = what => { throw new Unreadable(what); };
 
 // The gh port: fixed argv, routes built here from validated values only. get -> parsed JSON or throws Unreadable.
-export function ghPort({ ghExe, repo, run }) {
+export function ghPort({ ghExe, repo, run, nodeName }) {
   check(typeof ghExe === 'string' && /^[A-Z]:\\/.test(ghExe) && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '') && typeof run === 'function', 'ADMISSION_RERUN_CONFIG_INVALID');
   const routeOk = route => typeof route === 'string' && /^[A-Za-z0-9_./?&=%:-]*$/.test(route) && !route.split(/[/?]/).slice(1).some(p => p === '.' || p === '..');
   async function get(route, { missingOk = false } = {}) {
@@ -200,10 +214,14 @@ export function ghPort({ ghExe, repo, run }) {
       return post([`repos/${repo}/actions/runs/${runId}/rerun`]);
     },
     // The lost-run write: "Run workflow" of the required tests on a pull request's branch. Same outcomes as rerun.
-    async dispatch(workflowId, ref, pr, headSha) {
+    async dispatch(workflowId, ref, pr, headSha, markRun) {
       check(positive(workflowId) && BRANCH_REF.test(ref ?? '') && positive(pr) && HEX40.test(headSha ?? ''), 'ADMISSION_RERUN_ROUTE_REFUSED');
-      return post(['-f', `ref=${ref}`, '-f', `inputs[pr]=${pr}`, '-f', `inputs[head]=${headSha}`,
-        `repos/${repo}/actions/workflows/${workflowId}/dispatches`]);
+      const fields = ['-f', `ref=${ref}`, '-f', `inputs[pr]=${pr}`, '-f', `inputs[head]=${headSha}`];
+      if (markRun) {
+        check(NODE_NAME.test(nodeName ?? ''), 'ADMISSION_RERUN_NODE_NAME_INVALID');
+        fields.push('-f', `inputs[resident_node]=${nodeName}`, '-f', `inputs[resident_dispatch_id]=${randomUUID()}`);
+      }
+      return post([...fields, `repos/${repo}/actions/workflows/${workflowId}/dispatches`]);
     },
   });
 }
@@ -428,14 +446,18 @@ async function dispatchDecision({ gh, pull, defaultBranch, target, runs, missing
     return { ...out, action: 'skip', reason: 'the pull request or base moved' };
   // GitHub dispatches the workflow at ref. Use the trusted definition only on
   // a head that has that same file, and recheck the inventory before asking.
-  if ((await workflowFile(gh, target.path, headSha)).sha !== target.blob)
+  const source = await workflowFile(gh, target.path, headSha);
+  if (source.sha !== target.blob)
     return { ...out, action: 'skip', reason: 'the workflow differs from its default-branch definition' };
   const again = (await runsOf(gh, headSha)).filter(r => r.workflow_id === target.id);
   if (again.length !== runs.length || again.some(r => !runs.some(old => sameRun(r, old))))
     return { ...out, action: 'skip', reason: 'the workflow runs changed since they were read' };
   if (!(await admissionOf(gh, headSha, pr)).admitted)
     return { ...out, action: 'skip', reason: 'the pull request is no longer admitted' };
-  return { ...out, ref: now.head.ref, action: 'redispatch',
+  // Only send the extra inputs to a trusted workflow revision that supports them.
+  const markRun = target.path === REQUIRED_TESTS_WORKFLOW && Buffer.from(source.content, 'base64').toString('utf8')
+    .split(/\r?\n/).some(line => line.startsWith('run-name:') && line.includes(`'${DISPATCH_MARK} {0} {1}'`));
+  return { ...out, ref: now.head.ref, action: 'redispatch', markRun,
     reason: skipped ? 'required tests were skipped for a non-Owner actor' : 'GitHub created no required workflow run of this head' };
 }
 
@@ -993,7 +1015,7 @@ export class AdmissionRerunner {
           return { acted, reason: 'ADMISSION_RERUN_STATE_UNSAVED' };
         }
         let r;
-        try { r = await (lost ? this.gh.dispatch(d.workflowId, d.ref, record.pr, headSha) : this.gh.rerun(d.runId)); } catch { r = { outcome: 'unsent', why: 'gh 没有启动' }; }
+        try { r = await (lost ? this.gh.dispatch(d.workflowId, d.ref, record.pr, headSha, d.markRun) : this.gh.rerun(d.runId)); } catch { r = { outcome: 'unsent', why: 'gh 没有启动' }; }
         Object.assign(record, { outcome: r.outcome, why: r.outcome === 'sent' ? null : short(r.why), at: new Date(this.clock()).toISOString() });
         if (lost && r.http !== undefined) record.http = r.http;
         // The intent on disk already stops a second request; an unsaved outcome is written again at the end of this step or the next

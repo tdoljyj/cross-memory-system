@@ -99,6 +99,7 @@ export const claimWaitText = reason => (CLAIM_MISSING_REASONS.includes(reason) ?
 // resident-v2/stage-fact.mjs DIAG), one code for scheduling. The PR page names which one it is and what to do, from the row's
 // stage-fact reason codes: the first line of this table that one of them matches. Only codes in this table are ever kept
 // (so a stored row is bounded by the table), and only for a CLAIM_REASONS release.
+// A NATIVE_NOT_ADMITTED release keeps the Source's sanitized codes for the PR page as well.
 export const CLAIM_WHY = Object.freeze([
   [['pr_task_binding_head_not_authorized'], '当前提交未授权：认领持有人对这个提交做 authorize_head 后自动继续'],
   [['pr_task_binding_unbound'], 'PR 没有绑定到任何任务认领：对这个提交带 pr_ref 授权'],
@@ -108,7 +109,13 @@ export const CLAIM_WHY = Object.freeze([
 ]);
 const CLAIM_WHY_CODES = Object.freeze(CLAIM_WHY.flatMap(([codes]) => codes));
 // A view only: nothing schedules on it, and whatever does not fit is dropped (never a refusal).
-export const reasonCodeList = v => (Array.isArray(v) ? [...new Set(v.filter(c => CLAIM_WHY_CODES.includes(c)))] : []);
+export function reasonCodeList(values, failureCode) {
+  if (!Array.isArray(values)) return [];
+  const codes = failureCode === 'NATIVE_NOT_ADMITTED'
+    ? values.slice(0, 64).filter(code => typeof code === 'string' && /^[a-z][a-z0-9_]{0,79}$/.test(code))
+    : values.filter(code => CLAIM_WHY_CODES.includes(code));
+  return [...new Set(codes)];
+}
 // How a waiting row can be woken before its next try, the one rule candidates() and the PR page (pr-status.mjs) read (Task 30643342,
 // FABLE-botmerge-auth-carry §1.6): 'authorization' for a claim wait (only a protected observation of a new head authorization wakes it,
 // claimChanged), 'edit' for every other row (a new trigger, after the cool-down). It reads only the row's state and reason, which the
@@ -465,11 +472,13 @@ export class RunQueue {
   }
 
   // Phase 2, step 2: the row's batch rests at parking point B (reason: why stage 8 was not ready; nextAt: its next try;
-  // position: its claim's place in the merge queue at that try). A newer commit that arrived meanwhile stays current.
-  park(pr, headSha, { reason, nextAt, position }, now) {
+  // position: its claim's place in the merge queue at that try; parkTry: the batch's ended stage-8 tries, once its budget is
+  // reached the one that woke the last try, task bd07449b r2, r3). A newer commit that arrived meanwhile stays current.
+  park(pr, headSha, { reason, nextAt, position, parkTry = null }, now) {
     const r = this.row(pr);
     if (!r || r.running?.headSha !== headSha) return false;
-    r.parked = { reason: reason ?? null, nextAt: Number.isSafeInteger(nextAt) ? nextAt : null, position: Number.isSafeInteger(position) ? position : null };
+    r.parked = { reason: reason ?? null, nextAt: Number.isSafeInteger(nextAt) ? nextAt : null, position: Number.isSafeInteger(position) ? position : null,
+      parkTry: Number.isSafeInteger(parkTry) && parkTry >= 0 ? parkTry : null };
     if (r.current?.headSha === headSha) this.setState(r, 'PARKED', reason ?? null, now);
     else r.updatedAt = now;
     return true;
@@ -505,7 +514,7 @@ export class RunQueue {
       case 'released': {
         r.order = this.seq(); // to the tail
         const claimWait = CLAIM_REASONS.includes(outcome.code);
-        const reasonCodes = claimWait ? reasonCodeList(outcome.reasonCodes) : [];
+        const reasonCodes = claimWait || outcome.code === 'NATIVE_NOT_ADMITTED' ? reasonCodeList(outcome.reasonCodes, outcome.code) : [];
         if (reasonCodes.length > 0) r.diagnostic = { headSha, reasonCodes };
         if (claimWait) {
           const since = r.current.firstAt ?? r.lastEvalAt ?? now;
@@ -690,7 +699,7 @@ export class RunQueue {
     const testSha = r => parkedHere(r) ? r.running.testSha
       : LIVE_STATES.includes(r.state) && (!r.running || r.running.testSha === r.current.testSha) ? r.current.testSha : null;
     // Task 0ca0479d: the last release's reason codes, only while the row is still on that commit.
-    const reasonCodes = r => (r.diagnostic?.headSha === r.current.headSha ? reasonCodeList(r.diagnostic.reasonCodes) : []);
+    const reasonCodes = r => (r.diagnostic?.headSha === r.current.headSha ? reasonCodeList(r.diagnostic.reasonCodes, r.reason) : []);
     return this.data.rows.filter(r => r.current).map(r => ({
       pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, state: r.state === 'PARKED' && !parkedHere(r) ? 'RUNNING' : r.state,
       // The companion can begin checking the staging run while the executor is still running stages 1-7.
@@ -700,6 +709,7 @@ export class RunQueue {
       ...(reasonCodes(r).length > 0 ? { reasonCodes: reasonCodes(r) } : {}),
       nextAt: parkedHere(r) ? (r.parked?.nextAt ?? null) : r.state === 'PARKED' ? null : time(r.nextAt) ? r.nextAt : (r.poke ? r.poke.dueAt : null), level: r.level, origin: r.origin ?? null, stopKind: r.stopKind ?? null,
       queuePosition: parkedHere(r) ? (r.parked?.position ?? null) : null,
+      parkTry: parkedHere(r) ? (r.parked?.parkTry ?? null) : null,
       // Generation 12 (defect 050560ac): a back-off after a network release (the line to GitHub or Native, DESIGN 53.3), for the PR page.
       network: r.state === 'BACKOFF' && r.levelKind === 'network',
       firstAt: r.current.firstAt ?? null, position: ahead.has(r.pr) ? ahead.get(r.pr) + 1 : null,

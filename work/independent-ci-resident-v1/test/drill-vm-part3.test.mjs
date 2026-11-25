@@ -7,8 +7,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   script, powershell, tmp, sha, q, ps, psCode, opts, entryScript, entryPs, STEP_LOGS, m5DrillReceipt, RENEWAL_3BC571A6,
-  notTheDrillsSource, S, L, PAUSE_REQUEST, evidence, verdictOf, pass, mockFleetTree, PROBE_FILES, bootBounds, finalize
+  notTheDrillsSource, S, L, PAUSE_REQUEST, FAKE_VERIFY, evidence, verdictOf, pass, mockFleetTree, PROBE_FILES, bootBounds, finalize, COMPANION_AFTER_BOOT
 } from './drill-vm-fixtures.mjs';
+
+// Wait-DrillRebootRefresh's 30-second sleeps between guest reads, stood in by the tests that drive it (one stand-in, two users).
+const NO_SLEEP = 'function Start-Sleep { }';
 
 // Fable renew-key ruling, supplement "eight on the path", item 5: a successful launcher ends with its own pause confirmed, so A6 holds
 // THAT pause (the request the launcher's terminal names, which state\PAUSED.json must name) with UNCERTAIN, no current batch, live 0 and
@@ -55,11 +58,13 @@ test('A7 judges each sample against the boot it was read in: a PASS left between
   const boot1 = '2026-11-16T02:40:00.0000000Z', boot2 = '2026-11-16T02:50:00.0000000Z';
   const status = (writtenAt, observedAt) => ({ writtenAt, node: { mode: 'UNCERTAIN' }, versions: { selfcheck: { result: 'PASS', observedAt } } });
   const between = { status: status('2026-11-16T02:51:00Z', '2026-11-16T02:45:00Z'), readAt: '2026-11-16T02:51:30Z', boot: boot2 };
-  const fresh = { status: status('2026-11-16T02:56:00Z', '2026-11-16T02:55:00Z'), readAt: '2026-11-16T02:56:30Z', boot: boot2 };
+  // K3: the companion up by itself after the second boot (its start task and its supervisor after 02:50)
+  const up = { ...COMPANION_AFTER_BOOT, boot: boot2, startTask: { lastRun: '2026-11-16T02:50:40Z', lastResult: 0 }, supervisors: [{ pid: 4120, owner: 'clued-companion', created: '2026-11-16T02:50:41Z' }] };
+  const fresh = { status: status('2026-11-16T02:56:00Z', '2026-11-16T02:55:00Z'), readAt: '2026-11-16T02:56:30Z', boot: boot2, companionAfterBoot: up };
   const wait = samples => ps(`
     $script:samples = New-Object Collections.Queue; foreach ($s in (${q(JSON.stringify(samples))} | ConvertFrom-Json)) { $script:samples.Enqueue($s) }
     function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) if ($script:samples.Count -gt 1) { $script:samples.Dequeue() } else { $script:samples.Peek() } }
-    function Start-Sleep { }
+    ${NO_SLEEP}
     Wait-DrillRebootRefresh $null ([DateTimeOffset]::Parse('${boot1}', [Globalization.CultureInfo]::InvariantCulture)) ([DateTimeOffset]::UtcNow.AddSeconds(2))`);
   const stuck = wait([between]);
   assert.equal(stuck.boot, boot2);
@@ -74,14 +79,125 @@ test('A7 judges each sample against the boot it was read in: a PASS left between
   assert.equal(pass(verdictOf(evidence({ reboot: once }))).A7, true);
 });
 
-test('A8 fails with a missing launcher, a nonzero exit, or an unsuccessful terminal status despite passing reverify', opts, () => {
+// Task 87d330d0 K3 (FABLE-drill-companion-k3-20261124 section 4, design T11): after the reboot nobody logs on to, A7 under the companion's
+// password definition also needs the companion up by itself -- all five of companionAfterBoot; any one missing fails A7 and is named.
+// Under the interactive definition it adds nothing.
+test('A7 (K3): under the password definition the companion up by itself after the boot, all five, each one missing named', opts, () => {
+  const e = JSON.parse(evidence());
+  const a7 = over => verdictOf(evidence({ reboot: { ...e.reboot, ...over } })).items.find(i => i.id === 'A7');
+  const all = a7({});
+  assert.equal(all.pass, true, all.detail);
+  assert.match(all.detail, /companionAfterBoot=complete/);
+  const cab = e.reboot.companionAfterBoot;
+  const enginePidOnly = a7({ companionAfterBoot: { ...cab, companionState: 2, companionInstances: [{ state: 2, enginePid: 4120 }] } });
+  assert.equal(enginePidOnly.pass, true, 'an instance with an engine process is running, the task\'s State 2 notwithstanding: ' + enginePidOnly.detail);
+  for (const [reason, value, named] of [
+    ['the supervisor started before this boot (the boot before\'s)', { ...cab, supervisors: [{ pid: 4120, owner: 'clued-companion', created: '2026-11-16T02:44:00Z' }] }, /supervisorAfterBoot/],
+    ['a supervisor of another account', { ...cab, supervisors: [{ pid: 4120, owner: 'drill', created: '2026-11-16T02:45:41Z' }] }, /supervisorAfterBoot/],
+    ['no supervisor', { ...cab, supervisors: [] }, /supervisorAfterBoot/],
+    ['the start task never ran', { ...cab, startTask: { lastRun: null, lastResult: 267011 } }, /startTaskRanAfterBoot.*startTaskResult=267011/],
+    ['the start task ran before this boot', { ...cab, startTask: { lastRun: '2026-11-16T02:30:00Z', lastResult: 0 } }, /startTaskRanAfterBoot/],
+    ['the start task failed', { ...cab, startTask: { lastRun: '2026-11-16T02:45:40Z', lastResult: 1 } }, /startTaskResult=1/],
+    ['someone logged on', { ...cab, interactiveSessions: 1 }, /interactiveSessions=1/],
+    ['the sessions could not be read', { ...cab, interactiveSessions: null }, /interactiveSessions=unread/],
+    // first review of K3, item 5: running is an instance running (4) or with an engine process; the task's State is not trusted
+    ['the companion task\'s only instance queued, whatever the task\'s State says', { ...cab, companionState: 4, companionInstances: [{ state: 2, enginePid: 0 }] }, /companionRunning/],
+    ['no instance of the companion task', { ...cab, companionInstances: [] }, /companionRunning/],
+    ['its instances could not be read', { ...cab, companionInstances: null }, /companionRunning/],
+    ['the definition could not be read', { ...cab, definition: null }, /companionAfterBoot definition=unknown/],
+  ]) {
+    const item = a7({ companionAfterBoot: value });
+    assert.equal(item.pass, false, reason);
+    assert.match(item.detail, named, reason + ': ' + item.detail);
+  }
+  // a reboot read without it at all is no pass
+  const { companionAfterBoot, ...without } = e.reboot;
+  const none = verdictOf(evidence({ reboot: without })).items.find(i => i.id === 'A7');
+  assert.equal(none.pass, false);
+  assert.match(none.detail, /companionAfterBoot=missing/);
+  // the interactive definition (a person logs on): nothing added, even with nothing of the five
+  const interactive = a7({ companionAfterBoot: { definition: 'interactive', interactiveSessions: 1, startTask: null, companionState: 3, supervisors: [], errors: {} } });
+  assert.equal(interactive.pass, true, interactive.detail);
+  assert.match(interactive.detail, /companionAfterBoot=interactive-definition/);
+});
+
+test('A7 (K3): the wait goes on until the companion is up too, and the guest read carries the five', opts, () => {
+  const boot = '2026-11-16T02:40:00.0000000Z';
+  const st = { writtenAt: '2026-11-16T02:42:00Z', node: { mode: 'UNCERTAIN' }, versions: { selfcheck: { result: 'PASS', observedAt: '2026-11-16T02:41:30Z' } } };
+  const up = { ...COMPANION_AFTER_BOOT, boot, startTask: { lastRun: '2026-11-16T02:40:40Z', lastResult: 0 }, supervisors: [{ pid: 4120, owner: 'clued-companion', created: '2026-11-16T02:40:41Z' }] };
+  const notYet = { status: st, readAt: '2026-11-16T02:42:10Z', boot, companionAfterBoot: { ...up, companionState: 2, companionInstances: [{ state: 2, enginePid: 0 }], supervisors: [] } };
+  const later = { status: st, readAt: '2026-11-16T02:42:40Z', boot, companionAfterBoot: up };
+  const got = ps(`
+    $script:samples = New-Object Collections.Queue; foreach ($s in (${q(JSON.stringify([notYet, later]))} | ConvertFrom-Json)) { $script:samples.Enqueue($s) }
+    $script:reads = 0
+    function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) $script:reads++; if ($script:samples.Count -gt 1) { $script:samples.Dequeue() } else { $script:samples.Peek() } }
+    ${NO_SLEEP}
+    $first = Get-DrillRebootSample (${q(JSON.stringify(notYet))} | ConvertFrom-Json) ([DateTimeOffset]::Parse('${boot}', [Globalization.CultureInfo]::InvariantCulture))
+    $r = Wait-DrillRebootRefresh $null ([DateTimeOffset]::Parse('${boot}', [Globalization.CultureInfo]::InvariantCulture)) ([DateTimeOffset]'2099-01-01T00:00:00Z')
+    [ordered]@{ firstDone = $first.done; r = $r; reads = $script:reads }`);
+  assert.equal(got.firstDone, false, 'the self-check passed but the companion is not up: not done');
+  assert.equal(got.r.done, true);
+  assert.equal(got.r.readAt, later.readAt);
+  assert.equal(got.reads, 2);
+  assert.equal(got.r.companionAfterBoot.supervisors[0].owner, 'clued-companion');
+  assert.equal(pass(verdictOf(evidence({ reboot: got.r }))).A7, true);
+  // the guest's read: the companion's definition, the interactive sessions, the start task, the companion's state, its supervisors
+  const src = fs.readFileSync(script, 'utf8');
+  const read = src.slice(src.indexOf('$script:GuestReadStatus = {'), src.indexOf('function Test-DrillCompanionAfterBoot'));
+  for (const needle of ["GetTask('CluedCIResidentCompanion')", "GetTask('CluedCIResidentCompanionStart')", 'Definition.Principal.LogonType', 'GetInstances(0)',
+    'WTSEnumerateSessions', "Name='CluedCompanionSupervisor.exe'", 'GetOwner', 'companionAfterBoot = $cab']) assert.ok(read.includes(needle), needle);
+});
+
+// First review of K3, item 1: the guest read itself comes over PowerShell Direct as the drill administrator, a type 2 logon session with
+// no window station; nobody logged on is the window-station sessions with a user name (as "query user"), so that session is not one.
+// The guest read run here with everything it reads stood in: the scheduler, WMI and the window-station sessions (a stand-in type of the
+// same name, so the real one is never built); this machine's tasks are not read.
+test('A7 (K3): the guest read counts the sessions with a user logged on, not the drill\'s own PowerShell Direct logon; running is an instance', opts, () => {
+  const read = users => ps(`
+    Add-Type -TypeDefinition 'public static class CluedDrillWts { public static string[] Users = new string[0]; public static string[] UserSessions() { return Users; } }'
+    [CluedDrillWts]::Users = [string[]]@(${users.map(q).join(', ')})
+    function Get-CimInstance { [CmdletBinding()] param([Parameter(Position = 0)][string]$ClassName, [string]$Filter)
+      switch ($ClassName) {
+        'Win32_OperatingSystem' { [pscustomobject]@{ LastBootUpTime = ([DateTimeOffset]'2026-11-16T02:45:00Z').LocalDateTime } }
+        'Win32_LogonSession' { @([pscustomobject]@{ LogonId = '7001'; LogonType = 2 }, [pscustomobject]@{ LogonId = '999'; LogonType = 0 }) }
+        'Win32_LoggedOnUser' { @([pscustomobject]@{ Antecedent = [pscustomobject]@{ Name = 'drill'; Domain = 'CLUED-DRILL' }; Dependent = [pscustomobject]@{ LogonId = '7001' } }) }
+        'Win32_Process' { @([pscustomobject]@{ ProcessId = 4120; CreationDate = ([DateTimeOffset]'2026-11-16T02:45:41Z').LocalDateTime }) }
+        default { throw ('not stood in: ' + $ClassName) } } }
+    function Invoke-CimMethod { [CmdletBinding()] param($InputObject, [string]$MethodName) [pscustomobject]@{ User = 'clued-companion' } }
+    function New-Object { [CmdletBinding()] param([Parameter(Position = 0)]$TypeName, [string]$ComObject)
+      if ($ComObject -cne 'Schedule.Service') { throw ('not stood in: ' + $ComObject) }
+      $companion = [pscustomobject]@{ State = 2; Definition = [pscustomobject]@{ Principal = [pscustomobject]@{ LogonType = 1 } } }
+      $companion | Add-Member -MemberType ScriptMethod -Name GetInstances -Value { param($f) ,@([pscustomobject]@{ State = 4; EnginePID = 4120 }) }
+      $start = [pscustomobject]@{ LastRunTime = ([DateTimeOffset]'2026-11-16T02:45:40Z').LocalDateTime; LastTaskResult = 0 }
+      $folder = [pscustomobject]@{ tasks = @{ CluedCIResidentCompanion = $companion; CluedCIResidentCompanionStart = $start } }
+      $folder | Add-Member -MemberType ScriptMethod -Name GetTask -Value { param($n) $this.tasks[$n] }
+      $svc = [pscustomobject]@{ folder = $folder }
+      $svc | Add-Member -MemberType ScriptMethod -Name Connect -Value { }
+      $svc | Add-Member -MemberType ScriptMethod -Name GetFolder -Value { param($p) if ($p -cne '\\Clued') { throw $p }; $this.folder }
+      $svc }
+    (& $script:GuestReadStatus ${q(path.join(tmp, 'no-drill-root'))}).companionAfterBoot`);
+  const nobody = read([]);
+  assert.equal(nobody.interactiveSessions, 0, 'the drill\'s own type 2 logon (PowerShell Direct) with no window-station user is nobody: ' + JSON.stringify(nobody));
+  assert.deepEqual(nobody.errors, {});
+  assert.deepEqual(nobody.companionInstances, [{ state: 4, enginePid: 4120 }]);
+  const e = JSON.parse(evidence());
+  const a7 = cab => verdictOf(evidence({ reboot: { ...e.reboot, companionAfterBoot: cab } })).items.find(i => i.id === 'A7');
+  const passed = a7(nobody);
+  assert.equal(passed.pass, true, 'the companion task\'s State 2 beside its running instance: ' + passed.detail);
+  const someone = read(['1:someone']);
+  assert.equal(someone.interactiveSessions, 1);
+  assert.match(a7(someone).detail, /interactiveSessions=1/);
+});
+
+test('A8 fails when either entry is not the same-package refusal, even with the other one right', opts, () => {
   const { reinstall } = JSON.parse(evidence());
-  const { launcherExit, launcherStatus, launcherVerdict, ...withoutLauncher } = reinstall;
+  const { prepareCode, ...withoutCode } = reinstall;
   for (const [reason, value] of [
-    ['missing command', withoutLauncher],
-    ['nonzero exit', { ...reinstall, launcherExit: 1 }],
-    ['launcher refused', { ...reinstall, launcherStatus: 'PAUSE_NOT_CONFIRMED', launcherVerdict: 'BOOTSTRAP_LAUNCHER_ENDED' }],
-    ['missing terminal status', { ...reinstall, launcherStatus: null, launcherVerdict: 'BOOTSTRAP_LAUNCHER_ENDED' }],
+    ['prepare code missing', withoutCode],
+    ['prepare refused for another reason', { ...reinstall, prepareCode: 'ARTIFACT_SHA_MISMATCH' }],
+    ['prepare let it through', { ...reinstall, prepareStatus: 'FLEET_NODE_INSTALL_PREPARED', prepareCode: null }],
+    ['upgrade staged it', { ...reinstall, upgradeStatus: 'FLEET_NODE_STAGED' }],
+    ['upgrade exit nonzero', { ...reinstall, upgradeExit: 1 }],
   ]) {
     const r = verdictOf(evidence({ reinstall: value }));
     assert.equal(pass(r).A8, false, reason);
@@ -89,36 +205,29 @@ test('A8 fails with a missing launcher, a nonzero exit, or an unsuccessful termi
   }
 });
 
-test('A8 captures the current launcher exit and indented terminal JSON from the prepare command', opts, () => {
+test('A8 reads each entry\'s status, the prepare code, exits and stderr apart from the real fleet tools\' output', opts, () => {
   const { tree, fleet } = mockFleetTree('a8-tree');
-  const good = "ConvertTo-Json @{ status = 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' }";
-  const commands = [null, ' ', "ConvertTo-Json @{ status = 'PAUSE_NOT_CONFIRMED' }", `${good}; exit 4`, good];
+  const answers = [
+    { answer: { status: 'FLEET_NODE_INSTALL_REFUSED', code: 'NEW_SOURCE_IS_THE_INSTALLED_ONE' }, exit: 1 },
+    { answer: { status: 'FLEET_NODE_INSTALL_REFUSED' }, exit: 1 },
+    { answer: { status: 'FLEET_NODE_INSTALL_PREPARED', runCommand: 'x' }, exit: 0 },
+  ];
   const r = ps(`
     $ErrorActionPreference = 'Stop'
-    $cases = ConvertFrom-Json -InputObject ${q(JSON.stringify(commands.map(c => JSON.stringify(c))))}
+    $cases = ConvertFrom-Json -InputObject ${q(JSON.stringify(answers.map(a => JSON.stringify(a))))}
     @($cases | ForEach-Object {
-      [IO.File]::WriteAllText(${q(path.join(fleet, 'run-command.json'))}, $_)
+      [IO.File]::WriteAllText(${q(path.join(fleet, 'prepare-answer.json'))}, $_)
       $up = & $script:GuestReinstallUpgrade ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} '1.2.3' $script:DrillNativeText
       $ri = & $script:GuestReinstall ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} '1.2.3' 'package.tar' 'acceptance.json' 'sha' $script:DrillNativeText $up
-      @{ exit = $ri.launcherExit; status = $ri.launcherStatus; verdict = $ri.launcherVerdict; pass = (Test-DrillReinstallLauncher $ri);
-        upgrade = $ri.upgradeStatus; prepare = $ri.prepareStatus; upgradeStderr = ([string]$ri.upgradeStderr).Trim(); prepareStderr = ([string]$ri.prepareStderr).Trim() }
+      [ordered]@{ upgrade = $ri.upgradeStatus; upgradeExit = $ri.upgradeExit; prepare = $ri.prepareStatus; code = $ri.prepareCode; prepareExit = $ri.prepareExit
+        upgradeStderr = ([string]$ri.upgradeStderr).Trim(); prepareStderr = ([string]$ri.prepareStderr).Trim() }
     })`);
-  const read = { upgrade: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', prepare: 'FLEET_NODE_INSTALL_PREPARED',
-    upgradeStderr: 'upgrade: a note on stderr', prepareStderr: 'prepare: a note on stderr' };
+  const read = { upgrade: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', upgradeExit: 0, upgradeStderr: 'upgrade: a note on stderr', prepareStderr: 'prepare: a note on stderr' };
   assert.deepEqual(r, [
-    { exit: null, status: null, verdict: 'NOT_RUN_MISSING_RUN_COMMAND', pass: false, ...read },
-    { exit: null, status: null, verdict: 'NOT_RUN_MISSING_RUN_COMMAND', pass: false, ...read },
-    { exit: 0, status: 'PAUSE_NOT_CONFIRMED', verdict: 'BOOTSTRAP_LAUNCHER_ENDED', pass: false, ...read },
-    { exit: 4, status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', verdict: 'BOOTSTRAP_DONE', pass: false, ...read },
-    { exit: 0, status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', verdict: 'BOOTSTRAP_DONE', pass: true, ...read },
+    { ...read, prepare: 'FLEET_NODE_INSTALL_REFUSED', code: 'NEW_SOURCE_IS_THE_INSTALLED_ONE', prepareExit: 1 },
+    { ...read, prepare: 'FLEET_NODE_INSTALL_REFUSED', code: null, prepareExit: 1 },
+    { ...read, prepare: 'FLEET_NODE_INSTALL_PREPARED', code: null, prepareExit: 0 },
   ]);
-  // the second prepare after the reinstall, the same way: its status, exit code and stderr all come back (Codex review of 58136df61, low 4)
-  fs.writeFileSync(path.join(fleet, 'run-command.json'), 'null');
-  const again = ps(`$ErrorActionPreference = 'Stop'; $p = & $script:GuestPrepareAgain ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} 'package.tar' 'acceptance.json' 'sha' $script:DrillNativeText
-    [ordered]@{ status = $p.status; exit = $p.exit; stderr = ([string]$p.stderr).Trim() }`);
-  assert.deepEqual(again, { status: 'FLEET_NODE_INSTALL_PREPARED', exit: 0, stderr: 'prepare: a note on stderr' });
-  // and the run keeps them in reinstall.json beside the status
-  assert.match(fs.readFileSync(script, 'utf8'), /\$reinstall\.prepareAgainExit = \$p2\.exit; \$reinstall\.prepareAgainStderr = \$p2\.stderr/);
 });
 
 // The drill's own children (the kit entry, verify, the A8 tools, root in the prerequisite distribution) are read like the package's
@@ -618,9 +727,9 @@ test('the drill reads its children with stdout and stderr apart: a stderr line n
   put('state/status.json', JSON.stringify({ paused: true }));
   const pausedText = JSON.stringify({ source: { requestSha256: PAUSE_REQUEST, reason: 'any' } });
   put('state/PAUSED.json', pausedText);
-  put('resident/abc/windows/verify-resident.ps1', "param($ExpectedInstallReceiptSha256, $LinuxVersionFactsFile)\n" +
-    "[Console]::Error.WriteLine('verify: a note on stderr')\nWrite-Output 'RESIDENT_VERIFIED'\nexit 0\n");
-  const g = ps(`$ErrorActionPreference = 'Stop'; $g = & $script:GuestRead ${q(root)} $script:DrillNativeText
+  // the stand-in keeps the real rule on the pause (FAKE_VERIFY): the read passes the pause the launcher confirmed, so a paused node verifies
+  put('resident/abc/windows/verify-resident.ps1', FAKE_VERIFY);
+  const g = ps(`$ErrorActionPreference = 'Stop'; $g = & $script:GuestRead ${q(root)} $script:DrillNativeText ${q(sha(pausedText))}
     [ordered]@{ verify = $g.verify.status; exit = $g.verify.exit; stderr = ([string]$g.verify.stderr).Trim(); pause = $g.pause }`);
   assert.deepEqual(g, { verify: 'RESIDENT_VERIFIED', exit: 0, stderr: 'verify: a note on stderr',
     pause: { sha256: sha(pausedText), requestSha256: PAUSE_REQUEST } });

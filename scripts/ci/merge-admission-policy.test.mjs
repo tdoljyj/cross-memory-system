@@ -461,17 +461,17 @@ test("advise: an unbound PR is advised after Native resolution without a full CI
   assert.ok(expired.outcome.notices.includes("claim_advisory:claim_expired"));
 });
 
-test("advise: a claim base that cannot be compared is a notice; enforced, it is an error or claim_base_unknown as before", async () => {
+test("compare 404 is the same claim_base_unknown notice in enforced and advise", async () => {
   for (const [state, status, expect] of [
     ["efficiency", 500, { admitted: true, notice: /^claim_advisory_unverified: the claim's base_commit could not be compared \(GitHub API .* returned 500\)$/ }],
-    ["efficiency", 404, { admitted: true, notice: new RegExp(`^claim_advisory:claim_base_unknown:${CLAIM_BASE}$`) }],
+    ["efficiency", 404, { admitted: true, notice: new RegExp(`^claim_base_unknown:${CLAIM_BASE}$`) }],
     ["efficiency", 200, { admitted: true }],
-    ["normal", 404, { admitted: false, reason: new RegExp(`^claim_base_unknown:${CLAIM_BASE}$`) }],
+    ["normal", 404, { admitted: true, notice: new RegExp(`^claim_base_unknown:${CLAIM_BASE}$`) }],
   ]) {
     const { outcome } = await judge({ table: RECOMMENDED_POLICY_TEXT, state, layer: "code", scenario: { claimBaseStatus: status } });
     assert.equal(outcome.admitted, expect.admitted, `${state}/${status}`);
     if (expect.notice) assert.ok(outcome.notices.some((notice) => expect.notice.test(notice)), `${state}/${status}: ${outcome.notices.join(" | ")}`);
-    if (expect.reason) assert.match(outcome.reasons[0], expect.reason);
+    if (status === 404) assert.deepEqual([outcome.verdict, outcome.reasons], ["ADMITTED", []], state);
   }
   await assert.rejects(judge({ table: RECOMMENDED_POLICY_TEXT, state: "normal", layer: "code", scenario: { claimBaseStatus: 500 } }), /returned 500/);
 });

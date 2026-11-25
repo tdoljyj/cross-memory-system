@@ -112,6 +112,7 @@ test('G2 (review M1): a task engine event without a TaskName (311, 104) reaches 
       if ($LogName -cne $script:EntryTaskSchedulerLogName) { throw 'not stood in' }
       $log | Where-Object { if ($FilterXPath.Contains("Data[@Name='TaskName']")) { $null -ne $_.TaskName -and $FilterXPath.Contains("'" + $_.TaskName + "'") } else { $FilterXPath.Contains('EventID=' + $_.Id) } } }
     function Read-EntryLogonEvents { 'L' }; function Read-EntryGuestMemory { 'M' }; function Read-EntryGuestProcesses { 'P' }; function Read-EntryWslService { 'W' }
+    $script:EntryProbeRunner = { 'R' }; function Read-EntryEvidence { 'V' }   # r12's probes and second layer: drill r12's own test
     $null = Write-EntryFailureSnapshot ${q(out)} ${q(list)} @{ ci = ${q(tmp)} } ${SINCE} ([ordered]@{ status = 'FIRST_INSTALL_STOPPED'; stopCode = 'x' }) { param($s, $m) @() }
     [ordered]@{ asked = @($script:asked); xpath = (Get-EntryTaskEngineEventsXPath ${SINCE}) }`);
   assert.equal(got.xpath, "*[System[(EventID=104 or EventID=311 or EventID=314 or EventID=317) and TimeCreated[@SystemTime>='2026-11-24T08:51:23.000Z']]]");
@@ -158,12 +159,16 @@ test('G2: the guest reader puts the parts together, with the entry\'s start, the
     function Read-EntryGuestMemory { 'M' }
     function Read-EntryGuestProcesses([int]$Max) { [void]$script:calls.Add("processes $Max"); 'P' }
     function Read-EntryWslService { 'W' }
+    $script:EntryProbeRunner = { [void]$script:calls.Add('probes'); 'R' }
+    function Read-EntryEvidence([DateTimeOffset]$Window) { [void]$script:calls.Add('evidence'); 'V' }
     $script:EntryTaskLog = [ordered]@{ state = 'enabled'; enabledBefore = $false; error = $null }
     $g = & $script:EntryFailureGuestReader ${SINCE} 50
     [ordered]@{ keys = @($g.Keys); guest = $g; calls = @($script:calls) }`);
-  assert.deepEqual(got.keys, ['taskSchedulerLog', 'taskEvents', 'engineEvents', 'logons', 'memory', 'processes', 'wslService']);
-  assert.deepEqual(got.guest, { taskSchedulerLog: { state: 'enabled', enabledBefore: false, error: null }, taskEvents: 'T', engineEvents: 'E', logons: 'L', memory: 'M', processes: 'P', wslService: 'W' });
-  assert.deepEqual(got.calls, ['tasks 2026-11-24T08:51:23.0000000+00:00 50', 'engine 2026-11-24T08:51:23.0000000+00:00 50', 'logons 2026-11-24T08:51:23.0000000+00:00 50', 'processes 50']);
+  // drill r12: the probes (run first) and the second layer (read last) after them
+  assert.deepEqual(got.keys, ['taskSchedulerLog', 'taskEvents', 'engineEvents', 'logons', 'memory', 'processes', 'wslService', 'probes', 'evidence']);
+  assert.deepEqual(got.guest, { taskSchedulerLog: { state: 'enabled', enabledBefore: false, error: null }, taskEvents: 'T', engineEvents: 'E', logons: 'L', memory: 'M', processes: 'P', wslService: 'W',
+    probes: 'R', evidence: 'V' });
+  assert.deepEqual(got.calls, ['probes', 'tasks 2026-11-24T08:51:23.0000000+00:00 50', 'engine 2026-11-24T08:51:23.0000000+00:00 50', 'logons 2026-11-24T08:51:23.0000000+00:00 50', 'processes 50', 'evidence']);
 });
 
 test('G3: the guest\'s account is in the snapshot and counted within its 1 MiB before any file; a reader that throws leaves the files read', opts, () => {

@@ -717,3 +717,30 @@ test('HALT rows end after the reset: rewritten non-error on every still-open hea
     assert.equal(written().length, 3, `${after}: once`);
   }
 });
+
+// G-5, Task 2fb32dc7 (PLAN-train-full-and-gate-poll-20261125 §2.3): the two texts of a head the poller does not propose are written
+// and read back by this one module; the PR gate (scripts/ci/clued-work-admission.mjs) reads them through heldHintOf. A sentence changed
+// without its reader fails here.
+test('G-5 the held texts describe writes read back as their hint, with the lines added around them; nothing else does', async () => {
+  const m = await import('../src/pr-status.mjs');
+  assert.equal(typeof m.heldHintText, 'function', 'pr-status.mjs exports heldHintText');
+  assert.equal(typeof m.heldHintOf, 'function', 'pr-status.mjs exports heldHintOf');
+  const { CAPACITY_ALERT_TEXT } = await import('../src/host-capacity.mjs');
+  const now = Date.parse('2026-11-25T04:00:00Z');
+  for (const [hint, behindBy] of [['merge-main', 1], ['merge-main', 110], ['merge-main', 123456], ['push-any-commit', 0]]) {
+    const pull = { pr: 1317, headSha: 'd'.repeat(40), eligible: false, hint, behindBy };
+    const written = describe({ pull, status: null, now });
+    assert.equal(written.description, m.heldHintText(hint, behindBy), `${hint}: describe writes the generator's sentence`);
+    assert.equal(m.heldHintOf(written.description), hint);
+    for (const around of [m.withRerunLine(written, true), m.withRerunLine(written, '补跑道：已为此提交重新派发一次'), m.withWatchdogLine(written, true),
+      m.withCapacityLine(written, CAPACITY_ALERT_TEXT), m.withWatchdogLine(m.withCapacityLine(written, CAPACITY_ALERT_TEXT), true)])
+      assert.equal(m.heldHintOf(around.description), hint, around.description);
+  }
+  // The field text (#1317 head d4dc68f3e, resident-queue/turing, 11-24 19:39:08Z).
+  assert.equal(m.heldHintOf('落后 main 110 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）'), 'merge-main');
+  const merge = m.heldHintText('merge-main', 3);
+  for (const other of [null, undefined, 42, '', '当班：运行中：第 1 段（准入）', 'DRAFT', `x${merge}`, `${merge}x`, merge.slice(0, -1), `${merge.slice(0, 30)}…`,
+    merge.replace('3', 'three'), '落后 main  个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）', `${merge}\n::set-output name=admitted::true`])
+    assert.equal(m.heldHintOf(other), null, String(other));
+  assert.equal(m.heldHintText('compare-unavailable', 0), null);
+});

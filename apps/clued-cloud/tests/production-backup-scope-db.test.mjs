@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, startCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { BACKUP_INVENTORY_SQL, createVerifiedBackup, SnapshotSession, validateInventory,
   verifyArchiveScope } from '../scripts/verify-production-backup-scope.mjs';
 
@@ -39,10 +38,6 @@ const execute = (command, args) => {
   assert.equal(child.status, 0, 'Synthetic PostgreSQL command failed: ' + (child.stderr || child.error?.message));
   return child.stdout;
 };
-async function freePort() {
-  const server = net.createServer(); await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
-  const port = server.address().port; await new Promise(resolve => server.close(resolve)); return port;
-}
 
 // No mocked pg_dump and no skipped missing-runtime PASS. Supply a matching
 // PG_DUMP/PG_RESTORE for embedded PostgreSQL, or an existing Docker image for a
@@ -75,13 +70,13 @@ async function databaseFixture(dir) {
         close: async () => { execute('docker',['rm','-f',container]); } };
     } catch (error) { execute('docker',['rm','-f',container]); throw error; }
   }
-  const password = crypto.randomBytes(24).toString('hex'), port = await freePort();
-  const server = new EmbeddedPostgres({ databaseDir:path.join(dir,'db'), user:'postgres',password,port,
+  const password = crypto.randomBytes(24).toString('hex');
+  const server = newCluster({ databaseDir:path.join(dir,'db'), user:'postgres',password,
     persistent:true,createPostgresUser:false,
     initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],onLog(){},onError(){} });
   let started = false;
   try {
-    await server.initialise(); await server.start(); started=true;
+    await startCluster(server); started=true;
     const connection = () => server.getPgClient('postgres','127.0.0.1');
     const sql = async statement => { const client=connection(); await client.connect();
       try { const r=await client.query(statement); return String(r.rows?.[0]?.[Object.keys(r.rows[0])[0]] ?? ''); }
@@ -91,7 +86,7 @@ async function databaseFixture(dir) {
         return first ? String(first[Object.keys(first)[0]]) : ''; }, close: () => client.end() }; },
       dumpPath: name => path.join(dir,name),
       runPg: async (tool,args) => execute(process.env[tool === 'pg_dump' ? 'PG_DUMP' : 'PG_RESTORE'] ?? tool,
-        tool === 'pg_dump' ? ['--dbname',`postgresql://postgres:${password}@127.0.0.1:${port}/postgres`,...args] : args),
+        tool === 'pg_dump' ? ['--dbname',`postgresql://postgres:${password}@127.0.0.1:${server.options.port}/postgres`,...args] : args),
       close: () => stopCluster(server) };
   } catch (error) { if (started) await stopCluster(server); throw error; }
 }

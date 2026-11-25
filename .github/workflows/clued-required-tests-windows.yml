@@ -122,46 +122,44 @@ jobs:
           TEMP: ${{ runner.temp }}
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
           WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
-          STAGING_SHA: ${{ github.sha }}
-          PUSH_REF: ${{ github.ref }}
-          EVENT_NAME: ${{ github.event_name }}
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:EVENT_NAME -ne 'push') { exit 0 }
-          if ($env:PUSH_REF -eq 'refs/heads/clued-train/staging') {
-            # Checkout fetched full history; no candidate code has run. T is the
-            # root of S's member chain (ADR 0019), a commit on main (S^1 for one
-            # member), walked by the runner hook's own code read from main.
-            $base = node --input-type=module -e "
-              const { execFileSync } = await import('node:child_process');
-              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);
-              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));
-              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));"
-            if ($LASTEXITCODE -ne 0 -or $base -notmatch '^[0-9a-f]{40}$') { exit 1 }
-            [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "sha=$base`n")
-          } else {
-            $base = git rev-parse "$($env:STAGING_SHA)^1"
-            if ($LASTEXITCODE -ne 0 -or $base -notmatch '^[0-9a-f]{40}$') { exit 1 }
-          }
-          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "ci_base=$base`n")
-      - name: Check out the trusted base (selection and commands)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}
-          path: trusted
-          sparse-checkout: |
-            scripts/ci
-            config
-            .github
+          # CI_BASE_SHA and the staging trusted ref, for every event, from the one rule in scripts/ci/ci-base.mjs read from main
+          # (the candidate copy only while main has none: the change that adds it). Later steps read CI_BASE_SHA from GITHUB_ENV.
+          node --input-type=module -e "
+            const { execFileSync } = await import('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+            const onMain = git('ls-tree', '--name-only', 'origin/main', 'scripts/ci/ci-base.mjs').trim() !== '';
+            if (!onMain) console.log('::warning title=CI base::main has no scripts/ci/ci-base.mjs yet; the candidate copy resolves the base');
+            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');
+            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+            process.exitCode = await writeCiBase();"
+          exit $LASTEXITCODE
+      - name: Export the trusted base (selection and commands)
+        shell: bash
+        env:
+          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}
+          GIT_NO_LAZY_FETCH: "1"
+          GIT_NO_REPLACE_OBJECTS: "1"
+        run: |
+          set -euo pipefail
+          cd -P -- "$GITHUB_WORKSPACE"
+          ref="$TRUSTED_REF"
+          [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]] || ref="refs/remotes/origin/$ref"
+          if ! base="$(git -C candidate rev-parse --verify --quiet --end-of-options "${ref}^{commit}")"; then
+            echo "::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)"
+            exit 1
+          fi
+          rm -rf -- trusted
+          mkdir -- trusted
+          git -C candidate archive "$base" -- scripts/ci config .github | tar -xf - -C trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
       - name: Select and run the suites declared for Windows
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
           PYTHONDONTWRITEBYTECODE: "1"
           # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
           CLUED_UNDER_TEST: "1"

@@ -102,7 +102,13 @@ export const PROBE_RESULTS = Object.freeze(['held', 'not-held', 'uncertain']);
 const iso = ms => new Date(ms).toISOString();
 const isoOrNull = v => (Number.isSafeInteger(v) && v > 0) ? iso(v) : (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? iso(Date.parse(v)) : null);
 const codeOrNull = v => typeof v === 'string' && CODE.test(v) ? v : null;
+// A parked row's ended stage-8 tries (queue.mjs#park; task bd07449b r2), null when none is named.
+const parkTryOf = v => (Number.isSafeInteger(v) && v >= 0 ? v : null);
 const key12 = key => (typeof key === 'string' && HEX64.test(key)) ? key.slice(0, 12) : null;
+const pendingReasonCodes = (values, code) => {
+  const reasonCodes = reasonCodeList(values, code);
+  return reasonCodes.length ? { reasonCodes } : {};
+};
 
 export class StatusBoard {
   constructor({ clock = Date.now, pid = process.pid } = {}) {
@@ -182,18 +188,26 @@ export class StatusBoard {
       leaseFrom: isoOrNull(current.leaseFrom ?? null) };
     this.timing.setCurrent({ pr: c.pr, headSha: c.headSha, attempt: c.attempt, stage: c.stage, phase: c.phase, since: c.since });
     this.touchTiming();
-    return this.update({ current: c });
+    // A released stage-1 refusal can retry with the same attempt. Its reason stops applying when the retry starts.
+    const recent = this.content.recent.filter(r => !(r.pr === c.pr && r.headSha === c.headSha && r.attempt === c.attempt
+      && r.code === 'NATIVE_NOT_ADMITTED' && Array.isArray(r.reasonCodes)));
+    return this.update({ current: c, recent });
   }
 
   // The newest outcome per (PR, head, attempt), newest first, bounded.
-  outcome({ pr, headSha, attempt = 1, outcome, code = null, klass = null, retry = null, key = null, pushedAt = null }) {
+  outcome({ pr, headSha, attempt = 1, outcome, code = null, klass = null, retry = null, key = null, pushedAt = null, reasonCodes = null }) {
     if (!Number.isSafeInteger(pr) || !HEX40.test(headSha ?? '') || !RECENT_OUTCOMES.includes(outcome)) return false;
     if (this.timing.finish({ pr, headSha, attempt, outcome, code, pushedAt })) this.touchTiming();
     const entry = { pr, headSha, attempt, outcome, code: typeof code === 'string' && CODE.test(code) ? code : null,
       class: typeof klass === 'string' && /^[a-z0-9-]{1,40}$/.test(klass) ? klass : null, retry: typeof retry === 'string' && /^[a-z0-9-]{1,40}$/.test(retry) ? retry : null,
       key: key12(key), at: iso(this.clock()) };
+    if (Array.isArray(reasonCodes)) entry.reasonCodes = reasonCodeList(reasonCodes, entry.code);
     const rest = this.content.recent.filter(r => !(r.pr === pr && r.headSha === headSha && r.attempt === attempt));
-    return this.update({ recent: [entry, ...rest].slice(0, RECENT_MAX) });
+    const current = this.content.current;
+    const refusedCurrent = entry.code === 'NATIVE_NOT_ADMITTED' && Array.isArray(reasonCodes) && current?.stage === 1
+      && current.pr === pr && current.headSha === headSha && current.attempt === attempt;
+    if (refusedCurrent) { this.timing.setCurrent(null); this.touchTiming(); }
+    return this.update({ recent: [entry, ...rest].slice(0, RECENT_MAX), ...(refusedCurrent ? { current: null } : {}) });
   }
 
   // The run queue's rows (queue.mjs#view). position: the place among the rows that may run now (null for a row that waits,
@@ -205,10 +219,11 @@ export class StatusBoard {
       level: Number.isSafeInteger(p.level) ? p.level : 0, origin: typeof p.origin === 'string' && /^[a-z0-9-]{1,20}$/.test(p.origin) ? p.origin : null,
       stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null,
       queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null, claimExpiresAt: isoOrNull(p.claimExpiresAt ?? null), watched: p.watched === true, network: p.network === true,
+      parkTry: parkTryOf(p.parkTry),
       ...(HEX40.test(p.testSha ?? '') ? { testSha: p.testSha } : {}),
       heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true,
       // Task 0ca0479d: the row's last release reason codes (queue.mjs#view), for the PR page only.
-      ...(reasonCodeList(p.reasonCodes).length > 0 ? { reasonCodes: reasonCodeList(p.reasonCodes) } : {}) })) });
+      ...pendingReasonCodes(p.reasonCodes, p.reason ?? p.deferred) })) });
   }
 
   snapshot() {
@@ -285,12 +300,12 @@ export function parseStatus(bytes) {
         ...(head(p.baseSha) ? { baseSha: p.baseSha } : {}), ...(head(p.testSha) ? { testSha: p.testSha } : {}),
         deferred: codeOrNull(p.deferred), since: ms(p.since), nextAt: ms(p.nextAt), eta: ms(p.eta), level: Number.isSafeInteger(p.level) ? p.level : 0,
         stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null, queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null,
-        claimExpiresAt: ms(p.claimExpiresAt), watched: p.watched === true, network: p.network === true, heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true,
-        ...(reasonCodeList(p.reasonCodes).length > 0 ? { reasonCodes: reasonCodeList(p.reasonCodes) } : {}) })) : [],
+        parkTry: parkTryOf(p.parkTry), claimExpiresAt: ms(p.claimExpiresAt), watched: p.watched === true, network: p.network === true, heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true,
+        ...pendingReasonCodes(p.reasonCodes, p.deferred) })) : [],
     recent: Array.isArray(v.recent) ? v.recent.filter(r => Number.isSafeInteger(r?.pr) && head(r.headSha) && RECENT_OUTCOMES.includes(r.outcome)).slice(0, RECENT_MAX)
       .map(r => ({ pr: r.pr, headSha: r.headSha, attempt: r.attempt, outcome: r.outcome, code: typeof r.code === 'string' && CODE.test(r.code) ? r.code : null,
         class: typeof r.class === 'string' && /^[a-z0-9-]{1,40}$/.test(r.class) ? r.class : null, retry: typeof r.retry === 'string' && /^[a-z0-9-]{1,40}$/.test(r.retry) ? r.retry : null,
-        at: Date.parse(r.at) || null })) : [],
+        at: Date.parse(r.at) || null, ...(Array.isArray(r.reasonCodes) ? { reasonCodes: reasonCodeList(r.reasonCodes, r.code) } : {}) })) : [],
     limits: v.limits && Number.isSafeInteger(v.limits.batches24h) ? { batches24h: v.limits.batches24h, maxBatches: v.limits.maxBatches, evaluations24h: v.limits.evaluations24h, maxEvaluations: v.limits.maxEvaluations } : null,
     queue: v.queue && /^[0-9a-f]{12}$/.test(v.queue.generation ?? '') ? { generation: v.queue.generation, live: Number.isSafeInteger(v.queue.live) ? v.queue.live : null, depth: Number.isSafeInteger(v.queue.depth) ? v.queue.depth : null, parkingFull: v.queue.parkingFull === true,
       hold: codeOrNull(v.queue.hold ?? null) } : null,

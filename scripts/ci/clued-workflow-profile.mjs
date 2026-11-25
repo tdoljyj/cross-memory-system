@@ -195,18 +195,18 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'a39bec437446a92a670fb3ef09f1a31f7f785e7b',
-  source_sha256:'fe0420afaa111c5b606d1580e0ad92e23af74b58155adfaa65340f1ed9ffb6db',
-  workflow_definition_sha256:'68d4abd6272f28ebd618282e7c7522aae51b5473cade40219307a56f690d1fc8',
-  profile_sha256:'6d8ce050d0a86699d303c74904b0f9ee8c1498e033db90dc2d95d934ab33c764',
+  workflow_blob:'44b2a88bd74b987f81fa55066046166c4fe87ec2',
+  source_sha256:'d5e8005f966fec200ed8affd3daf8b2821618243fd1d3094dd618120049dda11',
+  workflow_definition_sha256:'6bf1254b389ab9e89a23ce1fd754be5ba6946b54d423824902473e91fc882019',
+  profile_sha256:'ad3adfe0f0fe88805c425e7c0c04abd3a6d1079c106c086645118f7c615b3919',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
   role_sha256:Object.freeze({
-    'clued-cloud-tests':'d05c0813bdcc408b1109e5c1bc6c4287089448fe5f4ed97a58557bcfe954fa42',
-    'ci-suites':'480820a7b22a8bbbccf35e7ac3aff0dc963ecc0553e011ac7035d1416d39af56',
-    'migration-verify':'88e509c64bed8cc7461d507833e9f95d8c765720e25d015049d8b705fcf3e197',
-    'gitleaks':'d8334648ceceb2e91aa6dd39959d04aef792293d5f3efaf0960f162042f6dbeb',
-    'trivy':'a7b25bdeb9180e25c0067ff815803f386d5c11bd0e58fc5cc1392577af13f77c',
-    'contract-placement':'8e260c7eafaef15ec60f9fa020d656f9e6c519a055dcdc842c8bcd083c4b7993',
+    'clued-cloud-tests':'c34d55c18fa85fea715c4f972de0e106ef355e1d1487b42c636918eda39888ee',
+    'ci-suites':'714cfad8a014072f83d8f5ec67f1ee66a725eb746cb331339987873bc00a6234',
+    'migration-verify':'ff03a97c7add0aaebc140ff7662dc61bc10f8af6f51296c74fbc520c440c4069',
+    'gitleaks':'db2d6957cc30f4b06035197d261bd266f35134895f090e74e58cb8eb64da1b32',
+    'trivy':'84163225be96a1aaecb8341bba0043298ff08b9a503b4910415cdb35a6dee298',
+    'contract-placement':'08be4e9f9d7c58c0ddca5bdb2621f31afde460a2c14c6ce3714ccc2a26fd6ce8',
   }),
 });
 // Earlier exact bytes of the same compound Source, oldest first. Catalogues kept as
@@ -341,6 +341,57 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
       'gitleaks':'8ba529df09135a0468457158d678890cdae2b019c3116ca596703e486248ef1f',
       'trivy':'db53df5ff61fc99513d23af891d7dc035052736f100eda22526289247c5ded2c',
       'contract-placement':'8e260c7eafaef15ec60f9fa020d656f9e6c519a055dcdc842c8bcd083c4b7993',
+    }),
+  }),
+  // Before every train-base step resolved CI_BASE_SHA through scripts/ci/ci-base.mjs (task 6cd46765; main b404f735).
+  Object.freeze({
+    file:'.github/workflows/clued-required-tests.yml',
+    workflow_blob:'a39bec437446a92a670fb3ef09f1a31f7f785e7b',
+    source_sha256:'fe0420afaa111c5b606d1580e0ad92e23af74b58155adfaa65340f1ed9ffb6db',
+    workflow_definition_sha256:'68d4abd6272f28ebd618282e7c7522aae51b5473cade40219307a56f690d1fc8',
+    profile_sha256:'6d8ce050d0a86699d303c74904b0f9ee8c1498e033db90dc2d95d934ab33c764',
+    primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
+    role_sha256:Object.freeze({
+      'clued-cloud-tests':'d05c0813bdcc408b1109e5c1bc6c4287089448fe5f4ed97a58557bcfe954fa42',
+      'ci-suites':'480820a7b22a8bbbccf35e7ac3aff0dc963ecc0553e011ac7035d1416d39af56',
+      'migration-verify':'88e509c64bed8cc7461d507833e9f95d8c765720e25d015049d8b705fcf3e197',
+      'gitleaks':'d8334648ceceb2e91aa6dd39959d04aef792293d5f3efaf0960f162042f6dbeb',
+      'trivy':'a7b25bdeb9180e25c0067ff815803f386d5c11bd0e58fc5cc1392577af13f77c',
+      'contract-placement':'8e260c7eafaef15ec60f9fa020d656f9e6c519a055dcdc842c8bcd083c4b7993',
+    }),
+  }),
+  // Before resident redispatch run names (Task 04f9b91b, main df2274d95).
+  Object.freeze({
+    file:'.github/workflows/clued-required-tests.yml',
+    workflow_blob:'9066264ff4b0f07274ee67f07e16ca86a6db60f6',
+    source_sha256:'5b70008aee3ea9715dd364b0dfdf775681111e49f599d8830626aef844054b0c',
+    workflow_definition_sha256:'9bb187e5d8dc70b648b8afeb27f4f6a2cc3a623704c1d449a5f8e5fda07c0da4',
+    profile_sha256:'f7c35633a023bdec827e64ac575502cb2140c2c5f96c024a21d54f10de5304ad',
+    primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
+    role_sha256:Object.freeze({
+      'clued-cloud-tests':'44925327ac3a3771b7c41bb548a265bf1020e3fcaecfb47fa7056241a4332c6d',
+      'ci-suites':'4cc5da241cb6a501790ed2a865367831c741ed3f6195454449c8c7a14a2438d0',
+      'migration-verify':'817a962d0bda284cc42c124926182558e2f34fa14be094fa33329e6bf0502e4f',
+      'gitleaks':'8d16964d9257e512a88bf4baa617c87f5c184e2ea039b81351cc002814a28270',
+      'trivy':'3928538bd2214e658804adde40c33c5697db7d67776c51b13b099ee99fef052a',
+      'contract-placement':'9c0dd24d80b5d317259689fc709fc61a52ab73a11e1a321f9a1f9c4421e6022d',
+    }),
+  }),
+  // Before local trusted exports and Trivy generations (Task 04f9b91b; #1346).
+  Object.freeze({
+    file:'.github/workflows/clued-required-tests.yml',
+    workflow_blob:'d044a9124ae24721d510ad6bf1100d608501efbe',
+    source_sha256:'4fb7a84e68461e57e2d10651bcbe8c9dc70721e985de4182f7e55f281b466251',
+    workflow_definition_sha256:'b168205d5a87daad0ba9944b2cab93410d59980c190be981463ff5f868e998e8',
+    profile_sha256:'65319f2ddec89830beb5ec1e4e6aba69e73bad8a31975d12fb021cf07fabad36',
+    primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
+    role_sha256:Object.freeze({
+      'clued-cloud-tests':'44925327ac3a3771b7c41bb548a265bf1020e3fcaecfb47fa7056241a4332c6d',
+      'ci-suites':'4cc5da241cb6a501790ed2a865367831c741ed3f6195454449c8c7a14a2438d0',
+      'migration-verify':'817a962d0bda284cc42c124926182558e2f34fa14be094fa33329e6bf0502e4f',
+      'gitleaks':'8d16964d9257e512a88bf4baa617c87f5c184e2ea039b81351cc002814a28270',
+      'trivy':'3928538bd2214e658804adde40c33c5697db7d67776c51b13b099ee99fef052a',
+      'contract-placement':'9c0dd24d80b5d317259689fc709fc61a52ab73a11e1a321f9a1f9c4421e6022d',
     }),
   }),
 ]);
@@ -502,6 +553,9 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
       roleDefinitionDigest(role.definition)!==role.definition_sha256||!same(role.definition,value.jobs?.[role.job_id]))))
     reject('exact compound Source and complete independent roles required');
   if(!value?.jobs || !value.on || !Object.hasOwn(value.on,'pull_request'))reject('PR jobs missing');
+  const unsupportedKeys=Object.keys(value).filter(key=>!['name','on','permissions','concurrency','jobs'].includes(key)&&
+    !(compound&&key==='run-name'));
+  if(unsupportedKeys.length)reject('unsupported top-level key: '+unsupportedKeys.join(','));
   const trigger=value.on.pull_request??null;
   if(trigger!==null && (typeof trigger!=='object' || Array.isArray(trigger) ||
     Object.keys(trigger).some(key=>key!=='paths') || !Array.isArray(trigger.paths) || !trigger.paths.length))

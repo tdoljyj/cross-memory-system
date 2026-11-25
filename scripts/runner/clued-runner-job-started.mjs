@@ -83,14 +83,8 @@
 //                                  a read-only GitHub token (actions, contents
 //                                  and pull requests: read); used only when no App is set
 //   CLUED_RUNNER_HOOK_ENFORCE      "true" refuses; anything else only reports
-//   CLUED_RUNNER_HOOK_WAIT_SECONDS how long to wait for the Native admission, and
-//                                  separately for a re-run's admission-gate
-//                                  job (780 each: the longest wait the registered
-//                                  gate job holds, INDEPENDENT_GATE_WAIT_CEILING_SECONDS
-//                                  of clued-work-admission.mjs). A heavy job of a re-run of a
-//                                  pull request that changes a workflow can
-//                                  wait for both: up to twice this, plus at
-//                                  most READ_ALLOWANCE_MS of reads.
+//   CLUED_RUNNER_HOOK_WAIT_SECONDS how long a re-run's heavy job can wait for its
+//                                  admission-gate job (780 seconds by default).
 // It needs Node 18 or newer (the runner bundles one under externals/).
 //
 // Transient reads (work-handover-native-admission-retry-v1, component 1.0.2;
@@ -102,15 +96,13 @@
 // are tried again: every GET, and the two POSTs their callers mark as reads
 // (the installation-token mint: a new token is harmless; the read-only
 // execution_current observation). Any other answer (401, 403, 404, 429, a
-// malformed body) is final at once, as before. While the hook waits for the
-// Native kooyumi-work-admission check or a re-run's
-// admission-gate job, a poll that still fails transiently is "not settled
-// yet", never a refusal, until the wait ends; then the last failure refuses.
-// Every wait ends by the clock (CLUED_RUNNER_HOOK_WAIT_SECONDS, 780 by default), however long
-// its reads take, and all reads of one hook run end within twice that plus
-// READ_ALLOWANCE_MS. The Native check is judged at the time its pages were
-// read, never at a time taken before the retries. Fail closed is unchanged:
-// nothing is admitted on a failure.
+// malformed body) is final at once. The hook reads Native admission once,
+// including pagination and per-request retries, then refuses if the check is
+// missing or incomplete. The resident lane can re-run the workflow when
+// admission succeeds. The check is judged at the time its pages were read.
+// While a re-run's heavy job waits for its admission-gate, a transient failure
+// counts as pending until the wait ends. All reads share the hook deadline
+// (twice the configured wait plus READ_ALLOWANCE_MS).
 //
 // The pinned gate and resident lane carry the same failure classifier.
 export const SETUP_STEPS = ["Set up job", "Set up runner"];
@@ -331,8 +323,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "native-only-admission-v1";
-export const COMPONENT_VERSION = "1.0.8";
+export const HOOK_VERSION = "native-admission-no-wait-v1";
+export const COMPONENT_VERSION = "1.0.9";
 
 // Transient reads (see the header).
 export const READ_ATTEMPTS = 3;
@@ -348,8 +340,7 @@ const markTransient = (failure) => {
   error.transient = true;
   return error;
 };
-// CLUED_RUNNER_HOOK_WAIT_SECONDS (780 when unset or not a whole number of seconds; FABLE-scaffold-shadow-fix-20261122 §2 C:
-// a Native admission measured up to 9.5 minutes, so 480 refused heads whose admission was on its way, #1236).
+// The re-run gate wait defaults to 780 seconds.
 export function waitLimitSeconds(env) {
   const seconds = Number.parseInt(env.CLUED_RUNNER_HOOK_WAIT_SECONDS ?? "", 10);
   return Number.isInteger(seconds) && seconds >= 0 ? seconds : 780;
@@ -877,8 +868,8 @@ async function rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, 
   const attemptStarted = Date.parse(run && run.run_started_at);
   if (!Number.isFinite(attemptStarted)) return refuse("the run has no run_started_at; re-run refused");
   // A heavy job needs the gate, so a gate job of this attempt still shown as
-  // not started or not completed is the API's lag: wait for it, like for the
-  // Native admission below, and refuse at the end of the wait.
+  // not started or not completed is the API's lag: wait for it and refuse at
+  // the end of the wait.
   let seen;
   try {
     seen = await waitForAttemptGate({ fetchImpl, token, repository, runId, attempt, attemptStarted, limit, sleep, now });
@@ -1069,22 +1060,20 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
     // independent CI's App 5368905. The legacy clued-work-admission.yml's state is not read and its
     // pull_request_target run never stands in, whether or not that workflow is enabled again.
     const nativeToken = await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true });
-    let native;
-    const waitUntil = now() + limit * 1000;
-    for (let waited = 0; ; waited += 10) {
-      try {
-        native = await nativeAdmissionCheck(fetchImpl, nativeToken, repository, pr.head.sha, pr.number, since, now);
-      } catch (error) {
-        // Not settled yet while the wait lasts; the last transient failure refuses at its end (fail closed).
-        if (!transient(error) || waited >= limit || now() >= waitUntil) throw error;
-        native = { settled: false, check: null, admitted: false };
-      }
-      if (native.settled || waited >= limit || now() >= waitUntil) break;
-      await sleep(10_000);
-    }
-    const current = await github(fetchImpl, token, `/repos/${repository}/pulls/${pr.number}`);
-    const live = current?.state === "open" && current.base?.ref === defaultBranch
+    const native = await nativeAdmissionCheck(fetchImpl, nativeToken, repository, pr.head.sha, pr.number, since, now);
+    const current = native.admitted ? await github(fetchImpl, token, `/repos/${repository}/pulls/${pr.number}`) : null;
+    const same = current?.base?.ref === defaultBranch
       && current.base?.repo?.full_name?.toLowerCase() === repository.toLowerCase() && current.head?.sha === pr.head.sha;
+    let live = same && current.state === "open";
+    // 戊 (FABLE-main-push-same-tree-parallel-20261123 §7): when this admission is the last required check, GitHub
+    // can merge before the hook re-reads the PR. The same PR merged with this very head is still
+    // this PR once main contains the head: read again then, its job changes no workflow and starts on the
+    // "changes no workflow" path above with no admission at all, so this admits nothing that path does not.
+    let merged = false;
+    if (!live && same && native.admitted && current.state === "closed" && current.merged === true) {
+      merged = (await changedWorkflows(fetchImpl, token, repository, defaultBranch, pr.head.sha)).length === 0;
+      live = merged;
+    }
     let repair = { ok: true, why: "" };
     if (native.admitted && live && runnerAttempt > 1) {
       if (workflow !== ".github/workflows/clued-required-tests.yml") {
@@ -1100,7 +1089,7 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
     }
     result.allow = Boolean(native.admitted && live && repair.ok);
     result.reason = `pull request #${pr.number} changes ${[...new Set(changed)].join(", ")}; Native admission ${native.check?.id ?? "absent"}: `
-      + `${result.allow ? "succeeded" : `not admitted (binding, current head, conclusion, freshness or rerun${repair.why ? `: ${repair.why}` : ""})`}${rerun}`;
+      + `${result.allow ? `succeeded${merged ? "; merged with this head meanwhile" : ""}` : `not admitted (binding, current head, conclusion, freshness or rerun${repair.why ? `: ${repair.why}` : ""})`}${rerun}`;
     return result;
   }
   throw new Error(`unreachable event ${event}`);

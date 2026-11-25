@@ -697,6 +697,7 @@ test('a front batch longer than sweepFreshMs: the next stage 10 refreshes the pr
   const frontJob = { repo: REPO, pr: 910, headSha: H, baseSha: T, testSha: S };
   const stage8 = async () => trainHeadDecision({ job: frontJob, claimId: CLAIM, holders: { onDuty: true, holders: [e.native.holder] }, proof: await e.store.latestProof(),
     storeRefused: e.store.refused, front: (await e.store.frontBatches({ pr: 910, headSha: H }))[0], ledger: await e.ledger.list(), pulls: { complete: true, pulls: [] }, now: e.now });
+  e.now += 1000; // stage 8 runs after stage 10's records (the store stamps them strictly increasing, board 269)
   assert.equal(await stage8(), null, 'fresh at first');
   e.now += 20 * 60_000;
   assert.equal(await stage8(), TRAIN_SINGLE_GREEN_NOT_PROVEN, 'older than sweepFreshMs: parked in B');
@@ -706,6 +707,7 @@ test('a front batch longer than sweepFreshMs: the next stage 10 refreshes the pr
     ['TRAIN_FRONT_BATCH_RUNNING', null, false, false]);
   validateTrainFacts(again.facts);
   assert.equal((await e.store.frontBatches({ pr: 910, headSha: H })).length, 1, 'no attempt 2');
+  e.now += 1000;
   assert.equal(await stage8(), null, 'the refreshed proof covers the running batch');
   // a new S (main moved), a finished attempt (frontOutcome) or a clock no longer running: not the running batch
   e.native.holder = { ...e.native.holder, ciState: null };
@@ -773,13 +775,14 @@ test('stage 10: the scaffold ruleset alone pins no scan to this App -> facts.app
   const part = scaffoldRules().map(r => r.type !== 'required_status_checks' ? r
     : { ...r, parameters: { ...r.parameters, required_status_checks: [...r.parameters.required_status_checks, { context: 'trivy', integration_id: 5368905 }, { context: 'gitleaks', integration_id: ACTIONS }] } });
   assert.deepEqual((await run({ complete: true, branch: 'main', rules: part })).appScans, ['trivy']);
-  // not read: no appScans at all (every scan runs, the safe side)
+  // not read (task bd07449b: RULESET_READ_FAILED), or read and a scan required from no App: no appScans at all (every scan runs, the safe side)
   const noScan = scaffoldRules().map(r => r.type !== 'required_status_checks' ? r
     : { ...r, parameters: { ...r.parameters, required_status_checks: [...r.parameters.required_status_checks, { context: 'gitleaks' }] } });
-  for (const reply of [{ complete: false, branch: 'main', rules: scaffoldRules() }, new Error('rules read failed'), { complete: true, branch: 'main', rules: 'x' },
-    { complete: true, branch: 'main', rules: noScan }, { complete: true, branch: 'main', rules: [{ type: 'deletion' }] }]) {
+  for (const [reply, reason] of [[{ complete: false, branch: 'main', rules: scaffoldRules() }, 'RULESET_READ_FAILED'], [new Error('rules read failed'), 'RULESET_READ_FAILED'],
+    [{ complete: true, branch: 'main', rules: 'x' }, 'RULESET_READ_FAILED'],
+    [{ complete: true, branch: 'main', rules: noScan }, 'RULESET_UNREADABLE'], [{ complete: true, branch: 'main', rules: [{ type: 'deletion' }] }, 'RULESET_UNREADABLE']]) {
     const f = await run(reply);
-    assert.deepEqual([f.rules, f.rulesReason, Object.hasOwn(f, 'appScans')], [null, 'RULESET_UNREADABLE', false], JSON.stringify(reply));
+    assert.deepEqual([f.rules, f.rulesReason, Object.hasOwn(f, 'appScans')], [null, reason, false], JSON.stringify(reply));
   }
 });
 

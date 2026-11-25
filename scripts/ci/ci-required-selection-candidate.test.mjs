@@ -13,6 +13,7 @@ import * as selection from './ci-required-selection.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SOURCE = readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8');
+const { SELECTOR_IMPORTS } = selection;
 const childEnv = () => { const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; for (const name of ['GITHUB_EVENT_PATH', 'GITHUB_EVENT_NAME', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY']) delete env[name]; return env; };
 const groupLines = (out) => out.split(/\r?\n/).filter((line) => line.startsWith('::group::'));
 
@@ -24,7 +25,11 @@ function checkout(t, tail = '', files = {}, at = null) {
   else t.after(() => rmSync(root, { recursive: true, force: true }));
   const dir = path.join(root, 'scripts/ci');
   mkdirSync(dir, { recursive: true });
-  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'test-env.mjs'));
+  mkdirSync(path.join(root, 'config'), { recursive: true });
+  copyFileSync(path.join(ROOT, 'config/ci-toolchain.json'), path.join(root, 'config/ci-toolchain.json'));
+  for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
+  copyFileSync(path.join(ROOT, 'scripts/ci/ci-test-failures-reporter.mjs'), path.join(dir, 'ci-test-failures-reporter.mjs'));
+  writeFileSync(path.join(dir, 'ci-known-failures.json'), '{}\n');
   writeFileSync(path.join(dir, 'ci-required-selection.mjs'), `${SOURCE}\n${tail}\n`);
   for (const [name, text] of Object.entries(files)) {
     mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
@@ -35,9 +40,10 @@ function checkout(t, tail = '', files = {}, at = null) {
 const passing = (label) => `import test from 'node:test';\ntest('${label}', () => { console.log('${label} executed'); });\n`;
 const failing = (label) => `import test from 'node:test';\ntest('${label}', () => { console.log('${label} executed'); throw new Error('${label} red'); });\n`;
 
-// The trusted selector on the candidate checkout, in Actions (no local slot).
+// The trusted selector on the candidate checkout, in Actions (no local slot), with the base commit a CI job always has
+// (ciBaseRefusal): a fixed one, not the outer environment's, so CI and a local run take the same path.
 const cli = (selector, args, env = {}, cwd = undefined) => spawnSync(process.execPath, [selector, ...args],
-  { cwd, env: { ...childEnv(), GITHUB_ACTIONS: 'true', ...env }, encoding: 'utf8' });
+  { cwd, env: { ...childEnv(), GITHUB_ACTIONS: 'true', CI_BASE_SHA: 'f'.repeat(40), ...env }, encoding: 'utf8' });
 const NEW_SUITE = (platforms) => `SUITES['ci-suites']['brand-new'] = ['scripts/ci/brand-new/**'];
 SUITE_COMMANDS['brand-new'] = [{ cwd: '.', known: 'retrigger-counter', argv: ['node', '--test', '{tests:scripts/ci/brand-new}'] }];
 ${platforms ? `SUITE_PLATFORMS['brand-new'] = { platforms: ${JSON.stringify(platforms)}, reason: 'test' };` : ''}`;
@@ -136,6 +142,105 @@ test('reading the candidate suite table may not start a process; expanding its c
 });
 const SUITE_COMMANDS_OF = (id) => selection.SUITE_COMMANDS[id];
 
+function copyEntry(t, source = SOURCE, files = {}) {
+  const tree = checkout(t, '', files);
+  writeFileSync(tree.selector, source);
+  return tree;
+}
+
+const RUN_COUNTER = (root) => ['--run', 'retrigger-counter', '--root', root];
+const COUNTER_TEST = 'scripts/ci/retrigger-counter.test.mjs';
+const outputOf = (run) => run.stdout + run.stderr;
+
+test('U1 候选入口的守卫拒绝清单外测试借用欠账 helper', (t) => {
+  const guard = 'env: clockGuardEnv({ root, record }),';
+  assert.ok(SOURCE.includes(guard));
+  const trusted = copyEntry(t, SOURCE.replace(guard, 'env: {},'));
+  const candidate = copyEntry(t, SOURCE, {
+    'config/test-clock-debt.txt': 'scripts/ci/fixtures/clock/helpers.mjs\nscripts/ci/fixtures/clock/listed.test.mjs\n',
+    'scripts/ci/fixtures/clock/helpers.mjs': 'export const stamp = () => Date.now();\n',
+    'scripts/ci/fixtures/clock/listed.test.mjs': "import { stamp } from './helpers.mjs';\nexport const listed = stamp;\n",
+    [COUNTER_TEST]: "import test from 'node:test';\nimport { stamp } from './fixtures/clock/helpers.mjs';\n"
+      + "test('U1 清单外测试', () => { console.log('U1 清单外测试已启动'); stamp(); });\n",
+  });
+  const run = cli(trusted.selector, RUN_COUNTER(candidate.root));
+  const out = outputOf(run);
+  assert.notEqual(run.status, 0, out);
+  assert.match(out, /候选入口自己跑这一套是红的/);
+  assert.match(out, /U1 清单外测试/);
+  assert.match(out, /REAL_CLOCK_IN_TEST: Date\.now\(\)/);
+  assert.equal(groupLines(out).length, 2, out);
+});
+
+test('U2 入口和相对导入闭包内容相同，只跑一遍', (t) => {
+  const trusted = copyEntry(t);
+  const candidate = copyEntry(t, SOURCE, { [COUNTER_TEST]: passing('U2 fixture') });
+  const run = cli(trusted.selector, RUN_COUNTER(candidate.root));
+  assert.equal(run.status, 0, outputOf(run));
+  assert.equal(groupLines(run.stdout).length, 1, outputOf(run));
+});
+
+test('U3 只改入口导入的守卫，候选再跑同一套', (t) => {
+  for (const check of Object.keys(selection.SUITES)) {
+    assert.deepEqual(selection.selectSuites(check, ['scripts/ci/test-clock-guard.mjs']).suites, Object.keys(selection.SUITES[check]));
+  }
+  const trusted = copyEntry(t);
+  const candidate = copyEntry(t, SOURCE, { [COUNTER_TEST]: passing('U3 fixture') });
+  const guard = path.join(candidate.root, 'scripts/ci/test-clock-guard.mjs');
+  writeFileSync(guard, `${readFileSync(guard, 'utf8')}\n// U3 fixture\n`);
+  const run = cli(trusted.selector, RUN_COUNTER(candidate.root));
+  assert.equal(run.status, 0, outputOf(run));
+  assert.equal(groupLines(run.stdout).length, 2, outputOf(run));
+});
+
+test('U4 候选入口收到递归标记，两遍结束', (t) => {
+  const trusted = copyEntry(t);
+  const candidate = copyEntry(t, `${SOURCE}
+if (process.argv.includes('--run')) console.log('U4 marker ' + process.env.CLUED_CI_CANDIDATE_PASS);
+`, { [COUNTER_TEST]: passing('U4 fixture') });
+  const run = cli(trusted.selector, RUN_COUNTER(candidate.root));
+  assert.equal(run.status, 0, outputOf(run));
+  assert.match(run.stdout, /^U4 marker 1$/m);
+  assert.equal(groupLines(run.stdout).length, 2, outputOf(run));
+  const marked = cli(trusted.selector, RUN_COUNTER(candidate.root), { CLUED_CI_CANDIDATE_PASS: '1' });
+  assert.equal(marked.status, 0, outputOf(marked));
+  assert.equal(groupLines(marked.stdout).length, 1, outputOf(marked));
+});
+
+test('U5 可信入口失败时不启动候选入口', (t) => {
+  const trusted = copyEntry(t);
+  const candidate = copyEntry(t, `${SOURCE}\n// U5 fixture\n`, { [COUNTER_TEST]: failing('U5 fixture') });
+  const run = cli(trusted.selector, RUN_COUNTER(candidate.root));
+  assert.equal(run.status, 1, outputOf(run));
+  assert.equal(groupLines(run.stdout).length, 1, outputOf(run));
+  assert.doesNotMatch(outputOf(run), /候选入口自己跑这一套是红的/);
+});
+
+test('选中套件的候选入口收到同一分片参数', (t) => {
+  const narrow = `${SOURCE}\nSUITES['ci-suites'] = { 'retrigger-counter': SUITES['ci-suites']['retrigger-counter'] };\n`;
+  const trusted = copyEntry(t, narrow);
+  const candidate = copyEntry(t, `${narrow}
+if (process.argv.includes('--run')) console.log('candidate argv ' + process.argv.slice(2).join(' '));
+`, { [COUNTER_TEST]: passing('sharded counter') });
+  const run = cli(trusted.selector, ['--run-selected', 'ci-suites', '--root', candidate.root, '--shard', '1/1']);
+  assert.equal(run.status, 0, outputOf(run));
+  assert.ok(run.stdout.includes(`candidate argv --run retrigger-counter --root ${candidate.root} --shard 1/1`), outputOf(run));
+  assert.equal(groupLines(run.stdout).length, 2, outputOf(run));
+});
+
+test('并行各道汇总可信结果后，只有通过的套件启动候选入口', async (t) => {
+  const candidate = copyEntry(t, `${SOURCE}\n// parallel candidate fixture\n`, { [COUNTER_TEST]: passing('lane counter') });
+  const lines = [];
+  const run = () => selection.runSelected(['retrigger-counter'], { root: candidate.root, cores: 8,
+    env: { ...childEnv(), GITHUB_ACTIONS: 'true', CI_BASE_SHA: 'f'.repeat(40) }, log: (line) => lines.push(line) });
+  assert.equal(await run(), 0, lines.join('\n'));
+  assert.equal(groupLines(lines.join('\n')).length, 2, lines.join('\n'));
+  lines.length = 0;
+  writeFileSync(path.join(candidate.root, COUNTER_TEST), failing('lane counter'));
+  assert.equal(await run(), 1, lines.join('\n'));
+  assert.equal(groupLines(lines.join('\n')).length, 1, lines.join('\n'));
+});
+
 // Review finding 7: the real shape of C2's change. The trusted command lists the application's unit tests ({unit-tests},
 // a process the candidate's own expansion starts under the permission model) with a known-failure allowance; the candidate
 // appends a placeholder that adds a CI-script test outside the command's directory (../../scripts/...).
@@ -146,10 +251,12 @@ test('a test file the candidate adds after {unit-tests} runs alone, without the 
   const trustedDir = mkdtempSync(path.join(os.tmpdir(), 'ci-trusted-unit-'));
   t.after(() => rmSync(trustedDir, { recursive: true, force: true }));
   mkdirSync(path.join(trustedDir, 'scripts/ci'), { recursive: true });
-  for (const name of ['test-env.mjs', 'ci-test-failures-reporter.mjs']) {
+  for (const name of [...SELECTOR_IMPORTS, 'ci-test-failures-reporter.mjs']) {
     copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(trustedDir, 'scripts/ci', name));
   }
   writeFileSync(path.join(trustedDir, 'scripts/ci/ci-known-failures.json'), '{}\n');
+  mkdirSync(path.join(trustedDir, 'config'));
+  copyFileSync(path.join(ROOT, 'config/ci-toolchain.json'), path.join(trustedDir, 'config/ci-toolchain.json'));
   const trusted = path.join(trustedDir, 'scripts/ci/ci-required-selection.mjs');
   writeFileSync(trusted, SOURCE.replace(entry, unit));
   const candidate = checkout(t, `const ownExpand = expandArgv;
@@ -198,7 +305,9 @@ test('a changed expansion under an unchanged command line runs the test files it
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-trusted-expand-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(path.join(dir, 'scripts/ci'), { recursive: true });
-  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'scripts/ci/test-env.mjs'));
+  mkdirSync(path.join(dir, 'config'));
+  copyFileSync(path.join(ROOT, 'config/ci-toolchain.json'), path.join(dir, 'config/ci-toolchain.json'));
+  for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, 'scripts/ci', name));
   const trusted = path.join(dir, 'scripts/ci/ci-required-selection.mjs');
   writeFileSync(trusted, SOURCE.replace(command, own));
   const tail = `const ownExpand = expandArgv;
@@ -207,7 +316,9 @@ expandArgv = (argv, options) => ownExpand(argv, options).flatMap((arg) => (arg =
   t.after(() => rmSync(candidate, { recursive: true, force: true }));
   mkdirSync(path.join(candidate, 'scripts/ci/rc'), { recursive: true });
   mkdirSync(path.join(candidate, 'scripts/ci/rc-more'), { recursive: true });
-  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(candidate, 'scripts/ci/test-env.mjs'));
+  mkdirSync(path.join(candidate, 'config'));
+  copyFileSync(path.join(ROOT, 'config/ci-toolchain.json'), path.join(candidate, 'config/ci-toolchain.json'));
+  for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(candidate, 'scripts/ci', name));
   writeFileSync(path.join(candidate, 'scripts/ci/ci-required-selection.mjs'), `${SOURCE.replace(command, own)}\n${tail}\n`);
   writeFileSync(path.join(candidate, 'scripts/ci/rc/a.test.mjs'), passing('baseline'));
   writeFileSync(path.join(candidate, 'scripts/ci/rc-more/b.test.mjs'), failing('rule addition'));
@@ -216,10 +327,8 @@ expandArgv = (argv, options) => ownExpand(argv, options).flatMap((arg) => (arg =
   assert.deepEqual(groupLines(run.stdout), ['::group::retrigger-counter: (.) node --test scripts/ci/rc/a.test.mjs',
     '::group::retrigger-counter: (.) node --test scripts/ci/rc-more/b.test.mjs']);
   assert.match(run.stdout, /rule addition executed/);
-  // The same rule on both sides: nothing more runs. (The CLI runs at the end of the file: the rule goes in before it.)
-  const marker = '\nconst real = (file) => {';
-  assert.equal(SOURCE.split(marker).length, 2);
-  writeFileSync(trusted, SOURCE.replace(command, own).replace(marker, `\n${tail}${marker}`));
+  // With the same entry bytes on both sides, nothing more runs.
+  copyFileSync(path.join(candidate, 'scripts/ci/ci-required-selection.mjs'), trusted);
   writeFileSync(path.join(candidate, 'scripts/ci/rc-more/b.test.mjs'), passing('rule addition'));
   const same = cli(trusted, ['--run', 'retrigger-counter', '--root', candidate]);
   assert.equal(same.status, 0, same.stdout + same.stderr);

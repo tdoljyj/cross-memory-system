@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { PLATFORM_SQL } from '../scripts/production-schema-drift.mjs';
-import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
@@ -23,18 +22,11 @@ const committed = result => {
   return result;
 };
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve, reject) => listener.once('error', reject).listen(0, '127.0.0.1', resolve));
-  const { port } = listener.address();
-  await new Promise(resolve => listener.close(resolve));
-  return port;
-}
 
 test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t => {
-  const server = new EmbeddedPostgres({
+  const server = newCluster({
     databaseDir: await fs.mkdtemp(path.join(os.tmpdir(), 'clued-merged-event-')),
-    user: 'postgres', password: randomUUID(), port: await freePort(), persistent: false,
+    user: 'postgres', password: randomUUID(), persistent: false,
     initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { console.error(message); },
   });
   const clients = [];
@@ -45,8 +37,7 @@ test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t 
     return client;
   };
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = await connect();
     await admin.query(PLATFORM_SQL);
     for (const name of (await fs.readdir(migrations)).filter(name => name.endsWith('.sql')).sort()) {
@@ -84,8 +75,8 @@ test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t 
       source_refs: [], source_unavailable_reason: 'fixture',
       mutation: { title: randomUUID(), content: 'fixture', type_fields: { execution_bucket: 'next' }, relations: {} },
     })).target_refs[0].id;
-    const claim = (who, taskId, file, scope = 'global') => rpc(who, 'clued_work_claim_v1', {
-      scope, task_id: taskId, write_set: [file], holder_label: who, holder_session_ref: randomUUID(), idempotency_key: randomUUID(),
+    const claim = (who, taskId, file, scope = 'global', extra = {}) => rpc(who, 'clued_work_claim_v1', {
+      scope, task_id: taskId, write_set: [file], holder_label: who, holder_session_ref: randomUUID(), idempotency_key: randomUUID(), ...extra,
     });
     const authorize = (r, sha, pr) => rpc('holder', 'clued_work_renew_v1', {
       scope: r.claim.context_key, action: 'authorize_head', claim_id: r.claim.claim_id, fence: r.claim.fence,
@@ -99,9 +90,9 @@ test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t 
       const result = await ci('clued_work_verify_v1', { ...proof, claim_id: r.claim.claim_id, changed_paths: r.claim.write_set });
       assert.equal(result.verdict, 'ADMITTED');
     };
-    const admitted = async (pr, scope = 'global') => {
+    const admitted = async (pr, scope = 'global', extra = {}) => {
       const taskId = await task(scope);
-      const r = committed(await claim('holder', taskId, 'fixture/' + taskId + '/main.mjs', scope));
+      const r = committed(await claim('holder', taskId, 'fixture/' + taskId + '/main.mjs', scope, extra));
       await admit(r, randomBytes(20).toString('hex'), pr);
       return r;
     };
@@ -132,12 +123,18 @@ test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t 
       assert.deepEqual(await messages(id), { inbox: 0, sent: 0 });
       assert.ok(!notices.some(message => message.includes('work_claim_pr_end_notification_skipped')));
     };
-    // 两个不同的 Task 争用完全相同的文件，单独验证每条入口都能解除冲突。
+    // 两个不同的 Task 争用同一文件和同一触发源，单独验证每条入口都能解除冲突。
+    // 已授权 head 的认领不再以仓库路径挡人（20261124160000），触发源仍互斥到认领结束，
+    // 所以冲突只剩触发源一项，由 PR 结束释放认领来解除。
     const contention = async pr => {
-      const r = await admitted(pr);
+      const trigger = { trigger_refs: ['issue:' + randomUUID()] };
+      const r = await admitted(pr, 'global', trigger);
       const waiting = await task();
-      const retry = () => claim('otherHolder', waiting, r.claim.write_set[0]);
-      assert.equal((await retry()).error_code, 'work_claim_conflict');
+      const retry = () => claim('otherHolder', waiting, r.claim.write_set[0], 'global', trigger);
+      const blocked = await retry();
+      assert.equal(blocked.error_code, 'work_claim_conflict', JSON.stringify(blocked));
+      assert.deepEqual(blocked.conflicts.map(c => [c.claim_id, c.overlap]),
+        [[r.claim.claim_id, { same_task: false, paths: [], trigger_refs: trigger.trigger_refs }]]);
       return { r, retry };
     };
 

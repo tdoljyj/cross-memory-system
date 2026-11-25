@@ -336,8 +336,8 @@ test('发布门不依赖心跳，两个发布入口使用部署后状态模式',
 
 test('libpq tools get sslmode=require where the node-postgres URL says no-verify', () => {
   const scripts = [...productionWorkflow.matchAll(/node -e '((?:const|let) url[^']*)'/g)].map((m) => m[1]);
-  // Capacity gate, backup, migration login role, apply, (release door v1) the deploy grant step and the applied-history export.
-  assert.equal(scripts.length, 6);
+  // Capacity gate, backup, migration login role, apply, (release door v1) the deploy grant step, the fleet-accept door step and the applied-history export.
+  assert.equal(scripts.length, 7);
   for (const script of scripts) {
     const run = (value) => spawnSync(process.execPath, ['-e', script], {
       env: { ...process.env, CLUED_ATTESTATION_DATABASE_URL: value, CLUED_MIGRATION_DATABASE_URL: value },
@@ -483,6 +483,189 @@ test('production release deploys only when deploy is chosen explicitly', () => {
   assert.equal(run({ RELEASE_MODE: 'release', ROLLBACK_DRILL: 'false' }), 0);
   for (const mode of ['preflight', 'backup', 'deploy']) assert.notEqual(run({ RELEASE_MODE: mode, ROLLBACK_DRILL: 'true' }), 0, mode);
   assert.notEqual(run({ RELEASE_MODE: 'migrate', MIGRATIONS: '20261003170000_owner_grants_release_door.sql', ROLLBACK_DRILL: 'true' }), 0);
+  // fleet-accept names one published package by version and request hash, both
+  // of fixed shape; no other mode takes them, and it takes nothing else.
+  const fleet = { RELEASE_MODE: 'fleet-accept', FLEET_VERSION: '1.4.0', FLEET_REQUEST_SHA256: 'a'.repeat(64) };
+  assert.equal(run(fleet), 0);
+  for (const bad of [{ FLEET_VERSION: '' }, { FLEET_VERSION: '-1' }, { FLEET_VERSION: '1.0/x' }, { FLEET_VERSION: "1'; drop" },
+    { FLEET_VERSION: '1 0' }, { FLEET_VERSION: 'v'.repeat(90) }, { FLEET_REQUEST_SHA256: '' }, { FLEET_REQUEST_SHA256: 'A'.repeat(64) },
+    { FLEET_REQUEST_SHA256: 'a'.repeat(63) }, { FLEET_REQUEST_SHA256: 'a'.repeat(65) }, { MIGRATIONS: 'x.sql' },
+    { SOURCE_REQUEST_ID: 'r' }, { ROLLBACK_DRILL: 'true' }]) {
+    assert.notEqual(run({ ...fleet, ...bad }), 0, JSON.stringify(bad));
+  }
+  for (const mode of ['preflight', 'backup', 'deploy', 'release']) {
+    assert.notEqual(run({ RELEASE_MODE: mode, FLEET_VERSION: '1.4.0' }), 0, mode);
+    assert.notEqual(run({ RELEASE_MODE: mode, FLEET_REQUEST_SHA256: 'a'.repeat(64) }), 0, mode);
+  }
+});
+
+// Fleet acceptance (Task 87d330d0; PLAN-accept-binding-20261125 section 3).
+// fleet-accept opens the Owner's request and changes nothing else: it reads
+// the published request with no credential, gives the door only checked
+// values as COPY data, and consumes or approves nothing.
+const FLEET_CHECK_STEP = 'Check the published acceptance request';
+const FLEET_OPEN_STEP = 'Open the Owner request to accept the package';
+
+test('fleet-accept only checks the published request and opens the Owner request', () => {
+  const run = simulateRelease({ mode: 'fleet-accept', fleet_version: '1.4.0', fleet_request_sha256: 'a'.repeat(64) });
+  assert.equal(run.conclusion, 'success');
+  const named = run.ran.filter((name) => !/^(uses|if): /.test(name));
+  assert.deepEqual(named, ['Configure job temporary storage', 'Validate exclusive release mode',
+    'Check production database credential', FLEET_CHECK_STEP, FLEET_OPEN_STEP, 'Preserve release evidence', ...APPLIED_EXPORT_STEPS]);
+  // No dependency is installed and no dependency code runs before the door is called.
+  for (const step of run.steps) assert.doesNotMatch(step.text, /\bnpm (ci|install|run|test)\b|wrangler/, step.name ?? step.text.split('\n')[0]);
+  assert.deepEqual(grantSteps(run), [], 'fleet-accept consumes no grant');
+  // No other mode runs either step.
+  for (const mode of RELEASE_MODES.filter((m) => m !== 'fleet-accept')) {
+    const other = simulateRelease({ mode, ...(mode === 'migrate' ? { migrations: MIGRATION } : {}) });
+    for (const name of [FLEET_CHECK_STEP, FLEET_OPEN_STEP]) assert.ok(!other.ran.includes(name), `${mode}: ${name}`);
+  }
+  const [check, open] = [FLEET_CHECK_STEP, FLEET_OPEN_STEP].map((name) => run.steps.find((step) => step.name === name));
+  // The download and its checks hold no secret; the inputs reach them as environment values.
+  assert.doesNotMatch(check.text, /secrets\.|GITHUB_TOKEN|GH_TOKEN/);
+  assert.match(check.text, /FLEET_VERSION: \$\{\{ inputs\.fleet_version \}\}\n/);
+  assert.match(check.text, /FLEET_REQUEST_SHA256: \$\{\{ inputs\.fleet_request_sha256 \}\}\n/);
+  assert.match(check.text, /node scripts\/ci\/clued-fleet-accept\.mjs input > "\$RUNNER_TEMP\/clued-fleet-accept-input\.json"/);
+  // The door gets that file as COPY data; no input is spliced into shell or SQL text.
+  assert.match(open.text, /CLUED_MIGRATION_DATABASE_URL: \$\{\{ secrets\.CLUED_MIGRATION_DATABASE_URL \}\}/);
+  assert.match(open.text, /-c "copy door_input\(line\) from stdin with \(format csv, delimiter e'\\x01', quote e'\\x02'\)"/);
+  assert.match(open.text, /-c "select clued_private\.fleet_accept_door_v1\(line::jsonb\)::text from door_input"/);
+  assert.match(open.text, /< "\$RUNNER_TEMP\/clued-fleet-accept-input\.json"/);
+  assert.match(open.text, /clued-fleet-accept\.mjs report --error-file "\$err"/);
+  assert.match(open.text, /to_regprocedure\('clued_private\.fleet_accept_door_v1\(jsonb\)'\)/);
+  for (const step of [check, open]) {
+    assert.match(step.text, /NODE_OPTIONS: ''/);
+    assert.doesNotMatch(step.text.slice(step.text.indexOf('run: |')), /\$\{\{|FLEET_VERSION|FLEET_REQUEST_SHA256|release_door_v1|owner_auto_approve/, step.name);
+  }
+  // Outside the inputs block and the two env lines of each of the two steps that
+  // take them, the workflow never expands the two inputs.
+  assert.equal(productionWorkflow.match(/\$\{\{ inputs\.fleet_(version|request_sha256) \}\}/g).length, 4);
+  // Its own concurrency group: it neither waits for a release nor holds one up.
+  const group = /\nconcurrency:\n  group: \$\{\{ (.+) \}\}\n/.exec(productionWorkflow)?.[1];
+  assert.ok(group, 'the concurrency group is an expression');
+  const groupOf = (mode) => evaluateExpression(group, { inputs: { mode }, failed: false, outcomes: {} });
+  for (const mode of RELEASE_MODES) {
+    assert.equal(groupOf(mode), mode === 'fleet-accept' ? 'clued-cloud-fleet-accept' : 'clued-cloud-production-release', mode);
+  }
+});
+
+test('the fleet-accept script lets only a checked request of this repository on main reach the door', async () => {
+  const fleet = await import('../../../scripts/ci/clued-fleet-accept.mjs');
+  const repository = 'acme/widgets';
+  const version = '1.4.0';
+  const archive = 'b'.repeat(64);
+  const commit = 'c'.repeat(40);
+  const requestBytes = Buffer.from(JSON.stringify({ contract: fleet.REQUEST_CONTRACT, version, archive_sha256: archive, commit, repository,
+    ciSourceManifestSha256: 'd'.repeat(64), firstInstallKitSha256: 'e'.repeat(64), fleetRefs: [] }));
+  const requestSha256 = createHash('sha256').update(requestBytes).digest('hex');
+  const sums = Buffer.from(`${'f'.repeat(64)}  other.txt\n${archive}  fleet-node-${version}.tar\n`);
+  const env = { FLEET_VERSION: version, FLEET_REQUEST_SHA256: requestSha256, GITHUB_REPOSITORY: repository,
+    GITHUB_RUN_ID: '42', GITHUB_RUN_ATTEMPT: '2' };
+  const resource = `fleet-node:${repository}/${version}/${archive}/${requestSha256}`;
+  const asked = [];
+  const serve = (files) => async (url, init) => {
+    asked.push([url, init]);
+    const name = decodeURIComponent(url.split('/').at(-1));
+    return name in files ? new Response(files[name]) : new Response('missing', { status: 404 });
+  };
+  const files = { [`fleet-node-${version}.acceptance-request.json`]: requestBytes, SHA256SUMS: sums };
+  const build = (over = {}, deps = {}) => fleet.buildInput({ ...env, ...over }, { fetchImpl: serve(files), isAncestor: () => true, ...deps });
+
+  assert.deepEqual(await build(), { action: 'fleet.accept', resources: [resource], run_id: '42', run_attempt: '2' });
+  // Anonymous, from this repository's Release for this version only.
+  assert.deepEqual(asked.map(([url]) => url), [
+    `https://github.com/${repository}/releases/download/fleet-node-${version}/fleet-node-${version}.acceptance-request.json`,
+    `https://github.com/${repository}/releases/download/fleet-node-${version}/SHA256SUMS`]);
+  for (const [, init] of asked) assert.equal(init.headers, undefined, 'nothing is sent with the download');
+  // The commit is held to main with the request's own value, checked as 40 hex.
+  const seen = [];
+  await build({}, { isAncestor: (value) => { seen.push(value); return true; } });
+  assert.deepEqual(seen, [commit]);
+  await assert.rejects(build({}, { isAncestor: () => false }), /^Error: FLEET_ACCEPT_COMMIT_NOT_ON_MAIN/);
+  // Inputs of any other shape stop before anything is downloaded.
+  for (const [over, code] of [[{ FLEET_VERSION: '../x' }, 'VERSION_INVALID'], [{ FLEET_VERSION: '' }, 'VERSION_INVALID'],
+    [{ FLEET_REQUEST_SHA256: 'A'.repeat(64) }, 'REQUEST_SHA256_INVALID'], [{ GITHUB_REPOSITORY: 'acme' }, 'REPOSITORY_INVALID'],
+    [{ GITHUB_REPOSITORY: 'acme/w/x' }, 'REPOSITORY_INVALID']]) {
+    asked.length = 0;
+    await assert.rejects(build(over), new RegExp(`^Error: FLEET_ACCEPT_${code}`), JSON.stringify(over));
+    assert.equal(asked.length, 0, JSON.stringify(over));
+  }
+  // A request file that is not the one hashed, or not for this run, is refused.
+  await assert.rejects(build({ FLEET_REQUEST_SHA256: '0'.repeat(64) }), /FLEET_ACCEPT_REQUEST_SHA256_MISMATCH/);
+  const run = { version, repository };
+  const check = (request, sumsText = sums) => {
+    const bytes = Buffer.from(typeof request === 'string' ? request : JSON.stringify(request));
+    return () => fleet.checkRequest({ ...run, requestSha256: createHash('sha256').update(bytes).digest('hex') }, bytes, Buffer.from(sumsText));
+  };
+  const good = JSON.parse(requestBytes.toString());
+  assert.deepEqual(check(good)().commit, commit);
+  assert.throws(check('not json'), /FLEET_ACCEPT_REQUEST_UNREADABLE/);
+  assert.throws(check([good]), /FLEET_ACCEPT_REQUEST_CONTRACT/);
+  assert.throws(check({ ...good, contract: 'clued.independent-ci.fleet-node-acceptance-request/2' }), /FLEET_ACCEPT_REQUEST_CONTRACT/);
+  assert.throws(check({ ...good, version: '1.4.1' }), /FLEET_ACCEPT_REQUEST_VERSION/);
+  assert.throws(check({ ...good, repository: 'acme/other' }), /FLEET_ACCEPT_REQUEST_REPOSITORY/);
+  assert.throws(check({ ...good, archive_sha256: 'B'.repeat(64) }), /FLEET_ACCEPT_REQUEST_ARCHIVE/);
+  assert.throws(check({ ...good, commit: `${commit} --help` }), /FLEET_ACCEPT_REQUEST_COMMIT/);
+  assert.throws(check({ ...good, commit: 'main' }), /FLEET_ACCEPT_REQUEST_COMMIT/);
+  // The Release must name the request's archive hash for the tar, exactly once.
+  for (const text of ['', `${'9'.repeat(64)}  fleet-node-${version}.tar\n`, `${archive}  fleet-node-1.4.1.tar\n`,
+    `${archive}  fleet-node-${version}.tar\n${'9'.repeat(64)}  fleet-node-${version}.tar\n`]) {
+    assert.throws(check(good, text), /FLEET_ACCEPT_ARCHIVE_NOT_ON_RELEASE/, JSON.stringify(text));
+  }
+  // A missing asset, an empty one and an oversized one are refused.
+  await assert.rejects(fleet.buildInput(env, { fetchImpl: serve({}), isAncestor: () => true }), /FLEET_ACCEPT_ASSET_NOT_ON_RELEASE/);
+  for (const body of [Buffer.alloc(0), Buffer.alloc(1024 * 1024 + 1, 0x20)]) {
+    await assert.rejects(fleet.buildInput(env, { fetchImpl: serve({ ...files, SHA256SUMS: body }), isAncestor: () => true }), /FLEET_ACCEPT_ASSET_SIZE/);
+  }
+  // The run's own account of itself is optional and of fixed shape.
+  assert.deepEqual(fleet.doorInput({ GITHUB_RUN_ID: 'x', GITHUB_RUN_ATTEMPT: '0' }, resource), { action: 'fleet.accept', resources: [resource] });
+
+  // The report: pending and accepted end the run green; anything else fails it.
+  const pending = { action: 'fleet.accept', resources: [resource], request_sha256: requestSha256, status: 'pending',
+    request_id: '11111111-2222-4333-8444-555555555555', confirm_path: '/confirm/11111111-2222-4333-8444-555555555555',
+    expires_at: '2026-11-26T04:00:00+00:00' };
+  const told = fleet.explain({ answerText: `${JSON.stringify(pending)}\n`, errorText: '', env: {} });
+  assert.equal(told.ok, true);
+  assert.equal(told.confirm_url, 'https://kooyumi.pixelgrav.com/confirm/11111111-2222-4333-8444-555555555555');
+  assert.equal(told.request_sha256, requestSha256);
+  assert.match(fleet.renderSummary(told), /确认链接：https:\/\/kooyumi\.pixelgrav\.com\/confirm\/11111111-2222-4333-8444-555555555555/);
+  // The link is built only from a path of the door's fixed shape.
+  for (const confirm_path of ['https://evil.example/confirm/x', '/confirm/../x', '//evil.example', undefined]) {
+    assert.equal(fleet.explain({ answerText: JSON.stringify({ ...pending, confirm_path }), errorText: '', env: {} }).ok, false, String(confirm_path));
+  }
+  const accepted = fleet.explain({ answerText: JSON.stringify({ ...pending, status: 'accepted', grant_id: 'g' }), errorText: '', env: {} });
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.confirm_url, null);
+  for (const [errorText, words] of [
+    ['ERROR:  function clued_private.fleet_accept_door_v1(jsonb) does not exist', /mode=migrate.*20261125100000_fleet_accept_door_v1\.sql/],
+    ['ERROR:  fleet_accept_version_already_accepted', /已经以另一份请求或另一个包被接受过/],
+    ['ERROR:  release_door_identity_missing', /发布身份/],
+    ['ERROR:  permission denied for function fleet_accept_door_v1', /登录角色无权/],
+    ['psql: error: connection to server at "db" failed', /连不上生产库/],
+    ['ERROR:  fleet_accept_door_resources_invalid', /fleet_accept_door_resources_invalid/],
+    ['', /接受门没有回答/]]) {
+    const refused = fleet.explain({ answerText: '', errorText, env: {} });
+    assert.equal(refused.ok, false, errorText);
+    assert.match(refused.reason, words, errorText);
+  }
+  for (const status of ['none', 'rejected', 'expired']) {
+    assert.equal(fleet.explain({ answerText: JSON.stringify({ ...pending, status }), errorText: '', env: {} }).ok, false, status);
+  }
+  // The Owner's no is final: the door replays it and the run says what to do (a new version), not "unreadable".
+  const rejected = fleet.explain({ answerText: JSON.stringify({ ...pending, status: 'rejected', confirm_path: undefined }), errorText: '', env: {} });
+  assert.deepEqual([rejected.ok, rejected.status, rejected.confirm_url], [false, 'rejected', null]);
+  assert.match(rejected.reason, /Owner 已拒绝.*不再询问.*新版本/);
+  assert.match(fleet.renderSummary(rejected), /Owner 已拒绝/);
+  // The command line: exit codes, and no credential read by the input side.
+  const out = []; const err = [];
+  const io = { stdin: `${JSON.stringify(pending)}\n`, write: (text) => out.push(text), error: (text) => err.push(text) };
+  assert.equal(await fleet.main(['report'], {}, io), 0);
+  assert.equal(await fleet.main(['report'], {}, { ...io, stdin: '' }), 1);
+  assert.equal(await fleet.main(['input'], { ...env, FLEET_VERSION: '' }, io), 1);
+  assert.equal(await fleet.main(['nonsense'], {}, io), 2);
+  const source = await readFile(new URL('../../../scripts/ci/clued-fleet-accept.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /DATABASE_URL: |process\.env\.CLUED_MIGRATION|GITHUB_TOKEN|GH_TOKEN|authorization/i);
+  assert.doesNotMatch(source, /\bexecSync\b|shell: true|\bspawn\b/);
 });
 
 test('a release with migrations stops before any production credential is read', () => {
@@ -675,7 +858,7 @@ const evaluateCondition = (source, context) => Boolean(evaluateExpression(source
 
 // The release job's timeout-minutes for one dispatch mode, a literal or an
 // expression over the inputs (GitHub allows `inputs` there).
-const RELEASE_MODES = ['preflight', 'backup', 'source-capture', 'deploy', 'migrate', 'release'];
+const RELEASE_MODES = ['preflight', 'backup', 'source-capture', 'deploy', 'migrate', 'release', 'fleet-accept'];
 function jobTimeoutMinutes(mode) {
   const source = /\n {4}timeout-minutes: (.+)\n/.exec(productionWorkflow)?.[1];
   assert.ok(source, 'the release job has no timeout-minutes');
@@ -939,6 +1122,8 @@ test('only deploy and release get the longer job timeout; every other mode keeps
   assert.deepEqual(options, RELEASE_MODES, 'a new mode must be placed on one side of the job timeout');
   for (const mode of RELEASE_MODES) {
     if (mode === 'deploy' || mode === 'release') assert.ok(jobTimeoutMinutes(mode) > 45, mode);
+    // fleet-accept reads two small files and makes one database call.
+    else if (mode === 'fleet-accept') assert.equal(jobTimeoutMinutes(mode), 10, mode);
     else assert.equal(jobTimeoutMinutes(mode), 45, mode);
   }
 });

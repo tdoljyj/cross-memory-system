@@ -1,13 +1,12 @@
-import { EPHEMERAL_INITDB_FLAGS, EPHEMERAL_POSTGRES_FLAGS, stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { EPHEMERAL_INITDB_FLAGS, EPHEMERAL_POSTGRES_FLAGS, stopCluster, removeTestDirectory, startCluster } from './cluster-cleanup.mjs';
 import { createPhaseClock } from './phase-clock.fixture.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import EmbeddedPostgres from "embedded-postgres";
+import { newCluster } from "./pg-cluster-fixture.mjs";
 
 import { createResourceCenterGoogleDriveOnlineToolHost, createResourceCenterGoogleDriveWriterToolHost,
   createResourceCenterGoogleDriveNativeWriterToolHost } from "../../../kernel/host/resource-center-online-tool-host.mjs";
@@ -150,14 +149,6 @@ async function qualifyCurrentCallers(t, admin, client, closeoutSql) {
   });
 }
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
-
 const focusedCloud = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "account-cloud";
 const focusedAdmin = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-admin";
 const focusedRead = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-read";
@@ -205,20 +196,17 @@ for (const bindingSchema of bindingSchemas) test(`Canonical Resource Center regi
     const closeoutSql = await phase("databaseSetup", DATABASE_SETUP_LIMIT_MS, async (signal) => {
       preparingServer = true;
       try {
-        await clock.measure("initialise", async () => {
-          directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-db-"));
-          const port = await freePort();
-          signal.throwIfAborted();
-          // Keep directory removal separate from the library's stop promise.
-          server = new EmbeddedPostgres({
-            databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
-            port, persistent: true, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: EPHEMERAL_POSTGRES_FLAGS,
-            onLog: clock.postgresLog, onError: clock.postgresLog,
-          });
-          await server.initialise();
-        });
+        directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-db-"));
         signal.throwIfAborted();
-        await clock.measure("start", () => server.start());
+        // Keep directory removal separate from the library's stop promise.
+        server = newCluster({
+          databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
+          persistent: true, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: EPHEMERAL_POSTGRES_FLAGS,
+          onLog: clock.postgresLog, onError: clock.postgresLog,
+        });
+        // startCluster reports "initialise" and every "start" (retries add to it) to the clock, as stopCluster
+        // reports its steps.
+        await startCluster(server, { mark: clock.mark });
       } finally {
         preparingServer = false;
         // Never remove the directory while initdb or a late start still owns it.
