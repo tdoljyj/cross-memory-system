@@ -14,8 +14,11 @@ import * as publishModule from '../publish.mjs';
 import { writeTar } from '../tar.mjs';
 import { FAKE_GH } from './fleet-fixtures.mjs';
 import { sha, VERSION, TAG, COMMIT, FLEET, BOOTSTRAP, PREREQ, world, REPO, RELEASE_ASSETS, rowOf,
-  seedRelease, FIX, FIX_DECISION, FIX_RECEIPT, FIX_ACCEPTED_AT, requestLine, prepWorld, GRANT, GRANT_RECEIPT, REQUEST_ASSET,
+  seedRelease, FIX, FIX_DECISION, FIX_RECEIPT, FIX_ACCEPTED_AT, requestLine, prepWorld as sharedPrepWorld, GRANT, GRANT_RECEIPT, REQUEST_ASSET,
   resourceOf, sealedNothing, fakeTime, timed } from './publish-fixtures.mjs';
+
+// Keep the in-process fake for publish cases unless a case needs to inspect the child process.
+const prepWorld = (t, options) => sharedPrepWorld(t, { spawnGh: false, ...options });
 
 const releaseWrites = async w => (await w.calls()).filter(c => c.args[0] === 'release' && ['create', 'upload', 'delete-asset'].includes(c.args[1]));
 
@@ -655,7 +658,7 @@ test('prepare reuses two role images from the previous Release: its sums file is
 
 // T1 of the ruling, in this file's terms: a build, an index with its header only, an empty gh state, no release step
 test('prepare on a build with no Release and no index row: checks the commit on the remote, creates the Release as release did, appends the row, writes the request', async t => {
-  const w = await prepWorld(t, { released: false });
+  const w = await prepWorld(t, { released: false, spawnGh: true });
   const r = await w.prep();
   assert.equal(r.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
   const calls = await w.calls();
@@ -759,7 +762,7 @@ test('main: release is no command, in any form', async t => {
 
 // What the release command checked and wrote, now prepare's step 4 (the same assets, notes, target and index row)
 test('prepare creates the Release as release did: gh release create <tag> <five assets> --target <commit>, without any token variable; then one index line; again no second create', async t => {
-  const w = await prepWorld(t, { released: false });
+  const w = await prepWorld(t, { released: false, spawnGh: true });
   const r = await w.prep();
   assert.equal(r.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
   const calls = await w.calls();
@@ -987,7 +990,7 @@ test('seal through the door: not approved yet it answers WAITING_OWNER with the 
 // PLAN-accept-binding-20261125 section 3, part B: none or expired at the start: one dispatch, then reads only (rejected is final: next test)
 test('seal opens the request itself: none or expired at the start is exactly one gh workflow run of the fleet-accept mode, then only reads; the link once the door has it', async t => {
   for (const start of ['none', 'expired']) {
-    const w = await prepWorld(t);
+    const w = await prepWorld(t, { spawnGh: true });
     await w.prep();
     w.door.status = start;
     const time = fakeTime('2026-11-25T01:00:00Z');
