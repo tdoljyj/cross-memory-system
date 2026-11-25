@@ -724,7 +724,7 @@ test('every file a moved database test imports selects production-schema', () =>
   const specifiers = (source) => [...source.matchAll(/\b(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(?\s*['"]([^'"]+)['"]/g)]
     .map((match) => match[1] ?? match[2]).filter((spec) => spec.startsWith('.'));
   const seen = new Set();
-  const roots = [...SUITE_COMMANDS['production-schema'].at(-1).argv.filter((arg) => arg.endsWith('.test.mjs')).map((arg) => `apps/clued-cloud/${arg}`),
+  const roots = [...SUITE_COMMANDS['production-schema'].find(({ argv }) => argv.includes('--test-force-exit')).argv.filter((arg) => arg.endsWith('.test.mjs')).map((arg) => `apps/clued-cloud/${arg}`),
     'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs', 'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs'];
   const pending = roots.map((file) => path.join(ROOT, file));
   while (pending.length > 0) {
@@ -736,6 +736,37 @@ test('every file a moved database test imports selects production-schema', () =>
     if (/\.(?:m?js|ts)$/.test(file)) pending.push(...specifiers(readFileSync(file, 'utf8')).map((spec) => path.resolve(path.dirname(file), spec)));
   }
   assert.ok(roots.length > 60 && seen.size > roots.length);
+});
+
+// PLAN-g4-red-merged-20261125 §2.2 (Task 4432ee9b): the checks only clued-g4-database.yml ran (plpgsql_check lint, pgTAP,
+// PostgreSQL 17 backup coverage) run in production-schema, the suite of the required migration-verify, as one command on a
+// real Supabase database, last; first with --observe. The files it runs and starts from select it.
+const REAL_DATABASE = { cwd: 'apps/clued-cloud',
+  argv: ['node', '../../scripts/ci/clued-real-database.mjs', '--observe', 'tests/production-backup-scope-db.test.mjs'] };
+test('production-schema runs the real database checks last, selected by the files they run and start from', () => {
+  assert.deepEqual(SUITE_COMMANDS['production-schema'].at(-1), REAL_DATABASE);
+  for (const file of ['apps/clued-cloud/scripts/verify-production-backup-scope.mjs', 'apps/clued-cloud/tests/production-backup-scope-db.test.mjs',
+    'scripts/ci/clued-real-database.mjs', 'scripts/ci/clued-real-database.test.mjs', 'scripts/ci/clued-g4-fresh-start.mjs',
+    'scripts/ci/clued-local-migrate.mjs', 'apps/clued-cloud/supabase/tests/m1_runtime_contracts.test.sql']) {
+    assert.ok(existsSync(path.join(ROOT, file)), `${file} exists`);
+    assert.deepEqual(selectSuites('migration-verify', [file], 'linux').suites, ['production-schema'], file);
+  }
+});
+
+// A script command's test file operands are files the command runs: coverage (check-tests-covered.mjs) counts them as run
+// and --run-files runs the whole command for one. Any other second operand still leaves the command unplannable.
+test('a node script command takes its script and its test file operands, nothing else', () => {
+  const named = new Set(['apps/clued-cloud/tests/production-backup-scope-db.test.mjs', 'scripts/ci/clued-real-database.mjs']);
+  const result = selection.filterCommand(REAL_DATABASE, REAL_DATABASE.argv, named);
+  assert.deepEqual(result.accepts, ['scripts/ci/clued-real-database.mjs', 'apps/clued-cloud/tests/production-backup-scope-db.test.mjs']);
+  assert.deepEqual(result.runs, [REAL_DATABASE.argv]);
+  assert.deepEqual(result.matched, ['scripts/ci/clued-real-database.mjs', 'apps/clued-cloud/tests/production-backup-scope-db.test.mjs']);
+  const drift = { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--report', 'r.json'] };
+  assert.deepEqual(selection.filterCommand(drift, drift.argv, new Set(['apps/clued-cloud/scripts/production-schema-drift.mjs'])),
+    { runs: [], matched: [], accepts: [] });
+  const one = { cwd: '.', argv: ['node', 'scripts/ci/check-cron-budget.mjs'] };
+  assert.deepEqual(selection.filterCommand(one, one.argv, new Set(['scripts/ci/check-cron-budget.mjs'])),
+    { runs: [one.argv], matched: ['scripts/ci/check-cron-budget.mjs'], accepts: ['scripts/ci/check-cron-budget.mjs'] });
 });
 
 // Every database test, like every other test file, runs in a required suite or is listed in ci-uncovered-tests.json with its
@@ -756,7 +787,7 @@ test('a migration selects the production-schema check; ordinary documentation se
   for (const file of ['ci-connection-self-db.test.mjs', 'fixtures/ci-connection-self-v1.json']) {
     assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/tests/' + file]).suites, ['production-schema']);
   }
-  const scanStart = SUITE_COMMANDS['production-schema'].at(-2);
+  const scanStart = SUITE_COMMANDS['production-schema'].find(({ argv }) => argv[1] === '--test' && argv.includes('{db-concurrency}'));
   assert.equal(scanStart.cwd, 'apps/clued-cloud');
   t.mock.method(os, 'availableParallelism', () => 16);
   assert.deepEqual(expandArgv(scanStart.argv, { cwd: scanStart.cwd }), ['node', '--test', '--test-concurrency=4',
@@ -780,7 +811,8 @@ for (const [cpus, concurrency] of [[16, 4], [4, 2], [64, 4], [15, 3]]) {
       return { status: 0 };
     };
     assert.equal(executeSuite('production-schema', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log }), 0);
-    assert.deepEqual(calls.slice(-2).map((argv) => argv.filter((arg) => arg.startsWith('--test-concurrency'))),
+    assert.deepEqual(calls.filter((argv) => argv.includes('{db-concurrency}') || argv.some((arg) => arg.startsWith('--test-concurrency')))
+      .map((argv) => argv.filter((arg) => arg.startsWith('--test-concurrency'))),
       [[`--test-concurrency=${concurrency}`], [`--test-concurrency=${concurrency}`]]);
   });
 }
@@ -1250,6 +1282,17 @@ test("under Actions a suite child gets the fake token, not the job's, and keeps 
   assert.equal(seen[0].GITHUB_TOKEN, selection.FAKE_GITHUB_TOKEN);
   assert.equal(seen[0].RUNNER_TRACKING_ID, 'github_1234');
   assert.equal(seen[0].GITHUB_ACTIONS, undefined, 'a test runs the same in Actions and locally');
+});
+
+// Task 4432ee9b (ruling 11-25 B1): the real database command of production-schema reads the runner's kind to skip its
+// cleanup on a GitHub-hosted runner; a suite child gets RUNNER_ENVIRONMENT as the runner gives it.
+test("a suite child keeps the runner's kind, RUNNER_ENVIRONMENT", () => {
+  const seen = [];
+  const spawn = (command, args, options) => { seen.push(options.env); return { status: 0 }; };
+  const env = { GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted', CI_BASE_SHA: 'b', PATH: '/bin' };
+  assert.equal(executeSuite('retrigger-counter', { root: ROOT, env, spawn, log }), 0);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].RUNNER_ENVIRONMENT, 'github-hosted');
 });
 
 // Task 3435f8bf: the hosted windows image points PSModuleAnalysisCachePath at a warmed Windows PowerShell module analysis
@@ -2255,7 +2298,7 @@ test('the release workflow and its grant script select the release door flow dat
     'apps/clued-cloud/tests/production-release-door-flow-db.test.mjs', 'apps/clued-cloud/tests/release-door-psql-fixture.mjs']) {
     assert.deepEqual(selectSuites('migration-verify', [file], 'linux').suites, ['production-schema'], file);
   }
-  assert.ok(SUITE_COMMANDS['production-schema'].at(-1).argv.includes('tests/production-release-door-flow-db.test.mjs'));
+  assert.ok(SUITE_COMMANDS['production-schema'].find(({ argv }) => argv.includes('--test-force-exit')).argv.includes('tests/production-release-door-flow-db.test.mjs'));
 });
 
 // --run-files: point-in-time reproduction of named test files through the same suite command.
@@ -2620,6 +2663,31 @@ async function shardRun(suites, shard, env) {
   return calls;
 }
 
+async function assertShardsRunPlanOnce(suites, totals, env) {
+  const plan = await shardRun(suites, null, env);
+  const planUnits = shardUnits(plan);
+  for (const total of totals) {
+    const shards = [];
+    for (let index = 1; index <= total; index += 1) shards.push(await shardRun(suites, { index, total }, env));
+    if (total === 1) assert.deepEqual(shards[0], plan, `1/1 runs today's plan command for command (${suites.join(' ')})`);
+    const units = shards.map(shardUnits);
+    // Each unit once: no shard leaves one out, no two shards run the same one.
+    assert.deepEqual(units.flat().sort(), [...planUnits].sort(), `the ${total} shards of ${suites.join(' ')} run the plan's units once`);
+    for (const part of units) {
+      let at = 0;
+      for (const unit of part) {
+        while (at < planUnits.length && planUnits[at] !== unit) at += 1;
+        assert.ok(at < planUnits.length, `a shard runs ${unit} out of the plan's order`);
+        at += 1;
+      }
+    }
+    if (planUnits.length >= total * 4) {
+      const sizes = units.map((part) => part.length);
+      assert.ok(Math.min(...sizes) > 0, `every one of ${total} shards runs something: ${sizes}`);
+    }
+  }
+}
+
 test('--shard i/n: the shards together run every unit of the plan once, in its order; 1/1 is the plan as it runs today', async (t) => {
   const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
@@ -2628,29 +2696,22 @@ test('--shard i/n: the shards together run every unit of the plan once, in its o
   // Any selection: every suite, one suite, and orders that put the listing suites at other places.
   const selections = [all, ['resident-node'], [...all].reverse(), all.filter((id, i) => i % 3 !== 1),
     ['offline-drill', 'selection', 'retrigger-counter']];
-  for (const suites of selections) {
-    const plan = await shardRun(suites, null, env);
-    const planUnits = shardUnits(plan);
-    for (const total of [1, 2, 3, 4, 7]) {
-      const shards = [];
-      for (let index = 1; index <= total; index += 1) shards.push(await shardRun(suites, { index, total }, env));
-      if (total === 1) assert.deepEqual(shards[0], plan, `1/1 runs today's plan command for command (${suites.join(' ')})`);
-      const units = shards.map(shardUnits);
-      // Each unit once: no shard leaves one out, no two shards run the same one.
-      assert.deepEqual(units.flat().sort(), [...planUnits].sort(), `the ${total} shards of ${suites.join(' ')} run the plan's units once`);
-      for (const part of units) {
-        let at = 0;
-        for (const unit of part) {
-          while (at < planUnits.length && planUnits[at] !== unit) at += 1;
-          assert.ok(at < planUnits.length, `a shard runs ${unit} out of the plan's order`);
-          at += 1;
-        }
-      }
-      if (planUnits.length >= total * 4) {
-        const sizes = units.map((part) => part.length);
-        assert.ok(Math.min(...sizes) > 0, `every one of ${total} shards runs something: ${sizes}`);
-      }
-    }
+  for (const suites of selections) await assertShardsRunPlanOnce(suites, [1, 2, 3, 4, 7], env);
+});
+
+// Task 3435f8bf (PLAN-ci-p90-next-20261125 §3.1): the hosted shard jobs' own plans at the shard counts of their matrices
+// (hosted-required.yml; hosted-required.test.mjs pins the counts): hosted-migration-verify runs the whole migration-verify
+// selection in 4, hosted-ci-suites the Linux ci-suites selection in 3, hosted-ci-suites-windows the Windows one in 6.
+test('--shard: the hosted plans at their shard counts (migration-verify 4, Linux ci-suites 3, Windows ci-suites 6) run every unit once', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp };
+  const plans = [['migration-verify', 'linux', 4], ['ci-suites', 'linux', 3], ['ci-suites', 'win32', 6]];
+  for (const [check, platform, total] of plans) {
+    const { suites } = selectSuites(check, null, platform);
+    assert.ok(suites.length > 0, `${check} on ${platform} selects something`);
+    if (check === 'migration-verify') assert.deepEqual(suites, ['production-schema']);
+    await assertShardsRunPlanOnce(suites, [total], env);
   }
 });
 
@@ -2677,12 +2738,17 @@ test('--shard: a listing command runs its shard\'s files with its own switches; 
   const firstShard = (selection.shardOffset('admission-self-tests') % 2) + 1;
   const known = { 'admission-self-tests': [{ file: first, path: ['a'], fingerprint: 'a'.repeat(16), reason: 'r' },
     { file: second, path: ['b'], fingerprint: 'b'.repeat(16), reason: 'r' }] };
+  // Its own table, not the repository's: the first file the heaviest and the second the next, so by the packing rule (heaviest first
+  // into the lightest shard) they are in different shards whatever seconds the real table has.
+  const tableDir = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-seconds-'));
+  const shardSecondsFile = path.join(tableDir, 'ci-shard-seconds.json');
+  writeFileSync(shardSecondsFile, JSON.stringify({ [first]: 1000, [second]: 999 }));
   const summary = { type: 'summary', counts: {}, success: false };
   const shardOf = (index, events, status) => {
     const lines = [];
     let ran;
     const code = executeSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, known, log: (line) => lines.push(line),
-      spawn: (command, args) => { ran = args; return { status }; }, shard: { index, total: 2 },
+      spawn: (command, args) => { ran = args; return { status }; }, shard: { index, total: 2 }, shardSecondsFile,
       readReportFile: () => [...events, summary].map((event) => JSON.stringify(event)).join('\n') });
     return { code, lines: lines.join('\n'), ran };
   };
@@ -2696,6 +2762,7 @@ test('--shard: a listing command runs its shard\'s files with its own switches; 
   assert.ok(two.ran.includes(second) && !two.ran.includes(first));
   assert.match(two.lines, new RegExp(`known failure::${second} :: b`));
   assert.doesNotMatch(two.lines, new RegExp(`${first} :: a`), 'the other shard\'s known failure is not this shard\'s');
+  rmSync(tableDir, { recursive: true, force: true });
 });
 
 test('--shard takes i/n with 1 <= i <= n, splits --run-selected only and runs only in a CI job', async () => {

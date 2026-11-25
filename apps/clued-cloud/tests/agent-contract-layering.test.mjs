@@ -21,6 +21,7 @@ const holderPreflight = JSON.parse(await readFile(new URL('./fixtures/agent-cont
 const servedTarget = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v60-v61-map.json', import.meta.url), 'utf8'));
 const sessionCapInHand = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v61-v62-map.json', import.meta.url), 'utf8'));
 const ciJoinOnly = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v62-v63-map.json', import.meta.url), 'utf8'));
+const sessionCapOpenBinding = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v63-v64-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
@@ -33,13 +34,37 @@ const sha256 = text => createHash('sha256').update(text).digest('hex');
 // only the existing A.4 holder preflight and its retired readiness wording. The v61 successor lets a pull-request
 // authorize_head omit the target branch the service decides (Task 0ca0479d). The v62 successor says the session
 // cap counts only claims in hand (Task e642d087). The v63 successor makes the resident CI the only way into a served
-// repository's merge queue (Task 05ff5174).
+// repository's merge queue (Task 05ff5174). The v64 successor says a claim whose Task's pull request is open
+// counts as delivered whether the CI confirmed it or the holder's authorize_head named it (Task e642d087).
 // Undo only these declared
 // successors before checking all 24 original normative blocks against the unchanged frozen proof.
 // The v63 successor makes the resident CI the only way into a served repository's merge queue (A.6): the holder no
 // longer joins by renewing with the merge ref, and no longer renews hourly to keep a place. The three other places that
 // said a merge ref "joins" or "queues" (§1.7, the refusal table of §4, A.1) now only say that it never conflicts.
+// The v64 successor widens the one parenthesis of the work_claim_budget_exhausted row: a pull request the
+// holder's own authorize_head named counts as open too (20261124190000).
+function v63Source() {
+  assert.equal(sessionCapOpenBinding.schema,'clued.agent-contract-session-cap-open-binding-successor/1');
+  assert.equal(sessionCapOpenBinding.source_version,63);assert.equal(sessionCapOpenBinding.target_version,64);
+  assert.deepEqual(sessionCapOpenBinding.edits.map(row=>row.id),['version','session-cap-open-binding']);
+  assert.deepEqual(sessionCapOpenBinding.edits[0],{id:'version',before:'Contract version: 63',after:'Contract version: 64'});
+  assert.equal(sha256(source),sessionCapOpenBinding.target_document_normalized_sha256);
+  const edit=sessionCapOpenBinding.edits[1];
+  for(const text of [edit.before,edit.after]) {
+    assert.ok(text.startsWith('claims in hand per session ('));
+    assert.equal(/\n|### |<a id=/.test(text),false,'the edit stays inside one line');
+  }
+  assert.ok(edit.after.includes('confirmed by the CI')&&edit.after.includes('authorize_head'));
+  let restored=source;
+  for(const {id,before,after} of [...sessionCapOpenBinding.edits].reverse()) {
+    assert.equal(restored.split(after).length-1,1,`${id}: exact open-binding successor text`);
+    restored=restored.replace(after,before);
+  }
+  assert.equal(sha256(restored),sessionCapOpenBinding.source_document_normalized_sha256);
+  return restored;
+}
 function v62Source() {
+  const source=v63Source();
   assert.equal(ciJoinOnly.schema,'clued.agent-contract-ci-join-only-successor/1');
   assert.equal(ciJoinOnly.source_version,62);assert.equal(ciJoinOnly.target_version,63);
   assert.deepEqual(ciJoinOnly.edits.map(row=>row.id),['version','core-names-queue','conflict-row','resume-claims','ci-join-only','unmarked-ref-dropped','no-hourly-renewal']);
@@ -358,7 +383,7 @@ test('the mandatory work-claim core remains within 500 words', () => {
   assert.ok(words > 0 && words <= 500, `§1.7 has ${words} words`);
 });
 
-test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v63 successor edits', () => {
+test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v64 successor edits', () => {
   assert.equal(map.schema, 'clued.agent-contract-claim-move/1');
   assert.equal(map.blocks.length, 24);
   assert.equal(map.blocks.reduce((count, row) => count + row.reference_edits.length, 0), 9);
