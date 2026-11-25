@@ -1699,7 +1699,7 @@ function mergeBaseOf(W, a, b) {
   const common = [...reach(W, a)].filter(x => inB.has(x));
   return common.find(x => common.every(y => y === x || !W.ancestor(x, y))) ?? null;
 }
-// gh as the poller calls it: the main ref and the open pulls with --include, compare with its --jq projection.
+// gh as the poller calls it: the main ref, open pulls and parked checks with --include, compare with its --jq projection.
 function pollerRun(e) {
   return async argv => {
     const route = argv.find(a => a.startsWith('repos/')) ?? '';
@@ -1707,6 +1707,11 @@ function pollerRun(e) {
     if (route === MAIN_REF_ROUTE(REPO)) return included({ object: { sha: e.main() } });
     if (route === PULLS_ROUTE(REPO)) return included([...e.W.pulls.values()].filter(p => p.state === 'open').map(p => ({ number: p.number,
       head: { sha: p.head }, base: { sha: p.base }, draft: false, updated_at: p.updated }))); // GitHub's base.sha: where main was at the last push
+    const parked = /\/commits\/([0-9a-f]{40})\/check-runs\?filter=latest&per_page=100$/.exec(route);
+    if (parked) {
+      const { complete, checks } = await e.gh.readChecks(parked[1]);
+      if (complete) return included({ total_count: checks.length, check_runs: checks });
+    }
     const m = /compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})/.exec(route);
     if (m) {
       const inHead = reach(e.W, m[2]);
