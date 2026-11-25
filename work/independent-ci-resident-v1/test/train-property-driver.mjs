@@ -14,7 +14,10 @@
 //       burned    every PR not landed is STOPPED with a code of the failure table and the node is idle (the last tick IDLE, no DEFERRED
 //                 in the last rounds): only a new commit runs the PR again, but the node is not blocked;
 //       stall     everything else: a HALT whose code no halt row names, a DEFERRED every round, a row QUEUED or PARKED for ever.
-// A round is what the service does in a minute: one poller pass, one executor tick, the clock a minute on.
+// A round is what the service does in a minute: one pass of the companion's poll lane, one executor tick, the clock a minute on.
+// The companion is its real wiring (task bd07449b r2): the poll lane is companion-main.mjs#pollLane (the status board the executor
+// wrote, the PR pass, one sleeping batch observed), and main's rules reach poller.noteBranchRules as the ruleset backstop hands them
+// on, every BACKSTOP_EVERY_MS from the first round, read from the world (the rules stage 8 reads, through no injection).
 // Where the scene is the fixture's and not the product's (the verdict of a case that ends there is the fixture's, and the table says so):
 //   - the fixture runs a stage in this process, with no stage entry around it. A stage that throws is answered here as the real entry
 //     answers a throw (entry-runtime.mjs#runEntry: BLOCKED, reason safeReason(error), no side effects; stage 10 after a write, by
@@ -30,6 +33,8 @@ import { fileURLToPath } from 'node:url';
 import { trainLandingWorld } from './train-landing-world.mjs';
 import { safeReason } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/entry-runtime.mjs';
 import { outcomeFailureCode } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
+import { BACKSTOP_EVERY_MS, pollLane } from '../src/companion-main.mjs';
+import { pollerLandingOf } from '../src/status.mjs';
 
 export const ROUNDS = 60; // §3.8 step 1: N starts at the 60 of the existing cases (train-landing-e2e E9)
 // A known red runs this many rounds (decisions §4: a case that lands does so within 11 rounds; a known red only waits for a known end).
@@ -73,8 +78,9 @@ const EMPTY = {
   'store.readLandingState': () => ({ bad: [], suspect: null, adopted: [], handled: [] }),
   // the poller: only the open pulls have an empty answer (no open pull); the main ref and a compare answer their thing or fail
   'poller.gh': ([argv]) => (argv.some(a => /\/pulls\?state=open/.test(a)) ? { code: 0, stdout: 'HTTP/1.1 200 OK\n\n[]' } : PASS),
-  // a status file not read in time or unreadable is github-merge (status.mjs#pollerLandingOf(null))
-  'poller.status': () => 'github-merge',
+  // a status file not read in time or unreadable: the poll lane's read gives null (companion-main.mjs#pollLane), so the landing is
+  // github-merge (status.mjs#pollerLandingOf(null)) and no sleeping batch is looked at that pass
+  'poller.status': () => null,
 };
 // The store's other reads answer null when there is no record (train-sweep-store.mjs: `[0] ?? null`, `p`).
 for (const point of ['store.landingBatchByTest', 'store.latestProof', 'store.latestProofStrict', 'store.latestStrictFrontProof', 'store.latestStrictProof',
@@ -128,13 +134,16 @@ async function writeTwin(store, kind) {
 export async function scene(t, { prs = [1441, 1442, 1443], stage8Code = null } = {}) {
   const w = await trainLandingWorld();
   const e = await w.world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
-  const ctx = { stage: 'outside', injection: null, census: new Map(), round: 0, thrown: [] };
+  const ctx = { stage: 'outside', batch: null, injection: null, census: new Map(), round: 0, thrown: [] };
   const count = (point, stage) => { const m = ctx.census.get(point) ?? new Map(); m.set(stage, (m.get(stage) ?? 0) + 1); ctx.census.set(point, m); };
   const inScope = j => (j.scope === 'tick' ? ['1', '8', '10', 'tick'].includes(ctx.stage) : j.scope === ctx.stage);
   const hit = (point, args, call) => {
     count(point, ctx.stage);
     const j = ctx.injection;
     if (!j || !j.armed || j.done || j.point !== point || !inScope(j)) return call();
+    // an injection of several firings (times) fires again only in the batch it first fired in
+    if ((j.times ?? 1) > 1 && j.batch != null && ctx.batch !== j.batch) return call();
+    j.batch ??= ctx.batch;
     if (j.mode === 'error') {
       j.hits += 1; j.stages.add(ctx.stage);
       return Promise.reject(point.startsWith('github.') ? http502() : new Error(`injected: ${point} unreadable`));
@@ -148,6 +157,7 @@ export async function scene(t, { prs = [1441, 1442, 1443], stage8Code = null } =
   const wrap = (object, prefix, names) => {
     for (const name of names) { const original = object[name].bind(object), point = `${prefix}.${name}`; object[name] = (...a) => hit(point, a, () => original(...a)); }
   };
+  const worldRules = e.gh.readBranchRules.bind(e.gh); // the companion's backstop read of main's rules (never injected)
   wrap(e.gh, 'github', methodsOf(e.gh).filter(n => n.startsWith('read')));
   wrap(e.native.port, 'native', ['holders', 'nodesStatus']);
   wrap(e.store, 'store', methodsOf(e.store).filter(isRead));
@@ -168,24 +178,39 @@ export async function scene(t, { prs = [1441, 1442, 1443], stage8Code = null } =
   for (const name of ['runStage', 'runTrainStage']) {
     const original = engine[name];
     engine[name] = async (a, b) => {
-      const before = ctx.stage;
+      const before = ctx.stage, batchBefore = ctx.batch;
       ctx.stage = name === 'runTrainStage' ? '10' : String(b.number);
+      ctx.batch = name === 'runTrainStage' ? null : a?.key ?? null;
       try {
         const x = await original(a, b).catch(error => { ctx.thrown.push([ctx.round, ctx.stage, safeReason(error)]); return thrownStage(error, Number(ctx.stage)); });
         return stage8Code && ctx.stage === '8' && x.ok === false ? { ...x, code: stage8Code, outcome: { ...x.outcome, reason: stage8Code } } : x;
-      } finally { ctx.stage = before; }
+      } finally { ctx.stage = before; ctx.batch = batchBefore; }
     };
   }
-  // the poller's own reads: GitHub through gh (the main ref, the open pulls, compare) and the status file the executor writes
-  const run = r.poller.run, landing = r.poller.landing;
+  // the poller's own reads: GitHub through gh (the main ref, the open pulls, compare, a sleeping batch's checks) and the status file the
+  // executor writes, which the poll lane reads once a pass (the landing port reads that read, as in companion-main.mjs#advisoryLanes)
+  const run = r.poller.run;
   r.poller.run = (argv, o) => hit('poller.gh', [argv, o], () => run(argv, o));
-  r.poller.landing = () => hit('poller.status', [], () => landing());
+  const lane = pollLane({ poller: r.poller, readStatus: () => hit('poller.status', [], async () => r.status()) });
+  r.poller.landing = async () => pollerLandingOf(lane.status());
+  // the backstop's rules as GitHub's REST answers them (ruleset-backstop.mjs#companionBackstop hands the parsed reply on)
+  let rulesReadAt = null;
+  const observeRules = async () => {
+    if (rulesReadAt !== null && r.f.clock() - rulesReadAt <= BACKSTOP_EVERY_MS) return;
+    rulesReadAt = r.f.clock();
+    count('companion.readBranchRules', ctx.stage);
+    try {
+      const { rules } = await worldRules('main');
+      r.poller.noteBranchRules(rules.map(x => ({ type: x.type, ruleset_id: x.rulesetId, ...(x.parameters ? { parameters: x.parameters } : {}) })));
+    } catch { /* the backstop's next time */ }
+  };
   const landedCount = () => prs.filter(pr => e.W.pulls.get(pr).merged).length;
   const s = { w, e, r, ctx, prs, landed: () => landedCount() === prs.length, landedCount, ticks: [] };
   s.round = async () => {
     ctx.round += 1;
     ctx.stage = 'poller';
-    await r.poller.pass().catch(error => { s.ticks.push([ctx.round, 'POLLER_THREW', String(error?.message ?? error)]); });
+    await observeRules();
+    await lane.work();
     ctx.stage = 'tick';
     const x = await r.f.exec.tick();
     ctx.stage = 'outside';
@@ -206,7 +231,7 @@ export async function census(t) {
     points: [...s.ctx.census].map(([point, m]) => ({ point, stages: Object.fromEntries(m) })).sort((a, b) => a.point.localeCompare(b.point)) };
 }
 
-// c: { point, scope: '1'|'8'|'10'|'tick'|'poller', mode: 'error'|'empty'|'twin', arm: 'start'|'mid' } (twin: point is 'store:<kind>';
+// c: { point, scope: '1'|'8'|'10'|'tick'|'poller', mode: 'error'|'empty'|'twin', arm: 'start'|'mid', times (default 1) } (twin: point is 'store:<kind>';
 // arm mid: after the first front batch landed). Returns { verdict: 'landed'|'terminal'|'burned'|'stall'|'not-reached', detail }.
 export async function inject(t, c, { rounds = ROUNDS } = {}) {
   const s = await scene(t, { stage8Code: c.stage8Code ?? null }), { r, ctx } = s;
@@ -218,13 +243,21 @@ export async function inject(t, c, { rounds = ROUNDS } = {}) {
       if (armed() && (twin = await writeTwin(s.e.store, kind))) injectedAt = ctx.round; else await s.round();
     }
   } else {
+    // times: the injection fires in this many rounds in which the stage calls the point, the later ones only in the batch of the first
+    // (task bd07449b: "empty twice" is one batch's stage-8 try and the try it is woken for). A case whose later firings never come
+    // (that batch never calls the point again) is judged from where it stands then.
     const j = ctx.injection = { ...c, armed: false, done: false, hits: 0, stages: new Set() };
+    let fired = 0;
     for (let i = 0; i < rounds && injectedAt === null && !s.landed(); i++) {
       j.armed = armed();
+      const before = j.hits;
       await s.round();
+      if (j.hits > before) fired += 1;
       if (j.hits > 0) first ??= ctx.round;
-      if (first !== null && ctx.round - first + 1 >= (c.window ?? 1)) { j.done = true; injectedAt = ctx.round; }
+      if (first !== null && ctx.round - first + 1 >= (c.window ?? 1) && fired >= (c.times ?? 1)) { j.done = true; injectedAt = ctx.round; }
     }
+    j.fired = fired;
+    if (injectedAt === null && first !== null) { j.done = true; injectedAt = ctx.round; }
   }
   if (injectedAt === null) return { verdict: 'not-reached', detail: `landed ${s.landedCount()}/${s.prs.length} after ${ctx.round} rounds, the injection never fired` };
   let halt = await r.f.ledger.halted(), paused = null;
@@ -234,7 +267,7 @@ export async function inject(t, c, { rounds = ROUNDS } = {}) {
     paused = x?.state === 'PAUSED' ? (x.reason ?? 'no reason') : null;
   }
   const after = ctx.round - injectedAt;
-  const hits = ctx.injection ? `${ctx.injection.hits} call(s) in ${[...ctx.injection.stages].join('+')}` : `a record written ${twin.sameMs ? 'in the newest record\'s millisecond' : 'after the newest record\'s millisecond'}`;
+  const hits = ctx.injection ? `${ctx.injection.hits} call(s) in ${[...ctx.injection.stages].join('+')}${(c.times ?? 1) > 1 ? `, fired in ${ctx.injection.fired} of ${c.times} rounds` : ''}` : `a record written ${twin.sameMs ? 'in the newest record\'s millisecond' : 'after the newest record\'s millisecond'}`;
   const head = `injected in round ${first !== null && first !== injectedAt ? `${first}-` : ''}${injectedAt} (${hits})`, part = `landed ${s.landedCount()}/${s.prs.length}`;
   if (s.landed()) return { verdict: 'landed', detail: `${head}; all landed ${after} rounds later` };
   halt ??= await r.f.ledger.halted();

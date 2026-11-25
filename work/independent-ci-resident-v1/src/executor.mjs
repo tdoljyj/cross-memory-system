@@ -3020,8 +3020,10 @@ export class ResidentExecutor {
     for (const e of entries.filter(x => Ledger.parkedAt(x) && this.parkedAsleep(x))) {
       const { pr, headSha } = e.reserved.subject;
       const row = this.queue.row(pr), last = ResidentExecutor.lastTry(e);
+      // Asleep by age (park.maxMs) is the budget reached: no parkTry (task bd07449b r2).
       if (row?.parked?.nextAt != null)
-        sleepViewChanged = this.queue.park(pr, headSha, { reason: last.code, nextAt: null, position: last.position }, now) || sleepViewChanged;
+        sleepViewChanged = this.queue.park(pr, headSha, { reason: last.code, nextAt: null, position: last.position,
+          parkTry: last.sleeping === true && now - Date.parse(e.parked.at) < this.policy.park.maxMs ? (row.parked.parkTry ?? null) : null }, now) || sleepViewChanged;
     }
     if (sleepViewChanged) await this.persistQueue();
     // Transient parks and batches with no settled not-ready answer retain the old age backstop.
@@ -3201,7 +3203,9 @@ export class ResidentExecutor {
         this.trainUrgent = true;
       }
       await this.receipt('stage8-not-ready', { key, try: n, failureCode: control.code, nextAt: sleeping ? null : new Date(nextAt).toISOString(), position });
-      return { state: 'PARKED', key, reason: control.code, until: nextAt, position, tries: n,
+      // parkTry (task bd07449b r2): the batch's ended stage-8 tries, for the status row (queue.mjs#park): the companion's wake of a batch
+      // asleep on RULESET_UNREADABLE names the sleep it is for (poller.mjs#parkedPass). null once the budget is reached (final).
+      return { state: 'PARKED', key, reason: control.code, until: nextAt, position, tries: n, parkTry: final ? null : n,
         settle: { kind: 'parked', code: control.code, klass: 'queue', breaker: 'neutral', pos: POSITIONS[8], linux: false, nextAt, position } };
     }
     // DESIGN §28: a transient zero-effect ending parks again, at most STAGE8_TRANSIENT_MAX_TRIES times (the next one burns as
@@ -3217,7 +3221,7 @@ export class ResidentExecutor {
       await this.ledger.endTry(key, n, { code: control.code, nextAt: new Date(nextAt).toISOString(), position, entered: queueFact?.entered ?? null, transient: true, assumedPosition,
         claimExpiresAt: this.leaseOf(subject) });
       await this.receipt('stage8-transient-parked', { key, try: n, failureCode: control.code, nextAt: new Date(nextAt).toISOString(), position, assumedPosition, park: transientParks + 1 });
-      return { state: 'PARKED', key, reason: control.code, until: nextAt, position: assumedPosition, tries: n,
+      return { state: 'PARKED', key, reason: control.code, until: nextAt, position: assumedPosition, tries: n, parkTry: n,
         settle: { kind: 'parked', code: control.code, klass: 'transient', breaker: 'neutral', pos: POSITIONS[8], linux: false, nextAt, position: assumedPosition } };
     }
     return windowsOnly(new StepFailure(8, control.code, control.proof, 'stage', relayed, control));
@@ -3902,7 +3906,7 @@ export class ResidentExecutor {
     if (!result || result.state === 'WAITING') return result;
     if (result.state === 'PARKED') {
       try {
-        this.queue.park(subject.pr, subject.headSha, { reason: result.reason, nextAt: result.until, position: result.position ?? null }, this.clock());
+        this.queue.park(subject.pr, subject.headSha, { reason: result.reason, nextAt: result.until, position: result.position ?? null, parkTry: result.parkTry ?? null }, this.clock());
         await this.feedBreaker(subject, result.settle);
         await this.persistQueue();
       } catch { /* a view */ }

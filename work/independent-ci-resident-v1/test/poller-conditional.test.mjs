@@ -182,3 +182,38 @@ test('bd07449b must-red 3: rules read as pinned to this App wake that batch once
   other.moveMain();
   assert.equal(await other.pass(), 1);
 });
+
+// Task bd07449b r2 (PLAN-ruleset-unreadable-park-r2 §2): the wake of a batch asleep on RULESET_UNREADABLE names the sleep it is for
+// (the status row's parkTry: the batch's ended stage-8 tries). Woken once, the batch that stage 8 put to sleep again with the world
+// unchanged is woken again; only for that code, and only while the companion reads the rules pinned.
+test('bd07449b r2 must-red 2: a batch asleep on RULESET_UNREADABLE again (parkTry one more, all else the same) is woken again', async () => {
+  const s = sleepingOn('RULESET_UNREADABLE');
+  s.row.parkTry = 1;
+  s.p.noteBranchRules(sixPinnedTo(5368905));
+  assert.equal(await s.pass(), 1);
+  assert.equal(await s.pass(), 1, 'the same sleep is one wake');
+  s.row.parkTry = 2;
+  assert.equal(await s.pass(), 2, 'stage 8 put it to sleep again: a new wake');
+  assert.notEqual(s.written[1].parkEvent, s.written[0].parkEvent);
+  assert.deepEqual([s.written[1].pr, s.written[1].headSha, s.written[1].baseSha], [884, s.row.headSha, MAIN]);
+  assert.equal(await s.pass(), 2);
+  // the try budget reached (parkTry null): the signal is the last one, it moves only with the world again
+  s.row.parkTry = null;
+  assert.equal(await s.pass(), 2, 'no wake for the budget reached');
+  s.moveMain();
+  assert.equal(await s.pass(), 3, 'the world still wakes it');
+});
+
+test('bd07449b r2 must-red 5: parkTry wakes nothing while the rules are not pinned, nor for any other code', async () => {
+  const s = sleepingOn('RULESET_UNREADABLE');
+  s.p.noteBranchRules(LIVE_SCAFFOLD);
+  for (const parkTry of [1, 2, 3, null, 4]) { s.row.parkTry = parkTry; assert.equal(await s.pass(), 0, `parkTry ${parkTry}`); }
+  assert.deepEqual(s.reads, []);
+  const other = sleepingOn('REQUIRED_CHECK_FAILED');
+  other.p.noteBranchRules(sixPinnedTo(5368905));
+  other.row.parkTry = 1;
+  assert.equal(await other.pass(), 0, 'its first look is a baseline');
+  for (const parkTry of [2, 3, null]) { other.row.parkTry = parkTry; assert.equal(await other.pass(), 0, `${parkTry}: not a change for another code`); }
+  other.moveMain();
+  assert.equal(await other.pass(), 1);
+});

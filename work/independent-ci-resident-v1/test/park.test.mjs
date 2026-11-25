@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { rulesetFacts } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
-import { ResidentExecutor, PARK_HEAD_RETRY_MS, PARK_HEAD_STREAK_MS, STAGE8_NOT_READY_CODES, STAGE8_TRANSIENT_MAX_TRIES, STAGE8_TRANSIENT_PARK_CODES, STAGE8_TRANSIENT_RETRY_MS } from '../src/executor.mjs';
+import { ResidentExecutor, PARK_NUDGE_MS, PARK_HEAD_RETRY_MS, PARK_HEAD_STREAK_MS, STAGE8_NOT_READY_CODES, STAGE8_TRANSIENT_MAX_TRIES, STAGE8_TRANSIENT_PARK_CODES, STAGE8_TRANSIENT_RETRY_MS } from '../src/executor.mjs';
 import { STAGE8_NOT_READY_REASONS, STAGE8_FINAL_REASONS } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs';
 import { outcomeFailureCode } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
 import { validatePolicy } from '../src/policy.mjs';
@@ -16,8 +16,9 @@ import { describe as prPage, events as notificationEvents } from '../src/pr-stat
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { Ledger, batchKey, headKey } from '../src/ledger.mjs';
 import { Poller } from '../src/poller.mjs';
+import { pollLane } from '../src/companion-main.mjs';
 import { drainRequest, abortRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
-import { restAnswer } from './gh-rest-stub.mjs';
+import { restAnswer, restPolls } from './gh-rest-stub.mjs';
 import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
@@ -1033,4 +1034,81 @@ test('bd07449b: the PR page says which of the two it is', () => {
   assert.match(page({ deferred: 'RULESET_READ_FAILED', nextAt: now + MIN }), /^已测通：暂时读不到 main 的规则.*再查第 8 段/);
   assert.match(page({ deferred: 'RULESET_UNREADABLE', nextAt: null }), /^已测通：main 的必需检查没有全部钉在本执行器上.*规则钉回后/);
   assert.doesNotMatch(page({ deferred: 'RULESET_UNREADABLE', nextAt: null }), /读不到/);
+});
+
+// Task bd07449b r2 (PLAN-ruleset-unreadable-park-r2 §2, §5 must-red 3, 4). The companion as main() runs it: its poll lane
+// (companion-main.mjs#pollLane: the status board, the PR pass, one sleeping batch observed) over a GitHub that shows PR 884 open on main
+// (no compare answer: nothing is proposed), with main's rules read pinned to this App. One beat is one pass of that lane.
+function companionBeats(f) {
+  let events = 0;
+  const pulls = () => [{ number: 884, headRefOid: HEAD, baseRefOid: BASE, isDraft: false, updatedAt: '2026-11-25T03:00:00Z' }];
+  const run = restPolls(async argv => (argv.some(a => /\/check-runs/.test(a))
+    ? restAnswer(argv, { total_count: 1, check_runs: [{ id: 1, name: 'hosted-ci-suites', status: 'completed', conclusion: 'success' }] })
+    : { code: 9, stdout: '', stderr: '' }), { main: () => BASE, pulls });
+  const poller = new Poller({ repo: subject().repo, ghExe: 'gh', clock: f.clock, run,
+    writeTrigger: async trigger => { events++; await f.drop(Buffer.from(JSON.stringify(trigger))); } });
+  poller.noteBranchRules(pinnedBack());
+  // the status board the executor writes (state\status.json), as the companion parses it
+  const readStatus = () => { const b = new StatusBoard({ clock: f.clock }); b.update({ backfill: { complete: true, published: 0, unreadable: 0 } });
+    b.setPending(f.queue.view(f.clock(), { etaBatchMs: 20 * MIN })); return parseStatus(Buffer.from(JSON.stringify(b.snapshot()))); };
+  const lane = pollLane({ poller, readStatus });
+  return { beat: () => lane.work(), events: () => events, readStatus };
+}
+const unreadable = () => notReady('RULESET_UNREADABLE');
+
+test('bd07449b r2 must-red 3: put to sleep on RULESET_UNREADABLE again on the try it was woken for, the batch is woken again by the next beat', async t => {
+  const engine = stage8Engine(Array.from({ length: 4 }, unreadable), KEY);
+  const f = await executorFixture(t, { engine });
+  await f.drop(triggerBytes());
+  const first = await f.exec.tick();
+  assert.deepEqual([first.state, first.reason, first.until, first.tries], ['PARKED', 'RULESET_UNREADABLE', null, 1]);
+  const c = companionBeats(f);
+  assert.deepEqual(c.readStatus().pending.filter(r => r.pr === 884).map(r => [r.state, r.deferred, r.nextAt]), [['PARKED', 'RULESET_UNREADABLE', null]]);
+  await c.beat();
+  assert.equal(c.events(), 1, 'the rules read pinned: a wake');
+  const second = await f.exec.tick();
+  assert.deepEqual([second.state, second.reason, second.until, second.tries], ['PARKED', 'RULESET_UNREADABLE', null, 2], 'stage 8 answers the same: asleep again');
+  // the companion beats every minute; the world has not changed
+  const runs = () => stagesRun(engine).filter(stage => stage === 8).length;
+  for (let minute = 0; minute <= PARK_NUDGE_MS / MIN && runs() === 2; minute++) {
+    await c.beat();
+    await f.exec.tick();
+    f.advance(MIN);
+  }
+  assert.equal(c.events(), 2, 'one more wake, for the second sleep');
+  assert.equal(runs(), 3, 'the third try ran');
+  const ended = (await f.ledger.state(KEY)).tries.map(x => x.ended?.code);
+  assert.deepEqual(ended, ['RULESET_UNREADABLE', 'RULESET_UNREADABLE', 'RULESET_UNREADABLE']);
+});
+
+test('bd07449b r2 must-red 4: the companion reads the rules pinned and stage 8 answers RULESET_UNREADABLE for ever: a try at most every 5 minutes, none past the budget, the Owner told once', async t => {
+  // a budget of 4 tries (policy park.stage8MaxTries, 12 by default) keeps the scene short; the companion beats every minute while tries
+  // come, then every 10 minutes to the end of the 3 hours (a beat writes only a changed signal, so the coarser beat hides nothing)
+  const limit = 4;
+  const engine = stage8Engine(Array.from({ length: 30 }, unreadable), KEY);
+  const f = await executorFixture(t, { engine, policy: rawPolicy({ park: { ...rawPolicy().park, stage8MaxTries: limit } }) });
+  await f.drop(triggerBytes());
+  const start = f.clock();
+  await f.exec.tick();
+  const c = companionBeats(f);
+  const at = [f.clock()];
+  let runs = 1;
+  while (f.clock() - start < 180 * MIN) {
+    await c.beat();
+    await f.exec.tick();
+    const now = stagesRun(engine).filter(stage => stage === 8).length;
+    if (now > runs) { at.push(f.clock()); runs = now; }
+    f.advance(f.clock() - at.at(-1) < 15 * MIN ? MIN : 10 * MIN);
+  }
+  assert.ok(runs >= 3, `the third try happened (${runs} tries)`);
+  assert.equal(runs, limit, 'tries up to the budget, none past it');
+  // The first wake of a batch comes at once (executor.mjs#nudgeParked: no nudge before it), so the second try may follow the first in the
+  // same minute; every later wake is at least PARK_NUDGE_MS after the one before it.
+  const gaps = at.slice(1).map((x, i) => (x - at[i]) / MIN);
+  assert.ok(gaps.slice(1).every(g => g >= PARK_NUDGE_MS / MIN), `woken tries at least 5 minutes apart: ${gaps.join(', ')}`);
+  assert.ok(at.at(-1) - at[0] < 60 * MIN, 'the budget is spent within the first hour of the three');
+  assert.equal(f.queue.notices.filter(n => n.code === 'STAGE8_TRY_LIMIT').length, 1, 'the Owner is told once');
+  const [entry] = await f.ledger.parkedEntries();
+  assert.equal(ResidentExecutor.lastTry(entry).sleeping, true);
+  assert.equal(c.readStatus().pending.find(r => r.pr === 884).parkTry, null, 'the budget reached: no parkTry');
 });

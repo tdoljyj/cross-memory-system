@@ -465,11 +465,13 @@ export class RunQueue {
   }
 
   // Phase 2, step 2: the row's batch rests at parking point B (reason: why stage 8 was not ready; nextAt: its next try;
-  // position: its claim's place in the merge queue at that try). A newer commit that arrived meanwhile stays current.
-  park(pr, headSha, { reason, nextAt, position }, now) {
+  // position: its claim's place in the merge queue at that try; parkTry: the batch's ended stage-8 tries, null once its budget is
+  // reached, task bd07449b r2). A newer commit that arrived meanwhile stays current.
+  park(pr, headSha, { reason, nextAt, position, parkTry = null }, now) {
     const r = this.row(pr);
     if (!r || r.running?.headSha !== headSha) return false;
-    r.parked = { reason: reason ?? null, nextAt: Number.isSafeInteger(nextAt) ? nextAt : null, position: Number.isSafeInteger(position) ? position : null };
+    r.parked = { reason: reason ?? null, nextAt: Number.isSafeInteger(nextAt) ? nextAt : null, position: Number.isSafeInteger(position) ? position : null,
+      parkTry: Number.isSafeInteger(parkTry) && parkTry >= 0 ? parkTry : null };
     if (r.current?.headSha === headSha) this.setState(r, 'PARKED', reason ?? null, now);
     else r.updatedAt = now;
     return true;
@@ -700,6 +702,7 @@ export class RunQueue {
       ...(reasonCodes(r).length > 0 ? { reasonCodes: reasonCodes(r) } : {}),
       nextAt: parkedHere(r) ? (r.parked?.nextAt ?? null) : r.state === 'PARKED' ? null : time(r.nextAt) ? r.nextAt : (r.poke ? r.poke.dueAt : null), level: r.level, origin: r.origin ?? null, stopKind: r.stopKind ?? null,
       queuePosition: parkedHere(r) ? (r.parked?.position ?? null) : null,
+      parkTry: parkedHere(r) ? (r.parked?.parkTry ?? null) : null,
       // Generation 12 (defect 050560ac): a back-off after a network release (the line to GitHub or Native, DESIGN 53.3), for the PR page.
       network: r.state === 'BACKOFF' && r.levelKind === 'network',
       firstAt: r.current.firstAt ?? null, position: ahead.has(r.pr) ? ahead.get(r.pr) + 1 : null,
