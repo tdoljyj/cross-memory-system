@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AdmissionRerunner, REDISPATCH_KIND } from '../../work/independent-ci-resident-v1/src/admission-rerun.mjs';
+import { AdmissionRerunner, REDISPATCH_KIND, residentDispatchMark } from '../../work/independent-ci-resident-v1/src/admission-rerun.mjs';
 import { matchCompanionStatuses } from './retrigger-counter.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -186,7 +186,8 @@ async function runsOnHead(get, head) {
       const a = n === 1 && run.run_attempt === 1 ? run : await get(`/actions/runs/${run.id}/attempts/${n}`);
       if (a?.id !== run.id || a.head_sha !== head || a.run_attempt !== n) fail(`运行 ${run.id} 的 attempt ${n} 响应不完整`);
       const time = stamp(a.run_started_at, `运行 ${run.id} 的 attempt ${n}`);
-      candidates.push({ ...a, workflow: run.path, branch: run.head_branch, prs: run.pull_requests, time });
+      candidates.push({ ...a, event: run.event, display_title: run.display_title,
+        workflow: run.path, branch: run.head_branch, prs: run.pull_requests, time });
     }
   }
   return candidates;
@@ -194,19 +195,25 @@ async function runsOnHead(get, head) {
 
 async function readReruns(get, head, pushes, prsByBranch, inWindow, end) {
   const candidates = await runsOnHead(get, head);
+  const events = [], ignored = [];
   const manual = candidates.filter(a => {
     if (!inWindow(a.time)) return false;
     const identity = actorKind(a.triggering_actor);
     if (identity === 'unknown') fail(`运行 ${a.id} 的 attempt ${a.run_attempt} 缺 triggering_actor`);
-    return identity === 'human';
+    if (identity !== 'human') return false;
+    const mark = residentDispatchMark(a);
+    if (!mark) return true;
+    ignored.push({ kind: 'Z2', at: beijing(a.time), head,
+      why: `运行 ${a.id}:${a.run_attempt} 标记为常驻自动补发（节点 ${mark.node}，编号 ${mark.id}）` });
+    return false;
   });
-  if (!manual.length) return { events: [], ignored: [] };
+  if (!manual.length) return { events, ignored };
   const statuses = await pages(get, `/commits/${head}/statuses`);
   uniqueIds(statuses, `${head} 的提交状态`);
+  // 已标记的运行仍参与时间匹配，避免它的状态被误归给临近的手工运行。
   const { companion, ambiguous } = matchCompanionStatuses(candidates, statuses.filter(s => stamp(s.created_at, '状态') <= end), {
     matchesWorkflow: () => true, matchesDescription: companionDescription,
   });
-  const events = [], ignored = [];
   for (const a of manual) {
     const id = `${a.id}:${a.run_attempt}`, at = beijing(a.time);
     const doubt = ambiguous.get(id), status = companion.get(id);
