@@ -32,7 +32,7 @@ import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, wri
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 export const INFRASTRUCTURE = 'real_database_infrastructure:';
 const FAILURE = 'real_database:';
@@ -251,7 +251,7 @@ function verdict({ ran, failures, observe, runtime, times, runner }) {
   return problems.length === 0 || observe ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (import.meta.main) {
   const code = await realDatabase();
   process.exitCode = Number.isInteger(code) ? code : 1;
 }
