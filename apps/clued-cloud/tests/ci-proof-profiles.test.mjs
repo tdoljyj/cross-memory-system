@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {retiredCatalogue} from '../../../scripts/ci/fixtures/retired-gated-proof-catalogue.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,11 +30,10 @@ const registry=parseWorkflowProfiles(fs.readFileSync(path.join(root,'scripts/ci/
 const roleSpecs=JSON.parse(fs.readFileSync(path.join(root,'scripts/ci/clued-gated-proof-role-specs.json'),'utf8'));
 const parseYaml=text=>{const doc=YAML.parseDocument(text);assert.deepEqual(doc.errors,[]);assert.deepEqual(doc.warnings,[]);return doc.toJS({maxAliasCount:0});};
 
-test('registered definitions match full YAML bytes and complete explicit primary profiles',()=>{
+function assertRegisteredDefinitions(registry,roleSpecs) {
   assert.equal(require('yaml/package.json').version,'2.9.0');
   assert.equal(registry.schema,'clued.gated-proof-profiles/2');
   assert.equal(roleSpecs.schema,'clued.gated-proof-role-specs/2');
-  const current=ciWorkflows(root);
   for(const [file,record] of Object.entries(registry.workflows)) {
     for(const entry of [record,...(record.accepted_sources??[])]) {
       assert.equal(entry.registration_status,'registered');
@@ -45,7 +45,11 @@ test('registered definitions match full YAML bytes and complete explicit primary
     assert.deepEqual(Object.keys(roleSpecs.workflows[file].sources).sort(),
       [record,...(record.accepted_sources??[])].map(entry=>entry.workflow_blob).sort(),`${file}: orphan source roles`);
   }
-  for(const [file,blob] of current) {
+}
+
+test('registered definitions match full YAML bytes and complete explicit primary profiles',()=>{
+  assertRegisteredDefinitions(registry,roleSpecs);
+  for(const [file,blob] of ciWorkflows(root)) {
     const identity=recognizeCatalogueWorkflow({registry,roleSpecs,file,blob});
     assert.equal(identity.source_identified,true,`${file}: current Source identity is missing`);
     if(identity.kind===SOURCE_METADATA_ONLY_DISABLED) {
@@ -64,6 +68,33 @@ test('registered definitions match full YAML bytes and complete explicit primary
     assert.equal(recognizeCatalogueWorkflow({registry,roleSpecs,file,blob:workflowBlob(committed)}).source_identified,true,
       `${file}: committed Git bytes have no Source identity`);
   }
+});
+
+const designRefsFile='.github/workflows/design-refs.yml';
+const designRefs=registry.workflows[designRefsFile];
+const sourceWithEnv='env:\n  REGISTRATION_TEST: enabled\n'+designRefs.source_yaml;
+
+for(const [key,source] of [
+  ['env',sourceWithEnv],
+  ['defaults','defaults:\n  run:\n    shell: bash\n'+designRefs.source_yaml],
+]) {
+  test(`registration compiler rejects top-level ${key} in registered YAML`,()=>{
+    const accepted_roles=rolesForSource(roleSpecs,designRefsFile,designRefs.workflow_blob);
+    assert.throws(()=>compileRegisteredWorkflow(source,{primary_ids:designRefs.primary_ids,parseYaml,accepted_roles}),
+      new RegExp(`unsupported top-level key: ${key}`));
+  });
+}
+
+test('registry validation rejects an accepted Source with top-level env',()=>{
+  const candidateRegistry=structuredClone(registry);
+  const candidateRoleSpecs=structuredClone(roleSpecs);
+  const {accepted_sources,...fields}=candidateRegistry.workflows[designRefsFile];
+  const blob=workflowBlob(sourceWithEnv);
+  accepted_sources.push({...fields,workflow_blob:blob,source_yaml:sourceWithEnv,
+    source_sha256:createHash('sha256').update(sourceWithEnv).digest('hex')});
+  const sources=candidateRoleSpecs.workflows[designRefsFile].sources;
+  sources[blob]=sources[fields.workflow_blob];
+  assert.throws(()=>assertRegisteredDefinitions(candidateRegistry,candidateRoleSpecs),/unsupported top-level key: env/);
 });
 
 test('YAML aliases and duplicate fields cannot hide an execution role or trigger',()=>{
