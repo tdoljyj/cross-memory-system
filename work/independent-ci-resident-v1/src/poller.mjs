@@ -148,7 +148,10 @@ export class Poller {
         };
       }, 'PARKED_CHECKS_UNAVAILABLE', COMPARE_TIMEOUT_MS);
       checksReady = checks.ready;
-    } catch { /* an absent observation cannot replace the last confirmed value */ }
+    } catch {
+      // Reuse a confirmed check list. Without one, a failed read cannot signal a ruleset wake.
+      if (row.deferred === 'RULESET_UNREADABLE' && checks === null) return;
+    }
     let mergeMethods = previous?.mergeMethods ?? null;
     if (row.deferred === 'MERGE_METHODS_NOT_MERGE_ONLY') {
       try {
@@ -160,8 +163,8 @@ export class Poller {
     }
     // Task bd07449b r2: for RULESET_UNREADABLE the signal also names the sleep (the row's parkTry, its ended stage-8 tries): a batch woken
     // and put to sleep again with the world unchanged is a new signal, so it is woken again (each wake still at most every PARK_NUDGE_MS,
-    // executor.mjs#nudgeParked, and within the stage-8 try budget). The budget reached, the executor keeps the parkTry that woke the last
-    // try (r3), so the signal moves with the world only; read from the row alone, nothing remembered here. Every other code's signal is as before.
+    // executor.mjs#nudgeParked, and within the stage-8 try budget). At the budget the executor keeps the previous row's parkTry, including
+    // null on legacy rows, so the sequence stops changing the signal. Every other code's signal is as before.
     const parkTry = row.deferred === 'RULESET_UNREADABLE' && Number.isSafeInteger(row.parkTry) ? row.parkTry : null;
     const signal = digest([row.pr, row.headSha, sha, this.lastPass.mainSha, this.rulesDigest, checks?.digest ?? null, mergeMethods,
       ...(row.deferred === 'RULESET_UNREADABLE' ? [parkTry] : [])]);

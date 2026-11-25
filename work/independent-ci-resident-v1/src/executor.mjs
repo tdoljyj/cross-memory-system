@@ -3135,6 +3135,10 @@ export class ResidentExecutor {
     const unrecorded = await this.beforePublication(key, subject, 8);
     if (unrecorded) { unrecorded.relayedRoles = s.plan?.relayed?.length ?? 0; return windowsOnly(unrecorded); }
     const n = await this.ledger.beginTry(key, { batchId: batch.batchId });
+    // Capture this batch's previous sleep before stage 8 runs. A legacy row's null is part of its wake signal.
+    const row = this.queue.row(subject.pr);
+    const previousParkTry = row?.running?.key === key && row.running.headSha === subject.headSha && row.parked
+      ? (row.parked.parkTry ?? null) : n - 1;
     this.atStage(8, 'stage');
     const { result: control, aborted } = await this.runWindowsStageWithRetry(key, batch, 8);
     if (aborted) return aborted;
@@ -3176,13 +3180,10 @@ export class ResidentExecutor {
     if (zero && tryLimit && (park || STAGE8_NOT_READY_CODES.includes(control.code)))
       this.queue.notice(boundedNotice({ code: 'STAGE8_TRY_LIMIT', subject, used: counted, limit: this.policy.park.stage8MaxTries,
         now, recovery: park ? 'park-event' : 'batch', episode: key }));
-    // The absolute retry cap also covers the uncounted head tries. Event-driven tries may follow it.
+    // The batch count and age also put uncounted queue-head tries to sleep. A new event can still wake the batch.
     const final = control.code === 'RESIDENT_BASE_MOVED' || tryLimit || n >= MAX_TRIES || now - Date.parse(s.parked.at) >= this.policy.park.maxMs;
-    // parkTry (task bd07449b r2, r3): the batch's ended stage-8 tries, for the status row (queue.mjs#park): the companion's wake of a batch
-    // asleep on RULESET_UNREADABLE names the sleep it is for (poller.mjs#parkedPass). Once the budget is reached (final) it stays the one
-    // that woke this try (the last try's, n - 1 before any was recorded): the companion's signal is then the one this try was woken for,
-    // which the executor already knows (parkEvents, the try's parkEvent), so nothing the poller forgets or restarts can wake it again.
-    const parkTry = final ? (before.at(-1)?.ended.parkTry ?? n - 1) : n;
+    // At the budget, keep the previous sleep's sequence so the poller can reproduce the consumed wake even after a restart.
+    const parkTry = final ? previousParkTry : n;
     if (park) {
       const sleeping = final || STAGE8_SLEEP_AT_ONCE_CODES.includes(control.code);
       // The back-off follows the counted tries: after a run at the queue's first place the next try is not 2 hours away
