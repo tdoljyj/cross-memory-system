@@ -373,6 +373,10 @@ export const FALSIFYING_REASONS = Object.freeze(['pr_subject_changed', 'pr_files
 // The rule's live read of a batch's PR (DESIGN §72) happens at most this often per batch and named head (independent review of step
 // 1, m9): a resting batch's own cadence, and the bound on a hint that names the same head again.
 export const SUPERSEDE_LIVE_READ_MS = 10 * 60_000;
+// DESIGN §72.2: the rule's two reads (the PR's pr-head, the companion's heartbeat) are never silent when they fail. Per node and per read,
+// a spell of failed reads has one standing-unread receipt at its start and one standing-read-restored at its end; at most one announced
+// spell per read in this window, so a read that flaps writes at most two receipts an hour.
+export const STANDING_UNREAD_QUIET_MS = 60 * 60_000;
 // Ticks in a row the queue could not be written before the Owner is told (re-review N2).
 export const QUEUE_SAVE_ALARM = 3;
 // Phase 2, step 2: stage 8 not ready, with zero side effects (Source v2 publisher STAGE8_NOT_READY_REASONS).
@@ -3328,12 +3332,16 @@ export class ResidentExecutor {
     this.parkNudgedAt ??= new Map();
     this.parkNudgeBase ??= new Map();
     this.parkEvents ??= new Map();
+    // Board 266: under the push route the poller's baseSha is each PR's merge base (poller.mjs batchBase), and main moving sends no
+    // trigger at all (deduplicated by PR:head:batchBase), so a trigger says nothing about main there: main moving is stage 10's own
+    // reading (hintParkedHead). Delete `moved` with parkNudgeBase when G2 removes the github-merge landing.
+    const tipFromTriggers = this.batchRoute() !== 'push';
     for (const e of entries) {
       const s = e.reserved.subject;
       // The main tip comes from the poller (its triggers carry prUpdatedAt); an Agent's trigger may name any base. Each tip
       // nudges a batch once (re-review of step 2, m7: alternating stale bases nudged every 5 minutes).
       const nudged = this.parkNudgeBase.get(e.key) ?? [];
-      const moved = triggers.find(({ t }) => t.prUpdatedAt !== null && t.baseSha !== s.baseSha && !nudged.includes(t.baseSha));
+      const moved = tipFromTriggers && triggers.find(({ t }) => t.prUpdatedAt !== null && t.baseSha !== s.baseSha && !nudged.includes(t.baseSha));
       const edited = triggers.some(({ t, seen }) => !t.parkEvent && t.pr === s.pr && !seen);
       const event = triggers.findLast(({ t }) => t.parkEvent && t.pr === s.pr && t.headSha === s.headSha && t.baseSha === s.baseSha);
       const changed = event && event.t.parkEvent !== (this.parkEvents.get(e.key) ?? ResidentExecutor.lastTry(e)?.parkEvent);
@@ -3750,7 +3758,48 @@ export class ResidentExecutor {
 
   // One live read of the PR (the companion's pr-head): null when there is no answer. Never authority to run anything.
   async livePull(pr, batch = null) {
-    try { return (await this.companion.prHead?.(pr, batch)) ?? null; } catch { return null; }
+    return (await this.livePullResult(pr, batch)).pull;
+  }
+
+  // The same read with the reason there was no answer: { pull, code }. code: null with a pull; PR_HEAD_NO_ANSWER when nothing came back
+  // (also a port without pr-head); the port's code when it threw one (service-ports.mjs#prHead: PR_HEAD_UNAVAILABLE, PR_HEAD_NO_ANSWER,
+  // a MAILBOX_* refusal); PR_HEAD_READ_FAILED for anything else. Only standing() reads the code, for its receipt.
+  async livePullResult(pr, batch = null) {
+    try {
+      const pull = (await this.companion.prHead?.(pr, batch)) ?? null;
+      return { pull, code: pull ? null : 'PR_HEAD_NO_ANSWER' };
+    } catch (error) {
+      return { pull: null, code: error instanceof ResidentError && CODE.test(error.code ?? '') ? error.code : 'PR_HEAD_READ_FAILED' };
+    }
+  }
+
+  // The one writer of standing-unread and standing-read-restored (DESIGN §72.2). read: 'pr-head' | 'heartbeat'; failure: the code of a
+  // failed read, null when it was read. A spell of failed reads is per node (its cause, the companion or gh or the network, is), so its
+  // receipt names the batch of the read that started it. It is announced when it starts, or later in the spell once
+  // STANDING_UNREAD_QUIET_MS has passed since the last announced one; only an announced spell is announced restored. In memory only: a
+  // restart starts afresh. Auxiliary: a receipt that cannot be written is not written, the tick goes on.
+  async standingRead(read, failure, ctx) {
+    this.standingUnread ??= { 'pr-head': null, heartbeat: null };
+    this.standingUnreadAnnouncedAt ??= { 'pr-head': -Infinity, heartbeat: -Infinity };
+    const now = this.clock();
+    let spell = this.standingUnread[read];
+    try {
+      if (failure) {
+        if (!spell) spell = this.standingUnread[read] = { since: now, failedReads: 0, failureCode: failure, announced: false, ctx };
+        spell.failedReads += 1;
+        spell.failureCode = failure;
+        if (spell.announced || now - this.standingUnreadAnnouncedAt[read] < STANDING_UNREAD_QUIET_MS) return;
+        spell.announced = true;
+        this.standingUnreadAnnouncedAt[read] = now;
+        const { basis, key, pr, safePoint } = spell.ctx, { heartbeatAgeMs = null } = ctx;
+        await this.receipt('standing-unread', { read, failureCode: failure, basis, key, pr, safePoint, ...(read === 'heartbeat' ? { heartbeatAgeMs } : {}) });
+      } else if (spell) {
+        this.standingUnread[read] = null;
+        if (spell.announced) {
+          await this.receipt('standing-read-restored', { read, since: new Date(spell.since).toISOString(), failedReads: spell.failedReads, failureCode: spell.failureCode });
+        }
+      }
+    } catch { /* auxiliary: never in the way of this tick */ }
   }
 
   // The scheduled attempt 2: same pre-checks under its own keys; the intent is closed if they refuse it
@@ -4616,7 +4665,8 @@ export class ResidentExecutor {
   //       mode (a single node: always on duty). The end proves quiescence through the companion, so only with its fresh heartbeat;
   //   (1), (2) one live read of the PR through the companion's pr-head (DESIGN §17.5), due once every SUPERSEDE_LIVE_READ_MS per batch
   //       and at once when the run queue (a newer commit) or stage 10 (the front) names another head of the PR (hint). Stage 1 is a read
-  //       too: markStarted counts as this batch's first one. No answer never ends a batch.
+  //       too: markStarted counts as this batch's first one. No answer never ends a batch. It is never silent either: standingRead()
+  //       writes one receipt when a spell of no answers starts and one when it ends.
   // A batch RESTING at a parking point (A or B) also stands only while (4) no upgrade of this node waits for it (endParkedIfNotStanding,
   // upgradeDraining). Field 2026-11-16 (#1130): the frozen upgrader drains until no ledger entry lacks 90-terminal.json
   // (upgrader/src/resident-ports.mjs#openBatches), while a front batch at B could not pass stage 8 before this node ran the Source the
@@ -4626,15 +4676,18 @@ export class ResidentExecutor {
   // Every ending goes the one way, supersededEnd(): quiescence on both hosts, the head burned, a rename-only archive, FAILED_CLEAN
   // SUPERSEDED_AT_SAFE_POINT (neutral, never an attempt 2); anything unproven is UNKNOWN and HALTs. Nothing is published or retracted.
   async standing(key, subject, batch, { hint = null, safePoint = null } = {}) {
-    if (this.probing() && this.nodeMode() === 'STANDBY') return (await this.companionFresh()) ? { basis: 'not-on-duty', live: null } : null;
+    if (this.probing() && this.nodeMode() === 'STANDBY') {
+      return (await this.companionFresh({ basis: 'not-on-duty', key, pr: subject.pr, safePoint })) ? { basis: 'not-on-duty', live: null } : null;
+    }
     const queued = this.queue.row(subject.pr)?.current?.headSha ?? null;
     const newer = HEX40.test(queued ?? '') && queued !== subject.headSha ? queued : null;
     const named = HEX40.test(hint ?? '') && hint !== subject.headSha ? hint : newer;
     if (!this.liveReadDue(key, named)) return null;
-    const live = await this.livePull(subject.pr, batch);
+    const { pull: live, code } = await this.livePullResult(subject.pr, batch);
+    await this.standingRead('pr-head', live ? null : code, { basis: 'pr', key, pr: subject.pr, safePoint });
     const verdict = prCandidate(live, subject);
     if (!verdict) {
-      if (named) await this.receipt('supersede-unconfirmed', { key, pr: subject.pr, safePoint });
+      if (named) await this.receipt('supersede-unconfirmed', { key, pr: subject.pr, safePoint, ...(live ? {} : { failureCode: code }) });
       return null;
     }
     if (verdict.basis === null || verdict.basis === PR_DRAFT) {
@@ -4661,22 +4714,27 @@ export class ResidentExecutor {
     return true;
   }
 
-  // The end proves quiescence through the companion: only with its fresh heartbeat.
-  async companionFresh() {
+  // The end proves quiescence through the companion: only with its fresh heartbeat. ctx (the rule's basis and the batch it was read for):
+  // the read is the rule's, so a stale or missing heartbeat is no silence (standingRead, code COMPANION_NOT_READY; heartbeatAgeMs null
+  // when there was no heartbeat to age).
+  async companionFresh(ctx = null) {
     let beat = null;
     try { beat = await this.companion.heartbeat?.(); } catch { beat = null; }
-    return typeof beat?.at === 'number' && this.clock() - beat.at <= this.policy.companion.heartbeatMaxAgeMs;
+    const heartbeatAgeMs = typeof beat?.at === 'number' ? this.clock() - beat.at : null;
+    const fresh = heartbeatAgeMs !== null && heartbeatAgeMs <= this.policy.companion.heartbeatMaxAgeMs;
+    if (ctx) await this.standingRead('heartbeat', fresh ? null : 'COMPANION_NOT_READY', { ...ctx, heartbeatAgeMs });
+    return fresh;
   }
 
   // (4) for a resting batch: this node's upgrader waits for the drain. Both of its own words, read this tick: upgrade\status.json says its
   // op is WAITING_DRAIN (the versions port; the upgrader, not the Owner's session, writes it), and its intake hold is in force (renewed
   // while it drains, lifted when the drain runs out, at most two hours: a status it left behind ends nothing). Not read: null.
-  async upgradeDraining() {
+  async upgradeDraining(ctx = {}) {
     if (this.versionState?.view?.upgrade?.state !== 'WAITING_DRAIN') return null;
     let view = null;
     try { view = await this.intakeRefresh(); } catch { return null; }
     if (!(view?.holders ?? []).some(h => h.holder === UPGRADE_HOLDER)) return null;
-    return (await this.companionFresh()) ? { basis: UPGRADE_DRAIN_BASIS, live: null } : null;
+    return (await this.companionFresh({ basis: UPGRADE_DRAIN_BASIS, ...ctx })) ? { basis: UPGRADE_DRAIN_BASIS, live: null } : null;
   }
 
   // A batch in flight, at a safe point outside the Linux preparation (before stage R's plan, before the workspace): the inbox is read
@@ -4696,7 +4754,7 @@ export class ResidentExecutor {
     const { key } = entry, subject = entry.reserved.subject, atB = Ledger.parkedAt(entry);
     if (!atB && !Ledger.waitingAt(entry)) return null;
     const batch = atB ? entry.parked.batch : entry.wait.batch, safePoint = atB ? 'parked' : 'waiting';
-    const fact = (await this.upgradeDraining()) ?? await this.standing(key, subject, batch, { hint, safePoint });
+    const fact = (await this.upgradeDraining({ key, pr: subject.pr, safePoint })) ?? await this.standing(key, subject, batch, { hint, safePoint });
     if (!fact) return null;
     this.parkNudges?.delete(key);
     this.current = { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, attempt: subject.attempt, since: entry.reserved.reservedAt ?? null };

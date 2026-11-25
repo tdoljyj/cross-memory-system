@@ -160,6 +160,11 @@ $killAt = $uninstallText.IndexOf("'COMPANION_STILL_RUNNING_RESIDENT_NOT_RENAMED'
 Yes ($killAt -gt $uninstallText.IndexOf('Unregister-ScheduledTask') -and $killAt -lt $uninstallText.IndexOf('[IO.Directory]::Move($Root')) 'uninstall-stops-companion-before-rename'
 Yes ($uninstallText.IndexOf("Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion'") -gt 0 -and $uninstallText.IndexOf("Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion'") -lt $uninstallText.IndexOf("Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion'") -and
   $uninstallText.Contains("Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier'") -and $uninstallText.Contains("Name='CluedCompanionSupervisor.exe'")) 'uninstall-stops-the-supervisor-and-deletes-both-tasks'
+# K3 (task 87d330d0): the SYSTEM start task (\Clued\CluedCIResidentCompanionStart) is deleted before the companion is stopped, and verify
+# records it (companion-start-task); test/companion-run-ignores-constraints.test.mjs T9 runs both in CI.
+$startDel = $uninstallText.IndexOf("Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanionStart' -Confirm:`$false")
+Yes ($startDel -gt 0 -and $startDel -lt $uninstallText.IndexOf("Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction Stop")) 'uninstall-deletes-the-start-task-first'
+Yes ((Get-Content -LiteralPath (Join-Path $here 'verify-resident.ps1') -Raw).Contains('Record ''companion-start-task'' $companionStart.ok $companionStart.detail')) 'verify-records-the-start-task'
 $probeNode = 'C:\Program Files\nodejs\node.exe'
 if ((Test-Path -LiteralPath $probeNode) -and (Test-Path -LiteralPath $na.path)) {
   $probeDir = Join-Path $Scratch 'conhost probe'; [void][IO.Directory]::CreateDirectory($probeDir)   # a space, quoted like the real paths

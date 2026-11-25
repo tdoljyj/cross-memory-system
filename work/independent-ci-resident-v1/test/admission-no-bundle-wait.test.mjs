@@ -11,7 +11,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
 import { batchKey } from '../src/ledger.mjs';
-import { BASE, HEAD, executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, triggerBytes, withTimeout } from './helpers.mjs';
+import { BASE, HEAD, executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, triggerBytes } from './helpers.mjs';
+import { until } from '../../../scripts/ci/test-clock-guard.mjs';
 import { NO_SWEEP, trainFacts } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
 
 const MIN = 60_000;
@@ -44,7 +45,7 @@ test('github-merge route, no scan from this App, no S: no bundle is asked for; s
   f.exec.trainLast = LEAN_READ;
   assert.equal(f.exec.batchRoute(), null, 'not the push route');
   await f.drop(triggerBytes());
-  const r = await withTimeout(f.exec.tick(), 'the tick of a batch that needs no bundle', 5_000);
+  const r = await until(f.exec.tick(), 'the tick of a batch that needs no bundle');
   assert.deepEqual(engine.calls.filter(c => c[0] === 'stage').map(c => c[1]), [1, 8], 'stage 1, then straight to stage 8');
   assert.equal(Object.hasOwn((await ofType(f.receipts, 'batch-reserved'))[0].subject, 'batchRoute'), false, 'no push stamp');
   assert.ok((await ofType(f.receipts, 'batch-started'))[0], 'batch-started was written');
@@ -64,13 +65,13 @@ test('the lean decision is on disk: the reading is gone after 10-started (a rest
   f.exec.trainLast = LEAN_READ;
   const atA = holdAtA(f.exec);
   await f.drop(triggerBytes());
-  const first = await withTimeout(f.exec.tick(), 'the tick up to parking point A', 5_000);
+  const first = await until(f.exec.tick(), 'the tick up to parking point A');
   assert.equal(first.state, 'WAITING', JSON.stringify(first));
   assert.equal((await f.ledger.state(first.key)).started?.facts?.lean, true);
   f.exec.trainLast = null; // a restart: the reading lives in memory only; unread means "every scan runs" for a batch born now
   atA.release();
   f.advance(MIN);
-  const r = await withTimeout(f.exec.tick(), 'the tick that goes on from A', 5_000);
+  const r = await until(f.exec.tick(), 'the tick that goes on from A');
   assert.equal(r.state, 'COMPLETED', JSON.stringify(r));
   assert.deepEqual(engine.calls.filter(c => c[0] === 'stage').map(c => c[1]), [1, 8], 'no Linux stage');
   assert.deepEqual((await f.ledger.state(r.key)).plan?.local, [], 'the plan has no local role');
@@ -103,7 +104,7 @@ test('the rules were not read (a restart): the bundle still comes before stage 1
   const bundles = neverBundle(companion);
   order.length = 0;
   f.advance(MIN);
-  const r2 = await withTimeout(f.exec.tick(), 'the tick of the restamped head', 5_000);
+  const r2 = await until(f.exec.tick(), 'the tick of the restamped head');
   assert.equal(r2.state, 'COMPLETED', JSON.stringify(r2));
   assert.deepEqual(order.filter(x => x.startsWith('stage-')), ['stage-1', 'stage-8'], order.join(' '));
   assert.equal(bundles.n, 0, 'the restamped batch (stamped push) builds no bundle');

@@ -62,5 +62,8 @@ HTTP 202 携带审批编号和重试秒数，常驻保存两项并按服务端�
 | `companion.json` | `resident/mailbox/responses/renew-key.json` |
 | `probe.json` | `resident/broker/renew-ci.json` 或 `renew-upgrade.json` |
 | `record.json` | 来宾管理员对 `secrets/ci-admission.connection.json` 的实读，只记 `PRESENT` 或 `ABSENT`，不读内容 |
+| `network.json` | 不来自来宾：由宿主写，内容只有本轮演练在来宾里切断的主机名单 `{"blackholeHosts":[…]}`（kit 的 `server.blackholeHosts`） |
+
+网关一项按 `network.json` 双向判定，网关主机取自 `windows/SwapBroker.cs` 的 `Route`（读不出即 `DRILL_GATEWAY_ROUTE_UNREADABLE`）。名单不含网关主机时，探询必须是 403 身份拒绝（`gateway=true`）；名单含网关主机时，探询必须恰为 `RENEW_GATEWAY_UNAVAILABLE`，登记为未验到（`gateway='NOT_VERIFIED_GATEWAY_CUT_OFF'`），这时收到 403 或别的码即失败。两种情况都要求探询时间在 24 小时内。
 
 路径相对于来宾的 CI 根目录。控制账号的观测来自实际第 11 阶段服务令牌。正式包从 `windows/SwapBroker.cs` 生成 resident 清单项及 `bin/SwapBroker.cs` 编译槽。Broker 读取当前代次指针所钉的安装回执，并核对运行中的可执行文件、清单和两处源码摘要后才执行续期。

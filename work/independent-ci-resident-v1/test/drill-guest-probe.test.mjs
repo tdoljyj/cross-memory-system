@@ -470,7 +470,7 @@ test('the late probe is called once, at the end of the run: after the reinstall,
   const text = fs.readFileSync(script, 'utf8');
   const run = text.slice(text.indexOf('function Invoke-DrillRun'), text.indexOf('function Save-DrillGuestEvidence'));
   assert.equal(run.split('Save-DrillLateProbe').length, 2);
-  assert.ok(run.indexOf('Save-DrillLateProbe') > run.indexOf('prepareAgainStatus') && run.indexOf('Save-DrillLateProbe') < run.indexOf('try { Copy-DrillM5 $RunDir $Cred }'));
+  assert.ok(run.indexOf('Save-DrillLateProbe') > run.indexOf("'reinstall.json'") && run.indexOf('Save-DrillLateProbe') < run.indexOf('try { Copy-DrillM5 $RunDir $Cred'));
   assert.doesNotMatch(text.slice(text.indexOf('function Get-DrillVerdict'), text.indexOf('function Test-DrillAfterBoot')), /guest-probe|probeLate|GuestInspect/);
   // the readiness probe the drill already had keeps its own name and body
   assert.match(text, /\$script:GuestProbe = \{\r?\n\s+\$setup = Get-ItemProperty -Path 'HKLM:\\SYSTEM\\Setup'/);

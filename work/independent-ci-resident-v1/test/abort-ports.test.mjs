@@ -10,7 +10,8 @@ import { BROKER_STOP_CONTRACT, PUMP_CODES, WindowsEngine, findInflightSwap } fro
 import { CANCEL_CONTRACT, Mailbox } from '../src/mailbox.mjs';
 import { CALLBACK_WINDOW_MS, Companion, RELAY_TIMEOUT_MS } from '../src/companion.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { TEST_NODE, TEST_NODE_SHA, rawPolicy, tempRoot, waitFor } from './helpers.mjs';
+import { TEST_NODE, TEST_NODE_SHA, rawPolicy, tempRoot } from './helpers.mjs';
+import { until } from '../../../scripts/ci/test-clock-guard.mjs';
 
 const V2 = ['work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'resident-v2'];
 const sha = b => createHash('sha256').update(b).digest('hex');
@@ -149,7 +150,7 @@ test('a stop the broker did not send never cancels the pump; a failing pump canc
   // The helper ends by itself; the stage now only waits for the pump, which the next poll cancels (second review MINOR 2).
   release();
   // After the helper returns, the engine still does real file I/O (the observer's stop) before it marks the Windows side ended.
-  await waitFor(() => f.engine.inflight?.windowsEnded === true, 'the engine to mark the Windows side of the stage ended');
+  await until(() => f.engine.inflight?.windowsEnded === true, 'the engine to mark the Windows side of the stage ended');
   assert.equal(f.engine.inflight?.windowsEnded, true);
   const after = await f.engine.requestStop(f.batch, 2);
   assert.deepEqual([after.pump, after.done], [true, true]);
