@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 
 // raw-binding-grants: applies only migrations before 20261009050000, where raw Bindings still pass.
 
@@ -20,25 +19,17 @@ const projectionName = '20260922093621_bug_20260922_002_projection_rebuild_gate.
 const readSurfacesName = '20260922093948_bug_20260922_002_currentness_read_surfaces.sql';
 const uuid = () => crypto.randomUUID();
 
-async function freePort() {
-  const server = net.createServer();
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const port = server.address().port;
-  await new Promise((resolve) => server.close(resolve));
-  return port;
-}
 
 test('raw direct Event inventory is complete, scoped, and CAS transitions are atomic', { timeout: 180000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-legacy-currentness-'));
-  const server = new EmbeddedPostgres({
+  const server = newCluster({
     databaseDir: directory, user: 'postgres', password: crypto.randomBytes(32).toString('hex'),
-    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   let db;
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     db = server.getPgClient();
     await db.connect();
     await db.query(`create role anon nologin; create role authenticated nologin;

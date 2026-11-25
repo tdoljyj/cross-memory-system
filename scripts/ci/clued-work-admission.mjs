@@ -431,6 +431,8 @@ export const GATE_JOB_SHA256 = new Set([
   // required test checks of clued-required-tests.yml. Registered here (PR-A)
   // before that workflow is added (PR-B, #971).
   "9c582144f424d1bc9ef7d3b048d3b7771c7b639ef5544bc04a8a80515c52b2f2",
+  // Task 3576b29c: cancel-only PR close skips this exact otherwise unchanged gate.
+  "94c304b8aef3e7ce3e3919e5a86ac627ae7a79ba6c0a8b607a7be3f14e38a384",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 export const PRODUCTION_PUBLISHER_WORKFLOW = ".github/workflows/clued-cloud-production-release.yml";

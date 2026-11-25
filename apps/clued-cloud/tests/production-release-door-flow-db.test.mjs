@@ -1,14 +1,13 @@
-import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, startCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import pg from 'pg';
 
 // Release door v1 in the production release workflow (FABLE-release-identity-
@@ -96,25 +95,15 @@ $door$;
 `;
 const INSTALL = '20990101000000_fixture_release_door.sql';
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
-
 test('release door v1: the release workflow consumes, probes and boots the door inside the migration transaction',
   { timeout: 600000 }, async (t) => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-release-door-flow-'));
     const password = crypto.randomBytes(16).toString('hex');
-    const port = await freePort();
-    const server = new EmbeddedPostgres({ databaseDir: path.join(directory, 'db'), user: 'postgres', password, port,
+    const server = newCluster({ databaseDir: path.join(directory, 'db'), user: 'postgres', password,
       persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(message + '\n'); } });
     const clients = [];
     try {
-      await server.initialise();
-      await server.start();
+      await startCluster(server);
       const admin = server.getPgClient();
       clients.push(admin);
       await admin.connect();
@@ -133,7 +122,7 @@ test('release door v1: the release workflow consumes, probes and boots the door 
       async function fresh({ door = false, autoApprove = true } = {}) {
         const name = `flow_${++databases}`;
         await admin.query(`create database ${name}`);
-        const db = new pg.Client({ connectionString: `postgresql://postgres:${password}@127.0.0.1:${port}/${name}` });
+        const db = new pg.Client({ connectionString: `postgresql://postgres:${password}@127.0.0.1:${server.options.port}/${name}` });
         clients.push(db);
         await db.connect();
         await db.query('create schema supabase_migrations; create table supabase_migrations.schema_migrations(version text primary key, name text, statements text[])');
@@ -152,7 +141,7 @@ test('release door v1: the release workflow consumes, probes and boots the door 
           const base = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(path|node_options|github_.*|clued_.*|release_.*|migrations)$/i.test(key)));
           const result = spawnSync('bash', ['-c', stepScript(stepName)], { cwd, encoding: 'utf8', env: { ...base,
             PATH: `${bin}${path.delimiter}${process.env.PATH ?? process.env.Path ?? ''}`,
-            CLUED_MIGRATION_DATABASE_URL: `postgresql://postgres:${password}@127.0.0.1:${port}/${name}`,
+            CLUED_MIGRATION_DATABASE_URL: `postgresql://postgres:${password}@127.0.0.1:${server.options.port}/${name}`,
             CLUED_CONFIRM_ORIGIN: 'https://kooyumi.pixelgrav.com', GITHUB_REPOSITORY: REPOSITORY, GITHUB_SHA: SHA,
             GITHUB_RUN_ID: '4242', GITHUB_RUN_ATTEMPT: '1', GITHUB_STEP_SUMMARY: summary, RUNNER_TEMP: checkout.split(path.sep).join('/'), ...env } });
           return { status: result.status, out: `${result.stdout}\n${result.stderr}` };

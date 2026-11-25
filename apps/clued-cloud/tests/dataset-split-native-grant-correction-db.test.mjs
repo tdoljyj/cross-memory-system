@@ -1,12 +1,11 @@
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, startCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceApp = path.resolve(process.env.CLUED_SYNTHETIC_SOURCE_APP ?? app);
 const { allowRawTestBindings } = await import(pathToFileURL(path.join(sourceApp,'tests/raw-binding-grants-fixture.mjs')));
@@ -25,11 +24,6 @@ const scope = 'project:' + PROJECT;
 const uid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 const planResource = 'repo:tdoljyj/cross-memory-system/8a975c42ddba3ee7a80fe54a4223b7f590014b67/development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json';
-async function freePort() {
-  const s = net.createServer(); await new Promise(resolve => s.listen(0, '127.0.0.1', resolve));
-  const port = s.address().port; await new Promise(resolve => s.close(resolve)); return port;
-}
-
 for (const scene of ['boundaries','consume-race']) test(`Native correction (${scene}): isolated real token/receipt transaction`,
   { timeout: 300000 }, async t => {
   const root = path.resolve(repo, 'work/host-harness/ngc');
@@ -38,15 +32,14 @@ for (const scene of ['boundaries','consume-race']) test(`Native correction (${sc
   const dir = await fs.mkdtemp(path.join(root, 'p-'));
   const ownership = { run_id: uid(), root, dir };
   await fs.writeFile(path.join(dir, 'Ownership.json'), JSON.stringify(ownership), { flag: 'wx' });
-  const port = await freePort();
-  const server = new EmbeddedPostgres({ databaseDir: path.join(dir, 'db'), user: 'postgres',
-    password: hash(), port, persistent: true, createPostgresUser: false,
+  const server = newCluster({ databaseDir: path.join(dir, 'db'), user: 'postgres',
+    password: hash(), persistent: true, createPostgresUser: false,
     initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'], onLog() {}, onError() {} });
   let db, proc;
   const oldTemp = Object.fromEntries(['TEMP','TMP','TMPDIR'].map(k => [k,process.env[k]]));
   for (const k of ['TEMP','TMP','TMPDIR']) process.env[k] = dir;
   try {
-    await server.initialise(); await server.start(); proc = server.process;
+    await startCluster(server); proc = server.process;
     assert.ok(proc?.pid);
     db = server.getPgClient('postgres', '127.0.0.1'); await db.connect();
     await db.query("set statement_timeout='10s'");

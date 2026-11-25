@@ -1,13 +1,12 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, startCluster } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import { cp, mkdtemp, readFile, readdir, utimes } from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build, stop as stopEsbuild } from "esbuild";
-import EmbeddedPostgres from "embedded-postgres";
+import { newCluster } from "./pg-cluster-fixture.mjs";
 
 import {
   buildSnapshot,
@@ -60,28 +59,17 @@ function recordEvidence(file, row) {
   frozenEvidence.get(file).push({ contract: "clued.p6.validation-result.v1", ...row });
 }
 
-async function unusedPort() {
-  const socket = net.createServer();
-  await new Promise((resolve, reject) => socket.listen(0, "127.0.0.1", resolve).once("error", reject));
-  const { port } = socket.address();
-  await new Promise((resolve) => socket.close(resolve));
-  return port;
-}
-
 async function createP6Database(root, label) {
-  const port = await unusedPort();
   const databaseDir = path.join(root, label);
-  const server = new EmbeddedPostgres({
+  const server = newCluster({
     databaseDir,
     user: "postgres",
     password: "p6-local-password",
-    port,
     persistent: true,
     onLog: () => {},
     onError: () => {},
   });
-  await server.initialise();
-  await server.start();
+  await startCluster(server);
   const client = server.getPgClient();
   await client.connect();
   await client.query(`
@@ -944,16 +932,15 @@ test("G6-3A/G6-4 rebuild two same-seed PostgreSQL databases, replay writes, dry-
     rightStopped = true;
     const backupDirectory = path.join(root, "backup-restore-copy");
     await cp(right.databaseDir, backupDirectory, { recursive: true, force: false, errorOnExist: true });
-    restored = new EmbeddedPostgres({
+    restored = newCluster({
       databaseDir: backupDirectory,
       user: "postgres",
       password: "p6-local-password",
-      port: await unusedPort(),
       persistent: true,
       onLog: () => {},
       onError: () => {},
     });
-    await restored.start();
+    await startCluster(restored, { initialise: false });
     const restoredFingerprint = await databaseFingerprint(restored);
     assert.deepEqual(restoredFingerprint, rightFingerprint);
 

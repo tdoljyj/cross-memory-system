@@ -14,14 +14,10 @@
 // candidate's own changes to the selection (this file, the workflow) select
 // every suite.
 //
-// So a pull request that fixes the trusted side (this file, test-env.mjs, the
-// suite commands) runs under main's trusted side, not its own fix (Task
-// 3435f8bf). Its must-fail test exercises the candidate's code itself (call
-// executeSuite and assert the child's environment, red on main's code, green
-// on the candidate's); it never asserts the job's real environment, which is
-// main's until it merges. The end-to-end check is the first run after merge;
-// a timing guard is added then. The hosted suite jobs' timeout-minutes is a
-// hang backstop, not a speed gate (hosted-required.test.mjs: at least 90).
+// A pull request changing this entry or its runtime imports selects every
+// suite. After its trusted run passes, each suite also runs via the candidate
+// entry in a separate process (Task 04f9b91b). Both runs must pass. The hosted
+// suite jobs' timeout-minutes is a hang backstop, not a speed gate.
 //
 //   node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>]
 //     reads GITHUB_EVENT_PATH and lists the pull request's files through the
@@ -58,7 +54,7 @@
 // The suite run modes (--run, --run-selected, --write-known, --run-files) wait for a machine-wide suite slot outside GitHub Actions.
 import { spawn as spawnAsync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -212,6 +208,7 @@ export const SUITES = {
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/test-clock-scan.mjs', 'scripts/ci/test-clock-guard.mjs',
       'scripts/ci/test-clock-imports.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
       'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/ci-required-selection-timeout.test.mjs',
+      'scripts/ci/ci-required-selection-toolchain.test.mjs', 'config/ci-toolchain.json',
       'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
@@ -244,9 +241,12 @@ export const SUITES = {
   },
 };
 
-// Changing how selection or the required-check workflow works selects every
-// suite of every check.
+// The entry's relative import closure, including the guard preloaded by the clock scanner.
+export const SELECTOR_IMPORTS = ['test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'test-clock-imports.mjs'];
+
+// A change to selection, the required-check workflow or the clock guard's inputs selects every suite.
 export const SELECT_ALL = ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs',
+  ...SELECTOR_IMPORTS.map((name) => `scripts/ci/${name}`), 'config/test-clock-debt.txt', 'scripts/ci/test-clock-allow.json',
   '.github/workflows/clued-required-tests.yml', '.github/actions/**'];
 
 export const FILE_LIMIT = 3000;
@@ -365,6 +365,7 @@ export const SUITE_COMMANDS = {
     { cwd: '.', argv: ['node', 'scripts/ci/check-ci-deps-entry.mjs', '--base', '{base}'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
     'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/ci-required-selection-timeout.test.mjs',
+    'scripts/ci/ci-required-selection-toolchain.test.mjs',
     'scripts/ci/local-verify.test.mjs',
     'scripts/ci/local-verify-concurrency.test.mjs'] }],
   'clued-cloud': [
@@ -1285,6 +1286,51 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
   });
 }
 
+const CANDIDATE_PASS = 'CLUED_CI_CANDIDATE_PASS';
+
+function runCandidateSuite(id, { root, env = process.env, log = console.log, shard = null }) {
+  if (env[CANDIDATE_PASS] === '1') return 0;
+  const trusted = fileURLToPath(import.meta.url);
+  const candidate = candidateSelectorOf(root, trusted, `the candidate entry for ${id}`);
+  if (!candidate) return 0;
+  const unchanged = [path.basename(trusted), ...SELECTOR_IMPORTS].every((name) =>
+    readFileSync(path.join(HERE, name)).equals(readFileSync(path.join(path.dirname(candidate), name))));
+  if (unchanged) return 0;
+
+  const argv = [real(candidate), '--run', id, '--root', root];
+  if (shard) argv.push('--shard', `${shard.index}/${shard.total}`);
+  const childEnv = { ...testEnv(env), GITHUB_ACTIONS: env.GITHUB_ACTIONS, RUNNER_TEMP: env.RUNNER_TEMP,
+    [HOST_LACKS_VARIABLE]: env[HOST_LACKS_VARIABLE], [CANDIDATE_PASS]: '1' };
+  const logFile = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-candidate-${randomUUID()}.log`);
+  log(`${id}: 可信入口已通过，开始用候选入口再跑一遍`);
+  // A regular file captures both streams in order without waiting on pipes held by a descendant.
+  const fd = openSync(logFile, 'wx');
+  try {
+    let run;
+    try {
+      run = spawnSync(process.execPath, argv, { cwd: root, env: childEnv, stdio: ['ignore', fd, fd], windowsHide: true });
+    } finally {
+      closeSync(fd);
+    }
+    if (run.status !== 0) {
+      const reason = run.error?.message ?? (run.signal ? `信号 ${run.signal}` : `退出 ${run.status}`);
+      log(`::error title=${id}::候选入口自己跑这一套是红的：合入后 main 上就是这个结果（${reason}）`);
+    }
+    const output = readFileSync(logFile, 'utf8').trimEnd();
+    if (output) log(output);
+    return run.status ?? 1;
+  } finally {
+    try {
+      rmSync(logFile, { force: true });
+    } catch { /* a log held open by a descendant does not decide the suite */ }
+  }
+}
+
+async function runSuiteWithCandidate(id, options) {
+  const status = await runSuite(id, options);
+  return status === 0 ? runCandidateSuite(id, options) : status;
+}
+
 // What a host cannot give a test (FABLE-hosted-windows-suites-20261122 §2.3, task 04f9b91b). The host says what it lacks
 // in CLUED_CI_HOST_LACKS (only the hosted workflow sets it: hosted-required.test.mjs), a test says what it needs in its own
 // name ("... [needs:non-elevated]"), and every node --test command of a suite gets Node's skip pattern for those names:
@@ -1811,7 +1857,7 @@ export function runLanePart(id, { root, env = process.env, lane, drainMs = LANE_
 // one fails (so the summary names each); any failure fails the step, and with
 // it the check. Nothing selected is a pass: the change touches no suite of
 // this platform.
-export async function runSelected(suites, { root, env = process.env, run = runSuite, log = console.log, summary = () => {}, shard = null,
+export async function runSelected(suites, { root, env = process.env, run = runSuiteWithCandidate, log = console.log, summary = () => {}, shard = null,
   cores = os.availableParallelism(), runPart = runLanePart, check = null, platform = hostPlatform(), shardSecondsFile = SHARD_SECONDS_PATH } = {}) {
   const host = hostLacks(env);
   if (host.error) {
@@ -1866,7 +1912,16 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
       }
     }));
     for (const id of suites) {
-      const status = parts.get(id).find((part) => part.status !== 0)?.status ?? 0;
+      let status = parts.get(id).find((part) => part.status !== 0)?.status ?? 0;
+      // All the trusted lanes must pass before the candidate entry runs the suite once.
+      if (status === 0) {
+        try {
+          status = runCandidateSuite(id, { root, env, log });
+        } catch (error) {
+          log(`::error title=${id}::${error.message}`);
+          status = 1;
+        }
+      }
       summary(`- \`${id}\`: ${status === 0 ? 'passed' : '**failed**'}\n`);
       if (status !== 0) failed.push(id);
     }
@@ -2001,6 +2056,34 @@ export function writeShardSeconds(logs, { file = SHARD_SECONDS_PATH, log = conso
 const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>] | --run-selected <check> [--root <checkout>] [--shard <i>/<n>] | --run <suite> [--root <checkout>] | --run-files <suite> <file> [<file>...] [--root <checkout>] | --run-prepush --root <tree> | --write-shard-seconds <log> [<log>...]';
 export const LOCAL_TIMEOUT_EXIT = 75;
 
+function gitToolchainRefusal(env) {
+  // Match the policy to this selector's checkout. A candidate passed through --root cannot change the trusted baseline.
+  const platform = process.platform === 'win32' ? 'windows' : process.platform;
+  let policy;
+  try {
+    policy = JSON.parse(readFileSync(new URL('../../config/ci-toolchain.json', import.meta.url), 'utf8'));
+  } catch (error) {
+    return `环境不符：无法读取 config/ci-toolchain.json 的 Git 声明（${error.message}）`;
+  }
+  const declared = policy?.[platform]?.git;
+  if (declared === undefined) {
+    return `环境不符：config/ci-toolchain.json 的 Git 声明缺少本平台（${platform}，${process.platform}）`;
+  }
+  if (typeof declared !== 'string' || !/^\d+\.\d+\.\d+$/.test(declared)) {
+    return '环境不符：config/ci-toolchain.json 的 Git 声明必须包含主、次和补丁版本';
+  }
+  const result = spawnSync('git', ['--version'], { cwd: ROOT, env, encoding: 'utf8', timeout: 10_000, windowsHide: true });
+  const actual = /^git version (\d+\.\d+\.\d+\S*)(?:\s|$)/.exec(result.stdout ?? '')?.[1];
+  if (result.status !== 0 || !actual) {
+    const reason = result.error?.message || (result.status !== 0 ? `退出 ${result.status ?? result.signal}` : '输出格式无效');
+    return `环境不符：声明 ${declared}，实际未知（git --version：${reason}）`;
+  }
+  if (declared.split('.').slice(0, 2).join('.') !== actual.split('.').slice(0, 2).join('.')) {
+    return `环境不符：声明 ${declared}，实际 ${actual}`;
+  }
+  return null;
+}
+
 async function main(argv, env = process.env) {
   try {
     markTestRun(argv, env);
@@ -2041,7 +2124,7 @@ async function main(argv, env = process.env) {
       console.error(`${error.message}\n${USAGE}`);
       return 2;
     }
-    if (!argv.includes('--run-selected')) {
+    if (!argv.includes('--run-selected') && !(argv.includes('--run') && env[CANDIDATE_PASS] === '1')) {
       console.error(`--shard goes with --run-selected only\n${USAGE}`);
       return 2;
     }
@@ -2098,26 +2181,29 @@ async function main(argv, env = process.env) {
     });
   }
   const runIndex = argv.indexOf('--run');
+  const selectedIndex = argv.indexOf('--run-selected');
+  const target = argv[(runIndex >= 0 ? runIndex : selectedIndex) + 1];
+  if (runIndex >= 0 || (selectedIndex >= 0 && Object.hasOwn(SUITES, target))) {
+    const baseRefusal = ciBaseRefusal(env);
+    if (baseRefusal) {
+      console.log(`::error title=${target} CI_BASE_SHA::${baseRefusal}`);
+      return 2;
+    }
+    const toolchainRefusal = gitToolchainRefusal(env);
+    if (toolchainRefusal) {
+      console.error(toolchainRefusal);
+      return 2;
+    }
+  }
   if (runIndex >= 0) {
     const rootIndex = argv.indexOf('--root');
     const root = rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT;
-    const refusal = ciBaseRefusal(env);
-    if (refusal) {
-      console.log(`::error title=${argv[runIndex + 1]} CI_BASE_SHA::${refusal}`);
-      return 2;
-    }
-    return runSuite(argv[runIndex + 1], { root, env });
+    return runSuiteWithCandidate(target, { root, env, shard });
   }
-  const selectedIndex = argv.indexOf('--run-selected');
   const index = selectedIndex >= 0 ? selectedIndex : argv.indexOf('--check');
   const check = index >= 0 ? argv[index + 1] : undefined;
-  if (!SUITES[check]) {
+  if (!Object.hasOwn(SUITES, check)) {
     console.error(USAGE);
-    return 2;
-  }
-  const refusal = selectedIndex >= 0 ? ciBaseRefusal(env) : null;
-  if (refusal) {
-    console.log(`::error title=${check} CI_BASE_SHA::${refusal}`);
     return 2;
   }
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};
