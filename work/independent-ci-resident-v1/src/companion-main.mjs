@@ -40,6 +40,7 @@ import { assertGhIsolation, assertNotElevated, sessionFacts, writeSessionFacts }
 import { companionKeyWatch } from './connection-renewal.mjs';
 import { companionSelfPull } from './fleet-self-pull.mjs';
 import { resolveCompanionWslClient } from './wsl-client.mjs';
+import { POOL_ALERT_EVERY_MS, PoolAlert, poolAlertDir, validatePoolAlertConfig } from './pool-alert.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
 // phase 1, item 7). The poller looks for new PR heads every 15 seconds in a lane of its own (f79929d9; it was once a minute in
@@ -412,6 +413,13 @@ export async function main(args = process.argv.slice(2)) {
     notify });
   // The PR page says when this lane re-ran a head's required tests, or what came of a lost run's dispatch (pr-status.mjs#PrStatusReporter).
   reporter.rerunLine = headSha => rerunner.line(headSha);
+  // The kernel pool alert (pool-alert.mjs, docs/architecture.md 9.1): its own Runner, lane and state; it only notifies the Owner and
+  // never restarts anything. A helper: a configuration it cannot read leaves it off, never the companion.
+  const poolRunner = new Runner({ env: { ...process.env }, jobHost });
+  let poolConfig = null;
+  try { poolConfig = validatePoolAlertConfig(raw.poolAlert); } catch { poolConfig = null; }
+  const poolAlert = new PoolAlert({ config: poolConfig, a: companionArgv(cfg), run: (a, o) => poolRunner.run(a, o),
+    dir: poolAlertDir(cfg.node.ownerProfileDirectory), clock: Date.now, uptimeMs: () => os.uptime() * 1000, notify, node: cfg.node.nodeName });
   keepalive(companionArgv(cfg).keepalive());
   // M5 (ADR 0022 §6 Q1, Q2): the WSL instance this session sees, for the Owner's read-only probe. In the background; never blocks.
   sessionFacts({ wsl: (...l) => [cfg.wslExe, '--distribution', cfg.distribution, '--user', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LANG=C', 'LC_ALL=C', ...l],
@@ -452,6 +460,7 @@ export async function main(args = process.argv.slice(2)) {
       ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),
       ...(mergeReconcile?[lane({runner:mergeRunner,work:()=>mergeReconcile.step(),everyMs:MERGE_RECONCILE_LANE_EVERY_MS})]:[]),
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
+      lane({ runner: poolRunner, work: () => poolAlert.step(), everyMs: POOL_ALERT_EVERY_MS }),
       ...(frontMerge ? [lane({ runner: frontMergeRunner, work: () => frontMerge.step(), everyMs: FRONT_MERGE_LANE_EVERY_MS })] : []),
       ...advisorySpecs.map(spec => lane(spec)),
     ]);

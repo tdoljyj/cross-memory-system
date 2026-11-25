@@ -41,6 +41,7 @@ import { RESIDENT_INSTALL_ROOT, validateCompanionConfig } from '../src/companion
 import { validateStatusConfig } from '../src/pr-status.mjs';
 import { PANEL_REPO, validatePanelDispatchConfig } from '../src/panel-dispatch.mjs';
 import {MERGE_RECONCILE_REPO,validateMergeReconcileConfig} from '../src/merge-reconcile-config.mjs';
+import { validatePoolAlertConfig } from '../src/pool-alert.mjs';
 import { INSTALLED_MANIFEST_CONTRACT } from '../src/service-ports.mjs';
 import { pinnedNodeProfile } from '../src/node-profile.mjs';
 import { nodeIdentityOf, nodeIdentitySha256 } from '../src/node-identity.mjs';
@@ -220,6 +221,8 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   // The panel trigger is on unless switched off, and it only exists for the panel's own repository: no silent "on" that does nothing.
   check(!validatePanelDispatchConfig(finalCompanion.panelDispatch).enabled || finalCompanion.repo === PANEL_REPO, 'PACKAGE_PANEL_DISPATCH_REPO_MISMATCH');
   check(!validateMergeReconcileConfig(finalCompanion.mergeReconcile).enabled||finalCompanion.repo===MERGE_RECONCILE_REPO,'PACKAGE_MERGE_RECONCILE_REPO_MISMATCH');
+  // The kernel pool alert's lines (pool-alert.mjs): absent is on with 3 GiB and 5 GiB; a value of another shape is refused here.
+  validatePoolAlertConfig(finalCompanion.poolAlert);
   await fs.mkdir(path.join(out, 'config'));
   await writeJson(path.join(out, 'config', 'policy.json'), finalPolicy);
   await writeJson(path.join(out, 'config', 'companion.json'), finalCompanion);
