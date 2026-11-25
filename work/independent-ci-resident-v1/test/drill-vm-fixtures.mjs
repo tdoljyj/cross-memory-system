@@ -810,14 +810,15 @@ export function ladderMain(name, runs, extra = '') {
 // answer as told (the check's exit, whether an input is local), the injected prerequisites are real files hashed for real, and the tar
 // is a command that exits 0. snapAt: 'gap' (the first local copy after the check's verdict) or a tool name (its expansion) -- there the
 // stage record as it stands is copied aside (what a pull at that moment brings back); snapStop: the entry stops right after.
-export function entryAccepted(name, { checkExit = 0, underDir = true, snapAt = '', snapStop = false } = {}) {
+// notInjected: item names the manifest pins whose file the host did not put into the payload.
+export function entryAccepted(name, { checkExit = 0, underDir = true, snapAt = '', snapStop = false, notInjected = [] } = {}) {
   const root = fs.mkdtempSync(path.join(tmp, `entry-accepted-${name}-`));
   const [assets, payload, fake, out, work, cred] = ['assets', 'payload', 'fake', 'out', 'work', 'cred'].map(d => { const p = path.join(root, d); fs.mkdirSync(p); return p; });
   const tar = path.join(root, 'tar.cmd'); fs.writeFileSync(tar, '@exit /b 0\r\n');
   const snap = path.join(root, 'snapshot.jsonl');
-  const file = (n, text) => { fs.writeFileSync(path.join(payload, n), text); return { sha256: sha(Buffer.from(text)), bytes: Buffer.byteLength(text) }; };
+  const file = (n, text, put = true) => { if (put) fs.writeFileSync(path.join(payload, n), text); return { sha256: sha(Buffer.from(text)), bytes: Buffer.byteLength(text) }; };
   const items = [['wsl', 'wsl.msi', 'w'.repeat(40)], ['node', 'node.zip', 'n'.repeat(50)], ['python', 'python.zip', 'p'.repeat(60)], ['git', 'git.zip', 'g'.repeat(70)]]
-    .map(([n, f, text]) => ({ name: n, fileName: f, maxEntryPathLength: 10, ...file(f, text) }));
+    .map(([n, f, text]) => ({ name: n, fileName: f, maxEntryPathLength: 10, ...file(f, text, !notInjected.includes(n)) }));
   const debs = [{ fileName: 'a.deb', ...file('a.deb', 'd'.repeat(30)) }];
   fs.writeFileSync(path.join(assets, 'fleet-node-1.2.3.prereq-manifest.json'), JSON.stringify({ items, debs }));
   for (const n of ['SHA256SUMS', 'fleet-node-1.2.3.first-install.SHA256SUMS', 'fleet-node-1.2.3.tar']) fs.writeFileSync(path.join(assets, n), '');

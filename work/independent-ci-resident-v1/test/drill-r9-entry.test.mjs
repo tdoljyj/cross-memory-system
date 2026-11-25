@@ -16,6 +16,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import * as kit from '../drill/make-drill-kit.mjs';
+import { entryAccepted } from './drill-vm-fixtures.mjs';
 
 const windows = process.platform === 'win32';
 const opts = { skip: !windows, timeout: 240_000 };
@@ -309,4 +310,18 @@ test('S6: the helper\'s refusal events from the Application log come first in th
   assert.deepEqual(got.both.slice(0, 2), ['helper', 'scm 1']);
   assert.equal(got.none, 0, 'no helper event since the entry started: none in the snapshot');
   assert.deepEqual(got.denied, ['Application log unreadable: denied'], 'an Application log that cannot be read is named, in place of its events');
+});
+
+// Fable ruling 0e418483 (D:/w/tmp/FABLE-node-install-batch-20261124.md section 3.3 A): the guest downloads no prerequisite. Every item of the
+// package's prereq-manifest.json is injected by the host (make-drill-kit.mjs); one that is not stops the entry by name, never a download
+// (r10/r11 fetched node, python, git, actions-runner and linux-node in the guest: 5.5-7.7 minutes a run, over the outside network).
+test('P1: an item of the manifest that is not injected stops the entry by name; nothing is downloaded, no get step', opts, () => {
+  const e = entryAccepted('not-injected-node', { notInjected: ['node'] });
+  assert.equal(e.thrown, 'DRILL_PREREQ_NOT_INJECTED:node');
+  const steps = (e.record ?? '').split(/\r?\n/).filter(Boolean).map(l => JSON.parse(l)).filter(r => r.step);
+  assert.ok(!steps.some(r => r.step === 'get'), JSON.stringify(steps));
+});
+
+test('P1: the entry has no download path: no call to the package\'s Get-Prereq', opts, () => {
+  assert.doesNotMatch(fs.readFileSync(entryScript, 'utf8'), /Get-Prereq\b/);
 });
