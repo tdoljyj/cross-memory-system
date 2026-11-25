@@ -28,15 +28,12 @@ export const UP_TO_DATE_HINTS = Object.freeze(['merge-main', 'push-any-commit', 
 const COMPARE_CACHE_MAX = 512;
 // A compare is one short call, and at most MAX_COMPARES_PER_PASS uncached ones run per pass (independent review of
 // phase 1, M1): a PR not compared this pass is "compare-unavailable" (never proposed) until the next pass. A compare
-// that timed out (its child still running, the Runner busy) ends this pass's compares without using the budget, and
-// that one compare is not asked again for SLOW_COMPARE_SKIP_MS, so the PRs behind it are compared in the next passes
-// (independent re-review, MINOR-B).
+// that times out or finds the Runner busy ends this pass's compares without using the budget. Timeouts and
+// unavailable answers retry per (main, head) after one, two, then at most four minutes.
 export const COMPARE_TIMEOUT_MS = 15_000;
 export const MAX_COMPARES_PER_PASS = 10;
-export const SLOW_COMPARE_SKIP_MS = 15 * 60_000;
-// The 60-second poll (Decision 1b99e7e4) must not multiply what was paced by the old five-minute pass: a compare GitHub did not
-// answer is asked again for the same (main, head) only after COMPARE_RETRY_MS (once per five-minute pass before).
-export const COMPARE_RETRY_MS = 5 * 60_000;
+const COMPARE_RETRY_MIN_MS = 60_000;
+const COMPARE_RETRY_MAX_MS = 4 * COMPARE_RETRY_MIN_MS;
 const stalledCall = r => r?.timedOut === true || r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD';
 // The two conditional reads. An ETag goes back into an argv (If-None-Match), so only GitHub's shape is kept.
 export const PULLS_ROUTE = repo => `repos/${repo}/pulls?state=open&base=main&per_page=50`;
@@ -76,9 +73,9 @@ export class Poller {
   // ports: { repo, ghExe, run(argv,{timeoutMs}), writeTrigger(object), clock, landing?() -> 'push' | other }
   constructor(ports) {
     Object.assign(this, ports);
-    this.sent = new Map(); this.compares = new Map(); this.slow = new Map(); this.lastPass = null;
+    this.sent = new Map(); this.compares = new Map(); this.compareRetries = new Map(); this.lastPass = null;
     this.compareBudget = MAX_COMPARES_PER_PASS; this.stalled = false;
-    this.etags = new Map(); this.reads = { fresh: 0, notModified: 0 }; this.retryAt = new Map();
+    this.etags = new Map(); this.reads = { fresh: 0, notModified: 0 };
     this.parkedObserved = new Map(); this.parkedCursor = 0; this.rulesDigest = null; this.rulesPinned = null;
   }
 
@@ -200,21 +197,25 @@ export class Poller {
   async compare(mainSha, headSha) {
     const id = `${mainSha}...${headSha}`;
     if (this.compares.has(id)) return this.compares.get(id);
-    if (this.compareBudget <= 0 || this.stalled || (this.slow.get(id) ?? 0) > this.clock() || (this.retryAt.get(id) ?? 0) > this.clock()) return null;
+    const retry = this.compareRetries.get(id);
+    if (this.compareBudget <= 0 || this.stalled || (retry && retry.at > this.clock())) return null;
     const r = await this.run([this.ghExe, 'api', '--method', 'GET', `repos/${this.repo}/compare/${mainSha}...${headSha}?per_page=1`, '--jq', '{behind_by: .behind_by, base: .base_commit.sha, merge_base: .merge_base_commit.sha}'], { timeoutMs: COMPARE_TIMEOUT_MS });
     if (stalledCall(r)) {
       this.stalled = true;
-      if (r.timedOut) { this.slow.set(id, this.clock() + SLOW_COMPARE_SKIP_MS); if (this.slow.size > COMPARE_CACHE_MAX) this.slow.delete(this.slow.keys().next().value); }
-      return null;
+      // A busy Runner refused to start the comparison, so this pair has no new failure.
+      if (!r.timedOut) return null;
+    } else {
+      this.compareBudget -= 1;
     }
-    this.compareBudget -= 1;
-    const v = r.code === 0 ? json(r.stdout) : null;
+    const v = !this.stalled && r?.code === 0 ? json(r.stdout) : null;
     if (!v || v.base !== mainSha || !Number.isSafeInteger(v.behind_by) || v.behind_by < 0) {
-      this.retryAt.set(id, this.clock() + COMPARE_RETRY_MS);
-      if (this.retryAt.size > COMPARE_CACHE_MAX) this.retryAt.delete(this.retryAt.keys().next().value);
+      const delay = retry ? Math.min(retry.delay * 2, COMPARE_RETRY_MAX_MS) : COMPARE_RETRY_MIN_MS;
+      this.compareRetries.set(id, { at: this.clock() + delay, delay });
+      if (this.compareRetries.size > COMPARE_CACHE_MAX) this.compareRetries.delete(this.compareRetries.keys().next().value);
       return null;
     }
     const answer = { behindBy: v.behind_by, mergeBase: HEX40.test(v.merge_base ?? '') ? v.merge_base : null };
+    this.compareRetries.delete(id);
     this.compares.set(id, answer);
     if (this.compares.size > COMPARE_CACHE_MAX) this.compares.delete(this.compares.keys().next().value);
     return answer;
@@ -234,23 +235,32 @@ export class Poller {
     const landing = await this.landingMode();
     let proposed = 0;
     const pulls = [], drafts = [];
+    const proposedHeads = new Set(Array.from(this.sent.keys(), id => id.slice(0, id.lastIndexOf(':'))));
+    const newHeads = [], oldHeads = [];
     for (const p of await this.openPulls()) {
       if (!Number.isSafeInteger(p.number) || !HEX40.test(p.headRefOid ?? '')) continue;
       // A draft is no candidate (pr-candidate.mjs, the executor's one judgement): never proposed; the PR page's status on its head says
       // it is held (pr-status.mjs). Ready for review moves updatedAt, so the next pass proposes it again.
       if (isDraft({ draft: p.isDraft })) { drafts.push({ pr: p.number, headSha: p.headRefOid }); continue; }
       const prBase = HEX40.test(p.baseRefOid ?? '') ? p.baseRefOid : null;
-      const cmp = await this.compare(base, p.headRefOid), behind = cmp?.behindBy ?? null;
+      const pull = { pr: p.number, headSha: p.headRefOid, baseSha: prBase, mainSha: base };
+      pulls.push(pull);
+      const group = proposedHeads.has(`${pull.pr}:${pull.headSha}`) ? oldHeads : newHeads;
+      group.push({ pull, updatedAt: p.updatedAt });
+    }
+    // A stalled compare can end the pass. Give unproposed heads the first chance without reordering lastPass.pulls.
+    for (const { pull, updatedAt } of [...newHeads, ...oldHeads]) {
+      const cmp = await this.compare(base, pull.headSha), behind = cmp?.behindBy ?? null;
       const pushed = landing === 'push' && pushEligible({ behindBy: behind, mergeBase: cmp?.mergeBase });
-      const verdict = pushed ? { eligible: true, hint: null } : upToDate({ mainSha: base, baseSha: prBase, behindBy: behind });
-      pulls.push({ pr: p.number, headSha: p.headRefOid, baseSha: prBase, mainSha: base, behindBy: behind, ...verdict });
+      const verdict = pushed ? { eligible: true, hint: null } : upToDate({ mainSha: base, baseSha: pull.baseSha, behindBy: behind });
+      Object.assign(pull, { behindBy: behind, ...verdict });
       if (!verdict.eligible) continue;
       const batchBase = pushed ? cmp.mergeBase : base;
-      const id = `${p.number}:${p.headRefOid}:${batchBase}`;
-      if (this.sent.get(id) === p.updatedAt) continue;
-      const prUpdatedAt = typeof p.updatedAt === 'string' && Number.isFinite(Date.parse(p.updatedAt)) ? new Date(Date.parse(p.updatedAt)).toISOString() : null;
-      await this.writeTrigger({ contract: TRIGGER_CONTRACT_V2, repo: this.repo, pr: p.number, headSha: p.headRefOid, baseSha: batchBase, ...(prUpdatedAt ? { prUpdatedAt } : {}) });
-      this.sent.set(id, p.updatedAt);
+      const id = `${pull.pr}:${pull.headSha}:${batchBase}`;
+      if (this.sent.get(id) === updatedAt) continue;
+      const prUpdatedAt = typeof updatedAt === 'string' && Number.isFinite(Date.parse(updatedAt)) ? new Date(Date.parse(updatedAt)).toISOString() : null;
+      await this.writeTrigger({ contract: TRIGGER_CONTRACT_V2, repo: this.repo, pr: pull.pr, headSha: pull.headSha, baseSha: batchBase, ...(prUpdatedAt ? { prUpdatedAt } : {}) });
+      this.sent.set(id, updatedAt);
       proposed += 1;
     }
     // What the PR page status shows for the PRs this pass looked at (pr-status.mjs).
