@@ -403,8 +403,8 @@ function train() {
   const w = { now: NOW, tip: T, prs: new Map(), heads: new Map(), updates: [], calls: [], required: REQUIRED, failing: null, made: 0, ruleFiller: 0, endless: false,
     pins: {}, comments: [] };
   // A commit GitHub knows: which main tip it contains, when it appeared, and what ran on it.
-  w.head = (id, { contains = BASE, at = w.now - 600 * MIN, checks = [], statuses = [], runs = [], parents = [BASE] } = {}) => {
-    w.heads.set(id, { sha: id, contains, at, checks, statuses, runs, parents }); return id; };
+  w.head = (id, { contains = BASE, behind = 3, at = w.now - 600 * MIN, checks = [], statuses = [], runs = [], parents = [BASE] } = {}) => {
+    w.heads.set(id, { sha: id, contains, behind, at, checks, statuses, runs, parents }); return id; };
   w.open = (number, { head, auto = null, draft = false, mergeable = 'MERGEABLE', fork = false, base = 'main', ...rest }) => {
     w.head(head, rest); w.prs.set(number, { number, head, auto, draft, mergeable, fork, base, updatedAt: rest.at ?? w.now - 600 * MIN }); return w; };
   w.check = (id, name, conclusion = 'success', app = 15368, extra = {}) => w.heads.get(id).checks.push({ id: ++w.made, name, head_sha: id,
@@ -448,7 +448,10 @@ function train() {
       head: { sha: p.head, repo: { full_name: p.fork ? 'someone/r' : 'o/r' } }, base: { ref: p.base, repo: { full_name: 'o/r', default_branch: 'main' } } })
       : reply({ message: 'Not Found' }, 404);
     const compare = /^\/repos\/o\/r\/compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})/.exec(route);
-    if (method === 'GET' && compare) return reply({ behind_by: w.heads.get(compare[2])?.contains === compare[1] ? 0 : 3, ahead_by: 1 });
+    if (method === 'GET' && compare) {
+      const head = w.heads.get(compare[2]);
+      return reply({ behind_by: head?.contains === compare[1] ? 0 : head?.behind ?? 3, ahead_by: 1 });
+    }
     const of = /^\/repos\/o\/r\/commits\/([0-9a-f]{40})(\/check-runs|\/status)?(?:\?|$)/.exec(route), h = of && w.heads.get(of[1]);
     if (method === 'GET' && of && !h) return reply({ message: 'Not Found' }, 404);
     if (method === 'GET' && of?.[2] === '/check-runs') return reply({ total_count: h.checks.length, check_runs: h.checks });
@@ -836,6 +839,54 @@ function rulesOf(w, phase) {
 const BOTH = [...FRAMEWORK.map(context => ({ context, integration_id: INDEPENDENT_ADMISSION_APP_ID })),
   ...HOSTED.map(context => ({ context, integration_id: GITHUB_ACTIONS_APP_ID })), { context: APP_CHECK_NAME, integration_id: ADMISSION_APP_ID }];
 const SCAFFOLD = { CLUED_FRONT_MERGE_PHASE: 'scaffold' };
+
+function scene1344() {
+  const w = train();
+  w.now = Date.parse('2026-11-25T12:20:43Z');
+  w.required = SCAFFOLD_R6;
+  w.tip = '2c8197ebac8b81cfc0c68d6695c842e4ba6bf4b5';
+  const head = 'a8cb467661c35b0e81033a89feceb5d14312b00a';
+  const parent = 'cf361dec2b8e403d4ebd826793298ac989414df5';
+  const later = 'a5dce4192d59565843361fb77451d600aae97c5b';
+  w.open(1344, { head, behind: 25, parents: [parent, BASE], auto: '2026-11-25T09:26:28Z' });
+  w.head(parent);
+  for (const sha of [head, parent]) w.check(sha, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
+  hostedGreen(w)(head);
+  w.heads.get(head).statuses.push({ context: 'resident-queue/turing (info only)', state: 'pending', description: residentSays(25) });
+  w.open(1349, { head: later, contains: w.tip, auto: '2026-11-25T10:00:00Z' });
+  w.heads.get(later).runs.push({ status: 'in_progress' });
+  w.open(1350, { head: '678dbce8c6d55c03f6fc2e6aad9640e53a6b614f', behind: 25, auto: '2026-11-25T11:00:00Z' });
+  return w;
+}
+
+test('3576b29c: #1344 with green hosted checks gets main before the later #1349, even after two updates', async () => {
+  const w = scene1344();
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'merged', JSON.stringify(r));
+  assert.deepEqual(w.brought(), [1344]);
+  assert.equal(r.main_sha, w.tip);
+  assert.equal(w.heads.get(w.headOf(1344)).checks.some(check => check.name === MAIN_MERGE_CHECK), true);
+});
+
+test('3576b29c: the earlier safe and green candidate wins if all eight required checks passed', async () => {
+  const w = scene1344();
+  w.check(w.headOf(1344), INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID);
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'merged', JSON.stringify(r));
+  assert.deepEqual(w.brought(), [1344]);
+});
+
+test('3576b29c: the hosted copy annotates none with the reason and runs no branch update', async t => {
+  const w = scene1344();
+  w.prs.get(1344).mergeable = 'CONFLICTING';
+  t.mock.method(console, 'log', () => {});
+  const error = t.mock.method(console, 'error', () => {});
+  assert.equal(await frontMergeMain(env({ ...SCAFFOLD, GITHUB_WORKSPACE: ROOT }), w.fetchImpl,
+    { now: () => w.now, sleep: async () => {} }, []), 0);
+  assert.deepEqual(w.brought(), []);
+  assert.match(error.mock.calls.map(call => call.arguments[0]).join('\n'), /::notice .*none: #1349 contains main and is under way.*#1344.*conflict/);
+});
+
 const minted = w => w.calls.filter(c => c.route?.startsWith('/app/installations/')).length;
 const phaseOutput = async (w) => {
   const dir = fs.mkdtempSync(path.join(process.env.TEMP ?? process.env.TMPDIR ?? '.', 'front-merge-phase-'));
@@ -1690,7 +1741,7 @@ test('A5: a rebring chain that cannot be read only keeps that head back; the can
 // The sentence is taken from what pr-status.mjs writes, so a change of the sentence changes these cases with it.
 const SILENT_B = 1401, SILENT_C = 1402, SILENT_D = 1403, SILENT_FRONT = 1400;
 const residentSays = behindBy => describePrStatus({ pull: { headSha: sha(0x1401), eligible: false, hint: 'merge-main', behindBy }, status: null, now: NOW }).description;
-// A head behind main by 12, as the robot left it: kooyumi-main-merge of App 5164952, the seven hosted- green, no kooyumi-work-admission;
+// A head behind main by 12, as the robot left it: kooyumi-main-merge of App 5164952, one hosted check and kooyumi-work-admission missing;
 // the resident's pending sentence rewritten 5 minutes ago, everything else last active 40 minutes ago, nothing running. Brought, it
 // is the App's second in a row (its first parent the App's as well, inARow 2): the train does not bring it again (PLAN-train-held-
 // deadlock §2.1), so nothing moves it; once only (inARow 1) it is a candidate after the others.
@@ -1700,7 +1751,7 @@ function silentHead(w, number, { brought = true, inARow = 2, text = residentSays
   if (brought && inARow >= 2) w.check(parent, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
   w.open(number, { head, auto, contains: BASE, at: w.now - 40 * MIN, parents: [parent, BASE] });
   if (brought) w.check(head, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID, { started_at: iso(w.now - 40 * MIN) });
-  for (const name of HOSTED) w.check(head, name, 'success', GITHUB_ACTIONS_APP_ID, { started_at: iso(w.now - 40 * MIN) });
+  for (const name of HOSTED.slice(1)) w.check(head, name, 'success', GITHUB_ACTIONS_APP_ID, { started_at: iso(w.now - 40 * MIN) });
   w.heads.get(head).statuses.unshift({ context, state: 'pending', description: text, created_at: iso(w.now - 300 * MIN), updated_at: iso(w.now - 5 * MIN) });
   return head;
 }
@@ -1857,8 +1908,8 @@ test('D3: 乙’s second head the App brought, not admitted and behind again, is
   w.merged(BING); w.prs.get(JIA).auto = null; w.now += 20 * MIN;
   await w.run({}, SCAFFOLD);
   assert.deepEqual(w.brought(), [BING, YI]);
-  // 乙's second head: the seven hosted- green, still no admission. Another pull request comes aboard; main moves on.
-  const second = w.headOf(YI); hostedGreen(w)(second);
+  // 乙's second head: one hosted check and admission still missing. Another pull request comes aboard; main moves on.
+  const second = w.headOf(YI); for (const name of HOSTED.slice(1)) w.check(second, name);
   w.open(DING, { head: sha(0x13300), auto: '2026-11-25T02:40:00Z', contains: BASE, at: w.now });
   w.tip = sha(0x7325); w.now += 20 * MIN;
   const r = await w.run({}, SCAFFOLD);

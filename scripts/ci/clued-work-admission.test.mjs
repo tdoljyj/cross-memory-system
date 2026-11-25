@@ -1232,8 +1232,10 @@ const GATED_FILES = fs.readdirSync(path.join(ROOT, ".github", "workflows")).filt
 const NEWLY_GATED_FILES = ["contract-placement.yml", "gitleaks.yml", "trivy.yml"];
 // These consumers use the independently registered Linux Native gate; their
 // current gates are covered separately from the historical permission/bootstrap templates.
-// clued-required-tests-windows.yml (resident ADR 0032): the Windows side keeps the same Linux gate job, byte for byte.
+// The required-test workflows share a Linux gate. Their cancel-only close event adds one exact guard.
 const INDEPENDENT_LINUX_GATE_FILES = ["clued-required-tests.yml", "clued-required-tests-windows.yml", "clued-g4-database.yml", "clued-front-main-merge.yml"];
+const CANCEL_ONLY_GATE_FILES = ["clued-required-tests.yml", "clued-required-tests-windows.yml"];
+const CANCEL_ONLY_GATE_IF = "    if: github.event.action != 'closed'\n";
 const LEGACY_TEMPLATE_FILES = GATED_FILES.filter((name) => !NEWLY_GATED_FILES.includes(name) && !INDEPENDENT_LINUX_GATE_FILES.includes(name));
 const SOURCE_PROOF_GATE_DIGEST = "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb";
 // Owner Decisions 325717a6 and 22b0e0ed (PR-B): the Stage C gate on ubuntu-latest that admits on
@@ -1482,8 +1484,6 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
   const legacyDigest = "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4";
   const prReadDigest = "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd";
   const noEnforceDigest = "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc";
-  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest, TEMPORARY_GATE_DIGEST, SOURCE_PROOF_GATE_DIGEST,
-    HOSTED_SOURCE_PROOF_GATE_DIGEST, ANY_RUNNER_GATE_DIGEST, SELF_HOSTED_INDEPENDENT_GATE_DIGEST], "only the eight exact gate versions");
   // Task 2a5fdb66: contract-placement's independent-admission gate with runs-on moved to the
   // self-hosted Linux pool, nothing else, is accepted; any other runs-on or source is not.
   const placement = fs.readFileSync(new URL("../../.github/workflows/contract-placement.yml", import.meta.url), "utf8");
@@ -1492,6 +1492,11 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
   const selfHostedGate = hostedGate.replace("ubuntu-latest", "[self-hosted, Linux, X64, clued, pool-general, trust-internal]");
   const selfHostedIndependent = placement.replace(hostedGate, selfHostedGate);
   const gateOf = (text) => sha256Hex(workflowJobs(text).find((job) => job.name === "admission-gate").lines.join("\n"));
+  const cancelOnly = selfHostedIndependent.replace("  admission-gate:\n", "  admission-gate:\n" + CANCEL_ONLY_GATE_IF);
+  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest, TEMPORARY_GATE_DIGEST, SOURCE_PROOF_GATE_DIGEST,
+    HOSTED_SOURCE_PROOF_GATE_DIGEST, ANY_RUNNER_GATE_DIGEST, SELF_HOSTED_INDEPENDENT_GATE_DIGEST, gateOf(cancelOnly)], "only the nine exact gate versions");
+  assert.deepEqual(gateFindings(cancelOnly, selfHostedIndependent), []);
+  assert.deepEqual(gateFindings(cancelOnly.replace("!= 'closed'", "== 'closed'"), selfHostedIndependent), ["admission_gate_changed"]);
   assert.equal(gateOf(selfHostedIndependent), SELF_HOSTED_INDEPENDENT_GATE_DIGEST);
   assert.equal(gateOf(placement), HOSTED_SOURCE_PROOF_GATE_DIGEST);
   assert.match(selfHostedIndependent, /CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission\n/);
@@ -1575,7 +1580,9 @@ test("gate guard (Merge Admission step 6): every gated workflow's gate no longer
     const gateJob = workflowJobs(current).find((job) => job.name === "admission-gate");
     assert.ok(!gateJob.lines.some((line) => /_ENFORCE\b/.test(line)), `${name}: the gate reads no retired switch`);
     if (INDEPENDENT_LINUX_GATE_FILES.includes(name)) {
-      assert.equal(sha256Hex(gateJob.lines.join("\n")), SELF_HOSTED_INDEPENDENT_GATE_DIGEST, name);
+      const gateText = gateJob.lines.join("\n");
+      const template = CANCEL_ONLY_GATE_FILES.includes(name) ? gateText.replace(CANCEL_ONLY_GATE_IF, "") : gateText;
+      assert.equal(sha256Hex(template), SELF_HOSTED_INDEPENDENT_GATE_DIGEST, name);
     } else if (NEWLY_GATED_FILES.includes(name)) {
       // Owner Decisions 325717a6 and 22b0e0ed (PR-B): the Stage C gate on ubuntu-latest that admits on
       // the independent CI's own admission; exactly runner, timeout and gate source differ.
@@ -3978,7 +3985,7 @@ test('G4 uses the registered required-tests Native gate without changing any exe
   const text = fs.readFileSync(new URL('../../' + file, import.meta.url), 'utf8');
   const required = fs.readFileSync(new URL('../../.github/workflows/clued-required-tests.yml', import.meta.url), 'utf8');
   const gateJob = value => admissionModule.workflowJobs(value).find(job => job.name === 'admission-gate');
-  assert.deepEqual(gateJob(text).lines, gateJob(required).lines);
+  assert.equal(gateJob(text).lines.join('\n'), gateJob(required).lines.join('\n').replace(CANCEL_ONLY_GATE_IF, ''));
   assert.equal(admissionModule.sha256Hex(gateJob(text).lines.join('\n')),
     '9c582144f424d1bc9ef7d3b048d3b7771c7b639ef5544bc04a8a80515c52b2f2');
   const profiles = parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json', import.meta.url)));
