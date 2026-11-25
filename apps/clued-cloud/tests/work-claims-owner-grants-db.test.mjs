@@ -37,7 +37,7 @@ const ephemeralCluster = async () => newCluster({
 // only free until something binds it. Run 45380641278 failed this file 663 ms in with a bare
 // `undefined`: its postmaster exited during start, which embedded-postgres rejects with no reason.
 // Here the port is taken on purpose: the second cluster's first pick is the port a running cluster holds.
-test('a cluster whose port another cluster already holds still starts', { timeout: 120000 }, async () => {
+test('a cluster whose port another cluster already holds still starts', async () => {
   const servers = [];
   try {
     const holder = await ephemeralCluster();
@@ -65,7 +65,7 @@ test('a cluster whose port another cluster already holds still starts', { timeou
 // One address family taken is not a taken port to a postmaster that listens on both: it comes up on the
 // other and the test would talk to whoever holds this one. newCluster listens on 127.0.0.1 only, so this
 // is the same retry as above. Without ::1 on the machine the case cannot tell the two apart.
-test('a port held on 127.0.0.1 alone is still a taken port', { timeout: 120000 }, async () => {
+test('a port held on 127.0.0.1 alone is still a taken port', async () => {
   const holder = net.createServer();
   await new Promise((resolve, reject) => { holder.once('error', reject); holder.listen(0, '127.0.0.1', resolve); });
   const held = holder.address().port;
