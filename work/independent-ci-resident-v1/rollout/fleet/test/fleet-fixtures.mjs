@@ -195,7 +195,6 @@ const refuse = text => { fs.writeFileSync(state, JSON.stringify(log)); console.e
 // "gh workflow run ...": recorded only (the release workflow's fleet-accept mode, PLAN-accept-binding-20261125); the state's workflowFail: gh refuses it
 if (args[0] === 'workflow' && log.workflowFail) refuse('HTTP 403: Resource not accessible by integration');
 if (args[0] === 'workflow' && log.workflowLostReply) refuse('connection closed before the dispatch response');
-if (args[0] === 'api' && args[1]?.includes('/compare/') && log.compareDelayMs) await new Promise(resolve => setTimeout(resolve, log.compareDelayMs));
 if (args[0] === 'release' && ['view', 'upload', 'download', 'delete-asset'].includes(args[1]) && absent(args[2])) refuse('release not found');
 if (args[0] === 'release' && args[1] === 'create') {
   if (process.env.FAKE_GH_FAIL_CREATE === '1') refuse('HTTP 422: fake create failure');
