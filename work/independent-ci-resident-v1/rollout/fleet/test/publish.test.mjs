@@ -1508,6 +1508,62 @@ test("seal's refusals that asking again cannot change are one exported list (acc
   for (const code of ['ACCEPT_DOOR_UNAVAILABLE', 'ACCEPT_DOOR_OPEN_FAILED', 'PUBLISH_GH_RELEASE_DOWNLOAD_FAILED']) assert.ok(!list.includes(code), `${code}: asking again may help`);
 });
 
+// Task 87d330d0 alignment: accept.mjs (part C) on part B's real seal (wait 0) and readFleet, reached through accept.mjs's own defaults
+// (deps.sealOptions and deps.readStatus give them this world's index, gh and door; nothing else is faked on B's side).
+const acceptWorld = async (t, onSleep) => {
+  const w = await prepWorld(t);
+  await w.prep();
+  const time = fakeTime('2026-11-25T01:00:00Z', onSleep);
+  const request = JSON.parse(await fs.readFile(w.requestFile, 'utf8'));
+  const upgrades = [];
+  const deps = { sealOptions: { index: w.index, ghCommand: [process.execPath, w.fake], deps: { ...w.deps, clock: time.clock, sleep: time.sleep } },
+    readStatus: w.deps.readStatus, now: time.clock, sleep: time.sleep, root: path.join(w.d, 'root'),
+    upgrade: async argv => { upgrades.push(argv); return { status: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', node: 'DESK' }; } };
+  const { main: acceptMain, exitCodeOf: acceptExit } = await import('../accept.mjs');
+  const run = (...extra) => acceptMain(['run', '--request', w.requestFile, '--work', path.join(w.d, 'work'), ...extra], deps);
+  const open = () => acceptMain(['open', '--request', w.requestFile], deps);
+  return { w, time, request, upgrades, run, open, acceptExit };
+};
+
+test('accept.mjs on the real seal and readFleet: open opens the request once and gives the link; approved, run seals and reads the fleet off the door', async t => {
+  const { w, request, upgrades, run, open, acceptExit } = await acceptWorld(t);
+  w.door.status = 'none';
+  const opened = await open();
+  assert.equal(opened.status, 'FLEET_ACCEPTANCE_WAITING_OWNER', JSON.stringify(opened));
+  assert.equal(opened.confirmUrl, w.door.confirmUrl);
+  assert.equal(acceptExit(opened), 0);
+  assert.equal((await w.opens()).length, 1, 'one workflow run');
+  // the Owner approves on the page; both nodes report the accepted Source
+  const at = request.ciSourceManifestSha256;
+  Object.assign(w.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: '2026-11-25T01:02:03.456789+00:00',
+    nodes: [{ name: 'DESK', source_sha256: at, paused: false }, { name: 'TURING', source_sha256: at, paused: false }] });
+  const done = await run();
+  assert.equal(done.status, 'ROLLOUT_DONE', JSON.stringify(done));
+  assert.deepEqual(done.nodes, ['DESK', 'TURING']);
+  assert.equal(upgrades.length, 1);
+  assert.ok((await w.assets()).some(a => a.name === `${TAG}.acceptance.json`), 'sealed on the Release');
+  assert.equal((await w.opens()).length, 1, 'still one workflow run');
+  // TURING not there yet: the door says so, and run names it
+  w.door.nodes = [{ name: 'DESK', source_sha256: at, paused: false }, { name: 'TURING', source_sha256: 'a'.repeat(64), paused: false }];
+  const waiting = await run();
+  assert.equal(waiting.status, 'ROLLOUT_WAITING_OTHER_NODES', JSON.stringify(waiting));
+  assert.deepEqual(waiting.pending.map(n => n.node), ['TURING']);
+  const acceptModule = await import('../accept.mjs');
+  assert.equal(acceptModule.SEAL_INPUT_ERRORS, publishModule.SEAL_INPUT_ERRORS, 'accept.mjs stops on seal\'s own list');
+});
+
+// Open design question (Task 87d330d0 alignment, result file section 4): run asks seal (wait 0) again every 30-120 s, and seal opens a
+// new request when it reads rejected at its start. Design 2.1 wants the Owner's "not yet" to stop the command.
+test('accept.mjs run on the real seal: the Owner rejects the request it waits on -> ROLLOUT_STOPPED, no new request', { todo: 'design question: seal reopens a rejected request on accept.mjs\'s next look' }, async t => {
+  let wr = null;
+  const { w, run } = await acceptWorld(t, tt => { if (tt.slept.length === 1) wr.door.status = 'rejected'; });
+  wr = w;
+  w.door.status = 'pending';
+  const r = await run('--wait', '10');
+  assert.equal(r.status, 'ROLLOUT_STOPPED', JSON.stringify(r));
+  assert.deepEqual(await w.opens(), [], 'no request opened after the Owner said no');
+});
+
 // review 87d330d0 B, "要改" 5: no invisible character in the fleet scripts (a literal U+FEFF an editor drops fails silently)
 test('the fleet scripts hold no literal U+FEFF: the BOM is written as an escape', async () => {
   const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');

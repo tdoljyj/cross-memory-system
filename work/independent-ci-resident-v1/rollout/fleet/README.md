@@ -47,7 +47,7 @@ node R/rollout/fleet/accept.mjs run --request <目录>\fleet-node-<version>.acce
 
 有界、可原样重跑（同一个 `--work`），退出时打印一行 JSON（`status`、停在哪、`next` 写下一条命令）。寿命不超过一条请求的有效期：以 seal 第一次答“待批”时的 `expiresAt` 为止（没有就从起跑算 24 小时），下面每一段等待都截在这里。三步：
 
-1. **封存**：调 `seal`。门答“待批”（含请求已排队、还没有链接）就每 30、60、120 秒再问一次，上限 `--wait`（默认到请求过期）；“已批”即封存（接受文件的 Decision、回执、时间都取自门批准的那条 Grant）；“拒绝”或过期即停，候选留在未接受状态，原样重跑重开请求。seal 抛错（门或 gh 网络抖动）算这一轮没问到，按同样间隔再问；输入错误（`SEAL_INPUT_ERRORS`，如请求文件名不对）立即停；连续出错满 30 分钟就停，带最后一次的 `code`。
+1. **封存**：调 `seal`。门答“待批”（含请求已排队、还没有链接）就每 30、60、120 秒再问一次，上限 `--wait`（默认到请求过期）；“已批”即封存（接受文件的 Decision、回执、时间都取自门批准的那条 Grant）；“拒绝”或过期即停，候选留在未接受状态，原样重跑重开请求。seal 抛错（门或 gh 网络抖动）算这一轮没问到，按同样间隔再问；输入错误（件 B `publish.mjs` 导出的 `SEAL_INPUT_ERRORS`，如请求文件名不对、这个版本已以另一份请求被接受）立即停；连续出错满 30 分钟就停，带最后一次的 `code`。
 2. **本机**：`upgrade.mjs fetch --version <version> --work <work>\node`（0.3 同一条），先**不带** `--allow-active-upgrade`。本命令对本机发过什么记在 `<work>\requested-fleet-node-<version>.json`；找到记录的重跑只读、不再问 `upgrade.mjs`，所以回滚之后重跑不会再投。每次可能发请求之前先写一份“将要请求”的记录：进程在发出请求和写记录之间丢了，重跑先等最多 5 分钟看升级代理是否已接手，接手了就跟着读，看不到才再问。
    - 待命（`FLEET_NODE_UPGRADE_REQUESTED`）：记下请求（请求号就是升级代理的 opId），读 `upgrade\status.json` 到这次操作的终态，再核 `upgrade\current.json` 两侧 Source 等于接受的 Source。
      - 请求被升级代理归档为 `rejected` 或 `ignored`（`upgrade\inbox-archive`：空文件、读不了、当天新开操作已到上限）：答 `ROLLOUT_STOPPED`、`code = ROLLOUT_REQUEST_NOT_TAKEN`、`disposition`；它没有变成操作，记录删掉，原样重跑会再请求一次。
@@ -66,7 +66,7 @@ node R/rollout/fleet/accept.mjs run --request <目录>\fleet-node-<version>.acce
 | `ROLLOUT_STOPPED` | `stage = accept`：Owner 拒绝、请求过期、seal 输入错误或连续出错满 30 分钟；`stage = node`：本机回滚或被拒（`node`、`outcome`、`code`），请求没被接手（`ROLLOUT_REQUEST_NOT_TAKEN`），升级代理没在跑（`ROLLOUT_UPGRADER_NOT_RUNNING`） | 1 | 见 0.5；不碰下一台。重跑不会再投同一个请求（记录在 `--work` 里），同一个包第二次请求归 Owner（服务端规则） |
 | `ROLLOUT_REFUSED` | 输入不对（`code`，如 `USAGE`；`--decision-record` 也是 `USAGE`） | 1 | 按 `code` 改正 |
 
-全队各节点最近报告的 Source 由门读出（件 B `accept-door.mjs` 的 `readFleet({ repo, version, request })`，匿名读 `public.clued_fleet_accept_status_v1`，已批时带各登记节点的名字、Source、是否暂停）；读不到、读回为空、缺本机或节点名重复，都算读不到：当班节点不发请求，第 3 步答 `ROLLOUT_WAITING_OTHER_NODES`、`code = ROLLOUT_FLEET_UNREADABLE`，不会答 `ROLLOUT_DONE`。TURING 的 `upgrade\inbox` 只有该节点的操作员会话能写，所以这一阶段 TURING 那一步仍由 DESK 经 Desktop Commander 跑 0.3 那条命令；节点自己读目标升级（G9）落地后这一步和本命令的等待一起删掉。
+全队各节点最近报告的 Source 由门读出（件 B `accept-door.mjs` 的 `readFleet({ resource })`，资源由接受请求文件算出，匿名读 `public.clued_fleet_accept_status_v1`，已批时带各登记节点的名字、Source、是否暂停）；读不到、读回为空、缺本机或节点名重复，都算读不到：当班节点不发请求，第 3 步答 `ROLLOUT_WAITING_OTHER_NODES`、`code = ROLLOUT_FLEET_UNREADABLE`，不会答 `ROLLOUT_DONE`。TURING 的 `upgrade\inbox` 只有该节点的操作员会话能写，所以这一阶段 TURING 那一步仍由 DESK 经 Desktop Commander 跑 0.3 那条命令；节点自己读目标升级（G9）落地后这一步和本命令的等待一起删掉。
 
 ### 0.3 每台节点：同一条命令
 

@@ -48,8 +48,8 @@
 // Life: no longer than one request's validity (plan 2.3): the request's expiresAt from seal's first WAITING answer, else 24 hours from
 // the start; every wait above ends at it.
 //
-// The fleet read is piece B's: rollout/fleet/accept-door.mjs readFleet({ repo, version, request }) (the anonymous read of
-// public.clued_fleet_accept_status_v1; when accepted it carries each registered node's name, Source and pause) -> [{ node,
+// The fleet read is piece B's: rollout/fleet/accept-door.mjs readFleet({ resource }), the resource of this request file (the anonymous
+// read of public.clued_fleet_accept_status_v1; when accepted it carries each registered node's name, Source and pause) -> [{ node,
 // ciSourceManifestSha256, paused }] (or { nodes: [...] }). A read that is not that shape, is empty, names a node twice or lacks this
 // node is unreadable: a node on duty is then never requested, and step 3 answers ROLLOUT_WAITING_OTHER_NODES with code
 // ROLLOUT_FLEET_UNREADABLE, never ROLLOUT_DONE. This node's name is upgrade.mjs's (node.profile.nodeName), else the installed record's
@@ -59,11 +59,13 @@
 // it put and upgrade\inbox-archive under the resident root, and record\acceptance.json (read-only, as upgrade.mjs does). One JSON line;
 // exit 0 ROLLOUT_DONE, 2 waiting (Owner, other nodes, this node), 1 stopped or refused. `deps` is for tests only (a fixture root, a fake
 // seal, upgrade, fleet read and clock); the command line cannot reach it.
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { DEFAULT_ROOT } from './install.mjs';
-import { readRequest } from './publish.mjs';
+import { acceptResourceOf, readFleet } from './accept-door.mjs';
+import { SEAL_INPUT_ERRORS, readRequest } from './publish.mjs';
 import { Refused } from './ports.mjs';
 import { tagOf } from './universal.mjs';
 import { OP_MOVING, main as upgradeMain } from './upgrade.mjs';
@@ -75,11 +77,9 @@ export const SEAL_SEALED = 'FLEET_ACCEPTANCE_SEALED';
 export const SEAL_REJECTED = 'FLEET_ACCEPTANCE_REJECTED';
 export const SEAL_QUEUED = 'FLEET_ACCEPTANCE_OPEN_QUEUED';
 const SEAL_ANSWERS = Object.freeze([SEAL_WAITING, SEAL_SEALED, SEAL_REJECTED]);
-// seal's codes that asking again cannot change (the request, its file name, the repository, the index row): stop at once. Any other
-// code is asked again, bounded by SEAL_ERROR_MINUTES (to be held equal to piece B's list; interface assumption B5).
-export const SEAL_INPUT_ERRORS = Object.freeze(['USAGE', 'REQUEST_REFUSED', 'REQUEST_FILE_NAME_REFUSED', 'PUBLISH_REPO_REFUSED', 'ACCEPTANCE_NOT_THIS_REPOSITORY',
-  'ACCEPTANCE_REFUSED', 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN', 'ACCEPTANCE_NOT_THIS_RELEASE', 'PUBLISH_INDEX_LACKS_VERSION', 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED',
-  'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', 'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE']);
+// seal's codes that asking again cannot change: piece B's one list (publish.mjs SEAL_INPUT_ERRORS), stop at once. Any other code is asked
+// again, bounded by SEAL_ERROR_MINUTES.
+export { SEAL_INPUT_ERRORS };
 export const POLL_MS = Object.freeze({ first: 30_000, max: 120_000 });
 export const OPEN_WAIT_MINUTES = 5;          // open: the dispatched run reaches the door (PLAN-accept-binding section 3, piece C)
 export const OPEN_POLL_MS = 15_000;
@@ -105,18 +105,21 @@ async function exists(file) {
 const msOf = iso => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? t : null; };
 const nextInterval = i => Math.min(i * 2, POLL_MS.max);
 
-// --- the defaults the command line uses (tests give their own) ---
-// piece B's seal(): one look at the door (wait 0), never a wait of its own; the polling is this command's.
-async function defaultSeal({ request, drillReceipt, repo }) {
+// --- the defaults the command line uses (tests give their own, or reach these with the door's stand-ins: deps.sealOptions, deps.readStatus) ---
+// piece B's seal() (wait 0): one look at the door; the polling is this command's. A look that finds no open request dispatches the release
+// workflow once and reads for its link up to publish.mjs OPEN_WAIT_MS itself.
+const sealOf = (extra = {}) => async ({ request, drillReceipt, repo }) => {
   const { seal } = await import('./publish.mjs');
-  return seal({ request, drillReceipt, repo, wait: 0 });
-}
-async function defaultReadFleet(args) {
-  let door = null;
-  try { door = await import('./accept-door.mjs'); } catch { door = null; }
-  if (typeof door?.readFleet !== 'function') throw new Refused('ROLLOUT_FLEET_UNREADABLE', 'accept-door.mjs has no readFleet (PLAN-accept-binding section 3, piece B)');
-  return door.readFleet(args);
-}
+  return seal({ ...extra, request, drillReceipt, repo, wait: 0 });
+};
+// piece B's readFleet reads the door by this request's one resource (accept-door.mjs acceptResourceOf: the request file's own sha256)
+const readFleetOf = readStatus => async ({ request }) => {
+  const bytes = await fs.readFile(request);
+  const r = readRequest(jsonOf(bytes));
+  const resource = acceptResourceOf({ repository: r.repository, version: r.version, archiveSha256: r.archive_sha256,
+    requestSha256: createHash('sha256').update(bytes).digest('hex') });
+  return readFleet({ resource, ...(readStatus ? { readStatus } : {}) });
+};
 const defaultSleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // This node's name: the one upgrade.mjs answered, else the installed record's node profile.
@@ -365,7 +368,7 @@ async function contextOf(values, deps) {
   let request;
   try { request = readRequest(jsonOf(await fs.readFile(requestFile))); } catch (e) { throw new Refused(e?.code ?? 'REQUEST_REFUSED', e?.detail ?? 'not a JSON file'); }
   return { requestFile, request, drillReceipt: values['drill-receipt'] ? path.resolve(values['drill-receipt']) : null,
-    seal: deps.seal ?? defaultSeal, upgrade: deps.upgrade ?? upgradeMain, readFleet: deps.readFleet ?? defaultReadFleet,
+    seal: deps.seal ?? sealOf(deps.sealOptions), upgrade: deps.upgrade ?? upgradeMain, readFleet: deps.readFleet ?? readFleetOf(deps.readStatus),
     sleep: deps.sleep ?? defaultSleep, now: deps.now ?? Date.now, root: deps.root ?? DEFAULT_ROOT, nodeWaitMinutes: deps.nodeWaitMinutes ?? NODE_WAIT_MINUTES };
 }
 
