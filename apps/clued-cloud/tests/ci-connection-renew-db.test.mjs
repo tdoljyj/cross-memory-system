@@ -823,10 +823,13 @@ test('fleet target on the CI probe follows the latest approval and survives an o
     const peer = await node('fleet-peer');
     await setWorkerGatewayCaller(f.gateway);
     async function probe(n = caller) {
-      const response = (await f.gateway.query('select public.clued_ci_connection_renew_v1($1) v', [{
+      // 用夹具数据库的时钟生成本条语句的签发时间，续期函数也用数据库时钟校验新鲜度。
+      const response = (await f.gateway.query(`select public.clued_ci_connection_renew_v1(
+        $1::jsonb || jsonb_build_object('issued_at', to_char(statement_timestamp() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+      ) v`, [{
         contract: 'clued.ci-connection-renew/1', kind: 'ci', project_id: f.project, node_id: n.id,
         identity_fingerprint: n.identity_fingerprint, old_binding_id: n.binding.binding_id, old_token_hash: digest(n.binding.token),
-        generation: 1, new_token_hash: null, issued_at: new Date().toISOString(),
+        generation: 1, new_token_hash: null,
       }])).rows[0].v;
       assert.equal(response.status, 'ok');
       return response.fleet_target;

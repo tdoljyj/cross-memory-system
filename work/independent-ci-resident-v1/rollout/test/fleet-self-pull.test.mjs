@@ -463,14 +463,20 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
         stopRequested: async () => batches === 8, acknowledgeStop: async () => {}, onLoopException: error => { throw error; },
         betweenBatches: async () => {}, selfPull: lane.resident,
         sleep: async () => {
-          if (batches === 1) { olderContent.assets.clear(); await lane.probe(); }
+          await renew(); await lane.tick();
+          // 先等两条通道完成，再为下一拍修改探针或 Release。
+          if (batches === 1) {
+            assert.equal(await read(path.join(node.root, 'state', 'fleet-target.json')), null);
+            olderContent.assets.clear();
+            await lane.probe();
+          }
           if (batches === 4) {
+            // 第 2 拍尝试下载，第 4 拍才是常驻可报告下载失败的下一次空闲拍。
+            assert.equal((await lane.state()).code, 'FLEET_REQUEST_MISSING');
             for (const [name, bytes] of saved) olderContent.assets.set(name, bytes);
             time += 60_000;
             await lane.probe();
           }
-          await renew(); await lane.tick();
-          if (batches === 3) assert.equal((await lane.state()).code, 'FLEET_REQUEST_MISSING');
         } });
       assert.equal(batches, 8);
       assert.equal(renewals, 8);
