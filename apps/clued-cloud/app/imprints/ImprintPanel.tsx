@@ -12,6 +12,7 @@ import { suggestImprintOrganization, type ImprintSuggestions } from "./imprint-s
 import ExistingAssociationEditor from "./ExistingAssociationEditor";
 import MixedContentEditor from "./MixedContentEditor";
 import ImprintBulkPanel from "./ImprintBulkPanel";
+import LaunchDecisionPanel from "./LaunchDecisionPanel";
 import type { AssociationRead } from "./imprint-associations";
 import { searchRevisions, searchSources, type RevisionRead } from "./imprint-search";
 
@@ -157,6 +158,8 @@ export default function ImprintPanel({ session, projects, locale, developmentCon
       <label>{t.extraDomain}<select aria-label={t.extraDomain} value={extraDomain} onChange={event => setExtraDomain(event.target.value as Domain | "")}><option value="">{t.anyDomain}</option>{DOMAIN_KEYS.map(item => <option key={item} value={item}>{labels[item]}</option>)}</select></label>
       <label><input type="checkbox" checked={history} onChange={event => setHistory(event.target.checked)} />{t.history}</label>
     </div>
+    {!development && view === "decision" && <LaunchDecisionPanel session={session} scope={readScope}
+      projectScopes={projects.map(project => "project:" + project.id)} locale={locale} rpc={rpc} />}
     <form className="imprints-tools" onSubmit={search}><label>{t.query}<input aria-label={t.query} type="search" maxLength={500} value={searchText} onChange={event => setSearchText(event.target.value)} /></label><button type="submit">{t.search}</button><button type="button" onClick={() => { setSearchText(""); setQuery(""); }}>{t.clearQuery}</button><button type="button" onClick={() => void load()}>{t.refresh}</button></form>
     <p className="context-muted">{labels[view]} · {readScope === "all" ? allScopeLabel : readScope === "global" ? t.global : projects.find(project => "project:" + project.id === readScope)?.name ?? readScope}{query ? ` · ${query}` : ""}</p>
     <ImprintBulkPanel key={key} rpc={rpc} locale={locale} owner={session.user.id} selection={{ scope: readScope, ...(developmentContextId ? { context_id: developmentContextId } : {}) }}
