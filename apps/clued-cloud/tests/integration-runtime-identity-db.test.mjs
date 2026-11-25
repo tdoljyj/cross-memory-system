@@ -1,15 +1,14 @@
-import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, startCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // S2c Integration Runtime PR-2 (IntegrationRuntime v0.1.8 §14.1): Integration identity, Installation
@@ -40,14 +39,6 @@ const sha = (text) => crypto.createHash('sha256').update(text).digest('hex');
 const uid = () => crypto.randomUUID();
 const key = (label = 'k') => `${label}-${crypto.randomUUID()}`;
 
-async function freePort() {
-  const socket = net.createServer();
-  await new Promise((resolve) => socket.listen(0, '127.0.0.1', resolve));
-  const { port } = socket.address();
-  await new Promise((resolve) => socket.close(resolve));
-  return port;
-}
-
 async function expectCode(promise, code) {
   try {
     const result = await promise;
@@ -60,8 +51,8 @@ async function expectCode(promise, code) {
 
 test('S2c PR-2: identity, Installation Requests, claims, connections and ownership', { timeout: 1_800_000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-integration-identity-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: sha(uid()), port: await freePort(),
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: sha(uid()),
     persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, '-c', 'max_connections=60'],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
@@ -73,8 +64,7 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
     return client;
   };
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = await connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;
@@ -1692,14 +1682,13 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
 // PR-2 functions must run on that shape, not only compile.
 test('S2c PR-2 runs on the production-installed shape (no P5 migrations)', { timeout: 600_000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-integration-prodshape-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: sha(uid()), port: await freePort(),
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: sha(uid()),
     persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   let db, gateway;
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     db = server.getPgClient();
     await db.connect();
     await db.query(`create role anon nologin; create role authenticated nologin;

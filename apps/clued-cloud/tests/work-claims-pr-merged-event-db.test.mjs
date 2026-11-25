@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { PLATFORM_SQL } from '../scripts/production-schema-drift.mjs';
-import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
@@ -23,18 +22,11 @@ const committed = result => {
   return result;
 };
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve, reject) => listener.once('error', reject).listen(0, '127.0.0.1', resolve));
-  const { port } = listener.address();
-  await new Promise(resolve => listener.close(resolve));
-  return port;
-}
 
 test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t => {
-  const server = new EmbeddedPostgres({
+  const server = newCluster({
     databaseDir: await fs.mkdtemp(path.join(os.tmpdir(), 'clued-merged-event-')),
-    user: 'postgres', password: randomUUID(), port: await freePort(), persistent: false,
+    user: 'postgres', password: randomUUID(), persistent: false,
     initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { console.error(message); },
   });
   const clients = [];
@@ -45,8 +37,7 @@ test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t 
     return client;
   };
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = await connect();
     await admin.query(PLATFORM_SQL);
     for (const name of (await fs.readdir(migrations)).filter(name => name.endsWith('.sql')).sort()) {

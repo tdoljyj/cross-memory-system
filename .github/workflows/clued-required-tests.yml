@@ -1,4 +1,5 @@
 name: clued-required-tests
+run-name: ${{ github.event_name == 'workflow_dispatch' && (inputs.resident_node && inputs.resident_dispatch_id && format('clued-resident-dispatch/v1 {0} {1}', inputs.resident_node, inputs.resident_dispatch_id) || 'clued-required-tests') || '' }}
 
 # Required checks clued-cloud-tests, ci-suites and migration-verify (Task
 # 2a5fdb66; work/ci-required-tests-v1/DESIGN.md), on the self-hosted Linux
@@ -47,6 +48,14 @@ on:
       head:
         description: 'PR 当前完整 head SHA'
         required: true
+        type: string
+      resident_node:
+        description: '常驻自动补发节点（手工运行留空）'
+        required: false
+        type: string
+      resident_dispatch_id:
+        description: '常驻自动补发一次性编号（手工运行留空）'
+        required: false
         type: string
   push:
     branches: [main, clued-train/staging]

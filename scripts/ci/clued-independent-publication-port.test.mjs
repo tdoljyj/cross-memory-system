@@ -14,7 +14,7 @@ async function fixture(t,active=true){
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'native-port-unit-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));
  const job=makeJobV2({...subject(),testSha:subject().headSha,role:'gitleaks'}),claim={claimId:'11111111-2222-4333-8444-555555555555',fence:4,epoch:3,expiresAt:new Date(now+3600000).toISOString()};
  const packet={complete:true,pr:job.pr,headSha:job.headSha,baseSha:job.baseSha,paths:['scripts/ci/example.mjs']};
- let facts=admittedFacts(job,claim,packet,{batchClaim:claim,observedAt:now});
+ let facts=admittedFacts(job,claim,packet,{batchClaim:claim,observedAt:now,slotUntil:now+3600000});
  if(active){delete facts.observationSha256;facts={...facts,contract:'clued.independent-ci.full-admission/3',executionPolicy:'active',guarded:true,
   publicationRequired:true,headAuthorizationId:controllerId};facts={...facts,observationSha256:digest(facts)};}
  const checks=[],commands=[];let current=true,posts=0,patches=0;

@@ -7,17 +7,16 @@
 // that turns absorbed events back into pending ones) - and the database itself refuses to delete a current checkpoint.
 // The retention class of the new table (ledger) is registered in supabase/retention-classes.json, which is not on
 // this branch's base: the B2 test retention-classes-db lists every table from pg_class and is red until it is added.
-import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 import { MIGRATE_MODE_SQL, PLATFORM_SQL } from '../scripts/production-schema-drift.mjs';
@@ -28,13 +27,6 @@ const BATCHES = 'clued_private.context_archive_batches_v1';
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise(resolve => listener.close(resolve));
-  return port;
-}
 
 // The release workflow's migrate mode: the whole file is one EXECUTE inside one transaction.
 async function migrate(client, text) {
@@ -51,13 +43,13 @@ async function migrate(client, text) {
 
 test('context archive structure: deleting an old checkpoint takes nothing else with it', { timeout: 600000 }, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-context-archive-structure-'));
-  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: uuid(),
-    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
+  const server = newCluster({ databaseDir: directory, user: 'postgres', password: uuid(),
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(message + '\n'); } });
   const clients = [];
   const connect = async () => { const db = server.getPgClient(); clients.push(db); await db.connect(); return db; };
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     const admin = await connect();
     await admin.query(PLATFORM_SQL);
     const migrations = path.join(root, 'supabase/migrations');

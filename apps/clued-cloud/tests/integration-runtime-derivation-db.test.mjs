@@ -1,13 +1,12 @@
-import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 
 // S2c Integration Runtime PR-1 (IntegrationRuntime v0.1.8 §14.1): registries and the pure
 // derivation functions. Covers the pure-function / property layer of G-A3 and G-A7
@@ -45,13 +44,6 @@ const TABLES = ['integration_binding_domains_v1', 'integration_capability_vocabu
   'integration_compatibility_rules_v1', 'integration_host_surfaces_v1', 'integration_hosts_v1', 'integration_policy_v1',
   'integration_providers_v1', 'integration_scope_capability_map_v1'];
 
-async function freePort() {
-  const socket = net.createServer();
-  await new Promise((resolve) => socket.listen(0, '127.0.0.1', resolve));
-  const { port } = socket.address();
-  await new Promise((resolve) => socket.close(resolve));
-  return port;
-}
 
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -1122,8 +1114,8 @@ function* p2Samples() {
 
 test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-integration-derivation-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: hash(), 
     persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
@@ -1135,8 +1127,7 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
     return client;
   };
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = await connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;
