@@ -840,7 +840,7 @@ const BOTH = [...FRAMEWORK.map(context => ({ context, integration_id: INDEPENDEN
   ...HOSTED.map(context => ({ context, integration_id: GITHUB_ACTIONS_APP_ID })), { context: APP_CHECK_NAME, integration_id: ADMISSION_APP_ID }];
 const SCAFFOLD = { CLUED_FRONT_MERGE_PHASE: 'scaffold' };
 
-function scene1344() {
+function scene1344({ hostedChecks = HOSTED } = {}) {
   const w = train();
   w.now = Date.parse('2026-11-25T12:20:43Z');
   w.required = SCAFFOLD_R6;
@@ -851,7 +851,7 @@ function scene1344() {
   w.open(1344, { head, behind: 25, parents: [parent, BASE], auto: '2026-11-25T09:26:28Z' });
   w.head(parent);
   for (const sha of [head, parent]) w.check(sha, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
-  hostedGreen(w)(head);
+  for (const name of hostedChecks) w.check(head, name);
   w.heads.get(head).statuses.push({ context: 'resident-queue/turing (info only)', state: 'pending', description: residentSays(25) });
   w.open(1349, { head: later, contains: w.tip, auto: '2026-11-25T10:00:00Z' });
   w.heads.get(later).runs.push({ status: 'in_progress' });
@@ -866,6 +866,19 @@ test('3576b29c: #1344 with green hosted checks gets main before the later #1349,
   assert.deepEqual(w.brought(), [1344]);
   assert.equal(r.main_sha, w.tip);
   assert.equal(w.heads.get(w.headOf(1344)).checks.some(check => check.name === MAIN_MERGE_CHECK), true);
+});
+
+test('3576b29c: the third update needs all hosted checks green when admission is missing', async () => {
+  const green = scene1344();
+  const refreshed = await green.run({}, SCAFFOLD);
+  assert.equal(refreshed.result, 'merged', statesOf(refreshed));
+  assert.deepEqual(green.brought(), [1344]);
+
+  const missing = scene1344({ hostedChecks: HOSTED.slice(1) });
+  const blocked = await missing.run({}, SCAFFOLD);
+  assert.equal(blocked.result, 'none', statesOf(blocked));
+  assert.deepEqual(missing.brought(), []);
+  assert.match(blocked.train.members.find(m => m.pr === 1344).state, /连带 2 次仍未通过，不再带$/);
 });
 
 test('3576b29c: the earlier safe and green candidate wins if all eight required checks passed', async () => {
@@ -1802,6 +1815,20 @@ test('U2 (修前必红): with no front, two such heads are each named once and t
   assert.deepEqual(namings(w).map(c => c.pr).sort(), [SILENT_B, SILENT_C], JSON.stringify(r));
   w.now += 10 * MIN;
   assert.notEqual((await w.run({}, SCAFFOLD)).result, 'held'); assert.equal(namings(w).length, 2, 'once per head');
+});
+
+test('3576b29c: an unadmitted head brought twice with a failed hosted check stays behind the next candidate', async () => {
+  const w = sceneSilent({ front: false });
+  const head = silentHead(w, SILENT_B, { auto: '2026-11-24T01:00:00Z' });
+  w.check(head, HOSTED[0], 'failure', GITHUB_ACTIONS_APP_ID, { started_at: iso(w.now - 40 * MIN) });
+  silentHead(w, SILENT_D, { brought: false, auto: '2026-11-24T03:00:00Z' });
+
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'merged', statesOf(r));
+  assert.deepEqual(w.brought(), [SILENT_D]);
+  assert.equal(w.headOf(SILENT_B), head);
+  assert.equal(r.train.members.find(m => m.pr === SILENT_B).state,
+    `red (${HOSTED[0]}), not admitted on a head the App brought: 连带 2 次仍未通过，不再带`);
 });
 
 test('U1b: brought once only, behind and not admitted, it is a candidate after the front: not named', async () => {
