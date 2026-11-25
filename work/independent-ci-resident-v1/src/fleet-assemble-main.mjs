@@ -92,8 +92,10 @@ async function assemble(root, run, deadline) {
 
 if (import.meta.main) {
   // Wait for the Broker to put this process in its kill-on-close job before starting any work.
-  let ready = '';
-  for await (const chunk of process.stdin) ready += chunk;
+  // .NET Framework can prefix redirected stdin with a UTF-8 BOM under console code page 65001.
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  const ready = new TextDecoder().decode(Buffer.concat(chunks));
   if (ready === 'assemble\n') {
     process.env.PSModulePath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules';
     try {
