@@ -162,10 +162,56 @@ function initdbProblems(items, name) {
   return items.filter((item) => !/^--[a-z][a-z-]*(=.*)?$/.test(item)).map((item) => `${name} 追加的选项写法不认 ${item}`);
 }
 
+// The constant must be imported from cluster-cleanup.mjs and not shadowed by a local declaration.
+function constantProblems(code, name, constant, file) {
+  const found = [];
+  const imported = [...code.matchAll(/import\s*\{([^}]*)\}\s*from\s*(['"])([^'"\n]+)\2/g)].some((m) =>
+    m[1].split(',').map((s) => s.trim().split(/\s+as\s+/).pop()).includes(constant)
+    && file !== undefined && path.resolve(path.dirname(file), m[3]) === TARGET);
+  if (!imported) found.push(`${name} 未从 cluster-cleanup.mjs 导入 ${constant}`);
+  if (new RegExp(`(?:const|let|var|function|class)\\s+${constant}\\b`).test(code)) found.push(`${constant} 被本地声明遮住`);
+  return found;
+}
+
+// pg-cluster-fixture.mjs builds every cluster (pg-cluster-source.test.mjs), so it puts the constants first for every
+// caller, including one that passes no flags; the caller's own items follow and are checked where they are written,
+// and the fixture's own literals come last. Its one constructor call must have exactly this shape, so the constants
+// can be neither dropped, moved behind the caller's items, nor overridden by spreading options after them.
+const FIXTURE = path.join(root, 'apps/clued-cloud/tests/pg-cluster-fixture.mjs');
+const LITERALS = `((?:\\s*,\\s*(?:'[^'\\n]*'|"[^"\\n]*"))*)`;
+const fixtureValue = (name, constant) =>
+  `${name}\\s*:\\s*\\[\\s*\\.\\.\\.${constant}\\s*,\\s*\\.\\.\\.\\(\\s*options\\.${name}\\s*\\?\\?\\s*\\[\\s*\\]\\s*\\)${LITERALS}\\s*,?\\s*\\]`;
+const FIXTURE_CALL = new RegExp(`\\bnew\\s+EmbeddedPostgres\\s*\\(\\s*\\{\\s*\\.\\.\\.options\\s*,\\s*`
+  + `${fixtureValue('initdbFlags', 'EPHEMERAL_INITDB_FLAGS')}\\s*,\\s*${fixtureValue('postgresFlags', 'EPHEMERAL_POSTGRES_FLAGS')}`
+  + `\\s*,?\\s*\\}\\s*\\)`, 'g');
+
+function fixtureViolations(code, bare, file) {
+  const found = [];
+  const count = (text, pattern) => (text.match(pattern) ?? []).length;
+  const calls = [...code.matchAll(FIXTURE_CALL)];
+  // The package is named twice in code: its import and the one call, so no other construction can get around the shape.
+  if (calls.length !== 1 || count(bare, /\bEmbeddedPostgres\b/g) !== 2) {
+    found.push('pg-cluster-fixture.mjs 未按定形构造：new EmbeddedPostgres({ ...options, initdbFlags: [...EPHEMERAL_INITDB_FLAGS, ...(options.initdbFlags ?? [])], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, ...(options.postgresFlags ?? []), <字面量>] })');
+  }
+  for (const { name, constant } of RULES) {
+    // Each name appears exactly as the key and as the caller's items inside the one call.
+    if (count(bare, new RegExp(`\\b${name}\\b`, 'g')) !== 2 || count(code, new RegExp(`(['"])${name}\\1`, 'g')) !== 0) {
+      found.push(`pg-cluster-fixture.mjs 在定形之外提到 ${name}`);
+    }
+    found.push(...constantProblems(code, name, constant, file));
+  }
+  for (const call of calls) {
+    const literals = (group) => [...(group ?? '').matchAll(/'([^'\n]*)'|"([^"\n]*)"/g)].map((m) => m[1] ?? m[2]);
+    found.push(...initdbProblems(literals(call[1]), 'initdbFlags'), ...postgresProblems(literals(call[2]), 'postgresFlags'));
+  }
+  return found;
+}
+
 // Returns the problems found in one source file; an empty list means the file complies.
 function violations(source, file) {
   const { code, bare, problems } = scan(source);
   if (problems.length) return problems.map((p) => `无法解析（扫描失步，请改写）：${p}`);
+  if (file !== undefined && path.resolve(file) === FIXTURE) return fixtureViolations(code, bare, file);
   const found = [];
   for (const { name, constant } of RULES) {
     // A name counts when it is code (bare identifier) or a quoted key such as 'postgresFlags' or ['postgresFlags'].
@@ -177,11 +223,7 @@ function violations(source, file) {
     const form = new RegExp(`${key}\\s*:\\s*(?:\\[\\s*\\.\\.\\.${constant}\\b((?:\\s*,\\s*(?:'[^'\\n]*'|"[^"\\n]*"))*)\\s*,?\\s*\\]|${constant}\\b)(?=\\s*(?:[,)};\\n]|$))`, 'g');
     const matches = [...code.matchAll(form)];
     if (matches.length !== mentions) found.push(`${name} 未全部从 ${constant} 取值`);
-    const imported = [...code.matchAll(/import\s*\{([^}]*)\}\s*from\s*(['"])([^'"\n]+)\2/g)].some((m) =>
-      m[1].split(',').map((s) => s.trim().split(/\s+as\s+/).pop()).includes(constant)
-      && file !== undefined && path.resolve(path.dirname(file), m[3]) === TARGET);
-    if (!imported) found.push(`${name} 未从 cluster-cleanup.mjs 导入 ${constant}`);
-    if (new RegExp(`(?:const|let|var|function|class)\\s+${constant}\\b`).test(code)) found.push(`${constant} 被本地声明遮住`);
+    found.push(...constantProblems(code, name, constant, file));
     for (const match of matches) {
       const items = [...(match[1] ?? '').matchAll(/'([^'\n]*)'|"([^"\n]*)"/g)].map((m) => m[1] ?? m[2]);
       found.push(...(name === 'postgresFlags' ? postgresProblems(items, name) : initdbProblems(items, name)));
@@ -273,6 +315,38 @@ test('unit: names inside comments and strings do not count', () => {
 /* initdbFlags is EPHEMERAL_INITDB_FLAGS now */
 const note = 'postgresFlags and initdbFlags moved to cluster-cleanup';
 `, UNIT_FILE), []);
+});
+
+// The package specifier is a placeholder: the check reads the call, not where EmbeddedPostgres comes from.
+const fixture = (call) => violations(`import EmbeddedPostgres from './package.mjs';\n${IMPORT_LINE}`
+  + `export function newCluster(options = {}) {\n  return ${call};\n}\n`, FIXTURE);
+const INITDB = '[...EPHEMERAL_INITDB_FLAGS, ...(options.initdbFlags ?? [])]';
+const POSTGRES = "[...EPHEMERAL_POSTGRES_FLAGS, ...(options.postgresFlags ?? []), '-c', 'listen_addresses=127.0.0.1']";
+const shape = (initdb, postgres) => `new EmbeddedPostgres({ ...options, initdbFlags: ${initdb}, postgresFlags: ${postgres} })`;
+
+test('unit: the fixture puts the constants first for every caller', () => {
+  assert.deepEqual(fixture(shape(INITDB, POSTGRES)), []);
+  assert.deepEqual(fixture(`new EmbeddedPostgres({\n    ...options,\n    initdbFlags: ${INITDB},\n    postgresFlags: ${POSTGRES},\n  })`), []);
+});
+
+test('unit: a fixture that does not put the constants first fails', () => {
+  for (const call of [
+    'new EmbeddedPostgres({ ...options })',
+    "new EmbeddedPostgres({ ...options, postgresFlags: [...(options.postgresFlags ?? []), '-c', 'listen_addresses=127.0.0.1'] })",
+    `new EmbeddedPostgres({ ...options, postgresFlags: ${POSTGRES} })`,
+    shape(INITDB, "[...(options.postgresFlags ?? []), ...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1']"),
+    `new EmbeddedPostgres({ initdbFlags: ${INITDB}, postgresFlags: ${POSTGRES}, ...options })`,
+    `${shape(INITDB, POSTGRES)} && new EmbeddedPostgres(options)`,
+  ]) {
+    assert.notDeepEqual(fixture(call), [], call);
+  }
+});
+
+test('unit: items that conflict with the constant fail in the fixture and at a call site', () => {
+  assert.notDeepEqual(fixture(shape(INITDB, "[...EPHEMERAL_POSTGRES_FLAGS, ...(options.postgresFlags ?? []), '-c', 'fsync=on']")), []);
+  assert.notDeepEqual(check(`newCluster({ postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, '-c', 'fsync=on'] });`), []);
+  // Passing the caller's items through is the fixture's shape only; anywhere else they would go unchecked.
+  assert.notDeepEqual(check(`newCluster({ postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, ...(options.postgresFlags ?? [])] });`), []);
 });
 
 test('every test file that sets postgresFlags or initdbFlags takes them from the ephemeral constants', async () => {
