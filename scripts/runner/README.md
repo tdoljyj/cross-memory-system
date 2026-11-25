@@ -34,6 +34,12 @@ Native `kooyumi-work-admission`（绑定、时效、当前 head 与重跑规则�
 那个工作流重新启用与否，自托管 runner 凭的都是同一份准入。每个作业少一次 GitHub 读取。
 下面 1.0.1 一节“`active` 保留旧规则”的说法由此作废。合入即发布（loader 从 main 读）。
 
+### Native 准入只读一次（c29597be）
+
+`native-admission-no-wait-v1` 的版本副本供源码资格验证。
+`qualify-native-admission-retry-candidate.mjs --candidate` 用模拟读取覆盖准入缺失、未完成和瞬时网络故障。
+loader 从 main 读取 `clued-runner-job-started.mjs`，合入后在每次作业启动时读取新版本。
+
 ### 必需运行缺失补发后继（G3，Task 7067280f）
 
 `required-tests-dispatch-v1` / component `1.0.5` 只增加
@@ -51,9 +57,9 @@ execution epoch 查询绑定 PR，而不是把本次补发当作普通分支任�
 
 `required-tests-late-admission-v1` / component `1.0.3` keeps every rule of
 `work-handover-native-admission-retry-v1`. Native admits a pull request only when it is the
-train's front, often long after the push. For a pull request that changes a
-workflow every job of attempt 1 then waits `CLUED_RUNNER_HOOK_WAIT_SECONDS` and
-is refused in "Set up runner" ("Native admission absent"); the companion's one
+train's front, often long after the push. At the time, for a pull request that
+changed a workflow, every job of attempt 1 waited and was refused in "Set up
+runner" ("Native admission absent"). The companion's one
 "Re-run all jobs" after the admission (resident DESIGN §56.5) was refused as
 well, because Native admitted attempt 1 only, and a new commit had to be pushed
 by hand (#1121 run `43720693841`, #1122 run `43720708199`). The attempt-1 rule
@@ -93,14 +99,10 @@ three attempts per call with 2 and 5 seconds between them. Only reads are tried
 again: GET requests, and the two POSTs their callers mark as reads (the hook
 App's installation-token mint and the read-only `execution_current`
 observation). A 401, 403, 404, 429 or a malformed answer is final at once, as
-before. While the hook waits for the Native check or
-a re-run's `admission-gate` job, a poll that still fails transiently counts as
-"not settled yet" until `CLUED_RUNNER_HOOK_WAIT_SECONDS` ends by the clock;
-then the last failure refuses. A Native check is judged at the time its pages
-were read. All reads of one job start end within twice the wait plus two
-minutes. Nothing is admitted on a failure. `qualify-native-admission-retry-candidate.mjs
---candidate` repeats the 1.0.1 cases and adds synthetic network cuts. The
-1.0.1 file and its qualifier stay unchanged for rollback.
+before. A Native check is judged at the time its pages were read. While a
+re-run's heavy job waits for its `admission-gate`, a poll that still fails
+transiently counts as pending until `CLUED_RUNNER_HOOK_WAIT_SECONDS` ends by
+the clock. All reads share a deadline of twice that setting plus two minutes.
 
 This file is under `scripts/runner/**`, a protected path: merging it needs an
 Owner Grant. As for every successor, it then needs exact Source acceptance,
@@ -142,9 +144,9 @@ A job starts only when its run is one of the following:
 
 - **On `main`:** a push, a schedule, `workflow_run`, `pull_request_target`, or a manual dispatch. A `pull_request_target` run counts only for a pull request into `main` (re-review 7, m1): it runs on `main`'s ref whatever the pull request's base, and a workflow may check out that base, which is the Agent's to edit when it is another branch.
 - **A pull request into `main` that changes no file under `.github/workflows/`.** Each workflow keeps its `admission-gate` job, which waits for the KooYomi admission of the pull request.
-- **A pull request into `main` that changes a workflow,** once the Native admission of the same event as the job's run has succeeded (`native-only-admission-v1`).
+- **A pull request into `main` that changes a workflow,** once the Native admission of the same event as the job's run has succeeded (`native-admission-no-wait-v1`).
   - That admission is the newest `kooyumi-work-admission` check of App `5368905` on the exact head, with its Native external id, a summary naming this pull request only, started no earlier than 15 seconds before the job's run, and the pull request still open into `main` at that head. The legacy `clued-work-admission.yml` is not read, whether it is enabled or not.
-  - While that check has not completed, the job waits for it (up to `CLUED_RUNNER_HOOK_WAIT_SECONDS`, default 780, the longest wait the registered gate job holds). The same setting also bounds, separately, the wait for a re-run's `admission-gate` job (see Re-runs), so a heavy job of a re-run of a pull request that changes a workflow can wait up to twice that, plus at most two minutes of reads (component 1.0.2).
+  - The hook reads Native admission once, with pagination and transient retries for each request. A missing or incomplete check immediately refuses the job in "Set up runner" (exit 1 in enforcement mode). After admission succeeds, the resident lane can request "Re-run all jobs" for a gated run that ran nothing. `CLUED_RUNNER_HOOK_WAIT_SECONDS` (default 780) still bounds a re-run's heavy job wait for its own `admission-gate` job (see Re-runs).
   - An older success on the same head does not count: for example after a force-push back to an admitted commit, or a pull request closed and reopened (even within seconds). A newer refusal or pending check cannot be hidden by an older success.
 - **A manual dispatch on another branch of `clued-connection-authorization.yml`, `clued-g4-database.yml`, `information-flow-e2e.yml`, `clued-handover-external-qualification.yml` or `clued-handover-disposable-idle.yml`,** when the branch's `.github/workflows` directory is exactly `main`'s (same files, same object ids).
   - A branch behind `main` must merge `main` first.
