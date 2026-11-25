@@ -1632,7 +1632,9 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 在批次认领成为合并队列队首之后、写任何日志之前，第 8 段现读两样 GitHub 事实（`independent-control-checks-v2/train-rules.mjs`）。
 
 - **main 的规则**：`GET /repos/{repo}/rules/branches/main`（Metadata 读权限，安装令牌本来就有）。
-  - 读不到、没有 `required_status_checks` 规则（规则集被停用）、六项必需检查里有一项缺失或不再钉 integration 5368905（灾备切换），都是 `RULESET_UNREADABLE`。在本次运行的 90 秒窗口内反复读，读不到就停靠重试。
+  - 读到了完整答复但不是本 App 的六项：没有 `required_status_checks` 规则（规则集被停用；GitHub 对没有启用规则集的分支答 `200 []`，空列表归这一类）、六项必需检查里有一项缺失或不再钉 integration 5368905（灾备切换），都是 `RULESET_UNREADABLE`。读本身失败（抛错、答复不完整、`rules` 不是列表）是另一个码 `RULESET_READ_FAILED`（任务 bd07449b，`train-rules.mjs#readMainRules` 是唯一读入口）。
+  - 两个码的停靠不同（任务 bd07449b）：`RULESET_READ_FAILED` 按 1、3、10 分钟退避，之后每 10 分钟再读（`RULES_READ_RETRY_MS`）；`RULESET_UNREADABLE` 第一次就睡（`STAGE8_SLEEP_AT_ONCE_CODES`，不按时钟重试：规则不变，第 8 段答的也不变），只由伴随进程叫醒——它的规则集兜底每 5 分钟读一次 main 的规则（`poller.noteBranchRules`），读到六项钉回本 App（`rulesPinned`）才看这个睡着的批次、写 `parkEvent` 触发；没钉住时什么都不读、不写。
+  - 叫醒信号带“第几次睡”（二轮，PLAN-ruleset-unreadable-park-r2 §2）。`RULESET_UNREADABLE` 行的 `parkTry` 随队列落盘，并进入轮询器的信号摘要（`poller.mjs#parkedPass`）。预算内每次续试后再停靠时写入已结束的第 8 段尝试数，序号变化可触发下一次唤醒。到预算时，队列与该次尝试的账本保留同一 key 和 head 的前序停靠行值，包括旧版行的显式 `null`。没有前序行时使用本次尝试序号减一。执行器用 `parkEvents` 和账本里的 `parkEvent` 识别已消费的信号，旧版行的同一观察至多触发一次兼容续试。规则已钉回但读取检查列表失败时，沿用本进程最后一次确认的列表。尚未确认过列表时，本拍跳过该行。第一次叫醒不等，之后每次叫醒与上一次至少相隔 `PARK_NUDGE_MS`（5 分钟）。非队首计数尝试达到 `stage8MaxTries` 时通知 Owner 一次（`STAGE8_TRY_LIMIT`）。队首尝试不计入 `stage8MaxTries`（review m5），因此这一阈值不发队首通知。队首批次达到 99 次（`MAX_TRIES`）或停靠满 24 小时（`park.maxMs`）后进入预算休眠，睡眠序号停止推动后续重试。新的有效事件仍可唤醒，每 PR 仍受滚动 24 小时 100 次重试额度约束（`park.stage8RetriesPer24h`，见 §81）。
   - 多个规则集按最严的算：任一条要求 `strict` 就算开；合并方式取所有 `pull_request` 规则都允许的交集。读不出合并方式的 `pull_request` 规则按“未知”算（不算只有 merge），不因此判规则读不到：合并方式只对列车有用（复核 N6）。
   - `strict` 关着而本节点不在列车模式：`STRICT_OFF_WITHOUT_TRAIN`，立即停靠，并通知 Owner（每天一次）。
   - 列车模式下 `strict` 关着而合并方式不只有 merge：`MERGE_METHODS_NOT_MERGE_ONLY`（3a 用不到，写好供第 5 步起用）。
@@ -1660,7 +1662,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 
 ### 19.4 常驻层
 
-- 新码进了 `classify.mjs` 的干净终止码表和失败对照表，与 Source 的 `stage-fact.mjs` 一致（测试交叉核对）。`RULESET_UNREADABLE`、`STRICT_OFF_WITHOUT_TRAIN`、`MERGE_METHODS_NOT_MERGE_ONLY`、`TRAIN_TEST_MERGE_NOT_READY`、`GREEN_LEDGER_UNAVAILABLE` 是第 8 段没就绪的码，批次停在 B，按第 2 步的退避再试；`TRAIN_TEST_MERGE_TREE_DIFFERS` 是干净终止，中性，不做 attempt 2。
+- 新码进了 `classify.mjs` 的干净终止码表和失败对照表，与 Source 的 `stage-fact.mjs` 一致（测试交叉核对）。`RULESET_UNREADABLE`、`RULESET_READ_FAILED`、`STRICT_OFF_WITHOUT_TRAIN`、`MERGE_METHODS_NOT_MERGE_ONLY`、`TRAIN_TEST_MERGE_NOT_READY`、`GREEN_LEDGER_UNAVAILABLE` 是第 8 段没就绪的码，批次停在 B，按第 2 步的退避再试（两个规则码例外，见 19.1）；`TRAIN_TEST_MERGE_TREE_DIFFERS` 是干净终止，中性，不做 attempt 2。
 - 新的通知种类 `stage8-rules`：`STRICT_OFF_WITHOUT_TRAIN`、`MERGE_METHODS_NOT_MERGE_ONLY`（每天一次）和 `TRAIN_TEST_MERGE_TREE_DIFFERS`（每个 head 一次）弹 Windows 通知给 Owner。
 - PR 页面：停靠行写明原因（“已测通：main 的 strict 已关而列车未开，暂不发合并位（已通知 Owner）”“已测通：等 GitHub 算好试合并”等）；树不同的结束写“试合并与测过的树不同，未发合并位：请推新提交（已通知 Owner）”。
 

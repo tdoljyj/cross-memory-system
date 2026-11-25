@@ -73,7 +73,8 @@ for (const unreadable of ['throw', 'incomplete', 'missing', 'unsupported', 'malf
     assert.equal(e.native.calls.filter(c => c[0] === 'yield').length, 1);
     assert.equal(r.facts.actions.returned, true);
     assert.equal(r.facts.openFrontBatch, null);
-    assert.equal(r.facts.rulesReason, unreadable === 'unsupported' ? 'REQUIRED_CHECKS_UNREADABLE' : 'RULESET_UNREADABLE');
+    // task bd07449b: a read that failed (threw, or not given whole) has its own reason; rules read and not understood keep RULESET_UNREADABLE
+    assert.equal(r.facts.rulesReason, unreadable === 'unsupported' ? 'REQUIRED_CHECKS_UNREADABLE' : ['throw', 'incomplete'].includes(unreadable) ? 'RULESET_READ_FAILED' : 'RULESET_UNREADABLE');
   });
 
 for (const failed of [false, true]) test(`multi-PR holder selection uses the same required list: required failed=${failed}`, async t => {
