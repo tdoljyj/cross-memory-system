@@ -15,6 +15,10 @@ on:
           first) and runs only when the three wrangler production configurations are byte for
           byte those of the commit the edge serves (otherwise use deploy). deploy and release
           roll the Workers back to the versions they served if a deploy or verification fails.
+          fleet-accept changes nothing but one pending request: it checks the acceptance
+          request of the published universal node package fleet-node-<fleet_version> and
+          opens the Owner's fleet.accept request for it; the Owner's approval on the
+          confirmation page is the acceptance.
         type: choice
         required: true
         default: preflight
@@ -25,6 +29,7 @@ on:
           - deploy
           - migrate
           - release
+          - fleet-accept
       source_request_id:
         description: Exact approved authorization request UUID; source-capture mode only
         type: string
@@ -39,6 +44,18 @@ on:
           comma-separated, in the order to apply
         type: string
         default: ''
+      fleet_version:
+        description: >-
+          fleet-accept mode only: the version of the published universal node package
+          (Release tag fleet-node-<version>)
+        type: string
+        default: ''
+      fleet_request_sha256:
+        description: >-
+          fleet-accept mode only: SHA-256 of that Release's
+          fleet-node-<version>.acceptance-request.json, 64 lowercase hex characters
+        type: string
+        default: ''
       rollback_drill:
         description: >-
           release mode only: after every verification has passed, fail on purpose before
@@ -49,8 +66,10 @@ on:
 permissions:
   contents: read
 
+# fleet-accept opens a request and changes nothing else in production: it has
+# its own group, so it neither waits for a release nor holds one up.
 concurrency:
-  group: clued-cloud-production-release
+  group: ${{ inputs.mode == 'fleet-accept' && 'clued-cloud-fleet-accept' || 'clued-cloud-production-release' }}
   cancel-in-progress: false
 
 jobs:
@@ -64,7 +83,8 @@ jobs:
     # own timeout-minutes; tests/production-release-gate.test.mjs checks the sum).
     # Every other mode keeps 45: the migrate steps have no step timeout, and a
     # stalled migration must not hold the concurrency group longer than before.
-    timeout-minutes: ${{ (inputs.mode == 'deploy' || inputs.mode == 'release') && 165 || 45 }}
+    # fleet-accept reads two small files and makes one database call: 10.
+    timeout-minutes: ${{ (inputs.mode == 'deploy' || inputs.mode == 'release') && 165 || inputs.mode == 'fleet-accept' && 10 || 45 }}
     # OwnerCredential §6.1: CLUED_MIGRATION_DATABASE_URL lives in this
     # environment (Owner setting: deployment branches main only). Its database
     # login is also the release identity: only it may call the release door.
@@ -95,6 +115,8 @@ jobs:
           SOURCE_REQUEST_DIGEST: ${{ inputs.source_request_digest }}
           MIGRATIONS: ${{ inputs.migrations }}
           ROLLBACK_DRILL: ${{ inputs.rollback_drill }}
+          FLEET_VERSION: ${{ inputs.fleet_version }}
+          FLEET_REQUEST_SHA256: ${{ inputs.fleet_request_sha256 }}
         run: |
           set -euo pipefail
           # Deploy is never implied: an unknown or missing mode stops here, before any
@@ -121,10 +143,28 @@ jobs:
                 echo "::error::release takes no migrations: apply them with migrate mode first, then release" >&2
                 exit 1
               fi ;;
+            fleet-accept)
+              test -z "$SOURCE_REQUEST_ID"
+              test -z "$SOURCE_REQUEST_DIGEST"
+              test -z "${MIGRATIONS:-}"
+              # The two values are checked here as fixed shapes and travel on as
+              # environment values only, never as shell or SQL text.
+              if ! [[ "${FLEET_VERSION:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,88}$ ]]; then
+                echo "::error::fleet_version is not a universal node package version" >&2
+                exit 1
+              fi
+              if ! [[ "${FLEET_REQUEST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]; then
+                echo "::error::fleet_request_sha256 is not 64 lowercase hex characters" >&2
+                exit 1
+              fi ;;
             *)
               echo "::error::Unknown release mode '$RELEASE_MODE'" >&2
               exit 1 ;;
           esac
+          if [ "$RELEASE_MODE" != "fleet-accept" ] && [ -n "${FLEET_VERSION:-}${FLEET_REQUEST_SHA256:-}" ]; then
+            echo "::error::fleet_version and fleet_request_sha256 are fleet-accept inputs" >&2
+            exit 1
+          fi
           if [ "${ROLLBACK_DRILL:-false}" != "false" ] && [ "$RELEASE_MODE" != "release" ]; then
             echo "::error::rollback_drill is a release-mode switch" >&2
             exit 1
@@ -427,7 +467,54 @@ jobs:
           done
           node -e 'process.stdout.write(JSON.stringify({contract:"clued.production-migration-apply.v1",source_commit:process.env.GITHUB_SHA,applied:JSON.parse(process.argv[1]),finished_at:new Date().toISOString()},null,2)+"\n")' "$applied" \
             > "$evidence_dir/production-migrations.json"
-      - if: ${{ inputs.mode != 'backup' && inputs.mode != 'migrate' }}
+      # fleet-accept (Task 87d330d0; migration 20261125100000_fleet_accept_door_v1.sql).
+      # The first step holds no secret: it downloads the package's acceptance
+      # request and SHA256SUMS from its public Release without a token, checks
+      # them against the two inputs, this repository and main, and writes the
+      # door's input. The second gives that input to the door as COPY data. The
+      # door opens (or returns) the Owner's pending request and never approves:
+      # the run ends green with the confirmation link in its summary, and the
+      # Owner's approval on that page is the acceptance. Neither step installs
+      # or runs dependency code; scripts/ci/clued-fleet-accept.mjs uses Node only.
+      - name: Check the published acceptance request
+        if: ${{ inputs.mode == 'fleet-accept' }}
+        timeout-minutes: 3
+        working-directory: .
+        env:
+          NODE_OPTIONS: ''
+          FLEET_VERSION: ${{ inputs.fleet_version }}
+          FLEET_REQUEST_SHA256: ${{ inputs.fleet_request_sha256 }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/clued-fleet-accept.mjs input > "$RUNNER_TEMP/clued-fleet-accept-input.json"
+      - name: Open the Owner request to accept the package
+        if: ${{ inputs.mode == 'fleet-accept' }}
+        timeout-minutes: 3
+        working-directory: .
+        env:
+          NODE_OPTIONS: ''
+          CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
+          CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
+        run: |
+          set -euo pipefail
+          database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
+          psql() { docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine psql "$database_url" -v ON_ERROR_STOP=1 -X "$@"; }
+          err=$(mktemp "$RUNNER_TEMP/clued-fleet-accept-XXXXXX")
+          trap 'rm -f -- "$err"' EXIT
+          # The door comes with a migration; say so plainly when it is not there yet.
+          door=$(psql -q -tA -c "select to_regprocedure('clued_private.fleet_accept_door_v1(jsonb)') is not null" 2>"$err") || true
+          if [ "$door" = "f" ]; then
+            echo "::error title=接受通用节点包::接受门不在这个数据库里。先触发一次 mode=migrate，migrations 填 20261125100000_fleet_accept_door_v1.sql，再重跑本次。" >&2
+            exit 1
+          fi
+          answer=$(psql -q -tA -v VERBOSITY=terse \
+            -c "create temp table door_input(line text)" \
+            -c "copy door_input(line) from stdin with (format csv, delimiter e'\x01', quote e'\x02')" \
+            -c "select clued_private.fleet_accept_door_v1(line::jsonb)::text from door_input" \
+            < "$RUNNER_TEMP/clued-fleet-accept-input.json" 2>"$err") || true
+          cat -- "$err" >&2
+          printf '%s\n' "$answer" | node scripts/ci/clued-fleet-accept.mjs report --error-file "$err"
+      - if: ${{ inputs.mode != 'backup' && inputs.mode != 'migrate' && inputs.mode != 'fleet-accept' }}
         timeout-minutes: 10
         run: npm ci --ignore-scripts
       - name: Capture exact nonsecret registration source

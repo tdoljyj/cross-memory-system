@@ -1,0 +1,78 @@
+{
+  "source": "2026-11-25 北京时间，GitHub Activity、按 head 列运行、运行详情及同 head 状态的字段裁剪。",
+  "push": {
+    "id": 51733144793,
+    "ref": "refs/heads/claude/drill-companion-queued",
+    "activity_type": "push",
+    "before": "5f5bcc3923deb27880d896f2dd44989b4ed3f20c",
+    "after": "1d619c92154ef3d9b9ee8af0dbb795800e68fb35",
+    "timestamp": "2026-11-24T22:16:23Z",
+    "actor": { "login": "clued-admission[bot]", "type": "Bot" }
+  },
+  "runs": {
+    "total_count": 4,
+    "workflow_runs": [
+      {
+        "id": 45503124414,
+        "event": "workflow_dispatch",
+        "run_attempt": 1,
+        "head_sha": "1d619c92154ef3d9b9ee8af0dbb795800e68fb35",
+        "head_branch": "claude/drill-companion-queued",
+        "path": ".github/workflows/clued-required-tests.yml",
+        "run_started_at": "2026-11-24T22:40:28Z",
+        "actor": { "login": "tdoljyj", "type": "User" },
+        "triggering_actor": { "login": "tdoljyj", "type": "User" },
+        "conclusion": "cancelled",
+        "pull_requests": [],
+        "referenced_workflows": []
+      },
+      {
+        "id": 45499359230,
+        "event": "pull_request",
+        "run_attempt": 1,
+        "head_sha": "1d619c92154ef3d9b9ee8af0dbb795800e68fb35",
+        "path": ".github/workflows/hosted-required.yml",
+        "run_started_at": "2026-11-24T22:16:28Z",
+        "triggering_actor": { "login": "clued-admission[bot]", "type": "Bot" }
+      },
+      {
+        "id": 45499359314,
+        "event": "pull_request",
+        "run_attempt": 1,
+        "head_sha": "1d619c92154ef3d9b9ee8af0dbb795800e68fb35",
+        "path": ".github/workflows/clued-required-tests.yml",
+        "run_started_at": "2026-11-24T22:16:28Z",
+        "triggering_actor": { "login": "clued-admission[bot]", "type": "Bot" }
+      },
+      {
+        "id": 45499359256,
+        "event": "pull_request",
+        "run_attempt": 1,
+        "head_sha": "1d619c92154ef3d9b9ee8af0dbb795800e68fb35",
+        "path": ".github/workflows/clued-required-tests-windows.yml",
+        "run_started_at": "2026-11-24T22:16:28Z",
+        "triggering_actor": { "login": "clued-admission[bot]", "type": "Bot" }
+      }
+    ]
+  },
+  "statuses": [
+    {
+      "id": 59818302541,
+      "context": "resident-queue/turing (info only)",
+      "created_at": "2026-11-24T22:41:29Z",
+      "description": "当班：ci-suites-windows 没有运行，无法自动补发；已测通：读不到 main 的规则，或必需检查不再钉在本执行器上，约 22:49Z 再查第 8 段"
+    },
+    {
+      "id": 59818221959,
+      "context": "resident-queue/turing (info only)",
+      "created_at": "2026-11-24T22:40:28Z",
+      "description": "当班：必需测试被跳过，自动补发结果不确定；已测通：读不到 main 的规则，或必需检查不再钉在本执行器上，约 22:49Z 再查第 8 段"
+    },
+    {
+      "id": 59818145821,
+      "context": "resident-queue/turing (info only)",
+      "created_at": "2026-11-24T22:39:30Z",
+      "description": "当班：已测通：读不到 main 的规则，或必需检查不再钉在本执行器上，约 22:49Z 再查第 8 段"
+    }
+  ]
+}

@@ -197,11 +197,17 @@ test('bd07449b r2 must-red 2: a batch asleep on RULESET_UNREADABLE again (parkTr
   assert.notEqual(s.written[1].parkEvent, s.written[0].parkEvent);
   assert.deepEqual([s.written[1].pr, s.written[1].headSha, s.written[1].baseSha], [884, s.row.headSha, MAIN]);
   assert.equal(await s.pass(), 2);
-  // the try budget reached (parkTry null): the signal is the last one, it moves only with the world again
-  s.row.parkTry = null;
-  assert.equal(await s.pass(), 2, 'no wake for the budget reached');
+  // the try budget reached: the executor keeps the parkTry that woke the last try (r3), the signal is the last one, it moves only with
+  // the world again. A pass that sees the row not asleep (RUNNING) forgets the observation; seen asleep again, the same signal is
+  // written once more with the same parkEvent, which the executor knows already (executor.mjs#nudgeParked: no wake).
+  s.row.state = 'RUNNING';
+  assert.equal(await s.pass(), 2);
+  s.row.state = 'PARKED';
+  assert.equal(await s.pass(), 3);
+  assert.equal(s.written[2].parkEvent, s.written[1].parkEvent, 'the same signal as the wake of the last try');
+  assert.equal(await s.pass(), 3, 'no wake for the budget reached');
   s.moveMain();
-  assert.equal(await s.pass(), 3, 'the world still wakes it');
+  assert.equal(await s.pass(), 4, 'the world still wakes it');
 });
 
 test('bd07449b r2 must-red 5: parkTry wakes nothing while the rules are not pinned, nor for any other code', async () => {

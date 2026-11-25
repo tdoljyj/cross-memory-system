@@ -44,7 +44,7 @@ export function capacityMemoryFor(profilesBytes, hostname) {
 
 // The text with every [wsl2] memory= value set to `memory`; from = the last value it had (null: none). Pure.
 export function setWslMemory(text, memory) {
-  const bom = text.startsWith('﻿') ? '﻿' : '';
+  const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
   const body = text.slice(bom.length);
   const eol = body.includes('\r\n') ? '\r\n' : body.includes('\n') ? '\n' : '\r\n';
   // each line with its own line end, so that what is not changed is put back byte for byte

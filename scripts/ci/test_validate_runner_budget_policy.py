@@ -493,7 +493,7 @@ class HostedScaffoldTests(unittest.TestCase):
         texts = self.real()
         report = policy.evaluate_workflows(texts)
         self.assertEqual(report["status"], "PASS", report["violations"])
-        self.assertEqual(report["hosted_scaffold_jobs"], 11)
+        self.assertEqual(report["hosted_scaffold_jobs"], 14)
         self.assertEqual(set(policy.HOSTED_SCAFFOLD_JOBS), {"hosted-required.yml", "clued-front-main-merge-hosted.yml"})
         names = set()
         for filename in policy.HOSTED_SCAFFOLD_JOBS:
@@ -501,7 +501,8 @@ class HostedScaffoldTests(unittest.TestCase):
             for job_id, block in jobs.items():
                 self.assertEqual(policy.classify_route(filename, job_id, policy.job_fields(block))[0], "hosted", (filename, job_id))
                 names |= policy.job_check_names(job_id, policy.job_fields(block))
-        self.assertEqual(names, {"hosted-ci-suites", "hosted-clued-cloud-tests", "hosted-migration-verify",
+        self.assertEqual(names, {"hosted-ci-suites", "hosted-ci-suites-shard-{0}", "hosted-clued-cloud-tests", "hosted-clued-cloud-tests-shard-{0}",
+                                 "hosted-migration-verify", "hosted-migration-verify-shard-{0}",
                                  "hosted-ci-suites-windows", "hosted-ci-suites-windows-shard-{0}",
                                  "hosted-ci-suites-windows-duration", "hosted-gitleaks", "hosted-trivy", "hosted-contract-placement",
                                  "hosted-scaffold-phase", "hosted-clued-front-main-merge"})

@@ -24,32 +24,37 @@
 // No retries here: the dispatcher asks again while stage 10 still says so.
 //
 // Without pr and head (Task ea22e734: a push to main, the schedule, or a dispatch
-// without inputs) it chooses the pull request itself, from GitHub's records of
-// this moment and nothing kept between runs (chooseFront below):
+// without inputs; the hosted copy also when hosted-required completes on any head,
+// PLAN-train-held-deadlock-20261125 §3.3) it chooses the pull request itself, from
+// GitHub's records of this moment and nothing kept between runs (chooseFront below):
 //   the train   = the open, ready pull requests of this repository into main
 //                 that have auto-merge on (auto-merge on is the one way aboard);
 //   the front   = one of them that contains main's tip and is under way: no
 //                 required check failed on its head, and it is not idle;
-//   a candidate = one of them behind main, not reported as a conflict, and its
-//                 head is not one the App brought up: neither one red (a true
-//                 red) nor one the independent CI never admitted. A red head the
-//                 App did not bring up is a candidate too, once (FABLE-defect-
-//                 remediation-plan-20261124 §3.1, #1258): its red may be the
+//   a candidate = one of them behind main, not reported as a conflict, and no
+//                 admission failed on its head: main does not change that. A red
+//                 head the App did not bring up is a candidate too, once (FABLE-
+//                 defect-remediation-plan-20261124 §3.1, #1258): its red may be the
 //                 pipeline's (an old base's gitleaks) and main may carry the fix;
-//                 the head made from it runs everything. Not when an admission
-//                 failed: main does not change that. A red head the App brought up
-//                 is a candidate again (第二轮规划 A, 任务 2fb32dc7, #1298), after
-//                 every other candidate, when it was admitted, the red is
-//                 not the admission and its first parent is not one the App brought
-//                 (REBRING_RED_MAX in a row): main may have fixed that red since.
+//                 the head made from it runs everything. A head the App brought up
+//                 that has not passed (red, or not admitted) is a candidate again
+//                 (第二轮规划 A, #1298; PLAN-train-held-deadlock-20261125 §2.1), after
+//                 every other candidate, while fewer than BROUGHT_IN_A_ROW_MAX heads
+//                 in a row (it and its first parents) are ones the App brought: main
+//                 may have fixed that red since, and the resident never proposes a
+//                 head behind main, so without this nothing would move it again.
 // Every run without inputs also names, once per head, a pull request on the train
 // whose required checks are not all there with nothing queued or running for
-// STALLED_AFTER_MS (§3.11 item 3; nameStalled below).
+// STALLED_AFTER_MS (§3.11 item 3; nameStalled below). The resident's own page status that
+// it does not propose a head (heldPartOf: "落后 main N 个提交：轮到时机器人合入 main…")
+// is neither under way nor activity there (PLAN-unadmitted-silent-20261125 §2.2).
 // With a front it does nothing. Without one it brings the candidate whose
 // auto-merge was enabled first (ties: the lower number) exactly as a named run
-// does, one per run, unless BROUGHT_UNADMITTED_LIMIT heads on the train are ones
-// the App brought up and the admission has not passed: then it holds (below). A named run goes through the same hold: it reads the
-// train once first and, held, changes nothing (FABLE-scaffold-open-qs 问题 2). A red or idle front, a lost event or a failed run need no
+// does, one per run. There is no hold (PLAN-train-held-deadlock-20261125 §2.1: the hold
+// of FABLE-scaffold-s5-pre §2 counted heads with no way out, and two of them stopped
+// the train until someone stepped in): a run brings nobody only with a front under way,
+// frozen, GitHub unread, or update-branch refusing every candidate; each of those ends by
+// itself or moves to the next. A red or idle front, a lost event or a failed run need no
 // memory: the next run reads the same records again.
 // A required check pinned to an App is read only from that App (open-qs 改法 4): with the legacy admission workflow enabled again,
 // App 5164952 and App 5368905 both post kooyumi-admission-verified and kooyumi-merge-slot on one head.
@@ -66,8 +71,8 @@
 // It takes no authorization step itself; it holds no Clued credential.
 
 import fs from 'node:fs';
-import { ADMISSION_APP_ID, APP_CHECK_NAME, INDEPENDENT_ADMISSION_APP_ID, INDEPENDENT_ADMISSION_CHECK, MAIN_MERGE_CHECK, appJwt, githubJson,
-  githubPaged, mainMergeExternalId } from './clued-work-admission.mjs';
+import { ADMISSION_APP_ID, APP_CHECK_NAME, INDEPENDENT_ADMISSION_APP_ID, INDEPENDENT_ADMISSION_CHECK, MAIN_MERGE_CHECK, RESIDENT_STATUS_CONTEXT_PREFIX,
+  appJwt, githubJson, githubPaged, heldPartOf, mainMergeExternalId } from './clued-work-admission.mjs';
 import { appRequest } from './clued-managed-auto-merge.mjs';
 import { resolveMode } from './merge-admission-policy.mjs';
 import { sixPinned } from '../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
@@ -89,11 +94,6 @@ export const pendingAuthorizationLine = merged => `新 head ${merged}，待补�
 // A head that contains main is idle once it is this old with nothing queued, running or pending on it and its required
 // checks not all green (the rule of the hooks' wait-pr exit 5): nothing will finish it, so it is not the front.
 export const IDLE_AFTER_MS = 15 * 60_000;
-// A head the App brought up that the admission does not pass (a failure or no answer) is not the front, so the next one is
-// brought. A systemic cause (the authorization not carried, Clued unreachable, the admission workflow disabled) would spend the
-// whole train one pull request per run. With this many such heads on the train at once nobody else is brought up; below it the
-// train goes on by itself (FABLE-scaffold-s5-pre §2). 2, not 1: one protected-layer head waiting for a new Owner Grant holds nobody.
-export const BROUGHT_UNADMITTED_LIMIT = 2;
 // The admission verdict each admitter publishes, by name and App (open-qs 改法 3, gate-leak 改法 1): the independent CI's
 // kooyumi-work-admission (App 5368905, pinned by #292) and the clued-admission App's kooyumi-admission-verified (App 5164952,
 // pinned by the hosted scaffold ruleset; it never posts a check named kooyumi-work-admission: that is the job name of its
@@ -107,6 +107,11 @@ const FAILED = new Set(['failure', 'cancelled', 'timed_out', 'action_required'])
 const GREEN = new Set(['success', 'skipped', 'neutral']);
 // The independent CI withdrew this check (no verdict on the code); its pending status that says it stopped will not finish.
 const WITHDRAWN = 'Independent CI check withdrawn', STOPPED = '已停止';
+// The resident saying it does not propose this head (poller.mjs hints merge-main and push-any-commit; pr-status.mjs#describe writes
+// the sentence, heldPartOf reads it, the same bytes as the PR gate's). Pending while the head is behind, and rewritten each time main
+// moves: read as under way or as activity, a head behind main that the train will not bring was never named (PLAN-unadmitted-silent
+// -20261125 §1.2 缺陷乙). Any other text, of the resident or anyone, is under way as before: unknown, it waits.
+const residentHeld = status => String(status?.context ?? '').startsWith(RESIDENT_STATUS_CONTEXT_PREFIX) && heldPartOf(status?.description) !== null;
 const TRAIN_QUERY = 'query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){defaultBranchRef{name} '
   + 'pullRequests(states:OPEN,first:100,after:$after){pageInfo{hasNextPage endCursor} '
   + 'nodes{number isDraft baseRefName headRefOid mergeable updatedAt autoMergeRequest{enabledAt} headRepository{nameWithOwner}}}}}';
@@ -162,7 +167,7 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
     return (run?.status === 'completed' && GREEN.has(run.conclusion) && !withdrawn(run)) || stateOf(check) === 'success';
   });
   const unfinished = runs.filter(run => run.status !== 'completed').length
-    + statuses.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED)).length;
+    + statuses.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED) && !residentHeld(status)).length;
   const by = (name, app) => succeeded(runs, name, app);
   // What each required check that is not green last did, as wait-pr's exit 5 lists it: a job GitHub skipped keeps its unexpanded
   // name ("... && 'ci-suites' || 'ci-suites-skipped'"), so the required name never appears: that is "job-skipped".
@@ -176,7 +181,7 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
       : state ? `status ${state}` : job ? `job-${job.conclusion ?? job.status}` : 'missing';
     return { context: check.context, last };
   });
-  const times = [...runs.map(run => run.completed_at ?? run.started_at), ...statuses.map(status => status.updated_at ?? status.created_at)]
+  const times = [...runs.map(run => run.completed_at ?? run.started_at), ...statuses.filter(status => !residentHeld(status)).map(status => status.updated_at ?? status.created_at)]
     .map(t => Date.parse(t ?? '')).filter(Number.isFinite);
   return { failed, green, unfinished, missing, lastActivity: times.length ? Math.max(...times) : 0, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID),
     admitted: admitters.every(({ context, integration_id }) => by(context, integration_id)) };
@@ -231,21 +236,26 @@ async function phaseGate(env, fetchImpl) {
 }
 
 // 第二轮规划 A (任务 2fb32dc7): #1298's head, which the App brought up, went red on a test of main that read the real base; main fixed
-// that test 38 minutes later and the head stayed red, behind and passed over until a person merged main. A red head the App brought
-// is brought again while fewer than this many heads in a row (it and its first parents) are ones the App brought; the count is read
-// from GitHub each run (the App's kooyumi-main-merge success on each), nothing kept. A true red costs one more round at most.
-export const REBRING_RED_MAX = 2;
+// that test 38 minutes later and the head stayed red, behind and passed over until a person merged main. 任务 3576b29c (PLAN-train-
+// held-deadlock-20261125 §2.1): #1325's head, which the App brought up and the admission never answered, fell behind main and had no
+// way out at all. A head the App brought that has not passed (red on something else than the admission, or not admitted) is brought
+// again while fewer than this many heads in a row (it and its first parents) are ones the App brought; the count is read from
+// GitHub each run (the App's kooyumi-main-merge success on each), nothing kept. A true red or a head never admitted costs one more
+// round at most; then it is named (nameStalled) and stays until its holder pushes.
+export const BROUGHT_IN_A_ROW_MAX = 2;
 const succeeded = (runs, name, app) => runs.some(run => run.name === name && Number(run.app?.id) === app && run.status === 'completed' && run.conclusion === 'success');
 const admissionRed = (records, admitters) => records.failed.some(context => admitters.some(row => row.context === context));
-// A head the App brought, admitted, red on a required check that is not the admission: main may have changed that red.
-const redBrought = (records, admitters) => records.failed.length > 0 && records.brought && records.admitted && !admissionRed(records, admitters);
+// A head the App brought that has not passed, the admission not failed on it: red on a required check, or not admitted (no answer
+// yet, or never). Main may have changed the red; the admission of the head made from it may come. A head the App brought that is
+// admitted and not red is a candidate as any other.
+const broughtNotPassed = (records, admitters) => records.brought && !admissionRed(records, admitters) && (records.failed.length > 0 || !records.admitted);
 
 // How many heads in a row, this one first, the App brought up (this one is): its first parents read while each carries the App's
-// kooyumi-main-merge success, at most REBRING_RED_MAX deep. The parent is read from the git commit object (parents only, no diff
+// kooyumi-main-merge success, at most BROUGHT_IN_A_ROW_MAX deep. The parent is read from the git commit object (parents only, no diff
 // against a merge of all of main). Throws when GitHub cannot be read: then that head is not brought again, the rest goes on.
 async function broughtInARow({ env, fetchImpl, repository, head }) {
   let count = 1;
-  for (let at = head; count < REBRING_RED_MAX;) {
+  for (let at = head; count < BROUGHT_IN_A_ROW_MAX;) {
     const parent = (await githubJson(fetchImpl, env, `/repos/${repository}/git/commits/${at}`))?.parents?.[0]?.sha;
     if (!SHA.test(parent ?? '')) throw new Error(`the first parent of ${at} could not be read`);
     if (!succeeded(await githubPaged(fetchImpl, env, `/repos/${repository}/commits/${parent}/check-runs`, 'check_runs'), MAIN_MERGE_CHECK, ADMISSION_APP_ID)) break;
@@ -255,18 +265,20 @@ async function broughtInARow({ env, fetchImpl, repository, head }) {
 }
 
 // What the train does with a head behind main, one rule for choosing the front and for naming the stalled: a candidate is brought
-// up to main once there is no front; anything else stays where it is. §3.1: a failed admission is not something main changes; a
-// head the App brought that is not admitted is not brought again. A red head the App brought is brought again (last) while
-// records.inARow (read by chooseFront for such a head only) is below REBRING_RED_MAX; unread, it is not (red, not a candidate)
-// and every other member is decided as before.
+// up to main once there is no front; anything else stays where it is. §3.1: a failed admission is not something main changes. A
+// head the App brought that has not passed (broughtNotPassed) is brought again (last) while records.inARow (read for such a head
+// only, by chooseFront and nameStalled) is below BROUGHT_IN_A_ROW_MAX; at it, it stays and says so; unread, it is not brought this run.
 function behindVerdict(member, records, admitters) {
+  const red = `red (${records.failed.join(', ')})`;
   if (member.mergeable === 'CONFLICTING') return { state: 'conflict', candidate: false };
-  if (redBrought(records, admitters) && (records.inARow ?? REBRING_RED_MAX) < REBRING_RED_MAX)
-    return { state: `candidate, red (${records.failed.join(', ')}) on a head the App brought: main is merged in again, after the others`, candidate: true, last: true };
-  if (records.failed.length && (records.brought || admissionRed(records, admitters)))
-    return { state: `red (${records.failed.join(', ')})`, candidate: false };
-  if (records.brought && !records.admitted) return { state: 'brought up before and not admitted', candidate: false };
-  return { state: records.failed.length ? `candidate, red (${records.failed.join(', ')}): main is merged in once` : 'candidate', candidate: true };
+  if (admissionRed(records, admitters)) return { state: red, candidate: false };
+  if (broughtNotPassed(records, admitters)) {
+    const why = `${[...(records.failed.length ? [red] : []), ...(records.admitted ? [] : ['not admitted'])].join(', ')} on a head the App brought`;
+    if (records.inARow === undefined) return { state: why, candidate: false };
+    if (records.inARow >= BROUGHT_IN_A_ROW_MAX) return { state: `${why}: 连带 ${BROUGHT_IN_A_ROW_MAX} 次仍未通过，不再带`, candidate: false };
+    return { state: `candidate, ${why}: main is merged in again, after the others`, candidate: true, last: true };
+  }
+  return { state: records.failed.length ? `candidate, ${red}: main is merged in once` : 'candidate', candidate: true };
 }
 
 // The train of this moment (see the head of this file): every pull request on it with what it is, and the candidates in
@@ -316,27 +328,29 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
     if (now() - await appearedAt({ env, fetchImpl, repository, member }) >= IDLE_AFTER_MS) member.state = 'idle';
   }
   const candidates = [], last = [];
-  const nofront = !train.some(member => member.state === 'front');
-  // Without a front every member's head is read, a conflict's too: each one the App brought up and not admitted counts.
-  if (nofront) for (const member of train.filter(member => member.behind > 0)) {
+  // Without a front every member behind main is read and decided (behindVerdict); a conflict is read too, for its naming.
+  if (!train.some(member => member.state === 'front')) for (const member of train.filter(member => member.behind > 0)) {
     const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
-    let unread = null;
-    if (member.mergeable !== 'CONFLICTING' && redBrought(records, admitters)) {
-      try {
-        records.inARow = await broughtInARow({ env, fetchImpl, repository, head: member.head });
-      } catch (error) {
-        unread = error instanceof Error ? error.message : String(error);
-      }
-    }
+    const unread = await readInARow({ env, fetchImpl, repository, member, records, admitters });
     const verdict = behindVerdict(member, records, admitters);
     member.state = unread ? `${verdict.state}; 连带次数未读到 (${unread}): not brought again this run` : verdict.state;
     if (verdict.candidate) (verdict.last ? last : candidates).push(member);
   }
   candidates.push(...last);
   for (const member of train) member.state ??= 'behind';
-  const stranded = nofront ? train.filter(member => member.records?.brought && !member.records.admitted) : [];
-  if (stranded.length >= BROUGHT_UNADMITTED_LIMIT) { for (const member of candidates) member.state = 'candidate, held'; candidates.length = 0; }
-  return { main, tip, train, candidates, stranded, required, admitters };
+  return { main, tip, train, candidates, required, admitters };
+}
+
+// records.inARow of a head behind main the App brought that has not passed (nothing for any other head); the reason when GitHub
+// cannot be read (records.inARow left unset: that head is not brought this run, the rest goes on), else null.
+async function readInARow({ env, fetchImpl, repository, member, records, admitters }) {
+  if (member.mergeable === 'CONFLICTING' || records.inARow !== undefined || !broughtNotPassed(records, admitters)) return null;
+  try {
+    records.inARow = await broughtInARow({ env, fetchImpl, repository, head: member.head });
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 // When a head appeared: with its commit or, for an older commit pushed later, with the push (the PR's last change).
@@ -350,8 +364,10 @@ async function appearedAt({ env, fetchImpl, repository, member }) {
 // FABLE-defect-remediation-plan-20261124 §3.11 item 3: a pull request on the train that nothing will move. Its head has no required
 // check failed (a red one is seen on the PR and by wait-pr) and not all of them green, is not reported as a conflict, and nothing has
 // been queued, running or pending on it for STALLED_AFTER_MS: the rule of wait-pr's exit 5, the length a parameter. A head behind
-// main is one of these only when the train will not bring it up (behindVerdict: the App brought it and it is not admitted); a
-// candidate waits for the front and is brought up, naming it would send someone to merge main by hand. Such a head is
+// main is one of these only when the train will not bring it up (behindVerdict: the App brought it BROUGHT_IN_A_ROW_MAX times in a
+// row and it has not passed); a candidate waits for the front and is brought up, naming it would send someone to merge main by
+// hand. The resident's pending
+// "落后 main N 个提交" on such a head is not under way and not activity (headRecords, residentHeld). Such a head is
 // named on its pull request, once: which required checks are missing and how each last ended. Nothing is kept between runs: the
 // comment carries the head, and a comment that already names it (stalledMark) means it was named. A helper: whatever it cannot read
 // or post it only reports, per pull request; it never changes what the run decided.
@@ -385,12 +401,16 @@ export async function nameStalled({ env, fetchImpl, chosen, skip = new Set(), no
       const records = member.records ??= await headRecords({ env, fetchImpl, repository, head: member.head, required: chosen.required, admitters: chosen.admitters });
       if (records.failed.length || records.green || records.unfinished > 0) continue;
       // Behind main and a candidate: the train brings it up once there is no front, so something will move it (review 2fb32dc7 §5).
+      // With a front chooseFront did not read how many in a row the App brought it: read here. Unread, a quiet head is not named
+      // this run (whether the train brings it again is not known) and the run says so.
+      const unread = member.behind > 0 ? await readInARow({ env, fetchImpl, repository, member, records, admitters: chosen.admitters }) : null;
       if (member.behind > 0 && behindVerdict(member, records, chosen.admitters).candidate) continue;
       const runs = await listedInFull(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${member.head}`, 'workflow_runs', `the workflow runs of ${member.head}`);
       if (runs.some(run => run.status !== 'completed')) continue;
       const ran = runs.map(run => Date.parse(run.updated_at ?? '')).filter(Number.isFinite);
       const quiet = Math.max(await appearedAt({ env, fetchImpl, repository, member }), records.lastActivity, ...ran);
       if (now() - quiet < STALLED_AFTER_MS) continue;
+      if (unread) throw new Error(`连带次数未读到 (${unread})`);
       missing = records.missing;
       if (await commentsName({ env, fetchImpl, repository, pr: member.pr, head: member.head })) continue;
       if (!token && !refused) ({ token, reason: refused } = await frontMergeToken({ env, fetchImpl, now, only: COMMENT_PERMISSIONS }));
@@ -405,8 +425,6 @@ export async function nameStalled({ env, fetchImpl, chosen, skip = new Set(), no
 }
 
 const unreadable = error => `GitHub could not be read (${error instanceof Error ? error.message : String(error)}); nothing is changed, the next run looks again`;
-const heldReason = chosen => `${chosen.stranded.map(m => `#${m.pr}`).join(', ')}: brought up to ${chosen.main} and not admitted; nobody else is brought up `
-  + `while ${BROUGHT_UNADMITTED_LIMIT} are, until one of them is admitted, gets a new head, or leaves the train (auto-merge off or closed)`;
 const trainOf = chosen => ({ main: chosen.tip, members: chosen.train.map(({ pr, head, behind, state }) => ({ pr, head, behind, state })) });
 
 // A run without inputs: with no front, the first candidate that GitHub lets it update.
@@ -431,7 +449,6 @@ async function runFrontChoice(ports) {
 async function decide(ports, chosen, train, done) {
   const front = chosen.train.find(member => member.state === 'front');
   if (front) return done('none', `#${front.pr} contains ${chosen.main} and is under way`, train);
-  if (chosen.stranded.length >= BROUGHT_UNADMITTED_LIMIT) return done('held', heldReason(chosen), train);
   if (!chosen.candidates.length)
     return done('none', chosen.train.length ? 'no pull request on the train can be brought up now' : 'no open pull request has auto-merge on', train);
   for (const candidate of chosen.candidates) {
@@ -453,18 +470,8 @@ export async function runFrontMainMerge({ env, fetchImpl, workspace, input, read
   if (resolveMode({ env, workspace, readFile: readPolicyFile }).state === 'frozen') return { result: 'none', reason: 'merge admission is frozen: nothing is changed', ...named };
   const off = await phaseGate(env, fetchImpl);
   if (off) return { ...off, ...named };
-  // A named run (the companion's dispatch or a person) goes through the same hold as a run without inputs (FABLE-scaffold-open-qs
-  // 问题 2): the promise "at most BROUGHT_UNADMITTED_LIMIT brought up and spent" holds for every entry. The train is read once; with
-  // a front under way nobody is held (stranded counts only without one).
-  if (NAMED_INPUT(input)) {
-    let chosen;
-    try {
-      chosen = await chooseFront({ env, fetchImpl, now });
-    } catch (error) {
-      return { result: 'skipped', reason: unreadable(error), ...named };
-    }
-    if (chosen.stranded.length >= BROUGHT_UNADMITTED_LIMIT) return { result: 'held', reason: heldReason(chosen), ...named, train: trainOf(chosen) };
-  }
+  // A named run (the companion's dispatch or a person) brings up the pull request it names, as before the hold of FABLE-scaffold-
+  // open-qs 问题 2 (gone with the hold, PLAN-train-held-deadlock-20261125 §2.1): it does not read the train.
   const result = await bringUp({ env, fetchImpl, workspace, input, readPolicyFile, now, sleep });
   return env.CLUED_FRONT_MERGE_PHASE === SCAFFOLD_PHASE ? notePendingAuthorization({ env, fetchImpl, result, now }) : result;
 }

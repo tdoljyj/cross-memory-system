@@ -1,0 +1,99 @@
+{
+  "front": {
+    "source": "2026-11-25 北京时间，活动记录、Actions run/jobs、main 状态和 #1256 合并前后证据裁剪。run 45149132949 日志结果 none，目标 PR 已移到 0721b2118492。",
+    "mainActivity": {
+      "activity_type": "pr_merge",
+      "actor": {
+        "login": "tdoljyj",
+        "type": "User"
+      },
+      "after": "19a14567c1c73762ef263106d9a1d819fd73296d",
+      "before": "d5da68256cc63a89241f11ff14b4a0fb09fb3ea2",
+      "id": 51483134062,
+      "ref": "refs/heads/main",
+      "timestamp": "2026-11-23T09:39:41Z"
+    },
+    "activity": [
+      {
+        "activity_type": "branch_creation",
+        "actor": {
+          "login": "tdoljyj",
+          "type": "User"
+        },
+        "after": "62a5657ca81bdaf113b6c380c3a66b8e29530165",
+        "before": "0000000000000000000000000000000000000000",
+        "id": 51475963170,
+        "ref": "refs/heads/claude/hosted-gitleaks-range",
+        "timestamp": "2026-11-23T08:34:31Z"
+      },
+      {
+        "activity_type": "push",
+        "actor": {
+          "login": "clued-admission[bot]",
+          "type": "Bot"
+        },
+        "after": "0721b2118492d562293ba6025b1fa38af83a0c47",
+        "before": "62a5657ca81bdaf113b6c380c3a66b8e29530165",
+        "id": 51483242486,
+        "ref": "refs/heads/claude/hosted-gitleaks-range",
+        "timestamp": "2026-11-23T09:40:38Z"
+      }
+    ],
+    "run": {
+      "actor": {
+        "login": "tdoljyj",
+        "type": "User"
+      },
+      "created_at": "2026-11-23T09:40:11Z",
+      "event": "workflow_dispatch",
+      "head_branch": "main",
+      "head_sha": "19a14567c1c73762ef263106d9a1d819fd73296d",
+      "id": 45149132949,
+      "path": ".github/workflows/clued-front-main-merge.yml",
+      "run_attempt": 1,
+      "run_started_at": "2026-11-23T09:40:11Z",
+      "triggering_actor": {
+        "login": "tdoljyj",
+        "type": "User"
+      }
+    },
+    "statuses": []
+  },
+  "companion": {
+    "source": "2026-11-25 北京时间，通过 GitHub 只读 GET 裁剪 #1321 分支 push、Actions run 与提交状态。",
+    "push": {
+      "activity_type": "push",
+      "actor": {
+        "login": "clued-admission[bot]",
+        "type": "Bot"
+      },
+      "after": "18305982a031879f33168b1a2484c49bc42652e1",
+      "before": "fd939c8c5f68dd5bed0d64b5d12156cf82ec12ff",
+      "id": 51753657451,
+      "ref": "refs/heads/claude/train-burned-passenger",
+      "timestamp": "2026-11-25T01:55:39Z"
+    },
+    "run": {
+      "created_at": "2026-11-25T02:23:24Z",
+      "event": "workflow_dispatch",
+      "head_branch": "claude/train-burned-passenger",
+      "head_sha": "18305982a031879f33168b1a2484c49bc42652e1",
+      "id": 45532586038,
+      "path": ".github/workflows/clued-required-tests.yml",
+      "run_attempt": 1,
+      "run_started_at": "2026-11-25T02:23:24Z",
+      "triggering_actor": {
+        "login": "tdoljyj",
+        "type": "User"
+      }
+    },
+    "statuses": [
+      {
+        "context": "resident-queue/turing (info only)",
+        "created_at": "2026-11-25T02:23:31Z",
+        "description": "当班：必需测试被跳过（推送者非 Owner），已自动补发一次；已测通：读不到 main 的规则，或必需检查不再钉在本执行器上，约 02:30Z 再查第 8 段",
+        "id": 59831881659
+      }
+    ]
+  }
+}

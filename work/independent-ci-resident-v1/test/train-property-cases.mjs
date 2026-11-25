@@ -14,8 +14,8 @@
 //     record kinds the sweep store reads "one meaning per millisecond" get a twin case each.
 //   - KNOWN_RED are the reds known today, each with its verdict (burned or stall) and its board row: registered todo (they run, they are
 //     red, the suite stays green), to be fixed one by one; they run KNOWN_RED_ROUNDS rounds. A file's sentinel is red when one of its
-//     known reds holds again, or ends in another class: the entry then changes with the fix (decisions §6: burned after the fix of
-//     maint:622, for the three stage-8 cases).
+//     known reds holds again, or ends in another class: the entry then changes with the fix (decisions §6: the stage-8 cases went from
+//     stall to burned with the fix of maint:622, #1321).
 // Every case writes its verdict as a diagnostic line (TRAIN_PROPERTY {...}): the red table is made from the run's log.
 import test, { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -61,7 +61,7 @@ const POINTS = Object.freeze({
 const TWINS = Object.freeze(['proof', 'full-on', 'strict-front-proof']);
 
 const ADMISSION = { verdict: 'burned', why: "board (DESK to add, decisions §派活 看板): one failed read burns the PR. Stage 1 here: STOPPED NATIVE_NOT_ADMITTED, the node idle; the code is the fixture's (stage 1 answers NATIVE_NOT_ADMITTED with no reason code for every answer but ADMITTED, e2e:1957), re-judged after decisions §5 (the fixture as a module, stage 1 through outcomeFailureCode)" };
-const STAGE8 = { verdict: 'stall', why: "board P0 (DESK to add, decisions §6): a stage 8 that cannot read its batch file stops the PR before it joins the merge queue (PR_NOT_OPEN_OR_CHANGED); stage 10 still picks it as a rider (maint:1141-1162), each front batch of the PR behind ends TRAIN_BATCH_CHANGED (pub:645-646) and is never bisected (maint:622) until DAILY_BATCH_LIMIT defers every tick; after the fix of maint:622 it is burned" };
+const STAGE8 = { verdict: 'burned', why: "board (DESK to add, decisions §派活 看板): one failed read burns the PR. A stage 8 that cannot read its batch file stops the PR before it joins the merge queue (PR_NOT_OPEN_OR_CHANGED), the row STOPPED. It was a stall until the fix of maint:622 (decisions §6, #1321): stage 10 picked the PR as a rider and every front batch of the PR behind ended TRAIN_BATCH_CHANGED until DAILY_BATCH_LIMIT; now that batch is bisected, the PR behind lands and only this PR is burned" };
 // The three twin cases (store:proof, store:strict-front-proof, store:full-on, every stage of one round) were known reds of 搁163 (stall,
 // TRAIN_SWEEP_INCOMPLETE for ever) until d05108d15 (#1314): TrainSweepStore.write() now writes max(writtenAt, newest stamp + 1)
 // (train-sweep-store.mjs:177-187), so the twin the driver writes through write() with the same writtenAt lands one millisecond later

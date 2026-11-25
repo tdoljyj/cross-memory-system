@@ -1,29 +1,27 @@
 #!/usr/bin/env node
 // An isolated source-candidate probe, never an accepted/installed/live proof.
 // All GitHub/service reads and token-file reads below are synthetic fixtures.
-// work-handover-native-admission-retry-v1 (component 1.0.2, Task 5cee3629): the
-// cases of the 1.0.1 qualifier, plus synthetic network cuts of the Native read
-// and of the execution_current observation: a cut inside one read's attempts
-// admits, a cut across polls of a wait (CLUED_RUNNER_HOOK_WAIT_SECONDS 20)
-// admits, a cut that outlasts the wait or the attempts refuses with that very
-// failure.
+// native-admission-no-wait-v1: a missing or incomplete Native check refuses
+// on the first read. Synthetic network cuts exercise the bounded retries of
+// the Native read and the execution_current observation.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import fs from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 
-const source=new URL('./clued-runner-job-started.work-handover-native-admission-retry-v1.mjs',import.meta.url);
-const CANDIDATE_SHA='c86615e82626ce2e641263a58be470de4fb0397c6fbc32e07d3bfb63c147b912';
+const source=new URL('./clued-runner-job-started.native-admission-no-wait-v1.mjs',import.meta.url);
+const CANDIDATE_SHA='58613a531cc45d4e583aa447ea9517574d235d424ca01dd4a93dc69b0ed2c3f5';
 const digest=()=>createHash('sha256').update(fs.readFileSync(source)).digest('hex');
 export async function qualifyNativeRetryCandidate(){
   assert.equal(digest(),CANDIDATE_SHA,'Candidate bytes differ; this pin grants no Source acceptance');
   const hook=await import(source.href);
-  assert.equal(hook.COMPONENT_VERSION,'1.0.2');
+  assert.equal(hook.HOOK_VERSION,'native-admission-no-wait-v1');
+  assert.equal(hook.COMPONENT_VERSION,'1.0.9');
   const api='https://api.github.com/repos/o/r',head='b'.repeat(40),created='2026-11-02T00:00:00Z';
   const rpc='https://fixture.supabase.co/rest/v1/rpc/clued_work_verify_v1';
   const environment={CLUED_RUNNER_HOOK_REPOSITORY:'o/r',CLUED_RUNNER_HOOK_TOKEN_FILE:'/fixture-token',
-    CLUED_RUNNER_HOOK_ENFORCE:'true',CLUED_RUNNER_HOOK_WAIT_SECONDS:'0',GITHUB_REPOSITORY:'o/r',
+    CLUED_RUNNER_HOOK_ENFORCE:'true',GITHUB_REPOSITORY:'o/r',
     GITHUB_WORKFLOW_REF:'o/r/.github/workflows/clued-required-tests.yml@refs/pull/9/merge',
     GITHUB_EVENT_NAME:'pull_request',GITHUB_REF:'refs/pull/9/merge',GITHUB_SHA:'a'.repeat(40),
     GITHUB_EVENT_PATH:'/fixture-event',GITHUB_RUN_ID:'555',GITHUB_RUN_ATTEMPT:'1'};
@@ -40,17 +38,17 @@ export async function qualifyNativeRetryCandidate(){
     ['native-wrong-head',{head_sha:'d'.repeat(40)},null,false],
     ['native-wrong-pr',{output:{summary:'o/r#90'}},null,false],
     ['native-unbound',{external_id:'unbound'},null,false],
+    ['native-absent',null,null,false],
     ['native-pending',{status:'in_progress',conclusion:null},null,false],
     ['native-failure',{conclusion:'failure'},null,false],
     ['native-old-event',{started_at:'2026-11-01T23:59:44Z'},null,false],
     // synthetic network cuts: a rejected fetch, or a gateway 503
     ['native-cut-then-admitted',{}, {status:'ok',guard_required:true,epoch_current:true},true,{checks:2}],
-    ['native-503-outlasts-wait',{}, null,false,{checks:Infinity,status:503}],
+    ['native-503-outlasts-attempts',{}, null,false,{checks:Infinity,status:503}],
     ['epoch-cut-then-current',{}, {status:'ok',guard_required:true,epoch_current:true},true,{rpc:1}],
     ['epoch-cut-outlasts-attempts',{}, {status:'ok',guard_required:true,epoch_current:true},false,{rpc:Infinity}],
-    ['native-cut-across-polls',{}, {status:'ok',guard_required:true,epoch_current:true},true,{checks:4,wait:'20'}],
   ]){
-    const calls=[],cuts={checks:0,rpc:0};
+    const calls=[],sleeps=[],cuts={checks:0,rpc:0};
     const fault=(kind)=>{cuts[kind]+=1;if(cuts[kind]>(faults[kind]??0))return null;
       if(faults.status)return {status:faults.status,json:async()=>null};throw new TypeError('fetch failed (synthetic cut)');};
     const fetchImpl=async(url,init)=>{
@@ -60,7 +58,10 @@ export async function qualifyNativeRetryCandidate(){
       if(url===`${api}/actions/runs/555`)body={id:555,run_attempt:1,created_at:created};
       else if(url===`${api}/compare/main...${head}`)body={files:[{filename:'.github/workflows/gitleaks.yml'}]};
       else if(url===`${api}/actions/workflows/clued-work-admission.yml`)body={path:'.github/workflows/clued-work-admission.yml',state:'disabled_manually'};
-      else if(String(url).startsWith(`${api}/commits/${head}/check-runs?`))body={total_count:1,check_runs:[{...check,...alter}]};
+      else if(String(url).startsWith(`${api}/commits/${head}/check-runs?`)){
+        const checks=alter===null?[]:[{...check,...alter}];
+        body={total_count:checks.length,check_runs:checks};
+      }
       else if(url===`${api}/pulls/9`)body={state:'open',base:{ref:'main',repo:{full_name:'o/r'}},head:{sha:head}};
       else if(url===`${api}/contents/apps/clued-cloud/app/supabase-public-config.ts?ref=main`)
         body={type:'file',encoding:'base64',content:Buffer.from('return { url: "https://fixture.supabase.co", key: "sb_publishable_fixture" };').toString('base64')};
@@ -70,23 +71,24 @@ export async function qualifyNativeRetryCandidate(){
     };
     let allowed=false,error=false;
     try{
-      const result=await hook.decideWithCurrentEpoch({env:{...environment,...(faults.wait?{CLUED_RUNNER_HOOK_WAIT_SECONDS:faults.wait}:{})},fetchImpl,now:()=>Date.parse(created),sleep:async()=>{},readFile:p=>{
+      const result=await hook.decideWithCurrentEpoch({env:environment,fetchImpl,now:()=>Date.parse(created),sleep:async ms=>{sleeps.push(ms);},readFile:p=>{
         if(p==='/fixture-token')return 'synthetic-read-only-token';
         assert.equal(p,'/fixture-event','Unexpected file read in isolated probe');
-        return JSON.stringify({pull_request:{number:9,base:{ref:'main'},head:{sha:head}}});
+        const repo={full_name:'o/r'};
+        return JSON.stringify({pull_request:{number:9,base:{ref:'main',repo},head:{sha:head,repo}}});
       }});
       allowed=result.allow;
     }catch(e){
       // only these cases end in an exception, each with its own failure
       const expectedError={'native-unavailable-epoch':/execution epoch observation is invalid/,'native-invalid-epoch':/execution epoch observation is invalid/,
-        'native-503-outlasts-wait':/check-runs\?check_name=kooyumi-work-admission.* returned 503$/,'epoch-cut-outlasts-attempts':/synthetic cut/}[name];
+        'native-503-outlasts-attempts':/check-runs\?check_name=kooyumi-work-admission.* returned 503$/,'epoch-cut-outlasts-attempts':/synthetic cut/}[name];
       assert.ok(expectedError,name+': '+e.message);assert.match(e.message,expectedError,name);error=true;
     }
     assert.equal(allowed,expected,name);
-    assert.ok(calls.some(url=>url.includes('/check-runs?')),name+' did not exercise Native admission');
+    const checkAttempts=Math.min((faults.checks??0)+1,hook.READ_ATTEMPTS);
+    assert.equal(cuts.checks,checkAttempts,name+' Native request count');
+    if(!faults.rpc)assert.deepEqual(sleeps,hook.READ_RETRY_DELAYS_MS.slice(0,checkAttempts-1),name+' Native retry delays');
     if(expected)assert.ok(calls.includes(rpc),'The Native success must still observe the epoch');
-    if(faults.checks!==undefined)assert.equal(cuts.checks>(faults.checks===Infinity?0:faults.checks),true,name+' did not read again after the cut');
-    if(faults.wait)assert.ok(cuts.checks>hook.READ_ATTEMPTS,name+' did not poll again after a read that failed all its attempts');
     cases.push({name,outcome:'pass',expected:expected?'allow':'deny',exception:error});
   }
   assert.equal(digest(),CANDIDATE_SHA,'Candidate changed during qualification');

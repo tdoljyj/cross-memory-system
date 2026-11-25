@@ -3020,10 +3020,10 @@ export class ResidentExecutor {
     for (const e of entries.filter(x => Ledger.parkedAt(x) && this.parkedAsleep(x))) {
       const { pr, headSha } = e.reserved.subject;
       const row = this.queue.row(pr), last = ResidentExecutor.lastTry(e);
-      // Asleep by age (park.maxMs) is the budget reached: no parkTry (task bd07449b r2).
+      // Asleep by age (park.maxMs): the row keeps its parkTry, the companion's signal does not change (task bd07449b r3).
       if (row?.parked?.nextAt != null)
         sleepViewChanged = this.queue.park(pr, headSha, { reason: last.code, nextAt: null, position: last.position,
-          parkTry: last.sleeping === true && now - Date.parse(e.parked.at) < this.policy.park.maxMs ? (row.parked.parkTry ?? null) : null }, now) || sleepViewChanged;
+          parkTry: row.parked.parkTry ?? null }, now) || sleepViewChanged;
     }
     if (sleepViewChanged) await this.persistQueue();
     // Transient parks and batches with no settled not-ready answer retain the old age backstop.
@@ -3135,6 +3135,10 @@ export class ResidentExecutor {
     const unrecorded = await this.beforePublication(key, subject, 8);
     if (unrecorded) { unrecorded.relayedRoles = s.plan?.relayed?.length ?? 0; return windowsOnly(unrecorded); }
     const n = await this.ledger.beginTry(key, { batchId: batch.batchId });
+    // Capture this batch's previous sleep before stage 8 runs. A legacy row's null is part of its wake signal.
+    const row = this.queue.row(subject.pr);
+    const previousParkTry = row?.running?.key === key && row.running.headSha === subject.headSha && row.parked
+      ? (row.parked.parkTry ?? null) : n - 1;
     this.atStage(8, 'stage');
     const { result: control, aborted } = await this.runWindowsStageWithRetry(key, batch, 8);
     if (aborted) return aborted;
@@ -3176,8 +3180,10 @@ export class ResidentExecutor {
     if (zero && tryLimit && (park || STAGE8_NOT_READY_CODES.includes(control.code)))
       this.queue.notice(boundedNotice({ code: 'STAGE8_TRY_LIMIT', subject, used: counted, limit: this.policy.park.stage8MaxTries,
         now, recovery: park ? 'park-event' : 'batch', episode: key }));
-    // The absolute retry cap also covers the uncounted head tries. Event-driven tries may follow it.
+    // The batch count and age also put uncounted queue-head tries to sleep. A new event can still wake the batch.
     const final = control.code === 'RESIDENT_BASE_MOVED' || tryLimit || n >= MAX_TRIES || now - Date.parse(s.parked.at) >= this.policy.park.maxMs;
+    // At the budget, keep the previous sleep's sequence so the poller can reproduce the consumed wake even after a restart.
+    const parkTry = final ? previousParkTry : n;
     if (park) {
       const sleeping = final || STAGE8_SLEEP_AT_ONCE_CODES.includes(control.code);
       // The back-off follows the counted tries: after a run at the queue's first place the next try is not 2 hours away
@@ -3193,7 +3199,7 @@ export class ResidentExecutor {
         return this.supersededEnd(key, subject, batch, { safePoint: 'parked', pos: POSITIONS[8], stage: 8, basis: 'park-over-capacity' });
       }
       await this.ledger.endTry(key, n, { code: control.code, nextAt: sleeping ? null : new Date(nextAt).toISOString(), position, entered: queueFact?.entered ?? null,
-        ...(sleeping ? { sleeping: true } : {}),
+        parkTry, ...(sleeping ? { sleeping: true } : {}),
         ...(this.parkEvents?.has(key) ? { parkEvent: this.parkEvents.get(key) } : {}),
         claimExpiresAt: this.leaseOf(subject),
         ...(this.policy.train.enabled === 'on' && !Object.hasOwn(subject, 'testSha') && control.code === 'TRAIN_SINGLE_GREEN_NOT_PROVEN' && position === 1
@@ -3203,9 +3209,7 @@ export class ResidentExecutor {
         this.trainUrgent = true;
       }
       await this.receipt('stage8-not-ready', { key, try: n, failureCode: control.code, nextAt: sleeping ? null : new Date(nextAt).toISOString(), position });
-      // parkTry (task bd07449b r2): the batch's ended stage-8 tries, for the status row (queue.mjs#park): the companion's wake of a batch
-      // asleep on RULESET_UNREADABLE names the sleep it is for (poller.mjs#parkedPass). null once the budget is reached (final).
-      return { state: 'PARKED', key, reason: control.code, until: nextAt, position, tries: n, parkTry: final ? null : n,
+      return { state: 'PARKED', key, reason: control.code, until: nextAt, position, tries: n, parkTry,
         settle: { kind: 'parked', code: control.code, klass: 'queue', breaker: 'neutral', pos: POSITIONS[8], linux: false, nextAt, position } };
     }
     // DESIGN §28: a transient zero-effect ending parks again, at most STAGE8_TRANSIENT_MAX_TRIES times (the next one burns as
