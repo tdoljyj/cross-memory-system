@@ -13,10 +13,13 @@
 // MERGED_PENDING_MINUTES 分钟判“在跑”，满了回到“未知”；连续段内有这样的 head，判据一律“未达”。
 // 准入时延（框架 v1 §2.3 判据“准入 p90 ≤3 分钟”；PLAN-native-admission-latency-20261124 §4 PR 丙）：同一批已读的 check-runs，
 // 每个 head 带 admission，判据只算连续一致段那批 head，诊断两行不进判据（见 ADMISSION）。
+// 手工绕过（框架 v1 §2.10、S6）：Z1 人工纯追平、Z2 人工重跑/重发、Z3 空提交和重开 PR。
+// 只认真推上远端的 head，以 GitHub Activity 为推送证据。最后一次绕过截断连续段。证据读不全则未判。
 //
 //   node scripts/ci/shadow-compare.mjs --prs <起>-[<止>]      PR 范围内每个 PR 的每个被测 head
 //   node scripts/ci/shadow-compare.mjs --head <sha> [--head <sha>]...
 import { ghReader } from './retrigger-counter.mjs';
+import { collectBypass } from './bypass-events.mjs';
 import { p90 } from '../../work/independent-ci-resident-v1/src/stage-timing.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
@@ -58,10 +61,13 @@ const beijing = value => {
 const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 function limited(api, maxRequests) {
-  let requests = 0;
+  const cache = new Map();
   return route => {
-    if (++requests > maxRequests) fail('达到 API 读取上限');
-    return api.get(route);
+    if (!cache.has(route)) {
+      if (cache.size >= maxRequests) fail('达到 API 读取上限');
+      cache.set(route, Promise.resolve().then(() => api.get(route)));
+    }
+    return cache.get(route);
   };
 }
 
@@ -269,7 +275,7 @@ export function admissionLatency(heads) {
   return { ...all, met, overlap, nonOverlap, over, line, unmetText: met ? null : `准入 p90 ${text(all)}超过 ${ADMISSION.p90Minutes} 分钟` };
 }
 
-async function candidatesOfPrs(get, { from, to }) {
+async function candidatesOfPrs(get, { from, to }, repo) {
   const pulls = [];
   for (let page = 1; page <= 50; page++) {
     const rows = await get(`/pulls?state=all&sort=created&direction=desc&per_page=${PAGE}&page=${page}`);
@@ -284,7 +290,8 @@ async function candidatesOfPrs(get, { from, to }) {
     // 当前：open PR 的 head；最终：已合入 PR 的 head；其余（PR 的其他提交、关闭未合入 PR 的 head）是被取代。
     const roleOf = sha => sha !== head ? 'superseded' : pull.state === 'open' ? 'current' : pull.merged_at ? 'final' : 'superseded';
     // 已合入 PR 的最终 head 记下 PR 号（判据 X1）、合入提交（按树读）与合入时刻（刚合入的窗口，§8）。
-    const facts = sha => ({ prs: [pull.number], role: roleOf(sha), mergedPrs: roleOf(sha) === 'final' ? [pull.number] : [],
+    const branches = pull.head?.repo?.full_name?.toLowerCase() === repo.toLowerCase() && pull.head.ref ? [pull.head.ref] : [];
+    const facts = sha => ({ prs: [pull.number], branches, role: roleOf(sha), mergedPrs: roleOf(sha) === 'final' ? [pull.number] : [],
       mergeCommit: roleOf(sha) === 'final' ? pull.merge_commit_sha ?? null : null,
       mergedAt: roleOf(sha) === 'final' ? pull.merged_at : null });
     try {
@@ -303,6 +310,7 @@ async function candidatesOfPrs(get, { from, to }) {
       const union = key => [...new Set([...seen[key], ...c[key]])];
       seen.prs = union('prs').sort((a, b) => a - b);
       seen.mergedPrs = union('mergedPrs').sort((a, b) => a - b);
+      seen.branches = union('branches');
       if (ROLES[c.role] > ROLES[seen.role]) seen.role = c.role;
       seen.readError ??= c.readError;
       seen.mergeCommit ??= c.mergeCommit;
@@ -324,11 +332,18 @@ async function pushersOf(get, sha) {
   }
 }
 
-function summarize(heads, nowMs, owner) {
+function summarize(heads, nowMs, owner, { bypass, pushedAt }) {
   const counts = { 一致: 0, 不一致: 0, 未知: 0, 在跑: 0, 跳过: 0 };
   for (const h of heads) counts[h.verdict]++;
+  const cutBy = bypass.state === '已判' ? bypass.events.at(-1) ?? null : null;
+  const cutMs = cutBy ? Date.parse(cutBy.at) : -Infinity;
+  const segment = bypass.state === '已判'
+    ? heads.filter(h => pushedAt.get(h.sha) > cutMs)
+      .map(h => ({ ...h, atMs: pushedAt.get(h.sha), at: beijing(pushedAt.get(h.sha)) }))
+      .sort((a, b) => a.atMs - b.atMs || a.sha.localeCompare(b.sha))
+    : heads;
   // 连续一致：从最新往回数，“在跑”“跳过”不计也不打断，其余非一致即断。跨度从这一段第一个一致 head 起算。
-  const decided = heads.filter(h => h.verdict !== '在跑' && h.verdict !== '跳过');
+  const decided = segment.filter(h => h.verdict !== '在跑' && h.verdict !== '跳过');
   let n = 0;
   while (n < decided.length && decided[decided.length - 1 - n].verdict === '一致') n++;
   const run = decided.slice(decided.length - n);
@@ -342,7 +357,9 @@ function summarize(heads, nowMs, owner) {
   // 连续段内（时间不早于段首；没有连续段时从最后一个已判定 head 起）框架结论未出的已合入 head（§8）：它们稍后可能变成不一致，
   // 有一个判据就不算达成。open PR 当前 head 的在跑不算。读不到时间的照算（偏严）。
   const segmentMs = n > 0 ? firstMs : decided.at(-1)?.atMs;
-  const pendingMergedHeads = heads.filter(h => h.role === 'final' && h.verdict === '在跑' && !(h.atMs < segmentMs)).length;
+  const pendingMergedHeads = segment.filter(h => h.role === 'final' && h.verdict === '在跑' && !(h.atMs < segmentMs)).length;
+  const bypassLine = bypass.state === '未判' ? `手工绕过未判：${bypass.reason}`
+    : `手工绕过 ${bypass.events.length}${cutBy ? `（最近：${cutBy.kind} ${cutBy.at}）` : ''}`;
   const unmet = [
     n < STREAK.heads && `连续一致不足 ${STREAK.heads} 个 head`,
     mergedPrs < STREAK.mergedPrs && `已合入 PR 不足 ${STREAK.mergedPrs} 个`,
@@ -351,12 +368,15 @@ function summarize(heads, nowMs, owner) {
     pendingMergedHeads > 0 && `连续段内有 ${pendingMergedHeads} 个已合入 head 的框架结论未出`,
     n > 0 && admission.unmetText,
   ].filter(Boolean);
+  // 有绕过就从下一次推送重新起算。新段仍不足时，把历史绕过及截断时刻列为未达依据。
+  if (bypass.state === '未判' || (cutBy && unmet.length > 0)) unmet.push(bypassLine);
   const hours = Math.round(spanMs / 360_000) / 10, days = Math.round(spanMs / 8640_000) / 10;
   const rule = `连续 ${STREAK.heads} 个 head、七项逐项一致；出自不少于 ${STREAK.mergedPrs} 个已合入 PR，`
-    + `含至少 ${STREAK.nonOwnerPushedHeads} 个非 Owner 推送的 head、至少 ${STREAK.bothRedHeads} 个两边同红的 head；准入 p90 ≤${ADMISSION.p90Minutes} 分钟`;
+    + `含至少 ${STREAK.nonOwnerPushedHeads} 个非 Owner 推送的 head、至少 ${STREAK.bothRedHeads} 个两边同红的 head；准入 p90 ≤${ADMISSION.p90Minutes} 分钟；连续段内手工绕过 0`;
   const streak = { heads: n, hours, days, from: run[0]?.at ?? null, to: run.at(-1)?.at ?? null, mergedPrs, nonOwnerPushedHeads, bothRedHeads,
-    met: unmet.length === 0, unmet, rule };
-  const hostedGreenFrameworkRedLast20 = decided.slice(-LAST).flatMap(h => h.pairs).filter(p => p.direction === '框架红、托管绿').length;
+    cutBy, met: unmet.length === 0, unmet, rule };
+  const hostedGreenFrameworkRedLast20 = heads.filter(h => h.verdict !== '在跑' && h.verdict !== '跳过')
+    .slice(-LAST).flatMap(h => h.pairs).filter(p => p.direction === '框架红、托管绿').length;
   // 框架侧有项是从合入提交按树读的 head 数（修订 7）：让读的人一眼看到有多少不是 head 自己的结果。
   const frameworkByTreeHeads = heads.filter(h => h.pairs.some(p => p.frameworkFrom)).length;
   const mismatches = heads.flatMap(h => h.pairs.filter(p => p.verdict === '不一致').map(p => `${h.sha.slice(0, 7)} ${p.check} ${p.direction}`));
@@ -364,15 +384,16 @@ function summarize(heads, nowMs, owner) {
     + `连续一致 ${n} 个 head / ${hours} 小时，已合入 PR ${mergedPrs} 个、非 Owner 推送 ${nonOwnerPushedHeads} 个、两边同红 ${bothRedHeads} 个、已合入未出结论 ${pendingMergedHeads} 个`
     + `（判据：${streak.met ? '已达' : `未达，${unmet.join('、')}`}）`
     + `；${admission.line}`
+    + (unmet.includes(bypassLine) ? '' : `；${bypassLine}`)
     + (mismatches.length ? `；不一致：${mismatches.join('；')}` : '');
   const { line: admissionLine, unmetText, ...admissionFigures } = admission;
-  return { counts, streak, admission: { ...admissionFigures, line: admissionLine }, hostedGreenFrameworkRedLast20, frameworkByTreeHeads, pendingMergedHeads, line };
+  return { counts, streak, bypass, admission: { ...admissionFigures, line: admissionLine }, hostedGreenFrameworkRedLast20, frameworkByTreeHeads, pendingMergedHeads, line };
 }
 
-export async function compare({ repo = REPO, prs = null, heads = null, api = ghReader({ repo }), now = new Date().toISOString(), maxRequests = 5000 } = {}) {
+export async function compare({ repo = REPO, prs = null, heads = null, api = ghReader({ repo }), git, now = new Date().toISOString(), maxRequests = 5000 } = {}) {
   const get = limited(api, maxRequests);
   const pins = await readPins(get);
-  const candidates = prs ? await candidatesOfPrs(get, prs)
+  const candidates = prs ? await candidatesOfPrs(get, prs, repo)
     // 直接给的 head 视作当前 head：还没完成的判在跑。
     : heads.map(sha => ({ sha, prs: [], mergedPrs: [], role: 'current', committedAt: null }));
   const judged = [], nowMs = Date.parse(now);
@@ -392,7 +413,8 @@ export async function compare({ repo = REPO, prs = null, heads = null, api = ghR
   for (const h of judged) if (h.admissionAt) h.admission = admissionOf(h.admissionAt, windows, nowMs);
   // 按时间排（读不到时间的排最后，照样打断连续一致）；直接给 head 时保持给定顺序。
   if (prs) judged.sort((a, b) => (Number.isFinite(a.atMs) ? a.atMs : Infinity) - (Number.isFinite(b.atMs) ? b.atMs : Infinity) || a.sha.localeCompare(b.sha));
-  const summary = summarize(judged, nowMs, repo.split('/')[0]);
+  const bypass = await collectBypass({ get, git, now, heads: candidates, repo });
+  const summary = summarize(judged, nowMs, repo.split('/')[0], bypass);
   return { status: 'ok', repo, generatedAt: beijing(now), ruleset: { id: MAIN_RULESET_ID, readable: pins !== null },
     pairs: PAIRS.map(p => ({ check: p.check, hosted: p.hosted.name, hostedApp: p.hosted.app })),
     heads: judged.map(({ atMs, admissionAt, windows: _, ...h }) => h), summary };
@@ -416,7 +438,7 @@ function parse(argv) {
   return { prs, heads: prs ? null : heads };
 }
 
-export async function main(argv, { api, write = line => process.stdout.write(`${line}\n`), now } = {}) {
+export async function main(argv, { api, git, write = line => process.stdout.write(`${line}\n`), now } = {}) {
   let options;
   try {
     options = parse(argv);
@@ -425,7 +447,7 @@ export async function main(argv, { api, write = line => process.stdout.write(`${
     return 2;
   }
   try {
-    write(JSON.stringify(await compare({ ...options, ...(api ? { api } : {}), ...(now ? { now } : {}) })));
+    write(JSON.stringify(await compare({ ...options, api, git, now })));
     return 0;
   } catch (error) {
     write(JSON.stringify({ status: 'error', error: error.message }));

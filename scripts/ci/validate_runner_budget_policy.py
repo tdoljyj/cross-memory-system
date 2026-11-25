@@ -125,7 +125,7 @@ LEGACY_HOSTED_DEBT = {
     },
     "clued-cloud-production-release.yml": {
         # PR #1121 (Fable 1121 rework): release takes no migrations and gains the rollback_drill input.
-        "control_sha256": "c9cd44da8c145047a0f9bb940c079f81d4f6b0e77daa9e61bd28a416e4d20f9c",
+        "control_sha256": "aa22efc988d6a24f59a37a726b7e97384fd2688a6ae68c8f5efd3d33e3d70749",
         "jobs": {
             # PR #1121 after Fable 1121 §6 on top of release door v1 (FABLE-release-identity-autonomous-20261119):
             # one-approval release without migrations or wrangler config changes, Worker rollback judged by
@@ -137,7 +137,8 @@ LEGACY_HOSTED_DEBT = {
             # applied migration list read-only as its own artifact; routing, triggers and permissions unchanged.
             # B3 (FABLE-prod-db-shrink-v2-20261124 §8, PR #1282): one capacity-gate step before migrate in the
             # existing job; controls (c9cd44da…) and routing unchanged, no new hosted job, independently reviewed.
-            "release": "8397996e2d32c85d246f605fdde1b16d13c77183b074598c05e137dfaf217bc5"
+            # Task 87d330d0 piece A: fleet-accept mode (only opens an Owner request, changes nothing in production).
+            "release": "4dbe6f369f95c49f56ba82d36a1c7bb519ae85ad423565d67c72615be15cd787"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {
