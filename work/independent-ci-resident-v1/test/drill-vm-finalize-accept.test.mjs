@@ -26,7 +26,7 @@ function finalizeWith(name, receipt, { row = notTheDrillsSource(), request = 'gi
       $finalized = [bool]((Get-Content -Raw -LiteralPath ${q(receiptFile)} | ConvertFrom-Json).PSObject.Properties['finalizedAt'])
       [IO.File]::AppendAllText(${q(calls)}, (@($Arguments) -join '|') + '|finalizedBefore=' + $finalized + "\`n")
       @{ exit = ${opener.exit}; stdout = ${q(opener.stdout)}; stderr = '' } };`;
-  const out = ps(`${inject} $Finalize = ${q(receiptFile)}; $ProductionReadback = ${q(readback)}; ${request === 'given' ? `$Request = ${q(requestFile)};` : ''} Invoke-DrillMain`);
+  const out = ps(`${inject} $Finalize = ${q(receiptFile)}; $ProductionReadback = ${q(readback)}; ${request === 'given' ? `$Request = ${q(requestFile)};` : request === 'none' ? '' : `$Request = ${request};`} Invoke-DrillMain`);
   return { out, receiptFile, requestFile, receipt: JSON.parse(fs.readFileSync(receiptFile, 'utf8')),
     calls: fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n') : [] };
 }
@@ -81,4 +81,15 @@ test('under the test marker the real opener is never run (no door, no gh from a 
   assert.equal(r.out.acceptance.status, 'NOT_OPENED');
   assert.equal(r.out.acceptance.code, 'DRILL_HOST_ACCESS_UNDER_TEST');
   assert.equal(psCode(`$Request = 'x.json'; $BaselineOnly = $true; Invoke-DrillMain`), 'DRILL_USAGE');
+});
+
+// review suggestion 7: the opener's own path work is inside the auxiliary step (a -Request no path can be made of: a NUL in it)
+test('a -Request that is no path leaves the PASS and the receipt as they are: NOT_OPENED with DRILL_ACCEPTANCE_OPEN_FAILED, nothing run', opts, () => {
+  const r = finalizeWith('accept-bad-path', candidate('accept-bad-path-run'), { request: '"x`0y.json"' });
+  assert.equal(r.out.status, 'DRILL_FINALIZED', JSON.stringify(r.out));
+  assert.equal(r.out.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+  assert.equal(r.out.acceptance.status, 'NOT_OPENED');
+  assert.equal(r.out.acceptance.code, 'DRILL_ACCEPTANCE_OPEN_FAILED');
+  assert.deepEqual(r.calls, []);
+  assert.equal(r.receipt.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
 });

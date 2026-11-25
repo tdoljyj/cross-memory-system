@@ -36,7 +36,7 @@
 
 1. 构建、发布：第 2、3 节，不变。
 2. 接受前：`publish.mjs prepare`（第 4 节），产出给 Owner 看的接受请求。**`fleetRefs` 里进入 Source 的三项 `sourceAcceptanceRef`、`hostQualificationRef`、`formalRoles` 沿用现装值**，由 `prepare` 从本机已装记录只读带入（与 `install.mjs fleet-refs` 同一来源），这一版才能原地升级。三项里有任何一项要换，这一版对所有节点都是重装（`prepare` 不提供改它们的入口，要换先找 Fable）。
-3. 候选演练 `-Finalize` 时带上接受请求：`drill-vm.ps1 -Finalize <receipt.json> -ProductionReadback <readback.json> -Request <接受请求>`。候选回执判 PASS 就开请求（`accept.mjs open`，调一次 seal、不等待），返回里的 `acceptance.confirmUrl` 就是给 Owner 的确认链接；不 PASS 不开、没有链接。开请求失败不改演练结论，答 `acceptance.status = NOT_OPENED` 和原因（下面这条命令也会开请求）。
+3. 候选演练 `-Finalize` 时带上接受请求：`drill-vm.ps1 -Finalize <receipt.json> -ProductionReadback <readback.json> -Request <接受请求>`。候选回执判 PASS 就开请求（`accept.mjs open`：调 seal，等门上出现待批请求的确认链接，最多 5 分钟；超时答 `NOT_OPENED`、`code = FLEET_ACCEPTANCE_OPEN_QUEUED`，下面这条命令会接着等），返回里的 `acceptance.confirmUrl` 就是给 Owner 的确认链接；不 PASS 不开、没有链接。开请求失败不改演练结论，答 `acceptance.status = NOT_OPENED` 和原因（下面这条命令也会开请求）。
 4. 然后在 DESK（本机已装节点、Owner 会话、非提权）用后台方式起**一条命令**，从等 Owner 批准一直走到本机升级、全队读回（0.2a）。Owner 点完之后到封存完成没有 agent 动作。
 
 ### 0.2a 接受之后：一条命令
@@ -45,14 +45,17 @@
 node R/rollout/fleet/accept.mjs run --request <目录>\fleet-node-<version>.acceptance-request.json [--drill-receipt <候选演练定稿的 receipt.json>] --work <目录> [--wait <分钟>]
 ```
 
-有界、可原样重跑（同一个 `--work`），退出时打印一行 JSON（`status`、停在哪、`next` 写下一条命令）。三步：
+有界、可原样重跑（同一个 `--work`），退出时打印一行 JSON（`status`、停在哪、`next` 写下一条命令）。寿命不超过一条请求的有效期：以 seal 第一次答“待批”时的 `expiresAt` 为止（没有就从起跑算 24 小时），下面每一段等待都截在这里。三步：
 
-1. **封存**：调 `seal`。门答“待批”就每 30、60、120 秒再问一次，上限 `--wait`（默认到请求过期）；“已批”即封存（接受文件的 Decision、回执、时间都取自门批准的那条 Grant）；“拒绝”或过期即停，候选留在未接受状态，原样重跑重开请求。
-2. **本机**：`upgrade.mjs fetch --version <version> --work <work>\node`（0.3 同一条），先**不带** `--allow-active-upgrade`：
-   - 待命（`FLEET_NODE_UPGRADE_REQUESTED`）：把这次请求记在 `<work>\requested-fleet-node-<version>.json`，读 `upgrade\status.json` 到终态，再核 `upgrade\current.json` 两侧 Source 等于接受的 Source。
+1. **封存**：调 `seal`。门答“待批”（含请求已排队、还没有链接）就每 30、60、120 秒再问一次，上限 `--wait`（默认到请求过期）；“已批”即封存（接受文件的 Decision、回执、时间都取自门批准的那条 Grant）；“拒绝”或过期即停，候选留在未接受状态，原样重跑重开请求。seal 抛错（门或 gh 网络抖动）算这一轮没问到，按同样间隔再问；输入错误（`SEAL_INPUT_ERRORS`，如请求文件名不对）立即停；连续出错满 30 分钟就停，带最后一次的 `code`。
+2. **本机**：`upgrade.mjs fetch --version <version> --work <work>\node`（0.3 同一条），先**不带** `--allow-active-upgrade`。本命令对本机发过什么记在 `<work>\requested-fleet-node-<version>.json`；找到记录的重跑只读、不再问 `upgrade.mjs`，所以回滚之后重跑不会再投。每次可能发请求之前先写一份“将要请求”的记录：进程在发出请求和写记录之间丢了，重跑先等最多 5 分钟看升级代理是否已接手，接手了就跟着读，看不到才再问。
+   - 待命（`FLEET_NODE_UPGRADE_REQUESTED`）：记下请求（请求号就是升级代理的 opId），读 `upgrade\status.json` 到这次操作的终态，再核 `upgrade\current.json` 两侧 Source 等于接受的 Source。
+     - 请求被升级代理归档为 `rejected` 或 `ignored`（`upgrade\inbox-archive`：空文件、读不了、当天新开操作已到上限）：答 `ROLLOUT_STOPPED`、`code = ROLLOUT_REQUEST_NOT_TAKEN`、`disposition`；它没有变成操作，记录删掉，原样重跑会再请求一次。
+     - 请求还在 `upgrade\inbox`、`status.json` 15 分钟没刷新（升级代理每一轮都重写它，间隔不超过 60 秒）：答 `ROLLOUT_STOPPED`、`code = ROLLOUT_UPGRADER_NOT_RUNNING`；记录保留，CluedCIUpgrader 起来后原样重跑，跟的还是这一个请求。
+   - 在途（`FLEET_NODE_UPGRADE_IN_PROGRESS`）：同样记下（按它的 opId）再照读，它回滚了重跑也不再投。它若以成功结束而本机不在接受的 Source（那是别的包的操作），记录删掉，再请求本机一次。
    - 当班（`FLEET_NODE_UPGRADE_HAND_OVER_FIRST`）：读全队；其余节点都报告接受的 Source、都没停在暂停时，才带 `--allow-active-upgrade` 再发；否则不发请求。
-   - 已到位、在途：照读；其他回答（要重装、预检拒绝、拒绝）即停。
-3. **读回**：全部登记节点报告的 Source 等于接受的 Source、都没停在暂停时，才答 `ROLLOUT_DONE`。
+   - 已到位：照读；其他回答（要重装、预检拒绝、拒绝）即停。
+3. **读回**：全部登记节点报告的 Source 等于接受的 Source、都没停在暂停时，才答 `ROLLOUT_DONE`。只差本机时（门上本机的 Source 还没跟上 `current.json`），有界地再读，最多 10 分钟。
 
 | status | 意思 | 退出码 | 下一步 |
 |---|---|---|---|
@@ -60,10 +63,10 @@ node R/rollout/fleet/accept.mjs run --request <目录>\fleet-node-<version>.acce
 | `ROLLOUT_WAITING_OWNER` | 到 `--wait` 时门仍待批（`confirmUrl`） | 2 | Owner 批一次后原样重跑 |
 | `ROLLOUT_WAITING_OTHER_NODES` | 本机已到位（或本机当班、在等其余节点），`pending` 列出还没到的节点 | 2 | 在 `pending` 的节点上跑 0.3 那条命令（当班的最后，加 `--allow-active-upgrade`），然后原样重跑 |
 | `ROLLOUT_IN_PROGRESS` | 本机升级到时限还在途 | 2 | 原样重跑 |
-| `ROLLOUT_STOPPED` | `stage = accept`：Owner 拒绝或请求过期；`stage = node`：本机回滚或被拒（`node`、`outcome`、`code`） | 1 | 见 0.5；不碰下一台。重跑不会再投同一个请求（记录在 `--work` 里），同一个包第二次请求归 Owner（服务端规则） |
+| `ROLLOUT_STOPPED` | `stage = accept`：Owner 拒绝、请求过期、seal 输入错误或连续出错满 30 分钟；`stage = node`：本机回滚或被拒（`node`、`outcome`、`code`），请求没被接手（`ROLLOUT_REQUEST_NOT_TAKEN`），升级代理没在跑（`ROLLOUT_UPGRADER_NOT_RUNNING`） | 1 | 见 0.5；不碰下一台。重跑不会再投同一个请求（记录在 `--work` 里），同一个包第二次请求归 Owner（服务端规则） |
 | `ROLLOUT_REFUSED` | 输入不对（`code`，如 `USAGE`；`--decision-record` 也是 `USAGE`） | 1 | 按 `code` 改正 |
 
-全队各节点最近报告的 Source 由门读出（`accept-door.mjs` 的 `readFleet`）；读不到时当班节点不发请求，第 3 步答 `ROLLOUT_WAITING_OTHER_NODES`、`code = ROLLOUT_FLEET_UNREADABLE`，不会答 `ROLLOUT_DONE`。TURING 的 `upgrade\inbox` 只有该节点的操作员会话能写，所以这一阶段 TURING 那一步仍由 DESK 经 Desktop Commander 跑 0.3 那条命令；节点自己读目标升级（G9）落地后这一步和本命令的等待一起删掉。
+全队各节点最近报告的 Source 由门读出（件 B `accept-door.mjs` 的 `readFleet({ repo, version, request })`，匿名读 `public.clued_fleet_accept_status_v1`，已批时带各登记节点的名字、Source、是否暂停）；读不到、读回为空、缺本机或节点名重复，都算读不到：当班节点不发请求，第 3 步答 `ROLLOUT_WAITING_OTHER_NODES`、`code = ROLLOUT_FLEET_UNREADABLE`，不会答 `ROLLOUT_DONE`。TURING 的 `upgrade\inbox` 只有该节点的操作员会话能写，所以这一阶段 TURING 那一步仍由 DESK 经 Desktop Commander 跑 0.3 那条命令；节点自己读目标升级（G9）落地后这一步和本命令的等待一起删掉。
 
 ### 0.3 每台节点：同一条命令
 

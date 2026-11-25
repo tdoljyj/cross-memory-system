@@ -1486,7 +1486,8 @@ function Get-DrillProductionVerdict($Receipt, $Readback) {
 }
 
 # -Finalize of a candidate that ends PASS opens the Owner's acceptance request (PLAN-accept-auto-seal-20261125.md 2.1): one
-# `rollout/fleet/accept.mjs open` (one seal call, no wait), after the receipt is final (seal reads it). The Owner accepts by approving the
+# `rollout/fleet/accept.mjs open` (seal until the door's request has its link, at most 5 minutes, under the 600 s child limit below),
+# after the receipt is final (seal reads it). The Owner accepts by approving the
 # fleet.accept Grant at the confirm link it answers; nothing else here is the Owner's. Auxiliary (the board's rule: an auxiliary step that
 # fails only does not happen): whatever it answers, the drill's conclusion and receipt stay as the read-back made them, and the answer
 # says why the request is not open (accept.mjs run opens it as well). Under a test marker (NODE_TEST_CONTEXT or CLUED_UNDER_TEST, as
@@ -1495,16 +1496,17 @@ function Get-DrillProductionVerdict($Receipt, $Readback) {
 # is refused.
 $script:DrillAcceptanceOpener = $null
 function Open-DrillAcceptance([string]$Request, [string]$Receipt) {
-  $accept = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $script:DrillScriptPath) '..\rollout\fleet\accept.mjs'))
+  # every path made here is inside the auxiliary step: one that cannot be made (a -Request no path is made of) is NOT_OPENED, never a throw
+  $accept = try { [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $script:DrillScriptPath) '..\rollout\fleet\accept.mjs')) } catch { 'rollout\fleet\accept.mjs' }
   $notOpened = { param($code) [ordered]@{ status = 'NOT_OPENED'; code = $code; confirmUrl = $null
     next = "node $accept run --request <the candidate's acceptance-request.json> --drill-receipt $Receipt --work <a new directory> (it opens the request too)" } }
   if (-not $Request) { return (& $notOpened 'DRILL_FINALIZE_NO_REQUEST') }
   $marked = [bool]($env:NODE_TEST_CONTEXT -or $env:CLUED_UNDER_TEST)
   if ($marked -and $null -eq $script:DrillAcceptanceOpener) { return (& $notOpened 'DRILL_HOST_ACCESS_UNDER_TEST') }
   if (-not $marked -and $null -ne $script:DrillAcceptanceOpener) { return (& $notOpened 'DRILL_ACCEPTANCE_OPENER_WITHOUT_TEST_MARKER') }
-  $arguments = @($accept, 'open', '--request', [IO.Path]::GetFullPath($Request), '--drill-receipt', [IO.Path]::GetFullPath($Receipt))
   $run = $null; $opened = $null
   try {
+    $arguments = @($accept, 'open', '--request', [IO.Path]::GetFullPath($Request), '--drill-receipt', [IO.Path]::GetFullPath($Receipt))
     $run = if ($marked) { & $script:DrillAcceptanceOpener 'node.exe' $arguments } else {
       Invoke-DrillNode ((Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source) $arguments 600 }
     $last = @(([string](Get-Prop $run 'stdout')) -split "`r?`n" | Where-Object { $_.Trim() }) | Select-Object -Last 1
