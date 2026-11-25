@@ -514,7 +514,8 @@ test('11-22 08:23: main moved and nobody is the front; a run without inputs brin
   w.now += 30 * MIN;
   assert.equal((await w.run()).result, 'none'); assert.deepEqual(w.brought(), [1156, 1217]);
   // GitHub merges #1217 and main moves (the push event). #1156's head is the one the App made and the admission never
-  // admitted: it is not brought again until its holder pushes. The next in order is #1224 (enabled with #1225: lower number).
+  // admitted: it is brought again only after every other candidate (PLAN-train-held-deadlock §2.1). The next in order is #1224
+  // (enabled with #1225: lower number).
   w.merged(1217);
   const fourth = await w.run();
   assert.equal(fourth.result, 'merged', JSON.stringify(fourth)); assert.equal(fourth.pr, 1224);
@@ -599,10 +600,18 @@ test('only candidates are brought: not a conflict, a red head, a head the App br
   r = await w.run();
   assert.equal(r.pr, 1217, JSON.stringify(r)); assert.deepEqual(w.brought(), [1217]);
   assert.match(r.train.members.find(m => m.pr === 1156).state, /^candidate, red \(clued-cloud-tests\) on a head the App brought/, JSON.stringify(r.train.members));
-  // The App brought this head earlier and the admission never admitted it: not brought again.
-  w = scene0823();
+  // The App brought this head earlier and the admission never admitted it: brought again after every other candidate
+  // (PLAN-train-held-deadlock §2.1), not before them.
+  w = scene0823(); w.head(BASE);
   w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
-  assert.equal((await w.run()).pr, 1217); assert.deepEqual(w.brought(), [1217]);
+  r = await w.run();
+  assert.equal(r.pr, 1217); assert.deepEqual(w.brought(), [1217]);
+  assert.match(r.train.members.find(m => m.pr === 1156).state, /^candidate, not admitted on a head the App brought: main is merged in again, after the others$/);
+  // Its first parent the App brought as well: two in a row, not brought a third time.
+  w = scene0823(); w.head(BASE); w.check(BASE, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
+  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
+  r = await w.run();
+  assert.equal(r.pr, 1217); assert.match(r.train.members.find(m => m.pr === 1156).state, /^not admitted on a head the App brought: 连带 2 次仍未通过，不再带$/);
   // The same head, admitted by the independent CI (it ran, then main moved): brought again.
   w = scene0823();
   w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID);
@@ -653,12 +662,10 @@ test('a run with pr and head handles only the named pull request, as before', as
     pr: 1225, head_sha: sha(0x1225), merged_head_sha: w.headOf(1225), main_sha: T });
   assert.deepEqual(w.brought(), [1225]);
   const calls = w.calls.map(c => `${c.method} ${c.route}`), named = calls.indexOf('GET /repos/o/r/pulls/1225');
-  // which copy brings the front (FABLE-scaffold-s5-pre §1): the rules in force, read first
+  // which copy brings the front (FABLE-scaffold-s5-pre §1): the rules in force, read first; then the named pull request only,
+  // the train is not read (no hold, PLAN-train-held-deadlock §2.1)
   assert.deepEqual(calls.slice(0, 2), ['GET /repos/o/r', 'GET /repos/o/r/rules/branches/main?per_page=100&page=1']);
-  // then the train, once, for the hold (scaffold open-qs 2): reads only; #1224 is under way, so nobody is held
-  const choice = calls.slice(2, named);
-  assert.equal(choice[0], 'POST /graphql'); assert.ok(choice.includes('GET /repos/o/r/rules/branches/main?per_page=100&page=1'));
-  assert.ok(choice.slice(1).every(c => c.startsWith('GET ')), JSON.stringify(choice));
+  assert.equal(named, 2, JSON.stringify(calls)); assert.equal(calls.includes('POST /graphql'), false);
   assert.deepEqual(calls.slice(named), [
     'GET /repos/o/r/pulls/1225', 'GET /repos/o/r/branches/main', `GET /repos/o/r/compare/${T}...${sha(0x1225)}`,
     'GET /repos/o/r/installation', 'POST /app/installations/42/access_tokens', 'PUT /repos/o/r/pulls/1225/update-branch',
@@ -941,7 +948,9 @@ test('hosted copy: the workflow runs the same entry on a hosted machine, only fr
   const read = file => fs.readFileSync(path.join(ROOT, '.github/workflows', file), 'utf8');
   const text = read('clued-front-main-merge-hosted.yml'), original = read('clued-front-main-merge.yml');
   const on = text.slice(text.indexOf('\non:\n'), text.indexOf('\npermissions:\n'));
-  assert.equal(on, original.slice(original.indexOf('\non:\n'), original.indexOf('\npermissions:\n')), 'the same triggers and inputs as the self-hosted workflow');
+  // The same triggers and inputs as the self-hosted workflow, and hosted-required completing (§3.3, PLAN-train-held-deadlock).
+  assert.equal(on.replace('\n  workflow_run:\n    workflows: [hosted-required]\n    types: [completed]\n', '\n'),
+    original.slice(original.indexOf('\non:\n'), original.indexOf('\npermissions:\n')), 'the self-hosted triggers and inputs, and workflow_run');
   assert.doesNotMatch(on, /pull_request/);
   const jobs = text.slice(text.indexOf('\njobs:\n'));
   const [phase, merge] = jobs.split('\n  merge-main:\n');
@@ -1110,9 +1119,9 @@ test('§1: in each state of the rules exactly one of the two copies brings the f
 });
 
 // FABLE-scaffold-s5-pre §2: a head the App brought up to main that the admission does not pass (a failure, or nothing at all) is not
-// the front, so the next one was brought, and the next: a systemic cause (the authorization not carried, Clued unreachable, the
-// admission workflow disabled) spent the whole train one pull request per run. With 2 such heads on the train at once nobody else is
-// brought up; below 2 it goes on by itself. Nothing is kept between runs: both facts are on the heads.
+// the front, so the next one is brought, and the next. The hold that stopped the train at 2 such heads is gone (PLAN-train-held-
+// deadlock-20261125 §2.1): it counted heads with no way out and stopped the train until someone stepped in. Each run brings one;
+// a head whose admission failed is not brought again (main does not change that), one never answered is, after the others.
 const [A, B, C, D] = [2001, 2002, 2003, 2004];
 function fourBehind(rules) {
   const w = rulesOf(train(), rules);
@@ -1135,38 +1144,37 @@ const admissionOf = app => (app === ADMISSION_APP_ID ? APP_CHECK_NAME : INDEPEND
 const failsAdmission = (w, app) => head => w.check(head, admissionOf(app), 'failure', app);
 const hostedGreen = w => head => { for (const name of HOSTED) w.check(head, name); };
 
-test('§2: brought-up heads the admission fails hold the train at 2; the others keep their heads', async () => {
+test('§2: brought-up heads the admission fails: each run brings the next one, never held; the failed ones are not brought again', async () => {
   for (const [rules, extra, app] of [['scaffold', SCAFFOLD, ADMISSION_APP_ID], ['framework', {}, INDEPENDENT_ADMISSION_APP_ID]]) {
     const w = fourBehind(rules);
-    const results = await runs(w, 4, extra, 10 * MIN, failsAdmission(w, app));
-    assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], `${rules}: ${JSON.stringify(results.at(-1))}`);
-    assert.deepEqual(w.brought(), [A, B], rules);
-    for (const r of results.slice(2)) { assert.match(r.reason, /#2001\b/); assert.match(r.reason, /#2002\b/); assert.equal(r.pr, null); }
-    assert.equal(w.headOf(C), sha(C)); assert.equal(w.headOf(D), sha(D));
-    assert.match(renderSummary(results[3]), /nobody brought up: \*\*held\*\*/);
+    const results = await runs(w, 5, extra, 10 * MIN, failsAdmission(w, app));
+    assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'merged', 'merged', 'none'], `${rules}: ${statesOf(results.at(-1))}`);
+    assert.deepEqual(w.brought(), [A, B, C, D], rules);
+    assert.equal(results[4].reason, 'no pull request on the train can be brought up now');
+    for (const r of results) assert.doesNotMatch(`${r.reason} ${statesOf(r)} ${renderSummary(r)}`, /held/, rules);
   }
 });
 
-test('§2: brought-up heads the admission never answers hold the train at 2 as well', async () => {
+test('§2: brought-up heads the admission never answers: one brought per run, each once, never held', async () => {
   const w = fourBehind('scaffold');
   const results = await runs(w, 4, SCAFFOLD, 16 * MIN, hostedGreen(w));
-  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], JSON.stringify(results.at(-1)));
-  assert.deepEqual(w.brought(), [A, B]);
-  assert.equal(w.headOf(C), sha(C)); assert.equal(w.headOf(D), sha(D));
+  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'merged', 'merged'], statesOf(results.at(-1)));
+  assert.deepEqual(w.brought(), [A, B, C, D]);
 });
 
-test('§2: the hold lifts by itself: one of the two admitted is the front; once it merged, the next is brought', async () => {
+test('§2: a brought head admitted after all is the front; once it merged, the next candidate is brought, not the failed ones', async () => {
   const w = fourBehind('scaffold');
   await runs(w, 3, SCAFFOLD, 10 * MIN, failsAdmission(w, ADMISSION_APP_ID));
-  assert.deepEqual(w.brought(), [A, B]);
+  assert.deepEqual(w.brought(), [A, B, C]);
   // A's head is admitted after all (DESK authorized it; later the admission carries it) and its checks are green.
   w.check(w.headOf(A), APP_CHECK_NAME, 'success', ADMISSION_APP_ID); hostedGreen(w)(w.headOf(A));
   let r = await w.run({}, SCAFFOLD);
-  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#2001 contains main and is under way/); assert.deepEqual(w.brought(), [A, B]);
-  // GitHub merges A and main moves: only B is brought and not admitted, below the limit: C is brought.
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#2001 contains main and is under way/); assert.deepEqual(w.brought(), [A, B, C]);
+  // GitHub merges A and main moves: B and C, whose admission failed, are not brought again; D is.
   w.merged(A); w.now += 10 * MIN;
   r = await w.run({}, SCAFFOLD);
-  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, C); assert.deepEqual(w.brought(), [A, B, C]);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, D); assert.deepEqual(w.brought(), [A, B, C, D]);
+  for (const n of [B, C]) assert.match(r.train.members.find(m => m.pr === n).state, /^red \(kooyumi-admission-verified\)$/, statesOf(r));
 });
 
 test('§2: one head the admission fails does not hold the train; the next one admitted is the front', async () => {
@@ -1207,27 +1215,24 @@ test('scaffold open-qs 1.4: under #292 a newer same-name check of another App do
   assert.equal(w.calls.filter(c => c.method === 'PUT').length, 0); assert.deepEqual(w.brought(), []);
 });
 
-// FABLE-scaffold-open-qs 问题 2: a named run (the companion's dispatch or a person) goes through the same hold. It reads the train
-// once; with BROUGHT_UNADMITTED_LIMIT heads brought up and not admitted (and no front) it holds, naming the pull request it was given.
+// FABLE-scaffold-open-qs 问题 2 put a named run (the companion's dispatch or a person) through the hold. With the hold gone
+// (PLAN-train-held-deadlock-20261125 §2.1) a named run reads no train: it brings up the pull request it names, as before.
 const named = (w, number, extra = {}) => w.run({ pr: String(number), head: w.headOf(number) }, extra);
-const writesSince = (w, from) => w.calls.slice(from).filter(c => c.method !== 'GET' && c.route !== '/graphql');
 for (const [rules, extra, app] of [['framework', {}, INDEPENDENT_ADMISSION_APP_ID], ['scaffold', SCAFFOLD, ADMISSION_APP_ID]]) {
-  test(`open-qs 2 (${rules}): a named run holds while two brought-up heads are not admitted; nothing is written`, async () => {
+  test(`open-qs 2 (${rules}): with two brought-up heads not admitted a named run still brings its pull request up`, async () => {
     const w = fourBehind(rules);
     await runs(w, 2, extra, 10 * MIN, failsAdmission(w, app));
     assert.deepEqual(w.brought(), [A, B]);
     const from = w.calls.length;
     const r = await named(w, C, extra);
-    assert.equal(r.result, 'held', JSON.stringify(r));
-    assert.match(r.reason, /#2001\b/); assert.match(r.reason, /#2002\b/);
+    assert.equal(r.result, 'merged', JSON.stringify(r));
     assert.deepEqual([r.pr, r.head_sha], [C, sha(C)]);
-    assert.deepEqual(writesSince(w, from), [], 'no update-branch, no App token, no check');
-    assert.equal(w.calls.slice(from).filter(c => c.route?.startsWith('/app/installations/')).length, 0);
-    assert.equal(w.headOf(C), sha(C)); assert.deepEqual(w.brought(), [A, B]);
+    assert.equal(w.calls.slice(from).filter(c => c.route === '/graphql').length, 0, 'the train is not read');
+    assert.equal(w.calls.slice(from).filter(c => c.method === 'PUT').length, 1); assert.deepEqual(w.brought(), [A, B, C]);
   });
 }
 
-test('open-qs 2: named one after another, each brought head failing the admission, only two are brought', async () => {
+test('open-qs 2: named one after another, each brought head failing the admission, each is brought', async () => {
   const w = fourBehind('framework');
   const results = [];
   for (const n of [A, B, C, D]) {
@@ -1236,28 +1241,26 @@ test('open-qs 2: named one after another, each brought head failing the admissio
     for (const u of w.updates.slice(seen)) failsAdmission(w, INDEPENDENT_ADMISSION_APP_ID)(u.to);
     w.now += 10 * MIN;
   }
-  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], JSON.stringify(results.at(-1)));
-  assert.equal(w.calls.filter(c => c.method === 'PUT').length, 2);
-  assert.deepEqual(w.brought(), [A, B]); assert.equal(w.headOf(C), sha(C)); assert.equal(w.headOf(D), sha(D));
+  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'merged', 'merged'], JSON.stringify(results.at(-1)));
+  assert.equal(w.calls.filter(c => c.method === 'PUT').length, 4);
+  assert.deepEqual(w.brought(), [A, B, C, D]);
 });
 
-test('open-qs 2: a named run that cannot read the train changes nothing; the next run looks again', async () => {
+test('open-qs 2: a named run does not need the train: the train unreadable, it brings its pull request up', async () => {
   const w = fourBehind('framework');
   w.failing = '/graphql';
   const r = await named(w, C);
-  assert.equal(r.result, 'skipped', JSON.stringify(r));
-  assert.match(r.reason, /^GitHub could not be read \(.*\); nothing is changed, the next run looks again$/);
-  assert.deepEqual([r.pr, r.head_sha], [C, sha(C)]);
-  assert.equal(w.calls.filter(c => c.method === 'PUT').length, 0); assert.deepEqual(w.brought(), []);
+  assert.equal(r.result, 'merged', JSON.stringify(r));
+  assert.deepEqual([r.pr, r.head_sha], [C, sha(C)]); assert.deepEqual(w.brought(), [C]);
 });
 
-test('open-qs 2: below the limit, or with a front under way, a named run brings its pull request up as before', async () => {
+test('open-qs 2: with a brought head not admitted, or with a front under way, a named run brings its pull request up as before', async () => {
   // One brought-up head not admitted: below the limit.
   let w = fourBehind('framework');
   await runs(w, 1, {}, 10 * MIN, failsAdmission(w, INDEPENDENT_ADMISSION_APP_ID));
   let r = await named(w, C);
   assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [A, C]);
-  // Two, but one of them is admitted after all and is the front: the hold counts only without a front.
+  // Two, one of them admitted after all and the front: the named run brings its pull request up all the same.
   w = fourBehind('framework');
   await runs(w, 2, {}, 10 * MIN, failsAdmission(w, INDEPENDENT_ADMISSION_APP_ID));
   w.check(w.headOf(A), INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID);
@@ -1275,34 +1278,31 @@ const statesOf = r => JSON.stringify(r.train?.members.map(m => [m.pr, m.state]))
 // Every required check of 'both' green but the scaffold's admission (App 5164952), which says nothing.
 const bothGreenButTheApp = w => head => { for (const { context, integration_id } of BOTH) if (integration_id !== ADMISSION_APP_ID) w.check(head, context, 'success', integration_id); };
 
-test('gate-leak 1: at the trial switch heads Native admits and App 5164952 fails hold the train at 2', async () => {
+test('gate-leak 1: at the trial switch heads Native admits and App 5164952 fails are not admitted: the next one is brought each run', async () => {
   const w = fourBehind('both');
   const results = await runs(w, 4, {}, 10 * MIN, head => { nativeAdmits(w)(head); appAdmits(w, 'failure')(head); });
-  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], statesOf(results.at(-1)));
-  assert.deepEqual(w.brought(), [A, B]);
-  for (const r of results.slice(2)) { assert.match(r.reason, /#2001\b/); assert.match(r.reason, /#2002\b/); }
-  assert.equal(w.headOf(C), sha(C)); assert.equal(w.headOf(D), sha(D));
+  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'merged', 'merged'], statesOf(results.at(-1)));
+  assert.deepEqual(w.brought(), [A, B, C, D]);
+  // None of them is the front (the admission App 5164952 failed on each): red, not under way.
+  for (const n of [A, B, C]) assert.match(results[3].train.members.find(m => m.pr === n).state, /^red \(kooyumi-admission-verified\)$/, statesOf(results[3]));
 });
 
-test('gate-leak 2: at the trial switch heads App 5164952 never answers hold the train at 2 as well', async () => {
+test('gate-leak 2: at the trial switch heads App 5164952 never answers are not admitted: idle, the next one is brought each run', async () => {
   const w = fourBehind('both');
   const results = await runs(w, 4, {}, 16 * MIN, bothGreenButTheApp(w));
-  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], statesOf(results.at(-1)));
-  assert.deepEqual(w.brought(), [A, B]);
-  for (const r of results.slice(2)) { assert.match(r.reason, /#2001\b/); assert.match(r.reason, /#2002\b/); }
-  assert.equal(w.headOf(C), sha(C)); assert.equal(w.headOf(D), sha(D));
+  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'merged', 'merged'], statesOf(results.at(-1)));
+  assert.deepEqual(w.brought(), [A, B, C, D]);
+  // idle (and, quiet 30 minutes, named once: §3.11), not under way
+  for (const n of [A, B, C]) assert.match(results[3].train.members.find(m => m.pr === n).state, /^idle(; stalled: posted)?$/, statesOf(results[3]));
 });
 
-test('gate-leak 3: at the trial switch a named run holds as well; no update-branch, no App token', async () => {
+test('gate-leak 3: at the trial switch a named run brings its pull request up whatever the train holds', async () => {
   const w = fourBehind('both');
   await runs(w, 2, {}, 10 * MIN, head => { nativeAdmits(w)(head); appAdmits(w, 'failure')(head); });
   assert.deepEqual(w.brought(), [A, B]);
-  const from = w.calls.length;
   const r = await named(w, C);
-  assert.equal(r.result, 'held', `${JSON.stringify({ result: r.result, reason: r.reason })} ${statesOf(r)}`);
-  assert.equal(w.calls.slice(from).filter(c => c.method === 'PUT').length, 0);
-  assert.equal(w.calls.slice(from).filter(c => c.route?.startsWith('/app/installations/')).length, 0, 'no App token');
-  assert.equal(w.headOf(C), sha(C));
+  assert.equal(r.result, 'merged', `${JSON.stringify({ result: r.result, reason: r.reason })} ${statesOf(r)}`);
+  assert.deepEqual(w.brought(), [A, B, C]);
 });
 
 // 改法 2 (独审建议 3): a required check pinned to an App is read only from that App's check runs, never from a commit status of the
@@ -1329,11 +1329,12 @@ test('gate-leak 5: success statuses named like pinned checks do not make a quiet
 });
 
 // Kept as they are (not more than the leak): the gate at the trial switch, by name and App, and unpinned statuses.
-test('gate-leak kept: at the trial switch heads Native fails and App 5164952 admits hold at 2', async () => {
+test('gate-leak kept: at the trial switch heads Native fails and App 5164952 admits are not admitted: red, the next one is brought', async () => {
   const w = fourBehind('both');
   const results = await runs(w, 4, {}, 10 * MIN, head => { failsAdmission(w, INDEPENDENT_ADMISSION_APP_ID)(head); appAdmits(w)(head); });
-  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], statesOf(results.at(-1)));
-  assert.deepEqual(w.brought(), [A, B]);
+  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'merged', 'merged'], statesOf(results.at(-1)));
+  assert.deepEqual(w.brought(), [A, B, C, D]);
+  for (const n of [A, B, C]) assert.match(results[3].train.members.find(m => m.pr === n).state, /^red \(kooyumi-work-admission\)$/, statesOf(results[3]));
 });
 
 test('gate-leak kept: at the trial switch a head both admissions pass is the front; nobody else is brought', async () => {
@@ -1390,11 +1391,16 @@ test('§3.1 #1258: red, behind main and alone on the train, it is brought up to 
   w.now += 10 * MIN;
   let again = await w.run({}, SCAFFOLD);
   assert.equal(again.result, 'none', JSON.stringify(again)); assert.deepEqual(w.brought(), [1258]);
-  // main moves on: the App's head is behind and red, and it is the App's own: passed over, not brought a second time.
+  // main moves on: the App's head is behind, red and never admitted. It is brought once more (main may carry a fix; PLAN-train-
+  // held-deadlock §2.1); red again and behind again, two in a row the App brought: it stays, and says so.
   w.tip = sha(0x7258); w.now += 10 * MIN;
   again = await w.run({}, SCAFFOLD);
-  assert.equal(again.result, 'none', JSON.stringify(again)); assert.deepEqual(w.brought(), [1258]);
-  assert.match(again.train.members.find(m => m.pr === 1258).state, /^red \(hosted-gitleaks\)$/, statesOf(again));
+  assert.equal(again.result, 'merged', JSON.stringify(again)); assert.deepEqual(w.brought(), [1258, 1258]);
+  w.check(w.headOf(1258), 'hosted-gitleaks', 'failure');
+  w.tip = sha(0x7259); w.now += 10 * MIN;
+  again = await w.run({}, SCAFFOLD);
+  assert.equal(again.result, 'none', JSON.stringify(again)); assert.deepEqual(w.brought(), [1258, 1258]);
+  assert.match(again.train.members.find(m => m.pr === 1258).state, /^red \(hosted-gitleaks\), not admitted on a head the App brought: 连带 2 次仍未通过，不再带$/, statesOf(again));
   // The self-hosted copy under #292 the same: the author's red head behind main is brought up once.
   const framework = rulesOf(train(), 'framework');
   framework.open(1258, { head: sha(0x1258), auto: '2026-11-23T10:17:00Z' });
@@ -1527,14 +1533,15 @@ test('§3.11: an author’s head behind main is not named while another pull req
   assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(alone.brought(), [STALLED]); assert.equal(namings(alone).length, 0);
 });
 
-// What nothing moves behind main: a head the App brought up that is not admitted (the train does not bring it again). It is named
-// once, with or without a front; a brought head that is admitted is a candidate again and not named.
-test('§3.11: a head the App brought up, behind main and not admitted, is named once; admitted, it is a candidate and not named', async () => {
+// What nothing moves behind main: a head the App brought up twice in a row that is not admitted (the train does not bring it again,
+// PLAN-train-held-deadlock §2.1). It is named once, with or without a front. Once only, or admitted, it is a candidate and not named.
+test('§3.11: a head the App brought up twice in a row, behind main and not admitted, is named once; once only, or admitted, it is not', async () => {
   const head = sha(0x1300);
-  const brought = x => {
+  const brought = (x, { twice = true } = {}) => {
     x.heads.get(head).contains = BASE;
     x.heads.get(head).checks = x.heads.get(head).checks.filter(c => c.name !== INDEPENDENT_ADMISSION_CHECK);
     x.check(head, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID, { started_at: iso(x.now - 40 * MIN) });
+    x.head(BASE); if (twice) x.check(BASE, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
   };
   let w = sceneStalled(); brought(w);
   let r = await w.run();
@@ -1556,6 +1563,20 @@ test('§3.11: a head the App brought up, behind main and not admitted, is named 
   w.open(1301, { head: sha(0x1301), auto: '2026-11-24T00:30:00Z', contains: T, at: w.now - 5 * MIN }); w.check(sha(0x1301), 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);
   r = await w.run();
   assert.match(r.reason, /#1301 contains main/); assert.equal(namings(w).length, 0, JSON.stringify(w.comments));
+  // Brought once, not admitted: with a front it waits as a candidate, not named; without one it is brought again.
+  w = sceneStalled(); brought(w, { twice: false });
+  w.open(1301, { head: sha(0x1301), auto: '2026-11-24T00:30:00Z', contains: T, at: w.now - 5 * MIN }); w.check(sha(0x1301), 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);
+  r = await w.run();
+  assert.match(r.reason, /#1301 contains main/); assert.equal(namings(w).length, 0, JSON.stringify(w.comments)); assert.equal(r.named, undefined);
+  w = sceneStalled(); brought(w, { twice: false });
+  r = await w.run();
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [STALLED]); assert.equal(namings(w).length, 0);
+  // How many in a row cannot be read: not named this run, and the run says so.
+  w = sceneStalled(); brought(w); w.failing = `/git/commits/${head}`;
+  w.open(1301, { head: sha(0x1301), auto: '2026-11-24T00:30:00Z', contains: T, at: w.now - 5 * MIN }); w.check(sha(0x1301), 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);
+  r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.equal(namings(w).length, 0);
+  assert.match(r.named?.[0]?.comment ?? '', /^not named \(连带次数未读到/, JSON.stringify(r.named));
 });
 
 // 第二轮规划 A（任务 2fb32dc7，#1298）: a head the App brought up went red for the pipeline's own reason (a test on main that read the
@@ -1586,14 +1607,14 @@ test('A1 #1298: a head the App brought, admitted, red on a required check and be
   w.tip = sha(0x7298); w.now += 40 * MIN;
   const again = await w.run({}, SCAFFOLD);
   assert.equal(again.result, 'none', JSON.stringify(again)); assert.deepEqual(w.brought(), [REBRING]);
-  assert.match(again.train.members.find(m => m.pr === REBRING).state, /^red \(hosted-clued-cloud-tests\)$/, statesOf(again));
+  assert.match(again.train.members.find(m => m.pr === REBRING).state, /^red \(hosted-clued-cloud-tests\) on a head the App brought: 连带 2 次仍未通过，不再带$/, statesOf(again));
 });
 
 test('A2: a red head the App brought whose first parent the App brought as well is not brought again', async () => {
   const w = scene1298({ parentBrought: true });
   const r = await w.run({}, SCAFFOLD);
   assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
-  assert.match(r.train.members.find(m => m.pr === REBRING).state, /^red \(hosted-clued-cloud-tests\)$/, statesOf(r));
+  assert.match(r.train.members.find(m => m.pr === REBRING).state, /^red \(hosted-clued-cloud-tests\) on a head the App brought: 连带 2 次仍未通过，不再带$/, statesOf(r));
 });
 
 test('A3: a candidate that is not red is brought before a red head the App brought; once it merged, the red one is brought', async () => {
@@ -1645,13 +1666,17 @@ test('A5: a rebring chain that cannot be read only keeps that head back; the can
 // It is the resident saying it will not run that head: not something under way, and not activity. Read as under way, a head the
 // App brought up and the admission never answered was never named, and two of them held the train with nobody told.
 // The sentence is taken from what pr-status.mjs writes, so a change of the sentence changes these cases with it.
-const SILENT_B = 1401, SILENT_C = 1402, SILENT_FRONT = 1400;
+const SILENT_B = 1401, SILENT_C = 1402, SILENT_D = 1403, SILENT_FRONT = 1400;
 const residentSays = behindBy => describePrStatus({ pull: { headSha: sha(0x1401), eligible: false, hint: 'merge-main', behindBy }, status: null, now: NOW }).description;
 // A head behind main by 12, as the robot left it: kooyumi-main-merge of App 5164952, the seven hosted- green, no kooyumi-work-admission;
-// the resident's pending sentence rewritten 5 minutes ago, everything else last active 40 minutes ago, nothing running.
-function silentHead(w, number, { brought = true, text = residentSays(12), context = 'resident-queue/turing (info only)', auto } = {}) {
-  const head = sha(number * 16 + 1);
-  w.open(number, { head, auto, contains: BASE, at: w.now - 40 * MIN });
+// the resident's pending sentence rewritten 5 minutes ago, everything else last active 40 minutes ago, nothing running. Brought, it
+// is the App's second in a row (its first parent the App's as well, inARow 2): the train does not bring it again (PLAN-train-held-
+// deadlock §2.1), so nothing moves it; once only (inARow 1) it is a candidate after the others.
+function silentHead(w, number, { brought = true, inARow = 2, text = residentSays(12), context = 'resident-queue/turing (info only)', auto } = {}) {
+  const head = sha(number * 16 + 1), parent = sha(number * 16 + 2);
+  w.head(parent, {});
+  if (brought && inARow >= 2) w.check(parent, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
+  w.open(number, { head, auto, contains: BASE, at: w.now - 40 * MIN, parents: [parent, BASE] });
   if (brought) w.check(head, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID, { started_at: iso(w.now - 40 * MIN) });
   for (const name of HOSTED) w.check(head, name, 'success', GITHUB_ACTIONS_APP_ID, { started_at: iso(w.now - 40 * MIN) });
   w.heads.get(head).statuses.unshift({ context, state: 'pending', description: text, created_at: iso(w.now - 300 * MIN), updated_at: iso(w.now - 5 * MIN) });
@@ -1676,14 +1701,23 @@ test('U1 (修前必红): a brought-up head behind main, not admitted, with only 
   assert.match(namings(w)[0].body, new RegExp(head)); assert.match(namings(w)[0].body, new RegExp(`- ${INDEPENDENT_ADMISSION_CHECK}: missing\n`));
 });
 
-test('U2 (修前必红): with no front, two such heads hold the train and each is named once', async () => {
+test('U2 (修前必红): with no front, two such heads are each named once and the train brings another (PLAN-train-held-deadlock §2.3)', async () => {
   const w = sceneSilent({ front: false });
   silentHead(w, SILENT_B, { auto: '2026-11-24T01:00:00Z' }); silentHead(w, SILENT_C, { auto: '2026-11-24T02:00:00Z' });
+  silentHead(w, SILENT_D, { brought: false, auto: '2026-11-24T03:00:00Z' });
   const r = await w.run({}, SCAFFOLD);
-  assert.equal(r.result, 'held', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, SILENT_D); assert.deepEqual(w.brought(), [SILENT_D]);
   assert.deepEqual(namings(w).map(c => c.pr).sort(), [SILENT_B, SILENT_C], JSON.stringify(r));
   w.now += 10 * MIN;
-  assert.equal((await w.run({}, SCAFFOLD)).result, 'held'); assert.equal(namings(w).length, 2, 'once per head');
+  assert.notEqual((await w.run({}, SCAFFOLD)).result, 'held'); assert.equal(namings(w).length, 2, 'once per head');
+});
+
+test('U1b: brought once only, behind and not admitted, it is a candidate after the front: not named', async () => {
+  const w = sceneSilent();
+  silentHead(w, SILENT_B, { inARow: 1, auto: '2026-11-24T01:00:00Z' });
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#1400 contains main/);
+  assert.equal(namings(w).length, 0, JSON.stringify(w.comments)); assert.equal(r.named, undefined);
 });
 
 test('U3: an author’s head behind main with the same sentence is a candidate: the train brings it, it is not named', async () => {
@@ -1776,7 +1810,7 @@ test('D1 (修前必红): 11-25 10:16, two heads the App brought and not admitted
   assert.equal(mainMergeChecks(w, w.headOf(BING)).length, 1, 'one kooyumi-main-merge on its new head');
   assert.match(r.train.members.find(m => m.pr === JIA).state, /^red \(hosted-ci-suites-windows\)$/, statesOf(r));
   assert.match(r.train.members.find(m => m.pr === YI).state,
-    /^candidate, red \(hosted-migration-verify\), not admitted, on a head the App brought: main is merged in again, after the others$/, statesOf(r));
+    /^candidate, red \(hosted-migration-verify\), not admitted on a head the App brought: main is merged in again, after the others$/, statesOf(r));
   assert.doesNotMatch(statesOf(r), /held/);
 });
 
@@ -1808,7 +1842,7 @@ test('D3: 乙’s second head the App brought, not admitted and behind again, is
   const r = await w.run({}, SCAFFOLD);
   assert.equal(r.result, 'merged', `${JSON.stringify({ result: r.result, reason: r.reason })} ${statesOf(r)}`);
   assert.equal(r.pr, DING); assert.deepEqual(w.brought(), [BING, YI, DING]);
-  assert.match(r.train.members.find(m => m.pr === YI).state, /^not admitted, on a head the App brought: 连带 2 次仍未通过，不再带$/, statesOf(r));
+  assert.match(r.train.members.find(m => m.pr === YI).state, /^not admitted on a head the App brought: 连带 2 次仍未通过，不再带$/, statesOf(r));
   // 丁 is the front now. 乙 is not brought again and nothing will move it: named once its head is quiet for 30 minutes.
   w.check(w.headOf(DING), 'hosted-ci-suites', null, GITHUB_ACTIONS_APP_ID);
   w.now += 20 * MIN;
