@@ -1,6 +1,6 @@
 // Terminal admission is removed (20261113151000). A PR's end through adopt (merged) or
-// an explicit GitHub closure releases the claim that served it when the Task has no other
-// open PR and the claim authorized no newer head; the judgment never changes adopt/return.
+// an explicit GitHub closure releases the claim that served it when the claim served no other
+// open PR of the Task and authorized no newer head; the judgment never changes adopt/return.
 import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -158,6 +158,37 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       assert.equal(await binding(1151), 'active');
       assert.equal(await binding(1152), 'active');
       assert.deepEqual((await releaseInfo(r)).trigger_refs, [slot]);
+      committed(await release(r));
+    });
+    await t.test('#1359 合入释放认领，即使同 Task 上旧认领留下的 #1308 仍打开', async () => {
+      const taskId = await task();
+      const old = await claim(taskId);
+      committed(await authorize(old, 'a'.repeat(40), 1308));
+      assert.equal(await binding(1308), 'unknown');
+      committed(await release(old));
+
+      const r = await claim(taskId);
+      const head = 'd'.repeat(40);
+      committed(await authorize(r, head));
+      assert.equal((await resolve('ci', 1359, head)).binding_status, 'bound');
+      assert.equal((await verify('ci', r, 1359, head)).verdict, 'ADMITTED');
+
+      const event = await webhook(1359);
+      const c = await releaseInfo(r);
+      assert.deepEqual(event, { status: 'ok', finished: 1, released: [r.claim.claim_id] }, `claim status: ${c.status}`);
+      assert.deepEqual([await binding(1359), await binding(1308), c.status, c.released_by, c.released_evidence_ref],
+        ['merged', 'unknown', 'RELEASED', 'pr_end', repo + '#1359@' + 'e'.repeat(40)]);
+    });
+    await t.test('#2359 合入时保留仍为打开的 #2308 服务的认领', async () => {
+      const r = await claim(await task());
+      committed(await authorize(r, 'b'.repeat(40), 2308));
+      assert.equal(await binding(2308), 'unknown');
+      await admitted(r, 2359, 'c'.repeat(40));
+
+      const event = await webhook(2359);
+      assert.deepEqual(event, { status: 'ok', finished: 1, released: [] });
+      assert.equal((await releaseInfo(r)).status, 'ACTIVE');
+      assert.equal(await binding(2308), 'unknown');
       committed(await release(r));
     });
     await t.test('交还合并位不收任何 GitHub 状态；迟到的关闭报告让绑定保留 merged', async () => {
