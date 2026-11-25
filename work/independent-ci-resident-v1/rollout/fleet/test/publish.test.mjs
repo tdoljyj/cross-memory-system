@@ -14,8 +14,11 @@ import * as publishModule from '../publish.mjs';
 import { writeTar } from '../tar.mjs';
 import { FAKE_GH } from './fleet-fixtures.mjs';
 import { sha, VERSION, TAG, COMMIT, FLEET, BOOTSTRAP, PREREQ, world, REPO, RELEASE_ASSETS, rowOf,
-  seedRelease, FIX, FIX_DECISION, FIX_RECEIPT, FIX_ACCEPTED_AT, requestLine, prepWorld, GRANT, GRANT_RECEIPT, REQUEST_ASSET,
+  seedRelease, FIX, FIX_DECISION, FIX_RECEIPT, FIX_ACCEPTED_AT, requestLine, prepWorld as sharedPrepWorld, GRANT, GRANT_RECEIPT, REQUEST_ASSET,
   resourceOf, sealedNothing, fakeTime, timed } from './publish-fixtures.mjs';
+
+// Keep the in-process fake for publish cases unless a case needs to inspect the child process.
+const prepWorld = (t, options) => sharedPrepWorld(t, { spawnGh: false, ...options });
 
 const releaseWrites = async w => (await w.calls()).filter(c => c.args[0] === 'release' && ['create', 'upload', 'delete-asset'].includes(c.args[1]));
 

@@ -79,7 +79,7 @@ const FIX_DECISION = FIX.target_refs[0].id, FIX_RECEIPT = FIX.receipt_id, FIX_AC
 // the line DESK used to copy into a hand-written Decision (the generation-18 shape below names the request with it)
 const requestLine = hash => `acceptance-request ${TAG} sha256:${hash}`;
 // released: false leaves the Release and the index row to prepare (an empty gh state, an index with its header only)
-const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = 'b'.repeat(64), released = true, spawnGh = false } = {}) => {
+const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = 'b'.repeat(64), released = true, spawnGh = true } = {}) => {
   const w = await world(t);
   if (released) await seedRelease(w, { row: true });
   const image = path.join(w.d, `role-image-${IMAGE}.tar.gz`);
@@ -127,7 +127,7 @@ const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = '
   const deps = { kitOf, readKit: () => ({}), fleetMaterial: async () => ({ formalRoles, installed: { ...carried, ciSourceManifestSha256: templateSource } }),
     sourceHash: async args => { s.sourceDrafts.push(args); return { ciSourceManifestSha256: s.sourceOf }; }, readStatus };
   const opens = async () => (await w.calls()).filter(c => c.args[0] === 'workflow');
-  // Cases that check the subprocess environment keep the real spawn. All cases share the same fake command.
+  // The default exercises subprocess timeouts and environment filtering with fake gh.
   const gh = spawnGh ? [process.execPath, w.fake] : fakeCommand(w.state);
   const prep = (over = {}) => prepare({ version: VERSION, dir: w.out, out, images: [image], index: w.index, ghCommand: gh, deps, ...over });
   const requestFile = path.join(out, `${TAG}.acceptance-request.json`);
