@@ -33,7 +33,7 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "63",
+      "version": "64",
       "description": "BeamingFace Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
