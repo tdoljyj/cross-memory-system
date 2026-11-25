@@ -2028,9 +2028,9 @@ export async function mainMergeSource(fetchImpl, env, repository, prNumber, head
 // is unreadable or does not qualify ends the chain there. It then asks Native
 // for each hop, the oldest first, with the same one-hop carry: Native still
 // trusts one hop at a time, only from a head this claim authorized (a hop
-// already carried answers replayed). A refused hop does not stop the later
-// ones (a middle head the holder authorized directly still carries onwards);
-// any other refusal does. The head is authorized when its own hop committed.
+// already carried answers replayed). An unauthorized source does not stop
+// later hops: a middle head the holder authorized directly can still carry
+// onwards. Any other refusal stops the chain.
 export const MAIN_MERGE_CHAIN_DEPTH = 8;
 
 async function carryMainMerge(fetchImpl, env, workspace, pr, binding, tip, outcome) {
@@ -2054,7 +2054,8 @@ async function carryMainMerge(fetchImpl, env, workspace, pr, binding, tip, outco
   for (const hop of chain) {
     let reply;
     try {
-      reply = await cluedRpc(fetchImpl, env, workspace, VERIFY_RPC, { action: "carry_main_merge", scope: binding.scope,
+      reply = await cluedRpc(fetchImpl, env, workspace, VERIFY_RPC, { action: "carry_main_merge",
+        ...(binding.scope == null ? {} : { scope: binding.scope }),
         pr_ref: `${env.GITHUB_REPOSITORY}#${pr.number}`, from_head_sha: hop.from, head_sha: hop.head, main_sha: hop.main,
         target_branch: pr.base.ref });
     } catch (error) {
@@ -2065,7 +2066,7 @@ async function carryMainMerge(fetchImpl, env, workspace, pr, binding, tip, outco
       const code = reply.body?.error_code ?? reply.detail ?? reply.status;
       notCarried(code);
       carried = null;
-      if (code === "source_head_not_authorized") continue;
+      if (code === "source_head_not_authorized" || code === "head_authorization_required") continue;
       return null;
     }
     outcome.notices.push(`main_merge_carried: ${hop.from.slice(0, 12)} + main ${hop.main.slice(0, 12)}${reply.body.replayed === true ? " (already carried)" : ""}`);
@@ -2223,7 +2224,10 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
       { workspace, scope: bindingScope, readOnly: gateFindingsOfPr.length > 0 });
     // DESIGN §80: a head that only merged main into the authorized head keeps
     // that authorization (never in frozen, never for a read-only verification).
-    if (outcome.claim_binding.binding_status === 'head_not_authorized' && !gateFindingsOfPr.length && mode.state !== 'frozen'
+    const { binding_status, reason } = outcome.claim_binding;
+    const needsCarry = binding_status === 'head_not_authorized'
+      || (binding_status === 'unbound' && reason === 'head_authorization_required');
+    if (needsCarry && !gateFindingsOfPr.length && mode.state !== 'frozen'
       && await carryMainMerge(fetchImpl, env, workspace, pr, outcome.claim_binding, tipCompare.tip, outcome))
       outcome.claim_binding = await resolvePullRequestBinding(fetchImpl, env, pr, { workspace, scope: bindingScope, readOnly: false });
     if (outcome.claim_binding.binding_status === 'bound') reference = claimReferenceFromBinding(outcome.claim_binding);

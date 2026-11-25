@@ -1,0 +1,19 @@
+{
+  "schema": "clued.agent-contract-main-merge-discovery-successor/1",
+  "source_version": 64,
+  "target_version": 65,
+  "source_document_normalized_sha256": "fddd709acf2b625faeb2560c662ec99ff5384016d7ce6d8b22e8454c9e832a54",
+  "target_document_normalized_sha256": "902e86204151a1cdc2d94723871ade9a40117aa0970c9e88883e1cc131f1b3a4",
+  "edits": [
+    {
+      "id": "version",
+      "before": "Contract version: 64",
+      "after": "Contract version: 65"
+    },
+    {
+      "id": "source-head-discovery",
+      "before": "A known PR number can be associated atomically with that authorization; otherwise qualified CI discovers it from one valid authorization of a current claim.",
+      "after": "A known PR number can be associated atomically with that authorization; otherwise qualified CI discovers the single current Task with a valid holder authorization for the PR head itself or for a source head on a CI-verified chain of main merges into it."
+    }
+  ]
+}

@@ -29,7 +29,8 @@ const AUTH = '00000000-0000-4000-8000-000000000453', CARRIED = '00000000-0000-40
 const FRESH = Array.from({ length: 12 }, (_, i) => (i + 1).toString(16).padStart(2, '0').repeat(20));
 const MAINS = Array.from({ length: 12 }, (_, i) => `c${(i + 1).toString(16)}`.repeat(20));
 // One GitHub repository and one Native, as their HTTP answers. world.pr is the PR; world.commits the commits GitHub knows.
-function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file = 'docs/front.md', mainTouches = ['docs/other.md'] } = {}) {
+function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file = 'docs/front.md',
+  mainTouches = ['docs/other.md'], boundPR = true } = {}) {
   const w = {
     pr: { number: PR, state: 'open', draft: false, body: 'Body', changed_files: 1, head: { sha: H, ref: 'claude/x', repo: { full_name: 'o/r' } },
       base: { sha: BASE, ref: 'main', repo: { full_name: 'o/r', default_branch: 'main' } } },
@@ -55,6 +56,10 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
     if (u === RPC_URL) {
       const input = body.p_input;
       if (input.action === 'resolve_pr_claim') {
+        if (!boundPR) return reply({ status: 'ok', binding_status: 'unbound', reason: 'head_authorization_required',
+          repository: 'o/r', pr_number: PR, pr_ref: `o/r#${PR}`, head_sha: input.head_sha, base_sha: input.base_sha,
+          target_branch: input.target_branch, scope: input.scope ?? null, task_id: null, claim: null,
+          head_authorization_id: null, auto_bound: false, receipt_id: null });
         const bound = w.authorized.has(input.head_sha);
         return reply({ status: 'ok', binding_status: bound ? 'bound' : 'head_not_authorized', reason: bound ? null : 'head_authorization_required',
           repository: 'o/r', pr_number: PR, pr_ref: `o/r#${PR}`, head_sha: input.head_sha, base_sha: input.base_sha, target_branch: input.target_branch,
@@ -68,6 +73,7 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
         // Migration 20261116090000: a head the claim already authorized is answered committed, replayed, and nothing is written.
         if (w.authorized.has(input.head_sha)) return reply({ status: 'committed', replayed: true, authorization_id: CARRIED, carried_from: AUTH, head_sha: input.head_sha });
         w.authorized.add(input.head_sha);
+        boundPR = true;
         return reply({ status: 'committed', replayed: false, authorization_id: CARRIED, carried_from: AUTH, head_sha: input.head_sha });
       }
       if (input.action === 'execution_current') return reply({ status: 'ok', guard_required: false, epoch_current: null });
@@ -159,6 +165,22 @@ test('a train front behind main is merged with main by the App and its merge com
   assert.deepEqual(w.carries.map(c => [c.from_head_sha, c.head_sha, c.main_sha, c.pr_ref, c.scope, c.target_branch]),
     [[H, X, T, `o/r#${PR}`, 'global', 'main']]);
   assert.equal(after.claim_binding.head_authorization_id, CARRIED);
+});
+
+test('an unbound PR carries an attested main merge and resolves again with its discovered Task', async () => {
+  const w = world({ boundPR: false });
+  assert.equal((await merge(w)).result, 'merged');
+  const out = await admit(w, X);
+  const actions = w.calls.filter(c => c.url === RPC_URL).map(c => c.body.p_input);
+  assert.deepEqual(actions.slice(0, 3).map(a => [a.action, a.head_sha, a.scope]), [
+    ['resolve_pr_claim', X, undefined], ['carry_main_merge', X, undefined], ['resolve_pr_claim', X, undefined],
+  ]);
+  assert.deepEqual(w.carries.map(c => [c.from_head_sha, c.head_sha, c.main_sha, c.pr_ref, c.target_branch]),
+    [[H, X, T, `o/r#${PR}`, 'main']]);
+  assert.equal(out.verdict, 'ADMITTED', JSON.stringify({ reasons: out.reasons, notices: out.notices }));
+  assert.equal(out.claim_binding.binding_status, 'bound');
+  assert.equal(out.claim_binding.task_id, TASK);
+  assert.equal(out.claim_binding.head_authorization_id, CARRIED);
 });
 
 test('the admission keeps the authorization only for an attested GitHub merge of main into the authorized head', async () => {
