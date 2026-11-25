@@ -130,7 +130,7 @@ test('a merge of main into an authorized head keeps the authorization, only by t
         assert.notEqual((await resolve(12, X)).binding_status, 'bound', who);
       }
       assert.equal((await carry('ci', 12, sha('6'), X)).error_code, 'source_head_not_authorized', 'an unauthorized source');
-      assert.equal((await carry('ci', 13, H, X)).error_code, 'pr_task_binding_unbound', 'another PR');
+      assert.equal((await carry('ci', 13, H, X)).error_code, 'head_authorization_required', 'an authorization limited to another PR');
       for (const bad of [{ head_sha: H }, { main_sha: X }, { extra: 1 }, { scope: 'nope' }]) {
         assert.equal((await carry('ci', 12, H, X, bad)).status, 'error', JSON.stringify(bad));
       }
@@ -149,6 +149,52 @@ test('a merge of main into an authorized head keeps the authorization, only by t
     const writes = async () => (await admin.query(`select (select count(*)::int from public.clued_audit_receipts where user_id=$1) receipts,
       (select count(*)::int from clued_private.work_claim_head_authorizations_v1 where user_id=$1) authorizations,
       (select count(*)::int from clued_private.work_claim_door_usage_v1 where user_id=$1) usage`, [user])).rows[0];
+
+    await t.test('an unbound PR is bound and its main merge authorized from the one holder-authorized source Task', async sub => {
+      const H = sha('a'), r = await claim(await task());
+      sub.after(async () => committed(await release(r)));
+      const source = committed(await authorize(r, H));
+      for (const [number, M, scope] of [[31, sha('c'), 'global'], [34, sha('b'), undefined]]) {
+        assert.equal(await bindingStatus(number), undefined);
+        const before = await writes();
+        const result = committed(await carry('ci', number, H, M, { scope }));
+        assert.equal(result.carried_from, source.authorization_id);
+        assert.equal(await bindingStatus(number), 'active', 'carry binds before the next resolve');
+        const bound = await resolve(number, M);
+        assert.equal(bound.binding_status, 'bound', JSON.stringify(bound));
+        assert.equal(bound.task_id, r.claim.task_id);
+        assert.equal(bound.head_authorization_id, result.authorization_id);
+        assert.deepEqual(await writes(), { receipts: before.receipts + 2, authorizations: before.authorizations + 1, usage: before.usage });
+        assert.equal((await verify(r, number, M)).verdict, 'ADMITTED');
+      }
+      const direct = await resolve(35, H);
+      assert.deepEqual([direct.binding_status, direct.task_id, direct.head_authorization_id, direct.auto_bound],
+        ['bound', r.claim.task_id, source.authorization_id, true], 'ordinary discovery uses the same source rule');
+    });
+
+    await t.test('an unbound PR with two holder-authorized source Tasks stays unbound', async () => {
+      const H = sha('a'), M = sha('c'), first = await claim(await task()), second = await claim(await task());
+      committed(await authorize(first, H));
+      committed(await authorize(second, H));
+      const before = await writes();
+      const result = await carry('ci', 32, H, M);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'pr_task_binding_ambiguous']);
+      assert.equal(await bindingStatus(32), undefined);
+      assert.deepEqual(await writes(), before);
+      committed(await release(first));
+      committed(await release(second));
+    });
+
+    await t.test('an unbound PR without a holder-authorized source stays unbound', async () => {
+      const r = await claim(await task());
+      const before = await writes();
+      const result = await carry('ci', 33, sha('8'), sha('c'));
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'head_authorization_required']);
+      assert.equal(await bindingStatus(33), undefined);
+      assert.deepEqual(await writes(), before);
+      committed(await release(r));
+    });
+
     // Authorized by the holder with pr_number only: no CI resolve, no admission.
     const unadmitted = async (n, H) => {
       const r = await claim(await task());

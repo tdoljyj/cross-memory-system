@@ -1,0 +1,19 @@
+{
+  "schema": "clued.agent-contract-session-cap-open-binding-successor/1",
+  "source_version": 63,
+  "target_version": 64,
+  "source_document_normalized_sha256": "e5244e4bc4b7439ba0444b0a13bd5b2ba6d93ea8af59914b8e1d64041253c2f7",
+  "target_document_normalized_sha256": "fddd709acf2b625faeb2560c662ec99ff5384016d7ce6d8b22e8454c9e832a54",
+  "edits": [
+    {
+      "id": "version",
+      "before": "Contract version: 63",
+      "after": "Contract version: 64"
+    },
+    {
+      "id": "session-cap-open-binding",
+      "before": "claims in hand per session (a claim whose Task has a PR the CI has confirmed open does not count)",
+      "after": "claims in hand per session (a claim whose Task has an open pull request, confirmed by the CI or named by your own `authorize_head` with its PR number, does not count)"
+    }
+  ]
+}

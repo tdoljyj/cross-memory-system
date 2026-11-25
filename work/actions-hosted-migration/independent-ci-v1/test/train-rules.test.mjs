@@ -4,6 +4,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import * as TrainRules from '../src/independent-control-checks-v2/train-rules.mjs';
 import { rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested, requiredCheckFailure, REQUIRED_CHECK_NAMES, appScansNotDone, appScansPinned } from '../src/independent-control-checks-v2/train-rules.mjs';
 import { batchJobsV2, frontJobIdsV2, scanExternalIdV2 } from '../src/job-v2.mjs';
 import { GreenLedger, validateGreenEntry, GREEN_LEDGER_CONTRACT } from '../src/independent-control-checks-v2/green-ledger.mjs';
@@ -237,4 +239,43 @@ test('appScansPinned: the scaffold pins no scan to this App; #292 pins all three
     mainRules({ extra: [{ context: 'gitleaks' }] }), [...scaffoldRules(), required({ pinned: -1, names: ['trivy'] })],
     Array.from({ length: 100 }, () => ({ type: 'deletion' }))])
     assert.equal(appScansPinned(bad, APP), null, JSON.stringify(bad)?.slice(0, 200));
+});
+
+// Task bd07449b (PLAN-ruleset-unreadable-park-20261125 §3.1): one entry reads main's rules, and it tells a read that failed
+// (RULESET_READ_FAILED: no whole, well-formed reply) from rules read whole that this App does not understand (RULESET_UNREADABLE).
+// The fixture is GitHub's own reply for main on 2026-11-25 (ruleset 27843120, the hosted scaffold), as `gh api` printed it.
+const LIVE_SCAFFOLD = JSON.parse(readFileSync(new URL('./fixtures/main-rules-scaffold-20261125.json', import.meta.url), 'utf8'));
+const ported = raw => raw.map(r => ({ type: r.type, rulesetId: r.ruleset_id ?? null, parameters: r.parameters ? structuredClone(r.parameters) : null }));
+const rulesPort = answer => ({ async readBranchRules(branch) { assert.equal(branch, 'main'); return answer(); } });
+
+test('bd07449b must-red 1 (Source half): the scaffold rules as read on 11-25 are read whole and not understood: RULESET_UNREADABLE, never a failed read', async () => {
+  assert.equal(typeof TrainRules.readMainRules, 'function', 'the one entry that reads main\'s rules');
+  assert.deepEqual([...new Set(LIVE_SCAFFOLD.map(r => r.ruleset_id))], [27843120]);
+  const read = await TrainRules.readMainRules(rulesPort(() => ({ complete: true, branch: 'main', rules: ported(LIVE_SCAFFOLD) })), APP);
+  assert.deepEqual(read.rules, ported(LIVE_SCAFFOLD));
+  assert.throws(() => read.facts(), e => e.code === 'RULESET_UNREADABLE');
+  // read whole and understood: the facts, the same as rulesetFacts gives
+  const pinned = await TrainRules.readMainRules(rulesPort(() => ({ complete: true, branch: 'main', rules: mainRules() })), APP);
+  assert.deepEqual(pinned.facts(), rulesetFacts(mainRules(), APP));
+});
+
+test('bd07449b must-red 4 (Source half): a read that throws, or a reply not given whole, is RULESET_READ_FAILED, never RULESET_UNREADABLE', async () => {
+  assert.equal(TrainRules.RULESET_READ_FAILED, 'RULESET_READ_FAILED');
+  const thrown = code => () => { throw Object.assign(new Error(code), { code }); };
+  for (const [name, answer] of [['http 503', thrown('github_http_503')], ['rate limit', thrown('github_http_403')], ['timeout', thrown('github_timeout')],
+    ['a reply of the wrong shape', thrown('invalid_rules_reply')], ['not complete', () => ({ complete: false, branch: 'main', rules: [] })],
+    ['no reply', () => null], ['complete without a list', () => ({ complete: true, branch: 'main' })]])
+    await assert.rejects(TrainRules.readMainRules(rulesPort(answer), APP), e => e.code === 'RULESET_READ_FAILED', name);
+});
+
+test('bd07449b must-red 5: readBranchRules( is called from the one entry only (the GitHub port defines it)', () => {
+  const roots = [new URL('../src/', import.meta.url), new URL('../../../independent-ci-resident-v1/src/', import.meta.url)];
+  const found = [];
+  for (const root of roots) for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() || !/\.(mjs|js|cjs)$/.test(entry.name)) continue;
+    const file = path.join(entry.parentPath ?? entry.path, entry.name);
+    const hits = readFileSync(file, 'utf8').split('readBranchRules(').length - 1;
+    if (hits) found.push(`${path.basename(path.dirname(file))}/${entry.name}:${hits}`);
+  }
+  assert.deepEqual(found.sort(), ['independent-control-checks-v2/train-rules.mjs:1', 'src/github.mjs:1']);
 });
