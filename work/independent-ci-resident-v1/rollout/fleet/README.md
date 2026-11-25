@@ -152,7 +152,7 @@ node R/rollout/fleet/publish.mjs prepare --version <version> --dir <构建输出
 
 ### 4.2 候选演练（接受之前）
 
-Owner 接受的，应当是已经在干净机器上装通过的东西：候选演练（`drill/`，见 `drill/FIRST-INSTALL-KIT.md`）用接受请求和该版的 kit、镜像组装自己的来宾目录。演练给来宾用的接受文件由接受请求加**演练保留值**生成（`publish.mjs` 的 `DRILL_RESERVED` 与 `acceptanceOf`，仓库里只此一处）。`seal` 与挂接受文件的步骤见到保留值即拒绝（`namesDrillReserved`），所以这份文件上不了 Release，真实节点拿不到。演练结束立刻 `-Finalize`（只回读 A9），回执定稿。`seal --drill-receipt` 只收 `candidate` 为 `true`、结论是 `PASS_A_FULL`、`PASS_A_PER_NODE_STEPS_REMAIN` 或 `PASS_A_REINSTALL_NOT_DRILLED`（候选显式带 `-SkipReinstall` 跳过 A8 时只能是它，同包重装未演练；`DRILL_PASS_CONCLUSIONS`）的回执，`PASS_A_PENDING_PRODUCTION_READBACK` 等一律拒绝。顺序是**演练 → `-Finalize` → 把请求与终稿回执摆给 Owner → 接受 → seal**，接受之后不开机、不再回读。演练失败不找 Owner：修、出新候选、重跑。首装演练不是原地升级的门，只走升级路径的紧急包可以不带演练回执。
+Owner 接受的，应当是已经在干净机器上装通过的东西：候选演练（`drill/`，见 `drill/FIRST-INSTALL-KIT.md`）用接受请求和该版的 kit、镜像组装自己的来宾目录。演练给来宾用的接受文件由接受请求加**演练保留值**生成（`publish.mjs` 的 `DRILL_RESERVED` 与 `acceptanceOf`，仓库里只此一处）。`seal` 与挂接受文件的步骤见到保留值即拒绝（`namesDrillReserved`），所以这份文件上不了 Release，真实节点拿不到。演练结束立刻 `-Finalize`（只回读 A9），回执定稿。`seal --drill-receipt` 只收 `candidate` 为 `true`、结论是 `PASS_A_FULL` 或 `PASS_A_PER_NODE_STEPS_REMAIN`（`DRILL_PASS_CONCLUSIONS`）的回执（A8 只验同一个包对已装节点两条入口都不动它：升级答“已到位”、prepare 以 `NEW_SOURCE_IS_THE_INSTALLED_ONE` 拒绝；旧包到新包的重装不在首装演练内，A8 的 detail 如实写着），`PASS_A_PENDING_PRODUCTION_READBACK` 等一律拒绝。顺序是**演练 → `-Finalize` → 把请求与终稿回执摆给 Owner → 接受 → seal**，接受之后不开机、不再回读。演练失败不找 Owner：修、出新候选、重跑。首装演练不是原地升级的门，只走升级路径的紧急包可以不带演练回执。
 
 ### 4.3 接受后：seal（填 Decision、挂上 Release、写索引）
 
@@ -239,7 +239,7 @@ bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象�
 - 启动器：首装预检（无残留、令牌目录只有 SYSTEM/Administrators）→ 从 `first-install\credentials\` 带令牌并核指纹 → Windows 侧完整预检（runner 等待、两处秘密文件、安装器的两次 dry run 与 ACL 迁移计划；不过即停，Linux 未动）→ Linux A/B（由提权 Owner `wsl -u root`，发行版此时在 operator 名下的导入位置）→ 安装 → verify → companion → rearm → 现有的 M5-b 切换（`rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory`，把发行版 move 到 companion 名下）。没有 W1、没有卸载。首装的结论按这个顺序判（`Get-LauncherVerdict`）：先看角色，first-train 等待没有确认角色（终态 `role` 不是 `held` 或 `not-held`）时 bootstrap 答 `BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED`，码 `FIRST_INSTALL_ROLE_UNAUTHORIZED`（服务端拒了本节点的 CI 令牌）或 `FIRST_INSTALL_ROLE_UNCONFIRMED`（其余），换账户没过也是这个结论；角色确认之后再看切换，没有通过（`companionHeadless` 不是 `COMPANION_HEADLESS_QUALIFIED`）时答 `BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE`。两种都不答 `BOOTSTRAP_DONE`；切换的状态在每种结论的 `companionSwitch` 里都保留。
 - 令牌目录（`first-install\credentials\`）不留过本次运行：主机准备开始前先删掉以前运行留下的；主机准备只在 bootstrap 仍在等它时（进程号与启动时间）为启动器保留，bootstrap 已放弃等待或窗口已关就删；启动器在任何结局都删除（停止、异常、完成）；`prepare` 失败或启动器 UAC 被拒时 bootstrap 再请求一次 UAC 清掉。
 - 主机准备先写 `facts.json`（整份或没有），再放 App 私钥与 ci-admission 令牌：中途断掉只会留下有 facts、缺秘密的状态，下次运行按 facts 记录的指纹只问缺的那些（facts 记录了心跳令牌就必须再给），`-Reset` 能清掉；不会留下没有 facts、无法归属的秘密。
-- 中途停止：Linux A 之前停下，什么都没动，重跑同一条命令（P1 会再问令牌）。A 完成之后停下（B 中断、失败或 Windows 侧未完成），重跑同一条命令：Linux A 找到本提交的暂存（同一个包、自 A 起未变、新输入目录与暂存逐字节一致）即不再暂存，B 从停下处接着做；不一致按名拒绝。已安装（有回执）之后停下的，按重装处理。
+- 中途停止：Linux A 之前停下，什么都没动，重跑同一条命令（P1 会再问令牌）。A 完成之后停下（B 中断、失败或 Windows 侧未完成），重跑同一条命令：Linux A 找到本提交的暂存（同一个包、自 A 起未变、新输入目录与暂存逐字节一致）即不再暂存，B 从停下处接着做；不一致按名拒绝。已安装（有回执）之后停下的，按重装处理，要用更新的包：同一个包会被 `NEW_SOURCE_IS_THE_INSTALLED_ONE` 拒绝。
 
 ## 6. 顺序与列车窗口（先待命，后当班）
 

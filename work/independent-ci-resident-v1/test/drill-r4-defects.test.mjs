@@ -97,7 +97,8 @@ test('E3: an M5 observation the guest does not have is missing, never an empty f
     $m5 = Copy-DrillM5 ${q(runDir)} $null
     $v = Get-DrillM5Verdict ${q(runDir)} $m5
     [ordered]@{ missing = @($m5.missing); files = @(Get-ChildItem -LiteralPath (Join-Path ${q(runDir)} 'm5') -File | ForEach-Object { $_.Name }); detail = $v.detail }`);
-  assert.deepEqual(r.files, ['record.json'], 'only the observation the guest made');
+  // the host's own network.json (FABLE-drill-r13-a8-m5 2.3) beside the only observation the guest made
+  assert.deepEqual(r.files, ['network.json', 'record.json'], 'only the observation the guest made, and the host\'s network.json');
   assert.deepEqual(r.missing, ['profile.json', 'system.json', 'resident.json', 'controller.json', 'companion.json', 'probe.json']);
   assert.equal(r.detail, 'DRILL_M5_OBSERVATIONS_MISSING');
 });
@@ -120,7 +121,7 @@ function runToA7(name, read, entry = { line: entryLine, exit: 1 }) {
   for (const [n, text] of Object.entries(files)) fs.writeFileSync(path.join(guest, n), text);
   return ps(`
     $script:sent = [Collections.Generic.List[string]]::new()
-    $script:Interactive = $false; $SkipReinstall = $true
+    $script:Interactive = $false
     function New-PSSession { param($VMName, $Credential) 'session' }
     function Remove-PSSession { param($Session) }
     function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
@@ -136,13 +137,16 @@ function runToA7(name, read, entry = { line: entryLine, exit: 1 }) {
       if ($Step -ceq 'first-install') { return [ordered]@{ lines = @(${q(entry.line)}); exit = ${entry.exit}; stderr = '' } }
       if ($Step -ceq 'stage-files' -or $Step -ceq 'guest-evidence') { return (& $Script ${q(guest)} $ArgumentList[1]) }
       if ($Step -ceq 'read-after-install') { return $read }
+      # A8 after an entry that ended done (no skip any more: FABLE-drill-r13-a8-m5 1.3): the two refusals
+      if ($Step -ceq 'reinstall-upgrade') { return [ordered]@{ exit = 0; stdout = '{"status":"FLEET_NODE_ALREADY_AT_THIS_PACKAGE"}'; stderr = '' } }
+      if ($Step -ceq 'reinstall') { return [ordered]@{ upgradeStatus = 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE'; prepareStatus = 'FLEET_NODE_INSTALL_REFUSED'; prepareCode = 'NEW_SOURCE_IS_THE_INSTALLED_ONE'; upgradeExit = 0; prepareExit = 1 } }
       throw "unexpected step $Step"
     }
     $package = @{ version = '1.2.3'; files = @(); tar = 'C:/x/p.tar'; tarSha256 = 'ab'; acceptance = 'C:/x/a.json'; ciSourceManifestSha256 = ('5' * 64) }
     $testKit = [pscustomobject]@{ dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 5; perNodeSteps = @(); prerequisiteMode = 'first-install-host'
       credentials = [pscustomobject]@{ required = [pscustomobject]@{ appKey = 'app-private-key.pem' }; optional = [pscustomobject]@{} } }
     $code = try { $run = Invoke-DrillRun ${q(runDir)} $package $testKit $null $null; 'done' } catch { $c = Get-DrillCode $_; "$($c.code) $($c.detail)" }
-    $a7 = if ($run) { $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); skipReinstall = $true; kit = $testKit; candidate = $true; firstInstallSteps = (Read-DrillFirstInstallSteps ${q(runDir)}) }; @($items | Where-Object { $_.id -eq 'A7' })[0] } else { $null }
+    $a7 = if ($run) { $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); kit = $testKit; candidate = $true; firstInstallSteps = (Read-DrillFirstInstallSteps ${q(runDir)}) }; @($items | Where-Object { $_.id -eq 'A7' })[0] } else { $null }
     $file = Join-Path ${q(runDir)} 'read-after-reboot.json'
     @{ code = $code; sent = @($script:sent); a7 = $a7; rebootFile = $(if (Test-Path -LiteralPath $file) { Read-DrillJson $file } else { $null }) }`);
 }
@@ -261,7 +265,9 @@ test('E5(b): a FAIL summary line names its failed items and the first one\'s rea
     [ordered]@{ run = (Get-DrillRunSummary $receipt); pass = (Get-DrillRunSummary $pass); m5Only = (Get-DrillRunSummary $m5Only); noRestore = (Get-DrillRunSummary $noRestore); noA1Steps = (Get-DrillRunSummary $noA1Steps)
       conclusionAgrees = ((Get-DrillConclusion $receipt.items $receipt.m5 $true) -ceq 'FAIL') }`);
   assert.equal(r.run.reason, 'A1:launcher:SECRET_CHECK_FAILED:VERIFY_SCRIPT_PARSE_ERRORS');
-  assert.deepEqual(r.run.failedItems, ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'M5']);
+  // that run skipped A8 (pass null, "skipped (-SkipReinstall)"); A8 has no skip any more (FABLE-drill-r13-a8-m5 1.3), so for this
+  // candidate's receipt a not-true A8 is a failed item like the others
+  assert.deepEqual(r.run.failedItems, ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'M5']);
   assert.equal(r.conclusionAgrees, true);
   assert.deepEqual(r.pass, { failedItems: [], reason: null });
   assert.deepEqual(r.m5Only, { failedItems: ['M5'], reason: 'M5:DRILL_M5_OBSERVATIONS_MISSING' });

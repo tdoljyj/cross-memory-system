@@ -214,6 +214,22 @@ test('no regression: no answer runs as before; an older reply without draft neve
   assert.equal((await g.exec.tick()).state, 'COMPLETED');
 });
 
+// PLAN-executor-standing-read-20261125 item 4: the service port keeps the code of a read without a pull (the executor's livePull still
+// treats it as no answer; standingRead puts the code in its receipt).
+test('port: pr-head without a pull rejects with the code (PR_HEAD_UNAVAILABLE, PR_HEAD_NO_ANSWER); with a pull it returns it as before', async () => {
+  const start = Date.parse('2026-11-25T05:00:00Z');
+  const request = { contract: REQUEST_CONTRACT, requestId: 'abc0f111-867b-44ad-aa49-37c91a90fb04', kind: 'pr-head', batchId: '0000000000000000-000000000000', pr: A,
+    createdAt: new Date(start).toISOString(), deadline: new Date(start + 120000).toISOString() };
+  const response = (ok, code, p) => validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok, code, proof: null, directory: null,
+    verified: null, usage: null, pull: p, jobTree: null, memory: null, prune: null, observedAt: new Date(start).toISOString() }, request);
+  const port = answer => mailboxCompanion({ send: async () => request, await: async () => answer }, async () => {});
+  await assert.rejects(port(response(false, 'PR_HEAD_UNAVAILABLE', null)).prHead(A), { code: 'PR_HEAD_UNAVAILABLE' });
+  await assert.rejects(port(null).prHead(A), { code: 'PR_HEAD_NO_ANSWER' });
+  await assert.rejects(port(response(true, null, null)).prHead(A), { code: 'PR_HEAD_UNAVAILABLE' }, 'ok without a pull is no answer either');
+  await assert.rejects(port({ ok: false, code: 'not a code', pull: null }).prHead(A), { code: 'PR_HEAD_UNAVAILABLE' });
+  assert.deepEqual(await port(response(true, null, { number: A, state: 'open', headSha: HEAD, draft: false })).prHead(A), { number: A, state: 'open', headSha: HEAD, draft: false });
+});
+
 // §3 item 7.
 test('structure: executor.mjs compares a live read\'s state or head only through pr-candidate.mjs', async () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
