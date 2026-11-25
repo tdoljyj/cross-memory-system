@@ -51,7 +51,7 @@ test('L4: continue.py says how a stopped first install continues (the same boots
 test('the acceptance has two commands in the README, prepare before the Owner and seal after; no draft entry, no hand-attached kit or acceptance', () => {
   // Fable 3bc571a6 ruling section 3 (Task 758989fa): the two halves, each one command; the steps under them have no command of their own
   assert.match(readme, /^node [^\n]*publish\.mjs prepare --version <version> --dir /m);
-  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--decision-record /m);
+  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--wait </m);
   assert.ok(!/acceptance-draft/.test(readme), 'the old entry is gone from the README');
   assert.ok(!/attach-acceptance|attach-first-install-kit/.test(readme), 'no manual attach step is named in the README');
   assert.ok(!/install\.mjs first-install-kit/.test(readme), 'the manual take-the-kit step is gone from the README');
@@ -63,11 +63,18 @@ test('the acceptance has two commands in the README, prepare before the Owner an
   assert.match(readme, /候选 commit 必须已在远端/);
 });
 
-test('the acceptance in the README: seal takes the Decision record, not three hand-copied values; the delivery directory is the Release\'s assets, not prepare\'s --out', () => {
+test('the acceptance in the README: seal asks the acceptance door (one fleet.accept Grant), no Decision record and no three hand-copied values; the delivery directory is the Release\'s assets, not prepare\'s --out', () => {
   // FABLE-renew-key-algorithm-ruling-20261119.md section 4 and its supplement; review suggestions 3 and 4
-  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--decision-record /m);
-  assert.ok(!/^node [^\n]*publish\.mjs seal [^\n]*--(decision|receipt|accepted-at) /m.test(readme), 'no Decision, receipt or time on seal\'s command line');
-  assert.match(readme, /clued_record_mutate/);
+  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--wait </m);
+  // PLAN-accept-auto-seal-20261125 2.2: the acceptance is the Owner's fleet.accept Grant; the Decision record has no way in
+  assert.ok(!/^node [^\n]*publish\.mjs seal [^\n]*--(decision|decision-record|receipt|accepted-at|grant) /m.test(readme), 'no Decision record, Grant, receipt or time on seal\'s command line');
+  assert.match(readme, /`fleet\.accept`/);
+  assert.match(readme, /FLEET_ACCEPTANCE_WAITING_OWNER/);
+  // PLAN-accept-binding-20261125: seal opens the request through the release workflow's fleet-accept mode and reads the answer anonymously;
+  // no token of a publisher Binding, no op id
+  assert.match(readme, /mode=fleet-accept/);
+  assert.match(readme, /clued_fleet_accept_status_v1/);
+  assert.ok(!/op_id|CLUED_SUPABASE_URL/.test(readme), 'no op id, no Supabase address in the environment');
   assert.match(readme, /PASS_A_FULL/);
   assert.match(readme, /PASS_A_PER_NODE_STEPS_REMAIN/);
   assert.ok(!/可直接交给 `install\.mjs first-install-check --from` 和 `bootstrap\.ps1 -From`/.test(readme), 'prepare\'s --out is not the delivery directory');
@@ -99,5 +106,8 @@ test('the README\'s delivery directory: its one command takes every asset bootst
   const patterns = [...commands[0].matchAll(/--pattern "([^"]+)"/g)].map(m => m[1].replaceAll('<version>', v));
   const glob = p => new RegExp(`^${p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*').replaceAll('?', '.')}$`);
   for (const n of [...required, `role-image-${'c'.repeat(64)}.tar.gz`]) assert.ok(patterns.some(p => glob(p).test(n)), `${n} is fetched`);
+  // the acceptance request is a Release asset too (the release workflow's fleet-accept mode reads it there); bootstrap refuses a file neither
+  // sums file lists (ASSET_NOT_LISTED), so the delivery directory never fetches it
+  assert.ok(!patterns.some(p => glob(p).test(`${t}.acceptance-request.json`)), 'the acceptance request is not fetched into the delivery directory');
   assert.match(commands[0], /^gh release download fleet-node-<version> /);
 });

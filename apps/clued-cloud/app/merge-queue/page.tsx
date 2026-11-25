@@ -147,7 +147,7 @@ export default function MergeQueuePage() {
   return <main className="context-page owner-confirm">
     <header><Link href="/">BeamingFace</Link> <Link href="/work-claims">谁在做哪个任务</Link> <Link href="/agent-messages">Agent 消息</Link></header>
     <h1>合并排队</h1>
-    <p className="context-muted">同一个分支一次只合并一个拉取请求，其余的排队等候。这里决定排在第一位之后的拉取请求按什么顺序轮到：按排队先后，或按它所属任务的自动优先级（数字大的先，一样大的按排队先后，没有优先级的排在最后）。任务优先级变了，在排队下一次有变动时（有人加入、离开或续期）生效。</p>
+    <p className="context-muted">这里列出由常驻 CI 测试并放入合并队列的拉取请求。同一个分支一次只合并其中一个。这里决定排在第一位之后的拉取请求按什么顺序轮到：按排队先后，或按它所属任务的自动优先级（数字大的先，一样大的按排队先后，没有优先级的排在最后）。任务优先级变了，在排队下一次有变动时（有人加入、离开或续期）生效。</p>
     <p className="context-muted">已经排在第一位的那个不会被后来的插队，切换顺序也不会换掉它，它合并、关闭或超时离开后才轮到下一个。新账号默认按排队先后。只有你本人登录 BeamingFace 才能在这里切换，Agent 改不了。</p>
     {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 BeamingFace</Link> 后管理合并排队。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
@@ -162,7 +162,7 @@ export default function MergeQueuePage() {
       </section>
       {view && <section aria-label="排队情况">
         <h2>排队情况</h2>
-        {view.queues.length === 0 ? <p className="context-muted">现在没有排队的拉取请求。</p> : view.queues.map((queue) =>
+        {view.queues.length === 0 ? <p className="context-muted">现在没有经常驻 CI 入队的拉取请求。仓库的合入不经常驻 CI 时（例如由 GitHub 自动合入），这里会一直是空的，本页的顺序设置也不起作用。</p> : view.queues.map((queue) =>
           <div key={queue.ref}>
             <p><strong>{queueName(queue.ref)}</strong></p>
             <ol>

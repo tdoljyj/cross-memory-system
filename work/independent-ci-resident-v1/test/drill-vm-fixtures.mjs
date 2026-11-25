@@ -14,7 +14,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { acceptanceOf, prepare, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
+import { acceptanceOf, prepare, seal } from '../rollout/fleet/publish.mjs';
 import { FAKE_GH } from '../rollout/fleet/test/fleet-fixtures.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
 
@@ -355,11 +355,11 @@ export async function sealWorld(t) {
   await prepare({ version, dir: out, out: accept, images: [imageFile], index, ghCommand: gh, deps });
   const requestFile = path.join(accept, `${tag}.acceptance-request.json`);
   const request = JSON.parse(fs.readFileSync(requestFile, 'utf8'));
-  // the Decision record as DESK exports it (the shape of the real clued_record_mutate return PR-乙's tests pin), naming this request
-  const record = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../rollout/fleet/test/fixtures/clued-decision-mutate-3bc571a6.json', import.meta.url)), 'utf8'));
-  record.supplemental.record.content = `TEST TEXT: the Owner accepts.\n${requestLineOf(version, sha(fs.readFileSync(requestFile)))}\n`;
-  const decisionRecord = path.join(d, 'decision-record.json'); fs.writeFileSync(decisionRecord, JSON.stringify(record, null, 2));
-  const sealIt = drillReceipt => seal({ request: requestFile, decisionRecord, index, ghCommand: gh, deps, drillReceipt });
+  // the Owner's acceptance: a stand-in of the acceptance door's anonymous read (rollout/fleet/accept-door.mjs) answering the fleet.accept Grant
+  // of 3bc571a6's values for the resource read, naming its request
+  const readStatus = async resource => ({ status: 'accepted', request_sha256: resource.split('/').pop(), resources: [resource],
+    grant_id: 'c556370f-b0fc-404b-b164-0f06699e4c7a', receipt_id: '7ccaefca-5fda-4bc8-9747-2a8101b92342', accepted_at: '2026-11-19T12:22:39.628169+00:00' });
+  const sealIt = drillReceipt => seal({ request: requestFile, index, ghCommand: gh, deps: { ...deps, readStatus }, drillReceipt });
   return { d, version, request, index, sealIt };
 }
 
