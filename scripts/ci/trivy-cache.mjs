@@ -5,12 +5,17 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 const SOURCES = ['ghcr.io/aquasecurity/trivy-db:2', 'mirror.gcr.io/aquasec/trivy-db:2'];
-// The refresh age only controls when to try a download. Each generation's own metadata sets its validity interval.
+// Upstream publishes about every 6h, with NextUpdate = UpdatedAt + 24h.
+// From 6h until expiry, a failed refresh only warns. The generation's metadata sets the actual expiry.
 const REFRESH_AGE_MS = 6 * 60 * 60 * 1000;
 // Keep an expired generation around past the longest scan job that could still be using it.
 const EXPIRED_RETENTION_MS = 60 * 60 * 1000;
+const PREPARE_BUDGET_MS = 570_000;
+// Reserve a 60s checks download, two 10s read-backs and up to 5s for container cleanup.
+const CHECKS_RESERVE_MS = 85_000;
 const UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 const run = promisify(execFile);
+const secondsLeft = (deadline) => Math.floor((deadline - performance.now()) / 1000);
 
 function timestamp(value) {
   if (typeof value !== 'string' || !UTC_TIMESTAMP.test(value)) return NaN;
@@ -67,12 +72,14 @@ function publish(stage, destination) {
   }
 }
 
-async function docker(args, seconds) {
-  const { stdout } = await run('docker', args, { timeout: seconds * 1000, killSignal: 'SIGKILL' });
+async function docker(args, seconds, deadline) {
+  const timeout = Math.min(seconds * 1000, Math.floor(deadline - performance.now()));
+  if (timeout <= 0) throw new Error('Trivy cache preparation deadline exceeded');
+  const { stdout } = await run('docker', args, { timeout, killSignal: 'SIGKILL' });
   return stdout;
 }
 
-function containers(image) {
+function containers(image, deadline) {
   const uid = process.getuid();
   const gid = process.getgid();
   const confined = ['run', '--rm', '--pull=never', `--user=${uid}:${gid}`, '--read-only', '--cap-drop=ALL',
@@ -87,12 +94,12 @@ function containers(image) {
           '--env=NODE_OPTIONS=', '--env=NODE_PATH=', '--env=HOME=/scratch', '--env=TMPDIR=/scratch', '--env=GODEBUG=http2client=0',
           `--tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=${uid},gid=${gid}`,
           '--cidfile', cidfile, ...mount(stage, '/cache', 'bind-propagation=rprivate'), ...mounts,
-          '--workdir=/scratch', '--entrypoint', '/usr/local/bin/trivy', image, ...args], timeout);
+          '--workdir=/scratch', '--entrypoint', '/usr/local/bin/trivy', image, ...args], timeout, deadline);
       } catch (error) {
         // If the Docker client times out, clean up only the container it actually started.
         if (error.killed && existsSync(cidfile)) {
           const id = readFileSync(cidfile, 'utf8').trim();
-          if (/^[0-9a-f]{64}$/.test(id)) await docker(['rm', '--force', id], 5).catch(() => {});
+          if (/^[0-9a-f]{64}$/.test(id)) await docker(['rm', '--force', id], 5, deadline).catch(() => {});
         }
         throw error;
       } finally {
@@ -101,7 +108,7 @@ function containers(image) {
     },
     read(directory, entry, args) {
       return docker([...confined, '--network=none', ...mount(directory, '/cache', 'readonly'),
-        '--entrypoint', entry, image, ...args], 10);
+        '--entrypoint', entry, image, ...args], 10, deadline);
     },
   };
 }
@@ -111,28 +118,41 @@ function downloadDetail(error) {
   return error.stderr?.trim().split(/\r?\n/).at(-1) || (typeof error.code === 'number' ? `Docker exited ${error.code}` : error.message);
 }
 
-async function prepareDatabase(root, job, container) {
-  const initial = generations(root);
+function reclaimStages(root, now) {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.name.startsWith('.stage-') || !(entry.isDirectory() || (entry.isFile() && entry.name.endsWith('.cid')))) continue;
+    const target = path.join(root, entry.name);
+    const stat = lstatSync(target, { throwIfNoEntry: false });
+    if (stat && now - stat.mtimeMs > EXPIRED_RETENTION_MS) rmSync(target, { recursive: entry.isDirectory(), force: true });
+  }
+}
+
+async function prepareDatabase(root, job, container, deadline) {
   const now = Date.now();
+  reclaimStages(root, now);
+  const initial = generations(root);
   const available = initial.find((db) => db.complete && current(db, now));
   for (const db of initial) {
     if (now - db.next >= EXPIRED_RETENTION_MS) rmSync(db.directory, { recursive: true, force: true });
   }
   if (available && now - available.updated <= REFRESH_AGE_MS) return available;
 
-  // Optional refresh tries each source once. Four cold attempts must fit in the 10-minute step,
-  // leaving time for the image and the checks bundle. Visit the mirror before retrying GHCR.
+  // Optional refresh tries each source once. Cold downloads visit the mirror before retrying GHCR.
   const sources = available ? SOURCES : [...SOURCES, ...SOURCES];
-  const timeout = available ? { trivy: '3m', docker: 185 } : { trivy: '95s', docker: 100 };
   for (const source of sources) {
     const refreshedElsewhere = generations(root).find((db) => db.complete && current(db, Date.now()) &&
       (!available || db.updated > available.updated));
     if (refreshedElsewhere) return refreshedElsewhere;
+    const remaining = secondsLeft(deadline);
+    if (remaining < 60) break;
+    const seconds = Math.min(available ? 180 : 240, remaining);
+    const trivyTimeout = available && seconds === 180 ? '3m' : `${seconds}s`;
+    const dockerTimeout = Math.min(seconds + (available ? 5 : 0), remaining);
     const downloaded = await stageIn(root, job, async (stage) => {
-      console.log(`Trivy DB download: ${source} (${timeout.trivy})`);
+      console.log(`Trivy DB download: ${source} (${trivyTimeout})`);
       try {
-        await container.download(stage, [], ['fs', '--download-db-only', '--timeout', timeout.trivy,
-          '--cache-dir', '/cache', '--db-repository', source], timeout.docker);
+        await container.download(stage, [], ['fs', '--download-db-only', '--timeout', trivyTimeout,
+          '--cache-dir', '/cache', '--db-repository', source], dockerTimeout);
       } catch (error) {
         console.log(`Trivy DB download failed: ${source}: ${downloadDetail(error)}`);
         return false;
@@ -176,25 +196,46 @@ async function prepareChecks(root, job, container, digest) {
       throw new Error('checks bundle read-back found no Rego policy');
     }
   };
-  if (!existsSync(directory)) {
-    const installed = await stageIn(root, job, async (stage) => {
-      const empty = path.join(stage, 'empty');
-      mkdirSync(empty);
-      console.log(`Trivy checks bundle download: ${digest}`);
-      await container.download(stage, ['--mount', `type=bind,src=${empty},dst=/empty,readonly,bind-propagation=rprivate`],
-        ['fs', '--timeout', '55s', '--cache-dir', '/cache', '--checks-bundle-repository', `ghcr.io/aquasecurity/trivy-checks@${digest}`,
-          '--scanners', 'misconfig', '--severity', 'HIGH,CRITICAL', '--exit-code', '1', '/empty'], 60);
-      rmSync(empty, { recursive: true });
-      await validate(stage);
-      return publish(stage, directory);
-    });
-    if (installed) return policy;
+  const observed = lstatSync(directory, { throwIfNoEntry: false });
+  if (observed) {
+    try {
+      await validate(directory);
+      return policy;
+    } catch (error) {
+      console.log(`Trivy checks bundle read-back failed; reinstalling: ${downloadDetail(error)}`);
+      await stageIn(root, job, (stage) => {
+        const entry = lstatSync(directory, { throwIfNoEntry: false });
+        if (entry?.ino !== observed.ino || entry.dev !== observed.dev) return;
+        try {
+          renameSync(directory, path.join(stage, 'invalid-checks'));
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
+      });
+      if (existsSync(directory)) {
+        // Another job published a replacement while this job was validating.
+        await validate(directory);
+        return policy;
+      }
+    }
   }
-  await validate(directory);
+  const installed = await stageIn(root, job, async (stage) => {
+    const empty = path.join(stage, 'empty');
+    mkdirSync(empty);
+    console.log(`Trivy checks bundle download: ${digest}`);
+    await container.download(stage, ['--mount', `type=bind,src=${empty},dst=/empty,readonly,bind-propagation=rprivate`],
+      ['fs', '--timeout', '55s', '--cache-dir', '/cache', '--checks-bundle-repository', `ghcr.io/aquasecurity/trivy-checks@${digest}`,
+        '--scanners', 'misconfig', '--severity', 'HIGH,CRITICAL', '--exit-code', '1', '/empty'], 60);
+    rmSync(empty, { recursive: true });
+    await validate(stage);
+    return publish(stage, directory);
+  });
+  if (!installed) await validate(directory);
   return policy;
 }
 
 async function main() {
+  const deadline = performance.now() + PREPARE_BUDGET_MS;
   const { TRIVY_IMAGE: image, CHECKS_DIGEST: digest, GITHUB_ENV: output, GITHUB_RUN_ID: job = 'local' } = process.env;
   if (!output || !image || !/^sha256:[0-9a-f]{64}$/.test(digest ?? '')) throw new Error('TRIVY_IMAGE, CHECKS_DIGEST and GITHUB_ENV are required');
   const root = path.join(homedir(), '.cache', 'clued-trivy');
@@ -202,15 +243,16 @@ async function main() {
   mkdirSync(root, { recursive: true, mode: 0o700 });
   if (!lstatSync(root).isDirectory()) throw new Error('Trivy cache root must be a directory');
   try {
-    await docker(['image', 'inspect', image], 5);
+    await docker(['image', 'inspect', image], 5, deadline);
   } catch {
-    await docker(['pull', '--quiet', image], 60);
+    await docker(['pull', '--quiet', image], 240, deadline);
   }
-  const container = containers(image);
+  const container = containers(image, deadline);
   const label = job.replace(/[^A-Za-z0-9_-]/g, '_');
-  // Read the DB clock after the checks bundle is ready, including on a cold cache.
+  let db = await prepareDatabase(root, label, container, deadline - CHECKS_RESERVE_MS);
   const policy = await prepareChecks(root, label, container, digest);
-  const db = await prepareDatabase(root, label, container);
+  // A DB near NextUpdate can expire while checks are being prepared.
+  if (!current(db, Date.now())) db = await prepareDatabase(root, label, container, deadline);
   appendFileSync(output, `CLUED_TRIVY_DB=${path.join(db.directory, 'db')}\nCLUED_TRIVY_POLICY=${policy}\n`);
   console.log(`Trivy DB ready: ${path.basename(db.directory)} (NextUpdate ${new Date(db.next).toISOString()})`);
 }

@@ -6887,7 +6887,7 @@
         {
           "command_digests": {
             "Export the trusted base (temporary storage)": [
-              "7dbb7b2a4c638c2ac0daa35285730bc4ec9ccf17ed87958dfc0c044bdb5b3057"
+              "42d8687bb0083e50662d1adb82e6febba8e41e55b5a226ca92daa978067cb6fa"
             ],
             "Misconfiguration (HIGH/CRITICAL)": [
               "9f0705bc17731ba331ad9ece175e25c24517fb503e6cae85d4d71537eca10f4b"
@@ -6963,9 +6963,10 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "32ff0ee5598a187024a18f3d22c9f39a9810ec1d627b2edd2d540fa9b734357f",
+      "source_sha256": "e03a964a81ee95731f999dcc83285ef7b7cffb50e49c9c97349d502430130b8b",
       "source_yaml_lines": [
 "name: clued-required-tests",
+"run-name: ${{ github.event_name == 'workflow_dispatch' && (inputs.resident_node && inputs.resident_dispatch_id && format('clued-resident-dispatch/v1 {0} {1}', inputs.resident_node, inputs.resident_dispatch_id) || 'clued-required-tests') || '' }}",
 "",
 "# Required checks clued-cloud-tests, ci-suites and migration-verify (Task",
 "# 2a5fdb66; work/ci-required-tests-v1/DESIGN.md), on the self-hosted Linux",
@@ -7014,6 +7015,14 @@
 "      head:",
 "        description: 'PR 当前完整 head SHA'",
 "        required: true",
+"        type: string",
+"      resident_node:",
+"        description: '常驻自动补发节点（手工运行留空）'",
+"        required: false",
+"        type: string",
+"      resident_dispatch_id:",
+"        description: '常驻自动补发一次性编号（手工运行留空）'",
+"        required: false",
 "        type: string",
 "  push:",
 "    branches: [main, clued-train/staging]",
@@ -7691,8 +7700,8 @@
 "          # In that case the protected workflow pins the exact local blob and checks its bytes.",
 "          helper=trusted/scripts/ci/trivy-cache.mjs",
 "          if [ ! -f \"$helper\" ]; then",
-"            git -C candidate cat-file blob b099089d9b7ffff91a079b63fb675a2603e44562 > \"$helper\"",
-"            printf '%s  %s\\n' c0136acc6c8d7af48eb417222edb39444ed2313e7935951270375e828895a606 \"$helper\" | sha256sum --check --status",
+"            git -C candidate cat-file blob 3d1473a247f59b2c8d7af70c36210fcb23e3bd65 > \"$helper\"",
+"            printf '%s  %s\\n' 2d8f016bca5668c62f2024cebf820f155835c4c54ef8b757fd572eaf8726d938 \"$helper\" | sha256sum --check --status",
 "          fi",
 "      - name: Configure job temporary storage",
 "        uses: ./trusted/.github/actions/ci-temporary-storage",
@@ -7920,7 +7929,7 @@
 "        run: python3 -I -B scripts/ci/check_contract_placement.py --base \"$CI_BASE_SHA\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\"",
 ""
       ],
-      "workflow_blob": "69ad8c114598e42f4a6d85010707c978b1490b68"
+      "workflow_blob": "1ec8af06e9891f8436441a6661130cfb915cca38"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [

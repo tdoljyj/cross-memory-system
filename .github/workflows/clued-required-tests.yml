@@ -1,4 +1,5 @@
 name: clued-required-tests
+run-name: ${{ github.event_name == 'workflow_dispatch' && (inputs.resident_node && inputs.resident_dispatch_id && format('clued-resident-dispatch/v1 {0} {1}', inputs.resident_node, inputs.resident_dispatch_id) || 'clued-required-tests') || '' }}
 
 # Required checks clued-cloud-tests, ci-suites and migration-verify (Task
 # 2a5fdb66; work/ci-required-tests-v1/DESIGN.md), on the self-hosted Linux
@@ -47,6 +48,14 @@ on:
       head:
         description: 'PR 当前完整 head SHA'
         required: true
+        type: string
+      resident_node:
+        description: '常驻自动补发节点（手工运行留空）'
+        required: false
+        type: string
+      resident_dispatch_id:
+        description: '常驻自动补发一次性编号（手工运行留空）'
+        required: false
         type: string
   push:
     branches: [main, clued-train/staging]
@@ -724,8 +733,8 @@ jobs:
           # In that case the protected workflow pins the exact local blob and checks its bytes.
           helper=trusted/scripts/ci/trivy-cache.mjs
           if [ ! -f "$helper" ]; then
-            git -C candidate cat-file blob b099089d9b7ffff91a079b63fb675a2603e44562 > "$helper"
-            printf '%s  %s\n' c0136acc6c8d7af48eb417222edb39444ed2313e7935951270375e828895a606 "$helper" | sha256sum --check --status
+            git -C candidate cat-file blob 3d1473a247f59b2c8d7af70c36210fcb23e3bd65 > "$helper"
+            printf '%s  %s\n' 2d8f016bca5668c62f2024cebf820f155835c4c54ef8b757fd572eaf8726d938 "$helper" | sha256sum --check --status
           fi
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage

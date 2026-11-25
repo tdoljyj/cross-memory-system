@@ -2087,7 +2087,7 @@
     },
     ".github/workflows/clued-required-tests.yml": {
       "sources": {
-        "69ad8c114598e42f4a6d85010707c978b1490b68": [
+        "1ec8af06e9891f8436441a6661130cfb915cca38": [
           {
             "job_id": "clued-cloud-tests",
             "definition_sha256": "c34d55c18fa85fea715c4f972de0e106ef355e1d1487b42c636918eda39888ee",
@@ -2482,7 +2482,7 @@
           },
           {
             "job_id": "trivy",
-            "definition_sha256": "1c65e61de898cc1412d3bb1c7eba33210eedd56e7f32e5c3827638ba336c9308",
+            "definition_sha256": "d1c01de5078fb88d8f07f2ffaa310441b4a1e911819dcfe3fa12e652f826b48f",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'trivy' || 'trivy-skipped' }}",
               "needs": "admission-gate",
@@ -2539,7 +2539,7 @@
                     "GIT_NO_LAZY_FETCH": "1",
                     "GIT_NO_REPLACE_OBJECTS": "1"
                   },
-                  "run": "set -euo pipefail\ncd -P -- \"$GITHUB_WORKSPACE\"\nref=\"$TRUSTED_REF\"\n[[ \"$ref\" =~ ^[0-9a-fA-F]{40}$ ]] || ref=\"refs/remotes/origin/$ref\"\nif ! base=\"$(git -C candidate rev-parse --verify --quiet --end-of-options \"${ref}^{commit}\")\"; then\n  echo \"::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)\"\n  exit 1\nfi\nrm -rf -- trusted\nmkdir -- trusted\ngit -C candidate archive \"$base\" -- scripts/ci config .github | tar -xf - -C trusted\n# The introduction PR and its staging run can have a base without the helper.\n# In that case the protected workflow pins the exact local blob and checks its bytes.\nhelper=trusted/scripts/ci/trivy-cache.mjs\nif [ ! -f \"$helper\" ]; then\n  git -C candidate cat-file blob b099089d9b7ffff91a079b63fb675a2603e44562 > \"$helper\"\n  printf '%s  %s\\n' c0136acc6c8d7af48eb417222edb39444ed2313e7935951270375e828895a606 \"$helper\" | sha256sum --check --status\nfi\n"
+                  "run": "set -euo pipefail\ncd -P -- \"$GITHUB_WORKSPACE\"\nref=\"$TRUSTED_REF\"\n[[ \"$ref\" =~ ^[0-9a-fA-F]{40}$ ]] || ref=\"refs/remotes/origin/$ref\"\nif ! base=\"$(git -C candidate rev-parse --verify --quiet --end-of-options \"${ref}^{commit}\")\"; then\n  echo \"::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)\"\n  exit 1\nfi\nrm -rf -- trusted\nmkdir -- trusted\ngit -C candidate archive \"$base\" -- scripts/ci config .github | tar -xf - -C trusted\n# The introduction PR and its staging run can have a base without the helper.\n# In that case the protected workflow pins the exact local blob and checks its bytes.\nhelper=trusted/scripts/ci/trivy-cache.mjs\nif [ ! -f \"$helper\" ]; then\n  git -C candidate cat-file blob 3d1473a247f59b2c8d7af70c36210fcb23e3bd65 > \"$helper\"\n  printf '%s  %s\\n' 2d8f016bca5668c62f2024cebf820f155835c4c54ef8b757fd572eaf8726d938 \"$helper\" | sha256sum --check --status\nfi\n"
                 },
                 {
                   "name": "Configure job temporary storage",

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -41,14 +41,26 @@ import { setTimeout as delay } from 'node:timers/promises';
 const args = process.argv.slice(2);
 const log = (line) => appendFileSync(process.env.FAKE_LOG, line + '\n');
 const opt = (name) => args[args.indexOf(name) + 1];
+const advance = (seconds) => {
+  const elapsed = process.env.FAKE_ELAPSED;
+  writeFileSync(elapsed, String(Number(readFileSync(elapsed, 'utf8')) + seconds * 1000));
+};
 const stage = args.find((arg) => arg.startsWith('type=bind,src=') && arg.includes(',dst=/cache'))?.split(',')[1].slice(4);
 const put = (name, value) => {
   const file = path.join(stage, name);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value));
 };
-if (args[0] === 'image') { log('inspect'); process.exit(0); }
-if (args[0] === 'pull') { log('pull'); process.exit(0); }
+if (args[0] === 'image') { log('inspect'); process.exit(process.env.FAKE_SOURCES === 'budget' ? 1 : 0); }
+if (args[0] === 'pull') {
+  log('pull');
+  if (process.env.FAKE_SOURCES === 'budget') {
+    const limit = Number(process.env.FAKE_DOCKER_TIMEOUT);
+    advance(Math.min(125_000, limit) / 1000);
+    if (limit < 125_000) process.exit(23);
+  }
+  process.exit(0);
+}
 if (args.includes('--download-db-only')) {
   const source = opt('--db-repository');
   log('db ' + source + ' ' + opt('--timeout'));
@@ -62,10 +74,22 @@ if (args.includes('--download-db-only')) {
   // The old 5m attempts exhaust the step before getting to a reachable mirror.
   if (process.env.FAKE_SOURCES === 'down' || (process.env.FAKE_SOURCES === 'mirror' &&
       (!source.startsWith('mirror.') || opt('--timeout') === '5m'))) process.exit(23);
+  if (['slow', 'budget'].includes(process.env.FAKE_SOURCES)) {
+    const timeout = opt('--timeout');
+    const trivySeconds = Number.parseInt(timeout, 10) * (timeout.endsWith('m') ? 60 : 1);
+    const allowed = Math.min(trivySeconds, Number(process.env.FAKE_DOCKER_TIMEOUT) / 1000);
+    if (process.env.FAKE_SOURCES === 'budget') {
+      advance(allowed);
+      process.exit(23);
+    }
+    advance(Math.min(120, allowed));
+    if (allowed < 120) process.exit(23);
+  }
   put('db/metadata.json', { Version: 2, UpdatedAt: process.env.FAKE_UPDATED, NextUpdate: process.env.FAKE_NEXT });
   put('db/trivy.db', 'complete db');
 } else if (args.includes('--checks-bundle-repository')) {
   log('checks download');
+  if (process.env.FAKE_FAIL_CHECKS) process.exit(23);
   put('policy/metadata.json', { Digest: opt('--checks-bundle-repository').split('@')[1], MajorVersion: 2 });
   put('policy/content/check.rego', 'package check');
 } else if (opt('--entrypoint') === '/bin/cat') {
@@ -80,7 +104,7 @@ if (args.includes('--download-db-only')) {
 }
 `;
 
-function cacheFixture(t, { db, next = 12, checks = true, sources = 'down', concurrent = false } = {}) {
+function cacheFixture(t, { db, next = 12, checks = true, sources = 'down', concurrent = false, failChecks = false } = {}) {
   const dir = scratch(t);
   const home = path.join(dir, 'home');
   const cache = path.join(home, '.cache', 'clued-trivy');
@@ -106,18 +130,24 @@ function cacheFixture(t, { db, next = 12, checks = true, sources = 'down', concu
   }
   const loader = path.join(dir, 'fake-commands.mjs');
   put(loader, `import childProcess from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { promisify } from 'node:util';
 if (process.argv[1]?.endsWith('trivy-cache.mjs')) {
   const execFile = childProcess.execFile;
-  const redirect = (run) => (file, args, ...rest) => file === 'docker'
-    ? run(process.execPath, [${JSON.stringify(fake)}, ...args], ...rest) : run(file, args, ...rest);
+  const redirect = (run) => (file, args, options, ...rest) => file === 'docker'
+    ? run(process.execPath, [${JSON.stringify(fake)}, ...args], {
+      ...options, env: { ...process.env, FAKE_DOCKER_TIMEOUT: String(options.timeout) },
+    }, ...rest) : run(file, args, options, ...rest);
   childProcess.execFile = redirect(execFile);
   childProcess.execFile[promisify.custom] = redirect(promisify(execFile));
   syncBuiltinESMExports();
   process.getuid ??= () => 1976;
   process.getgid ??= () => 1976;
   Date.now = () => Date.parse(${JSON.stringify(now)});
+  Object.defineProperty(performance, 'now', {
+    value: () => Number(readFileSync(process.env.FAKE_ELAPSED, 'utf8')),
+  });
 }
 `);
   const barrier = concurrent ? path.join(dir, 'barrier') : '';
@@ -127,8 +157,10 @@ if (process.argv[1]?.endsWith('trivy-cache.mjs')) {
     const temp = path.join(cwd, 'temp');
     const log = path.join(cwd, 'calls.log');
     const output = path.join(cwd, 'github.env');
+    const elapsed = path.join(cwd, 'elapsed');
     const helper = path.join(root, 'scripts/ci/trivy-cache.mjs');
     mkdirSync(temp, { recursive: true });
+    writeFileSync(elapsed, '0');
     if (existsSync(helper)) {
       const trusted = path.join(cwd, 'trusted/scripts/ci');
       mkdirSync(trusted, { recursive: true });
@@ -141,6 +173,7 @@ if (process.argv[1]?.endsWith('trivy-cache.mjs')) {
           RUNNER_TEMP: forward(temp), GITHUB_ENV: forward(output), GITHUB_RUN_ID: id,
           NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(loader).href}`,
           FAKE_BIN: forward(bin), FAKE_LOG: log, FAKE_SOURCES: sources, FAKE_BARRIER: barrier,
+          FAKE_ELAPSED: elapsed, FAKE_FAIL_CHECKS: failChecks ? '1' : '',
           FAKE_UPDATED: !existsSync(helper) ? '2020-01-01T00:00:00Z' : stamp(-1),
           FAKE_NEXT: !existsSync(helper) ? '2999-01-01T00:00:00Z' : stamp(12) },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -192,6 +225,39 @@ test('T4 expired DB: ghcr times out, mirror publishes a new generation', async (
   assert.equal(readFileSync(path.join(f.cache, generation(-1), 'db/trivy.db'), 'utf8'), 'complete db');
 });
 
+test('T4 cold DB: a source that needs 120s can publish a current generation', async (t) => {
+  const f = cacheFixture(t, { checks: false, sources: 'slow' });
+  const r = await f.run('cold-120s');
+  assert.equal(r.code, 0, JSON.stringify(r));
+  assert.deepEqual(r.calls.filter((call) => call.startsWith('db ')), [`db ${ghcr} 240s`]);
+  assert.match(r.env, /db-2026-11-25T11-00-00\.000Z/);
+});
+
+test('T4 cold DB: an image pull and DB attempts share the deadline and reserve time for checks', async (t) => {
+  const f = cacheFixture(t, { checks: false, sources: 'budget' });
+  const r = await f.run('cold-budget');
+  assert.equal(r.code, 1, JSON.stringify(r));
+  assert.match(r.text, /vulnerability DB expired/);
+  assert.deepEqual(r.calls, ['inspect', 'pull', `db ${ghcr} 240s`, `db ${mirror} 120s`]);
+  assert.equal(r.env, '');
+});
+
+test('T4 abandoned staging entries older than one hour are reclaimed', async (t) => {
+  const f = cacheFixture(t, { db: -1 });
+  const abandoned = path.join(f.cache, '.stage-x-abc');
+  const oldCid = `${abandoned}.cid`;
+  const recent = path.join(f.cache, '.stage-x-recent');
+  for (const entry of [abandoned, recent]) put(path.join(entry, 'partial'), 'partial download');
+  put(oldCid, 'container id');
+  for (const entry of [abandoned, oldCid]) utimesSync(entry, new Date(stamp(-2)), new Date(stamp(-2)));
+  utimesSync(recent, new Date(stamp(0)), new Date(stamp(0)));
+  const r = await f.run('abandoned-stage');
+  assert.equal(r.code, 0, JSON.stringify(r));
+  assert.ok(!existsSync(abandoned), 'two-hour-old .stage-x-abc directory should be removed');
+  assert.ok(!existsSync(oldCid), 'two-hour-old .cid should be removed');
+  assert.ok(existsSync(recent), 'a recent stage may still be active');
+});
+
 test('T5 two processes publish the same DB and checks generations atomically', async (t) => {
   const f = cacheFixture(t, { checks: false, sources: 'up', concurrent: true });
   const runs = await Promise.all([f.run('first'), f.run('second')]);
@@ -203,23 +269,41 @@ test('T5 two processes publish the same DB and checks generations atomically', a
 });
 
 test('T6 cached checks: no download, validate digest, major version, custom flag and Rego', async (t) => {
-  const f = cacheFixture(t, { db: -1, sources: 'up' });
+  const f = cacheFixture(t, { db: -1, sources: 'up', failChecks: true });
   const r = await f.run('cached-checks');
   assert.equal(r.code, 0, JSON.stringify(r));
   assert.ok(!r.calls.includes('checks download'), JSON.stringify(r));
   assert.ok(r.calls.includes('read /cache/policy/metadata.json') && r.calls.includes('read policies'), JSON.stringify(r));
   const meta = path.join(f.policy, 'metadata.json');
+  const rego = path.join(f.policy, 'content/check.rego');
   for (const change of [{ Digest: 'wrong' }, { MajorVersion: 1 }, { CustomBuild: true }]) {
     put(meta, { Digest: digest, MajorVersion: 2, ...change });
-    const bad = await f.run('invalid-checks');
+    put(rego, 'package check');
+    const bad = await f.run(`invalid-checks-${Object.keys(change)[0]}`);
     assert.equal(bad.code, 1, JSON.stringify(bad));
+    assert.match(bad.text, /expected pinned digest, major version 2 and no custom build/);
+    assert.equal(bad.calls.filter((call) => call === 'checks download').length, 1);
     assert.equal(bad.env, '');
   }
   put(meta, { Digest: digest, MajorVersion: 2 });
-  rmSync(path.join(f.policy, 'content/check.rego'));
+  rmSync(rego, { force: true });
   const noRego = await f.run('no-rego');
   assert.equal(noRego.code, 1, JSON.stringify(noRego));
+  assert.match(noRego.text, /checks bundle read-back found no Rego policy/);
+  assert.equal(noRego.calls.filter((call) => call === 'checks download').length, 1);
   assert.equal(noRego.env, '');
+});
+
+test('T6 damaged checks: quarantine the directory, reinstall once and reuse the repair', async (t) => {
+  const f = cacheFixture(t, { db: -1 });
+  put(path.join(f.policy, 'metadata.json'), { Digest: 'wrong', MajorVersion: 2 });
+  const repaired = await f.run('repair-checks');
+  assert.equal(repaired.code, 0, JSON.stringify(repaired));
+  assert.equal(repaired.calls.filter((call) => call === 'checks download').length, 1);
+  assert.equal(JSON.parse(readFileSync(path.join(f.policy, 'metadata.json'), 'utf8')).Digest, digest);
+  const reused = await f.run('reuse-repaired-checks');
+  assert.equal(reused.code, 0, JSON.stringify(reused));
+  assert.ok(!reused.calls.includes('checks download'), JSON.stringify(reused));
 });
 
 function exportFixture(t) {
