@@ -33,7 +33,9 @@ const actorKind = actor => {
 export function localMergeTree(before, parent, { cwd = process.cwd() } = {}) {
   if (!validSha(before) || !validSha(parent)) fail('merge-tree 收到无效提交');
   const opts = { cwd, encoding: 'utf8', timeout: 30_000, windowsHide: true };
-  const git = (args, env = process.env) => spawnSync('git', ['--no-lazy-fetch', '--no-replace-objects', ...args], { ...opts, env });
+  // 不懒取对象用环境变量：Git 2.44 起认 GIT_NO_LAZY_FETCH，旧版忽略；全局选项 --no-lazy-fetch 在 2.43 上直接报错。
+  const git = (args, env = {}) => spawnSync('git', ['--no-replace-objects', ...args],
+    { ...opts, env: { ...process.env, GIT_NO_LAZY_FETCH: '1', ...env } });
   const objects = git(['rev-parse', '--path-format=absolute', '--git-path', 'objects']);
   if (objects.error || objects.status !== 0 || !objects.stdout.trim()) fail('本机 Git 或对象库不可用，无法重做合并');
   for (const sha of [before, parent]) {
@@ -45,7 +47,7 @@ export function localMergeTree(before, parent, { cwd = process.cwd() } = {}) {
   const scratch = mkdtempSync(join(tmpdir(), 'shadow-merge-'));
   try {
     const result = git(['merge-tree', '--write-tree', before, parent], {
-      ...process.env, GIT_OBJECT_DIRECTORY: scratch,
+      GIT_OBJECT_DIRECTORY: scratch,
       GIT_ALTERNATE_OBJECT_DIRECTORIES: JSON.stringify(objects.stdout.trim().replaceAll('\\', '/')),
     });
     const tree = result.stdout?.split(/\r?\n/, 1)[0];
