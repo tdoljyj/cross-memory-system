@@ -153,6 +153,8 @@ test('a test file the candidate adds after {unit-tests} runs alone, without the 
     copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(trustedDir, 'scripts/ci', name));
   }
   writeFileSync(path.join(trustedDir, 'scripts/ci/ci-known-failures.json'), '{}\n');
+  mkdirSync(path.join(trustedDir, 'config'));
+  copyFileSync(path.join(ROOT, 'config/ci-toolchain.json'), path.join(trustedDir, 'config/ci-toolchain.json'));
   const trusted = path.join(trustedDir, 'scripts/ci/ci-required-selection.mjs');
   writeFileSync(trusted, SOURCE.replace(entry, unit));
   const candidate = checkout(t, `const ownExpand = expandArgv;
@@ -201,6 +203,8 @@ test('a changed expansion under an unchanged command line runs the test files it
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-trusted-expand-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(path.join(dir, 'scripts/ci'), { recursive: true });
+  mkdirSync(path.join(dir, 'config'));
+  copyFileSync(path.join(ROOT, 'config/ci-toolchain.json'), path.join(dir, 'config/ci-toolchain.json'));
   for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, 'scripts/ci', name));
   const trusted = path.join(dir, 'scripts/ci/ci-required-selection.mjs');
   writeFileSync(trusted, SOURCE.replace(command, own));
