@@ -17,6 +17,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { UNTIL_POLL_MS, until } from '../../../scripts/ci/test-clock-guard.mjs';
 
 // These clusters are discarded after the test and never used for crash recovery.
 export const EPHEMERAL_POSTGRES_FLAGS = Object.freeze([
@@ -36,7 +37,12 @@ export const CLEANUP_DEFAULTS = Object.freeze({
   pollMs: 100,
 });
 
-const sleepFor = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Test code reads no clock: a pause is a number of polls of until() (one real tick each), and a budget in milliseconds
+// (exitTimeoutMs, attemptDelayMs) is counted in those ticks. `cancelled` ends the pause early.
+const sleepFor = async (ms, cancelled) => {
+  let left = Math.ceil(ms / UNTIL_POLL_MS);
+  await until(() => (cancelled?.() ?? false) || (left -= 1) < 0, 'a pause');
+};
 
 const processAlive = (pid) => {
   try { process.kill(pid, 0); return true; } catch (error) { return error?.code === 'EPERM'; }
@@ -82,9 +88,8 @@ async function checkedDirectory(directory, o) {
 export async function waitForPidExit(pid, overrides = {}) {
   const o = options(overrides);
   if (!Number.isSafeInteger(pid) || pid <= 0) return true;
-  const deadline = Date.now() + o.exitTimeoutMs;
-  while (o.alive(pid)) {
-    if (Date.now() >= deadline) return false;
+  for (let polls = Math.ceil(o.exitTimeoutMs / o.pollMs); o.alive(pid); polls -= 1) {
+    if (polls <= 0) return false;
     await o.sleep(o.pollMs);
   }
   return true;
@@ -153,9 +158,9 @@ export async function stopCluster(server, overrides = {}) {
   await cleanupStep(o, 'stop', async () => {
     if (exited) return;
     const timeout = Symbol('stop timeout');
-    let timer;
+    let finished = false;
     try {
-      const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve(timeout), o.exitTimeoutMs); });
+      const deadline = Promise.resolve(o.sleep(o.exitTimeoutMs, () => finished)).then(() => timeout);
       slow = (await Promise.race([server.stop(), deadline])) === timeout;
     } catch (error) {
       // Recover a lock error from the library's own unretried removal below.
@@ -163,7 +168,7 @@ export async function stopCluster(server, overrides = {}) {
       stopped = false;
       o.log(`stop() failed: ${error?.code ?? error?.message ?? String(error)}`);
     } finally {
-      clearTimeout(timer);
+      finished = true;
     }
   });
   if (!(await cleanupStep(o, 'waitForExit', () => waitForPidExit(pid, o)))) {

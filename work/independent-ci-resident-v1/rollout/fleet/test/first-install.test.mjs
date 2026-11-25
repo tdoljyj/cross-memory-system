@@ -357,18 +357,12 @@ async function releaseWorld(t, w) {
   const out = path.join(d, 'accept');
   const prepare = (over = {}) => publishModule.prepare({ version: VERSION, dir: outDir, out, images: w.kit.images.local.map(l => path.join(w.from, l.asset)), index,
     root: w.template.root, ghCommand, ...over });
-  // the Decision record: the shape of the real clued_record_mutate return of 3bc571a6 (Decision c556370f, receipt 7ccaefca), its text naming this request
-  // (the old seal read the three values from the command line: they are given too, so the same tests ran before the rework)
-  const recordOf = async (request, edit = r => r) => {
-    const r = JSON.parse(await fs.readFile(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'clued-decision-mutate-3bc571a6.json'), 'utf8'));
-    r.supplemental.record.content = `TEST TEXT\nacceptance-request fleet-node-${VERSION} sha256:${sha(await fs.readFile(request))}\n`;
-    const file = path.join(d, `decision-record-${randomUUID()}.json`);
-    await fs.writeFile(file, JSON.stringify(edit(r), null, 2));
-    return file;
-  };
-  const seal = async (request, over = {}) => publishModule.seal({ request, decisionRecord: await recordOf(request), decision: 'c556370f-b0fc-404b-b164-0f06699e4c7a',
-    receipt: '7ccaefca-5fda-4bc8-9747-2a8101b92342', acceptedAt: '2026-11-19T12:22:39Z', index, ghCommand, ...over });
-  return { d, index, assets, kitName, out, prepare, seal, recordOf, outDir };
+  // the Owner's acceptance: a stand-in of the acceptance door's anonymous read (accept-door.mjs) answering the fleet.accept Grant of 3bc571a6's
+  // values (Grant c556370f, receipt 7ccaefca) for the resource read, naming its request; the door replays the same row on every read
+  const readStatus = async resource => ({ status: 'accepted', request_sha256: resource.split('/').pop(), resources: [resource],
+    grant_id: 'c556370f-b0fc-404b-b164-0f06699e4c7a', receipt_id: '7ccaefca-5fda-4bc8-9747-2a8101b92342', accepted_at: '2026-11-19T12:22:39.628169+00:00' });
+  const seal = async (request, over = {}) => publishModule.seal({ request, index, ghCommand, deps: { readStatus }, ...over });
+  return { d, index, assets, kitName, out, prepare, seal, outDir };
 }
 // the companion writes its version facts again (a new observedAt): the next kit taken from this node is other bytes
 async function factsObservedAgain(w, at) {
@@ -400,9 +394,10 @@ test('3bc571a6 end to end: prepare on the installed node with no Decision, the O
     await assert.rejects(r0.seal(p.request), { code: 'ACCEPTANCE_SOURCE_NOT_THE_RELEASES' });
     assert.ok(!r0.assets().some(a => a.name === `fleet-node-${VERSION}.acceptance.json`));
     await fs.writeFile(p.request, requestBytes);
-    // the Owner accepts; DESK writes the Decision with prepare's line and keeps the return; seal takes no node root and no kit: the request and that record
+    // the Owner approves the fleet.accept Grant on the confirm page; seal takes no node root and no kit: the request and the door's answer
     const decision = 'c556370f-b0fc-404b-b164-0f06699e4c7a', receipt = '7ccaefca-5fda-4bc8-9747-2a8101b92342';
-    assert.equal(p.decisionLine, `acceptance-request fleet-node-${VERSION} sha256:${sha(requestBytes)}`);
+    assert.equal(p.requestSha256, sha(requestBytes));
+    assert.ok(!('decisionLine' in p), 'no Decision line: the acceptance is the Grant of the door');
     const sealed = await r0.seal(p.request);
     assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
     const accepted = readJson(sealed.acceptance);

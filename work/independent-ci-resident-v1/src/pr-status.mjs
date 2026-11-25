@@ -166,7 +166,8 @@ const WAIT_TEXT = Object.freeze({ OWNER_REVIEW_REQUIRED: '等 Owner 批准受保
 // Phase 2, step 3a: a batch parked before stage 8 because of main's live rules, GitHub's test merge or the green ledger.
 const PARKED_TEXT = Object.freeze({ REQUIRED_CHECK_FAILED: '必需检查失败，已停止入队和延长；等待检查重跑',
   REQUIRED_CHECKS_UNREADABLE: '暂时无法确认必需检查，等待重新核对',
-  RULESET_UNREADABLE: '已测通：读不到 main 的规则，或必需检查不再钉在本执行器上',
+  RULESET_UNREADABLE: '已测通：main 的必需检查没有全部钉在本执行器上',
+  RULESET_READ_FAILED: '已测通：暂时读不到 main 的规则',
   STRICT_OFF_WITHOUT_TRAIN: '已测通：main 的 strict 已关而列车未开，暂不发合并位（已通知 Owner）',
   MERGE_METHODS_NOT_MERGE_ONLY: '已测通：strict 已关，但合并方式不只有 merge，暂不发合并位（已通知 Owner）',
   TRAIN_TEST_MERGE_NOT_READY: '已测通：等 GitHub 算好试合并', GREEN_LEDGER_UNAVAILABLE: '已测通：本机绿色台账暂时写不进',
@@ -279,6 +280,31 @@ export function timingText(status, now, room) {
   return table ? `${out}；${table}`.slice(0, room) : out;
 }
 
+// The two texts of a head the poller does not propose (poller.mjs hints merge-main and push-any-commit): describe writes them and the
+// PR gate (scripts/ci/clued-work-admission.mjs#residentHeldHint, Task 2fb32dc7) reads them back with heldPartOf. Such a head is never
+// admitted (the head is fixed and main only moves on), so the gate ends at once instead of polling its whole wait. A text is held only
+// when one of its "；"-separated parts is exactly a held sentence (the lines withRerunLine, withCapacityLine and withWatchdogLine add
+// around it are other parts); a clipped or any other text is not. The gate imports nothing outside scripts/ci and this package nothing
+// from scripts/ci, so the block between the held-texts marks is in both files byte for byte, the way env-failure.mjs is the gate's failure
+// rule; the admission self-tests lock the two, so a sentence never changes without its reader.
+// held-texts: begin
+const HELD_TEXTS = Object.freeze({
+  'merge-main': behindBy => `落后 main ${behindBy} 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）`,
+  'push-any-commit': () => '已包含 main，但 PR 的基准还是旧的：推一个任意提交即可',
+});
+const HELD_NUMBER = '\u0000';
+const HELD_PATTERNS = Object.entries(HELD_TEXTS).map(([hint, text]) =>
+  [hint, new RegExp(`^${text(HELD_NUMBER).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(HELD_NUMBER, '[0-9]{1,10}')}$`, 'u')]);
+// { hint, text }: the held part of a PR page text (text is that part alone: a fixed sentence and digits), or null.
+export function heldPartOf(description) {
+  if (typeof description !== 'string' || description.length > 1000) return null;
+  for (const part of description.split('；')) for (const [hint, pattern] of HELD_PATTERNS) if (pattern.test(part)) return { hint, text: part };
+  return null;
+}
+// held-texts: end
+export function heldHintText(hint, behindBy) { return Object.hasOwn(HELD_TEXTS, hint) ? HELD_TEXTS[hint](behindBy) : null; }
+export const heldHintOf = description => heldPartOf(description)?.hint ?? null;
+
 // Pure: what the PR page should say for one open PR head, or null (write nothing). weak: a generic text that never
 // replaces what was already written for that head.
 export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
@@ -288,8 +314,8 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // Task 484bddac (FABLE-front-merge-stale-summary §2.3): a behind head is never asked to merge main by hand; the robot
     // (clued-front-main-merge) takes main in when its turn comes. One line, whatever the train summary says (stale, no front, another
     // PR or this one): the summary-based branch told every PR to merge main whenever it was stale or empty (34 hand merges).
-    if (pull.hint === 'merge-main') return { state: 'pending', description: clip(`落后 main ${pull.behindBy} 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）`) };
-    if (pull.hint === 'push-any-commit') return { state: 'failure', description: '已包含 main，但 PR 的基准还是旧的：推一个任意提交即可' };
+    if (pull.hint === 'merge-main') return { state: 'pending', description: clip(heldHintText('merge-main', pull.behindBy)) };
+    if (pull.hint === 'push-any-commit') return { state: 'failure', description: heldHintText('push-any-commit') };
     return null;
   }
   if (!status) return null;
@@ -326,6 +352,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // Parked before stage 8 (phase 2, step 2): its checks are published; it waits for the merge queue.
     if (row.state === 'PARKED') {
       const lease = leaseText(row, now, { running: false }), latest = row.nextAt ? `（最晚约 ${hhmm(row.nextAt)}）` : '';
+      if (row.nextAt === null && row.deferred === 'RULESET_UNREADABLE') return { state: 'pending', description: clip(`${PARKED_TEXT[row.deferred]}，规则钉回后再查第 8 段${lease}`) };
       if (row.nextAt === null) return { state: 'pending', description: clip(`休眠停靠（${row.deferred ?? '第 8 段未就绪'}）：有变化后再查第 8 段${lease}`) };
       // Generation 12 (DESIGN §56.2): a watched row (row.watched) tries stage 8 within minutes once its claim holds the merge slot;
       // an unwatched one (an older Source, a STANDBY node, the watch or try budget used up) keeps the generation-11 text.

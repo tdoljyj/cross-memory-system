@@ -79,9 +79,10 @@ clued-runner、clued-control 名下的计划任务，非提权看不到（任务
   2. `exported`：Owner 名下这个发行版的注册键用 `reg export` 完整导出到 `install\companion-wsl-owner-<guid>.reg`，键的全部值（VhdFileName、PackageFamilyName、KernelCommandLine、DefaultEnvironment、Flavor、OsVersion、DefaultUid ……）也写进记录。
   3. `moved`：`wsl --terminate <D>`（只停这一个），等 vhdx 能被独占打开；从盘符根到目标目录的每一级：已存在的必须是 SYSTEM / Administrators / TrustedInstaller 所有、不是链接、没有非管理员能删、能改权限或所有者的条目（盘根只看 DELETE_CHILD 等，不看 DELETE），否则 `WSL_TARGET_PARENT_UNSAFE`；不存在的按保护的 ACL 新建并读回核对。同一卷改名；跨卷先复制成 `ext4.vhdx.partial`（边读边算 SHA-256，目标由注册程序 `file-sha256` 以 `FILE_FLAG_NO_BUFFERING` 从磁盘重读再算），任何异常都删掉 `.partial`，哈希一致才改名为 `ext4.vhdx` 并删源文件（DESK 的 C: 回收在这里）。目录和文件设保护的 ACL。**这一步不动 Owner 的注册项。**
   4. 注册程序 `register-account`：随机密码先设到账户上，再注册 companion 任务和一次性导入任务（同一密码，传入 Owner 原来的 DefaultUid）；之后任何一次注册失败都立即把 companion 任务退回账户的交互定义（`RegistrarFlow.PasswordFlow`），不会留下存着旧密码的定义去反复登录失败。
-  5. `imported`：运行导入任务。它的脚本以账户身份 `wsl --import-in-place`；失败时只有在发行版已注册且能启动（被打断的上一次已经导入）时才算成功；再写回 DefaultUid。结果不是 0 就报 `WSL_IMPORT_FAILED:<码>`、退回，Owner 的注册项还在。
-  6. `forgotten`：导入返回 0 之后才删 Owner 名下的注册键（`DefaultDistribution` 指向它时一并删）。删时出错报 `COMPANION_WSL_FORGET_FAILED`，重跑从这里续做。
+  5. `imported`：运行导入任务。它的脚本以账户身份 `wsl --import-in-place`；失败时只有在发行版已注册且能启动（被打断的上一次已经导入）时才算成功；再写回 DefaultUid。脚本只在走完（complete）时以专用码 `0x434C4901`（`RegistrarCore.ImportDoneExitCode`）退出；结果不是这个码（含任务计划在实例没跑时留下的 0）就报 `WSL_IMPORT_FAILED:<码>`，实例排队 120 秒没起报 `WSL_IMPORT_FAILED:not-started`，等待中读不出任务报 `WSL_IMPORT_FAILED:unreadable`，都退回，Owner 的注册项还在（任务 87d330d0）。
+  6. `forgotten`：导入返回专用成功码之后才删 Owner 名下的注册键（`DefaultDistribution` 指向它时一并删）。删时出错报 `COMPANION_WSL_FORGET_FAILED`，重跑从这里续做。
   7. 运行 companion 任务，8 分钟内由提权一侧验收（与 ADR 0022 相同）。通过：`qualified`，删标记和回退任务。不通过：任务退回该账户的交互定义（账户从不交互登录，companion 停着，服务只推迟，不烧任何 head），报告原因。
+  - **启动一律忽略约束（K3，任务 87d330d0）**：第 11 轮演练来宾上没有任何用户会话，账户口令任务的普通 `Run` 和它自己的触发器都只排队（State 2、没有引擎、LastTaskResult 0），`RunEx($null, 2, 0, $null)`（TASK_RUN_IGNORE_CONSTRAINTS）才起。所以 companion 任务和一次性导入任务的每一次按需启动都用 `RunEx(2)`（`Start-CompanionTask`、`Invoke-CompanionWslImportTask`）；定时启动另由一个 SYSTEM 起动任务 `\Clued\CluedCIResidentCompanionStart` 负责：开机后 30 秒、每 15 分钟，动作只有一行固定的 PowerShell：以 COM 对 `\Clued\CluedCIResidentCompanion` 调 `RunEx($null, 2, 0, $null)`（`schtasks /Run /I` 只在约束解除之后测过，不用），SDDL 只给 SY 与 BA，不带输入、不落凭据；companion 任务是 IgnoreNew，已经在跑时这一脚被丢掉。起动任务跟口令定义同生同灭：两条切换路径在注册程序成功之后、第一次启动之前登记（失败报 `COMPANION_START_TASK_REGISTER_FAILED` 并按现有路径退回），每次退回交互定义（`Invoke-CompanionFallback`）时删除，卸载时一并删除。口令定义自带的两个触发器原样保留（冻结通道校验它们）。判“起没起”只看实例：有实例 State=4 或 EnginePID≠0 才算起来过，从不看任务的 State（RunEx 的实例结束后，旧的排队实例还在，任务 State 回到 2）。
 - **退回原状**：`rearm-resident.ps1 -CompanionWslRestore`。先停 companion，vhdx 按记录移回原位置（跨卷时同样经 `.partial` 两边校验），Owner 的注册键不在就从导出的 `.reg` 导回。账户名下那条注册之后指向不存在的文件，无害，删账户时随档案一起删掉。
 - **WSL 虚拟机按用户分**：账户有自己的 WSL VM 和 `.wslconfig`（步骤 P 写，只在没有时写）。DESK 建议 16GB / 8 CPU / 4GB swap（Owner 的 VM 仍跑 CluedCI-Linux 和 CluedDev-Linux，28GB 上限；64 GB 内存够两者同时用），TURING 用 6GB / 3 CPU / 2GB（迁移之后 Owner 名下只剩 docker-desktop）。
 - **TURING 的特殊情况**：`Ubuntu-24.04` 是 TURING 唯一的通用发行版，迁走之后 Owner 和 TURING 的 Agent 都不能再直接 `wsl` 进去（只能 `-CompanionRootShell`）。如果那里还有别的用途（家里 Linux runner 单元、日常开发），要先由 TURING 一侧只读确认，或者改为先建一个专用的常驻发行版（像 DESK 的 `CluedResident-Linux`，按 reinstall README 第 8c 节首装），这是另一块工作。D: 只剩 27 GB，TURING 的 vhdx 只能留在 C:，这次**不回收** TURING 的 C:。
@@ -145,7 +146,7 @@ clued-runner、clued-control 名下的计划任务，非提权看不到（任务
 | MAJOR M1 | vhdx 已存在的上级目录不校验，PR 作业可抢先建 `D:\clued-resident\wsl` | `Get-CompanionDirAclProblem` / `Assert-CompanionVhdxParents`：所有者和条目规则，新建的读回核对；目标目录本身同样核对 |
 | MAJOR M2 | root-shell 设了新密码但注册失败时，任务留着旧密码 | `RegistrarFlow.PasswordFlow`：设密码之后任何注册失败都立即退回交互定义，返回 `ROOT_SHELL_TASK_NOT_UPDATED_PARKED` 等明确的码；register-account 同样 |
 | MAJOR M3 | 复制一半失败留下不完整的 `ext4.vhdx` | 先写 `.partial`，异常即删，哈希一致才改名；上次残留的 `.partial` 重跑时删掉 |
-| MAJOR M4 | 注册键记录不全、只在内存、导入前就删，不能续做、不能退回 | 阶段记录、`reg export` 完整导出、导入返回 0 之后才删、`-CompanionWslRestore` |
+| MAJOR M4 | 注册键记录不全、只在内存、导入前就删，不能续做、不能退回 | 阶段记录、`reg export` 完整导出、导入返回专用成功码之后才删、`-CompanionWslRestore` |
 | MAJOR M5 | 测试只有 happy path | 第 10 节：复制中途异常、哈希不一致、迁移后注册失败、导入失败、删键后异常、续做、退回、有账户时 source-v2-acl、root-shell 注册失败（C# 流程测试） |
 | m1 | 导入结果没人检查 | `WSL_IMPORT_FAILED:<码>`；导入脚本只在发行版已注册且能启动时接受“已存在” |
 | m2 | 预检缺 `DisableDomainCreds` 与锁定余量 | 加入切换预检，位于任何不可逆动作之前 |

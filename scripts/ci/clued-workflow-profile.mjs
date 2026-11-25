@@ -519,6 +519,8 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
       roleDefinitionDigest(role.definition)!==role.definition_sha256||!same(role.definition,value.jobs?.[role.job_id]))))
     reject('exact compound Source and complete independent roles required');
   if(!value?.jobs || !value.on || !Object.hasOwn(value.on,'pull_request'))reject('PR jobs missing');
+  const unsupportedKeys=Object.keys(value).filter(key=>!['name','on','permissions','concurrency','jobs'].includes(key));
+  if(unsupportedKeys.length)reject('unsupported top-level key: '+unsupportedKeys.join(','));
   const trigger=value.on.pull_request??null;
   if(trigger!==null && (typeof trigger!=='object' || Array.isArray(trigger) ||
     Object.keys(trigger).some(key=>key!=='paths') || !Array.isArray(trigger.paths) || !trigger.paths.length))

@@ -114,7 +114,7 @@ test('resident upgrade: approved automatically under the switch, counted by node
       [{ risk: 'high', auto_approvable: true }]);
     const manual = (await admin.query(`select action from clued_private.owner_grant_actions where not auto_approvable order by action`)).rows
       .map((r) => r.action);
-    assert.deepEqual(manual, ['connection.permission', 'model.dataset_split.bootstrap', 'model.dataset_split.producer',
+    assert.deepEqual(manual, ['connection.permission', 'fleet.accept', 'model.dataset_split.bootstrap', 'model.dataset_split.producer',
       'model.dataset_split.recognize', 'model.dataset_split.verify']);
     await assert.rejects(() => admin.query(`update clued_private.owner_grant_actions set auto_approvable=true where action='connection.permission'`),
       /owner_grant_actions_auto_approvable_check/);

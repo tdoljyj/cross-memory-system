@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../src/proof.mjs';
@@ -16,7 +17,7 @@ import { protectedFactsFromVerify } from '../runtime/one-shot-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, signResult, FAR_FUTURE } from './resident-v2-fixtures.mjs';
 import { requiredCheckFailure } from '../src/independent-control-checks-v2/train-rules.mjs';
-import { s7Rules, scaffoldRules } from './s7-rules-fixture.mjs';
+import { portRules, s7Rules, scaffoldRules } from './s7-rules-fixture.mjs';
 import { createFullAdmissionPortV2 } from '../src/full-admission-v2.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
@@ -700,12 +701,13 @@ test('control pair v2 (step 3a): live branch rules decide before anything is wri
   assert.deepEqual([off.r.status, off.r.reason, off.r.sideEffects, off.github.checks.length, off.greenLedger.records.length, off.r.polls], ['BLOCKED', 'STRICT_OFF_WITHOUT_TRAIN', 0, 0, 0, 1]);
   assert.equal(stage8Code(off.r), 'STRICT_OFF_WITHOUT_TRAIN');
   // a required check pinned to another integration (a disaster-recovery switch), one missing, no required checks at all
-  // (the ruleset disabled), or a read that fails: unreadable, no queue writes or publication
-  for (const github of [fakeGithub({ rules: branchRules({ pinned: 5164952 }) }), fakeGithub({ rules: branchRules({ names: SIX.slice(1) }) }),
-    fakeGithub({ rules: [] }), fakeGithub({ rulesError: 'github_http_403' })]) {
+  // (the ruleset disabled): unreadable, no queue writes or publication. A read that fails is its own answer (task bd07449b, must-red 4:
+  // RULESET_READ_FAILED, never RULESET_UNREADABLE), with the same zero effects.
+  for (const [github, code] of [[fakeGithub({ rules: branchRules({ pinned: 5164952 }) }), 'RULESET_UNREADABLE'], [fakeGithub({ rules: branchRules({ names: SIX.slice(1) }) }), 'RULESET_UNREADABLE'],
+    [fakeGithub({ rules: [] }), 'RULESET_UNREADABLE'], [fakeGithub({ rulesError: 'github_http_403' }), 'RULESET_READ_FAILED'], [fakeGithub({ rulesError: 'github_http_503' }), 'RULESET_READ_FAILED']]) {
     const u = await pairRun(t, { github });
-    assert.deepEqual([u.r.status, u.r.reason, u.r.sideEffects, u.github.checks.length, u.greenLedger.records.length, u.r.polls], ['BLOCKED', 'RULESET_UNREADABLE', 0, 0, 0, 1]);
-    assert.equal(stage8Code(u.r), 'RULESET_UNREADABLE');
+    assert.deepEqual([u.r.status, u.r.reason, u.r.sideEffects, u.github.checks.length, u.greenLedger.records.length, u.r.polls], ['BLOCKED', code, 0, 0, 0, 1]);
+    assert.equal(stage8Code(u.r), code);
   }
   // the rules as they are today (strict on, all six pinned): the pair is written
   const ok = await pairRun(t);
@@ -722,6 +724,18 @@ test('control pair v2: S7 rules (#292 and the scaffold ruleset) write the pair; 
   assert.deepEqual(s7.github.checks.map(x => [x.name, x.conclusion]), [['kooyumi-admission-verified', 'success'], ['kooyumi-merge-slot', 'success']]);
   const s5 = await pairRun(t, { github: fakeGithub({ rules: scaffoldRules() }) });
   assert.deepEqual([s5.r.status, s5.r.reason, s5.r.sideEffects, s5.github.checks.length], ['BLOCKED', 'RULESET_UNREADABLE', 0, 0]);
+});
+
+// Task bd07449b (PLAN-ruleset-unreadable-park-r2 §4, a guard: green before the change too). The real publisher over main's rules as
+// GitHub gave them on 2026-11-25 (gh api repos/<repo>/rules/branches/main: the scaffold ruleset 27843120 alone, read whole), through the
+// port's own shape: RULESET_UNREADABLE at the first read of the rules, one poll, nothing written. TRAIN_WAITED never waits this out:
+// it governs only a second read of the same run that disagrees with the first.
+test('control pair v2 (bd07449b guard): the rules read live on 11-25 answer RULESET_UNREADABLE after one poll, with zero effects', async t => {
+  const live = JSON.parse(readFileSync(new URL('./fixtures/main-rules-scaffold-20261125.json', import.meta.url), 'utf8'));
+  const u = await pairRun(t, { github: fakeGithub({ rules: portRules(live) }) });
+  assert.deepEqual([u.r.status, u.r.reason, u.r.sideEffects, u.github.checks.length, u.greenLedger.records.length, u.r.polls], ['BLOCKED', 'RULESET_UNREADABLE', 0, 0, 0, 1]);
+  assert.equal(u.calls, 1, 'one look at the merge queue head, then the rules: no second admission call');
+  assert.equal(stage8Code(u.r), 'RULESET_UNREADABLE');
 });
 
 test('control pair v2 (step 3a): the test merge must be exactly [T, H] with the tested tree', async t => {

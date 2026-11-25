@@ -16,6 +16,10 @@ import {
 import * as selection from './ci-required-selection.mjs';
 import reporterStream, { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
 
+// What a copy of the selector needs beside it: the modules it imports (test-env since Task 2ee162c2, the real-clock scan,
+// guard and their shared imports since Task 11092b8b).
+const SELECTOR_IMPORTS = ['test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'test-clock-imports.mjs'];
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
 
@@ -97,12 +101,16 @@ function slotFixture(t) {
       setTimeout(() => { clearInterval(poll); process.exitCode = 1; }, 35_000).unref();
     `;
     writeFileSync(path.join(scripts, 'retrigger-counter.test.mjs'), body ?? probe);
+    // The probe waits for real events on real timers: on the checkout's debt list, which the guard the entry preloads reads
+    // (Task 11092b8b).
+    mkdirSync(path.join(root, 'config'), { recursive: true });
+    writeFileSync(path.join(root, 'config', 'test-clock-debt.txt'), 'scripts/ci/retrigger-counter.test.mjs\n');
     let tool = selector;
     let target = suite;
     if (mode === '--write-known') {
       const tools = path.join(root, 'tools');
       mkdirSync(tools);
-      for (const file of ['ci-required-selection.mjs', 'test-env.mjs', 'ci-test-failures-reporter.mjs',
+      for (const file of ['ci-required-selection.mjs', ...SELECTOR_IMPORTS, 'ci-test-failures-reporter.mjs',
         'local-suite-slot-guard.mjs', 'local-suite-slots.mjs', 'local-suite-slot-job.ps1']) {
         copyFileSync(path.join(ROOT, 'scripts', 'ci', file), path.join(tools, file));
       }
@@ -128,6 +136,8 @@ function slotFixture(t) {
     Object.assign(env, extraEnv);
     if (mode === '--run-selected') {
       writeFileSync(path.join(scripts, 'check-cron-budget.test.mjs'), probe);
+      writeFileSync(path.join(root, 'config', 'test-clock-debt.txt'),
+        'scripts/ci/check-cron-budget.test.mjs\nscripts/ci/retrigger-counter.test.mjs\n');
       writeFileSync(path.join(scripts, 'check-cron-budget.mjs'), '');
       target = 'ci-suites';
       const event = path.join(root, 'event.json');
@@ -212,7 +222,8 @@ for (const mode of ['--run-selected', '--write-known']) {
   test(`M3: GitHub Actions ${mode} bypasses an occupied local queue`, async (t) => {
     const start = slotFixture(t);
     await fillSuiteSlots(start);
-    const run = start('actions', { mode, ci: 'GITHUB_ACTIONS' });
+    // The fixture is a minimal checkout for the selected suite; other tests exercise full-plan lanes.
+    const run = start('actions', { mode, ci: 'GITHUB_ACTIONS', extraEnv: { CI_SELECTED_LANES: '1' } });
     await waitForSlotFixture(run, run.ready);
     run.release();
     assert.deepEqual(await run.done, [0, null]);
@@ -573,6 +584,77 @@ test('a change to a file a pinned registry holds runs the pinned-registry check'
   assert.deepEqual(SUITE_COMMANDS['pinned-registries'][0].argv, ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}']);
 });
 
+// Task 700f2b68 (PLAN-main-red-real-repo-20261124 §4.3, PR-A): a check that compares with the base gets it from the command
+// table's --base {base}. The coverage check runs as a command of its own in clued-cloud (the suite every change runs), the
+// schema drift check takes the base the same way; each runs once, also when a plan is split into shards.
+const COVERAGE_CHECK = ['node', 'scripts/ci/check-tests-covered.mjs', '--base', '{base}'];
+// Task 11092b8b (PLAN-main-red-ci-base-sha-20261124 §4): the real-clock debt list only shrinks against the same base, checked
+// by a command of its own after the coverage check, last in clued-cloud.
+const CLOCK_CHECK = ['node', 'scripts/ci/test-clock-scan.mjs', '--check', '--base', '{base}'];
+const takesBase = (id) => SUITE_COMMANDS[id].filter((command) => command.argv.includes('{base}'));
+const packedCommand = (command, argv, total, seconds) => selection.packShards([{ id: 'fixture', command, argv }], { total, seconds })[0];
+test('the coverage, real-clock debt and schema drift checks take the base from the command table, once each, also under --shard', () => {
+  assert.deepEqual(takesBase('clued-cloud').map(({ cwd, argv }) => ({ cwd, argv })), [{ cwd: '.', argv: COVERAGE_CHECK }, { cwd: '.', argv: CLOCK_CHECK }]);
+  assert.deepEqual(SUITE_COMMANDS['clued-cloud'].slice(-2).map(({ argv }) => argv), [COVERAGE_CHECK, CLOCK_CHECK], 'last, after the coverage check');
+  const drift = takesBase('production-schema');
+  assert.equal(drift.length, 1, 'one schema drift command takes the base');
+  assert.deepEqual(drift[0].argv.slice(0, 5), ['node', 'scripts/production-schema-drift.mjs', 'check', '--base', '{base}']);
+  const base = 'b'.repeat(40);
+  for (const command of [...takesBase('clued-cloud'), ...drift]) {
+    const options = { cwd: path.join(ROOT, command.cwd), root: ROOT, report: 'r.json' };
+    const argv = expandArgv(command.argv, { ...options, base });
+    assert.equal(argv[argv.indexOf('--base') + 1], base, argv.join(' '));
+    assert.throws(() => expandArgv(command.argv, options), /CI_BASE_SHA is required/, 'no base: the suite fails, it never guesses');
+    for (const total of [1, 2, 3, 4]) {
+      const step = packedCommand(command, argv, total);
+      const parts = Array.from({ length: total }, (_, at) => selection.shardPart(step, at + 1));
+      assert.equal(parts.filter(({ argv }) => argv).length, 1, `${argv.join(' ')}: one of ${total}`);
+    }
+  }
+});
+
+test('the suite run hands the job base to the checks: clued-cloud and production-schema start them with --base CI_BASE_SHA', () => {
+  const base = 'c'.repeat(40);
+  const summary = JSON.stringify({ type: 'summary', counts: {}, success: true });
+  for (const [id, script] of [['clued-cloud', 'scripts/ci/check-tests-covered.mjs'], ['clued-cloud', 'scripts/ci/test-clock-scan.mjs'],
+    ['production-schema', 'scripts/production-schema-drift.mjs']]) {
+    const calls = [];
+    const spawn = (command, args) => { calls.push(args); return { status: 0 }; };
+    assert.equal(executeSuite(id, { root: ROOT, env: { CI_BASE_SHA: base, RUNNER_TEMP: os.tmpdir() }, spawn, log, platform: 'linux',
+      known: { 'clued-cloud': [] }, readReportFile: () => summary }), 0, id);
+    const checks = calls.filter((args) => args.includes(script));
+    assert.equal(checks.length, 1, `${id} runs ${script} once`);
+    assert.equal(checks[0][checks[0].indexOf('--base') + 1], base, `${id}: ${checks[0].join(' ')}`);
+  }
+});
+
+// Task 700f2b68 (PLAN-main-red-ci-base-sha-20261124 §3.1): a suite whose trusted commands take {base} and has no base
+// stops before its first command, and says how to set one locally. Before, it ran every command up to the one that took
+// the base (clued-cloud: lint, typecheck, build and every unit test) and only then threw.
+test('a suite whose trusted commands take {base} starts no command without a base and names the local setting', () => {
+  const suites = Object.keys(SUITE_COMMANDS).filter((id) => SUITE_COMMANDS[id].some((command) => command.argv.includes('{base}')));
+  assert.ok(['clued-cloud', 'production-schema', 'components', 'pinned-registries'].every((id) => suites.includes(id)), suites.join(', '));
+  for (const id of suites) {
+    for (const env of [{}, { CI_BASE_SHA: '' }, { CI_BASE_SHA: '0'.repeat(40) }]) {
+      const calls = [];
+      const lines = [];
+      const spawn = (command, args) => { calls.push(args); return { status: 0 }; };
+      let status;
+      try {
+        status = executeSuite(id, { root: ROOT, env: { ...env, RUNNER_TEMP: os.tmpdir() }, spawn, platform: 'linux',
+          log: (line) => lines.push(String(line)) });
+      } catch (error) {
+        status = `threw ${error.message}`;
+      }
+      const what = `${id} ${JSON.stringify(env)}`;
+      assert.equal(calls.length, 0, `${what}: started ${calls.map((args) => args.join(' ')).join('; ')}`);
+      assert.equal(status, 2, what);
+      assert.match(lines.join('\n'), /CI_BASE_SHA is required for this suite/, what);
+      assert.match(lines.join('\n'), /CI_BASE_SHA=\$\(git merge-base HEAD origin\/main\)/, what);
+    }
+  }
+});
+
 test('compute panel changes select the panel tests; the retired cache maintenance suite is gone', () => {
   for (const file of ['scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml']) {
     assert.ok(selectSuites('ci-suites', [file]).suites.includes('compute-panel'), file);
@@ -640,7 +722,7 @@ test('every file a moved database test imports selects production-schema', () =>
   const specifiers = (source) => [...source.matchAll(/\b(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(?\s*['"]([^'"]+)['"]/g)]
     .map((match) => match[1] ?? match[2]).filter((spec) => spec.startsWith('.'));
   const seen = new Set();
-  const roots = [...SUITE_COMMANDS['production-schema'].at(-1).argv.filter((arg) => arg.endsWith('.test.mjs')).map((arg) => `apps/clued-cloud/${arg}`),
+  const roots = [...SUITE_COMMANDS['production-schema'].find(({ argv }) => argv.includes('--test-force-exit')).argv.filter((arg) => arg.endsWith('.test.mjs')).map((arg) => `apps/clued-cloud/${arg}`),
     'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs', 'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs'];
   const pending = roots.map((file) => path.join(ROOT, file));
   while (pending.length > 0) {
@@ -652,6 +734,37 @@ test('every file a moved database test imports selects production-schema', () =>
     if (/\.(?:m?js|ts)$/.test(file)) pending.push(...specifiers(readFileSync(file, 'utf8')).map((spec) => path.resolve(path.dirname(file), spec)));
   }
   assert.ok(roots.length > 60 && seen.size > roots.length);
+});
+
+// PLAN-g4-red-merged-20261125 §2.2 (Task 4432ee9b): the checks only clued-g4-database.yml ran (plpgsql_check lint, pgTAP,
+// PostgreSQL 17 backup coverage) run in production-schema, the suite of the required migration-verify, as one command on a
+// real Supabase database, last; first with --observe. The files it runs and starts from select it.
+const REAL_DATABASE = { cwd: 'apps/clued-cloud',
+  argv: ['node', '../../scripts/ci/clued-real-database.mjs', '--observe', 'tests/production-backup-scope-db.test.mjs'] };
+test('production-schema runs the real database checks last, selected by the files they run and start from', () => {
+  assert.deepEqual(SUITE_COMMANDS['production-schema'].at(-1), REAL_DATABASE);
+  for (const file of ['apps/clued-cloud/scripts/verify-production-backup-scope.mjs', 'apps/clued-cloud/tests/production-backup-scope-db.test.mjs',
+    'scripts/ci/clued-real-database.mjs', 'scripts/ci/clued-real-database.test.mjs', 'scripts/ci/clued-g4-fresh-start.mjs',
+    'scripts/ci/clued-local-migrate.mjs', 'apps/clued-cloud/supabase/tests/m1_runtime_contracts.test.sql']) {
+    assert.ok(existsSync(path.join(ROOT, file)), `${file} exists`);
+    assert.deepEqual(selectSuites('migration-verify', [file], 'linux').suites, ['production-schema'], file);
+  }
+});
+
+// A script command's test file operands are files the command runs: coverage (check-tests-covered.mjs) counts them as run
+// and --run-files runs the whole command for one. Any other second operand still leaves the command unplannable.
+test('a node script command takes its script and its test file operands, nothing else', () => {
+  const named = new Set(['apps/clued-cloud/tests/production-backup-scope-db.test.mjs', 'scripts/ci/clued-real-database.mjs']);
+  const result = selection.filterCommand(REAL_DATABASE, REAL_DATABASE.argv, named);
+  assert.deepEqual(result.accepts, ['scripts/ci/clued-real-database.mjs', 'apps/clued-cloud/tests/production-backup-scope-db.test.mjs']);
+  assert.deepEqual(result.runs, [REAL_DATABASE.argv]);
+  assert.deepEqual(result.matched, ['scripts/ci/clued-real-database.mjs', 'apps/clued-cloud/tests/production-backup-scope-db.test.mjs']);
+  const drift = { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--report', 'r.json'] };
+  assert.deepEqual(selection.filterCommand(drift, drift.argv, new Set(['apps/clued-cloud/scripts/production-schema-drift.mjs'])),
+    { runs: [], matched: [], accepts: [] });
+  const one = { cwd: '.', argv: ['node', 'scripts/ci/check-cron-budget.mjs'] };
+  assert.deepEqual(selection.filterCommand(one, one.argv, new Set(['scripts/ci/check-cron-budget.mjs'])),
+    { runs: [one.argv], matched: ['scripts/ci/check-cron-budget.mjs'], accepts: ['scripts/ci/check-cron-budget.mjs'] });
 });
 
 // Every database test, like every other test file, runs in a required suite or is listed in ci-uncovered-tests.json with its
@@ -672,7 +785,7 @@ test('a migration selects the production-schema check; ordinary documentation se
   for (const file of ['ci-connection-self-db.test.mjs', 'fixtures/ci-connection-self-v1.json']) {
     assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/tests/' + file]).suites, ['production-schema']);
   }
-  const scanStart = SUITE_COMMANDS['production-schema'].at(-2);
+  const scanStart = SUITE_COMMANDS['production-schema'].find(({ argv }) => argv[1] === '--test' && argv.includes('{db-concurrency}'));
   assert.equal(scanStart.cwd, 'apps/clued-cloud');
   t.mock.method(os, 'availableParallelism', () => 16);
   assert.deepEqual(expandArgv(scanStart.argv, { cwd: scanStart.cwd }), ['node', '--test', '--test-concurrency=4',
@@ -695,8 +808,9 @@ for (const [cpus, concurrency] of [[16, 4], [4, 2], [64, 4], [15, 3]]) {
       calls.push([command, ...args]);
       return { status: 0 };
     };
-    assert.equal(executeSuite('production-schema', { root: ROOT, env: {}, spawn, log }), 0);
-    assert.deepEqual(calls.slice(-2).map((argv) => argv.filter((arg) => arg.startsWith('--test-concurrency'))),
+    assert.equal(executeSuite('production-schema', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log }), 0);
+    assert.deepEqual(calls.filter((argv) => argv.includes('{db-concurrency}') || argv.some((arg) => arg.startsWith('--test-concurrency')))
+      .map((argv) => argv.filter((arg) => arg.startsWith('--test-concurrency'))),
       [[`--test-concurrency=${concurrency}`], [`--test-concurrency=${concurrency}`]]);
   });
 }
@@ -1051,7 +1165,7 @@ test('a suite stops at its first failing command and reports a command that did 
   assert.equal(executeSuite('components', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log }), 3);
   assert.equal(calls.length, 2);
   assert.equal(executeSuite('selection', { root: ROOT, env: {}, spawn: () => ({ error: new Error('ENOENT') }), log }), 1);
-  assert.equal(executeSuite('production-schema', { root: ROOT, env: {}, spawn: () => ({ status: 0 }), log }), 0);
+  assert.equal(executeSuite('production-schema', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn: () => ({ status: 0 }), log }), 0);
   assert.throws(() => executeSuite('nope', { root: ROOT, spawn, log }), /unknown suite/);
 });
 
@@ -1101,8 +1215,9 @@ console.log(JSON.stringify({
   global: scoped.filter(([scope]) => scope === 'global').map(([, entry]) => entry),
   system: scoped.filter(([scope]) => scope === 'system').map(([, entry]) => entry),
   command: scoped.filter(([scope]) => scope === 'command').map(([, entry]) => entry),
-  leaked: ['GITHUB_PAT_TOKEN', 'ANTHROPIC_API_KEY', 'CLUED_HOME', 'GIT_CONFIG_COUNT', 'NODE_OPTIONS'].filter((name) => name in process.env),
+  leaked: ['GITHUB_PAT_TOKEN', 'ANTHROPIC_API_KEY', 'CLUED_HOME', 'GIT_CONFIG_COUNT'].filter((name) => name in process.env),
   kept: ['CI_BASE_SHA', 'PYTHONDONTWRITEBYTECODE', 'CLUED_CI_APP_DEPS'].map((name) => process.env[name]),
+  clock: ['NODE_OPTIONS', 'CLUED_CLOCK_ROOT'].map((name) => process.env[name]), record: Boolean(process.env.CLUED_CLOCK_RECORD),
 }));`;
 test('suite children get only the listed variables and a fake identity: fake GitHub tokens, an empty gh configuration, a git global configuration with only the test identity, no system configuration', (t) => {
   // The caller's identity, as a run on the Owner's own account inherits it.
@@ -1145,6 +1260,10 @@ test('suite children get only the listed variables and a fake identity: fake Git
     assert.deepEqual(child.command, [], "no configuration from the caller's environment");
     assert.deepEqual(child.kept, ['b', '1', '1'], 'the listed ones are');
     assert.equal(child.prompt, '0');
+    // Task 11092b8b (FABLE-no-real-clock-20261122 §2.1, §7.8): the caller's NODE_OPTIONS is not passed; the one a child
+    // gets preloads the real-clock guard of this checkout, with the checkout and a record of its own.
+    assert.deepEqual(child.clock, [`--import=${pathToFileURL(path.join(ROOT, 'scripts/ci/test-clock-guard.mjs')).href}`, path.resolve(ROOT)]);
+    assert.equal(child.record, true);
   }
   assert.deepEqual(env, before, "the caller's env is not changed");
 });
@@ -1161,6 +1280,17 @@ test("under Actions a suite child gets the fake token, not the job's, and keeps 
   assert.equal(seen[0].GITHUB_TOKEN, selection.FAKE_GITHUB_TOKEN);
   assert.equal(seen[0].RUNNER_TRACKING_ID, 'github_1234');
   assert.equal(seen[0].GITHUB_ACTIONS, undefined, 'a test runs the same in Actions and locally');
+});
+
+// Task 4432ee9b (ruling 11-25 B1): the real database command of production-schema reads the runner's kind to skip its
+// cleanup on a GitHub-hosted runner; a suite child gets RUNNER_ENVIRONMENT as the runner gives it.
+test("a suite child keeps the runner's kind, RUNNER_ENVIRONMENT", () => {
+  const seen = [];
+  const spawn = (command, args, options) => { seen.push(options.env); return { status: 0 }; };
+  const env = { GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted', CI_BASE_SHA: 'b', PATH: '/bin' };
+  assert.equal(executeSuite('retrigger-counter', { root: ROOT, env, spawn, log }), 0);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].RUNNER_ENVIRONMENT, 'github-hosted');
 });
 
 // Task 3435f8bf: the hosted windows image points PSModuleAnalysisCachePath at a warmed Windows PowerShell module analysis
@@ -1273,7 +1403,7 @@ function candidateSelector(t) {
   const dir = path.join(root, 'scripts/ci');
   mkdirSync(dir, { recursive: true });
   const source = readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8');
-  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'test-env.mjs'));
+  for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
   const change = (id, commands) => writeFileSync(path.join(dir, 'ci-required-selection.mjs'),
     commands === undefined ? source : `${source}\nSUITE_COMMANDS[${JSON.stringify(id)}] = ${JSON.stringify(commands)};\n`);
   change();
@@ -1354,7 +1484,7 @@ test('a command added by a module the candidate selector imports runs although t
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const dir = path.join(root, 'scripts/ci');
     mkdirSync(dir, { recursive: true });
-    copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'test-env.mjs'));
+    for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
     writeFileSync(path.join(dir, 'ci-required-selection.mjs'), `${readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8')}
 import { ADDED } from './suite-additions.mjs';
 SUITE_COMMANDS['retrigger-counter'].push(...ADDED);
@@ -1601,7 +1731,7 @@ test('a known-failure command adds the trusted reporter, warns on known failures
 test('the application suite gates lint, ledger, typecheck and build before the unit tests', () => {
   const calls = [];
   const spawn = (command, args) => { calls.push(args.join(' ')); return { status: args.includes('typecheck') ? 2 : 0 }; };
-  assert.equal(executeSuite('clued-cloud', { root: ROOT, env: {}, spawn, log, platform: 'linux' }), 2);
+  assert.equal(executeSuite('clued-cloud', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log, platform: 'linux' }), 2);
   assert.deepEqual(calls, ['run lint', 'run ledger:verify', 'run typecheck']);
 });
 
@@ -1621,7 +1751,7 @@ test('on Windows the entry starts npm and npx through node, not the .cmd shim; e
   assert.deepEqual(resolveCommand(['npm', 'run', 'lint'], { ...win, exists: () => false }), ['npm', 'run', 'lint']);
   assert.deepEqual(resolveCommand(['npm', 'run', 'lint'], { ...win, platform: 'linux' }), ['npm', 'run', 'lint']);
   const calls = [];
-  executeSuite('clued-cloud', { root: ROOT, env: {}, platform: 'win32', log, spawn: (command, args) => { calls.push([command, ...args]); return { status: 1 }; } });
+  executeSuite('clued-cloud', { root: ROOT, env: { CI_BASE_SHA: 'b' }, platform: 'win32', log, spawn: (command, args) => { calls.push([command, ...args]); return { status: 1 }; } });
   assert.equal(calls.length, 1);
   if (process.platform === 'win32') {
     assert.equal(calls[0][0], process.execPath, 'the first step starts npm via node');
@@ -1990,6 +2120,10 @@ function runBaseline(t, { shell, script }, repo, { EVENT_NAME, PUSH_REF, STAGING
   return { status: r.status, outputs: kv(output), env: kv(envFile), log: r.stdout + r.stderr };
 }
 const STAGING = { EVENT_NAME: 'push', PUSH_REF: 'refs/heads/clued-train/staging' };
+// The suites each Linux required job runs that take {base}: ci-suites the selected ones, clued-cloud-tests and
+// migration-verify their one suite (the coverage check and the schema drift check, task 700f2b68).
+const BASE_SUITES_OF_JOB = { 'ci-suites': ['components', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry'],
+  'clued-cloud-tests': ['clued-cloud'], 'migration-verify': ['production-schema'] };
 for (const [file, id] of BASELINE_JOBS) {
   const label = `${path.basename(file)} ${id}`;
   const step = baselineStep(file, id);
@@ -2075,21 +2209,18 @@ for (const [file, id] of BASELINE_JOBS) {
     assert.equal(pr.status, 0, pr.log);
     assert.deepEqual(pr.outputs, { ci_base: repo.M2 }, pr.log);
   });
-  if (id !== 'ci-suites') continue;
-  // The consumer, end to end: what the step wrote to GITHUB_ENV (the suite step sets no CI_BASE_SHA of its own, which
-  // would override it), then the selector expanding every command of the four suites that take {base}. Before the
+  const baseSuites = BASE_SUITES_OF_JOB[id];
+  if (!baseSuites) continue;
+  // The consumer, end to end: what the step wrote to GITHUB_ENV (that no step sets CI_BASE_SHA itself is checked once, in
+  // ci-base.test.mjs), then the selector expanding every command of the job's suites that take {base}. Before the
   // dispatch fix this threw 'CI_BASE_SHA is required for this suite', as in the run's log.
   test(`lost-run dispatch, ${label}: the suites that compare with a base get the merge-base commit`, { skip }, (t) => {
     const repo = dispatchCheckout(t);
-    const text = readFileSync(file, 'utf8');
-    const job = text.slice(text.indexOf(`\n  ${id}:\n`) + 1);
-    const suitesStep = job.slice(job.indexOf('- name: Run the selected suites\n'));
-    assert.doesNotMatch(suitesStep.slice(0, suitesStep.indexOf('\n      - ')), /^ +CI_BASE_SHA:/m);
     for (const [head, expected] of [[repo.caughtUp, repo.M2], [repo.behind, repo.T]]) {
       const r = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: head });
       assert.equal(r.status, 0, r.log);
       const base = r.env.CI_BASE_SHA ?? '';
-      for (const suite of ['components', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry']) {
+      for (const suite of baseSuites) {
         let compared = 0;
         for (const command of SUITE_COMMANDS[suite]) {
           const argv = expandArgv(command.argv, { cwd: path.join(ROOT, command.cwd), root: ROOT, base, report: path.join(repo.dir, 'r.json') });
@@ -2098,7 +2229,9 @@ for (const [file, id] of BASELINE_JOBS) {
           assert.equal(argv[at + 1], expected, `${suite}: ${argv.join(' ')}`);
           compared++;
         }
-        assert.equal(compared, 1, `${suite} compares with the base once`);
+        // clued-cloud: the coverage check and the real-clock debt check (Task 11092b8b); the others: one command each.
+        const expectedCount = suite === 'clued-cloud' ? 2 : 1;
+        assert.equal(compared, expectedCount, `${suite} compares with the base ${expectedCount} time(s)`);
       }
       assert.equal(base, expected, r.log);
       assert.ok(isAncestor(repo, base, head), 'the suites compare the head with one of its own ancestors');
@@ -2114,7 +2247,7 @@ test('in a CI job, --run and --run-selected without a base commit start no comma
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const tools = path.join(dir, 'tools');
   mkdirSync(tools);
-  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(tools, 'test-env.mjs'));
+  for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(tools, name));
   const tail = `for (const key of Object.keys(SUITES['ci-suites'])) delete SUITES['ci-suites'][key];
 SUITES['ci-suites']['retrigger-counter'] = ['**'];
 delete SUITE_PLATFORMS['retrigger-counter'];
@@ -2163,7 +2296,7 @@ test('the release workflow and its grant script select the release door flow dat
     'apps/clued-cloud/tests/production-release-door-flow-db.test.mjs', 'apps/clued-cloud/tests/release-door-psql-fixture.mjs']) {
     assert.deepEqual(selectSuites('migration-verify', [file], 'linux').suites, ['production-schema'], file);
   }
-  assert.ok(SUITE_COMMANDS['production-schema'].at(-1).argv.includes('tests/production-release-door-flow-db.test.mjs'));
+  assert.ok(SUITE_COMMANDS['production-schema'].find(({ argv }) => argv.includes('--test-force-exit')).argv.includes('tests/production-release-door-flow-db.test.mjs'));
 });
 
 // --run-files: point-in-time reproduction of named test files through the same suite command.
@@ -2504,9 +2637,10 @@ const shardRecord = (calls) => (command, args, options) => {
     argv: [command, ...args].filter((arg) => !arg.startsWith('--test-reporter')) });
   return { status: 0 };
 };
+const isBuild = ({ argv }) => argv.join(' ') === 'npm run build';
 function shardUnits(calls) {
   const units = [];
-  for (const { cwd, argv } of calls) {
+  for (const { cwd, argv } of calls.filter((call) => !isBuild(call))) {
     const testAt = argv.indexOf('--test');
     const unittestAt = argv.findIndex((arg, i) => arg === 'unittest' && argv[i - 1] === '-m');
     const anchor = testAt >= 0 ? testAt : unittestAt >= 0 && argv[unittestAt + 1] !== 'discover' ? unittestAt : -1;
@@ -2520,12 +2654,75 @@ function shardUnits(calls) {
   }
   return units;
 }
-async function shardRun(suites, shard, env) {
+async function shardRun(suites, shard, env, options = {}) {
   const calls = [];
   const run = (id, options) => executeSuite(id, { ...options, spawn: shardRecord(calls), platform: 'linux', known: {},
     readReportFile: () => JSON.stringify({ type: 'summary', counts: {}, success: true }) });
-  assert.equal(await runSelected(suites, { root: ROOT, env, log, run, ...(shard ? { shard } : {}) }), 0);
+  assert.equal(await runSelected(suites, { root: ROOT, env, log, run, ...(shard ? { shard } : {}), ...options }), 0);
   return calls;
+}
+
+test('--shard: heavy files in different commands stay below the modeled shard limit', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-binpack-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const id = 'retrigger-counter';
+  const original = SUITE_COMMANDS[id];
+  t.after(() => { SUITE_COMMANDS[id] = original; });
+  SUITE_COMMANDS[id] = [
+    { cwd: '.', argv: ['node', '--test', 'first.test.mjs', 'light.test.mjs'] },
+    { cwd: '.', argv: ['node', '--test', 'second.test.mjs'] },
+  ];
+  const weights = { 'first.test.mjs': 100, 'second.test.mjs': 100, 'light.test.mjs': 1 };
+  const shardSecondsFile = path.join(temp, 'table.json');
+  writeFileSync(shardSecondsFile, JSON.stringify(weights));
+  const loads = [];
+  for (const index of [1, 2]) {
+    const calls = [];
+    const run = (suite, options) => executeSuite(suite, { ...options, platform: 'linux', known: {},
+      shardSecondsFile, spawn: shardRecord(calls) });
+    assert.equal(await runSelected([id], { root: ROOT, env: { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp }, log, run,
+      check: 'ci-suites', platform: 'linux', shardSecondsFile, shard: { index, total: 2 } }), 0);
+    loads.push(calls.flatMap(({ argv }) => argv).reduce((sum, arg) => sum + (weights[arg] ?? 0), 0));
+  }
+  assert.deepEqual(loads.sort((a, b) => a - b), [100, 101]);
+});
+
+test('--shard: both clued-cloud shards build before their tests', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-cloud-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp };
+  for (const index of [1, 2]) {
+    const calls = await shardRun(['clued-cloud'], { index, total: 2 }, env, { check: 'clued-cloud-tests', platform: 'linux' });
+    const build = calls.findIndex(isBuild);
+    const tests = calls.findIndex(({ argv }) => argv.includes('scripts/run-tests.mjs'));
+    assert.ok(build >= 0 && build < tests, `shard ${index}: build at ${build}, unit tests at ${tests}`);
+    assert.equal(calls.filter(isBuild).length, 1, `shard ${index} builds once`);
+  }
+});
+
+async function assertShardsRunPlanOnce(suites, totals, env, options = {}) {
+  const plan = await shardRun(suites, null, env);
+  const planUnits = shardUnits(plan);
+  for (const total of totals) {
+    const shards = [];
+    for (let index = 1; index <= total; index += 1) shards.push(await shardRun(suites, { index, total }, env, options));
+    if (total === 1) assert.deepEqual(shards[0], plan, `1/1 runs today's plan command for command (${suites.join(' ')})`);
+    const units = shards.map(shardUnits);
+    // Each unit once: no shard leaves one out, no two shards run the same one.
+    assert.deepEqual(units.flat().sort(), [...planUnits].sort(), `the ${total} shards of ${suites.join(' ')} run the plan's units once`);
+    for (const part of units) {
+      let at = 0;
+      for (const unit of part) {
+        while (at < planUnits.length && planUnits[at] !== unit) at += 1;
+        assert.ok(at < planUnits.length, `a shard runs ${unit} out of the plan's order`);
+        at += 1;
+      }
+    }
+    if (options.check && planUnits.length >= total * 4) {
+      const sizes = units.map((part) => part.length);
+      assert.ok(Math.min(...sizes) > 0, `every one of ${total} shards runs something: ${sizes}`);
+    }
+  }
 }
 
 test('--shard i/n: the shards together run every unit of the plan once, in its order; 1/1 is the plan as it runs today', async (t) => {
@@ -2536,29 +2733,19 @@ test('--shard i/n: the shards together run every unit of the plan once, in its o
   // Any selection: every suite, one suite, and orders that put the listing suites at other places.
   const selections = [all, ['resident-node'], [...all].reverse(), all.filter((id, i) => i % 3 !== 1),
     ['offline-drill', 'selection', 'retrigger-counter']];
-  for (const suites of selections) {
-    const plan = await shardRun(suites, null, env);
-    const planUnits = shardUnits(plan);
-    for (const total of [1, 2, 3, 4, 7]) {
-      const shards = [];
-      for (let index = 1; index <= total; index += 1) shards.push(await shardRun(suites, { index, total }, env));
-      if (total === 1) assert.deepEqual(shards[0], plan, `1/1 runs today's plan command for command (${suites.join(' ')})`);
-      const units = shards.map(shardUnits);
-      // Each unit once: no shard leaves one out, no two shards run the same one.
-      assert.deepEqual(units.flat().sort(), [...planUnits].sort(), `the ${total} shards of ${suites.join(' ')} run the plan's units once`);
-      for (const part of units) {
-        let at = 0;
-        for (const unit of part) {
-          while (at < planUnits.length && planUnits[at] !== unit) at += 1;
-          assert.ok(at < planUnits.length, `a shard runs ${unit} out of the plan's order`);
-          at += 1;
-        }
-      }
-      if (planUnits.length >= total * 4) {
-        const sizes = units.map((part) => part.length);
-        assert.ok(Math.min(...sizes) > 0, `every one of ${total} shards runs something: ${sizes}`);
-      }
-    }
+  for (const suites of selections) await assertShardsRunPlanOnce(suites, [1, 2, 3, 4, 7], env);
+});
+
+const hostedPlans = [['migration-verify', 'linux', 4], ['ci-suites', 'linux', 4], ['ci-suites', 'win32', 7], ['clued-cloud-tests', 'linux', 2]];
+test('--shard: the hosted plans at their matrix counts run every partitioned unit once', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp };
+  for (const [check, platform, total] of hostedPlans) {
+    const { suites } = selectSuites(check, null, platform);
+    assert.ok(suites.length > 0, `${check} on ${platform} selects something`);
+    if (check === 'migration-verify') assert.deepEqual(suites, ['production-schema']);
+    await assertShardsRunPlanOnce(suites, [total], env, { check, platform });
   }
 });
 
@@ -2567,30 +2754,32 @@ test('--shard: a listing command runs its shard\'s files with its own switches; 
   const argv = ['node', 'scripts/run-tests.mjs', '--test', '--test-concurrency=2', 'tests/a.test.mjs', 'tests/b.test.mjs', 'tests/c.test.mjs'];
   const only = (file) => ['node', 'scripts/run-tests.mjs', '--test', '--test-concurrency=2', file];
   const listed = new Set(['apps/clued-cloud/tests/a.test.mjs', 'apps/clued-cloud/tests/b.test.mjs', 'apps/clued-cloud/tests/c.test.mjs']);
-  assert.deepEqual(selection.shardCommand(command, argv, { index: 2, total: 2 }, 0),
+  assert.deepEqual(selection.shardPart(packedCommand(command, argv, 2), 2),
     { argv: only('tests/b.test.mjs'), units: 3, files: new Set(['apps/clued-cloud/tests/b.test.mjs']), listed });
-  assert.deepEqual(selection.shardCommand(command, argv, { index: 1, total: 4 }, 3),
-    { argv: only('tests/b.test.mjs'), units: 3, files: new Set(['apps/clued-cloud/tests/b.test.mjs']), listed });
-  assert.deepEqual(selection.shardCommand(command, argv, { index: 2, total: 4 }, 3),
-    { argv: only('tests/c.test.mjs'), units: 3, files: new Set(['apps/clued-cloud/tests/c.test.mjs']), listed });
-  assert.deepEqual(selection.shardCommand(command, argv, { index: 3, total: 4 }, 3), { argv: null, units: 3, files: null, listed: null });
+  const step = packedCommand(command, argv, 4);
+  assert.deepEqual(selection.shardPart(step, 4), { argv: null, units: 3, files: null });
   // Not a list of test files: the command is one unit.
   const discover = ['python', '-m', 'unittest', 'discover', '-s', 'test', '-p', 'test_*.py'];
-  assert.deepEqual(selection.shardCommand({ cwd: '.' }, discover, { index: 2, total: 3 }, 4), { argv: discover, units: 1, files: null, listed: null });
-  assert.deepEqual(selection.shardCommand({ cwd: '.' }, ['node', 'scripts/ci/check-cron-budget.mjs'], { index: 1, total: 3 }, 4),
-    { argv: null, units: 1, files: null, listed: null });
+  const whole = packedCommand({ cwd: '.', argv: discover }, discover, 3);
+  assert.deepEqual(selection.shardPart(whole, 1), { argv: discover, units: 1, files: null });
+  assert.deepEqual(selection.shardPart(whole, 2), { argv: null, units: 1, files: null });
 
-  // admission-self-tests lists its files: of 2 shards, the one its number (shardOffset) gives has the first file, the other the second.
+  // The heavier first file takes the first shard, the second file takes the second shard.
   const [first, second] = SUITE_COMMANDS['admission-self-tests'][0].argv.slice(2);
-  const firstShard = (selection.shardOffset('admission-self-tests') % 2) + 1;
+  const firstShard = 1;
   const known = { 'admission-self-tests': [{ file: first, path: ['a'], fingerprint: 'a'.repeat(16), reason: 'r' },
     { file: second, path: ['b'], fingerprint: 'b'.repeat(16), reason: 'r' }] };
+  // Its own table, not the repository's: the first file the heaviest and the second the next, so by the packing rule (heaviest first
+  // into the lightest shard) they are in different shards whatever seconds the real table has.
+  const tableDir = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-seconds-'));
+  const shardSecondsFile = path.join(tableDir, 'ci-shard-seconds.json');
+  writeFileSync(shardSecondsFile, JSON.stringify({ [first]: 1000, [second]: 999 }));
   const summary = { type: 'summary', counts: {}, success: false };
   const shardOf = (index, events, status) => {
     const lines = [];
     let ran;
     const code = executeSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, known, log: (line) => lines.push(line),
-      spawn: (command, args) => { ran = args; return { status }; }, shard: { index, total: 2 },
+      spawn: (command, args) => { ran = args; return { status }; }, shard: { index, total: 2 }, shardSecondsFile,
       readReportFile: () => [...events, summary].map((event) => JSON.stringify(event)).join('\n') });
     return { code, lines: lines.join('\n'), ran };
   };
@@ -2604,6 +2793,7 @@ test('--shard: a listing command runs its shard\'s files with its own switches; 
   assert.ok(two.ran.includes(second) && !two.ran.includes(first));
   assert.match(two.lines, new RegExp(`known failure::${second} :: b`));
   assert.doesNotMatch(two.lines, new RegExp(`${first} :: a`), 'the other shard\'s known failure is not this shard\'s');
+  rmSync(tableDir, { recursive: true, force: true });
 });
 
 test('--shard takes i/n with 1 <= i <= n, splits --run-selected only and runs only in a CI job', async () => {
@@ -2632,7 +2822,7 @@ test('--shard takes i/n with 1 <= i <= n, splits --run-selected only and runs on
 // Review of f574bab16 (REVIEW-hosted-speed-b3-20261124). Each shard selects on its own: one whose list of changed files
 // cannot be read runs every suite, the others the real selection. A suite's units go to the same shards whatever else a
 // shard selected, so each unit of the real selection still runs exactly once (H1: 39 of 157 files left out, 39 twice).
-async function shardRunById(suites, shard, env, { fail = () => false, summary = () => {} } = {}) {
+async function shardRunById(suites, shard, env, { fail = () => false, summary = () => {}, check, platform } = {}) {
   const calls = [];
   const run = (id, options) => executeSuite(id, { ...options, platform: 'linux', known: {},
     spawn: (command, args, opts) => {
@@ -2642,7 +2832,7 @@ async function shardRunById(suites, shard, env, { fail = () => false, summary = 
       return { status: fail(call) ? 1 : 0 };
     },
     readReportFile: () => JSON.stringify({ type: 'summary', counts: {}, success: true }) });
-  const status = await runSelected(suites, { root: ROOT, env, log, run, summary, ...(shard ? { shard } : {}) });
+  const status = await runSelected(suites, { root: ROOT, env, log, run, summary, check, platform, ...(shard ? { shard } : {}) });
   return { status, calls };
 }
 const unitsOf = (calls) => shardUnits(calls.map(({ cwd, argv }) => ({ cwd, argv })));
@@ -2651,17 +2841,19 @@ test('--shard: shards that select differently (one runs every suite) still run e
   const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
   const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp };
-  const all = Object.keys(SUITE_COMMANDS);
-  for (const real of [['resident-node'], ['selection', 'offline-drill', 'source-v2-node']]) {
-    const plan = unitsOf((await shardRunById(real, null, env)).calls);
-    for (const total of [2, 4]) {
+  for (const [check, platform, total] of hostedPlans.filter(([name]) => name !== 'migration-verify')) {
+    const all = selectSuites(check, null, platform).suites;
+    const selections = check === 'clued-cloud-tests' ? [all] : [['resident-node'], all.filter((id) => ['selection', 'source-v2-node'].includes(id))];
+    const options = { check, platform };
+    for (const real of selections) {
+      const plan = unitsOf((await shardRunById(real, null, env)).calls);
+      const expected = await Promise.all(Array.from({ length: total }, (_, at) => shardRunById(real, { index: at + 1, total }, env, options)));
       for (let fallback = 1; fallback <= total; fallback += 1) {
-        const ran = [];
-        for (let index = 1; index <= total; index += 1) {
-          const { status, calls } = await shardRunById(index === fallback ? all : real, { index, total }, env);
-          assert.equal(status, 0);
-          ran.push(...calls.filter((call) => real.includes(call.id)));
-        }
+        const { status, calls } = await shardRunById(all, { index: fallback, total }, env, options);
+        assert.equal(status, 0);
+        const fallbackCalls = calls.filter((call) => real.includes(call.id));
+        assert.deepEqual(fallbackCalls, expected[fallback - 1].calls, 'selection does not change the assigned commands');
+        const ran = expected.flatMap(({ calls }, at) => at + 1 === fallback ? fallbackCalls : calls);
         assert.deepEqual(unitsOf(ran).sort(), [...plan].sort(),
           `${real.join(' ')}, ${total} shards, shard ${fallback} runs every suite: each unit of the selection once`);
       }
@@ -2672,8 +2864,8 @@ test('--shard: shards that select differently (one runs every suite) still run e
 test('--shard: a python -m unittest command with an operand that is not a file runs whole, in one shard', () => {
   const argv = ['python', '-m', 'unittest', 'tests/test_a.py', 'tests'];
   for (const total of [2, 3]) {
-    const parts = [];
-    for (let index = 1; index <= total; index += 1) parts.push(selection.shardCommand({ cwd: '.' }, argv, { index, total }, 0));
+    const packed = packedCommand({ cwd: '.', argv }, argv, total);
+    const parts = Array.from({ length: total }, (_, at) => selection.shardPart(packed, at + 1));
     const runs = parts.filter((part) => part.argv);
     assert.equal(runs.length, 1, `one of ${total} shards runs it`);
     assert.deepEqual(runs[0].argv, argv, 'the package operand is not dropped');
@@ -2681,7 +2873,7 @@ test('--shard: a python -m unittest command with an operand that is not a file r
   }
   // Every operand a file: split by file as before.
   const files = ['python', '-m', 'unittest', 'tests/test_a.py', 'tests.test_b'];
-  assert.deepEqual(selection.shardCommand({ cwd: '.' }, files, { index: 2, total: 2 }, 0).argv, ['python', '-m', 'unittest', 'tests.test_b']);
+  assert.deepEqual(selection.shardPart(packedCommand({ cwd: '.', argv: files }, files, 2), 2).argv, ['python', '-m', 'unittest', 'tests.test_b']);
 });
 
 test('--shard: the summary tells a suite this shard ran no unit of from one it ran and passed', async (t) => {
@@ -2804,13 +2996,28 @@ test('--shard: the test files and the command a pull request adds to a suite are
   }
 });
 
-// Block 5 (FABLE-hosted-win-shard-balance-20261124 §2): --shard packs a listing command's files by their seconds
-// (ci-shard-seconds.json, passed to shardCommand here, never the repository's table), heaviest first into the lightest
-// shard. The table only moves files between shards: each file still runs in exactly one.
-const bySeconds = (files, total, position, seconds) => {
+test('a candidate addition uses spare load without moving any trusted unit', () => {
+  const step = (file, expanded = false) => {
+    const argv = ['node', '--test', file];
+    return { id: 'fixture', command: { cwd: '.', argv, expanded }, argv };
+  };
+  const trusted = [step('first.test.mjs'), step('second.test.mjs')];
+  const added = step('added.test.mjs', true);
+  const seconds = new Map([['first.test.mjs', 11], ['second.test.mjs', 8], ['added.test.mjs', 100]]);
+  const options = { total: 2, seconds };
+  const plan = selection.packShards(trusted, options);
+  const combined = selection.packShards([...trusted, added], options);
+  assert.deepEqual(combined.slice(0, 2), plan);
+  assert.equal(combined[2].units[0].shard, 2);
+});
+
+// The table only moves files between shards: each file still runs in exactly one.
+const bySeconds = (files, total, seconds = {}) => {
+  const argv = ['node', '--test', '--test-concurrency=2', ...files];
+  const step = packedCommand({ cwd: '.', argv }, argv, total, new Map(Object.entries(seconds)));
   const parts = [];
   for (let index = 1; index <= total; index += 1) {
-    const part = selection.shardCommand({ cwd: '.' }, ['node', '--test', '--test-concurrency=2', ...files], { index, total }, position, seconds);
+    const part = selection.shardPart(step, index);
     assert.equal(part.units, files.length);
     parts.push({ argv: part.argv, files: part.files ? [...part.files] : [] });
   }
@@ -2822,14 +3029,11 @@ test('--shard by seconds: two heavy files whose numbers agree mod n land in diff
   const weights = [100, 1, 1, 1, 100, 1, 1, 1];
   const seconds = Object.fromEntries(files.map((file, i) => [file, weights[i]]));
   const sum = weights.reduce((a, b) => a + b, 0);
-  for (let position = 0; position < 4; position += 1) {
-    const parts = bySeconds(files, 4, position, seconds);
-    const loads = parts.map((part) => part.files.reduce((total, file) => total + seconds[file], 0));
-    const heavy = parts.find((part) => part.files.includes(files[0]));
-    assert.ok(!heavy.files.includes(files[4]), `position ${position}: the two 100-second files share a shard (${loads})`);
-    // One file alone weighs 100: no partition gets the heaviest shard under it.
-    assert.ok(Math.max(...loads) <= Math.max(1.15 * (sum / 4), Math.max(...weights)), `position ${position}: shards ${loads}`);
-  }
+  const parts = bySeconds(files, 4, seconds);
+  const loads = parts.map((part) => part.files.reduce((total, file) => total + seconds[file], 0));
+  const heavy = parts.find((part) => part.files.includes(files[0]));
+  assert.ok(!heavy.files.includes(files[4]), `the two 100-second files share a shard (${loads})`);
+  assert.ok(Math.max(...loads) <= Math.max(1.15 * (sum / 4), Math.max(...weights)), `shards ${loads}`);
 });
 
 test('--shard by seconds: any table, any n, the shards split the command\'s files: disjoint, all of them, in order', () => {
@@ -2854,8 +3058,7 @@ test('--shard by seconds: any table, any n, the shards split the command\'s file
     }
     seconds['elsewhere/x.test.mjs'] = 999;
     const total = 1 + (trial % 8);
-    const position = Math.floor(random() * 40);
-    const parts = bySeconds(files, total, position, seconds);
+    const parts = bySeconds(files, total, seconds);
     const ran = parts.flatMap((part) => part.files);
     assert.deepEqual([...ran].sort(), [...files].sort(), `trial ${trial}: every file once`);
     for (const part of parts) {
@@ -2867,16 +3070,14 @@ test('--shard by seconds: any table, any n, the shards split the command\'s file
   }
 });
 
-test('--shard by seconds: with no table (or none of its files in it) a file goes where (position + unit) mod n puts it', () => {
+test('--shard by seconds: ties follow plan order and use the lowest numbered lightest shard', () => {
   for (let count = 1; count <= 12; count += 1) {
     const files = Array.from({ length: count }, (_, i) => `t/f${String(i).padStart(2, '0')}.test.mjs`);
     for (let total = 1; total <= 8; total += 1) {
-      for (let position = 0; position <= 10; position += 1) {
-        for (const seconds of [undefined, {}, { 'elsewhere/x.test.mjs': 300 }]) {
-          const parts = bySeconds(files, total, position, seconds);
-          parts.forEach((part, i) => assert.deepEqual(part.files, files.filter((file, unit) => (position + unit) % total === i),
-            `${count} files, ${total} shards, from ${position}, table ${JSON.stringify(seconds)}`));
-        }
+      for (const seconds of [undefined, {}, { 'elsewhere/x.test.mjs': 300 }]) {
+        const parts = bySeconds(files, total, seconds);
+        parts.forEach((part, i) => assert.deepEqual(part.files, files.filter((file, unit) => unit % total === i),
+          `${count} files, ${total} shards, table ${JSON.stringify(seconds)}`));
       }
     }
   }
@@ -2887,12 +3088,12 @@ test('--shard by seconds: the checked-in table spreads resident-node over 4 shar
   assert.equal(problem, null, 'the checked-in table reads');
   const [command] = SUITE_COMMANDS['resident-node'];
   const argv = expandArgv(command.argv, { cwd: path.join(ROOT, command.cwd), root: ROOT, base: 'a'.repeat(40), report: '' });
-  const position = selection.shardOffset('resident-node');
+  const step = packedCommand(command, argv, 4, table);
   const loads = [];
   const ran = [];
   let listed = null;
   for (let index = 1; index <= 4; index += 1) {
-    const part = selection.shardCommand(command, argv, { index, total: 4 }, position, table);
+    const part = selection.shardPart(step, index);
     listed ??= part.listed;
     const mine = part.files ? [...part.files] : [];
     ran.push(...mine);
@@ -2969,7 +3170,7 @@ test('--shard by seconds: a listing command says how much of the table it hit an
   assert.equal(logged.length, 1);
   assert.deepEqual(JSON.parse(logged[0].slice('admission-self-tests: shard-seconds '.length)), { [files[0]]: 1.8, [files[1]]: 2 });
   // The suite's first line names the table it read, so the shards' logs show they read the same one.
-  assert.match(lines[0], /^admission-self-tests: shard 1\/1, units numbered from \d+; 按秒数分片，表 3 条（[0-9a-f]{12}）$/);
+  assert.match(lines[0], /^admission-self-tests: shard 1\/1; 按秒数分片，表 3 条（[0-9a-f]{12}）$/);
 });
 
 test('--write-shard-seconds: the median of each file\'s samples in the shard logs, under 3 seconds dropped, keys sorted', (t) => {
@@ -2988,7 +3189,7 @@ test('--write-shard-seconds: the median of each file\'s samples in the shard log
   const lines = [];
   assert.equal(selection.writeShardSeconds([one, two], { file: out, log: (line) => lines.push(line) }), 0);
   assert.equal(readFileSync(out, 'utf8'), expected);
-  assert.match(lines.join('\n'), /3 files written/);
+  assert.match(lines.join('\n'), /3 keys written/);
   // Nothing to write from (no shard-seconds line, an unreadable log, no log): the table stays as it was.
   const none = path.join(temp, 'none.log');
   writeFileSync(none, 'resident-node: shard 1/4\n');
@@ -3020,26 +3221,137 @@ test('the reporter gives a top-level test its whole milliseconds (ms), a nested 
     [['top > inner', undefined], ['top', 1234], ['bad', 100], ['skipped', 0]]);
 });
 
-test('the reporter counts a test\'s child process in the test\'s own file (fleet-node-children: its fleet tests are its seconds)', (t) => {
-  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-seconds-'));
+test('the reporter uses the file wall clock ahead of the sum of its tests', async () => {
+  const file = path.join(ROOT, 'shard-timing.test.mjs');
+  const source = [
+    { type: 'test:pass', data: { file, nesting: 0, name: 'case', details: { duration_ms: 1000 } } },
+    { type: 'test:complete', data: { file, nesting: 0, name: 'case', details: { duration_ms: 1000 } } },
+    { type: 'test:complete', data: { nesting: 0, name: file, details: { duration_ms: 5000 } } },
+  ];
+  const lines = [];
+  for await (const line of reporterStream(source)) lines.push(line);
+  const report = readReport(lines.join(''), ROOT);
+  assert.equal(selection.shardSecondsOf(report, new Set(['shard-timing.test.mjs']))['shard-timing.test.mjs'], 5);
+  assert.equal(JSON.parse(lines.at(-1)).ms, 5000);
+});
+
+test('--write-shard-seconds takes the median of three whole-command samples', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-whole-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
-  // Named like another file, as fleet-node-children names each fleet test it starts.
-  writeFileSync(path.join(temp, 'parent.test.mjs'), [
-    "import { spawnSync } from 'node:child_process';",
-    "import test from 'node:test';",
-    "test('rollout/fleet/test/other.test.mjs', () => {",
-    "  const r = spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1200)']);",
-    "  if (r.status !== 0) throw new Error('child failed');",
-    '});', ''].join('\n'));
-  const out = path.join(temp, 'report.jsonl');
-  const env = { ...process.env };
-  delete env.NODE_TEST_CONTEXT;
-  const run = spawnSync(process.execPath, ['--test', `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`, `--test-reporter-destination=${out}`,
-    'parent.test.mjs'], { cwd: temp, env, encoding: 'utf8' });
-  assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
-  const { events } = readReport(readFileSync(out, 'utf8'), temp);
-  const top = events.filter((event) => event.type === 'pass');
-  assert.equal(top.length, 1);
-  assert.equal(top[0].file, 'parent.test.mjs');
-  assert.ok(top[0].ms >= 1100, `the child's time is the parent file's: ${top[0].ms} ms`);
+  const key = 'runner-budget-policy (.) python3 scripts/ci/validate_runner_budget_policy.py';
+  const logs = [8, 40, 12].map((seconds, index) => {
+    const file = path.join(temp, `round-${index}.log`);
+    writeFileSync(file, `runner-budget-policy: whole-seconds ${JSON.stringify({ [key]: seconds })}\n`);
+    return file;
+  });
+  const file = path.join(temp, 'table.json');
+  assert.equal(selection.writeShardSeconds(logs, { file, log }), 0);
+  const { table } = selection.readShardSeconds(file);
+  assert.deepEqual([...table], [[key, 12]]);
+  const files = ['node', '--test', 'a.test.mjs', 'b.test.mjs'];
+  const whole = ['python3', 'scripts/ci/validate_runner_budget_policy.py'];
+  const steps = [{ id: 'fixture', command: { cwd: '.', argv: files }, argv: files },
+    { id: 'runner-budget-policy', command: { cwd: '.', argv: whole }, argv: whole }];
+  const weights = new Map([['a.test.mjs', 9], ['b.test.mjs', 8], ...table]);
+  const packed = selection.packShards(steps, { total: 2, seconds: weights });
+  assert.equal(packed[1].units[0].weight, 12);
+  assert.deepEqual(packed.map(({ units }) => units.map(({ shard }) => shard)), [[2, 2], [1]]);
+});
+
+// --run-prepush (task 3435f8bf, FABLE-ci-one-round-20261124 §3.7 ruling 1): the push entry runs these few static checks on
+// the tree the push would merge into main. One list, the runner budget suite's commands by reference, never a copy.
+test('PREPUSH_COMMANDS: every file a command names exists, and its runner budget part is the suite\'s own command objects', () => {
+  const { PREPUSH_COMMANDS } = selection;
+  assert.ok(Array.isArray(PREPUSH_COMMANDS) && PREPUSH_COMMANDS.length > 0, 'PREPUSH_COMMANDS is exported');
+  for (const command of PREPUSH_COMMANDS) {
+    for (const arg of command.argv.filter((item) => /\.(?:mjs|py)$/.test(item))) {
+      assert.ok(existsSync(path.join(ROOT, command.cwd, arg)), `${arg} (cwd ${command.cwd}) exists`);
+    }
+  }
+  assert.deepEqual(PREPUSH_COMMANDS[0], { cwd: '.', argv: ['node', '--test', 'scripts/ci/main-entry-realpath.test.mjs'] });
+  const budget = SUITE_COMMANDS['runner-budget-policy'];
+  assert.equal(PREPUSH_COMMANDS.length, 1 + budget.length);
+  budget.forEach((command, index) => assert.equal(PREPUSH_COMMANDS[1 + index], command, 'the same object, not a copy'));
+});
+
+test('runPrepush: 0 when all pass; 1 naming the failed tests of a red command; 3 for a timeout; no slot, no dependencies', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-prepush-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const commands = [{ cwd: '.', argv: ['node', '--test', 'a.test.mjs'] }, { cwd: '.', argv: ['python', 'b.py'], quiet: true }];
+  const run = (outcome) => {
+    const calls = [];
+    const lines = [];
+    const spawn = (command, args, options) => {
+      calls.push({ command, args, options });
+      const destination = args.find((arg) => arg.startsWith('--test-reporter-destination=') && !arg.endsWith('=stdout'));
+      const result = outcome(args, destination?.slice('--test-reporter-destination='.length));
+      return { status: 0, signal: null, stdout: Buffer.from(''), ...result };
+    };
+    const status = selection.runPrepush(temp, { env: { CLUED_TEST_IDENTITY_DIR: temp }, spawn, log: (line) => lines.push(String(line)), commands });
+    return { status, calls, text: lines.join('\n') };
+  };
+  const green = run(() => ({}));
+  assert.equal(green.status, 0, green.text);
+  assert.equal(green.calls.length, 2);
+  for (const call of green.calls) assert.equal(call.options.timeout, selection.PREPUSH_TIMEOUT_MS);
+  assert.equal(selection.PREPUSH_TIMEOUT_MS, 120_000);
+
+  const red = run((args, report) => {
+    if (!report) return { status: 1 };
+    writeFileSync(report, `${JSON.stringify({ type: 'fail', file: path.join(temp, 'a.test.mjs'), path: ['entry guard', 'listed file'], fingerprint: '0123456789abcdef' })}\n`);
+    return { status: 1 };
+  });
+  assert.equal(red.status, 1, red.text);
+  assert.match(red.text, /a\.test\.mjs :: entry guard > listed file/);
+  assert.match(red.text, /python b\.py/, 'the second red command is named too');
+  assert.match(red.text, /--run-prepush --root/, 'the command that reproduces it');
+
+  const hung = run((args) => (args.includes('b.py') ? { status: null, signal: 'SIGTERM', error: Object.assign(new Error('spawnSync python ETIMEDOUT'), { code: 'ETIMEDOUT' }) } : {}));
+  assert.equal(hung.status, selection.PREPUSH_ERROR_EXIT, hung.text);
+  assert.equal(selection.PREPUSH_ERROR_EXIT, 3);
+});
+
+test('--run-prepush marks its environment as a test run, and needs --root', () => {
+  const env = {};
+  selection.markTestRun(['--run-prepush', '--root', '.'], env);
+  assert.equal(env.CLUED_UNDER_TEST, '1');
+  const missing = spawnSync(process.execPath, [path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), '--run-prepush'], { encoding: 'utf8' });
+  assert.equal(missing.status, 2, `${missing.stdout}${missing.stderr}`);
+  assert.match(missing.stderr, /--run-prepush --root <tree>/);
+});
+
+// Review of 3435f8bf: a red command is a clear red even when a later one times out, does not start, cannot be expanded
+// or throws; and an exception inside the run is "did not run" (3), never the red exit 1 the push entry refuses on.
+test('runPrepush: an earlier red stays 1 when a later command times out, does not start, cannot be expanded or throws; a throw alone is 3', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-prepush-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const run = (commands, outcome) => {
+    const lines = [];
+    const spawn = (command, args) => ({ status: 0, signal: null, stdout: Buffer.from(''), ...outcome(args) });
+    let status;
+    try {
+      status = selection.runPrepush(temp, { env: { CLUED_TEST_IDENTITY_DIR: temp }, spawn, log: (line) => lines.push(String(line)), commands });
+    } catch (error) {
+      status = `threw: ${error.message}`;
+    }
+    return { status, text: lines.join('\n') };
+  };
+  const first = { cwd: '.', argv: ['python', 'a.py'] };
+  const second = { cwd: '.', argv: ['python', 'b.py'] };
+  const timedOut = { status: null, signal: 'SIGTERM', error: Object.assign(new Error('spawnSync python ETIMEDOUT'), { code: 'ETIMEDOUT' }) };
+  const noStart = { status: null, signal: null, error: Object.assign(new Error('spawnSync python ENOENT'), { code: 'ENOENT' }) };
+  for (const [name, later] of [['timed out', timedOut], ['did not start', noStart]]) {
+    const result = run([first, second], (args) => (args.includes('a.py') ? { status: 1 } : later));
+    assert.equal(result.status, 1, `${name}: ${result.text}`);
+    assert.match(result.text, /prepush 红：\(\.\) python a\.py 退出 1/, name);
+    assert.match(result.text, /b\.py/, `${name}: the command that did not run is named too`);
+  }
+  const unexpanded = run([first, { cwd: '.', argv: ['node', 'x.mjs', '{base}'] }], (args) => (args.includes('a.py') ? { status: 1 } : {}));
+  assert.equal(unexpanded.status, 1, unexpanded.text);
+  const thrower = (args) => { if (args.includes('b.py')) throw new Error('EBUSY: resource busy or locked'); return args.includes('a.py') ? { status: 1 } : {}; };
+  const redThenThrow = run([first, second], thrower);
+  assert.equal(redThenThrow.status, 1, redThenThrow.text);
+  const throwOnly = run([second], thrower);
+  assert.equal(throwOnly.status, selection.PREPUSH_ERROR_EXIT, throwOnly.text);
+  assert.doesNotMatch(throwOnly.text, /prepush 红：/);
 });
