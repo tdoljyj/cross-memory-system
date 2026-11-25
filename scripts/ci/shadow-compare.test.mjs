@@ -1,7 +1,11 @@
 // 纯离线：GitHub 读取全部由录制路由替代，不发网络请求。
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ghReader } from './retrigger-counter.mjs';
 import { MAIN_RULESET_ID, PAIRS, compare, main } from './shadow-compare.mjs';
 import * as shadow from './shadow-compare.mjs';
@@ -325,7 +329,8 @@ test('U6 30 个一致 head 跨 7 天以上、中间夹着跳过的 head：跳过
     commits.push({ sha: s });
     checks[s] = runsAt(t, i % 8 === 4 ? frameworkCancelled('trivy', t) : undefined);
   }
-  const report = await compare({ prs: { from: 1650, to: 1650 }, api: api(prRoutes([{ number: 1650, state: 'open', commits }], checks)), now: NOW });
+  const routes = prRoutes([{ number: 1650, state: 'open', commits }], checks);
+  const report = await compare({ prs: { from: 1650, to: 1650 }, api: api(withCleanBypass(routes, NOW)), now: NOW });
   assert.equal(report.summary.counts.跳过, 4);
   assert.equal(report.summary.counts.一致, 30);
   assert.equal(report.summary.streak.heads, 30);
@@ -553,7 +558,7 @@ async function exitReport({ heads = 30, spanHours = 72, unmerged = [], dependabo
   for (let i = 0; i < heads; i++) routes[pushesRoute(sha(5000 + i))] = pushError.includes(i) ? { error: 'gh GET 失败（退出码 1）' } : pushes(pushers[i] ?? 'tdoljyj');
   if (lead !== null) routes[pushesRoute(sha(4999))] = pushes(leadPusher);
   if (race) addRace(routes, { number: 1850, t: iso(t0 + Math.round(14.5 * spanHours * 3600_000 / (heads - 1))), ...race });
-  return compare({ prs: { from: 1799, to: 1899 }, api: api(routes), now });
+  return compare({ prs: { from: 1799, to: 1899 }, api: api(withCleanBypass(routes, now)), now });
 }
 
 test('S6-a 30 个一致、跨满 72 小时、10 个已合入 PR、含一个机器人推送且判一致的 head、有同红：达成', async () => {
@@ -1090,10 +1095,370 @@ test('A4 3 分钟整算达标、超过才算；重叠按自托管 ci-suites-wind
   assert.deepEqual(fast.over, []);
 });
 
-test('A5 只用已读的 check-runs：准入时延不多发任何 API 请求', async () => {
+test('A5 只用已读的 check-runs：除绕过取证外，准入时延不多发 API 请求', async () => {
   const s = sha(711);
-  const stub = api(headRoutes([[s, greenRuns()]]));
+  const associated = `/commits/${s}/pulls?per_page=100&page=1`;
+  const stub = api({ ...headRoutes([[s, greenRuns()]]), [pushesRoute(s)]: pushes('tdoljyj'), [associated]: [],
+    [activityRoute('main')]: [creation(1, 'main', s, bypassAt())], [updatedPullsRoute]: [], [allRunsRoute(s)]: workflowRuns() });
   const report = await compare({ heads: [s], api: stub, now: NOW });
   assert.equal(report.heads[0].admission.minutes, 1);
-  assert.deepEqual(stub.calls, [RULESET_ROUTE, checksRoute(s), `/actions/runs?head_sha=${s}&event=pull_request&per_page=100&page=1`]);
+  assert.equal(report.summary.bypass.state, '已判');
+  assert.deepEqual(stub.calls, [RULESET_ROUTE, checksRoute(s), pushesRoute(s), associated, activityRoute('main'), updatedPullsRoute, allRunsRoute(s)]);
+});
+
+// S6 手工绕过：API 和 Git 均采用注入端口。空列表均来自已录制的完整读取。
+const bypassFacts = JSON.parse(readFileSync(new URL('./fixtures/shadow-compare/bypass-1328-1325.json', import.meta.url), 'utf8'));
+const bypassAt = (time = '02:30:00') => `2026-11-25T${time}Z`;
+const bypassNow = bypassAt('05:00:00');
+const human = { login: 'tdoljyj', type: 'User' };
+const robot = { login: BOT, type: 'Bot' };
+const branchRef = number => `topic/${number}`;
+const activityRoute = branch => `/activity?ref=${encodeURIComponent(`refs/heads/${branch}`)}&per_page=100`;
+const updatedPullsRoute = '/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1';
+const branchPullsRoute = branch => `/pulls?state=all&head=${encodeURIComponent(`tdoljyj:${branch}`)}&per_page=100&page=1`;
+const issueEventsRoute = pr => `/issues/${pr}/events?per_page=100&page=1`;
+const allRunsRoute = s => `/actions/runs?head_sha=${s}&per_page=100&page=1`;
+const statusesRoute = s => `/commits/${s}/statuses?per_page=100&page=1`;
+const workflowRuns = (...workflow_runs) => ({ total_count: workflow_runs.length, workflow_runs });
+const bypassPull = (number, head, overrides = {}) => ({
+  number, state: 'open', created_at: bypassAt('02:00:00'), updated_at: bypassAt('04:30:00'), closed_at: null, merged_at: null,
+  head: { sha: head, ref: branchRef(number), repo: { full_name: 'tdoljyj/cross-memory-system' } }, ...overrides,
+});
+const activity = (id, branch, before, after, timestamp, { actor = human, type = 'push' } = {}) =>
+  ({ id, ref: `refs/heads/${branch}`, activity_type: type, before, after, timestamp, actor });
+const creation = (id, branch, head, at) => activity(id, branch, sha(0), head, at, { type: 'branch_creation' });
+const bypassCommit = (s, t, parents) => ({ sha: s, commit: { tree: { sha: t } }, parents: parents.map(sha => ({ sha })) });
+const createdAtOf = (pushes, head) => pushes.find(p => p.after === head)?.timestamp;
+const noMerge = () => assert.fail('不应调用 merge-tree');
+
+// 原有连续段与准入用例补齐活动证据，让旧断言仍考察已判时的独立判据。
+function withCleanBypass(routes, now) {
+  const pulls = routes[PULLS], updated = [];
+  let id = 0;
+  for (const pull of pulls) {
+    const branch = branchRef(pull.number);
+    const commits = routes[`/pulls/${pull.number}/commits?per_page=100&page=1`];
+    const pushes = commits.map((c, i) => {
+      const checks = routes[checksRoute(c.sha)].check_runs;
+      const at = checks.map(r => r.started_at).filter(Boolean).sort()[0];
+      routes[allRunsRoute(c.sha)] = workflowRuns();
+      return i === 0 ? creation(++id, branch, c.sha, at)
+        : activity(++id, branch, commits[i - 1].sha, c.sha, at, { actor: robot });
+    });
+    pull.head = bypassPull(pull.number, pull.head.sha).head;
+    Object.assign(pull, { created_at: pushes[0].timestamp, updated_at: now, closed_at: pull.state === 'closed' ? now : null });
+    routes[activityRoute(branch)] = pushes;
+    routes[issueEventsRoute(pull.number)] = [];
+    updated.push(pull);
+  }
+  routes[updatedPullsRoute] = updated;
+  for (const suffix of ['', '&time_period=day', '&time_period=week']) routes[activityRoute('main') + suffix] = [];
+  return routes;
+}
+
+function bypassReplay({ pulls, picked, pushes, commits = [], routes: extra = {}, git = noMerge, now = bypassNow,
+  from = Math.min(...picked.map(p => p.number)), to = null }) {
+  const routes = prRoutes(picked.map(({ number, state, merged_at, heads }) => ({
+    number, state, merged: Boolean(merged_at), commits: heads.map(sha => ({ sha, date: createdAtOf(pushes, sha) })),
+  })), Object.fromEntries(picked.flatMap(p => p.heads.map(s => [s, createdAtOf(pushes, s)
+    ? greenRuns({ started: plusMinutes(createdAtOf(pushes, s), 5) }) : []]))));
+  routes[PULLS] = picked;
+  routes[updatedPullsRoute] = [...pulls].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
+  routes[activityRoute('main')] = [];
+  routes[`${activityRoute('main')}&time_period=day`] = [];
+  routes[`${activityRoute('main')}&time_period=week`] = [];
+  for (const p of pulls) {
+    const ref = p.head.ref;
+    routes[activityRoute(ref)] = pushes.filter(row => row.ref === `refs/heads/${ref}`);
+    routes[branchPullsRoute(ref)] = pulls.filter(x => x.head.ref === ref);
+    routes[issueEventsRoute(p.number)] = [];
+  }
+  for (const row of pushes) routes[allRunsRoute(row.after)] = workflowRuns();
+  for (const c of commits) routes[`/commits/${c.sha}`] = c;
+  const stub = api({ ...routes, ...extra });
+  return { stub, now, git, from, to, compare: () => compare({ prs: { from, to }, api: stub, git, now }) };
+}
+
+const [bBase, bMerge, bLater, bMain, bTree] = [88001, 88002, 88003, 88004, 88005].map(sha);
+const bypassBranch = branchRef(1329);
+function mergeReplay({ pushAt = bypassAt('03:41:00'), pushed = true, creationInstead = false,
+  actor = human, git = () => ({ status: 0, tree: bTree }), olderPr = false, routes = {} } = {}) {
+  const candidate = bypassPull(1329, bLater);
+  const older = bypassPull(1325, bMerge);
+  const receiving = olderPr ? older : candidate;
+  const ref = receiving.head.ref;
+  const pushes = [
+    creation(1, bypassBranch, bBase, bypassAt('02:20:00')),
+    ...(pushed ? [creationInstead ? creation(2, ref, bMerge, pushAt) : activity(2, ref, bBase, bMerge, pushAt, { actor })] : []),
+    activity(3, bypassBranch, bBase, bLater, bypassAt('04:00:00'), { actor: robot }),
+  ];
+  const picked = [{ ...candidate, heads: [bBase, ...(pushed && !olderPr ? [bMerge] : []), bLater] }];
+  return bypassReplay({ pulls: olderPr ? [candidate, older] : [candidate], picked, pushes,
+    commits: [bypassCommit(bMerge, bTree, [bBase, bMain])], git,
+    routes: { [`/compare/${bMain}...main`]: { status: 'ahead' }, ...routes }, from: 1329 });
+}
+
+function replay1328(from = 1328) {
+  const { pulls, activity: pushes, commit, middle } = bypassFacts;
+  const picked = pulls.filter(p => p.number >= from).map(p => ({
+    ...p, heads: [...pushes.filter(row => row.ref === `refs/heads/${p.head.ref}`).map(row => row.after),
+      ...(p.number === 1328 ? [middle] : [])],
+  }));
+  return bypassReplay({ pulls, picked, pushes, commits: [commit] });
+}
+
+test('B01 #1328 回放：带新提交、机器人与从未成为 tip 的合并', async () => {
+  const replay = replay1328();
+  const { summary: { bypass } } = await replay.compare();
+  assert.equal(bypass?.state, '已判');
+  assert.deepEqual(bypass.events, []);
+  assert.match(bypass.ignored.find(e => e.head === bypassFacts.commit.sha)?.why ?? '', /带新提交/);
+  assert.match(bypass.ignored.find(e => e.head === bypassFacts.pulls[0].head.sha)?.why ?? '', /机器人/);
+  assert.ok(!replay.stub.calls.some(route => route === allRunsRoute(bypassFacts.middle) || route === `/commits/${bypassFacts.middle}`));
+});
+
+test('B02 已开 PR 纯追平：Z1 按真实推送时刻截断连续段', async () => {
+  const { summary: { bypass, streak } } = await mergeReplay().compare();
+  assert.equal(streak.heads, 1);
+  assert.equal(bypass.state, '已判');
+  assert.deepEqual(bypass.events.map(e => [e.kind, e.head, e.pr]), [['Z1', bMerge, 1329]]);
+  assert.deepEqual(streak.cutBy, bypass.events[0]);
+  assert.equal(streak.from, '2026-11-25T12:00:00+08:00');
+  assert.match(streak.unmet.join(''), /手工绕过 1/);
+});
+
+test('B03 #1325 推送被拒：本机和账本的提交没有远端活动', async () => {
+  const previous = process.env.BYPASS_LEDGER;
+  process.env.BYPASS_LEDGER = fileURLToPath(new URL('./fixtures/shadow-compare/bypass-1328-1325.json', import.meta.url));
+  try {
+    const replay = replay1328(1325);
+    const { summary: { bypass, streak } } = await replay.compare();
+    assert.equal(bypass?.state, '已判');
+    assert.deepEqual(bypass.events, []);
+    assert.equal(streak.cutBy, null);
+    assert.ok(!replay.stub.calls.some(route => route.includes(bypassFacts.entries[0].head)));
+  } finally {
+    if (previous === undefined) delete process.env.BYPASS_LEDGER;
+    else process.env.BYPASS_LEDGER = previous;
+  }
+});
+
+test('B04 开 PR 前合 main：创建分支或 PR 创建前推送是交活', async () => {
+  for (const creationInstead of [true, false]) {
+    const replay = mergeReplay({ creationInstead, pushAt: bypassAt('01:50:00'), git: noMerge });
+    const { summary: { bypass } } = await replay.compare();
+    assert.equal(bypass?.state, '已判');
+    assert.deepEqual(bypass.events, []);
+    assert.match(bypass.ignored.find(e => e.head === bMerge)?.why ?? '', /建分支|没有打开的 PR/);
+  }
+});
+
+test('B05 真冲突或结果树不同：判交活', async () => {
+  for (const [git, why] of [[() => ({ status: 1 }), /冲突/], [() => ({ status: 0, tree: sha(9900) }), /树不同/]]) {
+    const { summary: { bypass } } = await mergeReplay({ git }).compare();
+    assert.equal(bypass?.state, '已判');
+    assert.deepEqual(bypass.events, []);
+    assert.match(bypass.ignored.find(e => e.head === bMerge)?.why ?? '', why);
+  }
+});
+
+test('B06 机器人 update-branch：按 pusher 判机器人', async () => {
+  const replay = mergeReplay({ actor: robot, git: noMerge,
+    routes: { [`/commits/${bMerge}`]: { ...bypassCommit(bMerge, bTree, [bBase, bMain]), committer: { login: 'web-flow', type: 'User' } } } });
+  const { summary: { bypass } } = await replay.compare();
+  assert.equal(bypass?.state, '已判');
+  assert.deepEqual(bypass.events, []);
+  assert.match(bypass.ignored.find(e => e.head === bMerge)?.why ?? '', /机器人/);
+});
+
+test('B07 人工空提交与同树 force_push：Z3 自身不进入连续段', async () => {
+  for (const [type, parent] of [['push', bBase], ['force_push', sha(9901)]]) {
+    const p = bypassPull(1329, bMerge);
+    const pushes = [creation(1, bypassBranch, bBase, bypassAt('02:20:00')),
+      activity(2, bypassBranch, bBase, bMerge, bypassAt('02:40:00'), { type })];
+    const replay = bypassReplay({ pulls: [p], picked: [{ ...p, heads: [bBase, bMerge] }], pushes,
+      commits: [bypassCommit(bMerge, bTree, [parent]), bypassCommit(bBase, bTree, [])] });
+    const { summary: { bypass, streak } } = await replay.compare();
+    assert.equal(bypass?.state, '已判');
+    assert.deepEqual(bypass.events.map(e => [e.kind, e.head]), [['Z3', bMerge]]);
+    assert.deepEqual(streak.cutBy, bypass.events[0]);
+    assert.equal(streak.heads, 0);
+  }
+});
+
+const hint = (description, at) => ({ id: 91, context: 'resident-queue/turing (info only)', description, created_at: at });
+function rerunReplay({ attempt = bypassFacts.attempt, dispatches = [], statuses = [] } = {}) {
+  const head = (attempt ?? dispatches[0]).head_sha;
+  const at = '2026-11-24T10:20:00Z';
+  const p = bypassPull(1327, head, { created_at: at });
+  return bypassReplay({ pulls: [p], picked: [{ ...p, heads: [head] }], pushes: [creation(1, p.head.ref, head, at)],
+    routes: { [allRunsRoute(head)]: workflowRuns(...(attempt ? [attempt] : []), ...dispatches), [statusesRoute(head)]: statuses,
+      ...(attempt ? { [`/actions/runs/${attempt.id}/attempts/2`]: attempt } : {}) } });
+}
+const dispatchRun = (id, t) => ({ id, head_sha: bypassFacts.attempt.head_sha, head_branch: branchRef(1327), event: 'workflow_dispatch',
+  run_attempt: 1, run_started_at: t, created_at: t, triggering_actor: human, path: '.github/workflows/clued-required-tests.yml' });
+
+test('B08a 真实 attempt 45366274471/2：triggering_actor 是人，计 Z2', async () => {
+  const { summary: { bypass } } = await rerunReplay().compare();
+  assert.equal(bypass?.state, '已判');
+  assert.deepEqual(bypass.events.map(e => [e.kind, e.actor]), [['Z2', human.login]]);
+});
+
+test('B08b 同一 attempt 有唯一补跑状态：系统补跑', async () => {
+  const statuses = [hint('已自动补跑一次必需测试', '2026-11-24T10:24:14Z')];
+  const { summary: { bypass } } = await rerunReplay({ statuses }).compare();
+  assert.equal(bypass?.state, '已判');
+  assert.deepEqual(bypass.events, []);
+  assert.ok(bypass.ignored.some(e => /自动补跑/.test(e.why)));
+});
+
+test('B08c workflow_dispatch 有补发状态抵扣，无状态计 Z2', async () => {
+  const dispatches = [dispatchRun(4601, '2026-11-24T10:22:00Z')];
+  for (const statuses of [[hint('必需测试没有运行，已自动补发一次', '2026-11-24T10:22:10Z')], []]) {
+    const { summary: { bypass } } = await rerunReplay({ attempt: null, dispatches, statuses }).compare();
+    assert.equal(bypass?.state, '已判');
+    assert.deepEqual(bypass.events.map(e => e.kind), statuses.length ? [] : ['Z2']);
+  }
+});
+
+test('B08d 一条提示对上两次运行：两次都计 Z2 并写明对不唯一', async () => {
+  const dispatches = [dispatchRun(4601, '2026-11-24T10:22:00Z')];
+  const statuses = [hint('已自动补跑一次必需测试', '2026-11-24T10:24:14Z')];
+  const { summary: { bypass } } = await rerunReplay({ dispatches, statuses }).compare();
+  assert.equal(bypass?.state, '已判');
+  assert.equal(bypass.events.length, 2);
+  assert.ok(bypass.events.every(e => e.kind === 'Z2' && e.basis.includes('对不唯一')));
+});
+
+test('B09 人工 reopened：断开连续段', async () => {
+  const p = bypassPull(1329, bLater);
+  const pushes = [creation(1, bypassBranch, bBase, bypassAt('02:20:00')),
+    activity(2, bypassBranch, bBase, bLater, bypassAt('04:00:00'), { actor: robot })];
+  const events = [{ id: 800, event: 'closed', actor: human, created_at: bypassAt('02:50:00') },
+    { id: 801, event: 'reopened', actor: human, created_at: bypassAt('03:30:00') }];
+  const replay = bypassReplay({ pulls: [p], picked: [{ ...p, heads: [bBase, bLater] }], pushes,
+    routes: { [issueEventsRoute(1329)]: events } });
+  const { summary: { bypass, streak } } = await replay.compare();
+  assert.equal(bypass?.state, '已判');
+  assert.deepEqual(bypass.events.map(e => [e.kind, e.pr]), [['重开', 1329]]);
+  assert.deepEqual(streak.cutBy, bypass.events[0]);
+  assert.equal(streak.heads, 1);
+});
+
+test('B10 --prs 1329- 仍覆盖窗口内更新的 #1325', async () => {
+  const { summary: { bypass }, heads } = await mergeReplay({ olderPr: true }).compare();
+  assert.equal(bypass?.state, '已判');
+  assert.ok(heads.every(h => h.prs.includes(1329)));
+  assert.deepEqual(bypass.events.map(e => [e.kind, e.pr]), [['Z1', 1325]]);
+});
+
+test('B11 活动读取失败、满页或 Git 缺对象：未判，结果和退出码仍可用', async () => {
+  const cases = [
+    { routes: { [activityRoute(bypassBranch)]: { error: '活动读取失败' } }, why: /活动读取失败/ },
+    { routes: { [activityRoute(bypassBranch)]: Array.from({ length: 100 }, (_, id) => creation(id + 1, bypassBranch, bBase, bypassAt('02:20:00'))) }, why: /100 条/ },
+    { git: () => ({ status: 128, missing: bMain }), why: /本机缺 .*fetch 后重跑可改判/ },
+  ];
+  const lines = [];
+  const check = async replay => {
+    const status = await main(['--prs', '1329-'], { api: replay.stub, git: replay.git, write: line => lines.push(line), now: replay.now });
+    const parsed = JSON.parse(lines.pop());
+    return { status, parsed };
+  };
+  const complete = await check(mergeReplay());
+  assert.equal(complete.status, 0);
+  for (const { why, ...options } of cases) {
+    const { status, parsed: { heads, summary: { bypass, streak } } } = await check(mergeReplay(options));
+    assert.equal(status, complete.status);
+    assert.deepEqual(heads, complete.parsed.heads);
+    assert.equal(bypass?.state, '未判');
+    assert.match(bypass.reason, why);
+    assert.equal(streak.met, false);
+    assert.match(streak.unmet.join(''), /手工绕过未判：/);
+  }
+});
+
+test('B12 --prs 1321- 目标回放：与账本拒推样本逐条核对', async () => {
+  const replay = replay1328(1321);
+  const lines = [];
+  const status = await main(['--prs', '1321-'], { api: replay.stub, git: replay.git, now: replay.now, write: line => lines.push(line) });
+  assert.equal(status, 0);
+  const { summary: { bypass, line } } = JSON.parse(lines[0]);
+  assert.equal(bypass?.state, '已判');
+  assert.match(bypass.ignored.find(e => e.head === bypassFacts.commit.sha)?.why ?? '', /带新提交/);
+  assert.match(line, /手工绕过 0/);
+  assert.deepEqual(bypass.events, []);
+  for (const row of bypassFacts.entries) {
+    assert.ok(!bypassFacts.activity.some(p => p.after.startsWith(row.head)));
+    assert.ok(!bypass.ignored.some(e => e.head.startsWith(row.head)));
+  }
+});
+
+const dispatchFacts = JSON.parse(readFileSync(new URL('./fixtures/shadow-compare/dispatch-provenance.json', import.meta.url), 'utf8'));
+
+test('B13 #1321 真实常驻补发：当班状态 59831881659 唯一对上运行 45532586038', async () => {
+  const { push, run, statuses } = dispatchFacts.companion;
+  const p = bypassPull(1321, push.after, { head: { ...bypassPull(1321, push.after).head, ref: run.head_branch } });
+  const replay = bypassReplay({ pulls: [p], picked: [{ ...p, heads: [push.after] }], pushes: [push],
+    routes: { [allRunsRoute(push.after)]: workflowRuns(run), [statusesRoute(push.after)]: statuses } });
+  const { summary: { bypass } } = await replay.compare();
+  assert.equal(bypass.state, '已判');
+  assert.deepEqual(bypass.events, []);
+  assert.match(bypass.ignored.find(e => e.kind === 'Z2')?.why ?? '', /59831881659.*45532586038.*已自动补发/);
+});
+
+test('B14 车头 dispatch：合入活动不扩 Z2 head 集，真实 push head 上无唯一状态则计 Z2', async () => {
+  const { mainActivity, activity: pushes, run, statuses } = dispatchFacts.front;
+  const head = pushes.at(-1).after, branch = pushes[0].ref.slice('refs/heads/'.length);
+  const p = bypassPull(1256, head, {
+    created_at: '2026-11-23T08:34:36Z', updated_at: '2026-11-23T09:40:38Z',
+    head: { ...bypassPull(1256, head).head, ref: branch },
+  });
+  for (const isPush of [false, true]) {
+    const row = isPush ? { ...mainActivity, actor: robot, activity_type: 'push' } : mainActivity;
+    const replay = bypassReplay({ pulls: [p], picked: [{ ...p, heads: pushes.map(e => e.after) }], pushes,
+      now: '2026-11-23T10:00:00Z',
+      routes: { [`${activityRoute('main')}&time_period=day`]: [row],
+        [allRunsRoute(run.head_sha)]: workflowRuns(run), [statusesRoute(run.head_sha)]: statuses } });
+    const { summary: { bypass } } = await replay.compare();
+    assert.equal(bypass.state, '已判');
+    assert.deepEqual(bypass.events.map(e => [e.kind, e.evidence.runId]), isPush ? [['Z2', run.id]] : []);
+    assert.equal(replay.stub.calls.includes(allRunsRoute(run.head_sha)), isPush);
+    assert.ok(bypass.ignored.some(e => e.head === head && e.why.includes('机器人')));
+  }
+});
+
+test('B15 实际 merge-tree：重做结果与 Git 合并同树，原对象库、工作树和 ref 未写入', async t => {
+  const { localMergeTree } = await import('./bypass-events.mjs');
+  const cwd = mkdtempSync(join(tmpdir(), 'shadow-merge-test-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const shellGit = (...args) => spawnSync('git', ['-c', 'user.name=Shadow Test', '-c', 'user.email=test@example.invalid',
+    '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', windowsHide: true });
+  const git = (...args) => {
+    const r = shellGit(...args);
+    assert.equal(r.status, 0, r.stderr || r.error?.message);
+    return r.stdout.trim();
+  };
+  git('init', '--initial-branch=main');
+  git('commit', '--allow-empty', '-m', 'Base');
+  git('checkout', '-b', 'topic');
+  writeFileSync(join(cwd, 'topic.txt'), 'topic\n');
+  git('add', 'topic.txt');
+  git('commit', '-m', 'Topic');
+  const topic = git('rev-parse', 'HEAD');
+  git('checkout', 'main');
+  writeFileSync(join(cwd, 'main.txt'), 'main\n');
+  git('add', 'main.txt');
+  git('commit', '-m', 'Main');
+  const main = git('rev-parse', 'HEAD');
+
+  const out = localMergeTree(topic, main, { cwd });
+  assert.equal(out.status, 0);
+  assert.notEqual(shellGit('cat-file', '-e', out.tree).status, 0);
+  assert.equal(git('rev-parse', 'HEAD'), main);
+  assert.equal(git('status', '--porcelain'), '');
+  assert.deepEqual(localMergeTree(topic, sha(99), { cwd }), { missing: sha(99) });
+
+  git('checkout', 'topic');
+  git('merge', '--no-edit', 'main');
+  assert.equal(git('rev-parse', 'HEAD^{tree}'), out.tree);
 });

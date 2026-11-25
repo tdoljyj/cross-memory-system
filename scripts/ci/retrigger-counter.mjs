@@ -29,6 +29,25 @@ export function ghReader({ repo = REPO, spawn = spawnSync } = {}) {
   } };
 }
 
+// 按 head 匹配常驻状态。同一提示前 15 分钟内有多个候选时保留歧义证据。
+export function matchCompanionStatuses(attempts, statuses, { matchesWorkflow, matchesDescription }) {
+  const hints = statuses.filter(s => /^resident-queue\/[^/]+ \(info only\)$/.test(s.context ?? '') &&
+    typeof s.description === 'string' && matchesDescription(s.description))
+    .map(status => ({ status, at: stamp(status.created_at) })).sort((a, b) => a.at - b.at);
+  const candidates = attempts.filter(a => matchesWorkflow(a.workflow)).map(attempt => ({
+    id: `${attempt.id}:${attempt.run_attempt}`, at: stamp(attempt.run_started_at),
+  }));
+  const companion = new Map(), ambiguous = new Map();
+  // 同一提示会随面板刷新再次发布，所以只认该 head 上最早的提示。
+  const first = hints[0];
+  if (first) {
+    const eligible = candidates.filter(a => a.at <= first.at && first.at - a.at <= 15 * 60_000);
+    const result = eligible.length === 1 ? companion : ambiguous;
+    for (const a of eligible) result.set(a.id, first.status);
+  }
+  return { companion, ambiguous };
+}
+
 export async function collect({ repo = REPO, since, until, automationActors = [], api = ghReader({ repo }), maxPages = 1000, maxRequests = 20_000 } = {}) {
   const start = stamp(since), end = stamp(until);
   if (start >= end) fail('since 必须早于 until');
@@ -101,14 +120,12 @@ export async function collect({ repo = REPO, since, until, automationActors = []
   const companion = new Set(), ambiguous = new Set();
   for (const head of new Set(attempts.filter(a => a.workflow === REQUIRED && actorKind(a.triggering_actor) !== 'automatic').map(a => a.head_sha))) {
     const statuses = await paged(`/commits/${encodeURIComponent(head)}/statuses`);
-    const hints = statuses.filter(s => /^resident-queue\/[^/]+ \(info only\)$/.test(s.context ?? '') &&
-      typeof s.description === 'string' && s.description.includes(AUTO_TEXT));
-    if (!hints.length) continue;
-    const first = Math.min(...hints.map(s => stamp(s.created_at)));
-    const eligible = attempts.filter(a => a.head_sha === head && a.workflow === REQUIRED &&
-      stamp(a.run_started_at) <= first && first - stamp(a.run_started_at) <= 15 * 60_000);
-    if (eligible.length === 1) companion.add(`${eligible[0].id}:${eligible[0].run_attempt}`);
-    else for (const a of eligible) ambiguous.add(`${a.id}:${a.run_attempt}`);
+    const matches = matchCompanionStatuses(attempts.filter(a => a.head_sha === head), statuses, {
+      matchesWorkflow: workflow => workflow === REQUIRED,
+      matchesDescription: description => description.includes(AUTO_TEXT),
+    });
+    for (const id of matches.companion.keys()) companion.add(id);
+    for (const id of matches.ambiguous.keys()) ambiguous.add(id);
   }
   for (const a of attempts) {
     if (!inWindow(a.run_started_at)) continue;
