@@ -63,12 +63,15 @@
 //   First everything seal refuses on its own (the request and the acceptance it becomes, fleetRefs naming the drill's stand-in among it,
 //   --drill-receipt, the index row, the commit on main, checkRequestOnRelease, the request asset on the Release), so the Owner is never asked
 //   for what would be refused. Then the acceptance door (accept-door.mjs; PLAN-accept-binding-20261125: no token on this machine) is read
-//   anonymously for this request (the resource fleet-node:<repo>/<v>/<tar sha256>/<request sha256>); none, expired or rejected there opens
-//   the request with one run of the release workflow's fleet-accept mode, and from then on seal only reads: for its link up to OPEN_WAIT_MS,
-//   with --wait <minutes> for the Owner's answer at 30 to 120 second steps; a read that fails is read again at the next step while there is
-//   time (without --wait and before anything was opened it is refused). pending is FLEET_ACCEPTANCE_WAITING_OWNER with the confirm link (no
-//   link yet: the workflow has not opened it, the same seal again), nothing written; rejected or expired after this seal saw the request
-//   open is FLEET_ACCEPTANCE_REJECTED, nothing written, exit code 1; accepted gives the three values an acceptance makes, from the door's
+//   anonymously for this request (the resource fleet-node:<repo>/<v>/<tar sha256>/<request sha256>); none or expired there opens the
+//   request with one run of the release workflow's fleet-accept mode, and from then on seal only reads: for its link up to OPEN_WAIT_MS
+//   from that run (--wait does not lengthen it), with --wait <minutes> for the Owner's answer at 30 to 120 second steps; a read that fails
+//   is read again at the next step while there is time (without --wait and before anything was opened it is refused). No link by then,
+//   also with the door unreadable, is FLEET_ACCEPTANCE_NOT_OPENED, nothing written, exit code 1: seal again would only dispatch again, the
+//   cause is in the workflow's run (PLAN-accept-align-open-20261125 2.2). pending is FLEET_ACCEPTANCE_WAITING_OWNER with the confirm link,
+//   nothing written. rejected is the Owner's final answer (the door never opens a rejected request again; 1.2 there): whenever it is read,
+//   FLEET_ACCEPTANCE_REJECTED, nothing dispatched or written, exit code 1; expired after this seal saw the request open is the same answer
+//   with answer expired; accepted gives the three values an acceptance makes, from the door's
 //   answer only, an answer that names this request (cluedDecision =
 //   ownerDecisionRef = the Grant id, installationReceiptRef = ownerReceiptRef = the use receipt id, acceptedAt = its time to the second);
 //   an accepted_at up to CLOCK_SKEW_MAX_MS after this machine's clock (the door's clock is the server's) is waited out once, one further ahead
@@ -722,15 +725,17 @@ async function putRequestOnRelease({ ghCommand, repo, tag, bytes, stage }) {
 
 // How seal reads the door (PLAN-accept-auto-seal-20261125 2.3; PLAN-accept-binding-20261125 section 3). --wait <minutes>: read again after
 // 30 s, 60 s, then every 120 s, never past the wait nor past the request's expiry. A request seal opened: read every OPEN_STEP_MS for its
-// link, up to OPEN_WAIT_MS (or the wait, if longer). A read that fails: again after READ_RETRY_MS while there is time. An accepted_at at most
-// CLOCK_SKEW_MAX_MS after this machine's clock: waited out once.
+// link, up to OPEN_WAIT_MS after the run was dispatched, whatever the wait (the wait is for the Owner, this for the workflow: its
+// fleet-accept job times out after 10 minutes, plus 5 for its queue; PLAN-accept-align-open-20261125 2.2). A read that fails: again after
+// READ_RETRY_MS while there is time. An accepted_at at most CLOCK_SKEW_MAX_MS after this machine's clock: waited out once.
 export const WAIT_STEPS_MS = Object.freeze([30_000, 60_000, 120_000]);
 export const WAIT_MAX_MINUTES = 1440;
-export const OPEN_WAIT_MS = 5 * 60_000;
+export const OPEN_WAIT_MS = 15 * 60_000;
 export const OPEN_STEP_MS = 15_000;
 export const READ_RETRY_MS = 30_000;
 export const CLOCK_SKEW_MAX_MS = 120_000;
-const NOT_OPEN = ['none', 'rejected', 'expired'];
+// what seal opens a request on: none, or one that ran out; never rejected, the Owner's final answer (the door never opens it again)
+const NOT_OPEN = ['none', 'expired'];
 // seal's refusals that asking again cannot change (the request, its file name, the repository, the index row, the drill receipt, a version
 // the door has accepted otherwise): accept.mjs stops on them at once and asks again on any other (the one list; Task 87d330d0 alignment).
 export const SEAL_INPUT_ERRORS = Object.freeze(['USAGE', 'REQUEST_REFUSED', 'REQUEST_FILE_NAME_REFUSED', 'PUBLISH_REPO_REFUSED', 'ACCEPTANCE_NOT_THIS_REPOSITORY',
@@ -781,7 +786,7 @@ export async function seal(options) {
     const resource = acceptResourceOf({ repository: r.repository, version: r.version, archiveSha256: r.archive_sha256, requestSha256 });
     const until = started + wait * 60_000;
     let answer = null, openedAt = null, seenOpen = false, skewWaited = false, waitStep = 0;
-    const openUntil = () => Math.max(until, openedAt + OPEN_WAIT_MS);
+    const openUntil = () => openedAt + OPEN_WAIT_MS;
     for (;;) {
       let a;
       try {
@@ -789,8 +794,10 @@ export async function seal(options) {
       } catch (e) {
         // a read that failed (a 503, a dropped connection, a timeout): read again while this seal still waits for something
         if (e?.code !== 'ACCEPT_DOOR_UNAVAILABLE') throw e;
-        const left = (openedAt !== null && !seenOpen ? openUntil() : Math.min(until, answer?.kind === 'pending' ? Date.parse(answer.expiresAt) : Infinity)) - clock();
-        if (left <= 0) { if (answer?.kind === 'pending') break; throw e; }
+        // after this seal's run an unreadable door ends as NOT_OPENED, never as a throw its caller would answer with seal (a run) again
+        const opening = openedAt !== null && !seenOpen;
+        const left = (opening ? openUntil() : Math.min(until, answer?.kind === 'pending' ? Date.parse(answer.expiresAt) : Infinity)) - clock();
+        if (left <= 0) { if (opening || answer?.kind === 'pending') break; throw e; }
         await sleep(Math.min(READ_RETRY_MS, left));
         continue;
       }
@@ -812,7 +819,9 @@ export async function seal(options) {
         await sleep(Math.min(WAIT_STEPS_MS[Math.min(waitStep++, WAIT_STEPS_MS.length - 1)], left));
         continue;
       }
-      // none, rejected or expired: the Owner's answer to a request this seal saw open; otherwise no request is open, so it is opened, once
+      // rejected: the Owner's final answer, whenever it is read; nothing is opened again
+      if (a.kind === 'rejected') break;
+      // none or expired: the end of a request this seal saw open; otherwise no request is open, so it is opened, once
       if (seenOpen) {
         check(a.kind !== 'none', 'ACCEPT_DOOR_ANSWER_REFUSED', { status: 'none', note: 'the door forgot a request it had open' });
         break;
@@ -825,15 +834,19 @@ export async function seal(options) {
       if (left <= 0) break;
       await sleep(Math.min(OPEN_STEP_MS, left));
     }
-    if (answer.kind === 'pending' || (NOT_OPEN.includes(answer.kind) && !seenOpen)) {
-      const open = answer.kind === 'pending';
-      return { status: 'FLEET_ACCEPTANCE_WAITING_OWNER', version: r.version, opened: open, confirmUrl: open ? answer.confirmUrl : null, expiresAt: open ? answer.expiresAt : null, resource,
-        next: open ? 'the Owner approves on confirmUrl; then the same seal again (--wait <minutes> waits for it)'
-          : 'the release workflow (mode fleet-accept) has not opened the request yet: the same seal again shows the link' };
+    if (answer.kind === 'pending') {
+      return { status: 'FLEET_ACCEPTANCE_WAITING_OWNER', version: r.version, opened: true, confirmUrl: answer.confirmUrl, expiresAt: answer.expiresAt, resource,
+        next: 'the Owner approves on confirmUrl; then the same seal again (--wait <minutes> waits for it)' };
+    }
+    if (NOT_OPEN.includes(answer.kind) && !seenOpen) {
+      // only after this seal's one run (none or expired is always opened): the workflow did not open it within OPEN_WAIT_MS
+      return { status: 'FLEET_ACCEPTANCE_NOT_OPENED', version: r.version, resource, dispatchedAt: new Date(now + (openedAt - started)).toISOString(), waitedMs: OPEN_WAIT_MS,
+        next: 'the release workflow (mode fleet-accept) did not open the request: read why in its latest run, fix that, then run the same command again' };
     }
     if (answer.kind !== 'accepted') {
       return { status: 'FLEET_ACCEPTANCE_REJECTED', version: r.version, answer: answer.kind, resource,
-        next: answer.kind === 'expired' ? 'the request ran out: the same seal again opens a new one' : 'the Owner did not accept this candidate; nothing was written' };
+        next: answer.kind === 'expired' ? 'the request ran out: the same seal again opens a new one'
+          : 'the Owner rejected this candidate, which is final (never asked again); nothing was written: to accept, publish a new version' };
     }
     const a = acceptanceOf(r, { decision: answer.grantId, receipt: answer.receiptId, acceptedAt: answer.acceptedAt });
     check(!namesDrillReserved(a), 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN', { grant: answer.grantId, receipt: answer.receiptId });
@@ -854,9 +867,9 @@ export async function seal(options) {
   }
 }
 
-// The command line's exit code of a seal or prepare that answered: non-zero only for an Owner's rejection or an expired request (a refusal
-// throws and exits 1 as well); waiting for the Owner is not a failure.
-export const exitCodeOf = r => (r?.status === 'FLEET_ACCEPTANCE_REJECTED' ? 1 : 0);
+// The command line's exit code of a seal or prepare that answered: non-zero only for an Owner's rejection, an expired request or a request
+// the workflow did not open (a refusal throws and exits 1 as well); waiting for the Owner is not a failure.
+export const exitCodeOf = r => (['FLEET_ACCEPTANCE_REJECTED', 'FLEET_ACCEPTANCE_NOT_OPENED'].includes(r?.status) ? 1 : 0);
 
 export async function main(argv) {
   const [sub, ...rest] = argv;
