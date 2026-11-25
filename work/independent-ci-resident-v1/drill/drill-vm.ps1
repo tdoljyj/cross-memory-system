@@ -4,7 +4,8 @@
 #   pwsh -NoProfile -File drill-vm.ps1 -PrereqOnly      (baseline copy + the pinned prerequisites from D:\clued-drill\prereq, then restored)
 #   pwsh -NoProfile -File drill-vm.ps1 -Version <v> -From <dir with tar/acceptance/SHA256SUMS> -Kit <first-install kit dir> [-RunTimeoutMinutes 70 | -Ladder]
 #     (a candidate: -From without an acceptance; the kit carries a drill-only one, see Test-DrillPackageDir and FIRST-INSTALL-KIT.md)
-#   pwsh -NoProfile -File drill-vm.ps1 -Finalize <receipt.json> -ProductionReadback <readback.json>
+#   pwsh -NoProfile -File drill-vm.ps1 -Finalize <receipt.json> -ProductionReadback <readback.json> [-Request <fleet-node-<v>.acceptance-request.json>]
+#     (a candidate that ends PASS opens the Owner's acceptance request: rollout/fleet/accept.mjs open; the answer carries the confirm link)
 #   pwsh -NoProfile -File drill-vm.ps1 -ServerKey <key>     (DESK stores the test project's public key on the host once the project answers it)
 #   pwsh -NoProfile -File drill-vm.ps1 -BindingCredential   (the Owner hands over the drill binding once, in the Windows credential dialog)
 #   pwsh -NoProfile -File drill-vm.ps1 -ServerDatabaseCredential   (the Owner hands over the test project's database password once, the same way)
@@ -49,6 +50,7 @@ param(
   [switch]$Ladder,
   [string]$Finalize,
   [string]$ProductionReadback,
+  [string]$Request,   # with -Finalize: the candidate's acceptance request (publish.mjs prepare), opened when the receipt ends PASS
   [switch]$BindingCredential,
   [string]$BindingConnection,   # with -BindingCredential: the connection id, filled in so only the token is pasted
   [string]$ServerKey,
@@ -1481,6 +1483,39 @@ function Get-DrillProductionVerdict($Receipt, $Readback) {
     (New-DrillItem 'A5' $a5 "local=$local production=$($sources -join ',')"),
     (New-DrillItem 'A9' $a9 (($counts.Keys | ForEach-Object { "$_=$($counts[$_])" }) -join ' '))
   )
+}
+
+# -Finalize of a candidate that ends PASS opens the Owner's acceptance request (PLAN-accept-auto-seal-20261125.md 2.1): one
+# `rollout/fleet/accept.mjs open` (one seal call, no wait), after the receipt is final (seal reads it). The Owner accepts by approving the
+# fleet.accept Grant at the confirm link it answers; nothing else here is the Owner's. Auxiliary (the board's rule: an auxiliary step that
+# fails only does not happen): whatever it answers, the drill's conclusion and receipt stay as the read-back made them, and the answer
+# says why the request is not open (accept.mjs run opens it as well). Under a test marker (NODE_TEST_CONTEXT or CLUED_UNDER_TEST, as
+# Request-DrillIntake) the real opener never runs -- it reaches the door and GitHub -- and only an injected one
+# ($script:DrillAcceptanceOpener: { param($Node, $Arguments) ... returns @{ exit; stdout } }) is used; without a marker an injected one
+# is refused.
+$script:DrillAcceptanceOpener = $null
+function Open-DrillAcceptance([string]$Request, [string]$Receipt) {
+  $accept = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $script:DrillScriptPath) '..\rollout\fleet\accept.mjs'))
+  $notOpened = { param($code) [ordered]@{ status = 'NOT_OPENED'; code = $code; confirmUrl = $null
+    next = "node $accept run --request <the candidate's acceptance-request.json> --drill-receipt $Receipt --work <a new directory> (it opens the request too)" } }
+  if (-not $Request) { return (& $notOpened 'DRILL_FINALIZE_NO_REQUEST') }
+  $marked = [bool]($env:NODE_TEST_CONTEXT -or $env:CLUED_UNDER_TEST)
+  if ($marked -and $null -eq $script:DrillAcceptanceOpener) { return (& $notOpened 'DRILL_HOST_ACCESS_UNDER_TEST') }
+  if (-not $marked -and $null -ne $script:DrillAcceptanceOpener) { return (& $notOpened 'DRILL_ACCEPTANCE_OPENER_WITHOUT_TEST_MARKER') }
+  $arguments = @($accept, 'open', '--request', [IO.Path]::GetFullPath($Request), '--drill-receipt', [IO.Path]::GetFullPath($Receipt))
+  $run = $null; $opened = $null
+  try {
+    $run = if ($marked) { & $script:DrillAcceptanceOpener 'node.exe' $arguments } else {
+      Invoke-DrillNode ((Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source) $arguments 600 }
+    $last = @(([string](Get-Prop $run 'stdout')) -split "`r?`n" | Where-Object { $_.Trim() }) | Select-Object -Last 1
+    $opened = ConvertFrom-Json -InputObject ([string]$last)
+  } catch { $opened = $null }
+  $status = [string](Get-Prop $opened 'status')
+  if ((Get-Prop $run 'exit') -ne 0 -or $status -cnotmatch '^FLEET_ACCEPTANCE_(WAITING_OWNER|SEALED)$') {
+    $code = [string](Get-Prop $opened 'code')
+    return (& $notOpened $(if ($code) { $code } elseif ($status) { $status } else { 'DRILL_ACCEPTANCE_OPEN_FAILED' }))
+  }
+  [ordered]@{ status = $status; confirmUrl = (Get-Prop $opened 'confirmUrl'); expiresAt = (Get-Prop $opened 'expiresAt'); code = $null }
 }
 
 # ---------------------------------------------------------------- guest-side fake credentials (Windows PowerShell 5.1 in the VM)
@@ -4349,8 +4384,13 @@ function Invoke-DrillMain {
     $receipt | Add-Member -NotePropertyName productionReadbackSha256 -NotePropertyValue (Get-Sha256Hex $ProductionReadback) -Force
     Write-DrillJson $Finalize $receipt
     $summary = Get-DrillRunSummary $receipt
-    return [ordered]@{ status = 'DRILL_FINALIZED'; conclusion = $receipt.conclusion; failedItems = $summary.failedItems; reason = $summary.reason; receipt = $Finalize }
+    $out = [ordered]@{ status = 'DRILL_FINALIZED'; conclusion = $receipt.conclusion; failedItems = $summary.failedItems; reason = $summary.reason; receipt = $Finalize }
+    # a candidate that ends PASS (Get-DrillConclusion's PASS_* values are publish.mjs DRILL_PASS_CONCLUSIONS, held equal by
+    # drill-vm-part1.test.mjs): the Owner's acceptance request is opened and its link is in this answer; any other ending opens nothing
+    if ((Get-Prop $receipt 'candidate') -eq $true -and [string]$receipt.conclusion -clike 'PASS_*') { $out.acceptance = Open-DrillAcceptance $Request $Finalize }
+    return $out
   }
+  if ($Request) { throw (New-DrillError 'DRILL_USAGE' '-Request goes with -Finalize only') }
 
   $full = -not $BaselineOnly -and -not $PrereqOnly
   if ($full -and (-not $Version -or -not $From -or -not $Kit)) { throw (New-DrillError 'DRILL_USAGE' 'give -Version, -From and -Kit (or -BaselineOnly / -PrereqOnly / -Finalize)') }
