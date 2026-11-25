@@ -2,9 +2,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ghReader } from './retrigger-counter.mjs';
 import { MAIN_RULESET_ID, PAIRS, compare, main } from './shadow-compare.mjs';
@@ -1529,8 +1529,7 @@ test('B21 07:38 回放：补发三秒后 head 被取代，运行标记独立证�
   assert.match(rerun.ignored.find(e => e.kind === 'Z2')?.why ?? '', /4602:1.*自动补发/);
 });
 
-test('B15 实际 merge-tree：重做结果与 Git 合并同树，原对象库、工作树和 ref 未写入', async t => {
-  const { localMergeTree } = await import('./bypass-events.mjs');
+function mergeFixture(t) {
   const cwd = mkdtempSync(join(tmpdir(), 'shadow-merge-test-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   const shellGit = (...args) => spawnSync('git', ['-c', 'user.name=Shadow Test', '-c', 'user.email=test@example.invalid',
@@ -1552,6 +1551,101 @@ test('B15 实际 merge-tree：重做结果与 Git 合并同树，原对象库、
   git('add', 'main.txt');
   git('commit', '-m', 'Main');
   const main = git('rev-parse', 'HEAD');
+  return { cwd, shellGit, git, topic, main };
+}
+
+// Git 2.43 不认 2.45 才有的全局选项 --no-lazy-fetch，报 unknown option 退出 129；其余参数原样交给真 git。
+// 垫片同时要求 GIT_NO_LAZY_FETCH=1，防止改掉选项后丢了“不懒取对象”。Linux 用 sh 脚本；
+// Windows 上 spawnSync 只按 PATH 找 .exe/.com，故用系统自带 csc 现编一个 git.exe。
+function git243Shim(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'shadow-git243-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const execPath = spawnSync('git', ['--exec-path'], { encoding: 'utf8', windowsHide: true }).stdout.trim();
+  const realGit = join(execPath, process.platform === 'win32' ? 'git.exe' : 'git');
+  assert.ok(existsSync(realGit), `找不到真 git：${realGit}`);
+  if (process.platform === 'win32') {
+    const source = join(dir, 'Shim.cs');
+    writeFileSync(source, String.raw`
+using System; using System.Diagnostics; using System.Text;
+public static class Shim {
+  const char BS = (char)92;
+  static string Quote(string a) {
+    if (a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t', '"' }) < 0) return a;
+    var sb = new StringBuilder("\""); int bs = 0;
+    foreach (char c in a) {
+      if (c == BS) { bs++; continue; }
+      if (c == '"') { sb.Append(BS, bs * 2 + 1).Append('"'); bs = 0; continue; }
+      sb.Append(BS, bs).Append(c); bs = 0;
+    }
+    return sb.Append(BS, bs * 2).Append('"').ToString();
+  }
+  public static int Main(string[] args) {
+    foreach (string a in args) {
+      if (!a.StartsWith("-")) break;
+      if (a == "--no-lazy-fetch") { Console.Error.WriteLine("unknown option: --no-lazy-fetch"); return 129; }
+    }
+    if (Environment.GetEnvironmentVariable("GIT_NO_LAZY_FETCH") != "1") { Console.Error.WriteLine("shim: GIT_NO_LAZY_FETCH=1 missing"); return 2; }
+    var quoted = new string[args.Length];
+    for (int i = 0; i < args.Length; i++) quoted[i] = Quote(args[i]);
+    var psi = new ProcessStartInfo(Environment.GetEnvironmentVariable("SHADOW_REAL_GIT"), string.Join(" ", quoted));
+    psi.UseShellExecute = false;
+    using (var p = Process.Start(psi)) { p.WaitForExit(); return p.ExitCode; }
+  }
+}`);
+    const csc = join(process.env.SystemRoot ?? 'C:/Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
+    const built = spawnSync(csc, ['/nologo', '/noconfig', '/target:exe', `/reference:${join(dirname(csc), 'System.dll')}`,
+      `/out:${join(dir, 'git.exe')}`, source], { encoding: 'utf8', windowsHide: true });
+    assert.equal(built.status, 0, built.stdout + built.stderr + (built.error?.message ?? ''));
+  } else {
+    writeFileSync(join(dir, 'git'), `#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    --no-lazy-fetch) echo "unknown option: --no-lazy-fetch" >&2; exit 129 ;;
+    -*) ;;
+    *) break ;;
+  esac
+done
+[ "$GIT_NO_LAZY_FETCH" = 1 ] || { echo "shim: GIT_NO_LAZY_FETCH=1 missing" >&2; exit 2; }
+exec "$SHADOW_REAL_GIT" "$@"
+`, { mode: 0o755 });
+  }
+  return (fn) => {
+    const saved = { PATH: process.env.PATH, SHADOW_REAL_GIT: process.env.SHADOW_REAL_GIT };
+    process.env.PATH = `${dir}${delimiter}${saved.PATH}`;
+    process.env.SHADOW_REAL_GIT = realGit;
+    try { return fn(); } finally {
+      for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  };
+}
+
+test('B15a 垫片如实模拟 Git 2.43：全局 --no-lazy-fetch 退出 129，其余原样转给真 git', async t => {
+  const { cwd } = mergeFixture(t);
+  const underShim = git243Shim(t);
+  const run = (env, ...args) => underShim(() => spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true,
+    env: { ...process.env, ...env } }));
+  const rejected = run({ GIT_NO_LAZY_FETCH: '1' }, '--no-lazy-fetch', 'rev-parse', 'HEAD');
+  assert.equal(rejected.status, 129, rejected.stderr);
+  assert.match(rejected.stderr, /unknown option: --no-lazy-fetch/);
+  const tail = `"q" ${String.fromCharCode(92)}`;
+  const passed = run({ GIT_NO_LAZY_FETCH: '1' }, '--no-replace-objects', 'log', '-1', `--format=%s with ${tail}`, 'HEAD');
+  assert.equal(passed.status, 0, passed.stderr);
+  assert.equal(passed.stdout.trim(), `Main with ${tail}`);
+});
+
+test('B15b 本机 Git 2.43（不认 --no-lazy-fetch）上 merge-tree 照样重做出树', async t => {
+  const { localMergeTree } = await import('./bypass-events.mjs');
+  const { cwd, git, topic, main } = mergeFixture(t);
+  const out = git243Shim(t)(() => localMergeTree(topic, main, { cwd }));
+  assert.equal(out.status, 0);
+  git('checkout', 'topic');
+  git('merge', '--no-edit', 'main');
+  assert.equal(git('rev-parse', 'HEAD^{tree}'), out.tree);
+});
+
+test('B15 实际 merge-tree：重做结果与 Git 合并同树，原对象库、工作树和 ref 未写入', async t => {
+  const { localMergeTree } = await import('./bypass-events.mjs');
+  const { cwd, shellGit, git, topic, main } = mergeFixture(t);
 
   const out = localMergeTree(topic, main, { cwd });
   assert.equal(out.status, 0);
