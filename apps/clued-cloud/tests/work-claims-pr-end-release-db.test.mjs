@@ -1,16 +1,15 @@
 // Terminal admission is removed (20261113151000). A PR's end through adopt (merged) or
-// an explicit GitHub closure releases the claim that served it when the Task has no other
-// open PR and the claim authorized no newer head; the judgment never changes adopt/return.
-import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+// an explicit GitHub closure releases the claim that served it when the claim served no other
+// open PR of the Task and authorized no newer head; the judgment never changes adopt/return.
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
@@ -18,18 +17,14 @@ const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 const repo = 'fixture/pr-task';
-async function freePort() {
-  const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r));
-  const p = s.address().port; await new Promise(r => s.close(r)); return p;
-}
 
 test('a PR end releases its claim; terminal admission is gone', { timeout: 300000 }, async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-pr-end-'));
-  const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await freePort(),
+  const server = newCluster({ databaseDir: dir, user: 'postgres', password: hash(), 
     persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
   const clients = [];
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     process.stderr.write('pr-end-release fixture started own PostgreSQL pid=' + server.process?.pid + '\n');
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;
@@ -163,6 +158,37 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       assert.equal(await binding(1151), 'active');
       assert.equal(await binding(1152), 'active');
       assert.deepEqual((await releaseInfo(r)).trigger_refs, [slot]);
+      committed(await release(r));
+    });
+    await t.test('#1359 合入释放认领，即使同 Task 上旧认领留下的 #1308 仍打开', async () => {
+      const taskId = await task();
+      const old = await claim(taskId);
+      committed(await authorize(old, 'a'.repeat(40), 1308));
+      assert.equal(await binding(1308), 'unknown');
+      committed(await release(old));
+
+      const r = await claim(taskId);
+      const head = 'd'.repeat(40);
+      committed(await authorize(r, head));
+      assert.equal((await resolve('ci', 1359, head)).binding_status, 'bound');
+      assert.equal((await verify('ci', r, 1359, head)).verdict, 'ADMITTED');
+
+      const event = await webhook(1359);
+      const c = await releaseInfo(r);
+      assert.deepEqual(event, { status: 'ok', finished: 1, released: [r.claim.claim_id] }, `claim status: ${c.status}`);
+      assert.deepEqual([await binding(1359), await binding(1308), c.status, c.released_by, c.released_evidence_ref],
+        ['merged', 'unknown', 'RELEASED', 'pr_end', repo + '#1359@' + 'e'.repeat(40)]);
+    });
+    await t.test('#2359 合入时保留仍为打开的 #2308 服务的认领', async () => {
+      const r = await claim(await task());
+      committed(await authorize(r, 'b'.repeat(40), 2308));
+      assert.equal(await binding(2308), 'unknown');
+      await admitted(r, 2359, 'c'.repeat(40));
+
+      const event = await webhook(2359);
+      assert.deepEqual(event, { status: 'ok', finished: 1, released: [] });
+      assert.equal((await releaseInfo(r)).status, 'ACTIVE');
+      assert.equal(await binding(2308), 'unknown');
       committed(await release(r));
     });
     await t.test('交还合并位不收任何 GitHub 状态；迟到的关闭报告让绑定保留 merged', async () => {

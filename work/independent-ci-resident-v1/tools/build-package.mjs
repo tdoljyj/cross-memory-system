@@ -48,12 +48,14 @@ import { nodeIdentityOf, nodeIdentitySha256 } from '../src/node-identity.mjs';
 
 const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const RESIDENT_FILES = ['src', 'tools', 'windows'];
-// Files of the resident generation whose one source lies outside the resident tree (D2c ruling B1): the renewal contract the Broker
-// reads is the server's own file. This table is the only list (rollout/fleet/facts.mjs and universal.mjs read it); each entry is
+// Files of the resident generation from outside the three packaged directories. The renewal contract is the server's own file,
+// and the download and tar readers are the fleet tools' own files. This table is shared by facts.mjs and universal.mjs. Each entry is
 // copied from its repository-relative source to resident\<path> after the three directories, in this order. A file at the same
 // path inside the resident tree is refused (PACKAGE_RESIDENT_DUPLICATE), so a second copy cannot come back.
 export const RESIDENT_EXTERNAL = Object.freeze([
   Object.freeze({ path: 'windows/ci-connection-renew.contract.json', source: 'apps/clued-cloud/worker/ci-connection-renew.contract.json' }),
+  ...['fetch.mjs', 'tar.mjs'].map(name => Object.freeze({ path: `rollout/fleet/${name}`,
+    source: `work/independent-ci-resident-v1/rollout/fleet/${name}` })),
 ]);
 // listed: the resident tree's walked paths. Returns [{ path, file }] with file the absolute source under the checkout of `base`.
 export function residentExternal(listed, base = HERE) {

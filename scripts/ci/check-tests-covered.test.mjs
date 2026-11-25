@@ -14,14 +14,16 @@ const TASK = '700f2b68-b355-4edb-95c1-be97f04ea8de';
 const RUNNER = 'node:' + 'test';
 
 // A throwaway checkout: files (path -> text), its own suite commands and table; tracked defaults to every file.
-function fixture(t, files, { commands = { unit: [{ cwd: '.', argv: ['node', '--test', '{tests:t}'] }] }, table = { tests: [] }, tracked } = {}) {
+// The base the lists are measured against defaults to the same table, the same files and no known failures.
+function fixture(t, files, { commands = { unit: [{ cwd: '.', argv: ['node', '--test', '{tests:t}'] }] }, table = { tests: [] }, tracked,
+  known = {}, baseline = { base: 'base', table, known: {}, files: tracked ?? Object.keys(files) } } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'tests-covered-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const [file, text] of Object.entries(files)) {
     mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     writeFileSync(path.join(root, file), text);
   }
-  return coverage({ root, tracked: tracked ?? Object.keys(files), table, commands, listUnit: () => [] });
+  return coverage({ root, tracked: tracked ?? Object.keys(files), table, known, baseline, commands, listUnit: () => [] });
 }
 const entry = (file, extra = {}) => ({ path: file, kind: 'unsorted', task: TASK, reason: '从没在必需检查里跑过，红绿未知，等下一批分拣', ...extra });
 
@@ -30,10 +32,93 @@ test('test files are named *.test.{mjs,js,cjs,ts}, test_*.py or *_test.py', () =
   for (const file of ['a.mjs', 'x/a.case.mjs', 'x/test-a.mjs', 'x/test_a.cjs', 'x/a.test.py', 'x/latest_a.py.txt']) assert.ok(!isTestFile(file), file);
 });
 
+// FABLE-defect-remediation-plan-20261124 §3.6 steps 1-4 (搁161, 搁48): the full set is every file named as a test, the
+// PowerShell ones too, and both lists only shrink against the base.
+test('PowerShell tests are test files too: test-*.ps1 and *.Tests.ps1', () => {
+  for (const file of ['test-x.ps1', 'a/test-x.ps1', 'a/b/x.Tests.ps1']) assert.ok(isTestFile(file), file);
+  for (const file of ['a/x-test.ps1', 'a/latest-x.ps1', 'a/test-x.psm1', 'a/x.Tests.ps1.txt']) assert.ok(!isTestFile(file), file);
+});
+
+test('a test file no suite runs fails wherever it is and whatever it is written in, until listed', (t) => {
+  const files = { 't/a.test.mjs': '', 'test-x.ps1': '', 'tools/x.Tests.ps1': '', 'tests/sub/y-db.test.mjs': '' };
+  assert.deepEqual(fixture(t, files).problems.map((problem) => problem.split(':')[0]), ['test-x.ps1', 'tools/x.Tests.ps1', 'tests/sub/y-db.test.mjs']);
+  const table = { tests: [entry('test-x.ps1'), entry('tools/x.Tests.ps1'), entry('tests/sub/y-db.test.mjs')] };
+  assert.deepEqual(fixture(t, files, { table }).problems, []);
+});
+
+test('a new test-x.ps1 in the repository fails the check: no suite command takes a PowerShell file', () => {
+  const { problems } = coverage({ root: ROOT, tracked: [...trackedFiles(ROOT), 'scripts/ci/test-x.ps1'] });
+  assert.equal(problems.length, 1, problems.join('\n'));
+  assert.match(problems[0], /^scripts\/ci\/test-x\.ps1: no required suite runs it and scripts\/ci\/ci-uncovered-tests\.json does not list it/);
+});
+
+const SHRINKS = 'clued.ci-uncovered-tests/2';
+test('the uncovered table only shrinks against the base: an entry the base does not list fails, one removed passes', (t) => {
+  const files = { 't/a.test.mjs': '', 'u/b.test.mjs': '', 'u/c.test.mjs': '' };
+  const baseline = { base: 'b1', table: { schema: SHRINKS, tests: [entry('u/b.test.mjs')] }, known: {}, files: [...Object.keys(files), 'old/d.test.mjs'] };
+  assert.deepEqual(fixture(t, files, { table: { schema: SHRINKS, tests: [entry('u/b.test.mjs'), entry('u/c.test.mjs')] }, baseline }).problems,
+    ['u/c.test.mjs: the base (b1) does not list it; scripts/ci/ci-uncovered-tests.json only shrinks: make a required suite run it']);
+  // A pattern is an entry like any other.
+  assert.deepEqual(fixture(t, { ...files, 'old/d.test.mjs': '' }, { table: { schema: SHRINKS, tests: [entry('u/b.test.mjs'), entry('u/c.test.mjs'),
+    entry('old/**', { kind: 'archive' })] }, baseline: { ...baseline, table: { schema: SHRINKS, tests: [entry('u/b.test.mjs'), entry('u/c.test.mjs')] } } }).problems,
+  ['old/**: the base (b1) does not list it; scripts/ci/ci-uncovered-tests.json only shrinks: make a required suite run it']);
+  // Removed (the file is gone, or now runs): passes. Sorting an entry (kind, reason) is no growth.
+  const both = { ...baseline, table: { schema: SHRINKS, tests: [entry('u/b.test.mjs'), entry('u/c.test.mjs')] } };
+  assert.deepEqual(fixture(t, files, { tracked: ['t/a.test.mjs', 'u/c.test.mjs'], table: { schema: SHRINKS, tests: [entry('u/c.test.mjs')] },
+    baseline: both }).problems, []);
+  assert.deepEqual(fixture(t, { ...files, 't/b.test.mjs': '' }, { tracked: ['t/a.test.mjs', 't/b.test.mjs', 'u/c.test.mjs'],
+    table: { schema: SHRINKS, tests: [entry('u/c.test.mjs', { kind: 'environment' })] }, baseline: both }).problems, []);
+  // Once the base has the rule, the candidate keeps it.
+  assert.deepEqual(fixture(t, files, { table: { schema: 'clued.ci-uncovered-tests/1', tests: [entry('u/b.test.mjs'), entry('u/c.test.mjs')] },
+    baseline: both }).problems, ['scripts/ci/ci-uncovered-tests.json: schema must stay clued.ci-uncovered-tests/2, as at the base (b1): the list only shrinks']);
+  // The change that brings the rule lists today's gaps: its base has no rule yet.
+  assert.deepEqual(fixture(t, files, { table: { schema: SHRINKS, tests: [entry('u/b.test.mjs'), entry('u/c.test.mjs')] },
+    baseline: { base: 'b0', table: { schema: 'clued.ci-uncovered-tests/1', tests: [] }, known: {} } }).problems, []);
+});
+
+test('an archive pattern is sealed: a test file the base does not have fails even where the pattern matches it', (t) => {
+  const files = { 't/a.test.mjs': '', 'old/b.test.mjs': '', 'old/sub/c.test.mjs': '' };
+  const table = { schema: SHRINKS, tests: [entry('old/**', { kind: 'archive' })] };
+  const baseline = { base: 'b1', table, known: {}, files: ['t/a.test.mjs', 'old/b.test.mjs'] };
+  const sealed = 'old/sub/c.test.mjs: the base (b1) does not have it; the archive old/** is sealed and takes no new test: make a required suite run it';
+  assert.deepEqual(fixture(t, files, { table, baseline }).problems, [sealed]);
+  // No bootstrap: sealed whatever schema the base's table has.
+  assert.deepEqual(fixture(t, files, { table, baseline: { ...baseline, table: { tests: table.tests } } }).problems, [sealed]);
+  // A file the base had stays exempt.
+  assert.deepEqual(fixture(t, files, { table, baseline: { ...baseline, files: Object.keys(files) } }).problems, []);
+});
+
+const failure = (file, name, fingerprint = '0123456789abcdef') => ({ file, path: [name], fingerprint, reason: 'fails on main' });
+test('the known-failure list only shrinks against the base: a new entry, or a listed test failing for a new reason, fails', (t) => {
+  const files = { 't/a.test.mjs': '' };
+  const known = { unit: [failure('t/a.test.mjs', 'one'), failure('t/a.test.mjs', 'two')] };
+  const baseline = { base: 'b1', table: { tests: [] }, known };
+  assert.deepEqual(fixture(t, files, { known, baseline }).problems, []);
+  assert.deepEqual(fixture(t, files, { known: { unit: [failure('t/a.test.mjs', 'two')], other: [] }, baseline }).problems, []);
+  assert.deepEqual(fixture(t, files, { known: { unit: [...known.unit, failure('t/a.test.mjs', 'three'), failure('t/a.test.mjs', 'one', 'fedcba9876543210')],
+    other: [failure('t/a.test.mjs', 'one')] }, baseline }).problems, [
+    'scripts/ci/ci-known-failures.json: unit: t/a.test.mjs :: three :: 0123456789abcdef: the base (b1) does not list it; the list only shrinks: fix the test',
+    'scripts/ci/ci-known-failures.json: unit: t/a.test.mjs :: one :: fedcba9876543210: the base (b1) does not list it; the list only shrinks: fix the test',
+    'scripts/ci/ci-known-failures.json: other: t/a.test.mjs :: one :: 0123456789abcdef: the base (b1) does not list it; the list only shrinks: fix the test',
+  ]);
+});
+
 test('the repository as committed: every test file runs in a required suite or is listed with its kind, reason and Task', () => {
   const result = coverage({ root: ROOT });
   assert.deepEqual(result.problems, []);
   assert.ok(result.counts.tests > 900 && result.counts.runs > 600, JSON.stringify(result.counts));
+});
+
+// PLAN-g4-red-merged-20261125 §2.2 (Task 4432ee9b): the PostgreSQL 17 backup coverage test runs in production-schema (the
+// real database command of migration-verify names it), so its entry (Task 5ba48256: production-schema had no Docker image)
+// is gone; listed again, the table says it runs and the entry must go.
+test('the PostgreSQL 17 backup coverage test runs in production-schema and is not listed as uncovered', () => {
+  const file = 'apps/clued-cloud/tests/production-backup-scope-db.test.mjs';
+  const table = JSON.parse(readFileSync(path.join(ROOT, TABLE_PATH), 'utf8'));
+  assert.deepEqual(table.tests.filter((listed) => listed.path === file), []);
+  table.tests.push(entry(file, { kind: 'environment' }));
+  const { problems } = coverage({ root: ROOT, table, baseline: null });
+  assert.deepEqual(problems, [`${file}: runs in a required suite (production-schema); remove the entry`]);
 });
 
 test('a new test file no suite runs and the table does not list fails the check, naming the file', () => {
@@ -47,7 +132,7 @@ test('a new test file no suite runs and the table does not list fails the check,
 test('a listed file that no longer exists, or that now runs, fails: remove the entry', () => {
   const table = JSON.parse(readFileSync(path.join(ROOT, TABLE_PATH), 'utf8'));
   table.tests.push(entry('scripts/ci/long-gone.test.mjs'), entry('scripts/ci/ci-required-selection.test.mjs'));
-  const { problems } = coverage({ root: ROOT, table });
+  const { problems } = coverage({ root: ROOT, table, baseline: null }); // the base is not this test: once main has the shrinking rule it would also report growth
   assert.deepEqual(problems, ['scripts/ci/long-gone.test.mjs: no such tracked file; remove the entry',
     'scripts/ci/ci-required-selection.test.mjs: runs in a required suite (selection, clued-cloud); remove the entry']);
 });
@@ -199,15 +284,25 @@ function cliCheckout(t) {
       }
     }
   }
-  const git = (...args) => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  put('scripts/ci/ci-known-failures.json', '{}\n');
+  const git = (...args) => spawnSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args],
+    { encoding: 'utf8' });
   assert.equal(git('init', '-q').status, 0);
-  return { put, add: () => assert.equal(git('add', '-A').status, 0), run: () => spawnSync(process.execPath,
-    [path.join(ROOT, 'scripts/ci/check-tests-covered.mjs'), '--root', root], { encoding: 'utf8' }) };
+  const add = () => assert.equal(git('add', '-A').status, 0);
+  // The base is the checkout's first commit: what it holds after add() and commit().
+  let base = null;
+  const commit = () => {
+    add();
+    assert.equal(git('commit', '-q', '-m', 'base').status, 0);
+    base = git('rev-parse', 'HEAD').stdout.trim();
+  };
+  return { put, add, commit, run: (at = base) => spawnSync(process.execPath,
+    [path.join(ROOT, 'scripts/ci/check-tests-covered.mjs'), '--root', root, ...(at ? ['--base', at] : [])], { encoding: 'utf8' }) };
 }
 
 test('the command line exits 0 when every test file is covered, 1 naming the file when one is not', (t) => {
-  const { put, add, run } = cliCheckout(t);
-  add();
+  const { put, add, commit, run } = cliCheckout(t);
+  commit();
   const green = run();
   assert.equal(green.status, 0, green.stderr);
   assert.match(green.stdout, /^tests covered: \d+ test files, \d+ run in a required suite, 0 listed/);
@@ -216,4 +311,38 @@ test('the command line exits 0 when every test file is covered, 1 naming the fil
   const red = run();
   assert.equal(red.status, 1, red.stdout);
   assert.match(red.stderr, /^TESTS_NOT_COVERED: 1 problem\(s\)\norphan\/lost\.test\.mjs: no required suite runs it/);
+});
+
+test('the command line reads the lists at --base from git: an entry added since fails; a base it cannot read fails', (t) => {
+  const { put, add, commit, run } = cliCheckout(t);
+  const table = (...files) => `${JSON.stringify({ schema: SHRINKS, tests: files.map((file) => entry(file)) }, null, 2)}\n`;
+  put('orphan/old.test.mjs');
+  put(TABLE_PATH, table('orphan/old.test.mjs'));
+  commit();
+  assert.equal(run().status, 0, run().stderr);
+  put('orphan/new.test.mjs');
+  put(TABLE_PATH, table('orphan/old.test.mjs', 'orphan/new.test.mjs'));
+  put('scripts/ci/ci-known-failures.json', `${JSON.stringify({ unit: [failure('orphan/old.test.mjs', 'one')] })}\n`);
+  add();
+  const red = run();
+  assert.equal(red.status, 1, red.stdout);
+  assert.match(red.stderr, /^orphan\/new\.test\.mjs: the base \([0-9a-f]{40}\) does not list it; scripts\/ci\/ci-uncovered-tests\.json only shrinks/m);
+  assert.match(red.stderr, /^scripts\/ci\/ci-known-failures\.json: unit: orphan\/old\.test\.mjs :: one :: 0123456789abcdef: the base \([0-9a-f]{40}\) does not list it/m);
+  const unreadable = run('0123456789abcdef0123456789abcdef01234567');
+  assert.equal(unreadable.status, 1, unreadable.stdout);
+  assert.match(unreadable.stderr, /^scripts\/ci\/ci-uncovered-tests\.json, scripts\/ci\/ci-known-failures\.json: cannot read the base 0123456789abcdef0123456789abcdef01234567/m);
+});
+
+test('the command line seals archive patterns against the base: a new test file under one fails, the archived ones pass', (t) => {
+  const { put, add, commit, run } = cliCheckout(t);
+  put('old/kept.test.mjs');
+  put(TABLE_PATH, `${JSON.stringify({ schema: SHRINKS, tests: [entry('old/**', { kind: 'archive' })] }, null, 2)}\n`);
+  commit();
+  const green = run();
+  assert.equal(green.status, 0, green.stderr);
+  put('old/deeper/brand-new.test.mjs');
+  add();
+  const red = run();
+  assert.equal(red.status, 1, red.stdout);
+  assert.match(red.stderr, /^TESTS_NOT_COVERED: 1 problem\(s\)\nold\/deeper\/brand-new\.test\.mjs: the base \([0-9a-f]{40}\) does not have it; the archive old\/\*\* is sealed/);
 });

@@ -15,7 +15,7 @@ import { Ledger } from './ledger.mjs';
 import { ReceiptChain } from './receipts.mjs';
 import { Inbox, OwnerInbox } from './inbox.mjs';
 import { Mailbox } from './mailbox.mjs';
-import { ResidentExecutor, lockHeldInEarlierBoot } from './executor.mjs';
+import { NODE_DEFERRALS, ResidentExecutor, lockHeldInEarlierBoot } from './executor.mjs';
 import { Runner, serviceEnv } from './runner.mjs';
 import { installedIntegrity, mailboxCompanion } from './service-ports.mjs';
 import { WindowsEngine, installedTrainMode } from './engine-windows.mjs';
@@ -30,6 +30,7 @@ import { STATUS_FILE, STATUS_MAX_BYTES, StatusBoard, StatusFile, readVersionStat
 import { RunQueue } from './queue.mjs';
 import { renewalWatch } from './connection-renewal.mjs';
 import { CompanionPresence, PRESENCE_EVERY_MS } from './companion-presence.mjs';
+import { residentSelfPull } from './fleet-self-pull.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -141,6 +142,7 @@ export async function main(argv = process.argv.slice(2), ports = {}) {
   const renew = renewalWatch({root,profile:policy.node,source:policy.ciSourceManifestSha256,clock,mode:()=>exec.renewalMode(),
     onHandover:()=>exec.requestHandoverProbe(),
     drained:async()=>!runner.busy && (await ledger.open()).length===0});
+  const selfPull = residentSelfPull({ root, repository: policy.repo, clock });
   const spool = path.join(path.dirname(root), 'formal-spool');
   const retention = new RetentionWatch({ policy, receipts, clock,
     readSettings: () => readRetentionSettings(path.join(root, 'owner', SETTINGS_FILE)),
@@ -177,7 +179,9 @@ export async function main(argv = process.argv.slice(2), ports = {}) {
   renewalTimer.unref();
   await recordServiceStart({ receipts, root, policySha256: values['policy-sha256'], pid: process.pid });
   const stopFile = path.join(state, 'STOP-REQUESTED');
-  return serviceLoop({ exec, lock, sleep, once: values.once === true,
+  return serviceLoop({ exec, lock, sleep, once: values.once === true, selfPull,
+    upgradeIdle: async () => !runner.busy && (await ledger.open()).length === 0
+      ? { queueEmpty: queue.live().length === 0 } : null,
     // A request left from an earlier boot is renamed with a receipt and does not stop us (src/stop-request.mjs).
     stopRequested: stopRequestCheck({ stopFile, locksDir: path.join(state, 'locks'), receipts, clock }),
     acknowledgeStop: async () => {
@@ -205,9 +209,10 @@ export async function main(argv = process.argv.slice(2), ports = {}) {
 export const RESTING_STATES = Object.freeze(['IDLE', 'DEFERRED', 'HALTED', 'PAUSED', 'WAITING', 'BACKFILL_PENDING']);
 export const LEAVE_MAX_MS = 120_000;
 export async function serviceLoop({ exec, lock, sleep, once = false, stopRequested, acknowledgeStop, onLoopException, betweenBatches, abandonBetweenBatches = () => {},
-  leaveMaxMs = LEAVE_MAX_MS }) {
+  leaveMaxMs = LEAVE_MAX_MS, selfPull, upgradeIdle = async () => ({ queueEmpty: true }) }) {
   let between = null;
   const leave = async () => {
+    selfPull?.stop();
     if (!between) return;
     try { abandonBetweenBatches(); } catch { /* it finishes at its own deadlines then */ }
     let timer;
@@ -231,6 +236,11 @@ export async function serviceLoop({ exec, lock, sleep, once = false, stopRequest
       try { await onLoopException(error); } catch { /* keep exiting */ }
       await leave();
       return 3;
+    }
+    if (selfPull && !once) {
+      const quiet = result.state === 'IDLE' || (result.state === 'DEFERRED' && result.reason === NODE_DEFERRALS.STANDBY);
+      const idle = quiet && result.immediate !== true ? await upgradeIdle().catch(() => null) : null;
+      selfPull.tick(idle);
     }
     // Between batches only (a tick runs at most one batch step): archive retention, the 50 GB and the C: reminders, at most hourly
     // (DESIGN §7.3, §35). Without a companion heartbeat nothing is asked of the companion, so this never waits for its timeout.

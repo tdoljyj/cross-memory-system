@@ -1,6 +1,6 @@
 // 托管脚手架 hosted-required.yml 的结构约束（任务 04f9b91b）。纯文本读取；hosted-gitleaks 与自托管 R1 的区间扫描逐字一致并真跑一遍。
 // staging 会被列车强制改指：上一批没落地时 github.event.before 在检出里不存在，拿它当基线检查就报错变红。
-// 所以凡是给命令传比较基线的作业，staging 推送时一律按 stagingBaseFromCheckout 现算（与四个测试作业同一来源）。
+// 所以凡是给命令传比较基线的作业，一律由 train-base 按 scripts/ci/ci-base.mjs 现算（staging 时即 stagingBaseFromCheckout；与自托管同一来源）。
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
@@ -29,43 +29,44 @@ test('托管工作流不拿 github.event.before 当基线（staging 强制改指
   assert.doesNotMatch(text, /github\.event\.before/);
 });
 
-test('传比较基线的作业都先按 stagingBaseFromCheckout 算出 staging 基线，并从这一步取值', () => {
+// CI_BASE_SHA 只有一处规则（scripts/ci/ci-base.mjs，任务 6cd46765）：每个要比较基线的作业在 train-base 步骤里从 main 读它，
+// 写进 GITHUB_ENV；没有哪一步自己设 CI_BASE_SHA 或 BASE（步骤 env 会盖过 GITHUB_ENV，#1292 就是步骤里取了 PR 旧合并基）。
+// 规则逐事件的取值与端到端（#1292 形状、dispatch 空基线）在 ci-base.test.mjs。
+const LOADS_CI_BASE = "git('show', 'origin/main:scripts/ci/ci-base.mjs')";
+test('传比较基线的作业都先跑 train-base（ci-base.mjs），不在步骤里自设基线', () => {
   const all = jobs(text);
   assert.ok(all.has('contract-placement') && all.has('ci-suites'), [...all.keys()].join(','));
   const users = [];
   for (const [id, block] of all) {
     const values = [...block.matchAll(BASE_ENV)].map(m => m[2]);
-    if (values.length === 0) continue;
+    const usesBase = values.length > 0 || /\$CI_BASE_SHA|ci-required-selection\.mjs --run/.test(block);
+    if (!usesBase) continue;
     users.push(id);
-    assert.match(block, /stagingBaseFromCheckout\(process\.env\.STAGING_SHA\)/, `${id} 没有 staging 基线步骤`);
-    assert.match(block, /id: train-base\n/, `${id} 的基线步骤不叫 train-base`);
+    assert.match(block, /id: train-base\n/, `${id} 没有 train-base 步骤`);
+    assert.ok(block.includes(LOADS_CI_BASE), `${id} 的 train-base 不从 main 读 ci-base.mjs`);
     for (const value of values) {
-      // hosted-gitleaks 用 R1 原文：基线经区间步骤取，区间步骤的推送基线取自 train-base（staging 时即 stagingBaseFromCheckout 的结果）。
-      if (value === '${{ steps.range.outputs.base }}') {
-        assert.match(block, /\n {10}PUSH_BASE: \$\{\{ steps\.train-base\.outputs\.ci_base \}\}\n/, `${id} 的区间步骤不从 train-base 取推送基线`);
-        continue;
-      }
-      assert.match(value, /^\$\{\{ steps\.train-base\.outputs\.sha \|\| /, `${id} 的基线不先取 train-base：${value}`);
+      // hosted-gitleaks 用 R1 原文：基线经区间步骤取，区间步骤的推送基线取自 train-base。
+      assert.equal(value, '${{ steps.range.outputs.base }}', `${id} 在步骤里自设基线：${value}`);
+      assert.match(block, /\n {10}PUSH_BASE: \$\{\{ steps\.train-base\.outputs\.ci_base \}\}\n/, `${id} 的区间步骤不从 train-base 取推送基线`);
     }
   }
+  assert.match(all.get('contract-placement'), /--base "\$CI_BASE_SHA"/, 'contract-placement 用 CI_BASE_SHA 比较');
   assert.ok(users.includes('contract-placement'), `contract-placement 应传基线：${users.join(',')}`);
 });
 
-// 任务 df4bdf98：托管跑套件的步骤不设 CI_BASE_SHA 时，ci-required-selection 判“CI_BASE_SHA is not a commit”，
-// 不做失败后整条命令重跑的偶发容错，必需项遇 1–3 条偶发失败就判红。取值与自托管（steps.train-base.outputs.sha || PR base || ci_base）逐字一致。
-test('托管每个跑 ci-required-selection --run* 的步骤都设 CI_BASE_SHA，取值与自托管一致', () => {
-  const selfHosted = readFileSync(new URL('../../.github/workflows/clued-required-tests.yml', import.meta.url), 'utf8');
-  const want = [...selfHosted.matchAll(/^\s+CI_BASE_SHA:\s*(.+)$/gm)].map(m => m[1].trim());
-  assert.ok(want.length > 0 && new Set(want).size === 1, `自托管取值应唯一：${want.join(' | ')}`);
+// 任务 df4bdf98：托管跑套件的步骤拿不到 CI_BASE_SHA 时，ci-required-selection 判“CI_BASE_SHA is not a commit”，
+// 不做失败后整条命令重跑的偶发容错。现在它来自同作业 train-base 写的 GITHUB_ENV，与自托管同一规则。
+test('托管每个跑 ci-required-selection --run* 的步骤都在 train-base 之后，且不自设 CI_BASE_SHA', () => {
   let steps = 0;
   for (const [id, block] of jobs(text)) {
-    for (const step of block.split(/\n      - /)) {
-      if (!/ci-required-selection\.mjs --run/.test(step)) continue;
+    const parts = block.split(/\n      - /);
+    const at = parts.findIndex(step => /\n {8}id: train-base\n/.test(`\n${step}\n`));
+    parts.forEach((step, i) => {
+      if (!/ci-required-selection\.mjs --run/.test(step)) return;
       steps += 1;
-      const m = /^\s+CI_BASE_SHA:\s*(.+)$/m.exec(step);
-      assert.ok(m, `${id} 的步骤没设 CI_BASE_SHA：${step.split('\n')[0]}`);
-      assert.equal(m[1].trim(), want[0], `${id} 的 CI_BASE_SHA 与自托管不一致`);
-    }
+      assert.ok(at >= 0 && at < i, `${id} 跑套件前没有 train-base：${step.split('\n')[0]}`);
+      assert.doesNotMatch(step, /^\s+CI_BASE_SHA:/m, `${id} 的步骤自设 CI_BASE_SHA，盖过 train-base 写的值`);
+    });
   }
   assert.ok(steps >= 4, `应至少覆盖 4 个跑套件步骤：${steps}`);
 });
@@ -73,7 +74,9 @@ test('托管每个跑 ci-required-selection --run* 的步骤都设 CI_BASE_SHA�
 // 影子对比要比的是同一选择：托管的 --check 与自托管 clued-required-tests.yml 逐字同参数（--check 带 --root 会多选候选自加的套件）。
 test('选择套件的 --check 参数与自托管一致', () => {
   const selfHosted = readFileSync(new URL('../../.github/workflows/clued-required-tests.yml', import.meta.url), 'utf8');
-  const checks = source => [...source.matchAll(/--check [^"'`;|&\n]*/g)].map(m => m[0].trim()).sort();
+  // Trivy 的 sha256sum 也使用 --check；这里只比较选择器的调用。
+  const invocation = /\bnode (?:[^\s"']*ci-required-selection\.mjs|"\$selector") (--check [^"'`;|&\n]*)/g;
+  const checks = source => [...source.matchAll(invocation)].map(m => m[1].trim()).sort();
   assert.deepEqual(checks(text), checks(selfHosted));
 });
 
@@ -99,18 +102,18 @@ test('只有 hosted-required.yml 的 Windows 套件步骤声明 CLUED_CI_HOST_LA
 
 // 任务 3435f8bf：作业级上限只兜底挂死，不当速度门。修可信侧的 PR 跑的是 main 的可信侧（选择、命令、test-env），
 // 自己的修复用不上，改动又喂所有套件，于是“最慢的环境跑最多套件”；45 分钟贴着实测 44–45 分钟，修慢的 PR 被慢卡死。
-// 跑套件的托管作业上限不低于 90（约实测最长正常耗时 2 倍）。migration-verify 只跑 production-schema 一个套件，自有 30 分钟预算，不在此列。
+// 跑套件的托管作业上限不低于 90（约实测最长正常耗时 2 倍）。migration-verify 的分片只跑 production-schema 一个套件，自有 30 分钟预算，不在此列。
 const SUITE_TIMEOUT_FLOOR = 90;
 test(`跑 ci-required-selection --run/--run-selected 套件的托管作业 timeout-minutes 不低于 ${SUITE_TIMEOUT_FLOOR}`, () => {
   const checked = [];
   for (const [id, block] of jobs(text)) {
-    if (id === 'migration-verify' || !/ci-required-selection\.mjs --run(?:-selected)? /.test(block)) continue;
+    if (id === 'migration-verify-shard' || !/ci-required-selection\.mjs --run(?:-selected)? /.test(block)) continue;
     const m = /^    timeout-minutes:\s*(\d+)\s*$/m.exec(block);
     assert.ok(m, `${id} 没有作业级 timeout-minutes`);
     assert.ok(Number(m[1]) >= SUITE_TIMEOUT_FLOOR, `${id} 的 timeout-minutes 是 ${m[1]}，低于 ${SUITE_TIMEOUT_FLOOR}`);
     checked.push(id);
   }
-  assert.deepEqual(checked.sort(), ['ci-suites', 'ci-suites-windows-shard', 'clued-cloud-tests']);
+  assert.deepEqual(checked.sort(), ['ci-suites-shard', 'ci-suites-windows-shard', 'clued-cloud-tests-shard']);
 });
 
 // 任务 3435f8bf 块 1：托管 Windows 作业在跑套件前把镜像预热好的模块分析缓存复制到默认位置（快不快由非必需的
@@ -131,50 +134,89 @@ test('托管 Windows 作业在跑套件前预热默认分析缓存，且这一�
 // ---- 任务 3435f8bf 块 4：Windows 套件分片（PLAN-hosted-windows-speed-20261123 §3.2、§4 V5；裁定 FABLE-hosted-b3-L2-ruling-20261124） ----
 // 分片作业跑同一份 --run-selected 计划的第 i/n 片；n 取 strategy.job-total，只在矩阵列表写一处。列表必须正好是 1..n：
 // 少写一个号（如 [1, 2, 4]）那一片就没人跑，汇总照样绿。S8 删托管工作流时这几条一起删。
-test('块 4：Windows 套件分片跑同一份 --run-selected 计划，片号正好 1..n，片数只写在矩阵列表', () => {
+test('Windows 分片由 PowerShell 运行并传回选择器退出码', () => {
   const shard = jobs(text).get('ci-suites-windows-shard') ?? '';
   assert.match(shard, /^    name: \$\{\{ format\('hosted-ci-suites-windows-shard-\{0\}', matrix\.shard\) \}\}$/m);
   assert.match(shard, /^    runs-on: windows-2025$/m);
   assert.match(shard, /^    timeout-minutes: 90$/m);
-  const matrix = /\n    strategy:\n      fail-fast: false\n      matrix:\n        shard: \[([0-9, ]+)\]\n/.exec(shard);
-  assert.ok(matrix, '矩阵是 strategy.fail-fast: false 加 matrix.shard 列表');
-  const shards = matrix[1].split(',').map(n => Number(n.trim()));
-  assert.deepEqual(shards, shards.map((_, i) => i + 1), `片号应为 1..n：${matrix[1]}`);
-  assert.equal(shards.length, 4);
   const at = shard.indexOf('- name: Select and run the suites declared for Windows');
   assert.ok(at >= 0, 'Windows 套件步骤还在');
   const step = shard.slice(at).split(/\n {6}- /)[0];
   assert.match(step, /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected ci-suites --root candidate --shard \$\{\{ matrix\.shard \}\}\/\$\{\{ strategy\.job-total \}\}\n {10}exit \$LASTEXITCODE\n/);
-  assert.equal(text.split('--shard ').length, 2, '整个工作流只有这一处 --shard');
 });
 
 // 必需检查 hosted-ci-suites-windows 是汇总作业：一个判断，别的都没有（裁定“块 4 汇总作业的要求”）。逐字钉住整个作业：
-// 多一步、多一个条件、换成读产物或调 API、把 always() 改掉（跳过的必需检查会被当成通过），都红。
-const SUMMARY_JOB = [
-  '    name: hosted-ci-suites-windows',
-  '    needs: ci-suites-windows-shard',
-  '    if: always()',
+// 汇总作业在普通事件上用 always() 检查分片结果。关闭事件只取消旧运行，汇总作业也跳过。
+const summaryJob = (name, needs, step) => [
+  `    name: ${name}`,
+  `    needs: ${needs}`,
+  "    if: always() && github.event.action != 'closed'",
   '    runs-on: ubuntu-24.04',
   '    timeout-minutes: 5',
   '    permissions: {}',
   '    steps:',
-  '      - name: Every Windows suite shard succeeded',
+  `      - name: ${step}`,
   '        env:',
-  '          RESULT: ${{ needs.ci-suites-windows-shard.result }}',
+  `          RESULT: \${{ needs.${needs}.result }}`,
   '          TMPDIR: ${{ runner.temp }}',
   '          TMP: ${{ runner.temp }}',
   '          TEMP: ${{ runner.temp }}',
   '          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache',
   '          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs',
   '        run: |',
-  '          echo "hosted-ci-suites-windows-shard-*: $RESULT"',
+  `          echo "${name}-shard-*: $RESULT"`,
   '          test "$RESULT" = success',
 ].join('\n');
-test('块 4：hosted-ci-suites-windows 是汇总作业，只有一步，只判分片作业的 result 是不是 success', () => {
-  const lines = (jobs(text).get('ci-suites-windows') ?? '').split('\n');
+const SUMMARY_JOB = summaryJob('hosted-ci-suites-windows', 'ci-suites-windows-shard', 'Every Windows suite shard succeeded');
+const jobLines = id => {
+  const lines = (jobs(text).get(id) ?? '').split('\n');
   // 作业块末尾的空行和注释属于下一个作业的说明。
   while (lines.length && (lines.at(-1).trim() === '' || lines.at(-1).trimStart().startsWith('#'))) lines.pop();
-  assert.equal(lines.join('\n'), SUMMARY_JOB);
+  return lines.join('\n');
+};
+test('块 4：hosted-ci-suites-windows 是汇总作业，只有一步，只判分片作业的 result 是不是 success', () => {
+  assert.equal(jobLines('ci-suites-windows'), SUMMARY_JOB);
+});
+
+// ---- 任务 3435f8bf 件甲（PLAN-ci-p90-next-20261125 §3.1；形状同 FABLE-ci-duration-target-20261124 §2.5）：三个长作业分片 ----
+// 检查名不变：hosted-<检查名> 是同名汇总作业。除关闭事件外，它总是检查自己矩阵的结果。
+// 分片作业 <作业名>-shard、检查名 hosted-<检查名>-shard-<i>，跑同一份 --run-selected 计划的第 i/n 片，n 只写在矩阵列表。
+// S8 删托管工作流时本节一起删。
+const SHARDED = [
+  { id: 'migration-verify', check: 'migration-verify', name: 'hosted-migration-verify', shards: 4, step: 'Every migration verification shard succeeded' },
+  { id: 'ci-suites', check: 'ci-suites', name: 'hosted-ci-suites', shards: 4, step: 'Every Linux suite shard succeeded' },
+  { id: 'ci-suites-windows', check: 'ci-suites', name: 'hosted-ci-suites-windows', shards: 7, step: 'Every Windows suite shard succeeded' },
+  { id: 'clued-cloud-tests', check: 'clued-cloud-tests', name: 'hosted-clued-cloud-tests', shards: 2, step: 'Every application test shard succeeded' },
+];
+const SHARD_RUN = check => new RegExp(`ci-required-selection\\.mjs --run-selected ${check} --root candidate --shard \\$\\{\\{ matrix\\.shard \\}\\}/\\$\\{\\{ strategy\\.job-total \\}\\}(?:\\n|$)`);
+test('分片作业跑 --run-selected <检查名> --shard i/n，片号正好 1..n，片数 4、4、7、2 只写在矩阵列表', () => {
+  for (const { id, check, name, shards } of SHARDED) {
+    const block = jobs(text).get(`${id}-shard`) ?? '';
+    assert.ok(block, `${id}-shard 作业在`);
+    assert.ok(block.split('\n').includes(`    name: \${{ format('${name}-shard-{0}', matrix.shard) }}`), `${id}-shard 的检查名是 ${name}-shard-<i>`);
+    const matrix = /\n    strategy:\n      fail-fast: false\n      matrix:\n        shard: \[([0-9, ]+)\]\n/.exec(block);
+    assert.ok(matrix, `${id}-shard：矩阵是 strategy.fail-fast: false 加 matrix.shard 列表`);
+    const list = matrix[1].split(',').map(n => Number(n.trim()));
+    assert.deepEqual(list, Array.from({ length: shards }, (_, i) => i + 1), `${id}-shard 片号应为 1..${shards}：${matrix[1]}`);
+    const runs = block.split(/\n {6}- /).filter(step => /ci-required-selection\.mjs --run/.test(step));
+    assert.equal(runs.length, 1, `${id}-shard 只有一步跑套件`);
+    assert.match(runs[0], SHARD_RUN(check), `${id}-shard 跑 --run-selected ${check} 的第 i/n 片`);
+    // 各片自己读 PR 的改动文件：没有令牌就读不到，每片都跑全部套件。
+    assert.match(runs[0], /\n {10}GITHUB_TOKEN: \$\{\{ github\.token \}\}\n/, `${id}-shard 跑套件那一步带 GITHUB_TOKEN`);
+  }
+  assert.equal(text.split('--shard ').length, SHARDED.length + 1, '每个矩阵只有一个分片入口');
+});
+
+test('各矩阵的同名必需检查只汇总分片作业的 result', () => {
+  for (const { id, name, step } of SHARDED) assert.equal(jobLines(id), summaryJob(name, `${id}-shard`, step), id);
+});
+
+test('件甲：未选中时 migration-verify 各片走 Not affected，不装依赖、不跑套件', () => {
+  const steps = (jobs(text).get('migration-verify-shard') ?? '').split(/\n {6}- /);
+  const at = name => steps.find(s => s.startsWith(`name: ${name}\n`)) ?? '';
+  assert.match(at('Install the application dependencies'), /\n {8}if: steps\.select\.outputs\.run_production_schema == 'true'\n/);
+  assert.match(at('Verify migrations on the production schema'), /\n {8}if: steps\.select\.outputs\.run_production_schema == 'true'\n/);
+  assert.match(at('Not affected'), /\n {8}if: steps\.select\.outputs\.run_production_schema != 'true'\n/);
 });
 
 // 时长作业只显红、不挡合入：名字不是任何必需检查（规则集要的是 hosted-ci-suites-windows，影子比对按名字配对七项）。
@@ -182,7 +224,7 @@ test('块 4：时长作业非必需，不在影子比对的七项里，只读 ac
   const block = jobs(text).get('ci-suites-windows-duration') ?? '';
   assert.match(block, /^    name: hosted-ci-suites-windows-duration$/m);
   assert.match(block, /^    needs: ci-suites-windows-shard$/m);
-  assert.match(block, /^    if: always\(\)$/m);
+  assert.match(block, /^    if: always\(\) && github\.event\.action != 'closed'$/m);
   assert.match(block, /\n    permissions:\n      actions: read\n      contents: read\n    steps:\n/);
   assert.match(block, /\n {8}run: node candidate\/scripts\/ci\/hosted-windows-duration\.mjs(?:\n|$)/);
   const { PAIRS } = await import('./shadow-compare.mjs');
@@ -235,9 +277,9 @@ test('hosted-gitleaks 的三步与自托管 R1 gitleaks 作业逐字一致，受
     assert.equal(a.run, b.run, `${name} 的 run 与自托管不一致`);
     assert.deepEqual(a.env, b.env, `${name} 的 env 与自托管不一致`);
   }
-  const want = trustedRef(jobs(text).get('clued-cloud-tests'));
-  assert.ok(want, 'clued-cloud-tests 的受信检出没有 ref');
-  for (const id of ['ci-suites', 'migration-verify']) assert.equal(trustedRef(jobs(text).get(id)), want, id);
+  const want = trustedRef(jobs(text).get('clued-cloud-tests-shard'));
+  assert.ok(want, 'clued-cloud-tests-shard 的受信检出没有 ref');
+  for (const id of ['ci-suites-shard', 'migration-verify-shard']) assert.equal(trustedRef(jobs(text).get(id)), want, id);
   assert.equal(trustedRef(hosted), want, 'hosted-gitleaks 的受信检出 ref 与其他托管作业不同');
   assert.match(hosted, /\n {6}- name: Check out the candidate\n[\s\S]*?\n {10}fetch-depth: 0\n {10}path: candidate\n/, '候选检出要全历史');
   assert.match(hosted, /\n {8}id: train-base\n/, '没有 train-base 步骤');
@@ -263,6 +305,26 @@ function gitBash() {
 const BASH = gitBash();
 const noBash = BASH ? false : '找不到 Git for Windows 的 bash';
 const fwd = p => p.replace(/\\/g, '/');
+
+test('应用分片仅在可信选择器尚未声明每片构建时预构建 dist', { skip: noBash }, (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'clued-hosted-shard-build-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const trusted = path.join(root, 'trusted', 'scripts', 'ci');
+  mkdirSync(trusted, { recursive: true });
+  const buildStep = 'Build application for a trusted selector predating per-shard build';
+  const steps = jobs(text).get('clued-cloud-tests-shard');
+  assert.ok(steps.indexOf('Install the application dependencies') < steps.indexOf(buildStep));
+  assert.ok(steps.indexOf(buildStep) < steps.indexOf('Run the selected application shard'));
+  const { run } = stepOf(steps, buildStep);
+  for (const every of [false, true]) {
+    writeFileSync(path.join(trusted, 'ci-required-selection.mjs'), `export const SUITE_COMMANDS = { 'clued-cloud': [{ every: ${every} }] };\n`);
+    const r = spawnSync(BASH, ['--noprofile', '--norc', '-eo', 'pipefail', '-c', `npm() { echo "$*"; }\n${run}`],
+      { cwd: root, encoding: 'utf8' });
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    assert.equal(r.stdout.trim(), every ? '' : '--prefix candidate/apps/clued-cloud run build');
+  }
+});
+
 // 仓库 generic-api-key 规则命中的样子；运行时拼出，本文件自身不带命中。
 const LEAK = ['const k = { policy', "Key: 'park.stage8Retries", "Per24h' };\n"].join('');
 const STUB = `import { spawnSync } from 'node:child_process';
@@ -309,9 +371,11 @@ function staleBaseRun(headFiles) {
     const origin = path.join(tmp, 'origin');
     mkdirSync(origin);
     git(origin, 'init', '-q', '-b', 'main');
-    const A = commit(origin, { 'src/a.txt': 'a\n' }, 'A');
+    const root = fileURLToPath(new URL('../../', import.meta.url));
+    const policy = readFileSync(path.join(root, '.gitleaks.toml'), 'utf8');
+    const A = commit(origin, { '.gitleaks.toml': policy, 'src/a.txt': 'a\n' }, 'A');
     git(origin, 'checkout', '-q', '-b', 'work');
-    const H = commit(origin, headFiles, 'H');
+    const H = commit(origin, { '.gitleaks.toml': `${policy}\n# candidate change\n`, ...headFiles }, 'H');
     git(origin, 'checkout', '-q', 'main');
     const B = commit(origin, { 'src/main.txt': 'main moves\n' }, 'B');
     const ws = path.join(tmp, 'ws');
@@ -324,8 +388,6 @@ function staleBaseRun(headFiles) {
     git(candidate, 'checkout', '-q', '--detach', B);
     git(candidate, 'merge', '-q', '--no-ff', '--no-edit', H);
     const M = git(candidate, 'rev-parse', 'HEAD');
-    const root = fileURLToPath(new URL('../../', import.meta.url));
-    copyFileSync(path.join(root, '.gitleaks.toml'), path.join(ws, 'trusted', '.gitleaks.toml'));
     copyFileSync(path.join(root, 'scripts', 'ci', 'gitleaks-range.sh'), path.join(ws, 'trusted', 'scripts', 'ci', 'gitleaks-range.sh'));
     const bin = path.join(tmp, 'bin');
     mkdirSync(bin);
@@ -340,7 +402,7 @@ function staleBaseRun(headFiles) {
     const shared = { ...env, MSYS_NO_PATHCONV: '1', GITHUB_WORKSPACE: fwd(ws), RUNNER_TEMP: fwd(temp), GITHUB_SHA: M,
       GITHUB_OUTPUT: fwd(output), PATH: `${bin}${path.delimiter}${process.env.PATH}` };
     const run = (script, cwd, extra) => {
-      const r = spawnSync(BASH, ['-e', '-c', script], { cwd, encoding: 'utf8', env: { ...shared, ...extra }, timeout: 240000 });
+      const r = spawnSync(BASH, ['-e', '-c', script], { cwd, encoding: 'utf8', env: { ...shared, ...extra } });
       return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
     };
     const block = jobs(text).get('gitleaks');
@@ -350,8 +412,9 @@ function staleBaseRun(headFiles) {
     assert.equal(r.code, 0, r.out);
     const out = Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(l => l.split('=')));
     assert.deepEqual(out, { base: A, head: H });
-    r = run(copyStep.run, ws, { BASE: A, HEAD: H });
+    r = run(copyStep.run, ws, { BASE: A, HEAD: H, TRUSTED_BASE_SHA: A });
     assert.equal(r.code, 0, r.out);
+    assert.equal(readFileSync(path.join(temp, 'clued-gitleaks', 'repo', '.gitleaks.toml'), 'utf8'), policy);
     return run(scanStep.run, ws, { BASE: A, HEAD: H });
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -371,10 +434,12 @@ test('hosted-gitleaks 在旧 base 下 PR 带假密钥则红', { skip: noBash }, 
 });
 
 // 块 4：汇总作业那一步原文真跑（与 GitHub 的 bash 同参数）：分片作业的 result 只有 success 退出 0；失败、取消、跳过、空值都红。
-test('块 4：汇总作业的判断真跑，只有分片作业 result 为 success 才退出 0', { skip: noBash }, () => {
-  const { run } = stepOf(jobs(text).get('ci-suites-windows'), 'Every Windows suite shard succeeded');
-  for (const [result, code] of [['success', 0], ['failure', 1], ['cancelled', 1], ['skipped', 1], ['', 1]]) {
-    const r = spawnSync(BASH, ['--noprofile', '--norc', '-eo', 'pipefail', '-c', run], { encoding: 'utf8', env: { ...process.env, RESULT: result } });
-    assert.equal(r.status, code, `${result || '(空)'}: ${r.stdout}${r.stderr}`);
+test('汇总步骤实际执行，只有分片作业 result 为 success 才退出 0', { skip: noBash }, () => {
+  for (const { id, step } of SHARDED) {
+    const { run } = stepOf(jobs(text).get(id), step);
+    for (const [result, code] of [['success', 0], ['failure', 1], ['cancelled', 1], ['skipped', 1], ['', 1]]) {
+      const r = spawnSync(BASH, ['--noprofile', '--norc', '-eo', 'pipefail', '-c', run], { encoding: 'utf8', env: { ...process.env, RESULT: result } });
+      assert.equal(r.status, code, `${id} ${result || '(空)'}: ${r.stdout}${r.stderr}`);
+    }
   }
 });

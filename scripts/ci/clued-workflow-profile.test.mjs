@@ -130,6 +130,10 @@ test('the earlier exact compound Source still decodes from its catalogue and com
     {commit:'709e474e83bae54f5985ad24b04ecc90bd6c11d5',blob:'00a9b5d1b1a0eaed1cc0d82d05753bfe984743ae'},
     {commit:'304f48f466bac8d15d4289358f617699179b27de',blob:'d05ee2b2e7779cb2b8dda780b9203ad9a9e4e789'},
     {commit:'777edf3a49e21ac9811a1534f4708d7b75e1b4e2',blob:'095d75173b66e6f10fd733a00edbd251a14ca819'},
+    {commit:'b404f735a0d1118d9da66e99e54a7bff54752aa0',blob:'a39bec437446a92a670fb3ef09f1a31f7f785e7b'},
+    {commit:'df2274d959193988763fd6caa87d3bbf4bba7eb6',blob:'9066264ff4b0f07274ee67f07e16ca86a6db60f6'},
+    {commit:'b9903659c32206a9495fc0210adc0cb5124d7495',blob:'d044a9124ae24721d510ad6bf1100d608501efbe'},
+    {commit:'5b2c291dac65ae8b6ef1964bd996604f3cd47600',blob:'27b43473d13a1c26749c4f32a27be0d593476c29'},
   ],file=REQUIRED_TESTS_SOURCE.file;
   assert.deepEqual(previous.map(pin=>pin.workflow_blob),generations.map(generation=>generation.blob));
   for(const {commit,blob} of generations){

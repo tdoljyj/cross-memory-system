@@ -279,6 +279,8 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 第 3 条按不区分大小写比较：`ghsa:GHSA-x` 与 `ghsa:ghsa-x` 相同。`@` 后都是至少 7 位十六进制、且一方是另一方前缀时也算相同，所以 `ci:trivy@f7ba6ff` 与完整 SHA 冲突。存储的 ref 保留声明时的大小写。
 - 第 2 条中 `**/` 也匹配零层目录：`**/package-lock.json` 覆盖根目录的 `package-lock.json`，与 CI 路径过滤的理解一致。
 
+**实现（仓库路径互斥到交付为止，2026-11-24，迁移 `20261124160000`）**：第 2 条只对未交付的认领生效。已有的那条认领一旦有有效的 head 授权（`authorize_head` 成功；`work_claim_head_authorizations_v1` 中属于该认领当前 `execution_epoch` 且 `revoked_at` 为空的行），它的仓库路径（裸路径与 `repo:` 资源）不再参与第 2 条的重叠判定，别的认领可以认领同一路径。交付之后两个 PR 是否相撞由 git 判（推送入口对 main 的 `git merge-tree`、GitHub、列车合成），语义是否相撞由合成结果上的必需检查判；按文件名排队在这一段只多出空等。不变的有：认领的 write_set 本身、准入的覆盖校验（4.6，PR 的全部改动路径仍须在 write_set 内）、第 1 条与第 3 条、机械文件豁免；非仓库资源（`storage:`、`record:` 及以后登记的种类）在认领整个存续期照旧互斥。判的是已有的那条：已交付的认领续期扩大 write_set 时，撞上别人未交付的认领照旧冲突。授权全部被撤销（含接管、交接导致的换代）后，路径互斥恢复。所以交付后不需要、也不应当收窄 write_set。
+
 不做：标题相似度、语义去重、自动合并意图（Decision `78ca0c07`）。语义不明确时 Agent 可以用 `clued_search_context` 做有上限的探索，但那不是准入判断。
 
 ### 4.4 租约、续期、过期、接管、fence
@@ -336,6 +338,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - **每 Binding 并发 claim 上限**（默认 3）：一个失控 Host 不能把所有 Task 都占了。
   - **实现（2026-10-02，Owner Decision `533a5286`，迁移 `20261002060001`）**：改为每个会话（Agent 自报的 `holder_session_ref`）最多 3 个活认领、每个 Binding 合计最多 10 个。原因：Owner 的所有 Claude Code 会话共用一个 Binding，原来的「每 Binding 3 个」会让并行会话互相挤占。会话标识是自报的，所以保留 Binding 总上限兜底；没有 `holder_session_ref` 的认领单独算一组。拒绝时 `limit` 字段写明撞到的是哪个上限。
   - **实现（2026-11-22，Task `e642d087`，迁移 `20261122130000`）**：会话上限只数在手的认领。认领所属 Task 已有 CI 确认为 active 的 PR 绑定时不计入；持有者自己 authorize_head 写出的 `unknown` 仍计入。发放和接收交接两处口径相同。Binding 10 个的上限照旧数全部活认领。会话上限的拒绝回执多带 `delivered`（本会话已交付几条）。
+  - **实现（2026-11-24，Task `e642d087`，迁移 `20261124190000`）**：“在手”的口径从“PR 绑定是 active”改为“PR 绑定开着”（`work_claim_pr_binding_open_v1`：active 或 unknown），推翻 11-22 那条“unknown 仍计入”。列车里非车头的 PR 跑不到 CI 第 1 段，绑定一直是 unknown，三辆车在途时会话就拿不到第四条认领（11-24 现场）。依据四条：会话标识是自报的，机制上的兜底是 Binding 10 个，改前改后不变、仍数全部活认领；库已凭持有者带 PR 号的 authorize_head 认定“已交付”（`20261112090000` 据此把租约钉到硬期限），会话名额凭同一件事，不引入新的信任；“绑定是否开着”只有 `work_claim_pr_binding_open_v1` 一个答案（`20261122090000`）；unknown 与 active 走同一个结束出口（webhook、常驻对账、列车 adopt，只认 GitHub 的 merged/closed）。发放、接收交接、lease key 移交续期三处同口径，lease key 移交的拒绝回执也带 `delivered`、`active_binding`。残余：持有者带一个不存在的 PR 号 authorize_head 时，这个 Task 的 PR 绑定一直开着。绑定挂在 Task 上（主键 user_id、repo_id、pr_number，`20261108161615`），认领释放或到期都不结束它；能结束它的只有 GitHub 的 merged/closed（`20261119140000`），常驻对账读这个号遇 404 就跳过，永远等不到。此后同一用户对这个 Task 的认领一开始就算已交付，不受 24 小时限制。号属于常驻不对账的仓库、或其实是 issue 时同样如此。上界仍是每 Binding 10 条活认领。
 - **每 claim CI 分钟上限**（原设计）：`admission-gate` 在放行重任务前调用 `clued_work_verify` 并上报本次预计分钟数；超出上限返回 REJECTED，重任务不启动。实际消耗由 workflow 完成后以 observed 回写（finalize）。
 - **模型 token**：claim 只记录 Agent 自报的估算，标为 `declared_unenforced`。不宣称预留。
 - （原设计）取消、失联或 UNKNOWN 时**不释放预留**；只有 finalize 或 takeover 事务才结算。没有分钟预留后不再适用。
@@ -352,7 +355,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 一个无路径过滤的 workflow，GitHub 托管 runner，只做一次 HTTPS 调用 `clued_work_verify`（只读 Binding 放在 GitHub secret）。
 - 输入：PR head SHA、base SHA、变更文件集（`gh api .../files`）、PR body 或最后一个 commit trailer 中的 `Clued-Work-Claim: <claim_id>`。
 - 判定：claim ACTIVE 或 DRAINING 且未过期；holder 不校验 GitHub 身份（都是 Owner），校验 fence 为该 task 当前最大；变更文件集 ⊆ write_set；base_sha 等于或晚于 claim.base_commit。任一不满足 → 失败并写明原因。
-  - **实现（2026-10-02，Owner Decision `36b50981`，Task `d95ee6ea`）**：「base_sha 等于或晚于 claim.base_commit」改为只提示。claim 的 base_commit 比 PR 的 base 新时，检查摘要写一条 `base_behind_claim` 提示，仍放行。原因：base_commit 由 Agent 自报，这条比较拦不住错误的 claim；Codex 在新 main 上重新认领而分支仍基于旧 main 时，#441 因此被拒三次。base_commit 在仓库里找不到（`claim_base_unknown`）仍拒绝。
+  - **实现（Owner Decision `36b50981`，Task `d95ee6ea`、`3576b29c`）**：claim 的 base_commit 比 PR 的 base 新时，检查摘要写 `base_behind_claim` 提示。GitHub compare 返回 404 时写 `claim_base_unknown` 提示。两条提示均不改变准入结论。base_commit 由 Agent 自报，这项比较无法识别认领错配。
 - **Owner 在 GitHub 网页直接改文件开的 PR**（Owner Decision `36b50981`）：同样需要 claim，没有豁免。Agent 与 Owner 共用一个 GitHub 账号，CI 分不出是谁改的，豁免会被 Agent 用来绕过。做法：网页改动前让任一 Agent 为该 Task 建 claim，把 `Clued-Work-Claim: <claim_id>` 贴进 PR 正文；改正文会重跑检查。
 - 范围扩张（变更文件超出 write_set）→ 失败，提示先 `clued_work_renew` 携带扩大的 write_set（扩大时重新做冲突判定）。
 - 加入 ruleset required 列表后，这条和 gitleaks、trivy 一样是无过滤 check，不会出现"等不到"的问题。

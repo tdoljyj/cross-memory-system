@@ -169,7 +169,7 @@ test('the shadow run reads only and says what it would do', async t => {
   assert.deepEqual([off.wouldDo, off.onDuty, idle.reads], ['NOT_ON_DUTY', false, []]);
   // unreadable rules are recorded, not fatal; a failing GitHub read is (BLOCKED by runEntry, zero side effects)
   const noRules = await readTrainFacts({ job, github: fakeGithub({ rulesError: true }), native: native({ onDuty: true, holders: [] }), ledger: null, clock: () => 0 });
-  assert.deepEqual([noRules.rules, noRules.rulesReason, noRules.wouldDo, noRules.ledger], [null, 'RULESET_UNREADABLE', 'NO_FRONT', { records: 0, refused: 0 }]);
+  assert.deepEqual([noRules.rules, noRules.rulesReason, noRules.wouldDo, noRules.ledger], [null, 'RULESET_READ_FAILED', 'NO_FRONT', { records: 0, refused: 0 }]);
   const broken = fakeGithub(); broken.readBranchHead = async () => { throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); };
   await assert.rejects(readTrainFacts({ job, github: broken, native: native({ onDuty: true, holders: [] }), ledger: null }), e => e.code === 'github_http_502');
 });

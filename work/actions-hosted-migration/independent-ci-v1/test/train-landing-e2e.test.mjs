@@ -141,7 +141,7 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   gh.readPullRequest = async n => {
     const p = W.pulls.get(n), main = W.refs.get('heads/main');
     const testMerge = p.state === 'open' ? (ancestor(p.head, main) ? null : merge(main, p.head)) : null;
-    return { number: n, state: p.state, draft: false, merged: p.merged, mergeable: p.state === 'open', merge_commit_sha: p.merged ? p.mergeSha : testMerge, body: p.body,
+    return { number: n, state: p.state, draft: p.draft === true, merged: p.merged, mergeable: p.state === 'open', merge_commit_sha: p.merged ? p.mergeSha : testMerge, body: p.body,
       auto_merge: p.autoMerge ? { merge_method: 'merge' } : null,
       head: { sha: p.head, ref: `topic-${n}`, repo: { full_name: REPO } }, base: { ref: 'main', sha: p.base, repo: { full_name: REPO } } };
   };
@@ -411,28 +411,25 @@ test('push: the middle PR breaks the combination -> bisection -> the other two l
   for (const s of e.W.pushes.filter(s => e.W.ancestor(s, e.main()))) assert.ok(await e.store.landingBatchByTest?.(s), s);
 });
 
-// FABLE-r3-batch2-gate F2, F3 (修复前必红: before the fix the job refuses the field): frontOutcome carries frontFailed. false (the batch
-// ended clean, say TRAIN_BATCH_CHANGED at stage 8, or its row was ignored): stage 10 learns only that the batch ended: no bisection, no new
-// bad member, no touch failed, and its plan is no longer TRAIN_FRONT_BATCH_RUNNING. true (a final deterministic-pr failure): as today.
-for (const frontFailed of [false, true]) test(`R3 batch 2 ${frontFailed ? 'F3' : 'F2'}: a batch of three ended (frontFailed ${frontFailed}) -> ${frontFailed ? 'bisection as today' : 'no bisection, no bad, no touch failed'}`, async t => {
+// FABLE-r3-batch2-gate F2, F3 (修复前必红: before the fix the job refuses the field): frontOutcome carries frontFailed. true (a final
+// deterministic-pr failure) or false (the batch ended clean, say TRAIN_BATCH_CHANGED at stage 8, or its row was ignored): a batch of several
+// members is bisected on either, never touch failed, and its plan is no longer TRAIN_FRONT_BATCH_RUNNING. F2 changed with
+// FABLE-train-property-decisions-20261124 §6 (burned passenger): before, false meant no bisection, and a rider that can never pass stage 8
+// had the same members reopened every round until DAILY_BATCH_LIMIT.
+for (const frontFailed of [false, true]) test(`R3 batch 2 ${frontFailed ? 'F3' : 'F2'}: a batch of three ended (frontFailed ${frontFailed}) -> bisection, no touch failed`, async t => {
   const e = await world(t, { prs: [910, 911, 912] });
   let b = null;
   for (let i = 0; i < 6 && !b; i++) b = (await stage10(e)).facts.openFrontBatch;
   assert.ok(b, 'a batch opened');
   assert.deepEqual((await e.store.landingBatchByTest(b.testSha)).members.map(m => m.pr), [910, 911, 912]);
-  const before = await e.store.readLandingState();
   const code = frontFailed ? 'TRAIN_LANDING_CHECK_FAILED' : 'TRAIN_BATCH_CHANGED';
   const r = await stage10(e, { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code, frontFailed });
   const after = await e.store.readLandingState();
   assert.deepEqual(e.failed, [], 'no touch failed for a batch of several');
-  if (frontFailed) {
-    assert.deepEqual(r.facts.landing?.bisect?.failed, [910, 911, 912], JSON.stringify(r.facts.landing));
-    assert.ok(after.handled.includes(b.testSha));
-  } else {
-    assert.notEqual(r.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(r.facts));
-    assert.equal(r.facts.landing?.bisect, undefined, JSON.stringify(r.facts.landing));
-    assert.deepEqual([after.bad, after.suspect, after.handled], [before.bad, before.suspect, before.handled], 'the landing state is unchanged');
-  }
+  assert.notEqual(r.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(r.facts));
+  assert.deepEqual(r.facts.landing?.bisect?.failed, [910, 911, 912], JSON.stringify(r.facts.landing));
+  assert.deepEqual(after.suspect?.map(m => m.pr), [910, 911, 912], JSON.stringify(after));
+  assert.ok(after.handled.includes(b.testSha));
 });
 
 test('push: main moved by someone else between the check and the write -> the fast-forward is refused -> retested on the new main -> lands', async t => {
@@ -1267,7 +1264,8 @@ test('three ways, fail closed: rules that cannot be read, or read only in part, 
     const p = await stage8(t, e, b, { trainLanding: PUSH1 });
     assert.equal(p.status, 'BLOCKED', JSON.stringify(p));
     assert.equal(p.sideEffects, 0);
-    assert.ok(['TRAIN_LANDING_RULES_MISSING', 'RULESET_UNREADABLE'].includes(p.reason), JSON.stringify(p));
+    // task bd07449b: a reply not given whole is a failed read (RULESET_READ_FAILED); rules read whole and not understood stay RULESET_UNREADABLE
+    assert.ok(['TRAIN_LANDING_RULES_MISSING', name === 'rules reply incomplete' ? 'RULESET_READ_FAILED' : 'RULESET_UNREADABLE'].includes(p.reason), JSON.stringify(p));
     if (p.reason === 'TRAIN_LANDING_RULES_MISSING') assert.ok(Array.isArray(p.missing) && p.missing.length > 0 && p.missing.every(m => /unreadable/.test(m)), JSON.stringify(p.missing));
     untouched(e, T); assert.deepEqual(e.W.pushes, []);
   });
@@ -1701,7 +1699,7 @@ function mergeBaseOf(W, a, b) {
   const common = [...reach(W, a)].filter(x => inB.has(x));
   return common.find(x => common.every(y => y === x || !W.ancestor(x, y))) ?? null;
 }
-// gh as the poller calls it: the main ref and the open pulls with --include, compare with its --jq projection.
+// gh as the poller calls it: the main ref, open pulls and parked checks with --include, compare with its --jq projection.
 function pollerRun(e) {
   return async argv => {
     const route = argv.find(a => a.startsWith('repos/')) ?? '';
@@ -1709,6 +1707,11 @@ function pollerRun(e) {
     if (route === MAIN_REF_ROUTE(REPO)) return included({ object: { sha: e.main() } });
     if (route === PULLS_ROUTE(REPO)) return included([...e.W.pulls.values()].filter(p => p.state === 'open').map(p => ({ number: p.number,
       head: { sha: p.head }, base: { sha: p.base }, draft: false, updated_at: p.updated }))); // GitHub's base.sha: where main was at the last push
+    const parked = /\/commits\/([0-9a-f]{40})\/check-runs\?filter=latest&per_page=100$/.exec(route);
+    if (parked) {
+      const { complete, checks } = await e.gh.readChecks(parked[1]);
+      if (complete) return included({ total_count: checks.length, check_runs: checks });
+    }
     const m = /compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})/.exec(route);
     if (m) {
       const inHead = reach(e.W, m[2]);
@@ -2478,26 +2481,71 @@ test('parked-front T1: a running front batch of two members is not opened again 
   assert.equal((await e.store.frontBatches({ pr: 910, headSha: e.head(910) })).length, 1, diag);
 });
 
-// T1b (a guard, green before and after): the executor reports a front batch that ended without the PR failing (frontFailed false):
-// stage 10 counts it ended and opens the next one in that very round; no touch failed, no bisection (the landing state's suspect
-// stays), also when the outcome is carried once more. (That the next round then sees the new batch running is T1's.)
-test('parked-front T1b: a front batch ended with frontFailed false is opened again at once, without touch failed or bisection', async t => {
+// T1b: the executor reports a front batch of two that ended without the PR failing (frontFailed false): stage 10 counts it ended, bisects
+// it and opens the first half (the front alone) in that very round; no touch failed; the outcome carried once more changes nothing.
+// (That the next round then sees the new batch running is T1's.) Changed with FABLE-train-property-decisions-20261124 §6: before, the same
+// two members were opened again, which looped until DAILY_BATCH_LIMIT when the rider could never pass stage 8.
+test('parked-front T1b: a front batch of two ended with frontFailed false is bisected at once: the front alone opens next, no touch failed', async t => {
   const e = await world(t, { prs: [910, 911] });
   const r1 = await stage10(e);
   const b = r1.facts.openFrontBatch;
   assert.ok(b && b.members?.length === 2, r1.facts.decision);
-  const before = await e.store.readLandingState();
   const ended = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: 'TRAIN_BATCH_CHANGED', frontFailed: false };
   const r2 = await stage10(e, ended);
   assert.equal(r2.facts.decision, 'OPEN_FRONT_BATCH', r2.facts.decision);
-  assert.notEqual(r2.facts.openFrontBatch.testSha, b.testSha);
+  const o = r2.facts.openFrontBatch;
+  assert.notEqual(o.testSha, b.testSha);
+  assert.ok(o.pr === 910 && !(o.members?.length > 1), JSON.stringify(o));
+  assert.deepEqual(r2.facts.landing?.bisect?.failed, [910, 911], JSON.stringify(r2.facts.landing));
   assert.deepEqual(e.failed, []);
   const after = await e.store.readLandingState();
-  assert.deepEqual([after?.suspect ?? null, after?.bad ?? [], after?.handled ?? []], [before?.suspect ?? null, before?.bad ?? [], before?.handled ?? []]);
+  assert.deepEqual(after.suspect?.map(m => m.pr), [910, 911], JSON.stringify(after));
+  assert.ok(after.handled.includes(b.testSha));
   await stage10(e, ended);
   assert.deepEqual(e.failed, []);
   const again = await e.store.readLandingState();
-  assert.deepEqual([again?.suspect ?? null, again?.bad ?? [], again?.handled ?? []], [before?.suspect ?? null, before?.bad ?? [], before?.handled ?? []]);
+  assert.deepEqual([again.suspect, again.bad, again.handled], [after.suspect, after.bad, after.handled]);
+});
+
+// T1c (review of §6, must-fix 1; 修复前必红): a batch of two ended (frontFailed false) and, meanwhile, its front became a PR that cannot
+// land as it stands (draft), was closed, or was merged by GitHub with S's tree. No new batch opens, so the executor carries the same
+// ended report into every round (it drops one only on failedReported, a new front or head, a new batch of that head, or its hard cap).
+// After the first round bisected it (handled), the report must not keep the multi-member branch: the next round yields the slot, gives
+// it back, or adopts the front. Before the fix every later round did nothing there and the front held the slot while others waited.
+for (const [kind, call] of [['draft', 'yield'], ['closed', 'return'], ['merged', 'adopt']]) test(`parked-front T1c: a batch of two ended (frontFailed false), the front then ${kind}, the report carried -> the next round ${call}s, the slot is not held`, async t => {
+  const e = await world(t, { prs: [910, 911] });
+  const slotCalls = [];
+  e.native.port.yieldSlot = async i => { slotCalls.push(['yield', i.pr]); return { onDuty: true, yielded: true }; };
+  e.native.port.returnSlot = async i => { slotCalls.push(['return', i.pr]); return { onDuty: true, returned: true }; };
+  const adopt = e.native.port.adopt;
+  e.native.port.adopt = async i => { slotCalls.push(['adopt', i.pr]); return adopt(i); };
+  const r1 = await stage10(e);
+  const b = r1.facts.openFrontBatch;
+  assert.ok(b && b.members?.length === 2, r1.facts.decision);
+  const p = e.W.pulls.get(910);
+  if (kind === 'draft') p.draft = true;
+  if (kind === 'closed') p.state = 'closed';
+  if (kind === 'merged') {
+    // GitHub merged H as [T, H] with S's tree (the §41.4 adopt condition), from this node's front batch record
+    const record = (await e.store.frontBatches({ pr: 910, headSha: b.headSha }))[0];
+    const m = h('github-merge-910');
+    e.W.commits.set(m, { sha: m, tree: record.testTree, parents: [record.baseSha, b.headSha] }); e.W.content.set(m, new Set(['910', '911']));
+    e.W.refs.set('heads/main', m);
+    Object.assign(p, { state: 'closed', merged: true, mergeSha: m });
+  }
+  const ended = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: 'TRAIN_BATCH_CHANGED', frontFailed: false };
+  const seen = [];
+  for (let i = 0; i < 3 && !slotCalls.length; i++) {
+    const r = await stage10(e, ended);
+    seen.push([r.facts.decision, r.facts.openFrontBatch?.pr ?? null, r.facts.landing?.bisect?.suspect ?? null]);
+    if (r.facts.openFrontBatch) break; // a new batch of this head: the executor drops the report (not this case)
+  }
+  const diag = JSON.stringify({ seen, slotCalls });
+  assert.ok(!seen.some(s => s[1] !== null), `no batch opens for this front: ${diag}`);
+  assert.deepEqual(slotCalls.map(c => c[0]), [call], diag);
+  assert.equal(slotCalls[0][1], 910, diag);
+  assert.ok((await e.store.readLandingState()).handled.includes(b.testSha), diag);
+  assert.deepEqual(e.failed, [], diag);
 });
 
 // T2 (end to end, the real stage 8 answer codes): three PRs, batchMax 3; GitHub Actions takes 25 minutes on every new S before its
@@ -2546,9 +2594,10 @@ test('parked-front T2: checks on S pending 25 minutes -> one OPEN_FRONT_BATCH pe
 // T3 (end to end, §1 item 5): checks on every new S pending 25 minutes, as in T2, so 1492's front batch carries 1493. 1493 leaves the
 // merge queue while that batch of two is at stage 8 (it rejoins right after): the real stage 8 ends the batch TRAIN_BATCH_CHANGED, the
 // resident's afterBatch reports that end (frontFailed false: not the PR's failure), and the next stage 10 opens a new front batch for
-// the same head in that round, which lands both; no touch failed. Its teeth (mutation): without the resident's report the second
-// open of 1492 never comes (1, not 2).
-test('parked-front T3: a front batch ended TRAIN_BATCH_CHANGED is reported (frontFailed false) and the next stage 10 opens it again; all three land', async t => {
+// the same head in that round: the first half, 1492 alone (FABLE-train-property-decisions-20261124 §6: a batch of several that ended is
+// bisected; before, the same two were opened again). 1492 lands, then 1493 on its own; no touch failed. Its teeth (mutation): without the
+// resident's report the second open of 1492 never comes (1, not 2).
+test('parked-front T3: a front batch ended TRAIN_BATCH_CHANGED is reported (frontFailed false) and the next stage 10 opens its first half; all three land', async t => {
   const prs = [1491, 1492, 1493];
   const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
   const pointed = new Map(), point = e.port.pointRef;
@@ -2578,20 +2627,60 @@ test('parked-front T3: a front batch ended TRAIN_BATCH_CHANGED is reported (fron
     await f.exec.tick();
     f.advance(60_000);
   }
-  const opens = engine.trainRuns.map((x, i) => [i, x.openFrontBatch?.pr ?? null, x.openFrontBatch?.testSha ?? null]).filter(x => x[1] !== null);
+  const opens = engine.trainRuns.map((x, i) => [i, x.openFrontBatch?.pr ?? null, x.openFrontBatch?.testSha ?? null, (x.openFrontBatch?.members ?? []).map(m => m.pr)]).filter(x => x[1] !== null);
   const reports = inputs.map((x, i) => [i, x.frontPr ?? null, x.frontTestSha ?? null, x.frontCode ?? null, x.frontFailed ?? null]).filter(x => x[1] !== null);
   const diag = `${await diagOf(r)} opens ${JSON.stringify(opens)} reports ${JSON.stringify(reports)}`;
   assert.ok(changed, diag);
   assert.ok(engine.stage8.some(x => x.front && x.reason === 'TRAIN_BATCH_CHANGED'), diag);
   const of1492 = opens.filter(o => o[1] === 1492);
   assert.equal(of1492.length, 2, diag);
-  const [[, pr, s1], [at2, , s2]] = of1492;
+  const [[, pr, s1, m1], [at2, , s2, m2]] = of1492;
   assert.notEqual(s2, s1, diag);
+  assert.ok(m1.includes(1493), `the first batch carried 1493: ${diag}`);
+  assert.ok(!m2.includes(1493), `the second is the first half, 1492 alone: ${diag}`);
   assert.ok(reports.some(x => x[0] === at2 && x[1] === pr && x[2] === s1 && x[3] === 'TRAIN_BATCH_CHANGED' && x[4] === false), `the second open is the round that read the report: ${diag}`);
   assert.ok(landed(), diag);
-  assert.equal(e.W.pulls.get(1492).mergeSha, e.W.pulls.get(1493).mergeSha, `1492 and 1493 in one batch: ${diag}`);
+  assert.notEqual(e.W.pulls.get(1492).mergeSha, e.W.pulls.get(1493).mergeSha, `1492 alone, then 1493 on its own: ${diag}`);
   assert.deepEqual(e.failed, [], diag);
   assert.ok(f.clock() - start <= 120 * 60_000, `landed after ${(f.clock() - start) / 60_000} minutes`);
+});
+
+// Burned passenger (修复前必红; D:/w/tmp/FABLE-train-property-decisions-20261124.md §6). 1441 lands; then 1442's ordinary batch passes
+// stage 1 and its stage 8 finds its batch-route file gone (once): the real stage 8 answers full_admission_subject_changed, the resident
+// maps it PR_NOT_OPEN_OR_CHANGED and the row stops, before stage 8 ever joined 1442 to the merge queue. 1442 keeps its admission green,
+// its auto-merge and its bound claim, so stage 10 still picks it as 1443's rider, and stage 8 ends every such batch TRAIN_BATCH_CHANGED
+// (a rider not in the queue), reported frontFailed false. Before the fix stage 10 bisected only on frontFailed true: every round opened
+// the same two members under a new S until the node's daily batch budget ran out (DAILY_BATCH_LIMIT, a deferral for every PR). Now a
+// batch of several reported ended is bisected: 1443 alone next, and it lands.
+test('burned passenger: a PR burned after stage 1, before stage 8 queued it, is not 1443\'s rider forever -> 1443 lands within 20 rounds, no DAILY_BATCH_LIMIT', async t => {
+  const prs = [1441, 1442, 1443];
+  const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
+  let burn = false, burned = false;
+  const tamper = async (number, dir) => { if (number === 8 && burn) { burn = false; await fs.rm(path.join(dir, STAGE_BATCH_ROUTE_FILE)); } };
+  const r = await residentOver(t, e, { queueFacts: true, tamper });
+  const { f, engine } = r;
+  const stage = engine.runStage;
+  engine.runStage = async (batch, s) => {
+    const subject = engine.subjects.get(batch.key), front = Object.hasOwn(subject ?? {}, 'testSha') && subject.testSha !== subject.headSha;
+    if (s.number === 8 && !burned && !front && subject?.pr === 1442 && engine.stage8.some(x => x.front && x.status === 'SETTLED')) burn = burned = true;
+    return stage(batch, s);
+  };
+  const ticks = [];
+  for (let i = 0; i < 20 && !e.W.pulls.get(1443).merged; i++) {
+    await r.poller.pass();
+    const x = await f.exec.tick();
+    ticks.push(`${x?.state ?? null}:${x?.reason ?? x?.failureCode ?? ''}`);
+    f.advance(60_000);
+  }
+  const opens = engine.trainRuns.map(x => x.openFrontBatch).filter(Boolean).map(o => [o.pr, o.testSha.slice(0, 7), (o.members ?? []).map(m => m.pr)]);
+  const diag = `${await diagOf(r)} ticks ${JSON.stringify(ticks)} opens ${JSON.stringify(opens)}`;
+  assert.ok(burned && e.W.pulls.get(1441).merged, diag);
+  assert.ok(engine.stage8.some(x => x.pr === 1442 && !x.front && x.reason === 'full_admission_subject_changed'), `1442 burned at stage 8: ${diag}`);
+  assert.ok(engine.stage8.some(x => x.pr === 1443 && x.front && x.reason === 'TRAIN_BATCH_CHANGED'), `the batch carrying 1442 ended: ${diag}`);
+  assert.ok(!ticks.some(x => x.includes('DAILY_BATCH_LIMIT')), `the node's batch budget burned: ${diag}`);
+  assert.ok(opens.filter(o => o[0] === 1443).length <= 3, `front batches of 1443: ${diag}`);
+  assert.ok(e.W.pulls.get(1443).merged, `1443 landed: ${diag}`);
+  assert.equal(e.W.pulls.get(1442).merged, false, diag);
 });
 
 // ---- bc982192 parked-front v2 rework (D:/w/tmp/FABLE-parked-front-attempt2-number-20261123.md §4 N1, N2) ----

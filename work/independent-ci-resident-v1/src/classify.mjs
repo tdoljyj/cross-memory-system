@@ -39,7 +39,7 @@ export const TRAIN_CLEAN_CODES = Object.freeze(['TRAIN_FRONT_JOB_WITHOUT_TRAIN',
   'TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_RULES_MISSING', 'TRAIN_LANDING_REFUSED', 'TRAIN_LANDING_CHECK_FAILED', 'TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH']);
 // Clean, but final for this head and attempt.
 export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_INPUT_RESULT_MISSING', 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED', 'BROKER_REQUEST_EXPIRED',
-  'BROKER_REQUEST_REFUSED', 'STAGE_HELPER_PREFLIGHT_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
+  'BROKER_REQUEST_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
   'NATIVE_POLICY_UNSUPPORTED', 'PUBLICATION_BLOCKED', 'PUBLICATION_REVOKED', 'EVIDENCE_REFUSED', 'WORKSPACE_PREPARATION_REFUSED',
   'RELAY_STAGE_REFUSED',
   // Stage 8 not ready: bounded retries, then sleeping until a change. A moved base is final for this base.
@@ -48,6 +48,8 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   // test merge of exactly [T, H] that is not the tested tree (final for the head).
   'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',
   'TRAIN_TEST_MERGE_TREE_DIFFERS',
+  // Task bd07449b: main's rules were not read (parked, read again within minutes); RULESET_UNREADABLE is rules read and not this App's six.
+  'RULESET_READ_FAILED',
   // App 5368905 already published on this head, found on GitHub (primary/standby design v0.4 §6.2, C4): at stage 1
   // before Native was asked, or before a role's first publication that this node knew nothing of. A new commit is needed.
   'HEAD_PUBLISHED_ON_GITHUB', 'ROLE_ALREADY_ON_GITHUB',
@@ -305,8 +307,7 @@ export const STAGE2_RETRY_KEEPS_ABANDONED = Object.freeze(['REFS_GATE_UNCONFIRME
 export const EXECUTION_RETRY_BLOCKED_REASONS = Object.freeze(['LINUX_PREPARATION_REFUSED', 'BRIDGE_CALLBACK_DEADLINE', 'REMOTE_REFS_UNAVAILABLE',
   ...NETWORK_GITHUB_REASONS, ...NETWORK_NATIVE_REASONS]);
 export function noLaunchRetryable(stage, result) {
-  const helperRefused = result.code === 'STAGE_HELPER_PREFLIGHT_REFUSED' && result.outcome == null;
-  return (result.brokerNoLaunch === true || helperRefused) && result.proof?.windowsTreeZero === true
+  return result.brokerNoLaunch === true && result.proof?.windowsTreeZero === true
     && result.proof?.serviceOriginalStopped === true
     && failureRow({ stage, code: result.code })?.retry === 'same-batch';
 }

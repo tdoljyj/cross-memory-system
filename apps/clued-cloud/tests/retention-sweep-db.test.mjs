@@ -3,35 +3,29 @@
 // retention migration the way the release workflow's migrate mode does (one plpgsql EXECUTE in one transaction).
 // pg_cron is a stub here (the platform stub of production-schema-drift.mjs): what pg_cron itself does with the
 // registered command text is only seen in production.
-import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { MIGRATE_MODE_SQL, PLATFORM_SQL } from '../scripts/production-schema-drift.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SWEEP_MIGRATION = '20261124120000_retention_sweep_v1.sql';
 const KEEP_MIGRATION = '20261124130000_imprint_history_keep_v1.sql';
+// Replaces the run-history rule of SWEEP_MIGRATION in place; everything after it below runs on the new body.
+const RUN_HISTORY_MIGRATION = '20261125020000_retention_rule_cron_run_history_regclass_v1.sql';
 const SWEEP_JOB = 'clued-retention-sweep';
 const OLD_JOB = 'clued-cron-run-history-retention';
 const RULES = ['retention_rule_cron_run_history_v1', 'retention_rule_memory_audit_v1', 'retention_rule_session_payload_v1'];
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise(resolve => listener.close(resolve));
-  return port;
-}
 
 // The release workflow's migrate mode: the whole file is one EXECUTE inside one transaction.
 async function migrate(client, text) {
@@ -49,13 +43,13 @@ async function migrate(client, text) {
 test('retention sweep: stock cleanup in the migration transaction and the daily sweep',
   { timeout: 600000 }, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-retention-sweep-'));
-  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: uuid(),
-    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
+  const server = newCluster({ databaseDir: directory, user: 'postgres', password: uuid(),
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(message + '\n'); } });
   const clients = [];
   const connect = async () => { const db = server.getPgClient(); clients.push(db); await db.connect(); return db; };
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     const admin = await connect();
     await admin.query(PLATFORM_SQL);
     // Production has pg_cron's run history; with it the 20261118080000 migration registers the job this one replaces.
@@ -138,6 +132,7 @@ test('retention sweep: stock cleanup in the migration transaction and the daily 
       assert.equal((await one('select count(*)::int n from public.clued_memory_audit where id=$1', [racedAudit])).n, 1);
     });
     await admin.query('delete from public.clued_memory_audit where id=$1', [racedAudit]);
+    await migrate(admin, await fs.readFile(path.join(migrations, RUN_HISTORY_MIGRATION), 'utf8'));
 
     await t.test('memory audit stock: only the last 30 days remain, unchanged, and the files shrink', async () => {
       const after = await auditRows();
@@ -259,6 +254,21 @@ test('retention sweep: stock cleanup in the migration transaction and the daily 
       await admin.query("update cron.job_run_details set end_time = now() - interval '25 hours' where runid = 5");
       await admin.query((await one('select command from cron.job where jobname=$1', [SWEEP_JOB])).command);
       assert.deepEqual(await remaining(), [3, 4]);
+    });
+
+    await t.test('without pg_cron run history the run-history rule returns 0; its search path is still empty', async () => {
+      const rule = 'clued_private.retention_rule_cron_run_history_v1(timestamptz)';
+      assert.deepEqual((await one('select proconfig from pg_proc where oid=$1::regprocedure', [rule])).proconfig, ['search_path=""']);
+      assert.equal((await one("select count(*)::int n from pg_proc where proname='retention_rule_cron_run_history_v1'")).n, 1);
+      await admin.query('begin');
+      try {
+        await admin.query('drop table cron.job_run_details');
+        assert.equal((await one('select clued_private.retention_rule_cron_run_history_v1($1) n', [await now()])).n, 0);
+        assert.equal((await sweep(await now())).retention_rule_cron_run_history_v1, 0);
+      } finally {
+        await admin.query('rollback');
+      }
+      assert.equal((await one("select to_regclass('cron.job_run_details') is not null ok")).ok, true);
     });
 
     await t.test('the statement timeout in the registered command cancels the whole run; one set on the function would not', async () => {

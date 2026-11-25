@@ -55,7 +55,7 @@ import { GreenLedger } from './green-ledger.mjs';
 import { closeGreenLedgerGroups } from './green-ledger-closed.mjs';
 import { APP_ID } from './publisher.mjs';
 import { createMergeSlotNative } from './merge-slot-native.mjs';
-import { RULESET_UNREADABLE, REQUIRED_CHECKS_UNREADABLE, appScansPinned, rulesetFacts, requiredCheckFailure } from './train-rules.mjs';
+import { RULESET_UNREADABLE, RULESET_READ_FAILED, REQUIRED_CHECKS_UNREADABLE, appScansPinned, readMainRules, requiredCheckFailure } from './train-rules.mjs';
 import { decideShadow, frontPullFacts, requiredFailureExcused, requiredYieldReason, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore } from './train-sweep-store.mjs';
@@ -209,12 +209,11 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   let rules = null, rulesReason = null, appScans = null;
   const landability = { rules: null, appId, onFallback: reason => { rulesReason ??= reason; } };
   try {
-    const reply = await github.readBranchRules('main');
-    if (reply?.complete !== true) fail(RULESET_UNREADABLE);
-    appScans = appScansPinned(reply.rules, appId);
-    rules = rulesetFacts(reply.rules, appId);
-    landability.rules = reply.rules;
-  } catch { rulesReason = RULESET_UNREADABLE; }
+    const read = await readMainRules(github, appId);
+    appScans = appScansPinned(read.rules, appId);
+    rules = read.facts();
+    landability.rules = read.rules;
+  } catch (e) { rulesReason = e?.code === RULESET_READ_FAILED ? RULESET_READ_FAILED : RULESET_UNREADABLE; }
   // ADR 0018 §2 L2 item 7: push behaviour only while main's rules read back as push (the same function as stage 8). Fable 11-21 open
   // points §5: every round reads this App's bypass state of each ruleset too (one GET /rulesets/{id} each), and the facts carry it
   // (landing.bypass -> state\status.json), so the landing precheck's P3 reads it there without elevation.
@@ -619,18 +618,30 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     }
     if (!takeoverPending && !lostDuty && holder?.pr && front && !frontLanded) {
       try {
-        const batchOfOutcome = push && job.frontFailed === true && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha
+        // FABLE-train-property-decisions-20261124 §6 (burned passenger): a batch of several members is bisected on any reported end,
+        // whatever its frontFailed. A rider that can never pass stage 8 (say one burned before stage 8 joined it to the merge queue) ends
+        // every batch TRAIN_BATCH_CHANGED with frontFailed false; reopening the same members burned the node's daily batch budget. A
+        // batch of one keeps touch failed on frontFailed true only (below); it counts toward the front's attempts, so it never loops.
+        const batchOfOutcome = push && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha
           ? await sweepStore.landingBatchByTest(job.frontTestSha) : null;
-        if (batchOfOutcome && batchOfOutcome.members.length > 1 && !landingState) {
+        // §6 review must-fix 1: an ended report not reported failed stays with the executor until a new batch of this head opens, and is
+        // carried into every round. Once bisected (handled) it holds nothing here: the round goes on to adopt, give back or yield the front
+        // below; otherwise a front that cannot land (draft, closed, merged by GitHub) kept the slot while others waited. A failure still
+        // reports failed every round it is carried (the executor drops it on that).
+        const bisectOutcome = batchOfOutcome && batchOfOutcome.members.length > 1
+          && (job.frontFailed === true || !landingState?.handled.includes(job.frontTestSha));
+        if (bisectOutcome && !landingState) {
           // the landing state could not be read: neither bisect nor touch failed (the front is not alone to blame); the next run tries again
-        } else if (batchOfOutcome && batchOfOutcome.members.length > 1) {
-          // ADR 0018 §3: a batch of several members failed for a PR's own reason: bisect (the next batch takes the first half), no touch failed.
+        } else if (bisectOutcome) {
+          // ADR 0018 §3: a batch of several members ended (failed for a PR's own reason, or ended for any other: §6 above): bisect (the next
+          // batch takes the first half), no touch failed.
           if (!landingState.handled.includes(job.frontTestSha)) {
             const next = bisectAfter({ suspect: landingState.suspect, members: batchOfOutcome.members, landed: false });
             landingState = { ...landingState, suspect: next.suspect, bad: [...landingState.bad, ...next.bad], handled: [...landingState.handled, job.frontTestSha] };
             await sweepStore.writeLandingState({ writtenAt: isoOf(clock()), runId: job.runId, ...landingState });
           }
-          actions.failedReported = true;
+          // Only a failure is reported failed; a batch that only ended opens its first half in this very round (openFront below).
+          if (job.frontFailed === true) actions.failedReported = true;
           landingFacts = { ...(landingFacts ?? {}), bisect: { failed: batchOfOutcome.members.map(m => m.pr), suspect: landingState.suspect?.map(m => m.pr) ?? null } };
         } else if (front.merged) {
           // §41.4 adopt: merged as [T, H] with S's tree, T and S from this node's front batch or the green's own summary

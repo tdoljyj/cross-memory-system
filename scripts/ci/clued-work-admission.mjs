@@ -431,6 +431,8 @@ export const GATE_JOB_SHA256 = new Set([
   // required test checks of clued-required-tests.yml. Registered here (PR-A)
   // before that workflow is added (PR-B, #971).
   "9c582144f424d1bc9ef7d3b048d3b7771c7b639ef5544bc04a8a80515c52b2f2",
+  // Task 3576b29c: cancel-only PR close skips this exact otherwise unchanged gate.
+  "94c304b8aef3e7ce3e3919e5a86ac627ae7a79ba6c0a8b607a7be3f14e38a384",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 export const PRODUCTION_PUBLISHER_WORKFLOW = ".github/workflows/clued-cloud-production-release.yml";
@@ -2028,9 +2030,9 @@ export async function mainMergeSource(fetchImpl, env, repository, prNumber, head
 // is unreadable or does not qualify ends the chain there. It then asks Native
 // for each hop, the oldest first, with the same one-hop carry: Native still
 // trusts one hop at a time, only from a head this claim authorized (a hop
-// already carried answers replayed). A refused hop does not stop the later
-// ones (a middle head the holder authorized directly still carries onwards);
-// any other refusal does. The head is authorized when its own hop committed.
+// already carried answers replayed). An unauthorized source does not stop
+// later hops: a middle head the holder authorized directly can still carry
+// onwards. Any other refusal stops the chain.
 export const MAIN_MERGE_CHAIN_DEPTH = 8;
 
 async function carryMainMerge(fetchImpl, env, workspace, pr, binding, tip, outcome) {
@@ -2054,7 +2056,8 @@ async function carryMainMerge(fetchImpl, env, workspace, pr, binding, tip, outco
   for (const hop of chain) {
     let reply;
     try {
-      reply = await cluedRpc(fetchImpl, env, workspace, VERIFY_RPC, { action: "carry_main_merge", scope: binding.scope,
+      reply = await cluedRpc(fetchImpl, env, workspace, VERIFY_RPC, { action: "carry_main_merge",
+        ...(binding.scope == null ? {} : { scope: binding.scope }),
         pr_ref: `${env.GITHUB_REPOSITORY}#${pr.number}`, from_head_sha: hop.from, head_sha: hop.head, main_sha: hop.main,
         target_branch: pr.base.ref });
     } catch (error) {
@@ -2065,7 +2068,7 @@ async function carryMainMerge(fetchImpl, env, workspace, pr, binding, tip, outco
       const code = reply.body?.error_code ?? reply.detail ?? reply.status;
       notCarried(code);
       carried = null;
-      if (code === "source_head_not_authorized") continue;
+      if (code === "source_head_not_authorized" || code === "head_authorization_required") continue;
       return null;
     }
     outcome.notices.push(`main_merge_carried: ${hop.from.slice(0, 12)} + main ${hop.main.slice(0, 12)}${reply.body.replayed === true ? " (already carried)" : ""}`);
@@ -2223,7 +2226,10 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
       { workspace, scope: bindingScope, readOnly: gateFindingsOfPr.length > 0 });
     // DESIGN §80: a head that only merged main into the authorized head keeps
     // that authorization (never in frozen, never for a read-only verification).
-    if (outcome.claim_binding.binding_status === 'head_not_authorized' && !gateFindingsOfPr.length && mode.state !== 'frozen'
+    const { binding_status, reason } = outcome.claim_binding;
+    const needsCarry = binding_status === 'head_not_authorized'
+      || (binding_status === 'unbound' && reason === 'head_authorization_required');
+    if (needsCarry && !gateFindingsOfPr.length && mode.state !== 'frozen'
       && await carryMainMerge(fetchImpl, env, workspace, pr, outcome.claim_binding, tipCompare.tip, outcome))
       outcome.claim_binding = await resolvePullRequestBinding(fetchImpl, env, pr, { workspace, scope: bindingScope, readOnly: false });
     if (outcome.claim_binding.binding_status === 'bound') reference = claimReferenceFromBinding(outcome.claim_binding);
@@ -2325,10 +2331,8 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
           write_set: Array.isArray(claim.write_set) ? claim.write_set : [],
         };
       }
-      // The claim's base must name a commit of this repository. A claim taken on
-      // a newer main than the PR's base is only reported (Owner Decision
-      // 36b50981): base_commit is declared by the Agent, so the comparison
-      // cannot catch a wrong claim, and rejecting it only forced re-pushes.
+      // Owner Decision 36b50981: the Agent declares base_commit, so the comparison
+      // cannot catch a wrong claim. An unknown or newer claim base is a notice.
       const claimBase = outcome.claim && outcome.claim.base_commit;
       if (outcome.verdict === "ADMITTED" && typeof claimBase === "string" && claimBase) {
         let compare;
@@ -2341,8 +2345,7 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
         if (compare === undefined) {
           // work_claim: advise and the compare failed: noted above.
         } else if (!compare) {
-          outcome.verdict = "REJECTED";
-          outcome.reasons.push(`claim_base_unknown:${claimBase}`);
+          outcome.notices.push(`claim_base_unknown:${claimBase}`);
         } else if (compare.status !== "ahead" && compare.status !== "identical") {
           outcome.notices.push(`base_behind_claim:${compare.status} (the claim's base_commit ${claimBase} is newer than this PR's base ${pr.base.sha}; merge main into the branch or claim with the branch's merge-base)`);
         }
@@ -2764,6 +2767,42 @@ export async function independentAdmissionCheck(fetchImpl, env, repository, head
   return { settled: true, check: newest, bound, admitted: bound && newest.conclusion === "success" };
 }
 
+// Task 2fb32dc7 (PLAN-train-full-and-gate-poll-20261125 §2.3): the admission side says on the PR page, under its
+// resident-queue/<node> status, when it will not propose this head (behind main under github-merge landing, or a stale PR base;
+// the resident package's src/pr-status.mjs#describe). The head is fixed and main only moves on, so that admission is not
+// coming: the gate stops polling and ends not admitted instead of holding its runner for the whole wait; the robot's new head runs
+// again. Only ever stricter, so who posted the status does not matter: it can end a wait, never admit. The newest resident-queue/
+// status decides (GitHub lists a commit's statuses newest first). One read without retries per poll: an error or any other text
+// (another node's, an older or a newer sentence) keeps the wait as before.
+// The held texts: pr-status.mjs writes them and holds the block between the held-texts marks byte for byte (the gate imports nothing
+// outside scripts/ci, that package nothing from scripts/ci); the admission self-tests lock the two.
+// held-texts: begin
+const HELD_TEXTS = Object.freeze({
+  'merge-main': behindBy => `落后 main ${behindBy} 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）`,
+  'push-any-commit': () => '已包含 main，但 PR 的基准还是旧的：推一个任意提交即可',
+});
+const HELD_NUMBER = '\u0000';
+const HELD_PATTERNS = Object.entries(HELD_TEXTS).map(([hint, text]) =>
+  [hint, new RegExp(`^${text(HELD_NUMBER).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(HELD_NUMBER, '[0-9]{1,10}')}$`, 'u')]);
+// { hint, text }: the held part of a PR page text (text is that part alone: a fixed sentence and digits), or null.
+export function heldPartOf(description) {
+  if (typeof description !== 'string' || description.length > 1000) return null;
+  for (const part of description.split('；')) for (const [hint, pattern] of HELD_PATTERNS) if (pattern.test(part)) return { hint, text: part };
+  return null;
+}
+// held-texts: end
+export const RESIDENT_STATUS_CONTEXT_PREFIX = "resident-queue/";
+export async function residentHeldHint(fetchImpl, env, repository, headSha) {
+  try {
+    const statuses = await githubJson(fetchImpl[RETRY_ORIGINAL] ?? fetchImpl, env, `/repos/${repository}/commits/${headSha}/statuses?per_page=100`);
+    if (!Array.isArray(statuses)) return null;
+    const newest = statuses.find((status) => status && typeof status.context === "string" && status.context.startsWith(RESIDENT_STATUS_CONTEXT_PREFIX));
+    return heldPartOf(newest && newest.description);
+  } catch {
+    return null;
+  }
+}
+
 export async function independentRepairRerun({ fetchImpl, env, pr, head = pr?.head.sha, attempt, self }) {
   const repository = env.GITHUB_REPOSITORY;
   const runId = env.GITHUB_RUN_ID;
@@ -2773,7 +2812,7 @@ export async function independentRepairRerun({ fetchImpl, env, pr, head = pr?.he
     read: route => githubJson(fetchImpl, env, route), readLog: route => githubText(fetchImpl, env, route) });
 }
 
-async function independentGateOutcome({ env, event, fetchImpl, outcome, pr, attempt, independent, limit, self }) {
+async function independentGateOutcome({ env, event, fetchImpl, outcome, pr, attempt, independent, limit, self, held = null }) {
   const what = `${INDEPENDENT_ADMISSION_CHECK} of App ${INDEPENDENT_ADMISSION_APP_ID} for #${pr.number} on ${pr.head.sha}`;
   outcome.admission_source = INDEPENDENT_GATE_SOURCE;
   outcome.automation_self_hosted = false;
@@ -2783,7 +2822,8 @@ async function independentGateOutcome({ env, event, fetchImpl, outcome, pr, atte
     html_url: check.html_url ?? null, source: what };
   if (!independent || !independent.settled) {
     outcome.verdict = "ADMISSION_PENDING";
-    outcome.reasons.push(`${what}: ${check ? `check ${check.id} still ${check.status}` : "has posted no check"} after ${limit}s`);
+    if (held) outcome.reasons.push(`${what}: 准入方不提议（${held.hint}）：${held.text}；机器人带上来后新 head 重新跑`);
+    else outcome.reasons.push(`${what}: ${check ? `check ${check.id} still ${check.status}` : "has posted no check"} after ${limit}s`);
   } else if (!independent.bound) {
     outcome.verdict = "REJECTED";
     outcome.reasons.push(`${what}: check ${check.id} does not bind this pull request (external_id or summary)`);
@@ -2878,10 +2918,30 @@ function boundedChecks(value) {
     Array.isArray(value.check_runs) && value.check_runs.length === value.total_count, 'check_listing_incomplete');
   return value.check_runs;
 }
-function samePR(pr, { repository, number, head, base, branch, owner }) {
-  return pr?.number === number && pr.state === 'open' && identity(pr.user, owner) &&
+function samePRFields(pr, { repository, number, head, base, branch, owner }) {
+  return pr?.number === number && identity(pr.user, owner) &&
     pr.head?.sha === head && pr.head.ref === branch && pr.head.repo?.full_name === repository &&
     pr.base?.sha === base && pr.base.ref === 'main' && pr.base.repo?.full_name === repository;
+}
+function samePR(pr, context) { return pr?.state === 'open' && samePRFields(pr, context); }
+// 戊 (FABLE-main-push-same-tree-parallel-20261123 §7): the same PR, merged with this very head.
+function mergedAsIs(pr, context) {
+  return pr?.state === 'closed' && pr.merged === true && SHA.test(pr.merge_commit_sha ?? '') && samePRFields(pr, context);
+}
+// The PR as it is now. Open: null, and the caller compares main's tip with the base as before. Merged with this very
+// head (when the admission is the last required check, GitHub merges within seconds, while the gate polls every
+// 30 s): its merge commit must have exactly the parents [base, head]; that is the after-the-fact proof of "open, and
+// main's tip at the base", since the first parent of GitHub's merge commit is main's tip when it merged. Anything
+// else (closed unmerged, another head, a squash, a first parent that is not the base) is refused as before.
+async function livePR(read, repository, context) {
+  const live = await read(`/repos/${repository}/pulls/${context.number}`);
+  if (samePR(live, context)) return null;
+  requireProof(mergedAsIs(live, context), 'live_pr_changed');
+  const merge = await read(`/repos/${repository}/commits/${live.merge_commit_sha}`);
+  const parents = merge?.parents?.map(parent => parent?.sha);
+  requireProof(merge?.sha === live.merge_commit_sha && parents?.length === 2 && parents[1] === context.head, 'live_pr_changed');
+  requireProof(parents[0] === context.base, 'main_tip_changed');
+  return live.merge_commit_sha;
 }
 
 // read is the gate's authenticated, GET-only GitHub JSON reader. Returned
@@ -2920,10 +2980,10 @@ export async function qualifyTrustedAutomationRoute({ env, event, run, currentAd
     requireProof(run.triggering_actor?.login === env.GITHUB_TRIGGERING_ACTOR &&
       (attempt === 1 ? identity(run.triggering_actor, AUTOMATION_BOT) :
         identity(run.triggering_actor, AUTOMATION_BOT) || identity(run.triggering_actor, owner)), 'triggering_actor_identity');
-    const live = await read(`/repos/${repository}/pulls/${pr.number}`);
-    requireProof(samePR(live, context), 'live_pr_changed');
-    const main = await read(`/repos/${repository}/branches/main`);
-    requireProof(main?.name === 'main' && main.commit?.sha === pr.base.sha, 'main_tip_changed');
+    if (await livePR(read, repository, context) === null) {
+      const main = await read(`/repos/${repository}/branches/main`);
+      requireProof(main?.name === 'main' && main.commit?.sha === pr.base.sha, 'main_tip_changed');
+    }
     const commit = await read(`/repos/${repository}/commits/${pr.head.sha}`);
     const parents = commit?.parents?.map(parent => parent?.sha);
     requireProof(commit?.sha === pr.head.sha && parents?.length === 2 && parents.every(parent => SHA.test(parent ?? '')) &&
@@ -2974,7 +3034,7 @@ export async function qualifyTrustedAutomationRoute({ env, event, run, currentAd
     const latest = boundedChecks(await read(checksPath(pr.head.sha))).filter(check =>
       (native ? check?.name === admissionName && check?.app?.id === INDEPENDENT_ADMISSION_APP_ID && check?.head_sha === pr.head.sha : validCheck(check, pr.head.sha, pr.number))).sort((a, b) => b.id - a.id)[0];
     requireProof(latest?.id === currentAdmission.id && validCheck(latest, pr.head.sha, pr.number) && successful(latest), 'current_admission_changed');
-    requireProof(samePR(await read(`/repos/${repository}/pulls/${pr.number}`), context), 'live_pr_changed');
+    await livePR(read, repository, context);
     return { qualified: true, reason: 'admitted_owner_pr_signed_main_refresh', run_id: run.id, run_attempt: attempt,
       pr_number: pr.number, head_sha: pr.head.sha, previous_head_sha: parents[0], main_sha: parents[1],
       actor_id: AUTOMATION_BOT.id, prior_check_id: prior?.id ?? null, prior_admission_run_id: priorRunId,
@@ -3106,7 +3166,7 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     && workflowFileOf(env) === "clued-required-tests.yml")
     return stagingRepairGate({ env, fetchImpl, outcome, attempt });
   if (!attempt && eventName === "push" && env.GITHUB_REF === "refs/heads/main") {
-    const reused = await mainPushTreeReuse({ env, fetchImpl });
+    const reused = await mainPushTreeReuse({ env, fetchImpl, sleep });
     if (reused && reused.run_heavy === false) {
       outcome.verdict = "TREE_ALREADY_TESTED";
       outcome.head_sha = env.GITHUB_SHA;
@@ -3114,6 +3174,20 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
       outcome.reasons = [`main push ${env.GITHUB_SHA}: tree ${reused.tested_tree} already passed ${workflowFileOf(env)} `
         + `in run ${reused.source_run_id} attempt ${reused.source_attempt} of PR #${reused.source_pr}; `
         + `prior PR evidence only, the skipped heavy jobs do not qualify this main commit; "Re-run all jobs" runs them`];
+      return outcome;
+    }
+    // 甲2 (FABLE-same-tree-main-push-redesign-20261123 §3): the merged head's run of this very tree is still going
+    // and its gate was seen to admit it (scaffold: its heavy jobs start after the merge). That run is the tree's one
+    // real run; this push runs no heavy job. Not a pass: run_heavy stays true and nothing here claims one. A gate
+    // still deciding, a refusal or a failed job comes back as another code and takes the notice below.
+    if (reused && reused.run_heavy === true && reused.reason === "pr_run_in_flight") {
+      outcome.verdict = "TREE_RUN_IN_FLIGHT";
+      outcome.head_sha = env.GITHUB_SHA;
+      outcome.tree_reuse = reused;
+      outcome.reasons = [`main push ${env.GITHUB_SHA}: tree ${reused.tested_tree} is being tested by ${workflowFileOf(env)} `
+        + `in run ${reused.source_run_id} attempt ${reused.source_attempt} of PR #${reused.source_pr} `
+        + `(${reused.source_status}; its gate admitted, ${reused.source_jobs} jobs listed); `
+        + `that run is this tree's one real run, so the heavy jobs do not run here; "Re-run all jobs" runs them`];
       return outcome;
     }
     if (reused) outcome.notices.push(`main push tree reuse: ${reused.reason}; the heavy jobs run`);
@@ -3159,6 +3233,7 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     if (!Number.isFinite(since)) throw new Error(`run ${env.GITHUB_RUN_ID} has no created_at.`);
     let found = { run: null, check: null };
     let independent = null;
+    let held = null;
     const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID} for #${pr.number} from the admission run of this event (created since ${self.created_at} less ${SAME_EVENT_MS / 1000}s)`;
     for (let waited = 0; ;) {
       let settled;
@@ -3175,13 +3250,15 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
       // The pauses of retried GitHub reads count into the wait.
       const used = waited + retryBudget.spentMs / 1000;
       if (settled || used >= limit) break;
+      // The admission side said it will not propose this head: no admission is coming (residentHeldHint).
+      if (independentSource && (held = await residentHeldHint(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha))) break;
       const delay = Math.min(pollSeconds, limit - used);
       await sleep(delay * 1000);
       waited += delay;
     }
     // A gate with the independent source is decided by the Native check alone, whether or not the
     // clued-admission workflow runs again: its event-bound check never stands in.
-    if (independentSource) return await independentGateOutcome({ env, event, fetchImpl, outcome, pr, attempt, independent, limit, self });
+    if (independentSource) return await independentGateOutcome({ env, event, fetchImpl, outcome, pr, attempt, independent, limit, self, held });
     // Merge Admission step 2 (review MINOR-3/4): on a re-run, the newest
     // check for this pull request on this head decides, whichever admission
     // run (or re-verification) posted it: every later check is a later
@@ -3331,7 +3408,7 @@ function workflowFileOf(env) {
 // workflow in the reuse table (proof "ancestry") reuses the merged PR head's passing run of the same tree.
 // scripts/ci/clued-tree-reuse.mjs decides (no repository imports); it reads only GitHub's own records with this job's token and
 // returns run_heavy=true on anything it cannot prove. Null: not a subject, nothing was read.
-async function mainPushTreeReuse({ env, fetchImpl }) {
+async function mainPushTreeReuse({ env, fetchImpl, sleep }) {
   const workflow = workflowFileOf(env);
   let reuse;
   try {
@@ -3340,7 +3417,7 @@ async function mainPushTreeReuse({ env, fetchImpl }) {
     return { run_heavy: true, reason: `reuse table unreadable (${error instanceof Error ? error.message : String(error)})` };
   }
   if (!workflow || !Object.hasOwn(reuse.TARGETS, workflow) || reuse.TARGETS[workflow].proof !== "ancestry") return null;
-  return reuse.evaluatePush({ ...env, REUSE_WORKFLOW: workflow }, fetchImpl);
+  return reuse.evaluatePush({ ...env, REUSE_WORKFLOW: workflow }, fetchImpl, { sleep });
 }
 
 async function stagingRepairGate({ env, fetchImpl, outcome, attempt }) {

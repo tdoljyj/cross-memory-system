@@ -14,7 +14,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { acceptanceOf, prepare, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
+import { acceptanceOf, prepare, seal } from '../rollout/fleet/publish.mjs';
 import { FAKE_GH } from '../rollout/fleet/test/fleet-fixtures.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
 
@@ -77,7 +77,7 @@ export const frozenClock = `function Get-DrillTime { [DateTimeOffset]${q(T0)} }`
 // Dot-source the script (definitions only), fix its clock at T0, and print the expression's value as JSON.
 export function ps(expr) {
   const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
-    `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(script)}; ${ownMutexes}; ${frozenClock}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`], { encoding: 'utf8', timeout: 120000 });
+    `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(script)}; ${ownMutexes}; ${frozenClock}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return JSON.parse(r.stdout.trim());
 }
@@ -267,9 +267,9 @@ export const STEP_LOGS = {
 // What the entry of a first install that ended done returned (Save-DrillGuestEvidence's third argument): only after this result is a
 // run without a failure snapshot missing nothing (planning ruling FABLE-r9-lineB-points R2).
 export const DONE_ENTRY_OUT = `([ordered]@{ lines = @(${q(STEP_LOGS['first-install.log'].trim())}); stderr = ''; exit = 0 })`;
-// skip: the run was started with -SkipReinstall; reinstall: 'absent' leaves the run without an A8 result at all; steps: false leaves the
+// reinstall: 'absent' leaves the run without an A8 result at all; steps: false leaves the
 // run directory without the first install's logs.
-export function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {}, reinstall = null, skip = false, steps = true, pre = '' } = {}) {
+export function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {}, reinstall = null, steps = true, pre = '' } = {}) {
   const root = path.join(tmp, name);
   const checkerFile = path.join(root, 'test', 'renewal-drill.mjs');
   fs.mkdirSync(path.dirname(checkerFile), { recursive: true });
@@ -285,7 +285,6 @@ export function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['prob
     timings: {}, m5: null };
   if (reinstall === 'absent') delete run.reinstall;
   const receipt = ps(`
-    ${skip ? '$SkipReinstall = $true' : ''}
     ${pre}
     $script:Drill.Runs = ${q(root)}
     $script:DrillScriptPath = ${q(path.join(root, 'drill', 'drill-vm.ps1'))}
@@ -356,18 +355,15 @@ export async function sealWorld(t) {
   await prepare({ version, dir: out, out: accept, images: [imageFile], index, ghCommand: gh, deps });
   const requestFile = path.join(accept, `${tag}.acceptance-request.json`);
   const request = JSON.parse(fs.readFileSync(requestFile, 'utf8'));
-  // the Decision record as DESK exports it (the shape of the real clued_record_mutate return PR-乙's tests pin), naming this request
-  const record = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../rollout/fleet/test/fixtures/clued-decision-mutate-3bc571a6.json', import.meta.url)), 'utf8'));
-  record.supplemental.record.content = `TEST TEXT: the Owner accepts.\n${requestLineOf(version, sha(fs.readFileSync(requestFile)))}\n`;
-  const decisionRecord = path.join(d, 'decision-record.json'); fs.writeFileSync(decisionRecord, JSON.stringify(record, null, 2));
-  const sealIt = drillReceipt => seal({ request: requestFile, decisionRecord, index, ghCommand: gh, deps, drillReceipt });
+  // the Owner's acceptance: a stand-in of the acceptance door's anonymous read (rollout/fleet/accept-door.mjs) answering the fleet.accept Grant
+  // of 3bc571a6's values for the resource read, naming its request
+  const readStatus = async resource => ({ status: 'accepted', request_sha256: resource.split('/').pop(), resources: [resource],
+    grant_id: 'c556370f-b0fc-404b-b164-0f06699e4c7a', receipt_id: '7ccaefca-5fda-4bc8-9747-2a8101b92342', accepted_at: '2026-11-19T12:22:39.628169+00:00' });
+  const sealIt = drillReceipt => seal({ request: requestFile, index, ghCommand: gh, deps: { ...deps, readStatus }, drillReceipt });
   return { d, version, request, index, sealIt };
 }
 
-// Fable renew-key ruling, supplement "candidate skips A8" (replaces the two tests that locked Codex review of PR-甲, blocking 1): the
-// blocking guarded against a skipped candidate earning a PASS that looks like a full one. Now the skip is an explicit option (never the
-// default: a candidate without -SkipReinstall runs A8 and needs it true), and a candidate that skipped A8 can end in one value only,
-// PASS_A_REINSTALL_NOT_DRILLED, which seal takes and writes into the index as it is: "not the same value" is what tells the two apart.
+// Candidate run stubs. A8 has no skip any more (FABLE-drill-r13-a8-m5 1.3): a candidate runs A8 like any run and needs it true.
 export const candidateStubs = `
     $Version = '1.2.3'; $From = 'unused'; $Kit = 'unused'
     function Read-DrillPrereq { @{ sha256 = 'pin' } }
@@ -555,6 +551,26 @@ export const S = '5'.repeat(64), L = '7'.repeat(64);
 // The pause the launcher confirmed (its terminal's pause.requestSha256) and state\PAUSED.json naming that request: a first install that
 // succeeded ends paused by its own request (Fable renew-key ruling, supplement "eight on the path", item 5).
 export const PAUSE_REQUEST = '9'.repeat(64);
+// A stand-in for windows/verify-resident.ps1 that keeps the real rule on the pause (verify-resident.ps1, 'paused-as-expected' /
+// 'not-paused'): -ExpectPausedSha256 given, state\PAUSED.json must be there with exactly that sha256; not given, any PAUSED.json is a
+// failure. Its JSON is the real one's shape ({status, checks: {name: {ok, detail}}}); fake-verify-checks.json beside the root's state, if
+// there, puts its checks first (where the real verify's first fifty sit, beyond the last 40 lines of its stdout). A note goes to stderr.
+// Task 87d330d0 (drill r13 A2): the stand-in before this took no pause parameter and printed RESIDENT_VERIFIED, which hid that the
+// drill's read never told verify the node is meant to be paused.
+export const FAKE_VERIFY = String.raw`param($ExpectedInstallReceiptSha256, $LinuxVersionFactsFile, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectPausedSha256)
+$root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
+$checks = [ordered]@{}
+$extra = Join-Path $root 'fake-verify-checks.json'
+if (Test-Path -LiteralPath $extra) { foreach ($p in (Get-Content -LiteralPath $extra -Raw | ConvertFrom-Json).PSObject.Properties) { $checks[$p.Name] = [ordered]@{ ok = $p.Value.ok; detail = $p.Value.detail } } }
+$checks['not-halted'] = [ordered]@{ ok = (-not (Test-Path -LiteralPath (Join-Path $root 'state\HALT.json'))); detail = $null }
+$pausedFile = Join-Path $root 'state\PAUSED.json'
+if ($ExpectPausedSha256) { $checks['paused-as-expected'] = [ordered]@{ ok = ((Test-Path -LiteralPath $pausedFile -PathType Leaf) -and ((Get-FileHash -LiteralPath $pausedFile -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $ExpectPausedSha256)); detail = $null } }
+else { $checks['not-paused'] = [ordered]@{ ok = (-not (Test-Path -LiteralPath $pausedFile)); detail = $null } }
+$ok = -not ($checks.Values | Where-Object { $_.ok -ne $true })
+[Console]::Error.WriteLine('verify: a note on stderr')
+[ordered]@{ status = $(if ($ok) { 'RESIDENT_VERIFIED' } else { 'RESIDENT_VERIFICATION_FAILED' }); checks = $checks } | ConvertTo-Json -Depth 6
+exit $(if ($ok) { 0 } else { 1 })
+`;
 
 // A guest work directory for Save-DrillGuestEvidence: the stub runs the real guest reader ($script:GuestStageFiles) over it.
 export function guestWorkDir(name, files) {
@@ -566,18 +582,21 @@ export function guestWorkDir(name, files) {
 export const WSL_COLD_START = JSON.stringify({ at: '2026-11-21T03:00:00Z', shutdown: { exit: 0, timedOut: false, stdout: '', stderr: '' },
   runningAfter: { exit: 0, timedOut: false, stdout: '', stderr: '' } });
 
+// K3 (task 87d330d0): the companion up by itself after the reboot, nobody logged on -- all five, under the password definition
+export const COMPANION_AFTER_BOOT = { boot: '2026-11-16T02:45:00Z', definition: 'password', interactiveSessions: 0,
+  startTask: { lastRun: '2026-11-16T02:45:40Z', lastResult: 0 }, companionState: 4, companionInstances: [{ state: 4, enginePid: 4120 }],
+  supervisors: [{ pid: 4120, owner: 'clued-companion', created: '2026-11-16T02:45:41Z' }], errors: {} };
 export function evidence(over = {}) {
   const status = { writtenAt: '2026-11-16T02:59:50Z', node: { mode: 'STANDBY' }, executor: { state: 'PAUSED' }, paused: true, current: null, queue: { live: 0 }, halt: null,
     versions: { selfcheck: { result: 'PASS', observedAt: '2026-11-16T02:50:00Z' } } };
   const e = { now: NOW, entry: { exitCode: 0, status: 'FIRST_INSTALL_DONE', stopCode: null, tree: 'C:\\t', node: 'C:\\n.exe', parsed: true },
-    verify: { status: 'RESIDENT_VERIFIED' }, status, current: { generation: 1, ciSourceManifestSha256: S, linux: { manifestSha256: L } },
+    verify: { status: 'RESIDENT_VERIFIED', expectPausedSha256: '4'.repeat(64), failed: [] }, status, current: { generation: 1, ciSourceManifestSha256: S, linux: { manifestSha256: L } },
     facts: { generation: 1, staged: null, pinsOk: true, ciSourceManifestSha256: S, manifestSha256: L }, acceptanceSource: S,
     launcher: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', role: 'not-held', completed: ['pause-confirmed', 'first-train-not-applicable'], pause: { confirmed: true, requestSha256: PAUSE_REQUEST, paused: { sha256: '4'.repeat(64) } } },
     firstInstallSteps: { missing: false, incomplete: false, incompleteStages: [] },
     pause: { sha256: '4'.repeat(64), requestSha256: PAUSE_REQUEST },
-    reboot: { ok: true, status, readAt: NOW, boot: '2026-11-16T02:45:00Z' }, reinstall: { skipped: false, upgradeStatus: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', prepareStatus: 'FLEET_NODE_INSTALL_PREPARED',
-      launcherExit: 0, launcherStatus: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', launcherVerdict: 'BOOTSTRAP_DONE',
-      reverifyPassed: true, prepareAgainStatus: 'FLEET_NODE_INSTALL_PREPARED' }, kit: { perNodeSteps: ['8c step 2'], credentials: PACKAGE_CREDENTIALS } };
+    reboot: { ok: true, status, readAt: NOW, boot: '2026-11-16T02:45:00Z', companionAfterBoot: COMPANION_AFTER_BOOT }, reinstall: { upgradeStatus: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', upgradeExit: 0,
+      prepareStatus: 'FLEET_NODE_INSTALL_REFUSED', prepareCode: 'NEW_SOURCE_IS_THE_INSTALLED_ONE', prepareExit: 1 }, kit: { perNodeSteps: ['8c step 2'], credentials: PACKAGE_CREDENTIALS } };
   return JSON.stringify(Object.assign(e, over));
 }
 // Build the evidence hashtable in PowerShell from JSON (nested objects as PSCustomObject, as the guest reads give them).
@@ -587,19 +606,18 @@ export const pass = (r) => Object.fromEntries(r.items.map((i) => [i.id, i.pass])
 
 // A tree whose fleet tools are stand-ins run by the real node: each writes a line on stderr (the A8 children are read with stdout and
 // stderr apart: Fable renew-key ruling, supplement "eight on the path", the drill's own six merged calls). install.mjs answers with the
-// runCommand the test puts in run-command.json; bootstrap.ps1 is the package's own (its launcher parser and verdict).
+// JSON line and exit code the test puts in prepare-answer.json (A8 runs nothing after the prepare: FABLE-drill-r13-a8-m5 1.3).
 export function mockFleetTree(name) {
   const tree = path.join(tmp, name);
   const fleet = path.join(tree, 'work', 'independent-ci-resident-v1', 'rollout', 'fleet');
   fs.mkdirSync(fleet, { recursive: true });
-  fs.copyFileSync(fileURLToPath(new URL('../rollout/fleet/bootstrap.ps1', import.meta.url)), path.join(fleet, 'bootstrap.ps1'));
   fs.writeFileSync(path.join(fleet, 'upgrade.mjs'),
     "process.stderr.write('upgrade: a note on stderr\\n'); console.log(JSON.stringify({ status: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE' }));\n");
   fs.writeFileSync(path.join(fleet, 'install.mjs'), [
     "import fs from 'node:fs';",
     "process.stderr.write('prepare: a note on stderr\\n');",
-    "const runCommand = JSON.parse(fs.readFileSync(new URL('./run-command.json', import.meta.url), 'utf8'));",
-    "console.log(JSON.stringify({ status: 'FLEET_NODE_INSTALL_PREPARED', ...(runCommand === null ? {} : { runCommand }) }));", ''].join('\n'));
+    "const { answer, exit } = JSON.parse(fs.readFileSync(new URL('./prepare-answer.json', import.meta.url), 'utf8'));",
+    "console.log(JSON.stringify(answer)); process.exitCode = exit;", ''].join('\n'));
   return { tree, fleet };
 }
 
@@ -749,7 +767,7 @@ export function earlyStopRun(name, { guest, grow = [], fireAt, fireCode, deadlin
     function Receive-Job { param($Job, $ErrorAction) if ($Job.failed) { throw 'The virtual machine is not running (fixture)' }; $Job.result }
     function Remove-Job { param($Job, [switch]$Force, $ErrorAction)
       if ($script:removeBlocks -and -not $Job.done) { $script:events.Add('remove-running-job:' + $Job.kind); $script:now += 300 } }
-    $script:Interactive = $false; $script:SkipReinstall = $true
+    $script:Interactive = $false
     $package = @{ version = '1.2.3'; files = @(); tar = 'C:/x/p.tar'; tarSha256 = 'ab'; ciSourceManifestSha256 = ('5' * 64); firstInstallKitSha256 = ('7' * 64); candidate = $false }
     $earlyKit = [pscustomobject]@{ sha256 = 'kit-ladder'; dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 240; prerequisiteMode = 'first-install-host'; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) }
     $window = @{ safeToResume = $true; deadline = ([DateTimeOffset]${q(T0)}).AddSeconds(${deadlineSeconds}); holdUntil = [DateTimeOffset]::MinValue }
@@ -792,14 +810,15 @@ export function ladderMain(name, runs, extra = '') {
 // answer as told (the check's exit, whether an input is local), the injected prerequisites are real files hashed for real, and the tar
 // is a command that exits 0. snapAt: 'gap' (the first local copy after the check's verdict) or a tool name (its expansion) -- there the
 // stage record as it stands is copied aside (what a pull at that moment brings back); snapStop: the entry stops right after.
-export function entryAccepted(name, { checkExit = 0, underDir = true, snapAt = '', snapStop = false } = {}) {
+// notInjected: item names the manifest pins whose file the host did not put into the payload.
+export function entryAccepted(name, { checkExit = 0, underDir = true, snapAt = '', snapStop = false, notInjected = [] } = {}) {
   const root = fs.mkdtempSync(path.join(tmp, `entry-accepted-${name}-`));
   const [assets, payload, fake, out, work, cred] = ['assets', 'payload', 'fake', 'out', 'work', 'cred'].map(d => { const p = path.join(root, d); fs.mkdirSync(p); return p; });
   const tar = path.join(root, 'tar.cmd'); fs.writeFileSync(tar, '@exit /b 0\r\n');
   const snap = path.join(root, 'snapshot.jsonl');
-  const file = (n, text) => { fs.writeFileSync(path.join(payload, n), text); return { sha256: sha(Buffer.from(text)), bytes: Buffer.byteLength(text) }; };
+  const file = (n, text, put = true) => { if (put) fs.writeFileSync(path.join(payload, n), text); return { sha256: sha(Buffer.from(text)), bytes: Buffer.byteLength(text) }; };
   const items = [['wsl', 'wsl.msi', 'w'.repeat(40)], ['node', 'node.zip', 'n'.repeat(50)], ['python', 'python.zip', 'p'.repeat(60)], ['git', 'git.zip', 'g'.repeat(70)]]
-    .map(([n, f, text]) => ({ name: n, fileName: f, maxEntryPathLength: 10, ...file(f, text) }));
+    .map(([n, f, text]) => ({ name: n, fileName: f, maxEntryPathLength: 10, ...file(f, text, !notInjected.includes(n)) }));
   const debs = [{ fileName: 'a.deb', ...file('a.deb', 'd'.repeat(30)) }];
   fs.writeFileSync(path.join(assets, 'fleet-node-1.2.3.prereq-manifest.json'), JSON.stringify({ items, debs }));
   for (const n of ['SHA256SUMS', 'fleet-node-1.2.3.first-install.SHA256SUMS', 'fleet-node-1.2.3.tar']) fs.writeFileSync(path.join(assets, n), '');

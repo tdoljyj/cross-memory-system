@@ -1,11 +1,11 @@
 // Archive one universal node package on a GitHub Release (Decision b5d041d2 v2) and keep the 资料中心 index.
 //
 //   node rollout/fleet/publish.mjs prepare --version <v> --dir <build out> --out <dir> [--image <role-image-<id>.tar.gz> ...] [--repo <owner/name>] [--index <index file>]
-//   node rollout/fleet/publish.mjs seal --request <fleet-node-<v>.acceptance-request.json> --decision-record <the clued_record_mutate return, as saved>
-//        [--drill-receipt <receipt.json>] [--repo <owner/name>] [--index <index file>]
+//   node rollout/fleet/publish.mjs seal --request <fleet-node-<v>.acceptance-request.json> [--drill-receipt <receipt.json>] [--wait <minutes>]
+//        [--repo <owner/name>] [--index <index file>]
 //
 // The acceptance has two halves, each one command that may be run again (Fable 3bc571a6 ruling section 3, Task 758989fa): prepare before the
-// Owner accepts (what the Owner reviews), seal after (what the acceptance makes). Nothing else puts a package, a kit or an acceptance on a
+// Owner accepts (what the Owner reviews), seal after (it asks for the Owner's acceptance and makes what it makes). Nothing else puts a package, a kit or an acceptance on a
 // Release: the steps (ensureRelease, attachFirstInstallKit, attachAcceptance) have no command of their own, so no hand-written acceptance file
 // has a way up, and there is no separate release step to forget (FABLE-drill-release-step-20261121.md: the release command is gone, any form of
 // it is USAGE; prepare makes the Release and the index row it needs).
@@ -54,15 +54,30 @@
 //      the check seal makes: SHA256SUMS and release.json naming the request's tar and commit, the tar downloaded from the Release giving the
 //      request's Source), so prepare never writes a request seal would refuse;
 //   6. then fleet-node-<v>.acceptance-request.json (REQUEST_CONTRACT): tar,
-//      commit, repository, Source, kit hash and those fleetRefs, and the line for the Decision's text (requestLineOf: the request file's sha256).
-//      No Decision, receipt or time: the Owner reviews it. Files are written whole or not at all.
-// seal (after the Owner accepted; never touches a node or takes a kit): the request and the Decision record, the return of the one
-//   clued_record_mutate that wrote the Decision, kept as it was (readDecisionRecord: a committed write, one target, the receipt; a Decision
-//   whose text carries this request's line). Decision, receipt and acceptedAt come from that file only and fill the five fields an
-//   acceptance makes (cluedDecision = ownerDecisionRef, installationReceiptRef = ownerReceiptRef, acceptedAt); validateAcceptance; the index row;
-//   checkRequestOnRelease; then attachAcceptance. Only after it succeeded are fleet-node-<v>.acceptance.json and fleet-node-<v>.decision-record.json
-//   written next to the request (the record is never uploaded). The drill's stand-in values are refused. The record proves no Owner
-//   acceptance (the release operator is the trust boundary): it keeps a Decision written for one candidate from sealing another.
+//      commit, repository, Source, kit hash and those fleetRefs, and the request file's sha256 (the acceptance door's resource binds it).
+//      No Decision, receipt or time: the Owner reviews it. It goes up as a Release asset first (never --clobber; the same bytes there are
+//      kept, other bytes refused, never replaced: the release workflow's fleet-accept mode reads it from the Release, PLAN-accept-binding-
+//      20261125 section 3), then into --out. Files are written whole or not at all.
+// seal (never touches a node or takes a kit; PLAN-accept-auto-seal-20261125 2.2): the Owner's acceptance is one fleet.accept Grant the Owner
+//   approves on the Clued confirm page, never a sentence in a chat and never a Decision written by hand (--decision-record is gone: USAGE).
+//   First everything seal refuses on its own (the request and the acceptance it becomes, fleetRefs naming the drill's stand-in among it,
+//   --drill-receipt, the index row, the commit on main, checkRequestOnRelease, the request asset on the Release), so the Owner is never asked
+//   for what would be refused. Then the acceptance door (accept-door.mjs; PLAN-accept-binding-20261125: no token on this machine) is read
+//   anonymously for this request (the resource fleet-node:<repo>/<v>/<tar sha256>/<request sha256>); none or expired there opens the
+//   request with one run of the release workflow's fleet-accept mode, and from then on seal only reads: for its link up to OPEN_WAIT_MS
+//   from that run (--wait does not lengthen it), with --wait <minutes> for the Owner's answer at 30 to 120 second steps; a read that fails
+//   is read again at the next step while there is time (without --wait and before anything was opened it is refused). No link by then,
+//   also with the door unreadable, is FLEET_ACCEPTANCE_NOT_OPENED, nothing written, exit code 1: seal again would only dispatch again, the
+//   cause is in the workflow's run (PLAN-accept-align-open-20261125 2.2). pending is FLEET_ACCEPTANCE_WAITING_OWNER with the confirm link,
+//   nothing written. rejected is the Owner's final answer (the door never opens a rejected request again; 1.2 there): whenever it is read,
+//   FLEET_ACCEPTANCE_REJECTED, nothing dispatched or written, exit code 1; expired after this seal saw the request open is the same answer
+//   with answer expired; accepted gives the three values an acceptance makes, from the door's
+//   answer only, an answer that names this request (cluedDecision =
+//   ownerDecisionRef = the Grant id, installationReceiptRef = ownerReceiptRef = the use receipt id, acceptedAt = its time to the second);
+//   an accepted_at up to CLOCK_SKEW_MAX_MS after this machine's clock (the door's clock is the server's) is waited out once, one further ahead
+//   refused; validateAcceptance; the index row; attachAcceptance; only then fleet-node-<v>.acceptance.json is written next to the request.
+//   The door replays its one row of a version, so the acceptance is a pure function of request and row and the same seal again changes
+//   nothing. The drill's stand-in values are refused.
 //   --drill-receipt: a candidate drill's receipt (drill/drill-vm.ps1, DRILL_RECEIPT_CONTRACT): candidate true, its conclusion one of
 //   DRILL_PASS_CONCLUSIONS, and tarSha256, ciSourceManifestSha256 and firstInstallKitSha256 those of this acceptance, else refused; the index
 //   row names it, and a sealed row's drill cell is never replaced. Without it the row says 首装未演练 (the first-install drill is not a gate of
@@ -88,12 +103,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import os from 'node:os';
+import { acceptResourceOf, openRequest, readAnswer, statusReader } from './accept-door.mjs';
 import { RESIDENT } from './facts.mjs';
 import { DEFAULT_ROOT, firstInstallKitOf, installedFleetMaterial, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
 import { readTar } from './tar.mjs';
 import { RELEASE_CONTRACT, VERSION, tagOf } from './universal.mjs';
+import { ACCEPTANCE_CONTRACT, REQUEST_CONTRACT, REQUEST_FLEET_REFS, acceptanceOf, acceptanceBytes } from '../../src/fleet-acceptance.mjs';
 
-export const ACCEPTANCE_CONTRACT = 'clued.independent-ci.fleet-node-acceptance/1';
+export { ACCEPTANCE_CONTRACT, REQUEST_CONTRACT, REQUEST_FLEET_REFS, acceptanceOf };
 export const DEFAULT_REPO = 'tdoljyj/cross-memory-system';
 export const DEFAULT_INDEX = 'G:\\我的云端硬盘\\Clued_资料中心\\10_E_工程与平台\\CI基础设施\\通用节点包_归档索引.md';
 // the drill column (seal): the candidate drill's conclusion and receipt sha256, or 首装未演练; an older table is completed with an empty cell
@@ -145,11 +162,13 @@ export async function stageNodeEntry({ release, tarBytes, sums }, stage) {
   return { sums: { name: 'SHA256SUMS', file: path.join(stage, 'SHA256SUMS') }, entry: out };
 }
 
-function gh(ghCommand, args) {
+function gh(ghCommand, args, timeout) {
+  if (typeof ghCommand === 'function') return ghCommand(args);
   const env = { ...process.env };
   for (const k of TOKEN_ENV) delete env[k];
   const [cmd, ...pre] = ghCommand;
-  const r = spawnSync(cmd, [...pre, ...args], { env, maxBuffer: 1 << 24, windowsHide: true });
+  const r = spawnSync(cmd, [...pre, ...args], { env, maxBuffer: 1 << 24, windowsHide: true, timeout, killSignal: 'SIGKILL' });
+  if (r.error?.code === 'ETIMEDOUT') fail('FLEET_ACCEPTANCE_DEADLINE', 'GitHub command timed out');
   return { status: r.status, stdout: String(r.stdout ?? ''), stdoutBytes: r.stdout ?? Buffer.alloc(0), stderr: String(r.stderr ?? r.error ?? '').trim().slice(-300) };
 }
 
@@ -157,9 +176,9 @@ function gh(ghCommand, args) {
 const isRow = l => l.startsWith('|');
 const cells = line => line.split('|').slice(1, -1).map(c => c.trim());
 const row = c => `| ${c.join(' | ')} |`;
-async function readIndex(index) {
+async function readIndex(index, readFile = fs.readFile) {
   let text = null;
-  try { text = (await fs.readFile(index)).toString('utf8'); } catch (e) { if (e?.code !== 'ENOENT') throw e; }
+  try { text = (await readFile(index)).toString('utf8'); } catch (e) { if (e?.code !== 'ENOENT') throw e; }
   const eol = text?.includes('\r\n') ? '\r\n' : '\n';
   const lines = text === null ? [row(INDEX_HEADER), `|${INDEX_HEADER.map(() => '---').join('|')}|`] : text.split(/\r?\n/);
   if (lines.length && lines[lines.length - 1] === '') lines.pop();
@@ -290,34 +309,16 @@ async function publishAssets({ ghCommand, repo, index, idx, s, assets }) {
 // such a file never reaches a Release and no real node (which reads the Release, or the operator's own --from) can read one. acceptedAt is a
 // stand-in time, not reserved. Shapes a node accepts: UUIDs, not 00000000- (validateAcceptance) nor dddddddd-/eeeeeeee- (generate.py).
 export const DRILL_RESERVED = Object.freeze({ decision: 'ca7d1da7-d2e1-4c1d-8000-000000000001', receipt: 'ca7d1da7-d2e1-4c1d-8000-000000000002', acceptedAt: '2026-01-01T00:00:00Z' });
-export const REQUEST_CONTRACT = 'clued.independent-ci.fleet-node-acceptance-request/1';
 export const DRILL_RECEIPT_CONTRACT = 'clued.independent-ci.drill-receipt/1';
 export const NOT_DRILLED = '首装未演练';
 // a candidate drill's conclusions seal takes (FABLE-renew-key-algorithm-ruling-20261119.md section 4.3): defined here only; drill/drill-vm.ps1's
-// conclusion function is held to the same three by PR-甲's test. PASS_A_REINSTALL_NOT_DRILLED: a candidate that skipped A8 (supplement
-// "candidate skips A8"), written into the index as it is. PASS_A_PENDING_PRODUCTION_READBACK and every other value are refused.
-export const DRILL_PASS_CONCLUSIONS = Object.freeze(['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN', 'PASS_A_REINSTALL_NOT_DRILLED']);
-// the line prepare gives for the Decision's text, and seal finds in the Decision record: the request file's sha256 binds tar, commit, Source,
-// kit and fleetRefs at once
-export const requestLineOf = (version, requestSha256) => `acceptance-request ${tagOf(version)} sha256:${requestSha256}`;
+// conclusion function is held to the same two by PR-甲's test. A8 has no skip (FABLE-drill-r13-a8-m5-20261125.md section 1.2), so the
+// value a skipped one ended in is gone and refused like PASS_A_PENDING_PRODUCTION_READBACK and every other value.
+export const DRILL_PASS_CONCLUSIONS = Object.freeze(['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN']);
 // the request's fleetRefs: what a node carries into every acceptance; the other three (ownerDecisionRef, installationReceiptRef, ownerReceiptRef) are seal's
-export const REQUEST_FLEET_REFS = Object.freeze(['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ownerPackageAcceptanceRef', 'formalRoles']);
 const REQUEST_KEYS = ['contract', 'version', 'archive_sha256', 'commit', 'repository', 'ciSourceManifestSha256', 'firstInstallKitSha256', 'fleetRefs'];
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const exactKeys = (o, keys) => o !== null && typeof o === 'object' && !Array.isArray(o) && Object.keys(o).length === keys.length && keys.every(k => Object.hasOwn(o, k));
-
-// The acceptance a request becomes: its fields and the five the acceptance makes (seal with the Owner's Decision; the drill with DRILL_RESERVED).
-export function acceptanceOf(request, { decision, receipt, acceptedAt }) {
-  const f = request.fleetRefs;
-  const a = { contract: ACCEPTANCE_CONTRACT, version: request.version, archive_sha256: request.archive_sha256, commit: request.commit, repository: request.repository,
-    ciSourceManifestSha256: request.ciSourceManifestSha256, cluedDecision: decision, acceptedAt,
-    fleetRefs: { sourceAcceptanceRef: f.sourceAcceptanceRef, hostQualificationRef: f.hostQualificationRef, ownerAuthorizationRef: f.ownerAuthorizationRef,
-      publisherQualificationRef: f.publisherQualificationRef, ownerPackageAcceptanceRef: f.ownerPackageAcceptanceRef, installationReceiptRef: receipt,
-      ownerDecisionRef: decision, ownerReceiptRef: receipt, formalRoles: f.formalRoles },
-    firstInstallKitSha256: request.firstInstallKitSha256 };
-  if (request.ciSourceManifestSha256 === undefined) delete a.ciSourceManifestSha256;
-  return a;
-}
 
 export function readRequest(r) {
   check(exactKeys(r, REQUEST_KEYS) && r.contract === REQUEST_CONTRACT, 'REQUEST_REFUSED', 'shape');
@@ -353,13 +354,14 @@ export async function readAcceptance(file, version) {
 }
 
 // seal's step (see the head of this file). `drill`: the index row's drill cell.
-export async function attachAcceptance({ version, acceptance, repo = DEFAULT_REPO, index = DEFAULT_INDEX, dir = null, drill = NOT_DRILLED, ghCommand = ['gh'] }) {
+export async function attachAcceptance({ version, acceptance, repo = DEFAULT_REPO, index = DEFAULT_INDEX, dir = null, drill = NOT_DRILLED,
+  ghCommand = ['gh'], checkTime = () => {}, readFile = fs.readFile }) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
   check(VERSION.test(version ?? ''), 'PUBLISH_VERSION_REFUSED');
   const a = await readAcceptance(acceptance, version);
   check(a.repository === repo, 'ACCEPTANCE_NOT_THIS_REPOSITORY', a.repository);
   check(typeof drill === 'string' && drill !== '' && !/[|\r\n]/.test(drill), 'PUBLISH_DRILL_CELL_REFUSED');
-  const idx = await readIndex(index);
+  const idx = await readIndex(index, readFile);
   const at = findRow(idx.lines, version);
   check(at >= 0, 'PUBLISH_INDEX_LACKS_VERSION', version);
   const c = cells(idx.lines[at]);
@@ -392,6 +394,7 @@ export async function attachAcceptance({ version, acceptance, repo = DEFAULT_REP
   const v = viewRelease(ghCommand, repo, tag);
   check(v.assets.some(x => x.name === name && x.size === bytes.length), 'PUBLISH_RELEASE_ASSET_MISSING', name);
   if (!again) {
+    checkTime();
     c[4] = a.acceptedAt;
     c[5] = a.cluedDecision;
     c[6] = drill;
@@ -617,6 +620,9 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     readRequest(request);
     // the request becomes an acceptance every node reads (the five fields seal fills aside)
     try { validateAcceptance(acceptanceOf(request, DRILL_RESERVED), now); } catch (e) { fail('PREPARE_REQUEST_REFUSED', e?.detail ?? e?.code ?? String(e)); }
+    // steps 3, 4 and 5 each print one line of when they started and ended, on stderr (Fable ruling 0e418483, node-install batch 3.3 B: what
+    // prepare's 8-9 minutes are made of is not known yet)
+    let lapAt = Date.now(); const lap = n => { const t = Date.now(); console.error(JSON.stringify({ prepareStep: n, startedAt: new Date(lapAt).toISOString(), endedAt: new Date(t).toISOString(), seconds: (t - lapAt) / 1000 })); lapAt = t; };
     // 3. every local role image: given, else the previous Release's
     const given = new Map();
     for (const f of images) { const mm = ROLE_IMAGE.exec(path.basename(f)); check(mm, 'FIRST_INSTALL_IMAGE_FILE_NAME_REFUSED', path.basename(f)); given.set(mm[1], f); }
@@ -630,8 +636,10 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
       check(f, 'PREPARE_IMAGE_MISSING', { id, asset: `role-image-${id}.tar.gz`, note: 'give it with --image; the previous Release has none of that id' });
       files.set(id, f);
     }
+    lap(3);
     // 4. all checks passed: the Release and the index row of this build, made or completed (only the tag fleet-node-<v> and this row)
     await ensureRelease({ ghCommand, repo, index, s, assets: releaseAssets, stage });
+    lap(4);
     // 5. the directory, the kit and the images in it, what the Release lacks uploaded, the whole request held to the Release (the same check
     //    as seal's); 6. only then the request
     await fs.mkdir(out, { recursive: true });
@@ -641,12 +649,14 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     for (const [id, f] of files) { const to = path.join(out, `role-image-${id}.tar.gz`); if (path.resolve(f) !== path.resolve(to)) await fs.copyFile(f, to); placed.push(to); }
     const attached = await attachFirstInstallKit({ version, kit: kitFile, images: placed, repo, ghCommand, resume: true });
     await checkRequestOnRelease({ ghCommand, repo, request, stage, kit: true, deps, now });
+    lap(5);
     const requestFile = path.join(out, `${tag}.acceptance-request.json`);
     const requestBytes = Buffer.from(JSON.stringify(request, null, 2) + '\n');
+    await putRequestOnRelease({ ghCommand, repo, tag, bytes: requestBytes, stage });
     await writeAtomic(requestFile, requestBytes);
     return { status: 'FLEET_ACCEPTANCE_REQUEST_WRITTEN', version, request: requestFile, directory: out, kitFrom: kitFromRelease ? 'release' : 'node',
       firstInstallKitSha256: request.firstInstallKitSha256, ciSourceManifestSha256: request.ciSourceManifestSha256, images: attached.images,
-      requestSha256: sha(requestBytes), decisionLine: requestLineOf(version, sha(requestBytes)) };
+      requestSha256: sha(requestBytes) };
   } finally {
     await fs.rm(stage, { recursive: true, force: true });
   }
@@ -654,9 +664,12 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
 
 // A candidate drill's receipt for this acceptance (blocking 4): one of DRILL_PASS_CONCLUSIONS, candidate true, and the three hashes of this
 // acceptance; the index row's drill cell (its conclusion and the receipt's sha256), or refused.
-async function drillCellOf(file, a) {
+async function drillCellOf(file, a, readFile) {
   let bytes, r;
-  try { bytes = await fs.readFile(file); r = JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')); } catch { fail('SEAL_DRILL_RECEIPT_REFUSED', 'not a JSON file'); }
+  try { bytes = await readFile(file); r = JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')); } catch (e) {
+    if (e?.code === 'FLEET_ACCEPTANCE_DEADLINE') throw e;
+    fail('SEAL_DRILL_RECEIPT_REFUSED', 'not a JSON file');
+  }
   check(r?.contract === DRILL_RECEIPT_CONTRACT && r.version === a.version, 'SEAL_DRILL_RECEIPT_REFUSED', { contract: r?.contract ?? null, version: r?.version ?? null });
   check(DRILL_PASS_CONCLUSIONS.includes(r.conclusion), 'SEAL_DRILL_RECEIPT_NOT_PASS', { conclusion: r.conclusion ?? null, pass: DRILL_PASS_CONCLUSIONS });
   check(r.candidate === true, 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE', { candidate: r.candidate ?? null });
@@ -664,27 +677,6 @@ async function drillCellOf(file, a) {
   const theirs = Object.fromEntries(Object.keys(mine).map(k => [k, r[k] ?? null]));
   check(Object.keys(mine).every(k => theirs[k] === mine[k]), 'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE', { receipt: theirs, acceptance: mine });
   return `${r.conclusion} receipt ${sha(bytes)}`;
-}
-
-// The Decision record (blocking 1, the ruling's supplement): the return of the one clued_record_mutate that wrote the Decision, kept as it was.
-// The only source of the Decision id (target_refs[0].id), the receipt id (receipt_id) and the time (supplemental.record.created_at, to the
-// second, UTC), so no two unrelated ids can be paired; its text must carry prepare's line for this very request. It proves no Owner acceptance
-// (the release operator is the trust boundary, ruling section 4.2): it keeps the Decision written for one candidate from sealing another.
-// content_hash is not checked: on the real 3bc571a6 return it is not the SHA-256 of content, and its algorithm is not known.
-export async function readDecisionRecord(file, line, now = Date.now()) {
-  let bytes, d;
-  try { bytes = await fs.readFile(file); d = JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')); } catch { fail('DECISION_RECORD_REFUSED', 'not a JSON file'); }
-  check(d !== null && typeof d === 'object' && !Array.isArray(d) && d.status === 'committed' && (d.error_code ?? null) === null, 'DECISION_RECORD_REFUSED', 'not a committed write');
-  const t = Array.isArray(d.target_refs) && d.target_refs.length === 1 ? d.target_refs[0] : null;
-  check(UUID.test(t?.id ?? '') && UUID.test(d.receipt_id ?? '') && t.id !== d.receipt_id, 'DECISION_RECORD_REFUSED', 'receipt_id and exactly one target, two different UUIDs');
-  const decision = t.id, receipt = d.receipt_id, rec = d.supplemental?.record;
-  check(rec !== null && typeof rec === 'object' && !Array.isArray(rec) && rec.record_type === 'decision', 'DECISION_RECORD_NOT_A_DECISION', { record_type: rec?.record_type ?? null });
-  check((rec.id === undefined || rec.id === decision) && rec.receipt_id === receipt, 'DECISION_RECORD_NOT_ITS_TARGET',
-    { target: decision, record: rec.id ?? null, receipt, recordReceipt: rec.receipt_id ?? null });
-  const at = typeof rec.created_at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/.test(rec.created_at) ? Date.parse(rec.created_at) : NaN;
-  check(Number.isFinite(at) && at <= now, 'DECISION_RECORD_REFUSED', { created_at: rec.created_at ?? null });
-  check(typeof rec.content === 'string' && rec.content.split(/\r?\n/).some(l => l.trim() === line), 'DECISION_RECORD_NOT_THIS_REQUEST', { line });
-  return { decision, receipt, acceptedAt: new Date(Math.floor(at / 1000) * 1000).toISOString().replace('.000Z', 'Z'), bytes };
 }
 
 // Only a package built from a commit already on main can be accepted (Fable renew-key ruling, supplement "one round exposes every error" (3)):
@@ -699,50 +691,259 @@ function checkCommitOnMain(ghCommand, repo, commit) {
   check(status === 'identical' || status === 'behind', 'SEAL_COMMIT_NOT_ON_MAIN', { commit, status });
 }
 
-// The second half of an acceptance (see the head of this file). `deps` is for tests only (a stand-in for the archive's source-hash).
-export async function seal({ request, decisionRecord, drillReceipt = null, repo = DEFAULT_REPO, index = DEFAULT_INDEX, ghCommand = ['gh'], now = Date.now(), deps = {} }) {
+// The acceptance request on the Release (prepare's step 6, seal's last check before the door): its bytes there, or null when it has none.
+async function requestOnRelease({ ghCommand, repo, tag, stage }) {
+  const name = `${tag}.acceptance-request.json`;
+  if (!viewRelease(ghCommand, repo, tag).assets.some(x => x.name === name)) return null;
+  return fs.readFile(downloadAsset(ghCommand, repo, tag, name, stage));
+}
+// prepare's step 6: the request goes up as a Release asset (never --clobber). The same bytes there are kept; other bytes are refused and never
+// replaced (the door may already have opened a request on them); read back whole.
+async function putRequestOnRelease({ ghCommand, repo, tag, bytes, stage }) {
+  const name = `${tag}.acceptance-request.json`;
+  const there = await requestOnRelease({ ghCommand, repo, tag, stage });
+  if (there !== null) {
+    check(there.equals(bytes), 'PREPARE_REQUEST_ON_RELEASE_DIFFERENT', { asset: name, release: sha(there), this: sha(bytes),
+      note: 'the Release holds another acceptance request of this version; it is never replaced: build a new version' });
+    return;
+  }
+  const dir = await fs.mkdtemp(path.join(stage, 'request-'));
+  const file = path.join(dir, name);
+  await fs.writeFile(file, bytes, { flag: 'wx' });
+  const up = gh(ghCommand, ['release', 'upload', tag, file, '--repo', repo]);
+  check(up.status === 0, 'PUBLISH_GH_RELEASE_UPLOAD_FAILED', { asset: name, stderr: up.stderr });
+  const back = await requestOnRelease({ ghCommand, repo, tag, stage });
+  check(back !== null && back.equals(bytes), 'PUBLISH_RELEASE_ASSET_MISSING', name);
+}
+
+// How seal reads the door (PLAN-accept-auto-seal-20261125 2.3; PLAN-accept-binding-20261125 section 3). --wait <minutes>: read again after
+// 30 s, 60 s, then every 120 s, never past the wait nor past the request's expiry. A request seal opened: read every OPEN_STEP_MS for its
+// link, up to OPEN_WAIT_MS after the run was dispatched, whatever the wait (the wait is for the Owner, this for the workflow: its
+// fleet-accept job times out after 10 minutes, plus 5 for its queue; PLAN-accept-align-open-20261125 2.2). A read that fails: again after
+// READ_RETRY_MS while there is time. An accepted_at at most CLOCK_SKEW_MAX_MS after this machine's clock: waited out once.
+export const WAIT_STEPS_MS = Object.freeze([30_000, 60_000, 120_000]);
+export const WAIT_MAX_MINUTES = 1440;
+export const OPEN_WAIT_MS = 15 * 60_000;
+export const OPEN_COMMAND_MS = 20 * 60_000;
+// Leave one minute inside the parent deadline for sealing, output and cleanup.
+const OPEN_RESERVE_MS = 60_000;
+const OPEN_OUTPUT_MS = 5_000;
+export const OPEN_STEP_MS = 15_000;
+export const READ_RETRY_MS = 30_000;
+export const CLOCK_SKEW_MAX_MS = 120_000;
+export const SEAL_UNREADABLE = 'FLEET_ACCEPTANCE_UNREADABLE';
+export const READ_ACCEPTANCE_AGAIN = 'the final answer could not be read; run the same command again to read the door before opening any request';
+// what seal opens a request on: none, or one that ran out; never rejected, the Owner's final answer (the door never opens it again)
+const NOT_OPEN = ['none', 'expired'];
+// Refusals that stop accept.mjs immediately (including a permanent door refusal or exhausted command budget). Other errors can
+// be retried before dispatch or an observed request, within the same command and staging directory.
+export const SEAL_INPUT_ERRORS = Object.freeze(['USAGE', 'REQUEST_REFUSED', 'REQUEST_FILE_NAME_REFUSED', 'PUBLISH_REPO_REFUSED', 'ACCEPTANCE_NOT_THIS_REPOSITORY',
+  'ACCEPTANCE_REFUSED', 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN', 'ACCEPTANCE_NOT_THIS_RELEASE', 'PUBLISH_INDEX_LACKS_VERSION', 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED',
+  'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', 'SEAL_REQUEST_REFUSED', 'SEAL_DRILL_RECEIPT_REFUSED', 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE', 'SEAL_DRILL_RECEIPT_NOT_PASS',
+  'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE', 'SEAL_DRILL_RECEIPT_NOT_THE_RECORDED', 'ACCEPT_RESOURCE_REFUSED', 'ACCEPT_DOOR_NOT_CONFIGURED',
+  'ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED', 'ACCEPT_DOOR_REFUSED', 'ACCEPT_DOOR_ANSWER_REFUSED', 'FLEET_ACCEPTANCE_DEADLINE']);
+
+// The second half of an acceptance (see the head of this file). `deps` is for tests only (a stand-in for the archive's source-hash, the door's
+// anonymous read, the clock and the sleep of --wait); the command line cannot reach it and reads the door with the repository's public
+// configuration (accept-door.mjs statusReader); the request is opened with this file's gh.
+export async function seal(options) {
+  // the Decision record has no way in (PLAN 2.2): given, it is USAGE, before anything is read or asked
+  check(!Object.hasOwn(options ?? {}, 'decisionRecord'), 'USAGE', { note: 'the acceptance is the Owner\'s fleet.accept Grant: seal asks the door, no Decision record goes in' });
+  const { request, drillReceipt = null, repo = DEFAULT_REPO, index = DEFAULT_INDEX, ghCommand = ['gh'], now = Date.now(), wait = 0,
+    deadline, waitDeadline, openOnly = false, packageDir, onPending, deps = {} } = options ?? {};
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
+  check(wait === 0 || (Number.isInteger(wait) && wait >= 1 && wait <= WAIT_MAX_MINUTES), 'USAGE', { wait });
+  const readStatus = deps.readStatus ?? statusReader();
+  const clock = deps.clock ?? Date.now, sleep = deps.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
+  const started = clock(), nowAt = () => now + (clock() - started);
+  const end = deadline ?? started + (wait === 0 ? OPEN_COMMAND_MS : WAIT_MAX_MINUTES * 60_000);
+  const until = waitDeadline ?? started + wait * 60_000;
+  const boundedOpen = openOnly || (deadline === undefined && wait === 0);
+  const preflightEnd = boundedOpen ? end - OPEN_WAIT_MS - OPEN_RESERVE_MS : end;
+  const sealEnd = boundedOpen ? end - OPEN_OUTPUT_MS : end;
+  const remaining = limit => {
+    const left = limit - clock();
+    check(left > 0, 'FLEET_ACCEPTANCE_DEADLINE', 'the acceptance command ran out of time');
+    return left;
+  };
+  const boundedGh = limit => args => gh(ghCommand, args, remaining(limit));
+  const boundedRead = limit => async file => {
+    const signal = AbortSignal.timeout(remaining(limit));
+    try {
+      const bytes = await fs.readFile(file, { signal });
+      remaining(limit);
+      return bytes;
+    } catch (e) {
+      if (signal.aborted) fail('FLEET_ACCEPTANCE_DEADLINE', 'file read timed out');
+      throw e;
+    }
+  };
+  const readInput = boundedRead(preflightEnd);
   let requestBytes, r;
-  try { requestBytes = await fs.readFile(request); r = JSON.parse(requestBytes.toString('utf8').replace(/^\uFEFF/, '')); } catch { fail('REQUEST_REFUSED', 'not a JSON file'); }
+  try { requestBytes = await readInput(request); r = JSON.parse(requestBytes.toString('utf8').replace(/^\uFEFF/, '')); } catch (e) {
+    if (e?.code === 'FLEET_ACCEPTANCE_DEADLINE') throw e;
+    fail('REQUEST_REFUSED', 'not a JSON file');
+  }
   readRequest(r);
   const tag = tagOf(r.version);
   check(path.basename(request) === `${tag}.acceptance-request.json`, 'REQUEST_FILE_NAME_REFUSED', path.basename(request));
   check(r.repository === repo, 'ACCEPTANCE_NOT_THIS_REPOSITORY', r.repository);
-  const rec = await readDecisionRecord(decisionRecord, requestLineOf(r.version, sha(requestBytes)), now);
-  const a = acceptanceOf(r, rec);
-  check(!namesDrillReserved(a), 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN', { decision: rec.decision });
-  try { validateAcceptance(a, now); } catch (e) { fail('ACCEPTANCE_REFUSED', e?.detail ?? e?.code ?? String(e)); }
-  const drill = drillReceipt === null ? NOT_DRILLED : await drillCellOf(drillReceipt, a);
-  const bytes = Buffer.from(JSON.stringify(a, null, 2) + '\n');
-  const final = path.join(path.dirname(request), `${tag}.acceptance.json`), recordCopy = path.join(path.dirname(request), `${tag}.decision-record.json`);
-  const readOrNull = async f => { try { return await fs.readFile(f); } catch (e) { if (e?.code === 'ENOENT') return null; throw e; } };
-  const there = await readOrNull(final);
-  check(there === null || there.equals(bytes), 'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', final);
-  // the index row before the Release (both read-only): another acceptance of this version, or a row that is not this request's tar and commit
-  const idx = await readIndex(index);
+  // everything seal refuses on its own is refused before the Owner is asked: the acceptance the request becomes (its fleetRefs naming the
+  // drill's stand-in; the contract every node reads, as prepare holds it), the drill receipt (its three hashes are the request's), the index
+  // row, the commit on main, the request against the Release and the request asset the workflow reads
+  check(!namesDrillReserved({ fleetRefs: r.fleetRefs }), 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN', { note: 'the request\'s fleetRefs name the drill\'s stand-in' });
+  try { validateAcceptance(acceptanceOf(r, DRILL_RESERVED), now); } catch (e) { fail('SEAL_REQUEST_REFUSED', e?.detail ?? e?.code ?? String(e)); }
+  const drill = drillReceipt === null ? NOT_DRILLED : await drillCellOf(drillReceipt, r, readInput);
+  const final = path.join(path.dirname(request), `${tag}.acceptance.json`);
+  const idx = await readIndex(index, readInput);
   const at = findRow(idx.lines, r.version);
   check(at >= 0, 'PUBLISH_INDEX_LACKS_VERSION', r.version);
   const c = cells(idx.lines[at]);
-  check((c[4] === '' && c[5] === '') || (c[4] === a.acceptedAt && c[5] === a.cluedDecision), 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED', { acceptedAt: c[4], decision: c[5] });
-  check(a.archive_sha256 === c[2] && a.commit === c[3], 'ACCEPTANCE_NOT_THIS_RELEASE');
-  const recordThere = await readOrNull(recordCopy);
-  check(recordThere === null || recordThere.equals(rec.bytes), 'SEAL_ANOTHER_DECISION_RECORD_IN_DIRECTORY', recordCopy);
-  checkCommitOnMain(ghCommand, repo, r.commit);
-  // the file goes up from a directory of its own; it and the record are written next to the request only after the Release and the index hold it
-  const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-seal-'));
+  check(r.archive_sha256 === c[2] && r.commit === c[3], 'ACCEPTANCE_NOT_THIS_RELEASE');
+  const preflightGh = boundedGh(preflightEnd);
+  checkCommitOnMain(preflightGh, repo, r.commit);
+  // the file goes up from a directory of its own; it is written next to the request only after the Release and the index hold it
+  const stage = packageDir ?? await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-seal-'));
+  let ownsStage = packageDir === undefined;
+  const clearStage = async () => {
+    if (!ownsStage) return;
+    ownsStage = false;
+    await fs.rm(stage, { recursive: true, force: true });
+  };
+  let noRetry = false;
   try {
-    await checkRequestOnRelease({ ghCommand, repo, request: r, stage, kit: true, deps, now });
+    await checkRequestOnRelease({ ghCommand: preflightGh, repo, request: r, stage, kit: true, deps, now });
+    const requestSha256 = sha(requestBytes);
+    const onRelease = await requestOnRelease({ ghCommand: preflightGh, repo, tag, stage });
+    check(onRelease !== null && onRelease.equals(requestBytes), 'SEAL_REQUEST_NOT_ON_RELEASE', { asset: `${tag}.acceptance-request.json`,
+      release: onRelease === null ? null : sha(onRelease), request: requestSha256, note: 'the release workflow reads the request from the Release: run the same prepare again' });
+    // the Owner's acceptance: one fleet.accept Grant on this request (accept-door.mjs), read anonymously; opened once when the door has none open
+    const resource = acceptResourceOf({ repository: r.repository, version: r.version, archiveSha256: r.archive_sha256, requestSha256 });
+    let answer = null, openedAt = null, seenOpen = false, skewWaited = false, waitStep = 0, readFailure = null, dispatchFailure = null;
+    const unreadable = () => ({ status: SEAL_UNREADABLE, code: SEAL_UNREADABLE, version: r.version, resource, next: READ_ACCEPTANCE_AGAIN });
+    const openUntil = () => Math.min(sealEnd, openedAt + OPEN_WAIT_MS);
+    const pendingUntil = () => Math.min(end, until, Date.parse(answer.expiresAt));
+    const pause = async (step, limit) => {
+      const left = limit - clock();
+      if (left > 0) await sleep(Math.min(step, left > 1000 ? left - 1000 : left));
+    };
+    for (;;) {
+      const opening = openedAt !== null && !seenOpen;
+      const readEnd = opening ? openUntil() : answer?.kind === 'pending' ? pendingUntil()
+        : skewWaited ? sealEnd : Math.min(preflightEnd, until > clock() ? until : end);
+      if (readEnd <= clock()) {
+        if (opening || answer?.kind === 'pending') break;
+        if (readFailure) throw readFailure;
+        remaining(readEnd);
+      }
+      let a;
+      try {
+        a = readAnswer(await readStatus(resource, { timeoutMs: remaining(readEnd) }), { resource, requestSha256 });
+        if (clock() > readEnd) { readFailure = { code: 'ACCEPT_DOOR_UNAVAILABLE' }; break; }
+      } catch (e) {
+        if (e?.code !== 'ACCEPT_DOOR_UNAVAILABLE') throw e;
+        readFailure = e;
+        if (!opening && answer?.kind !== 'pending' && (openOnly || until <= clock())) throw e;
+        await pause(READ_RETRY_MS, readEnd);
+        if (clock() >= readEnd && !opening && answer?.kind !== 'pending') throw e;
+        continue;
+      }
+      readFailure = null;
+      answer = a;
+      if (a.kind === 'accepted') {
+        noRetry = true;
+        // the door's time is the server's: a few seconds ahead of this machine is waited out once, further ahead refused
+        const ahead = a.acceptedAtMs - nowAt();
+        if (ahead <= 0) break;
+        check(ahead <= CLOCK_SKEW_MAX_MS && !skewWaited, 'ACCEPT_DOOR_ANSWER_REFUSED', { status: 'accepted', acceptedAt: a.acceptedAt, aheadMs: ahead,
+          note: 'accepted_at is after this machine\'s clock' });
+        skewWaited = true;
+        await sleep(Math.min(ahead + 1000, remaining(sealEnd)));
+        continue;
+      }
+      if (a.kind === 'pending') {
+        noRetry = true;
+        const valid = Date.parse(a.expiresAt) > clock();
+        if (!seenOpen && valid) onPending?.({ confirmUrl: a.confirmUrl, expiresAt: a.expiresAt, resource });
+        seenOpen = true;
+        await pause(WAIT_STEPS_MS[Math.min(waitStep++, WAIT_STEPS_MS.length - 1)], pendingUntil());
+        continue;
+      }
+      // rejected: the Owner's final answer, whenever it is read; nothing is opened again
+      if (a.kind === 'rejected') break;
+      // none or expired: the end of a request this seal saw open; otherwise no request is open, so it is opened, once
+      if (seenOpen) {
+        check(a.kind !== 'none', 'ACCEPT_DOOR_ANSWER_REFUSED', { status: 'none', note: 'the door forgot a request it had open' });
+        break;
+      }
+      if (openedAt === null) {
+        remaining(preflightEnd);
+        noRetry = true;   // even a failed dispatch response leaves its delivery uncertain
+        try {
+          openRequest({ runGh: preflightGh, repository: r.repository, version: r.version, requestSha256 });
+        } catch (e) {
+          // An explicit refusal is final for this attempt. A lost response may still have queued the run.
+          const refused = e?.code === 'ACCEPT_DOOR_OPEN_FAILED' && /\bHTTP (401|403|404|422)\b/i.test(e.detail?.stderr ?? '');
+          if (refused || !['ACCEPT_DOOR_OPEN_FAILED', 'FLEET_ACCEPTANCE_DEADLINE'].includes(e?.code)) throw e;
+          dispatchFailure = e.code;
+        }
+        openedAt = clock();
+      }
+      const left = openUntil() - clock();
+      if (left <= 0) break;
+      await pause(OPEN_STEP_MS, openUntil());
+    }
+    if (answer === null) return unreadable();
+    if (answer.kind === 'pending') {
+      await clearStage();
+      if (readFailure || Date.parse(answer.expiresAt) <= clock()) return unreadable();
+      return { status: 'FLEET_ACCEPTANCE_WAITING_OWNER', version: r.version, opened: true, confirmUrl: answer.confirmUrl, expiresAt: answer.expiresAt, resource,
+        next: 'the Owner approves on confirmUrl; then the same seal again (--wait <minutes> waits for it)' };
+    }
+    if (NOT_OPEN.includes(answer.kind) && !seenOpen) {
+      // only after this seal's one run (none or expired is always opened): the workflow did not open it within OPEN_WAIT_MS
+      return { status: 'FLEET_ACCEPTANCE_NOT_OPENED', version: r.version, resource, dispatchedAt: new Date(now + (openedAt - started)).toISOString(), waitedMs: clock() - openedAt,
+        ...(dispatchFailure ? { dispatchFailure } : {}),
+        next: 'the release workflow (mode fleet-accept) did not open the request: read why in its latest run, fix that, then run the same command again' };
+    }
+    if (answer.kind !== 'accepted') {
+      return { status: 'FLEET_ACCEPTANCE_REJECTED', version: r.version, answer: answer.kind, resource,
+        next: answer.kind === 'expired' ? 'the request ran out: the same seal again opens a new one'
+          : 'the Owner rejected this candidate, which is final (never asked again); nothing was written: to accept, publish a new version' };
+    }
+    const a = acceptanceOf(r, { decision: answer.grantId, receipt: answer.receiptId, acceptedAt: answer.acceptedAt });
+    check(!namesDrillReserved(a), 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN', { grant: answer.grantId, receipt: answer.receiptId });
+    try { validateAcceptance(a, nowAt()); } catch (e) { fail('ACCEPTANCE_REFUSED', e?.detail ?? e?.code ?? String(e)); }
+    const bytes = acceptanceBytes(a);
+    const readOrNull = async f => { try { return await fs.readFile(f); } catch (e) { if (e?.code === 'ENOENT') return null; throw e; } };
+    const there = await readOrNull(final);
+    check(there === null || there.equals(bytes), 'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', final);
+    check((c[4] === '' && c[5] === '') || (c[4] === a.acceptedAt && c[5] === a.cluedDecision), 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED', { acceptedAt: c[4], decision: c[5] });
     const staged = path.join(stage, 'up', `${tag}.acceptance.json`);
+    remaining(sealEnd);
     await fs.mkdir(path.dirname(staged));
     await fs.writeFile(staged, bytes, { flag: 'wx' });
-    const attached = await attachAcceptance({ version: r.version, acceptance: staged, repo, index, drill, ghCommand });
+    const attached = await attachAcceptance({ version: r.version, acceptance: staged, repo, index, drill,
+      ghCommand: boundedGh(sealEnd), checkTime: () => remaining(sealEnd), readFile: boundedRead(sealEnd) });
+    remaining(sealEnd);
     if (there === null) await writeAtomic(final, bytes);
-    if (recordThere === null) await writeAtomic(recordCopy, rec.bytes);
-    return { ...attached, status: 'FLEET_ACCEPTANCE_SEALED', acceptance: final, decisionRecord: recordCopy };
+    if (packageDir) {
+      await fs.writeFile(path.join(stage, `${tag}.acceptance.json`), bytes, { flag: 'wx' });
+      await fs.writeFile(path.join(stage, 'SHA256SUMS'), sumsText([[`${tag}.tar`, r.archive_sha256]]), { flag: 'wx' });
+    }
+    return { ...attached, status: 'FLEET_ACCEPTANCE_SEALED', acceptance: final, grantId: answer.grantId, receiptId: answer.receiptId,
+      ...(packageDir ? { packageDir } : {}) };
+  } catch (error) {
+    if (noRetry) error.noSealRetry = true;
+    throw error;
   } finally {
-    await fs.rm(stage, { recursive: true, force: true });
+    await clearStage();
   }
 }
+
+// The command line's exit code of a seal or prepare that answered: non-zero only for an Owner's rejection, an expired request or a request
+// the workflow did not open (a refusal throws and exits 1 as well); waiting for the Owner is not a failure.
+export const exitCodeOf = r => (['FLEET_ACCEPTANCE_REJECTED', 'FLEET_ACCEPTANCE_NOT_OPENED', SEAL_UNREADABLE].includes(r?.status) ? 1 : 0);
 
 export async function main(argv) {
   const [sub, ...rest] = argv;
@@ -750,8 +951,9 @@ export async function main(argv) {
   try {
     parsed = parseArgs({ args: rest, allowPositionals: true, options: { dir: { type: 'string' }, repo: { type: 'string' }, index: { type: 'string' },
       version: { type: 'string' }, image: { type: 'string', multiple: true }, out: { type: 'string' }, request: { type: 'string' },
-      'decision-record': { type: 'string' }, 'drill-receipt': { type: 'string' } } });
-  } catch { fail('USAGE'); }   // an option no command has (the old entry's --base, --kit, --acceptance; seal's old --decision, --receipt, --accepted-at)
+      'drill-receipt': { type: 'string' }, wait: { type: 'string' } } });
+  } catch { fail('USAGE'); }   // an option no command has (the old entry's --base, --kit, --acceptance; seal's old --decision, --receipt, --accepted-at
+  //                              and --decision-record: the acceptance is the Owner's fleet.accept Grant, PLAN-accept-auto-seal-20261125 2.2)
   // the release command is gone (prepare makes the Release): `release`, with or without options, ends in USAGE below like any unknown command
   const { values, positionals } = parsed;
   check(positionals.length === 0, 'USAGE');
@@ -761,16 +963,18 @@ export async function main(argv) {
     return prepare({ version: values.version, dir: values.dir, out: path.resolve(values.out), images: values.image ?? [], repo: values.repo, index: values.index });
   }
   if (sub === 'seal') {
-    only('request', 'decision-record', 'drill-receipt', 'repo', 'index');
-    check(values.request && values['decision-record'], 'USAGE');
-    return seal({ request: path.resolve(values.request), decisionRecord: path.resolve(values['decision-record']),
-      drillReceipt: values['drill-receipt'] ? path.resolve(values['drill-receipt']) : null, repo: values.repo, index: values.index });
+    only('request', 'drill-receipt', 'wait', 'repo', 'index');
+    check(values.request, 'USAGE');
+    // --wait <minutes>: a whole number from 1 to WAIT_MAX_MINUTES; without it the door is asked once
+    check(values.wait === undefined || (/^[0-9]{1,4}$/.test(values.wait) && Number(values.wait) >= 1 && Number(values.wait) <= WAIT_MAX_MINUTES), 'USAGE', { wait: values.wait });
+    return seal({ request: path.resolve(values.request), drillReceipt: values['drill-receipt'] ? path.resolve(values['drill-receipt']) : null,
+      wait: values.wait === undefined ? 0 : Number(values.wait), repo: values.repo, index: values.index });
   }
   return fail('USAGE');
 }
 
 if (import.meta.main) {
-  main(process.argv.slice(2)).then(r => console.log(JSON.stringify(r)), e => {
+  main(process.argv.slice(2)).then(r => { console.log(JSON.stringify(r)); process.exitCode = exitCodeOf(r); }, e => {
     console.log(JSON.stringify({ status: 'FLEET_RELEASE_REFUSED', code: e?.code ?? 'FLEET_RELEASE_FAILED', detail: e?.detail ?? String(e?.message ?? e).slice(0, 300) }));
     process.exitCode = 1;
   });

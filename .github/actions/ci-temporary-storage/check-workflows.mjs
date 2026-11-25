@@ -85,6 +85,33 @@ export function stepFingerprint(steps) {
   return createHash("sha256").update(JSON.stringify(steps)).digest("hex");
 }
 
+// Task 04f9b91b: these exact steps export the trusted action from a local Git object
+// into the workspace. They run only after the job's full candidate checkout.
+const REQUIRED_TESTS_EXPORT = "7dda24823a69cd63043ef0a380c609fde16fb992930ee101096db5412f876faf";
+const TRUSTED_ARCHIVES = {
+  "clued-required-tests.yml": {
+    "clued-cloud-tests": REQUIRED_TESTS_EXPORT,
+    "ci-suites": REQUIRED_TESTS_EXPORT,
+    "migration-verify": REQUIRED_TESTS_EXPORT,
+    gitleaks: "0b1aaeb20af7dd104e7d2bebd8f0f519e87583b9e91b7ff603ed6a35bbf709b6",
+    trivy: "1d272c7e2327fa6b3406e28421c63b8433cfe3f1b48bfcd8cbeaf154fbcf8726",
+    "contract-placement": "6008bbce98a79d4e55cde4265071e227575deafb8bb2e1d50197c0e43ab75ed8",
+  },
+  "clued-required-tests-windows.yml": {
+    "ci-suites-windows": "5f14d714189fc60ba4e359881ddeeff3c7d6c1e15858557d20d5ee1a8759f64b",
+  },
+};
+
+function trustedArchiveIndex(name, id, steps) {
+  const hash = TRUSTED_ARCHIVES[name]?.[id];
+  if (!hash) return -1;
+  const candidate = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@") &&
+    condition(step.if ?? "true") === "true" && step.with?.path === "candidate" &&
+    step.with["fetch-depth"] === 0 && step.with["persist-credentials"] === false);
+  if (candidate === -1) return -1;
+  return steps.findIndex((step, index) => index > candidate && stepFingerprint(step) === hash);
+}
+
 // These Source candidates classify six exact pre-bootstrap guards, not whole jobs.
 // The scan-permission lifecycle DOES write its single no-clobber RUNNER_TEMP
 // producer and consumes the original once permission. It is never read-only.
@@ -260,6 +287,7 @@ export function repositoryTemporaryStorageFindings(document, name, audit, contex
     if (classification.mode === "step-env" && checkoutSources(steps).length) {
       findings.push(`${label}: no-checkout control must not load repository code`);
     }
+    const archive = trustedArchiveIndex(name, id, steps);
     const lifecycle = registeredPreBootstrap(document, name, id, classification, context);
     if (Object.hasOwn(classification, "pre_bootstrap_lifecycle") && !lifecycle) {
       findings.push(`${label}: pre-bootstrap lifecycle Source or implementation closure is not registered`);
@@ -288,7 +316,8 @@ export function repositoryTemporaryStorageFindings(document, name, audit, contex
             index === lifecycle.bootstrapIndex && lifecycle.guardIndex < index;
           const available = checkoutSources(steps.slice(0, index)).some(s => s.path === prefix && s.if !== "false" &&
             (s.if === "true" || s.if === condition(step.if ?? "true") || guardImpliesCheckout));
-          if (!available) findings.push(`${label}: temporary bootstrap is not in an existing compatible checkout`);
+          const exported = prefix === "trusted" && archive !== -1 && archive < index;
+          if (!available && !exported) findings.push(`${label}: temporary bootstrap is not in an existing compatible checkout or trusted archive`);
           if (step.uses !== classification.action) findings.push(`${label}: temporary bootstrap changed its reviewed source checkout`);
         }
       }
@@ -298,7 +327,7 @@ export function repositoryTemporaryStorageFindings(document, name, audit, contex
         s.uses === classification.action && condition(s.if ?? "true") !== "false" &&
         (!Object.hasOwn(s, "if") || condition(s.if) === condition(step.if)));
       const registeredGuard = lifecycle && index === lifecycle.guardIndex && index < lifecycle.bootstrapIndex;
-      if (classification.mode === "step-env" ? !independent : !setup && !independent && !registeredGuard) {
+      if (classification.mode === "step-env" ? !independent : !setup && !independent && !registeredGuard && index !== archive) {
         findings.push(`${label}: temporary storage is not bound before runtime step ${index + 1}`);
       }
     }

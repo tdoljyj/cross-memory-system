@@ -25,6 +25,7 @@
 |---|---|---|---|---|
 | 服务端与 CI 令牌（`kit.json` 的 `server`；kit 里的 `fleet-node-<v>.first-install-kit.json`、`fleet-node-<v>.first-install.SHA256SUMS`、`fleet-node-<v>.acceptance.json` 三份；`C:\drill\fake\ci-admission.token` = Owner 的演练绑定） | 生产服务端（Release 的首装 kit 里 `record.supabaseUrl`、`record.publishableKey` 两个公开字段）与真节点的 CI 绑定 | 演练不得接触生产；现造的令牌打生产只会被答“未授权”（第 17 代候选包的演练），真令牌又不该出现在演练里 | 生产服务端对本包的应答；带 ci-admission 角色节点的首班车 | 不可删；没验到的部分由真机首装承担 |
 | `C:\drill\fake\companion-github.token`（`ghp_CLUEDDRILLFAKE…`，来宾里生成、来宾里读；仅当被演练的包在必需组或可选组列出它时生成并交付，kit 同时登记这一步） | Owner 在凭据窗口给的陪伴 GitHub 经典令牌 | 演练不得使用真凭据 | 令牌被 GitHub 接受；陪伴访问 GitHub 的各个通道 | 不可删；没验到的部分由真机首装后的运行状态承担 |
+| 来宾里的前置下载（包的 `prereq-manifest.json` 每一项：WSL、rootfs、gh、Git for Windows 之外还有 node、python、MinGit、actions-runner、linux-node；kit 的单节点步骤登记“前置由宿主注入替身”） | 来宾按包的前置清单从上游下载每一项前置 | 演练每轮从同样的字节开始；来宾里下载每轮 5.5–7.7 分钟且走外网（Fable 裁定 0e418483 第 3 条） | 来宾从上游下载前置；地址与哈希在建 kit 时由宿主按包的清单验过 | 不可删；没验到的部分由真机首装承担 |
 
 按设计不给的可选凭据：
 
@@ -32,7 +33,7 @@
 |---|---|---|---|
 | `ci-node-heartbeat.token` | 按设计不给（不造假心跳令牌） | 假令牌会让来宾的常驻向生产心跳端点发请求，既改变来宾行为，也会让演练对生产的回读不再是零 | 心跳这条路；它的证据是真机运行后的心跳 |
 
-gh 与 Git for Windows 本身不做替身，按包的前置清单由宿主注入来宾真装（缺一个不建 kit、不开机，来宾不下载）。
+包的前置清单（`prereq-manifest.json` 的 `items`）每一项都由宿主注入来宾，来宾一个都不下载：缺一项不建 kit（`DRILL_PREREQ_TOOLS_INCOMPLETE:<名字>`），入口遇到没注入的一项即停（`DRILL_PREREQ_NOT_INJECTED:<名字>`）。prereq.json 不带的项（node、python、MinGit、actions-runner、linux-node）取自宿主缓存 `D:\clued-drill\prereq\cache\<清单里的文件名>`；缓存没有时，建 kit 那一步按清单里的地址下一次（试 3 次），核清单的 sha256 与字节数，只许新建，清单不变就不再下；缓存里的文件与清单不符即拒（`DRILL_PREREQ_CHANGED:<文件名>`），不覆盖。地址、哈希、字节数只从包的清单读。gh 与 Git for Windows 另须在包的清单里各声明一次（`DRILL_PREREQ_TOOL_NOT_DECLARED`），开机前再核一遍（`DRILL_KIT_TOOL_NOT_INJECTED`），本身不做替身，在来宾里真装。
 kit 的接受文件给角色钉的每个主机工具（`fleetRefs.formalRoles.<角色>.hostTools.<名>`，如 gitleaks 的 `/usr/bin/python3.12`），建 kit 时从暂存的 .deb 里取出该路径核 sha256：凡带这个路径的 .deb 都须是钉住的普通文件，且至少有一个带；否则不建 kit（`DRILL_KIT_HOST_TOOL_NOT_THE_FLEET_PIN:<路径>`、`DRILL_KIT_HOST_TOOL_NOT_IN_THE_DEBS:<路径>`；Fable 裁定 0e418483 §4.1 第 3 步）。核过的结果在 make-drill-kit.mjs 输出的 `hostTools`。
 清空 perNodeSteps 也不能得到 PASS_A_FULL。即使 A1–A9 全通过，仍不能勾掉“新节点首装实测一次”或证明服务端接纳。
 
@@ -59,7 +60,7 @@ kit 的接受文件给角色钉的每个主机工具（`fleetRefs.formalRoles.<�
 
   | 步 | 不符时的码 |
   |---|---|
-  | 同步 | `DRILL_SERVER_PRODUCTION_LIST_MISSING`（没有成功的发布运行、它没导出清单或制品过期、文件不是该运行的清单；处理：触发一次发布 preflight，只读）、`DRILL_SERVER_DATABASE_CREDENTIAL_MISSING`（密码没交）、`DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED`（连不上：28P01，或存的那份读不出、形状不对；重置后重交）、`DRILL_SERVER_DIVERGED`（测试库清单不是生产清单的前缀；`:stale` 是测试库比生产最新清单还多，有人绕过同步写过它；处理：`-SyncServer -Rebuild`）、`DRILL_SERVER_SYNC_FAILED:<文件或环节>`（带 `/` 的是应用失败的那一行的文件，否则是 `production-list-texts`、`fixtures`、`database`、`login` 之一；`no-result` 是脚本没给出结果行）、`DRILL_SERVER_SYNC_TOOL_MISSING`（检出没有同步脚本或 `apps/clued-cloud/node_modules`，`:gh` 是宿主没有 gh）、`DRILL_SERVER_POOLER_HOST_NOT_SET`、`DRILL_SERVER_UNREACHABLE`（`:github` 是 gh 试 3 次仍不通） |
+  | 同步 | `DRILL_SERVER_PRODUCTION_LIST_MISSING`（没有成功的发布运行、它没导出清单或制品过期、文件不是该运行的清单；处理：触发一次发布 preflight，只读）、`DRILL_SERVER_DATABASE_CREDENTIAL_MISSING`（密码没交）、`DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED`（连不上：28P01，或存的那份读不出、形状不对；重置后重交）、`DRILL_SERVER_DIVERGED`（测试库清单不是生产清单的前缀；`:stale` 是测试库比生产最新清单还多，有人绕过同步写过它；处理：`-SyncServer -Rebuild`）、`DRILL_SERVER_SYNC_FAILED:<文件或环节>`（带 `/` 的是应用失败的那一行的文件，否则是 `production-list-texts`、`fixtures`、`database`、`login` 之一；`no-result` 是脚本没给出结果行）、`DRILL_SERVER_SYNC_TOOL_MISSING`（检出没有同步脚本，`:gh` 是宿主没有 gh）、`DRILL_SERVER_POOLER_HOST_NOT_SET`、`DRILL_SERVER_UNREACHABLE`（`:github` 是 gh 试 3 次仍不通） |
   | 角色探测 `clued_work_merge_slot_holders_v1`（令牌哈希、kit 的 `scope` 与 `repository`；要求答“无角色”：`holders: []`、`reason: admission_binding_required`，与节点同一个解析函数） | `DRILL_SERVER_PROBE_FUNCTION_MISSING`（404，测试项目缺迁移）、`DRILL_BINDING_REFUSED_BY_SERVER`（项目答 401/403 `42501`：令牌过期或对 `scope` 无只读授权）、`DRILL_SERVER_KEY_REFUSED`（网关答 401/403：kit 里的 key 轮换了）、`DRILL_BINDING_ON_DUTY`（被放行：账户没有 parking 角色，或绑定带了角色，来宾会转 ACTIVE）、`DRILL_SERVER_UNREACHABLE` |
 
   同步跟随的内容记进演练回执的 `server.sync`：发布运行号 `releaseRun`、生产清单末行 `productionLast` 与行数 `productionRows`、本次应用了几行 `applied`、拥有项目的账号 `projectAccount`（只留首字符和域名）。
@@ -141,12 +142,12 @@ if ($LASTEXITCODE) { throw '候选演练 kit 构建失败' }
 pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Version $v -From $candFrom -Kit $candKit -Ladder
 ```
 
-候选演练默认跑 A8 并要求它为真；跳过 A8 只能显式带 `-SkipReinstall`（不是默认，Fable 裁定补“候选跳过 A8”）。候选回执的 A1–A7 必须逐项为真，A8 为真或被显式跳过，其他情况都是 `FAIL`。跳过了 A8 的候选，回读后最好只能得到 `PASS_A_REINSTALL_NOT_DRILLED`，A8 的 detail 写“同包重装未演练”；这个值原样写进索引的演练格，永远不会是另外两种 PASS。
+A8 是“同一个包再走两条入口，节点不被动”（FABLE-drill-r13-a8-m5-20261125.md 第 1 节）：通用升级必须答 `FLEET_NODE_ALREADY_AT_THIS_PACKAGE`（退出码 0），`install.mjs prepare` 必须答 `FLEET_NODE_INSTALL_REFUSED` 且码为 `NEW_SOURCE_IS_THE_INSTALLED_ONE`；两步各限 10 分钟，之后什么都不跑（prepare 即使给出 `runCommand` 也不执行）。A8 没有跳过开关，每次都跑。候选回执的 A1–A8 必须逐项为真，其他情况都是 `FAIL`。旧包到新包的重装不在本演练内，A8 的 detail 如实写着，另由“重装演练”验。
 
-演练 kit 平铺存放 `first-install-entry.ps1`、`guest-failure-files.json`（入口失败快照可读的来宾文件清单）、`release-pins.json`、WSL MSI、Ubuntu rootfs、全部 .deb 和 `kit.json`。
+演练 kit 平铺存放 `first-install-entry.ps1`、`guest-failure-files.json`（入口失败快照可读的来宾文件清单）、`release-pins.json`、包的前置清单的每一项（WSL MSI、Ubuntu rootfs、gh、Git for Windows、node、python、MinGit、actions-runner、linux-node）、全部 .deb 和 `kit.json`。
 除 `kit.json` 自身外，每个文件都在 `files` 中钉 sha256。prereq.json 按原始字节绑定；其 WSL/rootfs/debs 与正式
-prereq-manifest 的文件名、sha256、字节数相符才拷入。Node/Python/Git/runner/Linux Node 的正式前置仍由 bootstrap 的
-已钉清单取得；本构建器不联网。
+prereq-manifest 的文件名、sha256、字节数相符才拷入。Node/Python/Git/runner/Linux Node 取自宿主缓存（见上文“前置清单每一项都由宿主注入”）；
+本构建器只在缓存缺项时按清单地址联网取一次。
 
 `prerequisiteMode=first-install-host` 让完整演练从 S0 把发行版、Docker 和账户交给正式主机准备，不提前导入同名发行版。
 旧 kit 仍支持预注入来宾前置条件。`perNodeSteps` 明确列出三处绕过。
@@ -189,10 +190,10 @@ pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Versio
 - A1 阻断：首装没有以 `FIRST_INSTALL_DONE` 结束（退出码非 0、带停止码、或结果读不出）时，不重启、不跑 A8、不读 M5。三者分别记为 `DRILL_A7_BLOCKED_BY_A1`（若什么都没装上，仍记 `DRILL_A7_BLOCKED_NOTHING_INSTALLED`）、`upgradeStatus = DRILL_A8_BLOCKED_BY_A1`、`DRILL_M5_BLOCKED_BY_A1`。装后读取与两次探针照跑。
 - 明盒：入口每进入、每结束一个阶段，就当场往来宾工作目录的 `stage-progress.jsonl` 追加一行（`stage`、`event`、`startedAt`、`endedAt`、`result`、`code`、`tail`，其中 `tail` 为该段日志最后 5 行）。阶段依次为 assets、prereq、unpack、check、host-inputs（check 判定后到 host 之前的本地拷贝、凭据目录与第二次解包）、host、prepare、wsl-cold-start、launcher；每段在自己的判定之后才记结束，停止码记在停下的那一段，万一没有打开的段则单记一行 `between-stages`。prereq 段内每个 item/deb 的每一步（`sha`、`copy`、`get`、`expand`，最后 `tools:find`）各记开始、结束两行（`event` 为 `step-start`/`step-end`，带 `item`、`step`、`bytes`），时间线在该段下列 `steps`，段被中止时 `inProgressStep` 指出卡在哪个 item 的哪一步。写不进就跳过，不影响首装。host 段：包里的 `first-install-host.ps1` 带 `-StepProgress` 参数时（入口探测到才传，bootstrap.ps1 不传），每个 `Enter-Step` 开始、每步结束也往同一个 `stage-progress.jsonl` 各写一行，时间线 host 段列 `steps`，被中止时 `inProgressStep` 给出进行中的子步骤名和开始时刻；旧包的 host 没有这个参数，被中止的 host/prepare/launcher 段给 `lastStepLine`（运行目录里该段日志最后一条步骤行的名字、结论和时刻）。宿主自己的步骤（入口前的 copy-in，入口后的 read-after-install、A7-reboot、A8-reinstall）开始、结束写在运行目录的 `host-steps.jsonl`，开始了没写出结果的记为进行中被中止。宿主每拍拉回这个文件，取证时再取一次。无论结局如何，回执的 `evidence.stageTimeline` 都列出走到第几段和每段结论：`ok`、`failed` 带码，或 `aborted-in-progress`（进行中被中止）。之后接 A1 结果、装后读取、A7、A8 各自的记录。kit 的入口若不写这个文件，就按运行目录里已有的阶段日志列出，此时 `source` 为 `stage-logs`。
 
-M5 对每个包都收集、都判定（Fable 11-19 裁定 §2.2：没有“不评估也算数”的出口）。完成 A 档步骤后，`m5/` 保存来宾已生成的公开观测，宿主的 `test/renewal-drill.mjs` 核验齐备的七份文件（六份公开观测，加来宾管理员对连接记录在不在的实读 `record.json`）。
+M5 对每个包都收集、都判定（Fable 11-19 裁定 §2.2：没有“不评估也算数”的出口）。完成 A 档步骤后，`m5/` 保存来宾已生成的公开观测，宿主的 `test/renewal-drill.mjs` 核验齐备的八份文件（六份公开观测，加来宾管理员对连接记录在不在的实读 `record.json`，加宿主写的 `network.json`：本轮在来宾里切断的主机名单，取 kit 的 `server.blackholeHosts`）。续期网关主机（`windows/SwapBroker.cs` 的 `Route`）在名单里时，探询必须恰为 `RENEW_GATEWAY_UNAVAILABLE`，`m5.verdict.gateway` 记 `NOT_VERIFIED_GATEWAY_CUT_OFF`（未验到，M5 仍可 `PASS`），收到 403 或别的码即 `FAIL`；不在名单里时仍要求 403。
 回执记录 `m5.result`：核验通过为 `PASS`，观测缺失（包里没有续期组件也是这一种）、核验器缺失或核验失败为 `FAIL`；`NOT_EVALUATED` 只出现在中途已失败的回执里。
 回执 `conclusion` 只有在 `m5.result` 为 `PASS` 时才可能不是 `FAIL`；`-Finalize` 同样按回执里的 `m5` 判，旧回执没有 `m5` 即 `FAIL`。
-回读（`-Finalize`）之前结论为 `PENDING_PRODUCTION_READBACK`；回读之后只有 `PASS_A_FULL`、`PASS_A_PER_NODE_STEPS_REMAIN`、`PASS_A_REINSTALL_NOT_DRILLED`（仅候选跳过 A8）三种 PASS，
+回读（`-Finalize`）之前结论为 `PENDING_PRODUCTION_READBACK`；回读之后只有 `PASS_A_FULL`、`PASS_A_PER_NODE_STEPS_REMAIN` 两种 PASS（M5 网关未验到不另设结论值），
 正是 `publish.mjs seal --drill-receipt` 收的集合（定义在 `publish.mjs`，测试核两边一致）。
 
 **候选的顺序：演练 → `-Finalize` → Owner 接受 → seal**（Fable 11-19 续期密钥裁定 §4.3）。候选回执在接受之前就定稿：
@@ -281,7 +282,7 @@ New-Item C:\drill\work\interactive.done -ItemType File
 没有信号就超时失败并还原。信号本身不构成成功证据。
 A1 来自 VM 内 C:\ProgramData\CluedBootstrap\<guid>\elevated-launcher-*.txt 的最后一个 JSON，由接受版
 Get-LauncherVerdict 判定，要求唯一结果文件、有效 PNG 截图、tree/node 路径。证据复制到宿主本次 runs 目录后，继续
-现有验收、A7 无登录重启和 A8 再装，最后关闭 VM 并还原 S0。临时登录口令随还原失效，不改宿主 DPAPI 基线凭据文件。
+现有验收、A7 无登录重启和 A8 同包两入口，最后关闭 VM 并还原 S0。临时登录口令随还原失效，不改宿主 DPAPI 基线凭据文件。
 
 这仍使用假凭据，不能证明服务端登记、心跳接纳或 STANDBY。为防把适配 kit 冒充完整首装，本封装在交互模式仍保留 A10
 限制；原入口证据单独记录于 interactive-launcher.json 和 interactive-screen.png，供 DESK/Owner 审核。
@@ -301,8 +302,10 @@ bootstrapException 标明 README §5 例外，entryMode 区分适配和交互模
 回读由 DESK 用回执内 productionReadbackSql 取得只读结果，写到本次 runs 目录的 readback.json，随后运行下面的命令。候选回执只判 A9（演练一结束就做）；已接受版本的重新演练判 A5 生产半边与 A9：
 
 ```powershell
-pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Finalize <本次receipt.json> -ProductionReadback <本次readback.json>
+pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Finalize <本次receipt.json> -ProductionReadback <本次readback.json> -Request <候选版本的fleet-node-版本.acceptance-request.json>
 ```
+
+候选演练判为 PASS 时，定稿结果会返回开单状态。有可用的确认链接时会一并返回。已接受版本的重新演练可省略 `-Request`。
 
 离线测试只用仓库入口：
 

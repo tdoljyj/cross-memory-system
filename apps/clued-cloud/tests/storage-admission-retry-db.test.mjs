@@ -1,15 +1,14 @@
 // Real disposable PostgreSQL. Synthetic identities/time/Drive transport only;
 // these tests never query production, change a real grant or mutate Google.
-import { EPHEMERAL_INITDB_FLAGS, EPHEMERAL_POSTGRES_FLAGS, removeTestDirectory } from './cluster-cleanup.mjs';
+import { EPHEMERAL_INITDB_FLAGS, EPHEMERAL_POSTGRES_FLAGS, removeTestDirectory, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import net from 'node:net';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import {build} from 'esbuild';
 import {stopOwnedPostgres} from './model-domain-postgres-lifecycle.fixture.mjs';
 import {batchRequests,batchReply} from './google-batch-fixture.mjs';
@@ -20,8 +19,6 @@ import {setWorkerGatewayCaller} from './worker-gateway-caller-fixture.mjs';
 import {testStorageDestructive} from './resource-center-storage-destructive-db.fixture.mjs';
 const cloud=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const uuid=()=>crypto.randomUUID();
-async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));
- const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 
 test('admission rollback recovery: real PostgreSQL and private Worker',{timeout:240000},async t=>{
  const parent=await fs.realpath(os.tmpdir()),directory=await fs.mkdtemp(path.join(parent,'kooyumi-registration-db-'));
@@ -37,14 +34,12 @@ test('admission rollback recovery: real PostgreSQL and private Worker',{timeout:
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(actual,'Ownership.json'),'utf8')),ownership);
   return actual;
  };
- const server=new EmbeddedPostgres({databaseDir,user:'postgres',password:uuid(),port:await port(),persistent:true,
+ const server=newCluster({databaseDir,user:'postgres',password:uuid(),persistent:true,
   initdbFlags:EPHEMERAL_INITDB_FLAGS,
   postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS,'-c','listen_addresses=127.0.0.1'],onLog(){},onError(){}});
  let db,native,retainedChild,startAttempted=false,initialiseSettled=false;
  try{
-  try{await server.initialise();}finally{initialiseSettled=true;}
-  startAttempted=true;
-  try{await server.start();}finally{
+  try{await startCluster(server,{mark:(name,event)=>{if(name==='initialise'&&event==='end')initialiseSettled=true;else if(name==='start'&&event==='start')startAttempted=true;}});}finally{
    retainedChild=server.process;
    if(retainedChild?.pid)await fs.writeFile(path.join(directory,'OwnProcess.json'),JSON.stringify({
     run_id:runId,pid:retainedChild.pid,database_dir:databaseDir,port:server.options.port})+'\n',{flag:'wx'});

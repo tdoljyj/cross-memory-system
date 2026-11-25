@@ -136,6 +136,13 @@ public static class RegistrarPureTests {
     threw = false; try { RegistrarCore.ImportTaskXml(Owner, "x y", @"D:\a\ext4.vhdx", 0); } catch (ArgumentException) { threw = true; }
     bool threw2 = false; try { RegistrarCore.ImportScript("D", @"D:\a\ext4.vhdx", -1); } catch (ArgumentException) { threw2 = true; }
     Ok(threw && threw2, "import-task-refuses-bad-distro-or-uid");
+    // task 87d330d0 (drill r11): success is the program's own exit code, only from the complete branch; a queued, cancelled or stopped
+    // instance leaves the Task Scheduler's 0 or its own status, never this. The failure codes stay 3, 4, 5, 7, 8 (6 before any step).
+    Ok(RegistrarCore.ImportDoneExitCode == 0x434C4901 && RegistrarCore.ImportDoneExitCode == 1129072897, "import-done-exit-code-value");
+    System.Text.RegularExpressions.MatchCollection exits = System.Text.RegularExpressions.Regex.Matches(iscript, @"\bexit\s+(\S+?)\s*(?:\}|$|;)", System.Text.RegularExpressions.RegexOptions.Multiline);
+    Ok(exits.Count == 2 && exits[0].Groups[1].Value == "1129072897" && exits[1].Groups[1].Value == "$code" && iscript.TrimEnd().EndsWith("if ($code -eq 0) { exit 1129072897 }; exit $code"), "import-script-exits-done-code-only-for-0");
+    Ok(System.Text.RegularExpressions.Regex.Matches(iscript, @"\$code = 0\b").Count == 1 && iscript.Contains("$code = 0; $r.phase = 'complete'") && iscript.Contains("$code = 6")
+      && iscript.Contains("{ $code = 3 }") && iscript.Contains("{ $code = 4 }") && iscript.Contains("$code = 5;") && iscript.Contains("$code = 7;") && iscript.Contains("$code = 8; throw"), "import-script-0-only-in-complete-failure-codes-unchanged");
     // review r1 M2: the parked definition (interactive token of the account at its log-on, the fixed action, no restart)
     XmlDocument px = new XmlDocument(); px.LoadXml(RegistrarCore.InteractiveTaskXml(Root, Owner));
     XmlNamespaceManager pns = new XmlNamespaceManager(px.NameTable); pns.AddNamespace("t", "http://schemas.microsoft.com/windows/2004/02/mit/task");

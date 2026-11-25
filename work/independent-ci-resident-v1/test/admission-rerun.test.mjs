@@ -27,6 +27,12 @@ const extraWorkflow = { id: EXTRA_WORKFLOW, path: '.github/workflows/additional.
 const hostedWorkflow = { id: HOSTED_WORKFLOW, path: '.github/workflows/gitleaks.yml', state: 'active' };
 const extraSource = 'jobs:\n  admission-gate:\n  extra:\n    needs: admission-gate\n    name: additional-check\n';
 const readWorkflow = file => fs.readFile(new URL(`../../../${file}`, import.meta.url), 'utf8');
+function markedDispatch(fields) {
+  assert.deepEqual(fields.slice(0, 4), ['ref=claude/x', 'inputs[pr]=452', `inputs[head]=${HEAD}`, 'inputs[resident_node]=turing']);
+  assert.equal(fields.length, 5);
+  assert.match(fields[4], /^inputs\[resident_dispatch_id\]=[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  return fields[4];
+}
 const CHECK_NAMES = HEAVY.map(name => name.replace(/-skipped$/, ''));
 // R1 (FABLE-cicd-framework-v1 :87): the three scans are gated jobs of clued-required-tests.yml too, so the Linux workflow's
 // required set is the heavy three plus the scans (L3 pins it against the real workflow).
@@ -58,7 +64,7 @@ const workflowAttempt = name => {
 
 // A scripted `gh api`: fail(route, method) may return { code } or 'throw' or { timedOut: true } for one call.
 function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(700, [attempt()])], rerunCode = 0, dispatchCode = 0, fail = () => null, onDispatch = async () => {},
-  rules = [requiredRule(...CHECK_NAMES)], workflows = WORKFLOWS } = {}) {
+  rules = [requiredRule(...CHECK_NAMES)], workflows = WORKFLOWS, workflowText = readWorkflow } = {}) {
   const st = { pulls, checks, runs, rules, posts: [], dispatches: [], calls: [] };
   const byId = id => st.runs.find(r => r.id === Number(id));
   const jobsOf = (r, n) => r.attempts[n - 1].jobs.map((j, i) => ({ id: r.id * 100 + n * 10 + i, run_attempt: n, ...j }));
@@ -93,7 +99,7 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     if (/^\/commits\/[a-f0-9]{40}\/check-runs\?filter=all&per_page=100&page=1$/.test(route)) return ok({ total_count: st.checks.length, check_runs: st.checks });
     if (route === '/actions/workflows?per_page=100&page=1') return ok({ total_count: workflows.length, workflows });
     if ((m = /^\/contents\/(\.github\/workflows\/[\w.-]+)\?ref=[a-f0-9]{40}$/.exec(route))) {
-      const content = Buffer.from(m[1] === extraWorkflow.path ? extraSource : await readWorkflow(m[1]));
+      const content = Buffer.from(m[1] === extraWorkflow.path ? extraSource : await workflowText(m[1]));
       return ok({ path: m[1], content: content.toString('base64'), encoding: 'base64', sha: (1 + [...WORKFLOWS, extraWorkflow, hostedWorkflow].findIndex(w => w.path === m[1])).toString().repeat(40) });
     }
     if (route === `/commits/${HEAD}/pulls?per_page=100&page=1`) return ok(st.pulls);
@@ -117,7 +123,7 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     if ((m = /^\/actions\/runs\/(\d+)$/.exec(route))) return ok(shown(byId(m[1])));
     assert.fail(`unexpected route ${route}`);
   };
-  st.gh = ghPort({ ghExe: 'C:\\gh.exe', repo: REPO, run: runFn });
+  st.gh = ghPort({ ghExe: 'C:\\gh.exe', repo: REPO, run: runFn, nodeName: 'turing' });
   return st;
 }
 const T0 = Date.parse('2026-11-05T12:00:00Z');
@@ -490,7 +496,7 @@ test('bot head: admitted gate with skipped heavy jobs dispatches once, persists 
   assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'redispatch');
   const l = await lane(t, w);
   await l.r.step();
-  assert.deepEqual(w.dispatchFields, ['ref=claude/x', 'inputs[pr]=452', `inputs[head]=${HEAD}`]);
+  markedDispatch(w.dispatchFields);
   assert.deepEqual(w.posts, []);
   assert.equal(l.r.line(HEAD), '必需测试被跳过（推送者非 Owner），已自动补发一次');
   assert.equal(l.toasts.length, 1);
@@ -593,9 +599,22 @@ test('G3: the lost-run request binds the open PR and exact head, and cannot disp
   const w = world({ runs: [] });
   const l = await lane(t, w);
   await l.r.step(); l.advance(LOST_RUN_AFTER_MS); await l.r.step();
-  assert.deepEqual(w.dispatchFields, ['ref=claude/x', 'inputs[pr]=452', `inputs[head]=${HEAD}`]);
+  markedDispatch(w.dispatchFields);
   const denied = world({ runs: [], checks: [nativeCheck({ conclusion: 'failure' })] });
   assert.notEqual((await decide({ gh: denied.gh, headSha: HEAD, headAgeMs: LOST_RUN_AFTER_MS })).action, 'redispatch');
+});
+
+test('R9: each resident dispatch has a fresh ID; a prior workflow revision receives the original inputs', async t => {
+  const first = world({ runs: [botRun()] });
+  const second = world({ runs: [botRun()] });
+  for (const w of [first, second]) await (await lane(t, w)).r.step();
+  assert.notEqual(markedDispatch(first.dispatchFields), markedDispatch(second.dispatchFields));
+
+  const legacy = world({ runs: [botRun()], workflowText: async file => (await readWorkflow(file))
+    .replace(/^run-name:.*\r?\n/m, '')
+    .replace(/^ {6}resident_(?:node|dispatch_id):\r?\n(?: {8}[^\r\n]*\r?\n){3}/gm, '') });
+  await (await lane(t, legacy)).r.step();
+  assert.deepEqual(legacy.dispatchFields, ['ref=claude/x', 'inputs[pr]=452', `inputs[head]=${HEAD}`]);
 });
 
 test('G3 end-to-end: no push run -> one durable dispatch -> original PR gate and runner epoch -> three checks on the same head', async t => {
@@ -604,12 +623,16 @@ test('G3 end-to-end: no push run -> one durable dispatch -> original PR gate and
   const configuration = await fs.readFile(path.join(root, 'apps/clued-cloud/app/supabase-public-config.ts'), 'utf8');
   const workflow = await fs.readFile(path.join(root, '.github/workflows/clued-required-tests.yml'), 'utf8');
   assert.match(workflow, /workflow_dispatch:/, 'GitHub accepts this event');
+  assert.match(workflow, /^run-name:.*format\('clued-resident-dispatch\/v1 \{0\} \{1\}', inputs\.resident_node, inputs\.resident_dispatch_id\)/m);
+  for (const input of ['resident_node', 'resident_dispatch_id'])
+    assert.match(workflow, new RegExp(`^ {6}${input}:\\r?\\n {8}description:.*\\r?\\n {8}required: false\\r?\\n {8}type: string\\r?$`, 'm'));
   const executed = [];
   let pr = pullRequest({ base: { sha: 'b'.repeat(40), ref: 'main', repo: { full_name: REPO, default_branch: 'main' } } });
   let epochCurrent = true;
   const w = world({ runs: [], pulls: [pr], onDispatch: async st => {
     const fields = Object.fromEntries(st.dispatchFields.map(field => { const at = field.indexOf('='); return [field.slice(0, at), field.slice(at + 1)]; }));
-    const event = { inputs: { pr: fields['inputs[pr]'], head: fields['inputs[head]'] }, repository: { default_branch: 'main' } };
+    const inputs = Object.fromEntries(st.dispatchFields.slice(1).map(field => /^inputs\[([^\]]+)\]=(.*)$/.exec(field).slice(1)));
+    const event = { inputs, repository: { default_branch: 'main' } };
     const self = { id: 900, event: 'workflow_dispatch', path: '.github/workflows/clued-required-tests.yml', head_sha: HEAD,
       head_branch: fields.ref, run_attempt: 1, created_at: new Date(T0).toISOString() };
     const environment = { GITHUB_REPOSITORY: REPO, GITHUB_REPOSITORY_OWNER: 'o', GITHUB_ACTOR: 'o',
@@ -1400,7 +1423,7 @@ test('per-run budget: the new run of a reopened PR is re-run although the old ru
 });
 
 // Fable 11-20 受保护工作流 PR 准入晚到 (Task 54a2b67a, design §3). A pull request that changes a workflow: at the push no Native admission
-// exists, the runner hook waits its 480 seconds in every gate job and refuses in "Set up runner", every heavy job is skipped. The admission
+// exists, the runner hook immediately refuses in each gate job's "Set up runner", and every heavy job is skipped. The admission
 // comes when the batch queue reaches the head, any time later. Its arrival is the trigger: every gated pull_request run that ran nothing is
 // re-run once, the G4 database workflow (not a required check) included, however long the head waited. The real runner hook decide() judges
 // attempt 1 and attempt 2; only GitHub's answers and the clocks are fakes.
@@ -1478,13 +1501,13 @@ async function lateAdmissionChain(t, delayMs) {
   const pushedAt = T0 - 10 * 60_000;
   const w = world({ checks: [], runs: [], rules: [requiredRule(...REQUIRED_ACTIONS)] });
   const hook = hookPort(w);
-  // 1-2. The push: three pull_request runs; each gate job meets the real hook with no Native check, which waits its 480 s and refuses.
+  // 1-2. The push: three pull_request runs; the real hook refuses each gate job on its first Native admission read.
   for (const wf of LATE_WORKFLOWS) {
     w.runs.push(pushedRun(wf, [{ notes: [], jobs: [] }], pushedAt));
     const verdict = await hook.judge(wf, 1, 'admission-gate', pushedAt);
     assert.equal(verdict.allow, false, `${wf.path}: ${verdict.reason}`);
     assert.match(verdict.reason, /Native admission absent: not admitted/);
-    assert.ok(verdict.waited >= 480_000, `${wf.path} waited ${verdict.waited} ms`);
+    assert.equal(verdict.waited, 0, `${wf.path} scheduled a wait before refusal`);
     // GitHub's record of the refused attempt: the gate failed in "Set up runner", every heavy job skipped.
     w.runs.at(-1).attempts[0] = refusedAttempt(wf, iso(pushedAt + verdict.waited));
   }
@@ -1494,7 +1517,9 @@ async function lateAdmissionChain(t, delayMs) {
   // 3. The admission arrives delayMs after the lane first saw the head.
   l.advance(delayMs);
   w.checks.push(lateAdmission(T0 + delayMs));
-  for (let i = 0; i < 3; i++) { await l.r.step(); l.advance(HEAD_RECHECK_MS); }
+  await l.r.step();
+  assert.deepEqual([...w.posts].sort(), LATE_WORKFLOWS.map(wf => wf.runId).sort(), 'the next step requests one full re-run per gated run');
+  for (let i = 0; i < 2; i++) { l.advance(HEAD_RECHECK_MS); await l.r.step(); }
   return { w, hook, l, at: T0 + delayMs };
 }
 

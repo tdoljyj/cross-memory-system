@@ -46,7 +46,7 @@ const digest=x=>createHash('sha256').update(x).digest('hex');
 export const naturalRoundId=keys=>{const h=digest(JSON.stringify([...keys].sort())).slice(0,32);return [h.slice(0,8),h.slice(8,12),h.slice(12,16),h.slice(16,20),h.slice(20)].join('-');};
 const refs=rows=>Array.isArray(rows)?rows.slice(0,2000).map(r=>({run_id:id(r.id??r.run_id),attempt:number(r.run_attempt),
   workflow_path:safe(r.path),head_sha:sha(r.head_sha),status:safe(r.status),conclusion:safe(r.conclusion)})):[];
-const REASONS=new Set(['claim_trailer_missing','claim_not_found','work_claim_conflict','changed_files_truncated','claim_base_unknown',
+const REASONS=new Set(['claim_trailer_missing','claim_not_found','work_claim_conflict','changed_files_truncated',
   'protected_change_not_up_to_date','path_outside_write_set','paths_outside_write_set','head_budget_exhausted','ci_budget_exhausted',
   'merge_slot_required','merge_slot_missing','owner_grant_required','owner_grant_missing','owner_grant_revoked','owner_grant_expired',
   'admission_binding_required','authorization_revoked_or_expired','binding_not_authorized','resource_action_not_authorized',
@@ -54,7 +54,7 @@ const REASONS=new Set(['claim_trailer_missing','claim_not_found','work_claim_con
 // These are the reader's real known evaluator prefixes. The typed event keeps
 // only the class; the envelope restores the diagnostic-free grammar prefix.
 const READER_REASON_PREFIXES=Object.freeze({
-  CLAIM_TRAILER_MISSING:'claim_trailer_missing',CHANGED_FILES_TRUNCATED:'changed_files_truncated:',CLAIM_BASE_UNKNOWN:'claim_base_unknown:',
+  CLAIM_TRAILER_MISSING:'claim_trailer_missing',CHANGED_FILES_TRUNCATED:'changed_files_truncated:',
   WORKFLOW_GATE:'workflow_gate:',POLICY_FILE_REMOVED:'policy_file_removed:',POLICY_FILE_INVALID:'policy_file_invalid:',
   PROTECTED_CHANGE_NOT_UP_TO_DATE:'protected_change_not_up_to_date:',OWNER_REVIEW_REQUIRED:'owner_review_required (',
   OWNER_REVIEW_UNAVAILABLE:'owner_review_unavailable:',WORKFLOW_RUNS_UNAVAILABLE:'workflow runs unavailable:',
