@@ -159,7 +159,7 @@ const AUTHORIZATION_DB_TESTS = [
 // inputs (ci-required-selection.test.mjs checks that every file a database test imports is listed here). The worker's
 // own files only (worker/*): worker/generated is rewritten by every component bump, and those version strings are
 // not what these tests check.
-const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/tests/fixtures/integration-runtime/**',
+const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 'scripts/ci/test-clock-guard.mjs', 'scripts/ci/test-clock-imports.mjs', 'apps/clued-cloud/tests/fixtures/integration-runtime/**',
   'apps/clued-cloud/tests/ci-connection-renew-db.test.mjs',
   'apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
   'apps/clued-cloud/tests/*fixture*.mjs', 'apps/clued-cloud/tests/*.case.mjs', 'apps/clued-cloud/tests/worker/**',
