@@ -244,7 +244,7 @@ function Write-EntryStageLine($Line) {
     try { $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Dispose() }
   } catch { }
 }
-# The steps inside a stage (the prereq stage: each item's sha, copy, get, expand; the tools found last): one line as a step starts and one
+# The steps inside a stage (the prereq stage: each item's sha, copy, expand; the tools found last): one line as a step starts and one
 # as it ends -- stage, item, step, bytes (the item's size from the manifest), startedAt, endedAt, result, code -- so a stage cut off says
 # which item and which step it was in (coordinator, item 6 of the fix round of 87d330d0).
 $script:EntryStepOpen = $null
@@ -961,18 +961,15 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     $pre = Join-Path $script:Work 'prereq'; [void][IO.Directory]::CreateDirectory($pre)
     $tools = @{}
     foreach ($item in $manifest['items']) {
-      # Prefer the injected, release-pinned WSL/rootfs. Get-Prereq still verifies size and sha256.
+      # Every item is injected by the host (make-drill-kit.mjs puts each item of the manifest into the kit) and held here to the manifest's
+      # size and sha256; the guest downloads none (Fable ruling 0e418483, node-install batch 3.3 A): one not injected stops here by name.
       $injected = Join-Path $Payload $item['fileName']
       $itemName = [string]$item['name']
-      # a download (not injected, and not one that must be): its own step
-      if (-not [IO.File]::Exists($injected) -and @('gh', 'git-for-windows') -cnotcontains $itemName) { Start-EntryStep $itemName 'get' $item['bytes'] }
-      if ([IO.File]::Exists($injected)) {
-        Start-EntryStep $itemName 'sha' $item['bytes']
-        if ((Sha256File $injected) -cne $item['sha256'] -or (Get-Item -LiteralPath $injected).Length -ne $item['bytes']) { throw 'DRILL_PREREQ_CHANGED' }
-        Start-EntryStep $itemName 'copy' $item['bytes']
-        $file = Join-Path $pre $item['fileName']; [IO.File]::Copy($injected, $file, $false)
-      } elseif (@('gh', 'git-for-windows') -ccontains [string]$item['name']) { throw ('DRILL_PREREQ_NOT_INJECTED:' + $item['name']) }
-      else { $file = Get-Prereq $item $pre }
+      if (-not [IO.File]::Exists($injected)) { throw ('DRILL_PREREQ_NOT_INJECTED:' + $itemName) }
+      Start-EntryStep $itemName 'sha' $item['bytes']
+      if ((Sha256File $injected) -cne $item['sha256'] -or (Get-Item -LiteralPath $injected).Length -ne $item['bytes']) { throw 'DRILL_PREREQ_CHANGED' }
+      Start-EntryStep $itemName 'copy' $item['bytes']
+      $file = Join-Path $pre $item['fileName']; [IO.File]::Copy($injected, $file, $false)
       # the package's own Expand-Cached, called as its bootstrap calls it (rollout/fleet/bootstrap.ps1): the zip's longest entry path from the
       # pinned manifest is its fourth argument, without which it refuses (PREREQ_ZIP_MAX_ENTRY_PATH_LENGTH)
       if (@('node', 'python', 'git') -ccontains $itemName) {
