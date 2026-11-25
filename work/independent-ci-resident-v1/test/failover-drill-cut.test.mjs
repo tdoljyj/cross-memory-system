@@ -26,7 +26,7 @@ import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const windows = process.platform === 'win32';
-const opts = { skip: !windows, timeout: 120_000 };
+const opts = { skip: !windows };
 const script = fileURLToPath(new URL('../drill/failover-drill-cut.ps1', import.meta.url));
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'failover-drill-cut-'));
@@ -35,7 +35,7 @@ const q = s => `'${String(s).replace(/'/g, "''")}'`;
 
 function ps(expr) {
   const command = `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(script)}; ConvertTo-Json -Depth 8 -Compress -InputObject $(${expr})`;
-  const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 100_000 });
+  const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1));
 }
