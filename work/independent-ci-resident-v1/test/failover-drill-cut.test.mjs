@@ -345,7 +345,7 @@ const netStubs = ({ enableThrows = [], disabled = [] } = {}) => `
   function Enable-NetAdapter { [CmdletBinding(SupportsShouldProcess)] param([string]$Name) [void]$script:log.Add("enable:$Name"); if (@(${[...enableThrows].map(q).join(',')}) -contains $Name) { throw "cannot enable $Name" } }
   function Get-NetAdapter { [CmdletBinding()] param([string]$Name, [switch]$Physical) [pscustomobject]@{ Name = $Name; Status = $(if (@(${[...disabled].map(q).join(',')}) -contains $Name) { 'Disabled' } else { 'Up' }) } }
   function Unregister-ScheduledTask { [CmdletBinding(SupportsShouldProcess)] param([string]$TaskName) [void]$script:log.Add("unregister:$TaskName") }
-  function Start-Sleep { [CmdletBinding()] param([int]$Seconds) [void]$script:log.Add("sleep:$Seconds") }`;
+  function Wait-DrillSeconds { param([int]$Seconds) [void]$script:log.Add("wait:$Seconds") }`;
 
 test('M1: Enable-DrillAdapters reads the adapters back; still Disabled or a throw counts as not enabled', opts, () => {
   const r = ps(`${netStubs({ enableThrows: ['Ethernet'], disabled: ['Ethernet', 'Wi-Fi'] })}
@@ -360,10 +360,11 @@ test('M1: the backstop action removes its task only once every adapter reads bac
   const stuck = action({ disabled: ['Wi-Fi'] });
   assert.ok(!stuck.some(l => l.startsWith('unregister')), stuck.join(' '));
   assert.ok(stuck.filter(l => l === 'enable:Wi-Fi').length > 1, `retries inside the action: ${stuck.join(' ')}`);
+  assert.deepEqual(stuck.filter(l => l.startsWith('wait:')), Array(5).fill('wait:10'));
   const thrown = action({ enableThrows: ['Ethernet'], disabled: ['Ethernet'] });
   assert.ok(!thrown.some(l => l.startsWith('unregister')), thrown.join(' '));
   const ok = action({});
-  assert.deepEqual(ok.filter(l => l.startsWith('unregister')), ['unregister:CluedFailoverDrillRestore-gen18-t']);
+  assert.deepEqual(ok.filter(l => l.startsWith('wait:') || l.startsWith('unregister')), ['unregister:CluedFailoverDrillRestore-gen18-t']);
 });
 
 test('M1: the backstop time trigger repeats every 2 minutes for a day, and there is a boot trigger', opts, () => {

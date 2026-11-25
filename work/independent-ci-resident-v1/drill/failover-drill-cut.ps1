@@ -71,12 +71,14 @@ function Enable-DrillAdapters([string[]]$Names) {
 function Get-DrillBackstopCommand([string]$TaskName, [string[]]$Names) {
   $quoted = @($Names | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ','
   $task = "'" + ($TaskName -replace "'", "''") + "'"
+  # 兜底动作在独立 PowerShell 进程运行，命令须自带等待函数。
+  "function Wait-DrillSeconds { ${function:Wait-DrillSeconds} }; " +
   "`$names = @($quoted); " +
   "for (`$i = 0; `$i -lt $($script:BackstopTries); `$i++) { " +
     "foreach (`$n in `$names) { try { Enable-NetAdapter -Name `$n -Confirm:`$false -ErrorAction Stop } catch { } }; " +
     "`$left = @(`$names | Where-Object { `$s = `$null; try { `$s = [string](Get-NetAdapter -Name `$_ -ErrorAction Stop).Status } catch { }; (`$null -eq `$s) -or (`$s -eq 'Disabled') }); " +
     "if (`$left.Count -eq 0) { Unregister-ScheduledTask -TaskName $task -Confirm:`$false; break }; " +
-    "Start-Sleep -Seconds 10 }"
+    "Wait-DrillSeconds 10 }"
 }
 # 到点触发（起每 2 分钟重复，持续 1 天）与开机触发。
 function New-DrillBackstopTriggers([datetime]$At) {
@@ -115,7 +117,7 @@ function Test-DrillConnectivity {
   } catch { $false } finally { $client.Dispose() }
 }
 function Get-DrillNow { [datetime]::UtcNow }
-function Wait-DrillSeconds([int]$Seconds) { Start-Sleep -Seconds $Seconds }
+function Wait-DrillSeconds { param([int]$Seconds) Start-Sleep -Seconds $Seconds }
 
 # --- 纯逻辑 ------------------------------------------------------------------
 function Get-DrillProp($Object, [string]$Name) {
