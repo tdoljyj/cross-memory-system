@@ -27,6 +27,7 @@ name: hosted-required
 # clued-work-admission.test.mjs); a main commit is not judged by these checks.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, closed]
     branches: [main]
   push:
     branches: [clued-train/staging]
@@ -40,6 +41,7 @@ concurrency:
 
 jobs:
   clued-cloud-tests-shard:
+    if: github.event.action != 'closed'
     name: ${{ format('hosted-clued-cloud-tests-shard-{0}', matrix.shard) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -176,7 +178,7 @@ jobs:
   clued-cloud-tests:
     name: hosted-clued-cloud-tests
     needs: clued-cloud-tests-shard
-    if: always()
+    if: always() && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
@@ -194,6 +196,7 @@ jobs:
           test "$RESULT" = success
 
   ci-suites-shard:
+    if: github.event.action != 'closed'
     # In shards (task 3435f8bf 件甲, PLAN-ci-p90-next-20261125 §3.1, the shape of FABLE-ci-duration-target-20261124 §2.5):
     # each shard runs the i-th of n parts of the same --run-selected plan (ci-required-selection.mjs --shard, from the
     # trusted base). The number of shards is written in the matrix list only. A shard's check name is
@@ -278,7 +281,7 @@ jobs:
   ci-suites:
     name: hosted-ci-suites
     needs: ci-suites-shard
-    if: always()
+    if: always() && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
@@ -296,6 +299,7 @@ jobs:
           test "$RESULT" = success
 
   migration-verify-shard:
+    if: github.event.action != 'closed'
     # In shards (task 3435f8bf 件甲, PLAN-ci-p90-next-20261125 §3.1, the shape of FABLE-ci-duration-target-20261124 §2.5):
     # each shard runs the i-th of n parts of the same --run-selected plan (ci-required-selection.mjs --shard, from the
     # trusted base). The number of shards is written in the matrix list only. A shard's check name is
@@ -375,7 +379,7 @@ jobs:
   migration-verify:
     name: hosted-migration-verify
     needs: migration-verify-shard
-    if: always()
+    if: always() && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
@@ -393,6 +397,7 @@ jobs:
           test "$RESULT" = success
 
   ci-suites-windows-shard:
+    if: github.event.action != 'closed'
     # The Windows suites in shards (task 3435f8bf block 4, PLAN-hosted-windows-speed-20261123 §3.2): one 4-core machine ran
     # them in 23-26 minutes; each shard runs the i-th of n parts of the same --run-selected plan (ci-required-selection.mjs
     # --shard, run from the trusted base like the rest). The number of shards is written in the matrix list only. A shard's
@@ -535,7 +540,7 @@ jobs:
   ci-suites-windows:
     name: hosted-ci-suites-windows
     needs: ci-suites-windows-shard
-    if: always()
+    if: always() && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
@@ -559,7 +564,7 @@ jobs:
   ci-suites-windows-duration:
     name: hosted-ci-suites-windows-duration
     needs: ci-suites-windows-shard
-    if: always()
+    if: always() && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -584,6 +589,7 @@ jobs:
   # The scans: the executor steps of gitleaks.yml, trivy.yml and contract-placement.yml from "Configure job temporary
   # storage" on, byte for byte, without the Native permission and relay identity steps (see the header).
   gitleaks:
+    if: github.event.action != 'closed'
     name: hosted-gitleaks
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -710,6 +716,7 @@ jobs:
             git /repo --config /repo/.gitleaks.toml --redact --no-banner --exit-code 1
 
   trivy:
+    if: github.event.action != 'closed'
     name: hosted-trivy
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -839,6 +846,7 @@ jobs:
             --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo
 
   contract-placement:
+    if: github.event.action != 'closed'
     name: hosted-contract-placement
     runs-on: ubuntu-24.04
     timeout-minutes: 15

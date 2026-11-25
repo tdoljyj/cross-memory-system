@@ -44,9 +44,10 @@ test('all original sources and complete successors roundtrip without losing byte
   assert.equal(restoreRetiredEntries(original,oldRoles).length,10);
   assert.equal(sources(original).length,75);
   delete original.workflows[REQUIRED_TESTS_SOURCE.file];
-  // Resident ADR 0032 step 2: the Windows side of the required tests is a later, additive Source with one primary
-  // Its current bytes export the trusted base from the local candidate object store (Task 04f9b91b).
-  const WINDOWS='.github/workflows/clued-required-tests-windows.yml',WINDOWS_BLOB='e726ce52cce5ea6dd1fed3b073a6d80eb3c46444';
+  // Resident ADR 0032 step 2: the Windows side of the required tests is a later, additive Source with one primary.
+  // The current Source exports the trusted base from the local candidate object store (Task 04f9b91b).
+  const WINDOWS='.github/workflows/clued-required-tests-windows.yml';
+  const WINDOWS_BLOB=workflowBlob(fs.readFileSync(new URL('../../'+WINDOWS,import.meta.url),'utf8'));
   assert.equal(original.workflows[WINDOWS].workflow_blob,WINDOWS_BLOB);assert.deepEqual(original.workflows[WINDOWS].primary_ids,['ci-suites-windows']);
   assert.equal(Object.hasOwn(original.workflows[WINDOWS],'execution_mode'),false);delete original.workflows[WINDOWS];
   const G4='.github/workflows/clued-g4-database.yml',G4_BLOB='d7876890a4df616fddae675c4d66737a70eb7045';
