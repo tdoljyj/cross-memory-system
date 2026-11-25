@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { checkDatabaseMaintenance } from './database-io-maintenance-db.case.mjs';
 import { checkWorkerDue } from './worker-due-db.case.mjs';
 
@@ -65,13 +64,6 @@ const API_ROLES = ['anon', 'authenticated'];
 const hash = () => crypto.randomBytes(32).toString('hex');
 const minus = (list, removed) => list.filter((entry) => !removed.includes(entry));
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 async function sourceFiles(directory, pattern) {
   const files = [];
@@ -140,14 +132,13 @@ test('database permission hygiene: exact privilege changes, Worker RPCs stay cal
   const clients = [];
   const startDatabase = async (label) => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), `clued-db-security-hygiene-${label}-`));
-    const server = new EmbeddedPostgres({
-      databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
+    const server = newCluster({
+      databaseDir: directory, user: 'postgres', password: hash(), 
       persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
       onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
     });
     servers.push({ server, directory });
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const db = server.getPgClient();
     clients.push(db);
     await db.connect();

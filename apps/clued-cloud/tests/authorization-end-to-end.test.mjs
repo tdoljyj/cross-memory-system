@@ -1,14 +1,13 @@
-import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, startCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import net from 'node:net';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { build, stop } from 'esbuild';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 
 // Real OAuth library -> application transport -> real migrated PostgreSQL.
@@ -26,18 +25,16 @@ class MemoryKV {
   async list({ prefix = '' } = {}) { return { keys: [...this.rows.keys()].filter(key => key.startsWith(prefix)).map(name => ({ name })), list_complete: true, cursor: '' }; }
 }
 test('OAuth consent, MCP record receipt, replay and revoke use the real database together', { timeout: 180000 }, async () => {
-  const listener = net.createServer(); await new Promise(r => listener.listen(0, '127.0.0.1', r));
-  const port = listener.address().port; await new Promise(r => listener.close(r));
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-authorization-e2e-'));
   await build({ entryPoints: ['worker/delegated-oauth.ts'], outdir: directory, bundle: true, platform: 'node', format: 'esm', outExtension: { '.js': '.mjs' }, plugins: [{ name: 'worker-runtime-only', setup(b) {
     b.onResolve({ filter: /^cloudflare:workers$/ }, () => ({ path: 'worker-runtime', namespace: 'fixture' }));
     b.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export class WorkerEntrypoint {}' }));
   } }] }); stop();
   const { handleDelegatedOAuth } = await import(pathToFileURL(path.join(directory, 'delegated-oauth.mjs')));
-  const server = new EmbeddedPostgres({ databaseDir: path.join(directory, 'db'), user: 'postgres', password: crypto.randomBytes(32).toString('hex'), port, persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(message + '\n'); } });
+  const server = newCluster({ databaseDir: path.join(directory, 'db'), user: 'postgres', password: crypto.randomBytes(32).toString('hex'), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(message + '\n'); } });
   const originalFetch = globalThis.fetch; const connections = [];
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     const db = server.getPgClient(); connections.push(db); await db.connect();
     await db.query(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls; create role authenticator nologin noinherit;
       create schema auth; create schema extensions; create extension pgcrypto with schema extensions;

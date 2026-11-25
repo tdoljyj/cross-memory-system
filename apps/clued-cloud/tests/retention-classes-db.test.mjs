@@ -14,16 +14,15 @@
 //     pending    { owner, expiresOn }: not decided yet; red after expiresOn (Asia/Shanghai date).
 // A schema with tables that neither list names, a table not declared, a declared table that no longer exists, a class
 // without its field and a lapsed pending entry all fail.
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REGISTRY = path.join(root, 'supabase/retention-classes.json');
@@ -100,23 +99,15 @@ function retentionErrors(registry, { tables, rules }, today = shanghaiToday()) {
   return errors;
 }
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const { port } = listener.address();
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 test('every table the migrations create declares its retention class', { timeout: 300000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-retention-classes-'));
-  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: crypto.randomUUID(),
-    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
+  const server = newCluster({ databaseDir: directory, user: 'postgres', password: crypto.randomUUID(),
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
   let db;
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     db = server.getPgClient();
     await db.connect();
     await db.query(`create role anon nologin; create role authenticated nologin;

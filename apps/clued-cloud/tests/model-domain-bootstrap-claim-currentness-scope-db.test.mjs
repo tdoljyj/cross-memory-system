@@ -1,12 +1,11 @@
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 
@@ -23,13 +22,6 @@ const signature = 'clued_private.model_domain_bootstrap_claim_candidate(text,pub
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
-async function freePort() {
-  const server = net.createServer();
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const port = server.address().port;
-  await new Promise(resolve => server.close(resolve));
-  return port;
-}
 
 test('Bootstrap claim admits a Global intent only with the same Binding actual Global read authority',
   { timeout: 300000 }, async t => {
@@ -41,12 +33,12 @@ test('Bootstrap claim admits a Global intent only with the same Binding actual G
   await fs.writeFile(path.join(directory, 'Ownership.json'), JSON.stringify(ownership), { flag: 'wx' });
   const oldTemp = Object.fromEntries(['TEMP', 'TMP', 'TMPDIR'].map(key => [key, process.env[key]]));
   for (const key of Object.keys(oldTemp)) process.env[key] = directory;
-  const server = new EmbeddedPostgres({ databaseDir: path.join(directory, 'database'), user: 'postgres',
-    password: hash(), port: await freePort(), persistent: true, createPostgresUser: false,
+  const server = newCluster({ databaseDir: path.join(directory, 'database'), user: 'postgres',
+    password: hash(), persistent: true, createPostgresUser: false,
     initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'], onLog() {}, onError() {} });
   let db, child;
   try {
-    await server.initialise(); await server.start(); child = server.process;
+    await startCluster(server); child = server.process;
     assert.ok(child?.pid);
     db = server.getPgClient('postgres', '127.0.0.1'); await db.connect();
     await db.query("set statement_timeout='10s'");

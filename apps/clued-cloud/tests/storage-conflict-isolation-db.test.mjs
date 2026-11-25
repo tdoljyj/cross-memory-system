@@ -1,16 +1,15 @@
 // issuer-credentials: disposable PostgreSQL only. Synthetic issuer credentials,
 // users and provider metadata exercise the actual migration and caller boundary;
 // no production connection, Google request, secret or file body is used.
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import net from 'node:net';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import {allowTestIssuerCredentials} from './issuer-credentials-fixture.mjs';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
 import {setWorkerGatewayCaller,assertGatewayCloseoutBoundary} from './worker-gateway-caller-fixture.mjs';
@@ -20,15 +19,14 @@ import {createGoogleDriveCreatePostconditionVerifier} from '../../../kernel/host
 import {build,stop} from 'esbuild';
 const cloud=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const id=()=>crypto.randomUUID(),sha=v=>crypto.createHash('sha256').update(v).digest('hex');
-async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 
 test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts',{timeout:240000},async t=>{
  const dir=await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()),'kooyumi-conflict-db-'));
- const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:sha(id()),port:await port(),persistent:true,
+ const server=newCluster({databaseDir:dir,user:'postgres',password:sha(id()),persistent:true,
   initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],onLog(){},onError(){}});
  const clients=[];let started=false;
  try{
-  await server.initialise();await server.start();started=true;
+  await startCluster(server);started=true;
   const db=server.getPgClient();clients.push(db);await db.connect();
   await db.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;
    create role authenticator nologin noinherit;create schema auth;create schema extensions;create extension pgcrypto with schema extensions;
