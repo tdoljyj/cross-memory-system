@@ -13,10 +13,18 @@ name: clued-front-main-merge-hosted
 #
 # Never a pull request event: this file and the script run from the default branch, with the clued-admission
 # environment's App key (deployment branches limited to main); the inputs are only a request, every fact is read again.
+#
+# hosted-required completing on any head, red or green, chooses again at once (PLAN-train-held-deadlock-20261125 §3.3): a red
+# front passes to the next candidate without waiting for the schedule. workflow_run runs this file and the script from the
+# default branch (github.ref is main) and uses nothing of the event. The schedule stays for what is decided by time (a front
+# idle for 15 minutes, a head quiet for 30 named) and for an event GitHub did not deliver.
 
 on:
   push:
     branches: [main]
+  workflow_run:
+    workflows: [hosted-required]
+    types: [completed]
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:

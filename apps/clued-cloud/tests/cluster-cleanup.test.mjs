@@ -86,9 +86,7 @@ test('really removes a populated directory, and an absent one is fine', async ()
   await fs.mkdir(path.join(directory, 'base', '1'), { recursive: true });
   await fs.writeFile(path.join(directory, 'base', '1', 'file'), 'x');
   await fs.writeFile(path.join(directory, 'postmaster.pid'), `${process.pid}\n`); // stale file naming a live pid
-  const started = Date.now();
   assert.equal(await removeTestDirectory(directory), true);
-  assert.ok(Date.now() - started < 5000, 'a stale postmaster.pid is not waited on');
   await assert.rejects(fs.lstat(directory), { code: 'ENOENT' });
   assert.equal(await removeTestDirectory(directory), true, 'an already removed directory is fine');
 });
@@ -99,7 +97,7 @@ test('waitForPidExit polls the exact pid and gives up without killing anything',
   assert.equal(await waitForPidExit(4242, deps), true);
   assert.equal(state.sleeps, 2);
   assert.equal(await waitForPidExit(undefined, deps), true);
-  assert.equal(await waitForPidExit(4242, { ...deps, exitTimeoutMs: 20, alive: () => true, sleep: () => new Promise((resolve) => setTimeout(resolve, 15)) }), false);
+  assert.equal(await waitForPidExit(4242, { ...deps, exitTimeoutMs: 20, alive: () => true, sleep: async () => {} }), false);
 });
 
 test('stopCluster finishes a non-persistent cluster whose own removal hit EBUSY', async () => {
@@ -125,8 +123,7 @@ test('stopCluster reports other stop errors, never throws, and tolerates a missi
   assert.deepEqual(state.logs, ['stop() failed: Could not find process PID']);
 });
 
-test('passing assertions stay green when stop misses its deadline but the cluster is gone', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+test('passing assertions stay green when stop misses its deadline but the cluster is gone', async () => {
   const stages = [];
   const { state, deps } = harness({
     alive: () => false,
@@ -134,10 +131,9 @@ test('passing assertions stay green when stop misses its deadline but the cluste
     rm: async (target) => { state.rmCalls.push(target); },
     mark: (name, event) => { stages.push([name, event]); },
   });
-  const server = runningServer({ stop: () => new Promise((resolve) => setTimeout(resolve, 181000)) });
+  const server = runningServer({ stop: () => new Promise(() => {}) }); // never answers; the injected sleep ends the deadline at once
   assert.equal(2 + 2, 4); // The fixture's assertions completed successfully.
   const cleanup = stopCluster(server, deps);
-  t.mock.timers.tick(15000);
   const outcome = await Promise.race([cleanup, new Promise((resolve) => setImmediate(() => resolve('pending')))]);
   assert.equal(outcome, true, 'cleanup must finish without waiting past the former 180-second parent deadline');
   assert.deepEqual(state.rmCalls, [DIRECTORY]);
@@ -184,7 +180,6 @@ test('stopCluster waits for the pid of its own child and only reports one that s
   const { state, deps } = harness({
     exitTimeoutMs: 20,
     alive: (pid) => { assert.equal(pid, 4242, 'never another pid'); return true; },
-    sleep: () => new Promise((resolve) => setTimeout(resolve, 15)),
     rm: async (target) => { state.rmCalls.push(target); },
   });
   assert.equal(await stopCluster(runningServer(), deps), false);

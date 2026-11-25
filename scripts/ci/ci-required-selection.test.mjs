@@ -2620,6 +2620,31 @@ async function shardRun(suites, shard, env) {
   return calls;
 }
 
+async function assertShardsRunPlanOnce(suites, totals, env) {
+  const plan = await shardRun(suites, null, env);
+  const planUnits = shardUnits(plan);
+  for (const total of totals) {
+    const shards = [];
+    for (let index = 1; index <= total; index += 1) shards.push(await shardRun(suites, { index, total }, env));
+    if (total === 1) assert.deepEqual(shards[0], plan, `1/1 runs today's plan command for command (${suites.join(' ')})`);
+    const units = shards.map(shardUnits);
+    // Each unit once: no shard leaves one out, no two shards run the same one.
+    assert.deepEqual(units.flat().sort(), [...planUnits].sort(), `the ${total} shards of ${suites.join(' ')} run the plan's units once`);
+    for (const part of units) {
+      let at = 0;
+      for (const unit of part) {
+        while (at < planUnits.length && planUnits[at] !== unit) at += 1;
+        assert.ok(at < planUnits.length, `a shard runs ${unit} out of the plan's order`);
+        at += 1;
+      }
+    }
+    if (planUnits.length >= total * 4) {
+      const sizes = units.map((part) => part.length);
+      assert.ok(Math.min(...sizes) > 0, `every one of ${total} shards runs something: ${sizes}`);
+    }
+  }
+}
+
 test('--shard i/n: the shards together run every unit of the plan once, in its order; 1/1 is the plan as it runs today', async (t) => {
   const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
@@ -2628,29 +2653,22 @@ test('--shard i/n: the shards together run every unit of the plan once, in its o
   // Any selection: every suite, one suite, and orders that put the listing suites at other places.
   const selections = [all, ['resident-node'], [...all].reverse(), all.filter((id, i) => i % 3 !== 1),
     ['offline-drill', 'selection', 'retrigger-counter']];
-  for (const suites of selections) {
-    const plan = await shardRun(suites, null, env);
-    const planUnits = shardUnits(plan);
-    for (const total of [1, 2, 3, 4, 7]) {
-      const shards = [];
-      for (let index = 1; index <= total; index += 1) shards.push(await shardRun(suites, { index, total }, env));
-      if (total === 1) assert.deepEqual(shards[0], plan, `1/1 runs today's plan command for command (${suites.join(' ')})`);
-      const units = shards.map(shardUnits);
-      // Each unit once: no shard leaves one out, no two shards run the same one.
-      assert.deepEqual(units.flat().sort(), [...planUnits].sort(), `the ${total} shards of ${suites.join(' ')} run the plan's units once`);
-      for (const part of units) {
-        let at = 0;
-        for (const unit of part) {
-          while (at < planUnits.length && planUnits[at] !== unit) at += 1;
-          assert.ok(at < planUnits.length, `a shard runs ${unit} out of the plan's order`);
-          at += 1;
-        }
-      }
-      if (planUnits.length >= total * 4) {
-        const sizes = units.map((part) => part.length);
-        assert.ok(Math.min(...sizes) > 0, `every one of ${total} shards runs something: ${sizes}`);
-      }
-    }
+  for (const suites of selections) await assertShardsRunPlanOnce(suites, [1, 2, 3, 4, 7], env);
+});
+
+// Task 3435f8bf (PLAN-ci-p90-next-20261125 §3.1): the hosted shard jobs' own plans at the shard counts of their matrices
+// (hosted-required.yml; hosted-required.test.mjs pins the counts): hosted-migration-verify runs the whole migration-verify
+// selection in 4, hosted-ci-suites the Linux ci-suites selection in 3, hosted-ci-suites-windows the Windows one in 6.
+test('--shard: the hosted plans at their shard counts (migration-verify 4, Linux ci-suites 3, Windows ci-suites 6) run every unit once', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp };
+  const plans = [['migration-verify', 'linux', 4], ['ci-suites', 'linux', 3], ['ci-suites', 'win32', 6]];
+  for (const [check, platform, total] of plans) {
+    const { suites } = selectSuites(check, null, platform);
+    assert.ok(suites.length > 0, `${check} on ${platform} selects something`);
+    if (check === 'migration-verify') assert.deepEqual(suites, ['production-schema']);
+    await assertShardsRunPlanOnce(suites, [total], env);
   }
 });
 

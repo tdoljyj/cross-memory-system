@@ -5,6 +5,12 @@
 //   {"type":"fail","file":<abs>,"path":[names...],"failure_type":...,"fingerprint":...,"ms":...?}
 //   {"type":"pass","file":<abs>,"path":[names...],"skip":true?,"ms":...?}   (skip only for a skipped test)
 //   {"type":"summary","counts":{...},"success":bool}   (the run's own summary)
+//   {"type":"begin"|"end","file":<abs>|null,"nesting":n,"name":...}   (Node's test:dequeue / test:complete)
+// begin and end come as Node runs the tests, not in report order, and Node sends
+// both for each test file itself (its name is the file's path): what began and
+// did not end when the entry ended a command at its limit is what hung there
+// (ci-required-selection.mjs unfinishedTests). What decides a command reads
+// only the other lines.
 // Every test:fail counts: a test, a suite, a hook (failure_type hookFailed), a
 // parent that throws after its subtests, a file that fails to load. So does
 // an error from asynchronous activity after a test ended (an uncaught
@@ -84,6 +90,8 @@ export default async function* reporter(source) {
       // A skipped test is reported as passed by Node; it did not run (a failure run alone again must run).
       const skipped = data.skip !== undefined && data.skip !== false;
       yield `${JSON.stringify({ type: 'pass', file: data.file ?? null, path: pathOf(data), ...(skipped ? { skip: true } : {}), ...timed(data) })}\n`;
+    } else if (event.type === 'test:dequeue' || event.type === 'test:complete') {
+      yield `${JSON.stringify({ type: event.type === 'test:dequeue' ? 'begin' : 'end', file: data.file ?? null, nesting: data.nesting, name: data.name })}\n`;
     } else if (event.type === 'test:summary' && data.file === undefined) {
       yield `${JSON.stringify({ type: 'summary', counts: data.counts ?? null, success: data.success === true })}\n`;
     }

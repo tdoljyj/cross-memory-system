@@ -159,7 +159,7 @@ const AUTHORIZATION_DB_TESTS = [
 // inputs (ci-required-selection.test.mjs checks that every file a database test imports is listed here). The worker's
 // own files only (worker/*): worker/generated is rewritten by every component bump, and those version strings are
 // not what these tests check.
-const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/tests/fixtures/integration-runtime/**',
+const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 'scripts/ci/test-clock-guard.mjs', 'scripts/ci/test-clock-imports.mjs', 'apps/clued-cloud/tests/fixtures/integration-runtime/**',
   'apps/clued-cloud/tests/ci-connection-renew-db.test.mjs',
   'apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
   'apps/clued-cloud/tests/*fixture*.mjs', 'apps/clued-cloud/tests/*.case.mjs', 'apps/clued-cloud/tests/worker/**',
@@ -212,7 +212,8 @@ export const SUITES = {
     // the classifier, selects it.
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/test-clock-scan.mjs', 'scripts/ci/test-clock-guard.mjs',
       'scripts/ci/test-clock-imports.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
-      'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/local-suite-slots.mjs',
+      'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/ci-required-selection-timeout.test.mjs',
+      'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
       'scripts/ci/check-tests-covered.mjs', 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-shard-seconds.json',
@@ -359,7 +360,8 @@ export const SUITE_COMMANDS = {
   'ci-deps-entry': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-deps.test.mjs', 'scripts/ci/check-ci-deps-entry.test.mjs'] },
     { cwd: '.', argv: ['node', 'scripts/ci/check-ci-deps-entry.mjs', '--base', '{base}'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
-    'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/local-verify.test.mjs',
+    'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/ci-required-selection-timeout.test.mjs',
+    'scripts/ci/local-verify.test.mjs',
     'scripts/ci/local-verify-concurrency.test.mjs'] }],
   'clued-cloud': [
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'lint'] },
@@ -1299,6 +1301,36 @@ export const RERUN_MAX_FILES = 2;
 export const RERUN_MAX_ELAPSED_MS = 10 * 60_000;
 export const RERUN_MIN_TIMEOUT_MS = 2 * 60_000;
 const isNodeTest = (argv) => argv[0] === 'node' && argv.includes('--test');
+
+// One limit at the entry (FABLE-flaky-four-replan-20261124 §2; PLAN-ci-p90-next-20261125 补充裁定, task 3435f8bf): a test or
+// command that hangs fails with its name, not at the job's limit (90 minutes hosted, 45 on a node's Windows job, 30 for
+// migration-verify) with none. executeSuite starts the first run of every command (node --test, the run-tests wrapper, any
+// other) with COMMAND_TIMEOUT_MS and ends it with SIGKILL: Windows ends a process outright anyway, and on POSIX a SIGTERM would
+// let Node cancel gracefully and end what had begun, so the two would differ. The command line stays as it is. Node times
+// each test (--test-timeout) but never a test file (its FileTest has no timeout), so the limit is the whole command's and,
+// for a node --test command with the trusted reporter, the entry then names each file and test that began and did not end:
+// the reporter writes Node's test:dequeue and test:complete, which reach it as they happen (not in report order), and the
+// parent sends both for each file itself, so a file that hangs is named even when its process sent nothing
+// (unfinishedTests). 25 minutes: 1.5 times the longest step of a passing job (987 s), above the one command of the 11-23
+// slow window (1287 s), and still named before migration-verify's 30 minutes for a command that starts early in the job. It
+// catches a hang; it is not a speed gate.
+export const COMMAND_TIMEOUT_MS = 25 * 60_000;
+const UNFINISHED_SHOWN = 20;
+const limitText = (ms) => (ms >= 60_000 ? `${Math.round(ms / 60_000)} 分钟` : `${ms / 1000} 秒`);
+// The files and tests a report (the trusted reporter's lines) began and did not end, in the order each first appears: per
+// (file, nesting, name), more begin lines than end lines. A line cut off by the kill ends the reading (readReport).
+export function unfinishedTests(text, root) {
+  const open = new Map();
+  for (const event of readReport(text, root).events) {
+    if (event.type !== 'begin' && event.type !== 'end') continue;
+    const at = { file: event.file ?? null, nesting: event.nesting ?? null, name: event.name ?? null };
+    const key = JSON.stringify([at.file, at.nesting, at.name]);
+    const entry = open.get(key) ?? { at, count: 0 };
+    entry.count += event.type === 'begin' ? 1 : -1;
+    open.set(key, entry);
+  }
+  return [...open.values()].filter((entry) => entry.count > 0).map((entry) => entry.at);
+}
 function withReporter(argv, out) {
   const index = argv.indexOf('--test');
   // The reporter comes from this file's (trusted base) checkout.
@@ -1459,7 +1491,8 @@ function clockRun(id, root, env) {
 // The CI process or the already guarded worker executes the suite here.
 export function executeSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
   captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : ''),
-  rerunMaxElapsedMs = RERUN_MAX_ELAPSED_MS, rerunMinTimeoutMs = RERUN_MIN_TIMEOUT_MS, shard = null, shardSecondsFile = SHARD_SECONDS_PATH } = {}) {
+  rerunMaxElapsedMs = RERUN_MAX_ELAPSED_MS, rerunMinTimeoutMs = RERUN_MIN_TIMEOUT_MS, shard = null, shardSecondsFile = SHARD_SECONDS_PATH,
+  commandTimeoutMs = COMMAND_TIMEOUT_MS } = {}) {
   const host = hostLacks(env);
   if (host.error) {
     log(`::error title=${id}::${host.error}`);
@@ -1560,7 +1593,8 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
     const run = resolveCommand(argv, { platform });
     const clock = clockRun(id, root, env);
     const started = performance.now();
-    const result = spawn(run[0], run.slice(1), { cwd, env: { ...testEnv(env), ...clock.env }, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
+    const result = spawn(run[0], run.slice(1), { cwd, env: { ...testEnv(env), ...clock.env }, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit',
+      timeout: commandTimeoutMs, killSignal: 'SIGKILL' });
     const elapsed = performance.now() - started;
     if (command.quiet && result.stdout) {
       // The runner budget report is long; print its head on success, all of it on failure.
@@ -1574,6 +1608,26 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
         const timed = shardSecondsOf(readReport(readReportFile(path.join(reportDir, 'failures.jsonl')), root), part.files);
         log(`${id}: shard-seconds ${JSON.stringify(timed)}`);
       } catch { /* no seconds this run */ }
+    }
+    // At the limit (COMMAND_TIMEOUT_MS) the command fails, a known-failure command too (no verdict), with what never ended.
+    if (result.error?.code === 'ETIMEDOUT') {
+      log(`::error::${id}: ${shown.join(' ')} 超过 ${limitText(commandTimeoutMs)}被终止`);
+      if (reportDir) {
+        let open = [];
+        try {
+          open = unfinishedTests(readReportFile(path.join(reportDir, 'failures.jsonl')), root);
+        } catch (error) {
+          log(`${id}: the test report cannot be read (${error?.message ?? error})`);
+        }
+        for (const entry of open.slice(0, UNFINISHED_SHOWN)) log(`::error title=${id} 开始了没结束::${entry.file ?? '<run>'} :: ${entry.name}`);
+        if (open.length > UNFINISHED_SHOWN) log(`${id}: 另有 ${open.length - UNFINISHED_SHOWN} 条开始了没结束`);
+        try {
+          rmSync(reportDir, { recursive: true, force: true });
+        } catch { /* a temporary directory left behind */ }
+      } else {
+        log(`${id}: 本命令无受信报告，列不出用例`);
+      }
+      return 1;
     }
     if (result.error) {
       dropReport();
