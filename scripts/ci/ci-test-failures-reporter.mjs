@@ -7,6 +7,7 @@
 //   {"type":"summary","counts":{...},"success":bool}   (the run's own summary)
 //   {"type":"begin"|"end","file":<abs>|null,"nesting":n,"name":...,"ms":...?,"wallFile":<abs>?}
 //      (Node's test:dequeue / test:complete, wallFile only on a file's completion)
+//   {"type":"metronome","n":<samples>,"median_ms":<number>|null}   (null if the run ended before the first tick)
 // begin and end come as Node runs the tests, not in report order, and Node sends
 // both for each test file itself (its name is the file's path): what began and
 // did not end when the entry ended a command at its limit is what hung there
@@ -62,7 +63,36 @@ export function failureFingerprint(error) {
 // A top-level test's duration as {ms}, or nothing.
 const timed = (data) => (data.nesting === 0 && Number.isFinite(data.details?.duration_ms) ? { ms: Math.round(data.details.duration_ms) } : {});
 
-export default async function* reporter(source) {
+const METRONOME_INPUT = Buffer.alloc(64 * 1024);
+
+export function metronomeWorkload() {
+  let digest = Buffer.alloc(0);
+  for (let round = 0; round < 640; round += 1) {
+    digest = createHash('sha256').update(METRONOME_INPUT).update(digest).digest();
+  }
+  return digest;
+}
+
+export default async function* reporter(source, { workload = metronomeWorkload } = {}) {
+  const samples = [];
+  const timer = setInterval(() => {
+    const start = performance.now();
+    workload();
+    samples.push(performance.now() - start);
+  }, 5_000).unref();
+  try {
+    yield* testEvents(source);
+  } finally {
+    clearInterval(timer);
+  }
+  samples.sort((a, b) => a - b);
+  const n = samples.length;
+  const middle = Math.floor(n / 2);
+  const median_ms = n === 0 ? null : (samples[Math.floor((n - 1) / 2)] + samples[middle]) / 2;
+  yield `${JSON.stringify({ type: 'metronome', n, median_ms })}\n`;
+}
+
+async function* testEvents(source) {
   const stacks = new Map();
   const pathOf = (data) => {
     const stack = stacks.get(data.file) ?? [];

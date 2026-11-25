@@ -3181,9 +3181,9 @@ test('--shard by seconds: a listing command says how much of the table it hit an
   assert.equal(code, 0);
   const text = lines.join('\n');
   assert.match(text, new RegExp(`admission-self-tests: 按秒数分片，表里命中 2 / 本命令 ${files.length} 个文件`));
-  const logged = lines.filter((line) => line.startsWith('admission-self-tests: shard-seconds '));
+  const logged = lines.filter((line) => line.startsWith('admission-self-tests: file-seconds '));
   assert.equal(logged.length, 1);
-  assert.deepEqual(JSON.parse(logged[0].slice('admission-self-tests: shard-seconds '.length)), { [files[0]]: 1.8, [files[1]]: 2 });
+  assert.equal(logged[0], `admission-self-tests: file-seconds ${JSON.stringify({ [files[0]]: 1.8, [files[1]]: 2 })} metronome null`);
   // The suite's first line names the table it read, so the shards' logs show they read the same one.
   assert.match(lines[0], /^admission-self-tests: shard 1\/1; 按秒数分片，表 3 条（[0-9a-f]{12}）$/);
 });
@@ -3196,7 +3196,7 @@ test('--write-shard-seconds: the median of each file\'s samples in the shard log
   writeFileSync(one, ['2026-11-24T02:00:00.0000000Z resident-node: shard 1/4, units numbered from 3; 按秒数分片，表 0 条（e3b0c44298fc）',
     '2026-11-24T02:03:00.0000000Z resident-node: shard-seconds {"w/z.test.mjs":10,"w/b.test.mjs":2,"w/d.test.mjs":4}',
     'some other line: shard-seconds are fun', '2026-11-24T02:04:00.0000000Z selection: shard-seconds {"s/c.test.mjs":3.4}'].join('\r\n'));
-  writeFileSync(two, ['resident-node: shard-seconds {"w/z.test.mjs":30,"w/b.test.mjs":2.9,"w/d.test.mjs":5}',
+  writeFileSync(two, ['resident-node: file-seconds {"w/z.test.mjs":30,"w/b.test.mjs":2.9,"w/d.test.mjs":5} metronome 25.5',
     'resident-node: shard-seconds {"w/z.test.mjs":20}'].join('\n'));
   const out = path.join(temp, 'table.json');
   writeFileSync(out, '{"old/gone.test.mjs":50}\n');
@@ -3231,7 +3231,10 @@ test('the reporter gives a top-level test its whole milliseconds (ms), a nested 
     yield { type: 'test:pass', data: { file, nesting: 0, name: 'skipped', skip: true, details: { duration_ms: 0.2 } } };
   }
   const lines = [];
-  for await (const line of reporterStream(source())) lines.push(JSON.parse(line));
+  for await (const line of reporterStream(source())) {
+    const event = JSON.parse(line);
+    if (event.type === 'pass' || event.type === 'fail') lines.push(event);
+  }
   assert.deepEqual(lines.map(({ path: at, ms }) => [at.join(' > '), ms]),
     [['top > inner', undefined], ['top', 1234], ['bad', 100], ['skipped', 0]]);
 });
@@ -3247,7 +3250,7 @@ test('the reporter uses the file wall clock ahead of the sum of its tests', asyn
   for await (const line of reporterStream(source)) lines.push(line);
   const report = readReport(lines.join(''), ROOT);
   assert.equal(selection.shardSecondsOf(report, new Set(['shard-timing.test.mjs']))['shard-timing.test.mjs'], 5);
-  assert.equal(JSON.parse(lines.at(-1)).ms, 5000);
+  assert.equal(report.events.find((event) => event.wallFile === 'shard-timing.test.mjs').ms, 5000);
 });
 
 test('--write-shard-seconds takes the median of three whole-command samples', (t) => {
