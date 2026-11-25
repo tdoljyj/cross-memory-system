@@ -84,9 +84,28 @@ export const POST_RETRY_MS = 2 * 60_000;
 // rows (PR, head, state, reason, next time, watched, lease end, network, the deferral holding the row), whether the parking places
 // are full, whether a daily budget is used up, and a global deferral of the scheduling pass.
 export const REPORT_MIN_GAP_MS = 5_000;
+const isHeldPull = pull => !pull.eligible && Object.hasOwn(HELD_TEXTS, pull.hint);
+
+// A missing compare leaves the same PR head's last known hint in the signature.
+// The successful poll still tells us which heads are present and what it learned about the others.
+export function heldPullsAfterPoll(previous, pulls) {
+  if (!Array.isArray(pulls)) return previous;
+  const previouslyHeld = new Map(previous.map(pull => [pull.pr, pull]));
+  const held = [];
+  for (const pull of pulls) {
+    if (isHeldPull(pull)) {
+      held.push(pull);
+    } else if (pull.hint === 'compare-unavailable') {
+      const prior = previouslyHeld.get(pull.pr);
+      if (prior && prior.headSha === pull.headSha) held.push(prior);
+    }
+  }
+  return held;
+}
+
 export function statusSignature(status, pulls) {
   // Only hints the gate can read count. Sort the tuples so poll order does not matter; the minute pass updates behindBy.
-  const held = Array.isArray(pulls) ? pulls.filter(p => !p.eligible && Object.hasOwn(HELD_TEXTS, p.hint))
+  const held = Array.isArray(pulls) ? pulls.filter(isHeldPull)
     .map(p => [p.pr, p.headSha, p.hint]).sort() : [];
   if (!status || typeof status !== 'object') return held.length ? canonicalJson({ held }) : null;
   const c = status.current;

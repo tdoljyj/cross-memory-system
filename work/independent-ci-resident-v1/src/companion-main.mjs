@@ -19,7 +19,7 @@ import { Poller } from './poller.mjs';
 import { Inbox } from './inbox.mjs';
 import os from 'node:os';
 import { readStatus, pollerLandingOf } from './status.mjs';
-import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, reportDue, statusSignature, toastArgv, validateStatusConfig } from './pr-status.mjs'; // toastArgv: the tests' fallback in companionHeartbeat only
+import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, heldPullsAfterPoll, reportDue, statusSignature, toastArgv, validateStatusConfig } from './pr-status.mjs'; // toastArgv: the tests' fallback in companionHeartbeat only
 import { companionBackstop } from './ruleset-backstop.mjs';
 import { NODE_STATUS_FILE, readCapacityAlert, resourceHoldAlert } from './host-capacity.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
@@ -108,17 +108,17 @@ export function within(promise, ms, { schedule = setTimeout, cancel = clearTimeo
 // the tests run the very poller and lanes main() runs. The poll lane (f79929d9) has its own Runner, pollRunner, and the Poller is
 // built here on it (every gh read of the poll runs there): a retention notice, a bundle retention, a backstop or a PR page pass that
 // does not return, or an advisory child that never ended, delays only the advisory lane, never finding a new PR head. The PR page
-// and the re-run lane use poller.lastPass; a failed poll contributes no heads to the report signature. -> { poller, lanes }
+// and the re-run lane use poller.lastPass; the report signature uses the last known held heads. -> { poller, lanes }
 // writeTrigger(v): the inbox drop box; readStatus(): the executor's status board; pruneOldBundles(), backstop(): one bundle retention
 // and one ruleset backstop pass.
 // One pass of the poll lane (f79929d9): the executor's status board read (at most POLL_STATUS_READ_MS, never a second read on top of
 // an outstanding one), the PR pass on it, then one sleeping batch observed (poller.parkedPass, the rows of that read). Exported so the
 // train's property test runs the very pass main() runs (task bd07449b r2). -> { work(): one pass, status(): what the last pass's status
-// read gave (null: not read within POLL_STATUS_READ_MS, or unreadable), signaturePulls(): the last attempt's pull list, or null }
+// read gave (null: not read within POLL_STATUS_READ_MS, or unreadable), signaturePulls(): the last known held heads }
 export function pollLane({ poller, readStatus, schedule = setTimeout, cancel = clearTimeout }) {
   let statusRead = null; // the status read while it is outstanding
   let passStatus = null;
-  let signaturePulls = null;
+  let signaturePulls = [];
   return {
     status: () => passStatus,
     signaturePulls: () => signaturePulls,
@@ -129,10 +129,9 @@ export function pollLane({ poller, readStatus, schedule = setTimeout, cancel = c
       try {
         await poller.pass({ generation: status?.queue?.generation ?? null });
       } catch {
-        signaturePulls = null;
         return;
       }
-      signaturePulls = poller.lastPass?.pulls ?? null;
+      signaturePulls = heldPullsAfterPoll(signaturePulls, poller.lastPass?.pulls);
       try { await poller.parkedPass(status?.pending ?? []); } catch { /* next pass */ }
     },
   };

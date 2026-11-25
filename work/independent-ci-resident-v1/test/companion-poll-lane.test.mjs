@@ -162,7 +162,7 @@ test('H-2: a change in behindBy alone waits for the minute report', async t => {
   assert.equal(pass.mock.calls[1].arguments[0].pulls[0].behindBy, 4);
 });
 
-test('H-3: an empty lastPass and a failed poll leave the regular reports running', async t => {
+test('H-3: failed polls before the first success leave the regular reports running', async t => {
   const ft = fakeTime(T0);
   t.mock.method(Date, 'now', ft.clock);
   const c = await companionParts(t, ft, { behindBy: 3 });
@@ -175,22 +175,79 @@ test('H-3: an empty lastPass and a failed poll leave the regular reports running
 
   await ft.runUntil(T0 + 15_000);
   c.pulls.push(pull(1308, 'c'.repeat(40)));
+  const fail = t.mock.method(c.parts.pollRunner, 'run', async () => ({ code: 1, stdout: '' }));
   await poll.work();
-  const lastPass = poller.lastPass;
-  assert.equal(lastPass.pulls[0].hint, 'merge-main');
+  assert.ok(fail.mock.callCount() > 0);
+  assert.equal(poller.lastPass, null);
+  await report.work();
+  assert.equal(pass.mock.callCount(), 1);
 
-  await ft.runUntil(T0 + 30_000);
+  await ft.runUntil(T0 + 60_001);
+  await report.work();
+  assert.equal(pass.mock.callCount(), 2);
+  assert.deepEqual(pass.mock.calls[1].arguments[0].pulls, []);
+});
+
+test('H-4: a failed poll and its recovery do not report an unchanged held head again', async t => {
+  const ft = fakeTime(T0);
+  t.mock.method(Date, 'now', ft.clock);
+  const c = await companionParts(t, ft, { behindBy: 3 });
+  c.pulls.push(pull(1309, 'a'.repeat(40)));
+  const { poller, lanes: [poll, report] } = advisoryLanes(c.parts);
+  const pass = t.mock.method(c.parts.reporter, 'pass');
+  await poll.work();
+  await report.work();
+  const lastPass = poller.lastPass;
+  assert.equal(pass.mock.callCount(), 1);
+  assert.equal(pass.mock.calls[0].arguments[0].pulls[0].hint, 'merge-main');
+
+  await ft.runUntil(T0 + 15_000);
   const fail = t.mock.method(c.parts.pollRunner, 'run', async () => ({ code: 1, stdout: '' }));
   await poll.work();
   assert.ok(fail.mock.callCount() > 0);
   assert.equal(poller.lastPass, lastPass);
   await report.work();
-  assert.equal(pass.mock.callCount(), 1, 'a failed poll does not trigger a report for the cached heads');
+  const afterFailure = pass.mock.callCount();
 
-  await ft.runUntil(T0 + 60_001);
+  await ft.runUntil(T0 + 30_000);
+  fail.mock.restore();
+  await poll.work();
+  assert.notEqual(poller.lastPass, lastPass);
+  assert.equal(poller.lastPass.pulls[0].hint, 'merge-main');
   await report.work();
-  assert.equal(pass.mock.callCount(), 2);
-  assert.deepEqual(pass.mock.calls[1].arguments[0].pulls, lastPass.pulls);
+  assert.deepEqual([afterFailure, pass.mock.callCount()], [1, 1], 'report counts after failure and recovery');
+});
+
+test('H-5: compare-unavailable and its recovery do not report an unchanged held head again', async t => {
+  const ft = fakeTime(T0);
+  t.mock.method(Date, 'now', ft.clock);
+  const c = await companionParts(t, ft, { behindBy: 3 });
+  c.pulls.push(pull(1310, 'b'.repeat(40)));
+  const { poller, lanes: [poll, report] } = advisoryLanes(c.parts);
+  const pass = t.mock.method(c.parts.reporter, 'pass');
+  await poll.work();
+  await report.work();
+  assert.equal(pass.mock.callCount(), 1);
+  assert.equal(pass.mock.calls[0].arguments[0].pulls[0].hint, 'merge-main');
+
+  await ft.runUntil(T0 + 15_000);
+  c.gh.main = 'e'.repeat(40);
+  const run = c.parts.pollRunner.run;
+  const timeout = t.mock.method(c.parts.pollRunner, 'run', (argv, opts) =>
+    argv.some(a => a.includes('/compare/')) ? { timedOut: true } : run(argv, opts));
+  await poll.work();
+  assert.equal(poller.lastPass.pulls[0].hint, 'compare-unavailable');
+  await report.work();
+  const afterTimeout = pass.mock.callCount();
+
+  await ft.runUntil(T0 + 30_000);
+  timeout.mock.restore();
+  // A new main tip allows a fresh compare within the report window.
+  c.gh.main = 'f'.repeat(40);
+  await poll.work();
+  assert.equal(poller.lastPass.pulls[0].hint, 'merge-main');
+  await report.work();
+  assert.deepEqual([afterTimeout, pass.mock.callCount()], [1, 1], 'report counts after compare timeout and recovery');
 });
 
 test('a retention notice that never returns: a new PR head is in the inbox within 15 s (fake clock) and one poll', async t => {

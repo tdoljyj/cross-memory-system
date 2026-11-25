@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { RunQueue } from '../src/queue.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
-import { LocalStore, POST_RETRY_MS, PrStatusReporter, WATCHDOG_STALE_TEXT, describe, events, statusSignature } from '../src/pr-status.mjs';
+import { LocalStore, POST_RETRY_MS, PrStatusReporter, WATCHDOG_STALE_TEXT, describe, events, heldPullsAfterPoll, statusSignature } from '../src/pr-status.mjs';
 import { nodeContext, parseDutyStatus } from '../src/node-duty.mjs';
 import { rulesReply, tempRoot } from './helpers.mjs';
 
@@ -67,6 +67,20 @@ test('the status signature tracks only PR number, head and hint for reportable h
   assert.equal(statusSignature(status, [{ ...behind, hint: 'compare-unavailable' }, pull]), empty);
   assert.equal(statusSignature(null, null), null);
   assert.notEqual(statusSignature(null, [behind]), null);
+});
+
+test('an unavailable compare keeps only the matching held head while the poll updates other PRs', () => {
+  const previous = [1, 2, 3, 4].map(pr => ({ pr, headSha: H(pr), eligible: false, hint: 'merge-main' }));
+  const [sameHead, replaced, nowEligible] = previous;
+  const newlyHeld = { pr: 5, headSha: H(5), eligible: false, hint: 'push-any-commit' };
+  const pulls = [
+    { ...sameHead, hint: 'compare-unavailable' },
+    { ...replaced, headSha: H(6), hint: 'compare-unavailable' },
+    { ...nowEligible, eligible: true, hint: null },
+    newlyHeld,
+  ];
+  assert.deepEqual(heldPullsAfterPoll(previous, pulls), [sameHead, newlyHeld]);
+  assert.deepEqual(heldPullsAfterPoll(previous, []), []);
 });
 
 test('a write lost to the outage is tried again at the next pass once the text changed; the same text after POST_RETRY_MS', async t => {
