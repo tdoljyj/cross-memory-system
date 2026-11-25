@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, copyFileSync, chmodSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -78,9 +78,9 @@ function commit(dir, files, message) {
 const parents = (dir, sha) => git(dir, 'log', '-1', '--format=%P', sha).split(' ').length;
 
 // main moves k.js to 2, the branch to 3, the branch merges main and its author resolves the conflict with `resolution`.
-function conflictMerge(resolution) {
+function conflictMerge(resolution, baseFiles = {}) {
   const dir = repo();
-  commit(dir, { 'src/k.js': 'const k = 1;\n' }, 'base');
+  commit(dir, { 'src/k.js': 'const k = 1;\n', ...baseFiles }, 'base');
   git(dir, 'checkout', '-q', '-b', 'work');
   commit(dir, { 'src/k.js': 'const k = 3;\n' }, 'branch change');
   git(dir, 'checkout', '-q', 'main');
@@ -247,8 +247,8 @@ test('the gitleaks job runs the trusted range script over the change, from a fre
   const job = jobs.gitleaks;
   const checkout = step(job, 'Check out the candidate');
   assert.equal(checkout.with['fetch-depth'], 0);
-  const trusted = job.steps.find((s) => s.with?.path === 'trusted');
-  assert.equal(trusted.with.ref, jobs['clued-cloud-tests'].steps.find((s) => s.with?.path === 'trusted').with.ref);
+  const trusted = step(job, 'Export the trusted base (scanner script and configuration)');
+  assert.equal(trusted.env.TRUSTED_REF, step(jobs['clued-cloud-tests'], 'Export the trusted base (selection and commands)').env.TRUSTED_REF);
   const scan = step(job, 'Scan the changed range with Gitleaks 8.30.1').run;
   assert.match(scan, /bash trusted\/scripts\/ci\/gitleaks-range\.sh "\$scan\/repo" "\$BASE" "\$HEAD" -- \\\n/);
   assert.match(scan, /--network=none/);
@@ -261,7 +261,7 @@ test('the gitleaks job runs the trusted range script over the change, from a fre
   assert.match(step(jobs['contract-placement'], 'Enforce placement and one-time production gate').run, /--base "\$CI_BASE_SHA" --head "\$CANDIDATE"/);
 });
 
-// The job's own steps (range, copy, scan) run against a pull request whose conflict resolution adds a secret, with a
+// The job's own steps (export, range, copy, scan) run against a pull request whose conflict resolution adds a secret, with a
 // stand-in docker that runs the stub on the mounted copy.
 // MSYS_NO_PATHCONV: Git for Windows' bash would rewrite the container path /repo into a Windows path for the stand-in.
 function bashStep(script, { cwd, env }) {
@@ -269,19 +269,23 @@ function bashStep(script, { cwd, env }) {
   return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
 }
 function pullRequestWorkspace(resolution) {
-  const c = conflictMerge(resolution);
+  const policy = readFileSync(path.join(ROOT, '.gitleaks.toml'), 'utf8');
+  const c = conflictMerge(resolution, {
+    '.gitleaks.toml': policy,
+    'scripts/ci/gitleaks-range.sh': readFileSync(SCRIPT, 'utf8'),
+    'config/example': 'config',
+    '.github/example': 'workflow config',
+  });
   const ws = path.join(TMP, `ws${serial++}`);
   const temp = path.join(ws, '_temp');
-  mkdirSync(path.join(ws, 'trusted', 'scripts', 'ci'), { recursive: true });
-  mkdirSync(temp);
+  mkdirSync(temp, { recursive: true });
   git(TMP, 'clone', '-q', '--no-local', c.dir, path.join(ws, 'candidate'));
   const candidate = path.join(ws, 'candidate');
   // GitHub's merge of the head into the base: the run's commit, with the head as its second parent.
   git(candidate, 'checkout', '-q', '--detach', c.base);
   git(candidate, 'merge', '-q', '--no-ff', '--no-edit', c.head);
   const sha = git(candidate, 'rev-parse', 'HEAD');
-  copyFileSync(path.join(ROOT, '.gitleaks.toml'), path.join(ws, 'trusted', '.gitleaks.toml'));
-  copyFileSync(SCRIPT, path.join(ws, 'trusted', 'scripts', 'ci', 'gitleaks-range.sh'));
+  writeFileSync(path.join(candidate, '.gitleaks.toml'), 'candidate policy must not be used');
   const bin = path.join(TMP, `bin${serial++}`);
   mkdirSync(bin);
   writeFileSync(path.join(bin, 'fake-docker.mjs'), `import { spawnSync } from 'node:child_process';
@@ -302,20 +306,28 @@ process.exit(r.status);
   const output = path.join(temp, 'output');
   writeFileSync(output, '');
   const env = { GITHUB_WORKSPACE: fwd(ws), RUNNER_TEMP: fwd(temp), GITHUB_SHA: sha, GITHUB_OUTPUT: fwd(output), PATH: `${bin}${path.delimiter}${process.env.PATH}` };
-  return { c, ws, candidate, env, output };
+  return { c, ws, candidate, env, output, policy };
 }
 function runJob(resolution) {
   const job = workflow().jobs.gitleaks;
   const w = pullRequestWorkspace(resolution);
+  const trusted = step(job, 'Export the trusted base (scanner script and configuration)');
+  let r = bashStep(trusted.run, { cwd: w.ws, env: { ...w.env, ...trusted.env, TRUSTED_REF: w.c.base } });
+  assert.equal(r.code, 0, r.out);
+  const trustedSha = readFileSync(w.output, 'utf8').trim();
+  assert.equal(trustedSha, `sha=${w.c.base}`);
+  assert.equal(existsSync(path.join(w.ws, 'trusted', '.gitleaks.toml')), false);
+  writeFileSync(w.output, '');
   const rangeStep = step(job, 'Resolve the changed range');
   assert.deepEqual(Object.keys(rangeStep.env).sort(), ['EVENT_NAME', 'PR_BASE', 'PR_HEAD', 'PUSH_BASE']);
-  let r = bashStep(rangeStep.run, { cwd: w.candidate, env: { ...w.env, EVENT_NAME: 'pull_request', PR_BASE: w.c.base, PR_HEAD: w.c.head, PUSH_BASE: '' } });
+  r = bashStep(rangeStep.run, { cwd: w.candidate, env: { ...w.env, EVENT_NAME: 'pull_request', PR_BASE: w.c.base, PR_HEAD: w.c.head, PUSH_BASE: '' } });
   assert.equal(r.code, 0, r.out);
   const out = Object.fromEntries(readFileSync(w.output, 'utf8').trim().split('\n').map((l) => l.split('=')));
   assert.deepEqual(out, { base: w.c.base, head: w.c.head });
-  const range = { BASE: out.base, HEAD: out.head };
+  const range = { BASE: out.base, HEAD: out.head, TRUSTED_BASE_SHA: trustedSha.slice('sha='.length) };
   r = bashStep(step(job, 'Copy the changed history into a fresh Git directory').run, { cwd: w.ws, env: { ...w.env, ...range } });
   assert.equal(r.code, 0, r.out);
+  assert.equal(readFileSync(path.join(w.ws, '_temp', 'clued-gitleaks', 'repo', '.gitleaks.toml'), 'utf8'), w.policy);
   return bashStep(step(job, 'Scan the changed range with Gitleaks 8.30.1').run, { cwd: w.ws, env: { ...w.env, ...range } });
 }
 

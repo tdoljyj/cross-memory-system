@@ -1681,13 +1681,6 @@
               "path": "candidate",
               "ref": null,
               "repository": null
-            },
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "trusted",
-              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
-              "repository": null
             }
           ],
           "retained_artifacts": [],
@@ -1703,13 +1696,6 @@
               "if": "true",
               "path": "candidate",
               "ref": null,
-              "repository": null
-            },
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "trusted",
-              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
               "repository": null
             }
           ],
@@ -1727,13 +1713,6 @@
               "path": "candidate",
               "ref": null,
               "repository": null
-            },
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "trusted",
-              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
-              "repository": null
             }
           ],
           "retained_artifacts": [],
@@ -1749,13 +1728,6 @@
               "if": "true",
               "path": "candidate",
               "ref": null,
-              "repository": null
-            },
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "trusted",
-              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
               "repository": null
             }
           ],
@@ -1773,13 +1745,6 @@
               "path": "candidate",
               "ref": null,
               "repository": null
-            },
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "trusted",
-              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
-              "repository": null
             }
           ],
           "retained_artifacts": [],
@@ -1795,13 +1760,6 @@
               "if": "true",
               "path": "candidate",
               "ref": null,
-              "repository": null
-            },
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "trusted",
-              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
               "repository": null
             }
           ],
@@ -1838,13 +1796,6 @@
               "if": "true",
               "path": "candidate",
               "ref": null,
-              "repository": null
-            },
-            {
-              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "trusted",
-              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}",
               "repository": null
             }
           ],

@@ -195,18 +195,18 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'db64cd16a9b7b627446ebd9ac3c5983061bfd44e',
-  source_sha256:'312b96b8bdd1c4c9baef422ffd68c17aec26e5021154fcdb0a524693b31db55b',
-  workflow_definition_sha256:'16bb929be9f42f68f750b4bb03c40c66ce0a2b419384cf39187fc7a099c02839',
-  profile_sha256:'4a3fed915e882c9368c5fd0b5c9db0a1522bc2344d9c76ee32bde3e35679095e',
+  workflow_blob:'27b43473d13a1c26749c4f32a27be0d593476c29',
+  source_sha256:'3c4d30fa5876d0534300bdef980c6ef980bbdcd64466a08d368636cfdbc4e1ff',
+  workflow_definition_sha256:'5badf0dfed0981dc546a949ec408875e152b392aa7664554787dcc41e1eac2e7',
+  profile_sha256:'d4e9d189df883775a34da0adef80b88a205739199f4909ed886fd0ab080f93b5',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
   role_sha256:Object.freeze({
-    'clued-cloud-tests':'44925327ac3a3771b7c41bb548a265bf1020e3fcaecfb47fa7056241a4332c6d',
-    'ci-suites':'4cc5da241cb6a501790ed2a865367831c741ed3f6195454449c8c7a14a2438d0',
-    'migration-verify':'817a962d0bda284cc42c124926182558e2f34fa14be094fa33329e6bf0502e4f',
-    'gitleaks':'8d16964d9257e512a88bf4baa617c87f5c184e2ea039b81351cc002814a28270',
-    'trivy':'3928538bd2214e658804adde40c33c5697db7d67776c51b13b099ee99fef052a',
-    'contract-placement':'9c0dd24d80b5d317259689fc709fc61a52ab73a11e1a321f9a1f9c4421e6022d',
+    'clued-cloud-tests':'c34d55c18fa85fea715c4f972de0e106ef355e1d1487b42c636918eda39888ee',
+    'ci-suites':'714cfad8a014072f83d8f5ec67f1ee66a725eb746cb331339987873bc00a6234',
+    'migration-verify':'ff03a97c7add0aaebc140ff7662dc61bc10f8af6f51296c74fbc520c440c4069',
+    'gitleaks':'db2d6957cc30f4b06035197d261bd266f35134895f090e74e58cb8eb64da1b32',
+    'trivy':'84163225be96a1aaecb8341bba0043298ff08b9a503b4910415cdb35a6dee298',
+    'contract-placement':'08be4e9f9d7c58c0ddca5bdb2621f31afde460a2c14c6ce3714ccc2a26fd6ce8',
   }),
 });
 // Earlier exact bytes of the same compound Source, oldest first. Catalogues kept as
@@ -377,7 +377,7 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
       'contract-placement':'9c0dd24d80b5d317259689fc709fc61a52ab73a11e1a321f9a1f9c4421e6022d',
     }),
   }),
-  // Before the cancel-only pull_request closed event (Task 3576b29c).
+  // Before local trusted exports and Trivy generations (Task 04f9b91b; #1346).
   Object.freeze({
     file:'.github/workflows/clued-required-tests.yml',
     workflow_blob:'d044a9124ae24721d510ad6bf1100d608501efbe',
@@ -394,13 +394,30 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
       'contract-placement':'9c0dd24d80b5d317259689fc709fc61a52ab73a11e1a321f9a1f9c4421e6022d',
     }),
   }),
+  // Before the cancel-only pull_request closed event (Task 3576b29c).
+  Object.freeze({
+    file:'.github/workflows/clued-required-tests.yml',
+    workflow_blob:'44b2a88bd74b987f81fa55066046166c4fe87ec2',
+    source_sha256:'d5e8005f966fec200ed8affd3daf8b2821618243fd1d3094dd618120049dda11',
+    workflow_definition_sha256:'6bf1254b389ab9e89a23ce1fd754be5ba6946b54d423824902473e91fc882019',
+    profile_sha256:'ad3adfe0f0fe88805c425e7c0c04abd3a6d1079c106c086645118f7c615b3919',
+    primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
+    role_sha256:Object.freeze({
+      'clued-cloud-tests':'c34d55c18fa85fea715c4f972de0e106ef355e1d1487b42c636918eda39888ee',
+      'ci-suites':'714cfad8a014072f83d8f5ec67f1ee66a725eb746cb331339987873bc00a6234',
+      'migration-verify':'ff03a97c7add0aaebc140ff7662dc61bc10f8af6f51296c74fbc520c440c4069',
+      'gitleaks':'db2d6957cc30f4b06035197d261bd266f35134895f090e74e58cb8eb64da1b32',
+      'trivy':'84163225be96a1aaecb8341bba0043298ff08b9a503b4910415cdb35a6dee298',
+      'contract-placement':'08be4e9f9d7c58c0ddca5bdb2621f31afde460a2c14c6ce3714ccc2a26fd6ce8',
+    }),
+  }),
 ]);
 const requiredTestsPin=blob=>[REQUIRED_TESTS_SOURCE,...REQUIRED_TESTS_PREVIOUS_SOURCES].find(pin=>pin.workflow_blob===blob)??null;
 // The Windows successor has only one primary and uses the ordinary profile.
 const WINDOWS_CANCEL_SOURCE=Object.freeze({
-  workflow_blob:'b1f0f447868d4f40fb3201d25abfa8bf9d8b93df',
-  source_sha256:'5bdf5d1f8c9fd7fb2067b5c744fb20b59cdb5d58ca1ae4a8c3bc5e28c182dc05',
-  workflow_definition_sha256:'795ce1616c644cf10ff088e379a2c49dae8c7b11bbda923ab36a65744d35c3f3',
+  workflow_blob:'85fe5d6f8c84b00fe268b3ed0ec2970c203c83f6',
+  source_sha256:'d29f33377802e716225b27d14fe5da02774e43ead7d17f5087b832d3c0f61701',
+  workflow_definition_sha256:'7264d99e97d56ee5ffda0c7aa1717c5150ba0f442a866a60dbf510c319644de6',
 });
 export function isExactAllRequiredPrimariesProfile(profile,file) {
   try {

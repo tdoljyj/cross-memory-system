@@ -2331,10 +2331,8 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
           write_set: Array.isArray(claim.write_set) ? claim.write_set : [],
         };
       }
-      // The claim's base must name a commit of this repository. A claim taken on
-      // a newer main than the PR's base is only reported (Owner Decision
-      // 36b50981): base_commit is declared by the Agent, so the comparison
-      // cannot catch a wrong claim, and rejecting it only forced re-pushes.
+      // Owner Decision 36b50981: the Agent declares base_commit, so the comparison
+      // cannot catch a wrong claim. An unknown or newer claim base is a notice.
       const claimBase = outcome.claim && outcome.claim.base_commit;
       if (outcome.verdict === "ADMITTED" && typeof claimBase === "string" && claimBase) {
         let compare;
@@ -2347,8 +2345,7 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
         if (compare === undefined) {
           // work_claim: advise and the compare failed: noted above.
         } else if (!compare) {
-          outcome.verdict = "REJECTED";
-          outcome.reasons.push(`claim_base_unknown:${claimBase}`);
+          outcome.notices.push(`claim_base_unknown:${claimBase}`);
         } else if (compare.status !== "ahead" && compare.status !== "identical") {
           outcome.notices.push(`base_behind_claim:${compare.status} (the claim's base_commit ${claimBase} is newer than this PR's base ${pr.base.sha}; merge main into the branch or claim with the branch's merge-base)`);
         }

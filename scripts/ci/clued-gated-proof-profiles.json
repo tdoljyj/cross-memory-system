@@ -6552,6 +6552,9 @@
       "routes": [
         {
           "command_digests": {
+            "Export the trusted base (selection and commands)": [
+              "7ebbc8a55679a0683e4754914eac696bc724e8e9f67643f8cab443e01d1a4d5a"
+            ],
             "Resolve push baseline before loading trusted commands": [
               "1f753f3906eb18174bb26eea0ff57db23ab9e06b9e52c70f60e1f1e5f1951a48"
             ],
@@ -6562,13 +6565,14 @@
           "job_id": "ci-suites-windows",
           "name": "ci-suites-windows",
           "required_steps": {
+            "Export the trusted base (selection and commands)": 1,
             "Resolve push baseline before loading trusted commands": 1,
             "Select and run the suites declared for Windows": 1
           },
           "self_hosted": true
         }
       ],
-      "source_sha256": "5bdf5d1f8c9fd7fb2067b5c744fb20b59cdb5d58ca1ae4a8c3bc5e28c182dc05",
+      "source_sha256": "d29f33377802e716225b27d14fe5da02774e43ead7d17f5087b832d3c0f61701",
       "source_yaml_lines": [
 "name: clued-required-tests-windows",
 "",
@@ -6710,16 +6714,24 @@
 "            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));",
 "            process.exitCode = await writeCiBase();\"",
 "          exit $LASTEXITCODE",
-"      - name: Check out the trusted base (selection and commands)",
-"        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
-"        with:",
-"          persist-credentials: false",
-"          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}",
-"          path: trusted",
-"          sparse-checkout: |",
-"            scripts/ci",
-"            config",
-"            .github",
+"      - name: Export the trusted base (selection and commands)",
+"        shell: bash",
+"        env:",
+"          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}",
+"          GIT_NO_LAZY_FETCH: \"1\"",
+"          GIT_NO_REPLACE_OBJECTS: \"1\"",
+"        run: |",
+"          set -euo pipefail",
+"          cd -P -- \"$GITHUB_WORKSPACE\"",
+"          ref=\"$TRUSTED_REF\"",
+"          [[ \"$ref\" =~ ^[0-9a-fA-F]{40}$ ]] || ref=\"refs/remotes/origin/$ref\"",
+"          if ! base=\"$(git -C candidate rev-parse --verify --quiet --end-of-options \"${ref}^{commit}\")\"; then",
+"            echo \"::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)\"",
+"            exit 1",
+"          fi",
+"          rm -rf -- trusted",
+"          mkdir -- trusted",
+"          git -C candidate archive \"$base\" -- scripts/ci config .github | tar -xf - -C trusted",
 "      - name: Configure job temporary storage",
 "        uses: ./trusted/.github/actions/ci-temporary-storage",
 "      - name: Select and run the suites declared for Windows",
@@ -6735,7 +6747,7 @@
 "          exit $LASTEXITCODE",
 ""
       ],
-      "workflow_blob": "b1f0f447868d4f40fb3201d25abfa8bf9d8b93df"
+      "workflow_blob": "85fe5d6f8c84b00fe268b3ed0ec2970c203c83f6"
     },
     ".github/workflows/clued-required-tests.yml": {
       "execution_mode": "all_required_primaries",
@@ -6753,6 +6765,9 @@
       "routes": [
         {
           "command_digests": {
+            "Export the trusted base (selection and commands)": [
+              "7ebbc8a55679a0683e4754914eac696bc724e8e9f67643f8cab443e01d1a4d5a"
+            ],
             "Install from lockfile": [
               "f7430d8896bab674b94c5be5a18a94b4d29f3f9c0296b602599e5893d0718d71"
             ],
@@ -6769,6 +6784,7 @@
           "job_id": "clued-cloud-tests",
           "name": "clued-cloud-tests",
           "required_steps": {
+            "Export the trusted base (selection and commands)": 1,
             "Install from lockfile": 1,
             "Lint, ledger, typecheck, build and unit tests": 1,
             "Resolve push baseline before loading trusted commands": 1,
@@ -6778,6 +6794,9 @@
         },
         {
           "command_digests": {
+            "Export the trusted base (selection and commands)": [
+              "7ebbc8a55679a0683e4754914eac696bc724e8e9f67643f8cab443e01d1a4d5a"
+            ],
             "Install the application dependencies the selected suites need": [
               "511e1108529d91041e013a3cd32568c97b1b0e9cbca78d7c19dee5be3cb6933e"
             ],
@@ -6794,6 +6813,7 @@
           "job_id": "ci-suites",
           "name": "ci-suites",
           "required_steps": {
+            "Export the trusted base (selection and commands)": 1,
             "Install the application dependencies the selected suites need": 1,
             "Resolve push baseline before loading trusted commands": 1,
             "Run the selected suites": 1,
@@ -6803,6 +6823,9 @@
         },
         {
           "command_digests": {
+            "Export the trusted base (selection and commands)": [
+              "7ebbc8a55679a0683e4754914eac696bc724e8e9f67643f8cab443e01d1a4d5a"
+            ],
             "Install from lockfile": [
               "f7430d8896bab674b94c5be5a18a94b4d29f3f9c0296b602599e5893d0718d71"
             ],
@@ -6822,6 +6845,7 @@
           "job_id": "migration-verify",
           "name": "migration-verify",
           "required_steps": {
+            "Export the trusted base (selection and commands)": 1,
             "Install from lockfile": 1,
             "Resolve push baseline before loading trusted commands": 1,
             "Select suites": 1,
@@ -6832,7 +6856,10 @@
         {
           "command_digests": {
             "Copy the changed history into a fresh Git directory": [
-              "388f6d22d73d503fded9724a0cc69f123f731eedca9b9e53e89615d7e4387bb1"
+              "8f896360e681ed4b1c9bc73a4690d8b5c873a3cb2eacd4d1262e46763a8339a9"
+            ],
+            "Export the trusted base (scanner script and configuration)": [
+              "fc5a894dc553aef068e90539e1de40dc2b7189dc8ec98d01242eeedb638f9ef0"
             ],
             "Reclaim the scan directories": [
               "73364c6d82c21b32e31cb950c96b9ba04b21a599f94756307d2f0701dae3a0a8"
@@ -6851,6 +6878,7 @@
           "name": "gitleaks",
           "required_steps": {
             "Copy the changed history into a fresh Git directory": 1,
+            "Export the trusted base (scanner script and configuration)": 1,
             "Reclaim the scan directories": 1,
             "Resolve push baseline before loading trusted commands": 1,
             "Resolve the changed range": 1,
@@ -6860,11 +6888,14 @@
         },
         {
           "command_digests": {
+            "Export the trusted base (temporary storage)": [
+              "c4269f347049f8914b7d795b7549cc7800cd485c1fd5b1478f55bd7a9318f822"
+            ],
             "Misconfiguration (HIGH/CRITICAL)": [
               "9f0705bc17731ba331ad9ece175e25c24517fb503e6cae85d4d71537eca10f4b"
             ],
             "Prepare the vulnerability DB and the pinned checks bundle": [
-              "d9cc3789fc0b26eade98b479ad66118ca65e186d49c1d21d113c8db73227d773"
+              "9d0df743453a18b188a40bf5cf3321f1919e7b11d6282bb5c769d7888260400b"
             ],
             "Reclaim the scan directories": [
               "73364c6d82c21b32e31cb950c96b9ba04b21a599f94756307d2f0701dae3a0a8"
@@ -6888,6 +6919,7 @@
           "job_id": "trivy",
           "name": "trivy",
           "required_steps": {
+            "Export the trusted base (temporary storage)": 1,
             "Misconfiguration (HIGH/CRITICAL)": 1,
             "Prepare the vulnerability DB and the pinned checks bundle": 1,
             "Reclaim the scan directories": 1,
@@ -6907,6 +6939,9 @@
             "Enforce placement and one-time production gate": [
               "2e982a450a9ebaec6d6b33f88aab35d01c9ea31afc3473fc929b5977a638e07f"
             ],
+            "Export the trusted base (temporary storage)": [
+              "7ebbc8a55679a0683e4754914eac696bc724e8e9f67643f8cab443e01d1a4d5a"
+            ],
             "Placement and renderer fixtures": [
               "84a1c7f60b3a42a5dd02da7d8be31c8323b939fe74a74cb278bcb549e73fe62e"
             ],
@@ -6922,6 +6957,7 @@
           "required_steps": {
             "Build actual public bootstrap without the application dependency tree": 1,
             "Enforce placement and one-time production gate": 1,
+            "Export the trusted base (temporary storage)": 1,
             "Placement and renderer fixtures": 1,
             "Render all actual and synthetic contract parts": 1,
             "Resolve push baseline before loading trusted commands": 1
@@ -6929,7 +6965,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "312b96b8bdd1c4c9baef422ffd68c17aec26e5021154fcdb0a524693b31db55b",
+      "source_sha256": "3c4d30fa5876d0534300bdef980c6ef980bbdcd64466a08d368636cfdbc4e1ff",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "run-name: ${{ github.event_name == 'workflow_dispatch' && (inputs.resident_node && inputs.resident_dispatch_id && format('clued-resident-dispatch/v1 {0} {1}', inputs.resident_node, inputs.resident_dispatch_id) || 'clued-required-tests') || '' }}",
@@ -7102,16 +7138,24 @@
 "            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');",
 "            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));",
 "            process.exitCode = await writeCiBase();\"",
-"      - name: Check out the trusted base (selection and commands)",
-"        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
-"        with:",
-"          persist-credentials: false",
-"          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
-"          path: trusted",
-"          sparse-checkout: |",
-"            scripts/ci",
-"            config",
-"            .github",
+"      - name: Export the trusted base (selection and commands)",
+"        shell: bash",
+"        env:",
+"          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
+"          GIT_NO_LAZY_FETCH: \"1\"",
+"          GIT_NO_REPLACE_OBJECTS: \"1\"",
+"        run: |",
+"          set -euo pipefail",
+"          cd -P -- \"$GITHUB_WORKSPACE\"",
+"          ref=\"$TRUSTED_REF\"",
+"          [[ \"$ref\" =~ ^[0-9a-fA-F]{40}$ ]] || ref=\"refs/remotes/origin/$ref\"",
+"          if ! base=\"$(git -C candidate rev-parse --verify --quiet --end-of-options \"${ref}^{commit}\")\"; then",
+"            echo \"::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)\"",
+"            exit 1",
+"          fi",
+"          rm -rf -- trusted",
+"          mkdir -- trusted",
+"          git -C candidate archive \"$base\" -- scripts/ci config .github | tar -xf - -C trusted",
 "      - name: Configure job temporary storage",
 "        uses: ./trusted/.github/actions/ci-temporary-storage",
 "      - name: Select suites",
@@ -7201,16 +7245,24 @@
 "            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');",
 "            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));",
 "            process.exitCode = await writeCiBase();\"",
-"      - name: Check out the trusted base (selection and commands)",
-"        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
-"        with:",
-"          persist-credentials: false",
-"          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
-"          path: trusted",
-"          sparse-checkout: |",
-"            scripts/ci",
-"            config",
-"            .github",
+"      - name: Export the trusted base (selection and commands)",
+"        shell: bash",
+"        env:",
+"          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
+"          GIT_NO_LAZY_FETCH: \"1\"",
+"          GIT_NO_REPLACE_OBJECTS: \"1\"",
+"        run: |",
+"          set -euo pipefail",
+"          cd -P -- \"$GITHUB_WORKSPACE\"",
+"          ref=\"$TRUSTED_REF\"",
+"          [[ \"$ref\" =~ ^[0-9a-fA-F]{40}$ ]] || ref=\"refs/remotes/origin/$ref\"",
+"          if ! base=\"$(git -C candidate rev-parse --verify --quiet --end-of-options \"${ref}^{commit}\")\"; then",
+"            echo \"::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)\"",
+"            exit 1",
+"          fi",
+"          rm -rf -- trusted",
+"          mkdir -- trusted",
+"          git -C candidate archive \"$base\" -- scripts/ci config .github | tar -xf - -C trusted",
 "      - name: Configure job temporary storage",
 "        uses: ./trusted/.github/actions/ci-temporary-storage",
 "      - name: Select suites",
@@ -7322,16 +7374,24 @@
 "            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');",
 "            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));",
 "            process.exitCode = await writeCiBase();\"",
-"      - name: Check out the trusted base (selection and commands)",
-"        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
-"        with:",
-"          persist-credentials: false",
-"          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
-"          path: trusted",
-"          sparse-checkout: |",
-"            scripts/ci",
-"            config",
-"            .github",
+"      - name: Export the trusted base (selection and commands)",
+"        shell: bash",
+"        env:",
+"          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
+"          GIT_NO_LAZY_FETCH: \"1\"",
+"          GIT_NO_REPLACE_OBJECTS: \"1\"",
+"        run: |",
+"          set -euo pipefail",
+"          cd -P -- \"$GITHUB_WORKSPACE\"",
+"          ref=\"$TRUSTED_REF\"",
+"          [[ \"$ref\" =~ ^[0-9a-fA-F]{40}$ ]] || ref=\"refs/remotes/origin/$ref\"",
+"          if ! base=\"$(git -C candidate rev-parse --verify --quiet --end-of-options \"${ref}^{commit}\")\"; then",
+"            echo \"::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)\"",
+"            exit 1",
+"          fi",
+"          rm -rf -- trusted",
+"          mkdir -- trusted",
+"          git -C candidate archive \"$base\" -- scripts/ci config .github | tar -xf - -C trusted",
 "      - name: Configure job temporary storage",
 "        uses: ./trusted/.github/actions/ci-temporary-storage",
 "      - name: Select suites",
@@ -7446,16 +7506,26 @@
 "            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');",
 "            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));",
 "            process.exitCode = await writeCiBase();\"",
-"      - name: Check out the trusted base (scanner script and configuration)",
-"        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
-"        with:",
-"          persist-credentials: false",
-"          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
-"          path: trusted",
-"          sparse-checkout: |",
-"            scripts/ci",
-"            config",
-"            .github",
+"      - name: Export the trusted base (scanner script and configuration)",
+"        id: trusted-base",
+"        shell: bash",
+"        env:",
+"          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
+"          GIT_NO_LAZY_FETCH: \"1\"",
+"          GIT_NO_REPLACE_OBJECTS: \"1\"",
+"        run: |",
+"          set -euo pipefail",
+"          cd -P -- \"$GITHUB_WORKSPACE\"",
+"          ref=\"$TRUSTED_REF\"",
+"          [[ \"$ref\" =~ ^[0-9a-fA-F]{40}$ ]] || ref=\"refs/remotes/origin/$ref\"",
+"          if ! base=\"$(git -C candidate rev-parse --verify --quiet --end-of-options \"${ref}^{commit}\")\"; then",
+"            echo \"::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)\"",
+"            exit 1",
+"          fi",
+"          rm -rf -- trusted",
+"          mkdir -- trusted",
+"          git -C candidate archive \"$base\" -- scripts/ci config .github | tar -xf - -C trusted",
+"          echo \"sha=$base\" >> \"$GITHUB_OUTPUT\"",
 "      - name: Configure job temporary storage",
 "        uses: ./trusted/.github/actions/ci-temporary-storage",
 "      # Scan containers once ran as uid 65532 and left files in $RUNNER_TEMP the runner account cannot delete; the",
@@ -7514,6 +7584,7 @@
 "        env:",
 "          BASE: ${{ steps.range.outputs.base }}",
 "          HEAD: ${{ steps.range.outputs.head }}",
+"          TRUSTED_BASE_SHA: ${{ steps.trusted-base.outputs.sha }}",
 "        shell: bash",
 "        run: |",
 "          set -euo pipefail",
@@ -7526,7 +7597,9 @@
 "          git -C \"$repo\" -c protocol.file.allow=always fetch --quiet --no-tags --no-recurse-submodules \\",
 "            \"$GITHUB_WORKSPACE/candidate\" refs/clued-scan/base:refs/heads/base refs/clued-scan/head:refs/heads/head",
 "          test \"$(git -C \"$repo\" rev-parse refs/heads/head)\" = \"$HEAD\"",
-"          install -m 0444 trusted/.gitleaks.toml \"$repo/.gitleaks.toml\"",
+"          # The root policy comes from the same local commit as the trusted export.",
+"          GIT_NO_LAZY_FETCH=1 git -C candidate show \"$TRUSTED_BASE_SHA:.gitleaks.toml\" > \"$repo/.gitleaks.toml\"",
+"          chmod 0444 \"$repo/.gitleaks.toml\"",
 "          printf '[safe]\\n\\tdirectory = /repo\\n' > \"$scan/git-safe.config\"",
 "      - name: Scan the changed range with Gitleaks 8.30.1",
 "        env:",
@@ -7549,8 +7622,8 @@
 "            git /repo --config /repo/.gitleaks.toml --redact --no-banner --exit-code 1",
 "",
 "  # trivy: the steps of the disabled trivy.yml (the local formal role's input refusals, vulnerability DB and pinned",
-"  # checks preparation, and its three scanners) over the run's commit. The DB is fetched fresh each run, as there:",
-"  # the runners' old cache is not current, and a stale DB fails the job.",
+"  # checks preparation, and its three scanners) over the run's commit. The node cache keeps complete,",
+"  # immutable generations. A still-current DB can cover a refresh outage.",
 "  trivy:",
 "    name: >-",
 "      ${{ needs.admission-gate.outputs.admitted == 'true' &&",
@@ -7609,16 +7682,31 @@
 "            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');",
 "            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));",
 "            process.exitCode = await writeCiBase();\"",
-"      - name: Check out the trusted base (temporary storage)",
-"        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
-"        with:",
-"          persist-credentials: false",
-"          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
-"          path: trusted",
-"          sparse-checkout: |",
-"            scripts/ci",
-"            config",
-"            .github",
+"      - name: Export the trusted base (temporary storage)",
+"        shell: bash",
+"        env:",
+"          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
+"          GIT_NO_LAZY_FETCH: \"1\"",
+"          GIT_NO_REPLACE_OBJECTS: \"1\"",
+"        run: |",
+"          set -euo pipefail",
+"          cd -P -- \"$GITHUB_WORKSPACE\"",
+"          ref=\"$TRUSTED_REF\"",
+"          [[ \"$ref\" =~ ^[0-9a-fA-F]{40}$ ]] || ref=\"refs/remotes/origin/$ref\"",
+"          if ! base=\"$(git -C candidate rev-parse --verify --quiet --end-of-options \"${ref}^{commit}\")\"; then",
+"            echo \"::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)\"",
+"            exit 1",
+"          fi",
+"          rm -rf -- trusted",
+"          mkdir -- trusted",
+"          git -C candidate archive \"$base\" -- scripts/ci config .github | tar -xf - -C trusted",
+"          # The introduction PR and its staging run can have a base without the helper.",
+"          # In that case the protected workflow pins the exact local blob and checks its bytes.",
+"          helper=trusted/scripts/ci/trivy-cache.mjs",
+"          if [ ! -f \"$helper\" ]; then",
+"            git -C candidate cat-file blob ab6e8e120274eefada13480e342fb9dcaca72520 > \"$helper\"",
+"            printf '%s  %s\\n' 16aa81c1824d4965387ed2279d256ded48587901993f9e2dcbf11d672501bfc6 \"$helper\" | sha256sum --check --status",
+"          fi",
 "      - name: Configure job temporary storage",
 "        uses: ./trusted/.github/actions/ci-temporary-storage",
 "      # Scan containers once ran as uid 65532 and left files in $RUNNER_TEMP the runner account cannot delete; the",
@@ -7677,58 +7765,15 @@
 "          snap=\"$RUNNER_TEMP/clued-trivy-snapshot\"",
 "          mkdir \"$snap\"",
 "          git ls-files -z | tar --null --no-recursion -T - -cf - | tar -xf - -C \"$snap\"",
-"      # Cache preparation exactly as the local role (required-trivy-v3/plans.mjs databasePreparationPlan",
-"      # and checksPreparationPlan, formal-trivy-v3/docker.mjs cacheCreateArguments): the only networked",
-"      # containers, each with one fresh cache-only mount and nothing of the checkout. The vulnerability",
-"      # DB comes from the same repositories in the same order (two attempts each) and must be current;",
-"      # the checks bundle comes by the installed generation's digest, never the mutable trivy-checks:2",
-"      # tag. A different digest, version or a stale DB fails the job.",
+"      # The trusted helper reuses complete generations from the node cache. Only downloads can use",
+"      # the network, with fresh cache-only mounts and nothing from the checkout. The DB must be",
+"      # current and the checks bundle must match its digest and major version, with Rego content.",
 "      - name: Prepare the vulnerability DB and the pinned checks bundle",
 "        timeout-minutes: 10",
 "        env:",
 "          TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9",
 "          CHECKS_DIGEST: sha256:b0e12d009b01dcc8ca2ebbc199b9caf3922491978d21c17b61c1d7f6dc75220b",
-"        run: |",
-"          set -eu",
-"          docker pull --quiet \"$TRIVY_IMAGE\" > /dev/null",
-"          cache_run() {",
-"            docker run --rm --pull=never --network=host --ipc=private --cgroupns=private --user=\"$(id -u):$(id -g)\" --read-only \\",
-"              --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \\",
-"              --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \\",
-"              --env=TMPDIR=/scratch --env=GODEBUG=http2client=0 \\",
-"              --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=\"$(id -u)\",gid=\"$(id -g)\" \"$@\"",
-"          }",
-"          read_back() {",
-"            docker run --rm --pull=never --network=none --user=\"$(id -u):$(id -g)\" --read-only --cap-drop=ALL \\",
-"              --security-opt=no-new-privileges:true --mount \"type=bind,src=$1,dst=/cache,readonly\" --entrypoint \"$2\" \"$TRIVY_IMAGE\" \"$3\"",
-"          }",
-"          db=\"\"",
-"          n=0",
-"          for repository in ghcr.io/aquasecurity/trivy-db:2 mirror.gcr.io/aquasec/trivy-db:2; do",
-"            for attempt in 1 2; do",
-"              n=$((n + 1)); stage=\"$RUNNER_TEMP/clued-trivy-db-$n\"",
-"              mkdir \"$stage\"",
-"              if cache_run --mount \"type=bind,src=$stage,dst=/cache,bind-propagation=rprivate\" --workdir=/scratch \\",
-"                --entrypoint /usr/local/bin/trivy \"$TRIVY_IMAGE\" \\",
-"                fs --download-db-only --timeout 5m --cache-dir /cache --db-repository \"$repository\"; then",
-"                db=\"$stage\"; break 2",
-"              fi",
-"            done",
-"          done",
-"          test -n \"$db\"",
-"          read_back \"$db\" /bin/cat /cache/db/metadata.json | python3 -I -B -c 'import json,sys,time; m=json.load(sys.stdin); now=time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime()); u, n = m[\"UpdatedAt\"], m[\"NextUpdate\"]; sys.exit(0 if m.get(\"Version\") == 2 and u.endswith(\"Z\") and n.endswith(\"Z\") and u[:19] <= now < n[:19] else 1)'",
-"          checks=\"$RUNNER_TEMP/clued-trivy-checks\"; empty=\"$RUNNER_TEMP/clued-trivy-empty\"",
-"          mkdir \"$checks\"",
-"          mkdir \"$empty\"",
-"          cache_run --mount \"type=bind,src=$checks,dst=/cache,bind-propagation=rprivate\" \\",
-"            --mount \"type=bind,src=$empty,dst=/empty,readonly,bind-propagation=rprivate\" --workdir=/scratch \\",
-"            --entrypoint /usr/local/bin/trivy \"$TRIVY_IMAGE\" \\",
-"            fs --cache-dir /cache --checks-bundle-repository \"ghcr.io/aquasecurity/trivy-checks@$CHECKS_DIGEST\" \\",
-"            --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /empty",
-"          read_back \"$checks\" /bin/cat /cache/policy/metadata.json | python3 -I -B -c 'import json,sys; m=json.load(sys.stdin); sys.exit(0 if m.get(\"Digest\") == sys.argv[1] and m.get(\"MajorVersion\") == 2 and m.get(\"CustomBuild\") is not True else 1)' \"$CHECKS_DIGEST\"",
-"          read_back \"$checks\" /bin/ls -R /cache/policy/content | grep -q '\\.rego$'",
-"          echo \"CLUED_TRIVY_DB=$db/db\" >> \"$GITHUB_ENV\"",
-"          echo \"CLUED_TRIVY_POLICY=$checks/policy\" >> \"$GITHUB_ENV\"",
+"        run: node trusted/scripts/ci/trivy-cache.mjs",
 "      # The three scanners exactly as the local role (required-trivy-v3/plans.mjs requiredTrivyPlans,",
 "      # verify-worker.mjs createArguments): no network, read-only root and mounts, cwd /scratch, the prepared",
 "      # DB and checks only, no update of either, five minutes each. Every scan container runs as the job account,",
@@ -7840,16 +7885,24 @@
 "            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');",
 "            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));",
 "            process.exitCode = await writeCiBase();\"",
-"      - name: Check out the trusted base (temporary storage)",
-"        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
-"        with:",
-"          persist-credentials: false",
-"          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
-"          path: trusted",
-"          sparse-checkout: |",
-"            scripts/ci",
-"            config",
-"            .github",
+"      - name: Export the trusted base (temporary storage)",
+"        shell: bash",
+"        env:",
+"          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
+"          GIT_NO_LAZY_FETCH: \"1\"",
+"          GIT_NO_REPLACE_OBJECTS: \"1\"",
+"        run: |",
+"          set -euo pipefail",
+"          cd -P -- \"$GITHUB_WORKSPACE\"",
+"          ref=\"$TRUSTED_REF\"",
+"          [[ \"$ref\" =~ ^[0-9a-fA-F]{40}$ ]] || ref=\"refs/remotes/origin/$ref\"",
+"          if ! base=\"$(git -C candidate rev-parse --verify --quiet --end-of-options \"${ref}^{commit}\")\"; then",
+"            echo \"::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)\"",
+"            exit 1",
+"          fi",
+"          rm -rf -- trusted",
+"          mkdir -- trusted",
+"          git -C candidate archive \"$base\" -- scripts/ci config .github | tar -xf - -C trusted",
 "      - name: Configure job temporary storage",
 "        uses: ./trusted/.github/actions/ci-temporary-storage",
 "      - name: Placement and renderer fixtures",
@@ -7880,7 +7933,7 @@
 "        run: python3 -I -B scripts/ci/check_contract_placement.py --base \"$CI_BASE_SHA\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\"",
 ""
       ],
-      "workflow_blob": "db64cd16a9b7b627446ebd9ac3c5983061bfd44e"
+      "workflow_blob": "27b43473d13a1c26749c4f32a27be0d593476c29"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [

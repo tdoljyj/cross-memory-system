@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { RunQueue } from '../src/queue.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
-import { LocalStore, POST_RETRY_MS, PrStatusReporter, WATCHDOG_STALE_TEXT, describe, events, statusSignature } from '../src/pr-status.mjs';
+import { LocalStore, POST_RETRY_MS, PrStatusReporter, WATCHDOG_STALE_TEXT, describe, events, heldPullsAfterPoll, statusSignature } from '../src/pr-status.mjs';
 import { nodeContext, parseDutyStatus } from '../src/node-duty.mjs';
 import { rulesReply, tempRoot } from './helpers.mjs';
 
@@ -50,6 +50,37 @@ test('the status signature moves with the queue rows, so the companion posts at 
   for (const extra of [{ watched: true }, { claimExpiresAt: T0 + 30 * MIN }, { network: true }]) {
     assert.notEqual(statusSignature({ ...backoff, pending: [{ ...row, ...extra }] }), sigs[1], JSON.stringify(extra));
   }
+});
+
+test('the status signature tracks only PR number, head and hint for reportable held heads', () => {
+  const status = { pending: [] };
+  const behind = { pr: 998, headSha: H(6), eligible: false, hint: 'merge-main', behindBy: 2 };
+  const oldBase = { pr: 999, headSha: H(7), eligible: false, hint: 'push-any-commit', behindBy: 0 };
+  const held = statusSignature(status, [behind, oldBase]);
+  assert.equal(statusSignature(status, [oldBase, { ...behind, behindBy: 3 }]), held);
+  assert.notEqual(statusSignature(status, [behind]), held);
+  for (const changed of [{ pr: 1000 }, { headSha: H(8) }, { hint: 'push-any-commit' }]) {
+    assert.notEqual(statusSignature(status, [{ ...behind, ...changed }, oldBase]), held);
+  }
+  const empty = statusSignature(status);
+  assert.equal(statusSignature(status, null), empty);
+  assert.equal(statusSignature(status, [{ ...behind, hint: 'compare-unavailable' }, pull]), empty);
+  assert.equal(statusSignature(null, null), null);
+  assert.equal(statusSignature(null, [behind]), null);
+});
+
+test('an unavailable compare keeps only the matching held head while the poll updates other PRs', () => {
+  const previous = [1, 2, 3, 4].map(pr => ({ pr, headSha: H(pr), eligible: false, hint: 'merge-main' }));
+  const [sameHead, replaced, nowEligible] = previous;
+  const newlyHeld = { pr: 5, headSha: H(5), eligible: false, hint: 'push-any-commit' };
+  const pulls = [
+    { ...sameHead, hint: 'compare-unavailable' },
+    { ...replaced, headSha: H(6), hint: 'compare-unavailable' },
+    { ...nowEligible, eligible: true, hint: null },
+    newlyHeld,
+  ];
+  assert.deepEqual(heldPullsAfterPoll(previous, pulls), [sameHead, newlyHeld]);
+  assert.deepEqual(heldPullsAfterPoll(previous, []), []);
 });
 
 test('a write lost to the outage is tried again at the next pass once the text changed; the same text after POST_RETRY_MS', async t => {
