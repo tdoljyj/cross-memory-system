@@ -23,6 +23,11 @@ const SELECTOR_IMPORTS = ['test-env.mjs', 'test-clock-scan.mjs', 'test-clock-gua
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
 
+function copyToolchain(root) {
+  mkdirSync(path.join(root, 'config'), { recursive: true });
+  copyFileSync(path.join(ROOT, 'config/ci-toolchain.json'), path.join(root, 'config/ci-toolchain.json'));
+}
+
 // Launch the real CLI in separate processes and use a different checkout for
 // each suite. Inject the queue location and short timing budgets.
 function slotFixture(t) {
@@ -1402,6 +1407,7 @@ function candidateSelector(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const dir = path.join(root, 'scripts/ci');
   mkdirSync(dir, { recursive: true });
+  copyToolchain(root);
   const source = readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8');
   for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
   const change = (id, commands) => writeFileSync(path.join(dir, 'ci-required-selection.mjs'),
@@ -1484,6 +1490,7 @@ test('a command added by a module the candidate selector imports runs although t
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const dir = path.join(root, 'scripts/ci');
     mkdirSync(dir, { recursive: true });
+    copyToolchain(root);
     for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
     writeFileSync(path.join(dir, 'ci-required-selection.mjs'), `${readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8')}
 import { ADDED } from './suite-additions.mjs';
@@ -2245,8 +2252,9 @@ for (const [file, id] of BASELINE_JOBS) {
 test('in a CI job, --run and --run-selected without a base commit start no command and name CI_BASE_SHA', (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-no-base-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const tools = path.join(dir, 'tools');
-  mkdirSync(tools);
+  const tools = path.join(dir, 'scripts/ci');
+  mkdirSync(tools, { recursive: true });
+  copyToolchain(dir);
   for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(tools, name));
   const tail = `for (const key of Object.keys(SUITES['ci-suites'])) delete SUITES['ci-suites'][key];
 SUITES['ci-suites']['retrigger-counter'] = ['**'];

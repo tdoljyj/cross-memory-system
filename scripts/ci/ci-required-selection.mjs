@@ -212,6 +212,7 @@ export const SUITES = {
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/test-clock-scan.mjs', 'scripts/ci/test-clock-guard.mjs',
       'scripts/ci/test-clock-imports.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
       'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/ci-required-selection-timeout.test.mjs',
+      'scripts/ci/ci-required-selection-toolchain.test.mjs', 'config/ci-toolchain.json',
       'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
@@ -365,6 +366,7 @@ export const SUITE_COMMANDS = {
     { cwd: '.', argv: ['node', 'scripts/ci/check-ci-deps-entry.mjs', '--base', '{base}'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
     'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/ci-required-selection-timeout.test.mjs',
+    'scripts/ci/ci-required-selection-toolchain.test.mjs',
     'scripts/ci/local-verify.test.mjs',
     'scripts/ci/local-verify-concurrency.test.mjs'] }],
   'clued-cloud': [
@@ -2001,6 +2003,29 @@ export function writeShardSeconds(logs, { file = SHARD_SECONDS_PATH, log = conso
 const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>] | --run-selected <check> [--root <checkout>] [--shard <i>/<n>] | --run <suite> [--root <checkout>] | --run-files <suite> <file> [<file>...] [--root <checkout>] | --run-prepush --root <tree> | --write-shard-seconds <log> [<log>...]';
 export const LOCAL_TIMEOUT_EXIT = 75;
 
+function gitToolchainRefusal(env) {
+  // Match the policy to this selector's checkout. A candidate passed through --root cannot change the trusted baseline.
+  let declared;
+  try {
+    declared = JSON.parse(readFileSync(new URL('../../config/ci-toolchain.json', import.meta.url), 'utf8')).git;
+  } catch (error) {
+    return `环境不符：无法读取 config/ci-toolchain.json 的 Git 声明（${error.message}）`;
+  }
+  if (typeof declared !== 'string' || !/^\d+\.\d+\.\d+$/.test(declared)) {
+    return '环境不符：config/ci-toolchain.json 的 Git 声明必须包含主、次和补丁版本';
+  }
+  const result = spawnSync('git', ['--version'], { cwd: ROOT, env, encoding: 'utf8', timeout: 10_000, windowsHide: true });
+  const actual = /^git version (\d+\.\d+\.\d+\S*)(?:\s|$)/.exec(result.stdout ?? '')?.[1];
+  if (result.status !== 0 || !actual) {
+    const reason = result.error?.message || (result.status !== 0 ? `退出 ${result.status ?? result.signal}` : '输出格式无效');
+    return `环境不符：声明 ${declared}，实际未知（git --version：${reason}）`;
+  }
+  if (declared.split('.').slice(0, 2).join('.') !== actual.split('.').slice(0, 2).join('.')) {
+    return `环境不符：声明 ${declared}，实际 ${actual}`;
+  }
+  return null;
+}
+
 async function main(argv, env = process.env) {
   try {
     markTestRun(argv, env);
@@ -2098,26 +2123,29 @@ async function main(argv, env = process.env) {
     });
   }
   const runIndex = argv.indexOf('--run');
+  const selectedIndex = argv.indexOf('--run-selected');
+  const target = argv[(runIndex >= 0 ? runIndex : selectedIndex) + 1];
+  if (runIndex >= 0 || (selectedIndex >= 0 && Object.hasOwn(SUITES, target))) {
+    const baseRefusal = ciBaseRefusal(env);
+    if (baseRefusal) {
+      console.log(`::error title=${target} CI_BASE_SHA::${baseRefusal}`);
+      return 2;
+    }
+    const toolchainRefusal = gitToolchainRefusal(env);
+    if (toolchainRefusal) {
+      console.error(toolchainRefusal);
+      return 2;
+    }
+  }
   if (runIndex >= 0) {
     const rootIndex = argv.indexOf('--root');
     const root = rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT;
-    const refusal = ciBaseRefusal(env);
-    if (refusal) {
-      console.log(`::error title=${argv[runIndex + 1]} CI_BASE_SHA::${refusal}`);
-      return 2;
-    }
-    return runSuite(argv[runIndex + 1], { root, env });
+    return runSuite(target, { root, env });
   }
-  const selectedIndex = argv.indexOf('--run-selected');
   const index = selectedIndex >= 0 ? selectedIndex : argv.indexOf('--check');
   const check = index >= 0 ? argv[index + 1] : undefined;
-  if (!SUITES[check]) {
+  if (!Object.hasOwn(SUITES, check)) {
     console.error(USAGE);
-    return 2;
-  }
-  const refusal = selectedIndex >= 0 ? ciBaseRefusal(env) : null;
-  if (refusal) {
-    console.log(`::error title=${check} CI_BASE_SHA::${refusal}`);
     return 2;
   }
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};

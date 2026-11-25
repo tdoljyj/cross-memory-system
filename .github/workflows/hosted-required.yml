@@ -90,6 +90,63 @@ jobs:
           path: trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
+      - &prepare-linux-git
+        name: Prepare declared Git
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          trap 'echo "::error title=工具准备失败::Git 准备步骤在第 $LINENO 行失败"' ERR
+          policy=trusted/config/ci-toolchain.json
+          # On the PR introducing the declaration the trusted base does not have it yet.
+          if [[ ! -e "$policy" ]]; then policy=candidate/config/ci-toolchain.json; fi
+          version=$(node -e 'const {git} = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+            if (typeof git !== "string" || !/^\d+\.\d+\.\d+$/.test(git)) throw new Error("invalid Git version");
+            console.log(git)' "$policy")
+
+          # Use the signed Noble repositories and extract the package in the job directory, without changing system Git.
+          tool=$(mktemp -d "$RUNNER_TEMP/clued-ci-git.XXXXXX")
+          cd "$tool"
+          mkdir -p lists/partial bin
+          export APT_CONFIG="$tool/apt.conf"
+          cat >"$APT_CONFIG" <<EOF
+          Dir::Etc::Parts "-";
+          Dir::Etc::Main "-";
+          Dir::Etc::sourcelist "$tool/sources.list";
+          Dir::Etc::sourceparts "-";
+          Dir::State::lists "$tool/lists";
+          Dir::State::status "/dev/null";
+          Dir::Cache::pkgcache "";
+          Dir::Cache::srcpkgcache "";
+          Acquire::Languages "none";
+          Acquire::Retries "2";
+          EOF
+          keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg
+          cat >sources.list <<EOF
+          deb [signed-by=$keyring] https://archive.ubuntu.com/ubuntu noble main
+          deb [signed-by=$keyring] https://archive.ubuntu.com/ubuntu noble-updates main
+          deb [signed-by=$keyring] https://security.ubuntu.com/ubuntu noble-security main
+          EOF
+          apt-get update -o APT::Update::Error-Mode=any
+          package=$(LC_ALL=C apt-cache policy git | awk '$1 == "Candidate:" { print $2 }')
+          if [[ "${package#*:}" != "$version"-* ]]; then
+            echo "::error title=工具准备失败::Noble 的 Git 包与声明 $version 不符（${package:-无候选包}）"
+            exit 1
+          fi
+          apt-get download "git=$package"
+          dpkg-deb --extract git_*.deb package
+          # Keep helpers and templates with the binary even when a suite filters its environment.
+          cat >bin/git <<'EOF'
+          #!/bin/sh
+          package=$(CDPATH= cd -- "$(dirname -- "$0")/../package" && pwd) || exit 1
+          export GIT_EXEC_PATH="$package/usr/lib/git-core"
+          export GIT_TEMPLATE_DIR="$package/usr/share/git-core/templates"
+          exec "$package/usr/bin/git" "$@"
+          EOF
+          chmod +x bin/git
+          actual=$(bin/git --version)
+          [[ "$actual" == "git version $version" ]]
+          echo "$actual"
+          printf '%s\n' "$tool/bin" >> "$GITHUB_PATH"
       - name: Select suites
         id: select
         env:
@@ -191,6 +248,7 @@ jobs:
           path: trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
+      - *prepare-linux-git
       - name: Select suites
         id: select
         env:
@@ -292,6 +350,7 @@ jobs:
           path: trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
+      - *prepare-linux-git
       - name: Select suites
         id: select
         env:
@@ -394,6 +453,47 @@ jobs:
           path: trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
+      # Cache only the vendor archive, and verify the declared digest on hits and misses alike.
+      - name: Cache declared MinGit archive
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ runner.temp }}/clued-ci-mingit.zip
+          key: clued-ci-mingit-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('trusted/config/ci-toolchain.json') || hashFiles('candidate/config/ci-toolchain.json') }}
+      - name: Prepare declared Git
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            $policyPath = 'trusted/config/ci-toolchain.json'
+            if (!(Test-Path -LiteralPath $policyPath)) { $policyPath = 'candidate/config/ci-toolchain.json' }
+            $policy = Get-Content -Raw -Encoding UTF8 -LiteralPath $policyPath | ConvertFrom-Json
+            if ($policy.git -cnotmatch '^\d+\.\d+\.\d+$' -or $policy.windows.mingitRevision -notmatch '^[1-9]\d*$' -or
+                $policy.windows.mingitSha256 -notmatch '^[0-9a-f]{64}$') {
+              throw 'config/ci-toolchain.json 的 Git 或 MinGit 声明无效'
+            }
+            $version = $policy.git
+            $release = "$version.windows.$($policy.windows.mingitRevision)"
+            $archive = Join-Path $env:RUNNER_TEMP 'clued-ci-mingit.zip'
+            if (!(Test-Path -LiteralPath $archive -PathType Leaf)) {
+              $url = "https://github.com/git-for-windows/git/releases/download/v$release/MinGit-$version-64-bit.zip"
+              & curl.exe --fail --location --silent --show-error --retry 2 --output $archive $url
+              if ($LASTEXITCODE -ne 0) { throw "MinGit 下载退出 $LASTEXITCODE" }
+            }
+            if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $policy.windows.mingitSha256) {
+              throw 'MinGit SHA-256 与声明不符'
+            }
+            $install = Join-Path $env:RUNNER_TEMP 'clued-ci-mingit'
+            Expand-Archive -LiteralPath $archive -DestinationPath $install
+            $bin = Join-Path $install 'cmd'
+            $actual = & (Join-Path $bin 'git.exe') --version
+            if ($LASTEXITCODE -ne 0 -or $actual -cne "git version $release") {
+              throw "声明 git version $release，安装得到 $actual"
+            }
+            Write-Output $actual
+            Add-Content -LiteralPath $env:GITHUB_PATH -Encoding utf8 -Value $bin
+          } catch {
+            throw "工具准备失败：$($_.Exception.Message)"
+          }
       # The image warms Windows PowerShell's module analysis cache only at the machine-level PSModuleAnalysisCachePath. A
       # PowerShell a test starts with its own minimal environment (the service's three variables) does not get that variable
       # and uses the default cache under LocalApplicationData, which is cold: 45-56 s per process re-analysing the image's
