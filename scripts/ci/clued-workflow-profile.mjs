@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-export const COMPONENT_VERSION = "1.0.8";
+export const COMPONENT_VERSION = "1.0.10";
 
 // /3 changes only the on-disk representation. Each original LF-delimited YAML
 // line remains a separate plaintext JSON string on a separate physical line.
@@ -195,10 +195,10 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'27b43473d13a1c26749c4f32a27be0d593476c29',
-  source_sha256:'3c4d30fa5876d0534300bdef980c6ef980bbdcd64466a08d368636cfdbc4e1ff',
-  workflow_definition_sha256:'5badf0dfed0981dc546a949ec408875e152b392aa7664554787dcc41e1eac2e7',
-  profile_sha256:'d4e9d189df883775a34da0adef80b88a205739199f4909ed886fd0ab080f93b5',
+  workflow_blob:'44b2a88bd74b987f81fa55066046166c4fe87ec2',
+  source_sha256:'d5e8005f966fec200ed8affd3daf8b2821618243fd1d3094dd618120049dda11',
+  workflow_definition_sha256:'6bf1254b389ab9e89a23ce1fd754be5ba6946b54d423824902473e91fc882019',
+  profile_sha256:'ad3adfe0f0fe88805c425e7c0c04abd3a6d1079c106c086645118f7c615b3919',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
   role_sha256:Object.freeze({
     'clued-cloud-tests':'c34d55c18fa85fea715c4f972de0e106ef355e1d1487b42c636918eda39888ee',
@@ -394,13 +394,13 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
       'contract-placement':'9c0dd24d80b5d317259689fc709fc61a52ab73a11e1a321f9a1f9c4421e6022d',
     }),
   }),
-  // Before the cancel-only pull_request closed event (Task 3576b29c).
+  // The cancel-only pull_request closed Source as landed in #1352 (Task 3576b29c).
   Object.freeze({
     file:'.github/workflows/clued-required-tests.yml',
-    workflow_blob:'44b2a88bd74b987f81fa55066046166c4fe87ec2',
-    source_sha256:'d5e8005f966fec200ed8affd3daf8b2821618243fd1d3094dd618120049dda11',
-    workflow_definition_sha256:'6bf1254b389ab9e89a23ce1fd754be5ba6946b54d423824902473e91fc882019',
-    profile_sha256:'ad3adfe0f0fe88805c425e7c0c04abd3a6d1079c106c086645118f7c615b3919',
+    workflow_blob:'27b43473d13a1c26749c4f32a27be0d593476c29',
+    source_sha256:'3c4d30fa5876d0534300bdef980c6ef980bbdcd64466a08d368636cfdbc4e1ff',
+    workflow_definition_sha256:'5badf0dfed0981dc546a949ec408875e152b392aa7664554787dcc41e1eac2e7',
+    profile_sha256:'d4e9d189df883775a34da0adef80b88a205739199f4909ed886fd0ab080f93b5',
     primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
     role_sha256:Object.freeze({
       'clued-cloud-tests':'c34d55c18fa85fea715c4f972de0e106ef355e1d1487b42c636918eda39888ee',
@@ -413,7 +413,7 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
   }),
 ]);
 const requiredTestsPin=blob=>[REQUIRED_TESTS_SOURCE,...REQUIRED_TESTS_PREVIOUS_SOURCES].find(pin=>pin.workflow_blob===blob)??null;
-// The Windows successor has only one primary and uses the ordinary profile.
+// The historical Windows Source used closed only to cancel; its ordinary profile remains readable.
 const WINDOWS_CANCEL_SOURCE=Object.freeze({
   workflow_blob:'85fe5d6f8c84b00fe268b3ed0ec2970c203c83f6',
   source_sha256:'d29f33377802e716225b27d14fe5da02774e43ead7d17f5087b832d3c0f61701',

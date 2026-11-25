@@ -28,7 +28,6 @@ name: clued-required-tests-windows
 # trusted command loads.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, closed]
   push:
     branches: [main, clued-train/staging]
 
@@ -48,7 +47,6 @@ jobs:
   # no Clued token. Its exact bytes are registered in GATE_JOB_SHA256
   # (scripts/ci/clued-work-admission.mjs) before this workflow can be admitted.
   admission-gate:
-    if: github.event.action != 'closed'
     name: admission-gate
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
     timeout-minutes: 15
