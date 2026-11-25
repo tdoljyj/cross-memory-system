@@ -5,6 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
+import { rulesetFacts } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
 import { ResidentExecutor, PARK_HEAD_RETRY_MS, PARK_HEAD_STREAK_MS, STAGE8_NOT_READY_CODES, STAGE8_TRANSIENT_MAX_TRIES, STAGE8_TRANSIENT_PARK_CODES, STAGE8_TRANSIENT_RETRY_MS } from '../src/executor.mjs';
 import { STAGE8_NOT_READY_REASONS, STAGE8_FINAL_REASONS } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs';
 import { outcomeFailureCode } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
@@ -738,7 +740,8 @@ test('step 3a: the stage-8 code lists of the publisher, the stage fact and the e
 });
 
 test('step 3a: the new not-ready answers park the batch and are tried again; the rules ones tell the Owner once a day', async t => {
-  for (const code of ['REQUIRED_CHECK_FAILED', 'REQUIRED_CHECKS_UNREADABLE', 'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE', 'TRAIN_MODE_UNREADABLE']) {
+  // RULESET_UNREADABLE is not tried again by the clock (task bd07449b, its own test below); a failed read of the rules is
+  for (const code of ['REQUIRED_CHECK_FAILED', 'REQUIRED_CHECKS_UNREADABLE', 'RULESET_READ_FAILED', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE', 'TRAIN_MODE_UNREADABLE']) {
     const f = await executorFixture(t, { engine: stage8Engine([notReady(code), notReady(code)], KEY) });
     await f.drop(triggerBytes());
     const first = await f.exec.tick();
@@ -776,7 +779,8 @@ test('step 3a: the PR page and the notifications say why stage 8 writes no green
   const pull = { pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 };
   const parkedAs = code => prPage({ pull, status: board(b => b.setPending([{ pr: 7, headSha: H(7), baseSha: BASE, state: 'PARKED', deferred: code, nextAt: now + 10 * MIN }])), now });
   assert.match(parkedAs('STRICT_OFF_WITHOUT_TRAIN').description, /^已测通：main 的 strict 已关而列车未开.*再查第 8 段$/);
-  assert.match(parkedAs('RULESET_UNREADABLE').description, /^已测通：读不到 main 的规则/);
+  assert.match(parkedAs('RULESET_UNREADABLE').description, /^已测通：main 的必需检查没有全部钉在本执行器上/);
+  assert.match(parkedAs('RULESET_READ_FAILED').description, /^已测通：暂时读不到 main 的规则/);
   assert.match(parkedAs('TRAIN_TEST_MERGE_NOT_READY').description, /^已测通：等 GitHub 算好试合并/);
   assert.match(parkedAs('MERGE_METHODS_NOT_MERGE_ONLY').description, /合并方式不只有 merge/);
   assert.match(parkedAs('GREEN_LEDGER_UNAVAILABLE').description, /绿色台账/);
@@ -928,4 +932,105 @@ test('review round 28: GREEN_LEDGER_UNAVAILABLE at the queue head parks for the 
   assert.equal(r.until - f.clock(), HEAD_MS);
   const [entry] = await f.ledger.parkedEntries();
   assert.equal(ResidentExecutor.lastTry(entry).position, 1);
+});
+
+// Task bd07449b (PLAN-ruleset-unreadable-park-20261125 §3.2, §4). main's rules as GitHub gave them on 2026-11-25 (ruleset 27843120, the
+// hosted scaffold): read whole, and not this App's six. Stage 8 answers RULESET_UNREADABLE for them every time, so a timed retry is
+// a wasted stage 8: the batch sleeps at its first try and only rules pinned back to this App wake it.
+const LIVE_SCAFFOLD = JSON.parse(readFileSync(new URL('../../actions-hosted-migration/independent-ci-v1/test/fixtures/main-rules-scaffold-20261125.json', import.meta.url), 'utf8'));
+const APP = 5368905;
+const SIX = ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot'];
+// the same reply once the Owner pins the six back to this App (the scaffold's own entries stay)
+const pinnedBack = () => LIVE_SCAFFOLD.map(r => (r.type !== 'required_status_checks' ? r : { ...r, parameters: { ...r.parameters,
+  required_status_checks: [...r.parameters.required_status_checks.filter(c => !SIX.includes(c.context)), ...SIX.map(context => ({ context, integration_id: APP }))] } }));
+const sourceCode = raw => { try { rulesetFacts(raw.map(r => ({ type: r.type, rulesetId: r.ruleset_id, parameters: r.parameters ?? null })), APP); return null; } catch (e) { return e.code; } };
+const stage8Tries = async f => (await f.receipts.latest(['stage8-not-ready'], 50)).map(r => [r.value.body.failureCode, r.value.body.nextAt]);
+
+test('bd07449b must-red 1-3: under the scaffold rules stage 8 parks asleep at its first try; no timed retry, no wake when the companion restarts; rules pinned back wake it', async t => {
+  const code = sourceCode(LIVE_SCAFFOLD);
+  assert.equal(code, 'RULESET_UNREADABLE', 'what the Source answers for the rules read on 11-25');
+  assert.equal(sourceCode(pinnedBack()), null);
+  const engine = stage8Engine([notReady(code), notReady(code), notReady(code)], KEY);
+  const f = await executorFixture(t, { engine });
+  await f.drop(triggerBytes());
+  const first = await f.exec.tick();
+  // must-red 1: asleep at once
+  assert.deepEqual([first.state, first.reason, first.until, first.tries], ['PARKED', 'RULESET_UNREADABLE', null, 1]);
+  const ended = (await f.ledger.state(KEY)).tries.at(-1).ended;
+  assert.deepEqual([ended.code, ended.nextAt, ended.sleeping], ['RULESET_UNREADABLE', null, true]);
+  assert.deepEqual(await stage8Tries(f), [['RULESET_UNREADABLE', null]]);
+  assert.equal((await f.exec.parkedCounts()).outside, 0, 'a sleeping batch holds no parking place');
+  assert.equal(f.queue.notices.filter(n => n.kind === 'stage8-rules' || n.code === 'STAGE8_TRY_LIMIT').length, 0, 'nobody is told by the executor');
+  for (const minutes of [10, 20, 40]) {
+    f.advance(minutes * MIN);
+    assert.equal((await f.exec.tick()).state, 'IDLE', `${minutes} minutes later`);
+  }
+  assert.equal(stagesRun(engine).filter(stage => stage === 8).length, 1, 'no stage-8 try by the clock');
+  // must-red 2: the companion restarts (a new poller: nothing observed yet) and reads the same rules
+  let events = 0, checkReads = 0;
+  const companion = () => new Poller({ repo: subject().repo, ghExe: 'gh', clock: f.clock,
+    run: async argv => { checkReads++; return restAnswer(argv, { total_count: 1, check_runs: [{ id: 1, name: 'hosted-ci-suites', status: 'completed', conclusion: 'success' }] }); },
+    writeTrigger: async trigger => { events++; await f.drop(Buffer.from(JSON.stringify(trigger))); } });
+  // the rows as the companion reads them: the queue's view through the status board (state\status.json)
+  const pending = () => { const b = new StatusBoard({ clock: f.clock }); b.update({ backfill: { complete: true, published: 0, unreadable: 0 } });
+    b.setPending(f.queue.view(f.clock(), { etaBatchMs: 20 * MIN })); return parseStatus(Buffer.from(JSON.stringify(b.snapshot()))).pending; };
+  assert.deepEqual(pending().filter(r => r.pr === 884).map(r => [r.state, r.deferred, r.nextAt, r.baseSha]), [['PARKED', 'RULESET_UNREADABLE', null, BASE]]);
+  for (let restart = 0; restart < 3; restart++) {
+    const poller = companion();
+    poller.lastPass = { mainSha: BASE, pulls: [{ pr: 884, headSha: HEAD }] };
+    await poller.parkedPass(pending());
+    poller.noteBranchRules(LIVE_SCAFFOLD);
+    await poller.parkedPass(pending());
+    await poller.parkedPass(pending());
+    assert.equal(events, 0, `restart ${restart}: the rules are still not this App's, nothing to wake for`);
+    assert.equal((await f.exec.tick()).state, 'IDLE');
+  }
+  assert.equal(checkReads, 0, 'and no GitHub read is spent on it');
+  assert.equal(stagesRun(engine).filter(stage => stage === 8).length, 1);
+  // must-red 3: the rules change to the six pinned to this App: the next pass writes the wake, stage 8 is tried again
+  const poller = companion();
+  poller.lastPass = { mainSha: BASE, pulls: [{ pr: 884, headSha: HEAD }] };
+  poller.noteBranchRules(LIVE_SCAFFOLD);
+  await poller.parkedPass(pending());
+  assert.equal(events, 0);
+  poller.noteBranchRules(pinnedBack());
+  await poller.parkedPass(pending());
+  assert.equal(events, 1, 'one wake');
+  await poller.parkedPass(pending());
+  assert.equal(events, 1, 'and only one');
+  const again = await f.exec.tick();
+  assert.deepEqual([again.state, again.tries], ['PARKED', 2], 'stage 8 ran again (here it still answers the old code: asleep again)');
+  assert.equal(stagesRun(engine).filter(stage => stage === 8).length, 2);
+  assert.equal((await f.exec.tick()).state, 'IDLE');
+});
+
+test('bd07449b must-red 4 (resident half): RULESET_READ_FAILED parks and is read again after 1, 3, 10, 10 minutes; the try limit still tells the Owner once', async t => {
+  const tries = 6;
+  const engine = stage8Engine(Array.from({ length: tries }, () => notReady('RULESET_READ_FAILED')), KEY);
+  const f = await executorFixture(t, { engine, policy: rawPolicy({ park: { ...rawPolicy().park, stage8MaxTries: tries } }) });
+  await f.drop(triggerBytes());
+  const waits = [];
+  for (let i = 0; i < tries; i++) {
+    const r = await f.exec.tick();
+    assert.deepEqual([r.state, r.reason, r.tries], ['PARKED', 'RULESET_READ_FAILED', i + 1]);
+    if (r.until === null) { waits.push(null); break; }
+    waits.push((r.until - f.clock()) / MIN);
+    f.advance(r.until - f.clock() - 1);
+    assert.equal((await f.exec.tick()).state, 'IDLE', 'not before its time');
+    f.advance(1);
+  }
+  assert.deepEqual(waits, [1, 3, 10, 10, 10, null], 'short at first, then every 10 minutes; the try limit puts it to sleep');
+  assert.equal(f.queue.notices.filter(n => n.code === 'STAGE8_TRY_LIMIT').length, 1);
+  assert.equal(f.queue.notices.filter(n => n.kind === 'stage8-rules').length, 0);
+  assert.equal(f.queue.breaker?.state ?? 'closed', 'closed', 'neutral');
+});
+
+test('bd07449b: the PR page says which of the two it is', () => {
+  const now = Date.parse('2026-11-25T03:00:00Z');
+  const board = rows => { const b = new StatusBoard({ clock: () => now }); b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); b.setPending(rows); return parseStatus(Buffer.from(JSON.stringify(b.snapshot()))); };
+  const pull = { pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 };
+  const page = row => prPage({ pull, status: board([{ pr: 7, headSha: H(7), baseSha: BASE, state: 'PARKED', ...row }]), now }).description;
+  assert.match(page({ deferred: 'RULESET_READ_FAILED', nextAt: now + MIN }), /^已测通：暂时读不到 main 的规则.*再查第 8 段/);
+  assert.match(page({ deferred: 'RULESET_UNREADABLE', nextAt: null }), /^已测通：main 的必需检查没有全部钉在本执行器上.*规则钉回后/);
+  assert.doesNotMatch(page({ deferred: 'RULESET_UNREADABLE', nextAt: null }), /读不到/);
 });

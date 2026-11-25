@@ -1267,7 +1267,8 @@ test('three ways, fail closed: rules that cannot be read, or read only in part, 
     const p = await stage8(t, e, b, { trainLanding: PUSH1 });
     assert.equal(p.status, 'BLOCKED', JSON.stringify(p));
     assert.equal(p.sideEffects, 0);
-    assert.ok(['TRAIN_LANDING_RULES_MISSING', 'RULESET_UNREADABLE'].includes(p.reason), JSON.stringify(p));
+    // task bd07449b: a reply not given whole is a failed read (RULESET_READ_FAILED); rules read whole and not understood stay RULESET_UNREADABLE
+    assert.ok(['TRAIN_LANDING_RULES_MISSING', name === 'rules reply incomplete' ? 'RULESET_READ_FAILED' : 'RULESET_UNREADABLE'].includes(p.reason), JSON.stringify(p));
     if (p.reason === 'TRAIN_LANDING_RULES_MISSING') assert.ok(Array.isArray(p.missing) && p.missing.length > 0 && p.missing.every(m => /unreadable/.test(m)), JSON.stringify(p.missing));
     untouched(e, T); assert.deepEqual(e.W.pushes, []);
   });

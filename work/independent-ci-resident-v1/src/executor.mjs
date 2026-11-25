@@ -384,6 +384,8 @@ export const STAGE8_NOT_READY_CODES = Object.freeze(['RESIDENT_BASE_MOVED', 'RES
   'REQUIRED_CHECK_FAILED', 'REQUIRED_CHECKS_UNREADABLE',
   // Phase 2, step 3a: main's live branch rules, GitHub's test merge, the green ledger (all before any journal write).
   'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',
+  // Task bd07449b: main's rules were not read (the Source's readMainRules); RULESET_UNREADABLE is rules read and not this App's six.
+  'RULESET_READ_FAILED',
   // Step 3c-2b (DESIGN §41.2): the single green is not proven; the batch rests at B until the next stage 10. The stage
   // directory's train mode could not be read for a front job: it rests at B too.
   'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_MODE_UNREADABLE',
@@ -393,6 +395,12 @@ export const STAGE8_NOT_READY_CODES = Object.freeze(['RESIDENT_BASE_MOVED', 'RES
 // [T, H] is not what was tested.
 export const STAGE8_OWNER_NOTICE_CODES = Object.freeze(['STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_TREE_DIFFERS']);
 export const PARK_RETRY_MS = Object.freeze([10 * 60_000, 20 * 60_000, 40 * 60_000, 80 * 60_000, 120 * 60_000]);
+// Task bd07449b (PLAN-ruleset-unreadable-park-20261125 §3.2). A failed read of main's rules mends by itself: read again after 1, 3,
+// 10 minutes, then every 10 (the try cap and park.maxMs bound it as every parked batch). Rules read whole that are not this App's six
+// (RULESET_UNREADABLE) give the same answer at every try: no timed retry, the batch sleeps at its first try and the companion wakes it
+// when it reads the rules pinned back (poller.mjs#parkedPass); a sleeping batch holds no parking place.
+export const RULES_READ_RETRY_MS = Object.freeze([60_000, 3 * 60_000, 10 * 60_000]);
+export const STAGE8_SLEEP_AT_ONCE_CODES = Object.freeze(['RULESET_UNREADABLE']);
 // DESIGN §28 (design r3 4a, PR #930): a stage-8 try that ended BLOCKED with zero side effects on a transient admission or GitHub
 // failure parks the batch at B again instead of burning a head whose stages 1-7 passed. Fixed here, not in the policy (no
 // policy contract change): at most STAGE8_TRANSIENT_MAX_TRIES such parks, after 1, 3 and 10 minutes; the next one ends the batch
@@ -3169,10 +3177,11 @@ export class ResidentExecutor {
     // The absolute retry cap also covers the uncounted head tries. Event-driven tries may follow it.
     const final = control.code === 'RESIDENT_BASE_MOVED' || tryLimit || n >= MAX_TRIES || now - Date.parse(s.parked.at) >= this.policy.park.maxMs;
     if (park) {
-      const sleeping = final;
+      const sleeping = final || STAGE8_SLEEP_AT_ONCE_CODES.includes(control.code);
       // The back-off follows the counted tries: after a run at the queue's first place the next try is not 2 hours away
       // (re-review N6).
-      const backoff = PARK_RETRY_MS[Math.min(Math.max(counted - 1, 0), PARK_RETRY_MS.length - 1)];
+      const steps = control.code === 'RULESET_READ_FAILED' ? RULES_READ_RETRY_MS : PARK_RETRY_MS;
+      const backoff = steps[Math.min(Math.max(counted - 1, 0), steps.length - 1)];
       const nextAt = sleeping ? null : now + (position === 1 && now - streakFrom < PARK_HEAD_STREAK_MS ? PARK_HEAD_RETRY_MS : backoff);
       // Over capacity outside the queue's first two places: end it now rather than hold a slot (§4.9, review n-m9).
       const counts = await this.parkedCounts();

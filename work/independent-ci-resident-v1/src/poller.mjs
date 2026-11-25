@@ -21,6 +21,7 @@
 import { HEX40, check, digest } from './canonical.mjs';
 import { TRIGGER_CONTRACT_V2 } from './trigger.mjs';
 import { isDraft } from './pr-candidate.mjs';
+import { rulesFacts } from './ruleset-backstop.mjs';
 
 const json = text => { try { return JSON.parse(text); } catch { return null; } };
 export const UP_TO_DATE_HINTS = Object.freeze(['merge-main', 'push-any-commit', 'compare-unavailable']);
@@ -78,7 +79,7 @@ export class Poller {
     this.sent = new Map(); this.compares = new Map(); this.slow = new Map(); this.lastPass = null;
     this.compareBudget = MAX_COMPARES_PER_PASS; this.stalled = false;
     this.etags = new Map(); this.reads = { fresh: 0, notModified: 0 }; this.retryAt = new Map();
-    this.parkedObserved = new Map(); this.parkedCursor = 0; this.rulesDigest = null;
+    this.parkedObserved = new Map(); this.parkedCursor = 0; this.rulesDigest = null; this.rulesPinned = null;
   }
 
   // One conditional REST read: the value of a 200 (kept with its ETag once `accept` takes it), or the kept value on a 304.
@@ -108,8 +109,12 @@ export class Poller {
     'POLLER_PULLS_UNAVAILABLE', 60_000);
   }
 
+  // main's rules as the companion's backstop just read them (ruleset-backstop.mjs#companionBackstop). rulesPinned: whether they are this
+  // App's six (the backstop's own reading, rulesFacts); null until a rules list was read, or when the list cannot be judged.
   noteBranchRules(rules) {
-    if (Array.isArray(rules)) this.rulesDigest = digest(rules);
+    if (!Array.isArray(rules)) return;
+    this.rulesDigest = digest(rules);
+    this.rulesPinned = rulesFacts(rules)?.pinned ?? null;
   }
 
   // Observe one sleeping batch per existing polling pass. The executor uses these changes only as hints;
@@ -128,6 +133,10 @@ export class Poller {
     if (sleeping.length === 0 || this.stalled) return;
     this.parkedCursor = (this.parkedCursor + 1) % sleeping.length;
     const row = sleeping[this.parkedCursor], sha = row.testSha ?? row.headSha;
+    // Task bd07449b: a batch asleep because main's rules are not this App's six has one thing to wait for, the rules pinned back. Until
+    // this process has read them so, nothing is observed and nothing is written for it: stage 8 would answer the same, and what was
+    // observed lives in memory, so a restart must not look like a change.
+    if (row.deferred === 'RULESET_UNREADABLE' && this.rulesPinned !== true) return;
     const previous = this.parkedObserved.get(sha);
     let checks = previous?.checks ?? null, checksReady = false;
     try {
@@ -152,7 +161,7 @@ export class Poller {
     const signal = digest([row.pr, row.headSha, sha, this.lastPass.mainSha, this.rulesDigest, checks?.digest ?? null, mergeMethods]);
     if (previous?.signal === signal) return;
     const observation = { signal, checks, mergeMethods };
-    const recoveredRules = row.deferred === 'RULESET_UNREADABLE' && this.rulesDigest !== null;
+    const recoveredRules = row.deferred === 'RULESET_UNREADABLE' && this.rulesPinned === true;
     const recoveredMethods = mergeMethods?.[0] === true && mergeMethods?.[1] === false && mergeMethods?.[2] === false;
     if (!previous && !checksReady && !recoveredRules && !recoveredMethods && this.lastPass.mainSha === row.baseSha) {
       this.parkedObserved.set(sha, observation);

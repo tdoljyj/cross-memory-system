@@ -700,12 +700,13 @@ test('control pair v2 (step 3a): live branch rules decide before anything is wri
   assert.deepEqual([off.r.status, off.r.reason, off.r.sideEffects, off.github.checks.length, off.greenLedger.records.length, off.r.polls], ['BLOCKED', 'STRICT_OFF_WITHOUT_TRAIN', 0, 0, 0, 1]);
   assert.equal(stage8Code(off.r), 'STRICT_OFF_WITHOUT_TRAIN');
   // a required check pinned to another integration (a disaster-recovery switch), one missing, no required checks at all
-  // (the ruleset disabled), or a read that fails: unreadable, no queue writes or publication
-  for (const github of [fakeGithub({ rules: branchRules({ pinned: 5164952 }) }), fakeGithub({ rules: branchRules({ names: SIX.slice(1) }) }),
-    fakeGithub({ rules: [] }), fakeGithub({ rulesError: 'github_http_403' })]) {
+  // (the ruleset disabled): unreadable, no queue writes or publication. A read that fails is its own answer (task bd07449b, must-red 4:
+  // RULESET_READ_FAILED, never RULESET_UNREADABLE), with the same zero effects.
+  for (const [github, code] of [[fakeGithub({ rules: branchRules({ pinned: 5164952 }) }), 'RULESET_UNREADABLE'], [fakeGithub({ rules: branchRules({ names: SIX.slice(1) }) }), 'RULESET_UNREADABLE'],
+    [fakeGithub({ rules: [] }), 'RULESET_UNREADABLE'], [fakeGithub({ rulesError: 'github_http_403' }), 'RULESET_READ_FAILED'], [fakeGithub({ rulesError: 'github_http_503' }), 'RULESET_READ_FAILED']]) {
     const u = await pairRun(t, { github });
-    assert.deepEqual([u.r.status, u.r.reason, u.r.sideEffects, u.github.checks.length, u.greenLedger.records.length, u.r.polls], ['BLOCKED', 'RULESET_UNREADABLE', 0, 0, 0, 1]);
-    assert.equal(stage8Code(u.r), 'RULESET_UNREADABLE');
+    assert.deepEqual([u.r.status, u.r.reason, u.r.sideEffects, u.github.checks.length, u.greenLedger.records.length, u.r.polls], ['BLOCKED', code, 0, 0, 0, 1]);
+    assert.equal(stage8Code(u.r), code);
   }
   // the rules as they are today (strict on, all six pinned): the pair is written
   const ok = await pairRun(t);
