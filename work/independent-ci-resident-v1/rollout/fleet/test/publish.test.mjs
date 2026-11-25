@@ -1187,6 +1187,39 @@ test('seal: a request the workflow has not opened 15 minutes after its one run a
   await sealedNothing(w2, before2, n2);
 });
 
+// Task 87d330d0 step 3: the two cases of the test above that its red run never reached, each on its own.
+// (red before: --wait 60 waited the whole hour for the link and answered WAITING_OWNER opened:false)
+test('seal --wait 60 on a request the workflow does not open: NOT_OPENED 15 minutes after its one run, not after the wait', async t => {
+  const w = await prepWorld(t);
+  await w.prep();
+  Object.assign(w.door, { status: 'none', openTo: 'none' });
+  const time = fakeTime('2026-11-25T01:00:00Z');
+  const start = time.now, before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
+  const r = await timed(w, time, { wait: 60 });
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_NOT_OPENED', JSON.stringify({ status: r.status, opened: r.opened ?? null, confirmUrl: r.confirmUrl ?? null, minutes: (time.now - start) / 60_000 }));
+  assert.equal(time.now - start, 15 * 60_000, 'the wait is for the Owner, the run is given 15 minutes');
+  assert.equal((await w.opens()).length, 1, 'one workflow run');
+  await sealedNothing(w, before, n);
+  assert.notEqual(publishModule.exitCodeOf(r), 0);
+});
+
+// (red before: the read that failed after the run threw ACCEPT_DOOR_UNAVAILABLE, and the caller ran seal again: a second run)
+test('seal: a door that cannot be read after its one run answers NOT_OPENED at 15 minutes, never a throw', async t => {
+  const w = await prepWorld(t);
+  await w.prep();
+  Object.assign(w.door, { status: 'none', openTo: 'none' });
+  const time = fakeTime('2026-11-25T01:00:00Z', () => { w.door.fail = 1e9; });
+  const start = time.now, before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
+  let r;
+  try { r = await timed(w, time, { wait: 0 }); } catch (e) { assert.fail(`seal threw ${e?.code ?? e} after ${(time.now - start) / 60_000} minutes`); }
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_NOT_OPENED', JSON.stringify(r));
+  assert.equal(time.now - start, 15 * 60_000);
+  assert.equal((await w.opens()).length, 1, 'one workflow run');
+  assert.ok(w.door.reads.length >= 3, 'read again while there was time');
+  await sealedNothing(w, before, n);
+  assert.notEqual(publishModule.exitCodeOf(r), 0);
+});
+
 test('seal through the door: pending, then rejected or expired answers REJECTED, writes nothing, and the command exits non-zero', async t => {
   for (const answer of ['rejected', 'expired']) {
     const w = await prepWorld(t);
@@ -1538,8 +1571,9 @@ test("seal's refusals that asking again cannot change are one exported list (acc
   for (const code of ['ACCEPT_DOOR_UNAVAILABLE', 'ACCEPT_DOOR_OPEN_FAILED', 'PUBLISH_GH_RELEASE_DOWNLOAD_FAILED']) assert.ok(!list.includes(code), `${code}: asking again may help`);
 });
 
-// Task 87d330d0 alignment: accept.mjs (part C) on part B's real seal (wait 0) and readFleet, reached through accept.mjs's own defaults
-// (deps.sealOptions and deps.readStatus give them this world's index, gh and door; nothing else is faked on B's side).
+// Task 87d330d0 alignment: accept.mjs (part C) on part B's real seal and readFleet, reached through accept.mjs's own defaults (open gives
+// seal wait 0, run one seal the whole --wait; deps.sealOptions and deps.readStatus give them this world's index, gh and door; nothing
+// else is faked on B's side).
 const acceptWorld = async (t, onSleep) => {
   const w = await prepWorld(t);
   await w.prep();
@@ -1563,18 +1597,20 @@ test('accept.mjs on the real seal and readFleet: open opens the request once and
   assert.equal(opened.confirmUrl, w.door.confirmUrl);
   assert.equal(acceptExit(opened), 0);
   assert.equal((await w.opens()).length, 1, 'one workflow run');
-  // the Owner approves on the page; both nodes report the accepted Source
+  // the Owner approves on the page; the in-service nodes report the accepted Source. Part A's answer as its migration writes it
+  // (5b8aa67c2, PLAN-accept-align-open-20261125 3.2): the nodes in state active or draining, by name, so a registered node never approved
+  // (state pending) is not in it and cannot hold the fleet back; a draining one is
   const at = request.ciSourceManifestSha256;
   Object.assign(w.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: '2026-11-25T01:02:03.456789+00:00',
-    nodes: [{ name: 'DESK', source_sha256: at, paused: false }, { name: 'TURING', source_sha256: at, paused: false }] });
+    nodes: [{ name: 'DESK', source_sha256: at, paused: false }, { name: 'LEAVING', source_sha256: at, paused: false }, { name: 'TURING', source_sha256: at, paused: false }] });
   const done = await run();
   assert.equal(done.status, 'ROLLOUT_DONE', JSON.stringify(done));
-  assert.deepEqual(done.nodes, ['DESK', 'TURING']);
+  assert.deepEqual(done.nodes, ['DESK', 'LEAVING', 'TURING']);
   assert.equal(upgrades.length, 1);
   assert.ok((await w.assets()).some(a => a.name === `${TAG}.acceptance.json`), 'sealed on the Release');
   assert.equal((await w.opens()).length, 1, 'still one workflow run');
   // TURING not there yet: the door says so, and run names it
-  w.door.nodes = [{ name: 'DESK', source_sha256: at, paused: false }, { name: 'TURING', source_sha256: 'a'.repeat(64), paused: false }];
+  w.door.nodes = [{ name: 'DESK', source_sha256: at, paused: false }, { name: 'LEAVING', source_sha256: at, paused: false }, { name: 'TURING', source_sha256: 'a'.repeat(64), paused: false }];
   const waiting = await run();
   assert.equal(waiting.status, 'ROLLOUT_WAITING_OTHER_NODES', JSON.stringify(waiting));
   assert.deepEqual(waiting.pending.map(n => n.node), ['TURING']);
@@ -1582,16 +1618,55 @@ test('accept.mjs on the real seal and readFleet: open opens the request once and
   assert.equal(acceptModule.SEAL_INPUT_ERRORS, publishModule.SEAL_INPUT_ERRORS, 'accept.mjs stops on seal\'s own list');
 });
 
-// Open design question (Task 87d330d0 alignment, result file section 4): run asks seal (wait 0) again every 30-120 s, and seal opens a
-// new request when it reads rejected at its start. Design 2.1 wants the Owner's "not yet" to stop the command.
-test('accept.mjs run on the real seal: the Owner rejects the request it waits on -> ROLLOUT_STOPPED, no new request', { todo: 'design question: seal reopens a rejected request on accept.mjs\'s next look' }, async t => {
+// PLAN-accept-align-open-20261125 1.2 and 1.4 (red before, a todo: run asked seal (wait 0) again, and seal opened a new request on the
+// rejected it read at its start): the Owner's no is final; the one seal run gives answers REJECTED and no request is ever opened
+test('accept.mjs run on the real seal: the Owner rejects the request it waits on -> ROLLOUT_STOPPED, no new request', async t => {
   let wr = null;
-  const { w, run } = await acceptWorld(t, tt => { if (tt.slept.length === 1) wr.door.status = 'rejected'; });
+  const { w, run, acceptExit } = await acceptWorld(t, tt => { if (tt.slept.length === 1) wr.door.status = 'rejected'; });
   wr = w;
   w.door.status = 'pending';
   const r = await run('--wait', '10');
   assert.equal(r.status, 'ROLLOUT_STOPPED', JSON.stringify(r));
+  assert.deepEqual([r.stage, r.code, r.answer], ['accept', 'FLEET_ACCEPTANCE_REJECTED', 'rejected']);
+  assert.match(r.next, /new version/);
+  assert.equal(acceptExit(r), 1);
   assert.deepEqual(await w.opens(), [], 'no request opened after the Owner said no');
+  // the same command again (a lost process restarted, a rerun): still no request
+  const again = await run();
+  assert.equal(again.status, 'ROLLOUT_STOPPED', JSON.stringify(again));
+  assert.deepEqual(await w.opens(), [], 'never opened again');
+});
+
+// PLAN-accept-align-open-20261125 2.4 (red before: run asked seal (wait 0) again every 30-120 s and each look that found no request
+// dispatched once more, for the whole wait; it ended ROLLOUT_WAITING_OWNER FLEET_ACCEPTANCE_OPEN_QUEUED)
+test('accept.mjs run on the real seal: a request the workflow never opens is ROLLOUT_STOPPED FLEET_ACCEPTANCE_NOT_OPENED 15 minutes after its one run', async t => {
+  const { w, time, run, acceptExit } = await acceptWorld(t);
+  Object.assign(w.door, { status: 'none', openTo: 'none' });
+  const start = time.now;
+  const r = await run('--wait', '60');
+  assert.deepEqual([r.status, r.code, (await w.opens()).length], ['ROLLOUT_STOPPED', 'FLEET_ACCEPTANCE_NOT_OPENED', 1], JSON.stringify({ ...r, runs: (await w.opens()).length }));
+  assert.equal(r.stage, 'accept');
+  assert.equal(time.now - start, 15 * 60_000, 'stopped 15 minutes after the run, not at the end of the wait');
+  assert.match(r.next, /fleet-accept/);
+  assert.equal(acceptExit(r), 1);
+});
+
+// PLAN-accept-align-open-20261125 2.1 item 3 and 2.4 (red before: each look of run was a whole seal, which downloaded the Release's tar
+// again): the Owner not answering for the whole wait is one seal, one download, no workflow run; then the default wait (a day) likewise
+test('accept.mjs run on the real seal: the Owner does not answer for the whole wait: one download of the tar, no workflow run, ROLLOUT_WAITING_OWNER with the link', async t => {
+  const { w, time, run, acceptExit } = await acceptWorld(t);
+  w.door.status = 'pending';
+  const tarsOf = calls => calls.filter(c => c.args[0] === 'release' && c.args[1] === 'download' && c.args[c.args.indexOf('--pattern') + 1] === `${TAG}.tar`).length;
+  for (const [extra, minutes] of [[['--wait', '60'], 60], [[], 24 * 60]]) {
+    const before = (await w.calls()).length, start = time.now;
+    const r = await run(...extra);
+    const calls = (await w.calls()).slice(before);
+    assert.deepEqual([r.status, tarsOf(calls), calls.filter(c => c.args[0] === 'workflow').length], ['ROLLOUT_WAITING_OWNER', 1, 0],
+      `${minutes} minutes: ${JSON.stringify({ status: r.status, code: r.code ?? null, tars: tarsOf(calls) })}`);
+    assert.equal(r.confirmUrl, w.door.confirmUrl);
+    assert.equal(time.now - start, minutes * 60_000, `${minutes} minutes waited`);
+    assert.equal(acceptExit(r), 2);
+  }
 });
 
 // review 87d330d0 B, "要改" 5: no invisible character in the fleet scripts (a literal U+FEFF an editor drops fails silently)

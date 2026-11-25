@@ -1486,7 +1486,8 @@ function Get-DrillProductionVerdict($Receipt, $Readback) {
 }
 
 # -Finalize of a candidate that ends PASS opens the Owner's acceptance request (PLAN-accept-auto-seal-20261125.md 2.1): one
-# `rollout/fleet/accept.mjs open` (seal until the door's request has its link, at most 5 minutes, under the 600 s child limit below),
+# `rollout/fleet/accept.mjs open` (one seal: a run it dispatches is given 15 minutes for the link, publish.mjs OPEN_WAIT_MS, under the
+# 1200 s child limit below),
 # after the receipt is final (seal reads it). The Owner accepts by approving the
 # fleet.accept Grant at the confirm link it answers; nothing else here is the Owner's. Auxiliary (the board's rule: an auxiliary step that
 # fails only does not happen): whatever it answers, the drill's conclusion and receipt stay as the read-back made them, and the answer
@@ -1508,7 +1509,7 @@ function Open-DrillAcceptance([string]$Request, [string]$Receipt) {
   try {
     $arguments = @($accept, 'open', '--request', [IO.Path]::GetFullPath($Request), '--drill-receipt', [IO.Path]::GetFullPath($Receipt))
     $run = if ($marked) { & $script:DrillAcceptanceOpener 'node.exe' $arguments } else {
-      Invoke-DrillNode ((Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source) $arguments 600 }
+      Invoke-DrillNode ((Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source) $arguments 1200 }
     $last = @(([string](Get-Prop $run 'stdout')) -split "`r?`n" | Where-Object { $_.Trim() }) | Select-Object -Last 1
     $opened = ConvertFrom-Json -InputObject ([string]$last)
   } catch { $opened = $null }

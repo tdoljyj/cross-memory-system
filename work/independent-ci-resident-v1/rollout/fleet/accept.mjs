@@ -4,19 +4,22 @@
 //
 //   node rollout/fleet/accept.mjs run --request <fleet-node-<v>.acceptance-request.json> [--drill-receipt <receipt.json>] --work <dir> [--wait <minutes>]
 //   node rollout/fleet/accept.mjs open --request <...acceptance-request.json> [--drill-receipt <receipt.json>]
-//        open: seal, asked again until the door's pending request has its confirm link, bounded by OPEN_WAIT_MINUTES (seal dispatches
-//        the release workflow's fleet-accept mode, and the link exists once that run reaches the door: PLAN-accept-binding-20261125.md
-//        section 3 piece C); nothing else. drill/drill-vm.ps1 -Finalize runs it for a candidate that ends PASS. Exit 0 on seal's three
-//        answers with the link (WAITING_OWNER with confirmUrl, SEALED, REJECTED); no link in time: NOT_OPENED, code
-//        FLEET_ACCEPTANCE_OPEN_QUEUED, exit 2 (accept.mjs run asks the same seal again and waits for it).
+//        open: one seal (wait 0), nothing else (PLAN-accept-align-open-20261125 2.2): with no request open at the door seal dispatches
+//        the release workflow's fleet-accept mode once and reads for its link up to publish.mjs OPEN_WAIT_MS. drill/drill-vm.ps1
+//        -Finalize runs it for a candidate that ends PASS. Exit 0 on seal's answers with an Owner's side (WAITING_OWNER, which always
+//        carries confirmUrl, SEALED, REJECTED); the workflow did not open it (seal's FLEET_ACCEPTANCE_NOT_OPENED): NOT_OPENED with that
+//        code, exit 2. seal throwing: ROLLOUT_REFUSED; never asked again here (a second seal may dispatch a second run).
 //
 // run, three steps, each safe to run again as it is (DESK starts it in the background, like wait-pr.sh: bounded, its exit wakes DESK):
-//   1. seal (publish.mjs, piece B: it opens the request at the door, or reads its answer). WAITING_OWNER (with or without the link yet;
-//      FLEET_ACCEPTANCE_OPEN_QUEUED alike): asked again every 30 s, then 60, then every 120 s, until --wait minutes (default: the
-//      request's expiresAt, else 24 hours) -> ROLLOUT_WAITING_OWNER with the link. REJECTED (refused or expired) -> ROLLOUT_STOPPED at
-//      the acceptance: the candidate stays unaccepted, the same command again opens a new request. SEALED: on. seal throwing (the door
-//      or gh unreachable: the network flaps) is a look that got no answer and is asked again on the same intervals; an input error
-//      (SEAL_INPUT_ERRORS) stops at once, and errors that last SEAL_ERROR_MINUTES stop with the last code.
+//   1. ONE seal that waits (publish.mjs, piece B; PLAN-accept-align-open-20261125 2.2): seal({ wait: --wait minutes, default and at most
+//      publish.mjs WAIT_MAX_MINUTES, never past the command's life }) opens the request at the door when none is open (one workflow run)
+//      and reads the door itself until the Owner answers, the wait runs out or the request expires; this command never polls seal.
+//      WAITING_OWNER (always with the link) -> ROLLOUT_WAITING_OWNER. REJECTED -> ROLLOUT_STOPPED at the acceptance: answer rejected is
+//      the Owner's final no (the door never asks again: publish a new version); answer expired, the same command again opens a new
+//      request. NOT_OPENED (the workflow did not open the request seal dispatched) -> ROLLOUT_STOPPED with that code: read why in the
+//      release workflow's latest fleet-accept run; this command never dispatches again. SEALED: on. seal throwing (the door or gh
+//      unreachable: the network flaps) is asked again after 30 s, 60, then every 120 s; an input error (SEAL_INPUT_ERRORS) stops at
+//      once, and errors that last SEAL_ERROR_MINUTES stop with the last code.
 //   2. this node: upgrade.mjs fetch --version <v> --work <work>\node --repo <the request's>, never --allow-active-upgrade at first.
 //      The note <work>\requested-<tag>.json says what this command asked of this node; a run that finds it asks upgrade.mjs nothing
 //      again and only reads (status.json, current.json, the inbox archive), so a rollback is never requested again by this command (a
@@ -45,8 +48,8 @@
 //      Commander, then this command again; plan 2.4). When only this node is still to go (the door's copy of its Source lags its
 //      current.json) the fleet is read again, bounded by FLEET_SETTLE_MINUTES.
 //
-// Life: no longer than one request's validity (plan 2.3): the request's expiresAt from seal's first WAITING answer, else 24 hours from
-// the start; every wait above ends at it.
+// Life: no longer than one request's validity (plan 2.3): 24 hours from the start (seal itself never waits past the request's
+// expiresAt); every wait above ends at it.
 //
 // The fleet read is piece B's: rollout/fleet/accept-door.mjs readFleet({ resource }), the resource of this request file (the anonymous
 // read of public.clued_fleet_accept_status_v1; when accepted it carries each registered node's name, Source and pause) -> [{ node,
@@ -65,24 +68,23 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { DEFAULT_ROOT } from './install.mjs';
 import { acceptResourceOf, readFleet } from './accept-door.mjs';
-import { SEAL_INPUT_ERRORS, readRequest } from './publish.mjs';
+import { SEAL_INPUT_ERRORS, WAIT_MAX_MINUTES, readRequest } from './publish.mjs';
 import { Refused } from './ports.mjs';
 import { tagOf } from './universal.mjs';
 import { OP_MOVING, main as upgradeMain } from './upgrade.mjs';
 
 export const ROLLOUT_CONTRACT = 'clued.independent-ci.fleet-rollout/1';
-// seal()'s answers (plan section 5, the interface pieces B and C share); OPEN_QUEUED: dispatched, the door has no request yet
+// seal()'s four answers (plan section 5, the interface pieces B and C share); NOT_OPENED: seal's one workflow run did not open the request
+// within publish.mjs OPEN_WAIT_MS (PLAN-accept-align-open-20261125 2.2)
 export const SEAL_WAITING = 'FLEET_ACCEPTANCE_WAITING_OWNER';
 export const SEAL_SEALED = 'FLEET_ACCEPTANCE_SEALED';
 export const SEAL_REJECTED = 'FLEET_ACCEPTANCE_REJECTED';
-export const SEAL_QUEUED = 'FLEET_ACCEPTANCE_OPEN_QUEUED';
+export const SEAL_NOT_OPENED = 'FLEET_ACCEPTANCE_NOT_OPENED';
 const SEAL_ANSWERS = Object.freeze([SEAL_WAITING, SEAL_SEALED, SEAL_REJECTED]);
 // seal's codes that asking again cannot change: piece B's one list (publish.mjs SEAL_INPUT_ERRORS), stop at once. Any other code is asked
 // again, bounded by SEAL_ERROR_MINUTES.
 export { SEAL_INPUT_ERRORS };
 export const POLL_MS = Object.freeze({ first: 30_000, max: 120_000 });
-export const OPEN_WAIT_MINUTES = 5;          // open: the dispatched run reaches the door (PLAN-accept-binding section 3, piece C)
-export const OPEN_POLL_MS = 15_000;
 export const SEAL_ERROR_MINUTES = 30;        // seal failing without a break this long: stop
 export const NODE_WAIT_MINUTES = 180;        // the upgrader's grant, drain and switch of one node, with room
 export const UPGRADER_STALE_MINUTES = 15;    // status.json is rewritten every pass (upgrader-main.mjs IDLE_MS, 60 s)
@@ -106,11 +108,11 @@ const msOf = iso => { const t = Date.parse(iso ?? ''); return Number.isFinite(t)
 const nextInterval = i => Math.min(i * 2, POLL_MS.max);
 
 // --- the defaults the command line uses (tests give their own, or reach these with the door's stand-ins: deps.sealOptions, deps.readStatus) ---
-// piece B's seal() (wait 0): one look at the door; the polling is this command's. A look that finds no open request dispatches the release
-// workflow once and reads for its link up to publish.mjs OPEN_WAIT_MS itself.
-const sealOf = (extra = {}) => async ({ request, drillReceipt, repo }) => {
+// piece B's seal() with the wait this command gives it (open: 0; run: --wait, default WAIT_MAX_MINUTES): seal reads the door itself. A
+// look that finds no open request dispatches the release workflow once and reads for its link up to publish.mjs OPEN_WAIT_MS.
+const sealOf = (extra = {}) => async ({ request, drillReceipt, repo, wait }) => {
   const { seal } = await import('./publish.mjs');
-  return seal({ ...extra, request, drillReceipt, repo, wait: 0 });
+  return seal({ ...extra, request, drillReceipt, repo, wait });
 };
 // piece B's readFleet reads the door by this request's one resource (accept-door.mjs acceptResourceOf: the request file's own sha256)
 const readFleetOf = readStatus => async ({ request }) => {
@@ -157,43 +159,38 @@ function waitingOthers(ctx, pending, extra = {}) {
     next: `on ${names}: ${upgradeCommand(ctx)} (the node on duty last, with --allow-active-upgrade); then ${rerun(ctx)}` });
 }
 const sealFailure = e => ({ code: e?.code ?? 'ROLLOUT_SEAL_FAILED', detail: e?.detail ?? String(e?.message ?? e).slice(0, 300) });
-const linked = s => s?.status !== SEAL_WAITING || (typeof s.confirmUrl === 'string' && s.confirmUrl !== '');
-const queued = s => s?.status === SEAL_QUEUED || (s?.status === SEAL_WAITING && !linked(s));
+const notOpenedNext = 'the release workflow (mode fleet-accept) did not open the request: read why in its latest run, fix that';
 
-// 1. the acceptance: seal until the door answers, bounded
+// 1. the acceptance: one seal that waits for the Owner itself; asked again only when it throws, bounded
 async function accept(ctx) {
-  let interval = POLL_MS.first, failingSince = null, lifeSet = false, lastWaiting = null;
-  const waitEnd = ctx.waitMinutes !== null ? ctx.now() + ctx.waitMinutes * 60_000 : null;
+  let interval = POLL_MS.first, failingSince = null;
+  const waitEnd = Math.min(ctx.waitMinutes !== null ? ctx.now() + ctx.waitMinutes * 60_000 : Infinity, ctx.lifeEnd);
   for (;;) {
+    const wait = Math.max(0, Math.min(WAIT_MAX_MINUTES, Math.floor((waitEnd - ctx.now()) / 60_000)));
     let s = null, failed = null;
-    try { s = await ctx.seal({ request: ctx.requestFile, drillReceipt: ctx.drillReceipt, repo: ctx.request.repository }); } catch (e) { failed = sealFailure(e); }
-    let until;
-    if (failed) {
-      failingSince ??= ctx.now();
-      const stop = () => ({ stop: answer(ctx, 'ROLLOUT_STOPPED', { stage: 'accept', ...failed, failingSince: new Date(failingSince).toISOString(),
-        next: `fix what code names, then ${rerun(ctx)}` }) });
-      if (SEAL_INPUT_ERRORS.includes(failed.code)) return stop();
-      until = Math.min(waitEnd ?? Infinity, ctx.lifeEnd, failingSince + SEAL_ERROR_MINUTES * 60_000);
-      if (ctx.now() + interval > until) return stop();
-    } else {
-      failingSince = null;
+    try { s = await ctx.seal({ request: ctx.requestFile, drillReceipt: ctx.drillReceipt, repo: ctx.request.repository, wait }); } catch (e) { failed = sealFailure(e); }
+    if (!failed) {
       if (s?.status === SEAL_SEALED) return { sealed: s };
+      if (s?.status === SEAL_WAITING) {
+        return { stop: answer(ctx, 'ROLLOUT_WAITING_OWNER', { confirmUrl: s.confirmUrl ?? null, expiresAt: s.expiresAt ?? null,
+          next: `the Owner approves once at confirmUrl; ${rerun(ctx)}` }) };
+      }
       if (s?.status === SEAL_REJECTED) {
-        return { stop: answer(ctx, 'ROLLOUT_STOPPED', { stage: 'accept', code: s.code ?? SEAL_REJECTED, seal: s,
-          next: `the Owner did not accept (or the request expired): the candidate stays unaccepted; ${rerun(ctx)} opens a new request` }) };
+        return { stop: answer(ctx, 'ROLLOUT_STOPPED', { stage: 'accept', code: SEAL_REJECTED, answer: s.answer ?? null, seal: s,
+          next: s.answer === 'expired' ? `the request ran out before the Owner answered: the candidate stays unaccepted; ${rerun(ctx)} opens a new request`
+            : 'the Owner rejected this candidate, which is final (the door never asks again): it stays unaccepted; to accept, publish a new version' }) };
       }
-      if (s?.status !== SEAL_WAITING && s?.status !== SEAL_QUEUED) {
-        return { stop: answer(ctx, 'ROLLOUT_STOPPED', { stage: 'accept', code: 'ROLLOUT_SEAL_ANSWER_UNKNOWN', seal: s ?? null, next: rerun(ctx) }) };
+      if (s?.status === SEAL_NOT_OPENED) {
+        return { stop: answer(ctx, 'ROLLOUT_STOPPED', { stage: 'accept', code: SEAL_NOT_OPENED, dispatchedAt: s.dispatchedAt ?? null, seal: s,
+          next: `${notOpenedNext}, then ${rerun(ctx)}` }) };
       }
-      const expires = msOf(s.expiresAt);
-      if (!lifeSet && expires !== null) { ctx.lifeEnd = expires; lifeSet = true; }   // the command lives no longer than the request
-      lastWaiting = s;
-      until = Math.min(waitEnd ?? Infinity, ctx.lifeEnd);
-      if (ctx.now() + interval > until) {
-        return { stop: answer(ctx, 'ROLLOUT_WAITING_OWNER', { confirmUrl: lastWaiting.confirmUrl ?? null, expiresAt: lastWaiting.expiresAt ?? null,
-          ...(queued(lastWaiting) ? { code: SEAL_QUEUED } : {}), next: `the Owner approves once at confirmUrl; ${rerun(ctx)}` }) };
-      }
+      return { stop: answer(ctx, 'ROLLOUT_STOPPED', { stage: 'accept', code: 'ROLLOUT_SEAL_ANSWER_UNKNOWN', seal: s ?? null, next: rerun(ctx) }) };
     }
+    failingSince ??= ctx.now();
+    const stop = () => ({ stop: answer(ctx, 'ROLLOUT_STOPPED', { stage: 'accept', ...failed, failingSince: new Date(failingSince).toISOString(),
+      next: `fix what code names, then ${rerun(ctx)}` }) });
+    if (SEAL_INPUT_ERRORS.includes(failed.code)) return stop();
+    if (ctx.now() + interval > Math.min(waitEnd, failingSince + SEAL_ERROR_MINUTES * 60_000)) return stop();
     await ctx.sleep(interval);
     interval = nextInterval(interval);
   }
@@ -319,7 +316,7 @@ async function upgradeHere(ctx) {
 }
 
 export async function run(ctx) {
-  ctx.lifeEnd = ctx.now() + DAY_MS;   // until seal answers the request's own expiresAt
+  ctx.lifeEnd = ctx.now() + DAY_MS;   // one request's validity
   const acc = await accept(ctx);
   if (acc.stop) return acc.stop;
   const here = await upgradeHere(ctx);
@@ -342,24 +339,18 @@ export async function run(ctx) {
   return answer(ctx, 'ROLLOUT_DONE', { acceptance: acc.sealed.acceptance ?? null, nodes: fleet.map(n => n.node), next: null });
 }
 
-// open: seal, asked again until the door's request has its link, bounded (the dispatched run reaches the door)
+// open: one seal (wait 0); its answer as it is, the workflow not opening the request as NOT_OPENED (drill-vm.ps1 reads this shape)
 async function open(ctx) {
-  const end = ctx.now() + OPEN_WAIT_MINUTES * 60_000;
   const out = (status, fields) => ({ contract: ROLLOUT_CONTRACT, command: 'open', status, confirmUrl: null, expiresAt: null, code: null, ...fields });
-  let failed = null;
-  for (;;) {
-    let s = null;
-    try { s = await ctx.seal({ request: ctx.requestFile, drillReceipt: ctx.drillReceipt, repo: ctx.request.repository }); failed = null; } catch (e) {
-      failed = sealFailure(e);
-      if (SEAL_INPUT_ERRORS.includes(failed.code)) return out('ROLLOUT_REFUSED', failed);
-    }
-    if (s && !queued(s)) return out(s.status ?? null, { confirmUrl: s.confirmUrl ?? null, expiresAt: s.expiresAt ?? null, code: s.code ?? null });
-    if (ctx.now() + OPEN_POLL_MS > end) {
-      return failed ? out('ROLLOUT_REFUSED', failed)
-        : out('NOT_OPENED', { code: SEAL_QUEUED, expiresAt: s?.expiresAt ?? null, next: `the request is queued at the door; accept.mjs run --request ${ctx.requestFile} --work <a new directory> waits for it` });
-    }
-    await ctx.sleep(OPEN_POLL_MS);
+  let s;
+  try { s = await ctx.seal({ request: ctx.requestFile, drillReceipt: ctx.drillReceipt, repo: ctx.request.repository, wait: 0 }); } catch (e) {
+    return out('ROLLOUT_REFUSED', sealFailure(e));
   }
+  if (s?.status === SEAL_NOT_OPENED) {
+    return out('NOT_OPENED', { code: SEAL_NOT_OPENED, dispatchedAt: s.dispatchedAt ?? null,
+      next: `${notOpenedNext}, then accept.mjs run --request ${ctx.requestFile} --work <a new directory> (it opens the request once more)` });
+  }
+  return out(s?.status ?? null, { confirmUrl: s?.confirmUrl ?? null, expiresAt: s?.expiresAt ?? null, code: s?.code ?? null });
 }
 
 async function contextOf(values, deps) {

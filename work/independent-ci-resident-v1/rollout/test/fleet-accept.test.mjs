@@ -1,8 +1,9 @@
 // rollout/fleet/accept.mjs run: one bounded command from the Owner's acceptance to every node on the accepted Source
 // (PLAN-accept-auto-seal-20261125.md 2.3, piece C). A fixture node root (upgrade\inbox, inbox-archive, status.json, current.json, the
-// record's node profile) and a fake door behind a fake seal (piece B's seal() answers: FLEET_ACCEPTANCE_WAITING_OWNER with confirmUrl,
-// FLEET_ACCEPTANCE_SEALED, FLEET_ACCEPTANCE_REJECTED), a fake Release directory, a fake installed upgrader that moves on the fake clock,
-// and a fake fleet read. Nothing here reaches the network, a real node root or a real door.
+// record's node profile) and a fake door behind a fake seal (piece B's seal() and its four answers: FLEET_ACCEPTANCE_WAITING_OWNER with
+// confirmUrl, FLEET_ACCEPTANCE_SEALED, FLEET_ACCEPTANCE_REJECTED with answer rejected or expired, FLEET_ACCEPTANCE_NOT_OPENED; it reads the
+// door again on the fake clock for the wait it is given, as seal --wait does), a fake Release directory, a fake installed upgrader that
+// moves on the fake clock, and a fake fleet read. Nothing here reaches the network, a real node root or a real door.
 //
 // Lives in rollout/test (the resident-node suite runs it); rollout/fleet/test is in no required suite (ci-uncovered-tests.json).
 import assert from 'node:assert/strict';
@@ -11,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { acceptanceOf } from '../fleet/publish.mjs';
+import { WAIT_MAX_MINUTES, acceptanceOf } from '../fleet/publish.mjs';
 import { ROLLOUT_CONTRACT, exitCodeOf, main } from '../fleet/accept.mjs';
 
 const VERSION = '2026.11.25-1';
@@ -30,7 +31,8 @@ const B_AT_NEW = { node: 'fixture-b', ciSourceManifestSha256: NEW, paused: false
 //   onDuty   fixture-a holds ci-admission: upgrade.mjs answers HAND_OVER_FIRST unless --allow-active-upgrade
 //   ending   how the installed upgrader ends the operation it is asked for: SUCCEEDED (both sides NEW), ROLLED_BACK_PAUSED, or STUCK
 //            (RUNNING for ever, status.json still rewritten on every pass)
-//   door     pending | accepted | rejected; ownerClicksAt: the sleep (1-based) at which the Owner approves on the page
+//   door     pending | accepted | rejected | expired | not-opened (seal's run did not open the request); ownerClicksAt: the sleep
+//            (1-based) at which the Owner approves on the page
 //   intake   what the upgrader does with a request in upgrade\inbox (s.intake, may change between runs): take (archived processed, an
 //            operation opens), ignored | rejected (archived so, no operation: src/inbox.mjs dispose), stopped (CluedCIUpgrader not
 //            running: nothing taken, status.json not rewritten)
@@ -95,11 +97,15 @@ function scene(name, { onDuty = false, ending = 'SUCCEEDED', door = 'pending', o
       if (s.door === 'pending' && s.sleeps.length >= ownerClicksAt) s.door = 'accepted';   // the Owner clicks once on the confirm page
       tick();
     },
-    // piece B's seal(): the door's answer, and on accepted the acceptance file on the Release (the three values from the door)
+    // piece B's seal(): while the door is pending it reads again at 30, 60, then 120 s steps for the wait it is given (minutes), then the
+    // door's answer, and on accepted the acceptance file on the Release (the three values from the door)
     seal: async args => {
       s.seals.push(args);
-      if (s.door === 'pending') return { status: 'FLEET_ACCEPTANCE_WAITING_OWNER', confirmUrl: CONFIRM, expiresAt: new Date(s.clock + 24 * 3600_000).toISOString() };
-      if (s.door === 'rejected') return { status: 'FLEET_ACCEPTANCE_REJECTED', code: 'FLEET_ACCEPTANCE_REJECTED' };
+      const until = s.clock + (args.wait ?? 0) * 60_000;
+      for (let i = 0; s.door === 'pending' && s.clock < until; i++) await s.deps.sleep(Math.min([30_000, 60_000, 120_000][Math.min(i, 2)], until - s.clock));
+      if (s.door === 'pending') return { status: 'FLEET_ACCEPTANCE_WAITING_OWNER', opened: true, confirmUrl: CONFIRM, expiresAt: new Date(s.clock + 24 * 3600_000).toISOString() };
+      if (s.door === 'rejected' || s.door === 'expired') return { status: 'FLEET_ACCEPTANCE_REJECTED', version: VERSION, answer: s.door };
+      if (s.door === 'not-opened') return { status: 'FLEET_ACCEPTANCE_NOT_OPENED', version: VERSION, dispatchedAt: iso(), waitedMs: 15 * 60_000 };
       const file = path.join(release, `${TAG}.acceptance.json`);
       const already = fs.existsSync(file);
       if (!already) fs.writeFileSync(file, JSON.stringify(acceptanceOf(req, { decision: grant.grant_id, receipt: grant.receipt_id, acceptedAt: grant.accepted_at }), null, 2) + '\n');
@@ -149,7 +155,8 @@ test('one command: the Owner approves once on the page, then with no further com
   assert.equal(exitCodeOf(r), 2);
   assert.ok(s.acceptanceOnRelease(), 'the acceptance is on the Release');
   assert.equal(s.inboxFiles(), 1, 'exactly one request was put in the inbox');
-  assert.ok(s.seals.length >= 2 && s.seals.every(a => a.request === s.request), 'seal asked again until the door answered');
+  // one seal that waits for the Owner itself (PLAN-accept-align-open-20261125 2.2): never polled, so one workflow run and one download
+  assert.deepEqual(s.seals.map(a => [a.request, a.wait]), [[s.request, WAIT_MAX_MINUTES]], 'one seal, given the whole wait');
   // no --allow-active-upgrade on a standby; the version is the request's
   assert.equal(s.upgrades.length, 1);
   assert.ok(!s.upgrades[0].includes('--allow-active-upgrade'));
@@ -339,20 +346,27 @@ test('a node the package cannot upgrade in place: ROLLOUT_STOPPED with its code'
 });
 
 test('the Owner rejects: ROLLOUT_STOPPED at the acceptance, no node touched; still waiting at --wait: ROLLOUT_WAITING_OWNER with the link', async () => {
-  const s = scene('rejected', { door: 'rejected' });
-  const r = await s.run();
-  assert.equal(r.status, 'ROLLOUT_STOPPED');
-  assert.equal(r.stage, 'accept');
-  assert.equal(r.code, 'FLEET_ACCEPTANCE_REJECTED');
-  assert.equal(exitCodeOf(r), 1);
-  assert.equal(s.upgrades.length, 0);
-  assert.ok(!s.acceptanceOnRelease());
+  // PLAN-accept-align-open-20261125 1.2: rejected is the Owner's final no (a new version to accept); expired is opened again by a rerun
+  for (const [door, next] of [['rejected', /final[^]*publish a new version/], ['expired', /ran out[^]*opens a new request/]]) {
+    const s = scene(door, { door });
+    const r = await s.run();
+    assert.equal(r.status, 'ROLLOUT_STOPPED', door);
+    assert.equal(r.stage, 'accept');
+    assert.equal(r.code, 'FLEET_ACCEPTANCE_REJECTED');
+    assert.equal(r.answer, door);
+    assert.match(r.next, next, door);
+    assert.equal(exitCodeOf(r), 1);
+    assert.equal(s.seals.length, 1, `${door}: seal once`);
+    assert.equal(s.upgrades.length, 0);
+    assert.ok(!s.acceptanceOnRelease());
+  }
   const w = scene('waiting', { ownerClicksAt: 1e9 });
   const waited = await w.run(['--wait', '5']);
   assert.equal(waited.status, 'ROLLOUT_WAITING_OWNER', JSON.stringify(waited));
   assert.equal(waited.confirmUrl, CONFIRM);
   assert.equal(exitCodeOf(waited), 2);
   assert.ok(w.slept() <= 5 * 60_000, 'bounded by --wait');
+  assert.deepEqual(w.seals.map(a => a.wait), [5], 'one seal given --wait');
   assert.equal(w.upgrades.length, 0);
   assert.ok(!w.acceptanceOnRelease());
 });
@@ -434,6 +448,7 @@ test('open: one seal call and no wait (what drill-vm.ps1 -Finalize runs): the li
   assert.equal(r.confirmUrl, CONFIRM);
   assert.equal(exitCodeOf(r), 0);
   assert.equal(s.seals.length, 1);
+  assert.equal(s.seals[0].wait, 0, 'open never waits for the Owner');
   assert.equal(s.seals[0].drillReceipt, path.join(s.dir, 'receipt.json'));
   assert.equal(s.sleeps.length, 0);
   assert.equal(s.upgrades.length, 0);
@@ -445,35 +460,52 @@ test('open: one seal call and no wait (what drill-vm.ps1 -Finalize runs): the li
   }
 });
 
-// PLAN-accept-binding-20261125.md section 3 piece C: seal dispatches the release workflow's fleet-accept mode, so the door's pending
-// request (and its link) appears only once that run reaches the door; open waits for the link, bounded
-test('open waits, bounded, for the link while the request is queued; no link in 5 minutes: NOT_OPENED with FLEET_ACCEPTANCE_OPEN_QUEUED, exit non-zero', async () => {
-  const s = scene('open-queued', { ownerClicksAt: 1e9 });
-  const seal = s.deps.seal;
-  let n = 0;
-  s.deps.seal = async a => (++n <= 2 ? { status: 'FLEET_ACCEPTANCE_WAITING_OWNER', confirmUrl: null } : seal(a));
+// PLAN-accept-align-open-20261125 2.2 (red before: open asked seal again every 15 s for 5 minutes, and seal's NOT_OPENED was passed on as
+// a status of its own, exit 1): open is one seal (wait 0) and nothing else; the workflow not opening the request is NOT_OPENED with
+// seal's code, exit 2 (drill-vm.ps1 reads this shape); seal throwing is ROLLOUT_REFUSED at once, never a second seal (it may dispatch)
+test('open is one seal with wait 0: NOT_OPENED with FLEET_ACCEPTANCE_NOT_OPENED, exit 2; a seal that throws is not asked again', async () => {
+  const s = scene('open-not-opened', { door: 'not-opened' });
   const r = await main(['open', '--request', s.request], s.deps);
-  assert.equal(r.status, 'FLEET_ACCEPTANCE_WAITING_OWNER', JSON.stringify(r));
-  assert.equal(r.confirmUrl, CONFIRM);
-  assert.equal(n, 3);
-  assert.ok(s.slept() <= 5 * 60_000);
-  assert.equal(exitCodeOf(r), 0);
-  const q = scene('open-never');
-  q.deps.seal = async () => ({ status: 'FLEET_ACCEPTANCE_WAITING_OWNER', confirmUrl: null });
-  const t = await main(['open', '--request', q.request], q.deps);
-  assert.equal(t.status, 'NOT_OPENED', JSON.stringify(t));
-  assert.equal(t.code, 'FLEET_ACCEPTANCE_OPEN_QUEUED');
-  assert.equal(t.confirmUrl, null);
-  assert.ok(q.sleeps.length > 0 && q.slept() <= 5 * 60_000, `${q.slept()}`);
+  assert.equal(r.status, 'NOT_OPENED', JSON.stringify(r));
+  assert.equal(r.code, 'FLEET_ACCEPTANCE_NOT_OPENED');
+  assert.equal(r.confirmUrl, null);
+  assert.match(r.next, /fleet-accept/);
+  assert.equal(exitCodeOf(r), 2);
+  assert.deepEqual(s.seals.map(a => a.wait), [0], 'one seal, wait 0');
+  assert.equal(s.sleeps.length, 0);
+  assert.equal(s.upgrades.length, 0);
+  const f = scene('open-throws');
+  f.deps.seal = async a => { f.seals.push(a); throw Object.assign(new Error('fetch failed'), { code: 'ACCEPT_DOOR_UNAVAILABLE' }); };
+  const t = await main(['open', '--request', f.request], f.deps);
+  assert.equal(t.status, 'ROLLOUT_REFUSED', JSON.stringify(t));
+  assert.equal(t.code, 'ACCEPT_DOOR_UNAVAILABLE');
+  assert.equal(f.seals.length, 1, 'never a second seal');
+  assert.equal(f.sleeps.length, 0);
   assert.notEqual(exitCodeOf(t), 0);
-  assert.equal(q.upgrades.length, 0);
 });
 
-test('run: a queued answer (no link yet) is waited on like the Owner, not a stop; the fleet is read through piece B with this request\'s repository and version', async () => {
-  const s = scene('run-queued', { door: 'accepted', other: { ...B_AT_NEW } });
-  const seal = s.deps.seal, read = s.deps.readFleet, reads = [];
-  let n = 0;
-  s.deps.seal = async a => (++n === 1 ? { status: 'FLEET_ACCEPTANCE_OPEN_QUEUED' } : n === 2 ? { status: 'FLEET_ACCEPTANCE_WAITING_OWNER', confirmUrl: null } : seal(a));
+// PLAN-accept-align-open-20261125 2.2 (red before: run asked seal (wait 0) again every 30-120 s, so seal was never given a wait, and seal's
+// NOT_OPENED stopped as ROLLOUT_SEAL_ANSWER_UNKNOWN): ONE seal given the wait (--wait, default and at most WAIT_MAX_MINUTES); NOT_OPENED is
+// ROLLOUT_STOPPED with seal's code and a next that points at the workflow's run, no node touched, never a second seal
+test('run gives one seal the whole wait (--wait, default WAIT_MAX_MINUTES); seal\'s NOT_OPENED is ROLLOUT_STOPPED FLEET_ACCEPTANCE_NOT_OPENED, exit 1', async () => {
+  for (const [extra, wait] of [[[], WAIT_MAX_MINUTES], [['--wait', '30'], 30], [['--wait', '0'], 0], [['--wait', '99999'], WAIT_MAX_MINUTES]]) {
+    const s = scene(`run-wait-${wait}`, { door: 'not-opened' });
+    const r = await s.run(extra);
+    assert.equal(r.status, 'ROLLOUT_STOPPED', JSON.stringify(r));
+    assert.equal(r.stage, 'accept');
+    assert.equal(r.code, 'FLEET_ACCEPTANCE_NOT_OPENED');
+    assert.match(r.next, /fleet-accept/);
+    assert.equal(exitCodeOf(r), 1);
+    assert.deepEqual(s.seals.map(a => a.wait), [wait], JSON.stringify(extra));
+    assert.equal(s.sleeps.length, 0, 'not asked again');
+    assert.equal(s.upgrades.length, 0);
+    assert.ok(!s.acceptanceOnRelease());
+  }
+});
+
+test('run: the fleet is read through piece B with this request\'s repository and version', async () => {
+  const s = scene('run-fleet-args', { door: 'accepted', other: { ...B_AT_NEW } });
+  const read = s.deps.readFleet, reads = [];
   s.deps.readFleet = async a => { reads.push(a); return read(a); };
   const r = await s.run();
   assert.equal(r.status, 'ROLLOUT_DONE', JSON.stringify(r));
