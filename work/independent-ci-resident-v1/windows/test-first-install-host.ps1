@@ -416,14 +416,14 @@ try {
   Case 't3:step-never-throws-a-verdict-refuses-by-name' {
     $fi = Get-Item -LiteralPath $tmp
     $cycle = @{}; $cycle['self'] = $cycle
-    foreach ($odd in @($fi, [DateTime]::UtcNow, [IO.FileAttributes]::Directory, [pscustomobject]@{ a = 1 }, $cycle, ([ordered]@{ ok = $jp; bad = $fi }))) {
+    foreach ($odd in @($fi, [DateTime]::new(2026, 11, 25, 0, 0, 0, [DateTimeKind]::Utc), [IO.FileAttributes]::Directory, [pscustomobject]@{ a = 1 }, $cycle, ([ordered]@{ ok = $jp; bad = $fi }))) {
       $l = Step 'odd' $odd
       $b = $js.DeserializeObject($l)
       Yes ($l -is [string] -and $b['name'] -ceq 'odd' -and $b['result'] -ceq 'ok') ('t3:step-one-line ' + $odd.GetType().Name + ' ' + $l)
     }
     Yes ([string]$js.DeserializeObject((Step 'odd' $fi))['detail'] -clike '*DirectoryInfo*') 't3:step-names-the-type'
     Yes ($js.DeserializeObject((Step 'odd' ([ordered]@{ ok = $jp; bad = $fi })))['detail']['ok'] -ceq [string]$jp) 't3:step-keeps-the-plain-part'
-    foreach ($odd in @($fi, [DateTime]::UtcNow, [IO.FileAttributes]::Directory, [pscustomobject]@{ a = 1 }, $cycle)) {
+    foreach ($odd in @($fi, [DateTime]::new(2026, 11, 25, 0, 0, 0, [DateTimeKind]::Utc), [IO.FileAttributes]::Directory, [pscustomobject]@{ a = 1 }, $cycle)) {
       Throws { ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = $odd }) } 'OUTPUT_NOT_PLAIN_DATA:$.facts*' ('t3:verdict-refused ' + $odd.GetType().Name)
     }
   }
@@ -459,6 +459,60 @@ try {
     Yes ($inWriter -ge 1 -and $calls -eq $inWriter) ('t2:every-Serialize-call-is-in-ConvertTo-JsonLine (file ' + $calls + ', writer ' + $inWriter + ')')
     Yes ($functions.ContainsKey('Get-StepLine') -and $functions['Get-StepLine'] -match 'ConvertTo-JsonLine' -and $functions['Step'] -match 'Get-StepLine' -and $functions.ContainsKey('Stop-Host') -and $functions['Stop-Host'] -match 'ConvertTo-JsonLine') 't2:step-and-stop-host-use-it'
     Yes ($main -match "ConvertTo-JsonLine \(\[ordered\]@\{ status = 'FIRST_INSTALL_HOST_READY'") 't2:ready-uses-it'
+  }
+  # T13 (task 87d330d0 line C, FABLE-drill-companion-queued-20261124 2.4): the companion's NTUSER.DAT, loaded for the read, is read by
+  # reg.exe (this process holds no handle in it), this process's own handles are let go, and the unload is held to its exit code: three
+  # tries a second apart; a hive still loaded stops the host by name, never carried on with (the account's profile could not load).
+  # Get-LocalUser, Test-Path and Invoke-Native are stood in: no hive is loaded and no reg.exe runs here.
+  Case 't13:the-companion-hive-unload-is-checked' {
+    Yes ($functions.ContainsKey('Get-CompanionDistributionState')) 'present:Get-CompanionDistributionState'
+    . ([scriptblock]::Create($functions['Get-CompanionDistributionState']))
+    $CompanionAccountName = 'clued-companion'
+    $profiles = Join-Path $tmp 'profiles'; [void][IO.Directory]::CreateDirectory((Join-Path $profiles 'clued-companion'))
+    [IO.File]::WriteAllText((Join-Path $profiles 'clued-companion\NTUSER.DAT'), 'not a hive')
+    function Get-LocalUser { [pscustomobject]@{ SID = [pscustomobject]@{ Value = $companion } } }
+    function Test-Path { $false }   # the account's hive is not loaded by Windows
+    $script:regCalls = New-Object Collections.Generic.List[string]; $script:unloadExits = @(); $script:queryExit = 0; $script:pauses = 0
+    $found = "`r`nHKEY_USERS\clued-p1-x\Software\Microsoft\Windows\CurrentVersion\Lxss\{3c1f0a52-0000-0000-0000-000000000000}`r`n    DistributionName    REG_SZ    CluedResident-Linux`r`n`r`nEnd of search: 1 match(es) found.`r`n"
+    function Invoke-Native([string]$exe, [string[]]$arguments, [int]$seconds) {
+      $script:regCalls.Add(([IO.Path]::GetFileName($exe) + ' ' + ($arguments -join ' ')))
+      $exit = 0; $out = ''
+      switch ($arguments[0]) {
+        'query' { $exit = $script:queryExit; if ($exit -eq 0) { $out = $found } }
+        'unload' { $exit = $script:unloadExits[0]; $script:unloadExits = @($script:unloadExits | Select-Object -Skip 1) }
+      }
+      [ordered]@{ exit = $exit; stdout = $out; stderr = $(if ($exit) { 'ERROR: Access is denied.' } else { '' }); timedOut = $false }
+    }
+    $run = { param([int[]]$unloads, [int]$query)
+      $script:regCalls.Clear(); $script:unloadExits = $unloads; $script:queryExit = $query; $script:pauses = 0
+      try { [ordered]@{ state = (Get-CompanionDistributionState -ProfileRoot $profiles -Pause { $script:pauses++ }); stop = $null } }
+      catch { [ordered]@{ state = $null; stop = $_.Exception.Message } } }
+    $mount = { @($script:regCalls | Where-Object { $_ -like 'reg.exe load *' } | ForEach-Object { $_.Split(' ')[2] }) }
+
+    # unloaded at the first try: read through reg.exe, the mount gone
+    $r = & $run @(0) 0
+    $m = @(& $mount)
+    Yes ($r.state -ceq 'present' -and $null -eq $r.stop) ('t13:present ' + ($r | ConvertTo-Json -Compress))
+    Yes ($m.Count -eq 1 -and $m[0] -cmatch '^HKU\\clued-p1-[0-9a-f]{32}$') ('t13:one-mount ' + ($script:regCalls -join ' | '))
+    Yes ((@($script:regCalls) -join ' | ') -ceq ("reg.exe load $($m[0]) $(Join-Path $profiles 'clued-companion\NTUSER.DAT') | reg.exe query $($m[0])\Software\Microsoft\Windows\CurrentVersion\Lxss /s /v DistributionName | reg.exe unload $($m[0])")) ('t13:read-by-reg-exe ' + ($script:regCalls -join ' | '))
+    Yes ($script:pauses -eq 0) 't13:no-pause-when-unloaded'
+    # no registration found (reg.exe's exit 1): absent
+    $r = & $run @(0) 1
+    Yes ($r.state -ceq 'absent' -and $null -eq $r.stop) ('t13:absent ' + ($r | ConvertTo-Json -Compress))
+    # refused once, unloaded at the second try: the read stands, one pause
+    $r = & $run @(5, 0) 0
+    $unloads = @($script:regCalls | Where-Object { $_ -like 'reg.exe unload *' })
+    Yes ($r.state -ceq 'present' -and $null -eq $r.stop -and $unloads.Count -eq 2 -and $script:pauses -eq 1) ('t13:second-try ' + ($r | ConvertTo-Json -Compress) + ' ' + ($script:regCalls -join ' | '))
+    # refused three times: the host stops by name; three tries, two pauses between them
+    $r = & $run @(5, 5, 5, 0) 0
+    $unloads = @($script:regCalls | Where-Object { $_ -like 'reg.exe unload *' })
+    Yes ($r.stop -ceq 'STOP:FIRST_INSTALL_COMPANION_HIVE_NOT_UNLOADED' -and $unloads.Count -eq 3 -and $script:pauses -eq 2) ('t13:stopped ' + ($r | ConvertTo-Json -Compress) + ' ' + ($script:regCalls -join ' | '))
+    # this process's own handles go before the unload: collected, finalizers run; the mount is never read through the registry provider
+    $body = $functions['Get-CompanionDistributionState']
+    $gc = $body.IndexOf('[GC]::WaitForPendingFinalizers()'); $unload = $body.IndexOf("@('unload'")
+    Yes ($body.Contains('[GC]::Collect()') -and $gc -gt 0 -and $unload -gt $gc) 't13:handles-released-before-the-unload'
+    # the default pause is one second
+    Yes ($body -match '\[scriptblock\]\$Pause = \{ Start-Sleep -Seconds 1 \}') 't13:one-second-apart'
   }
 } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
 

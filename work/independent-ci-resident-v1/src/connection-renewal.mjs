@@ -110,14 +110,18 @@ export function renewalWatch({root, profile, mode, drained, onHandover, source, 
     const now=clock();
     book ??= await read(stateFile) ?? { lanes:{}, pending:null };
     if (now>=nextCheck) {
-      nextCheck=now+CHECK_INTERVAL;
       const controller=path.join(path.dirname(root),'state','v2','receipts','renew-key-controller.json');
       const [system,r,c,h]=await Promise.all([read(path.join(root,'broker','renew-key.json')),observe().catch(()=>null),
         read(controller),read(path.join(root,'mailbox','responses','renew-key.json'))]);
       if(r) await writeObservation(path.join(root,'state','renew-key-resident.json'),r);
       const checkedAt=clock();
-      book.keys={...keyCheck(system,r,c,h,profile,checkedAt,mode()),systemFailure:system?.failure??null};
-      book.checkedAt=new Date(checkedAt).toISOString(); await save();
+      const keys={...keyCheck(system,r,c,h,profile,checkedAt,mode()),systemFailure:system?.failure??null};
+      // 启动宽限内（陪伴观测可能还没写出）的 FAIL 不落账、不推后下次检查，下一拍再查；PASS 立即落账，满一个周期后照旧。
+      if (keys.result==='FAIL' && uptime()<CHECK_INTERVAL) nextCheck=0;
+      else {
+        nextCheck=now+CHECK_INTERVAL;
+        book.keys=keys; book.checkedAt=new Date(checkedAt).toISOString(); await save();
+      }
     }
     await settleNext(); // 上一轮准备了却没判清的新请求（含两步之间退出）
     if (book.next) return;
