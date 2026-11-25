@@ -19,6 +19,12 @@ import { CI_SIGNATURES, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snaps
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+// This process reads its clock as a loaded host would: minutes after the server wrote what it compares with (a long
+// suite before the assertion). What the test says about a grant's lifetime must come from the server, never from
+// Date.now() here; an assertion that did so is red at once instead of on the one slow run.
+const realNow = Date.now;
+Date.now = () => realNow() + 4 * 60_000;
+
 // The sealed G6 closeout qualifies its original sources, before these two
 // authorized successors. Keep its real replay and separately prove the current
 // catalog rather than asking the historical seal to accept a changed body.
@@ -254,8 +260,17 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
     const status = await agent('claude', 'clued_owner_request_status_v1', { request_id: request.request_id });
     assert.equal(status.request.status, 'granted');
     assert.equal(status.request.grant.grant_id, given.grant.grant_id);
-    const expiresIn = (new Date(given.grant.expires_at) - Date.now()) / 1000;
-    assert.ok(expiresIn > 3500 && expiresIn <= 3600, String(expiresIn));
+    // Both ends of the lifetime are the server's own (this process may read its clock minutes after the grant), and the
+    // expires_at the interface returned is exactly the one the server stored.
+    const lifetime = async (grant) => {
+      const row = (await admin.query(`select extract(epoch from expires_at-granted_at)::float8 s, expires_at=$2::timestamptz same,
+        granted_at<=now() and expires_at>now() live from clued_private.owner_grants_v1 where id=$1`,
+      [grant.grant_id, grant.expires_at])).rows[0];
+      assert.equal(row.same, true, `returned expires_at ${grant.expires_at} is the stored one`);
+      assert.equal(row.live, true, 'granted by the server already and not yet expired on its clock');
+      return row.s;
+    };
+    assert.equal(await lifetime(given.grant), 3600);
     // A decided request takes no further confirmation.
     assert.equal((await native('clued_owner_grant_confirmation_issue_v1', { request_id: request.request_id })).error_code,
       'owner_request_decided');
@@ -304,8 +319,7 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
     const direct = committed(await grant(await confirm({ action: 'release.production',
       resources: ['repo:tdoljyj/cross-memory-system/**'] })));
     assert.equal(direct.grant.any_agent, true);
-    const directExpires = (new Date(direct.grant.expires_at) - Date.now()) / 1000;
-    assert.ok(directExpires > 14300 && directExpires <= 14400, 'default 4 hours');
+    assert.equal(await lifetime(direct.grant), 14400, 'default 4 hours');
     assert.equal((await consume(bindingIds.codex, 'release.production', ['repo:tdoljyj/cross-memory-system/abc1234']))
       .grant_id, direct.grant.grant_id);
     committed(await native('clued_owner_grant_revoke_v1', { grant_id: direct.grant.grant_id }));

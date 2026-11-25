@@ -374,9 +374,14 @@ test('M5-b relay parents: a node without its own companion account is not asked 
   assert.equal('companionRelayParents' in r, false);
 });
 
-test('M5-b relay parents: the default reader returns the live SDDL of a real directory (read-only, not elevated)', { skip: process.platform !== 'win32' }, async t => {
+test('M5-b relay parents: the default reader returns the live SDDL of a real directory (read-only, not elevated) [needs:non-elevated]', { skip: process.platform !== 'win32' }, async t => {
   const dir = await tempDir(t, 'clued-precheck-sddl-');
   assert.match(await readSddl(dir), /^O:.*D:/);
-  await assert.rejects(readSddl(path.join(dir, 'absent')));
+  // Refused by PowerShell itself (Get-Acl: the path does not exist, exit 1), not by readSddl's 60 s limit killing it.
+  await assert.rejects(readSddl(path.join(dir, 'absent')), (error) => {
+    assert.notEqual(error.killed, true, `killed: ${error.signal}`);
+    assert.equal(error.code, 1, String(error.code));
+    return true;
+  });
   assert.equal(relayParentsOf(path.join(dir, 'resident'))[0], dir);
 });
