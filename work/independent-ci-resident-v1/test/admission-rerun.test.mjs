@@ -27,6 +27,12 @@ const extraWorkflow = { id: EXTRA_WORKFLOW, path: '.github/workflows/additional.
 const hostedWorkflow = { id: HOSTED_WORKFLOW, path: '.github/workflows/gitleaks.yml', state: 'active' };
 const extraSource = 'jobs:\n  admission-gate:\n  extra:\n    needs: admission-gate\n    name: additional-check\n';
 const readWorkflow = file => fs.readFile(new URL(`../../../${file}`, import.meta.url), 'utf8');
+function markedDispatch(fields) {
+  assert.deepEqual(fields.slice(0, 4), ['ref=claude/x', 'inputs[pr]=452', `inputs[head]=${HEAD}`, 'inputs[resident_node]=turing']);
+  assert.equal(fields.length, 5);
+  assert.match(fields[4], /^inputs\[resident_dispatch_id\]=[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  return fields[4];
+}
 const CHECK_NAMES = HEAVY.map(name => name.replace(/-skipped$/, ''));
 // R1 (FABLE-cicd-framework-v1 :87): the three scans are gated jobs of clued-required-tests.yml too, so the Linux workflow's
 // required set is the heavy three plus the scans (L3 pins it against the real workflow).
@@ -58,7 +64,7 @@ const workflowAttempt = name => {
 
 // A scripted `gh api`: fail(route, method) may return { code } or 'throw' or { timedOut: true } for one call.
 function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(700, [attempt()])], rerunCode = 0, dispatchCode = 0, fail = () => null, onDispatch = async () => {},
-  rules = [requiredRule(...CHECK_NAMES)], workflows = WORKFLOWS } = {}) {
+  rules = [requiredRule(...CHECK_NAMES)], workflows = WORKFLOWS, workflowText = readWorkflow } = {}) {
   const st = { pulls, checks, runs, rules, posts: [], dispatches: [], calls: [] };
   const byId = id => st.runs.find(r => r.id === Number(id));
   const jobsOf = (r, n) => r.attempts[n - 1].jobs.map((j, i) => ({ id: r.id * 100 + n * 10 + i, run_attempt: n, ...j }));
@@ -93,7 +99,7 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     if (/^\/commits\/[a-f0-9]{40}\/check-runs\?filter=all&per_page=100&page=1$/.test(route)) return ok({ total_count: st.checks.length, check_runs: st.checks });
     if (route === '/actions/workflows?per_page=100&page=1') return ok({ total_count: workflows.length, workflows });
     if ((m = /^\/contents\/(\.github\/workflows\/[\w.-]+)\?ref=[a-f0-9]{40}$/.exec(route))) {
-      const content = Buffer.from(m[1] === extraWorkflow.path ? extraSource : await readWorkflow(m[1]));
+      const content = Buffer.from(m[1] === extraWorkflow.path ? extraSource : await workflowText(m[1]));
       return ok({ path: m[1], content: content.toString('base64'), encoding: 'base64', sha: (1 + [...WORKFLOWS, extraWorkflow, hostedWorkflow].findIndex(w => w.path === m[1])).toString().repeat(40) });
     }
     if (route === `/commits/${HEAD}/pulls?per_page=100&page=1`) return ok(st.pulls);
@@ -117,7 +123,7 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     if ((m = /^\/actions\/runs\/(\d+)$/.exec(route))) return ok(shown(byId(m[1])));
     assert.fail(`unexpected route ${route}`);
   };
-  st.gh = ghPort({ ghExe: 'C:\\gh.exe', repo: REPO, run: runFn });
+  st.gh = ghPort({ ghExe: 'C:\\gh.exe', repo: REPO, run: runFn, nodeName: 'turing' });
   return st;
 }
 const T0 = Date.parse('2026-11-05T12:00:00Z');
@@ -490,7 +496,7 @@ test('bot head: admitted gate with skipped heavy jobs dispatches once, persists 
   assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'redispatch');
   const l = await lane(t, w);
   await l.r.step();
-  assert.deepEqual(w.dispatchFields, ['ref=claude/x', 'inputs[pr]=452', `inputs[head]=${HEAD}`]);
+  markedDispatch(w.dispatchFields);
   assert.deepEqual(w.posts, []);
   assert.equal(l.r.line(HEAD), '必需测试被跳过（推送者非 Owner），已自动补发一次');
   assert.equal(l.toasts.length, 1);
@@ -593,9 +599,22 @@ test('G3: the lost-run request binds the open PR and exact head, and cannot disp
   const w = world({ runs: [] });
   const l = await lane(t, w);
   await l.r.step(); l.advance(LOST_RUN_AFTER_MS); await l.r.step();
-  assert.deepEqual(w.dispatchFields, ['ref=claude/x', 'inputs[pr]=452', `inputs[head]=${HEAD}`]);
+  markedDispatch(w.dispatchFields);
   const denied = world({ runs: [], checks: [nativeCheck({ conclusion: 'failure' })] });
   assert.notEqual((await decide({ gh: denied.gh, headSha: HEAD, headAgeMs: LOST_RUN_AFTER_MS })).action, 'redispatch');
+});
+
+test('R9: each resident dispatch has a fresh ID; a prior workflow revision receives the original inputs', async t => {
+  const first = world({ runs: [botRun()] });
+  const second = world({ runs: [botRun()] });
+  for (const w of [first, second]) await (await lane(t, w)).r.step();
+  assert.notEqual(markedDispatch(first.dispatchFields), markedDispatch(second.dispatchFields));
+
+  const legacy = world({ runs: [botRun()], workflowText: async file => (await readWorkflow(file))
+    .replace(/^run-name:.*\r?\n/m, '')
+    .replace(/^ {6}resident_(?:node|dispatch_id):\r?\n(?: {8}[^\r\n]*\r?\n){3}/gm, '') });
+  await (await lane(t, legacy)).r.step();
+  assert.deepEqual(legacy.dispatchFields, ['ref=claude/x', 'inputs[pr]=452', `inputs[head]=${HEAD}`]);
 });
 
 test('G3 end-to-end: no push run -> one durable dispatch -> original PR gate and runner epoch -> three checks on the same head', async t => {
@@ -604,12 +623,16 @@ test('G3 end-to-end: no push run -> one durable dispatch -> original PR gate and
   const configuration = await fs.readFile(path.join(root, 'apps/clued-cloud/app/supabase-public-config.ts'), 'utf8');
   const workflow = await fs.readFile(path.join(root, '.github/workflows/clued-required-tests.yml'), 'utf8');
   assert.match(workflow, /workflow_dispatch:/, 'GitHub accepts this event');
+  assert.match(workflow, /^run-name:.*format\('clued-resident-dispatch\/v1 \{0\} \{1\}', inputs\.resident_node, inputs\.resident_dispatch_id\)/m);
+  for (const input of ['resident_node', 'resident_dispatch_id'])
+    assert.match(workflow, new RegExp(`^ {6}${input}:\\r?\\n {8}description:.*\\r?\\n {8}required: false\\r?\\n {8}type: string\\r?$`, 'm'));
   const executed = [];
   let pr = pullRequest({ base: { sha: 'b'.repeat(40), ref: 'main', repo: { full_name: REPO, default_branch: 'main' } } });
   let epochCurrent = true;
   const w = world({ runs: [], pulls: [pr], onDispatch: async st => {
     const fields = Object.fromEntries(st.dispatchFields.map(field => { const at = field.indexOf('='); return [field.slice(0, at), field.slice(at + 1)]; }));
-    const event = { inputs: { pr: fields['inputs[pr]'], head: fields['inputs[head]'] }, repository: { default_branch: 'main' } };
+    const inputs = Object.fromEntries(st.dispatchFields.slice(1).map(field => /^inputs\[([^\]]+)\]=(.*)$/.exec(field).slice(1)));
+    const event = { inputs, repository: { default_branch: 'main' } };
     const self = { id: 900, event: 'workflow_dispatch', path: '.github/workflows/clued-required-tests.yml', head_sha: HEAD,
       head_branch: fields.ref, run_attempt: 1, created_at: new Date(T0).toISOString() };
     const environment = { GITHUB_REPOSITORY: REPO, GITHUB_REPOSITORY_OWNER: 'o', GITHUB_ACTOR: 'o',

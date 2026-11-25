@@ -657,6 +657,8 @@ test('N4: known-known start conflict and a false FINAL keep the original strict 
   ep.identity.native_run.run_started_at=null;ep.final_decision_observed=true;f.p.admissions[0].packet_raw=JSON.stringify(ep);f.seal();
   assert.equal(C.bindFourSourceNativePopulation(f.frame.packet_raw,n,f.expected).reason_code,'FOUR_SOURCE_NATIVE_ADMISSION_IDENTITY_MISMATCH');
 });
+// Yield n event-loop turns (no timer): the concurrency checks below only need the requests to overlap.
+const turns=async n=>{for(let i=0;i<n;i++)await new Promise(resolve=>setImmediate(resolve));};
 // M4 proves the checkout shape from the private mode, where the test file and its overrides sit outside the tree. In a
 // checkout (CI) the run itself is that proof, so M4 is not registered there. The tree is the four roots copied whole, so a
 // file a pull request adds, imported or read, is in it (board line 241).
@@ -801,7 +803,7 @@ test('bounded parallel Native captures retain every member under the same reques
   const runs=Array.from({length:7},(_,i)=>({id:426-i,run_attempt:1,workflow_id:8,head_sha:'a'.repeat(40),path:'.github/workflows/test.yml',event:'pull_request',status:'completed',conclusion:'success',
     created_at:'2026-10-09T00:00:01Z',run_started_at:'2026-10-09T00:00:02Z',updated_at:'2026-10-09T00:00:05Z',pull_requests:[]}));
   let active=0,maximum=0,calls=0;
-  const request=async route=>{calls++;active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,2));active--;
+  const request=async route=>{calls++;active++;maximum=Math.max(maximum,active);await turns(2);active--;
     const u=new URL(route,'https://native.invalid');
     if(u.pathname.endsWith('/actions/runs'))return {ok:true,body:{total_count:runs.length,workflow_runs:structuredClone(runs)}};
     const id=Number(u.pathname.match(/\/runs\/(\d+)/)?.[1]),r=runs.find(x=>x.id===id);assert.ok(r);
@@ -818,7 +820,7 @@ test('a failed directory page drains its existing batch before another stage can
   const rows=Array.from({length:500},(_,i)=>run(1199-i));let active=0,maximum=0;
   const request=async route=>{const page=Number(new URL(route,'https://native.invalid').searchParams.get('page'));
     if(page===1)return {ok:true,body:{total_count:500,workflow_runs:rows.slice(0,100)}};
-    active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,page===2?1:10));active--;
+    active++;maximum=Math.max(maximum,active);await turns(page===2?1:10);active--;
     if(page===2)throw Error('HTTP_PAGE_FAILED');return {ok:true,body:{total_count:500,workflow_runs:rows.slice((page-1)*100,page*100)}};
   };
   const result=await C.collectIncrementalNative({request,repository,window});
@@ -890,7 +892,7 @@ function uncappedDirectoryFixture({grow=true,remove=false,ascending=false,create
   let changed=false,calls=0,active=0,max=0;
   return {get calls(){return calls;},get max(){return max;},async request(route){
     const u=new URL(route,'https://native.invalid');assert.equal(u.pathname,'/repos/'+repository+'/actions/runs');assert.equal(u.searchParams.has('created'),false);
-    const page=Number(u.searchParams.get('page'));calls++;active++;max=Math.max(max,active);await new Promise(r=>setTimeout(r,2));active--;
+    const page=Number(u.searchParams.get('page'));calls++;active++;max=Math.max(max,active);await turns(2);active--;
     if(page>1)changed=true;let rows=changed?(remove?old.slice(1):replaced?[fresh[0],...old.slice(1)]:grow?[...fresh,...old]:old):old;
     if(createdInversion)rows=rows.map((r,i)=>i===106?{...r,created_at:'2026-10-09T00:00:01Z',run_started_at:'2026-10-09T00:00:02Z'}:r);
     if(ascending)rows=[...rows].reverse().map((r,i)=>({...r,created_at:i?'2026-10-09T00:00:01Z':'2026-10-09T00:00:00Z',run_started_at:'2026-10-09T00:00:02Z'}));

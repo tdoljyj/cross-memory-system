@@ -611,25 +611,25 @@ test('the run lock: taken, waited for while its run is alive, taken over when st
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-lock-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const file = path.join(home, 'run.lock');
-  const quiet = { log: () => {} };
+  const T = Date.parse("2026-11-01T00:00:00Z"), quiet = { log: () => {}, now: () => T };
   const release = acquireLock(home, { ...quiet, pid: 11 });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).pid, 11);
   release();
   assert.equal(fs.existsSync(file), false);
   // alive: waits until it is gone
-  fs.writeFileSync(file, JSON.stringify({ pid: 22, token: 'held', started: Date.now() }));
+  fs.writeFileSync(file, JSON.stringify({ pid: 22, token: 'held', started: T }));
   let waits = 0;
   acquireLock(home, { ...quiet, pid: 12, alive: () => true, wait: () => { waits += 1; fs.rmSync(file); } })();
   assert.equal(waits, 1);
   // gone, older than any run, or unreadable: taken over
-  for (const [held, alive] of [[{ pid: 33, token: 'dead', started: Date.now() }, () => false],
-    [{ pid: 34, token: 'old', started: Date.now() - 7 * 60 * 60_000 }, () => true], ['not json', () => true]]) {
+  for (const [held, alive] of [[{ pid: 33, token: 'dead', started: T }, () => false],
+    [{ pid: 34, token: 'old', started: T - 7 * 60 * 60_000 }, () => true], ['not json', () => true]]) {
     fs.writeFileSync(file, typeof held === 'string' ? held : JSON.stringify(held));
-    if (typeof held === 'string') fs.utimesSync(file, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    if (typeof held === 'string') fs.utimesSync(file, new Date(T - 60_000), new Date(T - 60_000));
     const mine = acquireLock(home, { ...quiet, pid: 13, alive, wait: () => assert.fail('a stale lock is not waited for') });
     assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).pid, 13);
     // another run's lock is never removed by this one's release
-    fs.writeFileSync(file, JSON.stringify({ pid: 44, token: 'theirs', started: Date.now() }));
+    fs.writeFileSync(file, JSON.stringify({ pid: 44, token: 'theirs', started: T }));
     mine();
     assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).token, 'theirs');
     fs.rmSync(file);
@@ -643,12 +643,12 @@ test('the run lock: taken, waited for while its run is alive, taken over when st
   // (and a stale lock taken over but not yet removed)
   for (const leftover of [`${file}.x-1-2.new`, `${file}.x-3-4`]) {
     fs.writeFileSync(leftover, '{}');
-    fs.utimesSync(leftover, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    fs.utimesSync(leftover, new Date(T - 60_000), new Date(T - 60_000));
   }
   acquireLock(home, { ...quiet, pid: 16 })();
   assert.deepEqual(fs.readdirSync(home), [], 'both cleared');
   // a long run renews its lock's age
-  let clock = Date.now();
+  let clock = T;
   const long = acquireLock(home, { ...quiet, pid: 15, now: () => clock });
   clock += 5 * 60 * 60_000;
   long.refresh();

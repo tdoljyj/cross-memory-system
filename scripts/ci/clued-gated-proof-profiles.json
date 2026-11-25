@@ -6927,9 +6927,10 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "5b70008aee3ea9715dd364b0dfdf775681111e49f599d8830626aef844054b0c",
+      "source_sha256": "4fb7a84e68461e57e2d10651bcbe8c9dc70721e985de4182f7e55f281b466251",
       "source_yaml_lines": [
 "name: clued-required-tests",
+"run-name: ${{ github.event_name == 'workflow_dispatch' && (inputs.resident_node && inputs.resident_dispatch_id && format('clued-resident-dispatch/v1 {0} {1}', inputs.resident_node, inputs.resident_dispatch_id) || 'clued-required-tests') || '' }}",
 "",
 "# Required checks clued-cloud-tests, ci-suites and migration-verify (Task",
 "# 2a5fdb66; work/ci-required-tests-v1/DESIGN.md), on the self-hosted Linux",
@@ -6978,6 +6979,14 @@
 "      head:",
 "        description: 'PR 当前完整 head SHA'",
 "        required: true",
+"        type: string",
+"      resident_node:",
+"        description: '常驻自动补发节点（手工运行留空）'",
+"        required: false",
+"        type: string",
+"      resident_dispatch_id:",
+"        description: '常驻自动补发一次性编号（手工运行留空）'",
+"        required: false",
 "        type: string",
 "  push:",
 "    branches: [main, clued-train/staging]",
@@ -7867,7 +7876,7 @@
 "        run: python3 -I -B scripts/ci/check_contract_placement.py --base \"$CI_BASE_SHA\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\"",
 ""
       ],
-      "workflow_blob": "9066264ff4b0f07274ee67f07e16ca86a6db60f6"
+      "workflow_blob": "d044a9124ae24721d510ad6bf1100d608501efbe"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [
