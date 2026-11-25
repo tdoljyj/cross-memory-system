@@ -33,6 +33,9 @@ for (const [name, relay] of [['no relay block (a new package)', undefined], ['a 
     const engine = fakeEngine();
     const f = await executorFixture(t, { engine, policy: rawPolicy(relay === undefined ? {} : { relay }) });
     const called = noRelayPorts(f, engine);
+    // The PR reads open at the batch's head: a standing batch, so the records are relay off's alone (a fixture whose companion never
+    // answers the PR read would add the standing-unread receipt of DESIGN §72.2, which has nothing to do with the relay).
+    f.companion.prHead = async pr => ({ number: pr, state: 'open', headSha: HEAD });
     await f.drop(triggerBytes());
     const r = await f.exec.tick();
     assert.equal(r.state, 'COMPLETED');

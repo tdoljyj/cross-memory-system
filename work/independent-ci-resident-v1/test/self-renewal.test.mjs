@@ -167,6 +167,8 @@ function drillFixture(t) {
   put('companion',{...row(profile.ownerSid),'ci-admission.token':'DENIED','ci-admission.connection.json':'DENIED'});
   put('probe',{at,code:'RENEW_IDENTITY_REFUSED'});
   put('record',{'ci-admission.connection.json':'PRESENT'});
+  // 宿主写的演练切断名单（drill-vm.ps1 Copy-DrillM5）：这组用例不切断网关主机，网关一项仍要求 403（切断时的规则见 drill-r13-a8-m5.test.mjs）
+  put('network',{blackholeHosts:['clued.pixelgrav.com']});
   const drill=()=>spawnSync(process.execPath,[path.join(resident,'test','renewal-drill.mjs'),dir],{encoding:'utf8'});
   return {drill, put, profile, row, dir};
 }
@@ -783,10 +785,11 @@ const CHECK = 10 * 60_000;
 const requestFiles = f => fs.readdirSync(path.join(f.root, 'broker/requests'));
 test('进程刚启动未满一个检查周期：不投、请求邮箱无新文件、不写通道记录、不计退避；自检照写', async t => {
   const f = handoverFixture(t);
-  f.startedAt = f.now; f.restart();
+  f.startedAt = f.now; f.restart(); seedBook(f, {}); // 宽限内 FAIL 不落账，状态文件须预先存在才能读
   await f.tick(); f.request(null);
   assert.deepEqual([requestFiles(f), f.book().lanes, f.book().pending], [[], {}, null]);
-  assert.deepEqual([typeof f.book().keys?.result, f.book().checkedAt], ['string', new Date(f.now).toISOString()], '宽限内自检照写');
+  // 任务 87d330d0：宽限内自检的 FAIL 不落账（见文末三个用例）；此处只证明宽限内的 FAIL 不写 keys。
+  assert.notEqual(f.book().keys?.result, 'FAIL', '宽限内 FAIL 不落账');
   f.now += CHECK - 1; await f.tick(); f.request(null);
   assert.deepEqual([requestFiles(f), f.book().lanes], [[], {}]);
   f.now += 1; await f.tick(); f.request('ci');
@@ -1218,4 +1221,48 @@ test('残件不再复用：正文写坏的那次之后，下一次投递换新�
   f.now += 15_000; await f.tick();
   const fresh = f.request('ci'); // f.request 同时核对新请求文件正文为 {kind:'ci'}
   assert.ok(![old, tornId].includes(fresh));
+});
+
+// 任务 87d330d0（Fable 11-25 第 3 节）：启动宽限内陪伴观测未到，密钥检查的 FAIL 不落账，下一拍再查；满一个周期后照旧落账。
+function keyGraceFixture(t, uptimeMs) {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'renew-grace-'));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const root=path.join(directory,'resident');
+  for (const dir of ['resident/state','resident/broker/requests','resident/mailbox/responses','state/v2/receipts'])
+    fs.mkdirSync(path.join(directory,dir),{recursive:true});
+  const service='S-1-5-80-'+Array.from({length:5},(_,i)=>sidHash.readUInt32LE(4*i)).join('-');
+  const profile={ownerSid:'companion',controllerSid:'controller'};
+  const f={directory,root,now:Date.parse('2026-11-25T00:00:00.000Z'),uptime:uptimeMs};
+  const iso=()=>new Date(f.now).toISOString();
+  const row=sid=>({at:iso(),sid,tpm:'DENIED',software:'ABSENT'});
+  const put=(file,value)=>fs.writeFileSync(path.join(directory,file),JSON.stringify(value));
+  f.publish=()=>{
+    put('resident/broker/renew-key.json',{at:iso(),sid:'S-1-5-18',provider:'Microsoft Platform Crypto Provider',code:null});
+    put('state/v2/receipts/renew-key-controller.json',row(profile.controllerSid));
+    put('resident/mailbox/responses/renew-key.json',{...row(profile.ownerSid),'ci-admission.token':'DENIED','ci-admission.connection.json':'DENIED'});
+  };
+  f.step=renewalWatch({root,profile,mode:()=>'STANDBY',clock:()=>f.now,source:CI_SOURCE,uptime:()=>f.uptime,observe:async()=>row(service)});
+  f.book=()=>{ try { return JSON.parse(fs.readFileSync(path.join(root,'state','connection-renewal.json'),'utf8')); } catch { return {}; } };
+  return f;
+}
+test('启动宽限内无陪伴观测：FAIL 不落账，renewalStatus 不给出 FAIL', async t => {
+  const f=keyGraceFixture(t,15_000);
+  await f.step();
+  const book=f.book();
+  assert.equal(book.keys,undefined);
+  assert.equal(book.checkedAt,undefined);
+  assert.notEqual(parseRenewalStatus({keyCheck:book.keys?.result,checkedAt:book.checkedAt})?.keyCheck,'FAIL');
+});
+test('启动宽限内陪伴观测晚到：下一拍即落账 PASS，不等十分钟', async t => {
+  const f=keyGraceFixture(t,15_000);
+  await f.step();
+  f.now+=15_000; f.uptime+=15_000; f.publish();
+  await f.step();
+  assert.equal(f.book().keys?.result,'PASS');
+  assert.equal(f.book().checkedAt,new Date(f.now).toISOString());
+});
+test('启动已满一个检查周期且无陪伴观测：FAIL 照旧落账', async t => {
+  const f=keyGraceFixture(t,10*60_000);
+  await f.step();
+  assert.equal(f.book().keys?.result,'FAIL');
 });

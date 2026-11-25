@@ -955,12 +955,86 @@ test('hosted copy: the workflow runs the same entry on a hosted machine, only fr
   assert.match(merge, /\n          CLUED_FRONT_MERGE_PHASE: scaffold\n/);
   assert.match(merge, /\n        run: node scripts\/ci\/clued-front-main-merge\.mjs\n/, 'the same entry as the self-hosted workflow');
   assert.match(original, /\n        run: node scripts\/ci\/clued-front-main-merge\.mjs\n/);
-  assert.match(merge, /\n    concurrency:\n      group: clued-front-main-merge\n      cancel-in-progress: false\n/, 'one at a time across both workflows');
+  // Each copy has its own group (task 2fb32dc7): the copies take turns by phase, not by a group, so the self-hosted no-op that
+  // waits for a Linux node during the scaffold can neither hold the hosted copy back nor push its waiting run out.
+  assert.match(merge, /\n    concurrency:\n      group: clued-front-main-merge-hosted\n      cancel-in-progress: false\n/, 'one at a time within the hosted workflow');
   assert.match(original, /\n      group: clued-front-main-merge\n/);
+  assert.notEqual(mergeMainGroup(text), mergeMainGroup(original), 'the two copies never share a group');
   // Default-branch code, no credential left in the checkout, nothing written with this run's token, no push of any kind.
   assert.equal((jobs.match(/\n          ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}\n          persist-credentials: false\n/g) ?? []).length, 2);
   const code = text.split('\n').filter(line => !/^\s*#/.test(line)).join('\n');
   assert.doesNotMatch(code, /: write\b|git push|rebase|--force|CLUED_ADMISSION_CLUED_TOKEN|CLUED_CONTEXT_READ_TOKEN/);
+});
+
+// The concurrency group of a workflow's merge-main job, read from the file.
+function mergeMainGroup(text) {
+  const found = text.slice(text.indexOf('\n  merge-main:\n')).match(/\n    concurrency:\n      group: ([^\n#]+)\n/);
+  assert.ok(found, 'merge-main has a literal concurrency group');
+  return found[1].trim();
+}
+
+// GitHub's concurrency group: one request runs, one waits, and a new waiting request cancels the one already waiting. Each
+// request holds its group for `holds` seconds once it gets it. Returns, per request, when it got its group or who cancelled it.
+function replayConcurrency(requests, groupOf) {
+  const groups = new Map(), outcome = new Map();
+  const advance = (group, now) => {
+    while (group.running && group.running.end <= now) {
+      const next = group.waiting, start = group.running.end;
+      group.running = null, group.waiting = null;
+      if (next) { outcome.set(next.id, { started: start }); group.running = { id: next.id, end: start + next.holds }; }
+    }
+  };
+  for (const request of [...requests].sort((a, b) => a.at - b.at)) {
+    const name = groupOf(request.copy);
+    if (!groups.has(name)) groups.set(name, { running: null, waiting: null });
+    const group = groups.get(name);
+    advance(group, request.at);
+    if (!group.running) {
+      outcome.set(request.id, { started: request.at });
+      group.running = { id: request.id, end: request.at + request.holds };
+      continue;
+    }
+    if (group.waiting) outcome.set(group.waiting.id, { cancelledBy: request.id });
+    group.waiting = request;
+  }
+  for (const group of groups.values()) advance(group, Infinity);
+  return outcome;
+}
+
+// Task 2fb32dc7 (PLAN-front-bot-concurrency-20261125 §4 T3): the night of 11-25 (Beijing) from the cancelled-run diagnosis. At
+// 02:56:53 the self-hosted copy's merge-main (a no-op during the scaffold) took the group and waited for a Linux node until
+// 03:14:14; every self-hosted request after it waits as long. A hosted run holds the group about a minute (28-80 s before 02:55).
+test('replay of 11-25 02:56: each copy has its own group, so no hosted request waits behind or is cancelled by the self-hosted no-op', () => {
+  const read = file => fs.readFileSync(path.join(ROOT, '.github/workflows', file), 'utf8');
+  const groups = { hosted: mergeMainGroup(read('clued-front-main-merge-hosted.yml')), 'self-hosted': mergeMainGroup(read('clued-front-main-merge.yml')) };
+  const at = clock => { const [h, m, s] = clock.split(':').map(Number); return h * 3600 + m * 60 + s; };
+  const SELF_HOLDS = at('03:14:14') - at('02:56:53'), HOSTED_HOLDS = 60;
+  const night = [
+    ['45460908558', 'self-hosted', '02:56:53'], ['45464948504', 'hosted', '02:57:21'], ['45462209918', 'self-hosted', '03:00:24'],
+    ['45465890520', 'hosted', '03:02:49'], ['45463563123', 'self-hosted', '03:05:50'], ['45466539575', 'hosted', '03:06:09'],
+    ['45467487837', 'hosted', '03:11:31'], ['45463925866', 'self-hosted', '03:12:20'],
+  ].map(([id, copy, clock]) => ({ id, copy, at: at(clock), holds: copy === 'hosted' ? HOSTED_HOLDS : SELF_HOLDS }));
+  // The model is the one GitHub ran that night: one shared group gives exactly the recorded cancellations.
+  const shared = replayConcurrency(night, () => 'one group');
+  assert.deepEqual(Object.fromEntries([...shared].filter(([, o]) => o.cancelledBy)), {
+    45464948504: { cancelledBy: '45462209918' }, 45462209918: { cancelledBy: '45465890520' },
+    45465890520: { cancelledBy: '45463563123' }, 45463563123: { cancelledBy: '45466539575' },
+    45466539575: { cancelledBy: '45467487837' }, 45467487837: { cancelledBy: '45463925866' },
+  });
+  assert.deepEqual(shared.get('45463925866'), { started: at('03:14:14') });
+  // The groups the two workflow files name: every hosted request runs or is cancelled by another hosted one, never by the
+  // self-hosted copy, and the first hosted request runs within a minute of asking.
+  const replay = replayConcurrency(night, copy => groups[copy]);
+  const copyOf = new Map(night.map(r => [r.id, r.copy]));
+  for (const request of night.filter(r => r.copy === 'hosted')) {
+    const o = replay.get(request.id);
+    assert.ok(o, `hosted ${request.id} has an outcome`);
+    if (o.cancelledBy) assert.equal(copyOf.get(o.cancelledBy), 'hosted', `hosted ${request.id} cancelled by the self-hosted ${o.cancelledBy}`);
+    else assert.ok(o.started >= request.at, `hosted ${request.id} started`);
+  }
+  const first = night.find(r => r.copy === 'hosted');
+  assert.ok(replay.get(first.id).started !== undefined && replay.get(first.id).started - first.at <= 60,
+    `the first hosted request runs within 60 s of asking: ${JSON.stringify(replay.get(first.id))}`);
 });
 
 // FABLE-scaffold-s5-pre §3: the clued-admission App 5164952 had no workflows permission, so update-branch answered 403 for every

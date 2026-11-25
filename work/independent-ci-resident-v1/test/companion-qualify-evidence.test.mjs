@@ -66,6 +66,8 @@ function Wait-CompanionTaskNotRunning { }
 function Start-CompanionTask { [void]$script:log.Add('run'); $script:ran = $true; $script:CompanionLastRun = [ordered]@{ instanceGuid = '{22222222-0000-0000-0000-000000000001}'; state = 2; enginePid = 0 } }
 function Register-CompanionFallbackTask { [void]$script:log.Add('fallback-task') }
 function Remove-CompanionFallbackTask { [void]$script:log.Add('fallback-task-removed') }
+function Register-CompanionStartTask { }
+function Remove-CompanionStartTask { }
 function Write-CompanionPending { [void]$script:log.Add('pending') }
 function New-CompanionBuild { [ordered]@{ directory = 'C:\\none'; generation = ('a' * 64); registrar = [ordered]@{ exe = 'registrar.exe'; sourceSha256 = ('b' * 64); sha256 = ('c' * 64) } } }
 function Remove-CompanionBuild { }
@@ -176,7 +178,8 @@ $noMem = Get-CompanionMemoryFacts { throw (New-Object UnauthorizedAccessExceptio
 test('Q5: Start-CompanionTask keeps the instance Run returned; a Run that throws is still COMPANION_TASK_RUN_FAILED, and watched', opts, () => {
   const got = ps(`
 $running = [pscustomobject]@{ InstanceGuid = '{33333333-0000-0000-0000-000000000003}'; State = 2; EnginePID = 0 }
-$task = [pscustomobject]@{}; $task | Add-Member -MemberType ScriptMethod -Name Run -Value { param($a) $script:runArg = $a; if ($script:refuse) { throw 'refused' }; $running }
+$task = [pscustomobject]@{}; $task | Add-Member -MemberType ScriptMethod -Name Run -Value { param($a) throw 'PLAIN_RUN_QUEUES' }
+$task | Add-Member -MemberType ScriptMethod -Name RunEx -Value { param($a, $f, $s, $u) $script:runArgs = @($(if ($null -eq $a) { '$null' } else { 'set' }), $f, $s, $(if ($null -eq $u) { '$null' } else { $u })); if ($script:refuse) { throw 'refused' }; $running }
 $tf = [pscustomobject]@{}; $tf | Add-Member -MemberType ScriptMethod -Name GetTask -Value { param($n) $script:runTask = $n; $task }
 $svc = [pscustomobject]@{}; $svc | Add-Member -MemberType ScriptMethod -Name Connect -Value { }
 $svc | Add-Member -MemberType ScriptMethod -Name GetFolder -Value { param($p) $tf }
@@ -185,8 +188,9 @@ $script:refuse = $false
 $ok = Watch-CompanionTaskRun { Start-CompanionTask }
 $script:refuse = $true
 $refused = Watch-CompanionTaskRun { Start-CompanionTask }
-[ordered]@{ ok = $ok; refused = $refused; task = $script:runTask } | ConvertTo-Json -Depth 6 -Compress`);
+[ordered]@{ ok = $ok; refused = $refused; task = $script:runTask; runArgs = $script:runArgs } | ConvertTo-Json -Depth 6 -Compress`);
   assert.equal(got.task, 'CluedCIResidentCompanion');
+  assert.deepEqual(got.runArgs, ['$null', 2, 0, '$null'], 'K3: RunEx, ignore constraints, no session, no user');
   assert.deepEqual(got.ok.returned, { instanceGuid: '{33333333-0000-0000-0000-000000000003}', state: 2, enginePid: 0 });
   assert.equal(got.ok.runError, null);
   // the Task Scheduler is stood in by New-Object here: its run facts are then a code, never a throw
