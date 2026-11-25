@@ -1099,11 +1099,12 @@ test('A5 只用已读的 check-runs：除绕过取证外，准入时延不多发
   const s = sha(711);
   const associated = `/commits/${s}/pulls?per_page=100&page=1`;
   const stub = api({ ...headRoutes([[s, greenRuns()]]), [pushesRoute(s)]: pushes('tdoljyj'), [associated]: [],
-    [activityRoute('main')]: [creation(1, 'main', s, bypassAt())], [updatedPullsRoute]: [], [allRunsRoute(s)]: workflowRuns() });
+    ...filteredActivityRoutes('main', [creation(1, 'main', s, bypassAt())]), [updatedPullsRoute]: [], [allRunsRoute(s)]: workflowRuns() });
   const report = await compare({ heads: [s], api: stub, now: NOW });
   assert.equal(report.heads[0].admission.minutes, 1);
   assert.equal(report.summary.bypass.state, '已判');
-  assert.deepEqual(stub.calls, [RULESET_ROUTE, checksRoute(s), pushesRoute(s), associated, activityRoute('main'), updatedPullsRoute, allRunsRoute(s)]);
+  assert.deepEqual(stub.calls, [RULESET_ROUTE, checksRoute(s), pushesRoute(s), associated,
+    ...activityTypes.map(type => filteredActivityRoute('main', type)), updatedPullsRoute, allRunsRoute(s)]);
 });
 
 // S6 手工绕过：API 和 Git 均采用注入端口。空列表均来自已录制的完整读取。
@@ -1114,6 +1115,10 @@ const human = { login: 'tdoljyj', type: 'User' };
 const robot = { login: BOT, type: 'Bot' };
 const branchRef = number => `topic/${number}`;
 const activityRoute = branch => `/activity?ref=${encodeURIComponent(`refs/heads/${branch}`)}&per_page=100`;
+const activityTypes = ['push', 'force_push', 'branch_creation'];
+const filteredActivityRoute = (branch, type, period = '') => `${activityRoute(branch)}${period ? `&time_period=${period}` : ''}&activity_type=${type}`;
+const filteredActivityRoutes = (branch, rows, period) => Object.fromEntries(activityTypes.map(type =>
+  [filteredActivityRoute(branch, type, period), rows.filter(row => row.activity_type === type)]));
 const updatedPullsRoute = '/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1';
 const branchPullsRoute = branch => `/pulls?state=all&head=${encodeURIComponent(`tdoljyj:${branch}`)}&per_page=100&page=1`;
 const issueEventsRoute = pr => `/issues/${pr}/events?per_page=100&page=1`;
@@ -1147,12 +1152,12 @@ function withCleanBypass(routes, now) {
     });
     pull.head = bypassPull(pull.number, pull.head.sha).head;
     Object.assign(pull, { created_at: pushes[0].timestamp, updated_at: now, closed_at: pull.state === 'closed' ? now : null });
-    routes[activityRoute(branch)] = pushes;
+    Object.assign(routes, filteredActivityRoutes(branch, pushes));
     routes[issueEventsRoute(pull.number)] = [];
     updated.push(pull);
   }
   routes[updatedPullsRoute] = updated;
-  for (const suffix of ['', '&time_period=day', '&time_period=week']) routes[activityRoute('main') + suffix] = [];
+  for (const period of ['', 'day', 'week']) Object.assign(routes, filteredActivityRoutes('main', [], period));
   return routes;
 }
 
@@ -1164,12 +1169,10 @@ function bypassReplay({ pulls, picked, pushes, commits = [], routes: extra = {},
     ? greenRuns({ started: plusMinutes(createdAtOf(pushes, s), 5) }) : []]))));
   routes[PULLS] = picked;
   routes[updatedPullsRoute] = [...pulls].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
-  routes[activityRoute('main')] = [];
-  routes[`${activityRoute('main')}&time_period=day`] = [];
-  routes[`${activityRoute('main')}&time_period=week`] = [];
+  for (const period of ['', 'day', 'week']) Object.assign(routes, filteredActivityRoutes('main', [], period));
   for (const p of pulls) {
     const ref = p.head.ref;
-    routes[activityRoute(ref)] = pushes.filter(row => row.ref === `refs/heads/${ref}`);
+    Object.assign(routes, filteredActivityRoutes(ref, pushes.filter(row => row.ref === `refs/heads/${ref}`)));
     routes[branchPullsRoute(ref)] = pulls.filter(x => x.head.ref === ref);
     routes[issueEventsRoute(p.number)] = [];
   }
@@ -1354,8 +1357,8 @@ test('B10 --prs 1329- 仍覆盖窗口内更新的 #1325', async () => {
 
 test('B11 活动读取失败、满页或 Git 缺对象：未判，结果和退出码仍可用', async () => {
   const cases = [
-    { routes: { [activityRoute(bypassBranch)]: { error: '活动读取失败' } }, why: /活动读取失败/ },
-    { routes: { [activityRoute(bypassBranch)]: Array.from({ length: 100 }, (_, id) => creation(id + 1, bypassBranch, bBase, bypassAt('02:20:00'))) }, why: /100 条/ },
+    { routes: { [filteredActivityRoute(bypassBranch, 'push')]: { error: '活动读取失败' } }, why: /活动读取失败/ },
+    { routes: { [filteredActivityRoute(bypassBranch, 'branch_creation')]: Array.from({ length: 100 }, (_, id) => creation(id + 1, bypassBranch, bBase, bypassAt('02:20:00'))) }, why: /100 条/ },
     { git: () => ({ status: 128, missing: bMain }), why: /本机缺 .*fetch 后重跑可改判/ },
   ];
   const lines = [];
@@ -1417,7 +1420,7 @@ test('B14 车头 dispatch：合入活动不扩 Z2 head 集，真实 push head �
     const row = isPush ? { ...mainActivity, actor: robot, activity_type: 'push' } : mainActivity;
     const replay = bypassReplay({ pulls: [p], picked: [{ ...p, heads: pushes.map(e => e.after) }], pushes,
       now: '2026-11-23T10:00:00Z',
-      routes: { [`${activityRoute('main')}&time_period=day`]: [row],
+      routes: { ...filteredActivityRoutes('main', [row], 'day'),
         [allRunsRoute(run.head_sha)]: workflowRuns(run), [statusesRoute(run.head_sha)]: statuses } });
     const { summary: { bypass } } = await replay.compare();
     assert.equal(bypass.state, '已判');
@@ -1425,6 +1428,70 @@ test('B14 车头 dispatch：合入活动不扩 Z2 head 集，真实 push head �
     assert.equal(replay.stub.calls.includes(allRunsRoute(run.head_sha)), isPush);
     assert.ok(bypass.ignored.some(e => e.head === head && e.why.includes('机器人')));
   }
+});
+
+function activityWindowReplay(hours, period, mainRows, unfiltered = []) {
+  const start = bypassAt('02:20:00');
+  const now = new Date(Date.parse(start) + hours * 3600_000).toISOString();
+  const p = bypassPull(1329, bBase);
+  return bypassReplay({ pulls: [p], picked: [{ ...p, heads: [bBase] }],
+    pushes: [creation(1, bypassBranch, bBase, start), ...mainRows], now, routes: {
+      [`${activityRoute('main')}${period ? `&time_period=${period}` : ''}`]: unfiltered,
+      ...filteredActivityRoutes('main', mainRows, period),
+    } });
+}
+
+for (const [hours, period] of [[22.9, 'day'], [23, 'week'], [166.9, 'week'], [167, '']]) {
+  test(`B16 ${hours} 小时窗口：main 与候选分支按活动类型过滤`, async () => {
+    const replay = activityWindowReplay(hours, period, []);
+    const { summary: { bypass } } = await replay.compare();
+    assert.equal(bypass.state, '已判', bypass.reason);
+    const calls = replay.stub.calls.filter(route => route.startsWith('/activity?'));
+    assert.deepEqual(calls.sort(), [
+      ...activityTypes.map(type => filteredActivityRoute('main', type, period)),
+      ...activityTypes.map(type => filteredActivityRoute(bypassBranch, type)),
+    ].sort());
+  });
+}
+
+test('B17 一周 main 原始页 100 条 pr_merge：过滤后读到 push 并完成判定', async () => {
+  const merges = Array.from({ length: 100 }, (_, i) => activity(i + 2, 'main', bBase, sha(i + 1),
+    bypassAt('02:30:00'), { actor: robot, type: 'pr_merge' }));
+  const push = activity(102, 'main', bBase, bMain, bypassAt('02:40:00'), { actor: robot });
+  const replay = activityWindowReplay(166.9, 'week', [push], merges);
+  const { summary: { bypass } } = await replay.compare();
+  assert.equal(bypass.state, '已判', bypass.reason);
+  assert.deepEqual(bypass.events, []);
+  assert.ok(bypass.ignored.some(e => e.head === bMain && e.why === '机器人推送'));
+});
+
+test('B18 main 过滤后的 force_push 单页满 100 条：未判', async () => {
+  const rows = Array.from({ length: 100 }, (_, i) => activity(i + 2, 'main', bBase, sha(i + 1),
+    bypassAt('02:30:00'), { actor: robot, type: 'force_push' }));
+  const { summary: { bypass } } = await activityWindowReplay(23, 'week', rows).compare();
+  assert.equal(bypass.state, '未判');
+  assert.match(bypass.reason, /main.*force_push.*100 条/);
+});
+
+test('B19 窗口内更新的同仓 PR 分支没有 tip 活动证据：未判', async () => {
+  const p = bypassPull(1329, bBase);
+  const replay = bypassReplay({ pulls: [p, bypassPull(1325, bLater)], picked: [{ ...p, heads: [bBase] }],
+    pushes: [creation(1, bypassBranch, bBase, bypassAt('02:20:00'))] });
+  const { summary: { bypass } } = await replay.compare();
+  assert.equal(bypass.state, '未判');
+  assert.match(bypass.reason, /topic\/1325.*缺.*活动/);
+});
+
+test('B20 #1307 同秒常驻补发结果不确定：唯一对上 45503124414 并抵扣 Z2', async () => {
+  const { push, runs, statuses } = JSON.parse(readFileSync(new URL('./fixtures/shadow-compare/dispatch-1307.json', import.meta.url), 'utf8'));
+  const p = bypassPull(1307, push.after, { created_at: '2026-11-24T22:00:00Z', updated_at: '2026-11-24T23:00:00Z' });
+  p.head.ref = push.ref.slice('refs/heads/'.length);
+  const replay = bypassReplay({ pulls: [p], picked: [{ ...p, heads: [push.after] }], pushes: [push],
+    now: '2026-11-24T23:00:00Z', routes: { [allRunsRoute(push.after)]: runs, [statusesRoute(push.after)]: statuses } });
+  const { summary: { bypass } } = await replay.compare();
+  assert.equal(bypass.state, '已判', bypass.reason);
+  assert.deepEqual(bypass.events, []);
+  assert.match(bypass.ignored.find(e => e.kind === 'Z2')?.why ?? '', /59818221959.*45503124414.*自动补发结果不确定/);
 });
 
 test('B15 实际 merge-tree：重做结果与 Git 合并同树，原对象库、工作树和 ref 未写入', async t => {

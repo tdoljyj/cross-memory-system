@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { AdmissionRerunner, REDISPATCH_KIND } from '../../work/independent-ci-resident-v1/src/admission-rerun.mjs';
 import { matchCompanionStatuses } from './retrigger-counter.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -12,8 +13,7 @@ const REF = 'refs/heads/';
 const PAGE = 100;
 const HOUR = 3600_000;
 const PUSH = new Set(['push', 'force_push']);
-const TIPS = new Set([...PUSH, 'branch_creation']);
-const OTHER_ACTIVITY = new Set(['branch_deletion', 'pr_merge', 'merge_queue_merge']);
+const TIP_TYPES = [...PUSH, 'branch_creation'];
 const positive = n => Number.isSafeInteger(n) && n > 0;
 const fail = message => { throw new Error(message); };
 const stamp = (value, label) => {
@@ -114,27 +114,29 @@ async function pages(get, route, { key, stop, maxPages = 50 } = {}) {
   fail(`达到分页上限：${route}`);
 }
 
-const routeForActivity = (branch, period) =>
-  `/activity?${new URLSearchParams({ ref: REF + branch, per_page: PAGE, ...(period ? { time_period: period } : {}) })}`;
-
 // 给 API 移动的 day/week 下界留一小时余量。一页 100 条依然未判。
 const activityPeriod = (start, end) => end - start < 23 * HOUR ? 'day' : end - start < 167 * HOUR ? 'week' : null;
 
 async function readActivity(get, branch, period) {
-  const rows = await get(routeForActivity(branch, period));
-  if (!Array.isArray(rows) || rows.length > PAGE) fail(`${branch} 的活动记录不完整`);
-  if (rows.length === PAGE) fail(`${branch} 的活动记录满 100 条，无法读全游标分页`);
+  const activity = [];
   const seen = new Set();
-  return rows.flatMap(row => {
-    if (row?.ref !== REF + branch || !positive(row.id) || seen.has(row.id) ||
-        (!TIPS.has(row.activity_type) && !OTHER_ACTIVITY.has(row.activity_type))) fail(`${branch} 的活动记录不完整`);
-    seen.add(row.id);
-    // GitHub 合入 PR 是单独的活动类型。只在推送或建分支实际送到远端的 tip 上查 Z2。
-    if (!TIPS.has(row.activity_type)) return [];
-    const time = stamp(row.timestamp, `${branch} 的活动`);
-    if (!validSha(row.after) || (PUSH.has(row.activity_type) && !validSha(row.before))) fail(`${branch} 的活动缺 before 或 after`);
-    return [{ ...row, branch, time }];
-  });
+  // 服务端按类型筛选，避免 pr_merge 占满 main 的首屏。
+  for (const type of TIP_TYPES) {
+    const query = new URLSearchParams({ ref: REF + branch, per_page: PAGE,
+      ...(period ? { time_period: period } : {}), activity_type: type });
+    const rows = await get(`/activity?${query}`);
+    const label = `${branch} 的 ${type} 活动记录`;
+    if (!Array.isArray(rows) || rows.length > PAGE) fail(`${label}不完整`);
+    if (rows.length === PAGE) fail(`${label}满 100 条，无法读全游标分页`);
+    for (const row of rows) {
+      if (row?.ref !== REF + branch || row.activity_type !== type || !positive(row.id) || seen.has(row.id)) fail(`${label}不完整`);
+      seen.add(row.id);
+      const time = stamp(row.timestamp, label);
+      if (!validSha(row.after) || (PUSH.has(type) && !validSha(row.before))) fail(`${label}缺 before 或 after`);
+      activity.push({ ...row, branch, time });
+    }
+  }
+  return activity;
 }
 
 function uniqueIds(rows, label, idOf = row => row?.id) {
@@ -159,10 +161,15 @@ function openAt(pull, events, at) {
   return !latest || latest.event === 'reopened';
 }
 
+// 用内存回执让常驻状态生成器渲染两种补发结果不确定的原文。
+const uncertainDispatchLines = new Set([false, true].map(skipped => new AdmissionRerunner({ state: {
+  data: { heads: {}, records: {} }, record: () => ({ kind: REDISPATCH_KIND, outcome: 'unknown', skipped }),
+} }).line(ZERO)));
+const companionLine = description => description.replace(/^(?:当班|双活停机|已交班|停摆（[A-Z0-9_]+）)：/, '').split('；', 1)[0];
+
 function companionDescription(description) {
-  // 常驻状态在补跑/补发文案前加当班词，补发还有两种必需测试原因前缀。
-  const line = description.replace(/^(?:当班|双活停机|已交班|停摆（[A-Z0-9_]+）)：/, '').split('；', 1)[0];
-  return /^(?:已自动补跑|(?:必需测试(?:没有运行|被跳过（推送者非 Owner）)，)?已自动补发)/.test(line);
+  const line = companionLine(description);
+  return uncertainDispatchLines.has(line) || /^(?:已自动补跑|(?:必需测试(?:没有运行|被跳过（推送者非 Owner）)，)?已自动补发)/.test(line);
 }
 
 async function runsOnHead(get, head) {
@@ -201,7 +208,7 @@ async function readReruns(get, head, pushes, prsByBranch, inWindow, end) {
   for (const a of manual) {
     const id = `${a.id}:${a.run_attempt}`, at = beijing(a.time);
     const doubt = ambiguous.get(id), status = companion.get(id);
-    if (status && !doubt) {
+    if (status && !doubt && (a.run_attempt === 1 || !uncertainDispatchLines.has(companionLine(status.description)))) {
       ignored.push({ kind: 'Z2', at, head, why: `常驻状态 ${status.id} 唯一对上运行 ${id}：${status.description}` });
       continue;
     }
@@ -263,7 +270,7 @@ export async function collectBypass({ get, git = localMergeTree, since, now, hea
       if (!branch) continue;
       if (!prsByBranch.has(branch)) prsByBranch.set(branch, []);
       prsByBranch.get(branch).push(pull);
-      if (branch !== MAIN) await readBranch(branch);
+      if (branch !== MAIN && !(await readBranch(branch)).length) fail(`${branch} 的窗口内更新 PR #${pull.number} 缺 tip 活动证据`);
     }
     await readBranch(MAIN, activityPeriod(start, end));
     const pushes = [...activity.values()].flat().filter(p => inWindow(p.time)).sort((a, b) => a.time - b.time || a.id - b.id);
@@ -297,6 +304,7 @@ export async function collectBypass({ get, git = localMergeTree, since, now, hea
       if (!['ahead', 'identical', 'behind', 'diverged'].includes(response?.status)) fail(`提交 ${sha} 的 main 祖先关系读不到`);
       return ['ahead', 'identical'].includes(response.status);
     } };
+    // Z2 的取证范围是本窗口已读分支上实际推送或创建过的 tip。
     const tips = new Map();
     for (const push of pushes) {
       const result = await classifyPush(push, ports);
