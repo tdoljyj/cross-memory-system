@@ -195,10 +195,10 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'9066264ff4b0f07274ee67f07e16ca86a6db60f6',
-  source_sha256:'5b70008aee3ea9715dd364b0dfdf775681111e49f599d8830626aef844054b0c',
-  workflow_definition_sha256:'9bb187e5d8dc70b648b8afeb27f4f6a2cc3a623704c1d449a5f8e5fda07c0da4',
-  profile_sha256:'f7c35633a023bdec827e64ac575502cb2140c2c5f96c024a21d54f10de5304ad',
+  workflow_blob:'d044a9124ae24721d510ad6bf1100d608501efbe',
+  source_sha256:'4fb7a84e68461e57e2d10651bcbe8c9dc70721e985de4182f7e55f281b466251',
+  workflow_definition_sha256:'b168205d5a87daad0ba9944b2cab93410d59980c190be981463ff5f868e998e8',
+  profile_sha256:'65319f2ddec89830beb5ec1e4e6aba69e73bad8a31975d12fb021cf07fabad36',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
   role_sha256:Object.freeze({
     'clued-cloud-tests':'44925327ac3a3771b7c41bb548a265bf1020e3fcaecfb47fa7056241a4332c6d',
@@ -360,6 +360,23 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
       'contract-placement':'8e260c7eafaef15ec60f9fa020d656f9e6c519a055dcdc842c8bcd083c4b7993',
     }),
   }),
+  // Before resident redispatch run names (Task 04f9b91b, main df2274d95).
+  Object.freeze({
+    file:'.github/workflows/clued-required-tests.yml',
+    workflow_blob:'9066264ff4b0f07274ee67f07e16ca86a6db60f6',
+    source_sha256:'5b70008aee3ea9715dd364b0dfdf775681111e49f599d8830626aef844054b0c',
+    workflow_definition_sha256:'9bb187e5d8dc70b648b8afeb27f4f6a2cc3a623704c1d449a5f8e5fda07c0da4',
+    profile_sha256:'f7c35633a023bdec827e64ac575502cb2140c2c5f96c024a21d54f10de5304ad',
+    primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
+    role_sha256:Object.freeze({
+      'clued-cloud-tests':'44925327ac3a3771b7c41bb548a265bf1020e3fcaecfb47fa7056241a4332c6d',
+      'ci-suites':'4cc5da241cb6a501790ed2a865367831c741ed3f6195454449c8c7a14a2438d0',
+      'migration-verify':'817a962d0bda284cc42c124926182558e2f34fa14be094fa33329e6bf0502e4f',
+      'gitleaks':'8d16964d9257e512a88bf4baa617c87f5c184e2ea039b81351cc002814a28270',
+      'trivy':'3928538bd2214e658804adde40c33c5697db7d67776c51b13b099ee99fef052a',
+      'contract-placement':'9c0dd24d80b5d317259689fc709fc61a52ab73a11e1a321f9a1f9c4421e6022d',
+    }),
+  }),
 ]);
 const requiredTestsPin=blob=>[REQUIRED_TESTS_SOURCE,...REQUIRED_TESTS_PREVIOUS_SOURCES].find(pin=>pin.workflow_blob===blob)??null;
 export function isExactAllRequiredPrimariesProfile(profile,file) {
@@ -519,7 +536,8 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
       roleDefinitionDigest(role.definition)!==role.definition_sha256||!same(role.definition,value.jobs?.[role.job_id]))))
     reject('exact compound Source and complete independent roles required');
   if(!value?.jobs || !value.on || !Object.hasOwn(value.on,'pull_request'))reject('PR jobs missing');
-  const unsupportedKeys=Object.keys(value).filter(key=>!['name','on','permissions','concurrency','jobs'].includes(key));
+  const unsupportedKeys=Object.keys(value).filter(key=>!['name','on','permissions','concurrency','jobs'].includes(key)&&
+    !(compound&&key==='run-name'));
   if(unsupportedKeys.length)reject('unsupported top-level key: '+unsupportedKeys.join(','));
   const trigger=value.on.pull_request??null;
   if(trigger!==null && (typeof trigger!=='object' || Array.isArray(trigger) ||

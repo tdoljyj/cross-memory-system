@@ -656,7 +656,7 @@ test("review: secondary rate limit, a job-phase error, a budget stop while halvi
   const errors = [];
   ({ code } = await runMain(github, { ...memoryFs(), logError: (line) => errors.push(line) }));
   const callsAtReturn = github.calls.length;
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve)); // turns, not a timer: any late request would show by now
   assert.deepEqual([code, github.calls.length], [1, callsAtReturn], "no request after main returned");
   assert.ok(callsAtReturn <= 5 + 3, `at most the in-flight requests finish (${callsAtReturn})`);
   assert.match(errors.join("\n"), /returned 404/);

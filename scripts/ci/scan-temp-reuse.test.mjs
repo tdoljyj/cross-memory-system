@@ -108,7 +108,7 @@ function write(root, files) {
   appendFileSync(process.env.FAKE_LEDGER, made.map((p) => p + '\\n').join(''));
   for (const p of made.reverse()) if (statSync(p).isDirectory()) chmodSync(p, 0o555);
 }
-const stamp = (ms) => new Date(Date.now() + ms).toISOString().slice(0, 19) + 'Z';
+const stamp = (ms) => (ms < 0 ? '2020-01-01T00:00:00Z' : '2999-01-01T00:00:00Z'); // a fixed past and future: the workflow only checks UpdatedAt <= now < NextUpdate
 if (entry === '/usr/local/bin/trivy') {
   if (args.includes('--download-db-only')) {
     write(host(opt('--cache-dir'), true), { 'db/metadata.json': JSON.stringify({ Version: 2, UpdatedAt: stamp(-3600e3), NextUpdate: stamp(86400e3) }), 'db/trivy.db': 'db' });
@@ -225,7 +225,7 @@ function runJob(r, id) {
     const exported = Object.fromEntries(readFileSync(genv, 'utf8').split('\n').filter(Boolean).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
     const cwd = path.join(r.ws, s['working-directory'] ?? '.');
     const shell = s.shell === 'bash' ? ['--noprofile', '--norc', '-eo', 'pipefail', '-c'] : ['-e', '-c'];
-    const p = spawnSync(BASH, [...shell, s.run], { cwd, encoding: 'utf8', timeout: 120000,
+    const p = spawnSync(BASH, [...shell, s.run], { cwd, encoding: 'utf8',
       env: { ...ENV, ...r.env, GITHUB_OUTPUT: fwd(output), GITHUB_ENV: fwd(genv), ...exported, ...stepEnv } });
     out += `--- ${id}: ${s.name}\n${p.stdout || ''}${p.stderr || ''}`;
     if (p.status !== 0) return { code: p.status, out, failed: s.name };

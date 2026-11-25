@@ -17,7 +17,7 @@ import {BROKER_RESPONSE_CONTRACT,BROKER_REQUEST_CONTRACT} from '../../work/actio
 import {fixtureRecord,tempDir,subject} from '../../work/actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
 const bytes=value=>Buffer.from(canonical(value));
 async function fixture(t){
- const {docs}=fixtureRecord(),record=validateRecordV2(docs,{now:Date.now()}),nonce='a'.repeat(32);
+ const {docs}=fixtureRecord(),record=validateRecordV2(docs,{now:Date.parse('2026-11-01T00:00:00Z')}),nonce='a'.repeat(32);
  const job=makeJobV2({...subject(),testSha:subject().headSha,sourceManifestSha256:record.config.sourceManifestSha256,role:'gitleaks'});
  const identity=makeIndependentPublicationIdentity({job,claim:{claim_id:randomUUID(),fence:4,execution_epoch:3},
   controller_id:independentControllerId({invocationNonce:nonce,jobId:job.id,nodeId:record.accepted.node.hostname})});
@@ -29,7 +29,7 @@ async function fixture(t){
  const witness=await registerIndependentController({identity,journal,args,plan,record});
  const outcome={contract:OUTCOME_CONTRACT,nonce,stage:3,entryRole:'check-publisher',status:'BLOCKED',reason:'authorization_changed',sideEffects:0,mayHavePublished:false,jobIds:[job.id]};
  const requestId=randomUUID(),bundle={requestId,planBytes:bytes(plan),jobsBytes:bytes(jobs),
-  requestBytes:bytes({contract:BROKER_REQUEST_CONTRACT,stage:3,nonce,configSha256:args.configSha256,deadline:new Date().toISOString()}),
+  requestBytes:bytes({contract:BROKER_REQUEST_CONTRACT,stage:3,nonce,configSha256:args.configSha256,deadline:'2026-11-01T00:00:00.000Z'}),
   responseBytes:bytes({contract:BROKER_RESPONSE_CONTRACT,requestId,ok:true,code:null,started:true,startCallIssued:true,helperPid:31337,
    stoppedInTime:true,restored:true,accountUnchanged:true,stableBefore:true,stableAfter:true,configurationConflict:false}),
   outcomeBytes:bytes(outcome),receiptBytes:bytes({contract:NATIVE_RECEIPT_CONTRACT_V2,nonce,state:'FIXED_CHILD_REFUSED',failure_code:'FIXED_NODE_EXIT_NONZERO',

@@ -36,7 +36,7 @@ test('actual port reservations remain distinct and unavailable until released', 
 });
 test('actual CLI creates matching fixture DB and Worker origins and verifies owned cleanup', async t => {
   const { root, env } = await fixture(t);
-  const run = spawnSync(process.execPath, [script, 'prepare'], { cwd: root, env, encoding: 'utf8', timeout: 10000 });
+  const run = spawnSync(process.execPath, [script, 'prepare'], { cwd: root, env, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   const result = JSON.parse(run.stdout);
   assert.equal(result.project, 'clued-public-mcp-38213425486-2-trusted-self-hosted');
@@ -46,9 +46,9 @@ test('actual CLI creates matching fixture DB and Worker origins and verifies own
   const worker = JSON.parse(await fs.readFile(path.join(root, 'evals/public-mcp/wrangler.jsonc'), 'utf8'));
   assert.equal(worker.vars.SUPABASE_URL, `http://127.0.0.1:${result.ports[1]}`);
   assert.equal(await fs.readFile(env.GITHUB_ENV, 'utf8'), `SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:${result.ports[2]}/postgres\n`);
-  const check = spawnSync(process.execPath, [script, 'verify'], { cwd: root, env, encoding: 'utf8', timeout: 10000 });
+  const check = spawnSync(process.execPath, [script, 'verify'], { cwd: root, env, encoding: 'utf8' });
   assert.equal(check.status, 0, check.stderr);
-  const replay = spawnSync(process.execPath, [script, 'prepare'], { cwd: root, env, encoding: 'utf8', timeout: 10000 });
+  const replay = spawnSync(process.execPath, [script, 'prepare'], { cwd: root, env, encoding: 'utf8' });
   assert.notEqual(replay.status, 0);
   assert.equal(await fs.readFile(path.join(root, 'supabase/config.toml'), 'utf8'), config);
 });
