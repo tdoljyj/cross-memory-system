@@ -465,8 +465,8 @@ export class RunQueue {
   }
 
   // Phase 2, step 2: the row's batch rests at parking point B (reason: why stage 8 was not ready; nextAt: its next try;
-  // position: its claim's place in the merge queue at that try; parkTry: the batch's ended stage-8 tries, null once its budget is
-  // reached, task bd07449b r2). A newer commit that arrived meanwhile stays current.
+  // position: its claim's place in the merge queue at that try; parkTry: the batch's ended stage-8 tries, once its budget is
+  // reached the one that woke the last try, task bd07449b r2, r3). A newer commit that arrived meanwhile stays current.
   park(pr, headSha, { reason, nextAt, position, parkTry = null }, now) {
     const r = this.row(pr);
     if (!r || r.running?.headSha !== headSha) return false;

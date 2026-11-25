@@ -15,6 +15,7 @@ import { POSITIONS, closedBreaker } from '../src/breaker.mjs';
 import { describe as prPage, events as notificationEvents } from '../src/pr-status.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { Ledger, batchKey, headKey } from '../src/ledger.mjs';
+import { writeNew } from '../src/store.mjs';
 import { Poller } from '../src/poller.mjs';
 import { pollLane } from '../src/companion-main.mjs';
 import { drainRequest, abortRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
@@ -1040,7 +1041,7 @@ test('bd07449b: the PR page says which of the two it is', () => {
 // (companion-main.mjs#pollLane: the status board, the PR pass, one sleeping batch observed) over a GitHub that shows PR 884 open on main
 // (no compare answer: nothing is proposed), with main's rules read pinned to this App. One beat is one pass of that lane.
 function companionBeats(f) {
-  let events = 0;
+  let events = 0, running = false;
   const pulls = () => [{ number: 884, headRefOid: HEAD, baseRefOid: BASE, isDraft: false, updatedAt: '2026-11-25T03:00:00Z' }];
   const run = restPolls(async argv => (argv.some(a => /\/check-runs/.test(a))
     ? restAnswer(argv, { total_count: 1, check_runs: [{ id: 1, name: 'hosted-ci-suites', status: 'completed', conclusion: 'success' }] })
@@ -1050,9 +1051,12 @@ function companionBeats(f) {
   poller.noteBranchRules(pinnedBack());
   // the status board the executor writes (state\status.json), as the companion parses it
   const readStatus = () => { const b = new StatusBoard({ clock: f.clock }); b.update({ backfill: { complete: true, published: 0, unreadable: 0 } });
-    b.setPending(f.queue.view(f.clock(), { etaBatchMs: 20 * MIN })); return parseStatus(Buffer.from(JSON.stringify(b.snapshot()))); };
+    b.setPending(f.queue.view(f.clock(), { etaBatchMs: 20 * MIN }).map(r => (running && r.pr === 884 ? { ...r, state: 'RUNNING', nextAt: null } : r)));
+    return parseStatus(Buffer.from(JSON.stringify(b.snapshot()))); };
   const lane = pollLane({ poller, readStatus });
-  return { beat: () => lane.work(), events: () => events, readStatus };
+  // runningBeat: one pass that sees the row RUNNING (the poller forgets what it observed of a row that is not asleep)
+  const runningBeat = async () => { running = true; try { await lane.work(); } finally { running = false; } };
+  return { beat: () => lane.work(), runningBeat, events: () => events, readStatus };
 }
 const unreadable = () => notReady('RULESET_UNREADABLE');
 
@@ -1110,5 +1114,109 @@ test('bd07449b r2 must-red 4: the companion reads the rules pinned and stage 8 a
   assert.equal(f.queue.notices.filter(n => n.code === 'STAGE8_TRY_LIMIT').length, 1, 'the Owner is told once');
   const [entry] = await f.ledger.parkedEntries();
   assert.equal(ResidentExecutor.lastTry(entry).sleeping, true);
-  assert.equal(c.readStatus().pending.find(r => r.pr === 884).parkTry, null, 'the budget reached: no parkTry');
+  assert.equal(c.readStatus().pending.find(r => r.pr === 884).parkTry, limit - 1, 'the budget reached: the row keeps the parkTry that woke the last try (r3)');
+});
+
+// Task bd07449b r3 (PLAN-ruleset-unreadable-park-r3 §2, §3): guards of what the code does today (green before and after, not must-red).
+// Beat the companion every minute while tries come (every 10 minutes once the last try is 15 minutes old) until `until`; returns the
+// clock of every stage-8 try that ran.
+async function beatsUntil(f, c, engine, until, at, stopAt = Infinity, step = null) {
+  let runs = stagesRun(engine).filter(stage => stage === 8).length;
+  while (f.clock() < until && runs < stopAt) {
+    await c.beat();
+    await f.exec.tick();
+    const now = stagesRun(engine).filter(stage => stage === 8).length;
+    if (now > runs) { at.push(f.clock()); runs = now; }
+    f.advance(step ?? (f.clock() - at.at(-1) < 15 * MIN ? MIN : 10 * MIN));
+  }
+  return runs;
+}
+
+test('bd07449b r3 guard: a companion restart after the budget wakes the batch no more; the Owner is still told once', async t => {
+  const limit = 4;
+  const engine = stage8Engine(Array.from({ length: 30 }, unreadable), KEY);
+  const f = await executorFixture(t, { engine, policy: rawPolicy({ park: { ...rawPolicy().park, stage8MaxTries: limit } }) });
+  await f.drop(triggerBytes());
+  await f.exec.tick();
+  const at = [f.clock()];
+  assert.equal(await beatsUntil(f, companionBeats(f), engine, f.clock() + 120 * MIN, at), limit, 'the budget, as must-red 4');
+  const limitNotices = () => f.queue.notices.filter(n => n.code === 'STAGE8_TRY_LIMIT');
+  assert.equal(limitNotices().length, 1);
+  const noticeKey = limitNotices()[0].key;
+  // the companion restarts (a new Poller: nothing observed yet) and runs an hour, then again
+  const afterFirst = await beatsUntil(f, companionBeats(f), engine, f.clock() + 60 * MIN, at);
+  const afterSecond = await beatsUntil(f, companionBeats(f), engine, f.clock() + 60 * MIN, at);
+  assert.equal(afterFirst, limit, 'the first restart: no try more (the row keeps the parkTry that woke the last try)');
+  assert.equal(afterSecond, limit, 'the second restart: none more');
+  assert.deepEqual(limitNotices().map(n => n.key), [noticeKey], 'one STAGE8_TRY_LIMIT notice, the same one');
+  const [entry] = await f.ledger.parkedEntries();
+  assert.equal(ResidentExecutor.lastTry(entry).sleeping, true);
+});
+
+test('bd07449b r3 guard: asleep on RULESET_UNREADABLE at the merge queue head, tries are not counted: bounded by the 99 tries of a batch, none after, no notice', async t => {
+  const head = () => notReady('RULESET_UNREADABLE', { entered: true, state: 'waiting', position: 1 });
+  const engine = stage8Engine(Array.from({ length: 60 }, head), KEY);
+  const f = await executorFixture(t, { engine });
+  await f.drop(triggerBytes());
+  const start = f.clock();
+  const first = await f.exec.tick();
+  assert.deepEqual([first.state, first.reason, first.until, first.position], ['PARKED', 'RULESET_UNREADABLE', null, 1]);
+  const c = companionBeats(f);
+  const at = [f.clock()];
+  // 14 tries live, more than park.stage8MaxTries (12): none of them counted, each one woken again
+  const live = 14;
+  assert.ok(live > rawPolicy().park.stage8MaxTries);
+  assert.equal(await beatsUntil(f, c, engine, start + 6 * 60 * MIN, at, live), live);
+  // the tries after them up to the 94th, the records as ledger.mjs#beginTry and #endTry write them (through the ledger every write
+  // reads all the tries before it: minutes). Then every beat reads a ledger of over 90 tries: the walk to the cap and after it beats
+  // every 5 minutes (the wake spacing was seen beat by beat above).
+  const at0 = new Date(f.clock()).toISOString(), record = (name, value) => writeNew(path.join(f.ledger.dir(KEY), name), value);
+  for (let n = live + 1; n <= 94; n++) {
+    await record(`71-try-${n}.json`, { key: KEY, contract: 'clued.independent-ci.resident-stage8-try/1', n, at: at0, batchId: 'x' });
+    await record(`72-tried-${n}.json`, { key: KEY, contract: 'clued.independent-ci.resident-stage8-tried/1', n, at: at0, code: 'RULESET_UNREADABLE', nextAt: null, position: 1, entered: true, parkTry: n, sleeping: true });
+  }
+  assert.equal((await f.ledger.state(KEY)).tries.length, 94);
+  const runs = await beatsUntil(f, c, engine, f.clock() + 60 * MIN, at, live + 99 - 94, 5 * MIN);
+  const settled = await beatsUntil(f, c, engine, f.clock() + 15 * MIN, at, Infinity, 5 * MIN);
+  // and past park.maxMs (24 hours from parking): two beats
+  f.advance(Math.max(0, start + 25 * 60 * MIN - f.clock()));
+  for (let i = 0; i < 2; i++) { await c.beat(); await f.exec.tick(); f.advance(10 * MIN); }
+  const after = stagesRun(engine).filter(stage => stage === 8).length;
+  const gaps = at.slice(1, live + 5).map((x, i) => (x - at[i]) / MIN);
+  const codes = [...new Set(f.queue.notices.map(n => n.code))];
+  t.diagnostic(`live tries ${runs} (ledger ${(await f.ledger.state(KEY)).tries.length}); gaps ${[...new Set(gaps)].join(',')}; notice codes ${JSON.stringify(codes)}`);
+  assert.equal(runs, live + 99 - 94, 'woken up to the batch cap (ledger MAX_TRIES, 99), not park.stage8MaxTries');
+  assert.deepEqual([settled, after], [runs, runs], 'none after the cap, also past park.maxMs');
+  assert.ok(gaps.slice(1).every(g => g >= PARK_NUDGE_MS / MIN), 'after the first wake, at least PARK_NUDGE_MS between wakes');
+  const [entry] = await f.ledger.parkedEntries();
+  assert.deepEqual([entry.tries.length, ResidentExecutor.lastTry(entry).sleeping, ResidentExecutor.lastTry(entry).position], [99, true, 1]);
+  assert.equal(c.readStatus().pending.find(r => r.pr === 884).parkTry, 98, 'the cap reached: the row keeps the parkTry that woke the last try');
+  // What the Owner hears when this branch tops out: STAGE8_TRY_LIMIT is sent only when the counted tries reach stage8MaxTries
+  // (executor.mjs#stage8Try), which tries at the head never do, and RULESET_UNREADABLE is no STAGE8_OWNER_NOTICE_CODES code.
+  assert.deepEqual(codes, [], 'no notice: the head branch tops out silently (PLAN-ruleset-unreadable-park-r3 §3, open item)');
+});
+
+// Task bd07449b r3, independent review r2 (must-red): the poller forgets a row it does not see asleep (poller.mjs#parkedPass drops the
+// observation of every head not in the sleeping list), so "the last parkTry seen" cannot carry the budget. One Poller beats every minute
+// and also once while each stage-8 try runs (the row RUNNING then); the budget reached, the batch must not be woken again.
+test('bd07449b r3 must-red: a beat that sees the row RUNNING during the last try does not wake the batch past its budget', async t => {
+  const limit = 4;
+  let during = async () => {};
+  const engine = stage8Engine(Array.from({ length: 40 }, unreadable), KEY);
+  const base = engine.runStage;
+  engine.runStage = async (batch, stage, o) => { if (stage.number === 8) await during(); return base(batch, stage, o); };
+  const f = await executorFixture(t, { engine, policy: rawPolicy({ park: { ...rawPolicy().park, stage8MaxTries: limit } }) });
+  await f.drop(triggerBytes());
+  await f.exec.tick();
+  const c = companionBeats(f);
+  during = () => c.runningBeat();
+  const at = [f.clock()];
+  const runs = await beatsUntil(f, c, engine, f.clock() + 120 * MIN, at);
+  const eventsAtBudget = c.events();
+  const more = await beatsUntil(f, c, engine, f.clock() + 60 * MIN, at);
+  assert.equal(runs, limit, `tries up to the budget, none past it (${runs}; tries at minutes ${at.map(x => (x - at[0]) / MIN).join(', ')})`);
+  assert.equal(more, limit, 'an hour later still none');
+  assert.ok(c.events() - eventsAtBudget <= 1, `no wake that runs a try (${c.events() - eventsAtBudget} trigger(s) written past the budget)`);
+  assert.equal(f.queue.notices.filter(n => n.code === 'STAGE8_TRY_LIMIT').length, 1);
+  assert.equal(c.readStatus().pending.find(r => r.pr === 884).parkTry, limit - 1, 'the budget reached: the row keeps the parkTry that woke the last try');
 });

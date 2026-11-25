@@ -160,13 +160,13 @@ export class Poller {
     }
     // Task bd07449b r2: for RULESET_UNREADABLE the signal also names the sleep (the row's parkTry, its ended stage-8 tries): a batch woken
     // and put to sleep again with the world unchanged is a new signal, so it is woken again (each wake still at most every PARK_NUDGE_MS,
-    // executor.mjs#nudgeParked, and within the stage-8 try budget). The budget reached (parkTry null), the last one seen stands: the
-    // signal moves with the world only. Every other code's signal is as before.
-    const parkTry = row.deferred === 'RULESET_UNREADABLE' ? (Number.isSafeInteger(row.parkTry) ? row.parkTry : (previous?.parkTry ?? null)) : null;
+    // executor.mjs#nudgeParked, and within the stage-8 try budget). The budget reached, the executor keeps the parkTry that woke the last
+    // try (r3), so the signal moves with the world only; read from the row alone, nothing remembered here. Every other code's signal is as before.
+    const parkTry = row.deferred === 'RULESET_UNREADABLE' && Number.isSafeInteger(row.parkTry) ? row.parkTry : null;
     const signal = digest([row.pr, row.headSha, sha, this.lastPass.mainSha, this.rulesDigest, checks?.digest ?? null, mergeMethods,
       ...(row.deferred === 'RULESET_UNREADABLE' ? [parkTry] : [])]);
     if (previous?.signal === signal) return;
-    const observation = { signal, checks, mergeMethods, parkTry };
+    const observation = { signal, checks, mergeMethods };
     const recoveredRules = row.deferred === 'RULESET_UNREADABLE' && this.rulesPinned === true;
     const recoveredMethods = mergeMethods?.[0] === true && mergeMethods?.[1] === false && mergeMethods?.[2] === false;
     if (!previous && !checksReady && !recoveredRules && !recoveredMethods && this.lastPass.mainSha === row.baseSha) {
