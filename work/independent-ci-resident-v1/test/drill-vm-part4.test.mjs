@@ -301,9 +301,10 @@ test('the kit registers a stand-in step for every name the drill makes, required
   }
 });
 
-// Codex review of f33fc33e5, medium 5: after a successful same-package reinstall the re-verify runs the whole verdict; its input carries the
-// launcher verdict and the pause (the same sources as the first install's A6), so strict mode does not stop it and prepare-again runs.
-test('a successful same-package reinstall goes through the re-verify to prepare-again', opts, () => {
+// FABLE-drill-r13-a8-m5-20261125 1.3: A8 is the same package through both entries, the node not moved. The run takes the two guest steps
+// (the upgrade, then the prepare) and nothing after them: no launcher, no read after the reinstall, no second prepare; the final A8 passes
+// on the two refusals.
+test('A8 runs the two entries and nothing after them; the final verdict passes on both refusals', opts, () => {
   const e = JSON.parse(evidence());
   const runDir = path.join(tmp, 'r5-a8-run'); fs.mkdirSync(runDir, { recursive: true });
   const guest = guestWorkDir('r5-a8-guest', { 'first-install.stdout.log': STEP_LOGS['first-install.log'], 'host.stdout.log': STEP_LOGS['host.stdout.log'],
@@ -313,7 +314,7 @@ test('a successful same-package reinstall goes through the re-verify to prepare-
   const read = { status: e.status, current: e.current, facts: e.facts, pause: e.pause, verify: e.verify, readAt: e.now };
   const r = ps(`
     $script:steps = [Collections.Generic.List[string]]::new()
-    $script:Interactive = $false; $SkipReinstall = $false
+    $script:Interactive = $false
     function New-PSSession { param($VMName, $Credential) 'session' }
     function Remove-PSSession { param($Session) }
     function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
@@ -326,10 +327,9 @@ test('a successful same-package reinstall goes through the re-verify to prepare-
       $script:steps.Add($Step)
       if ($Step -ceq 'first-install') { return [ordered]@{ lines = @(${q(STEP_LOGS['first-install.log'].trim())}); exit = 0; stderr = '' } }
       if ($Step -ceq 'stage-files' -or $Step -ceq 'guest-evidence') { return (& $Script ${q(guest)} $ArgumentList[1]) }
-      if ($Step -ceq 'read-after-install' -or $Step -ceq 'read-after-reinstall') { return $read }
+      if ($Step -ceq 'read-after-install') { return $read }
       if ($Step -ceq 'reinstall-upgrade') { return [ordered]@{ exit = 0; stdout = '{"status":"FLEET_NODE_ALREADY_AT_THIS_PACKAGE"}'; stderr = '' } }
-      if ($Step -ceq 'reinstall') { return @{ skipped = $false; upgradeStatus = 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE'; prepareStatus = 'FLEET_NODE_INSTALL_PREPARED'; launcherExit = 0; launcherVerdict = 'BOOTSTRAP_DONE' } }
-      if ($Step -ceq 'prepare-again') { return @{ status = 'FLEET_NODE_INSTALL_PREPARED'; exit = 0; stderr = '' } }
+      if ($Step -ceq 'reinstall') { return [ordered]@{ upgradeStatus = 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE'; prepareStatus = 'FLEET_NODE_INSTALL_REFUSED'; prepareCode = 'NEW_SOURCE_IS_THE_INSTALLED_ONE'; upgradeExit = 0; prepareExit = 1 } }
       throw "unexpected step $Step"
     }
     $package = @{ version = '1.2.3'; files = @(); tar = 'C:/x/p.tar'; tarSha256 = 'ab'; acceptance = 'C:/x/a.json'; ciSourceManifestSha256 = ${q(e.acceptanceSource)} }
@@ -337,17 +337,15 @@ test('a successful same-package reinstall goes through the re-verify to prepare-
     $code = try { $run = Invoke-DrillRun ${q(runDir)} $package $testKit $null $null; 'done' } catch { $c = Get-DrillCode $_; "$($c.code) $($c.detail)" }
     $re = Join-Path ${q(runDir)} 'reinstall.json'
     # the final verdict as Invoke-DrillPreparedRun forms it from this run (6th review round, low 3)
-    $a8 = if ($run) { $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); skipReinstall = $false; kit = $testKit; candidate = $false; firstInstallSteps = (Read-DrillFirstInstallSteps ${q(runDir)}) }; @($items | Where-Object { $_.id -eq 'A8' })[0] } else { $null }
+    $a8 = if ($run) { $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); kit = $testKit; candidate = $false; firstInstallSteps = (Read-DrillFirstInstallSteps ${q(runDir)}) }; @($items | Where-Object { $_.id -eq 'A8' })[0] } else { $null }
     @{ code = $code; steps = @($script:steps); reinstall = $(if (Test-Path -LiteralPath $re) { Read-DrillJson $re } else { $null }); a8 = $a8 }`);
   assert.equal(r.code, 'done');
-  assert.ok(r.steps.includes('prepare-again'), JSON.stringify(r.steps));
-  assert.equal(r.reinstall.reverifyPassed, true);
-  assert.equal(r.reinstall.prepareAgainStatus, 'FLEET_NODE_INSTALL_PREPARED');
-  // and the final A8 passes on it (6th review round, low 3)
+  const at = r.steps.indexOf('reinstall-upgrade');
+  assert.deepEqual(r.steps.slice(at, at + 2), ['reinstall-upgrade', 'reinstall'], JSON.stringify(r.steps));
+  assert.deepEqual(r.steps.filter(s => /reinstall|prepare|launcher/.test(s)), ['reinstall-upgrade', 'reinstall'], JSON.stringify(r.steps));
+  assert.equal(r.reinstall.prepareCode, 'NEW_SOURCE_IS_THE_INSTALLED_ONE');
   assert.equal(r.a8.pass, true, r.a8.detail);
-  assert.match(r.a8.detail, /upgrade=FLEET_NODE_ALREADY_AT_THIS_PACKAGE .*reverify=True prepareAgain=FLEET_NODE_INSTALL_PREPARED/);
-  // the re-verify's input carries the same launcher verdict and the pause read after the reinstall
-  assert.match(fs.readFileSync(script, 'utf8'), /\$reVerdict = Get-DrillVerdict @\{[^\n]*launcher = \$launcher; pause = \$again\.pause/);
+  assert.match(r.a8.detail, /^upgrade=FLEET_NODE_ALREADY_AT_THIS_PACKAGE upgradeExit=0 prepare=FLEET_NODE_INSTALL_REFUSED prepareCode=NEW_SOURCE_IS_THE_INSTALLED_ONE; /);
 });
 
 // Codex narrow review of 4190b0f8e, medium: A8's upgrade fetch can answer FLEET_NODE_UPGRADE_REFUSED with its code, and the prepare that
@@ -365,7 +363,7 @@ test('A8: an upgrade refused and then a prepare that times out -- both are kept,
   const refused = JSON.stringify({ status: 'FLEET_NODE_UPGRADE_REFUSED', code: 'UPGRADE_SAME_PACKAGE_REFUSED_FIXTURE', detail: 'fixture' });
   const r = ps(`
     $script:steps = [Collections.Generic.List[string]]::new()
-    $script:Interactive = $false; $SkipReinstall = $false
+    $script:Interactive = $false
     function New-PSSession { param($VMName, $Credential) 'session' }
     function Remove-PSSession { param($Session) }
     function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
@@ -742,7 +740,7 @@ test('block A 4: a first install stopped with a code blocks A7, A8 and M5 (recor
   const read = { status: { writtenAt: T0, node: { mode: 'UNCERTAIN' } }, current: null, facts: null, pause: null, verify: { status: 'NOT_RUN' }, readAt: T0 };
   const r = ps(`
     $script:steps = [Collections.Generic.List[string]]::new()
-    $script:Interactive = $false; $SkipReinstall = $false
+    $script:Interactive = $false
     function New-PSSession { param($VMName, $Credential) 'session' }
     function Remove-PSSession { param($Session) }
     function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
@@ -759,13 +757,13 @@ test('block A 4: a first install stopped with a code blocks A7, A8 and M5 (recor
       if ($Step -ceq 'stage-files' -or $Step -ceq 'guest-evidence') { return (& $Script ${q(guest)} $ArgumentList[1]) }
       if ($Step -ceq 'read-after-install') { return $read }
       if ($Step -ceq 'reinstall-upgrade') { return [ordered]@{ exit = 0; stdout = '{"status":"FLEET_NODE_ALREADY_AT_THIS_PACKAGE"}'; stderr = '' } }
-      if ($Step -ceq 'reinstall') { return @{ skipped = $false; upgradeStatus = 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE'; prepareStatus = 'FLEET_NODE_INSTALL_PREPARED'; launcherExit = 1; launcherVerdict = 'X' } }
+      if ($Step -ceq 'reinstall') { return [ordered]@{ upgradeStatus = 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE'; prepareStatus = 'FLEET_NODE_INSTALL_PREPARED'; prepareCode = $null; upgradeExit = 0; prepareExit = 0 } }
       return $null
     }
     $package = @{ version = '1.2.3'; files = @(); tar = 'C:/x/p.tar'; tarSha256 = 'ab'; acceptance = 'C:/x/a.json'; ciSourceManifestSha256 = ('5' * 64) }
     $testKit = [pscustomobject]@{ dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 5; perNodeSteps = @(); prerequisiteMode = 'first-install-host'; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) }
     $run = Invoke-DrillRun ${q(runDir)} $package $testKit $null $null
-    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); skipReinstall = $false; kit = $testKit; candidate = $true; firstInstallSteps = (Read-DrillFirstInstallSteps ${q(runDir)}) }
+    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); kit = $testKit; candidate = $true; firstInstallSteps = (Read-DrillFirstInstallSteps ${q(runDir)}) }
     $m5 = Get-DrillM5Verdict ${q(runDir)} $run.m5
     @{ steps = @($script:steps); a1 = @($items | Where-Object { $_.id -eq 'A1' })[0]; a7 = @($items | Where-Object { $_.id -eq 'A7' })[0]; a8 = @($items | Where-Object { $_.id -eq 'A8' })[0]
        m5 = @{ result = $m5.result; detail = $m5.detail }; reboot = (Read-DrillJson (Join-Path ${q(runDir)} 'read-after-reboot.json')) }`);
