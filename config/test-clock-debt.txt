@@ -50,8 +50,6 @@ apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs
 apps/clued-cloud/tests/ci-scheduling-stage1-worker.test.mjs
 apps/clued-cloud/tests/ci-scheduling-t2a2-db.test.mjs
 apps/clued-cloud/tests/ci-temporary-storage.test.mjs
-apps/clued-cloud/tests/cluster-cleanup.mjs
-apps/clued-cloud/tests/cluster-cleanup.test.mjs
 apps/clued-cloud/tests/connection-authorization-db.test.mjs
 apps/clued-cloud/tests/connection-permission-request-db.test.mjs
 apps/clued-cloud/tests/consent-account-race.test.mjs
