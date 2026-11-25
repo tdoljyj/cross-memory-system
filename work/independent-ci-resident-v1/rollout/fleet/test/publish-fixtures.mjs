@@ -2,14 +2,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import fsSync, { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
 import { prepare, readBuild, seal, stageNodeEntry } from '../publish.mjs';
 import { writeTar } from '../tar.mjs';
-import { FAKE_GH } from './fleet-fixtures.mjs';
+import { FAKE_GH, runFakeGh } from './fleet-fixtures.mjs';
 
 const IMAGE = 'c'.repeat(64);
 const uploadsOf = async w => (await w.calls()).filter(c => c.args[1] === 'upload');
@@ -19,20 +18,28 @@ const FLEET = 'tree/work/independent-ci-resident-v1/rollout/fleet/';
 const BOOTSTRAP = Buffer.from('# bootstrap.ps1 of the accepted commit\r\nparam([string]$From)\r\n');
 const PREREQ = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-prereq-manifest/1', items: [] }) + '\n');
 
-async function world(t) {
-  const d = await fs.mkdtemp(path.join(os.tmpdir(), 'fleetpub'));
-  t.after(() => fs.rm(d, { recursive: true, force: true }));
-  const out = path.join(d, 'out');
-  await fs.mkdir(out);
+function makeBuild() {
   // the archive carries the commit's bootstrap.ps1 and prereq-manifest.json: publish takes those bytes, never a working-tree copy
   const tar = writeTar([{ path: `${FLEET}bootstrap.ps1`, data: BOOTSTRAP }, { path: `${FLEET}prereq-manifest.json`, data: PREREQ },
     { path: 'universal-manifest.json', data: Buffer.from('{}') }]);
   const source = { version: VERSION, release_tag: TAG, archive_sha256: sha(tar), commit: COMMIT, resident_manifest_sha256: '2'.repeat(64),
     source_manifest_sha256: '3'.repeat(64), upgrader_manifest_sha256: '4'.repeat(64), bundle_sha256: '5'.repeat(64), universal_files_sha256: '6'.repeat(64) };
   const release = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-release/1', source, archive: { name: `${TAG}.tar`, bytes: tar.length, sha256: sha(tar) } }, null, 1) + '\n');
-  await fs.writeFile(path.join(out, `${TAG}.tar`), tar);
-  await fs.writeFile(path.join(out, `${TAG}.release.json`), release);
-  await fs.writeFile(path.join(out, 'SHA256SUMS'), `${sha(release)}  ${TAG}.release.json\n${sha(tar)}  ${TAG}.tar\n`);
+  return { tar, source, files: {
+    [`${TAG}.tar`]: tar,
+    [`${TAG}.release.json`]: release,
+    SHA256SUMS: `${sha(release)}  ${TAG}.release.json\n${source.archive_sha256}  ${TAG}.tar\n`,
+  } };
+}
+
+const BUILD = makeBuild();
+async function world(t) {
+  const d = await fs.mkdtemp(path.join(os.tmpdir(), 'fleetpub'));
+  t.after(() => fs.rm(d, { recursive: true, force: true }));
+  const out = path.join(d, 'out');
+  await fs.mkdir(out);
+  // Each case gets private copies so corrupt-build cases can rewrite them.
+  await Promise.all(Object.entries(BUILD.files).map(([name, bytes]) => fs.writeFile(path.join(out, name), bytes)));
   const index = path.join(d, 'index.md');
   await fs.writeFile(index, '| 版本 | Release | tar sha256 | commit | 接受时间 |\r\n|---|---|---|---|---|\r\n');
   const fake = path.join(d, 'fake-gh.mjs');
@@ -40,24 +47,30 @@ async function world(t) {
   const state = path.join(d, 'gh-state.json');
   const calls = async () => { try { return JSON.parse(await fs.readFile(state, 'utf8')).calls; } catch { return []; } };
   const assets = async () => { try { return JSON.parse(await fs.readFile(state, 'utf8')).assets; } catch { return []; } };
-  return { d, out, build: out, tar, source, index, calls, assets, fake, state };
+  return { d, out, build: out, tar: Buffer.from(BUILD.tar), source: { ...BUILD.source }, index, calls, assets, fake, state };
 }
 
 const REPO = 'tdoljyj/cross-memory-system';
 const RELEASE_ASSETS = [`${TAG}.tar`, `${TAG}.release.json`, 'SHA256SUMS', `${TAG}.bootstrap.ps1`, `${TAG}.prereq-manifest.json`];
 const rowOf = w => `| ${VERSION} | https://github.com/${REPO}/releases/tag/${TAG} | ${w.source.archive_sha256} | ${COMMIT} |  |  |  |`;
-// The fake gh's state as the Release of this build would have it (the assets the release step publishes, through the fake's own
-// "release create"); only: the assets kept (a release that stopped half way); row: the index row appended as well. The calls are cleared.
-async function seedRelease(w, { only = null, row = false } = {}) {
+const fakeCommand = (state, env = process.env) => args => runFakeGh(args, { ...env, FAKE_GH_STATE: state }, { fs: fsSync, path, createHash });
+async function buildReleaseAssets(w) {
   const build = await readBuild(w.build);
   const stage = await fs.mkdtemp(path.join(w.d, 'seed-'));
   const { sums, entry } = await stageNodeEntry(build, stage);
-  const files = [build.assets[0], build.assets[1], sums, ...entry].filter(a => only === null || only.includes(a.name)).map(a => a.file);
-  const r = spawnSync(process.execPath, [w.fake, 'release', 'create', TAG, ...files, '--repo', REPO, '--target', COMMIT], { env: { ...process.env, FAKE_GH_STATE: w.state }, encoding: 'utf8' });
+  const files = [build.assets[0], build.assets[1], sums, ...entry].map(a => a.file);
+  const state = path.join(stage, 'gh-state.json');
+  const r = fakeCommand(state, {})(['release', 'create', TAG, ...files, '--repo', REPO, '--target', COMMIT]);
   assert.equal(r.status, 0, r.stderr);
-  const st = JSON.parse(await fs.readFile(w.state, 'utf8'));
-  st.calls = [];
-  await fs.writeFile(w.state, JSON.stringify(st));
+  return JSON.parse(await fs.readFile(state, 'utf8')).assets;
+}
+
+// Stage the five immutable assets once. Copy just the requested assets into each case's independent fake Release.
+let releaseAssets;
+async function seedRelease(w, { only = null, row = false } = {}) {
+  const assets = await (releaseAssets ??= buildReleaseAssets(w));
+  const selected = only === null ? assets : assets.filter(a => only.includes(a.name));
+  await fs.writeFile(w.state, JSON.stringify({ calls: [], assets: selected }));
   if (row) await fs.appendFile(w.index, `${rowOf(w)}\r\n`);
 }
 const RECORD_FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'clued-decision-mutate-3bc571a6.json');
@@ -66,7 +79,7 @@ const FIX_DECISION = FIX.target_refs[0].id, FIX_RECEIPT = FIX.receipt_id, FIX_AC
 // the line DESK used to copy into a hand-written Decision (the generation-18 shape below names the request with it)
 const requestLine = hash => `acceptance-request ${TAG} sha256:${hash}`;
 // released: false leaves the Release and the index row to prepare (an empty gh state, an index with its header only)
-const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = 'b'.repeat(64), released = true } = {}) => {
+const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = 'b'.repeat(64), released = true, spawnGh = false } = {}) => {
   const w = await world(t);
   if (released) await seedRelease(w, { row: true });
   const image = path.join(w.d, `role-image-${IMAGE}.tar.gz`);
@@ -114,7 +127,8 @@ const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = '
   const deps = { kitOf, readKit: () => ({}), fleetMaterial: async () => ({ formalRoles, installed: { ...carried, ciSourceManifestSha256: templateSource } }),
     sourceHash: async args => { s.sourceDrafts.push(args); return { ciSourceManifestSha256: s.sourceOf }; }, readStatus };
   const opens = async () => (await w.calls()).filter(c => c.args[0] === 'workflow');
-  const gh = [process.execPath, w.fake];
+  // Cases that check the subprocess environment keep the real spawn. All cases share the same fake command.
+  const gh = spawnGh ? [process.execPath, w.fake] : fakeCommand(w.state);
   const prep = (over = {}) => prepare({ version: VERSION, dir: w.out, out, images: [image], index: w.index, ghCommand: gh, deps, ...over });
   const requestFile = path.join(out, `${TAG}.acceptance-request.json`);
   const kitAssets = async () => (await w.assets()).filter(a => a.name === `${TAG}.first-install-kit.json`);

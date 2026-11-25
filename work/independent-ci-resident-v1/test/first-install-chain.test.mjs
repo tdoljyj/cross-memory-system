@@ -225,7 +225,9 @@ test('chain: host ci-root, launcher preflight, install plan and apply, then the 
 });
 
 // The scripts the package carries: the real tree through the real selectTree (package-ps1-ascii.test.mjs reads it the same way).
+let selectedScripts;
 async function packageScripts() {
+  if (selectedScripts) return selectedScripts;
   const out = spawnSync('git', ['-C', CHECKOUT, 'ls-files', '-s', '-z'], { maxBuffer: 1 << 28 });
   assert.equal(out.status, 0, String(out.stderr));
   const listing = new Map();
@@ -234,7 +236,8 @@ async function packageScripts() {
     listing.set(rec.slice(tab + 1), { mode, oid });
   }
   const read = async paths => new Map(await Promise.all(paths.map(async p => [p, await fs.promises.readFile(path.join(CHECKOUT, ...p.split('/')))])));
-  return (await U.selectTree(listing, read)).filter(p => /\.(?:ps1|psm1|psd1)$/i.test(p));
+  selectedScripts = (await U.selectTree(listing, read)).filter(p => /\.(?:ps1|psm1|psd1)$/i.test(p));
+  return selectedScripts;
 }
 const listFile = (t, list) => { const f = path.join(tempDir(t, 'fi-chain-list-'), 'list.json'); fs.writeFileSync(f, JSON.stringify(list)); return f; };
 
@@ -287,9 +290,37 @@ foreach ($rel in $files) {
     ($n -is [Management.Automation.Language.VariableExpressionAst] -and $($k = & $lookup $n; $null -ne $k -and $holders.ContainsKey($k))) }
   # a value, not what running something printed: no command in it but Join-Path
   $launches = { param($r) @($r.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ine 'Join-Path' }, $true)).Count -gt 0 }
-  do { $grew = $false
-    foreach ($k in @($assign.Keys)) { if ($holders.ContainsKey($k)) { continue }
-      foreach ($r in $assign[$k]) { if (@($r.FindAll({ param($n) & $isRef $n }, $true)).Count -and -not (& $launches $r)) { $holders[$k] = $true; $grew = $true; break } } }
+  # Scan each assignment once. The fixed-point pass then works on scoped aliases, without walking the AST again.
+  $aliases = New-Object Collections.Generic.List[object]
+  foreach ($k in $assign.Keys) {
+    foreach ($r in $assign[$k]) {
+      $literal = $false
+      $refs = @(foreach ($n in $r.FindAll({
+        param($n)
+        $n -is [Management.Automation.Language.VariableExpressionAst] -or
+          $n -is [Management.Automation.Language.StringConstantExpressionAst] -or
+          $n -is [Management.Automation.Language.ExpandableStringExpressionAst]
+      }, $true)) {
+        if ($n -is [Management.Automation.Language.VariableExpressionAst]) {
+          $ref = & $lookup $n
+          if ($null -ne $ref) { $ref }
+        } elseif ($n.Value -match $exe) { $literal = $true }
+      })
+      if (($literal -or $refs.Count) -and -not (& $launches $r)) {
+        $aliases.Add(@{ key = $k; literal = $literal; refs = $refs })
+      }
+    }
+  }
+  do {
+    $grew = $false
+    foreach ($a in $aliases) {
+      if ($holders.ContainsKey($a.key)) { continue }
+      $resolved = $a.literal
+      foreach ($ref in $a.refs) {
+        if ($holders.ContainsKey($ref)) { $resolved = $true; break }
+      }
+      if ($resolved) { $holders[$a.key] = $true; $grew = $true }
+    }
   } while ($grew)
   $resolve = { param($node, [int]$depth)
     $t = $node.Extent.Text
@@ -302,10 +333,20 @@ foreach ($rel in $files) {
     $f = Get-Fn $n
     $sites.Add([ordered]@{ file = $rel; line = $n.Extent.StartLineNumber; function = $(if ($f) { $f.Name } else { $null }); via = $via; kind = $kind; bypass = ($evidence -match $bypass); text = $n.Extent.Text.Substring(0, [Math]::Min(160, $n.Extent.Text.Length)) }) }
   foreach ($c in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] }, $true)) {
-    $els = @($c.CommandElements); $rest = @($els | Select-Object -Skip 1); $name = $c.GetCommandName()
-    if (& $isRef $els[0]) { $ev = ''; foreach ($e in $rest) { $ev += $NL + (& $resolve $e 2) }; & $add $c 'invoke' $ev $null; continue }
-    if ($name -and $name -ieq 'Start-Process' -and @($rest | Where-Object { & $isRef $_ }).Count) { & $add $c 'start-process' (& $resolve $c 2) $null; continue }
-    if ($name -and $fns.ContainsKey($name.ToLowerInvariant()) -and @($rest | Where-Object { & $isRef $_ }).Count) {
+    $els = @($c.CommandElements); $name = $c.GetCommandName()
+    if (& $isRef $els[0]) {
+      $ev = ''; for ($i = 1; $i -lt $els.Count; $i++) { $ev += $NL + (& $resolve $els[$i] 2) }
+      & $add $c 'invoke' $ev $null; continue
+    }
+    if (-not $name) { continue }
+    $startProcess = $name -ieq 'Start-Process'
+    if (-not $startProcess -and -not $fns.ContainsKey($name.ToLowerInvariant())) { continue }
+    $takesPowerShell = $false
+    for ($i = 1; $i -lt $els.Count; $i++) {
+      if (& $isRef $els[$i]) { $takesPowerShell = $true; break }
+    }
+    if (-not $takesPowerShell) { continue }
+    if ($startProcess) { & $add $c 'start-process' (& $resolve $c 2) $null } else {
       $callee = $fns[$name.ToLowerInvariant()]; & $add $c 'call' ((& $resolve $c 2) + $NL + (& $resolve $callee.Body 1)) $callee.Name }
   }
   foreach ($a in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left -is [Management.Automation.Language.MemberExpressionAst] -and $n.Left.Member.Extent.Text -match '^(?i)(FileName|Path)$' }, $true)) {
