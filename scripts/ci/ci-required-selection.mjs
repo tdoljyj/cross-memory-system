@@ -2005,11 +2005,16 @@ export const LOCAL_TIMEOUT_EXIT = 75;
 
 function gitToolchainRefusal(env) {
   // Match the policy to this selector's checkout. A candidate passed through --root cannot change the trusted baseline.
-  let declared;
+  const platform = process.platform === 'win32' ? 'windows' : process.platform;
+  let policy;
   try {
-    declared = JSON.parse(readFileSync(new URL('../../config/ci-toolchain.json', import.meta.url), 'utf8')).git;
+    policy = JSON.parse(readFileSync(new URL('../../config/ci-toolchain.json', import.meta.url), 'utf8'));
   } catch (error) {
     return `环境不符：无法读取 config/ci-toolchain.json 的 Git 声明（${error.message}）`;
+  }
+  const declared = policy?.[platform]?.git;
+  if (declared === undefined) {
+    return `环境不符：config/ci-toolchain.json 的 Git 声明缺少本平台（${platform}，${process.platform}）`;
   }
   if (typeof declared !== 'string' || !/^\d+\.\d+\.\d+$/.test(declared)) {
     return '环境不符：config/ci-toolchain.json 的 Git 声明必须包含主、次和补丁版本';

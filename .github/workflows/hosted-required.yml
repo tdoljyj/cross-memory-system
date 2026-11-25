@@ -99,7 +99,7 @@ jobs:
           policy=trusted/config/ci-toolchain.json
           # On the PR introducing the declaration the trusted base does not have it yet.
           if [[ ! -e "$policy" ]]; then policy=candidate/config/ci-toolchain.json; fi
-          version=$(node -e 'const {git} = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+          version=$(node -e 'const git = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).linux?.git;
             if (typeof git !== "string" || !/^\d+\.\d+\.\d+$/.test(git)) throw new Error("invalid Git version");
             console.log(git)' "$policy")
 
@@ -466,20 +466,20 @@ jobs:
           try {
             $policyPath = 'trusted/config/ci-toolchain.json'
             if (!(Test-Path -LiteralPath $policyPath)) { $policyPath = 'candidate/config/ci-toolchain.json' }
-            $policy = Get-Content -Raw -Encoding UTF8 -LiteralPath $policyPath | ConvertFrom-Json
-            if ($policy.git -cnotmatch '^\d+\.\d+\.\d+$' -or $policy.windows.mingitRevision -notmatch '^[1-9]\d*$' -or
-                $policy.windows.mingitSha256 -notmatch '^[0-9a-f]{64}$') {
+            $policy = (Get-Content -Raw -Encoding UTF8 -LiteralPath $policyPath | ConvertFrom-Json).windows
+            if ($policy.git -cnotmatch '^\d+\.\d+\.\d+$' -or $policy.mingitRevision -notmatch '^[1-9]\d*$' -or
+                $policy.mingitSha256 -notmatch '^[0-9a-f]{64}$') {
               throw 'config/ci-toolchain.json 的 Git 或 MinGit 声明无效'
             }
             $version = $policy.git
-            $release = "$version.windows.$($policy.windows.mingitRevision)"
+            $release = "$version.windows.$($policy.mingitRevision)"
             $archive = Join-Path $env:RUNNER_TEMP 'clued-ci-mingit.zip'
             if (!(Test-Path -LiteralPath $archive -PathType Leaf)) {
-              $url = "https://github.com/git-for-windows/git/releases/download/v$release/MinGit-$version-64-bit.zip"
+              $url = "https://github.com/git-for-windows/git/releases/download/v$release/MinGit-$version.$($policy.mingitRevision)-64-bit.zip"
               & curl.exe --fail --location --silent --show-error --retry 2 --output $archive $url
               if ($LASTEXITCODE -ne 0) { throw "MinGit 下载退出 $LASTEXITCODE" }
             }
-            if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $policy.windows.mingitSha256) {
+            if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $policy.mingitSha256) {
               throw 'MinGit SHA-256 与声明不符'
             }
             $install = Join-Path $env:RUNNER_TEMP 'clued-ci-mingit'
