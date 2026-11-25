@@ -2695,12 +2695,17 @@ test('--shard: a listing command runs its shard\'s files with its own switches; 
   const firstShard = (selection.shardOffset('admission-self-tests') % 2) + 1;
   const known = { 'admission-self-tests': [{ file: first, path: ['a'], fingerprint: 'a'.repeat(16), reason: 'r' },
     { file: second, path: ['b'], fingerprint: 'b'.repeat(16), reason: 'r' }] };
+  // Its own table, not the repository's: the first file the heaviest and the second the next, so by the packing rule (heaviest first
+  // into the lightest shard) they are in different shards whatever seconds the real table has.
+  const tableDir = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-seconds-'));
+  const shardSecondsFile = path.join(tableDir, 'ci-shard-seconds.json');
+  writeFileSync(shardSecondsFile, JSON.stringify({ [first]: 1000, [second]: 999 }));
   const summary = { type: 'summary', counts: {}, success: false };
   const shardOf = (index, events, status) => {
     const lines = [];
     let ran;
     const code = executeSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, known, log: (line) => lines.push(line),
-      spawn: (command, args) => { ran = args; return { status }; }, shard: { index, total: 2 },
+      spawn: (command, args) => { ran = args; return { status }; }, shard: { index, total: 2 }, shardSecondsFile,
       readReportFile: () => [...events, summary].map((event) => JSON.stringify(event)).join('\n') });
     return { code, lines: lines.join('\n'), ran };
   };
@@ -2714,6 +2719,7 @@ test('--shard: a listing command runs its shard\'s files with its own switches; 
   assert.ok(two.ran.includes(second) && !two.ran.includes(first));
   assert.match(two.lines, new RegExp(`known failure::${second} :: b`));
   assert.doesNotMatch(two.lines, new RegExp(`${first} :: a`), 'the other shard\'s known failure is not this shard\'s');
+  rmSync(tableDir, { recursive: true, force: true });
 });
 
 test('--shard takes i/n with 1 <= i <= n, splits --run-selected only and runs only in a CI job', async () => {
