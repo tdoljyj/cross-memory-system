@@ -99,12 +99,6 @@
       "reason": "1 处：esbuild 打包 worker 失败 32 处，无法解析 node:util、node:crypto 等（测试的打包设置疑缺 node 平台；clued-cloud 套件的真实构建是绿的）"
     },
     {
-      "path": "apps/clued-cloud/tests/production-backup-scope-db.test.mjs",
-      "kind": "environment",
-      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
-      "reason": "需要 pg_dump/pg_restore 或现成的 Docker PostgreSQL 17 镜像（CLUED_BACKUP_TEST_IMAGE），production-schema 两样都没有；clued-g4-database.yml 用镜像跑它。首跑 5 处失败：3 处 spawnSync pg_dump ENOENT，另 2 处是连带（toc 未生成；上一子测试中途失败留下 concurrent_extra 表）"
-    },
-    {
       "path": "apps/clued-cloud/tests/raw-binding-fallback-db.test.mjs",
       "kind": "stale-or-suspect",
       "task": "28c9d784-ec96-4631-8686-fc100654975b",
