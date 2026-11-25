@@ -1,6 +1,8 @@
 // Real seal and accept commands through the existing resident-node suite. GitHub and the acceptance door are controlled fixtures.
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
 import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -189,10 +191,28 @@ test('返修 2b：open 前置校验超过预算时不派发', async t => {
 test('返修 2c：GitHub 校验子进程受绝对终点约束', async t => {
   const w = await prepWorld(t);
   await w.prep();
-  await w.setState(st => { st.compareDelayMs = 8_000; });
-  const started = Date.now();
-  await assert.rejects(w.sealDoor({ wait: 1, deadline: started + 500 }), { code: 'FLEET_ACCEPTANCE_DEADLINE' });
-  assert.ok(Date.now() - started < 6_000);
+  w.door.status = 'none';
+  const time = fakeTime('2026-11-25T01:00:00Z');
+  const deadline = time.now + 500;
+  const spawnSync = childProcess.spawnSync;
+  // Simulate a compare that takes 8 seconds using the timeout supplied to the child process.
+  const spawn = t.mock.method(childProcess, 'spawnSync', (command, args, options) => {
+    if (command === process.execPath && args[0] === w.fake && args[1] === 'api' && args[2]?.includes('/compare/')) {
+      if (options?.timeout > 0 && options.timeout < 8_000) {
+        time.now += options.timeout;
+        return { status: null, error: Object.assign(new Error('模拟 GitHub 校验超时'), { code: 'ETIMEDOUT' }) };
+      }
+      time.now += 8_000;
+    }
+    return spawnSync(command, args, options);
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(timed(w, time, { wait: 1, deadline }), { code: 'FLEET_ACCEPTANCE_DEADLINE' });
+  } finally {
+    spawn.mock.restore();
+    syncBuiltinESMExports();
+  }
   assert.deepEqual(w.door.reads, []);
   assert.deepEqual(await w.opens(), []);
 });
