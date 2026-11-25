@@ -358,6 +358,24 @@ test('stage 1 shows a deterministic Native refusal before archiving the failed b
   assert.deepEqual(page(), beforeBurn);
 });
 
+test('a same-attempt retry parked at A shows that it is waiting for hosted signals', () => {
+  const now = Date.parse('2026-11-25T03:00:00Z');
+  const board = new StatusBoard({ clock: () => now });
+  const batch = { key: 'a'.repeat(64), pr: PR, headSha: HEAD, baseSha: BASE, attempt: 1 };
+  const page = () => prPage({ pull: { pr: PR, headSha: HEAD, eligible: true },
+    status: parseStatus(Buffer.from(JSON.stringify(board.snapshot()))), now });
+
+  board.setCurrent({ ...batch, stage: 1 });
+  board.outcome({ ...batch, outcome: 'NOT_ADMITTED', code: 'NATIVE_NOT_ADMITTED',
+    klass: 'waiting', retry: 'new-trigger', reasonCodes: ['merge_slot_required'] });
+  assert.deepEqual(page(), { state: 'pending', description: '未准入（merge_slot_required）：等本 PR 排到合并队首后自动重试' });
+
+  board.setCurrent({ ...batch, stage: 0 });
+  board.setPending([{ pr: PR, headSha: HEAD, state: 'RUNNING', reason: 'PARKED_A' }]);
+  board.setCurrent({ ...batch, key: 'b'.repeat(64), pr: PR + 1, headSha: 'b'.repeat(40), stage: 3 });
+  assert.deepEqual(page(), { state: 'pending', description: '运行中：等待托管信号' });
+});
+
 async function boardField(t, refusal) {
   let now = () => 0;
   const board = new StatusBoard({ clock: () => now() });

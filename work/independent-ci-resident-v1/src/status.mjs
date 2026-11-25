@@ -188,7 +188,10 @@ export class StatusBoard {
       leaseFrom: isoOrNull(current.leaseFrom ?? null) };
     this.timing.setCurrent({ pr: c.pr, headSha: c.headSha, attempt: c.attempt, stage: c.stage, phase: c.phase, since: c.since });
     this.touchTiming();
-    return this.update({ current: c });
+    // A released stage-1 refusal can retry with the same attempt. Its reason stops applying when the retry starts.
+    const recent = this.content.recent.filter(r => !(r.pr === c.pr && r.headSha === c.headSha && r.attempt === c.attempt
+      && r.code === 'NATIVE_NOT_ADMITTED' && Array.isArray(r.reasonCodes)));
+    return this.update({ current: c, recent });
   }
 
   // The newest outcome per (PR, head, attempt), newest first, bounded.
