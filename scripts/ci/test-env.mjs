@@ -43,6 +43,9 @@ export const TEST_ENV_RULES = Object.freeze({
     // The Actions runner marks every process of a job with RUNNER_TRACKING_ID and, when the job ends, ends the ones still
     // carrying it; without it what a suite leaves running would outlive the job on a self-hosted node. Not a credential.
     'RUNNER_TRACKING_ID',
+    // The runner's kind (github-hosted or self-hosted), as the Actions runner gives it: the real database command of
+    // production-schema (clued-real-database.mjs) leaves a thrown-away GitHub-hosted machine uncleaned. Not a credential.
+    'RUNNER_ENVIRONMENT',
   ]),
   // A proxy URL can carry a user name and password (Codex review of 2ee162c2, medium 5): such a variable is not passed, nor
   // one that cannot be read as a URL and has an @ in it.

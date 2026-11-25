@@ -1400,7 +1400,7 @@ test('per-run budget: the new run of a reopened PR is re-run although the old ru
 });
 
 // Fable 11-20 受保护工作流 PR 准入晚到 (Task 54a2b67a, design §3). A pull request that changes a workflow: at the push no Native admission
-// exists, the runner hook waits its 480 seconds in every gate job and refuses in "Set up runner", every heavy job is skipped. The admission
+// exists, the runner hook immediately refuses in each gate job's "Set up runner", and every heavy job is skipped. The admission
 // comes when the batch queue reaches the head, any time later. Its arrival is the trigger: every gated pull_request run that ran nothing is
 // re-run once, the G4 database workflow (not a required check) included, however long the head waited. The real runner hook decide() judges
 // attempt 1 and attempt 2; only GitHub's answers and the clocks are fakes.
@@ -1478,13 +1478,13 @@ async function lateAdmissionChain(t, delayMs) {
   const pushedAt = T0 - 10 * 60_000;
   const w = world({ checks: [], runs: [], rules: [requiredRule(...REQUIRED_ACTIONS)] });
   const hook = hookPort(w);
-  // 1-2. The push: three pull_request runs; each gate job meets the real hook with no Native check, which waits its 480 s and refuses.
+  // 1-2. The push: three pull_request runs; the real hook refuses each gate job on its first Native admission read.
   for (const wf of LATE_WORKFLOWS) {
     w.runs.push(pushedRun(wf, [{ notes: [], jobs: [] }], pushedAt));
     const verdict = await hook.judge(wf, 1, 'admission-gate', pushedAt);
     assert.equal(verdict.allow, false, `${wf.path}: ${verdict.reason}`);
     assert.match(verdict.reason, /Native admission absent: not admitted/);
-    assert.ok(verdict.waited >= 480_000, `${wf.path} waited ${verdict.waited} ms`);
+    assert.equal(verdict.waited, 0, `${wf.path} scheduled a wait before refusal`);
     // GitHub's record of the refused attempt: the gate failed in "Set up runner", every heavy job skipped.
     w.runs.at(-1).attempts[0] = refusedAttempt(wf, iso(pushedAt + verdict.waited));
   }
@@ -1494,7 +1494,9 @@ async function lateAdmissionChain(t, delayMs) {
   // 3. The admission arrives delayMs after the lane first saw the head.
   l.advance(delayMs);
   w.checks.push(lateAdmission(T0 + delayMs));
-  for (let i = 0; i < 3; i++) { await l.r.step(); l.advance(HEAD_RECHECK_MS); }
+  await l.r.step();
+  assert.deepEqual([...w.posts].sort(), LATE_WORKFLOWS.map(wf => wf.runId).sort(), 'the next step requests one full re-run per gated run');
+  for (let i = 0; i < 2; i++) { l.advance(HEAD_RECHECK_MS); await l.r.step(); }
   return { w, hook, l, at: T0 + delayMs };
 }
 
