@@ -1,6 +1,23 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { after, before, test } from 'node:test';
-import { digest, schedulingFixture, uuid } from './ci-scheduling-stage1-fixture.mjs';
+import { removeTestDirectory, startCluster, stopCluster } from './cluster-cleanup.mjs';
+import { newCluster } from './pg-cluster-fixture.mjs';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+
+const uuid = () => crypto.randomUUID();
+const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
+const user = uuid();
+const other = uuid();
+const session = uuid();
+const binding = uuid();
+const token = digest(uuid());
+const heartbeatToken = digest(uuid());
+const migrations = new URL('../supabase/migrations/', import.meta.url);
 
 const view = {
   contract: 'clued.merge-queue-node-view/1',
@@ -20,11 +37,25 @@ const view = {
   stall: null,
 };
 
-let fixture;
+let directory;
+let server;
+const clients = [];
+let admin;
+let human;
 let nodeId;
 let ci;
-let heartbeatToken;
-const read = (claims) => fixture.native('clued_merge_queue_resident_v1', {}, claims);
+const connect = async (role) => {
+  const client = server.getPgClient();
+  clients.push(client);
+  await client.connect();
+  if (role) await client.query(`set role ${role}`);
+  return client;
+};
+const read = async (account = user, extra = {}) => {
+  await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+    [account, JSON.stringify({ sub: account, role: 'authenticated', session_id: session, ...extra })]);
+  return (await human.query("select public.clued_merge_queue_resident_v1('{}'::jsonb) v")).rows[0].v;
+};
 const command = async (input, token = heartbeatToken) => (await ci.query(
   'select public.clued_work_verify_v1($1,$2) v', [token, { scope: 'global', ...input }])).rows[0].v;
 const report = (data = view, token) => command({ action: 'ci_queue_report', view: data }, token);
@@ -34,15 +65,60 @@ const ok = (result) => {
   assert.equal(result.status, 'ok', JSON.stringify(result));
   return result;
 };
-const heartbeatAge = (age) => fixture.admin.query(`update clued_private.ci_node_liveness_v1
+const heartbeatAge = (age) => admin.query(`update clued_private.ci_node_liveness_v1
   set last_heartbeat_at=clock_timestamp()-$2::interval where node_id=$1 returning last_heartbeat_at`, [nodeId, age]);
 
 before(async () => {
-  fixture = await schedulingFixture();
-  const { admin, user, binding } = fixture;
-  nodeId = (await fixture.register()).node_id;
-  ci = await fixture.connect('anon');
-  heartbeatToken = digest(uuid());
+  directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-merge-queue-resident-'));
+  server = newCluster({ databaseDir: directory, user: 'postgres', password: digest(uuid()), persistent: false,
+    onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
+  await startCluster(server);
+  admin = await connect();
+  await admin.query(`create role anon nologin; create role authenticated nologin;
+    create role service_role nologin bypassrls; create role authenticator nologin noinherit;
+    create schema auth; create schema extensions; create extension pgcrypto with schema extensions;
+    create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,
+      banned_until timestamptz,deleted_at timestamptz);
+    create table auth.sessions(id uuid primary key,user_id uuid not null references auth.users(id),not_after timestamptz);
+    create function auth.uid() returns uuid language sql stable as
+      $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+    create function auth.jwt() returns jsonb language sql stable as
+      $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
+    grant usage on schema auth,extensions to anon,authenticated,service_role;
+    grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
+  for (const name of (await fs.readdir(migrations)).filter((file) => file.endsWith('.sql')).sort()) {
+    try { await admin.query(await fs.readFile(new URL(name, migrations), 'utf8')); }
+    catch (error) { throw new Error(`迁移 ${name}：${error.message}`, { cause: error }); }
+  }
+  await allowRawTestBindings(admin);
+  await assertGatewayCloseoutBoundary(admin);
+
+  await admin.query(`insert into auth.users(id,email,email_confirmed_at)
+    values($1,'resident-owner@example.invalid',now()),($2,'resident-other@example.invalid',now())`, [user, other]);
+  const project = uuid();
+  await admin.query('begin');
+  await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key,project_schema_version,project_recognized_v2)
+    values($1,$2,'Resident queue fixture','resident queue fixture',$3,2,true)`, [project, user, `project:${project}`]);
+  await admin.query(`insert into clued_private.project_lifecycle_v2_dispositions(project_id,user_id,disposition,disposition_reason,
+    recognition_confidence,recognition_source,basis,disposition_hash)
+    values($1,$2,'recognized_project','Synthetic database fixture',1,'v2_explicit_create','{}',$3)`, [project, user, digest('project')]);
+  await admin.query('commit');
+  await admin.query(`insert into public.clued_agent_bindings(id,user_id,vendor,agent_name,token_hash,scopes,context_keys)
+    values($1,$2,'synthetic','resident CI connection',$3,array['context:read'],array['*'])`, [binding, user, token]);
+  const jwk = () => crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' });
+  const { rows: [node] } = await admin.query(`insert into clued_private.ci_nodes_v1
+    (user_id,project_id,binding_id,name,profile,profile_sha256,identity_public_jwk,encryption_public_jwk,
+      identity_fingerprint,encryption_fingerprint,registration_digest,idempotency_key)
+    values($1,$2,$3,$4,'{}'::jsonb,$5,$6,$7,$8,$9,$10,$11) returning node_id`,
+  [user, project, binding, view.node.name, digest('profile'), jwk(), jwk(), digest('identity'), digest('encryption'),
+    digest('registration'), uuid()]);
+  nodeId = node.node_id;
+  const { rows: [receipt] } = await admin.query(`insert into public.clued_audit_receipts
+    (user_id,context_key,operation,object_type,object_id,version,metadata)
+    values($1,'global','fixture','fixture','fixture',1,'{}') returning id`, [user]);
+  await admin.query(`insert into clued_private.binding_roles_v1
+    (user_id,binding_id,role,granted_at,granted_receipt_id,effective_at,purpose)
+    values($1,$2,'ci-admission',now(),$3,now(),'resident-node')`, [user, binding, receipt.id]);
   const { id } = (await admin.query(`insert into public.clued_agent_bindings
     (user_id,vendor,agent_name,token_hash,scopes,context_keys)
     values($1,'Headless','queue view heartbeat',clued_private.ci_heartbeat_token_hash_v1($2),
@@ -52,15 +128,21 @@ before(async () => {
     values($1,null,$2,'clued-headless','queue view heartbeat','clued:ci-heartbeat',now()+interval '30 days','headless')`, [id, user]);
   await admin.query(`insert into clued_private.ci_node_heartbeat_link_v1
     (user_id,heartbeat_binding_id,node_binding_id,linked_at,linked_receipt_id) values($1,$2,$3,now(),$4)`,
-  [user, id, binding, uuid()]);
+  [user, id, binding, receipt.id]);
+  ci = await connect('anon');
+  human = await connect('authenticated');
 });
 
-after(async () => { await fixture?.close(); });
+after(async () => {
+  for (const client of clients.reverse()) await client.end().catch(() => {});
+  if (server) await stopCluster(server);
+  if (directory) await removeTestDirectory(directory);
+});
 
 test('心跳连接上报队列视图后，Owner 的页面 RPC 读到同一份', async (t) => {
   const result = await report();
   if (result.status !== 'ok') {
-    const { length, md5 } = (await fixture.admin.query(`select length(body),md5(body) from
+    const { length, md5 } = (await admin.query(`select length(body),md5(body) from
       (select pg_get_functiondef('clued_private.work_claim_ci_command_v1(text,jsonb)'::regprocedure) body) d`)).rows[0];
     t.diagnostic(`命令门定义 length=${length} md5=${md5}`);
   }
@@ -74,25 +156,25 @@ test('心跳连接上报队列视图后，Owner 的页面 RPC 读到同一份', 
 
 test('摘要相同只推进 reported_at，非当班节点的 CI 连接也可上报', async () => {
   ok(await report());
-  const { rows: [previous] } = await fixture.admin.query(`update clued_private.ci_node_queue_view_v1
+  const { rows: [previous] } = await admin.query(`update clued_private.ci_node_queue_view_v1
     set reported_at=reported_at-interval '1 minute', changed_at=changed_at-interval '1 minute'
     where node_id=$1 returning reported_at,changed_at,view_digest`, [nodeId]);
-  const { rows: [role] } = await fixture.admin.query(`select effective_at from clued_private.binding_roles_v1
-    where binding_id=$1 and role='ci-admission'`, [fixture.binding]);
-  await fixture.admin.query(`update clued_private.binding_roles_v1 set effective_at=now()+interval '1 hour'
-    where binding_id=$1 and role='ci-admission'`, [fixture.binding]);
+  const { rows: [role] } = await admin.query(`select effective_at from clued_private.binding_roles_v1
+    where binding_id=$1 and role='ci-admission'`, [binding]);
+  await admin.query(`update clued_private.binding_roles_v1 set effective_at=now()+interval '1 hour'
+    where binding_id=$1 and role='ci-admission'`, [binding]);
   const sameView = Object.fromEntries(Object.entries(view).reverse());
   try {
-    const result = ok(await report(sameView, fixture.token));
+    const result = ok(await report(sameView, token));
     assert.equal(result.changed, false);
     assert.equal(new Date(result.changed_at).getTime(), previous.changed_at.getTime());
     assert.ok(new Date(result.reported_at) > previous.reported_at);
-    const { rows: [stored] } = await fixture.admin.query(`select changed_at,view_digest,view
+    const { rows: [stored] } = await admin.query(`select changed_at,view_digest,view
       from clued_private.ci_node_queue_view_v1 where node_id=$1`, [nodeId]);
     assert.deepEqual(stored, { changed_at: previous.changed_at, view_digest: previous.view_digest, view });
   } finally {
-    await fixture.admin.query(`update clued_private.binding_roles_v1 set effective_at=$2
-      where binding_id=$1 and role='ci-admission'`, [fixture.binding, role.effective_at]);
+    await admin.query(`update clued_private.binding_roles_v1 set effective_at=$2
+      where binding_id=$1 and role='ci-admission'`, [binding, role.effective_at]);
   }
   const updated = { ...view, paused: true };
   const changed = ok(await report(updated));
@@ -143,9 +225,8 @@ test('节点沉默由服务端使用现行规则判定，并保留心跳读数',
 });
 
 test('只有 Owner 本人会话能读本账号节点，底表保持私有', async () => {
-  const { admin, user, other, claims } = fixture;
-  await assert.rejects(() => read(claims(user, fixture.session, { client_id: 'oauth-client' })), /direct_human_session_required/);
-  assert.deepEqual(ok(await read(claims(other))).nodes, []);
+  await assert.rejects(() => read(user, { client_id: 'oauth-client' }), /direct_human_session_required/);
+  assert.deepEqual(ok(await read(other)).nodes, []);
   const { rows } = await admin.query(`select r.role,
     has_function_privilege(r.role,'public.clued_merge_queue_resident_v1(jsonb)','execute') execute,
     has_table_privilege(r.role,'clued_private.ci_node_queue_view_v1','select,insert,update,delete') table_access
