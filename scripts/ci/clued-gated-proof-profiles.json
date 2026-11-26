@@ -6572,7 +6572,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "2de3d7f54dd6c5c8f976bfe506d2ed3c7fadc4032ee2ac711b5b117e079e8739",
+      "source_sha256": "9051575880163bcd8e5c4625a9d22cfebd5c24dbf80aedeb2892a8b70278f503",
       "source_yaml_lines": [
 "name: clued-required-tests-windows",
 "",
@@ -6678,7 +6678,7 @@
 "        github.event.pull_request.head.repo.full_name == github.repository &&",
 "        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
 "    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24, cap-python312]",
-"    timeout-minutes: 45",
+"    timeout-minutes: 90",
 "    permissions:",
 "      contents: read",
 "      pull-requests: read",
@@ -6745,7 +6745,7 @@
 "          exit $LASTEXITCODE",
 ""
       ],
-      "workflow_blob": "e726ce52cce5ea6dd1fed3b073a6d80eb3c46444"
+      "workflow_blob": "c9c9d146e6d434e69660490aa161d3d36264e21d"
     },
     ".github/workflows/clued-required-tests.yml": {
       "execution_mode": "all_required_primaries",
