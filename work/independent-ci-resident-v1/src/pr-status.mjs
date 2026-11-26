@@ -186,7 +186,8 @@ function rowHold(status, row, now) {
 const WAIT_TEXT = Object.freeze({ OWNER_REVIEW_REQUIRED: '等 Owner 批准受保护改动', TASK_CI_HEAD_CAP_REACHED: 'Task 的 24 小时 CI 额度已满',
   WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满（明天继续）' });
 // Phase 2, step 3a: a batch parked before stage 8 because of main's live rules, GitHub's test merge or the green ledger.
-const PARKED_TEXT = Object.freeze({ REQUIRED_CHECK_FAILED: '必需检查失败，已停止入队和延长；等待检查重跑',
+const PARKED_TEXT = Object.freeze({ CI_EFFECT_UNKNOWN: '等待核对共享列车的交接回执',
+  REQUIRED_CHECK_FAILED: '必需检查失败，已停止入队和延长；等待检查重跑',
   REQUIRED_CHECKS_UNREADABLE: '暂时无法确认必需检查，等待重新核对',
   RULESET_UNREADABLE: '已测通：main 的必需检查没有全部钉在本执行器上',
   RULESET_READ_FAILED: '已测通：暂时读不到 main 的规则',
@@ -484,7 +485,9 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
   if (recent) {
     const code = recent.code ?? '?';
     switch (recent.outcome) {
-      case 'COMPLETED': return { state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布' };
+      case 'COMPLETED': return recent.code === 'TRAIN_WORK_HANDED_OFF'
+        ? { state: 'success', description: '本机工作已交接，入队由共享列车继续处理' }
+        : { state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布' };
       case 'FAILED_CLEAN':
         if (recent.retry === 'safe-point') return { state: 'pending', description: '流程在安全点结束：条件恢复后自动接着跑，不用推新提交' };
         if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'pending', description: 'main 已移动：等待系统更新 PR 的基线' };
@@ -663,9 +666,8 @@ export class LocalStore {
     try {
       const v = JSON.parse(await fs.readFile(file, 'utf8'));
       if (v?.contract === STORE_CONTRACT && v.posted && typeof v.posted === 'object' && v.notified && typeof v.notified === 'object') {
-        // The node memory (C5) is optional: a store written before it starts with a fresh one (one more check, no lock);
-        // a lock that does not have the shape stays a lock (node-duty.mjs#validMemory).
-        s.data = { contract: STORE_CONTRACT, posted: v.posted, notified: v.notified, node: validMemory(v.node, clock()) };
+        s.data = { contract: STORE_CONTRACT, posted: v.posted, notified: v.notified, node: validMemory(v.node) };
+        s.retiredDutyMemory = v.node != null && ['lock', 'probeAt'].some(key => Object.hasOwn(v.node, key));
       }
     } catch { /* fresh memory */ }
     return s;
@@ -689,23 +691,15 @@ export class LocalStore {
 }
 
 export class PrStatusReporter {
-  // ports: { repo, ghExe, powershellExe, run(argv,{timeoutMs}), clock, store (LocalStore), prStatus (bool), notifications (bool),
-  //   node (this node's name, required: there is no default; status.json's own name wins when it names one), writeRequest(value)
-  //   (one file into the resident's requests\, for the dual-active hold; without it no lock is held), watchdogStale() (optional:
-  //   true while the failover watchdog is stale, §41.6a; companion-main.mjs sets it from the heartbeat), hostCapacity() (optional:
-  //   host-capacity.mjs#readCapacityAlert, the node governance status, node governance v1), notify(key, title, body)
-  //   (optional, M5: the notification queue instead of a toast), autoHandoverSince() (optional, ADR 0026: when the failover
-  //   watchdog last handed ci-admission to this node, ms or null; companion-main.mjs sets it from the heartbeat) }
+  // Optional advisory ports: watchdogStale(), hostCapacity(), notify(key, title, body).
   constructor(ports) {
     Object.assign(this, ports);
     check(NODE_NAME.test(this.node ?? ''), 'PR_STATUS_NODE_REQUIRED');
     check(contextShapeSafe(nodeContext(this.node)) && contextShapeSafe(standbyContext(this.node)), 'PR_STATUS_CONTEXT_UNSAFE');
     this.required = null; this.requiredAt = 0; this.collision = false; this.startedAt = this.clock(); this.failed = new Map();
     this.store.data.node ??= freshMemory();
-    // Every read the duty makes goes through call(): a stalled call ends the pass like any other.
-    this.duty = new NodeDuty({ repo: this.repo, ghExe: this.ghExe, run: (a, o) => this.call(a, o), clock: this.clock, memory: this.store.data.node, fallbackName: this.node,
-      writeRequest: this.writeRequest ?? null, timeoutMs: ADVISORY_TIMEOUT_MS, inBudget: () => this.inBudget(), staleMs: STATUS_STALE_MS,
-      autoHandoverSince: () => { try { return this.autoHandoverSince?.() ?? null; } catch { return null; } } });
+    this.dirty = this.store.retiredDutyMemory === true;
+    this.duty = new NodeDuty({ memory: this.store.data.node, fallbackName: this.node, staleMs: STATUS_STALE_MS });
   }
 
   async call(argv, o) {
@@ -806,8 +800,7 @@ export class PrStatusReporter {
     return shown;
   }
 
-  // One pass: the status notifications (local, never behind a slow GitHub), the node's duty (the take-over check and the
-  // dual-active lock) and its notifications, then the PR page status of every open PR head the poller looked at, then
+  // One pass: local status notifications, advisory role notices, PR page statuses, and
   // the duty's own writes (已交班, a restart, the end of a reminder written before ADR 0028).
   // drafts: the open draft PR heads the poller skipped ([{ pr, headSha }]); a head this node wrote on is told once that it is held.
   async pass({ pulls = [], drafts = [], status = null, statusError = false }) {
@@ -820,7 +813,7 @@ export class PrStatusReporter {
     let toasts = await this.showAll(events({ status, statusError, now, pulls, startedAt: this.startedAt, collision: this.collision }), now, 0);
     // A pass whose duty could not be worked out writes nothing on the PR page (never under a fallback name: review m1).
     let prep = null;
-    if (!this.stalled) { try { prep = await this.duty.prepare({ status, pulls, now, posted: this.store.data.posted }); } catch { prep = null; } }
+    if (!this.stalled) { try { prep = this.duty.prepare({ status, now, posted: this.store.data.posted }); } catch { prep = null; } }
     if (prep) toasts = await this.showAll(prep.events, now, toasts);
     if (prep && this.prStatus !== false && (pulls.length > 0 || drafts.length > 0) && !this.stalled) {
       const context = prep.context;
@@ -839,20 +832,19 @@ export class PrStatusReporter {
           if (ok) { posted += 1; this.failed.delete(key); } else if (!this.stalled) this.failed.set(key, { at: now, text });
           return ok;
         };
-        // What was written per head under this node's context: dutyAt is the last 当班 or 双活停机 (what an 已交班 is owed
-        // for); n counts the writes (GitHub keeps at most 1000 per context and commit).
+        // dutyAt records own duty history; n counts posts (GitHub limits each context and commit).
         const remember = (headSha, want) => {
           const last = this.store.data.posted[headSha];
           const mine = last?.context === context;
           this.store.data.posted[headSha] = { state: want.state, description: clip(want.description), at: new Date(now).toISOString(), context, kind: want.kind ?? null,
-            dutyAt: ['duty', 'dual'].includes(want.kind) ? new Date(now).toISOString() : (mine ? last.dutyAt ?? null : null), n: (mine ? last.n ?? 0 : 0) + 1 };
+            dutyAt: want.kind === 'duty' ? new Date(now).toISOString() : (mine && last.kind !== 'dual' ? last.dutyAt ?? null : null), n: (mine ? last.n ?? 0 : 0) + 1 };
         };
         // Owner decision 241824b2: the host watchdog's capacity marker, read once per pass; any failure is no marker.
         let capacity = null;
         try { capacity = (await this.hostCapacity?.())?.text ?? null; } catch { capacity = null; }
         for (const pull of pulls) {
           if (posted >= MAX_POSTS_PER_PASS || !this.inBudget()) break;
-          // The re-run line goes into the base text, so the duty word stays at the start (node-duty.mjs#parseDutyStatus reads it there)
+          // The re-run line goes into the base text, so the duty word stays at the start
           // and the watchdog tail stays last (review round 3, BLOCKER 1); the capacity line goes just before it.
           const base = withRerunLine(describe({ pull, status, now }), this.rerunLine?.(pull.headSha) ?? null);
           const want = rulesUnreadable ? RULES_UNREADABLE_WANT : withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX, await this.frontGap(pull, status?.train?.last ?? null, requiredRules))),
@@ -863,10 +855,10 @@ export class PrStatusReporter {
           const mine = last && last.context === context;
           const same = mine && last.state === want.state && last.description === clip(want.description);
           // A weak text never replaces another text; the same weak duty text is still refreshed (re-review).
-          if (want.weak && mine && !same) continue;
-          // NIT 4: a duty text is written again every DUTY_REFRESH_MS even when unchanged ("still alive" for the other node),
+          if (want.weak && mine && last.kind !== 'dual' && !same) continue;
+          // A duty text is written again every DUTY_REFRESH_MS even when unchanged,
           // up to REFRESH_MAX_POSTS writes per head.
-          const due = same && ['duty', 'dual', 'stalled'].includes(want.kind) && now - Date.parse(last.at) >= DUTY_REFRESH_MS && (last.n ?? 0) < REFRESH_MAX_POSTS;
+          const due = same && ['duty', 'stalled'].includes(want.kind) && now - Date.parse(last.at) >= DUTY_REFRESH_MS && (last.n ?? 0) < REFRESH_MAX_POSTS;
           if (same && !due) continue;
           if (await write(pull.headSha, want, context, pull.headSha)) remember(pull.headSha, want);
           if (this.stalled) break;

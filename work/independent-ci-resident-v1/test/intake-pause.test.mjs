@@ -16,6 +16,7 @@ import { describe as prPage } from '../src/pr-status.mjs';
 import { batchKey } from '../src/ledger.mjs';
 import { drainRequest, inspect, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
 import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { TRAIN_CONTROL_TIMING, TRAIN_FAILURE, TRAIN_PROTOCOL_VERSION } from '../../actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs';
 
 const MIN = 60_000;
 const T0 = Date.parse('2026-10-23T05:00:00Z');
@@ -53,6 +54,126 @@ function stage8Engine(answers) {
   engine.runStage = async (batch, stage, o) => (stage.number === 8 && i < answers.length ? (engine.calls.push(['stage', 8]), answers[i++]) : base(batch, stage, o));
   return engine;
 }
+
+test('train v2: persistent dual-active and delayed renewal are retired, while Owner pause, HALT and an old B batch survive', async t => {
+  const engine = stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]);
+  const a = await executorFixture(t, { engine, now: T0 });
+  await a.drop(triggerBytes());
+  assert.equal((await a.exec.tick()).state, 'PARKED');
+  const aState = await IntakePause.open(a.ledger.root, a.clock);
+  const b = await executorFixture(t, { now: T0 });
+  const bState = await IntakePause.open(b.ledger.root, b.clock);
+  for (const p of [aState, bState]) {
+    await p.save(p.apply(intakePauseRequest({ holder: 'dual-active', reason: 'legacy lock' }, () => T0), SHA(1)).data);
+    await p.save(p.apply(intakePauseRequest({ reason: 'Owner maintenance' }, () => T0), SHA(2)).data);
+  }
+  await b.ledger.halt('RECOVERY_UNCONFIRMED', {});
+  // Service restarts with two independent journals from the previous package.
+  const restartedA = await executorFixture(t, { engine, now: T0 + MIN, root: a.root });
+  const restartedB = await executorFixture(t, { now: T0 + MIN, root: b.root });
+  for (const f of [restartedA, restartedB]) {
+    await f.drop(json(intakePauseRequest({ holder: 'dual-active', reason: 'late legacy renewal' }, f.clock)), 'requests');
+    await f.exec.tick();
+    const state = await readIntakePause(f.ledger.root, f.clock);
+    assert.deepEqual(state.holds.map(h => h.holder), ['owner']);
+    assert.ok((await receiptTypes(f)).includes('intake-pause-ended'));
+  }
+  assert.equal((await restartedB.ledger.halted()).value.code, 'RECOVERY_UNCONFIRMED');
+  restartedA.advance(10 * MIN);
+  assert.equal((await restartedA.exec.tick()).state, 'COMPLETED');
+  assert.deepEqual(stagesRun(engine), [1, 2, 3, 4, 5, 6, 7, 8, 8]);
+  assert.equal((await restartedA.ledger.state(batchKey(subject()))).outcome, 'COMPLETED');
+  assert.equal((await readIntakePause(restartedA.ledger.root, restartedA.clock)).view.holders[0].holder, 'owner');
+});
+
+test('train v2: durable first-queue handoff releases new and recovered ordinary batches without another stage 8', async t => {
+  for (const recovered of [false, true]) {
+    const engine = stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]);
+    const f = await executorFixture(t, { engine, now: T0 });
+    await f.drop(triggerBytes());
+    if (recovered) assert.equal((await f.exec.tick()).state, 'PARKED');
+    const requests = [];
+    engine.handoffTrainWork = async ({ key, subject }) => {
+      requests.push({ key, subject });
+      return { protocol_version: TRAIN_PROTOCOL_VERSION, key, receiptId: 'b7abb84e-43e9-438b-ac4f-664f4b217b76' };
+    };
+    const running = recovered ? await executorFixture(t, { engine, now: T0 + MIN, root: f.root }) : f;
+    assert.equal((await running.exec.tick()).state, 'COMPLETED');
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].subject.headSha, HEAD);
+    assert.deepEqual(stagesRun(engine), recovered ? [1, 2, 3, 4, 5, 6, 7, 8] : [1, 2, 3, 4, 5, 6, 7]);
+    assert.equal((await running.ledger.state(batchKey(subject()))).outcome, 'COMPLETED');
+    assert.ok((await receiptTypes(running)).includes('train-work-handed-off'));
+  }
+});
+
+test('train v2: missing or wrong handoff keeps the archive, lets another PR run and never calls stage 8', async t => {
+  const engine = stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]);
+  const expected = batchKey(subject());
+  let valid = false, originalLookups = 0;
+  engine.handoffTrainWork = async ({ key, subject }) => {
+    if (subject.pr === 884) {
+      originalLookups += 1;
+      if (!valid && originalLookups === 1) throw new Error('read unavailable');
+      if (!valid) key = SHA(9);
+    }
+    return { protocol_version: TRAIN_PROTOCOL_VERSION, key, receiptId: 'b7abb84e-43e9-438b-ac4f-664f4b217b76' };
+  };
+  const f = await executorFixture(t, { engine, now: T0 });
+  await f.drop(triggerBytes());
+  assert.deepEqual(pick(await f.exec.tick()), ['PARKED', TRAIN_FAILURE.EFFECT_UNKNOWN.resident]);
+  assert.equal(f.queue.row(884).state, 'PARKED');
+  f.advance(TRAIN_CONTROL_TIMING.recheckMs);
+  await f.drop(triggerBytes({ pr: 900, headSha: H(4) }));
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.equal(originalLookups, 2);
+  assert.equal((await f.ledger.state(expected)).outcome ?? null, null);
+  assert.equal(f.queue.row(900).state, 'DONE');
+  assert.equal(stagesRun(engine).includes(8), false);
+  valid = true;
+  const windowsQuiescence = engine.windowsQuiescence;
+  engine.windowsQuiescence = async () => ({ ...WINDOWS_CLEAN, windowsTreeZero: false });
+  f.advance(TRAIN_CONTROL_TIMING.recheckMs);
+  await f.exec.tick();
+  assert.equal(originalLookups, 2, 'a busy process cannot hand off the archived batch');
+  assert.equal((await f.ledger.state(expected)).outcome ?? null, null);
+  engine.windowsQuiescence = windowsQuiescence;
+  f.advance(TRAIN_CONTROL_TIMING.recheckMs);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.equal((await f.ledger.state(expected)).outcome, 'COMPLETED');
+});
+
+test('train v2: shared head lease held defers to server time and completed settles without budget or role changes', async t => {
+  const engine = fakeEngine();
+  const stage = engine.runStage;
+  const retryAfter = T0 + TRAIN_CONTROL_TIMING.leaseMs;
+  let code = TRAIN_FAILURE.HEAD_LEASE_HELD;
+  engine.runStage = async (batch, request, opts) => {
+    if (request.number !== 1) return stage(batch, request, opts);
+    engine.calls.push(['stage', 1]);
+    return { ok: false, code: code.resident, proof: WINDOWS_CLEAN,
+      outcome: { status: 'BLOCKED', reason: code.native, sideEffects: 0, mayHavePublished: false,
+        scheduling: { ciRetryAfter: code === TRAIN_FAILURE.HEAD_LEASE_HELD ? iso(retryAfter) : null } } };
+  };
+  const f = await executorFixture(t, { engine, now: T0 });
+  const mode = f.exec.nodeMode();
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).failureCode, code.resident);
+  assert.equal(f.queue.row(884).nextAt, retryAfter);
+  f.advance(TRAIN_CONTROL_TIMING.leaseMs - 1);
+  await f.exec.tick();
+  assert.deepEqual(stagesRun(engine), [1]);
+  code = TRAIN_FAILURE.HEAD_LEASE_COMPLETED;
+  f.advance(1);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.equal(f.queue.row(884).state, 'DONE');
+  assert.deepEqual(stagesRun(engine), [1, 1]);
+  assert.equal(await f.executedHeads.published(subject()), false);
+  assert.equal(await f.ledger.halted(), null);
+  assert.equal(f.exec.nodeMode(), mode);
+  const usage = await f.ledger.usage(T0 - 1);
+  assert.deepEqual([usage.started, usage.evaluations, usage.waitingRetries, usage.releasesByHead.size], [0, 0, 0, 0]);
+});
 
 test('the request shapes: a holder, 1 to 120 minutes, a reason, its own time and nonce; nothing else', () => {
   const ok = intakePauseRequest({ holder: 'owner', minutes: 120, reason: 'switch to company-01' }, () => T0);
@@ -106,21 +227,21 @@ test('stale, future-dated and superseded requests change nothing', async t => {
   assert.equal(s.p.view(), null);
 });
 
-test('holders never cancel each other: the Owner pause and the dual-active hold are independent; renewals extend, a resume ends one', async t => {
+test('independent holders never cancel each other; renewals extend and a resume ends one', async t => {
   const s = await store(t);
   await take(s, intakePauseRequest({ holder: 'owner', minutes: 120, reason: 'planned switch' }, s.clock));
   s.advance(MIN);
-  await take(s, intakePauseRequest({ holder: 'dual-active', minutes: 120, reason: 'two nodes on duty' }, s.clock), SHA(2));
+  await take(s, intakePauseRequest({ holder: 'version-skew', minutes: 120, reason: 'different versions' }, s.clock), SHA(2));
   s.advance(MIN);
-  assert.deepEqual(await take(s, intakeResumeRequest({ holder: 'dual-active', reason: 'role lost' }, s.clock), SHA(3)), { kind: 'intake-resumed', holder: 'dual-active', held: true });
+  assert.deepEqual(await take(s, intakeResumeRequest({ holder: 'version-skew', reason: 'versions match' }, s.clock), SHA(3)), { kind: 'intake-resumed', holder: 'version-skew', held: true });
   assert.deepEqual(s.p.view().holders.map(h => h.holder), ['owner'], 'the Owner pause stays');
-  // the companion renews its own hold while the lock lasts: the until moves, since stays
+  // Renewing the same holder changes its end but keeps its start.
   s.advance(MIN);
-  await take(s, intakePauseRequest({ holder: 'dual-active', minutes: 120, reason: 'locked again' }, s.clock), SHA(4));
+  await take(s, intakePauseRequest({ holder: 'version-skew', minutes: 120, reason: 'versions differ again' }, s.clock), SHA(4));
   s.advance(100 * MIN);
-  const renewed = await take(s, intakePauseRequest({ holder: 'dual-active', minutes: 120, reason: 'renewal' }, s.clock), SHA(5));
+  const renewed = await take(s, intakePauseRequest({ holder: 'version-skew', minutes: 120, reason: 'renewal' }, s.clock), SHA(5));
   assert.equal(renewed.renewed, true);
-  const dual = s.p.view().holders.find(h => h.holder === 'dual-active');
+  const dual = s.p.view().holders.find(h => h.holder === 'version-skew');
   assert.deepEqual([dual.since, dual.until], [iso(T0 + 3 * MIN), iso(T0 + 103 * MIN + INTAKE_PAUSE_MAX_MS)]);
   // a resume of a holder with nothing in force is accepted and says so
   assert.deepEqual(await take(s, intakeResumeRequest({ holder: 'nobody', reason: 'r' }, s.clock), SHA(6)), { kind: 'intake-resumed', holder: 'nobody', held: false });
@@ -139,11 +260,11 @@ test('at most eight holders: a new holder takes the place of the oldest ended on
   await s.p.save(s.p.settle().data);
   await take(s, intakePauseRequest({ holder: 'later', minutes: 1, reason: 'r' }, s.clock), SHA(8));
   assert.deepEqual(s.p.data.holds.map(h => h.holder), ['later'], 'ended holds older than two hours are dropped');
-  // resumes of holders never seen take no place: the dual-active hold always finds one
+  // Resumes of holders never seen leave room for a new pause.
   const r = await store(t);
   for (let i = 0; i < 2 * INTAKE_HOLDS_MAX; i++) await take(r, intakeResumeRequest({ holder: `junk${i}`, reason: 'r' }, r.clock), SHA(i % 10));
   assert.equal(r.p.data.holds.length, 0);
-  assert.equal((await take(r, intakePauseRequest({ holder: 'dual-active', reason: 'lock' }, r.clock), SHA(1))).kind, 'intake-paused');
+  assert.equal((await take(r, intakePauseRequest({ holder: 'version-skew', reason: 'different versions' }, r.clock), SHA(1))).kind, 'intake-paused');
 });
 
 test('a clock that went back never stretches a hold beyond two hours', async t => {
@@ -242,16 +363,16 @@ test('it is neither PAUSE nor the drain: all three hold at once and each keeps i
   assert.equal(f.queue.row(900).state, 'QUEUED');
 });
 
-test('each holder lifts only its own hold; the Owner pause and the dual-active hold both have to end', async t => {
+test('each holder lifts only its own hold; the Owner and version-skew pauses both have to end', async t => {
   const f = await executorFixture(t, { now: T0 });
   await f.drop(json(intakePauseRequest({ holder: 'owner', reason: 'planned switch' }, f.clock)), 'requests');
-  await f.drop(json(intakePauseRequest({ holder: 'dual-active', reason: 'two nodes on duty' }, f.clock)), 'requests');
+  await f.drop(json(intakePauseRequest({ holder: 'version-skew', reason: 'version mismatch' }, f.clock)), 'requests');
   await f.drop(triggerBytes());
   assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED']);
   f.advance(MIN);
   await f.drop(json(intakeResumeRequest({ holder: 'owner', reason: 'switch done' }, f.clock)), 'requests');
-  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED'], 'the Owner resume leaves the dual-active hold');
-  await f.drop(json(intakeResumeRequest({ holder: 'dual-active', reason: 'role lost' }, f.clock)), 'requests');
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED'], 'the Owner resume leaves the version-skew hold');
+  await f.drop(json(intakeResumeRequest({ holder: 'version-skew', reason: 'versions match' }, f.clock)), 'requests');
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
   const types = await receiptTypes(f);
   assert.deepEqual([types.filter(x => x === 'intake-paused').length, types.filter(x => x === 'intake-resumed').length], [2, 2]);
@@ -356,7 +477,7 @@ test('review M1: requests that cannot be applied are refused after three tries, 
   await f.exec.tick();
   const real = f.exec.intakePause ?? await f.exec.intakeHolds();
   real.save = async () => { throw Object.assign(new Error('EPERM'), { code: 'EPERM' }); };
-  for (let i = 0; i < 16; i++) { f.advance(1000); await f.drop(json(intakePauseRequest({ holder: 'dual-active', reason: `renewal ${i}` }, f.clock)), 'requests'); }
+  for (let i = 0; i < 16; i++) { f.advance(1000); await f.drop(json(intakePauseRequest({ holder: 'owner', reason: `renewal ${i}` }, f.clock)), 'requests'); }
   await f.drop(json({ contract: PAUSE_CONTRACT, reason: 'emergency stop' }), 'requests');
   const states = [];
   for (let i = 0; i < 4; i++) states.push((await f.exec.tick()).state);
@@ -423,6 +544,8 @@ test('the command line: --minutes takes 1 to 120 whole minutes; the request goes
   const v = JSON.parse(await fs.readFile(path.join(root, 'requests', files[0]), 'utf8'));
   assert.deepEqual([v.contract, v.holder, v.minutes], [INTAKE_PAUSE_CONTRACT, 'owner', 45]);
   for (const m of ['1.5', '121', '0', 'x']) assert.deepEqual(await run('request-intake-pause', '--root', root, '--reason', 'r', '--minutes', m), { code: 1, out: { status: 'REFUSED', code: 'INTAKE_REQUEST_REFUSED' } }, m);
-  assert.equal((await run('request-intake-resume', '--root', root, '--reason', 'done', '--holder', 'dual-active')).out.status, 'INTAKE_RESUME_REQUESTED');
+  assert.equal((await run('request-intake-resume', '--root', root, '--reason', 'done', '--holder', 'owner')).out.status, 'INTAKE_RESUME_REQUESTED');
+  for (const command of ['request-intake-pause', 'request-intake-resume'])
+    assert.deepEqual(await run(command, '--root', root, '--reason', 'legacy', '--holder', 'dual-active'), { code: 1, out: { status: 'REFUSED', code: 'INTAKE_HOLDER_RETIRED' } });
   assert.equal((await fs.readdir(path.join(root, 'requests'))).length, 2);
 });

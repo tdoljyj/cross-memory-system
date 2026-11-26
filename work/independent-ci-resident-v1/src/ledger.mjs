@@ -531,7 +531,8 @@ export class Ledger {
       if (!name.startsWith(`${key}-`)) continue;
       try {
         const { value } = await readJson(path.join(this.unexecuted, name, '90-terminal.json'));
-        if (Date.parse(value.at) >= sinceMs) out.push({ at: Date.parse(value.at), reason: UNEXECUTED_REASONS.includes(value.reason) ? value.reason : null, klass: typeof value.facts?.class === 'string' ? value.facts.class : null });
+        if (Date.parse(value.at) >= sinceMs) out.push({ at: Date.parse(value.at), reason: UNEXECUTED_REASONS.includes(value.reason) ? value.reason : null, klass: typeof value.facts?.class === 'string' ? value.facts.class : null,
+          ...(value.facts?.class === 'train-work' ? { ciRetryAfter: Date.parse(value.facts.ciRetryAfter ?? '') } : {}) });
       } catch (error) {
         if (!contentError(error)) throw error;
         out.push({ at: this.clock(), reason: null, klass: null });
@@ -632,6 +633,7 @@ export class Ledger {
     }
     // One reservation: its origin, whether it executed, and how it ended (a release reason and the failure-table facts).
     const count = ({ reserved, started, reason, facts, burned = false }) => {
+      if (!started && !burned && reason === 'NOT_ADMITTED' && facts?.class === 'train-work') return;
       const origin = RESERVATION_ORIGINS.includes(reserved.origin) ? reserved.origin : 'queued';
       const s = reserved.subject ?? {};
       // Reclassify historical claim releases too: their old queued/backoff-retry/

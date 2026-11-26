@@ -9,7 +9,7 @@
 // (the workflow takes no inputs), with a fixed argv; the one extra read is the workflow's last runs (also the cross-node guard).
 //
 // Who dispatches: this node's status.json says node.mode ACTIVE (the role probe found the ci-admission role here), the snapshot is
-// fresh, and the dual-active hold is not set. Nothing else is shared between nodes: before every dispatch the workflow's own run
+// fresh. Before every dispatch the workflow's own run
 // list on GitHub is read, and a run on main younger than MIN_GAP_MS (any event: a dispatch of another node, a schedule event)
 // counts as this slot's dispatch, so two nodes that are both ACTIVE for a moment do not dispatch twice (a race inside one read
 // interval can, and the workflow's concurrency group then cancels one of the two runs). Two things shrink that window further: the
@@ -20,7 +20,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { check } from './canonical.mjs';
 import { parseIncluded } from './poller.mjs';
-import { NODE_NAME, HOLDER_DUAL } from './node-duty.mjs';
+import { NODE_NAME } from './node-duty.mjs';
 
 const MIN = 60_000;
 // The repository the panel workflow lives in. Pinned here, not read from the configuration: the dispatcher only ever starts this workflow of this repository.
@@ -108,8 +108,23 @@ export function dutyOf(status, nodeName, now) {
   if (status.node.name !== nodeName) return 'NODE_NAME_MISMATCH';
   if (status.node.mode === 'UNCERTAIN') return 'NODE_ROLE_UNCERTAIN';
   if (status.node.mode !== 'ACTIVE') return 'NOT_ACTIVE';
-  if ((status.intakePause?.holders ?? []).some(h => h.holder === HOLDER_DUAL)) return 'DUAL_ACTIVE_HOLD';
   return null;
+}
+
+// The v2 port owns the shared reservation and settlement. It calls send once,
+// only after reserving this exact effect. No answer can fall back to a POST.
+export async function dispatchByTrainEffect(port, effect, send) {
+  if (port === undefined) return { sent: true, reply: await send() };
+  let open = true, sent = false, reply;
+  try {
+    await port(Object.freeze({ ...effect, subject: Object.freeze(effect.subject) }), async () => {
+      check(open && !sent, 'TRAIN_AUXILIARY_DISPATCH_ALREADY_USED');
+      sent = true;
+      reply = await send();
+      return reply;
+    });
+  } finally { open = false; }
+  return { sent, reply };
 }
 
 const emptyState = () => ({ contract: STATE_CONTRACT, lastDispatchAt: null, pendingAt: null, sent: [], notified: {}, tickAt: null, duty: null, dutyLog: [], lastRunAt: null, failures: 0, lastCode: null });
@@ -269,7 +284,17 @@ export class PanelDispatcher {
       return { skipped: 'RECENT_RUN', ageMs: latestAge, event: latest.event, recheck: true };
     }
 
-    const w = await this.run(dispatchArgv(this.ghExe, this.repo), { timeoutMs: DISPATCH_TIMEOUT_MS });
+    let dispatch;
+    try {
+      dispatch = await dispatchByTrainEffect(this.dispatchTrainEffect,
+        { repo: this.repo, ref: PANEL_REF, subject: [PANEL_WORKFLOW, latest?.id ?? 0] },
+        () => this.run(dispatchArgv(this.ghExe, this.repo), { timeoutMs: DISPATCH_TIMEOUT_MS }));
+    } catch { return this.fail(now, 'DISPATCH_FAILED'); }
+    if (!dispatch.sent) {
+      this.nextAt = now + DISPATCH_EVERY_MS;
+      return { skipped: 'SHARED_EFFECT_HELD' };
+    }
+    const w = dispatch.reply;
     if (w.code === 0 && !w.timedOut && !w.refused) {
       d.lastDispatchAt = now; d.pendingAt = now; d.sent.push(now);
       this.nextAt = now + DISPATCH_EVERY_MS;

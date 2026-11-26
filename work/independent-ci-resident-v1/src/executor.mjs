@@ -146,8 +146,9 @@ import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactK
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
 import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, PULL_STATES, QUIESCENCE_TOTAL_MS, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
+import { RETIRED_DUAL_ACTIVE_HOLDER } from './node-duty.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
-import { classifyFailure } from './classify.mjs';
+import { TRAIN_HEAD_LEASE_COMPLETED, TRAIN_HEAD_LEASE_HELD, classifyFailure } from './classify.mjs';
 import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, chainOfFront, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainFrontRecheckNext, trainIdleExtraDue, trainNodesView, trainRunInput, trainRunMode, trainSummary, trainSweepView, claimBindingObservationOf } from './train.mjs';
 import { ROLE_PROBE_CODES, RoleProbe, roleBookFact, validateRoleProbeFact } from './role-probe.mjs';
 import { NODE_MODES, leaseShort } from './status.mjs';
@@ -433,6 +434,10 @@ export const DRAIN_MAX_AGE_MS = 60 * 60_000;
 // row it HALTs (like a backfill that keeps failing). An intake request that could not be applied in this many ticks is
 // refused, so it never keeps a PAUSE behind it out of the per-tick read (independent review of C6, M1).
 export const INTAKE_PAUSE_UNCONFIRMED_MAX_MS = 30 * 60_000;
+const TRAIN_WORK_HANDED_OFF = 'TRAIN_WORK_HANDED_OFF';
+const TRAIN_HANDOFF_PENDING = 'CI_EFFECT_UNKNOWN';
+const TRAIN_HANDOFF_RECHECK_MS = 15_000;
+const TRAIN_RECEIPT_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 export const INTAKE_REQUEST_TRIES = 3;
 // The oldest bundle a batch takes into the workspace preparation (which accepts at most 2 hours), measured from the
 // reservation, which comes before the bundle (design v0.5 §4.3 item 3).
@@ -1042,7 +1047,7 @@ export class ResidentExecutor {
   report(fn) { try { fn(this.status); } catch { /* advisory */ } }
   reportOutcome(subject, outcome, { code = null, row = null, key = null, retry = row?.retry ?? null, reasonCodes = null } = {}) {
     this.report(s => s.outcome({ pr: subject?.pr, headSha: subject?.headSha, attempt: subject?.attempt ?? 1, outcome, code, klass: row?.class ?? null, retry, key,
-      pushedAt: outcome === 'COMPLETED' ? this.firstSeenAt(subject) : null, reasonCodes }));
+      pushedAt: outcome === 'COMPLETED' && code !== TRAIN_WORK_HANDED_OFF ? this.firstSeenAt(subject) : null, reasonCodes }));
   }
   // The head's first sighting by the queue (ms), the push as far as the resident sees it (status timing: push to first green).
   firstSeenAt(subject) {
@@ -1721,11 +1726,21 @@ export class ResidentExecutor {
   async intakeRefresh() {
     let p, next;
     try { p = await this.intakeHolds(); next = p.settle(this.clock()); } catch (error) { await this.intakeTrouble(error, 'read'); throw error; }
+    const retired = p.data.holds.find(h => h.holder === RETIRED_DUAL_ACTIVE_HOLDER);
+    if (retired) {
+      const data = next?.data ?? p.data;
+      next = { data: { ...data, holds: data.holds.filter(h => h.holder !== RETIRED_DUAL_ACTIVE_HOLDER) },
+        ended: (next?.ended ?? []).filter(h => h.holder !== RETIRED_DUAL_ACTIVE_HOLDER) };
+    }
     if (!next && this.intakeTroubleSince != null && this.intakeTroubleKind === 'write') next = { data: p.data, ended: [] };
     if (next) {
       try { await p.save(next.data); } catch (error) { await this.intakeTrouble(error, 'write'); throw error; }
       this.intakeTroubleSince = null;
       for (const h of next.ended) { try { await this.receipt('intake-pause-ended', { holder: h.holder, since: h.since, until: h.until, ending: 'expired' }); } catch { /* see above */ } }
+      if (retired?.ended === null) {
+        const { holder, since, until, requestSha256 } = retired;
+        try { await this.receipt('intake-pause-ended', { holder, since, until, requestSha256, ending: 'retired' }); } catch { /* the state is already durable */ }
+      }
     } else if (this.intakeTroubleKind === 'read') this.intakeTroubleSince = null;
     return p.view(this.clock());
   }
@@ -1758,6 +1773,7 @@ export class ResidentExecutor {
     try { await this.intakeRefresh(); } catch { return null; }
     let next;
     try {
+      check(v.holder !== RETIRED_DUAL_ACTIVE_HOLDER, 'INTAKE_HOLDER_RETIRED');
       next = this.intakePause.apply(v, requestSha256, this.clock());
     } catch (error) {
       await this.receipt('intake-request-refused', { requestSha256, failureCode: codeOf(error) });
@@ -2862,7 +2878,7 @@ export class ResidentExecutor {
   // watched (whatever their next try's time).
   queueWatchCandidates(entries, now, { view = false } = {}) {
     return entries.filter(e => {
-      if (!Ledger.parkedAt(e)) return false;
+      if (!Ledger.parkedAt(e) || this.sharedTrainHandoff(e.reserved?.subject)) return false;
       const last = ResidentExecutor.lastTry(e), pr = e.reserved?.subject?.pr;
       const streak = last?.position === 1 && !(Date.parse(last.nextAt) - Date.parse(last.at) > PARK_HEAD_RETRY_MS);
       return last && last.transient !== true && QUEUE_WATCH_CODES.includes(last.code) && !streak && Number.isSafeInteger(pr) && pr > 0
@@ -2982,6 +2998,7 @@ export class ResidentExecutor {
     let inside = 0, outside = 0;
     for (const e of all) {
       if (Ledger.waitingAt(e)) { inside += 1; continue; }
+      if (this.sharedTrainHandoff(e.reserved?.subject)) continue;
       if (this.parkedAsleep(e)) continue;
       const last = ResidentExecutor.lastTry(e);
       const p = Number.isSafeInteger(last?.position) ? last.position : (last?.transient === true ? last.assumedPosition : null);
@@ -3022,6 +3039,18 @@ export class ResidentExecutor {
     this.parkingFull = counts.inside >= this.policy.park.maxParked || (outsideMax > 0 && counts.outside >= outsideMax);
     // A batch that no longer stands (its PR closed, a newer head, this node off duty) was ended by the rule before this (endNotStanding,
     // DESIGN §72), whatever the train gate below says: field defect PR #1035 needs no step of its own here.
+    const handoffs = entries.filter(e => Ledger.parkedAt(e) && this.sharedTrainHandoff(e.reserved?.subject));
+    const handoff = handoffs.find(e => {
+      const { pr } = e.reserved.subject;
+      const row = this.queue.row(pr);
+      return row?.running?.key !== e.key || row.parked?.reason !== TRAIN_HANDOFF_PENDING || row.parked.nextAt <= this.clock();
+    });
+    if (handoff && !this.betweenBatchesRunning) {
+      const result = await this.resumeParkedB(handoff);
+      if (result.reason !== TRAIN_HANDOFF_PENDING) return { acted: result, waiting: null };
+    }
+    // Receipt lookup has its own cadence. It uses no stage-8 try or parking slot.
+    entries = entries.filter(e => !handoffs.includes(e));
     if (hold) entries = entries.filter(e => this.frontBindKeys.has(e.key) || (this.trainStrictFront(e.reserved?.subject) && !this.trainGate(e.reserved?.subject)));
     if (entries.length === 0) return { acted: null, waiting: null };
     let waiting = null;
@@ -3116,6 +3145,32 @@ export class ResidentExecutor {
     return this.afterBatch(subject, origin, outcome);
   }
 
+  // This port is supplied only by the trusted v2 runtime once Native work leases,
+  // first-queue delivery and fenced landing are ready. It reads an existing durable
+  // receipt for the exact subject. It never performs a publication or a landing.
+  sharedTrainHandoff(subject) {
+    return !!subject && !Object.hasOwn(subject, 'testSha') && this.engine.handoffTrainWork !== undefined;
+  }
+
+  async handoffParkedTrainWork(key, subject, batch, entry) {
+    const pending = () => ({ state: 'PARKED', key, reason: TRAIN_HANDOFF_PENDING, until: this.clock() + TRAIN_HANDOFF_RECHECK_MS, position: null });
+    let confirmation;
+    try {
+      if (!proofComplete(await this.proofFor(batch, {}))) return pending();
+      confirmation = await this.engine.handoffTrainWork({ key, subject });
+    } catch { return pending(); }
+    if (confirmation?.protocol_version !== 2 || confirmation.key !== key || !TRAIN_RECEIPT_ID.test(confirmation.receiptId ?? '')) return pending();
+
+    const { receiptId } = confirmation;
+    const { batchId } = batch;
+    const relayed = entry.plan.relayed.map(r => r.role), local = entry.parked.local ?? [];
+    await this.ledger.terminal(key, 'COMPLETED', { batchId, closed: entry.parked.closed ?? null, relayed, local, trainHandoffReceiptId: receiptId });
+    await this.receipt('train-work-handed-off', { key, pr: subject.pr, headSha: subject.headSha, receiptId });
+    await this.receipt('batch-terminal', { key, outcome: 'COMPLETED', reason: TRAIN_WORK_HANDED_OFF });
+    this.reportOutcome(subject, 'COMPLETED', { key, code: TRAIN_WORK_HANDED_OFF });
+    return { state: 'COMPLETED', key, reason: TRAIN_WORK_HANDED_OFF, relayed, local, settle: { kind: 'completed', breaker: 'neutral', pos: POSITIONS.END, linux: false } };
+  }
+
   // Stage 8 as one try. Settled: COMPLETED. Not ready with zero side effects, and neither main moved nor the tries or the
   // time ran out: the try is recorded and the batch rests at B again (PARKED). Anything else: a stage failure as before.
   // Generation 22 field defect (PR #1029: proof written 08:19:59, front batch 08:20:24, stage 7 ended 08:35:09, stage 8 refused with
@@ -3132,6 +3187,7 @@ export class ResidentExecutor {
   }
 
   async stage8Try(key, subject, batch) {
+    if (this.sharedTrainHandoff(subject)) return this.handoffParkedTrainWork(key, subject, batch, await this.ledger.state(key));
     // Generation 22: the batch rests at parking point B (the Linux zone is closed, nothing of it runs), where stage 10 may run as it does
     // after a schedule that ran nothing: a front batch whose strict proof would run out first gets it refreshed now (urgent: only the
     // cadence is waived; the daily cap, one run per tick and every gate of trainMaintenance hold), so its first try is not refused.
@@ -3595,8 +3651,11 @@ export class ResidentExecutor {
     // The 10-minute cool-down of the batch key after a release it applies to (classify.mjs#UNEXECUTED_REASON_RULES). Not for a new
     // trigger whose PR now names another claim after a claim refusal (field defect 2026-11-08, PR #1039: the refusal was safeToRerun,
     // nothing ran, and the fix it asked for is in; the re-evaluation cap below still bounds how often).
+    const releases = await this.ledger.unexecutedRecords(key, now - DAY);
+    const shared = releases.filter(r => r.klass === 'train-work' && r.ciRetryAfter > now);
+    if (shared.length > 0) return { defer: TRAIN_HEAD_LEASE_HELD, perRow: true, until: Math.max(...shared.map(r => r.ciRetryAfter)) };
     const recent = claimChanged && origin === 'new-trigger' ? []
-      : (await this.ledger.unexecutedRecords(key, now - DAY)).filter(r => UNEXECUTED_REASON_RULES[r.reason]?.cooldown !== false);
+      : releases.filter(r => r.klass !== 'train-work' && UNEXECUTED_REASON_RULES[r.reason]?.cooldown !== false);
     if (recent.length > 0 && now - Math.max(...recent.map(r => r.at)) < l.unexecutedCooldownMs) return { defer: 'UNEXECUTED_COOLDOWN', perRow: true, until: Math.max(...recent.map(r => r.at)) + l.unexecutedCooldownMs };
     // The daily budgets (policy /4), all from the ledger: executions, evaluations (not for a wait: it has its own
     // budget), the waits' budget, the new-trigger re-evaluations of this PR commit, the PR's own executions.
@@ -3722,7 +3781,7 @@ export class ResidentExecutor {
       if (this.queue.stopAtCap(c.pr, c.headSha, pre.stop, this.clock(), pre.stopClass ?? null)) this.queue.notice({ key: `stopped:${c.pr}:${c.headSha}:${pre.stop}`, kind: 'stopped', pr: c.pr, headSha: c.headSha, code: pre.stop });
       return { state: 'DEFERRED', key, reason: pre.stop, next: true };
     }
-    if (resumeStage8) {
+    if (resumeStage8 && !this.sharedTrainHandoff(subject)) {
       const usage = await this.ledger.usage(this.clock() - DAY, { stage8Pr: subject.pr, budgetTimes: true });
       if (usage.stage8Retries >= this.policy.park.stage8RetriesPer24h) return this.deferral({ defer: 'STAGE8_RETRY_BUDGET_EXHAUSTED', perRow: true,
         notice: await this.quotaNotice('STAGE8_RETRY_BUDGET_EXHAUSTED', subject, usage) }, key, c.pr);
@@ -4026,7 +4085,7 @@ export class ResidentExecutor {
         await this.receipt('queue-row-stopped', { pr: subject.pr, headSha: subject.headSha, failureCode: s.code ?? null, releases24h, ...(network ? { networkReleases24h } : {}) });
       }
       // A batch that rested at B told the breaker about stages 1-7 when it parked: its end is a stage-8 ending.
-      await this.feedBreaker(subject, s);
+      if (s?.klass !== 'train-work') await this.feedBreaker(subject, s);
       if (s && (FALSIFYING_CODES.includes(s.code) || (s.code === 'STAGE_CHILD_REFUSED' && FALSIFYING_REASONS.includes(s.outcomeReason)))) await this.falsified(subject);
       await this.persistQueue();
     } catch { /* the queue and the breaker are a view; the next batch end writes them again */ }
@@ -4643,6 +4702,12 @@ export class ResidentExecutor {
         let reserved = null;
         try { reserved = (await this.ledger.state(key)).reserved ?? null; } catch { reserved = null; }
         const reportRefusal = release === 'NOT_ADMITTED' && reasonCodes !== null;
+        const shared = row?.class === 'train-work';
+        const completed = shared && failure.code === TRAIN_HEAD_LEASE_COMPLETED;
+        if (shared && !completed && !(Date.parse(facts.ciRetryAfter ?? '') > this.clock())) {
+          facts.ciRetryAfter = new Date(this.clock() + TRAIN_HANDOFF_RECHECK_MS).toISOString();
+          settle.ciRetryAfter = facts.ciRetryAfter;
+        }
         if (reportRefusal) this.reportOutcome(reserved?.subject ?? this.current, 'NOT_ADMITTED', { code: failure.code, row, key, reasonCodes });
         await this.closeOrThrow(batch);
         await this.ledger.releaseUnexecuted(key, release, { failureCode: failure.code, basis, ...facts, breakerState });
@@ -4652,8 +4717,13 @@ export class ResidentExecutor {
         // The stage-1 release of a passing GitHub / Native fault (nothing written, DESIGN 49) gives it back the same way: the fault says
         // nothing about the PR, and attempt 2 is the head's only automatic second chance. R3 batch 2 §3: only an attempt-2 intent
         // (reservation origin 'attempt2'); stage 10's front number 2 is a queue row with attempt 2 that stays queued and retries.
-        if ((row?.class === 'node-role' || STAGE1_TRANSIENT_RELEASE_CODES.includes(failure.code)) && this.current?.key === key && reserved?.origin === 'attempt2') {
+        if ((row?.class === 'node-role' || (shared && !completed) || STAGE1_TRANSIENT_RELEASE_CODES.includes(failure.code))
+          && this.current?.key === key && reserved?.origin === 'attempt2') {
           await this.reopenAttempt2(key, failure.code, reserved.subject);
+        }
+        if (completed) {
+          this.reportOutcome(reserved?.subject ?? this.current, 'COMPLETED', { code: TRAIN_WORK_HANDED_OFF, key });
+          return { state: 'COMPLETED', key, reason: TRAIN_WORK_HANDED_OFF, settle: { ...settle, kind: 'completed', reason: release } };
         }
         if (!reportRefusal) this.reportOutcome(await subjectOf() ?? this.current, release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', { code: failure.code, row, key });
         return { state: release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', key, failureCode: failure.code, release, settle: { ...settle, kind: 'released', reason: release } };

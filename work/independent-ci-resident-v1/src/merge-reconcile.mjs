@@ -7,7 +7,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { check, exactKeys, parseBoundedJson, UUID, HEX64 } from './canonical.mjs';
-import { NODE_NAME } from './node-duty.mjs';
+import { NODE_NAME, operationalIntakePause } from './node-duty.mjs';
+import { dispatchByTrainEffect } from './panel-dispatch.mjs';
 import { parseIncluded } from './poller.mjs';
 
 export const RECONCILE_REPO = 'tdoljyj/cross-memory-system';
@@ -56,7 +57,7 @@ export function reconcileDutyOf(status, nodeName, now) {
   if (status.node?.name !== nodeName) return 'NODE_NAME_MISMATCH';
   if (status.node?.mode !== 'ACTIVE') return 'NOT_ACTIVE';
   if (status.paused !== false || status.halt !== null) return 'PAUSED_OR_HALTED';
-  if (status.intakePause !== null) return 'INTAKE_HELD';
+  if (operationalIntakePause(status.intakePause) !== null) return 'INTAKE_HELD';
   if (status.versions?.consistent !== true || status.versions.upgrade !== null) return 'VERSION_OR_UPGRADE_HOLD';
   if ((status.draining !== undefined && status.draining !== false) || (status.drain !== undefined && status.drain !== null)
       || /DRAIN|UPGRADE/i.test(`${status.executor?.state ?? ''} ${status.executor?.reason ?? ''}`)) return 'DRAIN_HOLD';
@@ -257,11 +258,20 @@ export class MergeReconciler {
     const sentAt = this.clock();
     if (sentAt < d.lastTickAt) fail('MERGE_RECONCILE_CLOCK_BACKWARD');
     const requestId = randomUUID();
-    d.pending = { requestId, at: sentAt, sourceSha256: this.pinnedSource, phase: 'INTENT' };
-    d.dispatches.push(sentAt); d.nextAt = sentAt + RECONCILE_EVERY_MS;
-    await this.persist(sentAt); // failure here is a hard zero-POST boundary
-    let sent;
-    try { sent = await this.run(reconcileDispatchArgv(this.ghExe, this.repo, requestId), { timeoutMs: 30_000 }); } catch { sent = null; }
+    const newestRun = runs.reduce((newest, run) => Math.max(newest, run.id), 0);
+    const dispatch = await dispatchByTrainEffect(this.dispatchTrainEffect,
+      { repo: this.repo, ref: RECONCILE_REF, subject: [RECONCILE_WORKFLOW, newestRun], requestId },
+      async () => {
+        d.pending = { requestId, at: sentAt, sourceSha256: this.pinnedSource, phase: 'INTENT' };
+        d.dispatches.push(sentAt); d.nextAt = sentAt + RECONCILE_EVERY_MS;
+        await this.persist(sentAt); // failure here is a hard zero-POST boundary
+        try { return await this.run(reconcileDispatchArgv(this.ghExe, this.repo, requestId), { timeoutMs: 30_000 }); } catch { return null; }
+      });
+    if (!dispatch.sent) {
+      d.nextAt = sentAt + RECONCILE_EVERY_MS; await this.persist(sentAt);
+      return { skipped: 'SHARED_EFFECT_HELD' };
+    }
+    const sent = dispatch.reply;
     const reply = responseOf(sent);
     if (reply?.status === 204 && sent?.code === 0) {
       d.pending.phase = 'ACCEPTED'; d.lastCode = null; d.failures = 0; await this.persist(this.clock());

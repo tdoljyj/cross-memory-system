@@ -512,6 +512,11 @@ export class RunQueue {
         this.setState(r, 'DONE', null, now);
         return null;
       case 'released': {
+        if (outcome.klass === 'train-work' && time(outcome.ciRetryAfter)) {
+          Object.assign(r, { nextAt: outcome.ciRetryAfter, stopKind: null, stopClass: null });
+          this.setState(r, 'BACKOFF', outcome.code, now);
+          return null;
+        }
         r.order = this.seq(); // to the tail
         const claimWait = CLAIM_REASONS.includes(outcome.code);
         const reasonCodes = claimWait || outcome.code === 'NATIVE_NOT_ADMITTED' ? reasonCodeList(outcome.reasonCodes, outcome.code) : [];

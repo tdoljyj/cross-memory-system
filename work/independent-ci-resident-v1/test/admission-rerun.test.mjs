@@ -6,7 +6,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { AdmissionRerunState, AdmissionRerunner, HEAD_RECHECK_MS, candidateHeads, decide, ghPort } from '../src/admission-rerun.mjs';
 import { withRerunLine } from '../src/pr-status.mjs';
-import { parseDutyStatus } from '../src/node-duty.mjs';
 import { tempRoot } from './helpers.mjs';
 import { gate, resolvePublicSupabaseConfig } from '../../../scripts/ci/clued-work-admission.mjs';
 import { decide as hookDecide, decideWithCurrentEpoch } from '../../../scripts/runner/clued-runner-job-started.mjs';
@@ -863,18 +862,14 @@ test('the gh port: fixed argv, the routes it builds, paging; a non-zero exit or 
   await assert.rejects(gh.get('/../x'), { code: 'ADMISSION_RERUN_ROUTE_REFUSED' });
 });
 
-test('the PR page says the required tests were re-run once, in the base text: the duty word another node reads stays first', () => {
+test('the PR page says the required tests were re-run once, in the base text', () => {
   const want = { state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布', kind: 'result' };
   assert.deepEqual(withRerunLine(want, true), { ...want, description: '已自动补跑一次必需测试；已完成：常驻执行器跑完八段，检查已发布' });
   assert.equal(withRerunLine(want, false), want);
   assert.equal(withRerunLine(null, true), null);
   assert.equal(withRerunLine({ ...want, weak: true }, true).description, want.description, 'a generic text gets none');
-  // the reporter applies it to describe's text; NodeDuty then prefixes the duty word
   const base = withRerunLine({ state: 'pending', description: '运行中：第 3 段（扫描）' }, true);
-  for (const word of ['当班', '已交班', '双活停机']) {
-    const s = { login: 'owner', context: 'resident-queue/node-b (info only)', created_at: '2026-11-05T12:00:00Z', description: `${word}：${base.description}` };
-    assert.equal(parseDutyStatus(s, 'owner')?.word, word, word);
-  }
+  assert.equal(base.description, '已自动补跑一次必需测试；运行中：第 3 段（扫描）');
 });
 
 test('earlier re-runs by hand that ran nothing still leave the one automatic repair, as the gate itself allows', async t => {

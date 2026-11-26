@@ -32,7 +32,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { NODE_NAME } from './node-duty.mjs';
+import { NODE_NAME, operationalIntakePause } from './node-duty.mjs';
 
 // The CI command door (clued_work_verify_v1 -> work_claim_ci_command_v1) and its heartbeat action.
 export const HEARTBEAT_RPC = 'clued_work_verify_v1';
@@ -79,13 +79,14 @@ export function heartbeatPayload({ nodeName, scope, status, statusError = false,
   const readable = fresh && running;
   let state = 'UNKNOWN', halt = null, intakeUntil = null;
   if (readable) {
+    const intakePause = operationalIntakePause(status.intakePause);
     if (status.halt) {
       state = 'HALTED';
       halt = { code: CODE.test(status.halt.code ?? '') ? status.halt.code : 'HALTED', at: iso(status.halt.at),
         pr: Number.isSafeInteger(status.current?.pr) ? status.current.pr : null, headSha: HEX40.test(status.current?.headSha ?? '') ? status.current.headSha : null };
     } else if (status.paused) state = 'PAUSED';
-    else if (status.intakePause) {
-      intakeUntil = iso(status.intakePause.until);
+    else if (intakePause) {
+      intakeUntil = iso(intakePause.until);
       // An intake pause without a readable end cannot be reported as one (the server needs its end): UNKNOWN, so the server
       // judges by the last readable report.
       state = intakeUntil ? 'INTAKE_PAUSED' : 'UNKNOWN';
@@ -195,9 +196,6 @@ export class CompanionHeartbeat {
     Object.assign(this, ports);
     this.lastSentAt = null; this.lastFingerprint = null; this.failures = 0; this.failingSince = null; this.watchdogStale = false; this.unregisteredSince = null;
     this.connectionOnlySince = null; this.notReadySince = null; this.nodeBindingId = null; this.viaLink = null;
-    // ADR 0026: when the watchdog last handed ci-admission to this node (ms, server time), or null. The take-over check
-    // (node-duty.mjs) does not hold back for duty statements written before it: the server had found their writer silent.
-    this.autoHandoverSince = null;
   }
 
   async step() {
@@ -261,10 +259,6 @@ export class CompanionHeartbeat {
       await this.say(`watchdog-stale:${r.watchdogTickAt ?? 'never'}`, '自动接班看门狗未运行', `服务端看门狗${r.watchdogTickAt !== null ? `自 ${iso(r.watchdogTickAt)} 起` : ''}没有运行（超过 5 分钟）：失联的节点不会被自动交出。请检查 KooYomi 的 pg_cron 作业 clued-ci-admission-failover。`);
     }
     // The server lists only take-overs to this node's connection.
-    for (const h of r.autoHandovers ?? []) {
-      const created = Date.parse(h.createdAt ?? '');
-      if (Number.isFinite(created) && !(this.autoHandoverSince >= created)) this.autoHandoverSince = created;
-    }
     for (const h of r.autoHandovers ?? []) await this.relayHandover(h);
     return { sent: true, payload, watchdogStale: this.watchdogStale, autoHandovers: r.autoHandovers ?? [], nodeBindingId: this.nodeBindingId, viaLink: this.viaLink };
   }

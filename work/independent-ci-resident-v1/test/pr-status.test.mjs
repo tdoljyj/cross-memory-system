@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { COMPARE_TIMEOUT_MS, MAX_COMPARES_PER_PASS, Poller, upToDate } from '../src/poller.mjs';
 import { ADVISORY_TIMEOUT_MS, LocalStore, PASS_BUDGET_MS, POST_RETRY_MS, PrStatusReporter, contextFree, contextShapeSafe, describe, events, toastArgv, validateStatusConfig } from '../src/pr-status.mjs';
-import { nodeContext, parseDutyStatus, standbyContext } from '../src/node-duty.mjs';
+import { nodeContext, standbyContext } from '../src/node-duty.mjs';
 // Task 9cac75be A3: no default node; these reporters are the node named node-b (node: 'node-b').
 const PR_STATUS_CONTEXT = nodeContext('node-b');
 
@@ -436,7 +436,7 @@ test('C5: the node writes its own context on its own commits; duty texts are wri
   assert.equal((await reporter.pass({ pulls, status: standby })).posted, 0, 'once');
 });
 
-test('C5: another node on duty locks this one: the dual-active hold goes into requests\\, its commits say 双活停机; both contexts are checked against the rules', async t => {
+test('legacy dual-active memory is pruned and own status is replaced; both contexts still pass the rules check', async t => {
   const root = await tempRoot(t);
   let now = Date.parse('2026-10-23T06:00:00Z');
   const requests = [];
@@ -453,19 +453,26 @@ test('C5: another node on duty locks this one: the dual-active hold goes into re
   };
   const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
   const store = await LocalStore.open(path.join(root, 's.json'), () => now);
-  const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store, writeRequest: async v => { requests.push(v); } });
+  store.data.node.lock = { other: 'company-01', heads: [H(7)] };
+  store.data.node.probeAt = now - 30_000;
+  store.data.posted[H(7)] = { kind: 'dual', context: 'resident-queue/node-b (info only)', state: 'error',
+    description: '双活停机：另一节点也在当班', at: new Date(now - 30_000).toISOString(), n: 1 };
+  await store.save();
+  const reopened = await LocalStore.open(store.file, () => now);
+  const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: reopened, writeRequest: async v => { requests.push(v); } });
   const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }, { pr: 9, headSha: H(9), eligible: true, hint: null, behindBy: 0 }];
   const node = { name: 'node-b', mode: 'ACTIVE', probe: { at: new Date(now - 30_000).toISOString(), result: 'held', failures: 0, failingSince: null } };
   const status = boardStatus(b => { b.setState('IDLE'); b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node }); b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, position: 1 }]); }, now);
-  const r = await reporter.pass({ pulls, status });
-  assert.equal(requests.length, 1);
-  assert.deepEqual([requests[0].contract, requests[0].holder], ['clued.independent-ci.resident-intake-pause/1', 'dual-active']);
-  assert.ok(r.toasts >= 1, 'the Owner is told');
-  assert.match(calls.filter(a => a.includes('POST') && a.includes(`repos/${REPO}/statuses/${H(7)}`)).at(-1).find(a => a.startsWith('description=')), /^description=双活停机：另一节点 company-01 也在当班/);
-  // the lock survives a companion restart (the reporter's own store)
+  await reporter.pass({ pulls, status });
+  assert.equal(requests.length, 0);
+  assert.equal(calls.some(a => a[4]?.includes('/statuses?')), false);
+  assert.match(calls.filter(a => a.includes('POST') && a.includes(`repos/${REPO}/statuses/${H(7)}`)).at(-1).find(a => a.startsWith('description=')), /^description=当班：/);
+  const persisted = JSON.parse(await fs.readFile(store.file, 'utf8'));
+  assert.equal(Object.hasOwn(persisted.node, 'lock'), false);
+  assert.equal(Object.hasOwn(persisted.node, 'probeAt'), false);
   const again = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now),
     writeRequest: async v => { requests.push(v); } });
-  assert.equal(again.store.data.node.lock.other, 'company-01');
+  assert.equal(again.store.data.posted[H(7)].kind, 'duty');
   // either context among the required checks: nothing is written, the Owner is told which
   required = [...REQUIRED, standbyContext('node-b')];
   now += 31 * 60_000;
@@ -516,7 +523,7 @@ test('ADR 0028: a STANDBY writes no reminder under resident-standby/<node>; one 
   assert.deepEqual(store.data.node.standby, {});
 });
 
-test('C5 review: notifications before the duty reads; a pass whose duty fails writes nothing; refreshes stop at 900', async t => {
+test('HALT notices precede GitHub reads; a failed role projection writes nothing; refreshes stop at 900', async t => {
   const root = await tempRoot(t);
   let now = Date.parse('2026-10-23T06:00:00Z');
   const calls = [];
@@ -532,10 +539,11 @@ test('C5 review: notifications before the duty reads; a pass whose duty fails wr
   const node = { name: 'node-b', mode: 'ACTIVE', probe: { at: new Date(now - 30_000).toISOString(), result: 'held', failures: 0, failingSince: null } };
   const halted = boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node, halt: { code: 'X_Y', at: '2026-10-23T05:59:00Z' } }); }, now);
   await reporter.pass({ pulls: [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }], status: halted });
-  const toastAt = calls.findIndex(a => a.includes('-EncodedCommand')), readAt = calls.findIndex(a => a[4]?.includes('/statuses?'));
-  assert.ok(toastAt >= 0 && readAt > toastAt, 'the HALT toast before any status read (review M4)');
+  const toastAt = calls.findIndex(a => a.includes('-EncodedCommand')), readAt = calls.findIndex(a => a.some(x => x.includes('/rules/branches/main')));
+  assert.ok(toastAt >= 0 && readAt > toastAt, 'the HALT toast precedes the rules read');
+  assert.equal(calls.some(a => a[4]?.includes('/statuses?')), false);
   // m1: the duty throws: no PR page write at all this pass (never under a fallback name)
-  reporter.duty.prepare = async () => { throw new Error('bad memory'); };
+  reporter.duty.prepare = () => { throw new Error('bad memory'); };
   const posts = () => calls.filter(a => a.includes('POST')).length;
   const before = posts();
   now += 60_000;
@@ -673,8 +681,7 @@ test('HALT: the node on duty writes 执行器已停机（码） on every eligibl
   const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now), notifications: false, writeRequest: async () => {} });
   await reporter.pass({ pulls, status: halted('ACTIVE') });
   assert.deepEqual(written(), [[H(4), 'error', PR_STATUS_CONTEXT, TEXT], [H(5), 'error', PR_STATUS_CONTEXT, TEXT]]);
-  // It is no duty word: another node never reads it as on duty, and it is not written again while unchanged.
-  assert.equal(parseDutyStatus({ context: PR_STATUS_CONTEXT, description: TEXT, created_at: new Date(now).toISOString(), login: 'tdoljyj' }, 'tdoljyj').word, null);
+  assert.doesNotMatch(TEXT, /^(当班|停摆|已交班)/);
   now += 20 * 60_000;
   await reporter.pass({ pulls, status: halted('ACTIVE') });
   assert.equal(written().length, 2, 'not refreshed');
@@ -724,7 +731,7 @@ test('HALT rows end after the reset: rewritten non-error on every still-open hea
     const rows = written().slice(2);
     assert.equal(rows.length, 1, `${after}: ${JSON.stringify(rows)}`);
     assert.deepEqual(rows[0].slice(0, 3), [H(4), 'success', PR_STATUS_CONTEXT], after);
-    assert.equal(parseDutyStatus({ context: PR_STATUS_CONTEXT, description: rows[0][3], created_at: new Date(now).toISOString(), login: 'tdoljyj' }, 'tdoljyj').word, null, 'no duty word');
+    assert.doesNotMatch(rows[0][3], /^(当班|已交班)/);
     assert.doesNotMatch(rows[0][3], /运行中|排队|已完成|停机|停摆/, 'not read by the panel as progress, HALT or stall');
     now += 20 * 60_000;
     await reporter.pass({ pulls: open, status: board(after, false) });

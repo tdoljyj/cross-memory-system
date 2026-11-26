@@ -7,7 +7,7 @@ import path from 'node:path';
 import { RunQueue } from '../src/queue.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { LocalStore, POST_RETRY_MS, PrStatusReporter, WATCHDOG_STALE_TEXT, describe, events, heldPullsAfterPoll, statusSignature } from '../src/pr-status.mjs';
-import { nodeContext, parseDutyStatus } from '../src/node-duty.mjs';
+import { nodeContext } from '../src/node-duty.mjs';
 import { rulesReply, tempRoot } from './helpers.mjs';
 
 const MIN = 60_000;
@@ -134,7 +134,7 @@ test('review round 4: the reporter puts the re-run line after the duty word and 
   assert.equal((await reporter.pass({ pulls: [{ pr: 998, headSha: H(6), eligible: true, hint: null, behindBy: 0 }], status })).posted, 1);
   assert.match(posted[0], /^当班：已自动补跑一次必需测试；运行中：第 3 段/);
   assert.ok(posted[0].endsWith(WATCHDOG_STALE_TEXT), posted[0]);
-  assert.equal(parseDutyStatus({ login: 'owner', context: nodeContext('node-b'), created_at: new Date(T0).toISOString(), description: posted[0] }, 'owner')?.word, '当班');
+  assert.match(posted[0], /^当班：/);
 });
 
 test('review round 20: a network back-off whose time came and that a per-row deferral holds says the deferral, not the network and a passed time', async t => {
