@@ -79,6 +79,13 @@ test('a merge of main into an authorized head keeps the authorization, only by t
       .catch(e => ({ status: 'error', error: e.message }));
     const release = r => call('holder', 'clued_work_release_v1', { scope: 'global', claim_id: r.claim.claim_id,
       fence: r.claim.fence, lease_key: r.lease_key, outcome: 'completed', evidence_ref: 'fixture:' + uuid() });
+    const releaseHeld = async r => {
+      const result = await release(r);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'work_claim_release_pr_open']);
+      await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '1 hour',
+        expires_at=clock_timestamp()+interval '1 hour' where claim_id=$1`, [r.claim.claim_id]);
+      return release(r);
+    };
     const lease = async r => (await admin.query('select fence,lease_version,expires_at,hard_deadline_at from clued_private.work_claims_v1 where claim_id=$1',
       [r.claim.claim_id])).rows[0];
     // A front: the holder authorized head H of PR n, the CI admitted it (which binds the PR to the Task).
@@ -113,7 +120,7 @@ test('a merge of main into an authorized head keeps the authorization, only by t
       assert.equal(committed(await carry('ci', 11, H, X)).replayed, true);
       committed(await carry('ci', 11, X, sha('3')));
       assert.equal((await resolve(11, sha('3'))).binding_status, 'bound');
-      committed(await release(r));
+      committed(await releaseHeld(r));
       assert.notEqual((await resolve(11, X)).binding_status, 'bound', 'released with its claim');
     });
 
@@ -130,7 +137,7 @@ test('a merge of main into an authorized head keeps the authorization, only by t
         assert.equal((await carry('ci', 12, H, X, bad)).status, 'error', JSON.stringify(bad));
       }
       assert.equal((await resolve(12, X)).binding_status, 'head_not_authorized');
-      committed(await release(r));
+      committed(await releaseHeld(r));
       assert.equal((await carry('ci', 12, H, X)).status, 'rejected', 'a released claim carries nothing');
     });
 
@@ -147,7 +154,7 @@ test('a merge of main into an authorized head keeps the authorization, only by t
 
     await t.test('an unbound PR is bound and its main merge authorized from the one holder-authorized source Task', async sub => {
       const H = sha('a'), r = await claim(await task());
-      sub.after(async () => committed(await release(r)));
+      sub.after(async () => committed(await releaseHeld(r)));
       const source = committed(await authorize(r, H));
       for (const [number, M, scope] of [[31, sha('c'), 'global'], [34, sha('b'), undefined]]) {
         assert.equal(await bindingStatus(number), undefined);
@@ -211,7 +218,7 @@ test('a merge of main into an authorized head keeps the authorization, only by t
       assert.equal(bound.head_authorization_id, carried.authorization_id);
       assert.equal(bound.auto_bound, true);
       assert.equal(await bindingStatus(21), 'active');
-      committed(await release(r));
+      committed(await releaseHeld(r));
     });
 
     await t.test('T1b: a closed or merged relation still carries nothing and still reads as no live claim', async () => {
@@ -240,7 +247,7 @@ test('a merge of main into an authorized head keeps the authorization, only by t
       }
       assert.equal(await bindingStatus(24), 'unknown', 'only the CI write resolve activates a relation');
       assert.deepEqual(await writes(), before, 'no receipt, authorization or head meter');
-      committed(await release(r));
+      committed(await releaseHeld(r));
     });
 
     await t.test('T1d: a read-only resolve of an unauthorized head of an unknown relation names the claim', async () => {
@@ -252,7 +259,7 @@ test('a merge of main into an authorized head keeps the authorization, only by t
       }
       assert.equal(await bindingStatus(25), 'unknown');
       assert.deepEqual(await writes(), before);
-      committed(await release(r));
+      committed(await releaseHeld(r));
     });
   } finally {
     for (const c of clients.reverse()) await c.end().catch(() => {});

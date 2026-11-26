@@ -148,6 +148,7 @@ const AUTHORIZATION_DB_TESTS = [
   'drill-test-sync-db',
   // Repository paths are exclusive until delivery: a claim with a live head authorization does not block another (20261124160000).
   'work-claims-delivered-paths-db',
+  'work-claims-release-pr-open-db',
 ].map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
 // What those tests read besides the migrations: their shared test helpers, the worker code some of them bundle, the
 // Resource Center host and policy modules, the context compiler and the vendored Information Flow and DatasetSplit

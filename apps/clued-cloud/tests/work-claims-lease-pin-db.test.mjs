@@ -79,6 +79,13 @@ test('a PR-authorized claim lives as long as its PR, never past the hard deadlin
       action: 'resolve_pr_claim', pr_ref: `${repo}#${number}`, head_sha: head, base_sha: 'b'.repeat(40), target_branch: 'main', ...extra });
     const release = r => call('holder', 'clued_work_release_v1', { scope: r.claim.context_key, claim_id: r.claim.claim_id,
       fence: r.claim.fence, lease_key: r.lease_key, outcome: 'completed', evidence_ref: 'fixture:' + uuid() });
+    const releaseHeld = async r => {
+      const result = await release(r);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'work_claim_release_pr_open']);
+      await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '1 hour',
+        expires_at=clock_timestamp()+interval '1 hour' where claim_id=$1`, [r.claim.claim_id]);
+      return release(r);
+    };
     const counts = async () => {
       const present = (await admin.query("select to_regclass('clued_private.work_claim_pr_task_bindings_v1') present")).rows[0].present;
       const bindings = present ? (await admin.query('select count(*)::int n from clued_private.work_claim_pr_task_bindings_v1')).rows[0].n : 0;
@@ -118,7 +125,7 @@ test('a PR-authorized claim lives as long as its PR, never past the hard deadlin
       const r=await claim(await task()),head='3'.repeat(40);await admitted(r,7,head);
       const x=await call('ci','clued_work_verify_v1',{action:'lease_extend',scope:'global',pr_ref:repo+'#7',head_sha:head,minutes:180});
       assert.equal(x.extended,false,JSON.stringify(x));assert.equal(await ciReceipts(r),0);
-      committed(await release(r));
+      committed(await releaseHeld(r));
     });
     await t.test('nobody but the holder pins, and a workflow dispatch authorization does not pin',async()=>{
       const r=await claim(await task()),before=await lease(r);
