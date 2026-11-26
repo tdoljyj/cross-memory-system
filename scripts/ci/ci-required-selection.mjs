@@ -188,7 +188,11 @@ export const SUITES = {
     'reinstall-python': RESIDENT_AND_SOURCE,
     'offline-drill': RESIDENT_AND_SOURCE,
     'source-v2-node': [...RESIDENT_AND_SOURCE, 'apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
-      'apps/clued-cloud/supabase/migrations/*_ci_connection_self_v1.sql', 'apps/clued-cloud/tests/ci-connection-self-db.test.mjs'],
+      'apps/clued-cloud/supabase/migrations/*_ci_connection_self_v1.sql', 'apps/clued-cloud/tests/ci-connection-self-db.test.mjs',
+      // 列车端到端测试按需加载隔离数据库夹具及其依赖。
+      'apps/clued-cloud/tests/ci-scheduling-stage1-fixture.mjs', 'apps/clued-cloud/tests/cluster-cleanup.mjs',
+      'apps/clued-cloud/tests/merge-train-v2-db.fixture.mjs', 'apps/clued-cloud/tests/pg-cluster-fixture.mjs',
+      'apps/clued-cloud/tests/raw-binding-grants-fixture.mjs', 'apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs'],
     'source-v2-python': RESIDENT_AND_SOURCE,
     'components': ['scripts/clued_components.py', 'scripts/hooks/**', 'skills/**', 'integrations/**',
       'config/clued-components.json', 'tests/test_clued_components.py', 'tests/test_clued_version_check.py',

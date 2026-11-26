@@ -45,7 +45,6 @@ apps/clued-cloud/tests/ci-scan-start-batch-key-db.test.mjs
 apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs
 apps/clued-cloud/tests/ci-scheduling-stage1-db.test.mjs
 apps/clued-cloud/tests/ci-scheduling-stage1-effects-db.test.mjs
-apps/clued-cloud/tests/ci-scheduling-stage1-fixture.mjs
 apps/clued-cloud/tests/ci-scheduling-stage1-ui.test.mjs
 apps/clued-cloud/tests/ci-scheduling-stage1-worker.test.mjs
 apps/clued-cloud/tests/ci-scheduling-t2a2-db.test.mjs

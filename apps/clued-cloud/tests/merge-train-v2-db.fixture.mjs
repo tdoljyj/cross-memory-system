@@ -37,6 +37,7 @@ export async function mergeTrainTestDatabase(t, { repository, nodeCount = 2 }) {
     return Response.json(await rpc(target.pathname.split('/').at(-1), tokenHash, input));
   };
 
+  // raw-binding-grants: schedulingFixture 已安装授权触发器，会为每个新插入的节点 Binding 授予测试权限。
   const nodes = [];
   for (let index = 0; index < nodeCount; index++) {
     const name = `fixture-${index + 1}`;
