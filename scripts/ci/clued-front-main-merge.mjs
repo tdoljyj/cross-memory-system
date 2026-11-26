@@ -77,6 +77,9 @@ import { ADMISSION_APP_ID, APP_CHECK_NAME, INDEPENDENT_ADMISSION_APP_ID, INDEPEN
 import { appRequest } from './clued-managed-auto-merge.mjs';
 import { resolveMode } from './merge-admission-policy.mjs';
 import { sixPinned } from '../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
+import { DUTY_WINDOW_MS, dutyNow, parseDutyStatus } from '../../work/independent-ci-resident-v1/src/node-duty.mjs';
+import { WATCHDOG_STALE_TEXT } from '../../work/independent-ci-resident-v1/src/pr-status.mjs';
+import { WOULD_DO, trainPageLine } from '../../work/independent-ci-resident-v1/src/train.mjs';
 
 export const FRONT_MERGE_PERMISSIONS = Object.freeze({ contents: 'write', pull_requests: 'write', checks: 'write' });
 // update-branch with a main that changed a workflow file needs workflows: write (FABLE-scaffold-s5-pre §3). It is asked for only
@@ -115,14 +118,83 @@ const WITHDRAWN = 'Independent CI check withdrawn', STOPPED = '已停止';
 const residentHeld = status => String(status?.context ?? '').startsWith(RESIDENT_STATUS_CONTEXT_PREFIX) && heldPartOf(status?.description) !== null;
 const residentInfo = status => /^resident-queue\/[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])? \(info only\)$/.test(status?.context ?? '');
 const REFUSED_STATE = '准入拒绝待修（PATHS_OUTSIDE_WRITE_SET）';
-// pr-status.mjs writes the retry text under a duty prefix and the exhausted result without it (node-duty.mjs).
-function residentRefused(status) {
-  if (!residentInfo(status)) return false;
-  if (status.state === 'pending') {
-    return /^当班：(?:未准入或未执行|等待中)（PATHS_OUTSIDE_WRITE_SET）：(?:约 \d{2}:\d{2}Z? |当前批次结束后|即将)自动重试(?:（第 \d+ 次）|[，；])/u.test(status.description);
+const UNVERIFIED_REFUSAL_STATE = '准入拒绝状态待核实（PATHS_OUTSIDE_WRITE_SET）';
+// pr-status.mjs#describe and #withRerunLine, #withCapacityLine and #withWatchdogLine.
+const RETRY_TEXT = /^当班：(未准入或未执行|等待中)（PATHS_OUTSIDE_WRITE_SET）：(?:约 (?:[01]\d|2[0-3]):[0-5]\dZ |当前批次结束后|即将)自动重试(.*)$/u;
+const BACKOFF_TAIL = /^（第 [1-9]\d* 次），修正后编辑 PR 可提前$/u;
+const EXHAUSTED_TEXT = '24 小时内已多次未准入或未执行（PATHS_OUTSIDE_WRITE_SET）：请修正后推新提交';
+const RERUN_LINE = /^(?:已自动补跑一次必需测试|已自动补跑一次带门运行（运行 \d+，不属必需检查）|必需测试没有运行，(?:已自动补发一次|自动补发结果不确定|自动补发未成功)|必需测试被跳过（推送者非 Owner），已自动补发一次|必需测试被跳过，自动补发结果不确定)$/u;
+const CAPACITY_LINE = /^节点资源红线(?:（(?:暂停接新批|[A-Za-z0-9._-]{1,64} (?:[A-Z]:(?: 剩 -?\d+(?:\.\d+)? GB)?，暂停接新批|Linux runner 已停))）)?$/u;
+const SHADOW_LINES = new Set(WOULD_DO.map(wouldDo => trainPageLine({ mode: 'shadow', wouldDo, front: { pr: 1 } }, 1)).filter(Boolean));
+
+function residentBody(description) {
+  if (typeof description !== 'string' || description.length > 140 || /[\r\n…]/u.test(description)) return '';
+  const parts = description.split('；');
+  const onDuty = parts[0].startsWith('当班：');
+  if (onDuty) parts[0] = parts[0].slice('当班：'.length);
+  if (parts.at(-1) === WATCHDOG_STALE_TEXT) parts.pop();
+  if (CAPACITY_LINE.test(parts.at(-1))) parts.pop();
+  if (SHADOW_LINES.has(parts[0])) parts.shift();
+  else if (SHADOW_LINES.has(parts.at(-1))) parts.pop();
+  if (RERUN_LINE.test(parts[0])) parts.shift();
+  return parts.length === 1 ? `${onDuty ? '当班：' : ''}${parts[0]}` : '';
+}
+
+function refusalLike(status) {
+  return ['pending', 'failure'].includes(status.state) && /(?:未准入或未执行|等待中)（PATHS_OUTSIDE_WRITE_SET）/u.test(status.description);
+}
+
+function confirmedRefusalBody(state, body) {
+  if (state === 'failure') return body === EXHAUSTED_TEXT;
+  const retry = RETRY_TEXT.exec(body);
+  if (!retry) return false;
+  return retry[1] === '等待中' ? retry[2] === '，批准或修正后编辑 PR 可提前' : BACKOFF_TAIL.test(retry[2]);
+}
+
+const positionHint = status => status.state === 'pending' && heldPartOf(status.description)?.hint === 'merge-main';
+
+// GitHub gives the newest records first, including those with the same creation time.
+function latestByContext(statuses) {
+  const contexts = new Map();
+  for (const status of statuses) if (!contexts.has(status.context)) contexts.set(status.context, status);
+  return contexts;
+}
+
+function residentRefusal(statuses, ownerLogin, now) {
+  const resident = statuses.filter(residentInfo);
+  const visible = latestByContext(resident);
+  // The resident companion publishes as the Owner of this repository (node-duty.mjs#ownerLogin).
+  const duty = status => parseDutyStatus({ ...status, login: status.creator?.login }, ownerLogin);
+  const expiredDual = status => {
+    const seen = duty(status);
+    return status.state === 'error' && seen?.word === '双活停机' && now - seen.at > DUTY_WINDOW_MS;
+  };
+  // The poller's merge-main hint describes position. Keep the last substantive status on that exact head and context.
+  const reports = [...latestByContext(resident.filter(status => !positionHint(status))).values()].filter(status => !expiredDual(status));
+  const report = reports.find(refusalLike);
+  if (!report) return null;
+  const trusted = status => (duty(status)?.at ?? Infinity) <= now;
+  const onDuty = status => dutyNow(duty(status), now);
+  const verified = status => trusted(status) && (status.state === 'failure' || onDuty(status))
+    && confirmedRefusalBody(status.state, residentBody(status.description));
+  const inactive = new Set([...visible.values()].filter(status => refusalLike(status) && verified(status)));
+  const newest = reports[0];
+  if (newest !== report) {
+    // A newer report from the publisher can supersede the refusal across a handover.
+    const body = residentBody(newest.description);
+    const completed = newest.state === 'success' && body === '已完成：常驻执行器跑完八段，检查已发布';
+    const resumed = newest.state === 'pending' && onDuty(newest) && /^当班：(运行中|排队中|排队第 \d+ 位)/u.test(body);
+    return { inactive, confirmed: trusted(newest) && (completed || resumed) ? null : false };
   }
-  return status.state === 'failure'
-    && /^24 小时内已多次未准入或未执行（PATHS_OUTSIDE_WRITE_SET）：请修正后推新提交/u.test(status.description);
+  const conflictingDuty = [...visible.values()].some(status => {
+    if (status.context === report.context) return false;
+    const other = duty(status);
+    if (dutyNow(other, now)) return true;
+    return status.state === 'error' && String(status.description ?? '').startsWith('双活停机：') && !expiredDual(status);
+  });
+  const latest = visible.get(report.context), body = residentBody(latest.description);
+  const knownHint = heldPartOf(body)?.text === body;
+  return { inactive, confirmed: verified(report) && !conflictingDuty && (latest === report || (trusted(latest) && knownHint)) };
 }
 const TRAIN_QUERY = 'query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){defaultBranchRef{name} '
   + 'pullRequests(states:OPEN,first:100,after:$after){pageInfo{hasNextPage endCursor} '
@@ -144,30 +216,45 @@ export async function frontMergeToken({ env, fetchImpl, now = () => Date.now(), 
   return { token: null, reason: `the clued-admission App token with ${Object.entries(permissions).map(([k, v]) => `${k}: ${v}`).join(', ')} was refused (HTTP ${minted.status})` };
 }
 
-// One list of a head (body[key], 100 a page) read to the end: GitHub says how many there are (total_count). A list that
-// goes on past PAGES pages, or stops short of its count, is not known in full: what is still under way may be in the rest.
+// One list of a head (100 a page) read to the end. Object responses carry total_count; a plain list ends with a short page.
+// A list that goes on past PAGES pages, or stops short of its count, is not known in full.
 async function listedInFull(fetchImpl, env, route, key, what) {
   const items = [];
   for (let page = 1; ; page++) {
     const body = await githubJson(fetchImpl, env, `${route}${route.includes('?') ? '&' : '?'}per_page=100&page=${page}`);
-    if (!Array.isArray(body?.[key])) throw new Error(`${what} could not be read`);
-    items.push(...body[key]);
-    if (!(Number(body.total_count) > items.length)) return items;
-    if (body[key].length === 0 || page === PAGES) throw new Error(`${what}: ${items.length} of ${body.total_count} read, not known in full`);
+    const batch = key === null ? body : body?.[key];
+    if (!Array.isArray(batch)) throw new Error(`${what} could not be read`);
+    items.push(...batch);
+    if (key === null ? batch.length < 100 : !(Number(body.total_count) > items.length)) return items;
+    if (batch.length === 0 || page === PAGES) {
+      const count = key === null ? '' : ` of ${body.total_count}`;
+      throw new Error(`${what}: ${items.length}${count} read, not known in full`);
+    }
   }
 }
 
 // What ran on one head, as the ruleset reads it: for each required check (context, integration_id) the newest check run of that
 // name from the App it is pinned to (any App when unpinned), and for an unpinned one also the newest status of its context. A
 // pinned one never reads a status: the status API does not say who posted it (gate-leak 改法 2).
-async function headRecords({ env, fetchImpl, repository, head, required, admitters }) {
+async function headRecords({ env, fetchImpl, repository, head, required, admitters, now }) {
   const runs = await githubPaged(fetchImpl, env, `/repos/${repository}/commits/${head}/check-runs`, 'check_runs');
-  const statuses = await listedInFull(fetchImpl, env, `/repos/${repository}/commits/${head}/status`, 'statuses', `the statuses of ${head}`);
-  const contexts = new Map();
+  const commitRoute = `/repos/${repository}/commits/${head}`;
+  const combined = await listedInFull(fetchImpl, env, `${commitRoute}/status`, 'statuses', `the statuses of ${head}`);
+  let statuses = combined;
+  let refusal = null;
+  if (combined.some(status => residentInfo(status) && (refusalLike(status) || positionHint(status)))) {
+    // The combined status omits creators and can hide the status the position hint replaced.
+    statuses = await listedInFull(fetchImpl, env, `${commitRoute}/statuses`, null, `the status history of ${head}`);
+    if (!combined.every(latest => statuses.some(status => status.id === latest.id && status.context === latest.context
+      && status.created_at === latest.created_at && status.state === latest.state && status.description === latest.description))) {
+      throw new Error(`the statuses and status history of ${head} disagree`);
+    }
+    refusal = residentRefusal(statuses, repository.split('/')[0], now());
+  }
+  const contexts = latestByContext(statuses);
   const newer = (a, b) => String(a.started_at ?? '') > String(b.started_at ?? '') || (a.started_at === b.started_at && Number(a.id) > Number(b.id));
   const newest = ({ context, integration_id, contains = false }) => runs.filter(run => (contains ? String(run.name ?? '').includes(context) : run.name === context)
     && (integration_id === null || Number(run.app?.id) === integration_id)).reduce((best, run) => (!best || newer(run, best) ? run : best), null);
-  for (const status of statuses) if (!contexts.has(status.context)) contexts.set(status.context, status);
   const withdrawn = run => String(run.output?.title ?? '').startsWith(WITHDRAWN);
   const stateOf = check => (check.integration_id === null ? contexts.get(check.context)?.state : undefined);
   const failed = [...new Set(required.filter(check => {
@@ -181,12 +268,12 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
   const green = required.every(isGreen);
   const hosted = required.filter(({ context, integration_id }) => context.startsWith(HOSTED_CHECK_PREFIX) && integration_id === GITHUB_ACTIONS_APP_ID);
   const scaffoldReady = env.CLUED_FRONT_MERGE_PHASE === SCAFFOLD_PHASE && hosted.length > 0 && hosted.every(isGreen) && failed.length === 0;
-  // GitHub lists newest statuses first. A newer resident report can supersede a refusal even across a handover.
+  const unverifiedRefusal = refusal?.confirmed === false;
   const latest = [...contexts.values()];
-  const activity = latest.filter(status => !residentHeld(status) && !residentRefused(status));
+  const activity = latest.filter(status => !residentHeld(status) && !refusal?.inactive.has(status));
   const unfinished = runs.filter(run => run.status !== 'completed').length
     + activity.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED)).length;
-  const refused = !green && !unfinished && !admitters.some(isGreen) && residentRefused(latest.find(residentInfo));
+  const refused = !green && !unfinished && !admitters.some(isGreen) && refusal?.confirmed === true;
   const by = (name, app) => succeeded(runs, name, app);
   // What each required check that is not green last did, as wait-pr's exit 5 lists it: a job GitHub skipped keeps its unexpanded
   // name ("... && 'ci-suites' || 'ci-suites-skipped'"), so the required name never appears: that is "job-skipped".
@@ -199,7 +286,7 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
   });
   const times = [...runs.map(run => run.completed_at ?? run.started_at), ...activity.map(status => status.updated_at ?? status.created_at)]
     .map(t => Date.parse(t ?? '')).filter(Number.isFinite);
-  return { failed, green, scaffoldReady, unfinished, refused, missing, lastActivity: times.length ? Math.max(...times) : 0, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID),
+  return { failed, green, scaffoldReady, unfinished, refused, unverifiedRefusal, missing, lastActivity: times.length ? Math.max(...times) : 0, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID),
     admitted: admitters.every(({ context, integration_id }) => by(context, integration_id)) };
 }
 
@@ -296,6 +383,7 @@ function behindVerdict(member, records, admitters) {
   if (member.mergeable === 'CONFLICTING') return { state: 'conflict', candidate: false };
   if (admissionRed(records, admitters)) return { state: red, candidate: false };
   if (records.refused) return { state: REFUSED_STATE, candidate: false };
+  if (records.unverifiedRefusal && !records.admitted) return { state: UNVERIFIED_REFUSAL_STATE, candidate: false };
   if (broughtNotPassed(records, admitters)) {
     const why = `${[...(records.failed.length ? [red] : []), ...(records.admitted ? [] : ['not admitted'])].join(', ')} on a head the App brought`;
     if (records.inARow === undefined) return { state: why, candidate: false };
@@ -344,11 +432,11 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   }
   let front = null;
   for (const member of train.filter(member => member.behind === 0)) {
-    const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
+    const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters, now });
     const running = workflowsActive(await headWorkflows({ env, fetchImpl, repository, head: member.head }));
     if (records.failed.length) { member.state = `red (${records.failed.join(', ')})`; continue; }
     if (records.refused && !running) { member.state = REFUSED_STATE; continue; }
-    const active = records.green || records.unfinished > 0 || running;
+    const active = records.green || records.unfinished > 0 || records.unverifiedRefusal || running;
     const idle = !active && now() - await appearedAt({ env, fetchImpl, repository, member }) >= IDLE_AFTER_MS;
     member.state = idle ? 'idle' : 'front';
     if (!idle) front ??= member;
@@ -357,7 +445,7 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   // In scaffold, consider earlier heads even when a later head contains main and has CI under way.
   const eligible = !front ? train : env.CLUED_FRONT_MERGE_PHASE === SCAFFOLD_PHASE ? train.slice(0, train.indexOf(front)) : [];
   for (const member of eligible.filter(member => member.behind > 0)) {
-    const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
+    const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters, now });
     if (records.refused && workflowsActive(await headWorkflows({ env, fetchImpl, repository, head: member.head }))) records.refused = false;
     const unread = await readInARow({ env, fetchImpl, repository, member, records, admitters });
     const verdict = behindVerdict(member, records, admitters);
@@ -377,7 +465,8 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
 // records.inARow of a head behind main the App brought that has not passed (nothing for any other head); the reason when GitHub
 // cannot be read (records.inARow left unset: that head is not brought this run, the rest goes on), else null.
 async function readInARow({ env, fetchImpl, repository, member, records, admitters }) {
-  if (member.mergeable === 'CONFLICTING' || records.refused || records.inARow !== undefined || !broughtNotPassed(records, admitters)) return null;
+  if (member.mergeable === 'CONFLICTING' || records.refused || (records.unverifiedRefusal && !records.admitted)
+    || records.inARow !== undefined || !broughtNotPassed(records, admitters)) return null;
   try {
     records.inARow = await broughtInARow({ env, fetchImpl, repository, head: member.head });
     return null;
@@ -432,8 +521,8 @@ export async function nameStalled({ env, fetchImpl, chosen, skip = new Set(), no
     if (skip.has(member.pr) || member.mergeable === 'CONFLICTING') continue;
     let missing = null;
     try {
-      const records = member.records ??= await headRecords({ env, fetchImpl, repository, head: member.head, required: chosen.required, admitters: chosen.admitters });
-      if (records.failed.length || records.green || records.unfinished > 0) continue;
+      const records = member.records ??= await headRecords({ env, fetchImpl, repository, head: member.head, required: chosen.required, admitters: chosen.admitters, now });
+      if (records.failed.length || records.green || records.unfinished > 0 || records.unverifiedRefusal) continue;
       // Behind main and a candidate: the train brings it up once there is no front, so something will move it (review 2fb32dc7 §5).
       // With a front chooseFront did not read how many in a row the App brought it: read here. Unread, a quiet head is not named
       // this run (whether the train brings it again is not known) and the run says so.
