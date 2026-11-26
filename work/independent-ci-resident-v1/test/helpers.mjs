@@ -111,13 +111,19 @@ export function fakeCompanion(script = {}, clock = () => Date.now()) {
   const calls = [];
   return {
     calls,
+    queuedHead: () => HEAD,
     async heartbeat() { return script.heartbeat === null ? null : { at: script.heartbeat ?? clock() }; },
     async buildBundle() { calls.push(['bundle']); return script.bundle ?? { ok: true }; },
     async prepareWorkspaces() { calls.push(['wsprep']); return script.wsprep ?? { ok: true }; },
     async linuxQuiescence() { calls.push(['quiescence']); return script.linux ?? { linuxUnitsInactive: true, containersZero: true }; },
     async archiveLinux(batch, reason) { calls.push(['archive-linux', reason]); return script.archiveLinux ?? { verified: true, directory: `failed-x-${reason}-111111111111` }; },
-    // Phase 2: the live PR read (script.pull(pr) -> { number, state, headSha } | null); none unless scripted.
-    async prHead(pr) { calls.push(['pr-head', pr]); return script.pull ? script.pull(pr) : null; },
+    // 队列读取默认看到对应的打开 PR。在途读回由需要它的测试显式模拟。
+    async prHead(pr, batch) {
+      calls.push(['pr-head', pr]);
+      if (script.pull) return script.pull(pr, batch);
+      const headSha = batch ? null : this.queuedHead(pr);
+      return headSha ? { number: pr, state: 'open', headSha } : null;
+    },
   };
 }
 
@@ -161,8 +167,9 @@ export async function executorFixture(t, { engine = fakeEngine(), companion, pol
   const inbox = await Inbox.open(path.join(root, 'inbox'), path.join(root, 'state', 'inbox-archive'));
   const requests = await Inbox.open(path.join(root, 'requests'), path.join(root, 'state', 'requests-archive'));
   const owner = await OwnerInbox.open(path.join(root, 'owner'), path.join(root, 'state', 'owner-seen'));
-  const comp = companion ?? fakeCompanion({}, clock);
   const queue = await RunQueue.open(path.join(root, 'state', 'queue'), clock);
+  const comp = companion ?? fakeCompanion({}, clock);
+  if (comp.queuedHead) comp.queuedHead = pr => queue.row(pr)?.current?.headSha ?? null;
   const ports = {
     policy: validatePolicy(policy), ledger, receipts, inbox, requests, owner, engine, companion: comp, clock, sleep, executedHeads, status, queue, statusFlush,
     sourceIntegrity: async () => integrity ?? { ok: true, sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT },

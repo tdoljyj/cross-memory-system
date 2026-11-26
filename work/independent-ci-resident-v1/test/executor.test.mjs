@@ -22,9 +22,7 @@ test('happy path: bundle, stage 1, start, workspaces, stages 2..8 once; the same
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
   assert.deepEqual(stagesRun(f.engine), [1, 2, 3, 4, 5, 6, 7, 8]);
-  // The fixture's companion has no answer: stage 1 is then not the batch's first live read (PLAN-resident-draft-batch-20261123 §2
-  // item 7), so its first safe point (before the workspace) reads once more.
-  assert.deepEqual(f.companion.calls.map(c => c[0]), ['pr-head', 'bundle', 'pr-head', 'wsprep'], 'one live PR read before the reservation, one at the first safe point');
+  assert.deepEqual(f.companion.calls.map(c => c[0]), ['pr-head', 'bundle', 'wsprep'], '首个安全点沿用已核实的 PR 答复');
   assert.equal((await f.ledger.state(keyFor())).outcome, 'COMPLETED');
   assert.equal(await f.ledger.headBurned(headKey(subject())), true);
   // The same head again: the run queue has seen it, nothing is reserved (phase 2).
@@ -92,10 +90,18 @@ test('a merged PR leaves the queue before it is reserved: no bundle, no stage, n
   assert.equal((await f.exec.tick()).state, 'IDLE', 'it is not tried again');
 });
 
-test('an open PR, or no answer from the live read, runs as before', async t => {
-  for (const pull of [pr => ({ number: pr, state: 'open', headSha: HEAD }), () => null]) {
-    const f = await executorFixture(t, { companion: fakeCompanion({ pull }) });
+test('普通行等待可验证的 PR 状态，缺答或无效答复不占用批次', async t => {
+  for (const unverified of [null, { number: 884, state: 'open' }, { number: 884, state: 'closed', headSha: 'invalid' },
+    { number: 885, state: 'merged', headSha: HEAD }, { number: 884, state: 'unknown', headSha: HEAD }]) {
+    let pull = unverified;
+    const f = await executorFixture(t, { companion: fakeCompanion({ pull: () => pull }) });
     await f.drop(triggerBytes());
+    assert.equal((await f.exec.tick()).reason, 'QUEUE_PR_STATUS_UNCONFIRMED');
+    assert.equal((await f.ledger.state(keyFor())).state, 'ABSENT');
+    assert.deepEqual(f.companion.calls, [['pr-head', 884]]);
+    assert.equal(f.queue.row(884).deferUntil, f.clock() + 10 * 60_000);
+    pull = { number: 884, state: 'open', headSha: HEAD };
+    f.advance(10 * 60_000);
     assert.equal((await f.exec.tick()).state, 'COMPLETED');
   }
 });

@@ -170,7 +170,7 @@ test('resting at A, turned draft: ended pr-draft at stage 1; ready again, it is 
 });
 
 // §3 item 6.
-test('no regression: no answer runs as before; an older reply without draft never holds; the read carries draft end to end', async t => {
+test('缺答时普通行等待，旧版无 draft 字段的答复保持兼容，draft 可经传输返回', async t => {
   const { prCandidate } = await import('../src/pr-candidate.mjs');
   const s = subject();
   assert.equal(prCandidate(null, s), null, 'no answer is no fact');
@@ -207,10 +207,14 @@ test('no regression: no answer runs as before; an older reply without draft neve
   f.advance(SUPERSEDE_LIVE_READ_MS);
   await f.exec.tick();
   assert.ok(Ledger.parkedAt(await f.ledger.state(KEY)), 'no draft fact: it stands');
-  // No answer before the reservation: the row runs (stage 1 decides), as before.
+  // 预留前缺答时保留该行，等读到完整答复再调度。
   const g = await field(t);
   g.prs[A].answer = false;
   await g.drop(triggerBytes());
+  assert.equal((await g.exec.tick()).reason, 'QUEUE_PR_STATUS_UNCONFIRMED');
+  assert.equal((await g.ledger.state(KEY)).state, 'ABSENT');
+  g.prs[A].answer = true;
+  g.advance(SUPERSEDE_LIVE_READ_MS);
   assert.equal((await g.exec.tick()).state, 'COMPLETED');
 });
 

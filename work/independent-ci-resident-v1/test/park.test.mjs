@@ -252,7 +252,9 @@ describe('parking: lifecycle and safe points', () => {
     const at8 = engine.runStage;
     const failing = new Set([batchKey(subject({ pr: 901, headSha: H(3) })), batchKey(subject({ pr: 902, headSha: H(6) })), batchKey(subject({ pr: 903, headSha: H(8) }))]);
     engine.runStage = async (batch, stage, o) => (failing.has(batch.key) && stage.number === 2 ? (engine.calls.push(['stage', 2]), { ok: false, code: 'STAGE_PACKAGE_REFUSED', proof: WINDOWS_CLEAN }) : at8(batch, stage, o));
-    const f = await executorFixture(t, { engine, companion: fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: pr === 884 ? H(7) : null }) }) });
+    const f = await executorFixture(t, { engine, companion: fakeCompanion({
+      pull: pr => ({ number: pr, state: 'open', headSha: pr === 884 ? H(7) : f.queue.row(pr).current.headSha }),
+    }) });
     await f.drop(triggerBytes());
     assert.equal((await f.exec.tick()).state, 'PARKED');
     for (const [n, h] of [[1, 3], [2, 6], [3, 8]]) { await f.drop(triggerBytes({ pr: 900 + n, headSha: H(h) })); assert.equal((await f.exec.tick()).state, 'FAILED_CLEAN'); }
