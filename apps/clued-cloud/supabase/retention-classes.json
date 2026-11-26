@@ -227,9 +227,17 @@
       "class": "ledger",
       "reason": "保留落地意图、唯一代次标记与核对回执，供主分支写入判明与成员接续"
     },
+    "clued_private.ci_train_landing_receipts_v2": {
+      "class": "ledger",
+      "reason": "保留已裁决的远端落地事实与原收据，供成员接续核对"
+    },
     "clued_private.ci_train_lease_v1": {
       "class": "state",
       "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
+    },
+    "clued_private.ci_train_member_receipts_v2": {
+      "class": "ledger",
+      "reason": "保留每个精确批成员的落地收尾及幂等回执"
     },
     "clued_private.ci_train_required_recovery_v2": {
       "class": "ledger",

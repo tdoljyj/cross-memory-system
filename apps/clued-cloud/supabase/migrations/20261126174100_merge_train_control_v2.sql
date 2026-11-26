@@ -515,6 +515,7 @@ create function clued_private.ci_train_batch_adopt_v2(n clued_private.ci_nodes_v
 declare
   member jsonb:=payload->'member'; target_pr text; c clued_private.work_claims_v1; current_head text; member_merge_sha text;
   scope text:='project:'||n.project_id; r uuid; pos bigint; answer jsonb; all_receipts jsonb; landed_receipt uuid;
+  adoption_state text:='adopted';
 begin
   select i into pos from jsonb_array_elements(batch.members) with ordinality m(x,i) where x=member;
   if not n.publisher_approved or not n.hardening_observed or pos is null or batch.state not in ('landed','completed')
@@ -527,13 +528,16 @@ begin
     where batch_id=batch.batch_id and state='settled' and effect_key=payload->>'effect_key';
   if landed_receipt is null then return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
   if batch.adoption_receipts ? (member->>'pr') then
-    return jsonb_build_object('status','committed','replayed',true,'receipt_id',batch.adoption_receipts->(member->>'pr')); end if;
+    r:=(batch.adoption_receipts->>(member->>'pr'))::uuid;
+    select metadata->>'state' into adoption_state from public.clued_audit_receipts where id=r;
+    return jsonb_build_object('status','committed','replayed',true,'receipt_id',r,'member',member,
+      'state',adoption_state,'completed',batch.state='completed');
+  end if;
   if pos=1 and jsonb_array_length(batch.members)-1<>(select count(*) from jsonb_object_keys(batch.adoption_receipts)) then
     return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
   target_pr:=repo||'#'||(member->>'pr');
   select * into c from clued_private.work_claims_v1 q where q.user_id=n.user_id and q.context_key=scope
-    and q.claim_id=(member->>'claimId')::uuid and q.fence=(member->>'fence')::bigint
-    and q.execution_epoch=(member->>'epoch')::bigint for update;
+    and q.claim_id=(member->>'claimId')::uuid for update;
   if c.claim_id is null then return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
   select a.head_sha into current_head from clued_private.work_claim_head_authorizations_v1 a
     where a.user_id=n.user_id and a.claim_id=c.claim_id and a.repository=repo and a.target_branch=batch.target_branch
@@ -543,10 +547,15 @@ begin
           and binding.pr_number=(member->>'pr')::bigint and binding.status in ('active','merged')))
       and a.execution_epoch=c.execution_epoch and a.revoked_at is null
     order by a.issued_at desc,a.authorization_id desc limit 1;
-  if current_head is distinct from member->>'headSha' or exists(
-    select 1 from clued_private.work_claim_pr_current_v1(n.user_id,c.task_id) q where q.claim_id<>c.claim_id
-  ) then return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
-  if c.status='ACTIVE' and c.expires_at>clock_timestamp() and not c.execution_handover_pending then
+  if (c.fence,c.execution_epoch) is distinct from ((member->>'fence')::bigint,(member->>'epoch')::bigint)
+    or (current_head is not null and current_head<>member->>'headSha') or exists(
+      select 1 from clued_private.work_claim_pr_current_v1(n.user_id,c.task_id) q where q.claim_id<>c.claim_id
+    ) then
+    -- Landing already happened. Record this member without releasing the newer authorization.
+    adoption_state:='claim_changed';
+  elsif current_head is null then
+    return clued_private.ci_train_reject_v2('ci_work_lease_stale');
+  elsif c.status='ACTIVE' and c.expires_at>clock_timestamp() and not c.execution_handover_pending then
     insert into clued_private.ci_train_call_v2 values (pg_current_xact_id(),n.user_id,n.binding_id,n.project_id,'claim_adopt');
     answer:=public.clued_work_claim_adopt_v1(proof,
       jsonb_build_object('scope',scope,'pr_ref',target_pr,'merge_sha',member_merge_sha));
@@ -558,11 +567,12 @@ begin
   end if;
   r:=clued_private.ci_receipt_v1(n.user_id,n.project_id,'ci_train_claim_adopt',batch.batch_id,
     jsonb_build_object('generation',batch.generation,'member',member,'merge_sha',member_merge_sha,'landing_receipt_id',landed_receipt,
-      'native',answer,'evidence_digest',payload->>'evidence_digest'));
+      'native',answer,'evidence_digest',payload->>'evidence_digest','state',adoption_state));
   all_receipts:=batch.adoption_receipts||jsonb_build_object(member->>'pr',r);
   update clued_private.ci_train_batches_v2 set adoption_receipts=all_receipts,receipt_id=r,
     state=case when pos=1 then 'completed' else batch.state end where batch_id=batch.batch_id;
-  return jsonb_build_object('status','committed','receipt_id',r,'replayed',false,'completed',pos=1);
+  return jsonb_build_object('status','committed','receipt_id',r,'replayed',false,
+    'member',member,'state',adoption_state,'completed',pos=1);
 end $$;
 
 create function clued_private.ci_train_batch_command_v2(n clued_private.ci_nodes_v1,proof text,repo_id bigint,repo text,
@@ -1196,7 +1206,7 @@ begin
     insert into clued_private.ci_train_call_v2 values (pg_current_xact_id(),n.user_id,n.binding_id,n.project_id,op);
     projection:=clued_private.work_claim_resolve_pr_v1(proof,jsonb_build_object('action',op,
       'scope','project:'||n.project_id,'pr_ref',repo||'#'||(payload->>'pr'),'head_sha',payload->'head_sha',
-      'base_sha',payload->'base_sha','target_branch',branch,'read_only',false));
+      'base_sha',payload->'base_sha','target_branch',branch,'read_only',true));
     delete from clued_private.ci_train_call_v2 where transaction_id=pg_current_xact_id();
     return projection;
   end if;
@@ -1882,6 +1892,15 @@ select clued_private.ci_train_patch_v2('public.clued_ci_node_command_v1(text,jso
 select clued_private.ci_train_patch_v2('public.clued_ci_node_command_v1(text,jsonb,jsonb,jsonb)',
   $a$if prior.command=p_command and prior.node_id=n.node_id then$a$,
   $r$if op<>'merge_train_v2' and prior.command=p_command and prior.node_id=n.node_id then$r$);
+
+-- An exact signed node may discover the uniquely authorized Task before
+-- leasing the head. Only the later qualified verification activates the PR.
+select clued_private.ci_train_patch_v2('clued_private.work_claim_resolve_pr_v1(text,jsonb)',
+  $a$    if not can_write then return v_result; end if;$a$,
+  $r$    if not can_write and not (read_only and clued_private.ci_train_call_is_v2(
+      b.user_id,b.id,array['resolve_pr_claim'])) then return v_result; end if;$r$);
+select clued_private.ci_train_patch_v2('clued_private.work_claim_resolve_pr_v1(text,jsonb)',
+  $a$    need_bind:=true;$a$,$r$    need_bind:=can_write;$r$);
 
 select clued_private.ci_train_patch_v2('clued_private.ci_duty_admits_v1(uuid,uuid,text,uuid)',
   $a$  v:=clued_private.ci_duty_admits_decide_v1(u,p_binding,p_mode,p);$a$,

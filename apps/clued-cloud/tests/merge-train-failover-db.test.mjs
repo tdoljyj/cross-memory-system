@@ -1486,9 +1486,14 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
   });
 
   await t.test('5：唤醒只提供 PR/H/T，节点能发现尚无关联的精确认领', async () => {
+    const relation = () => one(admin, 'select status from clued_private.work_claim_pr_task_bindings_v1 where user_id=$1 and pr_number=$2',
+      [user, pr]);
+    const before = await relation();
     const result = data(await call(b, 'resolve_pr_claim', { pr, head_sha: head, base_sha: sha('base') }));
     assert.equal(result.binding_status, 'bound', JSON.stringify(result));
     assert.equal(result.claim.claim_id, f.claim.claim_id);
+    assert.equal(result.auto_bound, false);
+    assert.deepEqual(await relation(), before);
     const acquired = data(await call(b, 'head_acquire', subject));
     assert.equal(acquired.status, 'leased', JSON.stringify(acquired));
     assert.equal(data(await call(b, 'work_release', lease(acquired))).status, 'released');
@@ -1820,9 +1825,21 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
     const adopt = { ...recoveredHandle, member: members[0], evidence_digest: digest('PR merge readback') };
     assert.equal(data(await call(builder, 'claim_adopt', { ...adopt, member: { ...members[0], epoch: subject.execution_epoch+1 } })).error_code,
       TRAIN_FAILURE.LEASE_STALE.native);
+    const newerHead = sha('newer head before old landing adopt');
+    const current = await one(admin, 'select lease_version from clued_private.work_claims_v1 where claim_id=$1', [f.claim.claim_id]);
+    f.committed(await workerGatewayRpc(f.gateway, 'clued_work_renew_v1', f.token, {
+      scope: 'project:' + project, action: 'authorize_head', claim_id: f.claim.claim_id, fence: f.claim.fence,
+      lease_version: Number(current.lease_version), ...(f.claimResult.lease_key ? { lease_key: f.claimResult.lease_key } : {}),
+      repository, head_sha: newerHead, target_branch: 'main', pr_number: pr, idempotency_key: uuid(),
+    }));
     const adopted = data(await call(builder, 'claim_adopt', adopt));
     assert.equal(adopted.completed, true, JSON.stringify(adopted));
+    assert.equal(adopted.state, 'claim_changed');
+    assert.deepEqual(adopted.member, members[0]);
     assert.equal(data(await call(builder, 'claim_adopt', adopt)).receipt_id, adopted.receipt_id);
+    assert.equal((await one(admin, 'select status from clued_private.work_claims_v1 where claim_id=$1', [f.claim.claim_id])).status, 'ACTIVE');
+    assert.equal((await one(admin, 'select revoked_at from clued_private.work_claim_head_authorizations_v1 where claim_id=$1 and head_sha=$2',
+      [f.claim.claim_id, newerHead])).revoked_at, null);
     assert.equal(github.totals().mainUpdates, 1);
   });
 });
