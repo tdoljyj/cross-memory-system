@@ -87,6 +87,7 @@ param(
   # It cannot be used to apply a plan or to inspect/supply the heartbeat secret.
   [switch]$PreviewAfterUninstall,
   [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPlanSha256,
+  [ValidateLength(1,2048)][string]$InstalledPackageB64,
   [switch]$StartAfterInstall,
   [string]$AppPrivateKeyFile,        # optional: this node's App private key, downloaded by the Owner on this machine (design 7.1)
   [string]$CiAdmissionTokenFile,     # optional: this node's ci-admission connection token (design 7.2)
@@ -1249,6 +1250,22 @@ function Assert-Package4($pkg) {
   if ([string](Get-JsonField (Get-JsonField $pkg 'linux') 'manifestSha256') -cnotmatch '^[0-9a-f]{64}\z') { throw 'PACKAGE_LINUX_MANIFEST_REQUIRED' }
 }
 
+function Read-InstalledPackageIdentity([string]$encoded, $pkg) {
+  if (-not $encoded) { return $null }
+  try {
+    $p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded)) | ConvertFrom-Json
+    $keys = @($p.PSObject.Properties.Name | Sort-Object) -join ','
+    if ($keys -cne 'archiveSha256,ciSourceManifestSha256,commit,packageGeneration,releaseTag,version' -or
+        $p.version -isnot [string] -or $p.version -cnotmatch '^g([0-9]{6})\z' -or
+        ($p.packageGeneration -isnot [int] -and $p.packageGeneration -isnot [long]) -or
+        $p.packageGeneration -lt 23 -or $p.packageGeneration -ne [int]$p.version.Substring(1) -or
+        $p.releaseTag -cne ('fleet-node-' + $p.version) -or $p.archiveSha256 -cnotmatch '^[0-9a-f]{64}\z' -or
+        $p.commit -cnotmatch '^[0-9a-f]{40}\z' -or $p.commit -cne $pkg.linux.sourceV2.commit -or
+        $p.ciSourceManifestSha256 -cne $pkg.ciSourceManifestSha256) { throw 'identity' }
+    return $p
+  } catch { throw 'INSTALLED_PACKAGE_IDENTITY_REFUSED' }
+}
+
 function Build-Plan {
   $res = Get-ServiceSid $ServiceName
   if ((Sha256Bytes $pkgBytes) -cne $ExpectedPackageManifestSha256) { throw 'REVIEWED_PACKAGE_CHANGED' }
@@ -1260,6 +1277,7 @@ function Build-Plan {
   $find = { param($t) @($pkg.files | Where-Object { $_.target -ceq $t })[0].sha256 }
   if ($pkg.ciSourceManifestSha256 -cnotmatch '^[0-9a-f]{64}$' -or (& $find 'record\source-manifest.json') -cne $pkg.ciSourceManifestSha256) { throw 'SOURCE_V2_RECORD_PACKAGE_REQUIRED' }
   Assert-Package4 $pkg
+  $installedPackage = Read-InstalledPackageIdentity $InstalledPackageB64 $pkg
   $p = [ordered]@{
     contract = 'clued.independent-ci.resident-install-plan/8'   # /7 (DESIGN.md section 33): parentAcl; /8 (018da927): package /4, upgrader, generation
     root = $Root; rootExists = (Test-Path -LiteralPath $Root)
@@ -1328,6 +1346,7 @@ function Build-Plan {
 
   }
   if ($PreviewAfterUninstall) { $p.afterUninstallPreview = [ordered]@{ heartbeatDirectoryRecreated = $true; applyAllowed = $false } }
+  if ($installedPackage) { $p['installedPackage'] = $installedPackage }
   $p
 }
 
@@ -1644,9 +1663,21 @@ if ($StartAfterInstall) {
     $receipt[$pair[2]] = $have
   }
 }
-$out = Join-Path $Root 'install\install-receipt.json'                    # admin-only directory
-Write-New $out ((New-Object Text.UTF8Encoding($false)).GetBytes(($receipt | ConvertTo-Json -Depth 6)))
-$receiptSha256 = Sha256File $out
+function Write-ResidentInstallReceipt([string]$root, $receipt, $identity, [string]$packageManifestSha) {
+  $file = Join-Path $root 'install\install-receipt.json'   # admin-only directory
+  $encoding = New-Object Text.UTF8Encoding($false)
+  if ($null -ne $identity) { $receipt['installedPackage'] = $identity }
+  Write-New $file ($encoding.GetBytes(($receipt | ConvertTo-Json -Depth 6)))
+  $digest = Sha256File $file
+  if ($null -ne $identity) {
+    # The service can read config but cannot write it or read the administrator-only receipt.
+    $packageEvidence = [ordered]@{ installedPackage = $identity; packageManifestSha256 = $packageManifestSha; installReceiptSha256 = $digest }
+    Write-New (Join-Path $root 'config\installed-package.json') ($encoding.GetBytes(($packageEvidence | ConvertTo-Json -Compress)))
+  }
+  $digest
+}
+$out = Join-Path $Root 'install\install-receipt.json'
+$receiptSha256 = Write-ResidentInstallReceipt $Root $receipt $plan['installedPackage'] $ExpectedPackageManifestSha256
 # 8. generation-1 (018da927): after the receipt, because upgrade\current.json pins its hash. Nothing is moved: the record of generation 1 is
 #    the command lines just registered and the hash of its files where they are; current.json names it. Both create-only.
 $genDir = Join-Path $Root 'generations\g1'

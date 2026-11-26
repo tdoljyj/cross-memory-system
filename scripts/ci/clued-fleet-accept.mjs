@@ -193,7 +193,12 @@ export function explain({ answerText, errorText, env }) {
 }
 
 export function renderSummary(result) {
-  const lines = ["## 接受通用节点包：fleet.accept", ""];
+  const candidate = result.resources.length === 1
+    ? /^fleet-node:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/g([0-9]{6})\/([0-9a-f]{64})\/([0-9a-f]{64})$/.exec(result.resources[0])
+    : null;
+  const generation = candidate && candidate[3] === result.request_sha256 ? Number(candidate[1]) : null;
+  const lines = [generation >= 23 ? `## 确认第 ${generation} 代通用节点包` : "## 接受通用节点包：fleet.accept", ""];
+  if (generation >= 23) lines.push(`- 安装包 SHA-256：\`${candidate[2]}\``, `- 接受请求 SHA-256：\`${candidate[3]}\``);
   lines.push(`- 资源：${result.resources.map((r) => `\`${r}\``).join("，") || "n/a"}`);
   lines.push("- 调用方：发布环境的数据库登录身份（clued_private.fleet_accept_door_v1）；本运行只开请求，不批准、不改生产。");
   if (result.status === "pending") {

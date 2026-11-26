@@ -391,6 +391,8 @@ function Test-LeftoversAsPinned($found) {
 function Get-InstallArgs([switch]$Apply, [switch]$NoToken, [switch]$NoHeartbeat) {   # r5c: -UpgradeTokenFile unless -NoToken; -Apply with the with-token plan
   if ($Apply -and $NoHeartbeat) { Stop-Launch 'AFTER_UNINSTALL_PREVIEW_CANNOT_APPLY' $null }
   $a = @('-PackageRoot', $PackageRoot, '-ExpectedPackageManifestSha256', $PackageManifestSha256, '-OwnerSid', $OwnerSid, '-ControllerSid', $ControllerSid, '-OperatorSid', $OperatorSid)
+  $identity = Get-Variable FleetInstalledPackageB64 -ValueOnly -ErrorAction SilentlyContinue
+  if ($identity) { $a += @('-InstalledPackageB64', $identity) }
   if ($NoHeartbeat) { $a += @('-PreviewAfterUninstall') }
   if ($Apply) {
     if ([string]$R5c.applyPlanSha256 -cnotmatch '^[0-9a-f]{64}$') { Stop-Launch 'APPLY_PLAN_NOT_CONFIRMED' $null }
@@ -491,6 +493,26 @@ function Step-Archive {
   $Done.Add('archive')
   [ordered]@{ directory = $dir; moved = $moved.Count; receiptSha256 = (Sha256Bytes $rb) }
 }
+function Read-FleetInstalledPackage([string]$receiptSha) {
+  try {
+    $expected = Parse-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($FleetInstalledPackageB64)))
+    $rb = [IO.File]::ReadAllBytes((Join-Path $ResidentRoot 'install\install-receipt.json'))
+    if ((Sha256Bytes $rb) -cne $receiptSha) { return $null }
+    $receipt = Parse-Json ($Strict8.GetString($rb))
+    $marker = Parse-Json ([IO.File]::ReadAllText((Join-Path $ResidentRoot 'config\installed-package.json'), $Strict8))
+    $current = Parse-Json ([IO.File]::ReadAllText((Join-Path $ResidentRoot 'upgrade\current.json'), $Strict8))
+    if ((Get-Key $marker 'installReceiptSha256') -cne $receiptSha -or (Get-Key $current 'installReceiptSha256') -cne $receiptSha -or
+        (Get-Key $receipt 'packageManifestSha256') -cne $PackageManifestSha256 -or
+        (Get-Key $marker 'packageManifestSha256') -cne $PackageManifestSha256 -or
+        (Get-Key $current 'packageManifestSha256') -cne $PackageManifestSha256 -or
+        (Get-Key $current 'ciSourceManifestSha256') -cne (Get-Key $expected 'ciSourceManifestSha256')) { return $null }
+    foreach ($key in @('packageGeneration', 'version', 'releaseTag', 'commit', 'archiveSha256', 'ciSourceManifestSha256')) {
+      if ((Get-Key (Get-Key $receipt 'installedPackage') $key) -cne (Get-Key $expected $key) -or
+          (Get-Key (Get-Key $marker 'installedPackage') $key) -cne (Get-Key $expected $key)) { return $null }
+    }
+    return $expected
+  } catch { return $null }
+}
 function Step-Install {
   if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $i = Invoke-Child 'install' (Join-Path $Stage 'install-resident.ps1') (Get-InstallArgs -Apply)
@@ -501,9 +523,15 @@ function Step-Install {
   $rb = [IO.File]::ReadAllBytes((Join-Path $ResidentRoot 'install\install-receipt.json')); $sha = Sha256Bytes $rb
   if ($sha -cne (Get-Key $iv 'receiptSha256')) { Stop-Launch 'INSTALL_RECEIPT_CHANGED' ([ordered]@{ read = $sha; reported = (Get-Key $iv 'receiptSha256') }) }
   Write-New (Join-Path $Out 'install-receipt.json') $rb
+  $installedPackage = $null
+  if (Get-Variable FleetInstalledPackageB64 -ValueOnly -ErrorAction SilentlyContinue) {
+    $installedPackage = Read-FleetInstalledPackage $sha
+    if ($null -eq $installedPackage) { Stop-Launch 'INSTALLED_PACKAGE_EVIDENCE_MISMATCH' $sha }
+    $Progress['installedPackage'] = $installedPackage
+  }
   if ($FleetFirstInstall) { Remove-FirstInstallCredentials }   # the installer has placed both tokens
   $Done.Add('install')
-  [ordered]@{ status = 'RESIDENT_INSTALLED'; receiptSha256 = $sha; started = (Get-Key $iv 'started') }
+  [ordered]@{ status = 'RESIDENT_INSTALLED'; receiptSha256 = $sha; started = (Get-Key $iv 'started'); installedPackage = $installedPackage }
 }
 function Step-Verify([string]$receiptSha) {
   if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
@@ -513,12 +541,21 @@ function Step-Verify([string]$receiptSha) {
   $failed = @(); if ($checks -is [Collections.IDictionary]) { foreach ($k in @($checks.Keys)) { if ((Get-Key $checks[$k] 'ok') -ne $true) { $failed += $k } } }
   # Not passed: the step's line says so (r9, task 0e418483; it said ok beside a terminal that said verify not passed).
   $status = Get-Key $vv 'status'
+  $installedPackage = $null
+  if ($status -ceq 'RESIDENT_VERIFIED' -and (Get-Variable FleetInstalledPackageB64 -ValueOnly -ErrorAction SilentlyContinue)) {
+    $installedPackage = Read-FleetInstalledPackage $receiptSha
+    if ($null -eq $installedPackage -or $R5c.factsStaged -cne 'STAGED') {
+      $status = 'INSTALLED_PACKAGE_EVIDENCE_MISMATCH'
+      $failed += 'installed-package'
+      $installedPackage = $null
+    }
+  }
   if ($status -cne 'RESIDENT_VERIFIED') {
     $Progress['rejectCode'] = $(if ($status -is [string] -and $status -cmatch '^[A-Z][A-Z0-9_]{0,99}$') { $status } else { 'VERIFY_GAVE_NO_VERDICT' })
     $Progress['detail'] = [ordered]@{ status = $status; exit = $v.exit; notOk = $failed }
   }
   $Done.Add('verify')
-  [ordered]@{ exit = $v.exit; status = $status; notOk = $failed; linuxVersionFacts = $R5c.factsStaged }
+  [ordered]@{ exit = $v.exit; status = $status; notOk = $failed; linuxVersionFacts = $R5c.factsStaged; installedPackage = $installedPackage }
 }
 # ---- Reinstall: the installed resident is uninstalled first, by its own INSTALLED uninstall-resident.ps1 ----
 $InstalledUninstall = Join-Path $ResidentRoot ('resident\' + $InstalledResidentManifestSha256 + '\windows\uninstall-resident.ps1')
@@ -1283,6 +1320,10 @@ function Test-FleetLinuxOutput([string]$evidenceText, [string]$factsText) {
       $f.ContainsKey('ciSourceManifestSha256') -and $f['ciSourceManifestSha256'] -is [string] -and $f['ciSourceManifestSha256'] -ceq $CiSourceManifestSha256 -and
       $f.ContainsKey('manifestSha256') -and $f['manifestSha256'] -is [string] -and $f['manifestSha256'] -ceq $FleetLinuxManifestSha256 -and
       $f.ContainsKey('pinsOk') -and $f['pinsOk'] -is [bool] -and $f['pinsOk'])) { $codes += 'LINUX_VERSION_FACTS_NOT_THIS_PACKAGE' }
+  elseif ((Get-Variable FleetInstalledPackageB64 -ValueOnly -ErrorAction SilentlyContinue) -and
+      ((Get-Key $f 'sourceCommit') -cne $PackageHead -or (Get-Key $f 'liveMatchesCurrent') -eq $false)) {
+    $codes += 'LINUX_VERSION_FACTS_NOT_THIS_PACKAGE'
+  }
   , $codes
 }
 # A file B names in its last line: directly in the pinned out directory, with the name B gives it; its Windows path, else $null.
@@ -1949,6 +1990,12 @@ function Step-LinuxRoot {
     if ($null -eq $eb -or $null -eq $fb) { & $stop 'LINUX_OUTPUT_UNREADABLE' }   # missing, a link, a second name, not a plain file, or too large: nothing of it was read
   } finally { Remove-FleetRegistrar $build }
   $codes = Test-FleetLinuxOutput ($Strict8.GetString($eb)) ($Strict8.GetString($fb))
+  if ($codes.Count -eq 0 -and (Get-Variable FleetInstalledPackageB64 -ValueOnly -ErrorAction SilentlyContinue)) {
+    $sample = [DateTimeOffset]::MinValue; $now = [DateTimeOffset]::UtcNow
+    $seen = Get-Key (Parse-Json ($Strict8.GetString($fb))) 'observedAt'
+    if (-not [DateTimeOffset]::TryParse([string]$seen, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$sample) -or
+        ($now - $sample).TotalMinutes -gt 15 -or ($sample - $now).TotalMinutes -gt 5) { $codes += 'LINUX_VERSION_FACTS_NOT_FRESH' }
+  }
   if ($codes.Count) { $report.codes = @($codes); Write-Json 'linux-report.json' $report; Stop-Launch $codes[0] $report }
   # exactly the bytes that passed the rules, kept in this run's admin-only staging for verify
   $staged = Join-Path $Stage 'linux-version-facts.phase-B.json'; Write-New $staged $fb
@@ -2034,6 +2081,7 @@ $terminal = [ordered]@{ contract = 'clued.independent-ci.source-v2-windows-launc
   status = $(if ($verify.status -cne 'RESIDENT_VERIFIED') { 'R4_WINDOWS_REINSTALLED_VERIFY_NOT_PASSED_RESIDENT_STOPPED' } elseif (-not $pause.confirmed) { 'PAUSE_NOT_CONFIRMED' } else { 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' })
   role = $train.role   # the first-train wait's (unauthorized, unconfirmed, not-held, held); a first install is done only with held or not-held
   sourceSha = $SourceSha; packageHead = $PackageHead; planSha256 = $PlanSha256; uninstall = $uninstall; archive = $archive; install = $install; parentAcl = $parentAcl; train = $train; verify = $verify; pause = $pause; companion = $companion; rearm = $rearm; companionHeadless = $companionHeadless; fileLocks = $fileLocks; linux = $linux; carriedTokens = $CarriedTokens
+  installedPackage = $verify['installedPackage']
   completed = @($Done); at = [DateTimeOffset]::UtcNow.ToString('o') }
 Write-Json 'terminal.json' $terminal
 $terminal | ConvertTo-Json -Depth 6
