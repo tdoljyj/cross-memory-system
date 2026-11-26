@@ -89,8 +89,9 @@ export async function sweepTemp(dir, { olderThanMs = 3_600_000, clock = Date.now
 }
 
 // Bounded read of a file someone else may control: one handle, the size and type come from that
-// handle (no lstat/readFile gap), links and multi-link files are refused. Separate 'empty'
-// and 'size' errors let callers distinguish an unwritten file from an oversized one.
+// handle (no lstat/readFile gap), at most `maximum` bytes are ever read, links and multi-link
+// files are refused. 'empty' is kept apart from 'size' so a caller can tell an unwritten file
+// from an oversized one.
 export async function readBounded(file, maximum, code = 'BOUNDED_READ_REFUSED') {
   const link = await fs.lstat(file);
   check(link.isFile() && !link.isSymbolicLink(), code, 'type');
@@ -100,9 +101,8 @@ export async function readBounded(file, maximum, code = 'BOUNDED_READ_REFUSED') 
     check(stat.isFile() && stat.nlink === 1 && stat.ino === link.ino, code, 'identity');
     check(stat.size > 0, code, 'empty');
     check(stat.size <= maximum, code, 'size');
-    // Most ledger records are small. Read their observed size plus a byte to detect growth.
-    const buffer = Buffer.alloc(stat.size + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const buffer = Buffer.alloc(maximum + 1);
+    const { bytesRead } = await handle.read(buffer, 0, maximum + 1, 0);
     check(bytesRead === stat.size && bytesRead <= maximum, code, 'size-changed');
     return buffer.subarray(0, bytesRead);
   } finally {
