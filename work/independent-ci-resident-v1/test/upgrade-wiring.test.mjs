@@ -53,8 +53,10 @@ async function upgradeRoot(t, { cur = current(), fx = facts(), status = null } =
 test('status /7: versions from the three files; consistent true, false (generation, Source, manifest, pins) or null (stale, none, unreadable)', async t => {
   const root = await upgradeRoot(t, { status: upgradeStatus(op('WAITING_GRANT')) });
   const s = await readVersionState({ root, policy, policySha256: POLICY_SHA, clock: () => T0 });
-  assert.deepEqual(s.view, { generation: 2, windows: { packageManifestSha256: PKG, residentManifestSha256: RESIDENT, ciSourceManifestSha256: CI_SOURCE, policySha256: POLICY_SHA },
-    linux: { observedAt: new Date(T0 - 60_000).toISOString(), generation: 2, ciSourceManifestSha256: CI_SOURCE, manifestSha256: LINUX_MANIFEST, pinsOk: true }, consistent: true, selfcheck: null,
+  assert.deepEqual(s.view, { localInstallGeneration: 2, installedPackage: { packageGeneration: null, version: null, releaseTag: null, commit: null,
+    archiveSha256: null, ciSourceManifestSha256: null, status: 'unmarked', display: '未标注', observedAt: null },
+    windows: { packageManifestSha256: PKG, residentManifestSha256: RESIDENT, ciSourceManifestSha256: CI_SOURCE, policySha256: POLICY_SHA },
+    linux: { observedAt: new Date(T0 - 60_000).toISOString(), localInstallGeneration: 2, ciSourceManifestSha256: CI_SOURCE, manifestSha256: LINUX_MANIFEST, pinsOk: true }, consistent: true, selfcheck: null,
     upgrade: { opId: OP, state: 'WAITING_GRANT', phase: 'grant', since: new Date(T0 - 120_000).toISOString(), code: null, confirmUrl: `https://kooyomi.example/confirm/${OP}` } });
   assert.deepEqual(s.notices.map(n => n.kind), ['upgrade-grant-pending']);
   const view = inputs => versionsView(inputs, { policy, now: T0 }).consistent;
@@ -72,7 +74,7 @@ test('status /7: versions from the three files; consistent true, false (generati
   await fs.mkdir(path.join(bare, 'upgrade'));
   await fs.writeFile(path.join(bare, 'upgrade', 'current.json'), '{"contract":');
   const torn = await readVersionState({ root: bare, policy, clock: () => T0 });
-  assert.deepEqual([torn.view.generation, torn.view.linux, torn.view.consistent, torn.view.upgrade, torn.notices], [null, null, null, null, []]);
+  assert.deepEqual([torn.view.localInstallGeneration, torn.view.linux, torn.view.consistent, torn.view.upgrade, torn.notices], [null, null, null, null, []]);
 });
 
 test('status /8 is written and read back with versions; /6 and /5 files still read (versions null); the shape is re-checked', async t => {
@@ -97,8 +99,8 @@ test('status /8 is written and read back with versions; /6 and /5 files still re
   assert.throws(() => parseStatus(Buffer.from(JSON.stringify({ ...b.snapshot(), contract: 'clued.independent-ci.resident-status/6' }))), { code: 'STATUS_REFUSED' }, '/6 with versions');
   // what does not fit is shown as nothing, never trusted
   assert.equal(parseVersions({ windows: { residentManifestSha256: 'x' } }), null);
-  const odd = parseVersions({ ...view, generation: 0, upgrade: { ...view.upgrade, confirmUrl: 'javascript:alert(1)', phase: 'Not A Phase', code: 'free text' } });
-  assert.deepEqual([odd.generation, odd.upgrade.confirmUrl, odd.upgrade.phase, odd.upgrade.code], [null, null, null, null]);
+  const odd = parseVersions({ ...view, localInstallGeneration: 0, upgrade: { ...view.upgrade, confirmUrl: 'javascript:alert(1)', phase: 'Not A Phase', code: 'free text' } });
+  assert.deepEqual([odd.localInstallGeneration, odd.upgrade.confirmUrl, odd.upgrade.phase, odd.upgrade.code], [null, null, null, null]);
   assert.equal(parseVersions({ ...view, upgrade: { ...view.upgrade, state: 'SOMETHING' } }).upgrade, null);
 });
 

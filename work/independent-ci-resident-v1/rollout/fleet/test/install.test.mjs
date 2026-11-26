@@ -127,6 +127,24 @@ async function getWorld() {
 const prepare = (w, n, work, over = {}) => prepareInstall({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: w.acceptance, root: n.root,
   workDir: work, scm: SCM, ...over });
 
+test('旧包重装入口把正式包身份带进生成启动器的计划', { timeout: 600_000 }, async t => {
+  const w = await getWorld();
+  const node = await nodeSite(t, 'a', fleetFacts());
+  const dir = await tempDir(t, 'fleet-label');
+  const built = await buildUniversal({ repo: w.repo, commit: w.commit, version: 'g000023', out: path.join(dir, 'build') });
+  const acceptance = { ...w.acceptance, version: built.source.version, archive_sha256: built.source.archive_sha256 };
+  const tools = pythonTools();
+  const result = await prepareInstall({ artifactPath: built.tar, artifactSha256: acceptance.archive_sha256, acceptance, root: node.root,
+    workDir: path.join(dir, 'reinstall'), python: tools.fn, scm: SCM, wslConfigPath: path.join(dir, '.wslconfig') });
+  assert.equal(result.status, 'FLEET_NODE_INSTALL_PREPARED');
+  const identity = { packageGeneration: 23, version: 'g000023', releaseTag: 'fleet-node-g000023', commit: w.commit,
+    archiveSha256: acceptance.archive_sha256, ciSourceManifestSha256: acceptance.ciSourceManifestSha256 };
+  assert.deepEqual(result.installedPackage, identity);
+  assert.deepEqual(readJson(result.installPlan).installedPackage, identity);
+  for (const call of tools.calls.filter(c => c.name.startsWith('generate.py'))) assert.deepEqual(call.plan.installedPackage, identity);
+  assert.equal(readJson(path.join(node.root, 'upgrade', 'current.json')).generation, 1);
+});
+
 test('universal: two builds of one commit, the same tar; the reinstall subset, no node configuration, no test', { timeout: 600_000 }, async () => {
   const w = await getWorld();
   assert.equal(sha(await fs.readFile(w.r1.tar)), sha(await fs.readFile(w.r2.tar)));

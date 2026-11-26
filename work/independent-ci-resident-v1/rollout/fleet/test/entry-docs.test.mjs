@@ -50,7 +50,7 @@ test('L4: continue.py says how a stopped first install continues (the same boots
 
 test('the acceptance has two commands in the README, prepare before the Owner and seal after; no draft entry, no hand-attached kit or acceptance', () => {
   // Fable 3bc571a6 ruling section 3 (Task 758989fa): the two halves, each one command; the steps under them have no command of their own
-  assert.match(readme, /^node [^\n]*publish\.mjs prepare --version <version> --dir /m);
+  assert.match(readme, /^node [^\n]*publish\.mjs prepare --commit <main 的 40 位 SHA> --dir /m);
   assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--wait </m);
   assert.ok(!/acceptance-draft/.test(readme), 'the old entry is gone from the README');
   assert.ok(!/attach-acceptance|attach-first-install-kit/.test(readme), 'no manual attach step is named in the README');
@@ -58,7 +58,7 @@ test('the acceptance has two commands in the README, prepare before the Owner an
   assert.ok(!/^node [^\n]*first-install-kit/m.test(readme), 'no command line of the README runs a kit step by hand');
   assert.ok(!/^node [^\n]*install\.mjs source-hash/m.test(readme), 'the Source is prepare\'s, nobody fills it in by hand');
   // the flow: candidate -> drill -> the Owner's one acceptance -> seal; no release step before prepare (FABLE-drill-release-step-20261121.md)
-  assert.match(readme, /build（一次） -> publish prepare[^\n]*-> 候选演练[^\n]*-> Owner 接受[^\n]*-> publish seal/);
+  assert.match(readme, /publish prepare（分配代号、构建一次[^\n]*-> 候选演练[^\n]*-> publish seal（开接受请求，等 Owner 批准/);
   assert.ok(!/^node [^\n]*publish\.mjs release /m.test(readme), 'the release command is gone from the README');
   assert.match(readme, /候选 commit 必须已在远端/);
 });

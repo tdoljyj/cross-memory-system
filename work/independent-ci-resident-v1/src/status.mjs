@@ -37,14 +37,15 @@ import { parseBudget } from './budget-alert.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
-import { readBounded } from './store.mjs';
+import { writableUnderTest } from './production-root-guard.mjs';
+import { nonce, readBounded } from './store.mjs';
 import { reasonCodeList } from './queue.mjs';
 import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
 import { parseRevokeHead, parseTrainLast, parseTrainNodes, parseTrainSweep } from './train.mjs';
 import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
 import { StageTimings, parseTiming } from './stage-timing.mjs';
 import { renewalStatus, parseRenewalStatus, RESPONSE_WAITING } from './connection-renewal.mjs';
-import { parseSelfcheckView, readSelfcheck, selfcheckNotice, selfcheckView } from './selfcheck.mjs';
+import { installedPackageView, parseInstalledPackage, parseSelfcheckView, readSelfcheck, selfcheckNotice, selfcheckView, withPackageSelfcheck } from './selfcheck.mjs';
 import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE,
   consistent as versionsConsistent } from './upgrade-mailbox.mjs';
 
@@ -370,20 +371,33 @@ export function parseVersions(v) {
   if (!plain(v) || !plain(v.windows) || !HEX64.test(v.windows.residentManifestSha256 ?? '') || !HEX64.test(v.windows.ciSourceManifestSha256 ?? '')) return null;
   const l = plain(v.linux) ? v.linux : null;
   const u = plain(v.upgrade) && UUID.test(v.upgrade.opId ?? '') && UPGRADE_STATES.includes(v.upgrade.state) ? v.upgrade : null;
-  return {
-    generation: generationOf(v.generation),
+  const p = v.installedPackage;
+  const identity = parseInstalledPackage(p);
+  const verified = p?.status === 'verified' && identity && v.consistent === true
+    && identity.ciSourceManifestSha256 === v.windows.ciSourceManifestSha256
+    && identity.ciSourceManifestSha256 === l?.ciSourceManifestSha256 && l?.pinsOk === true && isoMs(p.observedAt);
+  const installedPackage = installedPackageView(verified ? 'verified' : p && p.status !== 'unmarked' ? 'failed' : 'unmarked',
+    identity, isoMs(p?.observedAt));
+  const view = {
+    localInstallGeneration: generationOf(v.localInstallGeneration ?? v.generation),
+    installedPackage,
     windows: { packageManifestSha256: hexOrNull(v.windows.packageManifestSha256), residentManifestSha256: v.windows.residentManifestSha256,
       ciSourceManifestSha256: v.windows.ciSourceManifestSha256, policySha256: hexOrNull(v.windows.policySha256) },
-    linux: l ? { observedAt: isoMs(l.observedAt), generation: generationOf(l.generation), ciSourceManifestSha256: hexOrNull(l.ciSourceManifestSha256),
+    linux: l ? { observedAt: isoMs(l.observedAt), localInstallGeneration: generationOf(l.localInstallGeneration ?? l.generation), ciSourceManifestSha256: hexOrNull(l.ciSourceManifestSha256),
       manifestSha256: hexOrNull(l.manifestSha256), pinsOk: l.pinsOk === true } : null,
     consistent: [true, false].includes(v.consistent) ? v.consistent : null,
     // Task 4a: the node's self-check (selfcheck.mjs); null before the first one. Only shown, nothing decides on it.
     ...(v.renewal ? {renewal:parseRenewalStatus(v.renewal)} : {}),
     ...(v.fleetPull ? { fleetPull: fleetPullView(v.fleetPull) } : {}),
-    selfcheck: parseSelfcheckView(v.selfcheck),
+    selfcheck: withPackageSelfcheck(parseSelfcheckView(v.selfcheck), installedPackage),
     upgrade: u ? { opId: u.opId, state: u.state, phase: typeof u.phase === 'string' && PHASE.test(u.phase) ? u.phase : null, since: isoMs(u.since),
       code: codeOrNull(u.code), confirmUrl: typeof u.confirmUrl === 'string' && CONFIRM_URL.test(u.confirmUrl) ? u.confirmUrl : null } : null,
   };
+  // Older in-process notification consumers read generation. The JSON projection
+  // exposes the renamed field only.
+  Object.defineProperty(view, 'generation', { value: view.localInstallGeneration });
+  if (view.linux) Object.defineProperty(view.linux, 'generation', { value: view.linux.localInstallGeneration });
+  return view;
 }
 
 async function readJsonLenient(file) {
@@ -407,18 +421,60 @@ export async function readVersionInputs(root) {
     status: plain(status) && status.contract === UPGRADE_STATUS_CONTRACT ? status : null };
 }
 
+async function readInstalledPackageEvidence(root) {
+  const file = path.join(root, 'config', 'installed-package.json');
+  try {
+    return { marker: JSON.parse((await readBounded(file, VERSION_FILE_MAX_BYTES, 'INSTALLED_PACKAGE_REFUSED')).toString('utf8')) };
+  } catch (error) {
+    return error.code === 'ENOENT' ? null : { marker: null };
+  }
+}
+
+function currentPackageView(evidence, { current, facts, agreed, policy, policySha256 }) {
+  if (evidence === null) return installedPackageView('unmarked');
+  const { marker } = evidence;
+  const identity = parseInstalledPackage(marker?.installedPackage);
+  const valid = identity && agreed === true && facts.sourceCommit === identity.commit && facts.liveMatchesCurrent !== false
+    && facts.staged === null && current.linux.ciSourceManifestSha256 === identity.ciSourceManifestSha256
+    && current.ciSourceManifestSha256 === identity.ciSourceManifestSha256 && policy.ciSourceManifestSha256 === identity.ciSourceManifestSha256
+    && current.residentManifestSha256 === policy.residentManifestSha256 && current.policySha256 === policySha256
+    && HEX64.test(marker.packageManifestSha256 ?? '') && current.packageManifestSha256 === marker.packageManifestSha256
+    && current.installReceiptSha256 === marker.installReceiptSha256;
+  return installedPackageView(valid ? 'verified' : 'failed', identity, isoMs(facts?.observedAt));
+}
+
+async function writePackageVersion(root, view) {
+  const dir = path.join(root, 'state');
+  if (!writableUnderTest(dir)) return;
+  const file = path.join(dir, 'PACKAGE-VERSION.txt');
+  const lines = [view.display];
+  if (view.status === 'verified') lines.push(`Tag: ${view.releaseTag}`, `Commit: ${view.commit}`, `Source: ${view.ciSourceManifestSha256}`);
+  const text = lines.join('\r\n') + '\r\n';
+  const previous = await readBounded(file, 2048, 'PACKAGE_VERSION_REFUSED').catch(() => null);
+  if (previous?.toString('utf8') === text) return;
+  await fs.mkdir(dir, { recursive: true });
+  const tmp = path.join(dir, `.tmp-${nonce()}-PACKAGE-VERSION.txt`);
+  try {
+    await fs.writeFile(tmp, text, { flag: 'wx' });
+    await fs.rename(tmp, file);
+  } finally {
+    await fs.unlink(tmp).catch(() => {});
+  }
+}
+
 // The view from the raw values. windows: what this executor runs (its policy and the policy's own hash), never taken from a file.
 // consistent: upgrade-mailbox.mjs#consistent (B1, frozen /1); without a current.json (a node installed before the channel, or
 // one whose current.json cannot be read now) nothing is compared and it is null: the version-skew hold never acts on "unknown".
-export function versionsView({ current, facts, status, selfcheck = null }, { policy, policySha256 = null, now = Date.now() }) {
+export function versionsView({ current, facts, status, selfcheck = null, packageEvidence = null }, { policy, policySha256 = null, now = Date.now() }) {
   let agreed = null;
   if (current && facts) { try { const c = versionsConsistent(current, facts, now); agreed = [true, false].includes(c) ? c : null; } catch { agreed = null; } }
   const op = plain(status?.op) ? status.op : null;
   return parseVersions({
-    generation: current?.generation ?? null,
+    localInstallGeneration: current?.generation ?? null,
+    installedPackage: currentPackageView(packageEvidence, { current, facts, agreed, policy, policySha256 }),
     windows: { packageManifestSha256: current?.packageManifestSha256 ?? null, residentManifestSha256: policy.residentManifestSha256,
       ciSourceManifestSha256: policy.ciSourceManifestSha256, policySha256 },
-    linux: facts ? { observedAt: facts.observedAt, generation: facts.generation, ciSourceManifestSha256: facts.ciSourceManifestSha256, manifestSha256: facts.manifestSha256, pinsOk: facts.pinsOk } : null,
+    linux: facts ? { observedAt: facts.observedAt, localInstallGeneration: facts.generation, ciSourceManifestSha256: facts.ciSourceManifestSha256, manifestSha256: facts.manifestSha256, pinsOk: facts.pinsOk } : null,
     consistent: agreed,
     selfcheck: selfcheckView(selfcheck, now),
     upgrade: op ? { opId: op.opId, state: op.state, phase: op.phase, since: op.phaseSince, code: op.code, confirmUrl: op.grant?.confirmUrl ?? null } : null,
@@ -428,8 +484,10 @@ export function versionsView({ current, facts, status, selfcheck = null }, { pol
 // The executor's port (service-main.mjs): { view, notices } of one root, read now. The engine's gate before the first Linux stage
 // uses the view only.
 export async function readVersionState({ root, policy, policySha256 = null, clock = Date.now }) {
-  const inputs = await readVersionInputs(root);
-  const view = versionsView(inputs, { policy, policySha256, now: clock() });
+  const [inputs, packageEvidence] = await Promise.all([readVersionInputs(root), readInstalledPackageEvidence(root)]);
+  const view = versionsView({ ...inputs, packageEvidence }, { policy, policySha256, now: clock() });
+  // The status projection can still be read if the optional text copy cannot be refreshed.
+  await writePackageVersion(root, view.installedPackage).catch(() => {});
   const renewal=await renewalStatus(root,clock());
   if(renewal) view.renewal=renewal;
   const fleetPull = fleetPullView(await readJsonLenient(path.join(root, 'state', 'fleet-pull.json')));
@@ -454,7 +512,7 @@ export function versionNotices(view, upgradeStatus = null) {
   if (failed) out.push(failed);
   if (['REFUSED', 'NEEDS_REINSTALL'].includes(view.fleetPull?.phase)) out.push({ key: `fleet-pull:${view.fleetPull.grantId}`,
     kind: 'fleet-pull-refused', code: view.fleetPull.code, pr: null, headSha: null, at: null, until: null });
-  if (view.consistent === false) out.push({ key: `version-skew:w${view.generation ?? 'x'}:l${view.linux?.generation ?? 'x'}`, kind: 'version-skew', pr: null, headSha: null, code: 'UPGRADE_VERSION_SKEW', at: view.linux?.observedAt ?? null, until: null });
+  if (view.consistent === false) out.push({ key: `version-skew:w${view.localInstallGeneration ?? 'x'}:l${view.linux?.localInstallGeneration ?? 'x'}`, kind: 'version-skew', pr: null, headSha: null, code: 'UPGRADE_VERSION_SKEW', at: view.linux?.observedAt ?? null, until: null });
   const u = view.upgrade;
   if (u?.state === 'WAITING_GRANT') out.push({ key: `upgrade-grant-pending:${u.opId}`, kind: 'upgrade-grant-pending', pr: null, headSha: null, code: null, at: u.since, until: null });
   if (u?.state === 'DEFERRED') out.push({ key: `upgrade-deferred:${u.opId}:${u.code ?? 'x'}`, kind: 'upgrade-deferred', pr: null, headSha: null, code: u.code, at: u.since, until: null });
