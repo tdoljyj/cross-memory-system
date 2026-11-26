@@ -6,7 +6,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { CODE, HEX40, HEX64, UUID, canonicalJson, check, exactKeys, isoNow, parseBoundedJson } from './canonical.mjs';
+import { CODE, HEX40, HEX64, UUID, canonicalJson, check, exactKeys, isoNow, parseBoundedJson, sha256 } from './canonical.mjs';
+import { JOB_HOST_GRACE_MS } from './runner.mjs';
 import { RELAY_TIMING_CONTRACT, parseRelayTiming } from './stage-timing.mjs';
 import { TEMP_PREFIX, ensureDir, exists, nonce, readBounded, sweepTemp, writeNew, writeNewAtomic } from './store.mjs';
 
@@ -49,6 +50,24 @@ const PRUNE_NAME = /^(archive|completed|failed)-[0-9A-Za-z-]{1,90}$/;
 // within 3 min, a second of at most 5 min, and slack.
 export const ARCHIVE_LINUX_REQUEST_MS = 14 * 60_000;
 export const CHECK_REFS_REQUEST_MS = 9 * 60_000;
+export const QUIESCENCE_REQUEST_MS = 210_000;
+export const QUIESCENCE_RECHECK_MS = 120_000;
+export const QUIESCENCE_TOTAL_MS = QUIESCENCE_REQUEST_MS + QUIESCENCE_RECHECK_MS;
+export const QUIESCENCE_FINAL_READ_MS = 500;
+const QUIESCENCE_DELIVERY_MS = 10_000;
+const PUBLICATION = 'clued.independent-ci.quiescence-publication/1';
+
+export function quiescenceProbeMs(deadline, now) {
+  const ms = Math.min(30_000, deadline - now - QUIESCENCE_DELIVERY_MS - JOB_HOST_GRACE_MS);
+  return ms >= 25_000 ? ms : 0;
+}
+
+// 只有这些终态能证明串行的上一封没有遗留探针或活动反证。
+export function temporaryQuiescence(r) {
+  if (!r || r.ok !== false || r.proof !== null || r.jobTree === 'unconfirmed') return false;
+  if (['QUIESCENCE_TIMEOUT', 'QUIESCENCE_TIMEOUT_EXPIRED'].includes(r.code)) return r.jobTree === 'zero';
+  return ['COMPANION_REQUEST_EXPIRED', 'QUIESCENCE_BUDGET_INSUFFICIENT'].includes(r.code);
+}
 // rebuild-bundle (DESIGN §37): the companion's own 30 min bound on build-bundle.ps1 -Rebundle, and slack. The executor also reserves it
 // in the authority check before a rebuild after a network wait (generation 13, DESIGN §57.3).
 export const REBUILD_BUNDLE_REQUEST_MS = 35 * 60_000;
@@ -87,11 +106,28 @@ const REQUEST_FIELDS = {
   'rebuild-bundle': ['batchId'],
 };
 
+export function validateQuiescenceBinding(b) {
+  exactKeys(b, ['key', 'headSha', 'failureCode', 'reason'], 'MAILBOX_QUIESCENCE_BINDING_REFUSED');
+  check(HEX64.test(b.key) && HEX40.test(b.headSha) && (
+    (b.failureCode === 'PROTECTED_CHANGE_NOT_UP_TO_DATE' && b.reason === 'full_admission_rejected') ||
+    (b.failureCode === 'STAGE_CHILD_REFUSED' && b.reason === 'pr_subject_changed')), 'MAILBOX_QUIESCENCE_BINDING_REFUSED');
+  return b;
+}
+
 export function validateRequest(v) {
   check(v && KINDS.includes(v.kind), 'MAILBOX_REQUEST_KIND_REFUSED');
   // DESIGN 54/59: a relay-stage of a run again (stages 2, 4 and 6: every relay-stage) carries `again` (1 or 2); a first run never carries it.
   const again = v.kind === 'relay-stage' && Object.hasOwn(v, 'again');
-  exactKeys(v, ['contract', 'requestId', 'kind', 'createdAt', 'deadline', ...REQUEST_FIELDS[v.kind], ...(again ? ['again'] : [])], 'MAILBOX_REQUEST_KEYS_REFUSED');
+  const bound = v.kind === 'linux-quiescence' && Object.hasOwn(v, 'binding');
+  const repeat = bound && Object.hasOwn(v, 'previousRequestId');
+  if (bound) {
+    const b = validateQuiescenceBinding(v.binding);
+    check(typeof v.batchId === 'string' && v.batchId.startsWith(b.key.slice(0, 16) + '-'), 'MAILBOX_QUIESCENCE_BINDING_REFUSED');
+    if (repeat) check(UUID.test(v.previousRequestId) && v.previousRequestId !== v.requestId &&
+      Date.parse(v.deadline) - Date.parse(v.createdAt) <= QUIESCENCE_RECHECK_MS, 'MAILBOX_QUIESCENCE_RECHECK_REFUSED');
+  }
+  exactKeys(v, ['contract', 'requestId', 'kind', 'createdAt', 'deadline', ...REQUEST_FIELDS[v.kind], ...(again ? ['again'] : []),
+    ...(bound ? ['binding'] : []), ...(repeat ? ['previousRequestId'] : [])], 'MAILBOX_REQUEST_KEYS_REFUSED');
   check(v.contract === REQUEST_CONTRACT && UUID.test(v.requestId), 'MAILBOX_REQUEST_IDENTITY_REFUSED');
   check(BATCH_ID.test(v.batchId), 'MAILBOX_BATCH_ID_REFUSED');
   check(!Number.isNaN(Date.parse(v.createdAt)) && !Number.isNaN(Date.parse(v.deadline)) && Date.parse(v.deadline) > Date.parse(v.createdAt), 'MAILBOX_REQUEST_TIME_REFUSED');
@@ -180,7 +216,9 @@ async function readFinished(file, maximum, code) {
 const TIMING_FILE_MAX_BYTES = 32 * 1024;
 
 export class Mailbox {
-  constructor(root, clock) {
+  constructor(root, clock, monotonic = () => performance.now()) {
+    this.monotonic = monotonic;
+    this.sentAt = new WeakMap();
     this.requests = path.join(root, 'requests');
     this.responses = path.join(root, 'responses');
     // The heartbeat lives in responses/ because that is the one mailbox directory the companion can write.
@@ -188,8 +226,8 @@ export class Mailbox {
     this.clock = clock;
   }
 
-  static async open(root, clock = Date.now) {
-    const m = new Mailbox(root, clock);
+  static async open(root, clock = Date.now, monotonic) {
+    const m = new Mailbox(root, clock, monotonic);
     await ensureDir(m.requests);
     await ensureDir(m.responses);
     // Temporary files of a write that a crash cut short (DESIGN §31): each side can delete only in the directory it writes.
@@ -199,21 +237,126 @@ export class Mailbox {
   }
 
   // Service side.
-  async send(kind, fields, timeoutMs) {
+  async send(kind, fields, timeoutMs, notAfter = Infinity) {
+    const began = this.monotonic();
     const now = this.clock();
-    const request = validateRequest({ contract: REQUEST_CONTRACT, requestId: randomUUID(), kind, createdAt: new Date(now).toISOString(), deadline: new Date(now + timeoutMs).toISOString(), ...fields });
+    const end = Math.min(now + timeoutMs, notAfter);
+    if (end <= now && Number.isFinite(notAfter)) return null;
+    const request = validateRequest({ contract: REQUEST_CONTRACT, requestId: randomUUID(), kind, createdAt: new Date(now).toISOString(), deadline: new Date(end).toISOString(), ...fields });
+    if (kind === 'linux-quiescence') this.sentAt.set(request, began);
     await writeNewAtomic(path.join(this.requests, `${request.requestId}.json`), request);
     return request;
   }
 
-  async poll(request) {
+  async responseBytes(request) {
     const file = path.join(this.responses, `${request.requestId}.json`);
     if (!(await exists(file))) return null;
-    const value = await readFinished(file, 4096, 'MAILBOX_RESPONSE_REFUSED');
-    return value === null ? null : validateResponse(value, request);
+    const r = await readFinishedBoth(file, 4096, 'MAILBOX_RESPONSE_REFUSED');
+    if (r) validateResponse(r.value, request);
+    return r;
   }
 
-  async await(request, sleep, pollMs = 500) {
+  async poll(request) {
+    return (await this.responseBytes(request))?.value ?? null;
+  }
+
+  async publishedInTime(request, response, strict) {
+    const file = path.join(this.responses, request.requestId + '.published.json');
+    if (!await exists(file)) return false;
+    const v = await readFinished(file, 1024, 'MAILBOX_PUBLICATION_REFUSED');
+    if (!v) return false;
+    exactKeys(v, ['contract', 'requestId', 'kind', 'sha256', 'publishedAt'], 'MAILBOX_PUBLICATION_REFUSED');
+    const bound = v.contract === PUBLICATION && v.requestId === request.requestId && v.kind === request.kind &&
+      v.sha256 === sha256(response.bytes) && Number.isSafeInteger(v.publishedAt) &&
+      Date.parse(request.createdAt) <= Date.parse(response.value.observedAt) && Date.parse(response.value.observedAt) <= v.publishedAt;
+    if (strict) check(bound, 'MAILBOX_PUBLICATION_REFUSED');
+    return bound && v.publishedAt <= Date.parse(request.deadline);
+  }
+
+  async awaitQuiescence(request, sleep, pollMs, strict) {
+    const created = Date.parse(request.createdAt), deadline = Date.parse(request.deadline);
+    let last = this.clock();
+    const monoEnd = (this.sentAt.get(request) ?? (this.monotonic() - (last - created))) + (deadline - created);
+    // 两个时钟取更早的截止；壁钟回拨或迟于末读上限均不能恢复旧证明。
+    const remaining = () => {
+      const now = this.clock();
+      if (now < last || now < created) {
+        if (strict) check(false, 'MAILBOX_CLOCK_REFUSED');
+        return -Infinity;
+      }
+      last = now;
+      return Math.min(deadline - now, monoEnd - this.monotonic());
+    };
+    let left = remaining();
+    while (left >= -QUIESCENCE_FINAL_READ_MS) {
+      const finalRead = left <= 0;
+      const r = await this.responseBytes(request);
+      left = remaining();
+      if (left < -QUIESCENCE_FINAL_READ_MS) return null;
+      if (r) {
+        const observed = Date.parse(r.value.observedAt);
+        if (!(observed >= created && observed <= last)) {
+          if (strict) check(false, 'MAILBOX_RESPONSE_TIME_REFUSED');
+          return null;
+        }
+        if (left >= 0) return r.value;
+        if (await this.publishedInTime(request, r, strict) && remaining() >= -QUIESCENCE_FINAL_READ_MS) return r.value;
+        return null;
+      }
+      if (finalRead) return null;
+      if (left > 0) await sleep(Math.min(pollMs, QUIESCENCE_FINAL_READ_MS, left));
+      left = remaining();
+    }
+    return null;
+  }
+
+  // 只由原服务记录实际收件时刻，伴随进程的响应文件与改名后凭据保存在另一侧。
+  async noteQuiescenceRead(request, receivedAt, reason) {
+    await writeNewAtomic(path.join(this.requests, request.requestId + '.received.json'), {
+      requestId: request.requestId, kind: request.kind, createdAt: request.createdAt, receivedAt, reason,
+    });
+  }
+
+  // 串行办理的开工标记。伴随进程崩溃后，原宿主的树不能仅凭信封过期视作已清。
+  probeMark(request) {
+    return path.join(this.responses, request.requestId + '.probe.json');
+  }
+
+  probeClaimed(request) { return exists(this.probeMark(request)); }
+
+  async claimProbe(request) {
+    const mark = this.probeMark(request);
+    if (await exists(mark)) return false;
+    const temporary = path.join(this.responses, `${TEMP_PREFIX}${nonce()}-${path.basename(mark)}`);
+    await writeNewAtomic(temporary, { requestId: request.requestId, at: this.clock() });
+    try {
+      // 开工只看标记是否存在。链接完整文件时目标必须不存在，竞争者无法覆盖先取得的标记。
+      await fs.link(temporary, mark);
+      return true;
+    } catch (error) {
+      if (error.code === 'EEXIST') return false;
+      throw error;
+    } finally {
+      await fs.unlink(temporary).catch(() => {}); // 遗留临时名由 sweepTemp 清理。
+    }
+  }
+
+  async predecessorAllowsProbe(request) {
+    const file = path.join(this.requests, request.previousRequestId + '.json');
+    const prior = validateRequest(await readFinished(file, 2048, 'MAILBOX_REQUEST_REFUSED'));
+    if (prior.requestId !== request.previousRequestId || prior.kind !== request.kind || prior.previousRequestId ||
+        prior.batchId !== request.batchId || !prior.binding || canonicalJson(prior.binding) !== canonicalJson(request.binding) ||
+        Date.parse(prior.createdAt) > Date.parse(request.createdAt)) return false;
+    // 上一封须已结束。迟到的双真只允许重新测量；迟到的活动、未知树、坏输出均保留。
+    const r = await this.poll(prior);
+    if (temporaryQuiescence(r)) return true;
+    if (!r || r.jobTree === 'unconfirmed') return false;
+    return (r.ok === true && r.code === null || r.ok === false && r.code === 'QUIESCENCE_RESULT_EXPIRED') &&
+      r.proof?.linuxUnitsInactive === true && r.proof.containersZero === true;
+  }
+
+  async await(request, sleep, pollMs = 500, strictPublication = false) {
+    if (request.kind === 'linux-quiescence') return this.awaitQuiescence(request, sleep, pollMs, strictPublication);
     while (this.clock() < Date.parse(request.deadline)) {
       const r = await this.poll(request);
       if (r) return r;
@@ -294,7 +437,10 @@ export class Mailbox {
       if (await exists(path.join(this.responses, name))) continue;
       try {
         const value = await readFinished(path.join(this.requests, name), 2048, 'MAILBOX_REQUEST_REFUSED');
-        if (value !== null) out.push(validateRequest(value));
+        if (value !== null) {
+          if (value.kind === 'linux-quiescence') check(value.requestId === id, 'MAILBOX_REQUEST_IDENTITY_REFUSED');
+          out.push(validateRequest(value));
+        }
       } catch { out.push({ requestId: id, refused: true }); }
     }
     // Oldest first by the service's own createdAt, not by the random request id.
@@ -303,7 +449,13 @@ export class Mailbox {
 
   async respond(request, fields) {
     const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, pull: null, jobTree: null, memory: null, prune: null, observedAt: isoNow(this.clock), ...fields }, request);
-    await writeNewAtomic(path.join(this.responses, `${request.requestId}.json`), response);
+    const hash = await writeNewAtomic(path.join(this.responses, `${request.requestId}.json`), response);
+    if (request.kind === 'linux-quiescence') {
+      const publishedAt = this.clock();
+      await writeNewAtomic(path.join(this.responses, request.requestId + '.published.json'), {
+        contract: PUBLICATION, requestId: request.requestId, kind: request.kind, sha256: hash, publishedAt,
+      });
+    }
     return response;
   }
 

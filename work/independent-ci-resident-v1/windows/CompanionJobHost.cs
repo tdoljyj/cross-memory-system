@@ -73,10 +73,10 @@ public static class CluedCompanionJobHost {
   return sb.Length<32767?sb.ToString():null;
  }
  static string Num(uint? v){return v.HasValue?v.Value.ToString():"null";}
- public static string Report(string nonce,bool started,string failure,uint? pid,bool timedOut,uint? exit,uint? leftover,uint? active,uint? total,bool treeZero){
+ public static string Report(string nonce,bool started,string failure,uint? pid,bool timedOut,uint? exit,uint? leftover,uint? active,uint? total,bool treeZero,long? elapsedMs=null){
   return "clued-job-host "+(ValidNonce(nonce)?nonce:"-")+" {\"contract\":\""+Contract+"\",\"started\":"+(started?"true":"false")+",\"failure\":"+(failure==null?"null":"\""+failure+"\"")+
    ",\"childPid\":"+Num(pid)+",\"timedOut\":"+(timedOut?"true":"false")+",\"exitCode\":"+Num(exit)+",\"leftover\":"+Num(leftover)+",\"activeProcesses\":"+Num(active)+
-   ",\"totalProcesses\":"+Num(total)+",\"treeZero\":"+(treeZero?"true":"false")+"}";
+   ",\"totalProcesses\":"+Num(total)+(elapsedMs.HasValue?",\"hostElapsedMs\":"+elapsedMs.Value.ToString(System.Globalization.CultureInfo.InvariantCulture):"")+",\"treeZero\":"+(treeZero?"true":"false")+"}";
  }
  static bool Query(IntPtr job,out Accounting info){uint returned;return QueryInformationJobObject(job,1,out info,(uint)Marshal.SizeOf(typeof(Accounting)),out returned)&&returned==(uint)Marshal.SizeOf(typeof(Accounting));}
  // Terminate the job and wait until it has no process left (and the child's exit code is known). Only this job.
@@ -104,6 +104,7 @@ public static class CluedCompanionJobHost {
  }
 
  public static int Main(string[] args){
+  var timing=Environment.GetEnvironmentVariable("CLUED_QUIESCENCE_TIMING")=="1"?System.Diagnostics.Stopwatch.StartNew():null;
   string nonce=args.Length>0?args[0]:null,failure=null;bool started=false,timedOut=false,treeZero=false,exitKnown=false,attributesReady=false;
   uint timeout=0,exit=0,leftover=uint.MaxValue,active=uint.MaxValue,total=uint.MaxValue;uint? pid=null;
   IntPtr job=IntPtr.Zero,input=IntPtr.Zero,output=IntPtr.Zero,error=IntPtr.Zero,attributes=IntPtr.Zero,handles=IntPtr.Zero,jobs=IntPtr.Zero;ProcessInfo p=new ProcessInfo();
@@ -146,7 +147,7 @@ public static class CluedCompanionJobHost {
    if(p.Thread!=IntPtr.Zero)CloseHandle(p.Thread);if(p.Process!=IntPtr.Zero)CloseHandle(p.Process);if(input!=IntPtr.Zero)CloseHandle(input);
    if(output!=IntPtr.Zero&&output!=stdOut)CloseHandle(output);if(error!=IntPtr.Zero&&error!=stdErr&&error!=output)CloseHandle(error);
   }
-  WriteReport(Report(nonce,started,failure,pid,timedOut,exitKnown?(uint?)exit:null,leftover==uint.MaxValue?null:(uint?)leftover,active==uint.MaxValue?null:(uint?)active,total==uint.MaxValue?null:(uint?)total,treeZero));
+  WriteReport(Report(nonce,started,failure,pid,timedOut,exitKnown?(uint?)exit:null,leftover==uint.MaxValue?null:(uint?)leftover,active==uint.MaxValue?null:(uint?)active,total==uint.MaxValue?null:(uint?)total,treeZero,timing==null?(long?)null:timing.ElapsedMilliseconds));
   if(job!=IntPtr.Zero)CloseHandle(job);
   if(!started)return 120;
   if(timedOut)return 121;
