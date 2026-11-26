@@ -3,16 +3,16 @@ import { after, before, test } from 'node:test';
 import { digest, schedulingFixture, uuid } from './ci-scheduling-stage1-fixture.mjs';
 
 const view = {
-  schema: 'clued.merge-queue-node-view/1',
+  contract: 'clued.merge-queue-node-view/1',
   node: { name: 'Synthetic node', mode: 'ACTIVE', source: digest('source'), generation: 1, consistent: true },
   executor: { state: 'running', reason: null, since: '2026-11-26T01:00:00Z' },
   halt: null,
   paused: false,
   intakePause: null,
   breaker: { state: 'closed', nextTrialAt: null },
-  queueHold: false,
+  queueHold: null,
   current: null,
-  pending: [{ pr: 1, headSha: 'a'.repeat(40), state: 'QUEUED', position: 1, deferred: false,
+  pending: [{ pr: 1, headSha: 'a'.repeat(40), state: 'QUEUED', position: 1, deferred: null,
     since: '2026-11-26T01:00:00Z', nextAt: null, holdText: '等待执行' }],
   unqueued: [{ pr: 2, headSha: 'b'.repeat(40) }],
   train: { enabled: 'on', last: null },
@@ -77,9 +77,10 @@ test('摘要相同只推进 reported_at，非当班节点的 CI 连接也可上�
   const { rows: [previous] } = await fixture.admin.query(`update clued_private.ci_node_queue_view_v1
     set reported_at=reported_at-interval '1 minute', changed_at=changed_at-interval '1 minute'
     where node_id=$1 returning reported_at,changed_at,view_digest`, [nodeId]);
-  const { rows: [role] } = await fixture.admin.query(`update clued_private.binding_roles_v1
-    set effective_at=now()+interval '1 hour' where binding_id=$1 and role='ci-admission'
-    returning effective_at-interval '1 hour' as restore_at`, [fixture.binding]);
+  const { rows: [role] } = await fixture.admin.query(`select effective_at from clued_private.binding_roles_v1
+    where binding_id=$1 and role='ci-admission'`, [fixture.binding]);
+  await fixture.admin.query(`update clued_private.binding_roles_v1 set effective_at=now()+interval '1 hour'
+    where binding_id=$1 and role='ci-admission'`, [fixture.binding]);
   const sameView = Object.fromEntries(Object.entries(view).reverse());
   try {
     const result = ok(await report(sameView, fixture.token));
@@ -91,7 +92,7 @@ test('摘要相同只推进 reported_at，非当班节点的 CI 连接也可上�
     assert.deepEqual(stored, { changed_at: previous.changed_at, view_digest: previous.view_digest, view });
   } finally {
     await fixture.admin.query(`update clued_private.binding_roles_v1 set effective_at=$2
-      where binding_id=$1 and role='ci-admission'`, [fixture.binding, role.restore_at]);
+      where binding_id=$1 and role='ci-admission'`, [fixture.binding, role.effective_at]);
   }
   const updated = { ...view, paused: true };
   const changed = ok(await report(updated));
@@ -107,7 +108,7 @@ test('坏视图被拒，心跳仍推进且旧视图完整保留', async () => {
   const oldView = (await read()).nodes[0];
   for (const invalid of [
     { ...view, alerts: ['字'.repeat(11000)] },
-    { ...view, schema: 'clued.merge-queue-node-view/2' },
+    { ...view, contract: 'clued.merge-queue-node-view/2' },
     { ...view, node_id: uuid() },
     { ...view, node: { ...view.node, secret: 'unexpected' } },
     { ...view, pending: Array(31).fill(view.pending[0]) },
