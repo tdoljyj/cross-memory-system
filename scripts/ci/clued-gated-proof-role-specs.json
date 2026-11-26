@@ -2688,10 +2688,10 @@
     },
     ".github/workflows/clued-required-tests-windows.yml": {
       "sources": {
-        "e726ce52cce5ea6dd1fed3b073a6d80eb3c46444": [
+        "c9c9d146e6d434e69660490aa161d3d36264e21d": [
           {
             "job_id": "ci-suites-windows",
-            "definition_sha256": "c8bc308ea776a71fa3be756725ab530c4db2d37c25ffd0af5f5acefcb726f7c1",
+            "definition_sha256": "bc032f2225f9efc593770491dca2790a7beccfd81c95e85276e74860cede23bd",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites-windows' || 'ci-suites-windows-skipped' }}",
               "needs": "admission-gate",
@@ -2706,7 +2706,7 @@
                 "cap-node24",
                 "cap-python312"
               ],
-              "timeout-minutes": 45,
+              "timeout-minutes": 90,
               "permissions": {
                 "contents": "read",
                 "pull-requests": "read"
