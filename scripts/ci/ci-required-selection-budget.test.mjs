@@ -78,6 +78,41 @@ test('fixture [needs:non-elevated]', () => { throw new Error('must be skipped');
   assert.deepEqual(expand(), alphabetical.toSorted());
 });
 
+test('resident-node: a free slot takes the next file while an earlier slot is still busy', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-budget-slots-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const suite = SUITE_COMMANDS['resident-node'][0];
+  const cwd = path.join(temp, suite.cwd);
+  mkdirSync(path.join(cwd, 'test'), { recursive: true });
+  mkdirSync(path.join(cwd, 'rollout/test'), { recursive: true });
+  const guard = new URL('./test-clock-guard.mjs', import.meta.url).href;
+  const files = ['rollout/test/a.test.mjs', 'test/b.test.mjs', 'test/c.test.mjs', 'test/d.test.mjs'];
+  for (const [index, file] of files.entries()) {
+    writeFileSync(path.join(cwd, file), `import { appendFileSync, readFileSync } from 'node:fs';
+import { until } from ${JSON.stringify(guard)};
+import test from 'node:test';
+test('slot ${index}', async () => {
+  appendFileSync('slots.log', 'start ${index}\\n');
+  const next = ${[1, 2, null, null][index]};
+  if (next !== null) await until(() => readFileSync('slots.log', 'utf8').includes('start ' + next + '\\n'), 'next slot');
+  appendFileSync('slots.log', 'end ${index}\\n');
+});\n`);
+  }
+  const lines = [];
+  assert.equal(executeSuite('resident-node', { root: temp, env: { ...process.env, RUNNER_TEMP: temp },
+    log: (line) => lines.push(line), commandTimeoutMs: 10_000, shard: { index: 1, total: 1, lane: true, concurrency: 2 } }), 0, lines.join('\n'));
+  const events = readFileSync(path.join(cwd, 'slots.log'), 'utf8').trimEnd().split('\n');
+  assert.deepEqual(events.toSorted(), files.flatMap((_, index) => [`start ${index}`, `end ${index}`]).sort());
+  assert.ok(events.indexOf('start 2') < events.indexOf('end 1'), events.join('\n'));
+  let active = 0;
+  let peak = 0;
+  for (const event of events) {
+    active += event.startsWith('start') ? 1 : -1;
+    peak = Math.max(peak, active);
+  }
+  assert.equal(peak, 2, events.join('\n'));
+});
+
 test('B4: the metronome workload does not use native hash acceleration', (t) => {
   const createHash = t.mock.method(crypto, 'createHash', () => {
     throw new Error('the metronome must not call crypto.createHash');

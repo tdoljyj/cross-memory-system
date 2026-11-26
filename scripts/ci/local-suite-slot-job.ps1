@@ -1,8 +1,9 @@
-param([switch]$Probe)
+param([switch]$Probe, [switch]$ResidentFiles, [string]$Directory, [string]$Node, [string]$Worker)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -130,7 +131,7 @@ public static class LocalSuiteJob {
         return info.ActiveProcesses;
     }
 
-    private static IntPtr StartWorker(IntPtr job, string node, string worker) {
+    private static IntPtr StartInJob(IntPtr job, string node, string arguments, IntPtr output, IntPtr error) {
         IntPtr size = IntPtr.Zero;
         InitializeProcThreadAttributeList(IntPtr.Zero, 2, 0, ref size);
         if (size == IntPtr.Zero) throw new Win32Exception();
@@ -143,7 +144,6 @@ public static class LocalSuiteJob {
             var security = new SecurityAttributes { Size = (uint)Marshal.SizeOf(typeof(SecurityAttributes)), Inherit = true };
             input = CreateFile("NUL", 0x80000000, 3, ref security, 3, 0, IntPtr.Zero);
             if (input == new IntPtr(-1)) throw new Win32Exception();
-            IntPtr output = GetStdHandle(-11), error = GetStdHandle(-12);
             if (!SetHandleInformation(output, 1, 1) || !SetHandleInformation(error, 1, 1)) throw new Win32Exception();
             IntPtr[] inherit = output == error ? new[] { input, output } : new[] { input, output, error };
             handles = Marshal.AllocHGlobal(inherit.Length * IntPtr.Size);
@@ -161,7 +161,7 @@ public static class LocalSuiteJob {
                     Flags = UseStandardHandles, Input = input, Output = output, Error = error },
                 Attributes = attributes
             };
-            var argv = new StringBuilder("\"" + node + "\" \"" + worker + "\" worker");
+            var argv = new StringBuilder("\"" + node + "\" " + arguments);
             ProcessInfo child;
             if (!CreateProcess(node, argv, IntPtr.Zero, IntPtr.Zero, true, ExtendedStartup | NoWindow,
                 IntPtr.Zero, null, ref start, out child)) throw new Win32Exception();
@@ -173,6 +173,105 @@ public static class LocalSuiteJob {
             if (input != IntPtr.Zero && input != new IntPtr(-1)) CloseHandle(input);
             if (handles != IntPtr.Zero) Marshal.FreeHGlobal(handles);
             if (jobs != IntPtr.Zero) Marshal.FreeHGlobal(jobs);
+        }
+    }
+
+    private static IntPtr StartWorker(IntPtr job, string node, string worker) {
+        return StartInJob(job, node, "\"" + worker + "\" worker", GetStdHandle(-11), GetStdHandle(-12));
+    }
+
+    private sealed class ResidentRequest {
+        public volatile bool Stop;
+        public Task Work;
+    }
+
+    private static void RunResidentFile(ResidentRequest request, int index, string directory, string node, string worker) {
+        IntPtr job = IntPtr.Zero, child = IntPtr.Zero;
+        int status = 1;
+        string failed = null, cleanup = null;
+        try {
+            job = CreateJobObject(IntPtr.Zero, null);
+            if (job == IntPtr.Zero) throw new Win32Exception();
+            Limits limits = new Limits();
+            limits.Basic.Flags = KillOnClose;
+            if (!SetInformationJobObject(job, ExtendedLimits, ref limits, Marshal.SizeOf(typeof(Limits))))
+                throw new Win32Exception();
+            if (!request.Stop) {
+                var security = new SecurityAttributes { Size = (uint)Marshal.SizeOf(typeof(SecurityAttributes)), Inherit = true };
+                string basename = Path.Combine(directory, index.ToString());
+                IntPtr log = CreateFile(basename + ".log", 0x40000000, 3, ref security, 1, 0, IntPtr.Zero);
+                if (log == new IntPtr(-1)) throw new Win32Exception();
+                try {
+                    child = StartInJob(job, node, "\"" + worker + "\" --resident-file-test \"" + basename + ".args.json\"", log, log);
+                } finally {
+                    CloseHandle(log);
+                }
+                Console.WriteLine("{0} started", index);
+                while (!request.Stop) {
+                    uint wait = WaitForSingleObject(child, 20);
+                    if (wait == WaitTimeout) continue;
+                    if (wait != 0 || !GetExitCodeProcess(child, out status)) throw new Win32Exception();
+                    break;
+                }
+            }
+        } catch (Exception error) {
+            failed = error.Message;
+        } finally {
+            if (child != IntPtr.Zero) CloseHandle(child);
+            if (job != IntPtr.Zero) {
+                try {
+                    if (Active(job) != 0 && !TerminateJobObject(job, 1)) throw new Win32Exception();
+                    Stopwatch drain = Stopwatch.StartNew();
+                    while (Active(job) != 0) {
+                        if (drain.ElapsedMilliseconds >= 10000) throw new IOException("file job did not drain");
+                        Thread.Sleep(20);
+                    }
+                } catch (Exception error) {
+                    cleanup = error.Message;
+                } finally {
+                    // KILL_ON_JOB_CLOSE still covers the entire job if explicit cleanup or confirmation failed.
+                    CloseHandle(job);
+                }
+            }
+        }
+        if (cleanup != null || failed != null) {
+            Console.WriteLine("{0} {1} {2}", index, cleanup == null ? "failed" : "cleanup",
+                Convert.ToBase64String(Encoding.UTF8.GetBytes(cleanup ?? failed)));
+        } else {
+            Console.WriteLine("{0} drained {1}", index, status);
+        }
+    }
+
+    // One host per file pool. EOF cancels every outstanding job even if the pool dies.
+    public static void RunResidentFiles(string directory, string node, string worker) {
+        var input = new StreamReader(Console.OpenStandardInput(), Encoding.ASCII);
+        var active = new Dictionary<int, ResidentRequest>();
+        var finished = new List<int>();
+        Console.WriteLine("ready");
+        try {
+            string line;
+            while ((line = input.ReadLine()) != null) {
+                int index = int.Parse(line.Substring(1));
+                if (line[0] == '-') {
+                    ResidentRequest existing;
+                    if (active.TryGetValue(index, out existing)) existing.Stop = true;
+                    continue;
+                }
+                finished.Clear();
+                foreach (var item in active) {
+                    if (!item.Value.Work.IsCompleted) continue;
+                    item.Value.Work.GetAwaiter().GetResult();
+                    finished.Add(item.Key);
+                }
+                foreach (int done in finished) active.Remove(done);
+                var request = new ResidentRequest();
+                active.Add(index, request);
+                request.Work = Task.Factory.StartNew(() => RunResidentFile(request, index, directory, node, worker),
+                    CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            }
+        } finally {
+            foreach (ResidentRequest request in active.Values) request.Stop = true;
+            foreach (ResidentRequest request in active.Values) request.Work.GetAwaiter().GetResult();
         }
     }
 
@@ -231,6 +330,11 @@ if ($Probe) {
     foreach ($request in (ConvertFrom-Json $env:CLUED_LOCAL_SUITE_JOB_PROBE)) {
         "$request $([LocalSuiteJob]::Probe($request))"
     }
+    exit 0
+}
+
+if ($ResidentFiles) {
+    [LocalSuiteJob]::RunResidentFiles($Directory, $Node, $Worker)
     exit 0
 }
 
