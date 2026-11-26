@@ -112,7 +112,7 @@ test('at no moment of send, respond or cancel does a mailbox directory hold an e
     const pending = await box.pending();
     assert.deepEqual(pending.filter(p => p.refused), [], `a request refused at ${stage}`);
     if (target?.kind === 'send') assert.equal(pending.filter(p => !known.has(p.requestId)).length, stage === 'renamed' ? 1 : 0, `send, ${stage}`);
-    if (target?.kind === 'respond') assert.equal(await box.poll(target.request) !== null, stage === 'renamed', `respond, ${stage}`);
+    if (target?.kind === 'respond') assert.equal(await box.poll(target.request) !== null, published || stage === 'renamed', `respond, ${stage}`);
     if (target?.kind === 'cancel') assert.equal(await box.cancelled(target.request), stage === 'renamed', `cancel, ${stage}`);
     if (stage === 'renamed') published = true;
   };

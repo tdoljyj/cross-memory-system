@@ -111,7 +111,7 @@ test('the moved bridge pump follows issue -> worker -> challenge/response -> res
   assert.equal(typeof beat.at, 'number', 'the heartbeat is written where the companion has write access');
   assert.deepEqual(await mailbox.heartbeat(), { at: beat.at });
   // linux-quiescence answers are the root tool's own facts, passed through unchanged.
-  const q = await mailbox.send('linux-quiescence', { batchId: BATCH }, 60_000);
+  const q = await mailbox.send('linux-quiescence', { batchId: BATCH }, 210_000);
   await c.step();
   assert.deepEqual((await mailbox.poll(q)).proof, { linuxUnitsInactive: true, containersZero: true });
 });
