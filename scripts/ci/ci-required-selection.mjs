@@ -169,7 +169,9 @@ const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 
   'apps/clued-cloud/scripts/release-migration-compat.mjs',
   'scripts/ci/clued-independent-publication-identity.mjs', 'scripts/ci/merge-admission-clock-source.mjs',
   'scripts/ci/merge-admission-measurement-history.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs',
-  'work/actions-hosted-migration/independent-ci-v1/src/proof.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/queue.mjs'];
+  'work/actions-hosted-migration/independent-ci-v1/src/proof.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/queue.mjs',
+  'work/actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs',
+  'work/independent-ci-resident-v1/test/multi-duty-fixture.mjs'];
 
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
@@ -188,7 +190,12 @@ export const SUITES = {
     'reinstall-python': RESIDENT_AND_SOURCE,
     'offline-drill': RESIDENT_AND_SOURCE,
     'source-v2-node': [...RESIDENT_AND_SOURCE, 'apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
-      'apps/clued-cloud/supabase/migrations/*_ci_connection_self_v1.sql', 'apps/clued-cloud/tests/ci-connection-self-db.test.mjs'],
+      'apps/clued-cloud/supabase/migrations/*_ci_connection_self_v1.sql', 'apps/clued-cloud/tests/ci-connection-self-db.test.mjs',
+      // The train e2e case imports the shared ephemeral database fixture.
+      'apps/clued-cloud/tests/merge-train-v2-db.fixture.mjs', 'apps/clued-cloud/tests/ci-scheduling-stage1-fixture.mjs',
+      'apps/clued-cloud/tests/pg-cluster-fixture.mjs', 'apps/clued-cloud/tests/raw-binding-grants-fixture.mjs',
+      'apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs',
+      'apps/clued-cloud/tests/cluster-cleanup.mjs', 'scripts/ci/test-clock-guard.mjs', 'scripts/ci/test-clock-imports.mjs'],
     'source-v2-python': RESIDENT_AND_SOURCE,
     'components': ['scripts/clued_components.py', 'scripts/hooks/**', 'skills/**', 'integrations/**',
       'config/clued-components.json', 'tests/test_clued_components.py', 'tests/test_clued_version_check.py',
