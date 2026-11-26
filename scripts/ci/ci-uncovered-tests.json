@@ -129,12 +129,6 @@
       "reason": "1 处 permission denied for function clued_mcp_search_context（测试以 anon 直连已收回执行权的旧函数）"
     },
     {
-      "path": "apps/clued-cloud/tests/storage-owner-lifecycle-db.test.mjs",
-      "kind": "stale-or-suspect",
-      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
-      "reason": "3 处：2 处网关函数数 88，测试期望 80（期望值过时）；1 处 :666 storage_demand_refresh_source_mismatch（根因未查）"
-    },
-    {
       "path": "apps/clued-cloud/tests/v2-red/unified-record-invariants.test.mjs",
       "kind": "unsorted",
       "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",

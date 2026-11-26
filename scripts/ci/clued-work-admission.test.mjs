@@ -1280,7 +1280,12 @@ function historicalUngatedTrivy() {
 // Keep the historical one-dependency attack fixtures below in their original
 // spelling. The all-workflows test reads the actual new dependency graph;
 // clued-push-reuse.test.mjs checks the additional proof dependency itself.
-const g4 = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-g4-database.yml"), "utf8")
+// Pin the historical gate-only cutover. Deriving old attack fixtures from the
+// live actor-routing successor can leave unmatched parentheses after trimming.
+const g4GateSource = registeredWorkflowSource(
+  parseWorkflowProfiles(fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-gated-proof-profiles.json'), 'utf8')),
+  '.github/workflows/clued-g4-database.yml', 'd7876890a4df616fddae675c4d66737a70eb7045').profile.source_yaml;
+const g4 = g4GateSource
   .replace("needs: [admission-gate, push-reuse]", "needs: admission-gate")
   .replace("(!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((", "((")
   .replace("github.actor == github.repository_owner)))\n    name:", "github.actor == github.repository_owner))\n    name:");
@@ -3980,9 +3985,9 @@ test('trusted admission catalogue reader permits only the profile through 2 MiB 
   }
 });
 
-test('G4 uses the registered required-tests Native gate without changing any execution route', async () => {
+test('historical G4 gate-only cutover uses the registered Native gate without changing its execution routes', async () => {
   const file = '.github/workflows/clued-g4-database.yml';
-  const text = fs.readFileSync(new URL('../../' + file, import.meta.url), 'utf8');
+  const text = g4GateSource;
   const required = fs.readFileSync(new URL('../../.github/workflows/clued-required-tests.yml', import.meta.url), 'utf8');
   const gateJob = value => admissionModule.workflowJobs(value).find(job => job.name === 'admission-gate');
   assert.equal(gateJob(text).lines.join('\n'), gateJob(required).lines.join('\n').replace(CANCEL_ONLY_GATE_IF, ''));
@@ -3998,6 +4003,23 @@ test('G4 uses the registered required-tests Native gate without changing any exe
   } });
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source],
     [true, 'ADMITTED', INDEPENDENT_GATE_SOURCE]);
+});
+
+test('live G4 actor-routing successor keeps every heavy job behind the unchanged Native gate', () => {
+  const file = '.github/workflows/clued-g4-database.yml';
+  const text = fs.readFileSync(new URL('../../' + file, import.meta.url), 'utf8');
+  const job = 'database-gate-trusted-self-hosted';
+  const region = workflowJobs(text).find(value => value.name === job).lines.join('\n');
+  assert.deepEqual(gateFindings(text, text), []);
+  assert.equal(workflowBlob(text), '9d81933776a2646bdf0ff77f6ee2621cda551ec2');
+  for (const [changed, expected] of [
+    [region.replace('needs: [admission-gate, push-reuse]', 'needs: [push-reuse]'), `job_not_gated:${job}`],
+    [region.replace("needs.admission-gate.outputs.admitted == 'true' &&", 'always() ||'), `job_condition_not_gated:${job}`],
+    [region.replace('\n    name:', ' || true\n    name:'), `job_condition_not_gated:${job}`],
+  ]) {
+    assert.notEqual(changed, region, 'the attack must actually alter the current job');
+    assert.ok(gateFindings(text.replace(region, changed), text).includes(expected), expected);
+  }
 });
 
 test('G4 all-jobs repair requires a current Native admission and every prior heavy job to have skipped', async () => {
