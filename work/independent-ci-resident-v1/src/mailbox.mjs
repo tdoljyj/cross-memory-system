@@ -325,12 +325,19 @@ export class Mailbox {
   probeClaimed(request) { return exists(this.probeMark(request)); }
 
   async claimProbe(request) {
+    const mark = this.probeMark(request);
+    if (await exists(mark)) return false;
+    const temporary = path.join(this.responses, `${TEMP_PREFIX}${nonce()}-${path.basename(mark)}`);
+    await writeNewAtomic(temporary, { requestId: request.requestId, at: this.clock() });
     try {
-      await writeNewAtomic(this.probeMark(request), { requestId: request.requestId, at: this.clock() }, { exclusiveClaim: true });
+      // 开工只看标记是否存在。链接完整文件时目标必须不存在，竞争者无法覆盖先取得的标记。
+      await fs.link(temporary, mark);
       return true;
     } catch (error) {
-      if (error.code === 'CREATE_ONLY_TARGET_EXISTS') return false;
+      if (error.code === 'EEXIST') return false;
       throw error;
+    } finally {
+      await fs.unlink(temporary).catch(() => {}); // 遗留临时名由 sweepTemp 清理。
     }
   }
 
