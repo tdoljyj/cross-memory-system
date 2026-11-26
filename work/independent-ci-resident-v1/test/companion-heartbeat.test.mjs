@@ -7,7 +7,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { CompanionHeartbeat, FAILOVER_SILENCE_MINUTES, HANDOVER_MARKER, HEARTBEAT_RPC, NODE_HEARTBEAT_EVERY_MS, WATCHDOG_STALE_MS, handoverComment, heartbeatPayload, parseHeartbeatReply,
   readHeartbeatToken, serviceRunningFrom, supabaseHeartbeatTransport } from '../src/companion-heartbeat.mjs';
-import { companionHeartbeat } from '../src/companion-main.mjs';
+import { advisoryLanes, companionHeartbeat, HEARTBEAT_LANE_EVERY_MS, lane } from '../src/companion-main.mjs';
 import { tempRoot } from './helpers.mjs';
 
 const MIN = 60_000;
@@ -172,21 +172,90 @@ test('an automatic take-over to this node: one marked @Owner comment on the comp
   const h = { receiptId: RECEIPT, from: FROM, to: null, at: new Date(NOW).toISOString(), trigger: 'silent' };
   const t = beat({ replies: [{ ok: true, tokenRefused: false, notRegistered: false, autoHandovers: [h], watchdogTickAt: NOW, watchdogStale: false }] });
   await t.hb.step();
+  assert.equal(t.comments.length, 0, 'the heartbeat only queues the receipt');
+  await t.hb.handoverStep();
   t.advance(NODE_HEARTBEAT_EVERY_MS);
   await t.hb.step();
+  await t.hb.handoverStep();
   assert.equal(t.comments.length, 1);
   assert.equal(t.comments[0].issue, 77);
   assert.ok(t.comments[0].body.startsWith(HANDOVER_MARKER(RECEIPT)) && t.comments[0].body.includes('@tdoljyj') && t.comments[0].body.includes(FROM) && t.comments[0].body.includes('node-a'));
   // already on the issue (another start or machine): not again
   const seen = beat({ existing: true, replies: [{ ok: true, tokenRefused: false, notRegistered: false, autoHandovers: [h], watchdogTickAt: NOW, watchdogStale: false }] });
   await seen.hb.step();
+  await seen.hb.handoverStep();
   assert.equal(seen.comments.length, 0);
   assert.ok(seen.memo.has(`auto-handover:${RECEIPT}`));
   // several receipts in one answer: one comment each
   const two = beat({ replies: [{ ok: true, tokenRefused: false, notRegistered: false, autoHandovers: [h, { ...h, receiptId: '0a1b2c3d-0000-4000-8000-0000000000cc' }], watchdogTickAt: NOW, watchdogStale: false }] });
   await two.hb.step();
+  await two.hb.handoverStep();
+  await two.hb.handoverStep();
   assert.equal(two.comments.length, 2);
   assert.equal(handoverComment(h, 'tdoljyj', 'node-a').split('\n')[0], `<!-- clued-auto-handover:${RECEIPT} -->`);
+});
+
+test('换手通知一直待决时，生产心跳仍连续发送五分钟，重复回执只提交一次通知', async () => {
+  const h = { receiptId: RECEIPT, createdAt: new Date(NOW).toISOString() };
+  const t = beat({ replies: [{ ok: true, autoHandovers: [h], watchdogTickAt: NOW, watchdogStale: false }] });
+  const sentAt = [], relayed = [];
+  const send = t.hb.transport;
+  t.hb.transport = (...args) => { sentAt.push(t.hb.clock()); return send(...args); };
+  t.hb.relayHandover = receipt => { relayed.push(receipt.receiptId); return new Promise(() => {}); };
+  const { lanes: [, advisory] } = advisoryLanes({ heartbeat: t.hb, repo: 'r/r', ghExe: 'gh' });
+  let wake, stopped = false;
+  const turn = () => new Promise(resolve => setImmediate(resolve));
+  void lane({ runner: { busy: false }, work: () => t.hb.step(), everyMs: HEARTBEAT_LANE_EVERY_MS,
+    sleep: () => new Promise(resolve => { wake = resolve; }), stop: () => stopped });
+  try {
+    await turn();
+    void advisory.work();
+    for (let elapsed = HEARTBEAT_LANE_EVERY_MS; elapsed <= 5 * MIN; elapsed += HEARTBEAT_LANE_EVERY_MS) {
+      wake?.();
+      t.advance(HEARTBEAT_LANE_EVERY_MS);
+      await turn();
+      await t.hb.handoverStep();
+    }
+    assert.deepEqual(relayed, [RECEIPT]);
+    assert.deepEqual(sentAt, Array.from({ length: 6 }, (_, i) => NOW + i * MIN));
+  } finally {
+    stopped = true;
+    wake?.();
+  }
+});
+
+test('换手通知限次、限时重试，回执重放不会刷新重试预算', async () => {
+  const h = { receiptId: RECEIPT, createdAt: new Date(NOW).toISOString() };
+  const replies = [{ ok: true, autoHandovers: [h, h], watchdogTickAt: NOW, watchdogStale: false }];
+  const t = beat({ replies });
+  const attempts = [];
+  t.hb.handover.commentExists = async () => { attempts.push(t.hb.clock()); return null; };
+  for (let i = 0; i <= 12; i += 1) {
+    await t.hb.step();
+    await t.hb.handoverStep();
+    await t.hb.handoverStep();
+    t.advance(MIN / 2);
+  }
+  assert.deepEqual(attempts, [NOW, NOW + MIN / 2, NOW + MIN]);
+  assert.equal(t.comments.length, 0, 'unconfirmed marker reads never permit a POST');
+
+  const expired = beat({ replies });
+  await expired.hb.step();
+  expired.advance(5 * MIN);
+  await expired.hb.step();
+  await expired.hb.handoverStep();
+  assert.equal(expired.comments.length, 0, 'replays do not restart an expired receipt');
+
+  const uncertain = beat({ replies });
+  const post = uncertain.hb.handover.comment;
+  uncertain.hb.handover.comment = async (...args) => { await post(...args); return false; };
+  uncertain.hb.handover.commentExists = async () => uncertain.comments.length > 0;
+  await uncertain.hb.step();
+  await uncertain.hb.handoverStep();
+  uncertain.advance(MIN / 2);
+  await uncertain.hb.handoverStep();
+  assert.equal(uncertain.comments.length, 1, 'a lost POST response is recovered by finding the receipt marker');
+  assert.ok(uncertain.memo.has(`auto-handover:${RECEIPT}`));
 });
 
 test('the reply is read tolerantly; the wire call posts the CI command door with the token hashed, never the token itself', async t => {
@@ -194,7 +263,7 @@ test('the reply is read tolerantly; the wire call posts the CI command door with
     watchdog: { last_tick_at: '2026-11-01T09:59:00+00:00', stale: false },
     auto_handovers: [{ receipt_id: RECEIPT.toUpperCase(), from_binding_id: '0A1B2C3D-0000-4000-8000-0000000000AA', to_binding_id: '0a1b2c3d-0000-4000-8000-0000000000ee',
       effective_at: '2026-11-01T10:05:00+00:00', trigger: 'silent', created_at: '2026-11-01T10:00:00+00:00' }, { receipt_id: 'x' }, 'junk'] };
-  assert.deepEqual(parseHeartbeatReply(ok), { ok: true, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, watchdogTickAt: Date.parse('2026-11-01T09:59:00Z'), watchdogStale: false,
+  assert.deepEqual(parseHeartbeatReply(ok), { ok: true, receivedAt: '2026-11-01T10:00:00.123Z', tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, watchdogTickAt: Date.parse('2026-11-01T09:59:00Z'), watchdogStale: false,
     nodeBindingId: null, viaLink: null, autoHandovers: [{ receiptId: RECEIPT, from: '0a1b2c3d-0000-4000-8000-0000000000aa', to: '0a1b2c3d-0000-4000-8000-0000000000ee', at: '2026-11-01T10:05:00.000Z', trigger: 'silent',
       createdAt: '2026-11-01T10:00:00.000Z' }] });
   // missing or odd optional parts never fail the beat
@@ -203,7 +272,7 @@ test('the reply is read tolerantly; the wire call posts the CI command door with
     assert.deepEqual([r.ok, r.autoHandovers, r.watchdogTickAt, r.watchdogStale], [true, [], null, null]);
   }
   assert.equal(parseHeartbeatReply({ status: 'ok', watchdog: { last_tick_at: null, stale: true } }).watchdogStale, true);
-  assert.deepEqual(parseHeartbeatReply({ status: 'rejected', error_code: 'ci_node_not_registered' }), { ok: false, tokenRefused: false, notRegistered: true, serverNotReady: false, connectionOnly: false, autoHandovers: [], watchdogTickAt: null, watchdogStale: null });
+  assert.deepEqual(parseHeartbeatReply({ status: 'rejected', error_code: 'ci_node_not_registered' }), { ok: false, tokenRefused: false, notRegistered: true, serverNotReady: false, connectionOnly: false, autoHandovers: [], watchdogTickAt: null, watchdogStale: null, errorKind: 'SERVER_REJECTED' });
   assert.equal(parseHeartbeatReply('ok').ok, false);
   const calls = [];
   const fetchImpl = async (url, init) => { calls.push({ url, init }); return { status: [200, 404, 403][calls.length - 1] ?? 400, text: async () => (calls.length === 1 ? JSON.stringify(ok) : '{"code":"PGRST202"}') }; };
@@ -231,6 +300,36 @@ test('the reply is read tolerantly; the wire call posts the CI command door with
     readJson: async () => ({ supabaseUrl: 'https://abc123.supabase.co', publishableKey: 'sb_publishable_x1', scope: 'project:0a1b2c3d-0000-4000-8000-0000000000bb' }) });
   assert.ok(hb instanceof CompanionHeartbeat);
   assert.equal(hb.scope, 'project:0a1b2c3d-0000-4000-8000-0000000000bb', 'the installed record\'s scope');
+});
+
+test('伴随诊断保留尝试时间、服务端确认和脱敏错误分类', async t => {
+  const root = await tempRoot(t);
+  const tokenDir = path.join(root, 'secrets', 'heartbeat');
+  await fs.mkdir(tokenDir, { recursive: true });
+  await fs.writeFile(path.join(tokenDir, 'ci-node-heartbeat.token'), TOKEN);
+  let now = NOW, saved;
+  const store = { data: { notified: {} }, save: async () => { saved = structuredClone(store.data.diagnostics); } };
+  const hb = await companionHeartbeat({ root, nodeName: 'node-b', ghExe: 'gh', repo: 'r/r', run: async () => ({ code: 0 }),
+    store, clock: () => now, readJson: async () => ({ supabaseUrl: 'https://abc123.supabase.co', publishableKey: 'sb_publishable_test' }) });
+  hb.readStatus = async () => status();
+  const options = { supabaseUrl: 'https://abc123.supabase.co', publishableKey: 'sb_publishable_test' };
+  const ack = '2026-11-01T10:00:00.123Z';
+  const setReply = response => {
+    hb.transport = supabaseHeartbeatTransport({ ...options, fetchImpl: async () => ({ status: 200, text: async () => JSON.stringify(response) }) });
+  };
+  setReply({ status: 'ok', received_at: ack });
+  await hb.step();
+  assert.deepEqual(saved, { pid: process.pid, lastAttemptAt: new Date(now).toISOString(), lastServerAckAt: ack, lastErrorKind: null });
+
+  now += MIN;
+  setReply({ status: 'rejected', error_code: TOKEN });
+  await hb.step();
+  assert.deepEqual(saved, { pid: process.pid, lastAttemptAt: new Date(now).toISOString(), lastServerAckAt: ack, lastErrorKind: 'SERVER_REJECTED' });
+
+  now += MIN / 2;
+  hb.transport = supabaseHeartbeatTransport({ ...options, fetchImpl: async () => { throw new Error(TOKEN); } });
+  await hb.step();
+  assert.deepEqual(saved, { pid: process.pid, lastAttemptAt: new Date(now).toISOString(), lastServerAckAt: ack, lastErrorKind: 'TRANSPORT_ERROR' });
 });
 
 // Task 293a092a: before merge-train step 2b the CI command door answers admission_binding_required (role checked before any

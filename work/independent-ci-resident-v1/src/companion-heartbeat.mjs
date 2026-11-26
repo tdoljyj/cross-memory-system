@@ -53,6 +53,10 @@ export const HEARTBEAT_TOKEN_DIR = path.join('secrets', 'heartbeat');
 export const HEARTBEAT_TOKEN_FILE = 'ci-node-heartbeat.token';
 export const HEARTBEAT_TIMEOUT_MS = 20_000;
 export const HANDOVER_MARKER = id => `<!-- clued-auto-handover:${id} -->`;
+const HANDOVER_MAX_ATTEMPTS = 3;
+const HANDOVER_RETRY_MS = 30_000;
+const HANDOVER_RETRY_WINDOW_MS = 5 * 60_000;
+const HANDOVER_DEDUP_MS = 24 * 60 * 60_000; // The server replays the last 24 hours of receipts.
 // The compute panel's own issue marker and author (scripts/ci/self-hosted/compute_panel.py MARKER, find_issue).
 export const PANEL_MARKER = '<!-- clued-compute-panel:v1 -->';
 export const PANEL_AUTHOR = 'github-actions[bot]';
@@ -109,6 +113,15 @@ export function heartbeatPayload({ nodeName, scope, status, statusError = false,
 const fingerprint = p => JSON.stringify({ ...p, snapshot_age_seconds: null });
 
 const FAILED = Object.freeze({ ok: false, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, autoHandovers: Object.freeze([]), watchdogTickAt: null, watchdogStale: null });
+const WIRE_ERRORS = new Set(['TRANSPORT_ERROR', 'TRANSPORT_TIMEOUT', 'TRANSPORT_CONFIG', 'HTTP_ERROR', 'INVALID_REPLY', 'SERVER_REJECTED']);
+function heartbeatError(reply) {
+  if (reply?.ok) return null;
+  if (reply?.notRegistered) return 'NOT_REGISTERED';
+  if (reply?.serverNotReady) return 'SERVER_NOT_READY';
+  if (reply?.connectionOnly) return 'CONNECTION_ONLY';
+  if (reply?.tokenRefused) return 'TOKEN_REFUSED';
+  return WIRE_ERRORS.has(reply?.errorKind) ? reply.errorKind : 'TRANSPORT_ERROR';
+}
 // A server without the heartbeat action (before merge-train step 2b): the CI command door checks the ci-admission role
 // before any action and answers admission_binding_required, which says nothing about the token (Task 293a092a): its own
 // notice, never "token refused". A 400 work_claim_ci_command_invalid is NOT that: from step 2b on it is the heartbeat
@@ -120,11 +133,11 @@ const NOT_READY = Object.freeze({ ...FAILED, serverNotReady: true });
 // viaLink (boolean | null): optional, never required }. Never throws. ok is status 'ok' alone: a missing or odd
 // watchdog or handover list only leaves that part unknown or empty; a handover entry that does not fit is skipped.
 export function parseHeartbeatReply(v) {
-  if (!plain(v)) return FAILED;
+  if (!plain(v)) return { ...FAILED, errorKind: 'INVALID_REPLY' };
   if (v.status === 'rejected' && v.error_code === 'admission_binding_required') return NOT_READY;
   if (v.status === 'rejected' && v.error_code === 'heartbeat_connection_only') return { ...FAILED, connectionOnly: true };
-  if (v.status === 'rejected') return { ...FAILED, notRegistered: v.error_code === NOT_REGISTERED, tokenRefused: v.error_code === 'binding_not_authorized' };
-  if (v.status !== 'ok') return FAILED;
+  if (v.status === 'rejected') return { ...FAILED, notRegistered: v.error_code === NOT_REGISTERED, tokenRefused: v.error_code === 'binding_not_authorized', errorKind: 'SERVER_REJECTED' };
+  if (v.status !== 'ok') return { ...FAILED, errorKind: 'INVALID_REPLY' };
   const w = plain(v.watchdog) ? v.watchdog : null;
   const tick = Date.parse(w?.last_tick_at ?? '');
   const watchdogTickAt = Number.isFinite(tick) ? tick : null;
@@ -137,7 +150,7 @@ export function parseHeartbeatReply(v) {
       to: UUID.test(h.to_binding_id ?? '') ? h.to_binding_id.toLowerCase() : null, at, trigger: typeof h.trigger === 'string' && h.trigger.length <= 64 ? h.trigger : null,
       createdAt: isoOf(h.created_at) }));
   }
-  return { ok: true, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, autoHandovers: Object.freeze(autoHandovers), watchdogTickAt, watchdogStale,
+  return { ok: true, receivedAt: isoOf(v.received_at), tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, autoHandovers: Object.freeze(autoHandovers), watchdogTickAt, watchdogStale,
     nodeBindingId: UUID.test(v.node_binding_id ?? '') ? v.node_binding_id.toLowerCase() : null, viaLink: typeof v.via_link === 'boolean' ? v.via_link : null };
 }
 
@@ -149,16 +162,17 @@ export function parseHeartbeatReply(v) {
 export function supabaseHeartbeatTransport({ supabaseUrl, publishableKey, fetchImpl = globalThis.fetch, timeoutMs = HEARTBEAT_TIMEOUT_MS }) {
   if (!/^https:\/\/[a-z0-9]+\.supabase\.co$/.test(supabaseUrl ?? '') || !/^sb_publishable_[A-Za-z0-9_-]+$/.test(publishableKey ?? '')) throw new Error('HEARTBEAT_TRANSPORT_CONFIG_INVALID');
   return async ({ payload }, { token }) => {
+    const signal = AbortSignal.timeout(timeoutMs);
     try {
-      const r = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/${HEARTBEAT_RPC}`, { method: 'POST', signal: AbortSignal.timeout(timeoutMs),
+      const r = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/${HEARTBEAT_RPC}`, { method: 'POST', signal,
         headers: { apikey: publishableKey, authorization: `Bearer ${publishableKey}`, 'content-type': 'application/json' },
         body: JSON.stringify({ p_token_hash: createHash('sha256').update(token, 'utf8').digest('hex'), p_input: payload }) });
       const text = await r.text();
-      if (Buffer.byteLength(text) > REPLY_MAX_BYTES) return FAILED;
       if (r.status === 401 || r.status === 403) return { ...FAILED, tokenRefused: true };
-      if (r.status !== 200) return FAILED;
-      return parseHeartbeatReply(JSON.parse(text));
-    } catch { return FAILED; }
+      if (r.status !== 200) return { ...FAILED, errorKind: r.status >= 400 && r.status < 500 ? 'SERVER_REJECTED' : 'HTTP_ERROR' };
+      if (Buffer.byteLength(text) > REPLY_MAX_BYTES) return { ...FAILED, errorKind: 'INVALID_REPLY' };
+      try { return parseHeartbeatReply(JSON.parse(text)); } catch { return { ...FAILED, errorKind: 'INVALID_REPLY' }; }
+    } catch { return { ...FAILED, errorKind: signal.aborted ? 'TRANSPORT_TIMEOUT' : 'TRANSPORT_ERROR' }; }
   };
 }
 
@@ -190,11 +204,15 @@ export class CompanionHeartbeat {
   // ports: { nodeName, scope (the installed record's), transport (supabaseHeartbeatTransport or a test double), readToken() -> token
   //   | null, readStatus() -> status (throws when unreadable), serviceRunning() -> true | false | null, clock, notify(key, title, body)
   //   (one Windows toast per key), memory: { get(key), set(key, value) } (the companion's own store), handover: { ownerLogin(),
-  //   panelIssue() -> number | null, commentExists(issue, marker) -> bool | null, comment(issue, body) -> bool } (the Owner's gh) }
+  //   panelIssue() -> number | null, commentExists(issue, marker) -> bool | null, comment(issue, body) -> bool } (the Owner's gh),
+  //   handoverClock (monotonic in production), recordDiagnostics(snapshot) (optional, schedules a local save) }
   constructor(ports) {
     Object.assign(this, ports);
+    this.handoverClock ??= this.clock;
     this.lastSentAt = null; this.lastFingerprint = null; this.failures = 0; this.failingSince = null; this.watchdogStale = false; this.unregisteredSince = null;
     this.connectionOnlySince = null; this.notReadySince = null; this.nodeBindingId = null; this.viaLink = null;
+    this.diagnostics = { pid: process.pid, lastAttemptAt: null, lastServerAckAt: null, lastErrorKind: null };
+    this.handovers = new Map();
     // ADR 0026: when the watchdog last handed ci-admission to this node (ms, server time), or null. The take-over check
     // (node-duty.mjs) does not hold back for duty statements written before it: the server had found their writer silent.
     this.autoHandoverSince = null;
@@ -213,8 +231,10 @@ export class CompanionHeartbeat {
     // A clock that went back (now < lastSentAt) is due at once: waiting for it to catch up would be silence to the server, whose own
     // clock stamps every beat (ADR 0026; with a 5-minute silence rule a 10-minute jump back would hand the role away).
     if (this.lastSentAt !== null && this.failures === 0 && now >= this.lastSentAt && now - this.lastSentAt < NODE_HEARTBEAT_EVERY_MS && !changed) return { skipped: 'NOT_DUE' };
+    this.updateDiagnostics({ lastAttemptAt: iso(this.clock()) });
     let r;
     try { r = await this.transport({ payload }, { token }); } catch { r = null; }
+    this.updateDiagnostics({ lastErrorKind: heartbeatError(r), lastServerAckAt: (r?.ok ? isoOf(r.receivedAt) : null) ?? this.diagnostics.lastServerAckAt });
     this.lastSentAt = now;
     if (r?.notRegistered === true) {
       // The server knows no node for this token's connection: its own notice (the beat is no heartbeat at all for the watchdog).
@@ -261,12 +281,35 @@ export class CompanionHeartbeat {
       await this.say(`watchdog-stale:${r.watchdogTickAt ?? 'never'}`, '自动接班看门狗未运行', `服务端看门狗${r.watchdogTickAt !== null ? `自 ${iso(r.watchdogTickAt)} 起` : ''}没有运行（超过 5 分钟）：失联的节点不会被自动交出。请检查 KooYomi 的 pg_cron 作业 clued-ci-admission-failover。`);
     }
     // The server lists only take-overs to this node's connection.
+    const handoverNow = this.handoverClock();
+    for (const [id, item] of this.handovers) if (!item.inFlight && handoverNow - item.lastSeenAt >= HANDOVER_DEDUP_MS) this.handovers.delete(id);
     for (const h of r.autoHandovers ?? []) {
       const created = Date.parse(h.createdAt ?? '');
       if (Number.isFinite(created) && !(this.autoHandoverSince >= created)) this.autoHandoverSince = created;
+      const item = this.handovers.get(h.receiptId);
+      if (item) item.lastSeenAt = handoverNow;
+      else this.handovers.set(h.receiptId, { receipt: h, lastSeenAt: handoverNow, nextAt: handoverNow,
+        deadline: handoverNow + HANDOVER_RETRY_WINDOW_MS, attempts: 0, inFlight: false, done: false });
     }
-    for (const h of r.autoHandovers ?? []) await this.relayHandover(h);
     return { sent: true, payload, watchdogStale: this.watchdogStale, autoHandovers: r.autoHandovers ?? [], nodeBindingId: this.nodeBindingId, viaLink: this.viaLink };
+  }
+
+  updateDiagnostics(fields) {
+    this.diagnostics = { ...this.diagnostics, ...fields };
+    try { this.recordDiagnostics?.(this.diagnostics); } catch { /* diagnostics are best effort */ }
+  }
+
+  // One due receipt per advisory pass. Replayed receipts do not reset attempts or extend the retry window.
+  async handoverStep() {
+    const now = this.handoverClock();
+    for (const item of this.handovers.values()) {
+      if (item.done || item.inFlight || item.attempts >= HANDOVER_MAX_ATTEMPTS || now < item.nextAt || now >= item.deadline) continue;
+      item.inFlight = true;
+      item.attempts += 1;
+      try { item.done = await this.relayHandover(item.receipt, item.deadline); }
+      finally { item.inFlight = false; item.nextAt = this.handoverClock() + HANDOVER_RETRY_MS; }
+      return;
+    }
   }
 
   async say(key, title, body) {
@@ -274,16 +317,20 @@ export class CompanionHeartbeat {
   }
 
   // Once per receipt: remembered locally, and the panel's issue is read for the marker first (another start, another machine).
-  async relayHandover(h) {
+  async relayHandover(h, deadline) {
     const key = `auto-handover:${h.receiptId}`;
     try {
-      if (await this.memory.get(key)) return false;
+      if (await this.memory.get(key)) return true;
       const login = await this.handover.ownerLogin();
+      if (!login || this.handoverClock() >= deadline) return false;
       const issue = await this.handover.panelIssue();
-      if (!login || !Number.isSafeInteger(issue)) return false;
+      if (!Number.isSafeInteger(issue) || this.handoverClock() >= deadline) return false;
       const seen = await this.handover.commentExists(issue, HANDOVER_MARKER(h.receiptId));
       if (seen === null) return false;
-      if (!seen && !(await this.handover.comment(issue, handoverComment(h, login, this.nodeName)))) return false;
+      if (!seen) {
+        if (this.handoverClock() >= deadline) return false;
+        if (!(await this.handover.comment(issue, handoverComment(h, login, this.nodeName)))) return false;
+      }
       await this.memory.set(key, this.clock());
       return true;
     } catch { return false; }
