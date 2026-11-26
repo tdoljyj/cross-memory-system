@@ -69,8 +69,15 @@ const SOURCE_REFS = Object.freeze(['sourceAcceptanceRef', 'hostQualificationRef'
 const HEX64 = /^[0-9a-f]{64}$/;
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const DEADLINE_ENV = 'FLEET_UPGRADE_DEADLINE_MS';
 const sha = b => createHash('sha256').update(b).digest('hex');
 const need = (ok, code, detail) => { if (!ok) throw new Refused(code, detail); };
+const timeLeft = deadline => {
+  if (deadline === undefined) return undefined;
+  const left = deadline - Date.now();
+  need(Number.isSafeInteger(left) && left > 0, 'FLEET_ACCEPTANCE_DEADLINE');
+  return left;
+};
 // The node's other way (Decision b5d041d2): the same package and acceptance file, install.mjs prepare.
 const needUpgradable = (ok, code, detail) => { if (!ok) throw Object.assign(new Refused(code, detail), { reinstall: true }); };
 const jsonOf = b => JSON.parse(Buffer.from(b).toString('utf8').replace(/^\uFEFF/, ''));
@@ -80,8 +87,9 @@ const failureOf = r => ({ exit: r.status, stderr: r.stderr.slice(-400), stdout: 
 async function readOrNull(file) {
   try { return await fs.readFile(file); } catch (e) { if (e?.code === 'ENOENT') return null; throw e; }
 }
-function run(exe, args, { cwd } = {}) {
-  const r = spawnSync(exe, args, { cwd, maxBuffer: 1 << 26, windowsHide: true });
+function run(exe, args, { cwd, deadline, env } = {}) {
+  const r = spawnSync(exe, args, { cwd, env, timeout: timeLeft(deadline), killSignal: 'SIGKILL', maxBuffer: 1 << 26, windowsHide: true });
+  need(r.error?.code !== 'ETIMEDOUT', 'FLEET_ACCEPTANCE_DEADLINE');
   const stdout = String(r.stdout ?? '');
   return { status: r.status, stdout, last: stdout.split(/\r?\n/).filter(l => l.trim()).at(-1) ?? null, stderr: String(r.stderr ?? r.error ?? '').trim().slice(-600) };
 }
@@ -101,16 +109,17 @@ export function carriedRecord(node, commit) {
 }
 
 // The installed request-upgrade.ps1 (Owner session, not elevated): one create-only file in upgrade\inbox; its JSON answer.
-export function defaultRequest({ script, packageDir, packageManifestSha256, decisionRef }) {
+export function defaultRequest({ script, packageDir, packageManifestSha256, decisionRef, deadline }) {
   const r = run(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-PackageRoot', packageDir,
-    '-ExpectedPackageManifestSha256', packageManifestSha256, '-AcceptanceDecisionRef', decisionRef]);
+    '-ExpectedPackageManifestSha256', packageManifestSha256, '-AcceptanceDecisionRef', decisionRef], { deadline });
   const answer = parsed(r.stdout.trim());
   need(r.status === 0 && answer?.status === 'UPGRADE_REQUESTED', 'UPGRADE_REQUEST_FAILED', { stderr: r.stderr, stdout: r.stdout.trim().slice(-300) });
   return answer;
 }
 
 export async function upgradeNode({ artifactPath, artifactSha256, acceptance, root = DEFAULT_ROOT, workDir, now = Date.now(), node: nodeBin = process.execPath,
-  request = defaultRequest, noRequest = false, allowActiveUpgrade = false, selfDir = HERE, hostname = defaultHostname, wslConfigPath = defaultWslConfigPath() }) {
+  request = defaultRequest, noRequest = false, allowActiveUpgrade = false, selfDir = HERE, hostname = defaultHostname, wslConfigPath = defaultWslConfigPath(), deadline }) {
+  timeLeft(deadline);
   validateAcceptance(acceptance, now);
   need(typeof workDir === 'string', 'USAGE');   // the package directory's shape is the installed request tool's to judge (A3)
   const { entries, universal } = readArchive(await fs.readFile(artifactPath), artifactSha256, acceptance);
@@ -125,7 +134,10 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   // the Owner's WSL VM next starts), by a run that goes on (requested, or already at this package) and nothing before it can refuse;
   // a host it cannot place is skipped, never refused. Every other answer: not written (a drill's --no-request writes nothing).
   const host = hostname();
-  const applyWslCapacity = () => wslCapacityOfArchive(byPath, { hostname: host, configPath: wslConfigPath, now });
+  const applyWslCapacity = () => {
+    timeLeft(deadline);
+    return wslCapacityOfArchive(byPath, { hostname: host, configPath: wslConfigPath, now });
+  };
   const base = { contract: UPGRADE_CONTRACT, version: universal.version, commit: universal.commit, ciSourceManifestSha256: accepted, statusFile: at('upgrade', 'status.json'),
     wslCapacity: wslCapacityNotApplied(byPath, { hostname: host, reason: 'NOT_REQUESTED' }) };
 
@@ -208,7 +220,7 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   const build = out => {
     const r = run(nodeBin, [path.join(R, 'tools', 'build-package.mjs'), '--out', out, '--policy', path.join(inputs, 'policy.input.json'), '--companion', path.join(inputs, 'companion.input.json'),
       '--node', node.nodeExe, '--record', record, '--source-root', tree, '--source-files', path.join(inputs, 'source-files.txt'),
-      '--linux-external-pins', path.join(inputs, 'linux-external-pins.json'), '--source-v2', path.join(inputs, 'source-v2.json'), '--state-compat', path.join(inputs, 'state-compat.json')], { cwd: R });
+      '--linux-external-pins', path.join(inputs, 'linux-external-pins.json'), '--source-v2', path.join(inputs, 'source-v2.json'), '--state-compat', path.join(inputs, 'state-compat.json')], { cwd: R, deadline });
     need(r.status === 0 && HEX64.test(parsed(r.last)?.packageManifestSha256 ?? ''), 'BUILD_PACKAGE_FAILED', failureOf(r));
     return parsed(r.last);
   };
@@ -233,7 +245,7 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   const staged = at('upgrade', 'staged', node.current.packageManifestSha256);
   const stagedManifest = await readOrNull(path.join(staged, 'package-manifest.json')).catch(() => null);
   const pre = run(nodeBin, [path.join(R, 'rollout', 'precheck.mjs'), '--root', root, '--package', packageDir, '--package-sha', first.packageManifestSha256, '--acceptance', decisionRef,
-    ...(stagedManifest && sha(stagedManifest) === node.current.packageManifestSha256 ? ['--installed-package', staged] : [])]);
+    ...(stagedManifest && sha(stagedManifest) === node.current.packageManifestSha256 ? ['--installed-package', staged] : [])], { deadline });
   const precheck = parsed(pre.last) ?? { status: 'PRECHECK_FAILED', detail: pre.stderr };
   const result = { ...base, node: node.profile.nodeName, workDir: work, packageDir, packageManifestSha256: first.packageManifestSha256,
     grantResource: `ci-resident:${node.profile.nodeName}/${first.packageManifestSha256}`, fromGeneration: node.current.generation, precheck };
@@ -248,7 +260,9 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
 
   // 9. the request, by the installed tool
   const script = at('resident', node.current.residentManifestSha256, 'windows', 'request-upgrade.ps1');
-  const answer = await request({ script, packageDir, packageManifestSha256: first.packageManifestSha256, decisionRef });
+  timeLeft(deadline);
+  const answer = await request({ script, packageDir, packageManifestSha256: first.packageManifestSha256, decisionRef,
+    ...(deadline === undefined ? {} : { deadline }) });
   return { ...result, status: 'FLEET_NODE_UPGRADE_REQUESTED', request: { requestId: answer.requestId ?? null, requestFile: answer.requestFile ?? null }, wslCapacity: applyWslCapacity(),
     ownerNextStep: 'Nothing while the Owner\'s automatic approval is on. Otherwise statusFile shows op.grant.confirmUrl at WAITING_GRANT: approve once there. Run this command again to see where the node is.' };
 }
@@ -263,7 +277,9 @@ export async function fetchAndUpgrade(argv, deps = {}) {
     'no-request': { type: 'boolean' }, 'allow-active-upgrade': { type: 'boolean' } } });
   need(values.version && values.work, 'USAGE');
   const work = path.resolve(values.work);
-  const fetched = await fetchPackage({ ...deps.fetch, version: values.version, dir: path.join(work, 'dl'), from: values.from ? path.resolve(values.from) : null, repo: values.repo ?? DEFAULT_REPO });
+  const { deadline, expectedArchiveSha256 } = deps;
+  const fetched = await fetchPackage({ ...deps.fetch, version: values.version, dir: path.join(work, 'dl'),
+    from: values.from ? path.resolve(values.from) : null, repo: values.repo ?? DEFAULT_REPO, deadline, expectedArchiveSha256 });
   const acceptance = jsonOf(await fs.readFile(fetched.acceptance));
   // shape only, no kit rule: this copy may be newer than the package (a rollback to one with no kit field); the unpacked package's own upgrade.mjs holds its own rule
   validateAcceptance(acceptance, deps.now ?? Date.now(), { requireKit: false });
@@ -274,7 +290,9 @@ export async function fetchAndUpgrade(argv, deps = {}) {
   const script = path.join(unpacked, 'tree', ...RESIDENT.split('/'), 'rollout', 'fleet', 'upgrade.mjs');
   const args = [script, '--artifact', fetched.artifact, '--artifact-sha', fetched.artifactSha256, '--acceptance', fetched.acceptance, '--work', path.join(work, 'upgrade'),
     ...(values['no-request'] ? ['--no-request'] : []), ...(values['allow-active-upgrade'] ? ['--allow-active-upgrade'] : [])];
-  const r = (deps.runChild ?? run)(process.execPath, args);
+  timeLeft(deadline);
+  const env = deadline === undefined ? undefined : { ...process.env, [DEADLINE_ENV]: String(deadline) };
+  const r = (deps.runChild ?? run)(process.execPath, args, { deadline, env });
   const answer = parsed(r.last ?? '') ?? { contract: UPGRADE_CONTRACT, status: 'FLEET_NODE_UPGRADE_REFUSED', code: 'FLEET_UNPACKED_UPGRADE_NO_ANSWER', detail: failureOf({ status: r.status, stderr: r.stderr ?? '', stdout: r.stdout ?? '' }) };
   return { ...answer, fetched: { artifact: fetched.artifact, artifactSha256: fetched.artifactSha256, source: fetched.source, attempts: fetched.attempts, resumed: fetched.resumed, unpacked } };
 }
@@ -298,5 +316,6 @@ export async function main(argv, deps = {}) {
 if (import.meta.main) {
   // the Windows PowerShell 5.1 children (request-upgrade.ps1, the precheck's Get-Acl) get their own module path (install.mjs)
   process.env.PSModulePath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules';
-  main(process.argv.slice(2)).then(r => { console.log(JSON.stringify(r)); process.exitCode = OK_STATUSES.includes(r.status) ? 0 : 1; });
+  const deadline = process.env[DEADLINE_ENV] === undefined ? undefined : Number(process.env[DEADLINE_ENV]);
+  main(process.argv.slice(2), { deadline }).then(r => { console.log(JSON.stringify(r)); process.exitCode = OK_STATUSES.includes(r.status) ? 0 : 1; });
 }

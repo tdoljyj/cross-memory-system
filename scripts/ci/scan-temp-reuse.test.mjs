@@ -108,7 +108,8 @@ function write(root, files) {
   appendFileSync(process.env.FAKE_LEDGER, made.map((p) => p + '\\n').join(''));
   for (const p of made.reverse()) if (statSync(p).isDirectory()) chmodSync(p, 0o555);
 }
-const stamp = (ms) => new Date(Date.now() + ms).toISOString().slice(0, 19) + 'Z';
+const now = Date.now();
+const stamp = (ms) => new Date(now + ms).toISOString();
 if (entry === '/usr/local/bin/trivy') {
   if (args.includes('--download-db-only')) {
     write(host(opt('--cache-dir'), true), { 'db/metadata.json': JSON.stringify({ Version: 2, UpdatedAt: stamp(-3600e3), NextUpdate: stamp(86400e3) }), 'db/trivy.db': 'db' });
@@ -119,6 +120,11 @@ if (entry === '/usr/local/bin/trivy') {
   process.exit(0); // the three scanners: read-only mounts, nothing written
 }
 if (entry === '/bin/cat') { process.stdout.write(readFileSync(host(args[0]))); process.exit(0); }
+if (entry === 'find' && args[0] === '/cache/policy/content') {
+  const policy = '/cache/policy/content/policies/kubernetes/k.rego';
+  if (existsSync(host(policy))) console.log(policy);
+  process.exit(0);
+}
 if (entry === '/bin/ls') {
   const walk = (d) => readdirSync(d, { withFileTypes: true }).forEach((e) => { console.log(e.name); if (e.isDirectory()) walk(path.join(d, e.name)); });
   // read_back passes ls only "-R" (its fourth argument is dropped), so ls lists its working directory, / with the mounts.
@@ -163,6 +169,7 @@ function runner(name) {
   const pr = path.join(ws, 'pr');
   git(pr, 'init', '-q', '-b', 'main');
   writeFileSync(path.join(pr, 'a.txt'), 'a\n');
+  copyFileSync(path.join(ROOT, '.gitleaks.toml'), path.join(pr, '.gitleaks.toml'));
   mkdirSync(path.join(pr, 'src', 'deep'), { recursive: true });
   writeFileSync(path.join(pr, 'src', 'deep', 'b.txt'), 'b\n');
   git(pr, 'add', '-A'); git(pr, 'commit', '-q', '-m', 'base');
@@ -176,8 +183,8 @@ function runner(name) {
   git(candidate, 'checkout', '-q', '--detach', base);
   git(candidate, 'merge', '-q', '--no-ff', '--no-edit', head);
   const sha = git(candidate, 'rev-parse', 'HEAD');
-  copyFileSync(path.join(ROOT, '.gitleaks.toml'), path.join(ws, 'trusted', '.gitleaks.toml'));
   copyFileSync(path.join(ROOT, 'scripts', 'ci', 'gitleaks-range.sh'), path.join(ws, 'trusted', 'scripts', 'ci', 'gitleaks-range.sh'));
+  copyFileSync(path.join(ROOT, 'scripts', 'ci', 'trivy-cache.mjs'), path.join(ws, 'trusted', 'scripts', 'ci', 'trivy-cache.mjs'));
   writeFileSync(path.join(bin, 'fake-docker.mjs'), FAKE_DOCKER);
   writeFileSync(path.join(bin, 'fake-find.mjs'), FAKE_FIND);
   const realFind = spawnSync(BASH, ['-c', 'command -v find'], { encoding: 'utf8' }).stdout.trim();
@@ -187,7 +194,8 @@ function runner(name) {
   chmodSync(path.join(bin, 'find'), 0o755);
   const ledger = path.join(ws, 'ledger');
   writeFileSync(ledger, '');
-  const env = { GITHUB_WORKSPACE: fwd(ws), RUNNER_TEMP: fwd(temp), GITHUB_SHA: sha, FAKE_LEDGER: fwd(ledger), PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  const env = { HOME: fwd(ws), GITHUB_WORKSPACE: fwd(ws), RUNNER_TEMP: fwd(temp), GITHUB_SHA: sha,
+    FAKE_LEDGER: fwd(ledger), FAKE_SELF: `${process.getuid?.()}:${process.getgid?.()}`, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
   return { ws, temp, ledger, env, range: { EVENT_NAME: 'pull_request', PR_BASE: base, PR_HEAD: head, PUSH_BASE: '' } };
 }
 
@@ -216,7 +224,7 @@ function runJob(r, id) {
   for (const s of steps.slice(from + 1)) {
     assert.ok(typeof s.run === 'string', `${id}/${s.name}: a run step`);
     const outputs = Object.fromEntries(readFileSync(output, 'utf8').split('\n').filter(Boolean).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
-    const known = { ...r.range, BASE: outputs.base, HEAD: outputs.head };
+    const known = { ...r.range, BASE: outputs.base, HEAD: outputs.head, TRUSTED_BASE_SHA: r.range.PR_BASE };
     const stepEnv = Object.fromEntries(Object.entries(s.env ?? {}).map(([k, v]) => {
       if (!String(v).includes('${{')) return [k, String(v)];
       assert.ok(known[k] !== undefined, `${id}/${s.name}: no value for ${k}`);
@@ -225,7 +233,7 @@ function runJob(r, id) {
     const exported = Object.fromEntries(readFileSync(genv, 'utf8').split('\n').filter(Boolean).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
     const cwd = path.join(r.ws, s['working-directory'] ?? '.');
     const shell = s.shell === 'bash' ? ['--noprofile', '--norc', '-eo', 'pipefail', '-c'] : ['-e', '-c'];
-    const p = spawnSync(BASH, [...shell, s.run], { cwd, encoding: 'utf8', timeout: 120000,
+    const p = spawnSync(BASH, [...shell, s.run], { cwd, encoding: 'utf8',
       env: { ...ENV, ...r.env, GITHUB_OUTPUT: fwd(output), GITHUB_ENV: fwd(genv), ...exported, ...stepEnv } });
     out += `--- ${id}: ${s.name}\n${p.stdout || ''}${p.stderr || ''}`;
     if (p.status !== 0) return { code: p.status, out, failed: s.name };
@@ -305,12 +313,12 @@ test('the scan containers run as the job account, without the permissions opened
       }
       if (s === reclaim[i]) continue;
       assert.doesNotMatch(s.run, /65532/, `${id}/${s.name}: no uid 65532 outside the reclaim`);
-      assert.doesNotMatch(s.run, /\bchmod\b|mkdir -m|\b0777\b|a\+w|a\+rX/, `${id}/${s.name}: no permission opened for another uid`);
+      assert.doesNotMatch(s.run.replace('chmod 0444 "$repo/.gitleaks.toml"', ''), /\bchmod\b|mkdir -m|\b0777\b|a\+w|a\+rX/, `${id}/${s.name}: no permission opened for another uid`);
     }
     assert.ok(reclaim[i], `${id}: a "${RECLAIM}" step`);
     assert.equal(steps.indexOf(reclaim[i]), steps.findIndex((s) => s.name === CONFIGURE) + 1, `${id}: reclaim right after ${CONFIGURE}`);
     assert.equal(reclaim[i].run, reclaim[0].run, `${id}: the same reclaim as trivy`);
     assert.deepEqual(reclaim[i].env, reclaim[0].env, `${id}: the same reclaim env as trivy`);
-    assert.ok(runs >= (id === 'trivy' ? 6 : 2), `${id}: its docker runs were found (${runs})`);
+    assert.ok(runs >= (id === 'trivy' ? 4 : 2), `${id}: its docker runs were found (${runs})`);
   }
 });

@@ -384,6 +384,8 @@ export const STAGE8_NOT_READY_CODES = Object.freeze(['RESIDENT_BASE_MOVED', 'RES
   'REQUIRED_CHECK_FAILED', 'REQUIRED_CHECKS_UNREADABLE',
   // Phase 2, step 3a: main's live branch rules, GitHub's test merge, the green ledger (all before any journal write).
   'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',
+  // Task bd07449b: main's rules were not read (the Source's readMainRules); RULESET_UNREADABLE is rules read and not this App's six.
+  'RULESET_READ_FAILED',
   // Step 3c-2b (DESIGN §41.2): the single green is not proven; the batch rests at B until the next stage 10. The stage
   // directory's train mode could not be read for a front job: it rests at B too.
   'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_MODE_UNREADABLE',
@@ -393,6 +395,12 @@ export const STAGE8_NOT_READY_CODES = Object.freeze(['RESIDENT_BASE_MOVED', 'RES
 // [T, H] is not what was tested.
 export const STAGE8_OWNER_NOTICE_CODES = Object.freeze(['STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_TREE_DIFFERS']);
 export const PARK_RETRY_MS = Object.freeze([10 * 60_000, 20 * 60_000, 40 * 60_000, 80 * 60_000, 120 * 60_000]);
+// Task bd07449b (PLAN-ruleset-unreadable-park-20261125 §3.2). A failed read of main's rules mends by itself: read again after 1, 3,
+// 10 minutes, then every 10 (the try cap and park.maxMs bound it as every parked batch). Rules read whole that are not this App's six
+// (RULESET_UNREADABLE) give the same answer at every try: no timed retry, the batch sleeps at its first try and the companion wakes it
+// when it reads the rules pinned back (poller.mjs#parkedPass); a sleeping batch holds no parking place.
+export const RULES_READ_RETRY_MS = Object.freeze([60_000, 3 * 60_000, 10 * 60_000]);
+export const STAGE8_SLEEP_AT_ONCE_CODES = Object.freeze(['RULESET_UNREADABLE']);
 // DESIGN §28 (design r3 4a, PR #930): a stage-8 try that ended BLOCKED with zero side effects on a transient admission or GitHub
 // failure parks the batch at B again instead of burning a head whose stages 1-7 passed. Fixed here, not in the policy (no
 // policy contract change): at most STAGE8_TRANSIENT_MAX_TRIES such parks, after 1, 3 and 10 minutes; the next one ends the batch
@@ -1030,9 +1038,9 @@ export class ResidentExecutor {
 
   // The status board is a view: a failure to update it never changes what the executor does.
   report(fn) { try { fn(this.status); } catch { /* advisory */ } }
-  reportOutcome(subject, outcome, { code = null, row = null, key = null, retry = row?.retry ?? null } = {}) {
+  reportOutcome(subject, outcome, { code = null, row = null, key = null, retry = row?.retry ?? null, reasonCodes = null } = {}) {
     this.report(s => s.outcome({ pr: subject?.pr, headSha: subject?.headSha, attempt: subject?.attempt ?? 1, outcome, code, klass: row?.class ?? null, retry, key,
-      pushedAt: outcome === 'COMPLETED' ? this.firstSeenAt(subject) : null }));
+      pushedAt: outcome === 'COMPLETED' ? this.firstSeenAt(subject) : null, reasonCodes }));
   }
   // The head's first sighting by the queue (ms), the push as far as the resident sees it (status timing: push to first green).
   firstSeenAt(subject) {
@@ -3012,8 +3020,10 @@ export class ResidentExecutor {
     for (const e of entries.filter(x => Ledger.parkedAt(x) && this.parkedAsleep(x))) {
       const { pr, headSha } = e.reserved.subject;
       const row = this.queue.row(pr), last = ResidentExecutor.lastTry(e);
+      // Asleep by age (park.maxMs): the row keeps its parkTry, the companion's signal does not change (task bd07449b r3).
       if (row?.parked?.nextAt != null)
-        sleepViewChanged = this.queue.park(pr, headSha, { reason: last.code, nextAt: null, position: last.position }, now) || sleepViewChanged;
+        sleepViewChanged = this.queue.park(pr, headSha, { reason: last.code, nextAt: null, position: last.position,
+          parkTry: row.parked.parkTry ?? null }, now) || sleepViewChanged;
     }
     if (sleepViewChanged) await this.persistQueue();
     // Transient parks and batches with no settled not-ready answer retain the old age backstop.
@@ -3125,6 +3135,10 @@ export class ResidentExecutor {
     const unrecorded = await this.beforePublication(key, subject, 8);
     if (unrecorded) { unrecorded.relayedRoles = s.plan?.relayed?.length ?? 0; return windowsOnly(unrecorded); }
     const n = await this.ledger.beginTry(key, { batchId: batch.batchId });
+    // Capture this batch's previous sleep before stage 8 runs. A legacy row's null is part of its wake signal.
+    const row = this.queue.row(subject.pr);
+    const previousParkTry = row?.running?.key === key && row.running.headSha === subject.headSha && row.parked
+      ? (row.parked.parkTry ?? null) : n - 1;
     this.atStage(8, 'stage');
     const { result: control, aborted } = await this.runWindowsStageWithRetry(key, batch, 8);
     if (aborted) return aborted;
@@ -3166,13 +3180,16 @@ export class ResidentExecutor {
     if (zero && tryLimit && (park || STAGE8_NOT_READY_CODES.includes(control.code)))
       this.queue.notice(boundedNotice({ code: 'STAGE8_TRY_LIMIT', subject, used: counted, limit: this.policy.park.stage8MaxTries,
         now, recovery: park ? 'park-event' : 'batch', episode: key }));
-    // The absolute retry cap also covers the uncounted head tries. Event-driven tries may follow it.
+    // The batch count and age also put uncounted queue-head tries to sleep. A new event can still wake the batch.
     const final = control.code === 'RESIDENT_BASE_MOVED' || tryLimit || n >= MAX_TRIES || now - Date.parse(s.parked.at) >= this.policy.park.maxMs;
+    // At the budget, keep the previous sleep's sequence so the poller can reproduce the consumed wake even after a restart.
+    const parkTry = final ? previousParkTry : n;
     if (park) {
-      const sleeping = final;
+      const sleeping = final || STAGE8_SLEEP_AT_ONCE_CODES.includes(control.code);
       // The back-off follows the counted tries: after a run at the queue's first place the next try is not 2 hours away
       // (re-review N6).
-      const backoff = PARK_RETRY_MS[Math.min(Math.max(counted - 1, 0), PARK_RETRY_MS.length - 1)];
+      const steps = control.code === 'RULESET_READ_FAILED' ? RULES_READ_RETRY_MS : PARK_RETRY_MS;
+      const backoff = steps[Math.min(Math.max(counted - 1, 0), steps.length - 1)];
       const nextAt = sleeping ? null : now + (position === 1 && now - streakFrom < PARK_HEAD_STREAK_MS ? PARK_HEAD_RETRY_MS : backoff);
       // Over capacity outside the queue's first two places: end it now rather than hold a slot (§4.9, review n-m9).
       const counts = await this.parkedCounts();
@@ -3182,7 +3199,7 @@ export class ResidentExecutor {
         return this.supersededEnd(key, subject, batch, { safePoint: 'parked', pos: POSITIONS[8], stage: 8, basis: 'park-over-capacity' });
       }
       await this.ledger.endTry(key, n, { code: control.code, nextAt: sleeping ? null : new Date(nextAt).toISOString(), position, entered: queueFact?.entered ?? null,
-        ...(sleeping ? { sleeping: true } : {}),
+        parkTry, ...(sleeping ? { sleeping: true } : {}),
         ...(this.parkEvents?.has(key) ? { parkEvent: this.parkEvents.get(key) } : {}),
         claimExpiresAt: this.leaseOf(subject),
         ...(this.policy.train.enabled === 'on' && !Object.hasOwn(subject, 'testSha') && control.code === 'TRAIN_SINGLE_GREEN_NOT_PROVEN' && position === 1
@@ -3192,7 +3209,7 @@ export class ResidentExecutor {
         this.trainUrgent = true;
       }
       await this.receipt('stage8-not-ready', { key, try: n, failureCode: control.code, nextAt: sleeping ? null : new Date(nextAt).toISOString(), position });
-      return { state: 'PARKED', key, reason: control.code, until: nextAt, position, tries: n,
+      return { state: 'PARKED', key, reason: control.code, until: nextAt, position, tries: n, parkTry,
         settle: { kind: 'parked', code: control.code, klass: 'queue', breaker: 'neutral', pos: POSITIONS[8], linux: false, nextAt, position } };
     }
     // DESIGN §28: a transient zero-effect ending parks again, at most STAGE8_TRANSIENT_MAX_TRIES times (the next one burns as
@@ -3208,7 +3225,7 @@ export class ResidentExecutor {
       await this.ledger.endTry(key, n, { code: control.code, nextAt: new Date(nextAt).toISOString(), position, entered: queueFact?.entered ?? null, transient: true, assumedPosition,
         claimExpiresAt: this.leaseOf(subject) });
       await this.receipt('stage8-transient-parked', { key, try: n, failureCode: control.code, nextAt: new Date(nextAt).toISOString(), position, assumedPosition, park: transientParks + 1 });
-      return { state: 'PARKED', key, reason: control.code, until: nextAt, position: assumedPosition, tries: n,
+      return { state: 'PARKED', key, reason: control.code, until: nextAt, position: assumedPosition, tries: n, parkTry: n,
         settle: { kind: 'parked', code: control.code, klass: 'transient', breaker: 'neutral', pos: POSITIONS[8], linux: false, nextAt, position: assumedPosition } };
     }
     return windowsOnly(new StepFailure(8, control.code, control.proof, 'stage', relayed, control));
@@ -3893,7 +3910,7 @@ export class ResidentExecutor {
     if (!result || result.state === 'WAITING') return result;
     if (result.state === 'PARKED') {
       try {
-        this.queue.park(subject.pr, subject.headSha, { reason: result.reason, nextAt: result.until, position: result.position ?? null }, this.clock());
+        this.queue.park(subject.pr, subject.headSha, { reason: result.reason, nextAt: result.until, position: result.position ?? null, parkTry: result.parkTry ?? null }, this.clock());
         await this.feedBreaker(subject, result.settle);
         await this.persistQueue();
       } catch { /* a view */ }
@@ -4497,10 +4514,13 @@ export class ResidentExecutor {
         // Task 0ca0479d: the stage fact's reason codes, for the PR page only (queue.mjs#reasonCodeList).
         reasonCodes: [facts.reasonCodes, facts.nativeReasonCodes].flatMap(c => (Array.isArray(c) ? c : [])),
         ...(typeof failure.windowsOnly === 'boolean' ? { windowsOnly: failure.windowsOnly } : {}) };
+      const reasonCodes = failure.stageNumber === 1 && failure.code === 'NATIVE_NOT_ADMITTED' ? settle.reasonCodes : null;
       if (!started && release) {
         // R3 batch 2 §3: the reservation (its origin and subject) is read before the release moves the entry away.
         let reserved = null;
         try { reserved = (await this.ledger.state(key)).reserved ?? null; } catch { reserved = null; }
+        const reportRefusal = release === 'NOT_ADMITTED' && reasonCodes !== null;
+        if (reportRefusal) this.reportOutcome(reserved?.subject ?? this.current, 'NOT_ADMITTED', { code: failure.code, row, key, reasonCodes });
         await this.closeOrThrow(batch);
         await this.ledger.releaseUnexecuted(key, release, { failureCode: failure.code, basis, ...facts, breakerState });
         await this.receipt('batch-unexecuted', { key, failureCode: failure.code, release, class: facts.class });
@@ -4512,13 +4532,15 @@ export class ResidentExecutor {
         if ((row?.class === 'node-role' || STAGE1_TRANSIENT_RELEASE_CODES.includes(failure.code)) && this.current?.key === key && reserved?.origin === 'attempt2') {
           await this.reopenAttempt2(key, failure.code, reserved.subject);
         }
-        this.reportOutcome(await subjectOf() ?? this.current, release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', { code: failure.code, row, key });
+        if (!reportRefusal) this.reportOutcome(await subjectOf() ?? this.current, release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', { code: failure.code, row, key });
         return { state: release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', key, failureCode: failure.code, release, settle: { ...settle, kind: 'released', reason: release } };
       }
       // Every other failure burns the head, also before 10-started (stage 1 may have published). Risk tier (Task 12ada80e,
       // DESIGN §36): a stage-1 ending that proves it published nothing (clean on both hosts, bound outcome with zero side
       // effects and mayHavePublished false) still burns the head, but uses the evaluation budget, not the execution one.
       const lowRisk = !started && failure.stageNumber === 1 && klass === 'CLEAN' && failure.outcome?.sideEffects === 0 && failure.outcome?.mayHavePublished === false;
+      if (klass === 'CLEAN' && reasonCodes !== null)
+        this.reportOutcome(await subjectOf() ?? this.current, 'FAILED_CLEAN', { code: failure.code, row, key, retry: facts.retry, reasonCodes });
       await this.ledger.burnHead(key, { failureCode: failure.code, ...(lowRisk ? { quotaTier: QUOTA_TIER_EVALUATION } : {}) });
       // DESIGN §27: a scanner-issuer stage that would HALT is closed clean when its abandonment can be proven.
       if (klass !== 'CLEAN' && await this.scannerAbandonable(key, failure)) return await this.abandonScannerStage(key, batch, failure, settle);
@@ -4530,7 +4552,7 @@ export class ResidentExecutor {
         await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: failure.code, basis, stage: failure.stageNumber, batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory, ...facts });
         await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: failure.code, class: facts.class });
         const subject = (await this.ledger.state(key)).reserved?.subject;
-        this.reportOutcome(subject, 'FAILED_CLEAN', { code: failure.code, row, key, retry: facts.retry });
+        if (reasonCodes === null) this.reportOutcome(subject, 'FAILED_CLEAN', { code: failure.code, row, key, retry: facts.retry });
         const key2 = await this.attempt2IfEligible(key, subject, failure);
         // DESIGN §41.4: a front batch that finally ended is owed to the next on-mode stage 10; every caller hands this ending to
         // afterBatch, which notes it (bc982192 parked-front: one place, one report).

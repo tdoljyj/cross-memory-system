@@ -33,7 +33,7 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "63",
+      "version": "66",
       "description": "BeamingFace Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
@@ -304,7 +304,7 @@
     {
       "id": "script.workflow-source-profile",
       "kind": "script",
-      "version": "1.0.7",
+      "version": "1.0.10",
       "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
       "root": "scripts/ci",
       "files": [
@@ -411,7 +411,7 @@
     {
       "id": "script.independent-native-publication",
       "kind": "script",
-      "version": "1.1.74",
+      "version": "1.1.78",
       "description": "Native publication/revocation with preserved exact workflow preregistration and accepted clock/upgrade fixes; physical once-per-repository/head/role scanner-start gate and durable restrictive holds; the hosted relay is removed. Offline fixtures grant no live qualification; exact Source, Worker/SQL policy activation and installation require separate formal acceptance.",
       "root": ".",
       "files": [

@@ -84,7 +84,29 @@ export const POST_RETRY_MS = 2 * 60_000;
 // rows (PR, head, state, reason, next time, watched, lease end, network, the deferral holding the row), whether the parking places
 // are full, whether a daily budget is used up, and a global deferral of the scheduling pass.
 export const REPORT_MIN_GAP_MS = 5_000;
-export function statusSignature(status) {
+const isHeldPull = pull => !pull.eligible && Object.hasOwn(HELD_TEXTS, pull.hint);
+
+// A missing compare leaves the same PR head's last known hint in the signature.
+// The successful poll still tells us which heads are present and what it learned about the others.
+export function heldPullsAfterPoll(previous, pulls) {
+  if (!Array.isArray(pulls)) return previous;
+  const previouslyHeld = new Map(previous.map(pull => [pull.pr, pull]));
+  const held = [];
+  for (const pull of pulls) {
+    if (isHeldPull(pull)) {
+      held.push(pull);
+    } else if (pull.hint === 'compare-unavailable') {
+      const prior = previouslyHeld.get(pull.pr);
+      if (prior && prior.headSha === pull.headSha) held.push(prior);
+    }
+  }
+  return held;
+}
+
+export function statusSignature(status, pulls) {
+  // Only hints the gate can read count. Sort the tuples so poll order does not matter; the minute pass updates behindBy.
+  const held = Array.isArray(pulls) ? pulls.filter(isHeldPull)
+    .map(p => [p.pr, p.headSha, p.hint]).sort() : [];
   if (!status || typeof status !== 'object') return null;
   const c = status.current;
   // Generation 12 (defect 050560ac): the queue rows too (state, reason, next time, hold, ...), so a batch that did not run, a back-off,
@@ -92,7 +114,7 @@ export function statusSignature(status) {
   // (review round 22, NIT 2).
   const rows = Array.isArray(status.pending) ? status.pending.slice(0, 100).map(r => [r.pr ?? null, r.headSha ?? null, r.state ?? null, r.deferred ?? null, r.nextAt ?? null,
     r.watched === true, r.claimExpiresAt ?? null, r.network === true, r.heldBy ?? null]) : [];
-  return canonicalJson({ current: c ? { pr: c.pr ?? null, headSha: c.headSha ?? null, attempt: c.attempt ?? null, stage: c.stage ?? null } : null, rows,
+  return canonicalJson({ current: c ? { pr: c.pr ?? null, headSha: c.headSha ?? null, attempt: c.attempt ?? null, stage: c.stage ?? null } : null, rows, held,
     breaker: status.breaker ? { state: status.breaker.state ?? null, nextTrialAt: status.breaker.nextTrialAt ?? null } : null,
     intakePause: status.intakePause ? canonicalJson(status.intakePause) : null, halt: status.halt?.code ?? null, paused: status.paused === true,
     parkingFull: status.queue?.parkingFull === true, quota: [quotaFull(status, 'batches'), quotaFull(status, 'evaluations')], hold: globalDefer(status), budgets: status.notices?.filter(n => n.budget).map(n => [n.key, n.budget]) ?? [] });
@@ -166,7 +188,8 @@ const WAIT_TEXT = Object.freeze({ OWNER_REVIEW_REQUIRED: '等 Owner 批准受保
 // Phase 2, step 3a: a batch parked before stage 8 because of main's live rules, GitHub's test merge or the green ledger.
 const PARKED_TEXT = Object.freeze({ REQUIRED_CHECK_FAILED: '必需检查失败，已停止入队和延长；等待检查重跑',
   REQUIRED_CHECKS_UNREADABLE: '暂时无法确认必需检查，等待重新核对',
-  RULESET_UNREADABLE: '已测通：读不到 main 的规则，或必需检查不再钉在本执行器上',
+  RULESET_UNREADABLE: '已测通：main 的必需检查没有全部钉在本执行器上',
+  RULESET_READ_FAILED: '已测通：暂时读不到 main 的规则',
   STRICT_OFF_WITHOUT_TRAIN: '已测通：main 的 strict 已关而列车未开，暂不发合并位（已通知 Owner）',
   MERGE_METHODS_NOT_MERGE_ONLY: '已测通：strict 已关，但合并方式不只有 merge，暂不发合并位（已通知 Owner）',
   TRAIN_TEST_MERGE_NOT_READY: '已测通：等 GitHub 算好试合并', GREEN_LEDGER_UNAVAILABLE: '已测通：本机绿色台账暂时写不进',
@@ -193,6 +216,33 @@ const codeWhy = (code, reasonCodes) => { const why = claimWhy(code, reasonCodes)
 const EARLY_WAKE_TEXT = Object.freeze({ authorization: '认领持有人授权此提交后，约 10 分钟内自动重试（编辑 PR 不会提前）' });
 const earlyWakeOfPage = row => earlyWakeOf({ state: row.state, reason: row.deferred });
 const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MAX - 1)}…`;
+
+const NATIVE_REFUSAL_FIX = Object.freeze({
+  admission_binding_required: '请 Owner 核对当班节点与准入绑定',
+  workflow_gate: '补齐工作流准入门后推送修正',
+  workflow_missing_admission_gate: '补齐工作流准入门后推送修正',
+  authorization_revoked_or_expired: '请认领持有人重新授权当前提交',
+  binding_not_authorized: '请 Owner 核对准入绑定权限',
+  resource_action_not_authorized: '请 Owner 核对该资源的准入权限',
+  work_claim_conflict: '等冲突的认领释放后重新授权当前提交',
+  copy_not_adopted: '请已采纳副本的持有人继续处理',
+  pr_task_binding_conflict: '请核对 PR 关联的任务及当前认领',
+  merge_slot_required: '等本 PR 排到合并队首后自动重试',
+  merge_slot_missing: '等本 PR 排到合并队首后自动重试',
+  evaluation_not_completed: '等准入评估完成后自动重试',
+  changed_files_truncated: '缩小 PR 的改动范围后推送修正',
+  policy_file_removed: '恢复准入策略文件后推送修正',
+  policy_file_invalid: '修正准入策略文件后推送修正',
+  protected_change_not_up_to_date: '将 main 合入分支后推送修正',
+});
+
+function nativeRefusal(state, codes = [], retry = '') {
+  const knownReason = codes.find(code => Object.hasOwn(NATIVE_REFUSAL_FIX, code));
+  const reason = knownReason ?? codes[0] ?? 'NATIVE_NOT_ADMITTED';
+  const fix = knownReason ? NATIVE_REFUSAL_FIX[knownReason] : '请核对当前提交的认领、授权与准入回执';
+  const more = codes.length > 1 ? `等 ${codes.length} 项` : '';
+  return { state, description: clip(`未准入（${reason}${more}）：${fix}${retry}`) };
+}
 
 // DESIGN §41.6a: while the heartbeat's answer shows the failover watchdog has not ticked for more than 5 minutes
 // (companion-heartbeat.mjs#watchdogStale), every text this node writes for a PR head ends with this, never clipped away. At
@@ -319,10 +369,23 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
   }
   if (!status) return null;
   if (now - status.writtenAt > staleMs) return { state: 'error', description: `执行器状态自 ${hhmm(status.writtenAt)} 起未更新，可能已停止` };
+  const mine = x => x && x.pr === pull.pr && x.headSha === pull.headSha;
+  const row = status.pending.find(mine);
+  const recent = status.recent.find(mine);
+  if (!mine(status.current) && !status.halt && !status.paused) {
+    // The queue keeps the reasons throughout backoff, even after the recent outcome is evicted.
+    if (row?.deferred === 'NATIVE_NOT_ADMITTED' && ['BACKOFF', 'WAITING'].includes(row.state)) {
+      const retry = row.nextAt > now ? `；约 ${hhmm(row.nextAt)} 自动重试` : '';
+      return nativeRefusal('pending', row.reasonCodes, retry);
+    }
+    // While the refused batch closes, the queue row can still say RUNNING.
+    if (recent?.code === 'NATIVE_NOT_ADMITTED' && Array.isArray(recent.reasonCodes)
+      && (!row || row.state === 'RUNNING' || (row.state === 'STOPPED' && row.deferred === recent.code && row.stopKind === 'burned')))
+      return nativeRefusal(recent.outcome === 'NOT_ADMITTED' ? 'pending' : 'failure', recent.reasonCodes);
+  }
   const budget = budgetForPull(status, pull, now);
   if (budget && !status.halt && !status.paused && !(status.current?.pr === pull.pr && status.current?.headSha === pull.headSha))
     return { state: 'pending', description: clip(budgetText(budget)) };
-  const mine = x => x && x.pr === pull.pr && x.headSha === pull.headSha;
   if (mine(status.current)) {
     const stage = status.current.stage;
     const text = stage === null ? '运行中：等待托管信号' : `运行中：第 ${stage} 段（${STAGE_NAMES[stage] ?? '?'}）`;
@@ -333,7 +396,6 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     return { state: 'pending', description: clip(text + timingText(status, now, DESCRIPTION_MAX - text.length - lease.length - TIMING_HEADROOM) + lease) };
   }
   // The run queue (phase 2): a row that waits for its turn or its next try says so; nothing runs while HALTed or paused.
-  const row = status.pending.find(mine);
   // Generation 12 (DESIGN §56.3): a batch resting at parking point A that is not the status's current one (several may wait at A):
   // it waits for the hosted signals, with the renewal reminder (its whole run is still ahead).
   // Under HALT or PAUSE it says that, like a row of the queue (review round 5, MINOR 1).
@@ -351,6 +413,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // Parked before stage 8 (phase 2, step 2): its checks are published; it waits for the merge queue.
     if (row.state === 'PARKED') {
       const lease = leaseText(row, now, { running: false }), latest = row.nextAt ? `（最晚约 ${hhmm(row.nextAt)}）` : '';
+      if (row.nextAt === null && row.deferred === 'RULESET_UNREADABLE') return { state: 'pending', description: clip(`${PARKED_TEXT[row.deferred]}，规则钉回后再查第 8 段${lease}`) };
       if (row.nextAt === null) return { state: 'pending', description: clip(`休眠停靠（${row.deferred ?? '第 8 段未就绪'}）：有变化后再查第 8 段${lease}`) };
       // Generation 12 (DESIGN §56.2): a watched row (row.watched) tries stage 8 within minutes once its claim holds the merge slot;
       // an unwatched one (an older Source, a STANDBY node, the watch or try budget used up) keeps the generation-11 text.
@@ -418,7 +481,6 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
   if (row && row.state === 'STOPPED' && row.stopKind === 'release-cap') {
     return { state: 'failure', description: clip(`24 小时内已多次未准入或未执行（${codeWhy(row.deferred ?? '?', row.reasonCodes)}）：请修正后推新提交`) };
   }
-  const recent = status.recent.find(mine);
   if (recent) {
     const code = recent.code ?? '?';
     switch (recent.outcome) {
@@ -562,6 +624,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'upgrade-rolled-back': out.push({ key: `notice:${n.key}`, title: '常驻升级已回滚，执行器保持暂停', body: `升级未通过验证（${n.code ?? '?'}），已回到上一代。执行器保持暂停，请检查后由 Owner 恢复。` }); break;
       case 'upgrade-rollback-failed': out.push({ key: `notice:${n.key}`, title: '常驻升级回滚失败，需要 Owner 处理', body: `回滚没有完成（${n.code ?? '?'}）。执行器保持暂停；请用管理员权限按 upgrade-apply.ps1 -Recover 处理。` }); break;
       case 'renewal-failed': out.push({ key: `notice:${n.key}`, title: '节点连接续期检查未通过', body: `原因：${n.code ?? '?'}。请查看 status.json 的 versions.renewal，核对连接观测与签名权限。` }); break;
+      case 'fleet-pull-refused': out.push({ key: `notice:${n.key}`, title: '节点自拉升级已停止', body: `原因：${n.code ?? '?'}。请查看 status.json 的 versions.fleetPull。` }); break;
       case 'selfcheck-failed': out.push({ key: `notice:${n.key}`, title: '节点用完即弃自检未通过', body: `原因：${n.code ?? '?'}（视图探针或遗留容器，详见 status.json 的 versions.selfcheck）。不影响准入和合入，请查明后处理。` }); break;
       // Step 3c-2b (DESIGN §41.4, §41.6): stage 10's decisions for the Owner.
       case 'train-owner': out.push({ key: `notice:${n.key}`, ...(TRAIN_OWNER_TEXT[n.code] ?? { title: '合并列车需要 Owner 处理', body: n.code ?? '?' }) }); break;

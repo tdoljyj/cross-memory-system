@@ -68,6 +68,8 @@ export const PLAN_CONTRACT = 'clued.independent-ci.fleet-node-install-plan/1';
 export const CONFIG_CONTRACT = 'clued.independent-ci.reinstall-config/1';
 export const DEFAULT_ROOT = 'C:\\ProgramData\\CluedIndependentCI\\resident';
 export const CI_ROOT = 'C:\\ProgramData\\CluedIndependentCI';   // where the launcher makes the Linux out directory (always the live one)
+// the Owner's confirm page: the upgrader's config (confirmOrigin) and the acceptance door's link (accept-door.mjs) are made from it
+export const CONFIRM_ORIGIN = 'https://kooyumi.pixelgrav.com';
 // fleetRefs (BATCH1-INTERFACES.md section 6): every acceptance reference of the record, the same on every node. sourceAcceptanceRef,
 // hostQualificationRef and formalRoles enter source-manifest.json (ciSourceManifestSha256); the others enter acceptance.json / policy.
 export const FLEET_REF_KEYS = Object.freeze(['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef',
@@ -298,7 +300,7 @@ export async function upgraderConfigFor({ recordDir, residentTree }) {
   const target = /^\$UpgradeTokenTarget = '([^']+)'/m.exec(installer)?.[1];
   const root = /^\$Root = '([^']+)'/m.exec(installer)?.[1];
   const cfg = { contract: 'clued.independent-ci.resident-upgrader-config/1', node: node.nodeName, nodeProfileSha256: manifest.nodeProfileSha256,
-    ownerSid: node.ownerSid, root, supabaseUrl: inst.supabaseUrl, publishableKey: inst.publishableKey, confirmOrigin: 'https://kooyumi.pixelgrav.com', tokenFile: target,
+    ownerSid: node.ownerSid, root, supabaseUrl: inst.supabaseUrl, publishableKey: inst.publishableKey, confirmOrigin: CONFIRM_ORIGIN, tokenFile: target,
     timeouts: { drainMaxMinutes: 120, drainRetryMinutes: 60, deferMaxHours: 24, pauseConfirmMs: 600000, verifyMaxMs: 2700000, grantPollMs: [30000, 120000] },
     keepGenerations: 3 };
   need(/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(cfg.node ?? '') && cfg.root === DEFAULT_ROOT && typeof target === 'string', 'UPGRADER_CONFIG_INPUT_REFUSED');

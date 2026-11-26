@@ -194,7 +194,6 @@ function sources(raw){
 const REASONS=Object.freeze([
   ['claim_trailer_missing', 'CLAIM_TRAILER_MISSING'],
   ['changed_files_truncated:', 'CHANGED_FILES_TRUNCATED'],
-  ['claim_base_unknown:', 'CLAIM_BASE_UNKNOWN'],
   ['workflow_gate:', 'WORKFLOW_GATE_REJECTED'],
   ['policy_file_removed:', 'POLICY_FILE_REMOVED'],
   ['policy_file_invalid:', 'POLICY_FILE_INVALID'],

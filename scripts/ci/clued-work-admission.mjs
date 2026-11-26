@@ -431,6 +431,8 @@ export const GATE_JOB_SHA256 = new Set([
   // required test checks of clued-required-tests.yml. Registered here (PR-A)
   // before that workflow is added (PR-B, #971).
   "9c582144f424d1bc9ef7d3b048d3b7771c7b639ef5544bc04a8a80515c52b2f2",
+  // Task 3576b29c: cancel-only PR close skips this exact otherwise unchanged gate.
+  "94c304b8aef3e7ce3e3919e5a86ac627ae7a79ba6c0a8b607a7be3f14e38a384",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 export const PRODUCTION_PUBLISHER_WORKFLOW = ".github/workflows/clued-cloud-production-release.yml";
@@ -2028,9 +2030,9 @@ export async function mainMergeSource(fetchImpl, env, repository, prNumber, head
 // is unreadable or does not qualify ends the chain there. It then asks Native
 // for each hop, the oldest first, with the same one-hop carry: Native still
 // trusts one hop at a time, only from a head this claim authorized (a hop
-// already carried answers replayed). A refused hop does not stop the later
-// ones (a middle head the holder authorized directly still carries onwards);
-// any other refusal does. The head is authorized when its own hop committed.
+// already carried answers replayed). An unauthorized source does not stop
+// later hops: a middle head the holder authorized directly can still carry
+// onwards. Any other refusal stops the chain.
 export const MAIN_MERGE_CHAIN_DEPTH = 8;
 
 async function carryMainMerge(fetchImpl, env, workspace, pr, binding, tip, outcome) {
@@ -2054,7 +2056,8 @@ async function carryMainMerge(fetchImpl, env, workspace, pr, binding, tip, outco
   for (const hop of chain) {
     let reply;
     try {
-      reply = await cluedRpc(fetchImpl, env, workspace, VERIFY_RPC, { action: "carry_main_merge", scope: binding.scope,
+      reply = await cluedRpc(fetchImpl, env, workspace, VERIFY_RPC, { action: "carry_main_merge",
+        ...(binding.scope == null ? {} : { scope: binding.scope }),
         pr_ref: `${env.GITHUB_REPOSITORY}#${pr.number}`, from_head_sha: hop.from, head_sha: hop.head, main_sha: hop.main,
         target_branch: pr.base.ref });
     } catch (error) {
@@ -2065,7 +2068,7 @@ async function carryMainMerge(fetchImpl, env, workspace, pr, binding, tip, outco
       const code = reply.body?.error_code ?? reply.detail ?? reply.status;
       notCarried(code);
       carried = null;
-      if (code === "source_head_not_authorized") continue;
+      if (code === "source_head_not_authorized" || code === "head_authorization_required") continue;
       return null;
     }
     outcome.notices.push(`main_merge_carried: ${hop.from.slice(0, 12)} + main ${hop.main.slice(0, 12)}${reply.body.replayed === true ? " (already carried)" : ""}`);
@@ -2223,7 +2226,10 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
       { workspace, scope: bindingScope, readOnly: gateFindingsOfPr.length > 0 });
     // DESIGN §80: a head that only merged main into the authorized head keeps
     // that authorization (never in frozen, never for a read-only verification).
-    if (outcome.claim_binding.binding_status === 'head_not_authorized' && !gateFindingsOfPr.length && mode.state !== 'frozen'
+    const { binding_status, reason } = outcome.claim_binding;
+    const needsCarry = binding_status === 'head_not_authorized'
+      || (binding_status === 'unbound' && reason === 'head_authorization_required');
+    if (needsCarry && !gateFindingsOfPr.length && mode.state !== 'frozen'
       && await carryMainMerge(fetchImpl, env, workspace, pr, outcome.claim_binding, tipCompare.tip, outcome))
       outcome.claim_binding = await resolvePullRequestBinding(fetchImpl, env, pr, { workspace, scope: bindingScope, readOnly: false });
     if (outcome.claim_binding.binding_status === 'bound') reference = claimReferenceFromBinding(outcome.claim_binding);
@@ -2325,10 +2331,8 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
           write_set: Array.isArray(claim.write_set) ? claim.write_set : [],
         };
       }
-      // The claim's base must name a commit of this repository. A claim taken on
-      // a newer main than the PR's base is only reported (Owner Decision
-      // 36b50981): base_commit is declared by the Agent, so the comparison
-      // cannot catch a wrong claim, and rejecting it only forced re-pushes.
+      // Owner Decision 36b50981: the Agent declares base_commit, so the comparison
+      // cannot catch a wrong claim. An unknown or newer claim base is a notice.
       const claimBase = outcome.claim && outcome.claim.base_commit;
       if (outcome.verdict === "ADMITTED" && typeof claimBase === "string" && claimBase) {
         let compare;
@@ -2341,8 +2345,7 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
         if (compare === undefined) {
           // work_claim: advise and the compare failed: noted above.
         } else if (!compare) {
-          outcome.verdict = "REJECTED";
-          outcome.reasons.push(`claim_base_unknown:${claimBase}`);
+          outcome.notices.push(`claim_base_unknown:${claimBase}`);
         } else if (compare.status !== "ahead" && compare.status !== "identical") {
           outcome.notices.push(`base_behind_claim:${compare.status} (the claim's base_commit ${claimBase} is newer than this PR's base ${pr.base.sha}; merge main into the branch or claim with the branch's merge-base)`);
         }

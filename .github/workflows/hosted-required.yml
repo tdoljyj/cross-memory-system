@@ -27,6 +27,7 @@ name: hosted-required
 # clued-work-admission.test.mjs); a main commit is not judged by these checks.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, closed]
     branches: [main]
   push:
     branches: [clued-train/staging]
@@ -39,10 +40,15 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  clued-cloud-tests:
-    name: hosted-clued-cloud-tests
+  clued-cloud-tests-shard:
+    if: github.event.action != 'closed'
+    name: ${{ format('hosted-clued-cloud-tests-shard-{0}', matrix.shard) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     permissions:
       contents: read
       pull-requests: read
@@ -86,6 +92,63 @@ jobs:
           path: trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
+      - &prepare-linux-git
+        name: Prepare declared Git
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          trap 'echo "::error title=工具准备失败::Git 准备步骤在第 $LINENO 行失败"' ERR
+          policy=trusted/config/ci-toolchain.json
+          # On the PR introducing the declaration the trusted base does not have it yet.
+          if [[ ! -e "$policy" ]]; then policy=candidate/config/ci-toolchain.json; fi
+          version=$(node -e 'const git = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).linux?.git;
+            if (typeof git !== "string" || !/^\d+\.\d+\.\d+$/.test(git)) throw new Error("invalid Git version");
+            console.log(git)' "$policy")
+
+          # Use the signed Noble repositories and extract the package in the job directory, without changing system Git.
+          tool=$(mktemp -d "$RUNNER_TEMP/clued-ci-git.XXXXXX")
+          cd "$tool"
+          mkdir -p lists/partial bin
+          export APT_CONFIG="$tool/apt.conf"
+          cat >"$APT_CONFIG" <<EOF
+          Dir::Etc::Parts "-";
+          Dir::Etc::Main "-";
+          Dir::Etc::sourcelist "$tool/sources.list";
+          Dir::Etc::sourceparts "-";
+          Dir::State::lists "$tool/lists";
+          Dir::State::status "/dev/null";
+          Dir::Cache::pkgcache "";
+          Dir::Cache::srcpkgcache "";
+          Acquire::Languages "none";
+          Acquire::Retries "2";
+          EOF
+          keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg
+          cat >sources.list <<EOF
+          deb [signed-by=$keyring] https://archive.ubuntu.com/ubuntu noble main
+          deb [signed-by=$keyring] https://archive.ubuntu.com/ubuntu noble-updates main
+          deb [signed-by=$keyring] https://security.ubuntu.com/ubuntu noble-security main
+          EOF
+          apt-get update -o APT::Update::Error-Mode=any
+          package=$(LC_ALL=C apt-cache policy git | awk '$1 == "Candidate:" { print $2 }')
+          if [[ "${package#*:}" != "$version"-* ]]; then
+            echo "::error title=工具准备失败::Noble 的 Git 包与声明 $version 不符（${package:-无候选包}）"
+            exit 1
+          fi
+          apt-get download "git=$package"
+          dpkg-deb --extract git_*.deb package
+          # Keep helpers and templates with the binary even when a suite filters its environment.
+          cat >bin/git <<'EOF'
+          #!/bin/sh
+          package=$(CDPATH= cd -- "$(dirname -- "$0")/../package" && pwd) || exit 1
+          export GIT_EXEC_PATH="$package/usr/lib/git-core"
+          export GIT_TEMPLATE_DIR="$package/usr/share/git-core/templates"
+          exec "$package/usr/bin/git" "$@"
+          EOF
+          chmod +x bin/git
+          actual=$(bin/git --version)
+          [[ "$actual" == "git version $version" ]]
+          echo "$actual"
+          printf '%s\n' "$tool/bin" >> "$GITHUB_PATH"
       - name: Select suites
         id: select
         env:
@@ -97,16 +160,54 @@ jobs:
         run: |
           node trusted/scripts/ci/ci-deps.mjs install candidate/apps/clued-cloud
           cd candidate/apps/clued-cloud && timeout --signal=TERM --kill-after=15s 2m npm rebuild @embedded-postgres/linux-x64
-      - name: Lint, ledger, typecheck, build and unit tests
+      - name: Build application for a trusted selector predating per-shard build
+        if: steps.select.outputs.run_clued_cloud == 'true'
+        shell: bash
+        run: |
+          per_shard=$(node --input-type=module -e "import { SUITE_COMMANDS } from './trusted/scripts/ci/ci-required-selection.mjs'; console.log(SUITE_COMMANDS['clued-cloud'].some(command => command.every));")
+          if [ "$per_shard" = false ]; then
+            npm --prefix candidate/apps/clued-cloud run build
+          fi
+      - name: Run the selected application shard
         if: steps.select.outputs.run_clued_cloud == 'true'
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           CLUED_UNDER_TEST: "1"
-        run: node trusted/scripts/ci/ci-required-selection.mjs --run clued-cloud --root candidate
+        run: node trusted/scripts/ci/ci-required-selection.mjs --run-selected clued-cloud-tests --root candidate --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
-  ci-suites:
-    name: hosted-ci-suites
+  clued-cloud-tests:
+    name: hosted-clued-cloud-tests
+    needs: clued-cloud-tests-shard
+    if: always() && github.event.action != 'closed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every application test shard succeeded
+        env:
+          RESULT: ${{ needs.clued-cloud-tests-shard.result }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        run: |
+          echo "hosted-clued-cloud-tests-shard-*: $RESULT"
+          test "$RESULT" = success
+
+  ci-suites-shard:
+    if: github.event.action != 'closed'
+    # In shards (task 3435f8bf 件甲, PLAN-ci-p90-next-20261125 §3.1, the shape of FABLE-ci-duration-target-20261124 §2.5):
+    # each shard runs the i-th of n parts of the same --run-selected plan (ci-required-selection.mjs --shard, from the
+    # trusted base). The number of shards is written in the matrix list only. A shard's check name is
+    # hosted-ci-suites-shard-<n>, which no ruleset names: the required hosted-ci-suites is the summary job below.
+    name: ${{ format('hosted-ci-suites-shard-{0}', matrix.shard) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     permissions:
       contents: read
       pull-requests: read
@@ -150,6 +251,7 @@ jobs:
           path: trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
+      - *prepare-linux-git
       - name: Select suites
         id: select
         env:
@@ -170,28 +272,45 @@ jobs:
           echo "CLUED_CI_APP_DEPS=1" >> "$GITHUB_ENV"
       - name: Run the selected suites
         env:
-          SUITES: ${{ steps.select.outputs.suites }}
+          GITHUB_TOKEN: ${{ github.token }}
           PYTHONDONTWRITEBYTECODE: "1"
           CLUED_UNDER_TEST: "1"
-        run: |
-          failed=""
-          for suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do
-            if node trusted/scripts/ci/ci-required-selection.mjs --run "$suite" --root candidate; then
-              echo "- \`$suite\`: passed" >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "- \`$suite\`: **failed**" >> "$GITHUB_STEP_SUMMARY"
-              failed="$failed $suite"
-            fi
-          done
-          if [ -n "$failed" ]; then
-            echo "::error title=hosted-ci-suites::failed:$failed"
-            exit 1
-          fi
+        run: node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
-  migration-verify:
-    name: hosted-migration-verify
+  # The required check hosted-ci-suites: green only when every shard succeeded, judged as hosted-ci-suites-windows is.
+  ci-suites:
+    name: hosted-ci-suites
+    needs: ci-suites-shard
+    if: always() && github.event.action != 'closed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every Linux suite shard succeeded
+        env:
+          RESULT: ${{ needs.ci-suites-shard.result }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        run: |
+          echo "hosted-ci-suites-shard-*: $RESULT"
+          test "$RESULT" = success
+
+  migration-verify-shard:
+    if: github.event.action != 'closed'
+    # In shards (task 3435f8bf 件甲, PLAN-ci-p90-next-20261125 §3.1, the shape of FABLE-ci-duration-target-20261124 §2.5):
+    # each shard runs the i-th of n parts of the same --run-selected plan (ci-required-selection.mjs --shard, from the
+    # trusted base). The number of shards is written in the matrix list only. A shard's check name is
+    # hosted-migration-verify-shard-<n>, which no ruleset names: the required hosted-migration-verify is the summary job below.
+    name: ${{ format('hosted-migration-verify-shard-{0}', matrix.shard) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     permissions:
       contents: read
       pull-requests: read
@@ -235,6 +354,7 @@ jobs:
           path: trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
+      - *prepare-linux-git
       - name: Select suites
         id: select
         env:
@@ -248,13 +368,36 @@ jobs:
       - name: Verify migrations on the production schema
         if: steps.select.outputs.run_production_schema == 'true'
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           CLUED_UNDER_TEST: "1"
-        run: node trusted/scripts/ci/ci-required-selection.mjs --run production-schema --root candidate
+        run: node trusted/scripts/ci/ci-required-selection.mjs --run-selected migration-verify --root candidate --shard ${{ matrix.shard }}/${{ strategy.job-total }}
       - name: Not affected
         if: steps.select.outputs.run_production_schema != 'true'
         run: echo "No migration, ledger, snapshot or drift-check file changed; nothing to verify." >> "$GITHUB_STEP_SUMMARY"
 
+  # The required check hosted-migration-verify: green only when every shard succeeded, judged as hosted-ci-suites-windows is.
+  migration-verify:
+    name: hosted-migration-verify
+    needs: migration-verify-shard
+    if: always() && github.event.action != 'closed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every migration verification shard succeeded
+        env:
+          RESULT: ${{ needs.migration-verify-shard.result }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        run: |
+          echo "hosted-migration-verify-shard-*: $RESULT"
+          test "$RESULT" = success
+
   ci-suites-windows-shard:
+    if: github.event.action != 'closed'
     # The Windows suites in shards (task 3435f8bf block 4, PLAN-hosted-windows-speed-20261123 §3.2): one 4-core machine ran
     # them in 23-26 minutes; each shard runs the i-th of n parts of the same --run-selected plan (ci-required-selection.mjs
     # --shard, run from the trusted base like the rest). The number of shards is written in the matrix list only. A shard's
@@ -266,7 +409,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7]
     permissions:
       contents: read
       pull-requests: read
@@ -315,6 +458,47 @@ jobs:
           path: trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
+      # Cache only the vendor archive, and verify the declared digest on hits and misses alike.
+      - name: Cache declared MinGit archive
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ runner.temp }}/clued-ci-mingit.zip
+          key: clued-ci-mingit-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('trusted/config/ci-toolchain.json') || hashFiles('candidate/config/ci-toolchain.json') }}
+      - name: Prepare declared Git
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            $policyPath = 'trusted/config/ci-toolchain.json'
+            if (!(Test-Path -LiteralPath $policyPath)) { $policyPath = 'candidate/config/ci-toolchain.json' }
+            $policy = (Get-Content -Raw -Encoding UTF8 -LiteralPath $policyPath | ConvertFrom-Json).windows
+            if ($policy.git -cnotmatch '^\d+\.\d+\.\d+$' -or $policy.mingitRevision -notmatch '^[1-9]\d*$' -or
+                $policy.mingitSha256 -notmatch '^[0-9a-f]{64}$') {
+              throw 'config/ci-toolchain.json 的 Git 或 MinGit 声明无效'
+            }
+            $version = $policy.git
+            $release = "$version.windows.$($policy.mingitRevision)"
+            $archive = Join-Path $env:RUNNER_TEMP 'clued-ci-mingit.zip'
+            if (!(Test-Path -LiteralPath $archive -PathType Leaf)) {
+              $url = "https://github.com/git-for-windows/git/releases/download/v$release/MinGit-$version.$($policy.mingitRevision)-64-bit.zip"
+              & curl.exe --fail --location --silent --show-error --retry 2 --output $archive $url
+              if ($LASTEXITCODE -ne 0) { throw "MinGit 下载退出 $LASTEXITCODE" }
+            }
+            if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $policy.mingitSha256) {
+              throw 'MinGit SHA-256 与声明不符'
+            }
+            $install = Join-Path $env:RUNNER_TEMP 'clued-ci-mingit'
+            Expand-Archive -LiteralPath $archive -DestinationPath $install
+            $bin = Join-Path $install 'cmd'
+            $actual = & (Join-Path $bin 'git.exe') --version
+            if ($LASTEXITCODE -ne 0 -or $actual -cne "git version $release") {
+              throw "声明 git version $release，安装得到 $actual"
+            }
+            Write-Output $actual
+            Add-Content -LiteralPath $env:GITHUB_PATH -Encoding utf8 -Value $bin
+          } catch {
+            throw "工具准备失败：$($_.Exception.Message)"
+          }
       # The image warms Windows PowerShell's module analysis cache only at the machine-level PSModuleAnalysisCachePath. A
       # PowerShell a test starts with its own minimal environment (the service's three variables) does not get that variable
       # and uses the default cache under LocalApplicationData, which is cold: 45-56 s per process re-analysing the image's
@@ -356,7 +540,7 @@ jobs:
   ci-suites-windows:
     name: hosted-ci-suites-windows
     needs: ci-suites-windows-shard
-    if: always()
+    if: always() && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
@@ -380,7 +564,7 @@ jobs:
   ci-suites-windows-duration:
     name: hosted-ci-suites-windows-duration
     needs: ci-suites-windows-shard
-    if: always()
+    if: always() && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -405,6 +589,7 @@ jobs:
   # The scans: the executor steps of gitleaks.yml, trivy.yml and contract-placement.yml from "Configure job temporary
   # storage" on, byte for byte, without the Native permission and relay identity steps (see the header).
   gitleaks:
+    if: github.event.action != 'closed'
     name: hosted-gitleaks
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -455,6 +640,13 @@ jobs:
           path: trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
+      - name: Record the trusted base commit
+        id: trusted-base
+        working-directory: trusted
+        shell: bash
+        run: |
+          base=$(git rev-parse --verify HEAD)
+          printf 'sha=%s\n' "$base" >> "$GITHUB_OUTPUT"
       # The change: a pull request's head against its base (the run's commit is GitHub's merge of the two), a push
       # against the baseline resolved above (main: the first parent; staging: the root T of its member chain), a
       # dispatch against its merge base with main.
@@ -486,6 +678,7 @@ jobs:
         env:
           BASE: ${{ steps.range.outputs.base }}
           HEAD: ${{ steps.range.outputs.head }}
+          TRUSTED_BASE_SHA: ${{ steps.trusted-base.outputs.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -498,7 +691,9 @@ jobs:
           git -C "$repo" -c protocol.file.allow=always fetch --quiet --no-tags --no-recurse-submodules \
             "$GITHUB_WORKSPACE/candidate" refs/clued-scan/base:refs/heads/base refs/clued-scan/head:refs/heads/head
           test "$(git -C "$repo" rev-parse refs/heads/head)" = "$HEAD"
-          install -m 0444 trusted/.gitleaks.toml "$repo/.gitleaks.toml"
+          # The root policy comes from the same local commit as the trusted export.
+          GIT_NO_LAZY_FETCH=1 git -C candidate show "$TRUSTED_BASE_SHA:.gitleaks.toml" > "$repo/.gitleaks.toml"
+          chmod 0444 "$repo/.gitleaks.toml"
           printf '[safe]\n\tdirectory = /repo\n' > "$scan/git-safe.config"
       - name: Scan the changed range with Gitleaks 8.30.1
         env:
@@ -521,6 +716,7 @@ jobs:
             git /repo --config /repo/.gitleaks.toml --redact --no-banner --exit-code 1
 
   trivy:
+    if: github.event.action != 'closed'
     name: hosted-trivy
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -650,6 +846,7 @@ jobs:
             --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo
 
   contract-placement:
+    if: github.event.action != 'closed'
     name: hosted-contract-placement
     runs-on: ubuntu-24.04
     timeout-minutes: 15

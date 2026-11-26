@@ -16,7 +16,7 @@
 //   - landMain: the one write to main, with its read-backs.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { sixPinned } from './train-rules.mjs';
+import { sixPinned, readMainRules } from './train-rules.mjs';
 
 export const LANDING_MODES = Object.freeze(['github-merge', 'push']);
 export const LANDING_DEFAULT = 'github-merge';
@@ -226,9 +226,7 @@ export function landingRoute({ rules, rulesets, appId }) {
 // unreadable. Stage 8 records them in the rehearsal; stage 10 (Fable 11-21 open points §5) every round, into its facts' landing.bypass.
 export async function readLandingRoute({ github, appId, rules = undefined }) {
   let list = rules;
-  if (list === undefined) {
-    try { const reply = await github.readBranchRules('main'); list = reply?.complete === true ? reply.rules : null; } catch { list = null; }
-  }
+  if (list === undefined) list = await readMainRules(github, appId).then(read => read.rules, () => null);
   const ids = Array.isArray(list) ? [...new Set(list.map(r => r?.rulesetId))].filter(id => Number.isSafeInteger(id) && id > 0) : [];
   const rulesets = new Map();
   if (ids.length <= MAX_RULESETS && typeof github?.readRuleset === 'function') for (const id of ids) {

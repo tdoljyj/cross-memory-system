@@ -4,11 +4,38 @@
 using System;
 using System.IO;
 using System.Collections.Generic;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using System.Web.Script.Serialization;
 
 public static class BrokerPureTests
 {
+    [StructLayout(LayoutKind.Sequential)] struct AccessRequest { public uint Access; public IntPtr Self, Types; public uint Count; public IntPtr Arguments; }
+    [StructLayout(LayoutKind.Sequential)] struct AccessReply { public uint Count; public IntPtr Granted, Sacl, Error; }
+    [DllImport("authz.dll", SetLastError=true)] static extern bool AuthzInitializeResourceManager(uint flags,IntPtr a,IntPtr b,IntPtr c,string name,out IntPtr manager);
+    [DllImport("authz.dll", SetLastError=true)] static extern bool AuthzInitializeContextFromSid(uint flags,byte[] sid,IntPtr manager,IntPtr expires,long id,IntPtr data,out IntPtr context);
+    [DllImport("authz.dll", SetLastError=true)] static extern bool AuthzAccessCheck(uint flags,IntPtr context,ref AccessRequest request,IntPtr audit,
+        byte[] descriptor,IntPtr more,uint moreCount,ref AccessReply reply,IntPtr results);
+    [DllImport("authz.dll")] static extern bool AuthzFreeContext(IntPtr context);
+    [DllImport("authz.dll")] static extern bool AuthzFreeResourceManager(IntPtr manager);
+    static bool Access(string dir,string identity,uint mask) {
+        byte[] descriptor=Directory.GetAccessControl(dir).GetSecurityDescriptorBinaryForm();
+        var sid=new SecurityIdentifier(identity);var bytes=new byte[sid.BinaryLength];sid.GetBinaryForm(bytes,0);
+        IntPtr manager,context;
+        if(!AuthzInitializeResourceManager(1,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero,null,out manager)) throw new Exception("AuthzInitializeResourceManager");
+        try {
+            if(!AuthzInitializeContextFromSid(2,bytes,manager,IntPtr.Zero,0,IntPtr.Zero,out context)) throw new Exception("AuthzInitializeContextFromSid");
+            var result=Marshal.AllocHGlobal(8);
+            try {
+                var request=new AccessRequest{Access=mask};
+                var reply=new AccessReply{Count=1,Granted=result,Error=IntPtr.Add(result,4)};
+                if(!AuthzAccessCheck(0,context,ref request,IntPtr.Zero,descriptor,IntPtr.Zero,0,ref reply,IntPtr.Zero)) throw new Exception("AuthzAccessCheck");
+                return Marshal.ReadInt32(reply.Error)==0 && ((uint)Marshal.ReadInt32(reply.Granted)&mask)==mask;
+            } finally { Marshal.FreeHGlobal(result); AuthzFreeContext(context); }
+        } finally { AuthzFreeResourceManager(manager); }
+    }
     static int n;
     static void Yes(bool ok, string what) { if (!ok) throw new Exception("FAILED:" + what); n++; }
     static void Refused(Action a, string code, string what)
@@ -33,6 +60,68 @@ public static class BrokerPureTests
     }
     public static int Main(string[] args)
     {
+        if (args.Length==2 && args[0]=="--fleet-request-shape-fixture") {
+            try {
+                Console.WriteLine(FleetPull.Parse(System.Text.Encoding.UTF8.GetBytes(args[1]))==null ? "UNRECOGNIZED" : "PARSED");
+            } catch (BrokerRefusal e) { Console.WriteLine(e.Code); }
+            return 0;
+        }
+        if (args.Length==5 && args[0]=="--fleet-package-acl-fixture") {
+            string root=Path.GetFullPath(args[1]), package=Path.GetFullPath(args[2]);
+            string scratch=Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\')+"\\";
+            if (!root.StartsWith(scratch,StringComparison.OrdinalIgnoreCase) ||
+                !package.StartsWith(root.TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase)) return 2;
+            foreach (string packagePath in new[]{package,Path.GetDirectoryName(package)}) {
+                foreach (string sid in new[]{args[3],args[4]}) {
+                    foreach (uint right in new uint[]{2,4,16,64,256,65536,262144,524288})
+                        Yes(!Access(packagePath,sid,right),"fleet-package-directory-write-denied: "+sid+" "+packagePath+" "+right);
+                }
+            }
+            Console.WriteLine("D2 ACL: package and parent deny writes by resident and companion");
+            return 0;
+        }
+        if (args.Length==4 && args[0]=="--fleet-acl-fixture") {
+            var root=Path.GetFullPath(args[1]);
+            if (!root.StartsWith(Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase)) return 2;
+            var resident=args[2];var companion=args[3];
+            Yes(Access(Path.Combine(root,"work"),resident,2) && !Access(Path.Combine(root,"work"),companion,2),"only-resident-writes-work");
+            Yes(Access(Path.Combine(root,"bundles"),companion,2) && Access(Path.Combine(root,"bundles"),resident,1),"companion-writes-resident-reads-bundles");
+            Yes(Access(Path.Combine(root,"broker","requests"),resident,2) && !Access(Path.Combine(root,"broker","requests"),companion,2),"companion-broker-write-denied");
+            Yes(!Access(Path.Combine(root,"upgrade","inbox"),resident,2) && !Access(Path.Combine(root,"upgrade","inbox"),companion,2),"companion-and-resident-upgrade-inbox-write-denied");
+            Yes(Access(Path.Combine(root,"install"),resident,1) && Access(Path.Combine(root,"upgrade"),resident,1),"resident-reads-no-request-inputs");
+            Console.WriteLine("D2 ACL: "+n+" AuthzAccessCheck cases");
+            return 0;
+        }
+        if ((args.Length==6 || args.Length==7) && args[0]=="--fleet-pull-fixture") {
+            string root=Path.GetFullPath(args[1]), scratch=Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\')+"\\";
+            if (!root.StartsWith(scratch,StringComparison.OrdinalIgnoreCase) || !Renewal.Id(args[2])) return 2;
+            // .NET Framework uses Console.InputEncoding for the child stdin writer.
+            // Reproduce the UTF-8 BOM regardless of the host's console code page.
+            typeof(Console).GetField("_inputEncoding", BindingFlags.NonPublic | BindingFlags.Static)
+                .SetValue(null, Encoding.UTF8);
+            Yes(Console.InputEncoding.GetPreamble().Length == 3, "fleet-child-stdin-utf8-bom");
+            var requestBytes=File.ReadAllBytes(Path.Combine(root,"broker","requests",args[2]+".json"));
+            var payload=FleetPull.Parse(requestBytes);
+            var grant=Renewal.Str(payload,"grantId");
+            var taken=Path.Combine(root,"broker","responses",args[2]+".taken");
+            if (File.Exists(taken)) {
+                Console.WriteLine(Renewal.Json(FleetPull.Interrupted(root,args[2],requestBytes,"BROKER_REQUEST_INTERRUPTED_NOT_REPEATED")));
+                return 0;
+            }
+            File.WriteAllBytes(taken,new byte[]{1});
+            string code=null,status=null;
+            try {
+                var v=Renewal.Object(File.ReadAllText(Path.Combine(root,"broker","renew-ci.json")));
+                var probe=new Renewal.Connection { OnDuty=(bool)v["onDuty"], FleetTarget=v["fleetTarget"] as Dictionary<string,object> };
+                var now=DateTime.Parse(args[5]).ToUniversalTime().AddMilliseconds(1);
+                var answer=FleetPull.Submit(root,args[2],args[3],()=>probe,payload,()=>now,(run,script)=>
+                    FleetPull.Assemble(root,run,args.Length==7?args[6]:script,args[4],null,scratch));
+                code=Renewal.Str(answer,"code"); status=Renewal.Str(answer,"status");
+            } catch (BrokerRefusal e) { code=e.Code; }
+            catch (Exception e) { Console.Error.WriteLine(e); code="FLEET_BROKER_UNCONFIRMED"; }
+            Console.WriteLine(Renewal.Json(FleetPull.Answer(root,args[2],grant,code,status)));
+            return 0;
+        }
         string dir = Path.Combine(Path.GetTempPath(), "clued-broker-pure-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         try

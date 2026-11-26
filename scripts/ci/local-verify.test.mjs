@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as selection from './ci-required-selection.mjs';
 import { acquireLock, bundleFor, cacheHome, changedFiles, chooseSuites, compareCommand, compareSuite, dataRoot, dependencyKey, fixedDrives, githubRefs,
-  killCommand, linkDependencies, linuxScript, mainResultsFile, mergedCandidate, newestMain, npmCommand, parseArgs, present,
+  killCommand, linkDependencies, linuxScript, loadSelector, mainResultsFile, mergedCandidate, newestMain, npmCommand, parseArgs, present,
   readCached, readResults, realpathLoose, refUpdates, residentBusy, RESIDENT_STATUS, runCommands, runsLinux, selectAffected, snapshot, startLinux, systemDriveNotes, testEnvironment, testsRun,
   toWslPath, verifySuites, watchdogLevels, windowsPathOf, withFailureReport, worktree, worktreePath, writeCached, YIELD_TIMEOUT_MS, yieldToResident } from './local-verify.mjs';
 
@@ -409,10 +409,14 @@ test('runCommands starts every command, also after a failure, with the report, a
     { cwd: '.', argv: ['python', '-m', 'x'] },
   ] } };
   const calls = [];
+  const tick = { type: 'metronome', n: 2, median_ms: 20.5 };
   const spawn = (file, args) => {
     calls.push([file, args]);
     const destination = args.find((arg) => arg.startsWith('--test-reporter-destination=') && arg.endsWith('.jsonl'));
-    if (destination) fs.writeFileSync(destination.split('=')[1], `${JSON.stringify(fail('t'))}\n${JSON.stringify(summary)}\n`);
+    if (destination) {
+      const events = calls.length === 2 ? [fail('t'), summary, tick] : [fail('t')];
+      fs.writeFileSync(destination.split('=')[1], events.map((event) => JSON.stringify(event)).join('\n'));
+    }
     return [{ status: 1 }, { status: 1 }, { status: null, signal: 'SIGTERM' }, { error: new Error('spawn python ENOENT') }][calls.length - 1];
   };
   const killed = [];
@@ -421,13 +425,14 @@ test('runCommands starts every command, also after a failure, with the report, a
   assert.deepEqual(killed, [root, root], 'what a stopped or unstartable command left is ended');
   assert.deepEqual(results.map((result) => [result.status, result.report !== null, result.known]), [[1, false, null], [1, true, null], [128, true, 's'], [null, false, null]]);
   assert.equal(results[1].report.events[0].type, 'fail');
+  assert.deepEqual(results[1].report.metronome, tick);
   assert.equal(calls[1][0], process.execPath, 'node is the running Node, not whatever PATH finds');
   assert.match(results[3].error, /ENOENT/);
   assert.match(fs.readFileSync(path.join(root, 'log.txt'), 'utf8'), /::group::s: \(\.\) npm run lint/);
   // a known-failure command that exits 0 without its report did not finish, as runSuite judges it
   const silent = runCommands({ ...selector, SUITE_COMMANDS: { k: [{ cwd: '.', known: 'k', argv: ['node', 'run.mjs', '--test', 'b.test.mjs'] }] } },
     'k', root, 'm'.repeat(40), path.join(root, 'log2.txt'), { spawn: () => ({ status: 0 }), kill: () => {} });
-  assert.deepEqual(silent[0].report, { events: [], summary: null, corrupt: false });
+  assert.deepEqual(silent[0].report, { events: [], summary: null, metronome: null, corrupt: false });
   assert.notEqual(compareSuite(silent, null, { selector: selection, knownLists: { k: [] } }).verdict, 'pass');
 });
 
@@ -569,6 +574,27 @@ test('the dependency link: made, kept, replaced when stale or broken, never over
   assert.equal(fs.readFileSync(path.join(a, 'mark'), 'utf8'), 'a');
 });
 
+test('the local selector uses the timing table from its base commit', async (t) => {
+  const { dir, commit } = repository(t);
+  const table = 'scripts/ci/ci-shard-seconds.json';
+  fs.mkdirSync(path.join(dir, 'scripts/ci'), { recursive: true });
+  const main = commit({
+    'scripts/ci/ci-required-selection.mjs': "export const SHARD_SECONDS_PATH = new URL('./ci-shard-seconds.json', import.meta.url);",
+    'scripts/ci/ci-known-failures.json': '{}',
+    'scripts/ci/ci-test-failures-reporter.mjs': '',
+    [table]: '{"tests/heavy.test.mjs":30}',
+  });
+  commit({ [table]: '{"tests/other.test.mjs":40}' });
+  const home = path.join(dir, 'cache');
+  const old = path.join(home, 'selectors', main);
+  fs.mkdirSync(old, { recursive: true });
+  fs.copyFileSync(path.join(dir, 'scripts/ci/ci-required-selection.mjs'), path.join(old, 'ci-required-selection.mjs'));
+  fs.writeFileSync(path.join(old, 'complete'), '');
+
+  const selector = await loadSelector(dir, main, home);
+  assert.equal(fs.readFileSync(selector.SHARD_SECONDS_PATH, 'utf8'), '{"tests/heavy.test.mjs":30}');
+});
+
 test('runCommands starts each command as runSuite would: same cwd, command line and known-failure reporter', () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const main = 'b'.repeat(40);
@@ -611,25 +637,25 @@ test('the run lock: taken, waited for while its run is alive, taken over when st
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-lock-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const file = path.join(home, 'run.lock');
-  const quiet = { log: () => {} };
+  const T = Date.parse("2026-11-01T00:00:00Z"), quiet = { log: () => {}, now: () => T };
   const release = acquireLock(home, { ...quiet, pid: 11 });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).pid, 11);
   release();
   assert.equal(fs.existsSync(file), false);
   // alive: waits until it is gone
-  fs.writeFileSync(file, JSON.stringify({ pid: 22, token: 'held', started: Date.now() }));
+  fs.writeFileSync(file, JSON.stringify({ pid: 22, token: 'held', started: T }));
   let waits = 0;
   acquireLock(home, { ...quiet, pid: 12, alive: () => true, wait: () => { waits += 1; fs.rmSync(file); } })();
   assert.equal(waits, 1);
   // gone, older than any run, or unreadable: taken over
-  for (const [held, alive] of [[{ pid: 33, token: 'dead', started: Date.now() }, () => false],
-    [{ pid: 34, token: 'old', started: Date.now() - 7 * 60 * 60_000 }, () => true], ['not json', () => true]]) {
+  for (const [held, alive] of [[{ pid: 33, token: 'dead', started: T }, () => false],
+    [{ pid: 34, token: 'old', started: T - 7 * 60 * 60_000 }, () => true], ['not json', () => true]]) {
     fs.writeFileSync(file, typeof held === 'string' ? held : JSON.stringify(held));
-    if (typeof held === 'string') fs.utimesSync(file, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    if (typeof held === 'string') fs.utimesSync(file, new Date(T - 60_000), new Date(T - 60_000));
     const mine = acquireLock(home, { ...quiet, pid: 13, alive, wait: () => assert.fail('a stale lock is not waited for') });
     assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).pid, 13);
     // another run's lock is never removed by this one's release
-    fs.writeFileSync(file, JSON.stringify({ pid: 44, token: 'theirs', started: Date.now() }));
+    fs.writeFileSync(file, JSON.stringify({ pid: 44, token: 'theirs', started: T }));
     mine();
     assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).token, 'theirs');
     fs.rmSync(file);
@@ -643,12 +669,12 @@ test('the run lock: taken, waited for while its run is alive, taken over when st
   // (and a stale lock taken over but not yet removed)
   for (const leftover of [`${file}.x-1-2.new`, `${file}.x-3-4`]) {
     fs.writeFileSync(leftover, '{}');
-    fs.utimesSync(leftover, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    fs.utimesSync(leftover, new Date(T - 60_000), new Date(T - 60_000));
   }
   acquireLock(home, { ...quiet, pid: 16 })();
   assert.deepEqual(fs.readdirSync(home), [], 'both cleared');
   // a long run renews its lock's age
-  let clock = Date.now();
+  let clock = T;
   const long = acquireLock(home, { ...quiet, pid: 15, now: () => clock });
   clock += 5 * 60 * 60_000;
   long.refresh();

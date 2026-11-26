@@ -4,16 +4,15 @@
 // and non-repository resources are unchanged. Before the migration cases 1, 2 and 8 fail (work_claim_conflict: the second
 // pushed PR of a hot file waited, or the first one's write set was narrowed by hand and its next head was refused, #1300).
 // Cases 3 to 7 are controls: the conflict is returned either way (4 and 7 also name which entries overlap, see there).
-import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
@@ -23,18 +22,14 @@ const hash = () => crypto.randomBytes(32).toString('hex');
 const head = () => crypto.randomBytes(20).toString('hex');
 const base = 'b'.repeat(40);
 const repo = 'fixture/delivered-paths';
-async function freePort() {
-  const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r));
-  const p = s.address().port; await new Promise(r => s.close(r)); return p;
-}
 
 test('repository paths of a claim with a live head authorization do not block another claim; everything else still does', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-delivered-paths-'));
-  const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await freePort(),
+  const server = newCluster({ databaseDir: dir, user: 'postgres', password: hash(), 
     persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
   const clients = [];
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;

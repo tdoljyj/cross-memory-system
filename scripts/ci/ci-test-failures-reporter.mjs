@@ -5,6 +5,14 @@
 //   {"type":"fail","file":<abs>,"path":[names...],"failure_type":...,"fingerprint":...,"ms":...?}
 //   {"type":"pass","file":<abs>,"path":[names...],"skip":true?,"ms":...?}   (skip only for a skipped test)
 //   {"type":"summary","counts":{...},"success":bool}   (the run's own summary)
+//   {"type":"begin"|"end","file":<abs>|null,"nesting":n,"name":...,"ms":...?,"wallFile":<abs>?}
+//      (Node's test:dequeue / test:complete, wallFile only on a file's completion)
+//   {"type":"metronome","n":<samples>,"median_ms":<number>|null}   (null if the run ended before the first tick)
+// begin and end come as Node runs the tests, not in report order, and Node sends
+// both for each test file itself (its name is the file's path): what began and
+// did not end when the entry ended a command at its limit is what hung there
+// (ci-required-selection.mjs unfinishedTests). What decides a command reads
+// only the other lines.
 // Every test:fail counts: a test, a suite, a hook (failure_type hookFailed), a
 // parent that throws after its subtests, a file that fails to load. So does
 // an error from asynchronous activity after a test ended (an uncaught
@@ -13,9 +21,10 @@
 // (subtestsFailed; the subtest carries the failure) and a todo test (Node
 // does not fail the run for it). The fingerprint identifies why a test
 // failed, so a known test failing for another reason is a new failure.
-// ms, whole milliseconds, only on a top-level test (nesting 0): their sum is
-// what the file took, the seconds --shard packs files by (ci-shard-seconds.json).
+// The top-level file's completion includes loading, hooks and process exit. Its
+// ms is the shard weight, with top-level test ms as a fallback.
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 
 const ASYNC_AFTER_END = /generated asynchronous activity after the test ended|triggered an? (?:uncaughtException|unhandledRejection) event/;
 
@@ -54,7 +63,36 @@ export function failureFingerprint(error) {
 // A top-level test's duration as {ms}, or nothing.
 const timed = (data) => (data.nesting === 0 && Number.isFinite(data.details?.duration_ms) ? { ms: Math.round(data.details.duration_ms) } : {});
 
-export default async function* reporter(source) {
+const METRONOME_INPUT = Buffer.alloc(64 * 1024);
+
+export function metronomeWorkload() {
+  let digest = Buffer.alloc(0);
+  for (let round = 0; round < 640; round += 1) {
+    digest = createHash('sha256').update(METRONOME_INPUT).update(digest).digest();
+  }
+  return digest;
+}
+
+export default async function* reporter(source, { workload = metronomeWorkload } = {}) {
+  const samples = [];
+  const timer = setInterval(() => {
+    const start = performance.now();
+    workload();
+    samples.push(performance.now() - start);
+  }, 5_000).unref();
+  try {
+    yield* testEvents(source);
+  } finally {
+    clearInterval(timer);
+  }
+  samples.sort((a, b) => a - b);
+  const n = samples.length;
+  const middle = Math.floor(n / 2);
+  const median_ms = n === 0 ? null : (samples[Math.floor((n - 1) / 2)] + samples[middle]) / 2;
+  yield `${JSON.stringify({ type: 'metronome', n, median_ms })}\n`;
+}
+
+async function* testEvents(source) {
   const stacks = new Map();
   const pathOf = (data) => {
     const stack = stacks.get(data.file) ?? [];
@@ -84,6 +122,13 @@ export default async function* reporter(source) {
       // A skipped test is reported as passed by Node; it did not run (a failure run alone again must run).
       const skipped = data.skip !== undefined && data.skip !== false;
       yield `${JSON.stringify({ type: 'pass', file: data.file ?? null, path: pathOf(data), ...(skipped ? { skip: true } : {}), ...timed(data) })}\n`;
+    } else if (event.type === 'test:dequeue' || event.type === 'test:complete') {
+      const complete = event.type === 'test:complete';
+      // Node can use the relative operand as the wrapper's name. Resolve it in the reporter's command cwd.
+      const fileEnd = complete && data.nesting === 0 && !data.entryFile && typeof data.name === 'string'
+        && (data.file ? path.relative(data.file, data.name) === '' : path.isAbsolute(data.name));
+      yield `${JSON.stringify({ type: complete ? 'end' : 'begin', file: data.file ?? null, nesting: data.nesting, name: data.name,
+        ...(complete ? timed(data) : {}), ...(fileEnd ? { wallFile: data.file ?? data.name } : {}) })}\n`;
     } else if (event.type === 'test:summary' && data.file === undefined) {
       yield `${JSON.stringify({ type: 'summary', counts: data.counts ?? null, success: data.success === true })}\n`;
     }

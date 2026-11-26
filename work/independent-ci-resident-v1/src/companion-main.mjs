@@ -19,7 +19,7 @@ import { Poller } from './poller.mjs';
 import { Inbox } from './inbox.mjs';
 import os from 'node:os';
 import { readStatus, pollerLandingOf } from './status.mjs';
-import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, reportDue, statusSignature, toastArgv, validateStatusConfig } from './pr-status.mjs'; // toastArgv: the tests' fallback in companionHeartbeat only
+import { LocalStore, PrStatusReporter, REPORT_MIN_GAP_MS, heldPullsAfterPoll, reportDue, statusSignature, toastArgv, validateStatusConfig } from './pr-status.mjs'; // toastArgv: the tests' fallback in companionHeartbeat only
 import { companionBackstop } from './ruleset-backstop.mjs';
 import { NODE_STATUS_FILE, readCapacityAlert, resourceHoldAlert } from './host-capacity.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
@@ -38,7 +38,9 @@ import { pruneArchivedGenerations } from './generation-retention.mjs';
 import { SETTINGS_FILE, readRetentionSettings } from './retention-settings.mjs';
 import { assertGhIsolation, assertNotElevated, sessionFacts, writeSessionFacts } from './companion-session.mjs';
 import { companionKeyWatch } from './connection-renewal.mjs';
+import { companionSelfPull } from './fleet-self-pull.mjs';
 import { resolveCompanionWslClient } from './wsl-client.mjs';
+import { POOL_ALERT_EVERY_MS, PoolAlert, poolAlertDir, validatePoolAlertConfig } from './pool-alert.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
 // phase 1, item 7). The poller looks for new PR heads every 15 seconds in a lane of its own (f79929d9; it was once a minute in
@@ -108,31 +110,49 @@ export function within(promise, ms, { schedule = setTimeout, cancel = clearTimeo
 // the tests run the very poller and lanes main() runs. The poll lane (f79929d9) has its own Runner, pollRunner, and the Poller is
 // built here on it (every gh read of the poll runs there): a retention notice, a bundle retention, a backstop or a PR page pass that
 // does not return, or an advisory child that never ended, delays only the advisory lane, never finding a new PR head. The PR page
-// and the re-run lane read poller.lastPass only. -> { poller, lanes }
+// and the re-run lane use poller.lastPass; the report signature uses the last known held heads. -> { poller, lanes }
 // writeTrigger(v): the inbox drop box; readStatus(): the executor's status board; pruneOldBundles(), backstop(): one bundle retention
 // and one ruleset backstop pass.
+// One pass of the poll lane (f79929d9): the executor's status board read (at most POLL_STATUS_READ_MS, never a second read on top of
+// an outstanding one), the PR pass on it, then one sleeping batch observed (poller.parkedPass, the rows of that read). Exported so the
+// train's property test runs the very pass main() runs (task bd07449b r2). -> { work(): one pass, status(): what the last pass's status
+// read gave (null: not read within POLL_STATUS_READ_MS, or unreadable), signaturePulls(): the last known held heads }
+export function pollLane({ poller, readStatus, schedule = setTimeout, cancel = clearTimeout }) {
+  let statusRead = null; // the status read while it is outstanding
+  let passStatus = null;
+  let signaturePulls = [];
+  return {
+    status: () => passStatus,
+    signaturePulls: () => signaturePulls,
+    work: async () => {
+      // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
+      statusRead ??= Promise.resolve().then(readStatus).catch(() => null).finally(() => { statusRead = null; });
+      const status = passStatus = await within(statusRead, POLL_STATUS_READ_MS, { schedule, cancel });
+      try {
+        await poller.pass({ generation: status?.queue?.generation ?? null });
+      } catch {
+        return;
+      }
+      signaturePulls = heldPullsAfterPoll(signaturePulls, poller.lastPass?.pulls);
+      try { await poller.parkedPass(status?.pending ?? []); } catch { /* next pass */ }
+    },
+  };
+}
+
 export function advisoryLanes({ advisory, pollRunner, repo, ghExe, writeTrigger, clock = Date.now, readStatus, renewKeyCheck, retentionNotifier,
   pruneOldBundles, backstop, reporter, schedule = setTimeout, cancel = clearTimeout }) {
   let lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0, lastBundlePrune = 0;
-  let statusRead = null; // the poll lane's status read while it is outstanding: never a second one on top of it
-  let passStatus = null; // what this pass's status read gave (null: not read within POLL_STATUS_READ_MS, or unreadable)
+  let poll = null; // the poll lane (pollLane): its pass's status read is what the landing port reads
   // bc982192: the batch route the service stamps a batch born now with (its status board's train.batchRoute, executor.mjs#batchRoute:
   // the train on, stage 10's effective route push and no scan required from this App) proposes a head behind main on its merge
   // base; no such field, or a status not read, is github-merge (status.mjs#pollerLandingOf). From the pass's own read (f79929d9
   // round 2): poller.pass reads status.json no second time, so a stalled read holds it up at most POLL_STATUS_READ_MS.
   // A `hints` key an older companion.json still carries (the removed hosted relay, DESIGN §76) is never read.
   const poller = new Poller({ repo, ghExe, run: (a, o) => pollRunner.run(a, o), clock, writeTrigger,
-    landing: async () => pollerLandingOf(passStatus) });
+    landing: async () => pollerLandingOf(poll.status()) });
+  poll = pollLane({ poller, readStatus, schedule, cancel });
   return { poller, lanes: [
-    { runner: pollRunner, everyMs: POLL_EVERY_MS, work: async () => {
-      // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
-      statusRead ??= Promise.resolve().then(readStatus).catch(() => null).finally(() => { statusRead = null; });
-      const status = passStatus = await within(statusRead, POLL_STATUS_READ_MS, { schedule, cancel });
-      try {
-        await poller.pass({ generation: status?.queue?.generation ?? null });
-        await poller.parkedPass(status?.pending ?? []);
-      } catch { /* next pass */ }
-    } },
+    { runner: pollRunner, everyMs: POLL_EVERY_MS, work: poll.work },
     { runner: advisory, work: async () => {
       await renewKeyCheck();
       try { await retentionNotifier.step(); } catch { /* advisory; retry without marking an undelivered notice */ }
@@ -144,14 +164,13 @@ export function advisoryLanes({ advisory, pollRunner, repo, ghExe, writeTrigger,
         try { await backstop(); } catch { /* next time */ }
       }
       // Generation 10 (DESIGN 53.5): status.json is read at most every REPORT_MIN_GAP_MS; the PR page is posted every minute as before,
-      // and also at once when the batch, its stage, the breaker, the intake pause or HALT/PAUSE changed (a claimed batch or a started
-      // trial is on the page within seconds, not after the next minute or the batch's end). reporter.pass still writes only what
-      // changed, within its own bounds.
+      // and also at once when the executor's visible status or the poller's set of held heads changes. reporter.pass still writes
+      // only what changed, within its own bounds.
       if (Date.now() - lastReport > REPORT_MIN_GAP_MS && Date.now() - lastStatusRead > REPORT_MIN_GAP_MS) {
         lastStatusRead = Date.now();
         let status = null, statusError = false;
         try { status = await readStatus(); } catch { statusError = true; }
-        const signature = statusSignature(status);
+        const signature = statusSignature(status, poll.signaturePulls());
         if (reportDue({ now: Date.now(), lastReport, lastSignature, signature, everyMs: REPORT_EVERY_MS })) {
           lastReport = Date.now();
           lastSignature = signature;
@@ -388,12 +407,19 @@ export async function main(args = process.argv.slice(2)) {
   // Generation 12 (DESIGN §56.5, Decision 207c0cd0 v2): the one repair re-run of the required tests the admission gate allows, clicked
   // with the Owner's gh login when the gate timed out before stage 1's admission. Its own Runner and its own memory file.
   const rerunRunner = new Runner({ env: { ...process.env }, jobHost });
-  const rerunner = new AdmissionRerunner({ gh: ghPort({ ghExe: raw.ghExe, repo: raw.repo, run: (a, o) => rerunRunner.run(a, o) }),
+  const rerunner = new AdmissionRerunner({ gh: ghPort({ ghExe: raw.ghExe, repo: raw.repo, nodeName: cfg.node.nodeName, run: (a, o) => rerunRunner.run(a, o) }),
     state: await AdmissionRerunState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-admission-rerun.json')),
     clock: Date.now, readStatus: () => readStatus(values.root), pulls: () => (poller.lastPass ? poller.lastPass.pulls : null),
     notify });
   // The PR page says when this lane re-ran a head's required tests, or what came of a lost run's dispatch (pr-status.mjs#PrStatusReporter).
   reporter.rerunLine = headSha => rerunner.line(headSha);
+  // The kernel pool alert (pool-alert.mjs, docs/architecture.md 9.1): its own Runner, lane and state; it only notifies the Owner and
+  // never restarts anything. A helper: a configuration it cannot read leaves it off, never the companion.
+  const poolRunner = new Runner({ env: { ...process.env }, jobHost });
+  let poolConfig = null;
+  try { poolConfig = validatePoolAlertConfig(raw.poolAlert); } catch { poolConfig = null; }
+  const poolAlert = new PoolAlert({ config: poolConfig, a: companionArgv(cfg), run: (a, o) => poolRunner.run(a, o),
+    dir: poolAlertDir(cfg.node.ownerProfileDirectory), clock: Date.now, uptimeMs: () => os.uptime() * 1000, notify, node: cfg.node.nodeName });
   keepalive(companionArgv(cfg).keepalive());
   // M5 (ADR 0022 §6 Q1, Q2): the WSL instance this session sees, for the Owner's read-only probe. In the background; never blocks.
   sessionFacts({ wsl: (...l) => [cfg.wslExe, '--distribution', cfg.distribution, '--user', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LANG=C', 'LC_ALL=C', ...l],
@@ -404,6 +430,9 @@ export async function main(args = process.argv.slice(2)) {
   // r3 implementation review MAJOR 2). The beat stops with the lanes; the entry below exits outright, so no timer keeps a
   // companion alive that answers nothing.
   const renewKeyCheck=companionKeyWatch(values.root);
+  const selfPullRunner = new Runner({ env: { ...process.env }, jobHost });
+  const selfPull = companionSelfPull({ root: values.root, repository: raw.repo, upload: ({ tag, file }) =>
+    selfPullRunner.run([raw.ghExe, 'release', 'upload', tag, file, '--repo', raw.repo], { timeoutMs: 60_000 }) });
   // The poller and its lane, and the advisory lane (advisoryLanes): built before any lane starts (the re-run lane reads poller.lastPass).
   const { poller, lanes: advisorySpecs } = advisoryLanes({ advisory, pollRunner, repo: raw.repo, ghExe: raw.ghExe, clock: Date.now,
     writeTrigger: v => Inbox.drop(inboxDir, v), // a create-only drop box: the reader waits for a file still being written (DESIGN §31.3)
@@ -427,9 +456,11 @@ export async function main(args = process.argv.slice(2)) {
       lane({ runner: upgradeRunner, work: async () => { const r = await upgradeLane.step(); await upgradeLane.selfcheckStep(); return r; }, everyMs: UPGRADE_LANE_EVERY_MS }),
       ...(heartbeat ? [lane({ runner: heartbeatRunner, work: () => heartbeat.step(), everyMs: HEARTBEAT_LANE_EVERY_MS })] : []),
       lane({ runner: fleetRunner, work: async () => { fleetLag ??= await openFleetLag(); await fleetLag?.step(); }, everyMs: 60000 }),
+      lane({ runner: selfPullRunner, work: selfPull, everyMs: 15_000 }),
       ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),
       ...(mergeReconcile?[lane({runner:mergeRunner,work:()=>mergeReconcile.step(),everyMs:MERGE_RECONCILE_LANE_EVERY_MS})]:[]),
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
+      lane({ runner: poolRunner, work: () => poolAlert.step(), everyMs: POOL_ALERT_EVERY_MS }),
       ...(frontMerge ? [lane({ runner: frontMergeRunner, work: () => frontMerge.step(), everyMs: FRONT_MERGE_LANE_EVERY_MS })] : []),
       ...advisorySpecs.map(spec => lane(spec)),
     ]);

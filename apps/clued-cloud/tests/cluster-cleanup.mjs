@@ -1,9 +1,9 @@
-// Shared cleanup for tests that run an embedded PostgreSQL cluster.
+// Shared start and cleanup for tests that run an embedded PostgreSQL cluster.
 //
 // On Windows the cluster's files stay locked for a short while after the
 // postgres process exits, so an immediate recursive remove fails with EBUSY
 // (or EPERM / ENOTEMPTY) and node:test then fails the whole file although every
-// subtest passed. `embedded-postgres` itself removes a non-persistent cluster at
+// subtest passed. The library itself removes a non-persistent cluster at
 // the end of stop() with one unretried fs.rm, so stopping goes through here too.
 //
 // Cleanup is best effort and never throws: when a directory still cannot be
@@ -13,9 +13,11 @@
 // pid of the child this process started (postmaster.pid is not trusted; on
 // Windows the library's taskkill leaves a stale one behind).
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { UNTIL_POLL_MS, until } from '../../../scripts/ci/test-clock-guard.mjs';
 
 // These clusters are discarded after the test and never used for crash recovery.
 export const EPHEMERAL_POSTGRES_FLAGS = Object.freeze([
@@ -35,7 +37,12 @@ export const CLEANUP_DEFAULTS = Object.freeze({
   pollMs: 100,
 });
 
-const sleepFor = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Test code reads no clock: a pause is a number of polls of until() (one real tick each), and a budget in milliseconds
+// (exitTimeoutMs, attemptDelayMs) is counted in those ticks. `cancelled` ends the pause early.
+const sleepFor = async (ms, cancelled) => {
+  let left = Math.ceil(ms / UNTIL_POLL_MS);
+  await until(() => (cancelled?.() ?? false) || (left -= 1) < 0, 'a pause');
+};
 
 const processAlive = (pid) => {
   try { process.kill(pid, 0); return true; } catch (error) { return error?.code === 'EPERM'; }
@@ -81,9 +88,8 @@ async function checkedDirectory(directory, o) {
 export async function waitForPidExit(pid, overrides = {}) {
   const o = options(overrides);
   if (!Number.isSafeInteger(pid) || pid <= 0) return true;
-  const deadline = Date.now() + o.exitTimeoutMs;
-  while (o.alive(pid)) {
-    if (Date.now() >= deadline) return false;
+  for (let polls = Math.ceil(o.exitTimeoutMs / o.pollMs); o.alive(pid); polls -= 1) {
+    if (polls <= 0) return false;
     await o.sleep(o.pollMs);
   }
   return true;
@@ -152,9 +158,9 @@ export async function stopCluster(server, overrides = {}) {
   await cleanupStep(o, 'stop', async () => {
     if (exited) return;
     const timeout = Symbol('stop timeout');
-    let timer;
+    let finished = false;
     try {
-      const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve(timeout), o.exitTimeoutMs); });
+      const deadline = Promise.resolve(o.sleep(o.exitTimeoutMs, () => finished)).then(() => timeout);
       slow = (await Promise.race([server.stop(), deadline])) === timeout;
     } catch (error) {
       // Recover a lock error from the library's own unretried removal below.
@@ -162,7 +168,7 @@ export async function stopCluster(server, overrides = {}) {
       stopped = false;
       o.log(`stop() failed: ${error?.code ?? error?.message ?? String(error)}`);
     } finally {
-      clearTimeout(timer);
+      finished = true;
     }
   });
   if (!(await cleanupStep(o, 'waitForExit', () => waitForPidExit(pid, o)))) {
@@ -173,4 +179,76 @@ export async function stopCluster(server, overrides = {}) {
   const removed = await cleanupStep(o, 'removeDirectory', () => removeDirectory
     ? removeTestDirectory(directory, o) : true);
   return stopped && removed;
+}
+
+// A port nothing listens on at this moment. It is only a candidate: see startCluster.
+async function freePort() {
+  const listener = net.createServer();
+  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
+  const port = listener.address().port;
+  await new Promise((resolve) => listener.close(resolve));
+  return port;
+}
+
+export const START_ATTEMPTS = 5;
+
+// The postmaster's own words for "this port is taken", as whole FATAL lines: no TCP address could be
+// bound, or another postmaster holds the port's socket lock file (Linux). The library pins LC_MESSAGES
+// to an English locale, so these are the English messages. Other lines that mention a postmaster or an
+// address in use (the data directory held by another postmaster, one address family failing to bind)
+// are not a taken port.
+export const PORT_TAKEN = /FATAL: +(?:could not create any TCP\/IP sockets|lock file "[^"\r\n]*\.s\.PGSQL\.\d+\.lock" already exists)[ \t]*\r?$/m;
+
+const fatalLines = (log) => log.split(/\r?\n/).filter((line) => /FATAL|PANIC/.test(line)).map((line) => line.trim()).join(' | ') || log;
+
+// Starts a cluster built by newCluster (./pg-cluster-fixture.mjs) on a port it
+// picks itself, before every start including the first; read the port from
+// server.options.port once this returns. The data directory is initialised
+// once; a persistent cluster that is started again passes initialise: false.
+// Picking a free port and the postmaster binding it are two steps, and the
+// database suites start four files' clusters at once (--test-concurrency=4):
+// another cluster can bind the port in between, and the postmaster then exits
+// at once. The library rejects an early exit with no reason, so the test
+// failed with a bare `undefined` (migration-verify run 45380641278,
+// work-claims-owner-grants-db, 663 ms in).
+// Only an early exit whose log says the port is taken is retried, on a newly
+// picked port, and each retry leaves one stderr line. Any other early exit is
+// thrown at once with its port and the postmaster's log, and a start error that
+// has a reason is thrown as it is. pickPort is handed the default picker.
+// mark(name, event) is told of each real library call as stopCluster's is:
+// 'initialise' once and 'start' for every start, retries too, each with
+// 'start' and 'end'; picking a port is in neither. A throwing mark is ignored.
+export async function startCluster(server, { initialise = true, attempts = START_ATTEMPTS, pickPort = freePort, log = defaultLog, mark } = {}) {
+  const step = { mark };
+  if (initialise) await cleanupStep(step, 'initialise', () => server.initialise());
+  const ownLog = server.options.onLog;
+  const ports = [];
+  let lines = [];
+  server.options.onLog = (message) => { lines.push(String(message)); return ownLog?.(message); };
+  try {
+    server.options.port = await pickPort(freePort);
+    for (;;) {
+      const port = server.options.port;
+      ports.push(port);
+      lines = [];
+      try {
+        await cleanupStep(step, 'start', () => server.start());
+        return server;
+      } catch (error) {
+        if (error !== undefined) throw error;
+        const output = lines.join('').trim();
+        if (!PORT_TAKEN.test(output)) {
+          throw new Error(`embedded PostgreSQL exited during start on port ${port}, not for a taken port, so not retried; its log: ${output || '(empty)'}`);
+        }
+        if (ports.length >= attempts) {
+          throw new Error(`embedded PostgreSQL found ports ${ports.join(', ')} taken; its last log: ${output}`);
+        }
+        const next = await pickPort(freePort);
+        log(`端口 ${port} 上 postmaster 启动即退出（端口冲突），改用端口 ${next}：${fatalLines(output)}`);
+        server.options.port = next;
+      }
+    }
+  } finally {
+    server.options.onLog = ownLog;
+  }
 }

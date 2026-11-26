@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 // Re-review 7, MAJOR-3: the admission door's case runs with this file, which
 // the authorization database job already lists.
 import './owner-grants-admission-door-db.case.mjs';
@@ -87,13 +86,6 @@ const session = (sub, sessionId = 'sess-main', extra = {}) =>
   ({ sub, role: 'authenticated', session_id: sessionId, aal: 'aal1',
     amr: [{ method: 'password', timestamp: nowEpoch() - 3 * 86400 }], ...extra });
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 const INSTALL = '20261119130000_release_door_db_identity_v1.sql';
 const REPOSITORY = 'tdoljyj/cross-memory-system';
@@ -104,15 +96,14 @@ const PROTECTED_ROLES = ['anon', 'authenticated', 'service_role', 'clued_worker_
 test('owner grants: the release door is the database login, consumes by action and commit and opens a request otherwise',
   { timeout: 300000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-owner-grants-door-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: hash(), 
     persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = server.getPgClient();
     clients.push(admin);
     await admin.connect();

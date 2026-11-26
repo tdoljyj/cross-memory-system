@@ -14,8 +14,8 @@
 //     record kinds the sweep store reads "one meaning per millisecond" get a twin case each.
 //   - KNOWN_RED are the reds known today, each with its verdict (burned or stall) and its board row: registered todo (they run, they are
 //     red, the suite stays green), to be fixed one by one; they run KNOWN_RED_ROUNDS rounds. A file's sentinel is red when one of its
-//     known reds holds again, or ends in another class: the entry then changes with the fix (decisions §6: burned after the fix of
-//     maint:622, for the three stage-8 cases).
+//     known reds holds again, or ends in another class: the entry then changes with the fix (decisions §6: the stage-8 cases went from
+//     stall to burned with the fix of maint:622, #1321).
 // Every case writes its verdict as a diagnostic line (TRAIN_PROPERTY {...}): the red table is made from the run's log.
 import test, { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,6 +38,7 @@ const POINTS = Object.freeze({
   'ledger.list': ['8', '10'],
   'native.holders': ['8', '10'],
   'native.nodesStatus': ['8', '10'],
+  'companion.readBranchRules': ['poller'],
   'poller.gh': ['poller'],
   'poller.status': ['poller'],
   'stage-file.batch-route': ['1', '8'],
@@ -60,7 +61,7 @@ const POINTS = Object.freeze({
 const TWINS = Object.freeze(['proof', 'full-on', 'strict-front-proof']);
 
 const ADMISSION = { verdict: 'burned', why: "board (DESK to add, decisions §派活 看板): one failed read burns the PR. Stage 1 here: STOPPED NATIVE_NOT_ADMITTED, the node idle; the code is the fixture's (stage 1 answers NATIVE_NOT_ADMITTED with no reason code for every answer but ADMITTED, e2e:1957), re-judged after decisions §5 (the fixture as a module, stage 1 through outcomeFailureCode)" };
-const STAGE8 = { verdict: 'stall', why: "board P0 (DESK to add, decisions §6): a stage 8 that cannot read its batch file stops the PR before it joins the merge queue (PR_NOT_OPEN_OR_CHANGED); stage 10 still picks it as a rider (maint:1141-1162), each front batch of the PR behind ends TRAIN_BATCH_CHANGED (pub:645-646) and is never bisected (maint:622) until DAILY_BATCH_LIMIT defers every tick; after the fix of maint:622 it is burned" };
+const STAGE8 = { verdict: 'burned', why: "board (DESK to add, decisions §派活 看板): one failed read burns the PR. A stage 8 that cannot read its batch file stops the PR before it joins the merge queue (PR_NOT_OPEN_OR_CHANGED), the row STOPPED. It was a stall until the fix of maint:622 (decisions §6, #1321): stage 10 picked the PR as a rider and every front batch of the PR behind ended TRAIN_BATCH_CHANGED until DAILY_BATCH_LIMIT; now that batch is bisected, the PR behind lands and only this PR is burned" };
 // The three twin cases (store:proof, store:strict-front-proof, store:full-on, every stage of one round) were known reds of 搁163 (stall,
 // TRAIN_SWEEP_INCOMPLETE for ever) until d05108d15 (#1314): TrainSweepStore.write() now writes max(writtenAt, newest stamp + 1)
 // (train-sweep-store.mjs:177-187), so the twin the driver writes through write() with the same writtenAt lands one millisecond later
@@ -85,10 +86,15 @@ const KNOWN_RED = Object.freeze({
 const ARMS = ['mid'];
 const FROM_START = new Set(['github.readForcePushes', 'github.readPullCommitsBounded']);
 const armOf = (point, arm) => (FROM_START.has(point) ? 'start' : arm);
-const nameOf = c => `${c.point} | ${c.scope === 'tick' ? 'every stage of one round' : c.scope === 'poller' ? 'the poller' : `stage ${c.scope}`} | ${c.mode} | ${c.arm === 'mid' ? 'after the first landing' : 'from the start'}${c.stage8Code ? ` | stage 8 answers ${c.stage8Code}` : ''}`;
+const nameOf = c => `${c.point} | ${c.scope === 'tick' ? 'every stage of one round' : c.scope === 'poller' ? 'the poller' : `stage ${c.scope}`} | ${c.mode}${c.times === 2 ? ' twice' : ''} | ${c.arm === 'mid' ? 'after the first landing' : 'from the start'}${c.stage8Code ? ` | stage 8 answers ${c.stage8Code}` : ''}`;
+// The companion's read of main's rules (its ruleset backstop, every 5 minutes) only wakes a batch asleep on them: it is no read of the
+// stages and is injected nowhere (task bd07449b r2: "one failed read" stays a read of stage 1, 8 or 10); it is in POINTS so that the
+// census still names every read of the scene.
+const NOT_INJECTED = new Set(['companion.readBranchRules']);
 const cases = [];
 for (const arm of ARMS) {
   for (const [point, stages] of Object.entries(POINTS)) for (const mode of ['error', 'empty']) {
+    if (NOT_INJECTED.has(point)) continue;
     if (mode === 'empty' && (ALREADY_EMPTY.has(point) || NO_EMPTY.has(point))) continue;
     for (const scope of stages) cases.push({ point, scope, mode, arm: armOf(point, arm) });
     if (stages.length > 1) cases.push({ point, scope: 'tick', mode, arm: armOf(point, arm) });
@@ -101,6 +107,10 @@ for (const arm of ARMS) {
 // 43e2c3baa (1 of 3 landed, the two behind PARKED for ever) and lands on main 12e8a3dea (parked front v2, #1291): it stays here as
 // the guard of that fix (decisions §1).
 cases.push({ point: 'github.readBranchRules', scope: 'tick', mode: 'error', arm: 'mid', stage8Code: 'TRAIN_SINGLE_GREEN_NOT_PROVEN' });
+// Task bd07449b (PLAN-ruleset-unreadable-park-r2 §3): main's rules read whole but empty put a batch to sleep at once (RULESET_UNREADABLE);
+// the companion, reading the rules pinned, wakes it. The same batch answered empty again on the try it was woken for sleeps again, with
+// the world unchanged: it must be woken again, or the train behind it stands for ever.
+cases.push({ point: 'github.readBranchRules', scope: '8', mode: 'empty', arm: 'mid', times: 2 });
 
 // The four files' parts. Every case is in exactly one (the census case of the same-ms file checks it).
 const GROUPS = Object.freeze({

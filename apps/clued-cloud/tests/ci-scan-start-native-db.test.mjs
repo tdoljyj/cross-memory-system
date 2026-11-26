@@ -1,17 +1,16 @@
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
 // 在校验网关完整授权清单的迁移套件里，同步验证新门的调用方和端到端行为。
 import './work-claims-pr-merged-event-db.test.mjs';
-import {workerGatewayRpc,setWorkerGatewayCaller,WORKER_SIGNATURES,CI_SIGNATURES,CI_NODE_GATEWAY_SIGNATURES,WORKER_DUE_SIGNATURE,CONNECTION_SELF_SIGNATURE,PR_MERGED_EVENT_SIGNATURE,PR_LIFECYCLE_REPORT_SIGNATURE,RENEW_SIGNATURES} from './worker-gateway-caller-fixture.mjs';
+import {workerGatewayRpc,setWorkerGatewayCaller,WORKER_SIGNATURES,CI_SIGNATURES,CI_NODE_GATEWAY_SIGNATURES,WORKER_DUE_SIGNATURE,CONNECTION_SELF_SIGNATURE,PR_MERGED_EVENT_SIGNATURE,PR_LIFECYCLE_REPORT_SIGNATURE,FLEET_ACCEPT_STATUS_SIGNATURE,RENEW_SIGNATURES} from './worker-gateway-caller-fixture.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const uuid=()=>crypto.randomUUID();
@@ -23,20 +22,19 @@ const migration='20261102151506_ci_scan_start_keys_v1.sql';
 const cloneOf={'public.clued_work_verify_v1':'clued_private.ci_scan_start_verify_principal_v1',
   'clued_private.work_claim_verify_before_execution_v1':'clued_private.ci_scan_start_verify_core_principal_v1'};
 const newGateway=['clued_ci_scan_start_hosted_v1(jsonb)','clued_ci_scan_start_policy_v1(jsonb)'];
-async function freePort(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 
 // Same isolated embedded-Postgres/all-migrations/real-Binding harness pattern
 // as the existing handover and scheduling tests. No Native verification stub.
 test('physical scan-start Native K: real transactions, exact existing authority and permanent burns',{timeout:600000},async t=>{
   const parent=await fs.realpath(os.tmpdir()),dir=await fs.mkdtemp(path.join(parent,'clued-scan-start-native-'));
-  const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:digest(uuid()),port:await freePort(),persistent:false,
+  const server=newCluster({databaseDir:dir,user:'postgres',password:digest(uuid()),persistent:false,
     initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(m){process.stderr.write(String(m)+'\n');}});
   const clients=[];
   const connect=async(role)=>{const c=server.getPgClient();clients.push(c);await c.connect();if(role)await c.query('set role '+role);return c;};
   const json=async(c,q,args=[])=>(await c.query(q,args)).rows[0].v;
   let admin;
   try{
-    await server.initialise();await server.start();admin=await connect();
+    await startCluster(server);admin=await connect();
     await admin.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;
       create schema auth;create schema extensions;create extension pgcrypto with schema extensions;
       create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz);
@@ -131,7 +129,7 @@ test('physical scan-start Native K: real transactions, exact existing authority 
         WORKER_DUE_SIGNATURE,PR_MERGED_EVENT_SIGNATURE,...RENEW_SIGNATURES].sort());
       const anon=(await admin.query(`select p.oid::regprocedure::text s from pg_proc p where p.pronamespace='public'::regnamespace and p.prosecdef
         and has_function_privilege('anon',p.oid,'EXECUTE') order by 1`)).rows.map(r=>r.s.replace(/^public\./,''));
-      assert.deepEqual(anon,[...CI_SIGNATURES, CONNECTION_SELF_SIGNATURE, PR_LIFECYCLE_REPORT_SIGNATURE].sort());
+      assert.deepEqual(anon,[...CI_SIGNATURES, CONNECTION_SELF_SIGNATURE, PR_LIFECYCLE_REPORT_SIGNATURE, FLEET_ACCEPT_STATUS_SIGNATURE].sort());
       assert.equal(afterCommands.replace("  if op='scan_start_independent' then\n    return clued_private.ci_scan_start_local_v1(p_token_hash,p_input);\n  end if;\n",''),
         beforeCommands);
       for(const [original,copy] of Object.entries(cloneOf)){

@@ -266,10 +266,15 @@ test('package /4 for a fresh install: the upgrader copy, host source, node and c
   await assert.rejects(buildPackage({ out: path.join(i.root, 'x4'), policyFile: i.policyFile, companionFile: i.companionFile, nodeExe: i.node, recordDir: i.record, freshInstall: true, upgraderConfigFile: badCfg }), { code: 'PACKAGE_UPGRADER_CONFIG_REFUSED' });
 });
 
-// D2c 裁定 B1：续期合同的单一来源在服务端。包构建按 RESIDENT_EXTERNAL（只此一处）从仓库相对路径取它，追加在三个目录之后；
-// 服务端改合同即选中节点套件；常驻树里再放一份同名文件（字节相同也一样）时构建被拒，“再放一份副本”这条路走不通。
-test('续期合同只取服务端那一份：表只此一处、改合同即选中节点套件，常驻树里放同名文件时构建被拒', async t => {
-  assert.deepEqual(packageTool.RESIDENT_EXTERNAL, [{ path: 'windows/ci-connection-renew.contract.json', source: SERVER_CONTRACT }]);
+// D2c 裁定 B1：续期合同的单一来源在服务端，常驻树里的同名合同会导致构建被拒。
+// 续期合同与两个自拉模块按 RESIDENT_EXTERNAL 的顺序追加，三处来源的变更均选中节点套件。
+test('常驻包按顺序追加外部条目，变更来源即选中节点套件，重复续期合同被拒', async t => {
+  const external = [
+    { path: 'windows/ci-connection-renew.contract.json', source: SERVER_CONTRACT },
+    { path: 'rollout/fleet/fetch.mjs', source: 'work/independent-ci-resident-v1/rollout/fleet/fetch.mjs' },
+    { path: 'rollout/fleet/tar.mjs', source: 'work/independent-ci-resident-v1/rollout/fleet/tar.mjs' },
+  ];
+  assert.deepEqual(packageTool.RESIDENT_EXTERNAL, external);
   for (const e of packageTool.RESIDENT_EXTERNAL) assert.ok(selectSuites('ci-suites', [e.source]).suites.includes('resident-node'), e.source);
   const i = await inputs(t);
   // 与通用包冻结树相同的布局：仓库相对路径，节点上用树里的 build-package.mjs 组包。
@@ -277,8 +282,15 @@ test('续期合同只取服务端那一份：表只此一处、改合同即选�
   const res = path.join(tree, 'work', 'independent-ci-resident-v1');
   for (const d of ['src', 'tools', 'windows', 'linux', 'upgrader']) await fs.cp(path.join(HERE, d), path.join(res, d), { recursive: true });
   const server = path.join(tree, ...SERVER_CONTRACT.split('/'));
-  await fs.mkdir(path.dirname(server), { recursive: true });
-  await fs.copyFile(path.join(REPO_ROOT, ...SERVER_CONTRACT.split('/')), server);
+  const externalRows = [];
+  for (const e of external) {
+    const source = e.source.split('/');
+    const dest = path.join(tree, ...source);
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.copyFile(path.join(REPO_ROOT, ...source), dest);
+    const bytes = await fs.readFile(dest);
+    externalRows.push({ path: e.path, sha256: sha256(bytes), bytes: bytes.length });
+  }
   const copied = await import(pathToFileURL(path.join(res, 'tools', 'build-package.mjs')).href);
   const build = name => copied.buildPackage({ out: path.join(i.root, name), policyFile: i.policyFile, companionFile: i.companionFile, nodeExe: i.node, recordDir: i.record });
   const built = await build('pkg-tree');
@@ -286,7 +298,7 @@ test('续期合同只取服务端那一份：表只此一处、改合同即选�
   const rows = manifest.files.filter(f => f.path === 'windows/ci-connection-renew.contract.json');
   assert.equal(rows.length, 1);
   assert.equal(rows[0].sha256, sha256(await fs.readFile(server)), '树里的服务端文件就是包内合同');
-  assert.deepEqual(manifest.files.slice(-1), rows, '外部条目追加在三个目录之后');
+  assert.deepEqual(manifest.files.slice(-3), externalRows, '三条外部条目按表中顺序追加');
   assert.match(built.residentManifestSha256, /^[0-9a-f]{64}$/);
   await fs.copyFile(server, path.join(res, 'windows', 'ci-connection-renew.contract.json'));
   await assert.rejects(build('pkg-duplicate'), { code: 'PACKAGE_RESIDENT_DUPLICATE' });

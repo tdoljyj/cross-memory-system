@@ -4,7 +4,8 @@ import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 
 import { ADMISSION_APP_ID as ADMISSION_APP, DISPATCH_GATED_WORKFLOWS as ADMISSION_DISPATCH_GATED, resolvePublicSupabaseConfig } from "../ci/clued-work-admission.mjs";
-import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, HOOK_VERSION, COMPONENT_VERSION, OBSERVATION_ATTEMPT_MS, READ_ALLOWANCE_MS, READ_ATTEMPTS, READ_ATTEMPT_MS, READ_RETRY_DELAYS_MS, decide, decideWithCurrentEpoch, main, proxyBootstrapArguments, retryingFetch, shortCheckFindings, waitLimitSeconds, workflowPathOf } from "./clued-runner-job-started.mjs";
+import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, HOOK_VERSION, COMPONENT_VERSION, OBSERVATION_ATTEMPT_MS, READ_ATTEMPTS, READ_ATTEMPT_MS, READ_RETRY_DELAYS_MS, decide, decideWithCurrentEpoch, main, proxyBootstrapArguments, retryingFetch, shortCheckFindings, waitLimitSeconds, workflowPathOf } from "./clued-runner-job-started.mjs";
+import { qualifyNativeRetryCandidate } from "./qualify-native-admission-retry-candidate.mjs";
 import { workflowIsGated } from "../ci/clued-work-admission.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -573,16 +574,6 @@ test("runner hook: a pull request into main runs when it changes no workflow, el
   ({ result } = await run({}, { [COMPARE]: files(...many), [NATIVE]: { body: { total_count: 0, check_runs: [] } } }));
   assert.equal(result.allow, false);
   assert.match(result.reason, /truncated/);
-  // It waits for a check that is still going.
-  let polls = 0;
-  let sleeps;
-  ({ result, sleeps } = await run({}, { ...change,
-    [NATIVE]: () => { polls += 1; return { body: { total_count: 1, check_runs: [nativeCheck(polls < 3 ? { status: "in_progress", conclusion: null } : {})] } }; } }));
-  assert.deepEqual([result.allow, polls, sleeps.length], [true, 3, 2]);
-  // And gives up after CLUED_RUNNER_HOOK_WAIT_SECONDS.
-  ({ result, sleeps } = await run({}, { ...change, [NATIVE]: { body: { total_count: 1, check_runs: [nativeCheck({ status: "in_progress", conclusion: null })] } } }));
-  assert.deepEqual([result.allow, sleeps.length], [false, 2]);
-  assert.match(result.reason, /Native admission 80: not admitted/);
 });
 
 test("runner hook: a hand dispatch off main runs only when its workflow files are exactly main's", async () => {
@@ -624,7 +615,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "refusal-reason-v1");
+  assert.equal(HOOK_VERSION, "native-admission-no-wait-v1");
   assert.ok(lines.length >= 5);
   const observations = lines.filter((line) => line.startsWith("clued-r9-pre-job: "));
   const diagnostics = lines.filter((line) => !line.startsWith("clued-r9-pre-job: "));
@@ -1010,7 +1001,7 @@ test("runner hook (re-review 3, N-R1): a re-run of a pull request that changes a
 });
 
 // Defect B (2026-11-15, PR #1121 run 43720693841, #1122 run 43720708199): a pull request that changes a workflow is pushed long
-// before it is the train's front; every job of attempt 1 waits the hook's limit and is refused in "Set up runner" ("Native admission
+// before it is the train's front; every job of attempt 1 was refused in "Set up runner" ("Native admission
 // absent"). The Native check comes later (14:11:36), the resident's lane asks for "Re-run all jobs" once, and attempt 2 was refused
 // only for being attempt 2 ("Native admission 132838811702: not admitted (... rerun)"), so a new commit had to be pushed by hand.
 // Now the first attempt that runs anything is the run's one run: a later attempt starts when every earlier attempt ran nothing.
@@ -1214,7 +1205,7 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
   assert.match((await decideWith({}, { [MINT]: { status: 201, body: {} } })).error, /returned no installation token/);
 });
 
-// Since the loader (runner-hook-loader-v1) the component is this file itself, run from main: no immutable per-version copy is added.
+// The loader runs the component source from main. Versioned copies are source candidates with their own pins.
 test("the hook component is the file runners load from main; the earlier immutable sources stay for their pins", () => {
   assert.equal(COMPONENT_VERSION, "1.0.9");
   const manifest = JSON.parse(fs.readFileSync(new URL("../../config/clued-components.json", import.meta.url), "utf8"));
@@ -1226,6 +1217,12 @@ test("the hook component is the file runners load from main; the earlier immutab
   }
 });
 
+test("the pinned no-wait hook candidate qualifies with synthetic Native admission reads", async () => {
+  const result = await qualifyNativeRetryCandidate();
+  assert.equal(result.boundary, "source_candidate");
+  assert.equal(result.network, "synthetic-only");
+});
+
 // ---- Transient reads (work-handover-native-admission-retry-v1, component 1.0.2; Task 5cee3629) ----
 // Network cuts simulated by the fake fetch: a throw is a rejected fetch (ECONNRESET), a 503 a gateway answer.
 const cut = (failures, answer, error = () => { throw new Error("ECONNRESET"); }) => {
@@ -1235,21 +1232,19 @@ const cut = (failures, answer, error = () => { throw new Error("ECONNRESET"); })
   return fn;
 };
 
-test("transient reads: the Native kooyumi-work-admission read cut by the network is read again within the wait and admits", async () => {
-  // poll 1: three attempts cut; poll 2: one more cut, then the check
-  const native = cut(4, { body: { total_count: 1, check_runs: [nativeCheck()] } });
+test("transient reads: Native admission succeeds after both per-request retries", async () => {
+  const native = cut(READ_ATTEMPTS - 1, { body: { total_count: 1, check_runs: [nativeCheck()] } });
   const { result, sleeps } = await run({}, { ...nativeScript(nativeCheck()), [NATIVE]: native });
   assert.equal(result.allow, true, result.reason);
   assert.match(result.reason, /Native admission 80: succeeded/);
-  assert.equal(native.count(), 5);
-  assert.deepEqual(sleeps, [...READ_RETRY_DELAYS_MS, 10_000, READ_RETRY_DELAYS_MS[0]]);
+  assert.equal(native.count(), READ_ATTEMPTS);
+  assert.deepEqual(sleeps, READ_RETRY_DELAYS_MS);
 });
 
-test("transient reads: a 503 that lasts the whole wait refuses with that failure (fail closed); 403 and malformed are final at once", async () => {
+test("transient reads: a 503 that exhausts the Native read retries refuses; 403 and malformed are final at once", async () => {
   const always = cut(Infinity, null, () => ({ status: 503, body: null }));
   await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [NATIVE]: always }), /returned 503/);
-  // CLUED_RUNNER_HOOK_WAIT_SECONDS 20: polls at 0, 10 and 20 s, three attempts each
-  assert.equal(always.count(), 3 * READ_ATTEMPTS);
+  assert.equal(always.count(), READ_ATTEMPTS);
   const forbidden = cut(Infinity, null, () => ({ status: 403, body: null }));
   await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [NATIVE]: forbidden }), /returned 403/);
   assert.equal(forbidden.count(), 1, "403 is not tried again");
@@ -1320,7 +1315,8 @@ test("transient reads: the App token mint and the execution_current observation 
 // A fake clock: sleeps advance it; an attempt that hangs advances it by its own time bound and fails as AbortSignal.timeout would.
 function clockFor(startMs) {
   let clock = startMs;
-  const h = { now: () => clock, sleep: async (ms) => { clock += ms; }, timeoutSignal: (ms) => ({ fakeTimeoutMs: ms }), bounds: [] };
+  const h = { now: () => clock, sleep: async (ms) => { h.sleeps.push(ms); clock += ms; },
+    timeoutSignal: (ms) => ({ fakeTimeoutMs: ms }), bounds: [], sleeps: [] };
   h.hang = (init) => { h.bounds.push(init.signal.fakeTimeoutMs); clock += init.signal.fakeTimeoutMs; throw new DOMException("The operation was aborted due to timeout", "TimeoutError"); };
   h.elapsed = () => clock - startMs;
   return h;
@@ -1335,29 +1331,45 @@ const decideAt = (h, fake, overrides = {}) => decide({ env: env(overrides), fetc
 
 // #1236 593ee2ec (FABLE-scaffold-shadow-fix-20261122 §2 C, §4): a pull request that changes a workflow, pushed
 // 22:40:46 Beijing; the hook waited its default 480 s and refused in Set up runner at 22:49:03; the Native
-// admission arrived 22:50:09, 563 s after the run was created. The default wait is 780 s, the longest wait the
-// registered gate job holds (clued-work-admission.mjs), so that head now starts; one that has none by 780 s does not.
+// admission arrived 22:50:09, 563 s after the run was created. A job arriving with admission already present can start.
 const AT_1236 = "2026-11-22T14:40:46Z";
-const arrivesAt = (h, seconds) => () => {
-  const at = Date.parse(AT_1236) + seconds * 1000;
-  const check = h.now() >= at ? nativeCheck({ started_at: AT_1236, completed_at: new Date(at).toISOString() })
-    : nativeCheck({ started_at: AT_1236, status: "in_progress", conclusion: null, completed_at: null });
-  return { body: { total_count: 1, check_runs: [check] } };
-};
-test("#1236 593ee2ec replay: with the default wait a workflow-changing head whose Native admission arrives at 563 s starts", async () => {
-  const h = clockFor(Date.parse(AT_1236));
-  const fake = clockedFetch({ [RUN]: thisRun({ created_at: AT_1236 }), ...nativeScript(), [NATIVE]: arrivesAt(h, 563) }, () => undefined);
+test("#1236 replay: the workflow-changing head starts when Native admission is already complete", async () => {
+  const completed = Date.parse(AT_1236) + 563_000;
+  const h = clockFor(completed);
+  const fake = fakeFetch({ [RUN]: thisRun({ created_at: AT_1236 }),
+    ...nativeScript(nativeCheck({ started_at: AT_1236, completed_at: new Date(completed).toISOString() })) });
   const result = await decideAt(h, fake, { CLUED_RUNNER_HOOK_WAIT_SECONDS: undefined });
   assert.equal(result.allow, true, result.reason);
-  assert.ok(h.elapsed() >= 563_000 && h.elapsed() < 600_000, `${h.elapsed()} ms`);
+  assert.equal(h.sleeps.length, 0);
 });
-test("#1236 replay: with the default wait a head with no Native admission by 780 s is refused, and not earlier", async () => {
+test("R-1 #1236 replay: a workflow-changing head without Native admission is refused in under 5 seconds", async () => {
   const h = clockFor(Date.parse(AT_1236));
-  const fake = clockedFetch({ [RUN]: thisRun({ created_at: AT_1236 }), ...nativeScript(), [NATIVE]: arrivesAt(h, 10_000) }, () => undefined);
+  const fake = fakeFetch({ [RUN]: thisRun({ created_at: AT_1236 }), ...nativeScript() });
+  const result = await decideAt(h, fake, { CLUED_RUNNER_HOOK_WAIT_SECONDS: undefined });
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /Native admission absent: not admitted/);
+  assert.ok(h.elapsed() < 5_000, `Native absence took ${h.elapsed()} ms`);
+  assert.equal(h.sleeps.length, 0);
+  assert.equal(fake.calls.filter(({ url }) => url.startsWith(NATIVE)).length, 1);
+  assert.ok(fake.calls.every(({ url }) => url !== `${API}/pulls/9`), "a refused attempt needs no PR re-read");
+});
+
+test("R-2: an in-progress Native admission is read once and refused in under 5 seconds without sleeping", async () => {
+  const h = clockFor(Date.parse(RUN_CREATED));
+  const fake = fakeFetch({ [RUN]: thisRun(), ...nativeScript(nativeCheck({ status: "in_progress", conclusion: null, completed_at: null })) });
   const result = await decideAt(h, fake, { CLUED_RUNNER_HOOK_WAIT_SECONDS: undefined });
   assert.equal(result.allow, false);
   assert.match(result.reason, /Native admission 80: not admitted/);
-  assert.ok(h.elapsed() >= 780_000 && h.elapsed() < 800_000, `${h.elapsed()} ms`);
+  assert.ok(h.elapsed() < 5_000, `Native admission in progress took ${h.elapsed()} ms`);
+  assert.equal(h.sleeps.length, 0);
+  assert.equal(fake.calls.filter(({ url }) => url.startsWith(NATIVE)).length, 1);
+});
+
+test("R-5: a missing Native admission leaves no timer waiting when the gate setup is cancelled", async () => {
+  const { result, sleeps } = await run({ ...GATE, CLUED_RUNNER_HOOK_WAIT_SECONDS: undefined }, nativeScript());
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /Native admission absent: not admitted/);
+  assert.equal(sleeps.length, 0, `gate refusal scheduled ${sleeps.length} sleeps`);
 });
 
 test("clock: a Native check that completed while its read was tried again is judged at the time it was seen, and admits (MAJOR-1)", async () => {
@@ -1374,19 +1386,20 @@ test("clock: a Native check that completed while its read was tried again is jud
   assert.deepEqual(h.bounds, [READ_ATTEMPT_MS]);
 });
 
-test("clock: a check-runs endpoint that never answers ends the wait by the clock, inside twice the wait plus the read allowance (MAJOR-2)", async () => {
+test("clock: Native read exhaustion is bounded by one call's retries (MAJOR-2)", async () => {
   const h = clockFor(Date.parse(RUN_CREATED) + 1_000);
   const fake = clockedFetch({ [RUN]: thisRun(), ...nativeScript(nativeCheck()) }, (url, init) => (url.startsWith(NATIVE) ? h.hang(init) : undefined));
-  await assert.rejects(decideAt(h, fake, { CLUED_RUNNER_HOOK_WAIT_SECONDS: "480" }), (error) => error.name === "TimeoutError" && error.transient === true);
+  await assert.rejects(decideAt(h, fake), (error) => error.name === "TimeoutError" && error.transient === true);
   const oneCall = READ_ATTEMPTS * READ_ATTEMPT_MS + READ_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0);
-  assert.ok(h.elapsed() <= 480_000 + oneCall + 10_000, `${h.elapsed()} ms`);
-  assert.ok(h.elapsed() <= 2 * 480_000 + READ_ALLOWANCE_MS, `${h.elapsed()} ms`);
-  // a cut that fails at once (ECONNRESET) ends by the clock too: no longer 49 polls of 17 s
+  assert.equal(h.elapsed(), oneCall);
   const g = clockFor(Date.parse(RUN_CREATED) + 1_000);
   const fast = clockedFetch({ [RUN]: thisRun(), ...nativeScript(nativeCheck()) }, (url) => { if (url.startsWith(NATIVE)) throw new TypeError("fetch failed"); return undefined; });
-  await assert.rejects(decideAt(g, fast, { CLUED_RUNNER_HOOK_WAIT_SECONDS: "480" }), /fetch failed/);
-  assert.ok(g.elapsed() <= 480_000 + 7_000 + 10_000, `${g.elapsed()} ms`);
-  // a re-run's gate wait the same way
+  await assert.rejects(decideAt(g, fast), /fetch failed/);
+  assert.deepEqual(g.sleeps, READ_RETRY_DELAYS_MS);
+});
+
+test("clock: the re-run gate wait is bounded despite a jobs endpoint that never answers (MAJOR-2)", async () => {
+  const oneCall = READ_ATTEMPTS * READ_ATTEMPT_MS + READ_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0);
   const r = clockFor(Date.parse(RUN_STARTED) + 1_000);
   const gate = clockedFetch({ [RUN]: rerunOf(2), [PULLS]: pull(), [COMPARE]: files("apps/x.ts") }, (url, init) => (url.startsWith(JOBS(2)) ? r.hang(init) : undefined));
   const refused = await decide({ env: env({ ...HEAVY, GITHUB_RUN_ATTEMPT: "2", CLUED_RUNNER_HOOK_WAIT_SECONDS: "480" }), fetchImpl: gate.fetchImpl, now: r.now, sleep: r.sleep,
@@ -1484,14 +1497,14 @@ test("Native only (scaffold open-qs 1.1): the legacy workflow's state is not rea
 });
 
 // 戊 (FABLE-main-push-same-tree-parallel-20261123 §7): a workflow-changing PR whose admission is the last required
-// check is merged by GitHub within seconds, while this hook still waits for that admission. Read again then, the
+// check can be merged by GitHub before the hook re-reads the PR. Read again then, the
 // same PR's job changes no workflow (its head is in main) and starts on the :1061 path with no admission at all;
 // so a PR merged with this very head, whose head main's tip now contains, starts after its successful admission.
 const MERGED = { state: "closed", merged: true, merged_at: "2026-10-04T05:00:30Z", merge_commit_sha: "e".repeat(40),
   base: { ref: "main", repo: { full_name: "o/r" } }, head: { sha: HEAD } };
 // The compare answers "changes a workflow" before the merge and "changes nothing" after it.
 const mergedMeanwhile = (after = files()) => { let reads = 0; return () => (++reads === 1 ? files(".github/workflows/gitleaks.yml") : after); };
-test("戊 hook: a workflow-changing PR merged with this head while the hook waited for its Native admission starts", async () => {
+test("戊 hook: a workflow-changing PR merged with this head before the PR re-read starts", async () => {
   const { result, calls } = await run({}, { ...nativeScript(nativeCheck()), [COMPARE]: mergedMeanwhile(), [`${API}/pulls/9`]: { body: MERGED } });
   assert.equal(result.allow, true, result.reason);
   assert.match(result.reason, /Native admission 80: succeeded/);
@@ -1552,6 +1565,12 @@ test("提交 D hook: a statuses read that fails, or no resident-queue status, le
   }
   const unscripted = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, nativeScript());
   assert.deepEqual([unscripted.result.allow, unscripted.result.reason], [false, ABSENT_REASON]);
+  const clock = clockFor(Date.parse(RUN_CREATED));
+  const stalled = clockedFetch({ [RUN]: thisRun(), ...nativeScript() }, (url, init) => url === STATUSES ? clock.hang(init) : undefined);
+  const timedOut = await decideAt(clock, stalled);
+  assert.deepEqual([timedOut.allow, timedOut.reason], [false, ABSENT_REASON]);
+  assert.deepEqual(clock.bounds, [1_000]);
+  assert.deepEqual(clock.sleeps, []);
   // An admission that exists decides as before, and its text is not read: admitted, or a refusal naming the check.
   for (const check of [nativeCheck(), nativeCheck({ conclusion: "failure" })]) {
     const { result, calls } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...nativeScript(check), [STATUSES]: { body: [residentStatus(52, FIELD_RESIDENT)] } });

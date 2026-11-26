@@ -1,32 +1,29 @@
 // Actual disposable PostgreSQL, original executor and Worker recovery. The
 // provider transport and elapsed-time fixtures are synthetic; no production
 // authorization, Drive file or machine synchronization state is asserted.
-import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import net from 'node:net';
 import crypto from 'node:crypto';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {build,stop} from 'esbuild';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
 import {workerGatewayRpc,assertGatewayCloseoutBoundary} from './worker-gateway-caller-fixture.mjs';
 import {testStorageDestructive} from './resource-center-storage-destructive-db.fixture.mjs';
 const cloud=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const uuid=()=>crypto.randomUUID();
-async function port(){const server=net.createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));
- const value=server.address().port;await new Promise(r=>server.close(r));return value;}
 
 test('legacy directory: real P5 attempts and independent before recovery',{timeout:240000},async t=>{
  const parent=await fs.realpath(os.tmpdir()),directory=await fs.mkdtemp(path.join(parent,'kooyumi-legacy-directory-'));
- const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:uuid(),port:await port(),persistent:true,
+ const server=newCluster({databaseDir:directory,user:'postgres',password:uuid(),persistent:true,
   initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],onLog(){},onError(){}});
  let db,started=false;
  try{
-  await server.initialise();await server.start();started=true;db=server.getPgClient();await db.connect();
+  await startCluster(server);started=true;db=server.getPgClient();await db.connect();
   const modules={};
   for(const name of ['storage-cloud-recovery','storage-credential-vault']){
    const output=path.join(directory,name+'.mjs');await build({entryPoints:[path.join(cloud,'worker',name+'.ts')],outfile:output,bundle:true,platform:'node',format:'esm'});

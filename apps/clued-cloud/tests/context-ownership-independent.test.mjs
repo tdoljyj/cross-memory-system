@@ -1,4 +1,4 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, readdir, readFile } from 'node:fs/promises';
@@ -6,9 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build, stop } from 'esbuild';
-import net from 'node:net';
 import crypto from 'node:crypto';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 
 // raw-binding-grants: applies only migrations before 20261009050000, where raw Bindings still pass.
 
@@ -50,14 +49,11 @@ test('independent revoked MCP call never returns a successful old package', asyn
 });
 
 test('independent real PostgreSQL negative access boundaries', { timeout: 120000 }, async t => {
-  const socket = net.createServer();
-  await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
-  const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
   const databaseDir = await mkdtemp(path.join(os.tmpdir(), 'clued-context-independent-pg-'));
-  const server = new EmbeddedPostgres({ databaseDir, user: 'postgres', password: crypto.randomUUID(), port, persistent: false, onLog() {}, onError() {} });
+  const server = newCluster({ databaseDir, user: 'postgres', password: crypto.randomUUID(), persistent: false, onLog() {}, onError() {} });
   const clients = [];
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
     await admin.query(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
       create role authenticator nologin noinherit; create schema auth; create schema extensions;

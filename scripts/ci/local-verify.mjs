@@ -112,8 +112,8 @@ const SELECTOR = 'scripts/ci/ci-required-selection.mjs';
 // test-env.mjs: what the selector imports since Task 2ee162c2; test-clock-scan.mjs, the guard it preloads and what both
 // import since Task 11092b8b; a main before them has none (OPTIONAL_SELECTOR_FILES).
 const CLOCK_FILES = ['scripts/ci/test-clock-scan.mjs', 'scripts/ci/test-clock-guard.mjs', 'scripts/ci/test-clock-imports.mjs'];
-const SELECTOR_FILES = [SELECTOR, 'scripts/ci/test-env.mjs', ...CLOCK_FILES, 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
-const OPTIONAL_SELECTOR_FILES = new Set(['scripts/ci/test-env.mjs', ...CLOCK_FILES]);
+const OPTIONAL_SELECTOR_FILES = new Set(['scripts/ci/test-env.mjs', ...CLOCK_FILES, 'scripts/ci/ci-shard-seconds.json']);
+const SELECTOR_FILES = [SELECTOR, ...OPTIONAL_SELECTOR_FILES, 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
 const APP = 'apps/clued-cloud';
 // mechanical-outputs links the store into its throwaway worktree (component-version-integration.py): it never installs here.
 const NEEDS_APP_DEPENDENCIES = new Set(['clued-cloud', 'production-schema', 'mechanical-outputs']);
@@ -970,9 +970,10 @@ export function chooseSuites(root, change, main, selector) {
 // --affected adds the Linux side wherever there is one (it is reached from Windows).
 export const runsLinux = (options, platform = process.platform) => options.linux || (options.affected && platform === 'win32');
 
-// main's selection, known-failure list and reporter, as the workflow uses them.
-async function loadSelector(root, main, home) {
-  const dir = path.join(home, 'selectors', main);
+// main's selection, timing table, known-failure list and reporter, as the workflow uses them.
+export async function loadSelector(root, main, home) {
+  // v2 includes the timing table even when v1 already cached this commit.
+  const dir = path.join(home, 'selectors-v2', main);
   if (!fs.existsSync(path.join(dir, 'complete'))) {
     // written once, by whichever run gets there first; the others find it complete
     withLock(home, `selector-${main.slice(0, 16)}`, () => {
@@ -1313,7 +1314,7 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
         // commandArgv runs only the test files an added command adds to a trusted one (a main predating it has none such).
         const argvOf = selector.commandArgv ?? ((it, options) => selector.expandArgv(it.argv, options));
         const [program, ...args] = argvOf(command, { cwd, root, base: main, report: path.join(temporary, `${id}-report.json`),
-          listUnit: unitTestFilesWith(cwd, env) });
+          shardSecondsFile: selector.SHARD_SECONDS_PATH, listUnit: unitTestFilesWith(cwd, env) });
         const reported = withFailureReport(program, args, { known: Boolean(known), reporterUrl: selector.reporterUrl,
           file: path.join(temporary, `command-${index}.jsonl`) });
         const [file, ...prefix] = program === 'npm' ? npmCommand() : program === 'node' ? [process.execPath] : [program];

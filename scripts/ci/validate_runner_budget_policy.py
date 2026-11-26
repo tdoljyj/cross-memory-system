@@ -125,7 +125,7 @@ LEGACY_HOSTED_DEBT = {
     },
     "clued-cloud-production-release.yml": {
         # PR #1121 (Fable 1121 rework): release takes no migrations and gains the rollback_drill input.
-        "control_sha256": "c9cd44da8c145047a0f9bb940c079f81d4f6b0e77daa9e61bd28a416e4d20f9c",
+        "control_sha256": "aa22efc988d6a24f59a37a726b7e97384fd2688a6ae68c8f5efd3d33e3d70749",
         "jobs": {
             # PR #1121 after Fable 1121 §6 on top of release door v1 (FABLE-release-identity-autonomous-20261119):
             # one-approval release without migrations or wrangler config changes, Worker rollback judged by
@@ -137,7 +137,8 @@ LEGACY_HOSTED_DEBT = {
             # applied migration list read-only as its own artifact; routing, triggers and permissions unchanged.
             # B3 (FABLE-prod-db-shrink-v2-20261124 §8, PR #1282): one capacity-gate step before migrate in the
             # existing job; controls (c9cd44da…) and routing unchanged, no new hosted job, independently reviewed.
-            "release": "8397996e2d32c85d246f605fdde1b16d13c77183b074598c05e137dfaf217bc5"
+            # Task 87d330d0 piece A: fleet-accept mode (only opens an Owner request, changes nothing in production).
+            "release": "4dbe6f369f95c49f56ba82d36a1c7bb519ae85ad423565d67c72615be15cd787"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {
@@ -351,30 +352,34 @@ OWNER_DECISION_HOSTED_JOBS = {
 # scaffold job can carry starts with "hosted-", so none can stand in for a
 # check of the independent CI. The hosted copy of the front-merge-main workflow
 # (clued-front-main-merge-hosted.yml) belongs to the same scaffold under the same
-# rule: its two jobs carry hosted- names. hosted-ci-suites-windows runs as four Windows
-# shards, a summary job of that name and a non-required duration job (task 3435f8bf
-# block 4); a matrix job's name is a format() whose literal starts with "hosted-",
-# the one quoted branch job_check_names reads. Temporary: at the switch back (stage S8) the
+# rule: its two jobs carry hosted- names. The required suite checks each summarize a
+# matrix: seven Windows suite shards, four Linux suite shards, four migration shards
+# and two application shards (task 3435f8bf). Windows also reports duration. A matrix job's name is a
+# format() whose literal starts with "hosted-", the one quoted branch job_check_names reads. Temporary: at the switch back (stage S8) the
 # workflows and these entries are deleted in one change; a stale entry fails.
 HOSTED_SCAFFOLD_SOURCE = "61b65d61"
 HOSTED_SCAFFOLD_PREFIX = "hosted-"
 HOSTED_SCAFFOLD_JOBS = {
     "hosted-required.yml": {
-        "control_sha256": "9a057883ee2ed3562058c81812778c539a19dda2afc1571c5cf1d50ae1c6ac76",
+        "control_sha256": "2f80faac1c7b3870adde2afc404357bd316ff37ceb184ba7c2c580c37fc85ce6",
         "jobs": {
-            "clued-cloud-tests": "4a34326ddef88ce360a11ddaa513320f7f551a649d615e544f85b1eb2567cf01",
-            "ci-suites": "24ad2a46369a2d0b0b628573a2946bacb41149ce85ce234ff66765199bfb693b",
-            "migration-verify": "72d1e7cc226ec3c5c8e545e41b26970ea63d1db00ca93fc8be6d182ae4f7859e",
-            "ci-suites-windows-shard": "27fdc362705fdf1cb776ecd2fd7e581b442471adc4ab13f4d84840590a800438",
-            "ci-suites-windows": "5071b13bdf66b49332eb45beefc7b4941f9666a6f4d5659606d232ce61e901a4",
-            "ci-suites-windows-duration": "9cfd47298e34cea4eca39a7ad78e5a4b4dfd08c356ee42ccd511066b73a99653",
-            "gitleaks": "da5e2dfe2648d4472f45977fbef4d7b4e95824c5dec27d3095d336fb06ba5eef",
-            "trivy": "7a5b2fee28fb2304c03a4d70c35832b64cbac60d70dc0a8c6f26eafc04bbb18a",
-            "contract-placement": "c7aefc109446652549e01ba4b659416446ba2aae4b86e4c722d6f428bfcc6e15"
+            "clued-cloud-tests-shard": "a854461e015da29eca6f1fa86838c0d340ae7fe991a13d3615ab5e584ad189af",
+            "clued-cloud-tests": "d4e5797402f3914d5ca5287ef94290a2c4be171e2f96f92a0184e2c49f890288",
+            "ci-suites-shard": "333a19665423152c8f95950f3dc533d749b7ae5affc6e67a4dfa6dbd8b718148",
+            "ci-suites": "e94c56206ef4f4eeeae64c78be97db8b752ef0322ee0177c694b2495857805c3",
+            "migration-verify-shard": "93216a639f104fa15c74ec39ba9e1dd5e728e23a9ee2acb12c9f0e472074a024",
+            "migration-verify": "24e2cf81f4c3c672961db8fd7b385d57b9d1872e9397ce527f2875da5322386b",
+            "ci-suites-windows-shard": "3a212b51fe984835cd19eb56f2bd28f34aca87bf24b9679a6290f7a9cb0fff49",
+            "ci-suites-windows": "4e9fc891e940350f6dc47bc5c4a86e4e21d6f0b90cab0f74ceef598909dcc92f",
+            "ci-suites-windows-duration": "ddc24fc7fc39b157309edfb48451673cf0862387e3b778aeb9b63b38f07a8efd",
+            "gitleaks": "5f197a5db5c018f27fcde2038da4e9d09e0d9595280d7de4ba25060eb1a347f1",
+            "trivy": "1626d64a8d44f76845c97fcd57d5b57b536f18f953df50aa1a25e81881971094",
+            "contract-placement": "86692591154cc7ce58b9318e5e5ca722f0be8dce26fd03a589e8957af937b98a"
         }
     },
     "clued-front-main-merge-hosted.yml": {
-        "control_sha256": "5f732deb1d366951e326ad41fb74df57a56db845b79be95956c25352346cd8a7",
+        # Task 3576b29c: on: workflow_run of hosted-required (completed) as well (was 5f732deb…; PLAN-train-held-deadlock §3.3).
+        "control_sha256": "32f928fb5cfc4a7bd399013d44f8ccc5ea298810f1b8ef76d4b1f2f2fc09e14a",
         "jobs": {
             "scaffold-phase": "973b475909436bd551f30f1cfc8d64d06178c340d89f4ceeb98725169edac16c",
             # Task 2fb32dc7: its own concurrency group clued-front-main-merge-hosted (was fcaa51b2…, the shared group).

@@ -14,7 +14,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { acceptanceOf, prepare, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
+import { acceptanceOf, prepare, seal } from '../rollout/fleet/publish.mjs';
 import { FAKE_GH } from '../rollout/fleet/test/fleet-fixtures.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
 
@@ -355,11 +355,11 @@ export async function sealWorld(t) {
   await prepare({ version, dir: out, out: accept, images: [imageFile], index, ghCommand: gh, deps });
   const requestFile = path.join(accept, `${tag}.acceptance-request.json`);
   const request = JSON.parse(fs.readFileSync(requestFile, 'utf8'));
-  // the Decision record as DESK exports it (the shape of the real clued_record_mutate return PR-乙's tests pin), naming this request
-  const record = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../rollout/fleet/test/fixtures/clued-decision-mutate-3bc571a6.json', import.meta.url)), 'utf8'));
-  record.supplemental.record.content = `TEST TEXT: the Owner accepts.\n${requestLineOf(version, sha(fs.readFileSync(requestFile)))}\n`;
-  const decisionRecord = path.join(d, 'decision-record.json'); fs.writeFileSync(decisionRecord, JSON.stringify(record, null, 2));
-  const sealIt = drillReceipt => seal({ request: requestFile, decisionRecord, index, ghCommand: gh, deps, drillReceipt });
+  // the Owner's acceptance: a stand-in of the acceptance door's anonymous read (rollout/fleet/accept-door.mjs) answering the fleet.accept Grant
+  // of 3bc571a6's values for the resource read, naming its request
+  const readStatus = async resource => ({ status: 'accepted', request_sha256: resource.split('/').pop(), resources: [resource],
+    grant_id: 'c556370f-b0fc-404b-b164-0f06699e4c7a', receipt_id: '7ccaefca-5fda-4bc8-9747-2a8101b92342', accepted_at: '2026-11-19T12:22:39.628169+00:00' });
+  const sealIt = drillReceipt => seal({ request: requestFile, index, ghCommand: gh, deps: { ...deps, readStatus }, drillReceipt });
   return { d, version, request, index, sealIt };
 }
 
@@ -810,14 +810,15 @@ export function ladderMain(name, runs, extra = '') {
 // answer as told (the check's exit, whether an input is local), the injected prerequisites are real files hashed for real, and the tar
 // is a command that exits 0. snapAt: 'gap' (the first local copy after the check's verdict) or a tool name (its expansion) -- there the
 // stage record as it stands is copied aside (what a pull at that moment brings back); snapStop: the entry stops right after.
-export function entryAccepted(name, { checkExit = 0, underDir = true, snapAt = '', snapStop = false } = {}) {
+// notInjected: item names the manifest pins whose file the host did not put into the payload.
+export function entryAccepted(name, { checkExit = 0, underDir = true, snapAt = '', snapStop = false, notInjected = [] } = {}) {
   const root = fs.mkdtempSync(path.join(tmp, `entry-accepted-${name}-`));
   const [assets, payload, fake, out, work, cred] = ['assets', 'payload', 'fake', 'out', 'work', 'cred'].map(d => { const p = path.join(root, d); fs.mkdirSync(p); return p; });
   const tar = path.join(root, 'tar.cmd'); fs.writeFileSync(tar, '@exit /b 0\r\n');
   const snap = path.join(root, 'snapshot.jsonl');
-  const file = (n, text) => { fs.writeFileSync(path.join(payload, n), text); return { sha256: sha(Buffer.from(text)), bytes: Buffer.byteLength(text) }; };
+  const file = (n, text, put = true) => { if (put) fs.writeFileSync(path.join(payload, n), text); return { sha256: sha(Buffer.from(text)), bytes: Buffer.byteLength(text) }; };
   const items = [['wsl', 'wsl.msi', 'w'.repeat(40)], ['node', 'node.zip', 'n'.repeat(50)], ['python', 'python.zip', 'p'.repeat(60)], ['git', 'git.zip', 'g'.repeat(70)]]
-    .map(([n, f, text]) => ({ name: n, fileName: f, maxEntryPathLength: 10, ...file(f, text) }));
+    .map(([n, f, text]) => ({ name: n, fileName: f, maxEntryPathLength: 10, ...file(f, text, !notInjected.includes(n)) }));
   const debs = [{ fileName: 'a.deb', ...file('a.deb', 'd'.repeat(30)) }];
   fs.writeFileSync(path.join(assets, 'fleet-node-1.2.3.prereq-manifest.json'), JSON.stringify({ items, debs }));
   for (const n of ['SHA256SUMS', 'fleet-node-1.2.3.first-install.SHA256SUMS', 'fleet-node-1.2.3.tar']) fs.writeFileSync(path.join(assets, n), '');

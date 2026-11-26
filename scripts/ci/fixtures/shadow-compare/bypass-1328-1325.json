@@ -1,0 +1,144 @@
+{
+  "source": "2026-11-25 北京时间，GitHub Activity、pulls、commits 与 actions attempts GET 裁剪回放。entries 是拒推误记的历史备份摘录，在 #1325 活动中无此 after（commits 查询 422）。",
+  "pulls": [
+    {
+      "number": 1328,
+      "state": "closed",
+      "created_at": "2026-11-25T01:23:11Z",
+      "updated_at": "2026-11-25T03:40:56Z",
+      "closed_at": "2026-11-25T03:40:56Z",
+      "merged_at": "2026-11-25T03:40:56Z",
+      "head": {
+        "ref": "claude/unadmitted-silent",
+        "sha": "d033d648ac403c7fa16a6aa3aa41b763d704baef",
+        "repo": {
+          "full_name": "tdoljyj/cross-memory-system"
+        }
+      }
+    },
+    {
+      "number": 1325,
+      "state": "open",
+      "created_at": "2026-11-24T23:01:18Z",
+      "updated_at": "2026-11-25T01:13:38Z",
+      "closed_at": null,
+      "merged_at": null,
+      "head": {
+        "ref": "claude/claim-cap-m",
+        "sha": "78060719b4f4fe3a751826142eb217ebd3449ea0",
+        "repo": {
+          "full_name": "tdoljyj/cross-memory-system"
+        }
+      }
+    }
+  ],
+  "activity": [
+    {
+      "id": 51750837141,
+      "ref": "refs/heads/claude/unadmitted-silent",
+      "activity_type": "branch_creation",
+      "timestamp": "2026-11-25T01:23:09Z",
+      "before": "0000000000000000000000000000000000000000",
+      "after": "d683032c50ac2dedc944e563c0cfc42b8eec744c",
+      "actor": {
+        "login": "tdoljyj",
+        "type": "User"
+      }
+    },
+    {
+      "id": 51759658551,
+      "ref": "refs/heads/claude/unadmitted-silent",
+      "activity_type": "push",
+      "timestamp": "2026-11-25T03:03:23Z",
+      "before": "d683032c50ac2dedc944e563c0cfc42b8eec744c",
+      "after": "757ef570bdbf0b05bd36c718a64266d9bc3374d0",
+      "actor": {
+        "login": "tdoljyj",
+        "type": "User"
+      }
+    },
+    {
+      "id": 51759732800,
+      "ref": "refs/heads/claude/unadmitted-silent",
+      "activity_type": "push",
+      "timestamp": "2026-11-25T03:04:12Z",
+      "before": "757ef570bdbf0b05bd36c718a64266d9bc3374d0",
+      "after": "d033d648ac403c7fa16a6aa3aa41b763d704baef",
+      "actor": {
+        "login": "clued-admission[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "id": 51737722336,
+      "ref": "refs/heads/claude/claim-cap-m",
+      "activity_type": "branch_creation",
+      "timestamp": "2026-11-24T23:01:15Z",
+      "before": "0000000000000000000000000000000000000000",
+      "after": "0da12052304d8628c53f57e895d9874369b8d618",
+      "actor": {
+        "login": "tdoljyj",
+        "type": "User"
+      }
+    },
+    {
+      "id": 51749980199,
+      "ref": "refs/heads/claude/claim-cap-m",
+      "activity_type": "push",
+      "timestamp": "2026-11-25T01:13:32Z",
+      "before": "0da12052304d8628c53f57e895d9874369b8d618",
+      "after": "78060719b4f4fe3a751826142eb217ebd3449ea0",
+      "actor": {
+        "login": "clued-admission[bot]",
+        "type": "Bot"
+      }
+    }
+  ],
+  "commit": {
+    "sha": "757ef570bdbf0b05bd36c718a64266d9bc3374d0",
+    "parents": [
+      {
+        "sha": "040b298369530929624fd2c6a70be2d32d2f88da"
+      }
+    ],
+    "commit": {
+      "tree": {
+        "sha": "8272f10cf7c50218cfe230667d82973eacca57c1"
+      }
+    }
+  },
+  "middle": "027b38b91f20245557fdc1c13e0d0fe2aadc9081",
+  "version": 1,
+  "categories": {},
+  "archive": {},
+  "entries": [
+    {
+      "category": "manual-main-merge",
+      "at": "2026-11-25T03:41:47.676Z",
+      "pr": "#1325",
+      "branch": "claude/claim-cap-m",
+      "head": "96dfde7bd392da303211c9cd3ff7746e72f00531",
+      "main": "f87829e8d77e32bd4dbe974d98b0336245aa6945",
+      "minutes": 20,
+      "source": "auto"
+    }
+  ],
+  "attempt": {
+    "id": 45366274471,
+    "name": "hosted-required",
+    "path": ".github/workflows/hosted-required.yml",
+    "event": "pull_request",
+    "run_attempt": 2,
+    "head_sha": "d4f7f35afd25a9f12251e6de7a530dbdf305ddf1",
+    "run_started_at": "2026-11-24T10:21:14Z",
+    "created_at": "2026-11-24T10:21:15Z",
+    "actor": {
+      "login": "clued-admission[bot]",
+      "type": "Bot"
+    },
+    "triggering_actor": {
+      "login": "tdoljyj",
+      "type": "User"
+    }
+  }
+}

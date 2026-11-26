@@ -26,6 +26,8 @@ export const ACTIONS_INTEGRATION_ID = 15368;
 export const RULE_SCAN_NAMES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
 // Not ready, with zero side effects and before any journal write: the resident parks the batch and tries again.
 export const RULESET_UNREADABLE = 'RULESET_UNREADABLE';
+// Task bd07449b: main's rules were not read (readMainRules). RULESET_UNREADABLE is only ever rules read whole that are not this App's six.
+export const RULESET_READ_FAILED = 'RULESET_READ_FAILED';
 export const REQUIRED_CHECK_FAILED = 'REQUIRED_CHECK_FAILED';
 export const REQUIRED_CHECKS_UNREADABLE = 'REQUIRED_CHECKS_UNREADABLE';
 export const STRICT_OFF_WITHOUT_TRAIN = 'STRICT_OFF_WITHOUT_TRAIN';
@@ -60,6 +62,22 @@ export function projectedHolderForJob(h, job, claimId) {
 }
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
+
+// Task bd07449b (PLAN-ruleset-unreadable-park-20261125 §3.1): the one read of main's rules. Every caller of the GitHub port's
+// branch-rules read goes through here (train-rules.test.mjs holds that), so two answers that shared one code cannot be mixed up again:
+//   - no whole, well-formed reply (the read threw: an error, a timeout, a 5xx, a rate limit, a reply of the wrong shape; or the reply is
+//     not complete, or carries no list): RULESET_READ_FAILED. It mends by itself; the resident reads again within minutes.
+//   - a whole reply that rulesetFacts refuses (facts() throws RULESET_UNREADABLE): the rules are not this App's six. Reading again gives
+//     the same answer until somebody changes the rules; the resident sleeps until they are pinned back.
+// -> { rules, facts }: the rules as the port gave them, and facts() = rulesetFacts(rules, appId), computed when asked (stage 10 reads
+// appScans from rules that are not the six; the landing route reads the rulesets' ids).
+export async function readMainRules(github, appId) {
+  let reply;
+  try { reply = await github.readBranchRules('main'); } catch { fail(RULESET_READ_FAILED); }
+  check(reply?.complete === true && Array.isArray(reply.rules), RULESET_READ_FAILED);
+  const rules = reply.rules;
+  return { rules, facts: () => rulesetFacts(rules, appId) };
+}
 
 // Only a confirmed terminal failure blocks queue participation. A newer rerun
 // supersedes an old failure; unrelated checks and another App's checks do not.

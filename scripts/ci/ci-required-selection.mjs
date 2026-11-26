@@ -14,14 +14,10 @@
 // candidate's own changes to the selection (this file, the workflow) select
 // every suite.
 //
-// So a pull request that fixes the trusted side (this file, test-env.mjs, the
-// suite commands) runs under main's trusted side, not its own fix (Task
-// 3435f8bf). Its must-fail test exercises the candidate's code itself (call
-// executeSuite and assert the child's environment, red on main's code, green
-// on the candidate's); it never asserts the job's real environment, which is
-// main's until it merges. The end-to-end check is the first run after merge;
-// a timing guard is added then. The hosted suite jobs' timeout-minutes is a
-// hang backstop, not a speed gate (hosted-required.test.mjs: at least 90).
+// A pull request changing this entry or its runtime imports selects every
+// suite. After its trusted run passes, each suite also runs via the candidate
+// entry in a separate process (Task 04f9b91b). Both runs must pass. The hosted
+// suite jobs' timeout-minutes is a hang backstop, not a speed gate.
 //
 //   node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>]
 //     reads GITHUB_EVENT_PATH and lists the pull request's files through the
@@ -47,9 +43,8 @@
 //     regenerates that suite's ci-known-failures.json entries from a real run
 //     (--keep also keeps the entries already listed).
 //   node scripts/ci/ci-required-selection.mjs --write-shard-seconds <log> [<log>...]
-//     rewrites ci-shard-seconds.json (the seconds --shard packs files by) from
-//     the shard-seconds lines of --shard job logs: each file's median, files
-//     under 3 seconds left out. The table is only ever written this way. When
+//     rewrites ci-shard-seconds.json from file-seconds and whole-seconds job
+//     logs: each key's median, leaving out values under 3 seconds. When
 //     hosted-required.yml goes (S8), --shard goes; the table and the packing
 //     stay for the lanes (FABLE-ci-duration-node-side-20261124, 做法 2).
 //   node scripts/ci/ci-required-selection.mjs --run-prepush --root <tree>
@@ -59,7 +54,7 @@
 // The suite run modes (--run, --run-selected, --write-known, --run-files) wait for a machine-wide suite slot outside GitHub Actions.
 import { spawn as spawnAsync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -126,7 +121,7 @@ const AUTHORIZATION_DB_TESTS = [
   'integration-runtime-verification-db',
   'issuer-credentials-db', 'k-cont-db', 'model-domain-bootstrap-db', 'mtpe-frontier-eligibility-v2-1-db', 'mtpe-frontier-eligibility-v2-db',
   'mtpe-owner-pin-consistency-db', 'mtpe-universal-intake-db', 'now-conflict-null-project-db', 'owner-grants-db', 'owner-grants-release-door-db',
-  'owner-grants-resident-upgrade-door-db', 'owner-grants-scope-db', 'owner-request-bundles-db', 'priority-projection-db', 'production-release-door-flow-db',
+  'owner-grants-resident-upgrade-door-db', 'owner-grants-fleet-accept-door-db', 'owner-grants-scope-db', 'owner-request-bundles-db', 'priority-projection-db', 'production-release-door-flow-db',
   'project-invitations-db',
   'project-list-authorization-db', 'projection-refresh-pipeline-db', 'record-update-field-merge-db', 'resource-center-authority-db',
   'migration-size-gate-db', 'resume-constraint-index-db', 'retention-classes-db', 'retention-sweep-db', 'search-context-cross-scope-db', 'search-context-rereview-db', 'session-context-from-token-db',
@@ -159,7 +154,7 @@ const AUTHORIZATION_DB_TESTS = [
 // inputs (ci-required-selection.test.mjs checks that every file a database test imports is listed here). The worker's
 // own files only (worker/*): worker/generated is rewritten by every component bump, and those version strings are
 // not what these tests check.
-const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/tests/fixtures/integration-runtime/**',
+const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 'scripts/ci/test-clock-guard.mjs', 'scripts/ci/test-clock-imports.mjs', 'apps/clued-cloud/tests/fixtures/integration-runtime/**',
   'apps/clued-cloud/tests/ci-connection-renew-db.test.mjs',
   'apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
   'apps/clued-cloud/tests/*fixture*.mjs', 'apps/clued-cloud/tests/*.case.mjs', 'apps/clued-cloud/tests/worker/**',
@@ -212,7 +207,9 @@ export const SUITES = {
     // the classifier, selects it.
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/test-clock-scan.mjs', 'scripts/ci/test-clock-guard.mjs',
       'scripts/ci/test-clock-imports.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
-      'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/local-suite-slots.mjs',
+      'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/ci-required-selection-timeout.test.mjs',
+      'scripts/ci/ci-required-selection-budget.test.mjs', 'scripts/ci/ci-required-selection-toolchain.test.mjs', 'config/ci-toolchain.json',
+      'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
       'scripts/ci/check-tests-covered.mjs', 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-shard-seconds.json',
@@ -235,13 +232,21 @@ export const SUITES = {
       // The release door flow test runs the release workflow steps and the grant script (FABLE-release-identity-autonomous §3.1).
       '.github/workflows/clued-cloud-production-release.yml', 'scripts/ci/clued-release-door.mjs',
       'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...MIGRATION_DB_TESTS, ...AUTHORIZATION_DB_TESTS, ...MIGRATION_DB_TEST_INPUTS, 'apps/clued-cloud/package.json',
-      'apps/clued-cloud/package-lock.json'],
+      'apps/clued-cloud/package-lock.json',
+      // The real database command (Task 4432ee9b): its script and test, the database start it reuses, the local migration
+      // executor, and the backup coverage test with the script it tests.
+      'scripts/ci/clued-real-database.mjs', 'scripts/ci/clued-real-database.test.mjs', 'scripts/ci/clued-g4-fresh-start.mjs',
+      'scripts/ci/clued-local-migrate.mjs', 'apps/clued-cloud/scripts/verify-production-backup-scope.mjs',
+      'apps/clued-cloud/tests/production-backup-scope-db.test.mjs'],
   },
 };
 
-// Changing how selection or the required-check workflow works selects every
-// suite of every check.
+// The entry's relative import closure, including the guard preloaded by the clock scanner.
+export const SELECTOR_IMPORTS = ['test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'test-clock-imports.mjs'];
+
+// A change to selection, the required-check workflow or the clock guard's inputs selects every suite.
 export const SELECT_ALL = ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs',
+  ...SELECTOR_IMPORTS.map((name) => `scripts/ci/${name}`), 'config/test-clock-debt.txt', 'scripts/ci/test-clock-allow.json',
   '.github/workflows/clued-required-tests.yml', '.github/actions/**'];
 
 export const FILE_LIMIT = 3000;
@@ -359,13 +364,16 @@ export const SUITE_COMMANDS = {
   'ci-deps-entry': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-deps.test.mjs', 'scripts/ci/check-ci-deps-entry.test.mjs'] },
     { cwd: '.', argv: ['node', 'scripts/ci/check-ci-deps-entry.mjs', '--base', '{base}'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
-    'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/local-verify.test.mjs',
+    'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/ci-required-selection-timeout.test.mjs',
+    'scripts/ci/ci-required-selection-budget.test.mjs',
+    'scripts/ci/ci-required-selection-toolchain.test.mjs',
+    'scripts/ci/local-verify.test.mjs',
     'scripts/ci/local-verify-concurrency.test.mjs'] }],
   'clued-cloud': [
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'lint'] },
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'ledger:verify'] },
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'typecheck'] },
-    { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'build'] },
+    { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'build'], every: true },
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', '{tests:../kooyumi-connect/tests}'] },
     // The CI tools' Python tests (FABLE-tests-outside-required-suites-20261121, C2). scripts/ci is listed file by file:
     // test_check_design_refs.py is red on its first run (ci-uncovered-tests.json), and the components and runner budget
@@ -388,6 +396,10 @@ export const SUITE_COMMANDS = {
       ...MIGRATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
     { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{db-concurrency}', '--test-force-exit',
       ...AUTHORIZATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
+    // The checks only clued-g4-database.yml ran, on a real Supabase database: plpgsql_check lint, pgTAP and the PostgreSQL
+    // 17 backup coverage test named here (PLAN-g4-red-merged-20261125 §2.2, Task 4432ee9b). Observed first: a failure is a
+    // warning until --observe is removed.
+    { cwd: 'apps/clued-cloud', argv: ['node', '../../scripts/ci/clued-real-database.mjs', '--observe', 'tests/production-backup-scope-db.test.mjs'] },
   ],
 };
 
@@ -407,8 +419,8 @@ export const PREPUSH_ERROR_EXIT = 3;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const KNOWN_FAILURES_PATH = path.join(HERE, 'ci-known-failures.json');
 export const REPORTER_PATH = path.join(HERE, 'ci-test-failures-reporter.mjs');
-// The seconds --shard packs a listing command's files by (shardCommand), read next to this file (the trusted base checkout,
-// the same for every shard). Written only by --write-shard-seconds; read only under --shard and in a lane (runSelected).
+// The seconds that order {tests:} and pack the plan (packShards), read next to this file (the trusted base checkout,
+// the same for every shard). Written only by --write-shard-seconds.
 export const SHARD_SECONDS_PATH = path.join(HERE, 'ci-shard-seconds.json');
 
 // Tests that already fail on main (quarantine, Task 679a0c2b), by suite: each
@@ -586,14 +598,16 @@ export function testConcurrency(cores = os.availableParallelism()) {
 // No base commit: unset, empty, or GitHub's all-zero SHA. expandArgv refuses {base} then, executeSuite refuses the suite.
 const missingBase = (base) => !base || /^0+$/.test(base);
 const BASE_REQUIRED = 'CI_BASE_SHA is required for this suite';
+const TEST_LIST = /^\{tests:(.+)\}$/;
 
 // hosted: a CI job's expansion. The trusted side passes it and its core count to the candidate's (readCandidate), whose
 // environment has no GITHUB_ACTIONS (test-env.mjs keep), so both sides expand the same command alike.
 export function expandArgv(argv, { cwd, root, base, report, listUnit = () => unitTestFiles(cwd),
-  hosted = process.env.GITHUB_ACTIONS === 'true', cores = os.availableParallelism() }) {
+  hosted = process.env.GITHUB_ACTIONS === 'true', cores = os.availableParallelism(), seconds, shardSecondsFile }) {
   let unit = null;
   const units = () => (unit ??= listUnit());
-  return argv.flatMap((arg) => {
+  const listed = [];
+  const expanded = argv.flatMap((arg) => {
     if (arg === '{ci-script-tests}') {
       if (!root) throw new Error('{ci-script-tests} needs the checkout root');
       return ciScriptTests(root, cwd, units());
@@ -606,12 +620,15 @@ export function expandArgv(argv, { cwd, root, base, report, listUnit = () => uni
     }
     if (arg === '{db-concurrency}') return [`--test-concurrency=${testConcurrency(cores)}`];
     if (arg === '{unit-concurrency}') return [`--test-concurrency=${hosted ? testConcurrency(cores) : 2}`];
-    const tests = /^\{tests:(.+)\}$/.exec(arg);
+    const tests = TEST_LIST.exec(arg);
     if (tests) {
       const files = readdirSync(path.join(cwd, tests[1])).filter((name) => name.endsWith('.test.mjs')).sort()
         .map((name) => `${tests[1]}/${name}`);
       if (files.length === 0) throw new Error(`no test files in ${tests[1]}`);
-      return files;
+      // Candidate comparison keeps the declared list order, including when the trusted selector predates timing.
+      if (seconds === undefined && shardSecondsFile === undefined) return files;
+      listed.push(...files);
+      return files.map(() => null);
     }
     if (arg === '{base}') {
       if (missingBase(base)) throw new Error(BASE_REQUIRED);
@@ -620,6 +637,13 @@ export function expandArgv(argv, { cwd, root, base, report, listUnit = () => uni
     if (arg === '{report}') return [report];
     return [arg];
   });
+  if (listed.length === 0) return expanded;
+  const table = seconds ?? readShardSeconds(shardSecondsFile).table;
+  const directory = posixPath(path.relative(root ?? cwd, cwd));
+  const weight = (file) => table.get(path.posix.join(directory, file)) ?? Infinity;
+  listed.sort((a, b) => weight(b) - weight(a) || (a < b ? -1 : a > b ? 1 : 0));
+  let at = 0;
+  return expanded.map((arg) => arg ?? listed[at++]);
 }
 
 // {ci-script-tests}: the *.test.mjs files directly in CI_SCRIPT_TEST_DIRS (from the checkout root) that run in no other
@@ -679,21 +703,32 @@ const real = (file) => {
 // sit behind a link), so entries match on any runner.
 export function readReport(text, root) {
   const events = [];
+  let metronome = null;
   const base = root ? real(root) : null;
+  const normalized = new Map();
   for (const line of String(text ?? '').split('\n')) {
     if (!line.trim()) continue;
     let event;
     try {
       event = JSON.parse(line);
     } catch {
-      return { events, summary: null, corrupt: true };
+      return { events, summary: null, metronome, corrupt: true };
     }
-    if (typeof event.file === 'string' && base) {
-      event.file = path.relative(base, real(event.file)).split(path.sep).join('/');
+    if (base) {
+      for (const key of ['file', 'wallFile']) {
+        const file = event[key];
+        if (typeof file !== 'string') continue;
+        if (!normalized.has(file)) normalized.set(file, posixPath(path.relative(base, real(file))));
+        event[key] = normalized.get(file);
+      }
+    }
+    if (event.type === 'metronome' && Number.isSafeInteger(event.n)
+        && (event.n === 0 ? event.median_ms === null : event.n > 0 && Number.isFinite(event.median_ms) && event.median_ms > 0)) {
+      metronome = event;
     }
     events.push(event);
   }
-  return { events, summary: events.find((event) => event.type === 'summary') ?? null, corrupt: false };
+  return { events, summary: events.find((event) => event.type === 'summary') ?? null, metronome, corrupt: false };
 }
 
 // The verdict of a run with known failures. It fails on: any failure that is
@@ -797,12 +832,14 @@ export function filterCommand(command, argv, named) {
       result.matched = [...kept].map((arg) => repo(fileOf(arg)));
     }
   } else {
+    // A script, alone or followed by the test files it runs (clued-real-database.mjs): naming any of them runs the command.
     const operands = operandsAfter(argv, 0);
-    if (operands.length === 1 && /\.(mjs|py)$/.test(operands[0])) {
-      result.accepts = [repo(operands[0])];
-      if (named.has(repo(operands[0]))) {
+    if (operands.length >= 1 && /\.(mjs|py)$/.test(operands[0]) && operands.slice(1).every((operand) => /\.test\.mjs$/.test(operand))) {
+      result.accepts = operands.map(repo);
+      const kept = operands.filter((operand) => named.has(repo(operand)));
+      if (kept.length > 0) {
         result.runs = [argv];
-        result.matched = [repo(operands[0])];
+        result.matched = kept.map(repo);
       }
     }
   }
@@ -840,122 +877,113 @@ export function commandArgv(command, options) {
   return only;
 }
 
-// --shard i/n (PLAN-hosted-windows-speed-20261123 block 3): n jobs split one --run-selected between them. The plan is cut into
-// units: each test file operand of a command that lists its test files (node --test, python -m unittest <files>), as
-// --run-files recognises one (filterCommand), and every other command whole (unittest discover, drills, check scripts, npm,
-// and a listing command with an operand that is not a test file, such as a package: it would leave every shard's command).
-// A unit's global number is the suite's own number (shardOffset) plus the unit's place in the suite's plan; shard i runs the
-// units whose number mod n is i - 1, so the shards together run every unit once and n = 1 runs today's plan command for
-// command. A listing command's files are packed by their seconds instead (FABLE-hosted-win-shard-balance-20261124, block 5):
-// see shardCommand; with no table, or none of the command's files in it, that is the same mod n rule. The suite's number
-// comes from its id alone, never from what else a shard selected: each shard selects on its own
-// (one that cannot read the changed files runs every suite), and a suite's units go to the same shards whichever other
-// suites a shard runs or stops at their first failure (REVIEW-hosted-speed-b3-20261124 H1). A listing command runs only its
-// shard's files, with its own switches, and runs again in full (passesAgain) as that narrower command; its known failures
-// are those of its shard's files, and the shard with its first file also has those of files the command no longer lists.
-// The whole-run-again thresholds (failures, files, time) count that narrower command, never summed across shards
-// (FABLE-hosted-b3-L2-ruling-20261124): what keeps a real failure red -- the run again passes in full, each test that
-// failed passes, the test files match base -- is the same per shard; the summary job reads only each shard's result.
+// --shard i/n splits the full plan of a check on this platform, then runs only the selected suites' units in plan order.
+// A file-list command contributes one unit per file. Other commands contribute one whole unit, except trusted `every`
+// commands, which run on every shard outside the partition. A shard falling back to selecting every suite still gives
+// each unit of the real selection to the same shard (REVIEW-hosted-speed-b3-20261124 H1).
 export function parseShard(text) {
   const match = /^([1-9]\d*)\/([1-9]\d*)$/.exec(String(text ?? ''));
   if (!match || Number(match[1]) > Number(match[2])) throw new Error(`--shard takes i/n with 1 <= i <= n: ${text}`);
   return { index: Number(match[1]), total: Number(match[2]) };
 }
 
-// The number of a suite's first unit: its place in SUITE_COMMANDS; past those, for a suite only the candidate has, a number
-// from its id.
-export function shardOffset(id) {
-  const ids = Object.keys(SUITE_COMMANDS);
-  if (ids.includes(id)) return ids.indexOf(id);
-  let hash = 0;
-  for (const char of id) hash = (hash * 31 + char.codePointAt(0)) >>> 0;
-  return ids.length + hash;
-}
+const validShardKey = (key) => key.length > 0 && !key.startsWith('/') && !key.includes('\\');
 
-// ci-shard-seconds.json as a Map of repository path -> whole seconds. A table that is missing or not that shape is an empty
+// ci-shard-seconds.json as a Map of file or command key -> whole seconds. A table that is missing or not that shape is an empty
 // one (problem says why): an aid that fails only does nothing, it never stops a shard (FABLE-hosted-win-shard-balance §1.3).
 export function readShardSeconds(file = SHARD_SECONDS_PATH) {
   let data;
   try {
     data = JSON.parse(readFileSync(file, 'utf8'));
   } catch (error) {
-    return { table: new Map(), problem: `${path.basename(file)} cannot be read (${error?.code ?? error?.message ?? error}); every file weighs 1` };
+    return { table: new Map(), problem: `${path.basename(file)} cannot be read (${error?.code ?? error?.message ?? error}); every unit weighs 1` };
   }
   const entries = data && typeof data === 'object' && !Array.isArray(data) ? Object.entries(data) : null;
-  const valid = entries && entries.every(([key, value]) => key.length > 0 && !key.startsWith('/') && !key.includes('\\')
-    && Number.isSafeInteger(value) && value > 0);
-  if (!valid) return { table: new Map(), problem: `${path.basename(file)} is not {"<repository path>": whole seconds}; every file weighs 1` };
+  const valid = entries && entries.every(([key, value]) => validShardKey(key) && Number.isSafeInteger(value) && value > 0);
+  if (!valid) return { table: new Map(), problem: `${path.basename(file)} is not {"<file or command key>": whole seconds}; every unit weighs 1` };
   return { table: new Map(entries), problem: null };
 }
 
-// The shard of each of a command's files: heaviest first (seconds from the table, 1 when it has none; equal ones in the
-// command's order), each into the lightest shard, equal ones taken in turn from shard position mod n. With equal weights that
-// puts unit u in shard (position + u) mod n, the rule for a command that runs whole. It reads only this command's files, the
-// table and the suite's number, never what else a shard selected (REVIEW-hosted-speed-b3-20261124 H1).
-function packFiles(files, total, position, seconds) {
-  const weight = (file) => {
-    const value = seconds instanceof Map ? seconds.get(file) : seconds && Object.hasOwn(seconds, file) ? seconds[file] : undefined;
-    return Number.isSafeInteger(value) && value > 0 ? value : 1;
-  };
-  const weights = files.map(weight);
-  const order = files.map((file, unit) => unit).sort((a, b) => weights[b] - weights[a] || a - b);
-  const loads = new Array(total).fill(0);
-  const shardOf = new Array(files.length);
-  const start = position % total;
-  for (const unit of order) {
-    let best = start;
-    for (let step = 1; step < total; step += 1) {
-      const candidate = (start + step) % total;
-      if (loads[candidate] < loads[best]) best = candidate;
-    }
-    shardOf[unit] = best;
-    loads[best] += weights[unit];
-  }
-  return shardOf;
-}
-
-// The part of one expanded command a shard runs: argv null when none; units, the units the command counts for; files, the
-// repository paths of the shard's test files, and listed, those of all the command's (both null for a command that runs
-// whole). seconds: the table (readShardSeconds), passed in; none packs as one with no entry.
-export function shardCommand(command, argv, shard, position, seconds = null) {
-  const { accepts, ...part } = shardPart(command, argv, shard, position, seconds);
-  return part;
-}
-
-// shardCommand, with accepts: every test file of a listing command (empty for a command that runs whole).
-function shardPart(command, argv, { index, total }, position, seconds) {
+function shardFiles(command, argv) {
   const testAt = argv.indexOf('--test');
   const unittestAt = argv.findIndex((arg, i) => arg === 'unittest' && argv[i - 1] === '-m');
-  const listing = testAt >= 0 || (unittestAt >= 0 && argv[unittestAt + 1] !== 'discover');
-  const { accepts } = listing ? filterCommand(command, argv, new Set()) : { accepts: [] };
-  // Each operand after the anchor a test file: filterCommand keeps no other operand (review M1).
-  const everyOperand = listing && accepts.length === operandsAfter(argv, testAt >= 0 ? testAt : unittestAt).length;
-  if (everyOperand && accepts.length > 0 && new Set(accepts).size === accepts.length) {
-    const shardOf = packFiles(accepts, total, position, seconds);
-    const files = accepts.filter((file, unit) => shardOf[unit] === index - 1);
-    if (files.length === 0) return { argv: null, units: accepts.length, files: null, listed: null, accepts };
-    const { runs, matched } = filterCommand(command, argv, new Set(files));
-    if (runs.length !== 1 || matched.length !== files.length) throw new Error(`cannot shard (${command.cwd}) ${argv.join(' ')}`);
-    return { argv: runs[0], units: accepts.length, files: new Set(files), listed: new Set(accepts), accepts };
-  }
-  return { argv: position % total === index - 1 ? argv : null, units: 1, files: null, listed: null, accepts: [] };
+  const anchor = testAt >= 0 ? testAt : argv[unittestAt + 1] === 'discover' ? -1 : unittestAt;
+  if (anchor < 0) return [];
+  const { accepts } = filterCommand(command, argv, new Set());
+  // A mixed operand list must run whole: narrowing it would erase the non-file operands (review M1).
+  return accepts.length === operandsAfter(argv, anchor).length && new Set(accepts).size === accepts.length ? accepts : [];
 }
 
-// The seconds a shard spent on each of its files: the sum of the file's top-level tests (the reporter's ms), so a test that
-// waits on a child process counts the child's time (fleet-node-children). One decimal; a file with no timed test is left out.
-export function shardSecondsOf(report, files) {
-  const ms = new Map();
-  for (const event of report.events) {
-    if ((event.type !== 'pass' && event.type !== 'fail') || typeof event.ms !== 'number' || !files.has(event.file)) continue;
-    ms.set(event.file, (ms.get(event.file) ?? 0) + event.ms);
+// Use the declared argv so placeholders such as {base} and {report} do not change the key on each job.
+const wholeShardKey = ({ id, command }) => `${id} (${command.cwd}) ${command.argv.join(' ')}`.replaceAll('\\', '/');
+
+// LPT over the whole plan, with ties in plan and shard-number order. Candidate additions use the loads the trusted units
+// leave behind, so an addition never changes where a trusted unit runs. Equal file keys in different commands are timed by
+// the same table entry but remain separate units of those commands.
+export function packShards(steps, { total, seconds = new Map() }) {
+  const loads = new Array(total).fill(0);
+  const packed = steps.map((step) => {
+    const { command, argv } = step;
+    const accepts = command.every ? [] : shardFiles(command, argv);
+    const keys = command.every ? [] : accepts.length > 0 ? accepts : [wholeShardKey(step)];
+    const units = keys.map((key) => {
+      const value = seconds.get(key);
+      return { key, weight: Number.isSafeInteger(value) && value > 0 ? value : 1, timed: seconds.has(key) };
+    });
+    return { ...step, accepts, units };
+  });
+  for (const added of [false, true]) {
+    const units = packed.filter(({ command }) => Boolean(command.expanded) === added).flatMap((step) => step.units);
+    units.sort((a, b) => b.weight - a.weight);
+    for (const unit of units) {
+      let best = 0;
+      for (let at = 1; at < loads.length; at += 1) {
+        if (loads[at] < loads[best]) best = at;
+      }
+      unit.shard = best + 1;
+      loads[best] += unit.weight;
+    }
   }
-  return Object.fromEntries([...ms].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([file, total]) => [file, Math.round(total / 100) / 10]));
+  return packed;
+}
+
+export function shardPart({ command, argv, accepts, units }, index) {
+  if (command.every) return { argv, units: 0, files: null };
+  if (accepts.length === 0) return { argv: units[0].shard === index ? argv : null, units: 1, files: null };
+  const files = new Set(units.filter((unit) => unit.shard === index).map((unit) => unit.key));
+  if (files.size === 0) return { argv: null, units: units.length, files: null };
+  const { runs, matched } = filterCommand(command, argv, files);
+  if (runs.length !== 1 || matched.length !== files.size) throw new Error(`cannot shard (${command.cwd}) ${argv.join(' ')}`);
+  return { argv: runs[0], units: units.length, files, listed: new Set(accepts) };
+}
+
+// Prefer the file's wall clock. Earlier reporters and runs without an isolated file fall back to the top-level tests.
+export function shardSecondsOf(report, files) {
+  const tests = new Map();
+  const wall = new Map();
+  for (const event of report.events) {
+    if (!Number.isFinite(event.ms)) continue;
+    if (event.type === 'end' && event.nesting === 0) {
+      const file = event.wallFile ?? (event.name === event.file ? event.file : null);
+      if (files.has(file)) wall.set(file, event.ms);
+    } else if ((event.type === 'pass' || event.type === 'fail') && files.has(event.file)) {
+      tests.set(event.file, (tests.get(event.file) ?? 0) + event.ms);
+    }
+  }
+  const ms = new Map([...tests, ...wall]);
+  return Object.fromEntries([...ms.keys()].sort().map((file) => [file, Math.round(ms.get(file) / 100) / 10]));
+}
+
+function logFileSeconds(id, report, command, argv, log) {
+  const files = new Set(filterCommand(command, argv, new Set()).accepts);
+  const timed = report ? shardSecondsOf(report, files) : {};
+  log(`${id}: file-seconds ${JSON.stringify(timed)} metronome ${report?.metronome?.median_ms ?? 'null'}`);
 }
 
 // Gap A (FABLE r8 B2): the trusted list first, in its order and with its policy, even if the PR removes or replaces a
-// command; then the commands the candidate's selector adds to the suite. Reading the candidate is lazy: only after the
-// baseline commands have run, and always when the candidate's selector is another file: its bytes say nothing about the
-// modules it imports. A separate Node process exports the candidate's list, and only what it prints, once validated here,
+// command; then the commands the candidate's selector adds to the suite. Serial runs read the candidate after the
+// baseline commands run, and sharded runs read it while planning. When the selector is another file, its bytes say
+// nothing about the modules it imports. A separate Node process exports the candidate's list, and only what it prints, once validated here,
 // can add a command; candidate code never runs inside the process that decides which commands passed. A candidate command
 // that only adds test files to a trusted command runs just those files, and none carries a policy. A checkout without
 // scripts/ci adds nothing; one with scripts/ci but no selector moved or deleted it, so what it adds cannot be read and the
@@ -1080,9 +1108,37 @@ export function candidateSuites(check, root, { platform = null, trusted = fileUR
   return added;
 }
 
+function planSuiteShards(ids, { root, env, total, seconds }) {
+  const steps = [];
+  for (const id of ids) {
+    const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
+    const options = { root, base: env.CI_BASE_SHA, report, hosted: env.GITHUB_ACTIONS === 'true', seconds, shardSecondsFile: SHARD_SECONDS_PATH };
+    for (const command of requiredCommands(id, root, { env, report })) {
+      const argv = commandArgv(command, { ...options, cwd: path.join(root, command.cwd) });
+      steps.push({ id, command, argv });
+    }
+  }
+  const bySuite = new Map(ids.map((id) => [id, []]));
+  for (const step of packShards(steps, { total, seconds })) bySuite.get(step.id).push(step);
+  return bySuite;
+}
+
+// No selected-suites input: each job and each lane must assign the same units even when path selection differs.
+export function planShards(check, { root, env = process.env, platform = hostPlatform(), total, seconds }) {
+  const trusted = selectSuites(check, null, platform).suites;
+  const added = candidateSuites(check, root, { platform, env }).map(({ id }) => id);
+  return planSuiteShards([...trusted, ...added], { root, env, total, seconds });
+}
+
+function shardTiming(file) {
+  const { table, problem } = readShardSeconds(file);
+  const digest = createHash('sha256').update(JSON.stringify([...table])).digest('hex').slice(0, 12);
+  return { table, info: { problem, size: table.size, digest } };
+}
+
 export class RunFilesError extends Error {}
 
-export function planFiles(id, { root, files, env = process.env }) {
+export function planFiles(id, { root, files, env = process.env, shardSecondsFile = SHARD_SECONDS_PATH }) {
   if (!Object.hasOwn(SUITE_COMMANDS, id)) throw new RunFilesError(`unknown suite: ${id}`);
   const list = (files ?? []).map(posixPath);
   if (list.length === 0) throw new RunFilesError('no test file named');
@@ -1101,7 +1157,7 @@ export function planFiles(id, { root, files, env = process.env }) {
   for (const command of requiredCommands(id, root, { env, base: env.CI_BASE_SHA || 'unset', report })) {
     const cwd = path.join(root, command.cwd);
     // {base} is not a test file; a placeholder keeps commands that need it plannable (they are skipped).
-    const argv = command.expanded ? command.argv : expandArgv(command.argv, { cwd, root, base: env.CI_BASE_SHA || 'unset', report });
+    const argv = command.expanded ? command.argv : expandArgv(command.argv, { cwd, root, base: env.CI_BASE_SHA || 'unset', report, shardSecondsFile });
     // A command that only adds test files to a trusted one runs no other file (the trusted command runs those).
     const filtered = filterCommand(command, argv, command.files ? new Set(command.files.filter((file) => named.has(file))) : named);
     accepts.push(...filtered.accepts);
@@ -1181,9 +1237,12 @@ export function runPrepush(root, { env = process.env, spawn = spawnSync, log = c
       }
       let tests = [];
       if (report) {
+        let ran = null;
         try {
-          tests = [...new Set(readReport(readReportFile(report), root).events.filter((event) => event.type === 'fail').map(testAt))];
+          ran = readReport(readReportFile(report), root);
+          tests = [...new Set(ran.events.filter((event) => event.type === 'fail').map(testAt))];
         } catch { /* the command's own output names them */ }
+        logFileSeconds('prepush', ran, command, argv, log);
         try {
           rmSync(reportDir, { recursive: true, force: true });
         } catch { /* a report directory left in the temp directory is litter, not a verdict */ }
@@ -1258,6 +1317,51 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
   });
 }
 
+const CANDIDATE_PASS = 'CLUED_CI_CANDIDATE_PASS';
+
+function runCandidateSuite(id, { root, env = process.env, log = console.log, shard = null }) {
+  if (env[CANDIDATE_PASS] === '1') return 0;
+  const trusted = fileURLToPath(import.meta.url);
+  const candidate = candidateSelectorOf(root, trusted, `the candidate entry for ${id}`);
+  if (!candidate) return 0;
+  const unchanged = [path.basename(trusted), ...SELECTOR_IMPORTS].every((name) =>
+    readFileSync(path.join(HERE, name)).equals(readFileSync(path.join(path.dirname(candidate), name))));
+  if (unchanged) return 0;
+
+  const argv = [real(candidate), '--run', id, '--root', root];
+  if (shard) argv.push('--shard', `${shard.index}/${shard.total}`);
+  const childEnv = { ...testEnv(env), GITHUB_ACTIONS: env.GITHUB_ACTIONS, RUNNER_TEMP: env.RUNNER_TEMP,
+    [HOST_LACKS_VARIABLE]: env[HOST_LACKS_VARIABLE], [CANDIDATE_PASS]: '1' };
+  const logFile = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-candidate-${randomUUID()}.log`);
+  log(`${id}: 可信入口已通过，开始用候选入口再跑一遍`);
+  // A regular file captures both streams in order without waiting on pipes held by a descendant.
+  const fd = openSync(logFile, 'wx');
+  try {
+    let run;
+    try {
+      run = spawnSync(process.execPath, argv, { cwd: root, env: childEnv, stdio: ['ignore', fd, fd], windowsHide: true });
+    } finally {
+      closeSync(fd);
+    }
+    if (run.status !== 0) {
+      const reason = run.error?.message ?? (run.signal ? `信号 ${run.signal}` : `退出 ${run.status}`);
+      log(`::error title=${id}::候选入口自己跑这一套是红的：合入后 main 上就是这个结果（${reason}）`);
+    }
+    const output = readFileSync(logFile, 'utf8').trimEnd();
+    if (output) log(output);
+    return run.status ?? 1;
+  } finally {
+    try {
+      rmSync(logFile, { force: true });
+    } catch { /* a log held open by a descendant does not decide the suite */ }
+  }
+}
+
+async function runSuiteWithCandidate(id, options) {
+  const status = await runSuite(id, options);
+  return status === 0 ? runCandidateSuite(id, options) : status;
+}
+
 // What a host cannot give a test (FABLE-hosted-windows-suites-20261122 §2.3, task 04f9b91b). The host says what it lacks
 // in CLUED_CI_HOST_LACKS (only the hosted workflow sets it: hosted-required.test.mjs), a test says what it needs in its own
 // name ("... [needs:non-elevated]"), and every node --test command of a suite gets Node's skip pattern for those names:
@@ -1299,12 +1403,77 @@ export const RERUN_MAX_FILES = 2;
 export const RERUN_MAX_ELAPSED_MS = 10 * 60_000;
 export const RERUN_MIN_TIMEOUT_MS = 2 * 60_000;
 const isNodeTest = (argv) => argv[0] === 'node' && argv.includes('--test');
+
+// One limit at the entry (FABLE-flaky-four-replan-20261124 §2; PLAN-ci-p90-next-20261125 补充裁定, task 3435f8bf): a test or
+// command that hangs fails with its name, not at the job's limit (90 minutes hosted, 45 on a node's Windows job, 30 for
+// migration-verify) with none. executeSuite starts the first run of every command (node --test, the run-tests wrapper, any
+// other) with COMMAND_TIMEOUT_MS and ends it with SIGKILL: Windows ends a process outright anyway, and on POSIX a SIGTERM would
+// let Node cancel gracefully and end what had begun, so the two would differ. The command line stays as it is. Node times
+// each test (--test-timeout) but never a test file (its FileTest has no timeout), so the limit is the whole command's and,
+// for a node --test command with the trusted reporter, the entry then names each file and test that began and did not end:
+// the reporter writes Node's test:dequeue and test:complete, which reach it as they happen (not in report order), and the
+// parent sends both for each file itself, so a file that hangs is named even when its process sent nothing
+// (unfinishedTests). 25 minutes: 1.5 times the longest step of a passing job (987 s), above the one command of the 11-23
+// slow window (1287 s), and still named before migration-verify's 30 minutes for a command that starts early in the job. It
+// catches a hang; it is not a speed gate.
+export const COMMAND_TIMEOUT_MS = 25 * 60_000;
+const UNFINISHED_SHOWN = 20;
+const limitText = (ms) => (ms >= 60_000 ? `${Math.round(ms / 60_000)} 分钟` : `${ms / 1000} 秒`);
+// The files and tests a report (the trusted reporter's lines) began and did not end, in the order each first appears: per
+// (file, nesting, name), more begin lines than end lines. A line cut off by the kill ends the reading (readReport).
+export function unfinishedTests(text, root) {
+  const open = new Map();
+  for (const event of readReport(text, root).events) {
+    if (event.type !== 'begin' && event.type !== 'end') continue;
+    const at = { file: event.file ?? null, nesting: event.nesting ?? null, name: event.name ?? null };
+    const key = JSON.stringify([at.file, at.nesting, at.name]);
+    const entry = open.get(key) ?? { at, count: 0 };
+    entry.count += event.type === 'begin' ? 1 : -1;
+    open.set(key, entry);
+  }
+  return [...open.values()].filter((entry) => entry.count > 0).map((entry) => entry.at);
+}
 function withReporter(argv, out) {
   const index = argv.indexOf('--test');
   // The reporter comes from this file's (trusted base) checkout.
   return [...argv.slice(0, index + 1), '--test-reporter=spec', '--test-reporter-destination=stdout',
     `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`, `--test-reporter-destination=${out}`, ...argv.slice(index + 1)];
 }
+
+const ORDERED_NODE_TESTS = '--ordered-node-tests';
+
+// Node's CLI sorts even explicit operands as glob results. The same Node test runner accepts an ordered file list
+// through run({ files }); use that path for trusted {tests:} commands with the switches these commands use.
+function spawnSuiteCommand(command, args, { orderedTests, ...options }) {
+  if (orderedTests && command === 'node' && args[0] === '--test' && operandsAfter(args, 0).length > 1
+      && args.slice(1).every((arg) => !arg.startsWith('-') || /^--test-(?:concurrency|skip-pattern|reporter|reporter-destination)=/.test(arg))) {
+    return spawnSync(command, [fileURLToPath(import.meta.url), ORDERED_NODE_TESTS, ...args.slice(1)], options);
+  }
+  return spawnSync(command, args, options);
+}
+
+async function runOrderedNodeTests(args) {
+  const { run } = await import('node:test');
+  const { spec } = await import('node:test/reporters');
+  const { compose } = await import('node:stream');
+  const { finished, pipeline } = await import('node:stream/promises');
+  const values = (flag) => args.filter((arg) => arg.startsWith(`${flag}=`)).map((arg) => arg.slice(flag.length + 1));
+  const files = args.filter((arg) => !arg.startsWith('-')).map((file) => path.resolve(file));
+  const concurrency = Number(values('--test-concurrency').at(-1)) || true;
+  const destination = values('--test-reporter-destination').find((arg) => arg !== 'stdout');
+  const reporter = destination ? (await import('./ci-test-failures-reporter.mjs')).default : null;
+  const source = run({ files, concurrency, testSkipPatterns: values('--test-skip-pattern') });
+  let status = 1;
+  source.on('test:summary', ({ success, file }) => { if (file === undefined) status = success ? 0 : 1; });
+  const terminal = compose(source, spec);
+  terminal.pipe(process.stdout, { end: false });
+  const outputs = [finished(terminal, { cleanup: true })];
+  if (reporter) outputs.push(pipeline(source, reporter, createWriteStream(destination, { flush: true })));
+  await Promise.all(outputs);
+  return status;
+}
+
+const ordersTestFiles = (command) => !command.expanded && command.argv.some((arg) => TEST_LIST.test(arg));
 const testAt = (entry) => `${entry.file} :: ${entry.path.join(' > ')}`;
 
 // Whether CI_BASE_SHA names a commit (Task 11092b8b; PLAN-mainpush-flaky-rerun-20261124 §2): null, or why not. The one
@@ -1370,7 +1539,7 @@ function passesAgain(id, { command, argv, failures, report, status, signal, elap
   const timeout = Math.max(2 * Math.ceil(elapsed), minTimeout);
   const clock = clockRun(id, root, env);
   const dir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-again-`));
-  let text = '';
+  let again = null;
   let result;
   try {
     // What the first run left in its temporary directory is not there for this one.
@@ -1380,10 +1549,11 @@ function passesAgain(id, { command, argv, failures, report, status, signal, elap
     log(`::group::${id}: run again in full (timeout ${Math.ceil(timeout / 1000)} s): (${command.cwd}) ${argv.join(' ')}`);
     const run = resolveCommand(withReporter(argv, path.join(dir, 'failures.jsonl')), { platform });
     result = spawn(run[0], run.slice(1), { cwd, env: { ...Object.fromEntries(kept), TEMP: temp, TMP: temp, TMPDIR: temp, ...clock.env },
-      stdio: 'inherit', timeout });
+      stdio: 'inherit', timeout, orderedTests: ordersTestFiles(command) });
     log('::endgroup::');
-    text = readReportFile(path.join(dir, 'failures.jsonl'));
+    again = readReport(readReportFile(path.join(dir, 'failures.jsonl')), root);
   } finally {
+    logFileSeconds(id, again, command, argv, log);
     // Removing it never decides the command (a process the run left may still hold a file there).
     try {
       rmSync(dir, { recursive: true, force: true });
@@ -1391,7 +1561,6 @@ function passesAgain(id, { command, argv, failures, report, status, signal, elap
       log(`${id}: could not remove ${dir}: ${error?.message ?? error}`);
     }
   }
-  const again = readReport(text, root);
   const failed = again.events.filter((event) => event.type === 'fail');
   const problems = new Set();
   const clockUses = clock.refused(log);
@@ -1457,33 +1626,33 @@ function clockRun(id, root, env) {
 }
 
 // The CI process or the already guarded worker executes the suite here.
-export function executeSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
+export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCommand, log = console.log, platform = process.platform,
   captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : ''),
-  rerunMaxElapsedMs = RERUN_MAX_ELAPSED_MS, rerunMinTimeoutMs = RERUN_MIN_TIMEOUT_MS, shard = null, shardSecondsFile = SHARD_SECONDS_PATH } = {}) {
+  rerunMaxElapsedMs = RERUN_MAX_ELAPSED_MS, rerunMinTimeoutMs = RERUN_MIN_TIMEOUT_MS, shard = null, shardSecondsFile = SHARD_SECONDS_PATH,
+  commandTimeoutMs = COMMAND_TIMEOUT_MS } = {}) {
   const host = hostLacks(env);
   if (host.error) {
     log(`::error title=${id}::${host.error}`);
     return 2;
   }
   if (shard && (files || captureKnown)) throw new Error('--shard splits a suite run, not --run-files or --write-known');
-  if (captureKnown) return writeKnown(id, root, env, keep);
+  if (captureKnown) return writeKnown(id, root, env, keep, log);
   // A suite whose trusted commands compare with the base stops here without one, before its first command, rather than
   // after every command ahead of the one that takes it (task 700f2b68). --run-files plans {base} commands out (planFiles).
   if (!files && missingBase(env.CI_BASE_SHA) && (SUITE_COMMANDS[id] ?? []).some((command) => command.argv.includes('{base}'))) {
     log(`::error title=${id}::${BASE_REQUIRED}; no command started. A CI job sets it in the step that runs the suite; locally: CI_BASE_SHA=$(git merge-base HEAD origin/main)`);
     return 2;
   }
-  // The global number of this suite's next unit (parseShard).
-  let position = shard ? shardOffset(id) : 0;
-  // The seconds the shard packs files by, read only here; the first line names the table (entries, a digest of them) so
-  // the shards' logs show they all read the same one.
-  let seconds = null;
+  let shardPlan = shard?.plan;
   if (shard) {
-    const { table, problem } = readShardSeconds(shardSecondsFile);
-    seconds = table;
+    if (!shardPlan) {
+      const { table, info } = shardTiming(shardSecondsFile);
+      const steps = planSuiteShards([id], { root, env, total: shard.total, seconds: table }).get(id);
+      shardPlan = { steps, info };
+    }
+    const { problem, size, digest } = shardPlan.info;
     if (problem) log(`::notice title=${id} shard seconds::${problem}`);
-    const digest = createHash('sha256').update(JSON.stringify([...table])).digest('hex').slice(0, 12);
-    log(`${id}: ${shard.lane ? '道' : 'shard'} ${shard.index}/${shard.total}, units numbered from ${position}; 按秒数分片，表 ${table.size} 条（${digest}）`);
+    log(`${id}: ${shard.lane ? '道' : 'shard'} ${shard.index}/${shard.total}; 按秒数分片，表 ${size} 条（${digest}）`);
   }
   const skipSwitches = hostLacksSwitches(host.lacks);
   // A lane's node --test runs at most its share of the cores (laneTestConcurrency), so n lanes do not each start one
@@ -1493,38 +1662,38 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
   // The trusted commands, then the candidate's additions (read once the trusted ones have run), or, for a suite only the
   // candidate has, the candidate's commands (requiredCommands throws for a suite neither has).
-  let steps = (function* plan() {
+  let steps = shardPlan?.steps ?? (function* plan() {
     for (const command of requiredCommands(id, root, { env, base: env.CI_BASE_SHA, report })) yield { command, argv: null };
   }());
   let named = null;
   if (files) {
     try {
-      ({ steps, named } = planFiles(id, { root, files, env }));
+      ({ steps, named } = planFiles(id, { root, files, env, shardSecondsFile }));
     } catch (error) {
       if (!(error instanceof RunFilesError)) throw error;
       log(`run-files ${id}: ${error.message}`);
       return 2;
     }
   }
-  for (const { command, argv: planned } of steps) {
+  for (const step of steps) {
+    const { command, argv: planned } = step;
     const cwd = path.join(root, command.cwd);
-    const full = planned ?? commandArgv(command, { cwd, root, base: env.CI_BASE_SHA, report, hosted: env.GITHUB_ACTIONS === 'true' });
+    const full = planned ?? commandArgv(command, { cwd, root, base: env.CI_BASE_SHA, report, hosted: env.GITHUB_ACTIONS === 'true', shardSecondsFile });
     let given = full;
     // A known failure counts in this shard when its file is one of the shard's, or one the command no longer lists and the
     // shard has the command's first file (one shard warns that it no longer runs, as without --shard).
     let shardKnown = null;
     let part = null;
     if (shard) {
-      part = shardPart(command, full, shard, position, seconds);
-      position += part.units;
-      if (part.accepts.length > 0) {
-        const hits = part.accepts.filter((file) => seconds.has(file)).length;
-        log(`${id}: 按秒数分片，表里命中 ${hits} / 本命令 ${part.accepts.length} 个文件`);
+      part = shardPart(step, shard.index);
+      if (step.accepts.length > 0) {
+        const hits = step.units.filter((unit) => unit.timed).length;
+        log(`${id}: 按秒数分片，表里命中 ${hits} / 本命令 ${step.accepts.length} 个文件`);
       }
       // How much of the suite the shard ran, for runSelected's summary (review M2).
       if (shard.tally) {
         shard.tally.units += part.units;
-        if (part.argv) shard.tally.ran += part.files ? part.files.size : 1;
+        if (part.argv) shard.tally.ran += part.files ? part.files.size : part.units;
       }
       if (!part.argv) continue;
       given = part.argv;
@@ -1560,7 +1729,9 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
     const run = resolveCommand(argv, { platform });
     const clock = clockRun(id, root, env);
     const started = performance.now();
-    const result = spawn(run[0], run.slice(1), { cwd, env: { ...testEnv(env), ...clock.env }, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
+    const result = spawn(run[0], run.slice(1), { cwd, env: { ...testEnv(env), ...clock.env }, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit',
+      orderedTests: ordersTestFiles(command),
+      timeout: commandTimeoutMs, killSignal: 'SIGKILL' });
     const elapsed = performance.now() - started;
     if (command.quiet && result.stdout) {
       // The runner budget report is long; print its head on success, all of it on failure.
@@ -1568,12 +1739,36 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
       log(result.status === 0 ? `${text.split('\n').slice(0, 4).join('\n')}\n...` : text);
     }
     log('::endgroup::');
-    // What each of the shard's files took on this first run, for --write-shard-seconds; never part of the verdict.
-    if (part?.files && reportDir && !result.error) {
+    // Timing is diagnostic, including a partial report from a command that timed out.
+    let ran = null;
+    if (reportDir) {
       try {
-        const timed = shardSecondsOf(readReport(readReportFile(path.join(reportDir, 'failures.jsonl')), root), part.files);
-        log(`${id}: shard-seconds ${JSON.stringify(timed)}`);
-      } catch { /* no seconds this run */ }
+        ran = readReport(readReportFile(path.join(reportDir, 'failures.jsonl')), root);
+      } catch { /* timing does not decide the command */ }
+      logFileSeconds(id, ran, command, plain, log);
+    }
+    if (part && !part.files && !result.error) {
+      log(`${id}: whole-seconds ${JSON.stringify({ [wholeShardKey(step)]: Math.round(elapsed / 100) / 10 })}`);
+    }
+    // At the limit (COMMAND_TIMEOUT_MS) the command fails, a known-failure command too (no verdict), with what never ended.
+    if (result.error?.code === 'ETIMEDOUT') {
+      log(`::error::${id}: ${shown.join(' ')} 超过 ${limitText(commandTimeoutMs)}被终止`);
+      if (reportDir) {
+        let open = [];
+        try {
+          open = unfinishedTests(readReportFile(path.join(reportDir, 'failures.jsonl')), root);
+        } catch (error) {
+          log(`${id}: the test report cannot be read (${error?.message ?? error})`);
+        }
+        for (const entry of open.slice(0, UNFINISHED_SHOWN)) log(`::error title=${id} 开始了没结束::${entry.file ?? '<run>'} :: ${entry.name}`);
+        if (open.length > UNFINISHED_SHOWN) log(`${id}: 另有 ${open.length - UNFINISHED_SHOWN} 条开始了没结束`);
+        try {
+          rmSync(reportDir, { recursive: true, force: true });
+        } catch { /* a temporary directory left behind */ }
+      } else {
+        log(`${id}: 本命令无受信报告，列不出用例`);
+      }
+      return 1;
     }
     if (result.error) {
       dropReport();
@@ -1603,10 +1798,9 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
     if (command.known) {
       const list = ((known ?? readKnownFailures())[command.known] ?? [])
         .filter((entry) => (!named || named.has(entry.file)) && (!shardKnown || shardKnown(entry.file)));
-      const text = readReportFile(path.join(reportDir, 'failures.jsonl'));
+      ran ??= readReport(readReportFile(path.join(reportDir, 'failures.jsonl')), root);
       rmSync(reportDir, { recursive: true, force: true });
       const status = result.signal ? 128 : result.status;
-      const ran = readReport(text, root);
       const verdict = knownFailureVerdict({ status, report: ran, known: list });
       const label = (entry) => `${entry.file} :: ${entry.path.join(' > ')}`;
       for (const entry of verdict.expected) log(`::warning title=${id} known failure::${label(entry)}`);
@@ -1630,9 +1824,8 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
     if (result.status !== 0) {
       log(`${id}: ${shown.join(' ')} exited ${result.status ?? result.signal}`);
       if (reportDir) {
-        let ran = null;
         try {
-          ran = readReport(readReportFile(path.join(reportDir, 'failures.jsonl')), root);
+          ran ??= readReport(readReportFile(path.join(reportDir, 'failures.jsonl')), root);
         } catch (error) {
           log(`${id}: not run again in full: the test report cannot be read (${error?.message ?? error})`);
         }
@@ -1659,8 +1852,8 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
 // Stop-loss: a timing failure lanes bring lowers LANES_MAX, then CI_SELECTED_LANES=1 (the design's 止损).
 export const LANES_MAX = 3;
 export const LANES_VARIABLE = 'CI_SELECTED_LANES';
-export function laneCount({ cores = os.availableParallelism(), env = process.env, shard = null } = {}) {
-  if (shard || env.GITHUB_ACTIONS !== 'true') return 1;
+export function laneCount({ cores = os.availableParallelism(), env = process.env, shard = null, suites = [] } = {}) {
+  if (shard || env.GITHUB_ACTIONS !== 'true' || suites.some((id) => SUITE_COMMANDS[id]?.some((command) => command.every))) return 1;
   const ceiling = Math.max(1, Math.min(LANES_MAX, Math.floor(cores / 4)));
   const asked = env[LANES_VARIABLE];
   if (asked === undefined || asked === '') return ceiling;
@@ -1674,13 +1867,14 @@ export const laneTestConcurrency = (cores, lanes) => Math.max(2, Math.floor((cor
 // inherited it): the part ends LANE_DRAIN_MS after its process exits, with the output read by then, and says so in a
 // notice line (what that process writes later is not in the log; review M2).
 export const LANE_DRAIN_MS = 5_000;
-const LANE_PART = `const [url, id, root, index, total, concurrency, out] = process.argv.slice(1);
-const { writeFileSync } = await import('node:fs');
+const LANE_PART = `const [url, id, root, index, total, concurrency, out, input] = process.argv.slice(1);
+const { readFileSync, writeFileSync } = await import('node:fs');
 const { runSuite } = await import(url);
 const tally = { units: 0, ran: 0 };
 let status = 1;
 try {
-  status = await runSuite(id, { root, shard: { index: Number(index), total: Number(total), tally, lane: true, concurrency: Number(concurrency) } });
+  const plan = input ? JSON.parse(readFileSync(input, 'utf8')) : undefined;
+  status = await runSuite(id, { root, shard: { index: Number(index), total: Number(total), tally, plan, lane: true, concurrency: Number(concurrency) } });
 } catch (error) {
   console.log('::error title=' + id + '::' + error.message);
 }
@@ -1688,10 +1882,12 @@ writeFileSync(out, JSON.stringify({ status, tally }));`;
 export function runLanePart(id, { root, env = process.env, lane, drainMs = LANE_DRAIN_MS }) {
   const dir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-lane-`));
   const out = path.join(dir, 'result.json');
+  const input = lane.plan ? path.join(dir, 'plan.json') : '';
+  if (input) writeFileSync(input, JSON.stringify(lane.plan));
   return new Promise((resolve) => {
     const chunks = [];
     const child = spawnAsync(process.execPath, ['--input-type=module', '-e', LANE_PART, import.meta.url, id, root,
-      String(lane.index), String(lane.total), String(lane.concurrency), out], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      String(lane.index), String(lane.total), String(lane.concurrency), out, input], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     child.stdout.on('data', (chunk) => chunks.push(chunk));
     child.stderr.on('data', (chunk) => chunks.push(chunk));
     let done = false;
@@ -1727,8 +1923,8 @@ export function runLanePart(id, { root, env = process.env, lane, drainMs = LANE_
 // one fails (so the summary names each); any failure fails the step, and with
 // it the check. Nothing selected is a pass: the change touches no suite of
 // this platform.
-export async function runSelected(suites, { root, env = process.env, run = runSuite, log = console.log, summary = () => {}, shard = null,
-  cores = os.availableParallelism(), runPart = runLanePart } = {}) {
+export async function runSelected(suites, { root, env = process.env, run = runSuiteWithCandidate, log = console.log, summary = () => {}, shard = null,
+  cores = os.availableParallelism(), runPart = runLanePart, check = null, platform = hostPlatform(), shardSecondsFile = SHARD_SECONDS_PATH } = {}) {
   const host = hostLacks(env);
   if (host.error) {
     log(`::error title=${HOST_LACKS_VARIABLE}::${host.error}`);
@@ -1740,7 +1936,23 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
     summary(`- ${hostLacksNote(host.lacks)}\n`);
   }
   const failed = [];
-  const lanes = laneCount({ cores, env, shard });
+  const lanes = laneCount({ cores, env, shard, suites });
+  let planFor = () => undefined;
+  if (suites.length > 0 && (shard || (lanes > 1 && check))) {
+    try {
+      const { table, info } = shardTiming(shardSecondsFile);
+      const options = { root, env, total: shard?.total ?? lanes, seconds: table };
+      const plans = check ? planShards(check, { ...options, platform }) : planSuiteShards(suites, options);
+      for (const id of suites) {
+        if (!plans.has(id)) throw new Error(`suite ${id} is missing from the full shard plan`);
+      }
+      planFor = (id) => ({ steps: plans.get(id), info });
+    } catch (error) {
+      log(`::error title=${check ?? 'shard plan'}::${error.message}`);
+      summary(`- **Shard plan failed**: ${error.message}\n`);
+      return 1;
+    }
+  }
   if (lanes > 1 && suites.length > 0) {
     const concurrency = laneTestConcurrency(cores, lanes);
     log(`${suites.length} 个套件分 ${lanes} 道并行（本机 ${cores} 核，每道 node --test 并发 ${concurrency}；${LANES_VARIABLE} 可压低），道内依次跑`);
@@ -1755,7 +1967,7 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
         const begun = performance.now();
         let part;
         try {
-          part = await runPart(id, { root, env, lane });
+          part = await runPart(id, { root, env, lane: { ...lane, plan: planFor(id) } });
         } catch (error) {
           part = { status: 1, output: `::error title=${id}::${error.message}\n`, tally: null };
         }
@@ -1766,7 +1978,16 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
       }
     }));
     for (const id of suites) {
-      const status = parts.get(id).find((part) => part.status !== 0)?.status ?? 0;
+      let status = parts.get(id).find((part) => part.status !== 0)?.status ?? 0;
+      // All the trusted lanes must pass before the candidate entry runs the suite once.
+      if (status === 0) {
+        try {
+          status = runCandidateSuite(id, { root, env, log });
+        } catch (error) {
+          log(`::error title=${id}::${error.message}`);
+          status = 1;
+        }
+      }
       summary(`- \`${id}\`: ${status === 0 ? 'passed' : '**failed**'}\n`);
       if (status !== 0) failed.push(id);
     }
@@ -1780,7 +2001,7 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
     let status = 1;
     const tally = { units: 0, ran: 0 };
     try {
-      status = await run(id, shard ? { root, env, log, shard: { index: shard.index, total: shard.total, tally } } : { root, env, log });
+      status = await run(id, shard ? { root, env, log, shard: { index: shard.index, total: shard.total, tally, plan: planFor(id) } } : { root, env, log });
     } catch (error) {
       // e.g. a candidate selector whose command list cannot be read: this suite fails, the next ones still run
       log(`::error title=${id}::${error.message}`);
@@ -1826,7 +2047,7 @@ export function knownEntriesFromReport(report, previous = [], { keep = false } =
 
 // --write-known <suite>: run that suite's known-failure command in the checkout
 // and rewrite its entries in ci-known-failures.json from the run.
-function writeKnown(id, root, env, keep = false) {
+function writeKnown(id, root, env, keep, log) {
   const command = SUITE_COMMANDS[id]?.find((candidate) => candidate.known);
   if (!command) throw new Error(`suite ${id} has no known-failure command`);
   const cwd = path.join(root, command.cwd);
@@ -1837,6 +2058,7 @@ function writeKnown(id, root, env, keep = false) {
   spawnSync(argv[0], [...argv.slice(1, index + 1), `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`,
     `--test-reporter-destination=${out}`, ...argv.slice(index + 1)], { cwd, env: testEnv(env), stdio: ['ignore', 'ignore', 'inherit'] });
   const report = readReport(existsSync(out) ? readFileSync(out, 'utf8') : '', root);
+  logFileSeconds(id, report, command, argv, log);
   rmSync(dir, { recursive: true, force: true });
   if (!report.summary) throw new Error('the run did not finish; nothing written');
   const data = JSON.parse(readFileSync(KNOWN_FAILURES_PATH, 'utf8'));
@@ -1847,9 +2069,8 @@ function writeKnown(id, root, env, keep = false) {
   return unexplained ? 1 : 0;
 }
 
-// --write-shard-seconds <log>...: rewrite ci-shard-seconds.json, the whole of it, from the shard-seconds lines of --shard job
-// logs (executeSuite): each file's median over its samples, rounded to whole seconds, files under 3 seconds left out, keys
-// sorted. The only way the table is written. A log it cannot read, or no shard-seconds line at all, writes nothing.
+// Rewrite the table from file-seconds, whole-seconds and older shard-seconds lines: each key's median, rounded to whole
+// seconds, keys under 3 seconds left out. An unreadable log or no timing samples leaves the table as it was.
 export function writeShardSeconds(logs, { file = SHARD_SECONDS_PATH, log = console.log } = {}) {
   const samples = new Map();
   if (logs.length === 0) {
@@ -1865,7 +2086,7 @@ export function writeShardSeconds(logs, { file = SHARD_SECONDS_PATH, log = conso
       return 1;
     }
     for (const line of text.split(/\r?\n/)) {
-      const match = /: shard-seconds (\{.*\})\s*$/.exec(line);
+      const match = /: (?:file|shard|whole)-seconds (\{.*\})(?: metronome \S+)?\s*$/.exec(line);
       if (!match) continue;
       let data;
       try {
@@ -1875,13 +2096,13 @@ export function writeShardSeconds(logs, { file = SHARD_SECONDS_PATH, log = conso
       }
       if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
       for (const [key, value] of Object.entries(data)) {
-        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) continue;
+        if (!validShardKey(key) || !Number.isFinite(value) || value < 0 || value > Number.MAX_SAFE_INTEGER) continue;
         samples.set(key, [...(samples.get(key) ?? []), value]);
       }
     }
   }
   if (samples.size === 0) {
-    log('write-shard-seconds: no shard-seconds line in the logs; nothing written');
+    log('write-shard-seconds: no valid timing samples in the logs; nothing written');
     return 1;
   }
   const median = (values) => {
@@ -1895,12 +2116,40 @@ export function writeShardSeconds(logs, { file = SHARD_SECONDS_PATH, log = conso
     if (seconds >= 3) table[key] = Math.round(seconds);
   }
   writeFileSync(file, `${JSON.stringify(table, null, 2)}\n`);
-  log(`write-shard-seconds: ${Object.keys(table).length} files written to ${path.basename(file)} (of ${samples.size} timed)`);
+  log(`write-shard-seconds: ${Object.keys(table).length} keys written to ${path.basename(file)} (of ${samples.size} timed)`);
   return 0;
 }
 
 const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>] | --run-selected <check> [--root <checkout>] [--shard <i>/<n>] | --run <suite> [--root <checkout>] | --run-files <suite> <file> [<file>...] [--root <checkout>] | --run-prepush --root <tree> | --write-shard-seconds <log> [<log>...]';
 export const LOCAL_TIMEOUT_EXIT = 75;
+
+function gitToolchainRefusal(env) {
+  // Match the policy to this selector's checkout. A candidate passed through --root cannot change the trusted baseline.
+  const platform = process.platform === 'win32' ? 'windows' : process.platform;
+  let policy;
+  try {
+    policy = JSON.parse(readFileSync(new URL('../../config/ci-toolchain.json', import.meta.url), 'utf8'));
+  } catch (error) {
+    return `环境不符：无法读取 config/ci-toolchain.json 的 Git 声明（${error.message}）`;
+  }
+  const declared = policy?.[platform]?.git;
+  if (declared === undefined) {
+    return `环境不符：config/ci-toolchain.json 的 Git 声明缺少本平台（${platform}，${process.platform}）`;
+  }
+  if (typeof declared !== 'string' || !/^\d+\.\d+\.\d+$/.test(declared)) {
+    return '环境不符：config/ci-toolchain.json 的 Git 声明必须包含主、次和补丁版本';
+  }
+  const result = spawnSync('git', ['--version'], { cwd: ROOT, env, encoding: 'utf8', timeout: 10_000, windowsHide: true });
+  const actual = /^git version (\d+\.\d+\.\d+\S*)(?:\s|$)/.exec(result.stdout ?? '')?.[1];
+  if (result.status !== 0 || !actual) {
+    const reason = result.error?.message || (result.status !== 0 ? `退出 ${result.status ?? result.signal}` : '输出格式无效');
+    return `环境不符：声明 ${declared}，实际未知（git --version：${reason}）`;
+  }
+  if (declared.split('.').slice(0, 2).join('.') !== actual.split('.').slice(0, 2).join('.')) {
+    return `环境不符：声明 ${declared}，实际 ${actual}`;
+  }
+  return null;
+}
 
 async function main(argv, env = process.env) {
   try {
@@ -1919,7 +2168,7 @@ async function main(argv, env = process.env) {
   if (secondsIndex >= 0) {
     const logs = argv.slice(secondsIndex + 1);
     if (logs.length === 0 || logs.some((arg) => arg.startsWith('--'))) {
-      console.error(`--write-shard-seconds <log> [<log>...] takes the --shard job logs and nothing else\n${USAGE}`);
+      console.error(`--write-shard-seconds <log> [<log>...] takes the test-run logs and nothing else\n${USAGE}`);
       return 2;
     }
     return writeShardSeconds(logs);
@@ -1942,7 +2191,7 @@ async function main(argv, env = process.env) {
       console.error(`${error.message}\n${USAGE}`);
       return 2;
     }
-    if (!argv.includes('--run-selected')) {
+    if (!argv.includes('--run-selected') && !(argv.includes('--run') && env[CANDIDATE_PASS] === '1')) {
       console.error(`--shard goes with --run-selected only\n${USAGE}`);
       return 2;
     }
@@ -1999,26 +2248,29 @@ async function main(argv, env = process.env) {
     });
   }
   const runIndex = argv.indexOf('--run');
+  const selectedIndex = argv.indexOf('--run-selected');
+  const target = argv[(runIndex >= 0 ? runIndex : selectedIndex) + 1];
+  if (runIndex >= 0 || (selectedIndex >= 0 && Object.hasOwn(SUITES, target))) {
+    const baseRefusal = ciBaseRefusal(env);
+    if (baseRefusal) {
+      console.log(`::error title=${target} CI_BASE_SHA::${baseRefusal}`);
+      return 2;
+    }
+    const toolchainRefusal = gitToolchainRefusal(env);
+    if (toolchainRefusal) {
+      console.error(toolchainRefusal);
+      return 2;
+    }
+  }
   if (runIndex >= 0) {
     const rootIndex = argv.indexOf('--root');
     const root = rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT;
-    const refusal = ciBaseRefusal(env);
-    if (refusal) {
-      console.log(`::error title=${argv[runIndex + 1]} CI_BASE_SHA::${refusal}`);
-      return 2;
-    }
-    return runSuite(argv[runIndex + 1], { root, env });
+    return runSuiteWithCandidate(target, { root, env, shard });
   }
-  const selectedIndex = argv.indexOf('--run-selected');
   const index = selectedIndex >= 0 ? selectedIndex : argv.indexOf('--check');
   const check = index >= 0 ? argv[index + 1] : undefined;
-  if (!SUITES[check]) {
+  if (!Object.hasOwn(SUITES, check)) {
     console.error(USAGE);
-    return 2;
-  }
-  const refusal = selectedIndex >= 0 ? ciBaseRefusal(env) : null;
-  if (refusal) {
-    console.log(`::error title=${check} CI_BASE_SHA::${refusal}`);
     return 2;
   }
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};
@@ -2038,7 +2290,7 @@ async function main(argv, env = process.env) {
   const summary = (text) => { if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, text); };
   summary(`### ${check}\n\n${selection.reason}.\n\nSuites (${platform}): ${selection.suites.map((id) => `\`${id}\``).join(', ') || 'none (not affected)'}\n`);
   if (selectedIndex < 0) return error ? 1 : 0;
-  const status = await runSelected(selection.suites, { root, env, summary, ...(shard ? { shard } : {}) });
+  const status = await runSelected(selection.suites, { root, env, summary, check, platform, ...(shard ? { shard } : {}) });
   return status !== 0 ? status : error ? 1 : 0;
 }
 
@@ -2060,5 +2312,6 @@ export function runEntry(run) {
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
-  runEntry(() => main(process.argv.slice(2)));
+  const args = process.argv.slice(2);
+  runEntry(() => args[0] === ORDERED_NODE_TESTS ? runOrderedNodeTests(args.slice(1)) : main(args));
 }

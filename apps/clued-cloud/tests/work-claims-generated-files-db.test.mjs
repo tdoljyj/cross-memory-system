@@ -1,13 +1,12 @@
-import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
@@ -22,23 +21,16 @@ const sha256 = text => crypto.createHash('sha256').update(text, 'utf8').digest('
 // Wholly generated outputs and one hand-written marker file (generated lines only).
 const artifacts = [...policy.mechanical_paths.map(p => p.endsWith('/**') ? p.slice(0, -2) + 'components.ts' : p), policy.marker_paths[0]];
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise(resolve => listener.close(resolve));
-  return port;
-}
 
 test('mechanical files do not serialize independent source claims or widen source authority',
   { timeout: 300000 }, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-mech-'));
-  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: hash(),
-    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
+  const server = newCluster({ databaseDir: directory, user: 'postgres', password: hash(),
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
   const clients = [];
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     process.stderr.write('mechanical fixture started own PostgreSQL pid=' + server.process?.pid + '\n');
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;
