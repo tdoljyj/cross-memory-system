@@ -247,13 +247,18 @@ create table clued_private.ci_train_required_runs_v2 (
 );
 create table clued_private.ci_train_required_recovery_v2 (
   batch_id text not null references clued_private.ci_train_batches_v2(batch_id),
+  user_id uuid not null,
+  project_id uuid not null,
+  repository_id bigint not null,
+  target_branch text not null,
   run_id bigint not null,
   attempt integer not null check (attempt between 2 and 3),
   actor_id bigint not null,
   generation bigint not null,
   state text not null check (state in ('reserved','sent','unknown','settled')),
   receipt_id uuid not null references public.clued_audit_receipts(id),
-  primary key (batch_id,run_id,attempt)
+  primary key (batch_id,run_id,attempt),
+  unique (user_id,project_id,repository_id,target_branch,run_id,attempt)
 );
 alter table clued_private.ci_train_required_runs_v2 enable row level security;
 alter table clued_private.ci_train_required_recovery_v2 enable row level security;
@@ -376,9 +381,14 @@ begin
       if exists(select 1 from clued_private.ci_train_required_recovery_v2 r where r.batch_id=batch.batch_id
         and r.run_id=observed_run_id and r.state<>'settled') then
         return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+      if exists(select 1 from clued_private.ci_train_required_recovery_v2 r
+        where (r.user_id,r.project_id,r.repository_id,r.target_branch)=(batch.user_id,batch.project_id,batch.repository_id,batch.target_branch)
+          and r.run_id=observed_run_id and r.attempt=next_attempt) then
+        return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
       receipt:=clued_private.ci_receipt_v1(n.user_id,n.project_id,'ci_train_required_run_recovery_reserve',batch.batch_id,payload);
       insert into clued_private.ci_train_required_recovery_v2
-        values(batch.batch_id,observed_run_id,next_attempt,actor,batch.generation,'reserved',receipt) returning * into repair;
+        values(batch.batch_id,batch.user_id,batch.project_id,batch.repository_id,batch.target_branch,
+          observed_run_id,next_attempt,actor,batch.generation,'reserved',receipt) returning * into repair;
     elsif repair.batch_id is null then
       return clued_private.ci_train_reject_v2('ci_effect_unknown');
     elsif op='required_run_recovery_send' then

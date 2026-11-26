@@ -1826,10 +1826,10 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
     assert.equal(data(await call(builder, 'claim_adopt', { ...adopt, member: { ...members[0], epoch: subject.execution_epoch+1 } })).error_code,
       TRAIN_FAILURE.LEASE_STALE.native);
     const newerHead = sha('newer head before old landing adopt');
-    const current = await one(admin, 'select lease_version from clued_private.work_claims_v1 where claim_id=$1', [f.claim.claim_id]);
+    const currentLease = await one(admin, 'select lease_version from clued_private.work_claims_v1 where claim_id=$1', [f.claim.claim_id]);
     f.committed(await workerGatewayRpc(f.gateway, 'clued_work_renew_v1', f.token, {
       scope: 'project:' + project, action: 'authorize_head', claim_id: f.claim.claim_id, fence: f.claim.fence,
-      lease_version: Number(current.lease_version), ...(f.claimResult.lease_key ? { lease_key: f.claimResult.lease_key } : {}),
+      lease_version: Number(currentLease.lease_version), ...(f.claimResult.lease_key ? { lease_key: f.claimResult.lease_key } : {}),
       repository, head_sha: newerHead, target_branch: 'main', pr_number: pr, idempotency_key: uuid(),
     }));
     const adopted = data(await call(builder, 'claim_adopt', adopt));
