@@ -71,9 +71,14 @@ export default function LaunchDecisionPanel({ session, scope, projectScopes, loc
   return <details className="imprints-detail" onToggle={event => setOpened(event.currentTarget.open)}>
     <summary>{t.title}</summary>
     {opened && (allowed
-      ? <Lookup session={session} scope={scope} projectScopes={projectScopes} locale={locale} rpc={rpc} />
+      ? <Lookup key={JSON.stringify([session.user.id, scope])} session={session} scope={scope} projectScopes={projectScopes} locale={locale} rpc={rpc} />
       : <p role="status">{t.choose}</p>)}
   </details>;
+}
+
+function abortRequest(request: { current: AbortController | null }) {
+  request.current?.abort();
+  request.current = null;
 }
 
 function Lookup({ session, scope, projectScopes, locale, rpc }: {
@@ -81,27 +86,53 @@ function Lookup({ session, scope, projectScopes, locale, rpc }: {
 }) {
   const t = COPY[locale];
   const [question, setQuestion] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [pendingSession, setPendingSession] = useState<Session | null>(null);
+  const [invalidSession, setInvalidSession] = useState<Session | null>(null);
   const [result, setResult] = useState<{ session: Session; scope: string; value: LaunchAnswer } | null>(null);
   const [source, setSource] = useState<{ answer: LaunchAnswer; quote: DecisionQuote; value: LaunchSource | null } | null>(null);
   const lookup = useRef<AbortController | null>(null);
   const attachment = useRef<AbortController | null>(null);
-  const principalInvalid = useRef(false);
-  function stopAttachment() { attachment.current?.abort(); attachment.current = null; }
-  function stopRequests() { lookup.current?.abort(); lookup.current = null; stopAttachment(); }
-  function clearResult() { stopRequests(); setBusy(false); setResult(null); setSource(null); }
+  const fence = useRef<{ session: Session; scope: string; valid: boolean } | null>(null);
+  const invalid = invalidSession?.user.id === session.user.id && invalidSession.access_token === session.access_token;
+  const busy = !invalid && pendingSession === session;
+  const answer = !invalid && result?.session === session && result.scope === scope ? result.value : null;
+
+  function clearResult() {
+    abortRequest(lookup);
+    abortRequest(attachment);
+    setPendingSession(null);
+    setResult(null);
+    setSource(null);
+  }
 
   useLayoutEffect(() => {
-    principalInvalid.current = false;
-    clearResult();
+    const bound = { session, scope, valid: true };
+    fence.current = bound;
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, next) => {
-      if (next?.user.id !== session.user.id || next?.access_token !== session.access_token) {
-        principalInvalid.current = true;
-        clearResult();
-      }
+      if (!bound.valid || (next?.user.id === session.user.id && next.access_token === session.access_token)) return;
+      // Invalidate immediately, before old RPCs can settle and before parent
+      // Session props refresh. React state, not the imperative fence, gates the DOM.
+      bound.valid = false;
+      abortRequest(lookup);
+      abortRequest(attachment);
+      setInvalidSession(session);
+      setPendingSession(null);
+      setResult(null);
+      setSource(null);
     });
-    return () => { stopRequests(); subscription.unsubscribe(); };
+    return () => {
+      bound.valid = false;
+      fence.current = null;
+      abortRequest(lookup);
+      abortRequest(attachment);
+      subscription.unsubscribe();
+    };
   }, [session, scope]);
+
+  function liveFence() {
+    const bound = fence.current;
+    return !invalid && bound?.session === session && bound.scope === scope && bound.valid ? bound : null;
+  }
 
   // RPC uses the already signed token snapshot bound by the containing
   // ImprintPanel. getUser verifies that exact snapshot before and after reads.
@@ -111,25 +142,26 @@ function Lookup({ session, scope, projectScopes, locale, rpc }: {
   }
   async function ask(event: FormEvent) {
     event.preventDefault();
+    const bound = liveFence();
+    if (!bound || !question.trim()) return;
     clearResult();
-    if (!question.trim() || principalInvalid.current) return;
     const controller = new AbortController();
     lookup.current = controller;
-    setBusy(true);
-    const active = () => lookup.current === controller && !controller.signal.aborted && !principalInvalid.current;
+    setPendingSession(session);
+    const active = () => bound.valid && lookup.current === controller && !controller.signal.aborted;
     const value = await runLaunchDecision({
       owner: session.user.id, sessionIdentity: session, scope, projectScopes, isCurrent: active, verifyOwner, read: rpc,
     }, question, controller.signal);
-    if (active()) { setResult({ session, scope, value }); setBusy(false); lookup.current = null; }
+    if (active()) { setResult({ session, scope, value }); setPendingSession(null); lookup.current = null; }
   }
-  const answer = !principalInvalid.current && result?.session === session && result.scope === scope ? result.value : null;
   async function showSource(a: LaunchAnswer, quote: DecisionQuote, evidenceId: string) {
-    if (a !== answer || principalInvalid.current) return;
-    stopAttachment();
+    const bound = liveFence();
+    if (!bound || a !== answer) return;
+    abortRequest(attachment);
     const controller = new AbortController();
     attachment.current = controller;
     setSource({ answer: a, quote, value: null });
-    const active = () => attachment.current === controller && !controller.signal.aborted && !principalInvalid.current;
+    const active = () => bound.valid && attachment.current === controller && !controller.signal.aborted;
     const value = await runLaunchSource({
       owner: session.user.id, sessionIdentity: session, scope, projectScopes, isCurrent: active, verifyOwner, read: rpc,
     }, a, { recordId: quote.recordId, version: quote.version, evidenceId }, controller.signal);
@@ -154,7 +186,7 @@ function Lookup({ session, scope, projectScopes, locale, rpc }: {
     <form className="imprints-tools" onSubmit={ask}>
       <label>{t.question}<input aria-label={t.question} value={question} maxLength={96} placeholder={t.example}
         onChange={event => { clearResult(); setQuestion(event.target.value); }} /></label>
-      <button type="submit" disabled={!question.trim() || busy}>{t.search}</button>
+      <button type="submit" disabled={invalid || !question.trim() || busy}>{t.search}</button>
     </form>
     <div aria-live="polite" aria-label={t.result}>
       {busy && <p>{t.loading}</p>}

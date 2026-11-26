@@ -100,7 +100,8 @@ function fixture(initial = session('owner'), locale = 'zh-CN', initialDevelopmen
         if (Array.isArray(node)) return node.map((item, i) => expand(item, key + '/' + (item?.key ?? i)));
         if (!node || typeof node !== 'object') return node;
         if (typeof node.type === 'function') {
-          const id = key + ':' + node.type.name; seen.add(id); if (!hooks.has(id)) hooks.set(id, []);
+          const id = key + ':' + node.type.name + (node.key == null ? '' : ':' + node.key);
+          seen.add(id); if (!hooks.has(id)) hooks.set(id, []);
           const parent = active, position = cursor; active = hooks.get(id); cursor = 0;
           const child = node.type(node.props); active = parent; cursor = position;
           return expand(child, id);
@@ -1333,6 +1334,51 @@ test("same-tab account change aborts the open source and discards the old respon
   f.setSession(incoming); f.authEvent("SIGNED_IN", incoming);
   await f.respond(i, launchSource());
   assert.ok(!f.text().includes(SOURCE_CURRENT)); assert.ok(!f.text().includes(LAUNCH_OLD));
+  assert.equal(f.calls.filter(c => c.name === "clued_imprint_source_v1").length, 1);
+});
+
+test("a token refresh fences previous-session results before the parent Session prop updates", async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await answerLaunchLookup(f);
+  const i = f.calls.length;
+  openLaunchSource(f, "当前决定原文"); await f.untilCalls(i + 1);
+  const first = f.calls[i];
+  const next = session("owner", "fixture-owner-refreshed");
+  f.authEvent("TOKEN_REFRESHED", next);
+  assert.equal(first.signal.aborted, true);
+  assert.ok(!f.text().includes(LAUNCH_CURRENT));
+  const panel = f.nodes("section").find(n => n.props["aria-label"] === "上线日期问答");
+  const [button] = f.nodes("button", panel);
+  assert.equal(button.props.disabled, true);
+  await f.respond(i, launchSource());
+  assert.ok(!f.text().includes(SOURCE_CURRENT));
+  assert.equal(f.calls.length, i + 1);
+
+  f.setSession(next);
+  const queryAt = f.calls.length;
+  const asked = f.submit("查询");
+  await f.untilCalls(queryAt + 1);
+  assert.equal(f.calls[queryAt].headers.Authorization, "Bearer fixture-owner-refreshed");
+  await f.respond(queryAt, launchPage([])); await asked;
+  assert.match(f.text(), /未找到可核实的正式上线决定/);
+  assert.ok(!f.text().includes(LAUNCH_CURRENT));
+});
+
+test("leaving and reselecting a project cannot revive the old launch decision or late source", async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await answerLaunchLookup(f);
+  const i = f.calls.length;
+  openLaunchSource(f, "当前决定原文"); await f.untilCalls(i + 1);
+  const first = f.calls[i];
+  f.change("查询范围", "all");
+  assert.equal(first.signal.aborted, true);
+  assert.ok(!f.text().includes(LAUNCH_CURRENT));
+  await f.respond(i + 1, launchPage([]));
+  f.change("查询范围", DATE_SCOPE);
+  await f.respond(i + 2, launchPage([]));
+  await f.respond(i, launchSource());
+  assert.equal(f.field("你的问题").props.value, "");
+  assert.ok(!f.text().includes(LAUNCH_CURRENT)); assert.ok(!f.text().includes(SOURCE_CURRENT));
   assert.equal(f.calls.filter(c => c.name === "clued_imprint_source_v1").length, 1);
 });
 
