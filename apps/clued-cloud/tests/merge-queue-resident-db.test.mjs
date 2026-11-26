@@ -162,7 +162,7 @@ test('摘要相同只推进 reported_at，非当班节点的 CI 连接也可上�
   const { rows: [previous] } = await admin.query(`update clued_private.ci_node_queue_view_v1
     set reported_at=reported_at-interval '1 minute', changed_at=changed_at-interval '1 minute'
     where node_id=$1 returning reported_at,changed_at,view_digest`, [nodeId]);
-  const { rows: [role] } = await admin.query(`select effective_at from clued_private.binding_roles_v1
+  const { rows: [role] } = await admin.query(`select effective_at::text from clued_private.binding_roles_v1
     where binding_id=$1 and role='ci-admission'`, [binding]);
   await admin.query(`update clued_private.binding_roles_v1 set effective_at=now()+interval '1 hour'
     where binding_id=$1 and role='ci-admission'`, [binding]);
