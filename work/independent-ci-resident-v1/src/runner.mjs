@@ -34,6 +34,8 @@ export const JOB_HOST_GRACE_MS = 60_000;
 export const PR_HEAD_JOB_HOST_GRACE_MS = 35_000;
 export const JOB_HOST_MIN_TIMEOUT_MS = 1000;
 export const JOB_HOST_MAX_TIMEOUT_MS = 3_600_000;
+export const RUNNER_BUSY_WITH_UNFINISHED_CHILD = 'RUNNER_BUSY_WITH_UNFINISHED_CHILD';
+const BUSY_REFUSAL = { code: null, stdout: '', stderr: '', refused: RUNNER_BUSY_WITH_UNFINISHED_CHILD };
 const REPORT_TAIL = 4096;
 const REPORT_KEYS = ['contract', 'started', 'failure', 'childPid', 'timedOut', 'exitCode', 'leftover', 'activeProcesses', 'totalProcesses', 'treeZero'];
 const count = v => v === null || (Number.isSafeInteger(v) && v >= 0 && v <= 0xffffffff);
@@ -69,6 +71,7 @@ export class Runner {
     this.nonce = nonce;
     this.graceMs = graceMs;
     this.outstanding = new Set();
+    this.overdue = new Set();
     this.probeRunners = new Map();
   }
 
@@ -79,17 +82,22 @@ export class Runner {
       if (mailboxProbe !== 'pr-head' && mailboxProbe !== 'linux-quiescence') {
         return Promise.resolve({ code: null, stdout: '', stderr: '', refused: 'RUNNER_MAILBOX_PROBE_REFUSED' });
       }
+      // 已过 guard 的主通道子树仍可能向 Linux 发出操作，静止证明要等它退出。
+      const quiescence = mailboxProbe === 'linux-quiescence';
+      if (quiescence && this.overdue.size) return Promise.resolve({ ...BUSY_REFUSAL, tree: 'unconfirmed' });
       if (!this.probeRunners.has(mailboxProbe)) {
         const graceMs = mailboxProbe === 'pr-head' ? PR_HEAD_JOB_HOST_GRACE_MS : JOB_HOST_GRACE_MS;
         this.probeRunners.set(mailboxProbe, new Runner({ env: this.env, spawnImpl: this.spawnImpl,
           jobHost: this.jobHost, nonce: this.nonce, graceMs }));
       }
-      return this.probeRunners.get(mailboxProbe).run(argv, { timeoutMs, measureHost });
+      const pending = this.probeRunners.get(mailboxProbe).run(argv, { timeoutMs, measureHost });
+      return quiescence ? pending.then(result => this.overdue.size
+        ? { ...BUSY_REFUSAL, tree: 'unconfirmed', hostElapsedMs: result.hostElapsedMs } : result) : pending;
     }
     if (!Array.isArray(argv) || argv.length === 0 || !argv.every(a => typeof a === 'string' && !a.includes('\0'))) {
       return Promise.resolve({ code: null, stdout: '', stderr: '', refused: 'RUNNER_ARGV_REFUSED' });
     }
-    if (this.busy) return Promise.resolve({ code: null, stdout: '', stderr: '', refused: 'RUNNER_BUSY_WITH_UNFINISHED_CHILD' });
+    if (this.busy) return Promise.resolve({ ...BUSY_REFUSAL });
     if (this.jobHost !== null) return this.hosted(argv, timeoutMs, measureHost);
     return new Promise(resolve => {
       const child = this.spawnImpl(argv[0], argv.slice(1), { shell: false, windowsHide: true, env: this.env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -140,6 +148,7 @@ export class Runner {
       };
       // The host outstayed its own limit and drain: end the host (only it; its job goes with it) and stay busy until it is gone.
       const guard = setTimeout(() => {
+        this.overdue.add(child);
         settle({ code: null, stdout, stderr, timedOut: true, tree: 'unconfirmed' });
         try { child.kill(); } catch { /* the close event still ends the busy state */ }
       }, timeoutMs + this.graceMs);
@@ -151,6 +160,7 @@ export class Runner {
       });
       child.on('close', code => {
         this.outstanding.delete(child);
+        this.overdue.delete(child);
         clearTimeout(guard);
         const report = parseJobHostReport(tail, nonce);
         if (measureHost) hostElapsedMs = report?.hostElapsedMs;

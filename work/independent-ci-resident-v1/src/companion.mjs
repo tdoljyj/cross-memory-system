@@ -16,7 +16,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { fileURLToPath } from 'node:url';
 import { BATCH_ID, PROBE_DELIVERY_MS, PROBE_KINDS, quiescenceProbeMs, validatePrune } from './mailbox.mjs';
 import { HEX64, check, exactKeys, fail } from './canonical.mjs';
-import { JOB_HOST_MIN_TIMEOUT_MS, PR_HEAD_JOB_HOST_GRACE_MS } from './runner.mjs';
+import { JOB_HOST_MIN_TIMEOUT_MS, PR_HEAD_JOB_HOST_GRACE_MS, RUNNER_BUSY_WITH_UNFINISHED_CHILD } from './runner.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
 import { powershellArgv } from './powershell-argv.mjs';
 import { TOOL_NOT_RUN, UPGRADE_TIMEOUT_MS, UPGRADE_TOOL_PATH, VERSION_FACTS_REFRESH_MS, responseFromTool, upgradeMailboxRequest, upgradeToolArgs, validateVersionFacts } from './upgrade-mailbox.mjs';
@@ -526,6 +526,7 @@ export class Companion {
     this.a = argv(ports.cfg);
     this.requestContext = new AsyncLocalStorage();
     this.probePasses = new Map();
+    this.probeTimer = null;
     this.run = async (a, o) => {
       const context = this.requestContext.getStore();
       const r = await ports.run(a, context?.probe ? { ...o, mailboxProbe: context.probe, measureHost: true } : o);
@@ -597,6 +598,7 @@ export class Companion {
     const proof = { linuxUnitsInactive: confirmed && v.linuxUnitsInactive, containersZero: confirmed && v.containersZero };
     if (!request) return proof;
     if (r?.quiescenceCode) return { ok: false, code: r.quiescenceCode, proof: valid ? proof : null };
+    if (r?.refused === RUNNER_BUSY_WITH_UNFINISHED_CHILD && r.tree === 'unconfirmed') return { ok: false, code: r.refused };
     if (valid) return { ok: true, proof };
     const drained = r?.timedOut === true && r.tree === 'zero' && !r.refused && r.code == null;
     return { ok: false, code: drained ? 'QUIESCENCE_TIMEOUT' : 'QUIESCENCE_PROBE_UNCONFIRMED' };
@@ -1077,12 +1079,21 @@ export class Companion {
     return this.primaryPass;
   }
 
+  startProbeLane() {
+    if (this.probeTimer !== null || typeof this.mailbox.pendingProbe !== 'function') return;
+    // 主通道的处理器或 Job Host 仍忙时，两个探针照常取件。
+    this.probeTimer = setInterval(() => PROBE_KINDS.map(kind => this.takeProbes(kind)), PROBE_PICKUP_MS).unref();
+  }
+
+  stopProbeLane() {
+    if (this.probeTimer === null) return;
+    clearInterval(this.probeTimer);
+    this.probeTimer = null;
+  }
+
   async stepMailbox() {
     const indexed = typeof this.mailbox.pendingProbe === 'function';
-    const take = () => PROBE_KINDS.map(kind => this.takeProbes(kind));
-    // 主通道的处理器或 Job Host 仍忙时，两个探针照常取件。
-    if (indexed && !this.probeTimer) this.probeTimer = setInterval(take, PROBE_PICKUP_MS).unref();
-    const probes = indexed ? take() : [];
+    const probes = indexed ? PROBE_KINDS.map(kind => this.takeProbes(kind)) : [];
     try {
       try { await this.mailbox.beat(); } catch { /* a liveness hint only */ }
       for (const request of await this.mailbox.pending()) {

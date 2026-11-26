@@ -518,6 +518,7 @@ export async function main(args = process.argv.slice(2)) {
     assertGhIsolation({ env: process.env, profileDir: cfg.node.ownerProfileDirectory, ghExe: raw.ghExe }).catch(() => { process.exit(5); });
   }, GH_RECHECK_EVERY_MS);
   try {
+    companion.startProbeLane();
     await Promise.all([
       // the service times out and classifies a request the companion did not answer; never retried here
       lane({ runner, work: () => companion.step() }),
@@ -533,6 +534,7 @@ export async function main(args = process.argv.slice(2)) {
       ...advisorySpecs.map(spec => lane(spec)),
     ]);
   } finally {
+    companion.stopProbeLane();
     clearInterval(beating);
     loopDelay.stop();
     clearInterval(lockAlive);

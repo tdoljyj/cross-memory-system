@@ -15,8 +15,8 @@ const head = 'a'.repeat(40);
 const quiet = { linuxUnitsInactive: true, containersZero: true };
 const due = request => Date.parse(request.deadline);
 
-async function scenario(t, { proof = quiet, treeZero = true } = {}) {
-  let markStarted, unblock, dispatch;
+async function scenario(t, { proof = quiet, treeZero = true, overdue = false } = {}) {
+  let markStarted, unblock, dispatch, companion;
   const started = new Promise(resolve => { markStarted = resolve; });
   const held = new Promise(resolve => { unblock = resolve; });
   const polls = [];
@@ -24,13 +24,14 @@ async function scenario(t, { proof = quiet, treeZero = true } = {}) {
     polls.push({ fn, ms });
     return { unref() { return this; } };
   });
-  t.after(async () => { unblock(); await dispatch; });
+  t.after(async () => { companion?.stopProbeLane(); unblock(); await dispatch; });
   const outcome = { status: 'BLOCKED', reason: 'full_admission_rejected', sideEffects: 0, mayHavePublished: false,
     safeToRerun: false, diagnostic: { reasonCodes: ['protected_change_not_up_to_date'] } };
   const engine = fakeEngine({ stages: { 1: { ok: false, code: 'PROTECTED_CHANGE_NOT_UP_TO_DATE', outcome, proof: WINDOWS_CLEAN } } });
   const f = await executorFixture(t, { engine });
   const box = await Mailbox.open(path.join(f.root, 'mailbox'), f.clock, f.clock);
   const calls = [];
+  let kills = 0;
   const runner = new Runner({ jobHost: 'C:\\fixture\\host.exe', spawnImpl: (_exe, [nonce, , ...argv]) => {
     const child = new EventEmitter();
     child.stdout = new PassThrough();
@@ -44,6 +45,7 @@ async function scenario(t, { proof = quiet, treeZero = true } = {}) {
     };
     if (argv.includes('archive-usage')) {
       calls.push('long');
+      child.kill = () => { kills += 1; return false; };
       markStarted();
       void held.then(() => finish({}));
     } else if (argv[0] === 'fixture-gh') {
@@ -62,14 +64,22 @@ async function scenario(t, { proof = quiet, treeZero = true } = {}) {
     }
     return child;
   } });
-  const companion = new Companion({ cfg: { wslExe: 'fixture-wsl', distribution: 'fixture', linuxTool: 'fixture-tool' }, mailbox: box,
+  companion = new Companion({ cfg: { wslExe: 'fixture-wsl', distribution: 'fixture', linuxTool: 'fixture-tool' }, mailbox: box,
     run: (argv, options) => runner.run(argv, options), clock: f.clock, readPull: pr => ['fixture-gh', String(pr)] });
+  companion.startProbeLane();
+  if (overdue) t.mock.timers.enable({ apis: ['setTimeout'] });
   const startLong = async () => {
     const req = await box.send('archive-usage', { batchId }, 300_000);
     dispatch = companion.step();
     await Promise.race([started, dispatch.then(() => assert.fail('先行邮箱命令未启动'))]);
     // 等空邮箱上已经发出的取件都结束，再由服务写入本次请求。
     for (const { fn } of polls) await Promise.all(fn());
+    if (overdue) {
+      t.mock.timers.tick(180_000); // archive-usage 的 120 秒预算加 60 秒 Job Host guard。
+      assert.equal(kills, 1);
+      await dispatch;
+      assert.equal(runner.busy, true, 'guard 已触发，Job Host 仍未 close');
+    }
     return req;
   };
   const pickup = async () => {
@@ -79,8 +89,27 @@ async function scenario(t, { proof = quiet, treeZero = true } = {}) {
     }
   };
   await box.beat();
-  return { ...f, box, calls, startLong, runner, pickup, step: () => companion.step() };
+  return { ...f, box, calls, startLong, unblock, runner, pickup, step: () => companion.step() };
 }
+
+test('单步处理已有邮箱请求后不会留下探针取件定时器', async t => {
+  const handle = { unref() { return this; } };
+  const timer = t.mock.method(globalThis, 'setInterval', () => handle);
+  const clear = t.mock.method(globalThis, 'clearInterval', () => {});
+  const companion = new Companion({ cfg: {}, mailbox: { beat: async () => {}, pending: async () => [], pendingProbe: async () => [] } });
+  await companion.step();
+  assert.equal(timer.mock.callCount(), 0);
+  companion.startProbeLane();
+  companion.startProbeLane();
+  assert.equal(timer.mock.callCount(), 1);
+  assert.equal(timer.mock.calls[0].arguments[1], 500);
+  companion.stopProbeLane();
+  companion.stopProbeLane();
+  assert.equal(clear.mock.callCount(), 1);
+  assert.deepEqual(clear.mock.calls[0].arguments, [handle]);
+  await companion.step();
+  assert.equal(timer.mock.callCount(), 1);
+});
 
 async function assertDispatch(box, request) {
   const timing = JSON.parse(await fs.readFile(path.join(box.responses, request.requestId + '.dispatch.json'), 'utf8'));
@@ -131,7 +160,7 @@ async function rejectedBatch(t, options = {}) {
   f.engine.runStage = async (...args) => {
     const result = await runStage(...args);
     f.advance(174_260);
-    if (Object.keys(options).length === 0) long = await f.startLong();
+    if (Object.keys(options).length === 0 || options.overdue) long = await f.startLong();
     return result;
   };
   const requests = [];
@@ -144,6 +173,7 @@ async function rejectedBatch(t, options = {}) {
       return;
     }
     if (!long) { await f.step(); return; }
+    if (options.overdue) { await f.pickup(); return; }
     try {
       await f.pickup();
       const answer = await f.box.poll(request);
@@ -174,6 +204,25 @@ test('已预留的旧 head 及时取得本次真实双真，双端归档后只�
   assert.deepEqual((await f.box.poll(f.requests[0])).proof, quiet);
   assert.equal(f.engine.calls.filter(([op]) => op === 'archive-windows').length, 1);
   assert.equal(f.companion.calls.filter(([op]) => op === 'archive-linux').length, 1);
+});
+
+test('主 Runner 的 guard 已触发而 Job Host 未退出，静止请求缺证并锁存 HALT，PR 查询仍可用', async t => {
+  const f = await rejectedBatch(t, { overdue: true });
+  assert.deepEqual([f.result.state, f.state.outcome, f.halt?.value.facts.basis], ['HALTED', 'FAILED_UNKNOWN', 'cleanup-proof-incomplete']);
+  const answer = await f.box.poll(f.requests[0]);
+  assert.deepEqual([answer.ok, answer.code, answer.jobTree, answer.proof], [false, 'RUNNER_BUSY_WITH_UNFINISHED_CHILD', 'unconfirmed', null]);
+  assert.equal(f.engine.calls.some(([op]) => op === 'archive-windows'), false);
+  const pr = await f.box.send('pr-head', { batchId, pr: 1380 }, 120_000);
+  await f.pickup();
+  assert.equal((await f.box.poll(pr))?.pull?.state, 'merged');
+  assert.deepEqual(f.calls, ['long', 'pr']);
+  f.unblock();
+  await Promise.resolve(); // 先让模拟 Job Host 发出 close。
+  assert.equal(f.runner.busy, false);
+  const afterClose = await f.box.send('linux-quiescence', { batchId }, 120_000);
+  await f.pickup();
+  assert.deepEqual((await f.box.poll(afterClose))?.proof, quiet);
+  assert.equal((await f.ledger.halted()).sha256, f.halt.sha256);
 });
 
 for (const [label, options] of [
