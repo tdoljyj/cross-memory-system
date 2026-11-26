@@ -15,7 +15,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { setup, jobOf, iso, REPO, NOW, SOURCE } from './train-strict-fixtures.mjs';
 import { tempDir, admittedFacts } from './resident-v2-fixtures.mjs';
 import { batchJobsV2, claimGeneration } from '../src/job-v2.mjs';
@@ -38,10 +38,21 @@ import { Poller, MAIN_REF_ROUTE, PULLS_ROUTE } from '../../../independent-ci-res
 import { WindowsEngine, DESCRIPTOR_CHAIN_CONTRACT, DESCRIPTOR_CONTRACT } from '../../../independent-ci-resident-v1/src/engine-windows.mjs';
 import { chainOfFront, openFrontBatchOf } from '../../../independent-ci-resident-v1/src/train.mjs';
 import { AdmissionRerunner, AdmissionRerunState, decide, HEAD_RECHECK_MS } from '../../../independent-ci-resident-v1/src/admission-rerun.mjs';
-import { parseStatus, pollerLandingOf, StatusBoard } from '../../../independent-ci-resident-v1/src/status.mjs';
+import { parseStatus, pollerLandingOf, readStatus, StatusBoard, StatusFile } from '../../../independent-ci-resident-v1/src/status.mjs';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../../../independent-ci-resident-v1/src/policy.mjs';
-import { CLEAN_PROOF, executorFixture, fakeCompanion, fakeEngine, rawPolicy, TEST_NODE, TEST_NODE_SHA } from '../../../independent-ci-resident-v1/test/helpers.mjs';
+import { CLEAN_PROOF, executorFixture, fakeCompanion, fakeEngine, rawPolicy, RESIDENT, TEST_NODE } from '../../../independent-ci-resident-v1/test/helpers.mjs';
 import { HOSTED, SCAFFOLD_RULESET as SCAFFOLD_RS, portRules, scaffoldRules } from './s7-rules-fixture.mjs';
+import { createLandingPort } from '../src/independent-control-checks-v2/train-landing-port.mjs';
+import { createMergeSlotNative } from '../src/independent-control-checks-v2/merge-slot-native.mjs';
+import { createClaimAssistNative } from '../src/independent-control-checks-v2/claim-assist-native.mjs';
+import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
+import { readBatchClaim, recordBatchClaim } from '../src/batch-claim-v2.mjs';
+import { probeRole } from '../src/resident-v2/role-probe-entry.mjs';
+import { roleProbeFact } from '../src/resident-v2/role-probe-run.mjs';
+import { resolvePRTaskBinding } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
+import { CompanionHeartbeat, supabaseHeartbeatTransport } from '../../../independent-ci-resident-v1/src/companion-heartbeat.mjs';
+import { nodeProfileSha256 } from '../../../independent-ci-resident-v1/src/node-profile.mjs';
+import { multiDutyClock, multiDutyGitHub } from '../../../independent-ci-resident-v1/test/multi-duty-fixture.mjs';
 
 const APP = 5368905, ACTIONS = 15368, SCOPE = 'project:00000000-0000-4000-8000-000000000000';
 const h = s => createHash('sha1').update(s).digest('hex');
@@ -273,7 +284,7 @@ async function stage10(e, outcome = null) {
 async function stage8(t, e, b, { trainLanding = { landing: 'push', batchMax: 4, unreadable: false }, mode = () => 'normal', scans = true, batchRoute = null, claimAssist = null,
   admission = e.admission } = {}) {
   e.now += 60_000;
-  const claim = pr => ({ claimId: e.claimFor(pr), fence: 3, epoch: 1, expiresAt: iso(e.now + 3_600_000) });
+  const claim = pr => e.claimGeneration ?? { claimId: e.claimFor(pr), fence: 3, epoch: 1, expiresAt: iso(e.now + 3_600_000) };
   const jobs = batchJobsV2({ repo: REPO, pr: b.pr, headSha: b.headSha, baseSha: b.baseSha, testSha: b.testSha, sourceManifestSha256: SOURCE, createdAt: iso(e.now), attempt: b.attempt });
   if (scans) e.gh.frontScans(jobs);
   e.journal ??= await EffectJournal.open(path.join(await tempDir(t), 'effects'));
@@ -457,8 +468,9 @@ const V2 = ['work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'res
 const CI_SOURCE = 'e'.repeat(64);
 // The resident's WindowsEngine over a fixture Source directory holding the real build-bundle.ps1, prepare-workspaces.py and invoke-stage.mjs
 // (what batchChainSupported reads) and a versions port (both sides of this generation, or not). Its derive runs a stub of derive-batch.mjs.
-async function residentEngine(t, { consistent = true, linuxSource = CI_SOURCE } = {}) {
-  const root = await tempDir(t), sourceRoot = path.join(root, 'source', CI_SOURCE);
+async function residentEngine(t, { consistent = true, linuxSource = CI_SOURCE, root = null, node = TEST_NODE } = {}) {
+  root ??= await tempDir(t);
+  const sourceRoot = path.join(root, 'source', CI_SOURCE);
   await fs.mkdir(path.join(sourceRoot, ...V2), { recursive: true });
   for (const n of ['build-bundle.ps1', 'prepare-workspaces.py', 'invoke-stage.mjs'])
     await fs.copyFile(new URL(`../src/resident-v2/${n}`, import.meta.url), path.join(sourceRoot, ...V2, n));
@@ -469,7 +481,7 @@ async function residentEngine(t, { consistent = true, linuxSource = CI_SOURCE } 
     return { code: 0, stdout: JSON.stringify({ status: 'RESIDENT_BATCH_DERIVED', batchKey: at('--batch-key'), batchId: at('--batch-id'), packageSha256: 'c'.repeat(64),
       ciSourceManifestSha256: CI_SOURCE, sourceCommit: 'd'.repeat(40), gitleaksTomlSha256: '9'.repeat(64), testSha: subject.testSha ?? subject.headSha, stages: rows }) };
   };
-  const engine = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, busy: () => false, sleep: async () => {}, clock: () => NOW,
+  const engine = new WindowsEngine({ node, nodeProfileSha256: nodeProfileSha256(node), run, busy: () => false, sleep: async () => {}, clock: () => NOW,
     trainLanding: { landing: 'push', batchMax: 3 },
     versions: async () => ({ consistent, windows: { ciSourceManifestSha256: CI_SOURCE }, linux: { ciSourceManifestSha256: linuxSource } }),
     paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'node.exe', powershellExe: 'powershell.exe', scExe: 'sc.exe' } });
@@ -1727,8 +1739,9 @@ const taskOf = pr => `${String(pr).padStart(8, '0')}-3333-4333-8444-555555555555
 // batchRoute: what the stage read from its batch-route.json (bc982192; null: none, main's tip is the batch base).
 function realAdmission(e, { batchRoute = null } = {}) {
   const W = e.W, ref = `merge:${REPO}:main`, policyText = '{"policy":"fixture"}';
-  const config = { domain: 'fixture', repository: REPO, scope: SCOPE, workspace: os.tmpdir(), sourceManifestSha256: SOURCE, evaluatorSha256: digest('EVALUATOR'),
-    policyText, policySha256: digest(policyText), ciPrincipalBindingId: BINDING_ID, ciPrincipalQualificationRef: 'qualification-ref',
+  const scope = e.scope ?? SCOPE, bindingId = e.bindingId ?? BINDING_ID;
+  const config = { domain: 'fixture', repository: REPO, scope, workspace: os.tmpdir(), sourceManifestSha256: SOURCE, evaluatorSha256: digest('EVALUATOR'),
+    policyText, policySha256: digest(policyText), ciPrincipalBindingId: bindingId, ciPrincipalQualificationRef: 'qualification-ref',
     publishableKey: 'sb_publishable_fixture', supabaseUrl: 'https://fixture.supabase.co' };
   const answer = v => ({ ok: true, status: 200, json: async () => structuredClone(v) });
   const fetchImpl = async url => {
@@ -1742,27 +1755,29 @@ function realAdmission(e, { batchRoute = null } = {}) {
   const evaluateImpl = async ({ event, observation_recorder }) => {
     const pr = event.pull_request, n = pr.number, head = pr.head.sha, main = e.main(), prRef = `${REPO}#${n}`, claimId = e.claimFor(n);
     const at = e.queue.indexOf(n), until = iso(e.now + 600_000), paths = [...W.pulls.get(n).paths];
-    const claim = { claim_id: claimId, task_id: taskOf(n), fence: 3, execution_epoch: 1, context_key: SCOPE, status: 'ACTIVE', bound_pr: prRef,
+    const fixtureClaim = { claim_id: claimId, task_id: taskOf(n), fence: 3, execution_epoch: 1, context_key: scope, status: 'ACTIVE', bound_pr: prRef,
       expires_at: iso(e.now + 3_600_000), lease_key_required: false, execution_handover_pending: false, merge_slot_until: until, trigger_refs: [ref],
       merge_queue: at < 0 ? [] : [{ ref, state: at === 0 ? 'head' : 'waiting', position: at + 1, ahead: at === 0 ? [] : e.queue.slice(0, at).map(x => ({ claim_id: e.claimFor(x) })),
         head: { claim_id: e.claimFor(e.queue[0]), bound_pr: `${REPO}#${e.queue[0]}`, since: iso(e.now - 1000), until } }] };
-    const native = { status: 'ok', verdict: 'ADMITTED', execution_authorized: true, execution_policy: 'staged', current_fence: 3, execution_epoch: 1,
-      bound_pr: prRef, pr_ref: prRef, head_sha: head, base_sha: pr.base.sha, verified_at: iso(e.now), paths_outside_write_set: [], claim };
+    const resolved = e.verifyHead ? await e.native.port.resolvePRBinding({ prNumber: n, scope, repository: REPO, headSha: head, baseSha: pr.base.sha, targetBranch: 'main' }) : null;
+    const native = e.verifyHead ? await e.verifyHead(pr, paths) : { status: 'ok', verdict: 'ADMITTED', execution_authorized: true, execution_policy: 'staged',
+      current_fence: 3, execution_epoch: 1, bound_pr: prRef, pr_ref: prRef, head_sha: head, base_sha: pr.base.sha, verified_at: iso(e.now), paths_outside_write_set: [], claim: fixtureClaim };
+    const claim = native.claim;
     observation_recorder.record('claim_verification', { result: { payload: native } });
     const upToDate = W.ancestor(main, head), layer = (e.layerOfPaths ?? (() => 'code'))(paths);
     // evaluate()'s check_and_strict of the protected layer (clued-work-admission.mjs, protected_change_not_up_to_date): unchanged here
-    const rejected = layer === 'protected' && !upToDate;
+    const rejected = native.verdict !== 'ADMITTED' || (layer === 'protected' && !upToDate);
     return { admitted: !rejected, verdict: rejected ? 'REJECTED' : 'ADMITTED', reasons: rejected ? [`protected_change_not_up_to_date:${main}`] : [],
-      head_sha: head, base_sha: pr.base.sha, pr_ref: prRef, claim_id: claimId, task_id: taskOf(n), scope: SCOPE, changed_paths: paths,
-      claim_binding: { status: 'ok', binding_status: 'bound', reason: null, repository: REPO, pr_number: n, pr_ref: prRef, head_sha: head, base_sha: pr.base.sha,
-        target_branch: 'main', scope: SCOPE, task_id: taskOf(n), claim: { claim_id: claimId, task_id: taskOf(n), context_key: SCOPE, fence: 3, execution_epoch: 1,
+      head_sha: head, base_sha: pr.base.sha, pr_ref: prRef, claim_id: claimId, task_id: claim?.task_id, scope, changed_paths: paths,
+      claim_binding: resolved ?? { status: 'ok', binding_status: 'bound', reason: null, repository: REPO, pr_number: n, pr_ref: prRef, head_sha: head, base_sha: pr.base.sha,
+        target_branch: 'main', scope, task_id: taskOf(n), claim: { claim_id: claimId, task_id: taskOf(n), context_key: scope, fence: 3, execution_epoch: 1,
           lease_version: 1, expires_at: claim.expires_at, status: 'ACTIVE', execution_handover_pending: false }, head_authorization_id: null, auto_bound: false, receipt_id: null },
       admission_mode: { state: 'normal', layer, policy_version: 1 },
       merge_slot: mergeSlotState({ repository: REPO, branch: 'main', tip: main, upToDate, claim, verifiedAt: native.verified_at }),
       owner_review: null, workflow_gate_findings: [] };
   };
   return createFullAdmissionPortV2({ protectedConfig: config, batchRoute, clock: () => e.now, monotonic: () => e.now, fetchImpl,
-    tokenProvider: async () => ({ githubToken: 'gh-fixture', ciAdmissionToken: ['clued', 'bnd', 'fixture123'].join('_'), ciPrincipalBindingId: BINDING_ID, ciPrincipalQualificationRef: 'qualification-ref' }),
+    tokenProvider: async () => ({ githubToken: 'gh-fixture', ciAdmissionToken: e.token ?? ['clued', 'bnd', 'fixture123'].join('_'), ciPrincipalBindingId: bindingId, ciPrincipalQualificationRef: 'qualification-ref' }),
     modeProvider: async () => ({ complete: true, repository: REPO, variable: 'CLUED_MERGE_ADMISSION_STATE', source: 'github-repository-variables', exists: false, observedAt: iso(e.now), proofRef: 'mode-proof' }),
     recorderProvider: async () => ({ kind: 'independent-controller', domain: 'fixture', observedAt: iso(e.now), observationRef: 'obs', recorder: { newId: () => h(`id:${e.now}:${Math.random()}`), record() {} } }),
     fixtureHooks: { evaluatorReader: () => 'EVALUATOR', evaluateImpl } });
@@ -1904,9 +1919,10 @@ async function stageRoute(t, real, number, batch, tamper = null) {
 // batch base (REMOTE_MAIN_BASE_CHANGED, which the companion answers as RESIDENT_BASE_MOVED); with baseRule on-main the base must be an
 // ancestor of the head and of main's tip (Base-On-Main).
 // Stage 2 (refs v2, protected-controller-ports-v2/refs.mjs:73): main must be the job's base, else REFS_MAIN_BASE_CHANGED.
-async function residentOver(t, e, { tamper = null, facts = null, queueFacts = false } = {}) {
-  const { engine: real, root } = await residentEngine(t);
+async function residentOver(t, e, { tamper = null, facts = null, queueFacts = false, nodeRoot = null } = {}) {
+  const { engine: real, root } = await residentEngine(t, { root: nodeRoot, node: e.profile });
   const engine = fakeEngine();
+  if (e.runRoleProbe) engine.runRoleProbe = e.runRoleProbe;
   const subjects = new Map();
   Object.assign(engine, { stages: [], stage1: [], stage8: [], routes: [], descriptors: new Map(), trainRuns: [], trainAt: [], subjects, bundles: [], refused: [] });
   const companion = fakeCompanion({}, () => f.clock());
@@ -1935,7 +1951,7 @@ async function residentOver(t, e, { tamper = null, facts = null, queueFacts = fa
     const job = makeTrainRun({ repo: REPO, runId: `${(++run).toString(16).padStart(16, '0')}-0123456789ab`, mode: m, sourceManifestSha256: SOURCE, createdAt: iso(e.now), ...params });
     e.inTen = true; // flakyRules 'ten': only stage 10's reads fail
     const r = await runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
-      claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN3 }).finally(() => { e.inTen = false; });
+      claimScope: e.scope ?? SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN3 }).finally(() => { e.inTen = false; });
     const train = facts ? facts(r.facts) : r.facts;
     engine.trainRuns.push(train);
     engine.trainAt.push(f.clock());
@@ -1954,6 +1970,13 @@ async function residentOver(t, e, { tamper = null, facts = null, queueFacts = fa
     if (stage.number === 1) {
       const batchRoute = await stageRoute(t, real, 1, batch, tamper);
       engine.routes.push({ pr: n, front, stage: 1, stamped: batch.batchRoute ?? null, read: batchRoute });
+      if (e.publishAdmission) {
+        const jobs = batchJobsV2({ repo: REPO, ...b, sourceManifestSha256: SOURCE, createdAt: iso(e.now) });
+        const outcome = await e.publishAdmission(jobs['work-admission'], realAdmission(e, { batchRoute }));
+        engine.stage1.push({ pr: n, front, status: outcome.status, reason: outcome.reason ?? null, diagnostic: outcome.admissionDiagnostic ?? null });
+        return outcome.status === 'SETTLED' ? { ...ok, outcome }
+          : { ok: false, code: outcomeFailureCode(outcome, 1), proof: PROOF, outcome };
+      }
       const job = batchJobsV2({ repo: REPO, ...b, sourceManifestSha256: SOURCE, createdAt: iso(e.now) })['control-admission'];
       const facts = await realAdmission(e, { batchRoute }).evaluatePr(job, await e.gh.readChangedPaths(job));
       engine.stage1.push({ pr: n, front, status: facts.status, reason: facts.reason ?? null, slot: facts.mergeSlot?.state ?? null });
@@ -1973,7 +1996,7 @@ async function residentOver(t, e, { tamper = null, facts = null, queueFacts = fa
     if (stage.number !== 8) return ok;
     const batchRoute = await stageRoute(t, real, 8, batch, tamper);
     engine.routes.push({ pr: n, front, stage: 8, stamped: batch.batchRoute ?? null, read: batchRoute });
-    const claimAssist = { async joinQueue({ pr }) { if (!e.queue.includes(pr)) e.queue.push(pr); return { ok: true, joined: true }; },
+    const claimAssist = e.claimAssist ?? { async joinQueue({ pr }) { if (!e.queue.includes(pr)) e.queue.push(pr); return { ok: true, joined: true }; },
       async extendLease() { return { ok: true, extended: false, reason: null }; } };
     const p = await stage8(t, e, b, { trainLanding: CHAIN3, scans: false, batchRoute, claimAssist, admission: realAdmission(e, { batchRoute }) });
     engine.stage8.push({ pr: n, front, status: p.status, reason: p.reason ?? null });
@@ -1988,11 +2011,12 @@ async function residentOver(t, e, { tamper = null, facts = null, queueFacts = fa
       ...(queueFacts && p.scheduling ? { scheduling: p.scheduling } : {}) };
     return { ok: false, code: outcomeFailureCode(outcome, 8), proof: PROOF, outcome };
   };
-  const policy = rawPolicy({ contract: POLICY_CONTRACT_V8, train: { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * 60_000, maintenanceMaxPerDay: 200,
+  const policy = rawPolicy({ contract: POLICY_CONTRACT_V8, ...(e.profile ? { node: e.profile, nodeProfileSha256: nodeProfileSha256(e.profile) } : {}),
+    train: { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * 60_000, maintenanceMaxPerDay: 200,
     ...TRAIN_DEFAULTS, sweep: 'audit', landing: 'push', batchMax: 3 } });
-  const board = new StatusBoard({ clock: () => e.now });
-  f = await executorFixture(t, { now: e.now, engine, companion, status: board, policy });
-  f.exec.trainTakeoverDone = true;
+  const board = new StatusBoard({ clock: e.statusClock ?? (() => e.now) });
+  f = await executorFixture(t, { now: e.now, engine, companion, status: board, policy, root: nodeRoot });
+  if (!e.runRoleProbe) f.exec.trainTakeoverDone = true;
   await f.exec.trainRecover();
   // companion-main.mjs: the poller's landing port reads the status file the executor writes (out.sees: the status as the poller read it
   // earlier, when that reading is not the board of now; E10b). Every trigger it writes is counted (out.triggers).
@@ -2015,6 +2039,197 @@ async function residentOver(t, e, { tamper = null, facts = null, queueFacts = fa
 }
 const rowsOf = f => [...f.queue.data.rows].map(r => ({ pr: r.pr, state: r.state, headSha: r.current?.headSha ?? null, baseSha: r.current?.baseSha ?? null, batchRoute: r.current?.batchRoute ?? null }));
 const passOf = p => p.lastPass.pulls.map(x => [x.pr, x.eligible, x.hint, x.behindBy]);
+
+// GitHub 的远端状态共用，每个节点保留自己的 Source、本地批记录和发布日志。
+async function multiDutyResident(t, world, db, identity, clock, faults, privateKey) {
+  const nodeRoot = await tempDir(t, `clued-${identity.name}-`);
+  const local = await setup(t, { fullDone: false, root: nodeRoot });
+  const e = { ...world, ...local, now: clock.now(), scope: db.config.scope, token: identity.token,
+    bindingId: identity.bindingId, claimFor: () => db.claim.claim_id, gh: { ...world.gh }, statusClock: clock.now };
+  e.clock = () => e.now;
+  e.sleep = async ms => { e.now += ms; };
+  e.profile = { ...TEST_NODE, nodeName: identity.name };
+  const nativeOptions = { config: db.config, fetchImpl: db.fetchImpl, nativeToken: identity.token };
+  e.native = { port: { ...createMergeSlotNative(nativeOptions),
+    resolvePRBinding: expected => resolvePRTaskBinding({ ...expected, command: input => db.verify(identity, input) }) } };
+  e.claimAssist = createClaimAssistNative(nativeOptions);
+  e.verifyHead = (pull, paths) => db.verify(identity, {
+    claim_id: db.claim.claim_id, pr_ref: `${REPO}#${pull.number}`, head_sha: pull.head.sha, base_sha: pull.base.sha,
+    target_branch: 'main', changed_paths: paths,
+  });
+  const live = () => {};
+  e.runRoleProbe = async ({ watchPr = null } = {}) => {
+    const outcome = await probeRole({ record: {
+      config: { ...db.config, ciPrincipalBindingId: identity.bindingId },
+      accepted: { node: {}, ciTokenPinSha256: digest('clued.independent-ci.ci-binding-pin/1\0' + identity.token) },
+    }, live, tokenFile: path.join(nodeRoot, 'secrets', 'ci-admission.token'), tokenReader: async () => identity.token,
+    protect: async () => false, watchPr, fetchImpl: db.fetchImpl });
+    return { ok: true, proof: PROOF, outcome: { ...outcome, mayHavePublished: false }, roleProbe: roleProbeFact(outcome.reason) };
+  };
+  e.gh.createCheck = payload => faults.write('createCheck', () => world.gh.createCheck(payload),
+    check => ['checkCreates', [check.app.id, check.head_sha, check.external_id, check.id], identity.name]);
+  const journal = await EffectJournal.open(path.join(nodeRoot, 'admission-effects'));
+  const batchClaims = {
+    async read(job) {
+      try { return await readBatchClaim(nodeRoot, job); }
+      catch (error) { if (error.code === 'BATCH_CLAIM_MISSING') return null; throw error; }
+    },
+    record: (job, generation, at) => recordBatchClaim(nodeRoot, job, generation, at),
+  };
+  e.publishAdmission = (job, admission) => createFixtureWorkAdmissionPublisherV2({
+    github: e.gh, journal, admission, batchClaims, assertLive: live, record() {}, authority: {}, clock: e.clock, sleep: e.sleep,
+    trainMode: 'on', slotNative: e.native.port, sweepStore: e.store,
+  }).publish(job);
+  e.port = createLandingPort({
+    repository: REPO, repositoryId: 12345, installationId: 1, appId: APP, privateKeyProvider: async () => privateKey, clock: e.clock,
+    async fetchImpl(url, options) {
+      const { hostname, pathname } = new URL(url);
+      assert.equal(hostname, 'api.github.com');
+      if (pathname === '/app') return Response.json({ id: APP });
+      if (pathname === '/app/installations/1/access_tokens') return Response.json({
+        token: 'fixture-landing', expires_at: iso(e.now + 3600_000),
+        permissions: { contents: 'write', workflows: 'write' }, repositories: [{ id: 12345, full_name: REPO }],
+      }, { status: 201 });
+      assert.ok(pathname.startsWith(`/repos/${REPO}/`));
+      assert.equal(options.headers.authorization, 'Bearer fixture-landing');
+      const request = JSON.parse(options.body);
+      const ref = pathname.split('/git/refs/')[1];
+      if (ref === 'heads/main') {
+        assert.equal(options.method, 'PATCH');
+        assert.equal(request.force, false);
+        return faults.write('fastForwardMain', async () => {
+          const before = world.main();
+          const result = await world.port.fastForwardMain(request.sha);
+          if (world.main() !== before) faults.count('mainUpdates', request.sha, identity.name);
+          return Response.json({ object: { sha: result.sha } }, { status: result.status });
+        });
+      }
+      if (ref === 'heads/clued-train/staging' || ref === 'heads/clued-train/staging.tmp') {
+        assert.equal(options.method, 'PATCH');
+        return faults.write('pointRef', async () => {
+          const before = world.W.refs.get(ref);
+          const knownRun = [...world.W.checks.values()].some(check => check.head_sha === request.sha && check.app.id === ACTIONS);
+          const result = await world.port.pointRef(ref, request.sha);
+          if (ref === 'heads/clued-train/staging' && before !== result.sha) {
+            faults.count('stagingUpdates', result.sha, identity.name);
+            if (!knownRun) faults.count('requiredRuns', result.sha, identity.name);
+          }
+          return Response.json({ object: { sha: result.sha } });
+        });
+      }
+      assert.equal(pathname, `/repos/${REPO}/merges`);
+      const result = await world.port.mergeIntoTmp(request.head);
+      return result.status === 204 ? new Response(null, { status: 204 }) : Response.json({ sha: result.sha }, { status: result.status });
+    },
+  });
+  const resident = await residentOver(t, e, { queueFacts: true, nodeRoot });
+  resident.board.setVersions({ windows: { residentManifestSha256: RESIDENT, ciSourceManifestSha256: SOURCE } });
+  const statusFile = new StatusFile(path.join(nodeRoot, 'state', 'status.json'));
+  const heartbeat = new CompanionHeartbeat({
+    nodeName: identity.name, scope: e.scope, clock: clock.now, readToken: async () => identity.token,
+    transport: supabaseHeartbeatTransport({ ...db.config, fetchImpl: db.fetchImpl }),
+    readStatus: () => readStatus(nodeRoot),
+    serviceRunning: async () => true,
+  });
+  return { ...resident, e, identity, async beat() {
+    // 状态写入与业务执行是两个独立循环。卡住业务时继续刷新状态文件。
+    await statusFile.write(resident.board.snapshot());
+    return heartbeat.step();
+  }, async tick() {
+    resident.f.advance(clock.now() - resident.f.clock());
+    const result = await resident.f.exec.tick();
+    clock.advance(Math.max(0, resident.f.clock() - clock.now()));
+    return result;
+  } };
+}
+
+test('列车 v2：两个节点同时看到新 PR，A 停止推进仍报心跳，B 接手并落地同一批',
+  { skip: '片 7 跨节点验收。启用前需接入共享批、进度租约和落地收尾。' },
+  async t => {
+    const { mergeTrainTestDatabase } = await import('../../../../apps/clued-cloud/tests/merge-train-v2-db.fixture.mjs');
+    const pr = 1741;
+    const db = await mergeTrainTestDatabase(t, { repository: REPO });
+    const clock = multiDutyClock(db.startAt), faults = multiDutyGitHub(clock);
+    const e = await world(t, { prs: [pr], queued: false, admitted: false, appScans: [] });
+    e.now = clock.now();
+    e.W.pulls.get(pr).updated = iso(e.now);
+    e.W.pulls.get(pr).paths = ['work/ci-scheduling-fixture/new.txt'];
+    e.W.pulls.get(pr).body = `Clued-Work-Claim: ${db.claim.claim_id}\nClued-Work-Scope: ${db.config.scope}\n`;
+    const authorized = await db.authorizeHead(pr, e.head(pr));
+    assert.equal((await db.effects()).queueJoins, 0);
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const [a, b] = await Promise.all(db.nodes.map(node => multiDutyResident(t, e, db, node, clock, faults, privateKey)));
+    for (const node of [a, b]) {
+      node.e.claimGeneration = { claimId: db.claim.claim_id, fence: Number(db.claim.fence), epoch: Number(db.claim.execution_epoch),
+        expiresAt: new Date(authorized.expires_at ?? db.claim.expires_at).toISOString() };
+      await node.poller.pass();
+      assert.deepEqual(node.poller.lastPass.pulls.map(pull => [pull.pr, pull.headSha]), [[pr, e.head(pr)]]);
+    }
+    const beats = async () => {
+      for (const node of [a, b]) {
+        const result = await node.beat();
+        assert.equal(result.sent, true, JSON.stringify({ name: node.identity.name, result }));
+      }
+    };
+    const T = e.main();
+    const staging = 'heads/clued-train/staging';
+    const pointRef = e.port.pointRef;
+    e.port.pointRef = async (ref, sha) => {
+      const result = await pointRef(ref, sha);
+      if (ref === staging) {
+        for (const check of e.W.checks.values()) {
+          if (check.head_sha === sha && check.app.id === ACTIONS) Object.assign(check, { status: 'in_progress', conclusion: null, completed_at: null });
+        }
+      }
+      return result;
+    };
+    for (let round = 0; round < 18 && !e.W.refs.has(staging); round++) {
+      await a.poller.pass();
+      await a.tick();
+      await b.tick();
+      await beats();
+      clock.advance(60_000);
+    }
+    const S = e.W.refs.get(staging);
+    const diagnostic = () => JSON.stringify({ S, main: e.main(), roles: [a, b].map(node => node.f.exec.roleProbe.last?.code),
+      stage1: a.engine.stage1, stage8: a.engine.stage8, stage10: a.engine.trainRuns.map(run => run.decision), effects: faults.totals() });
+    assert.ok(S && S !== T, `A 必须先成功暂存：${diagnostic()} RPC ${JSON.stringify(db.calls.filter(call => call.action !== 'ci_node_heartbeat' && call.name === 'clued_work_verify_v1'))}`);
+    assert.equal(e.main(), T, '故障发生于落地前');
+    const firstBatch = await a.e.store.landingBatchByTest(S);
+    assert.equal(firstBatch.members[0].headSha, e.head(pr));
+    const bLocalBatchBefore = await b.e.store.landingBatchByTest(S);
+    const before = await db.heartbeats();
+    const finishChecks = sha => {
+      for (const check of e.W.checks.values()) {
+        if (check.head_sha === sha && check.app.id === ACTIONS)
+          Object.assign(check, { status: 'completed', conclusion: 'success', completed_at: iso(clock.now()) });
+      }
+    };
+    // A 的业务循环停止后，已经在 GitHub 上的检查照常完成。
+    faults.emit('checks-completed', S);
+    await faults.deliver('checks-completed', finishChecks);
+    assert.ok((await b.e.gh.readChecks(S)).checks.some(check => check.app.id === ACTIONS && check.conclusion === 'success'));
+    const watchdog = [];
+    for (let round = 0; round < 2; round++) {
+      await b.poller.pass();
+      await b.tick();
+      await beats();
+      watchdog.push((await db.watchdog())?.outcome);
+      clock.advance(60_000);
+    }
+    const after = await db.heartbeats();
+    assert.equal(after.length, 2);
+    for (const [index, row] of after.entries()) {
+      assert.ok(Number(row.heartbeat_sequence) > Number(before[index].heartbeat_sequence));
+      assert.equal(row.reported_state, 'NORMAL');
+      assert.equal(row.reported_service_running, true);
+    }
+    const counts = { ...faults.totals(), ...await db.effects() };
+    assert.equal(e.main(), S, `B 须落地 A 已暂存的 S。 ${diagnostic()} B 本地已有批 ${bLocalBatchBefore !== null} 看门狗 ${JSON.stringify(watchdog)} 心跳 ${JSON.stringify(after.map(row => row.heartbeat_sequence))} 计数 ${JSON.stringify(counts)}`);
+    assert.deepEqual(faults.effects().filter(effect => effect.kind === 'mainUpdates').map(effect => [effect.subject, effect.node]), [[S, b.identity.name]]);
+    assert.equal((await b.e.gh.readPullRequest(pr)).merged, true);
+    assert.deepEqual([counts.queueJoins, counts.stagingUpdates, counts.requiredRuns, counts.adoptions], [1, 1, 1, 1]);
+  });
 
 // E1 (H2) and E2: installed landing push; stage 10's own reading is not push, nothing was read, the status cannot be read, or a scan is still
 // required from this App (or appScans not read: a Source before R3, neither the top-level appScans of §82 item 5 nor rules.appScans): no stamp anywhere, the poller proposes nothing and says merge-main for
