@@ -61,7 +61,7 @@ const WINDOWS_RUN = () => workflowCall('.github/workflows/clued-required-tests-w
 test('resident-node gives each allocated file its own command through both workflow entry points', (t) => {
   const trusted = checkout(t, "SUITES['ci-suites'] = { 'resident-node': SUITES['ci-suites']['resident-node'] };");
   const cwd = selection.SUITE_COMMANDS['resident-node'][0].cwd;
-  const files = ['test/a.test.mjs', 'test/b.test.mjs', 'rollout/test/c.test.mjs', 'rollout/test/d.test.mjs'];
+  const files = ['test/a[1].test.mjs', 'test/b.test.mjs', 'rollout/test/c.test.mjs', 'rollout/test/d.test.mjs'];
   const candidate = checkout(t, '', Object.fromEntries(files.map((file) => [`${cwd}/${file}`, passing(file)])),
     path.join(trusted.root, 'candidate'));
   const checkPass = (run) => {
