@@ -3,10 +3,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX64, ResidentError, check, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
-import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
+import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, REBUILD_BUNDLE_REQUEST_MS, QUIESCENCE_REQUEST_MS, QUIESCENCE_RECHECK_MS, QUIESCENCE_FINAL_READ_MS, temporaryQuiescence } from './mailbox.mjs';
 
 // Timeouts are upper bounds for one companion action; no answer by then is never success.
-const TIMEOUTS = { 'build-bundle': 35 * 60_000, 'rebuild-bundle': REBUILD_BUNDLE_REQUEST_MS, 'prepare-workspaces': PREPARE_WORKSPACES_REQUEST_MS, 'archive-linux': ARCHIVE_LINUX_REQUEST_MS, 'linux-quiescence': 2 * 60_000, 'check-refs': CHECK_REFS_REQUEST_MS, 'archive-usage': 3 * 60_000,
+const TIMEOUTS = { 'build-bundle': 35 * 60_000, 'rebuild-bundle': REBUILD_BUNDLE_REQUEST_MS, 'prepare-workspaces': PREPARE_WORKSPACES_REQUEST_MS, 'archive-linux': ARCHIVE_LINUX_REQUEST_MS, 'check-refs': CHECK_REFS_REQUEST_MS, 'archive-usage': 3 * 60_000,
   'pr-head': 2 * 60_000, 'archive-prune': 10 * 60_000 };
 const NO_BATCH = '0000000000000000-000000000000';
 
@@ -28,7 +28,27 @@ export function mailboxCompanion(mailbox, sleep, { abandon = null } = {}) {
     if (abandon.aborted) { try { await mailbox.cancel(request, 'service-stopping'); } catch { /* it runs at its own deadline then */ } }
     return null;
   };
+  async function quiescenceRead(batch, { binding, previousRequestId, until = Infinity } = {}) {
+    const proof = { linuxUnitsInactive: false, containersZero: false };
+    const cap = previousRequestId ? QUIESCENCE_RECHECK_MS : QUIESCENCE_REQUEST_MS;
+    const fields = { batchId: batch?.batchId ?? NO_BATCH, ...(binding && { binding }), ...(previousRequestId && { previousRequestId }) };
+    let request, r, reason = 'QUIESCENCE_NO_ANSWER', retryable = false;
+    try {
+      request = await mailbox.send('linux-quiescence', fields, cap, until - QUIESCENCE_FINAL_READ_MS);
+      if (!request) return { proof, requestId: null, reason: 'QUIESCENCE_TOTAL_EXHAUSTED', retryable: false, jobTree: null };
+      r = await mailbox.await(request, sleep, QUIESCENCE_FINAL_READ_MS, true);
+      if (r?.ok === true && r.code == null && r.jobTree !== 'unconfirmed' &&
+          typeof r.proof?.linuxUnitsInactive === 'boolean' && typeof r.proof.containersZero === 'boolean') {
+        Object.assign(proof, r.proof);
+        reason = proof.linuxUnitsInactive && proof.containersZero ? 'QUIESCENCE_CONFIRMED' : 'QUIESCENCE_ACTIVE';
+      } else if (r) reason = r.code ?? 'QUIESCENCE_PROBE_UNCONFIRMED';
+      retryable = r == null || temporaryQuiescence(r);
+    } catch { reason = 'QUIESCENCE_PROTOCOL_REFUSED'; }
+    try { await mailbox.noteQuiescenceRead?.(request, mailbox.clock(), reason); } catch { /* 诊断不参与证明 */ }
+    return { proof, requestId: request?.requestId ?? null, jobTree: r?.jobTree ?? null, reason, retryable };
+  }
   return {
+    quiescenceRead,
     heartbeat: () => mailbox.heartbeat(),
     // jobTree (DESIGN §24): what the companion's job host found about the bundle's child (mailbox.mjs RESPONSE_CONTRACT); null
     // also when no answer came. Recorded with a stage-0 failure; the release never waits for it.
@@ -47,9 +67,7 @@ export function mailboxCompanion(mailbox, sleep, { abandon = null } = {}) {
     },
     // No answer, or anything but the root tool's own true/true, is "not quiescent".
     async linuxQuiescence(batch) {
-      const id = batch?.batchId ?? '0000000000000000-000000000000';
-      const r = await ask('linux-quiescence', { batchId: id });
-      return { linuxUnitsInactive: r?.ok === true && r.proof?.linuxUnitsInactive === true, containersZero: r?.ok === true && r.proof?.containersZero === true };
+      return (await quiescenceRead(batch)).proof;
     },
     // Source v2: refs still the bundle's (stage 2 gate) and the Linux archive size (retention).
     async checkRefs(batch) {
