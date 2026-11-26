@@ -16,12 +16,27 @@ const framework = 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319';
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const source = fileURLToPath(new URL('../windows/CompanionTaskRegistrar.cs', import.meta.url));
 
-function run(exe, args) {
-  const r = spawnSync(exe, args, { windowsHide: true, encoding: 'utf8', timeout: 15000, maxBuffer: 1024 * 1024 });
+function run(exe, args, spawn = spawnSync) {
+  // The suite runner bounds the test and owns cleanup of its process tree.
+  const r = spawn(exe, args, { windowsHide: true, encoding: 'utf8', maxBuffer: 1024 * 1024 });
   assert.ifError(r.error);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return r.stdout;
 }
+
+test('M5-b harness accepts a PowerShell child that is slow to start', () => {
+  const startupMs = 20_000;
+  const result = run(powershell, ['-NoProfile', '-File', 'run.ps1'], (exe, args, { timeout }) => {
+    assert.equal(exe, powershell);
+    assert.deepEqual(args, ['-NoProfile', '-File', 'run.ps1']);
+    if (timeout > 0 && timeout <= startupMs) {
+      return { error: Object.assign(new Error('spawnSync powershell.exe ETIMEDOUT'), { code: 'ETIMEDOUT' }) };
+    }
+    assert.equal(timeout ?? 0, 0, 'the suite runner owns the fixture deadline');
+    return { status: 0, stdout: '{"commands":[]}' };
+  });
+  assert.deepEqual(JSON.parse(result), { commands: [] });
+});
 
 test('M5-b decoded task action sends every WSL token with unquoted leading options', { skip: !windows }, async t => {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-m5b-argv-'));
@@ -96,7 +111,21 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($c.programPath,[ref]$t
 if ($errors.Count) { throw 'GENERATED_TASK_PARSE_FAILED' }
 $functions = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Convert-IO','Invoke-IW')},$false))
 if ($functions.Count -ne 2) { throw 'GENERATED_TASK_FUNCTIONS_MISSING' }
-foreach ($f in $functions) { . ([scriptblock]::Create($f.Extent.Text)) }
+function New-FixtureStopwatch {
+  $clock = [pscustomobject]@{ ElapsedMilliseconds = 0L }
+  Add-Member -InputObject $clock -MemberType ScriptMethod -Name Stop -Value {}
+  $clock
+}
+foreach ($f in $functions) {
+  $definition = $f.Extent.Text
+  if ($f.Name -ceq 'Invoke-IW') {
+    # Exercise the real ProcessStartInfo and pipes with a fixed clock for the fake receiver.
+    $clockCall = '[Diagnostics.Stopwatch]::StartNew()'
+    if (-not $definition.Contains($clockCall)) { throw 'GENERATED_TASK_STOPWATCH_MISSING' }
+    $definition = $definition.Replace($clockCall, '(New-FixtureStopwatch)')
+  }
+  . ([scriptblock]::Create($definition))
+}
 function Write-Diag { }
 $script:r = [ordered]@{phase='starting';commands=@()}
 $wsl = [string]$c.receiver; $dir = [string]$c.scratch
