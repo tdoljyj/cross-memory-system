@@ -140,7 +140,7 @@ jobs:
        github.actor == github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       github.actor == github.repository_owner)))
+       (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))))
     name: Supabase migration, RLS, transaction, and pgTAP
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]
     timeout-minutes: 25
@@ -279,7 +279,7 @@ jobs:
        github.actor != github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        (github.event.pull_request.head.repo.full_name != github.repository ||
-        github.actor != github.repository_owner))))
+        (github.actor != github.repository_owner && needs.admission-gate.outputs.automation_self_hosted != 'true')))))
     name: Supabase migration, RLS, transaction, and pgTAP (hosted)
     runs-on: ubuntu-24.04
     timeout-minutes: 25

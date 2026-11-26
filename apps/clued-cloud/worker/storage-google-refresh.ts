@@ -4,6 +4,10 @@ import { scopeProfile, scopeString, type StorageScopeProfile } from "./storage-g
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 type Data = Record<string, unknown>;
+type FailureCode = "credential_validation" | "claim_deadline" | "token_invalid_grant" | "token_invalid_client"
+  | "token_temporarily_unavailable" | "token_server_error" | "token_response_invalid" | "scope_changed"
+  | "drive_identity_fetch" | "drive_identity_mismatch" | "root_metadata_fetch" | "root_identity_changed"
+  | "root_access_changed" | "root_parent_changed" | "refresh_deadline" | "credential_seal_failure";
 const object = (value: unknown): value is Data => !!value && typeof value === "object" && !Array.isArray(value);
 const denied = () => new Error("storage_refresh_unavailable");
 
@@ -49,8 +53,10 @@ export async function createStorageGoogleRefresh(config: {
       }
       catch { return { status: "unavailable" }; }
       if (claimed.status !== "acquired") return { status: "not_acquired" };
-      const failure = async (reason: string) => {
-        try { await rpc({ action: "fail", connection_id: connection, attempt_id: attempt, reason }); }
+      const failure = async (reason: "credential_invalid" | "provider_rejected" | "provider_unavailable", failure_code: FailureCode) => {
+        // Only fixed codes cross this boundary. Never persist upstream bodies,
+        // exception messages, URLs, credentials or stacks in a diagnostic.
+        try { await rpc({ action: "fail", connection_id: connection, attempt_id: attempt, reason, failure_code }); }
         catch { /* Unknown settlement remains fenced. Never log the upstream data. */ }
         return { status: "unavailable" };
       };
@@ -67,9 +73,9 @@ export async function createStorageGoogleRefresh(config: {
         previous = JSON.parse(await vault.open(claimed.credential_envelope as StorageCredentialEnvelope, context));
         if (object(previous)) profile = scopeProfile(previous.scope);
         if (!object(previous) || profile === null || previous.token_type !== "Bearer" || typeof previous.refresh_token !== "string" || previous.refresh_token.length < 16) throw denied();
-      } catch { return failure("credential_invalid"); }
+      } catch { return failure("credential_invalid", "credential_validation"); }
       const start = clock();
-      if (!Number.isFinite(start) || start >= deadline) return failure("credential_invalid");
+      if (!Number.isFinite(start) || start >= deadline) return failure("credential_invalid", "claim_deadline");
       let response: Response, tokens: Data;
       try {
         response = await fetcher("https://oauth2.googleapis.com/token", { method: "POST", cache: "no-store", signal: AbortSignal.timeout(10000),
@@ -78,31 +84,43 @@ export async function createStorageGoogleRefresh(config: {
         tokens = await read(response);
       } catch { return { status: "uncertain" }; } // Do not retry a potentially rotated refresh token.
       if (!response.ok) {
-        if (tokens.error === "invalid_grant" || tokens.error === "invalid_client") return failure("provider_rejected");
-        if (!tokens.access_token && ["temporarily_unavailable", "server_error"].includes(String(tokens.error))) return failure("provider_unavailable");
+        if (tokens.error === "invalid_grant") return failure("provider_rejected", "token_invalid_grant");
+        if (tokens.error === "invalid_client") return failure("provider_rejected", "token_invalid_client");
+        if (!tokens.access_token && tokens.error === "temporarily_unavailable") return failure("provider_unavailable", "token_temporarily_unavailable");
+        if (!tokens.access_token && tokens.error === "server_error") return failure("provider_unavailable", "token_server_error");
         return { status: "uncertain" };
       }
-      try {
         // RFC 6749 allows omitted scope when unchanged. A refresh never changes
         // the sealed profile (StorageNormalUse §2.2 item 4): any other explicit
         // scope fails here and the connection needs fresh consent. An omitted
         // refresh_token preserves the existing one.
         if (tokens.token_type !== "Bearer" || typeof tokens.access_token !== "string" || tokens.access_token.length < 16 ||
             !Number.isInteger(tokens.expires_in) || Number(tokens.expires_in) < 120 || Number(tokens.expires_in) > 86400 ||
-            (tokens.scope !== undefined && scopeProfile(tokens.scope) !== profile) ||
-            (tokens.refresh_token !== undefined && (typeof tokens.refresh_token !== "string" || tokens.refresh_token.length < 16))) throw denied();
-        const about = await metadata("https://www.googleapis.com/drive/v3/about?fields=user(permissionId,me)", tokens.access_token);
-        if (!object(about.user) || about.user.me !== true || about.user.permissionId !== context.provider_subject) throw denied();
-        const root = await metadata("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(String(claimed.root_folder_id)) +
-          "?fields=id,parents,mimeType,trashed,capabilities(canAddChildren),isAppAuthorized", tokens.access_token);
-        if (root.id !== claimed.root_folder_id || root.mimeType !== "application/vnd.google-apps.folder" || root.trashed !== false ||
-            (profile !== "full" && root.isAppAuthorized !== true) || !object(root.capabilities) || root.capabilities.canAddChildren !== true ||
-            !Array.isArray(root.parents) || root.parents.length !== 1 || root.parents[0] !== claimed.root_parent_id) throw denied();
+            (tokens.refresh_token !== undefined && (typeof tokens.refresh_token !== "string" || tokens.refresh_token.length < 16)))
+          return failure("provider_rejected", "token_response_invalid");
+        if (tokens.scope !== undefined && scopeProfile(tokens.scope) !== profile) return failure("provider_rejected", "scope_changed");
+        let about: Data, root: Data;
+        try { about = await metadata("https://www.googleapis.com/drive/v3/about?fields=user(permissionId,me)", tokens.access_token); }
+        catch { return failure("provider_rejected", "drive_identity_fetch"); }
+        if (!object(about.user) || about.user.me !== true || about.user.permissionId !== context.provider_subject)
+          return failure("provider_rejected", "drive_identity_mismatch");
+        try { root = await metadata("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(String(claimed.root_folder_id)) +
+          "?fields=id,parents,mimeType,trashed,capabilities(canAddChildren),isAppAuthorized", tokens.access_token); }
+        catch { return failure("provider_rejected", "root_metadata_fetch"); }
+        if (root.id !== claimed.root_folder_id || root.mimeType !== "application/vnd.google-apps.folder" || root.trashed !== false)
+          return failure("provider_rejected", "root_identity_changed");
+        if ((profile !== "full" && root.isAppAuthorized !== true) || !object(root.capabilities) || root.capabilities.canAddChildren !== true)
+          return failure("provider_rejected", "root_access_changed");
+        if (!Array.isArray(root.parents) || root.parents.length !== 1 || root.parents[0] !== claimed.root_parent_id)
+          return failure("provider_rejected", "root_parent_changed");
         const expires = start + Number(tokens.expires_in)*1000, now = clock();
-        if (!Number.isFinite(now) || now < start || now >= deadline || expires - now <= 60000) throw denied();
-        const envelope = await vault.seal(JSON.stringify({ access_token: tokens.access_token,
+        if (!Number.isFinite(now) || now < start || now >= deadline || expires - now <= 60000)
+          return failure("provider_rejected", "refresh_deadline");
+        let envelope: StorageCredentialEnvelope;
+        try { envelope = await vault.seal(JSON.stringify({ access_token: tokens.access_token,
           refresh_token: tokens.refresh_token ?? previous.refresh_token, token_type: "Bearer", scope: scopeString(profile!), expires_at_ms: expires }),
-          { ...context, credential_version: context.credential_version + 1 });
+          { ...context, credential_version: context.credential_version + 1 }); }
+        catch { return failure("provider_rejected", "credential_seal_failure"); }
         const commit = { action: "commit", connection_id: connection, attempt_id: attempt, credential_envelope: envelope, expires_at: new Date(expires).toISOString() };
         // Only retry this exact ciphertext commit, which is CAS + receipt-backed.
         for (let tries=0; tries<2; tries++) {
@@ -110,7 +128,6 @@ export async function createStorageGoogleRefresh(config: {
           catch { /* a lost commit reply is recovered through its original digest */ }
         }
         return { status: "uncertain" };
-      } catch { return failure("provider_rejected"); }
     },
   });
 }
