@@ -15,8 +15,14 @@ import { ROLE_PROBE_RUN_CONTRACT_WATCH, validWatchPr } from './role-probe-run.mj
 // own deadline (live), like every other read of a controller entry.
 // watchPr (generation 12, resident DESIGN 56.2): the job's watched PR (role-probe-run/2), else null. It changes nothing but the
 // held code (merge-slot-native.mjs#parseRoleProbe).
-export async function probeRole({ record, live, tokenFile = path.join(WIN_ROOT, 'secrets', 'ci-admission.token'), watchPr = null, tokenReader = readProtected, protect = assertProtectedPaths, fetchImpl = globalThis.fetch, readRetry = {} }) {
+export async function probeRole({ record, live, tokenFile = path.join(WIN_ROOT, 'secrets', 'ci-admission.token'), watchPr = null, tokenReader = readProtected, protect = assertProtectedPaths, fetchImpl = globalThis.fetch, readRetry = {}, train }) {
   live();
+  if (train !== undefined) {
+    const native = createMergeSlotNative({ config: record.config, train });
+    const fact = await native.roleProbe();
+    live();
+    return { status: 'BLOCKED', reason: fact.code, sideEffects: 0 };
+  }
   const { nativeToken: token } = await readCiCredential(record, { tokenFile, protect, tokenReader });
   // Each repeat keeps the probe's own 10 s bound (merge-slot-native.mjs). No log port here: the outcome's code says what was seen.
   const reads = withReadRetry((url, opts) => { live(); return fetchImpl(url, opts); }, { live, deadlineAt: () => live.deadlineAt ?? null, attemptTimeoutMs: 10_000,

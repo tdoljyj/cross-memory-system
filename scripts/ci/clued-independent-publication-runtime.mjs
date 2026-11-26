@@ -1,8 +1,12 @@
 // Qualified callers supply the protected Native, GitHub, journal and supervisor
 // ports. This module never reads a credential or treats a syntax check as a grant.
 import { createHash } from 'node:crypto';
-import { validateIndependentPublicationIdentity, independentPublicationIdentityDigest,
+import { APP_ID, CHECKS, validateIndependentPublicationIdentity, independentPublicationIdentityDigest,
   independentPublicationExternalId } from './clued-independent-publication-identity.mjs';
+import { TRAIN_CHECK_EFFECT_FIELDS, TRAIN_EFFECT_STATES, TRAIN_FAILURE, TRAIN_HEAD_RETRY_FIELDS,
+  TRAIN_PROTOCOL_VERSION, TRAIN_TICKET_AUTHORITY, trainEffectKey, trainHeadWorkKey }
+  from '../../work/actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs';
+import { admissionExternalIdV2 } from '../../work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
 
 export const COMPONENT_VERSION = '1.0.0';
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
@@ -224,4 +228,120 @@ export function createIndependentPublicationRuntime({ native, github, journal, a
     return { status: 'RECONCILED', ticket, checkRunId: check.id };
   }
   return Object.freeze({ prepare, createCheck, recover, adoptOpenTicket, reconcileStopped });
+}
+
+// 协议 2 的发送权由 Native 账本记录，其他节点据此区分预留票据和已发送的请求。
+export function createTrainHeadPublicationRuntime({ train, github, assertCurrent }) {
+  const command = async (action, fields) => {
+    const reply = await train.command({ ...fields, action, protocol_version: TRAIN_PROTOCOL_VERSION });
+    if (reply?.protocol_version !== TRAIN_PROTOCOL_VERSION) fail('ci_train_protocol_unconfirmed');
+    return reply;
+  };
+  const unknown = () => fail(TRAIN_FAILURE.EFFECT_UNKNOWN.native);
+
+  async function acquire(job, controllerId) {
+    const subject = { ...train.scope, pr: job.pr, headSha: job.headSha };
+    const workKey = trainHeadWorkKey({ ...subject, action: 'verify_head' });
+    const binding = { work_key: workKey, scope: train.scope.contextKey, repository: job.repo, pr_ref: job.repo + '#' + job.pr,
+      head_sha: job.headSha, base_sha: job.baseSha, target_branch: train.scope.targetBranch,
+      source_manifest_sha256: job.sourceManifestSha256, controller_id: controllerId };
+    const reply = await command('verify_head', binding);
+    if (reply.work_key !== workKey) fail('ci_train_head_work_unconfirmed');
+    const code = reply.status === 'rejected' ? reply.error_code : null;
+    if ([TRAIN_FAILURE.HEAD_LEASE_COMPLETED.native, TRAIN_FAILURE.LEASE_STALE.native].includes(code)) return { reason: code };
+    if (code === TRAIN_FAILURE.HEAD_LEASE_HELD.native) {
+      const ciRetryAfter = reply[TRAIN_HEAD_RETRY_FIELDS.native];
+      if (typeof ciRetryAfter !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(ciRetryAfter)
+        || !Number.isFinite(Date.parse(ciRetryAfter))) fail('ci_train_head_work_unconfirmed');
+      return { reason: code, ciRetryAfter };
+    }
+    if (reply.status !== 'ok' || !id(reply.lease_generation) || typeof reply.resume_required !== 'boolean') fail('ci_train_head_work_unconfirmed');
+    return { job, subject, resumeRequired: reply.resume_required, fields: { ...binding, lease_generation: reply.lease_generation } };
+  }
+
+  async function publish(lease, context = null) {
+    const { job } = lease;
+    const identity = context?.identity;
+    if (TRAIN_TICKET_AUTHORITY[job.role] !== 'head_or_front_job' || job.role !== 'work-admission'
+      || job.testSha !== job.headSha
+      || (!lease.resumeRequired && (context?.scope !== lease.fields.scope || identity?.controller_id !== lease.fields.controller_id)))
+      fail('ci_train_head_work_unconfirmed');
+    const effectKey = trainEffectKey({ ...lease.subject, action: 'publication_begin_independent',
+      subject: [job.pr, job.headSha, APP_ID, CHECKS[job.role]] });
+    // 维持 GitHub 准入门禁使用的 external_id 格式。共享效果键跨尝试和认领代次稳定。
+    const externalIdOf = ({ job, claim }) => admissionExternalIdV2('independent-ci:native-work-admission', job,
+      { claimId: claim.claim_id, fence: claim.fence, epoch: claim.execution_epoch });
+    const fields = { ...lease.fields, effect_key: effectKey };
+    const begin = lease.resumeRequired
+      ? await command('publication_reconcile', { ...fields, phase: 'read' })
+      : await command('publication_begin_independent', { ...fields, phase: 'reserve',
+        effect: { appId: APP_ID, headSha: job.headSha, externalId: externalIdOf(identity), checkRunId: null },
+        changed_paths: context.paths, independent_identity: identity });
+    if (begin.status !== 'ok' || begin.lease_generation !== fields.lease_generation || begin.effect_key !== effectKey
+      || !TRAIN_EFFECT_STATES.includes(begin.state) || !UUID.test(begin.publication_id ?? '') || !UUID.test(begin.receipt_id ?? '')) unknown();
+    const original = validateIndependentPublicationIdentity(begin.independent_identity);
+    if (original.job.repo !== job.repo || original.job.pr !== job.pr || original.job.headSha !== job.headSha
+      || original.job.role !== job.role || original.job.testSha !== job.headSha) unknown();
+    const externalId = externalIdOf(original);
+    const effect = { appId: APP_ID, headSha: job.headSha, externalId, checkRunId: null };
+    const matchesEffect = value => TRAIN_CHECK_EFFECT_FIELDS.every(k => Object.hasOwn(value ?? {}, k))
+      && value.appId === effect.appId && value.headSha === effect.headSha && value.externalId === externalId
+      && (value.checkRunId === null || id(value.checkRunId));
+    if (!matchesEffect(begin.effect)) unknown();
+    const ticket = { identity: original, publication_id: begin.publication_id, receipt_id: begin.receipt_id };
+    const bound = { identity: original, payload: { ...context?.payload, external_id: externalId } };
+    const matches = async () => (await github.readChecks(job.headSha)).filter(check => check.app?.id === effect.appId
+      && check.name === original.check_name && check.head_sha === effect.headSha && check.external_id === externalId);
+    async function readEffect(knownId = null) {
+      const found = await matches();
+      if (found.length !== 1 || !checkIdentity(found[0], bound, ticket)
+        || (knownId !== null && found[0].id !== knownId)) unknown();
+      return found[0];
+    }
+    let checkRun, sideEffects = 0;
+    if (begin.state === 'reserved') {
+      if (lease.resumeRequired || begin.effect.checkRunId !== null || independentPublicationIdentityDigest(original) !== independentPublicationIdentityDigest(identity)
+        || await assertCurrent(identity) !== true) fail(TRAIN_FAILURE.LEASE_STALE.native);
+      const inventory = await github.readChecks(job.headSha);
+      // 混版切换先排空旧普通准入检查。
+      if (inventory.some(c => c.app?.id === effect.appId && c.name === original.check_name)) unknown();
+      const send = await command('publication_begin_independent', { ...fields, phase: 'send', publication_id: ticket.publication_id });
+      if (send.status !== 'ok' || send.state !== 'sent' || send.send_authorized !== true
+        || send.lease_generation !== fields.lease_generation || send.publication_id !== ticket.publication_id
+        || send.effect_key !== effectKey || !matchesEffect(send.effect) || send.effect.checkRunId !== null) unknown();
+      const body = clone(bound.payload);
+      body.output.summary += '\n\n' + marker(ticket);
+      const posted = await github.createCheck(body);
+      if (!checkIdentity(posted, bound, ticket)) unknown();
+      sideEffects = 1;
+      checkRun = await readEffect(posted.id);
+    } else {
+      checkRun = await readEffect(begin.effect.checkRunId);
+    }
+
+    const exact = { ...fields, publication_id: ticket.publication_id, check_run_id: String(checkRun.id),
+      effect: { ...effect, checkRunId: checkRun.id } };
+    const confirms = answer => answer.status === 'committed' && answer.publication_id === exact.publication_id
+      && answer.effect_key === effectKey && matchesEffect(answer.effect)
+      && answer.effect.checkRunId === checkRun.id && UUID.test(answer.receipt_id ?? '');
+    if (begin.state !== 'revoked') {
+      if (checkRun.conclusion !== 'success') unknown();
+      const finished = await command('publication_finish', exact);
+      if (!confirms(finished) || typeof finished.must_revoke !== 'boolean') unknown();
+      if (!finished.must_revoke) {
+        if (finished.publication_status !== 'published' || finished.first_queue_pending !== true) unknown();
+        return { status: 'SETTLED', effectKey, checkRunId: checkRun.id, sideEffects };
+      }
+    }
+    if (checkRun.conclusion !== 'failure') {
+      await github.revokeCheck(checkRun.id, { status: 'completed', conclusion: 'failure', output: {
+        title: 'REVOKED: Native publication authority changed', summary: marker(ticket) } });
+      sideEffects++;
+    }
+    if ((await readEffect(checkRun.id)).conclusion !== 'failure') unknown();
+    const revoked = await command('publication_reconcile', exact);
+    if (!confirms(revoked) || revoked.must_revoke !== true) unknown();
+    return { status: 'REVOKED', effectKey, checkRunId: checkRun.id, sideEffects };
+  }
+  return Object.freeze({ acquire, publish });
 }
