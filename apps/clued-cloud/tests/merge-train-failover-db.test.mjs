@@ -1348,9 +1348,9 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
   }
 });
 
-test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果核对', { timeout: 300000 }, async t => {
+async function trainFixture(t, repository = 'fixture/repository-12345') {
   const { build, stop } = await import('esbuild');
-  const { schedulingFixture, digest, sha } = await import('./ci-scheduling-stage1-fixture.mjs');
+  const { schedulingFixture, digest, sha, limits } = await import('./ci-scheduling-stage1-fixture.mjs');
   const { TRAIN_FAILURE, TRAIN_PROBE_FIELDS, trainHeadWorkKey, trainBatchKey, trainEffectKey } =
     await import('../../../work/actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs');
   const { multiDutyClock, multiDutyGitHub } = await import('../../../work/independent-ci-resident-v1/test/multi-duty-fixture.mjs');
@@ -1384,7 +1384,16 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
   }
   const a = await addNode('列车节点 A', tokenA);
   const b = await addNode('列车节点 B', tokenB);
-  f.committed(await f.pool());
+  const legacy = await addNode('旧角色对照节点', 'fixture-' + hash());
+  await admin.query(`update clued_private.binding_roles_v1 set binding_id=$1
+    where user_id=$2 and binding_id=$3 and role='ci-admission'`, [legacy.binding, user, f.binding]);
+  const { pool } = await f.native('clued_ci_nodes_v1', { project_id: project });
+  const registration = await f.native('clued_ci_pool_confirmation_issue_v1', {
+    project_id: project, base_version: pool.version, repository: { id: 12345, name: repository },
+    limits: limits(), accepted_ref: 'fixture-pool-acceptance',
+  });
+  f.committed(await f.native('clued_ci_pool_apply_v1', { confirmation_token: registration.confirmation_token,
+    view_digest: registration.view_digest }));
   await f.modelMode();
   await admin.query(`update clued_private.work_claim_execution_policy_v1
     set activated_at=clock_timestamp(),qualification_commit=$1 where singleton`, [sha('source')]);
@@ -1401,7 +1410,7 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
   f.committed(await workerGatewayRpc(f.gateway, 'clued_work_renew_v1', f.token, {
     scope: 'project:' + project, action: 'authorize_head', claim_id: f.claim.claim_id, fence: f.claim.fence,
     lease_version: f.claim.lease_version, ...(f.claimResult.lease_key ? { lease_key: f.claimResult.lease_key } : {}),
-    repository: 'fixture/repository-12345', head_sha: head, target_branch: 'main', pr_number: pr, idempotency_key: uuid(),
+    repository, head_sha: head, target_branch: 'main', idempotency_key: uuid(),
   }));
 
   async function signed(node, action, fields = {}, overrides = {}) {
@@ -1440,6 +1449,14 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
   const call = async (node, action, fields) => send(node, await signed(node, action, fields));
   const data = doc => doc.result ?? doc;
   const lease = result => ({ work_key: result.work_key, generation: result.generation, lease_version: result.lease_version });
+  const scope = { tenantId: user, projectId: project, repositoryId: 12345, targetBranch: 'main' };
+  const paths = ['work/ci-scheduling-fixture/source.mjs'];
+
+  return { f, admin, user, project, github, a, b, head, pr, subject, one, signed, send, call, data, lease, scope, repository, paths, digest, sha, TRAIN_FAILURE, TRAIN_PROBE_FIELDS, trainHeadWorkKey, trainBatchKey, trainEffectKey };
+}
+
+test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果核对', { timeout: 300000 }, async t => {
+  const { f, admin, user, project, github, a, b, head, pr, subject, one, signed, send, call, data, lease, scope, repository, paths, digest, sha, TRAIN_FAILURE, TRAIN_PROBE_FIELDS, trainHeadWorkKey, trainBatchKey, trainEffectKey } = await trainFixture(t);
 
   await t.test('两台独立节点均有资格，同连接异机、跨项目和错 Source 均拒绝', async () => {
     const replies = await Promise.all([call(a, 'role_probe'), call(b, 'role_probe')]);
@@ -1460,7 +1477,43 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
     assert.equal(data(await call(a, 'head_acquire', { ...subject, source_manifest_sha256: OTHER_SRC })).error_code, TRAIN_FAILURE.SOURCE_MISMATCH.native);
   });
 
-  await t.test('同领只有一笔，续期按进展 CAS，心跳无效，旧代次无法复活，未知效果保留', async () => {
+  await t.test('10：发布资格可在无 job 或 head 租约时读取', async () => {
+    const qualification = data(await call(b, 'publisher_current'));
+    assert.equal(qualification.current, true, JSON.stringify(qualification));
+    assert.notEqual(qualification.send_authorized, true);
+  });
+
+  await t.test('5：唤醒只提供 PR/H/T，节点能发现尚无关联的精确认领', async () => {
+    const result = data(await call(b, 'resolve_pr_claim', { pr, head_sha: head, base_sha: sha('base') }));
+    assert.equal(result.binding_status, 'bound', JSON.stringify(result));
+    assert.equal(result.claim.claim_id, f.claim.claim_id);
+    const acquired = data(await call(b, 'head_acquire', subject));
+    assert.equal(acquired.status, 'leased', JSON.stringify(acquired));
+    assert.equal(data(await call(b, 'work_release', lease(acquired))).status, 'released');
+  });
+
+  await t.test('11a：双节点辅助派发最多一次获得发送许可，接手可读原回执', async () => {
+    const dispatch = { ref: 'main', subject: ['clued-compute-panel.yml', 42] };
+    const effect_key = trainEffectKey({ ...scope, action: 'workflow_dispatch', subject: dispatch.subject });
+    const fields = { ...dispatch, effect_key };
+    const reserved = (await Promise.all([call(a, 'auxiliary_dispatch_reserve', fields),
+      call(b, 'auxiliary_dispatch_reserve', fields)])).map(data);
+    const winner = reserved.findIndex(result => result.state === 'reserved' && result.generation);
+    assert.notEqual(winner, -1, JSON.stringify(reserved));
+    const authorization = { ...fields, generation: reserved[winner].generation };
+    const grants = (await Promise.all([call(a, 'auxiliary_dispatch_send', authorization),
+      call(b, 'auxiliary_dispatch_send', authorization)])).map(data);
+    assert.equal(grants.filter(result => result.send_authorized === true).length, 1, JSON.stringify(grants));
+    const sent = grants[winner];
+    const observer = winner === 0 ? b : a;
+    const original = data(await call(observer, 'auxiliary_dispatch_read', fields));
+    assert.deepEqual([original.state, original.receipt_id, original.send_authorized], ['sent', sent.receipt_id, false]);
+    assert.equal(data(await call(observer, 'auxiliary_dispatch_reconcile',
+      { ...fields, evidence_digest: digest('exact workflow dispatch readback') })).state, 'settled');
+    assert.notEqual(data(await call(observer, 'auxiliary_dispatch_send', authorization)).send_authorized, true);
+  });
+
+  await t.test('同领只有一笔，续期按进展 CAS，心跳无效，旧代次无法复活，未知效果保留', async t => {
     const results = (await Promise.all([call(a, 'head_acquire', subject), call(b, 'head_acquire', subject)])).map(data);
     const won = results.findIndex(r => r.status === 'leased');
     assert.notEqual(won, -1, JSON.stringify(results));
@@ -1469,10 +1522,9 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
     assert.equal(other.error_code, TRAIN_FAILURE.HEAD_LEASE_HELD.native);
     assert.ok(other.ci_retry_after);
     const [holder, successor] = won === 0 ? [a, b] : [b, a];
-    const scope = { tenantId: user, projectId: project, repositoryId: 12345, targetBranch: 'main' };
     assert.equal(current.work_key, trainHeadWorkKey({ ...scope, pr, headSha: head, action: 'verify_head' }));
     assert.equal(data(await call(holder, 'work_renew', lease(current))).error_code, TRAIN_FAILURE.LEASE_STALE.native);
-    const verified = data(await call(holder, 'verify_head', { ...lease(current), base_sha: sha('base'), changed_paths: ['work/ci-scheduling-fixture/source.mjs'] }));
+    const verified = data(await call(holder, 'verify_head', { ...lease(current), base_sha: sha('base'), changed_paths: paths }));
     assert.equal(verified.verdict, 'ADMITTED', JSON.stringify(verified));
     const renewed = (await Promise.all([
       call(holder, 'work_renew', lease(current)), call(holder, 'work_renew', lease(current)),
@@ -1483,11 +1535,32 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
     assert.equal((await one(admin, `select count(*)::int n from clued_private.work_claim_door_usage_v1
       where user_id=$1 and door='github-ci' and task_id=$2 and unit_key=$3`, [user, f.task, head])).n, 1);
 
+    await t.test('10：现行 head 可读准入事实，旧租约版本不可读', async () => {
+      const fact = data(await call(holder, 'admission_issue_fact', lease(live)));
+      assert.equal(fact.issuer_on_duty, true, JSON.stringify(fact));
+      assert.equal(fact.head_sha, head);
+      assert.equal(data(await call(holder, 'admission_issue_fact', lease(current))).error_code, TRAIN_FAILURE.LEASE_STALE.native);
+    });
+
     const check = { appId: 5368905, headSha: head, externalId: 'fixture-check-1788' };
     const intent = data(await call(holder, 'publication_begin_independent', { ...lease(live), check }));
     assert.equal(intent.state, 'reserved', JSON.stringify(intent));
     assert.equal(intent.effect_key, trainEffectKey({ ...scope, action: 'publication_begin_independent', subject: [pr, head, 'work-admission'] }));
-    const sent = data(await call(holder, 'publication_send', { ...lease(live), effect_key: intent.effect_key }));
+    const sendFields = { ...lease(live), effect_key: intent.effect_key };
+    await t.test('4：预留之后缩窄写集，发送时重新验证完整准入', async () => {
+      const old = await one(admin, 'select write_set from clued_private.work_claims_v1 where claim_id=$1', [f.claim.claim_id]);
+      await admin.query('update clued_private.work_claims_v1 set write_set=$2 where claim_id=$1', [f.claim.claim_id, ['different/**']]);
+      try {
+        const denied = data(await call(holder, 'verify_head', { ...lease(live), base_sha: sha('base'), changed_paths: paths }));
+        assert.equal(denied.verdict, 'REJECTED', JSON.stringify(denied));
+        const refusedSend = data(await call(holder, 'publication_send', sendFields));
+        assert.equal(refusedSend.error_code, TRAIN_FAILURE.LEASE_STALE.native, JSON.stringify(refusedSend));
+        assert.equal((await one(admin, 'select state from clued_private.ci_train_check_effects_v2 where effect_key=$1', [intent.effect_key])).state, 'reserved');
+      } finally {
+        await admin.query('update clued_private.work_claims_v1 set write_set=$2 where claim_id=$1', [f.claim.claim_id, old.write_set]);
+      }
+    });
+    const sent = data(await call(holder, 'publication_send', sendFields));
     assert.equal(sent.state, 'sent', JSON.stringify(sent));
     let githubCheck;
     github.arm('check create', { loseReply: true });
@@ -1516,6 +1589,30 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
     assert.equal(settled.state, 'settled', JSON.stringify(settled));
     assert.equal(data(await call(successor, 'publication_finish', finish)).receipt_id, settled.receipt_id);
     assert.equal(data(await call(holder, 'head_acquire', subject)).error_code, TRAIN_FAILURE.HEAD_LEASE_COMPLETED.native);
+    await t.test('11b：另一节点能凭旧 B 的精确 PR/H/T 只读发布结清收据', async () => {
+      const fields = { key: digest('legacy B fixture'), pr, head_sha: head, base_sha: sha('base') };
+      const answer = data(await call(holder, 'legacy_batch_handoff_read', fields));
+      assert.deepEqual([answer.protocol_version, answer.key, answer.receiptId], [2, fields.key, settled.receipt_id], JSON.stringify(answer));
+      assert.equal(data(await call(holder, 'legacy_batch_handoff_read', { ...fields, base_sha: sha('wrong base') })).receiptId, undefined);
+    });
+    await t.test('7：队列保活不延长尚未入队的认领', async () => {
+      const old = await one(admin, 'select expires_at from clued_private.work_claims_v1 where claim_id=$1', [f.claim.claim_id]);
+      const near = await one(admin, `update clued_private.work_claims_v1 set expires_at=clock_timestamp()+interval '5 minutes'
+        where claim_id=$1 returning expires_at`, [f.claim.claim_id]);
+      const renewalReceipts = () => one(admin, `select count(*)::int n from public.clued_audit_receipts
+        where user_id=$1 and object_id=$2 and operation in ('work_claim_lease_extend_by_ci','work_claim_queue_keepalive')`,
+      [user, f.claim.claim_id]);
+      const before = await renewalReceipts();
+      try {
+        const keep = data(await call(holder, 'queue_action_acquire', { ...subject, purpose: 'merge_queue_keepalive' }));
+        const result = data(await call(holder, 'merge_queue_keepalive', lease(keep)));
+        assert.deepEqual(result.kept_alive, [], JSON.stringify(result));
+        assert.deepEqual((await one(admin, 'select expires_at from clued_private.work_claims_v1 where claim_id=$1', [f.claim.claim_id])).expires_at, near.expires_at);
+        assert.deepEqual(await renewalReceipts(), before);
+      } finally {
+        await admin.query('update clued_private.work_claims_v1 set expires_at=$2 where claim_id=$1', [f.claim.claim_id, old.expires_at]);
+      }
+    });
     const queuedWork = data(await call(holder, 'queue_acquire', subject));
     assert.equal(queuedWork.status, 'leased', JSON.stringify(queuedWork));
     const queue = data(await call(holder, 'merge_queue_join', {
@@ -1527,8 +1624,43 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
     assert.equal((await one(admin, `select count(*)::int n from public.clued_audit_receipts
       where user_id=$1 and operation='work_claim_merge_queue_join_by_ci'`, [user])).n, 1);
 
+    await t.test('6：归还队位后，同一个 H 可重新评估入队且不重复发检查', async () => {
+      const returned = data(await call(holder, 'queue_action_acquire', { ...subject, purpose: 'merge_slot_return' }));
+      const receipt = data(await call(holder, 'merge_slot_return', { ...lease(returned), evidence_digest: digest('terminal check failure') }));
+      assert.equal(receipt.status, 'ok', JSON.stringify(receipt));
+      const next = data(await call(successor, 'queue_acquire', subject));
+      assert.equal(next.status, 'leased', JSON.stringify(next));
+      const rejoined = data(await call(successor, 'merge_queue_join', {
+        ...lease(next), check_run_id: 12345, inventory_digest: digest('recovered check inventory'),
+      }));
+      assert.equal(rejoined.joined, true, JSON.stringify(rejoined));
+      assert.equal(github.totals().checkCreates, 1);
+    });
+
     const baseSha = sha('base');
     const members = [{ pr, headSha: head, claimId: f.claim.claim_id, fence: subject.claim_fence, epoch: subject.execution_epoch }];
+    await t.test('2：成员已关闭且无在途 main 写，已暂存批可终结并释放目标', async () => {
+      const oldBase = sha('cleanup base');
+      const old = data(await call(holder, 'batch_reserve', { baseSha: oldBase, members }));
+      const oldHandle = { batchId: old.batchId, generation: old.generation };
+      const testSha = sha('cleanup test');
+      const generationRefOid = sha('cleanup marker');
+      assert.equal(data(await call(holder, 'batch_seal', { ...oldHandle, testSha, treeSha: sha('tree'),
+        steps: [{ sha: testSha, firstParent: oldBase, secondParent: head }], checksPolicyVersion: 'fixture-v1' })).state, 'sealed');
+      assert.equal(data(await call(holder, 'staging_prepare', { ...oldHandle, generationRefOid })).stagingState, 'reserved');
+      assert.equal(data(await call(holder, 'staging_send', oldHandle)).stagingState, 'sent');
+      assert.equal(data(await call(holder, 'staging_publish', { ...oldHandle, observation: {
+        testSha, generationRefOid, evidence_digest: digest('cleanup readback'),
+      } })).state, 'waiting_checks');
+      const resumed = data(await call(successor, 'batch_acquire', { batchId: old.batchId }));
+      await admin.query("update clued_private.work_claim_pr_task_bindings_v1 set status='closed' where user_id=$1 and pr_number=$2", [user, pr]);
+      try {
+        const cleaned = data(await call(successor, 'batch_cleanup', { batchId: old.batchId, generation: resumed.generation }));
+        assert.equal(cleaned.state, 'invalidated', JSON.stringify(cleaned));
+      } finally {
+        await admin.query("update clued_private.work_claim_pr_task_bindings_v1 set status='active' where user_id=$1 and pr_number=$2", [user, pr]);
+      }
+    });
     const reservations = (await Promise.all([call(holder, 'batch_reserve', { baseSha, members }),
       call(successor, 'batch_reserve', { baseSha, members })])).map(data);
     const ownerIndex = reservations.findIndex(r => r.state === 'forming');
@@ -1546,6 +1678,12 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
     const staged = data(await call(builder, 'staging_prepare', { ...handle, generationRefOid }));
     assert.equal(staged.stagingState, 'reserved', JSON.stringify(staged));
     assert.equal(data(await call(builder, 'staging_send', handle)).stagingState, 'sent');
+    await t.test('8：正确 S 配上其他代次标记不能结清暂存', async () => {
+      const prematureStage = data(await call(builder, 'staging_publish', { ...handle, observation: { testSha,
+        generationRefOid: sha('wrong staging generation'), evidence_digest: digest('wrong staging readback') } }));
+      assert.equal(prematureStage.error_code, TRAIN_FAILURE.LANDING_REF_MISMATCH.native, JSON.stringify(prematureStage));
+      assert.equal(data(await call(reader, 'batch_read', { batchId: batch.batchId })).stagingState, 'sent');
+    });
     const stage = data(await call(builder, 'staging_publish', { ...handle, observation: { testSha, generationRefOid,
       evidence_digest: digest('staging readback') } }));
     assert.equal(stage.state, 'waiting_checks', JSON.stringify(stage));
@@ -1553,7 +1691,8 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
     assert.equal(resume.testSha, testSha);
     assert.equal(resume.generation, batch.generation+1);
     const successorRefOid = sha('landed ref');
-    const landing = data(await call(reader, 'landing_prepare', { batchId: batch.batchId, generation: resume.generation, generationRefOid, successorRefOid,
+    const originalLandingOid = sha('independent landing generation');
+    const landing = data(await call(reader, 'landing_prepare', { batchId: batch.batchId, generation: resume.generation, generationRefOid: originalLandingOid, successorRefOid,
       evidence_digest: digest('required checks on S') }));
     assert.equal(landing.state, 'reserved', JSON.stringify(landing));
     assert.deepEqual(landing.intent.members, members);
@@ -1571,9 +1710,23 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
     assert.equal((await send(reader, late)).status, 'refused');
     await admin.query(`update clued_private.ci_train_batches_v2 set expires_at=clock_timestamp()-interval '1 second'
       where batch_id=$1`, [batch.batchId]);
-    const recovered = data(await call(builder, 'batch_acquire', { batchId: batch.batchId }));
-    assert.equal(recovered.generation, resume.generation+1);
-    const recoveredHandle = { ...landingHandle, generation: recovered.generation };
+    let recoveredHandle;
+    await t.test('1：接手节点仅凭共享账本发现原落地意图', async () => {
+      const pendingReply = data(await call(builder, 'work_pending'));
+      assert.equal(pendingReply.status, 'ok', JSON.stringify(pendingReply));
+      const pending = pendingReply.work.find(item => item.action === 'batch_acquire');
+      assert.ok(pending);
+      const read = data(await call(builder, 'batch_read', { batchId: pending.batchId }));
+      const recovered = data(await call(builder, 'batch_acquire', { batchId: pending.batchId }));
+      assert.equal(recovered.generation, resume.generation+1);
+      assert.equal(read.landingIntent.state, 'sent');
+      assert.deepEqual({ ...read.landingIntent, state: 'unknown' }, recovered.landingIntent);
+      assert.equal(recovered.landingIntent.intent.generationRefOid, originalLandingOid);
+      assert.equal(recovered.landingIntent.successorRefOid, successorRefOid);
+      assert.equal(recovered.landingIntent.state, 'unknown');
+      assert.ok(recovered.landingIntent.receipt_id);
+      recoveredHandle = { batchId: recovered.batchId, generation: recovered.generation, effect_key: recovered.landingIntent.effect_key };
+    });
     const unresolved = data(await call(builder, 'landing_reconcile', { ...recoveredHandle, observation: null }));
     assert.equal(unresolved.state, 'unknown', JSON.stringify(unresolved));
     assert.equal(data(await call(builder, 'landing_reconcile', { ...recoveredHandle,
@@ -1587,4 +1740,151 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
     assert.equal(data(await call(builder, 'claim_adopt', adopt)).receipt_id, adopted.receipt_id);
     assert.equal(github.totals().mainUpdates, 1);
   });
+});
+
+
+test('列车 v2 第 3 项：原认领失效后只撤销共享账本中的精确检查', { timeout: 120000 }, async t => {
+  const { f, a, b, admin, call, data, lease, subject, sha, paths, github } = await trainFixture(t);
+  const work = data(await call(a, 'head_acquire', subject));
+  assert.equal(data(await call(a, 'verify_head', { ...lease(work), base_sha: sha('base'), changed_paths: paths })).verdict, 'ADMITTED');
+  const ticket = data(await call(a, 'publication_begin_independent', { ...lease(work),
+    check: { appId: 5368905, headSha: subject.head_sha, externalId: 'exact-check-for-revocation' } }));
+  const exact = { ...lease(work), effect_key: ticket.effect_key };
+  assert.equal(data(await call(a, 'publication_send', exact)).state, 'sent');
+  const check = { ...ticket.check, checkRunId: 12345, state: 'published', must_revoke: false };
+  assert.equal(data(await call(a, 'publication_finish', { ...exact, observation: check })).state, 'settled');
+  await admin.query('update clued_private.work_claim_head_authorizations_v1 set revoked_at=clock_timestamp() where claim_id=$1',
+    [f.claim.claim_id]);
+  const fields = { effect_key: ticket.effect_key };
+  const read = data(await call(b, 'revoke_check', { ...fields, phase: 'read' }));
+  assert.equal(read.state, 'settled', JSON.stringify(read));
+  assert.deepEqual(read.effect, { appId: check.appId, headSha: check.headSha, externalId: check.externalId, checkRunId: check.checkRunId });
+  assert.equal(read.revoke_authorized, false);
+  const observation = { ...check, state: 'revoked' };
+  delete observation.must_revoke;
+  const wrong = data(await call(b, 'revoke_check', { ...fields, phase: 'send', observation: { ...observation, checkRunId: 67890 } }));
+  assert.notEqual(wrong.send_authorized, true);
+  const revoke = data(await call(b, 'revoke_check', { ...fields, phase: 'send', observation }));
+  assert.equal(revoke.send_authorized, true, JSON.stringify(revoke));
+  await github.write('check revoke', () => observation, value => ['checkRevocations', value, b.id]);
+  assert.notEqual(data(await call(b, 'revoke_check', { ...fields, phase: 'send', observation })).send_authorized, true);
+  const readback = { ...fields, observation, phase: 'reconcile', generation: revoke.generation };
+  const revoked = data(await call(b, 'revoke_check', readback));
+  assert.equal(revoked.state, 'revoked', JSON.stringify(revoked));
+  assert.equal(data(await call(b, 'revoke_check', readback)).receipt_id, revoked.receipt_id);
+  assert.equal(github.totals().checkRevocations, 1);
+});
+
+test('列车 v2 第 12 项：片 2 的实际签名命令与常驻端所需回执', { timeout: 300000 }, async t => {
+  const { f, a, b, head, pr, call, data, scope, repository, paths, digest, sha, TRAIN_FAILURE,
+    trainHeadWorkKey, trainEffectKey } = await trainFixture(t, 'tdoljyj/cross-memory-system');
+  const { admissionExternalIdV2, makeJobV2 } = await import('../../../work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs');
+  const { makeIndependentPublicationIdentity } = await import('../../../scripts/ci/clued-independent-publication-identity.mjs');
+  const baseSha = sha('base');
+  const work_key = trainHeadWorkKey({ ...scope, pr, headSha: head, action: 'verify_head' });
+  const fields = { work_key, scope: scope.contextKey ?? 'project:' + scope.projectId, repository, pr_ref: repository + '#' + pr,
+    head_sha: head, base_sha: baseSha, controller_id: uuid() };
+  const claim = { claim_id: f.claim.claim_id, fence: Number(f.claim.fence), execution_epoch: Number(f.claim.execution_epoch) };
+  const acquisition = data(await call(a, 'verify_head', fields));
+  assert.deepEqual([acquisition.protocol_version, acquisition.work_key, acquisition.status, acquisition.resume_required],
+    [2, work_key, 'ok', false], JSON.stringify(acquisition));
+  const held = data(await call(b, 'verify_head', { ...fields, controller_id: uuid() }));
+  assert.deepEqual([held.protocol_version, held.work_key, held.error_code], [2, work_key, TRAIN_FAILURE.HEAD_LEASE_HELD.native]);
+  assert.ok(Date.parse(held.ci_retry_after));
+  const lease = { ...fields, lease_generation: acquisition.lease_generation };
+  const request = { ...lease, changed_paths: paths, claim_id: claim.claim_id, read_only: false };
+  assert.equal(data(await call(a, 'verify_head', { ...request, controller_id: uuid() })).error_code, TRAIN_FAILURE.LEASE_STALE.native);
+  assert.equal(data(await call(a, 'verify_head', request)).verdict, 'ADMITTED');
+  const job = makeJobV2({ repo: repository, pr, headSha: head, baseSha, testSha: head, role: 'work-admission',
+    sourceManifestSha256: SRC, createdAt: new Date(f.sessionIssuedAt).toISOString(), attempt: 1 });
+  const independent_identity = makeIndependentPublicationIdentity({ job, claim, controller_id: fields.controller_id });
+  const effect_key = trainEffectKey({ ...scope, action: 'publication_begin_independent',
+    subject: [pr, head, 5368905, 'kooyumi-work-admission'] });
+  const effect = { appId: 5368905, headSha: head, checkRunId: null, externalId:
+    admissionExternalIdV2('independent-ci:native-work-admission', job,
+      { claimId: claim.claim_id, fence: claim.fence, epoch: claim.execution_epoch }) };
+  const ticket = data(await call(a, 'publication_begin_independent', { ...lease, phase: 'reserve', effect_key,
+    effect, changed_paths: paths, independent_identity }));
+  assert.deepEqual([ticket.protocol_version, ticket.status, ticket.state, ticket.effect],
+    [2, 'ok', 'reserved', effect], JSON.stringify(ticket));
+  assert.deepEqual(ticket.independent_identity, independent_identity);
+  const send = { ...lease, phase: 'send', effect_key, publication_id: ticket.publication_id };
+  const stale = data(await call(a, 'publication_begin_independent', { ...send, lease_generation: lease.lease_generation + 1 }));
+  assert.deepEqual([stale.work_key, stale.lease_generation, stale.error_code],
+    [work_key, lease.lease_generation + 1, TRAIN_FAILURE.LEASE_STALE.native]);
+  assert.equal(data(await call(a, 'publication_begin_independent', send)).send_authorized, true);
+  assert.notEqual(data(await call(a, 'publication_begin_independent', send)).send_authorized, true);
+  const original = data(await call(a, 'publication_reconcile', { ...lease, phase: 'read', effect_key }));
+  assert.deepEqual([original.receipt_id, original.publication_id, original.independent_identity],
+    [ticket.receipt_id, ticket.publication_id, independent_identity]);
+  const exact = { ...lease, publication_id: ticket.publication_id, effect_key, check_run_id: '321',
+    effect: { ...effect, checkRunId: 321 } };
+  const done = data(await call(a, 'publication_finish', exact));
+  assert.deepEqual([done.protocol_version, done.status, done.publication_status, done.must_revoke, done.first_queue_pending],
+    [2, 'committed', 'published', false, true], JSON.stringify(done));
+  assert.equal(data(await call(a, 'publication_finish', exact)).receipt_id, done.receipt_id);
+  const completed = data(await call(b, 'verify_head', { ...fields, controller_id: uuid() }));
+  assert.deepEqual([completed.protocol_version, completed.work_key, completed.error_code],
+    [2, work_key, TRAIN_FAILURE.HEAD_LEASE_COMPLETED.native]);
+  const queueSubject = { pr, head_sha: head, claim_id: claim.claim_id, claim_fence: claim.fence, execution_epoch: claim.execution_epoch };
+  const queueLease = data(await call(b, 'queue_acquire', queueSubject));
+  assert.deepEqual([queueLease.effect_key, queueLease.check, queueLease.base_sha, queueLease.entered],
+    [effect_key, exact.effect, baseSha, false]);
+  const evalFields = { scope: fields.scope, repository, pr_ref: fields.pr_ref, head_sha: head,
+    work_key: queueLease.work_key, lease_generation: queueLease.lease_generation, effect_key,
+    ...claim, effect: exact.effect, disposition: 'join', reason: 'ready', observation_sha256: digest('pinned inventory') };
+  const waiting = data(await call(b, 'merge_queue_join', { ...evalFields, disposition: 'wait', reason: 'checks_pending' }));
+  assert.deepEqual([waiting.status, waiting.disposition], ['committed', 'wait']);
+  assert.equal(data(await call(a, 'queue_acquire', queueSubject)).error_code, TRAIN_FAILURE.HEAD_LEASE_HELD.native);
+  await f.admin.query('update clued_private.ci_train_work_v2 set expires_at=clock_timestamp() where work_key=$1', [queueLease.work_key]);
+  const ready = data(await call(b, 'queue_acquire', queueSubject));
+  const readyFields = { ...evalFields, lease_generation: ready.lease_generation };
+  const join = data(await call(b, 'merge_queue_join', readyFields));
+  assert.deepEqual([join.protocol_version, join.status, join.work_key, join.effect_key, join.disposition, join.joined],
+    [2, 'committed', queueLease.work_key, effect_key, 'join', true], JSON.stringify(join));
+  assert.equal(data(await call(b, 'merge_queue_join', readyFields)).receipt_id, join.receipt_id);
+});
+
+
+test('列车 v2：未签名的 Binding 无法领用或绕过首次入队闸口', { timeout: 120000 }, async t => {
+  const { schedulingFixture, sha } = await import('./ci-scheduling-stage1-fixture.mjs');
+  const f = await schedulingFixture();
+  t.after(f.close);
+  f.committed(await f.pool());
+  await f.admin.query(`update clued_private.ci_quota_counters_v1
+    set policy=policy||'{"merge_train_v2":{}}'::jsonb where project_id=$1 and row_kind='pool_policy'`, [f.project]);
+  const anon = await f.connect('anon');
+  const { rows: [{ result }] } = await anon.query('select public.clued_work_verify_v1($1,$2) result', [
+    f.token, { action: 'merge_queue_join', scope: 'project:'+f.project, pr_ref: 'fixture/repository-12345#42', head_sha: sha('test head') },
+  ]);
+  assert.equal(result.error_code, 'ci_work_lease_stale');
+  for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+    const { rows: [acl] } = await f.admin.query(`select
+      has_table_privilege($1,'clued_private.ci_train_call_v2','INSERT') context_write,
+      has_table_privilege($1,'clued_private.ci_train_work_v2','UPDATE') lease_write,
+      has_table_privilege($1,'clued_private.ci_train_check_effects_v2','UPDATE') effect_write`, [role]);
+    assert.deepEqual(acl, { context_write: false, lease_write: false, effect_write: false });
+  }
+});
+
+
+test('列车 v2：目标分支只有一个未结束批次，按作用域隔离', { timeout: 120000 }, async t => {
+  const { schedulingFixture, digest, sha } = await import('./ci-scheduling-stage1-fixture.mjs');
+  const f = await schedulingFixture();
+  t.after(f.close);
+  const nodes = [await f.register(), await f.register(f.project2)];
+  const insert = (key, project, node, state) => f.admin.query(`insert into clued_private.ci_train_batches_v2(
+    batch_id,user_id,project_id,repository_id,target_branch,base_sha,source_manifest_sha256,policy_version,members,
+    state,node_id,binding_id,binding_generation,key_version,expires_at,receipt_id)
+    values($1,$2,$3,12345,'main',$4,$5,'fixture',$6,$7,$8,$9,1,1,clock_timestamp(),$10)`,
+  [digest(key), f.user, project, sha(key), digest('source'), JSON.stringify([{ pr: 42 }]), state, node.node_id, f.binding, f.claimResult.receipt_id]);
+  await insert('a', f.project, nodes[0], 'forming');
+  await assert.rejects(insert('b', f.project, nodes[0], 'waiting_checks'),
+    error => error.code === '23505' && error.constraint === 'ci_train_batches_v2_open_target');
+  await insert('other project', f.project2, nodes[1], 'forming');
+  await f.admin.query("update clued_private.ci_train_batches_v2 set state='invalidated' where batch_id=$1", [digest('a')]);
+  await insert('replacement', f.project, nodes[0], 'forming');
+  const { rows } = await f.admin.query(`select count(*)::int n from clued_private.ci_train_batches_v2
+    where user_id=$1 and target_branch='main' and state='forming'`, [f.user]);
+  assert.equal(rows[0].n, 2);
 });

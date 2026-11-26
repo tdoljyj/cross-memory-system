@@ -203,13 +203,37 @@
       "class": "state",
       "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
     },
+    "clued_private.ci_train_auxiliary_effects_v2": {
+      "class": "ledger",
+      "reason": "辅助工作流精确对象的发送与核对账本，保留效果键和回执以防历史事件重放导致重复派发"
+    },
+    "clued_private.ci_train_batches_v2": {
+      "class": "ledger",
+      "reason": "保留封存成员、暂存、二分与结清记录，供重放请求和跨节点恢复核对"
+    },
+    "clued_private.ci_train_call_v2": {
+      "class": "state",
+      "reason": "每个正在处理的签名命令事务至多一行，事务提交前移除，回滚时自动撤销"
+    },
+    "clued_private.ci_train_check_effects_v2": {
+      "class": "ledger",
+      "reason": "保留普通检查的原票据、精确外部身份及撤回回执，防止重复发布或撤回错检查"
+    },
     "clued_private.ci_train_front_v1": {
       "class": "state",
       "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
     },
+    "clued_private.ci_train_landing_v2": {
+      "class": "ledger",
+      "reason": "保留落地意图、唯一代次标记与核对回执，供主分支写入判明与成员接续"
+    },
     "clued_private.ci_train_lease_v1": {
       "class": "state",
       "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
+    },
+    "clued_private.ci_train_work_v2": {
+      "class": "ledger",
+      "reason": "每个精确 head 和动作保留一行，已结清工作键及回执用于跨节点重放去重"
     },
     "clued_private.clock_source_epoch_candidate_v1": {
       "class": "state",

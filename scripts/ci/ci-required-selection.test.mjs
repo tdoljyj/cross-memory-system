@@ -19,6 +19,13 @@ import reporterStream, { failureFingerprint, normalizeFailure } from './ci-test-
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
 
+test('列车 v2 的未签名写拒绝和单目标未结批约束由正式数据库套件执行', () => {
+  const files = SUITE_COMMANDS['production-schema'].flatMap(({ argv }) => argv).filter(arg => arg.endsWith('.test.mjs'));
+  for (const name of ['未签名的 Binding 无法领用或绕过首次入队闸口', '目标分支只有一个未结束批次，按作用域隔离']) {
+    assert.ok(files.some(file => readFileSync(path.join(ROOT, 'apps/clued-cloud', file), 'utf8').includes(name)), name);
+  }
+});
+
 test('U6 真时钟欠账清单和许可清单分别触发全选', () => {
   for (const file of ['config/test-clock-debt.txt', 'scripts/ci/test-clock-allow.json']) {
     assert.ok(selectSuites('migration-verify', [file]).suites.includes('production-schema'), file);

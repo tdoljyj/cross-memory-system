@@ -502,24 +502,3 @@ test('merge train queue: Owner switch, recorded front, priority order, keepalive
     await removeTestDirectory(directory);
   }
 });
-
-test('列车 v2：目标分支只有一个未结束批次，按作用域隔离', { timeout: 120000 }, async t => {
-  const { schedulingFixture, digest, sha } = await import('./ci-scheduling-stage1-fixture.mjs');
-  const f = await schedulingFixture();
-  t.after(f.close);
-  const nodes = [await f.register(), await f.register(f.project2)];
-  const insert = (key, project, node, state) => f.admin.query(`insert into clued_private.ci_train_batches_v2(
-    batch_id,user_id,project_id,repository_id,target_branch,base_sha,source_manifest_sha256,policy_version,members,
-    state,node_id,binding_id,binding_generation,key_version,expires_at,receipt_id)
-    values($1,$2,$3,12345,'main',$4,$5,'fixture',$6,$7,$8,$9,1,1,clock_timestamp(),$10)`,
-  [digest(key), f.user, project, sha(key), digest('source'), JSON.stringify([{ pr: 42 }]), state, node.node_id, f.binding, f.claimResult.receipt_id]);
-  await insert('a', f.project, nodes[0], 'forming');
-  await assert.rejects(insert('b', f.project, nodes[0], 'waiting_checks'),
-    error => error.code === '23505' && error.constraint === 'ci_train_batches_v2_open_target');
-  await insert('other project', f.project2, nodes[1], 'forming');
-  await f.admin.query("update clued_private.ci_train_batches_v2 set state='invalidated' where batch_id=$1", [digest('a')]);
-  await insert('replacement', f.project, nodes[0], 'forming');
-  const { rows } = await f.admin.query(`select count(*)::int n from clued_private.ci_train_batches_v2
-    where user_id=$1 and target_branch='main' and state='forming'`, [f.user]);
-  assert.equal(rows[0].n, 2);
-});
