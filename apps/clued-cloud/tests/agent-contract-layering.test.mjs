@@ -23,6 +23,8 @@ const sessionCapInHand = JSON.parse(await readFile(new URL('./fixtures/agent-con
 const ciJoinOnly = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v62-v63-map.json', import.meta.url), 'utf8'));
 const sessionCapOpenBinding = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v63-v64-map.json', import.meta.url), 'utf8'));
 const mainMergeDiscovery = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v64-v65-map.json', import.meta.url), 'utf8'));
+const prEndReleaseServedOnly = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v65-v66-map.json', import.meta.url), 'utf8'));
+const releasePrOpen = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v66-v67-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
@@ -38,12 +40,59 @@ const sha256 = text => createHash('sha256').update(text).digest('hex');
 // repository's merge queue (Task 05ff5174). The v64 successor says a claim whose Task's pull request is open
 // counts as delivered whether the CI confirmed it or the holder's authorize_head named it (Task e642d087).
 // The v65 successor adds the verified main merge source to PR discovery in A.5.
+// The v66 successor narrows the A.5 release guard to open PRs served by the same claim.
+// The v67 successor uses the same served PR evidence for manual release and exposes it in open_prs.
 // Undo only these declared
 // successors before checking all 24 original normative blocks against the unchanged frozen proof.
 // The v63 successor makes the resident CI the only way into a served repository's merge queue (A.6): the holder no
 // longer joins by renewing with the merge ref, and no longer renews hourly to keep a place. The three other places that
 // said a merge ref "joins" or "queues" (§1.7, the refusal table of §4, A.1) now only say that it never conflicts.
+function v66Source() {
+  assert.equal(releasePrOpen.schema, 'clued.agent-contract-release-pr-open-successor/1');
+  assert.equal(releasePrOpen.source_version, 66);
+  assert.equal(releasePrOpen.target_version, 67);
+  assert.deepEqual(releasePrOpen.edits.map(edit => edit.id), ['version', 'refusal-row', 'release-refused', 'open-prs']);
+  assert.deepEqual(releasePrOpen.edits[0], { id: 'version', before: 'Contract version: 66', after: 'Contract version: 67' });
+  assert.equal(sha256(source), releasePrOpen.target_document_normalized_sha256);
+  const [, refusal, release, openPrs] = releasePrOpen.edits;
+  const a4 = source.split('<a id="appendix-a4"></a>')[1].split('<a id="appendix-a5"></a>')[0];
+  const a5 = source.split('<a id="appendix-a5"></a>')[1].split('<a id="appendix-a6"></a>')[0];
+  const section4 = source.split('## 4. Write discipline')[1].split('\n## 5. ')[0];
+  assert.ok(section4.includes(refusal.after));
+  assert.ok(a4.includes(release.after));
+  assert.ok(a5.includes(openPrs.after));
+  let restored = source;
+  for (const { id, before, after } of [...releasePrOpen.edits].reverse()) {
+    assert.equal(restored.split(after).length - 1, 1, `${id}: exact manual release successor text`);
+    restored = restored.replace(after, before);
+  }
+  assert.equal(sha256(restored), releasePrOpen.source_document_normalized_sha256);
+  return restored;
+}
+
+function v65Source() {
+  const source = v66Source();
+  assert.equal(prEndReleaseServedOnly.schema, 'clued.agent-contract-pr-end-release-served-only-successor/1');
+  assert.equal(prEndReleaseServedOnly.source_version, 65);
+  assert.equal(prEndReleaseServedOnly.target_version, 66);
+  assert.deepEqual(prEndReleaseServedOnly.edits.map(edit => edit.id), ['version', 'served-open-pr']);
+  assert.deepEqual(prEndReleaseServedOnly.edits[0], { id: 'version', before: 'Contract version: 65', after: 'Contract version: 66' });
+  assert.equal(sha256(source), prEndReleaseServedOnly.target_document_normalized_sha256);
+  const edit = prEndReleaseServedOnly.edits[1];
+  const section = source.split('### A.5 Pull requests and protected changes')[1].split('<a id="appendix-a6"></a>')[0];
+  assert.ok(section.includes(edit.after));
+  assert.equal(/[\r\n]/.test(edit.before + edit.after), false, 'only the release condition in A.5 changes');
+  let restored = source;
+  for (const { id, before, after } of [...prEndReleaseServedOnly.edits].reverse()) {
+    assert.equal(restored.split(after).length - 1, 1, `${id}: exact PR-end release successor text`);
+    restored = restored.replace(after, before);
+  }
+  assert.equal(sha256(restored), prEndReleaseServedOnly.source_document_normalized_sha256);
+  return restored;
+}
+
 function v64Source() {
+  const source = v65Source();
   assert.equal(mainMergeDiscovery.schema, 'clued.agent-contract-main-merge-discovery-successor/1');
   assert.equal(mainMergeDiscovery.source_version, 64);
   assert.equal(mainMergeDiscovery.target_version, 65);
@@ -406,7 +455,7 @@ test('the mandatory work-claim core remains within 500 words', () => {
   assert.ok(words > 0 && words <= 500, `§1.7 has ${words} words`);
 });
 
-test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v65 successor edits', () => {
+test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v67 successor edits', () => {
   assert.equal(map.schema, 'clued.agent-contract-claim-move/1');
   assert.equal(map.blocks.length, 24);
   assert.equal(map.blocks.reduce((count, row) => count + row.reference_edits.length, 0), 9);

@@ -562,7 +562,7 @@ P2 的停止路径：经代理写 `.stop`，助手走自己的停止路径（只
 
 ## 9. companion
 
-代码：`R/src/companion-main.mjs`（各通道）、`companion.mjs`、`poller.mjs`、`pr-status.mjs`、`node-duty.mjs`、`ruleset-backstop.mjs`、`companion-heartbeat.mjs`、`panel-dispatch.mjs`、`admission-rerun.mjs`、`merge-reconcile.mjs`、`upgrade-mailbox.mjs`、`roles-public.mjs`、`runner.mjs`、`windows/CompanionJobHost.cs`
+代码：`R/src/companion-main.mjs`（各通道）、`companion.mjs`、`poller.mjs`、`pr-status.mjs`、`node-duty.mjs`、`ruleset-backstop.mjs`、`companion-heartbeat.mjs`、`panel-dispatch.mjs`、`admission-rerun.mjs`、`merge-reconcile.mjs`、`upgrade-mailbox.mjs`、`roles-public.mjs`、`pool-alert.mjs`、`runner.mjs`、`windows/CompanionJobHost.cs`
 档案：DESIGN §16.6、§24–§26、§39、§43、§56.5、§63
 
 companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起由计划任务的固定动作 `bin\CluedCompanionSupervisor.exe` 按管理员专用的 `config\companion-launch.json` 启动并退避重启（ADR 0022 §4.2）。每个通道有自己的 Runner，一个通道卡住不影响别的通道。每个子进程都建在作业宿主（`bin\CluedCompanionJobHost.exe`）自己的作业对象里，超时后整棵树一起结束。
@@ -578,6 +578,7 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 | 准入补跑 | 1 分钟 | `admission-gate` 以 `ADMISSION_PENDING` 结束时，用 Owner 的 gh 登录点一次 "Re-run all jobs"，每个 head 最多一次（Decision `207c0cd0`） |
 | 合并对账 | 30 秒 | 唤醒原合并控制器（`clued-merge-reconcile.yml`），不做任何合并判断。**默认关闭**：只有 companion.json 写了 `mergeReconcile.enabled=true` 的包才运行，仓库里现有配置都没有打开 |
 | 信箱心跳 | 每 10 秒 | 执行器据此判断 companion 是否活着；超过 120 秒没更新算失联（信号 D） |
+| 内核池到线通知 | 每 10 分钟 | 内核分页池最大标签过软线或硬线，只通知 Owner，绝不自动重启（§9.1） |
 
 安全边界：
 
@@ -594,6 +595,23 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 - GitHub：companion 用只限本仓库的细粒度令牌，放在 `%LOCALAPPDATA%\CluedIndependentCI\companion-gh\`，读不到就不启动。
 - 状态：`executor.companion.firstBeatAfterServiceStartMs`；服务启动 10 分钟仍无心跳时出 `companion-absent`。
 - 上线只能整套重装（R 类），步骤见 [`../rollout/M5-COMPANION-HEADLESS-RUNBOOK.md`](../rollout/M5-COMPANION-HEADLESS-RUNBOOK.md)。
+
+### 9.1 内核池到线通知
+
+代码：`R/src/pool-alert.mjs`、`R/windows/read-pool-tags.ps1`、`R/src/companion.mjs`（固定命令 `poolTags`）、`R/src/companion-main.mjs`（通道）
+档案：看板第 140 行；`D:/w/tmp/FABLE-admission-reboot-batch-20261124.md` 第 4 节原定“到线自动重启”，Owner 11-24 改为“到线通知我，别擅自自动重启”。
+
+内核持有的对象只增不减时，只有重启整机才回收。companion 的一个通道每 10 分钟量一次内核分页池里在用字节最大的那个标签（不认标签名，`NtQuerySystemInformation(22)`，不用提权），同时读分页池总量、已提交量和提交上限（`K32GetPerformanceInfo`）。过线只通知 Owner，由他找时间重启。随通用升级下发（U 类），零 UAC；不新增服务、计划任务、账户、权限。
+
+| 线 | 默认 | 到线后 |
+|---|---|---|
+| 软线 | 3 GiB | 通知一次：请安排重启 |
+| 硬线 | 5 GiB | 通知一次：请尽快重启 |
+
+- 绝不重启：本通道只运行 `read-pool-tags.ps1` 这一条只读命令；不关机、不重启、不暂停接新、不等空闲。常驻包（`src`、`tools`、`windows`）和升级代理里不出现任何重启或关机命令、接口和权限名，由 `test/pool-alert.test.mjs` 扫描把关。
+- 阈值与开关：`companion.json` 的可选键 `poolAlert: { enabled, softBytes, hardBytes }`，缺省开、取上表默认值；`tools/build-package.mjs` 校验。连续 2 次过线才算；量不出就什么都不做。
+- 节流（固定，不可配）：从第一次到线起算一轮，每条线每轮只通知一次；先到硬线就只发硬线；连续 2 次低于软线这一轮才结束，再到线算新一轮。通知没写进队列就在下一次读数时重发。轮次存在 companion 自己的 `%LOCALAPPDATA%\CluedIndependentCI\pool-alert\state.json`，companion 重启不重发。
+- 通知内容（走通知队列 `notify-queue.mjs`，由通知任务弹给 Owner）：分页池总量与最大标签、离提交上限还有多少、本次开机近 6 小时（至少 1 小时）的增速，以及按此增速几小时到硬线、几小时用完提交余量；建议重启时刻（北京时间）：软线为到硬线或用完余量中较早的时刻之前，硬线为今天尽快、最迟用完余量之前。增速不足 1 小时或不增长时照实写“估不出”。代码 `POOL_ALERT_SOFT` / `POOL_ALERT_HARD`。
 
 ---
 
@@ -791,7 +809,7 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 | 第 8 段 | — | `independent-control-checks-v2/publisher.mjs`、`train-rules.mjs`、`green-ledger.mjs`、`claim-assist-native.mjs` |
 | 列车 | `src/train.mjs`、`src/executor.mjs` | `independent-control-checks-v2/train-*.mjs`、`resident-v2/train-run.mjs` |
 | 节点 | `src/role-probe.mjs`、`src/node-identity.mjs`、`src/node-duty.mjs`、`src/companion-heartbeat.mjs` | — |
-| companion | `src/companion*.mjs`、`src/poller.mjs`、`src/pr-status.mjs`、`src/runner.mjs`、`windows/CompanionJobHost.cs` | — |
+| companion | `src/companion*.mjs`、`src/poller.mjs`、`src/pr-status.mjs`、`src/runner.mjs`、`src/pool-alert.mjs`、`windows/read-pool-tags.ps1`、`windows/CompanionJobHost.cs` | — |
 | Owner 请求 | `windows/rearm-resident.ps1`、`tools/rearm-tool.mjs`、`src/intake-pause.mjs`、`src/resident-requests.mjs` | — |
 | 升级 | `upgrader/src/`、`windows/request-upgrade.ps1`、`windows/upgrade-apply.ps1`、`rollout/`、`src/upgrade-mailbox.mjs` | — |
 | 安装 | `windows/install-resident.ps1`、`windows/verify-resident.ps1`、`linux/*.sh`、`tools/build-package.mjs`、`reinstall/` | `resident-v2/prepare-record.mjs` |

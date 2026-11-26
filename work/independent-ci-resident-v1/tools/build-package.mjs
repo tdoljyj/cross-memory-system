@@ -41,18 +41,21 @@ import { RESIDENT_INSTALL_ROOT, validateCompanionConfig } from '../src/companion
 import { validateStatusConfig } from '../src/pr-status.mjs';
 import { PANEL_REPO, validatePanelDispatchConfig } from '../src/panel-dispatch.mjs';
 import {MERGE_RECONCILE_REPO,validateMergeReconcileConfig} from '../src/merge-reconcile-config.mjs';
+import { validatePoolAlertConfig } from '../src/pool-alert.mjs';
 import { INSTALLED_MANIFEST_CONTRACT } from '../src/service-ports.mjs';
 import { pinnedNodeProfile } from '../src/node-profile.mjs';
 import { nodeIdentityOf, nodeIdentitySha256 } from '../src/node-identity.mjs';
 
 const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const RESIDENT_FILES = ['src', 'tools', 'windows'];
-// Files of the resident generation whose one source lies outside the resident tree (D2c ruling B1): the renewal contract the Broker
-// reads is the server's own file. This table is the only list (rollout/fleet/facts.mjs and universal.mjs read it); each entry is
+// Files of the resident generation from outside the three packaged directories. The renewal contract is the server's own file,
+// and the download and tar readers are the fleet tools' own files. This table is shared by facts.mjs and universal.mjs. Each entry is
 // copied from its repository-relative source to resident\<path> after the three directories, in this order. A file at the same
 // path inside the resident tree is refused (PACKAGE_RESIDENT_DUPLICATE), so a second copy cannot come back.
 export const RESIDENT_EXTERNAL = Object.freeze([
   Object.freeze({ path: 'windows/ci-connection-renew.contract.json', source: 'apps/clued-cloud/worker/ci-connection-renew.contract.json' }),
+  ...['fetch.mjs', 'tar.mjs'].map(name => Object.freeze({ path: `rollout/fleet/${name}`,
+    source: `work/independent-ci-resident-v1/rollout/fleet/${name}` })),
 ]);
 // listed: the resident tree's walked paths. Returns [{ path, file }] with file the absolute source under the checkout of `base`.
 export function residentExternal(listed, base = HERE) {
@@ -218,6 +221,8 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   // The panel trigger is on unless switched off, and it only exists for the panel's own repository: no silent "on" that does nothing.
   check(!validatePanelDispatchConfig(finalCompanion.panelDispatch).enabled || finalCompanion.repo === PANEL_REPO, 'PACKAGE_PANEL_DISPATCH_REPO_MISMATCH');
   check(!validateMergeReconcileConfig(finalCompanion.mergeReconcile).enabled||finalCompanion.repo===MERGE_RECONCILE_REPO,'PACKAGE_MERGE_RECONCILE_REPO_MISMATCH');
+  // The kernel pool alert's lines (pool-alert.mjs): absent is on with 3 GiB and 5 GiB; a value of another shape is refused here.
+  validatePoolAlertConfig(finalCompanion.poolAlert);
   await fs.mkdir(path.join(out, 'config'));
   await writeJson(path.join(out, 'config', 'policy.json'), finalPolicy);
   await writeJson(path.join(out, 'config', 'companion.json'), finalCompanion);

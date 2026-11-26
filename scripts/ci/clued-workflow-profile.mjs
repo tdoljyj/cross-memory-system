@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-export const COMPONENT_VERSION = "1.0.7";
+export const COMPONENT_VERSION = "1.0.10";
 
 // /3 changes only the on-disk representation. Each original LF-delimited YAML
 // line remains a separate plaintext JSON string on a separate physical line.
@@ -394,8 +394,31 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
       'contract-placement':'9c0dd24d80b5d317259689fc709fc61a52ab73a11e1a321f9a1f9c4421e6022d',
     }),
   }),
+  // The cancel-only pull_request closed Source as landed in #1352 (Task 3576b29c).
+  Object.freeze({
+    file:'.github/workflows/clued-required-tests.yml',
+    workflow_blob:'27b43473d13a1c26749c4f32a27be0d593476c29',
+    source_sha256:'3c4d30fa5876d0534300bdef980c6ef980bbdcd64466a08d368636cfdbc4e1ff',
+    workflow_definition_sha256:'5badf0dfed0981dc546a949ec408875e152b392aa7664554787dcc41e1eac2e7',
+    profile_sha256:'d4e9d189df883775a34da0adef80b88a205739199f4909ed886fd0ab080f93b5',
+    primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
+    role_sha256:Object.freeze({
+      'clued-cloud-tests':'c34d55c18fa85fea715c4f972de0e106ef355e1d1487b42c636918eda39888ee',
+      'ci-suites':'714cfad8a014072f83d8f5ec67f1ee66a725eb746cb331339987873bc00a6234',
+      'migration-verify':'ff03a97c7add0aaebc140ff7662dc61bc10f8af6f51296c74fbc520c440c4069',
+      'gitleaks':'db2d6957cc30f4b06035197d261bd266f35134895f090e74e58cb8eb64da1b32',
+      'trivy':'84163225be96a1aaecb8341bba0043298ff08b9a503b4910415cdb35a6dee298',
+      'contract-placement':'08be4e9f9d7c58c0ddca5bdb2621f31afde460a2c14c6ce3714ccc2a26fd6ce8',
+    }),
+  }),
 ]);
 const requiredTestsPin=blob=>[REQUIRED_TESTS_SOURCE,...REQUIRED_TESTS_PREVIOUS_SOURCES].find(pin=>pin.workflow_blob===blob)??null;
+// The historical Windows Source used closed only to cancel; its ordinary profile remains readable.
+const WINDOWS_CANCEL_SOURCE=Object.freeze({
+  workflow_blob:'85fe5d6f8c84b00fe268b3ed0ec2970c203c83f6',
+  source_sha256:'d29f33377802e716225b27d14fe5da02774e43ead7d17f5087b832d3c0f61701',
+  workflow_definition_sha256:'7264d99e97d56ee5ffda0c7aa1717c5150ba0f442a866a60dbf510c319644de6',
+});
 export function isExactAllRequiredPrimariesProfile(profile,file) {
   try {
     if(file!==REQUIRED_TESTS_SOURCE.file||!profile||typeof profile!=='object'||Array.isArray(profile))return false;
@@ -545,7 +568,8 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
     reject('source/parser/primary roles missing');
   if(/\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/.test(text))reject('source character domain');
   const value=parseYaml(text);
-  const pin=requiredTestsPin(workflowBlob(text)),compound=!!pin&&digest(text)===pin.source_sha256;
+  const blob=workflowBlob(text),sourceSha=digest(text);
+  const pin=requiredTestsPin(blob),compound=!!pin&&sourceSha===pin.source_sha256;
   if(compound&&(!same(primary_ids,pin.primary_ids)||
     roleDefinitionDigest(value)!==pin.workflow_definition_sha256||
     accepted_roles.some(role=>!exactKeys(role,['job_id','definition_sha256','definition'])||
@@ -556,7 +580,15 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
   const unsupportedKeys=Object.keys(value).filter(key=>!['name','on','permissions','concurrency','jobs'].includes(key)&&
     !(compound&&key==='run-name'));
   if(unsupportedKeys.length)reject('unsupported top-level key: '+unsupportedKeys.join(','));
-  const trigger=value.on.pull_request??null;
+  const pullRequest=value.on.pull_request??null;
+  // These exact Sources use closed only to cancel a run. Their executable PR
+  // events are still the default three, without path filters.
+  const windowsCancelSource=blob===WINDOWS_CANCEL_SOURCE.workflow_blob&&sourceSha===WINDOWS_CANCEL_SOURCE.source_sha256&&
+    roleDefinitionDigest(value)===WINDOWS_CANCEL_SOURCE.workflow_definition_sha256;
+  const cancellationOnly=(compound||windowsCancelSource)&&exactKeys(pullRequest,['types'])&&
+    same(pullRequest.types,['opened','synchronize','reopened','closed'])&&
+    value.jobs['admission-gate']?.if==="github.event.action != 'closed'";
+  const trigger=cancellationOnly?null:pullRequest;
   if(trigger!==null && (typeof trigger!=='object' || Array.isArray(trigger) ||
     Object.keys(trigger).some(key=>key!=='paths') || !Array.isArray(trigger.paths) || !trigger.paths.length))
     reject('unsupported trigger');
@@ -603,7 +635,7 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
   }
   if(!compound&&(routes.length>2 || new Set(routes.map(route=>route.self_hosted)).size!==routes.length))
     reject('unsupported multiple logical primaries or duplicate routes');
-  return {registration_status:'registered',workflow_blob:workflowBlob(text),source_sha256:digest(text),
+  return {registration_status:'registered',workflow_blob:blob,source_sha256:sourceSha,
     source_yaml:text,primary_ids:[...primary_ids],pull_request:trigger,gated:Object.hasOwn(value.jobs,'admission-gate'),routes,
     ...(compound?{execution_mode:ALL_REQUIRED_PRIMARIES_MODE}:{})};
 }

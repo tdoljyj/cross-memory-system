@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as selection from './ci-required-selection.mjs';
 import { acquireLock, bundleFor, cacheHome, changedFiles, chooseSuites, compareCommand, compareSuite, dataRoot, dependencyKey, fixedDrives, githubRefs,
-  killCommand, linkDependencies, linuxScript, mainResultsFile, mergedCandidate, newestMain, npmCommand, parseArgs, present,
+  killCommand, linkDependencies, linuxScript, loadSelector, mainResultsFile, mergedCandidate, newestMain, npmCommand, parseArgs, present,
   readCached, readResults, realpathLoose, refUpdates, residentBusy, RESIDENT_STATUS, runCommands, runsLinux, selectAffected, snapshot, startLinux, systemDriveNotes, testEnvironment, testsRun,
   toWslPath, verifySuites, watchdogLevels, windowsPathOf, withFailureReport, worktree, worktreePath, writeCached, YIELD_TIMEOUT_MS, yieldToResident } from './local-verify.mjs';
 
@@ -409,10 +409,14 @@ test('runCommands starts every command, also after a failure, with the report, a
     { cwd: '.', argv: ['python', '-m', 'x'] },
   ] } };
   const calls = [];
+  const tick = { type: 'metronome', n: 2, median_ms: 20.5 };
   const spawn = (file, args) => {
     calls.push([file, args]);
     const destination = args.find((arg) => arg.startsWith('--test-reporter-destination=') && arg.endsWith('.jsonl'));
-    if (destination) fs.writeFileSync(destination.split('=')[1], `${JSON.stringify(fail('t'))}\n${JSON.stringify(summary)}\n`);
+    if (destination) {
+      const events = calls.length === 2 ? [fail('t'), summary, tick] : [fail('t')];
+      fs.writeFileSync(destination.split('=')[1], events.map((event) => JSON.stringify(event)).join('\n'));
+    }
     return [{ status: 1 }, { status: 1 }, { status: null, signal: 'SIGTERM' }, { error: new Error('spawn python ENOENT') }][calls.length - 1];
   };
   const killed = [];
@@ -421,13 +425,14 @@ test('runCommands starts every command, also after a failure, with the report, a
   assert.deepEqual(killed, [root, root], 'what a stopped or unstartable command left is ended');
   assert.deepEqual(results.map((result) => [result.status, result.report !== null, result.known]), [[1, false, null], [1, true, null], [128, true, 's'], [null, false, null]]);
   assert.equal(results[1].report.events[0].type, 'fail');
+  assert.deepEqual(results[1].report.metronome, tick);
   assert.equal(calls[1][0], process.execPath, 'node is the running Node, not whatever PATH finds');
   assert.match(results[3].error, /ENOENT/);
   assert.match(fs.readFileSync(path.join(root, 'log.txt'), 'utf8'), /::group::s: \(\.\) npm run lint/);
   // a known-failure command that exits 0 without its report did not finish, as runSuite judges it
   const silent = runCommands({ ...selector, SUITE_COMMANDS: { k: [{ cwd: '.', known: 'k', argv: ['node', 'run.mjs', '--test', 'b.test.mjs'] }] } },
     'k', root, 'm'.repeat(40), path.join(root, 'log2.txt'), { spawn: () => ({ status: 0 }), kill: () => {} });
-  assert.deepEqual(silent[0].report, { events: [], summary: null, corrupt: false });
+  assert.deepEqual(silent[0].report, { events: [], summary: null, metronome: null, corrupt: false });
   assert.notEqual(compareSuite(silent, null, { selector: selection, knownLists: { k: [] } }).verdict, 'pass');
 });
 
@@ -567,6 +572,27 @@ test('the dependency link: made, kept, replaced when stale or broken, never over
   linkDependencies(link, a);
   assert.equal(fs.realpathSync(link), fs.realpathSync(a), 'a directory installed in the worktree itself is replaced');
   assert.equal(fs.readFileSync(path.join(a, 'mark'), 'utf8'), 'a');
+});
+
+test('the local selector uses the timing table from its base commit', async (t) => {
+  const { dir, commit } = repository(t);
+  const table = 'scripts/ci/ci-shard-seconds.json';
+  fs.mkdirSync(path.join(dir, 'scripts/ci'), { recursive: true });
+  const main = commit({
+    'scripts/ci/ci-required-selection.mjs': "export const SHARD_SECONDS_PATH = new URL('./ci-shard-seconds.json', import.meta.url);",
+    'scripts/ci/ci-known-failures.json': '{}',
+    'scripts/ci/ci-test-failures-reporter.mjs': '',
+    [table]: '{"tests/heavy.test.mjs":30}',
+  });
+  commit({ [table]: '{"tests/other.test.mjs":40}' });
+  const home = path.join(dir, 'cache');
+  const old = path.join(home, 'selectors', main);
+  fs.mkdirSync(old, { recursive: true });
+  fs.copyFileSync(path.join(dir, 'scripts/ci/ci-required-selection.mjs'), path.join(old, 'ci-required-selection.mjs'));
+  fs.writeFileSync(path.join(old, 'complete'), '');
+
+  const selector = await loadSelector(dir, main, home);
+  assert.equal(fs.readFileSync(selector.SHARD_SECONDS_PATH, 'utf8'), '{"tests/heavy.test.mjs":30}');
 });
 
 test('runCommands starts each command as runSuite would: same cwd, command line and known-failure reporter', () => {

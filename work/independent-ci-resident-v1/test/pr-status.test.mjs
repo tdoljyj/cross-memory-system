@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { COMPARE_RETRY_MS, COMPARE_TIMEOUT_MS, MAX_COMPARES_PER_PASS, Poller, SLOW_COMPARE_SKIP_MS, upToDate } from '../src/poller.mjs';
+import { COMPARE_TIMEOUT_MS, MAX_COMPARES_PER_PASS, Poller, upToDate } from '../src/poller.mjs';
 import { ADVISORY_TIMEOUT_MS, LocalStore, PASS_BUDGET_MS, POST_RETRY_MS, PrStatusReporter, contextFree, contextShapeSafe, describe, events, toastArgv, validateStatusConfig } from '../src/pr-status.mjs';
 import { nodeContext, parseDutyStatus, standbyContext } from '../src/node-duty.mjs';
 // Task 9cac75be A3: no default node; these reporters are the node named node-b (node: 'node-b').
@@ -71,10 +71,10 @@ test('the poller proposes only up-to-date heads (the nine stale-base burns of 20
   assert.deepEqual(p.lastPass.pulls.map(x => [x.pr, x.eligible, x.hint, x.behindBy]), [[1, true, null, 0], [2, false, 'merge-main', 5], [3, false, 'push-any-commit', 0], [4, false, 'compare-unavailable', null]]);
   const comparesNow = () => calls.filter(a => a.some(x => x.includes('/compare/'))).length;
   const compares = comparesNow();
-  clock += 60_000;
+  clock += 59_999;
   await p.pass();
-  assert.equal(comparesNow() - compares, 0, 'answered compares are cached; the unavailable one waits COMPARE_RETRY_MS (60-second poll)');
-  clock += COMPARE_RETRY_MS;
+  assert.equal(comparesNow() - compares, 0, 'answered compares are cached; the unavailable one waits one minute');
+  clock += 1;
   await p.pass();
   assert.equal(comparesNow() - compares, 1, 'then only the unavailable one is asked again');
 });
@@ -150,12 +150,17 @@ test('a stalled advisory call ends the pass: nothing it could not do is recorded
   assert.deepEqual([second.stalled, second.toasts, second.posted, reporter.failed.size], [true, 1, 0, 0]);
   mode = 'ok';
   assert.equal((await reporter.pass({ pulls: prs, status: halted })).posted, 1, 'written once the Runner answers again');
-  // poller: a compare that times out stops this pass's compares (budget kept) and is skipped for a while
+  // poller: a timed-out compare stops this pass without using the budget, then retries with bounded backoff
   let slowHead = null;
+  const slowCalls = [];
   const pulls = [1, 2, 3].map(i => ({ number: i, headRefOid: String(i).padStart(40, 'c'), baseRefOid: MAIN, isDraft: false, body: TRAILER, updatedAt: 't' }));
   const prun = async argv => {
     const c = argv.find(a => a.includes('/compare/'));
-    if (c) return c.includes(slowHead) ? { code: null, stdout: '', stderr: '', timedOut: true } : { code: 0, stdout: JSON.stringify({ behind_by: 0, base: MAIN }) };
+    if (c?.includes(slowHead)) {
+      slowCalls.push(clock);
+      return { code: null, stdout: '', stderr: '', timedOut: true };
+    }
+    if (c) return { code: 0, stdout: JSON.stringify({ behind_by: 0, base: MAIN }) };
     if (argv.includes('api')) return { code: 0, stdout: `${MAIN}\n` };
     return { code: 0, stdout: JSON.stringify(pulls) };
   };
@@ -165,9 +170,18 @@ test('a stalled advisory call ends the pass: nothing it could not do is recorded
   assert.equal(await p.pass(), 0, 'the first compare hangs: nothing compared after it this pass');
   assert.equal(p.compareBudget, MAX_COMPARES_PER_PASS, 'the budget is not used by a stalled call');
   assert.equal(await p.pass(), 2, 'next pass: the slow one is skipped, the PRs behind it are compared');
-  clock += SLOW_COMPARE_SKIP_MS;
+  for (const minutes of [1, 2, 4, 4]) {
+    const beforeRetry = slowCalls.length;
+    clock += minutes * 60_000 - 1;
+    await p.pass();
+    assert.equal(slowCalls.length, beforeRetry);
+    clock += 1;
+    await p.pass();
+    assert.equal(slowCalls.length, beforeRetry + 1);
+  }
+  clock += 4 * 60_000;
   slowHead = 'none';
-  assert.equal(await p.pass(), 1, 'after the skip window it is asked again');
+  assert.equal(await p.pass(), 1, 'the next capped retry proposes the head when the compare succeeds');
 });
 
 test('two lanes: a hung advisory child never stops the companion answering the mailbox (independent review M1)', async () => {

@@ -1,6 +1,6 @@
 // Terminal admission is removed (20261113151000). A PR's end through adopt (merged) or
-// an explicit GitHub closure releases the claim that served it when the Task has no other
-// open PR and the claim authorized no newer head; the judgment never changes adopt/return.
+// an explicit GitHub closure releases the claim that served it when the claim served no other
+// open PR of the Task and authorized no newer head; the judgment never changes adopt/return.
 import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -79,6 +79,14 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       action: 'resolve_pr_claim', pr_ref: `${repo}#${number}`, head_sha: head, base_sha: 'b'.repeat(40), target_branch: 'main', ...extra });
     const release = r => call('holder', 'clued_work_release_v1', { scope: r.claim.context_key, claim_id: r.claim.claim_id,
       fence: r.claim.fence, lease_key: r.lease_key, outcome: 'completed', evidence_ref: 'fixture:' + uuid() });
+    // These cases end a claim by hand while it still serves an open PR. Exercise the hard-deadline exception.
+    const releaseHeld = async r => {
+      const result = await release(r);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'work_claim_release_pr_open']);
+      await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '1 hour',
+        expires_at=clock_timestamp()+interval '1 hour' where claim_id=$1`, [r.claim.claim_id]);
+      return release(r);
+    };
     const row = async r => (await admin.query('select status,released_outcome,lease_version,lease_key_hash from clued_private.work_claims_v1 where claim_id=$1',[r.claim.claim_id])).rows[0];
     const verify = (who,r,n,head) => call(who,'clued_work_verify_v1',{scope:r.claim.context_key,claim_id:r.claim.claim_id,
       pr_ref:repo+'#'+n,head_sha:head,base_sha:'b'.repeat(40),target_branch:'main',changed_paths:['fixture/'+r.claim.task_id+'/main.mjs']});
@@ -158,7 +166,38 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       assert.equal(await binding(1151), 'active');
       assert.equal(await binding(1152), 'active');
       assert.deepEqual((await releaseInfo(r)).trigger_refs, [slot]);
-      committed(await release(r));
+      committed(await releaseHeld(r));
+    });
+    await t.test('#1359 合入释放认领，即使同 Task 上旧认领留下的 #1308 仍打开', async () => {
+      const taskId = await task();
+      const old = await claim(taskId);
+      committed(await authorize(old, 'a'.repeat(40), 1308));
+      assert.equal(await binding(1308), 'unknown');
+      committed(await releaseHeld(old));
+
+      const r = await claim(taskId);
+      const head = 'd'.repeat(40);
+      committed(await authorize(r, head));
+      assert.equal((await resolve('ci', 1359, head)).binding_status, 'bound');
+      assert.equal((await verify('ci', r, 1359, head)).verdict, 'ADMITTED');
+
+      const event = await webhook(1359);
+      const c = await releaseInfo(r);
+      assert.deepEqual(event, { status: 'ok', finished: 1, released: [r.claim.claim_id] }, `claim status: ${c.status}`);
+      assert.deepEqual([await binding(1359), await binding(1308), c.status, c.released_by, c.released_evidence_ref],
+        ['merged', 'unknown', 'RELEASED', 'pr_end', repo + '#1359@' + 'e'.repeat(40)]);
+    });
+    await t.test('#2359 合入时保留仍为打开的 #2308 服务的认领', async () => {
+      const r = await claim(await task());
+      committed(await authorize(r, 'b'.repeat(40), 2308));
+      assert.equal(await binding(2308), 'unknown');
+      await admitted(r, 2359, 'c'.repeat(40));
+
+      const event = await webhook(2359);
+      assert.deepEqual(event, { status: 'ok', finished: 1, released: [] });
+      assert.equal((await releaseInfo(r)).status, 'ACTIVE');
+      assert.equal(await binding(2308), 'unknown');
+      committed(await releaseHeld(r));
     });
     await t.test('交还合并位不收任何 GitHub 状态；迟到的关闭报告让绑定保留 merged', async () => {
       const r = await claim(await task());
@@ -186,7 +225,7 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       assert.notEqual(next.claim.claim_id, first.claim.claim_id);
       await admitted(next, 107, head);
       assert.equal(await binding(107), 'active');
-      committed(await release(next));
+      committed(await releaseHeld(next));
     });
     await t.test('PR merge records its source and merge SHA and notifies only the original holder once', async () => {
       const r = await claim(await task()); await admitted(r, 101, 'a'.repeat(40));
@@ -381,7 +420,7 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       await assert.rejects(()=>authorize(r,'2'.repeat(40),2,{terminal_release_ready:true}),/work_claim_head_authorization_input_invalid/);
       await assert.rejects(()=>call('ci','clued_work_merge_slot_return_v1',{scope:'global',pr_ref:repo+'#1',terminal_proof:{}}),/input_invalid/);
       assert.equal((await admin.query("select count(*)::int n from pg_proc where proname ~ 'terminal_(admission|release|ready|resources|outcome|runtime)|before_terminal|pr_terminal_apply'")).rows[0].n,0);
-      committed(await release(r));
+      committed(await releaseHeld(r));
     });
     await t.test('1. a PR merged through adopt releases its claim as completed with the PR as evidence; the holder continues free',async()=>{
       const id=await task(),session=uuid(),r=await claim(id,session),head='3'.repeat(40);await admitted(r,3,head);
@@ -404,7 +443,7 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       committed(await authorize(r,other,6));assert.equal((await resolve('ci',6,other)).binding_status,'bound');
       await admitted(r,5,'6'.repeat(40));
       assert.equal((await adopt(5)).status,'ok');assert.equal(await binding(5),'merged');assert.equal(await binding(6),'active');
-      assert.equal((await row(r)).status,'ACTIVE');committed(await release(r));
+      assert.equal((await row(r)).status,'ACTIVE');committed(await releaseHeld(r));
     });
     await t.test('3. a head authorized after the merged PR keeps the claim',async()=>{
       const r=await claim(await task());await admitted(r,7,'7'.repeat(40));
@@ -441,7 +480,7 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
     await t.test('L1-2 #1173：持有者先手动释放，再报 merged；同一 Task 之后的新认领照常自动释放', async () => {
       const taskId = await task(), first = await claim(taskId);
       await admitted(first, 2002, '22'.repeat(20));
-      committed(await release(first));
+      committed(await releaseHeld(first));
       assert.equal(await binding(2002), 'active');
       const merged = await lifecycle('ci', [{ pr_number: 2002, state: 'merged', merge_sha: 'c'.repeat(40) }]);
       assert.deepEqual([merged.status, merged.finished, merged.released], ['ok', 1, []], JSON.stringify(merged));
@@ -470,7 +509,7 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       assert.equal(await binding(2004), 'active');
       assert.equal((await row(r)).status, 'ACTIVE');
       assert.deepEqual(await finishes(2004), []);
-      committed(await release(r));
+      committed(await releaseHeld(r));
     });
     await t.test('L1-4 非 ci-admission 连接调用报告：拒绝，库无变化', async () => {
       const r = await claim(await task()); await admitted(r, 2005, '25'.repeat(20));
@@ -482,7 +521,7 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       for (const who of ['holder', 'reader'])
         assert.deepEqual(await lifecycle(who, [{ pr_number: 2005, state: 'closed' }]), { status: 'rejected', error_code: 'admission_binding_required' });
       assert.deepEqual(await snapshot(), before);
-      committed(await release(r));
+      committed(await releaseHeld(r));
     });
     await t.test('L1-5 webhook 与对账各送一次同一事实只有一条结束回执；迟到的 closed 不覆盖 merged；三个来源各自记名', async () => {
       const a = await claim(await task()); await admitted(a, 2006, '26'.repeat(20));
@@ -507,7 +546,7 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
         await assert.rejects(() => admin.query(`select clued_private.work_claim_pr_end_v1(b,'global',$2,$3,null)
           from public.clued_agent_bindings b where b.id=$1`, [ids.ci, repo + '#2010', status]), { code: '22023', message: 'work_claim_pr_end_source_required' });
       assert.deepEqual([await binding(2010), (await row(r)).status, (await finishes(2010)).length], ['active', 'ACTIVE', 0]);
-      committed(await release(r));
+      committed(await releaseHeld(r));
     });
     await t.test('L1-8 ACTIVE 认领从未授权的 unknown 绑定报 merged：绑定结束，认领仍 ACTIVE，没有释放回执', async () => {
       const taskId = await task(), r = await claim(taskId);

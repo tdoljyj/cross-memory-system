@@ -12,6 +12,7 @@
 //     the next batch fail at its own root preflight (DoS), never run something unsafe.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { BATCH_ID, validatePrune } from './mailbox.mjs';
 import { HEX64, check, exactKeys, fail } from './canonical.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
@@ -388,6 +389,10 @@ export const UPGRADE_TOOL_ARGV = Object.freeze([
 export const upgradeToolArgvOk = args => Array.isArray(args) && args.length >= 1 && args.length <= 11 && args.every(a => typeof a === 'string' && /^[a-z0-9-]{1,64}$/.test(a))
   && UPGRADE_TOOL_ARGV.some(re => re.test(args.join(' ')));
 
+// ---- The kernel pool alert (pool-alert.mjs, docs/architecture.md 9.1): its one fixed, read-only command ----
+// The pool reader, from this generation's own resident directory (resident\<residentManifestSha256>\windows).
+export const POOL_TAGS_TOOL = path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), 'windows', 'read-pool-tags.ps1');
+
 // Fixed argv builders. Every variable part is an id that matched a strict pattern first.
 export function argv(cfg) {
   const wsl = (...linux) => [cfg.wslExe, '--distribution', cfg.distribution, '--user', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LANG=C', 'LC_ALL=C', ...linux];
@@ -425,6 +430,8 @@ export function argv(cfg) {
     // DESIGN §63 (Task 3ea699f6): one of the six PUBLIC live role files, base64 on one line, as root and read-only; the name is one of
     // the six fixed ones (roles-public.mjs#ROLES_PUBLIC_NAMES), nothing variable reaches the path.
     rolePublic: name => { check(ROLES_PUBLIC_NAMES.includes(name), 'COMPANION_ROLE_PUBLIC_NAME_INVALID'); return wsl('/usr/bin/base64', '-w', '0', '--', `${ROLES_PUBLIC_LINUX_DIR}/${name}`); },
+    // The kernel pool alert (pool-alert.mjs): the largest paged pool tag, the paged pool and the commit charge (windows/read-pool-tags.ps1).
+    poolTags: () => powershellArgv(cfg.powershellExe, '-File', POOL_TAGS_TOOL),
   };
 }
 

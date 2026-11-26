@@ -38,7 +38,9 @@ import { pruneArchivedGenerations } from './generation-retention.mjs';
 import { SETTINGS_FILE, readRetentionSettings } from './retention-settings.mjs';
 import { assertGhIsolation, assertNotElevated, sessionFacts, writeSessionFacts } from './companion-session.mjs';
 import { companionKeyWatch } from './connection-renewal.mjs';
+import { companionSelfPull } from './fleet-self-pull.mjs';
 import { resolveCompanionWslClient } from './wsl-client.mjs';
+import { POOL_ALERT_EVERY_MS, PoolAlert, poolAlertDir, validatePoolAlertConfig } from './pool-alert.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
 // phase 1, item 7). The poller looks for new PR heads every 15 seconds in a lane of its own (f79929d9; it was once a minute in
@@ -411,6 +413,13 @@ export async function main(args = process.argv.slice(2)) {
     notify });
   // The PR page says when this lane re-ran a head's required tests, or what came of a lost run's dispatch (pr-status.mjs#PrStatusReporter).
   reporter.rerunLine = headSha => rerunner.line(headSha);
+  // The kernel pool alert (pool-alert.mjs, docs/architecture.md 9.1): its own Runner, lane and state; it only notifies the Owner and
+  // never restarts anything. A helper: a configuration it cannot read leaves it off, never the companion.
+  const poolRunner = new Runner({ env: { ...process.env }, jobHost });
+  let poolConfig = null;
+  try { poolConfig = validatePoolAlertConfig(raw.poolAlert); } catch { poolConfig = null; }
+  const poolAlert = new PoolAlert({ config: poolConfig, a: companionArgv(cfg), run: (a, o) => poolRunner.run(a, o),
+    dir: poolAlertDir(cfg.node.ownerProfileDirectory), clock: Date.now, uptimeMs: () => os.uptime() * 1000, notify, node: cfg.node.nodeName });
   keepalive(companionArgv(cfg).keepalive());
   // M5 (ADR 0022 §6 Q1, Q2): the WSL instance this session sees, for the Owner's read-only probe. In the background; never blocks.
   sessionFacts({ wsl: (...l) => [cfg.wslExe, '--distribution', cfg.distribution, '--user', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LANG=C', 'LC_ALL=C', ...l],
@@ -421,6 +430,9 @@ export async function main(args = process.argv.slice(2)) {
   // r3 implementation review MAJOR 2). The beat stops with the lanes; the entry below exits outright, so no timer keeps a
   // companion alive that answers nothing.
   const renewKeyCheck=companionKeyWatch(values.root);
+  const selfPullRunner = new Runner({ env: { ...process.env }, jobHost });
+  const selfPull = companionSelfPull({ root: values.root, repository: raw.repo, upload: ({ tag, file }) =>
+    selfPullRunner.run([raw.ghExe, 'release', 'upload', tag, file, '--repo', raw.repo], { timeoutMs: 60_000 }) });
   // The poller and its lane, and the advisory lane (advisoryLanes): built before any lane starts (the re-run lane reads poller.lastPass).
   const { poller, lanes: advisorySpecs } = advisoryLanes({ advisory, pollRunner, repo: raw.repo, ghExe: raw.ghExe, clock: Date.now,
     writeTrigger: v => Inbox.drop(inboxDir, v), // a create-only drop box: the reader waits for a file still being written (DESIGN §31.3)
@@ -444,9 +456,11 @@ export async function main(args = process.argv.slice(2)) {
       lane({ runner: upgradeRunner, work: async () => { const r = await upgradeLane.step(); await upgradeLane.selfcheckStep(); return r; }, everyMs: UPGRADE_LANE_EVERY_MS }),
       ...(heartbeat ? [lane({ runner: heartbeatRunner, work: () => heartbeat.step(), everyMs: HEARTBEAT_LANE_EVERY_MS })] : []),
       lane({ runner: fleetRunner, work: async () => { fleetLag ??= await openFleetLag(); await fleetLag?.step(); }, everyMs: 60000 }),
+      lane({ runner: selfPullRunner, work: selfPull, everyMs: 15_000 }),
       ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),
       ...(mergeReconcile?[lane({runner:mergeRunner,work:()=>mergeReconcile.step(),everyMs:MERGE_RECONCILE_LANE_EVERY_MS})]:[]),
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
+      lane({ runner: poolRunner, work: () => poolAlert.step(), everyMs: POOL_ALERT_EVERY_MS }),
       ...(frontMerge ? [lane({ runner: frontMergeRunner, work: () => frontMerge.step(), everyMs: FRONT_MERGE_LANE_EVERY_MS })] : []),
       ...advisorySpecs.map(spec => lane(spec)),
     ]);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { once } from 'node:events';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { EventEmitter, once } from 'node:events';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, watch, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -36,6 +36,7 @@ function copyToolchain(root) {
 function slotFixture(t) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'clued-suite-slots-test-'));
   const children = [];
+  const changes = new EventEmitter();
   const selector = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs');
   const slotModule = pathToFileURL(path.join(ROOT, 'scripts/ci/local-suite-slots.mjs')).href;
   const loader = path.join(dir, 'loader.mjs');
@@ -82,7 +83,7 @@ function slotFixture(t) {
   });
   return function start(name, {
     waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter', mode = '--run', body = null, named = null, extraFiles = {},
-    extraEnv = {},
+    extraEnv = {}, startupDelayMs = 0,
   } = {}) {
     const root = path.join(dir, name);
     const scripts = path.join(root, 'scripts', 'ci');
@@ -90,14 +91,17 @@ function slotFixture(t) {
     // A checkout with scripts/ci has its selector (requiredCommands); this one adds no command to any suite.
     writeFileSync(path.join(scripts, 'ci-required-selection.mjs'), 'export const SUITE_COMMANDS = {};\n');
     writeFileSync(path.join(root, 'descendant.mjs'), `
-      import { existsSync, writeFileSync } from 'node:fs';
-      writeFileSync('descendant.pid', String(process.pid));
+      import { existsSync, renameSync, writeFileSync } from 'node:fs';
+      writeFileSync('descendant.pid.tmp', String(process.pid));
+      renameSync('descendant.pid.tmp', 'descendant.pid');
       const poll = setInterval(() => { if (existsSync('release')) clearInterval(poll); }, 20);
       setTimeout(() => clearInterval(poll), 35_000).unref();
     `);
     const probe = `
       import { spawnSync } from 'node:child_process';
       import { existsSync, writeFileSync } from 'node:fs';
+      import { setTimeout as delay } from 'node:timers/promises';
+      if (${startupDelayMs}) await delay(${startupDelayMs});
       if (${tree}) {
         const launched = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-c',
           'import subprocess, sys; subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)',
@@ -158,15 +162,31 @@ function slotFixture(t) {
       writeFileSync(path.join(root, file), text);
     }
     const namedFiles = mode === '--run-files' ? (named ?? ['scripts/ci/retrigger-counter.test.mjs']) : [];
+    const notify = () => changes.emit('change');
+    const watcher = watch(root, { persistent: false }, notify);
     const child = spawn(process.execPath, ['--import', pathToFileURL(loader).href, tool,
       mode, target, ...namedFiles, '--root', root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
-    child.stdout.on('data', (data) => { output += data; });
-    child.stderr.on('data', (data) => { output += data; });
+    const appendOutput = (data) => {
+      output += data;
+      notify();
+    };
+    child.stdout.on('data', appendOutput);
+    child.stderr.on('data', appendOutput);
     const done = once(child, 'close');
-    const run = { child, done, root, output: () => output, ready: () => existsSync(path.join(root, 'ready')),
+    const run = { child, done, root, changes, closed: false, watchError: null,
+      output: () => output, ready: () => existsSync(path.join(root, 'ready')),
       descendant: () => existsSync(path.join(root, 'descendant.pid')) ? Number(readFileSync(path.join(root, 'descendant.pid'))) : 0,
       release: () => writeFileSync(path.join(root, 'release'), '') };
+    watcher.on('error', (error) => {
+      run.watchError = error;
+      notify();
+    });
+    child.once('close', () => {
+      run.closed = true;
+      watcher.close();
+      notify();
+    });
     children.push(run);
     return run;
   };
@@ -180,13 +200,15 @@ function pidAlive(pid) {
   }
 }
 
-async function waitForSlotFixture(run, condition) {
-  const deadline = performance.now() + 10_000;
-  while (performance.now() < deadline && run.child.exitCode === null && run.child.signalCode === null) {
-    if (condition()) return;
-    await delay(20);
+async function waitForSlotFixture(runOrRuns, condition) {
+  const runs = Array.isArray(runOrRuns) ? runOrRuns : [runOrRuns];
+  while (!condition()) {
+    for (const run of runs) {
+      if (run.watchError) throw run.watchError;
+      assert.ok(!run.closed, `fixture never reached the expected state: ${run.output()}`);
+    }
+    await once(runs[0].changes, 'change');
   }
-  assert.ok(condition(), `fixture never reached the expected state: ${run.output()}`);
 }
 
 async function fillSuiteSlots(start) {
@@ -251,6 +273,14 @@ test('local --run reclaims a slot after the holder is killed', async (t) => {
   await waitForSlotFixture(waiting, waiting.ready);
   waiting.release();
   assert.deepEqual(await waiting.done, [0, null]);
+});
+
+test('M1: fixture observes a descendant that starts after the old ten-second deadline', async (t) => {
+  const run = slotFixture(t)('slow-tree', { tree: true, startupDelayMs: 11_000 });
+  await waitForSlotFixture(run, run.descendant);
+  assert.ok(pidAlive(run.descendant()));
+  run.release();
+  assert.deepEqual(await run.done, [0, null]);
 });
 
 test('M1: killing only the entry drains its Python-launched descendant before admitting the waiter', async (t) => {
@@ -2538,14 +2568,14 @@ test('four local runs started together hold at most two slots; the other two que
   const start = slotFixture(t);
   const runs = ['a', 'b', 'c', 'd'].map((name) => start(name));
   const ready = () => runs.filter((run) => run.ready());
-  await waitForSlotFixture(runs[0], () => ready().length >= 2);
+  await waitForSlotFixture(runs, () => ready().length >= 2);
   const waiting = runs.filter((run) => !run.ready());
   for (const run of waiting) await waitForSlotFixture(run, () => run.ready() || /queue position [12]/.test(run.output()));
   assert.equal(ready().length, 2, runs.map((run) => run.output()).join('\n'));
   const [first] = ready();
   first.release();
   assert.deepEqual(await first.done, [0, null]);
-  await waitForSlotFixture(waiting[0], () => ready().length >= 3);
+  await waitForSlotFixture(waiting, () => ready().length >= 3);
   await delay(1_000);
   assert.equal(ready().length, 3, 'one freed slot starts exactly one waiting run');
 });
@@ -3181,9 +3211,9 @@ test('--shard by seconds: a listing command says how much of the table it hit an
   assert.equal(code, 0);
   const text = lines.join('\n');
   assert.match(text, new RegExp(`admission-self-tests: 按秒数分片，表里命中 2 / 本命令 ${files.length} 个文件`));
-  const logged = lines.filter((line) => line.startsWith('admission-self-tests: shard-seconds '));
+  const logged = lines.filter((line) => line.startsWith('admission-self-tests: file-seconds '));
   assert.equal(logged.length, 1);
-  assert.deepEqual(JSON.parse(logged[0].slice('admission-self-tests: shard-seconds '.length)), { [files[0]]: 1.8, [files[1]]: 2 });
+  assert.equal(logged[0], `admission-self-tests: file-seconds ${JSON.stringify({ [files[0]]: 1.8, [files[1]]: 2 })} metronome null`);
   // The suite's first line names the table it read, so the shards' logs show they read the same one.
   assert.match(lines[0], /^admission-self-tests: shard 1\/1; 按秒数分片，表 3 条（[0-9a-f]{12}）$/);
 });
@@ -3196,7 +3226,7 @@ test('--write-shard-seconds: the median of each file\'s samples in the shard log
   writeFileSync(one, ['2026-11-24T02:00:00.0000000Z resident-node: shard 1/4, units numbered from 3; 按秒数分片，表 0 条（e3b0c44298fc）',
     '2026-11-24T02:03:00.0000000Z resident-node: shard-seconds {"w/z.test.mjs":10,"w/b.test.mjs":2,"w/d.test.mjs":4}',
     'some other line: shard-seconds are fun', '2026-11-24T02:04:00.0000000Z selection: shard-seconds {"s/c.test.mjs":3.4}'].join('\r\n'));
-  writeFileSync(two, ['resident-node: shard-seconds {"w/z.test.mjs":30,"w/b.test.mjs":2.9,"w/d.test.mjs":5}',
+  writeFileSync(two, ['resident-node: file-seconds {"w/z.test.mjs":30,"w/b.test.mjs":2.9,"w/d.test.mjs":5} metronome 25.5',
     'resident-node: shard-seconds {"w/z.test.mjs":20}'].join('\n'));
   const out = path.join(temp, 'table.json');
   writeFileSync(out, '{"old/gone.test.mjs":50}\n');
@@ -3231,7 +3261,10 @@ test('the reporter gives a top-level test its whole milliseconds (ms), a nested 
     yield { type: 'test:pass', data: { file, nesting: 0, name: 'skipped', skip: true, details: { duration_ms: 0.2 } } };
   }
   const lines = [];
-  for await (const line of reporterStream(source())) lines.push(JSON.parse(line));
+  for await (const line of reporterStream(source())) {
+    const event = JSON.parse(line);
+    if (event.type === 'pass' || event.type === 'fail') lines.push(event);
+  }
   assert.deepEqual(lines.map(({ path: at, ms }) => [at.join(' > '), ms]),
     [['top > inner', undefined], ['top', 1234], ['bad', 100], ['skipped', 0]]);
 });
@@ -3247,7 +3280,7 @@ test('the reporter uses the file wall clock ahead of the sum of its tests', asyn
   for await (const line of reporterStream(source)) lines.push(line);
   const report = readReport(lines.join(''), ROOT);
   assert.equal(selection.shardSecondsOf(report, new Set(['shard-timing.test.mjs']))['shard-timing.test.mjs'], 5);
-  assert.equal(JSON.parse(lines.at(-1)).ms, 5000);
+  assert.equal(report.events.find((event) => event.wallFile === 'shard-timing.test.mjs').ms, 5000);
 });
 
 test('--write-shard-seconds takes the median of three whole-command samples', (t) => {

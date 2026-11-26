@@ -7,6 +7,7 @@
 //   {"type":"summary","counts":{...},"success":bool}   (the run's own summary)
 //   {"type":"begin"|"end","file":<abs>|null,"nesting":n,"name":...,"ms":...?,"wallFile":<abs>?}
 //      (Node's test:dequeue / test:complete, wallFile only on a file's completion)
+//   {"type":"metronome","n":<samples>,"median_ms":<number>|null}   (null if the run ended before the first tick)
 // begin and end come as Node runs the tests, not in report order, and Node sends
 // both for each test file itself (its name is the file's path): what began and
 // did not end when the entry ended a command at its limit is what hung there
@@ -22,6 +23,8 @@
 // failed, so a known test failing for another reason is a new failure.
 // The top-level file's completion includes loading, hooks and process exit. Its
 // ms is the shard weight, with top-level test ms as a fallback.
+// The metronome uses fixed JavaScript integer work because SHA-256 throughput
+// varies with hardware SHA instruction support and skews comparisons between hosts.
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
@@ -62,7 +65,44 @@ export function failureFingerprint(error) {
 // A top-level test's duration as {ms}, or nothing.
 const timed = (data) => (data.nesting === 0 && Number.isFinite(data.details?.duration_ms) ? { ms: Math.round(data.details.duration_ms) } : {});
 
-export default async function* reporter(source) {
+const METRONOME_WORDS = 16 * 1024;
+const METRONOME_ROUNDS = 640;
+
+export function metronomeWorkload() {
+  const words = new Uint32Array(METRONOME_WORDS);
+  let mixed = 1;
+  for (let round = 0; round < METRONOME_ROUNDS; round += 1) {
+    for (let index = 0; index < words.length; index += 1) {
+      mixed ^= words[index];
+      mixed ^= mixed << 13;
+      mixed ^= mixed >>> 17;
+      mixed ^= mixed << 5;
+      words[index] = mixed;
+    }
+  }
+  return words;
+}
+
+export default async function* reporter(source, { workload = metronomeWorkload } = {}) {
+  const samples = [];
+  const timer = setInterval(() => {
+    const start = performance.now();
+    workload();
+    samples.push(performance.now() - start);
+  }, 5_000).unref();
+  try {
+    yield* testEvents(source);
+  } finally {
+    clearInterval(timer);
+  }
+  samples.sort((a, b) => a - b);
+  const n = samples.length;
+  const middle = Math.floor(n / 2);
+  const median_ms = n === 0 ? null : (samples[Math.floor((n - 1) / 2)] + samples[middle]) / 2;
+  yield `${JSON.stringify({ type: 'metronome', n, median_ms })}\n`;
+}
+
+async function* testEvents(source) {
   const stacks = new Map();
   const pathOf = (data) => {
     const stack = stacks.get(data.file) ?? [];
