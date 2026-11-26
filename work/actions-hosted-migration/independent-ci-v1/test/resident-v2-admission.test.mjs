@@ -151,6 +151,19 @@ test('full admission v2: Native projection never falls back to advisory trailers
   assert.equal((await w.port.evaluatePr(w.job, w.packet)).admitted, false);
 });
 
+test('full admission v2: Native ci_binding_required is reported as an admission role refusal', async () => {
+  const reasons = ['ci_binding_required'];
+  const w = world({ nativeOverrides: { verdict: 'REJECTED', execution_authorized: false, reasons },
+    outcomeOverrides: { admitted: false, verdict: 'REJECTED', reasons } });
+  const blocked = await w.port.evaluatePr(w.job, w.packet);
+  const failure = fullAdmissionFailureV2(blocked);
+  assert.equal(failure.reason, 'full_admission_rejected');
+  const { reasonCodes, nativeReasonCodes } = failure.admissionDiagnostic;
+  assert.deepEqual({ reasonCodes, nativeReasonCodes }, {
+    reasonCodes: ['admission_binding_required'], nativeReasonCodes: ['admission_binding_required'],
+  });
+});
+
 test('full admission v2: an old single bound_pr field cannot override the exact Native PR Task projection', async () => {
   const w = world({ nativeOverrides: { bound_pr: `${REPO}#777` }, claimOverrides: { bound_pr: `${REPO}#777` } });
   assert.equal((await w.port.evaluatePr(w.job, w.packet)).status, 'ADMITTED');
