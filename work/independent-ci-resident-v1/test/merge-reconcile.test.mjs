@@ -114,10 +114,10 @@ test('only a matching workflow_dispatch title on main acknowledges the pending r
   assert.equal((await h.r.step()).skipped, 'RUNS_UNREADABLE'); assert.ok(h.r.state.data.pending);
 });
 
-test('standby/stale/future/dual/pause/HALT/upgrade/drain/version unknown produce zero API calls', async t => {
+test('standby/stale/future/Owner intake pause/PAUSE/HALT/upgrade/drain/version unknown produce zero API calls', async t => {
   const variants = [() => null, now => ({ ...publicStatus(now), node: { name: NODE, mode: 'STANDBY' } }),
     now => ({ ...publicStatus(now), writtenAt: now - 60_001 }), now => ({ ...publicStatus(now), writtenAt: now + 1 }),
-    now => ({ ...publicStatus(now), intakePause: { holders: [{ holder: 'dual-active' }] } }),
+    now => ({ ...publicStatus(now), intakePause: { holders: [{ holder: 'owner' }] } }),
     now => ({ ...publicStatus(now), paused: true }), now => ({ ...publicStatus(now), halt: { code: 'HALT' } }),
     now => ({ ...publicStatus(now), versions: { consistent: true, upgrade: { state: 'RUNNING' } } }),
     now => ({ ...publicStatus(now), executor: { reason: 'UPGRADE_DRAIN' } }), now => ({ ...publicStatus(now), versions: null })];
@@ -126,6 +126,7 @@ test('standby/stale/future/dual/pause/HALT/upgrade/drain/version unknown produce
     assert.equal((await h.r.step()).skipped, 'NOT_ON_DUTY'); assert.equal(h.calls.length, 0);
   }
   assert.equal(reconcileDutyOf(publicStatus(T0), NODE, T0), null);
+  assert.equal(reconcileDutyOf({ ...publicStatus(T0), intakePause: { holders: [{ holder: 'dual-active' }] } }, NODE, T0), null);
 });
 
 test('duty changes while reading or the final pinned Source changes: zero POST', async t => {

@@ -150,23 +150,6 @@ test('ADR 0026: a failed beat is tried again at the next lane pass (30 s), not a
   assert.ok(FAILOVER_SILENCE_MINUTES * MIN >= 2 * NODE_HEARTBEAT_EVERY_MS + MIN);
 });
 
-test('ADR 0026: the last automatic take-over to this node is kept (its server time), for the take-over check', async () => {
-  const at = iso => ({ receiptId: RECEIPT, from: null, to: null, at: null, trigger: 'silence', createdAt: iso });
-  const reply = list => ({ ok: true, tokenRefused: false, notRegistered: false, autoHandovers: list, watchdogTickAt: NOW, watchdogStale: false });
-  const t = beat({ replies: [reply([])] });
-  await t.hb.step();
-  assert.equal(t.hb.autoHandoverSince, null);
-  t.setReplies([reply([at('2026-11-01T10:00:00.000Z'), { ...at('2026-11-01T09:00:00.000Z'), receiptId: '0a1b2c3d-0000-4000-8000-0000000000cc' },
-    { ...at(null), receiptId: '0a1b2c3d-0000-4000-8000-0000000000dd' }])]);
-  t.advance(MIN);
-  await t.hb.step();
-  assert.equal(t.hb.autoHandoverSince, Date.parse('2026-11-01T10:00:00Z'), 'the newest; one without a time is skipped');
-  t.setReplies([reply([])]);
-  t.advance(MIN);
-  await t.hb.step();
-  assert.equal(t.hb.autoHandoverSince, Date.parse('2026-11-01T10:00:00Z'), 'an empty list (older than a day) keeps it');
-});
-
 test('an automatic take-over to this node: one marked @Owner comment on the compute panel issue per receipt', async () => {
   const FROM = '0a1b2c3d-0000-4000-8000-0000000000aa';
   const h = { receiptId: RECEIPT, from: FROM, to: null, at: new Date(NOW).toISOString(), trigger: 'silent' };

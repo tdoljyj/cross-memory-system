@@ -5,10 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { NodeDuty, validMemory } from '../src/node-duty.mjs';
 import { events } from '../src/pr-status.mjs';
 import { heartbeatPayload, parseHeartbeatReply } from '../src/companion-heartbeat.mjs';
-import { intakePauseRequest, INTAKE_PAUSE_CONTRACT, INTAKE_RESUME_CONTRACT } from '../src/intake-pause.mjs';
+import { intakePauseRequest, intakeResumeRequest } from '../src/intake-pause.mjs';
 import { parseStatus, readVersionState, StatusBoard } from '../src/status.mjs';
 import { nodeProfileSha256 } from '../src/node-profile.mjs';
 import { parseRoleProbe } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/merge-slot-native.mjs';
@@ -481,62 +480,27 @@ test('7.7 首次到期恢复：旧连接已过期、无在途事务、网关确�
   assert.equal(watch.request('ci'), confirmationId);
 });
 
-// 以陪伴进程重启时已有的双活锁开场。另一台一直报告当班，只有本机的角色变化可以解锁。
-function companionWithLock(node) {
-  const requests = [];
-  const duty = new NodeDuty({repo: 'fixture/ci', ghExe: 'fixture-gh', memory: validMemory({lock: {other: 'desk', heads: [HEAD]}}, node.clock()),
-    clock: node.clock, staleMs: 300_000, inBudget: () => true,
-    run: async argv => ({code: 0, stdout: argv[4] === 'user' ? 'fixture' : JSON.stringify([{
-      context: 'resident-queue/desk (info only)', description: '当班：运行中', login: 'fixture',
-      created_at: new Date(node.clock()).toISOString()}])}),
-    writeRequest: async request => {
-      requests.push([request.holder, request.contract]);
-      await node.drop(Buffer.from(JSON.stringify(request)), 'requests');
-    }});
-  const pass = () => duty.prepare({status: node.status(), now: node.clock(), pulls: []});
-  return {pass, requests};
-}
-
-test('陪伴进程停止续双活保持后，最后一毫秒仍暂停，到两小时自行恢复', async t => {
+test('确认待命保留独立暂停，暂停到期后紧急停继续生效', async t => {
   let fact = expired;
   const node = await residentNode(t, () => fact, Date.now());
-  await node.exec.tick();
-  const companion = companionWithLock(node);
-  await companion.pass(); await node.exec.tick();
-  const until = node.status().intakePause.until;
-  assert.equal(until - node.clock(), 2 * HOUR);
-  fact = standby;
-  node.advance(2 * HOUR - 1); await node.exec.tick();
-  assert.equal(node.beat().probe, 'not-held');
-  assert.equal(node.beat().state, 'INTAKE_PAUSED');
-  node.advance(1); await node.exec.tick();
-  assert.equal(node.beat().state, 'NORMAL');
-  assert.deepEqual(companion.requests, [['dual-active', INTAKE_PAUSE_CONTRACT]]);
-});
-
-test('确认待命只解除双活保持，独立保持满两小时失效，紧急停继续生效', async t => {
-  let fact = expired;
-  const node = await residentNode(t, () => fact, Date.now());
-  const companion = companionWithLock(node);
   for (const holder of ['owner', 'desk']) {
     await node.drop(Buffer.from(JSON.stringify(intakePauseRequest({holder, minutes: 120, reason: '演练'}, node.clock))), 'requests');
   }
-  await node.exec.tick(); await companion.pass(); await node.exec.tick();
+  await node.exec.tick();
   const holders = () => node.status().intakePause?.holders.map(h => h.holder).sort();
-  assert.deepEqual(holders(), ['desk', 'dual-active', 'owner']);
+  assert.deepEqual(holders(), ['desk', 'owner']);
   node.advance(60_000); fact = standby;
-  await node.exec.tick(); await companion.pass(); await node.exec.tick();
+  await node.exec.tick(); await node.exec.tick();
   assert.deepEqual(holders(), ['desk', 'owner']);
   assert.equal(node.beat().state, 'INTAKE_PAUSED');
   await node.ledger.pause({reason: 'Owner 急停', requestSha256: 'a'.repeat(64)});
   const emergency = (await node.ledger.paused()).sha256;
-  node.advance(2 * HOUR - 60_001); await node.exec.tick(); await companion.pass();
+  node.advance(2 * HOUR - 60_001); await node.exec.tick();
   assert.deepEqual(holders(), ['desk', 'owner']);
-  node.advance(1); await node.exec.tick(); await companion.pass();
+  node.advance(1); await node.exec.tick();
   assert.equal(node.status().intakePause, null);
   assert.equal(node.beat().state, 'PAUSED');
   assert.equal((await node.ledger.paused()).sha256, emergency);
-  assert.deepEqual(companion.requests, [['dual-active', INTAKE_PAUSE_CONTRACT], ['dual-active', INTAKE_RESUME_CONTRACT]]);
 });
 
 test('7.7 已提交的 TURING 自续恢复、NORMAL 心跳、候选、DESK 让班及排空后两类自续', {skip: process.platform !== 'win32'}, async t => {
@@ -549,15 +513,14 @@ test('7.7 已提交的 TURING 自续恢复、NORMAL 心跳、候选、DESK 让�
   const turing = await residentNode(t, () => turingConnection === bindingId ? expired : serving === turingConnection ? held : standby, start);
   const desk = await residentNode(t, () => serving === deskId ? held : standby, start, 'desk');
   const advance = ms => { turing.advance(ms); desk.advance(ms); };
-  const companion = companionWithLock(turing);
-  await turing.exec.tick(); await companion.pass(); await turing.exec.tick();
+  await turing.drop(Buffer.from(JSON.stringify(intakePauseRequest({ reason: 'Owner 维护' }, turing.clock))), 'requests');
+  await turing.exec.tick();
   assert.equal(turing.beat().probe, 'uncertain');
   assert.equal(turing.beat().state, 'INTAKE_PAUSED');
   advance(31 * 60_000);
-  await turing.exec.tick(); await companion.pass(); await turing.exec.tick();
+  await turing.exec.tick();
   const lastUntil = turing.status().intakePause.until;
-  assert.equal(lastUntil - turing.clock(), 2 * HOUR);
-  assert.deepEqual(companion.requests, Array(2).fill(['dual-active', INTAKE_PAUSE_CONTRACT]));
+  assert.equal(lastUntil - turing.clock(), 2 * HOUR - 31 * 60_000);
 
   // Broker 以已提交事务修复本地连接。服务端替身按换绑协议迁移该行的两个引用。
   const recovery = spawnSync(compileBrokerFixture(t), ['--recover-committed-ci'], {encoding: 'utf8', windowsHide: true});
@@ -581,7 +544,8 @@ test('7.7 已提交的 TURING 自续恢复、NORMAL 心跳、候选、DESK 让�
   await turing.exec.tick();
   assert.equal(turing.beat().probe, 'not-held');
   assert.equal(candidate(receive()), null, '明确待命但仍有保持');
-  await companion.pass(); await turing.exec.tick();
+  await turing.drop(Buffer.from(JSON.stringify(intakeResumeRequest({ reason: 'Owner 结束维护' }, turing.clock))), 'requests');
+  await turing.exec.tick();
   assert.ok(turing.clock() < lastUntil);
   const ready = receive();
   assert.deepEqual([ready.payload.state, ready.payload.mode, ready.payload.probe], ['NORMAL', 'STANDBY', 'not-held']);
@@ -621,9 +585,8 @@ test('7.7 已提交的 TURING 自续恢复、NORMAL 心跳、候选、DESK 让�
   const lanes = watch.book().lanes;
   assert.deepEqual([lanes.ci.bindingId, lanes.upgrade.bindingId, lanes.ci.code, lanes.upgrade.code], [deskNext, upgradeNext, null, null]);
   advance(2 * HOUR);
-  await turing.exec.tick(); await companion.pass(); await turing.exec.tick();
+  await turing.exec.tick();
   assert.equal(turing.beat().state, 'NORMAL');
-  assert.deepEqual(companion.requests.slice(2), [['dual-active', INTAKE_RESUME_CONTRACT]]);
   const check = drillFixture(t).drill();
   assert.equal(check.status, 0, check.stderr || check.stdout);
   assert.equal(JSON.parse(check.stdout).result, 'PASS');

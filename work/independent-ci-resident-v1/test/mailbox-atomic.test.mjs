@@ -328,6 +328,7 @@ test('no mailbox or companion write is create-then-write any more, except the tw
   assert.equal([...mailbox.matchAll(/\bwriteNewAtomic\(/g)].length, 7); // 请求、撤销、应答、计时，以及静止证明的开工、发布、收件记录
   const main = await read('companion-main.mjs');
   assert.doesNotMatch(main, /flag:\s*'wx'/);
-  assert.equal([...main.matchAll(/Inbox\.drop\(/g)].length, 2);
+  assert.equal([...main.matchAll(/Inbox\.drop\(/g)].length, 1);
+  assert.match(main, /writeTrigger: v => Inbox\.drop\(inboxDir, v\)/);
   assert.doesNotMatch(await read('ruleset-backstop.mjs'), /\bwriteNew\(/);
 });

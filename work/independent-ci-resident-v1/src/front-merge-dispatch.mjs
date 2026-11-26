@@ -11,7 +11,8 @@
 // A new head or a new main is a new request.
 import fs from 'node:fs/promises';
 import { check } from './canonical.mjs';
-import { dutyOf } from './panel-dispatch.mjs';
+import { dispatchByTrainEffect, dutyOf } from './panel-dispatch.mjs';
+import { operationalIntakePause } from './node-duty.mjs';
 
 const MIN = 60_000;
 export const FRONT_MERGE_REPO = 'tdoljyj/cross-memory-system';
@@ -25,8 +26,10 @@ const SHA = /^[0-9a-f]{40}$/;
 const STATE_CONTRACT = 'clued.independent-ci.front-merge-dispatch/1';
 
 // The front to bring main into, or null.
-export function wantedFrontMerge(status, nodeName, now) {
-  if (dutyOf(status, nodeName, now) !== null) return null;
+export function wantedFrontMerge(status, nodeName, now, protocolVersion = 1) {
+  if (dutyOf(status, nodeName, now) !== null || status.paused || status.halt) return null;
+  // 仅暂停接新时，协议 1 的既有车头可以继续。
+  if (protocolVersion !== 1 && operationalIntakePause(status.intakePause)) return null;
   const last = status?.train?.last;
   if (!last || last.mode !== 'on' || last.decision !== 'FRONT_NEEDS_MAIN_MERGE' || !(now - last.at <= SUMMARY_FRESH_MS)) return null;
   if (!Number.isSafeInteger(last.front?.pr) || last.front.pr < 1 || !SHA.test(last.front.headSha ?? '') || !SHA.test(last.mainSha ?? '')) return null;
@@ -62,13 +65,19 @@ export class FrontMergeDispatcher {
     const now = this.clock();
     let status = null;
     try { status = await this.readStatus(); } catch { status = null; }
-    const want = wantedFrontMerge(status, this.nodeName, now);
+    const want = wantedFrontMerge(status, this.nodeName, now, this.trainProtocolVersion);
     if (!want) return { dispatched: false };
     const key = `${want.pr}:${want.head}:${want.main}`, d = this.state.data;
     if (d.key === key && (d.tries >= MAX_TRIES || now - d.at < RETRY_MS)) return { dispatched: false, waiting: key };
     const tries = d.key === key ? d.tries + 1 : 1;
     let r = null;
-    try { r = await this.run(frontMergeArgv(this.ghExe, this.repo, want), { timeoutMs: POST_TIMEOUT_MS }); } catch { r = null; }
+    try {
+      const dispatch = await dispatchByTrainEffect(this,
+        { repo: this.repo, ref: 'main', subject: [FRONT_MERGE_WORKFLOW, want.pr, want.head, want.main] },
+        () => this.run(frontMergeArgv(this.ghExe, this.repo, want), { timeoutMs: POST_TIMEOUT_MS }));
+      if (!dispatch.sent) return { dispatched: false, waiting: key };
+      r = dispatch.reply;
+    } catch { r = null; }
     // Whatever came of it counts as a try: a refused or uncertain dispatch is asked again after RETRY_MS, not at once.
     this.state.data = { contract: STATE_CONTRACT, key, tries, at: now };
     try { await this.state.save(); } catch { /* memory is a convenience; the workflow refuses what is no longer true */ }

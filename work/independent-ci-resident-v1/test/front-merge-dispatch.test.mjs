@@ -46,6 +46,20 @@ test('only the node on duty, only for a fresh FRONT_NEEDS_MAIN_MERGE of mode on'
   ]) assert.equal(wantedFrontMerge(st, 'node-a', T0), null, name);
 });
 
+test('片 5 审查 6：协议 1 仅暂停接新时仍续办既有车头，PAUSE 和 HALT 各自阻断', async t => {
+  const until = new Date(T0 + MIN).toISOString();
+  const intakePause = { until, holders: [{ holder: 'owner', since: new Date(T0).toISOString(), until }] };
+  for (const latch of [{ paused: true }, { halt: { code: 'RECOVERY_UNCONFIRMED' } }]) {
+    const { g, d } = await lane(t, status({ intakePause, ...latch }));
+    assert.equal((await d.step()).dispatched, false);
+    assert.equal(g.calls.length, 0);
+  }
+  const { g, d } = await lane(t, status({ intakePause }));
+  d.trainProtocolVersion = 1;
+  assert.equal((await d.step()).dispatched, true);
+  assert.equal(g.calls.length, 1);
+});
+
 test('once per front head and main, again after RETRY_MS while it still says so, at most MAX_TRIES times; a new head asks at once', async t => {
   let summary = last();
   const { g, d } = await lane(t, now => status({ train: { enabled: 'on', last: { ...summary, at: now } } }, now));

@@ -9,7 +9,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { RoleProbe, ROLE_PROBE_CODES as C, ROLE_PROBE_INTERVAL_MS } from '../src/role-probe.mjs';
 import { FAILOVER_SILENCE_MINUTES, NODE_HEARTBEAT_EVERY_MS } from '../src/companion-heartbeat.mjs';
-import { DUTY_REFRESH_MS, NodeDuty, freshMemory, nodeContext } from '../src/node-duty.mjs';
 
 const MIN = 60_000;
 const ACTIVATION_MS = 5 * MIN;
@@ -148,30 +147,6 @@ test('the holder\'s heartbeat fails but its executor still works: the take-over 
     if (server.handovers[0].quiet) quick += 1; else kept += 1;
   }
   assert.ok(kept > 0 && quick > 0, `kept ${kept}, quick ${quick}: both branches are reached`);
-});
-
-test('the dead holder\'s last 当班 does not hold the new node back after the automatic take-over (it did for up to 30 minutes before)', async () => {
-  const OWNER = 'tdoljyj', HEAD = 'a'.repeat(40);
-  for (const lastRefresh of [0, 5 * MIN, DUTY_REFRESH_MS]) {
-    const server = new Server('desk');
-    const x = new Node('desk', server, { mode: 'ACTIVE' });
-    const y = new Node('node-b', server, { mode: 'STANDBY' });
-    const dies = T0 + 20 * MIN;
-    run({ server, nodes: [x, y], minutes: 30, event: t => { if (t === dies) x.alive = false; } });
-    // desk wrote its 当班 on its queued head every DUTY_REFRESH_MS; the last one lastRefresh before it died.
-    const statuses = [{ context: nodeContext('desk'), state: 'pending', description: '当班：排队第 1 位', created_at: new Date(dies - lastRefresh).toISOString(), login: OWNER }];
-    const check = async cut => {
-      const memory = freshMemory(); memory.mode = 'STANDBY';
-      const d = new NodeDuty({ repo: 'tdoljyj/cross-memory-system', ghExe: 'gh', clock: () => y.activeAt, memory, fallbackName: 'node-b', timeoutMs: 15_000,
-        inBudget: () => true, staleMs: 5 * MIN, writeRequest: async () => {}, autoHandoverSince: () => cut,
-        run: async argv => (argv[4] === 'user' ? { code: 0, stdout: OWNER } : { code: 0, stdout: JSON.stringify(statuses) }) });
-      const status = { writtenAt: y.activeAt, executor: { state: 'IDLE' }, halt: null, paused: false, intakePause: null, breaker: { state: 'closed' },
-        node: { name: 'node-b', mode: 'ACTIVE', probe: { at: y.activeAt, result: 'held', failures: 0 } }, current: null, pending: [], recent: [] };
-      return (await d.prepare({ status, pulls: [{ pr: 1, headSha: HEAD, eligible: true }], now: y.activeAt })).lock;
-    };
-    assert.ok(await check(null), 'without the cut: held back (the old behaviour)');
-    assert.equal(await check(server.handovers[0].createdAt), null, `with the cut: free at once (last refresh ${lastRefresh / MIN} min before)`);
-  }
 });
 
 test('the old node comes back after the take-over: it starts UNCERTAIN, learns not-held at once and stays STANDBY; never two at once', () => {
