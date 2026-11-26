@@ -41,7 +41,8 @@ import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChec
 export { RULES_UNREADABLE_REPORT_AFTER_MS };
 import { FRONT_CHECKS_DECISIONS, MAIN_REWRITTEN_TEXT, withTrainLine } from './train.mjs';
 import { CAPACITY_ALERT_TEXT } from './host-capacity.mjs';
-import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
+import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, freshMemory, nodeContext, ownAny, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
+import { queueFront, queueStall, stableStallText } from './queue-report.mjs';
 
 // Every node writes its own context (node-duty.mjs#nodeContext); there is no default node (Task 9cac75be A3).
 export const MAX_POSTS_PER_PASS = 20;
@@ -145,7 +146,8 @@ export const DRAFT_HELD_TEXT = '草稿：已搁置，转为可评审后自动继
 const DEFERRED_TEXT = Object.freeze({ DAILY_BATCH_LIMIT: '今日执行批次额度已满，明天继续', DAILY_EVALUATION_LIMIT: '今日评估额度已满', UNEXECUTED_COOLDOWN: '冷却中（10 分钟）',
   COMPANION_NOT_READY: '等 companion 就绪', PR_DAILY_BATCH_LIMIT: '本 PR 今日批次已满', WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满，明天继续',
   REEVALUATION_CAP: '本提交今日重新评估次数已满', BREAKER_OPEN: '执行器熔断中', TRAIN_NON_FRONT_RUNS_OFF: '合并列车只跑车头批次，成为车头后再跑',
-  TRAIN_FRONT_BOUND_HEAD: '合并列车：此提交已为队首认领绑定，车头批次在试合并提交上跑', PR_DRAFT: DRAFT_HELD_TEXT });
+  TRAIN_FRONT_BOUND_HEAD: '合并列车：此提交已为队首认领绑定，车头批次在试合并提交上跑', PR_DRAFT: DRAFT_HELD_TEXT,
+  SAFE_POINT_READMISSION: '流程在安全点结束，条件恢复后自动接着跑，不用推新提交' });
 // The global deferrals of a scheduling pass (executor.mjs#precheck, #trainGate; SCHEDULE_HOLDS) that the status keeps as queue.hold
 // until a pass gets past it: no row runs while one holds (review rounds 24 and 25). The daily budgets come from status.limits (quotaFull).
 const GLOBAL_DEFER_TEXT = Object.freeze({ COMPANION_NOT_READY: '等 companion 就绪', VERSION_SKEW: '两端版本不一致，等升级处理完',
@@ -210,6 +212,13 @@ export const claimWhy = (code, reasonCodes) => (CLAIM_REASONS.includes(code) && 
   ? CLAIM_WHY.find(([codes]) => codes.some(c => reasonCodes.includes(c)))?.[1] ?? '' : '');
 // The code as the page shows it in parentheses: "CODE" or "CODE，<why>".
 const codeWhy = (code, reasonCodes) => { const why = claimWhy(code, reasonCodes); return why ? `${code}，${why}` : code; };
+
+// The reason alone, shared by queue views, commit statuses and the long-wait notice. The PR page adds its scheduling details.
+export function holdText(status, row, now) {
+  const code = rowHold(status, row, now);
+  return DEFERRED_TEXT[code] ?? GATE_TEXT[code] ?? globalDeferText(code, status) ?? WAIT_TEXT[code] ?? PARKED_TEXT[code]
+    ?? (code ? `等待中（${codeWhy(code, row.reasonCodes)}）` : '前面还有批次');
+}
 // Task 30643342 (FABLE-botmerge-auth-carry §1.6): what wakes a waiting row before its next try is the queue's own rule
 // (queue.mjs#earlyWakeOf, which the queue's candidates() reads too); the page only says it. The status board carries the queue view's
 // reason as `deferred`.
@@ -356,7 +365,24 @@ export const heldHintOf = description => heldPartOf(description)?.hint ?? null;
 
 // Pure: what the PR page should say for one open PR head, or null (write nothing). weak: a generic text that never
 // replaces what was already written for that head.
-export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
+export function describe({ pull, status, now, staleMs = STATUS_STALE_MS, stall, front }) {
+  const base = describeHead({ pull, status, now, staleMs });
+  if (!pull?.eligible || pull.draft || !HEX40.test(pull.headSha ?? '') || status?.node?.mode !== 'ACTIVE') return base;
+  // Stale snapshots cannot establish current duty. Keep the HALT error read by the compute panel and the reset path.
+  if (status.halt || now - status.writtenAt > staleMs) return base;
+  stall = stall === undefined ? queueStall(status, [pull], now, staleMs) : stall;
+  if (!stall) return base;
+  if (!ownAny(status, pull)) {
+    const suffix = stall.text.includes(stall.code) ? '' : `（${stall.code}）`;
+    return { state: 'pending', description: `${(`未入队：${stall.text}`).slice(0, DESCRIPTION_MAX - suffix.length)}${suffix}`, kind: 'unqueued' };
+  }
+  front ??= queueFront(status);
+  if (!base || stall.level !== 'red' || front?.pr !== pull.pr || front.headSha !== pull.headSha) return base;
+  const suffix = `；${stall.code}`;
+  return { ...base, description: `${base.description.slice(0, DESCRIPTION_MAX - suffix.length)}${suffix}` };
+}
+
+function describeHead({ pull, status, now, staleMs }) {
   if (!pull || !HEX40.test(pull.headSha ?? '')) return null;
   if (!pull.eligible) {
     if (pull.draft === true) return { state: 'pending', description: DRAFT_HELD_TEXT };
@@ -413,15 +439,15 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // Parked before stage 8 (phase 2, step 2): its checks are published; it waits for the merge queue.
     if (row.state === 'PARKED') {
       const lease = leaseText(row, now, { running: false }), latest = row.nextAt ? `（最晚约 ${hhmm(row.nextAt)}）` : '';
-      if (row.nextAt === null && row.deferred === 'RULESET_UNREADABLE') return { state: 'pending', description: clip(`${PARKED_TEXT[row.deferred]}，规则钉回后再查第 8 段${lease}`) };
+      if (row.nextAt === null && row.deferred === 'RULESET_UNREADABLE') return { state: 'pending', description: clip(`${holdText(status, row, now)}，规则钉回后再查第 8 段${lease}`) };
       if (row.nextAt === null) return { state: 'pending', description: clip(`休眠停靠（${row.deferred ?? '第 8 段未就绪'}）：有变化后再查第 8 段${lease}`) };
       // Generation 12 (DESIGN §56.2): a watched row (row.watched) tries stage 8 within minutes once its claim holds the merge slot;
       // an unwatched one (an older Source, a STANDBY node, the watch or try budget used up) keeps the generation-11 text.
       if (row.deferred === 'RESIDENT_MERGE_QUEUE_NOT_JOINED') return { state: 'pending', description: clip(row.watched
         ? `已测通：现在加入合并队列，排到队首后几分钟内查第 8 段${latest}${lease}` : `已测通：现在加入合并队列，${at}再查第 8 段${lease}`) };
       if (row.deferred === 'TRAIN_SINGLE_GREEN_NOT_PROVEN' && row.frontOpenOwed) return { state: 'pending',
-        description: clip(`${PARKED_TEXT[row.deferred]}，下一拍优先（仍受安全门禁与每日上限约束）${lease}`) };
-      if (PARKED_TEXT[row.deferred]) return { state: 'pending', description: clip(`${PARKED_TEXT[row.deferred]}，${at}再查第 8 段${lease}`) };
+        description: clip(`${holdText(status, row, now)}，下一拍优先（仍受安全门禁与每日上限约束）${lease}`) };
+      if (PARKED_TEXT[row.deferred]) return { state: 'pending', description: clip(`${holdText(status, row, now)}，${at}再查第 8 段${lease}`) };
       // Without a place the Source did not learn whether the claim is in the queue (review of step 2, m13).
       if (!row.queuePosition) return { state: 'pending', description: clip(row.watched ? `已测通：等合并队列，排到队首后几分钟内查第 8 段${latest}${lease}`
         : `已测通：等合并队列，${at}再查第 8 段${lease}`) };
@@ -450,7 +476,11 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
         const wake = EARLY_WAKE_TEXT[earlyWakeOfPage(row)];
         if (wake && row.state === 'WAITING') return { state: 'pending', description: clip(`等待中（${codeWhy(code, row.reasonCodes)}）：${when}自动重试；${wake}`) };
         if (wake) return { state: 'pending', description: clip(`未准入或未执行（${codeWhy(code, row.reasonCodes)}）：${when}自动重试（第 ${row.level} 次）；${wake}`) };
-        if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${codeWhy(code, row.reasonCodes)}）`}：${when}自动重试，批准或修正后编辑 PR 可提前`) };
+        if (row.state === 'WAITING') {
+          const reason = row.deferred === 'WAITING_BUDGET_EXHAUSTED' ? WAIT_TEXT[row.deferred]
+            : row.deferred ? holdText(status, row, now) : '等待中（?）';
+          return { state: 'pending', description: clip(`${reason}：${when}自动重试，批准或修正后编辑 PR 可提前`) };
+        }
         // Generation 12 (defect 050560ac): a network back-off names the cause and the next try; it needs nothing from the PR.
         if (row.network) return { state: 'pending', description: clip(`网络问题，${NETWORK_CAUSE_TEXT[row.deferred] ?? `未执行（${code}）`}，${when}自动重试，不用推新提交`) };
         return { state: 'pending', description: clip(`未准入或未执行（${codeWhy(code, row.reasonCodes)}）：${when}自动重试（第 ${row.level} 次），修正后编辑 PR 可提前`) };
@@ -460,15 +490,14 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     const place = row.position ? `排队第 ${row.position} 位` : '排队中';
     // The intake pause (primary/standby C6): no new batch starts until it ends (the executor's first gate, before the
     // parking places and the breaker); no estimate that assumes a free executor.
-    if (status.intakePause) return { state: 'pending', description: clip(`${place}：暂停接新中${status.intakePause.until ? `，最晚 ${hhmm(status.intakePause.until)} 恢复` : ''}`) };
-    if (status.breaker?.state === 'half-open' || trialDue) return { state: 'pending', description: clip(`${place}：熔断后的试跑${trialDue ? '时间已到，即将开始' : '阶段，一次只跑一批'}，试跑通过后恢复`) };
-    if (status.breaker?.state === 'open') return { state: 'pending', description: clip(`${place}：执行器熔断中${status.breaker.cause === 'network' ? '（网络故障）' : ''}${status.breaker.nextTrialAt ? `，约 ${hhmm(status.breaker.nextTrialAt)} 试跑` : ''}`) };
+    if (status.intakePause) return { state: 'pending', description: clip(`${place}：${holdText(status, row, now)}${status.intakePause.until ? `，最晚 ${hhmm(status.intakePause.until)} 恢复` : ''}`) };
+    if (status.breaker?.state === 'half-open' || trialDue) return { state: 'pending', description: clip(`${place}：${trialDue ? '熔断后的试跑时间已到，即将开始' : `${holdText(status, row, now)}，一次只跑一批`}，试跑通过后恢复`) };
+    if (status.breaker?.state === 'open') return { state: 'pending', description: clip(`${place}：${holdText(status, row, now)}${status.breaker.cause === 'network' ? '（网络故障）' : ''}${status.breaker.nextTrialAt ? `，约 ${hhmm(status.breaker.nextTrialAt)} 试跑` : ''}`) };
     // No new batch while the parking places are full (phase 2, step 2; review m8): no estimate that assumes a free executor.
-    if (status.queue?.parkingFull === true) return { state: 'pending', description: clip(`${place}：停靠的批次已满，等它们结束`) };
+    if (status.queue?.parkingFull === true) return { state: 'pending', description: clip(`${place}：${holdText(status, row, now)}，等它们结束`) };
     // A daily budget used up, or a global deferral: no start before it ends (no estimate that assumes it).
-    if (gate && (DEFERRED_TEXT[gate] || GLOBAL_DEFER_TEXT[gate])) return { state: 'pending', description: clip(`${place}：${DEFERRED_TEXT[gate] ?? globalDeferText(gate, status)}`) };
-    if (row.deferred === 'SAFE_POINT_READMISSION') return { state: 'pending', description: `${place}：流程在安全点结束，条件恢复后自动接着跑，不用推新提交` };
-    const why = row.deferred ? `：${DEFERRED_TEXT[row.deferred] ?? row.deferred}` : '';
+    if (gate && (DEFERRED_TEXT[gate] || GLOBAL_DEFER_TEXT[gate])) return { state: 'pending', description: clip(`${place}：${holdText(status, row, now)}`) };
+    const why = row.deferred ? `：${DEFERRED_TEXT[row.deferred] ? holdText(status, row, now) : row.deferred}` : '';
     // Another PR's batch runs now (#1254: the PR waited behind it with no word why): say whose and at which stage.
     const other = status.current && status.current.pr !== pull.pr && Number.isInteger(status.current.stage) ? status.current : null;
     const behind = !row.deferred && other ? `：前面 #${other.pr} 的批次在跑（第 ${other.stage} 段）` : '';
@@ -563,7 +592,8 @@ const HALT_HINT_CODES = Object.freeze({
 export const haltHint = code => (Object.hasOwn(HALT_HINT_CODES, code ?? '') ? HALT_HINT_TEXT[HALT_HINT_CODES[code]] : '');
 
 // Pure: the notification events now (a stable key each; the reporter shows each key once).
-export function events({ status, statusError = false, now, pulls = [], startedAt = now, staleMs = STATUS_STALE_MS, collision = false }) {
+export function events({ status, statusError = false, now, pulls = [], startedAt = now, staleMs = STATUS_STALE_MS, collision = false,
+  stall = queueStall(status, pulls, now, staleMs) }) {
   const out = [];
   if (collision) out.push({ key: 'context-collision', title: 'PR 页面状态名与必需检查重名', body: `“${typeof collision === 'string' ? collision : '本节点的状态名'}”出现在 main 的必需检查里，已停止写 PR 页面状态。请检查 main 的规则。` });
   if (!status) {
@@ -572,13 +602,19 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
   }
   if (now - status.writtenAt > staleMs) out.push({ key: `stale:${status.writtenAt}`, title: '常驻执行器可能已停止', body: `状态自 ${hhmm(status.writtenAt)} 起未更新（超过 ${Math.round(staleMs / 60_000)} 分钟）。` });
   if (status.halt) out.push({ key: `halt:${status.halt.code}:${status.halt.at ?? ''}`, title: '常驻执行器已停机（HALT）', body: `原因：${status.halt.code}。需要 Owner 复位（rearm）后才会继续。${haltHint(status.halt.code)}` });
-  for (const p of status.pending) {
+  // Normal startup is visible in the view. Alert if it outlasts the escalation threshold with work waiting.
+  const starting = stall?.code === 'EXECUTOR_STARTING' && stall.level === 'yellow';
+  // The existing notices already cover unreadable/stale snapshots and HALT. A standby never alerts on waiting work.
+  if (stall && !starting && stall.code !== 'STATUS_STALE' && !status.halt && status.node?.mode !== 'STANDBY') {
+    out.push({ key: `queue-stall:${stall.code}:${stall.since ?? ''}`, title: '常驻 CI 队列停滞', body: stall.text });
+  }
+  for (const p of status.pending ?? []) {
     if (!LIVE.has(p.state ?? 'QUEUED') || !p.since || now - p.since <= WAIT_NOTIFY_MS) continue;
     // What holds the row now, as its PR page says (rowHold: a gate, its deferral, its own reason; review rounds 21 and 24).
     const d = rowHold(status, p, now);
     const reason = d ?? p.state ?? 'QUEUED';
     out.push({ key: `wait:${p.pr}:${p.headSha}:${reason}`, title: `PR #${p.pr} 排队超过 1 小时`,
-      body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[d] ?? GATE_TEXT[d] ?? globalDeferText(d, status) ?? WAIT_TEXT[d] ?? (d ? `等待中（${codeWhy(d, p.reasonCodes)}）` : '前面还有批次')}。` });
+      body: `提交 ${p.headSha.slice(0, 8)}：${holdText(status, p, now)}。` });
   }
   // The executor's own notices (queue.mjs#notice), each key once.
   for (const n of status.notices ?? []) {
@@ -817,7 +853,9 @@ export class PrStatusReporter {
     let posted = 0;
     for (const [head, f] of this.failed) if (now - f.at >= POST_RETRY_MS) this.failed.delete(head);
     const memoryBefore = canonicalJson(this.store.data.node);
-    let toasts = await this.showAll(events({ status, statusError, now, pulls, startedAt: this.startedAt, collision: this.collision }), now, 0);
+    const stall = queueStall(status, pulls, now);
+    const front = stall?.level === 'red' ? queueFront(status) : null;
+    let toasts = await this.showAll(events({ status, statusError, now, pulls, startedAt: this.startedAt, collision: this.collision, stall }), now, 0);
     // A pass whose duty could not be worked out writes nothing on the PR page (never under a fallback name: review m1).
     let prep = null;
     if (!this.stalled) { try { prep = await this.duty.prepare({ status, pulls, now, posted: this.store.data.posted }); } catch { prep = null; } }
@@ -854,14 +892,20 @@ export class PrStatusReporter {
           if (posted >= MAX_POSTS_PER_PASS || !this.inBudget()) break;
           // The re-run line goes into the base text, so the duty word stays at the start (node-duty.mjs#parseDutyStatus reads it there)
           // and the watchdog tail stays last (review round 3, BLOCKER 1); the capacity line goes just before it.
-          const base = withRerunLine(describe({ pull, status, now }), this.rerunLine?.(pull.headSha) ?? null);
-          const want = rulesUnreadable ? RULES_UNREADABLE_WANT : withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX, await this.frontGap(pull, status?.train?.last ?? null, requiredRules))),
+          const base = withRerunLine(describe({ pull, status, now, stall, front }), this.rerunLine?.(pull.headSha) ?? null);
+          const dutyWant = rulesUnreadable ? null : this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now,
+            DESCRIPTION_MAX, await this.frontGap(pull, status?.train?.last ?? null, requiredRules)));
+          // This pending status carries no duty word and never defeats the role fence or a dual-active lock.
+          const unqueued = base?.kind === 'unqueued' && prep.node.mode === 'ACTIVE' && !prep.lock ? base : null;
+          const want = rulesUnreadable ? RULES_UNREADABLE_WANT : withWatchdogLine(withCapacityLine(dutyWant ?? unqueued,
             capacity), this.watchdogStale?.() === true);
           if (!want) continue;
           described.add(pull.headSha);
           const last = this.store.data.posted[pull.headSha];
           const mine = last && last.context === context;
-          const same = mine && last.state === want.state && last.description === clip(want.description);
+          const sameText = last?.description === clip(want.description) || (want.kind === 'unqueued' && last?.kind === 'unqueued'
+            && stableStallText(last.description) === stableStallText(clip(want.description)));
+          const same = mine && last.state === want.state && sameText;
           // A weak text never replaces another text; the same weak duty text is still refreshed (re-review).
           if (want.weak && mine && !same) continue;
           // NIT 4: a duty text is written again every DUTY_REFRESH_MS even when unchanged ("still alive" for the other node),

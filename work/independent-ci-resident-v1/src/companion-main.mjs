@@ -29,7 +29,8 @@ import {MergeReconcileState,MergeReconciler} from './merge-reconcile.mjs';
 import {MERGE_RECONCILE_REPO,MERGE_RECONCILE_WORKFLOW_SHA256,validateMergeReconcileConfig} from './merge-reconcile-config.mjs';
 import { AdmissionRerunState, AdmissionRerunner, RERUN_LANE_EVERY_MS, ghPort } from './admission-rerun.mjs';
 import { FRONT_MERGE_LANE_EVERY_MS, FRONT_MERGE_REPO, FrontMergeDispatchState, FrontMergeDispatcher } from './front-merge-dispatch.mjs';
-import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
+import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseCiCommandRequest, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
+import { QueueReporter } from './queue-report.mjs';
 import { NotifyQueue, notifyQueueDir, queueNotify } from './notify-queue.mjs';
 import { ReceiptChain } from './receipts.mjs';
 import { RetentionNotifier } from './retention-notify.mjs';
@@ -57,6 +58,7 @@ export const UPGRADE_LANE_EVERY_MS = 5_000;
 // The node heartbeat's own lane (DESIGN §41.6a, companion-heartbeat.mjs) looks this often whether what it reports changed; it
 // sends every minute (ADR 0026) and at once on a change. Its own Runner: a slow GitHub or a long mailbox request never delays it.
 export const HEARTBEAT_LANE_EVERY_MS = 30_000;
+const QUEUE_REPORT_LANE_EVERY_MS = 30_000;
 // The companion's instance lock is refreshed this often (instance-lock.mjs: a holder older than ten minutes is not fresh).
 export const COMPANION_LOCK_TOUCH_MS = 60_000;
 // The compute panel's five-minute trigger (DESIGN §43, panel-dispatch.mjs) looks this often whether it is due; it dispatches at most every
@@ -85,6 +87,17 @@ export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershe
     handover: ghHandoverPort({ ghExe, repo, run }) });
 }
 
+function companionQueueReporter(root, nodeName) {
+  let reporter;
+  return { async step(input) {
+    if (!reporter) {
+      const { scope, supabaseUrl, publishableKey } = JSON.parse(await fs.readFile(path.join(root, 'record', 'installation.json'), 'utf8'));
+      reporter = new QueueReporter({ scope, nodeName, transport: supabaseCiCommandRequest({ supabaseUrl, publishableKey }), readToken: () => readHeartbeatToken(root) });
+    }
+    await reporter.step(input);
+  } };
+}
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // One lane of the companion: its own Runner, its own loop. The companion's actions (the mailbox: bundles, workspaces,
@@ -95,7 +108,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // (DESIGN §24), so the lane is busy again only while a job host itself has not ended.
 export async function lane({ runner, work, sleep: wait = sleep, everyMs = 2_000, stop = () => false }) {
   while (!stop()) {
-    if (!runner.busy) { try { await work(); } catch { /* each lane's work handles its own failures; never retry here */ } }
+    if (!runner?.busy) { try { await work(); } catch { /* each lane's work handles its own failures; never retry here */ } }
     await wait(everyMs);
   }
 }
@@ -140,7 +153,7 @@ export function pollLane({ poller, readStatus, schedule = setTimeout, cancel = c
 }
 
 export function advisoryLanes({ advisory, pollRunner, repo, ghExe, writeTrigger, clock = Date.now, readStatus, renewKeyCheck, retentionNotifier,
-  pruneOldBundles, backstop, reporter, schedule = setTimeout, cancel = clearTimeout }) {
+  pruneOldBundles, backstop, reporter, heartbeat, heartbeatRunner, queueReporter, schedule = setTimeout, cancel = clearTimeout }) {
   let lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0, lastBundlePrune = 0;
   let poll = null; // the poll lane (pollLane): its pass's status read is what the landing port reads
   // bc982192: the batch route the service stamps a batch born now with (its status board's train.batchRoute, executor.mjs#batchRoute:
@@ -178,6 +191,12 @@ export function advisoryLanes({ advisory, pollRunner, repo, ghExe, writeTrigger,
         }
       }
     } },
+    ...(heartbeat ? [{ runner: heartbeatRunner, work: () => heartbeat.step(), everyMs: HEARTBEAT_LANE_EVERY_MS }] : []),
+    ...(queueReporter ? [{ everyMs: QUEUE_REPORT_LANE_EVERY_MS, work: async () => {
+      let status = null;
+      try { status = await readStatus(); } catch { /* queueStall reports an unreadable status */ }
+      await queueReporter.step({ status, pulls: poller.lastPass?.pulls ?? [] });
+    } }] : []),
   ] };
 }
 const exists = async p => { try { await fs.access(p); return true; } catch { return false; } };
@@ -361,6 +380,7 @@ export async function main(args = process.argv.slice(2)) {
   const heartbeatStore = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-heartbeat.json'));
   const heartbeat = await companionHeartbeat({ root: values.root, nodeName: cfg.node.nodeName, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe,
     run: (a, o) => heartbeatRunner.run(a, o), store: heartbeatStore, notify });
+  const queueReporter = heartbeat ? companionQueueReporter(values.root, cfg.node.nodeName) : null;
   const fleetRunner = new Runner({ env: { ...process.env }, jobHost });
   let fleetLag = null;
   const openFleetLag = async () => {
@@ -440,7 +460,7 @@ export async function main(args = process.argv.slice(2)) {
     pruneOldBundles: () => companion.pruneOldBundles(),
     backstop: () => companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o),
       store, notify, observeRules: rules => poller.noteBranchRules(rules) }),
-    reporter });
+    reporter, heartbeat, heartbeatRunner, queueReporter });
   const beating = startHeartbeat(mailbox);
   const lockAlive = setInterval(() => { instanceLock.touch().catch(() => {}); }, COMPANION_LOCK_TOUCH_MS);
   // Review MINOR 6: the companion's own gh login is checked again every few minutes, not only at start: a hosts.yml that lost its token
@@ -454,7 +474,6 @@ export async function main(args = process.argv.slice(2)) {
       // the service times out and classifies a request the companion did not answer; never retried here
       lane({ runner, work: () => companion.step() }),
       lane({ runner: upgradeRunner, work: async () => { const r = await upgradeLane.step(); await upgradeLane.selfcheckStep(); return r; }, everyMs: UPGRADE_LANE_EVERY_MS }),
-      ...(heartbeat ? [lane({ runner: heartbeatRunner, work: () => heartbeat.step(), everyMs: HEARTBEAT_LANE_EVERY_MS })] : []),
       lane({ runner: fleetRunner, work: async () => { fleetLag ??= await openFleetLag(); await fleetLag?.step(); }, everyMs: 60000 }),
       lane({ runner: selfPullRunner, work: selfPull, everyMs: 15_000 }),
       ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),

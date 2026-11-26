@@ -294,7 +294,7 @@ export function parseStatus(bytes) {
     backfill: { complete: v.backfill?.complete === true },
     current: v.current && Number.isSafeInteger(v.current.pr) && head(v.current.headSha)
       ? { pr: v.current.pr, headSha: v.current.headSha, attempt: v.current.attempt, stage: Number.isSafeInteger(v.current.stage) ? v.current.stage : null, since: Date.parse(v.current.since) || null,
-        claimExpiresAt: ms(v.current.claimExpiresAt), leaseFrom: ms(v.current.leaseFrom) } : null,
+        stageSince: ms(v.current.stageSince), claimExpiresAt: ms(v.current.claimExpiresAt), leaseFrom: ms(v.current.leaseFrom) } : null,
     pending: Array.isArray(v.pending) ? v.pending.filter(p => Number.isSafeInteger(p?.pr) && head(p.headSha)).slice(0, PENDING_MAX)
       .map(p => ({ pr: p.pr, headSha: p.headSha, state: ROW_STATES.includes(p.state) ? p.state : 'QUEUED', position: Number.isSafeInteger(p.position) ? p.position : null,
         ...(head(p.baseSha) ? { baseSha: p.baseSha } : {}), ...(head(p.testSha) ? { testSha: p.testSha } : {}),
