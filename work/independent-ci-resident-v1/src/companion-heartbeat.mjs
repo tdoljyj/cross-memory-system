@@ -33,6 +33,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { NODE_NAME } from './node-duty.mjs';
+import { parseIncluded } from './poller.mjs';
 
 // The CI command door (clued_work_verify_v1 -> work_claim_ci_command_v1) and its heartbeat action.
 export const HEARTBEAT_RPC = 'clued_work_verify_v1';
@@ -56,7 +57,11 @@ export const HANDOVER_MARKER = id => `<!-- clued-auto-handover:${id} -->`;
 const HANDOVER_MAX_ATTEMPTS = 3;
 const HANDOVER_RETRY_MS = 30_000;
 const HANDOVER_RETRY_WINDOW_MS = 5 * 60_000;
+const HANDOVER_RECOVERY_MS = 10 * 60_000;
 const HANDOVER_DEDUP_MS = 24 * 60 * 60_000; // The server replays the last 24 hours of receipts.
+const HANDOVER_STATES = new Set(['pending', 'undelivered', 'unknown', 'delivered']);
+const COMMENT_REJECTED = new Set([400, 401, 403, 404, 410, 422, 429]);
+const COMMENT_NOT_STARTED = new Set(['RUNNER_ARGV_REFUSED', 'RUNNER_BUSY_WITH_UNFINISHED_CHILD', 'RUNNER_TIMEOUT_REFUSED', 'RUNNER_SPAWN_FAILED']);
 // The compute panel's own issue marker and author (scripts/ci/self-hosted/compute_panel.py MARKER, find_issue).
 export const PANEL_MARKER = '<!-- clued-compute-panel:v1 -->';
 export const PANEL_AUTHOR = 'github-actions[bot]';
@@ -200,11 +205,14 @@ export function handoverComment(h, ownerLogin, nodeName) {
   return `${HANDOVER_MARKER(h.receiptId)}\n@${ownerLogin} 自动接班：ci-admission 已从${from}交给本节点 ${nodeName}（${h.at ?? '时刻未知'}，回执 ${h.receiptId}）。服务端看门狗判定原持有节点失联；不会自动交回，需要时请在 /bindings 用一键移交。`;
 }
 
+const validIssue = issue => Number.isSafeInteger(issue) && issue > 0;
+
 export class CompanionHeartbeat {
   // ports: { nodeName, scope (the installed record's), transport (supabaseHeartbeatTransport or a test double), readToken() -> token
   //   | null, readStatus() -> status (throws when unreadable), serviceRunning() -> true | false | null, clock, notify(key, title, body)
   //   (one Windows toast per key), memory: { get(key), set(key, value) } (the companion's own store), handover: { ownerLogin(),
-  //   panelIssue() -> number | null, commentExists(issue, marker) -> bool | null, comment(issue, body) -> bool } (the Owner's gh),
+  //   panelIssue() -> number | null, commentExists(issue, marker) -> bool | null, comment(issue, body) -> true (created), false
+  //   (rejected), or null (unknown) } (the Owner's gh), handoverOutbox: { load(), save(records) } (production),
   //   handoverClock (monotonic in production), recordDiagnostics(snapshot) (optional, schedules a local save) }
   constructor(ports) {
     Object.assign(this, ports);
@@ -213,6 +221,8 @@ export class CompanionHeartbeat {
     this.connectionOnlySince = null; this.notReadySince = null; this.nodeBindingId = null; this.viaLink = null;
     this.diagnostics = { pid: process.pid, lastAttemptAt: null, lastServerAckAt: null, lastErrorKind: null };
     this.handovers = new Map();
+    this.handoverBusy = false; this.handoverDirty = false; this.handoverLoaded = !this.handoverOutbox;
+    this.alertsInFlight = new Set();
     // ADR 0026: when the watchdog last handed ci-admission to this node (ms, server time), or null. The take-over check
     // (node-duty.mjs) does not hold back for duty statements written before it: the server had found their writer silent.
     this.autoHandoverSince = null;
@@ -240,14 +250,14 @@ export class CompanionHeartbeat {
       // The server knows no node for this token's connection: its own notice (the beat is no heartbeat at all for the watchdog).
       // These three answers neither count nor clear real failures (review W2 MINOR 3).
       this.unregisteredSince ??= now;
-      await this.say(`heartbeat-unregistered:${this.unregisteredSince}`, '节点心跳未登记', '服务端没有本节点的登记（ci_node_not_registered）：心跳不被记下，自动接班看不到本节点。请 Owner 在 KooYomi 的 /bindings/failover 把心跳连接挂到本节点（两步确认），并核对本节点的 CI 连接。');
+      void this.say(`heartbeat-unregistered:${this.unregisteredSince}`, '节点心跳未登记', '服务端没有本节点的登记（ci_node_not_registered）：心跳不被记下，自动接班看不到本节点。请 Owner 在 KooYomi 的 /bindings/failover 把心跳连接挂到本节点（两步确认），并核对本节点的 CI 连接。');
       return { sent: false, payload, notRegistered: true };
     }
     this.unregisteredSince = null;
     if (r?.serverNotReady === true) {
       // Not a failure of this node or its token: the server has no heartbeat yet. One notice per spell; no failure count.
       this.notReadySince ??= now;
-      await this.say(`heartbeat-server-not-ready:${this.notReadySince}`, '服务端还不收心跳', '服务端还没有节点心跳功能（合并列车第 2 步 b 未上线）：心跳暂不被记下，自动接班看不到本节点。令牌没有问题，不用换令牌或重装；服务端上线后自动恢复。');
+      void this.say(`heartbeat-server-not-ready:${this.notReadySince}`, '服务端还不收心跳', '服务端还没有节点心跳功能（合并列车第 2 步 b 未上线）：心跳暂不被记下，自动接班看不到本节点。令牌没有问题，不用换令牌或重装；服务端上线后自动恢复。');
       return { sent: false, payload, serverNotReady: true };
     }
     this.notReadySince = null;
@@ -255,7 +265,7 @@ export class CompanionHeartbeat {
       // heartbeat_connection_only: the server refused the heartbeat action itself to this heartbeat connection. Should not happen; a
       // misconfiguration of the server or of the link, not of this token: its own notice, no failure count, never "token refused".
       this.connectionOnlySince ??= now;
-      await this.say(`heartbeat-connection-only:${this.connectionOnlySince}`, '心跳连接配置有误', '服务端对本节点的心跳答 heartbeat_connection_only（心跳连接只能发心跳，却连心跳也被拒）：本不应发生，心跳不被记下。令牌本身没有被拒，不用换令牌；请 Owner 在 KooYomi 的 /bindings/failover 核对心跳连接与本节点的挂接，仍不行就告诉维护者。');
+      void this.say(`heartbeat-connection-only:${this.connectionOnlySince}`, '心跳连接配置有误', '服务端对本节点的心跳答 heartbeat_connection_only（心跳连接只能发心跳，却连心跳也被拒）：本不应发生，心跳不被记下。令牌本身没有被拒，不用换令牌；请 Owner 在 KooYomi 的 /bindings/failover 核对心跳连接与本节点的挂接，仍不行就告诉维护者。');
       return { sent: false, payload, connectionOnly: true };
     }
     this.connectionOnlySince = null;
@@ -263,7 +273,7 @@ export class CompanionHeartbeat {
       this.failures += 1;
       this.failingSince ??= now;
       if (this.failures >= HEARTBEAT_FAILURES_NOTIFY || r?.tokenRefused === true) {
-        await this.say(`heartbeat-failing:${this.failingSince}`, '节点心跳发不出去', r?.tokenRefused === true
+        void this.say(`heartbeat-failing:${this.failingSince}`, '节点心跳发不出去', r?.tokenRefused === true
           ? `服务端拒绝了本节点的心跳令牌（过期或被撤销）。请在 /bindings 换一个心跳令牌，用 -HeartbeatTokenFile 重新安装；${FAILOVER_SILENCE_MINUTES} 分钟发不出心跳，服务端就按失联判断（可先关掉自动接班总开关）。`
           : `已连续 ${this.failures} 次发不出心跳。请检查网络和心跳令牌；${FAILOVER_SILENCE_MINUTES} 分钟发不出心跳，服务端就按失联判断（可先关掉自动接班总开关）。`);
       }
@@ -278,18 +288,17 @@ export class CompanionHeartbeat {
     const stale = r.watchdogStale ?? (r.watchdogTickAt !== null ? now - r.watchdogTickAt > WATCHDOG_STALE_MS : null);
     if (stale !== null) this.watchdogStale = stale;
     if (stale === true) {
-      await this.say(`watchdog-stale:${r.watchdogTickAt ?? 'never'}`, '自动接班看门狗未运行', `服务端看门狗${r.watchdogTickAt !== null ? `自 ${iso(r.watchdogTickAt)} 起` : ''}没有运行（超过 5 分钟）：失联的节点不会被自动交出。请检查 KooYomi 的 pg_cron 作业 clued-ci-admission-failover。`);
+      void this.say(`watchdog-stale:${r.watchdogTickAt ?? 'never'}`, '自动接班看门狗未运行', `服务端看门狗${r.watchdogTickAt !== null ? `自 ${iso(r.watchdogTickAt)} 起` : ''}没有运行（超过 5 分钟）：失联的节点不会被自动交出。请检查 KooYomi 的 pg_cron 作业 clued-ci-admission-failover。`);
     }
     // The server lists only take-overs to this node's connection.
-    const handoverNow = this.handoverClock();
-    for (const [id, item] of this.handovers) if (!item.inFlight && handoverNow - item.lastSeenAt >= HANDOVER_DEDUP_MS) this.handovers.delete(id);
     for (const h of r.autoHandovers ?? []) {
       const created = Date.parse(h.createdAt ?? '');
       if (Number.isFinite(created) && !(this.autoHandoverSince >= created)) this.autoHandoverSince = created;
-      const item = this.handovers.get(h.receiptId);
-      if (item) item.lastSeenAt = handoverNow;
-      else this.handovers.set(h.receiptId, { receipt: h, lastSeenAt: handoverNow, nextAt: handoverNow,
-        deadline: handoverNow + HANDOVER_RETRY_WINDOW_MS, attempts: 0, inFlight: false, done: false });
+      if (this.handovers.has(h.receiptId)) continue;
+      const receipt = { receiptId: h.receiptId, from: h.from ?? null, at: h.at ?? null };
+      const receivedAt = this.clock();
+      this.rememberHandover({ receipt, status: 'pending', issue: null, attempts: 0, firstSeenAt: receivedAt, retryAt: receivedAt });
+      this.handoverDirty = true;
     }
     return { sent: true, payload, watchdogStale: this.watchdogStale, autoHandovers: r.autoHandovers ?? [], nodeBindingId: this.nodeBindingId, viaLink: this.viaLink };
   }
@@ -299,40 +308,122 @@ export class CompanionHeartbeat {
     try { this.recordDiagnostics?.(this.diagnostics); } catch { /* diagnostics are best effort */ }
   }
 
-  // One due receipt per advisory pass. Replayed receipts do not reset attempts or extend the retry window.
-  async handoverStep() {
-    const now = this.handoverClock();
-    for (const item of this.handovers.values()) {
-      if (item.done || item.inFlight || item.attempts >= HANDOVER_MAX_ATTEMPTS || now < item.nextAt || now >= item.deadline) continue;
-      item.inFlight = true;
-      item.attempts += 1;
-      try { item.done = await this.relayHandover(item.receipt, item.deadline); }
-      finally { item.inFlight = false; item.nextAt = this.handoverClock() + HANDOVER_RETRY_MS; }
-      return;
+  rememberHandover(record) {
+    const now = this.clock(), monotonic = this.handoverClock();
+    this.handovers.set(record.receipt.receiptId, { record,
+      nextAt: monotonic + Math.max(0, record.retryAt - now),
+      deadline: monotonic + HANDOVER_RETRY_WINDOW_MS - Math.max(0, now - record.firstSeenAt) });
+  }
+
+  updateHandover(item, fields) {
+    item.record = { ...item.record, ...fields };
+    this.handoverDirty = true;
+  }
+
+  async loadHandovers() {
+    const records = Object.entries(await this.handoverOutbox.load());
+    for (const [id, record] of records) {
+      const receipt = record?.receipt;
+      if (!UUID.test(id) || id !== id.toLowerCase() || receipt?.receiptId !== id || !HANDOVER_STATES.has(record.status)
+        || (receipt.from !== null && (typeof receipt.from !== 'string' || !UUID.test(receipt.from)))
+        || (receipt.at !== null && isoOf(receipt.at) !== receipt.at)
+        || ![record.attempts, record.firstSeenAt, record.retryAt].every(Number.isSafeInteger)
+        || (record.status === 'unknown' && !validIssue(record.issue))) throw new Error('HANDOVER_OUTBOX_INVALID');
     }
+    for (const [, record] of records) this.rememberHandover(record);
+    this.handoverLoaded = true;
+  }
+
+  async saveHandovers() {
+    if (!this.handoverDirty) return;
+    this.handoverDirty = false;
+    try { await this.handoverOutbox?.save(Object.fromEntries([...this.handovers].map(([id, item]) => [id, item.record]))); }
+    catch (error) { this.handoverDirty = true; throw error; }
+  }
+
+  delayHandover(item, status, delay) {
+    item.nextAt = this.handoverClock() + delay;
+    this.updateHandover(item, { status, retryAt: this.clock() + delay });
+  }
+
+  exhaustHandover(item) {
+    this.delayHandover(item, 'undelivered', HANDOVER_RECOVERY_MS);
+    const id = item.record.receipt.receiptId;
+    void this.say(`handover-undelivered:${id}`, '自动接班评论未送达', `回执 ${id} 的评论尚未送达算力面板。伴随进程会在后台继续补发。`);
+  }
+
+  // One due receipt per advisory pass. The short retry budget is followed by one recovery attempt per cooldown.
+  async handoverStep() {
+    if (this.handoverBusy) return;
+    this.handoverBusy = true;
+    try {
+      if (!this.handoverLoaded) await this.loadHandovers();
+      const now = this.handoverClock();
+      for (const [id, item] of this.handovers) {
+        const { status, attempts, retryAt, receipt } = item.record;
+        if (status === 'delivered') {
+          if (this.clock() - retryAt >= HANDOVER_DEDUP_MS) { this.handovers.delete(id); this.handoverDirty = true; }
+          continue;
+        }
+        if (status === 'pending' && (attempts >= HANDOVER_MAX_ATTEMPTS || now >= item.deadline)) {
+          this.exhaustHandover(item);
+          continue;
+        }
+        if (now < item.nextAt) continue;
+        if (status === 'pending') this.updateHandover(item, { attempts: attempts + 1 });
+        await this.saveHandovers();
+        const deadline = status === 'pending' ? item.deadline : now + HANDOVER_RETRY_WINDOW_MS;
+        const delivered = await this.relayHandover(receipt, deadline, item);
+        if (delivered) {
+          this.delayHandover(item, 'delivered', 0);
+          await this.memory.set(`auto-handover:${id}`, this.clock());
+        } else if (item.record.status === 'pending' && (item.record.attempts >= HANDOVER_MAX_ATTEMPTS || this.handoverClock() >= deadline)) {
+          this.exhaustHandover(item);
+        } else {
+          const delay = status !== 'pending' && status === item.record.status ? HANDOVER_RECOVERY_MS : HANDOVER_RETRY_MS;
+          this.delayHandover(item, item.record.status, delay);
+        }
+        break;
+      }
+      await this.saveHandovers();
+    } catch { /* Keep dirty state for the next advisory pass. A failed intent write prevents POST. */ }
+    finally { this.handoverBusy = false; }
   }
 
   async say(key, title, body) {
-    try { if (await this.memory.get(key)) return; await this.memory.set(key, this.clock()); await this.notify(key, title, body); } catch { /* advisory */ }
+    if (this.alertsInFlight.has(key)) return;
+    this.alertsInFlight.add(key);
+    try {
+      if (await this.memory.get(key)) return;
+      await this.memory.set(key, this.clock());
+      await this.notify(key, title, body);
+    } catch { /* advisory */ }
+    finally { this.alertsInFlight.delete(key); }
   }
 
-  // Once per receipt: remembered locally, and the panel's issue is read for the marker first (another start, another machine).
-  async relayHandover(h, deadline) {
-    const key = `auto-handover:${h.receiptId}`;
+  async relayHandover(h, deadline, item) {
+    const marker = HANDOVER_MARKER(h.receiptId);
+    const beforePost = item.record;
     try {
-      if (await this.memory.get(key)) return true;
+      // An empty list can precede a late commit. Only a positive marker read settles a prior unknown POST.
+      if (beforePost.status === 'unknown') return (await this.handover.commentExists(beforePost.issue, marker)) === true;
+      if (await this.memory.get(`auto-handover:${h.receiptId}`)) return true;
+      if (this.handoverClock() >= deadline) return false;
       const login = await this.handover.ownerLogin();
       if (!login || this.handoverClock() >= deadline) return false;
       const issue = await this.handover.panelIssue();
-      if (!Number.isSafeInteger(issue) || this.handoverClock() >= deadline) return false;
-      const seen = await this.handover.commentExists(issue, HANDOVER_MARKER(h.receiptId));
-      if (seen === null) return false;
-      if (!seen) {
-        if (this.handoverClock() >= deadline) return false;
-        if (!(await this.handover.comment(issue, handoverComment(h, login, this.nodeName)))) return false;
-      }
-      await this.memory.set(key, this.clock());
-      return true;
+      if (!validIssue(issue) || this.handoverClock() >= deadline) return false;
+      const seen = await this.handover.commentExists(issue, marker);
+      if (seen !== false) return seen === true;
+      if (this.handoverClock() >= deadline) return false;
+      // Persist the intent before sending. After a crash, reconcile on the issue the POST targeted.
+      this.updateHandover(item, { status: 'unknown', issue });
+      try { await this.saveHandovers(); }
+      catch { this.updateHandover(item, beforePost); return false; }
+      if (this.handoverClock() >= deadline) { this.updateHandover(item, beforePost); return false; }
+      const result = await this.handover.comment(issue, handoverComment(h, login, this.nodeName));
+      if (result === false) this.updateHandover(item, beforePost);
+      return result === true;
     } catch { return false; }
   }
 }
@@ -346,13 +437,21 @@ export function ghHandoverPort({ ghExe, repo, run, timeoutMs = 15_000 }) {
       const r = await api(['--method', 'GET', `repos/${repo}/issues?state=open&creator=${encodeURIComponent(PANEL_AUTHOR)}&per_page=100`],
         `[.[] | select(.pull_request == null) | select((.body // "") | contains("${PANEL_MARKER}")) | .number][0]`);
       const n = r.code === 0 ? Number(String(r.stdout).trim()) : NaN;
-      return Number.isSafeInteger(n) && n > 0 ? n : null;
+      return validIssue(n) ? n : null;
     },
     async commentExists(issue, marker) {
       const r = await api(['--method', 'GET', '--paginate', `repos/${repo}/issues/${issue}/comments?per_page=100`], `[.[] | select((.body // "") | contains("${marker}"))] | length`);
-      if (r.code !== 0) return null;
-      return String(r.stdout).split(/\s+/).filter(Boolean).some(x => Number(x) > 0);
+      const counts = String(r.stdout ?? '').trim();
+      if (r.code !== 0 || !/^\d+(?:\s+\d+)*$/.test(counts)) return null;
+      return counts.split(/\s+/).some(x => Number(x) > 0);
     },
-    async comment(issue, body) { return (await api(['--method', 'POST', `repos/${repo}/issues/${issue}/comments`, '-f', `body=${body}`])).code === 0; },
+    async comment(issue, body) {
+      const r = await api(['--include', '--method', 'POST', `repos/${repo}/issues/${issue}/comments`, '-f', `body=${body}`]);
+      if (COMMENT_NOT_STARTED.has(r.refused)) return false;
+      if (r.timedOut || r.refused) return null;
+      const status = parseIncluded(r.stdout)?.status;
+      if (status === 201) return true;
+      return COMMENT_REJECTED.has(status) ? false : null;
+    },
   };
 }

@@ -67,6 +67,30 @@ export const MERGE_RECONCILE_LANE_EVERY_MS = 30_000;
 export const GH_RECHECK_EVERY_MS = 2 * 60_000;
 const SC_EXE = 'C:\\Windows\\System32\\sc.exe';
 
+// The outbox is independent of the toast/diagnostic store, whose keys are pruned. Only the advisory lane reads or writes it.
+function handoverOutbox(file, repo) {
+  return {
+    async load() {
+      let text;
+      try { text = await fs.readFile(file, 'utf8'); }
+      catch (error) { if (error.code === 'ENOENT') return {}; throw error; }
+      const data = JSON.parse(text);
+      if (data?.repo !== repo || !data.receipts || typeof data.receipts !== 'object' || Array.isArray(data.receipts)) {
+        throw new Error('HANDOVER_OUTBOX_INVALID');
+      }
+      return data.receipts;
+    },
+    async save(receipts) {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      const handle = await fs.open(tmp, 'w');
+      try { await handle.writeFile(JSON.stringify({ repo, receipts }, null, 2) + '\n'); await handle.sync(); }
+      finally { await handle.close(); }
+      await fs.rename(tmp, file);
+    },
+  };
+}
+
 // The node heartbeat, or null when no heartbeat token is installed (then nothing about the companion changes). The server's
 // address, publishable key and scope are the installed record's (record\installation.json), never a configuration of their own.
 // notify(key, title, body): the notification queue (M5, ADR 0022 §4.3); without it (tests) a toast through powershellExe as before.
@@ -99,6 +123,7 @@ export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershe
     notify: notify ?? (async (key, title, body) => { await run(toastArgv(powershellExe, title, body), { timeoutMs: 15_000 }); }),
     memory: { get: key => Date.parse(store.data.notified[key]?.at) || 0, set: (key, at) => { store.data.notified[key] = { at: new Date(at).toISOString() }; void save(); } },
     recordDiagnostics: snapshot => { store.data.diagnostics = snapshot; void save(); },
+    handoverOutbox: store.file ? handoverOutbox(path.join(path.dirname(store.file), 'companion-heartbeat-handovers.json'), repo) : null,
     handover: ghHandoverPort({ ghExe, repo, run: runHandover }) });
 }
 

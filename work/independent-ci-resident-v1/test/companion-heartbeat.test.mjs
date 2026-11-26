@@ -8,12 +8,15 @@ import { createHash } from 'node:crypto';
 import { CompanionHeartbeat, FAILOVER_SILENCE_MINUTES, HANDOVER_MARKER, HEARTBEAT_RPC, NODE_HEARTBEAT_EVERY_MS, WATCHDOG_STALE_MS, handoverComment, heartbeatPayload, parseHeartbeatReply,
   readHeartbeatToken, serviceRunningFrom, supabaseHeartbeatTransport } from '../src/companion-heartbeat.mjs';
 import { advisoryLanes, companionHeartbeat, HEARTBEAT_LANE_EVERY_MS, lane } from '../src/companion-main.mjs';
+import { NotifyQueue, queueNotify } from '../src/notify-queue.mjs';
+import { LocalStore } from '../src/pr-status.mjs';
 import { tempRoot } from './helpers.mjs';
 
 const MIN = 60_000;
 const NOW = Date.parse('2026-11-01T10:00:00Z');
 const SRC = 'c'.repeat(64), H = '4'.repeat(40), RECEIPT = '0a1b2c3d-0000-4000-8000-0000000000bb';
 const TOKEN = 'clued_hbt_FixtureHeartbeatToken0123456789abcdefghijkl';
+const nextTurn = () => new Promise(resolve => setImmediate(resolve));
 const status = (o = {}) => ({ writtenAt: NOW - 10_000, executor: { state: 'IDLE' }, halt: null, paused: false, intakePause: null, current: null,
   node: { name: 'node-b', mode: 'ACTIVE', probe: { at: NOW - 5 * MIN, result: 'held' } }, versions: { windows: { ciSourceManifestSha256: SRC } }, ...o });
 
@@ -111,6 +114,7 @@ test('three failures in a row, or a refused token, notify once per spell; a stal
   assert.deepEqual(t.notes.map(n => n.title), ['节点心跳发不出去'], 'once, at the third failure');
   const refused = beat({ replies: [{ ...fail, tokenRefused: true }] });
   await refused.hb.step();
+  await nextTurn();
   assert.match(refused.notes[0].body, /换一个心跳令牌/);
   const w = beat({ replies: [{ ok: true, tokenRefused: false, notRegistered: false, autoHandovers: [], watchdogTickAt: NOW - WATCHDOG_STALE_MS - 1, watchdogStale: null }] });
   assert.equal((await w.hb.step()).watchdogStale, true);
@@ -204,16 +208,15 @@ test('换手通知一直待决时，生产心跳仍连续发送五分钟，重�
   t.hb.relayHandover = receipt => { relayed.push(receipt.receiptId); return new Promise(() => {}); };
   const { lanes: [, advisory] } = advisoryLanes({ heartbeat: t.hb, repo: 'r/r', ghExe: 'gh' });
   let wake, stopped = false;
-  const turn = () => new Promise(resolve => setImmediate(resolve));
   void lane({ runner: { busy: false }, work: () => t.hb.step(), everyMs: HEARTBEAT_LANE_EVERY_MS,
     sleep: () => new Promise(resolve => { wake = resolve; }), stop: () => stopped });
   try {
-    await turn();
+    await nextTurn();
     void advisory.work();
     for (let elapsed = HEARTBEAT_LANE_EVERY_MS; elapsed <= 5 * MIN; elapsed += HEARTBEAT_LANE_EVERY_MS) {
       wake?.();
       t.advance(HEARTBEAT_LANE_EVERY_MS);
-      await turn();
+      await nextTurn();
       await t.hb.handoverStep();
     }
     assert.deepEqual(relayed, [RECEIPT]);
@@ -248,7 +251,7 @@ test('换手通知限次、限时重试，回执重放不会刷新重试预算',
 
   const uncertain = beat({ replies });
   const post = uncertain.hb.handover.comment;
-  uncertain.hb.handover.comment = async (...args) => { await post(...args); return false; };
+  uncertain.hb.handover.comment = async (...args) => { await post(...args); return null; };
   uncertain.hb.handover.commentExists = async () => uncertain.comments.length > 0;
   await uncertain.hb.step();
   await uncertain.hb.handoverStep();
@@ -256,6 +259,146 @@ test('换手通知限次、限时重试，回执重放不会刷新重试预算',
   await uncertain.hb.handoverStep();
   assert.equal(uncertain.comments.length, 1, 'a lost POST response is recovered by finding the receipt marker');
   assert.ok(uncertain.memo.has(`auto-handover:${RECEIPT}`));
+});
+
+async function handoverFixture(t, run) {
+  const root = await tempRoot(t);
+  const tokenDir = path.join(root, 'secrets', 'heartbeat');
+  await fs.mkdir(tokenDir, { recursive: true });
+  await fs.writeFile(path.join(tokenDir, 'ci-node-heartbeat.token'), TOKEN);
+  let now = NOW;
+  const h = { receiptId: RECEIPT, createdAt: new Date(now).toISOString() };
+  const handovers = path.join(root, 'companion-heartbeat-handovers.json');
+  const readHandover = async () => JSON.parse(await fs.readFile(handovers, 'utf8')).receipts[RECEIPT];
+  const open = async (receipts = [h]) => {
+    const store = await LocalStore.open(path.join(root, 'companion-heartbeat.json'), () => now);
+    const sent = [], notes = [];
+    const hb = await companionHeartbeat({ root, nodeName: 'node-b', ghExe: 'gh', repo: 'r/r', run, store, clock: () => now,
+      notify: async key => { notes.push(key); },
+      readJson: async () => ({ supabaseUrl: 'https://abc123.supabase.co', publishableKey: 'sb_publishable_test' }) });
+    hb.handoverClock = () => now;
+    hb.readStatus = async () => status({ writtenAt: now });
+    hb.transport = async () => { sent.push(now); return { ok: true, autoHandovers: receipts, watchdogTickAt: now, watchdogStale: false }; };
+    return { hb, sent, notes };
+  };
+  return { readHandover, open, advance: ms => { now += ms; } };
+}
+
+const ghOk = stdout => ({ code: 0, stdout });
+const ghTimeout = { code: null, timedOut: true, stdout: '' };
+const ghCreated = ghOk('HTTP/2 201 Created\r\n\r\n{}');
+const postBody = argv => argv.find(arg => arg.startsWith('body=')).slice(5);
+
+test('换手回执耗尽重试预算后可见，重启且回执停止重放后仍能自动补发', async t => {
+  const comments = [];
+  let reads = 0;
+  const f = await handoverFixture(t, async argv => {
+    if (argv.includes('POST')) { comments.push(postBody(argv)); return ghCreated; }
+    if (argv.includes('--paginate')) return ++reads <= 3 ? ghTimeout : ghOk(String(comments.length));
+    return ghOk(argv.includes('user') ? 'owner' : '77');
+  });
+  const { hb, sent, notes } = await f.open();
+  for (let i = 0; i < 7; i += 1) {
+    await hb.step();
+    await hb.handoverStep();
+    f.advance(MIN);
+  }
+  assert.deepEqual([sent.length, reads, comments.length], [7, 3, 0]);
+  const exhausted = await f.readHandover().catch(() => null);
+
+  f.advance(25 * 60 * MIN);
+  const { hb: restarted } = await f.open([]);
+  await restarted.step();
+  await restarted.handoverStep();
+  assert.equal(comments.length, 1, '恢复后即使服务端不再重放，也补发一次');
+  assert.ok(comments[0].startsWith(HANDOVER_MARKER(RECEIPT)));
+  assert.equal(exhausted?.status, 'undelivered');
+  assert.deepEqual(notes, [`handover-undelivered:${RECEIPT}`]);
+
+  const requests = [];
+  let posts = 0;
+  const overdue = await handoverFixture(t, async argv => {
+    if (argv.includes('POST')) {
+      requests.push('POST');
+      return ++posts === 1 ? { code: 1, stdout: 'HTTP/2 422 Unprocessable Entity\r\n\r\n{}' } : ghCreated;
+    }
+    if (argv.includes('--paginate')) { requests.push('marker'); return ghOk('0'); }
+    return ghOk(argv.includes('user') ? 'owner' : '77');
+  });
+  const { hb: delayed } = await overdue.open();
+  await delayed.step();
+  overdue.advance(5 * MIN);
+  await delayed.handoverStep();
+  assert.deepEqual(requests, [], '首次执行时短期窗口已过，先记录未送达');
+  assert.equal((await overdue.readHandover()).status, 'undelivered');
+  overdue.advance(10 * MIN);
+  await delayed.handoverStep();
+  assert.equal((await overdue.readHandover()).status, 'undelivered', '明确拒绝仍允许补发');
+  overdue.advance(10 * MIN);
+  await delayed.handoverStep();
+  assert.deepEqual(requests, ['marker', 'POST', 'marker', 'POST']);
+  assert.equal((await overdue.readHandover()).status, 'delivered');
+});
+
+test('首个 POST 超时且评论迟到时，空的标记查询不会触发重复 POST', async t => {
+  const comments = [], checked = [];
+  let pending, intent, posts = 0;
+  const f = await handoverFixture(t, async argv => {
+    if (argv.includes('POST')) {
+      const body = postBody(argv);
+      if (++posts === 1) { pending = body; intent = await f.readHandover().catch(() => null); return ghTimeout; }
+      comments.push(body);
+      return ghCreated;
+    }
+    if (argv.includes('--paginate')) {
+      checked.push(argv.find(arg => arg.includes('/comments?')));
+      return ghOk(String(comments.length));
+    }
+    return ghOk(argv.includes('user') ? 'owner' : (posts === 0 ? '77' : '88'));
+  });
+  const { hb } = await f.open();
+  await hb.step();
+  await hb.handoverStep();
+  f.advance(MIN / 2);
+  await hb.handoverStep();
+  comments.push(pending); // 首个请求在空查询之后才落地。
+  assert.deepEqual([posts, comments.length], [1, 1]);
+  assert.deepEqual([intent.status, intent.issue], ['unknown', 77], 'POST 发出前已持久化原 Issue');
+  assert.equal((await f.readHandover()).status, 'unknown', '空查询后继续保留未决状态');
+
+  f.advance(25 * 60 * MIN);
+  const { hb: restarted } = await f.open([]);
+  await restarted.handoverStep();
+  assert.deepEqual(checked, Array(3).fill('repos/r/r/issues/77/comments?per_page=100'));
+  assert.ok(comments[0].startsWith(HANDOVER_MARKER(RECEIPT)));
+  assert.equal((await f.readHandover()).status, 'delivered');
+});
+
+test('NotifyQueue 的 mkdir 待决五分钟时，生产心跳持续发送且告警只入队一次', async () => {
+  const reply = { ok: true, autoHandovers: [], watchdogTickAt: null, watchdogStale: true };
+  const t = beat({ replies: [reply] });
+  let release, wake, stopped = false, mkdirs = 0;
+  const pending = new Promise(resolve => { release = resolve; });
+  t.hb.notify = queueNotify(new NotifyQueue({ dir: '未使用的测试路径', fsImpl: {
+    mkdir: () => { mkdirs += 1; return pending; }, writeFile: async () => {}, readdir: async () => [],
+  } }));
+  const loop = lane({ runner: { busy: false }, work: () => t.hb.step(), everyMs: HEARTBEAT_LANE_EVERY_MS,
+    sleep: () => stopped ? Promise.resolve() : new Promise(resolve => { wake = resolve; }), stop: () => stopped });
+  try {
+    await nextTurn();
+    for (let elapsed = HEARTBEAT_LANE_EVERY_MS; elapsed <= 5 * MIN; elapsed += HEARTBEAT_LANE_EVERY_MS) {
+      t.advance(HEARTBEAT_LANE_EVERY_MS);
+      wake?.();
+      await nextTurn();
+    }
+    assert.equal(mkdirs, 1);
+    assert.equal(t.sent.length, 6, '待决的 mkdir 期间每分钟发送一次');
+  } finally {
+    stopped = true;
+    release();
+    wake?.();
+    await loop;
+  }
 });
 
 test('the reply is read tolerantly; the wire call posts the CI command door with the token hashed, never the token itself', async t => {
@@ -349,11 +492,13 @@ test('a server without the heartbeat action is its own notice, never "token refu
   // 2b-shaped 400s count: the third one warns "发不出去"
   const bad = beat({ replies: [{ ok: false, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, autoHandovers: [], watchdogTickAt: null, watchdogStale: null }] });
   for (let i = 0; i < 3; i += 1) { await bad.hb.step(); bad.advance(NODE_HEARTBEAT_EVERY_MS); }
+  await nextTurn();
   assert.deepEqual(bad.notes.map(n => n.title), ['节点心跳发不出去']);
   // a not-ready answer between real failures neither counts nor clears them
   const notReady = parseHeartbeatReply({ status: 'rejected', error_code: 'admission_binding_required' });
   const mix = beat({ replies: [invalid, notReady, invalid, notReady, invalid] });
   for (let i = 0; i < 5; i += 1) { await mix.hb.step(); mix.advance(NODE_HEARTBEAT_EVERY_MS); }
+  await nextTurn();
   assert.ok(mix.notes.some(n => n.title === '节点心跳发不出去'), 'three real failures warn even with not-ready answers between them');
   const t = beat({ replies: [parseHeartbeatReply({ status: 'rejected', error_code: 'admission_binding_required' })] });
   for (let i = 0; i < 4; i += 1) { assert.equal((await t.hb.step()).serverNotReady, true); t.advance(NODE_HEARTBEAT_EVERY_MS); }
