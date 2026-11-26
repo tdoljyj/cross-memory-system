@@ -233,6 +233,9 @@ language sql stable set search_path='' as $$
     'adoptionReceipts',batch.adoption_receipts,
     'stagingState',batch.staging_state,'stagingIntent',batch.staging_intent,
     'stagingObservation',batch.staging_observation,'expiresAt',batch.expires_at,'receipt_id',batch.receipt_id,
+    'landingState',(select d.state from clued_private.ci_train_landing_v2 d
+      where d.batch_id=batch.batch_id and d.state in ('reserved','sent','unknown','settled')
+      order by d.generation desc limit 1),
     'landingIntent',(
       select jsonb_build_object('effect_key',l.effect_key,'state',l.state,'intent',l.intent,
         'successorRefOid',l.successor_ref_oid,'observation',l.observation,'receipt_id',l.receipt_id)
@@ -354,6 +357,7 @@ declare
   landing clued_private.ci_train_landing_v2; r uuid; keys text[];
   subject jsonb; steps jsonb; step jsonb; observation jsonb; member jsonb; i integer;
   prev_sha text; signaled_sha text; k text; slot text; dest text:=payload->>'target_branch';
+  reason text:=payload->>'reason'; subject_proof jsonb;
   fields constant text[]:=array['protocol_version','action','repository_id','target_branch','source_manifest_sha256'];
   handle constant text[]:=array['batchId','generation'];
 begin
@@ -376,7 +380,9 @@ begin
   end;
   if keys is null then raise exception 'CI_OPERATION_NOT_SERVED' using errcode='42501'; end if;
   perform clued_private.ci_input_v1(payload,fields||keys
-    ||case when op='staging_prepare' then array['successorRefOid'] else array[]::text[] end,
+    ||case when op='staging_prepare' then array['successorRefOid'] else array[]::text[] end
+    ||case when op='batch_cleanup' then array['reason','observedBaseSha','blockedMember','testSha','evidence_digest','hard_cap_minutes']
+      else array[]::text[] end,
     fields||case when op='landing_reconcile' then array_remove(keys,'observation') else keys end,32768);
   if op='batch_reserve' then
     candidate.members:=payload->'members'; candidate.base_sha:=payload->>'baseSha';
@@ -449,17 +455,48 @@ begin
       where batch_id=k returning * into batch;
     update clued_private.ci_train_landing_v2 set state='unknown' where batch_id=k and state='sent';
   elsif op='batch_cleanup' then
-    if not (batch.state in ('forming','sealed') and coalesce(batch.staging_state,'reserved')='reserved'
-      or batch.state='waiting_checks' and batch.staging_state='settled' and expiry is null)
-      or exists(select 1 from clued_private.ci_train_landing_v2 l
-        where l.batch_id=k and l.state in ('reserved','sent','unknown','settled')) then
+    if batch.staging_state in ('sent','unknown') or batch.state not in ('forming','sealed','waiting_checks')
+      or exists(select 1 from clued_private.ci_train_landing_v2 d where d.batch_id=k and d.state in ('reserved','sent','unknown','settled'))
+      or batch.state='waiting_checks' and (batch.staging_state is distinct from 'settled'
+        or expiry is not null and coalesce(reason,'') not in ('PR_NOT_OPEN_OR_CHANGED','FRONT_NEEDS_MAIN_MERGE','OWNER_REVIEW_REQUIRED',
+          'RESIDENT_BASE_MOVED','TRAIN_LANDING_CHECK_FAILED'))
+      or reason='RESIDENT_BASE_MOVED' and (coalesce(payload->>'observedBaseSha','') !~ '^[0-9a-f]{40}$'
+        or payload->>'observedBaseSha'=batch.base_sha) then
       return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+    if reason in ('FRONT_NEEDS_MAIN_MERGE','OWNER_REVIEW_REQUIRED') then
+      member:=payload->'blockedMember';
+      if member is null or not batch.members @> jsonb_build_array(member) or expiry is null
+        or payload->>'observedBaseSha' is distinct from batch.base_sha
+        then return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
+      insert into clued_private.ci_train_call_v2 values (pg_current_xact_id(),n.user_id,n.binding_id,n.project_id,'merge_slot_return');
+      subject_proof:=public.clued_work_merge_slot_return_v1(proof,jsonb_build_object('scope','project:'||n.project_id,
+        'pr_ref',repo||'#'||(member->>'pr')));
+      delete from clued_private.ci_train_call_v2 where transaction_id=pg_current_xact_id();
+      if subject_proof->>'status' is distinct from 'ok' or subject_proof->>'reason'='admission_binding_required' then
+        return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
+    elsif reason='TRAIN_LANDING_CHECK_FAILED' then
+      member:=batch.members->0;
+      if batch.state<>'waiting_checks' or jsonb_array_length(batch.members)<>1 or expiry is null
+        or not n.publisher_approved or not n.hardening_observed
+        or payload->>'testSha' is distinct from batch.test_sha or payload->>'observedBaseSha' is distinct from batch.base_sha
+        or coalesce(payload->>'evidence_digest','') !~ '^[0-9a-f]{64}$'
+        or coalesce(payload->>'hard_cap_minutes','') !~ '^[0-9]{2,3}$'
+        then return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
+      insert into clued_private.ci_train_call_v2 values (pg_current_xact_id(),n.user_id,n.binding_id,n.project_id,'merge_slot_touch');
+      subject_proof:=public.clued_work_merge_slot_touch_v1(proof,jsonb_build_object(
+        'scope','project:'||n.project_id,'pr_ref',repo||'#'||(member->>'pr'),'head_sha',member->>'headSha',
+        'ci_state','failed','hard_cap_minutes',payload->'hard_cap_minutes'));
+      delete from clued_private.ci_train_call_v2 where transaction_id=pg_current_xact_id();
+      if subject_proof->'touched' is distinct from 'true'::jsonb then
+        return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
+    end if;
     r:=clued_private.ci_receipt_v1(n.user_id,n.project_id,'ci_train_batch_cleanup',k,
-      jsonb_build_object('generation',batch.generation,'state',batch.state));
+      jsonb_build_object('generation',batch.generation,'state',batch.state,'reason',reason,'testSha',batch.test_sha,
+        'blockedMember',payload->'blockedMember','evidence_digest',payload->>'evidence_digest'));
     update clued_private.ci_train_batches_v2 set state='invalidated',expires_at=t,receipt_id=r
       where batch_id=k returning * into batch;
   elsif op='batch_bisect' then
-    if batch.state<>'waiting_checks' or not n.publisher_approved or not n.hardening_observed
+    if batch.state<>'waiting_checks' or batch.staging_state is distinct from 'settled' or not n.publisher_approved or not n.hardening_observed
       or jsonb_array_length(batch.members)<2 or payload->>'testSha' is distinct from batch.test_sha
       or coalesce(payload->>'evidence_digest','') !~ '^[0-9a-f]{64}$'
       or exists(select 1 from clued_private.ci_train_landing_v2 d where d.batch_id=k and d.state in ('reserved','sent','unknown')) then
@@ -936,7 +973,37 @@ begin
     return jsonb_build_object('status','committed','protocol_version',2,'key',payload->'key','receiptId',e.receipt_id,'effect_key',e.effect_key);
   end if;
   if op='work_pending' then
-    return jsonb_build_object('status','ok','work',coalesce((
+    return jsonb_build_object('status','ok','policy_version',cfg->>'policy_version',
+      'batch_max',coalesce((cfg->>'batch_max')::integer,1),
+      'more_work',exists(select 1 from clued_private.ci_train_work_v2 q where q.user_id=n.user_id
+        and q.project_id=n.project_id and q.repository_id=repo_id and q.target_branch=branch
+        and q.source_manifest_sha256=source and q.policy_version=cfg->>'policy_version'
+        and q.action='merge_queue_join' and q.state<>'completed'),
+      'active_batch',exists(select 1 from clued_private.ci_train_batches_v2 d where d.user_id=n.user_id
+        and d.project_id=n.project_id and d.repository_id=repo_id and d.target_branch=branch
+        and d.state not in ('completed','invalidated')),
+      'queue',coalesce((
+        select jsonb_agg(member order by rank,pr) from (
+          select jsonb_build_object('pr',q.pr,'headSha',q.head_sha,'claimId',q.claim_id,'fence',q.claim_fence,
+            'epoch',q.execution_epoch,'position',rank,'sequence',q.pr,'solo',exists(
+              select 1 from clued_private.ci_train_batches_v2 p join clued_private.ci_train_batches_v2 c on c.parent_batch_id=p.batch_id
+              where p.user_id=q.user_id and p.project_id=q.project_id and p.repository_id=q.repository_id
+                and p.target_branch=q.target_branch and p.source_manifest_sha256=q.source_manifest_sha256
+                and p.policy_version=q.policy_version and c.state='completed'
+                and jsonb_array_length(p.members)=jsonb_array_length(c.members)+1
+                and p.members->(-1)=jsonb_build_object('pr',q.pr,'headSha',q.head_sha,'claimId',q.claim_id,
+                  'fence',q.claim_fence,'epoch',q.execution_epoch))) member,rank,q.pr
+          from jsonb_array_elements(clued_private.work_claim_merge_queue_current_v1(n.user_id,'merge:'||repo||':'||branch)->'entries')
+            with ordinality as native(entry,rank)
+          join clued_private.ci_train_work_v2 q on q.claim_id::text=entry->>'claim_id'
+          where entry->>'state' in ('head','waiting') and q.user_id=n.user_id and q.project_id=n.project_id
+            and q.repository_id=repo_id and q.target_branch=branch and q.source_manifest_sha256=source
+            and q.policy_version=cfg->>'policy_version' and q.action='merge_queue_join' and q.state='completed'
+            and q.queue_settlement->>'disposition' is distinct from 'discard'
+            and clued_private.ci_train_head_claim_v2(q,repo) is not null
+          order by rank,q.pr limit 10
+        ) ready_queue
+      ),'[]'::jsonb),'work',coalesce((
       select jsonb_agg(todo order by urgency,due,stable_key) from (
         select jsonb_build_object('action',q.action,'work_key',q.work_key,'pr',q.pr,'head_sha',q.head_sha,
           'claim_id',q.claim_id,'claim_fence',q.claim_fence,'execution_epoch',q.execution_epoch,
@@ -945,10 +1012,13 @@ begin
         from clued_private.ci_train_work_v2 q left join clued_private.ci_train_check_effects_v2 ce using(work_key)
         where q.user_id=n.user_id and q.project_id=n.project_id and q.repository_id=repo_id and q.target_branch=branch
           and q.source_manifest_sha256=source and q.policy_version=cfg->>'policy_version' and q.state<>'completed'
-          and q.expires_at<=t
+          and (q.state='released' and q.action<>'merge_queue_join' or q.expires_at<=t)
         union all
-        select jsonb_build_object('action','batch_acquire','batchId',d.batch_id,'state',d.state),
-          1,d.expires_at,d.batch_id
+        select jsonb_build_object('action','batch_acquire','batchId',d.batch_id,'state',d.state,
+          'member_count',jsonb_array_length(d.members)),
+          case when d.state='landed' or d.staging_state in ('sent','unknown') or exists(
+            select 1 from clued_private.ci_train_landing_v2 l where l.batch_id=d.batch_id
+              and l.state in ('sent','unknown','settled')) then 0 else 1 end,d.expires_at,d.batch_id
         from clued_private.ci_train_batches_v2 d where d.user_id=n.user_id and d.project_id=n.project_id
           and d.repository_id=repo_id and d.target_branch=branch and d.source_manifest_sha256=source
           and d.policy_version=cfg->>'policy_version' and d.state not in ('completed','invalidated') and d.expires_at<=t
@@ -1077,7 +1147,7 @@ begin
     return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
   expires:=clued_private.ci_train_head_claim_v2(w,repo);
   if expires is null and op not in ('publication_reconcile','publication_finish','revoke_check','work_release')
-    and not (op='merge_queue_join' and disposition='discard') then
+    and not (op='merge_queue_join' and w.action=op and disposition='discard') then
     return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
   if op=any(queue_actions) then
     if w.action<>op or (payload ? 'evidence_digest' and coalesce(payload->>'evidence_digest','') !~ '^[0-9a-f]{64}$')
@@ -1186,7 +1256,8 @@ begin
       return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
     target:=jsonb_build_object('scope','project:'||n.project_id,'pr_ref',repo||'#'||w.pr,'head_sha',w.head_sha);
     if disposition in ('join','return') then
-      insert into clued_private.ci_train_call_v2 values (pg_current_xact_id(),n.user_id,n.binding_id,n.project_id,op);
+      insert into clued_private.ci_train_call_v2 values (pg_current_xact_id(),n.user_id,n.binding_id,n.project_id,
+        case when disposition='join' then op else 'merge_slot_return' end);
       if disposition='join' then
         verification:=clued_private.work_claim_ci_queue_join_v1(b,target||jsonb_build_object('action',op));
       else

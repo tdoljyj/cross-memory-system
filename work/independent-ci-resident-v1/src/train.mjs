@@ -138,12 +138,16 @@ export function trainRunMode({ enabled, active, paused = false, intakeHeld = fal
 // next run after one comes TRAIN_RECHECK_MS later, not a full maintenanceEveryMs. The daily cap, pause and halt are unchanged.
 export const TRAIN_RECHECK_MS = 2 * 60_000;
 export const TRAIN_RECHECK_DECISIONS = Object.freeze(['TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE']);
-export function trainDue({ train, now, runs = [], busy, urgent = false, recheck = false }) {
+export function trainDue({ train, now, runs = [], busy, urgent = false, recheck = false, sharedRetryAt = null, sharedWork = false }) {
   if (!train || train.enabled === 'off' || busy) return false;
+  // 共享待办有自己的短租约和复查时间。常规维护额度仍约束旧的扫库回合。
+  const sharedDue = Number.isFinite(sharedRetryAt) && now >= sharedRetryAt;
+  if (sharedWork) return train.maintenanceMaxPerDay > 0 && (urgent === true || sharedDue);
   const recent = runs.filter(at => at > now - DAY);
   if (recent.length >= train.maintenanceMaxPerDay) return false;
   const last = recent.length ? Math.max(...recent) : null;
-  return last === null || urgent === true || now - last >= (recheck === true ? Math.min(TRAIN_RECHECK_MS, train.maintenanceEveryMs) : train.maintenanceEveryMs);
+  return last === null || urgent === true || sharedDue
+    || now - last >= (recheck === true ? Math.min(TRAIN_RECHECK_MS, train.maintenanceEveryMs) : train.maintenanceEveryMs);
 }
 // Field 2026-11-19 09:15-09:35 (#1172, FABLE-ci-10min §3.2 P1a): a bound front whose batch this run was to open but did not, where one
 // more run moves it on (an incomplete sweep, a returned slot), waited three full maintenanceEveryMs with the executor idle. Such a run's
@@ -344,8 +348,12 @@ export function trainSummary(f) {
   // DESIGN §62.4: the take-over front binding observation, kept by the executor only (a malformed one is none: no exception).
   const frontBind = f.mode === 'on' && decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && f.wouldDo === 'FRONT_NOT_BOUND' ? frontBindOf(f.frontBind, f.front) : null;
   const landing = f.mode === 'on' ? landingOf(f.landing) : null;
+  const shared = f.sharedWork;
+  const sharedWork = f.mode === 'on' && plain(shared) && shared.protocolVersion === 2
+    && (shared.retryAt === null || isoOrNull(shared.retryAt) !== null)
+    ? Object.freeze({ protocolVersion: 2, retryAt: shared.retryAt }) : null;
   return Object.freeze({ ...base, decision, sweep, actions: actionsOf(f.actions), requestPause: acting ? (f.requestPause ?? null) : null, openFrontBatch,
-    ...(frontBind ? { frontBind } : {}), ...(landing ? { landing } : {}) });
+    ...(frontBind ? { frontBind } : {}), ...(landing ? { landing } : {}), ...(sharedWork ? { sharedWork } : {}) });
 }
 
 // Task 04f9b91b (admission p90): stage 10's top-level appScans (any rule's scans pinned to this App, read also when the six are not: the

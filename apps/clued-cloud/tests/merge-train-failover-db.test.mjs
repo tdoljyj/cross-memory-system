@@ -1613,8 +1613,26 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
         await admin.query('update clued_private.work_claims_v1 set expires_at=$2 where claim_id=$1', [f.claim.claim_id, old.expires_at]);
       }
     });
-    const queuedWork = data(await call(holder, 'queue_acquire', subject));
+    const awaiting = data(await call(holder, 'work_pending', {}));
+    assert.equal(awaiting.more_work, true, JSON.stringify(awaiting));
+    assert.deepEqual(awaiting.queue, []);
+    assert.equal(awaiting.work.find(work => work.action === 'merge_queue_join')?.head_sha, head);
+    let queuedWork = data(await call(holder, 'queue_acquire', subject));
     assert.equal(queuedWork.status, 'leased', JSON.stringify(queuedWork));
+    assert.equal(queuedWork.effect_key, intent.effect_key);
+    assert.deepEqual(queuedWork.check, { appId: check.appId, headSha: head, externalId: check.externalId, checkRunId: 12345 });
+    assert.equal(queuedWork.entered, false);
+    const wait = data(await call(holder, 'merge_queue_join', {
+      ...lease(queuedWork), check_run_id: 12345, inventory_digest: digest('required check pending'),
+      disposition: 'wait', reason: 'REQUIRED_CHECKS_PENDING',
+    }));
+    assert.equal(wait.disposition, 'wait');
+    const delayed = data(await call(successor, 'work_pending', {}));
+    assert.equal(delayed.more_work, true);
+    assert.equal(delayed.work.some(work => work.action === 'merge_queue_join'), false);
+    await admin.query(`update clued_private.ci_train_work_v2 set expires_at=clock_timestamp()-interval '1 second'
+      where work_key=$1`, [queuedWork.work_key]);
+    queuedWork = data(await call(holder, 'queue_acquire', subject));
     const queue = data(await call(holder, 'merge_queue_join', {
       ...lease(queuedWork), check_run_id: 12345, inventory_digest: digest('fixture check inventory'),
     }));
@@ -1639,6 +1657,8 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
 
     const baseSha = sha('base');
     const members = [{ pr, headSha: head, claimId: f.claim.claim_id, fence: subject.claim_fence, epoch: subject.execution_epoch }];
+    const ready = data(await call(successor, 'work_pending', {}));
+    assert.deepEqual(ready.queue, [{ ...members[0], position: 1, sequence: pr, solo: false }]);
     await t.test('2：成员已关闭且无在途 main 写，已暂存批可终结并释放目标', async () => {
       const oldBase = sha('cleanup base');
       const old = data(await call(holder, 'batch_reserve', { baseSha: oldBase, members }));
