@@ -90,3 +90,19 @@ test('B4: the metronome workload does not use native hash acceleration', (t) => 
     syncBuiltinESMExports();
   }
 });
+
+test('Windows ci-suites-windows 作业上限覆盖两遍实测耗时并留出 25% 余量', () => {
+  const workflow = readFileSync(new URL('../../.github/workflows/clued-required-tests-windows.yml', import.meta.url), 'utf8');
+  const job = workflow.split(/^  (?=[\w-]+:)/m).find((block) => block.startsWith('ci-suites-windows:'));
+  assert.ok(job, '缺少 ci-suites-windows 作业');
+  const timeout = /^    timeout-minutes:[ \t]*(\d+)[ \t]*\r?$/m.exec(job);
+  assert.ok(timeout, '缺少 ci-suites-windows 作业级 timeout-minutes');
+
+  // GitHub 运行 139578654649 中各套件第一遍的实测秒数。
+  const firstPassSeconds = { 'node-governance': 54, 'resident-node': 942, 'resident-python': 162,
+    'offline-drill': 58, 'source-v2-node': 186 };
+  const minimumSeconds = 2 * Object.values(firstPassSeconds).reduce((total, seconds) => total + seconds, 0) * 1.25;
+  const timeoutSeconds = Number(timeout[1]) * 60;
+  assert.ok(timeoutSeconds >= minimumSeconds,
+    `ci-suites-windows 的上限 ${timeoutSeconds} 秒低于双遍预算 ${minimumSeconds} 秒`);
+});

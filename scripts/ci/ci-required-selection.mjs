@@ -1405,7 +1405,7 @@ export const RERUN_MIN_TIMEOUT_MS = 2 * 60_000;
 const isNodeTest = (argv) => argv[0] === 'node' && argv.includes('--test');
 
 // One limit at the entry (FABLE-flaky-four-replan-20261124 §2; PLAN-ci-p90-next-20261125 补充裁定, task 3435f8bf): a test or
-// command that hangs fails with its name, not at the job's limit (90 minutes hosted, 45 on a node's Windows job, 30 for
+// command that hangs fails with its name, not at the job's limit (90 minutes for hosted and node Windows jobs, 30 for
 // migration-verify) with none. executeSuite starts the first run of every command (node --test, the run-tests wrapper, any
 // other) with COMMAND_TIMEOUT_MS and ends it with SIGKILL: Windows ends a process outright anyway, and on POSIX a SIGTERM would
 // let Node cancel gracefully and end what had begun, so the two would differ. The command line stays as it is. Node times
