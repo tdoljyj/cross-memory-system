@@ -25,6 +25,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { packageGenerationOf } from '../../src/selfcheck.mjs';
 import { parseArgs } from 'node:util';
 import { CIV1, CLOSURE, NODE_PROFILES, PREPARE_RECORD, RESIDENT, computeUniversalFacts } from './facts.mjs';
 import { RESIDENT_EXTERNAL } from '../../tools/build-package.mjs';
@@ -223,6 +224,7 @@ export async function buildUniversal({ repo, commit, version, out, stateCompat =
     const archiveSha = sha(tar);
     const release = { contract: RELEASE_CONTRACT,
       source: { version, release_tag: tagOf(version), archive_sha256: archiveSha, commit,
+        ...(packageGenerationOf(version) === null ? {} : { built_at: new Date().toISOString() }),
         resident_manifest_sha256: universal.facts.residentManifestSha256, source_manifest_sha256: universal.facts.sourceManifestSha256,
         upgrader_manifest_sha256: universal.facts.upgraderManifestSha256, bundle_sha256: universal.facts.bundleSha256, universal_files_sha256: universal.facts.universalFilesSha256 },
       archive: { name: tarName, bytes: tar.length, sha256: archiveSha }, universalManifestSha256: sha(manifestBytes),
@@ -243,6 +245,7 @@ export async function main(argv) {
   check(cmd === 'build', 'USAGE');
   const { values } = parseArgs({ args: rest, options: { repo: { type: 'string' }, commit: { type: 'string' }, version: { type: 'string' }, out: { type: 'string' },
     'state-compat': { type: 'string' } } });
+  check(!/^g[0-9]/.test(values.version ?? ''), 'FORMAL_GENERATION_ASSIGNED_BY_PUBLISH');
   const stateCompat = values['state-compat'] ? JSON.parse(await fs.readFile(values['state-compat'], 'utf8')) : null;
   return buildUniversal({ repo: values.repo, commit: values.commit, version: values.version, out: values.out, stateCompat });
 }

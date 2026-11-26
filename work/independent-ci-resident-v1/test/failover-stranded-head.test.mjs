@@ -14,9 +14,13 @@ import { recordBatchClaim, readBatchClaim } from '../../actions-hosted-migration
 import { createFixtureWorkAdmissionPublisherV2 } from '../../actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs';
 import { outcomeFailureCode } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
 import { admittedFacts, tempDir } from '../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
+import { ResidentError } from '../src/canonical.mjs';
+import { ResidentExecutor } from '../src/executor.mjs';
+import { batchKey } from '../src/ledger.mjs';
 import { describe } from '../src/pr-status.mjs';
+import { RunQueue } from '../src/queue.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
-import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeEngine, triggerBytes } from './helpers.mjs';
+import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, triggerBytes } from './helpers.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system', APP = 5368905, MIN = 60_000;
 const iso = ms => new Date(ms).toISOString();
@@ -35,7 +39,7 @@ function sharedGithub() {
 
 // A node: its own resident (executor fixture), its own Source journal and batch claims; stage 1 is the real Source work-admission
 // publisher, stage 3 publishes gitleaks of the batch's job (the first role check); `script` overrides other stages.
-async function node(t, github, script = {}) {
+async function node(t, github, script = {}, companion) {
   const dir = await tempDir(t);
   const batchClaims = { read: async j => { try { return await readBatchClaim(dir, j); } catch (e) { if (e.code === 'BATCH_CLAIM_MISSING') return null; throw e; } },
     record: (j, c, at) => recordBatchClaim(dir, j, c, at) };
@@ -64,10 +68,78 @@ async function node(t, github, script = {}) {
     }
     return run(batch, stage, o);
   };
-  const f = await executorFixture(t, { engine });
+  const f = await executorFixture(t, { engine, companion });
   return { f, engine, stages: () => engine.calls.filter(c => c[0] === 'stage').map(c => c[1]) };
 }
 const named = (github, name) => github.checks.filter(c => c.name === name);
+
+const incident = { repo: REPO, pr: 1151, headSha: 'ba1d6dfab293bb8c660d87b69d22f30b22176223',
+  baseSha: '6a2b050feeaea167c12a17ce2726d5a948e89db3', sourceManifestSha256: SOURCE, attempt: 1 };
+const incidentTrigger = () => triggerBytes({ pr: incident.pr, headSha: incident.headSha, baseSha: incident.baseSha });
+
+async function queuedIncident(t, state) {
+  const github = sharedGithub();
+  const job = batchJobsV2({ ...incident, testSha: incident.headSha, createdAt: '2026-11-26T13:24:30.000Z' })['work-admission'];
+  await github.createCheck({ name: 'kooyumi-work-admission', head_sha: incident.headSha, status: 'completed', conclusion: 'success',
+    external_id: `independent-ci:native-work-admission:v2:${job.id}:a1:cfixture` });
+  const companion = fakeCompanion({ pull(pr) {
+    if (pr !== incident.pr) return { number: pr, state: 'open', headSha: HEAD };
+    if (state.expired) throw new ResidentError('COMPANION_REQUEST_EXPIRED');
+    return { number: pr, state: state.merged ? 'merged' : 'open', headSha: incident.headSha };
+  }, linux: { linuxUnitsInactive: false, containersZero: false } }, () => f.clock());
+  const { f } = await node(t, github, {}, companion);
+  await f.drop(incidentTrigger());
+  return f;
+}
+
+test('#1151 首次精确查询过期时不预留，有效合入回执到达后收终，下一行可运行', async t => {
+  const state = { merged: true, expired: true };
+  const f = await queuedIncident(t, state);
+  await f.drop(triggerBytes());
+  const key = batchKey(incident);
+  const bodies = async type => (await f.receipts.latest([type], 20)).map(r => r.value.body);
+
+  const first = await f.exec.tick();
+  const reserved = await bodies('batch-reserved');
+  const stages = await bodies('stage-terminal');
+  assert.deepEqual(reserved.map(r => r.subject.pr), [884], JSON.stringify({ first, reservations: reserved.map(r => r.subject.pr),
+    incidentStages: stages.filter(r => r.key === key), halt: await f.ledger.halted() }));
+  assert.equal(first.state, 'COMPLETED');
+  assert.equal(stages.some(r => r.key === key), false);
+  assert.equal((await f.ledger.state(key)).state, 'ABSENT');
+  assert.equal(await f.ledger.halted(), null);
+  assert.deepEqual(await bodies('queue-pr-closed'), []);
+
+  const incidentReads = () => f.companion.calls.filter(([kind, pr]) => kind === 'pr-head' && pr === incident.pr).length;
+  assert.equal(incidentReads(), 1);
+  f.advance(1);
+  const queue = await RunQueue.open(f.queue.dir, f.clock);
+  const restarted = new ResidentExecutor({ ...f.ports, queue });
+  await restarted.tick();
+  assert.equal(incidentReads(), 1, '重启后退避期间也不重复查询');
+  state.expired = false;
+  f.advance(10 * MIN);
+  await restarted.tick();
+  assert.equal(incidentReads(), 2);
+  assert.deepEqual((await bodies('queue-pr-closed')).map(r => [r.pr, r.state, r.before]), [[incident.pr, 'merged', 'reserve']]);
+  assert.deepEqual([queue.row(incident.pr).state, queue.row(incident.pr).reason], ['DONE', 'PR_CLOSED']);
+  assert.deepEqual((await bodies('batch-reserved')).map(r => r.subject.pr), [884]);
+  assert.deepEqual(await f.ledger.pendingAttempts2(), []);
+  assert.equal(await f.ledger.halted(), null);
+});
+
+test('已获可信打开状态并预留的批次缺少 Linux 静止证明时仍 HALT', async t => {
+  const f = await queuedIncident(t, { merged: false, expired: false });
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['HALTED', 'HEAD_INTERRUPTED_ON_GITHUB']);
+  const s = await f.ledger.state(batchKey(incident));
+  assert.equal(s.reserved.subject.pr, incident.pr);
+  assert.equal(s.started == null, true);
+  assert.equal(s.outcome, 'FAILED_UNKNOWN');
+  assert.equal(s.terminal.facts.basis, 'cleanup-proof-incomplete');
+  assert.ok(await f.ledger.halted());
+  assert.deepEqual(await f.ledger.pendingAttempts2(), []);
+});
 
 test('failover: A ran stage 1 of H and lost its line before any role check; B, on duty now, runs H by itself and gives the verdict', async t => {
   const github = sharedGithub();

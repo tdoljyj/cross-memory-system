@@ -54,11 +54,14 @@ export const QUIESCENCE_REQUEST_MS = 210_000;
 export const QUIESCENCE_RECHECK_MS = 120_000;
 export const QUIESCENCE_TOTAL_MS = QUIESCENCE_REQUEST_MS + QUIESCENCE_RECHECK_MS;
 export const QUIESCENCE_FINAL_READ_MS = 500;
-const QUIESCENCE_DELIVERY_MS = 10_000;
+export const PROBE_DELIVERY_MS = 10_000;
 const PUBLICATION = 'clued.independent-ci.quiescence-publication/1';
+export const PROBE_KINDS = Object.freeze(['pr-head', 'linux-quiescence']);
+const MAX_PROBE_TICKETS = 64; // 每类上限，包括等待判定的近期过期请求
+const PROBE_TICKET = /^(-?\d{1,16})_([0-9a-f-]{36})$/;
 
 export function quiescenceProbeMs(deadline, now) {
-  const ms = Math.min(30_000, deadline - now - QUIESCENCE_DELIVERY_MS - JOB_HOST_GRACE_MS);
+  const ms = Math.min(30_000, deadline - now - PROBE_DELIVERY_MS - JOB_HOST_GRACE_MS);
   return ms >= 25_000 ? ms : 0;
 }
 
@@ -219,6 +222,7 @@ export class Mailbox {
   constructor(root, clock, monotonic = () => performance.now()) {
     this.monotonic = monotonic;
     this.sentAt = new WeakMap();
+    this.probeSends = new Map();
     this.requests = path.join(root, 'requests');
     this.responses = path.join(root, 'responses');
     // The heartbeat lives in responses/ because that is the one mailbox directory the companion can write.
@@ -243,9 +247,60 @@ export class Mailbox {
     const end = Math.min(now + timeoutMs, notAfter);
     if (end <= now && Number.isFinite(notAfter)) return null;
     const request = validateRequest({ contract: REQUEST_CONTRACT, requestId: randomUUID(), kind, createdAt: new Date(now).toISOString(), deadline: new Date(end).toISOString(), ...fields });
-    if (kind === 'linux-quiescence') this.sentAt.set(request, began);
+    if (PROBE_KINDS.includes(request.kind)) {
+      this.sentAt.set(request, began);
+      await this.enqueueProbe(request);
+    }
     await writeNewAtomic(path.join(this.requests, `${request.requestId}.json`), request);
     return request;
+  }
+
+  probeDirectory(kind) {
+    check(PROBE_KINDS.includes(kind), 'MAILBOX_PROBE_KIND_REFUSED');
+    return path.join(this.requests, kind + '.ready');
+  }
+
+  probeTicket(request) {
+    return path.join(this.probeDirectory(request.kind), Date.parse(request.deadline) + '_' + request.requestId);
+  }
+
+  probeQueued(request) { return exists(this.probeTicket(request)); }
+
+  async probeTickets(kind) {
+    const dir = this.probeDirectory(kind);
+    let stat;
+    try { stat = await fs.lstat(dir); } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+    check(stat.isDirectory() && !stat.isSymbolicLink(), 'MAILBOX_PROBE_QUEUE_REFUSED');
+    return (await fs.readdir(dir)).flatMap(name => {
+      const ticket = PROBE_TICKET.exec(name);
+      return ticket && UUID.test(ticket[2]) && String(Number(ticket[1])) === ticket[1]
+        ? [{ name, deadline: Number(ticket[1]), id: ticket[2] }] : [];
+    });
+  }
+
+  // 服务先发布取件索引，再原子写入请求。索引只用于发现，请求和应答仍保留在原目录。
+  // 近期过期项保留到补取窗口结束，以便先确认上一封请求的终态。
+  async enqueueProbe(request) {
+    const kind = request.kind;
+    const prior = this.probeSends.get(kind);
+    const send = (async () => {
+      if (prior) await prior.catch(() => {});
+      const dir = this.probeDirectory(kind);
+      await ensureDir(dir);
+      const tickets = await this.probeTickets(kind);
+      const keepAfter = this.clock() - QUIESCENCE_RECHECK_MS;
+      let active = tickets.length;
+      for (const { name, deadline, id } of tickets) {
+        if (deadline < keepAfter || await exists(path.join(this.responses, id + '.json'))) {
+          await fs.rmdir(path.join(dir, name));
+          active--;
+        }
+      }
+      check(active < MAX_PROBE_TICKETS, 'MAILBOX_PROBE_QUEUE_FULL');
+      await fs.mkdir(this.probeTicket(request));
+    })();
+    this.probeSends.set(kind, send);
+    try { await send; } finally { if (this.probeSends.get(kind) === send) this.probeSends.delete(kind); }
   }
 
   async responseBytes(request) {
@@ -273,11 +328,11 @@ export class Mailbox {
     return bound && v.publishedAt <= Date.parse(request.deadline);
   }
 
-  async awaitQuiescence(request, sleep, pollMs, strict) {
+  replyWindow(request, strict = false) {
     const created = Date.parse(request.createdAt), deadline = Date.parse(request.deadline);
     let last = this.clock();
     const monoEnd = (this.sentAt.get(request) ?? (this.monotonic() - (last - created))) + (deadline - created);
-    // 两个时钟取更早的截止；壁钟回拨或迟于末读上限均不能恢复旧证明。
+    // 使用发件时捕获的单调时钟和信封壁钟中较早的截止时间。
     const remaining = () => {
       const now = this.clock();
       if (now < last || now < created) {
@@ -287,6 +342,11 @@ export class Mailbox {
       last = now;
       return Math.min(deadline - now, monoEnd - this.monotonic());
     };
+    return { created, last: () => last, remaining };
+  }
+
+  async awaitQuiescence(request, sleep, pollMs, strict) {
+    const { created, last, remaining } = this.replyWindow(request, strict);
     let left = remaining();
     while (left >= -QUIESCENCE_FINAL_READ_MS) {
       const finalRead = left <= 0;
@@ -295,7 +355,7 @@ export class Mailbox {
       if (left < -QUIESCENCE_FINAL_READ_MS) return null;
       if (r) {
         const observed = Date.parse(r.value.observedAt);
-        if (!(observed >= created && observed <= last)) {
+        if (!(observed >= created && observed <= last())) {
           if (strict) check(false, 'MAILBOX_RESPONSE_TIME_REFUSED');
           return null;
         }
@@ -357,12 +417,30 @@ export class Mailbox {
 
   async await(request, sleep, pollMs = 500, strictPublication = false) {
     if (request.kind === 'linux-quiescence') return this.awaitQuiescence(request, sleep, pollMs, strictPublication);
+    if (request.kind === 'pr-head') return this.awaitPull(request, sleep, pollMs);
     while (this.clock() < Date.parse(request.deadline)) {
       const r = await this.poll(request);
       if (r) return r;
       await sleep(pollMs);
     }
     return null; // No answer is never success.
+  }
+
+  async awaitPull(request, sleep, pollMs) {
+    const { created, last, remaining } = this.replyWindow(request);
+    let left = remaining();
+    while (left > 0) {
+      const r = await this.poll(request);
+      left = remaining();
+      if (left <= 0) return null;
+      if (r) {
+        const observed = Date.parse(r.observedAt);
+        return observed >= created && observed <= last() && !(r.ok && r.jobTree === 'unconfirmed') ? r : null;
+      }
+      await sleep(Math.min(pollMs, left));
+      left = remaining();
+    }
+    return null;
   }
 
   // Service side: idempotent (a cancel that already exists is the same cancel).
@@ -429,6 +507,21 @@ export class Mailbox {
   }
 
   // Companion side. A request the service is still writing is left out (the next pass reads it again), never refused.
+  async pendingProbe(kind) {
+    const tickets = await this.probeTickets(kind);
+    check(tickets.length <= MAX_PROBE_TICKETS, 'MAILBOX_PROBE_QUEUE_REFUSED');
+    const pending = await Promise.all(tickets.map(async ({ id, deadline }) => {
+      const name = id + '.json';
+      try {
+        if (await exists(path.join(this.responses, name))) return null;
+        const value = await readFinished(path.join(this.requests, name), 2048, 'MAILBOX_REQUEST_REFUSED');
+        const r = value && validateRequest(value);
+        return r?.kind === kind && r.requestId === id && Date.parse(r.deadline) === deadline ? r : null;
+      } catch { return null; }
+    }));
+    return pending.filter(Boolean).sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline));
+  }
+
   async pending() {
     const out = [];
     for (const name of (await fs.readdir(this.requests)).sort()) {
@@ -438,7 +531,7 @@ export class Mailbox {
       try {
         const value = await readFinished(path.join(this.requests, name), 2048, 'MAILBOX_REQUEST_REFUSED');
         if (value !== null) {
-          if (value.kind === 'linux-quiescence') check(value.requestId === id, 'MAILBOX_REQUEST_IDENTITY_REFUSED');
+          if (PROBE_KINDS.includes(value.kind)) check(value.requestId === id, 'MAILBOX_REQUEST_IDENTITY_REFUSED');
           out.push(validateRequest(value));
         }
       } catch { out.push({ requestId: id, refused: true }); }
@@ -447,14 +540,19 @@ export class Mailbox {
     return out.sort((a, b) => (a.refused || b.refused) ? 0 : Date.parse(a.createdAt) - Date.parse(b.createdAt));
   }
 
-  async respond(request, fields) {
+  async respond(request, fields, dispatch = null) {
     const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, pull: null, jobTree: null, memory: null, prune: null, observedAt: isoNow(this.clock), ...fields }, request);
     const hash = await writeNewAtomic(path.join(this.responses, `${request.requestId}.json`), response);
+    const publishedAt = request.kind === 'linux-quiescence' || dispatch ? this.clock() : null;
     if (request.kind === 'linux-quiescence') {
-      const publishedAt = this.clock();
       await writeNewAtomic(path.join(this.responses, request.requestId + '.published.json'), {
         contract: PUBLICATION, requestId: request.requestId, kind: request.kind, sha256: hash, publishedAt,
       });
+    }
+    if (dispatch) {
+      await writeNewAtomic(path.join(this.responses, request.requestId + '.dispatch.json'), {
+        requestId: request.requestId, kind: request.kind, ...dispatch, publishedAt,
+      }).catch(() => {}); // 应答已落盘，诊断写入失败不影响应答。
     }
     return response;
   }

@@ -14,7 +14,8 @@ param([Parameter(Mandatory)][ValidateSet('current', 'post-uninstall')][string]$V
       [Parameter(Mandatory)][ValidateSet('true', 'false')][string]$CiTokenTargetExists,
       [Parameter(Mandatory)][ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$OwnerSid,       # the node profile's
       [Parameter(Mandatory)][ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$ControllerSid,
-      [ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$OperatorSid)   # M5-b (ADR 0023): the Owner when ownerSid is the companion's account
+      [ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$OperatorSid,   # M5-b (ADR 0023): the Owner when ownerSid is the companion's account
+      [ValidateLength(1,2048)][string]$InstalledPackageB64)
 if (-not $OperatorSid) { $OperatorSid = $OwnerSid }
 $ErrorActionPreference = 'Stop'
 # The installer's JSON can carry the system's own (localized) text, e.g. an access-denied message in carryForwardPreview. Without this,
@@ -43,4 +44,6 @@ if ($View -ceq 'post-uninstall') {
     @($Name | Where-Object { @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader') -notcontains $_ } | ForEach-Object { Microsoft.PowerShell.Management\Get-Service -Name $_ -ErrorAction SilentlyContinue })
   }
 }
-& (Join-Path $PackageRoot 'resident\windows\install-resident.ps1') -PackageRoot $PackageRoot -ExpectedPackageManifestSha256 $PackageManifestSha256 -OwnerSid $OwnerSid -ControllerSid $ControllerSid -OperatorSid $OperatorSid -StartAfterInstall
+$extra = @{}
+if ($InstalledPackageB64) { $extra.InstalledPackageB64 = $InstalledPackageB64 }
+& (Join-Path $PackageRoot 'resident\windows\install-resident.ps1') -PackageRoot $PackageRoot -ExpectedPackageManifestSha256 $PackageManifestSha256 -OwnerSid $OwnerSid -ControllerSid $ControllerSid -OperatorSid $OperatorSid -StartAfterInstall @extra
