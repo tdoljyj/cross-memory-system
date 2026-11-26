@@ -83,7 +83,7 @@ function slotFixture(t) {
   });
   return function start(name, {
     waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter', mode = '--run', body = null, named = null, extraFiles = {},
-    extraEnv = {}, startupDelayMs = 0,
+    extraEnv = {}, startupDelayMs = 0, prepare,
   } = {}) {
     const root = path.join(dir, name);
     const scripts = path.join(root, 'scripts', 'ci');
@@ -161,6 +161,8 @@ function slotFixture(t) {
       mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
       writeFileSync(path.join(root, file), text);
     }
+    if (prepare) prepare(root);
+    else if (mode === '--run-files') fixtureBase(root);
     const namedFiles = mode === '--run-files' ? (named ?? ['scripts/ci/retrigger-counter.test.mjs']) : [];
     const notify = () => changes.emit('change');
     const watcher = watch(root, { persistent: false }, notify);
@@ -191,6 +193,417 @@ function slotFixture(t) {
     return run;
   };
 }
+
+function fixtureGit(root, ...args) {
+  const result = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
+
+function fixtureBase(root) {
+  fixtureGit(root, 'init', '--quiet');
+  fixtureWrite(root, '.git/info/exclude', 'node_modules\n/ready\n/release\n/descendant.pid\n/ran-named\n/ran-other\n');
+  fixtureGit(root, 'add', '--all');
+  fixtureGit(root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '--no-gpg-sign', '-m', 'baseline');
+  fixtureGit(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+}
+
+function fixtureWrite(root, file, contents) {
+  const absolute = path.join(root, file);
+  mkdirSync(path.dirname(absolute), { recursive: true });
+  writeFileSync(absolute, contents);
+}
+
+const TARGET_RESIDENT = 'work/independent-ci-resident-v1';
+const TARGET_FLEET = `${TARGET_RESIDENT}/rollout/fleet/test`;
+const TARGET_ACCEPTANCE = `${TARGET_RESIDENT}/rollout/test/fleet-accept-seal.test.mjs`;
+const TARGET_PUBLISH_FIXTURE = `${TARGET_FLEET}/publish-fixtures.mjs`;
+const targetShard = (number) => `${TARGET_RESIDENT}/test/fleet-node-children-${number}.test.mjs`;
+
+test('共享发布夹具改成进程内模式，只点发布分片也必须执行验收子进程测试并返回失败（#1363）',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const start = slotFixture(t);
+    const fixture = `
+      import { spawnSync } from 'node:child_process';
+      export function prepWorld({ spawnGh = true } = {}) {
+        return spawnGh ? spawnSync(process.execPath, ['-e', 'process.stdout.write("comparison called")'],
+          { encoding: 'utf8' }).stdout : '';
+      }
+    `;
+    const mark = (name) => `appendFileSync(FIXTURE_MARK_PATH, '${name}\\n');`;
+    const extraFiles = {
+      [TARGET_PUBLISH_FIXTURE]: fixture,
+      [`${TARGET_FLEET}/publish.test.mjs`]: `
+        import assert from 'node:assert/strict';
+        import { appendFileSync } from 'node:fs';
+        import { prepWorld } from './publish-fixtures.mjs';
+        ${mark('publish')}
+        assert.equal(prepWorld({ spawnGh: false }), '');
+      `,
+      [TARGET_ACCEPTANCE]: `
+        import assert from 'node:assert/strict';
+        import { appendFileSync } from 'node:fs';
+        import { prepWorld } from '../fleet/test/publish-fixtures.mjs';
+        ${mark('acceptance')}
+        assert.equal(prepWorld(), 'comparison called', 'FLEET_ACCEPTANCE_DEADLINE: fake gh comparison was not called');
+      `,
+      [`${TARGET_RESIDENT}/test/unrelated.test.mjs`]: `import { appendFileSync } from 'node:fs'; ${mark('unrelated')}`,
+      [targetShard(1)]: '// green shard\n',
+      [targetShard(2)]: `
+        import assert from 'node:assert/strict';
+        import { spawnSync } from 'node:child_process';
+        import { fileURLToPath } from 'node:url';
+        const env = { ...process.env };
+        delete env.NODE_TEST_CONTEXT;
+        const child = spawnSync(process.execPath, ['--test',
+          fileURLToPath(new URL('../rollout/fleet/test/publish.test.mjs', import.meta.url))], { env, stdio: 'inherit' });
+        assert.equal(child.status, 0);
+      `,
+      [targetShard(3)]: '// green shard\n',
+      'scripts/ci/self-hosted/node-governance/fixture.test.mjs': '',
+      'work/actions-hosted-migration/independent-ci-v1/test/fixture.test.mjs': '',
+      'apps/kooyumi-connect/tests/fixture.test.mjs': '',
+      'apps/clued-cloud/tests/fixture.test.mjs': '',
+      'apps/clued-cloud/scripts/select-tests.mjs': 'console.log("tests/fixture.test.mjs");\n',
+    };
+    const markers = mkdtempSync(path.join(os.tmpdir(), 'clued-reverse-deps-marks-'));
+    t.after(() => rmSync(markers, { recursive: true, force: true }));
+    for (const [name, changed, code] of [
+      ['bad-default', fixture.replace('spawnGh = true', 'spawnGh = false'), 1],
+      ['fixed-default', `${fixture}// keep a worktree change after fixing the default\n`, 0],
+      ['only-named', fixture, 0],
+    ]) {
+      const marks = path.join(markers, name);
+      const files = Object.fromEntries(Object.entries(extraFiles).map(([file, source]) =>
+        [file, source.replaceAll('FIXTURE_MARK_PATH', JSON.stringify(marks))]));
+      const run = start(name, { mode: '--run-files', suite: 'resident-node', named: [targetShard(2)], extraFiles: files,
+        prepare(root) {
+          fixtureBase(root);
+          fixtureWrite(root, TARGET_PUBLISH_FIXTURE, changed);
+        } });
+      const [status] = await run.done;
+      const executions = existsSync(marks) ? readFileSync(marks, 'utf8').trim().split('\n').sort() : [];
+      const expanded = name !== 'only-named';
+      assert.deepEqual({ status, executions }, { status: code, executions: expanded ? ['acceptance', 'publish'] : ['publish'] }, run.output());
+      assert.equal(run.output().includes(TARGET_PUBLISH_FIXTURE + ' -> ' + TARGET_ACCEPTANCE), expanded, run.output());
+      assert.match(run.output(), code ? /FLEET_ACCEPTANCE_DEADLINE/ : /定向结果/);
+      targetTiming(t, '#1363 ' + name, run);
+    }
+  });
+
+
+const TARGET_EXPANSIONS = {
+  'scripts/ci/self-hosted/node-governance/fixture.test.mjs': '',
+  'work/actions-hosted-migration/independent-ci-v1/test/fixture.test.mjs': '',
+  'apps/kooyumi-connect/tests/fixture.test.mjs': '',
+  'apps/clued-cloud/tests/fixture.test.mjs': '',
+  'apps/clued-cloud/scripts/select-tests.mjs': 'console.log("tests/fixture.test.mjs");\n',
+  [targetShard(1)]: '', [targetShard(2)]: '', [targetShard(3)]: '', [TARGET_ACCEPTANCE]: '',
+};
+const TARGET_SELECTOR = 'scripts/ci/ci-required-selection.mjs';
+const TARGET_RETRIGGER = 'scripts/ci/retrigger-counter.test.mjs';
+const TARGET_CRON = 'scripts/ci/check-cron-budget.test.mjs';
+const TARGET_BUDGET = 'scripts/ci/ci-required-selection-budget.test.mjs';
+const TARGET_LOCALS = 'scripts/ci/local-verify.test.mjs';
+
+function targetTiming(t, label, run) {
+  const timing = run.output().split(/\r?\n/).filter((line) => /^run-files (?:建图|组 )|^run-files \S+ (?:等槽|执行) /.test(line));
+  t.diagnostic(label + '\n' + timing.join('\n'));
+}
+
+test('定向 #1362：选择器改动补跑预算测试的同套引用者', async (t) => {
+  const { planTargetedFiles } = await import('./check-tests-covered.mjs');
+  const root = mkdtempSync(path.join(os.tmpdir(), 'clued-reverse-deps-1362-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const consumer = "import './ci-required-selection.mjs';\n";
+  const selector = 'export const SUITE_COMMANDS = {};\n';
+  for (const [file, source] of Object.entries({
+    ...TARGET_EXPANSIONS,
+    [TARGET_SELECTOR]: selector,
+    [TARGET_BUDGET]: consumer,
+    [TARGET_LOCALS]: consumer,
+    'scripts/ci/local-verify.mjs': '',
+    'scripts/ci/local-suite-slot-guard.mjs': '',
+  })) fixtureWrite(root, file, source);
+  fixtureBase(root);
+
+  // clued-cloud 也收录这两个测试，显式使用 Linux 规划可在所有宿主上检查相同的套件和文件。
+  const plan = () => planTargetedFiles(root, 'selection', new Set([TARGET_BUDGET]), { platform: 'linux' });
+  const before = plan();
+  assert.deepEqual(before.groups, [{ suite: 'selection', files: [TARGET_BUDGET], reasons: [] }]);
+  assert.deepEqual(before.matches, []);
+
+  fixtureWrite(root, TARGET_SELECTOR, selector + '// revised readReport shape\n');
+  const after = plan();
+  const files = [TARGET_BUDGET, TARGET_LOCALS];
+  assert.deepEqual(after.groups, [
+    { suite: 'clued-cloud', files, reasons: [] },
+    { suite: 'selection', files, reasons: [] },
+  ]);
+  assert.deepEqual(after.matches.map(({ suite, chain }) => [suite, ...chain]), [
+    ['clued-cloud', TARGET_SELECTOR, TARGET_BUDGET],
+    ['clued-cloud', TARGET_SELECTOR, TARGET_LOCALS],
+    ['selection', TARGET_SELECTOR, TARGET_LOCALS],
+  ]);
+});
+
+test('定向跨套件：两跳、环和多条路径只执行每个入口一次，第二组的失败保留', async (t) => {
+  const marksDir = mkdtempSync(path.join(os.tmpdir(), 'clued-reverse-deps-cross-'));
+  t.after(() => rmSync(marksDir, { recursive: true, force: true }));
+  const marks = path.join(marksDir, 'ran');
+  const mark = (label) => "import { appendFileSync } from 'node:fs'; appendFileSync(" + JSON.stringify(marks) + ", '" + label + "\\n');\n";
+  const run = slotFixture(t)('two-groups', { mode: '--run-files', suite: 'cron-budget', named: [TARGET_CRON],
+    extraFiles: {
+      ...TARGET_EXPANSIONS,
+      [TARGET_CRON]: "import '../../fixtures/outer.mjs';\n" + mark('cron'),
+      [TARGET_RETRIGGER]: "import('../../fixtures/outer.mjs'); import '../../fixtures/second.mjs';\n" + mark('retrigger') + "throw Error('SECOND_SUITE_FAILURE');",
+      'fixtures/outer.mjs': "import './inner.mjs';\n",
+      'fixtures/inner.mjs': "export * from './root.mjs'; import './outer.mjs';\n",
+      'fixtures/second.mjs': "import './root.mjs';\n",
+      'fixtures/root.mjs': 'export const before = true;\n',
+    },
+    prepare(root) {
+      fixtureBase(root);
+      fixtureWrite(root, 'fixtures/root.mjs', 'export const before = false;\n');
+    } });
+  assert.deepEqual(await run.done, [1, null], run.output());
+  assert.deepEqual(readFileSync(marks, 'utf8').trim().split('\n'), ['cron', 'retrigger']);
+  assert.match(run.output(), /cron-budget.*退出 0[\s\S]+retrigger-counter.*退出 1/);
+  assert.match(run.output(), /fixtures\/root\.mjs -> fixtures\/second\.mjs -> scripts\/ci\/retrigger-counter\.test\.mjs/);
+  assert.match(run.output(), /SECOND_SUITE_FAILURE/);
+});
+
+test('定向缺边：候选独有套件的 npm run 命令实际执行', { skip: process.platform !== 'win32' }, async (t) => {
+  const run = slotFixture(t)('candidate-npm', { mode: '--run-files', body: '', extraFiles: {
+    ...TARGET_EXPANSIONS,
+    [TARGET_SELECTOR]: "export const SUITES = { 'ci-suites': { 'fixture-candidate-npm': ['fixtures/**'] } };\n" +
+      "export const SUITE_COMMANDS = { 'fixture-candidate-npm': [{ cwd: '.', argv: ['npm', 'run', 'verify-fixture'] }] };",
+    '.npmrc': 'cache=${TEMP}/npm-cache\n',
+    'package.json': JSON.stringify({ scripts: { 'verify-fixture': 'node verify-fixture.cjs' } }),
+    'verify-fixture.cjs': "if (require('./fixtures/unknown.json').updated) console.log('CANDIDATE_NPM_EXECUTED');\n",
+    'fixtures/unknown.json': '{}',
+  }, prepare(root) {
+    fixtureBase(root);
+    fixtureWrite(root, 'fixtures/unknown.json', '{"updated":true}');
+  } });
+  assert.deepEqual(await run.done, [0, null], run.output());
+  assert.match(run.output(), /^CANDIDATE_NPM_EXECUTED$/m);
+});
+
+test('定向规划边界', async (t) => {
+  const { planTargetedFiles } = await import('./check-tests-covered.mjs');
+  const fleetJson = TARGET_FLEET + '/fixtures/clued-decision-mutate-3bc571a6.json';
+  const publish = TARGET_FLEET + '/publish.test.mjs';
+  const bootstrap = TARGET_RESIDENT + '/rollout/fleet/bootstrap.ps1';
+  const bootstrapTest = TARGET_FLEET + '/test-bootstrap.ps1';
+  const powershell = TARGET_RESIDENT + '/test/fleet-node-powershell.test.mjs';
+  const registry = 'scripts/ci/merge-admission-r9-source.json';
+  const reregister = 'scripts/ci/merge-admission-r9-reregister.mjs';
+  const governance = 'scripts/ci/self-hosted/node-governance/governance.test.mjs';
+  const capacity = TARGET_RESIDENT + '/src/host-capacity.mjs';
+  const resourceGate = TARGET_RESIDENT + '/test/node-resource-gate.test.mjs';
+  const pythonReader = TARGET_RESIDENT + '/test/test_linux_tool.py';
+  const standard = 'config/node-governance-standard.json';
+  const unknownResource = 'scripts/ci/fixtures/retrigger-counter/other.json';
+  const cases = [
+    {
+      name: 'JSON 导入、new URL、固定目录读和 PowerShell 补边',
+      files: {
+        [TARGET_LOCALS]: "import './merge-admission-r9-reregister.mjs';",
+        [TARGET_CRON]: "import '../../fixtures/literal.json' with { type: 'json' };",
+        [targetShard(2)]: "new URL('../../../fixtures/space%20中文.json', import.meta.url);",
+        [targetShard(1)]: "readFileSync(path.join(import.meta.dirname, '../../../fixtures', 'fixed.json'));",
+        [reregister]: '', [registry]: '{ "admission_source": { "policy_path": "fixtures/pin.json" } }',
+        'fixtures/pin.json': '{}', 'fixtures/literal.json': '{}', 'fixtures/space 中文.json': '{}', 'fixtures/fixed.json': '{}',
+        [fleetJson]: '{}', [TARGET_PUBLISH_FIXTURE]: '', [publish]: "import './publish-fixtures.mjs';",
+        [TARGET_ACCEPTANCE]: "import '../fleet/test/publish-fixtures.mjs';",
+        [bootstrap]: '', [bootstrapTest]: '', [powershell]: '',
+      },
+      mutate(root) {
+        for (const file of [fleetJson, 'fixtures/pin.json', 'fixtures/literal.json', 'fixtures/space 中文.json', 'fixtures/fixed.json']) {
+          fixtureWrite(root, file, '{"update":1}');
+        }
+        fixtureWrite(root, bootstrap, '# revised\n');
+      },
+      check(root, plan) {
+        const result = plan();
+        const hit = (file) => result.matches.find((match) => match.file === file)?.chain;
+        assert.deepEqual(hit(TARGET_ACCEPTANCE), [fleetJson, TARGET_PUBLISH_FIXTURE, TARGET_ACCEPTANCE]);
+        assert.deepEqual(hit(targetShard(3)), [fleetJson, TARGET_PUBLISH_FIXTURE, publish, targetShard(3)]);
+        assert.deepEqual(hit(powershell), [bootstrap, bootstrapTest, powershell]);
+        assert.deepEqual(hit(TARGET_LOCALS), ['fixtures/pin.json', reregister, TARGET_LOCALS]);
+        assert.deepEqual(hit(TARGET_CRON), ['fixtures/literal.json', TARGET_CRON]);
+        assert.deepEqual(hit(targetShard(1)), ['fixtures/fixed.json', targetShard(1)]);
+        assert.deepEqual(hit(targetShard(2)), ['fixtures/space 中文.json', targetShard(2)]);
+        fixtureWrite(root, 'fixtures/space 中文.json', '{"update":2}');
+        assert.throws(result.verify, /发生变化/);
+        assert.ok(result.groups.find(({ suite }) => suite === 'powershell-count').reasons.length);
+      },
+    },
+    {
+      name: '候选独有套件沿用不能拆分的原命令',
+      files: {
+        [TARGET_SELECTOR]: "export const SUITES = { 'ci-suites': { 'fixture-candidate-only': ['fixtures/**'] } };\n" +
+          "export const SUITE_COMMANDS = { 'fixture-candidate-only': [{ cwd: '.', argv: ['node', '--test', '--test-name-pattern', 'case', 'fixtures/candidate.test.mjs'] }] };",
+        'fixtures/candidate.test.mjs': "import './helper.mjs';",
+        'fixtures/helper.mjs': 'export const version = 1;',
+      },
+      mutate(root) { fixtureWrite(root, 'fixtures/helper.mjs', 'export const version = 2;'); },
+      check(root, plan) {
+        const result = plan();
+        const candidate = result.groups.find(({ suite }) => suite === 'fixture-candidate-only');
+        assert.deepEqual(candidate.files, ['fixtures/candidate.test.mjs']);
+        assert.match(candidate.reasons.join(' '), /命令只能整条执行/);
+      },
+    },
+    {
+      name: '不能读取跨出工作树的依赖',
+      files: { 'outside/outside.mjs': 'export const before = true;' },
+      mutate(root, child) {
+        const external = mkdtempSync(path.join(os.tmpdir(), 'clued-reverse-deps-external-'));
+        child.after(() => rmSync(external, { recursive: true, force: true }));
+        fixtureWrite(external, 'outside.mjs', '');
+        rmSync(path.join(root, 'outside'), { recursive: true });
+        symlinkSync(external, path.join(root, 'outside'), 'junction');
+      },
+      check(root, plan) { assert.throws(plan, /工作树内的文件|路径在工作树之外/); },
+    },
+    {
+      name: '改名、删除、暂存、分支提交、未跟踪及旧扩展名解析',
+      files: {
+        [TARGET_CRON]: "const gone = require('../../fixtures/old'); import '../../fixtures/中文 新.mjs'; import '../../fixtures/staged.mjs';",
+        [TARGET_LOCALS]: "import '../../fixtures/committed.mjs'; import '../../fixtures/renamed.js';",
+        'fixtures/old.js': 'module.exports = 1;\n', 'fixtures/staged.mjs': '', 'fixtures/committed.mjs': '',
+      },
+      mutate(root) {
+        fixtureWrite(root, 'fixtures/committed.mjs', 'export const committed = true;\n');
+        fixtureGit(root, 'add', 'fixtures/committed.mjs');
+        fixtureGit(root, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'branch change');
+        fixtureWrite(root, 'fixtures/renamed.js', readFileSync(path.join(root, 'fixtures/old.js'), 'utf8'));
+        rmSync(path.join(root, 'fixtures/old.js'));
+        fixtureWrite(root, 'fixtures/staged.mjs', 'export const staged = true;\n');
+        fixtureGit(root, 'add', 'fixtures/staged.mjs');
+        fixtureWrite(root, 'fixtures/中文 新.mjs', 'export const added = true;\n');
+      },
+      check(root, plan) {
+        const result = plan();
+        assert.notEqual(result.head, result.base);
+        assert.deepEqual(result.matches.find(({ suite }) => suite === 'cron-budget').chain, ['fixtures/old.js', TARGET_CRON]);
+        assert.deepEqual(result.matches.find(({ suite }) => suite === 'selection').chain, ['fixtures/committed.mjs', TARGET_LOCALS]);
+        fixtureWrite(root, 'fixtures/中文 新.mjs', 'export const added = false;\n');
+        assert.throws(result.verify, /中文 新\.mjs/);
+      },
+    },
+    {
+      name: '已知静态边和重叠动态路径同时生效',
+      files: {
+        [TARGET_CRON]: "import '../../fixtures/opaque/item.mjs';",
+        [TARGET_RETRIGGER]: 'const name = "item"; import(\x60../../fixtures/opaque/$' + '{name}.mjs\x60);',
+        'fixtures/opaque/item.mjs': 'export const val = 1;\n',
+      },
+      mutate(root) { fixtureWrite(root, 'fixtures/opaque/item.mjs', 'export const val = 2;\n'); },
+      check(root, plan) {
+        const result = plan();
+        assert.ok(result.groups.find(({ suite }) => suite === 'cron-budget').files.includes(TARGET_CRON));
+        assert.match(result.groups.find(({ suite }) => suite === 'retrigger-counter').reasons.join(' '), /动态加载/);
+      },
+    },
+    {
+      name: '跨目录动态导入有静态引用者时仍补齐登记边和读取者套件',
+      files: {
+        [governance]: `await import(pathToFileURL(path.join(ROOT, '${capacity}')).href);`,
+        [resourceGate]: "import '../src/host-capacity.mjs';",
+        [TARGET_CRON]: 'const moduleUrl = getModuleUrl(); await import(moduleUrl);',
+        [capacity]: 'export const capacity = 1;\n',
+      },
+      mutate(root) { fixtureWrite(root, capacity, 'export const capacity = 2;\n'); },
+      check(root, plan) {
+        const { matches, groups } = plan();
+        assert.deepEqual({
+          governance: matches.find(({ file }) => file === governance)?.chain,
+          staticReader: matches.find(({ file }) => file === resourceGate)?.chain,
+          opaque: groups.find(({ suite }) => suite === 'cron-budget')?.reasons.some((reason) => reason.includes('动态加载')),
+        }, { governance: [capacity, governance], staticReader: [capacity, resourceGate], opaque: true });
+      },
+    },
+    {
+      name: '资源静态边只覆盖所属套件，拼接读取补边且保留其他套件兜底',
+      files: {
+        [standard]: '{}', [unknownResource]: '{}',
+        [resourceGate]: `new URL('../../../${standard}', import.meta.url);`,
+        [governance]: "fs.readFileSync(path.join(ROOT, 'config', 'node-governance-standard.json'));",
+        [pythonReader]: 'STANDARD = (ROOT / "config" / "node-governance-standard.json").read_text()\n',
+        [TARGET_CRON]: `new URL('../../${unknownResource}', import.meta.url);`,
+        [TARGET_RETRIGGER]: "readFileSync(path.join(ROOT, 'scripts', 'ci', 'fixtures', 'retrigger-counter', NAME));",
+      },
+      mutate(root) {
+        for (const file of [standard, unknownResource]) fixtureWrite(root, file, '{"updated":true}');
+      },
+      check(root, plan) {
+        const { matches, groups } = plan();
+        const chain = (reader) => matches.find(({ file }) => file === reader)?.chain;
+        assert.deepEqual([chain(resourceGate), chain(governance), chain(pythonReader)],
+          [[standard, resourceGate], [standard, governance], [standard, pythonReader]]);
+        assert.match(groups.find(({ suite }) => suite === 'retrigger-counter').reasons.join(' '), /other\.json.*缺少/);
+        assert.deepEqual(groups.find(({ suite }) => suite === 'resident-node').reasons.filter((reason) => reason.includes(standard)), []);
+      },
+    },
+    {
+      name: '反引号 require 和静态导入都找到省略扩展名的 CommonJS 文件',
+      files: {
+        [TARGET_CRON]: "import '../../fixtures/reader.cjs';",
+        [TARGET_LOCALS]: "import '../../fixtures/shared.js';",
+        'fixtures/reader.cjs': 'require(`./shared`);',
+        'fixtures/shared.js': 'module.exports = 1;\n',
+      },
+      mutate(root) { fixtureWrite(root, 'fixtures/shared.js', 'module.exports = 2;\n'); },
+      check(root, plan) {
+        const { matches } = plan();
+        assert.deepEqual(matches.find(({ file }) => file === TARGET_CRON)?.chain,
+          ['fixtures/shared.js', 'fixtures/reader.cjs', TARGET_CRON]);
+        assert.deepEqual(matches.find(({ file }) => file === TARGET_LOCALS)?.chain, ['fixtures/shared.js', TARGET_LOCALS]);
+      },
+    },
+    {
+      name: '未知配置使用全仓兜底并报告其他平台',
+      files: {},
+      mutate(root) { fixtureWrite(root, 'fixtures/unknown.json', '{}'); },
+      check(root, plan) {
+        const result = plan();
+        assert.deepEqual(result.groups.map(({ suite }) => suite), ['retrigger-counter']);
+        assert.match(result.deferred.find(({ suite }) => suite === 'clued-cloud').reasons.join(' '), /全仓 \*\*/);
+      },
+    },
+    {
+      name: '说明文档与零差异保留点名',
+      files: {},
+      mutate(root) { fixtureWrite(root, 'README.md', '说明。\n'); },
+      check(root, plan) {
+        assert.deepEqual(plan().groups, [{ suite: 'retrigger-counter', files: [TARGET_RETRIGGER], reasons: [] }]);
+        rmSync(path.join(root, 'README.md'));
+        assert.deepEqual(plan().matches, []);
+      },
+    },
+    {
+      name: '本地基准引用丢失时拒绝规划',
+      files: {},
+      mutate(root) { fixtureGit(root, 'update-ref', '-d', 'refs/remotes/origin/main'); },
+      check(root, plan) { assert.throws(plan, /refs\/remotes\/origin\/main/); },
+    },
+  ];
+  for (const { name, files, mutate, check } of cases) {
+    await t.test(name, (child) => {
+      const root = mkdtempSync(path.join(os.tmpdir(), 'clued-reverse-deps-plan-'));
+      child.after(() => rmSync(root, { recursive: true, force: true }));
+      for (const [file, source] of Object.entries({ ...TARGET_EXPANSIONS, [TARGET_SELECTOR]: 'export const SUITE_COMMANDS = {};\n',
+        [TARGET_RETRIGGER]: '', ...files })) fixtureWrite(root, file, source);
+      fixtureBase(root);
+      mutate(root, child);
+      check(root, () => planTargetedFiles(root, 'retrigger-counter', new Set([TARGET_RETRIGGER]), { platform: 'win32' }));
+    });
+  }
+});
 
 function pidAlive(pid) {
   if (!pid) return false;
