@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { digest, schedulingFixture, uuid } from './ci-scheduling-stage1-fixture.mjs';
+import { digest, schedulingFixture, sha, uuid } from './ci-scheduling-stage1-fixture.mjs';
+import { trainBatchKey, trainEffectKey, trainLandingSlotKey } from '../../../work/actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs';
 import { workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 const RPC = new Set([
@@ -70,6 +71,36 @@ export async function mergeTrainTestDatabase(t, { repository, nodeCount = 2 }) {
   }
   return {
     config, fetchImpl, nodes, calls, verify, authorizeHead, claim: f.claim, startAt: f.sessionIssuedAt,
+    async prepareInFlightAdopt({ intent, newerHead }) {
+      const [member] = intent.members;
+      const ref = repository + '#' + member.pr;
+      const args = [f.user, f.claim.claim_id, member.epoch, f.binding, repository, member.headSha, ref];
+      await f.admin.query(`insert into clued_private.work_claim_pr_task_bindings_v1(user_id,repo_id,pr_number,task_id,status)
+        values($1,$2,$3,$4,'active')`, [f.user, repository, member.pr, f.claim.task_id]);
+      await authorizeHead(member.pr, member.headSha);
+      await authorizeHead(member.pr, newerHead);
+      await f.admin.query(`insert into clued_private.work_claim_execution_admissions_v1
+        (user_id,claim_id,execution_epoch,ci_binding_id,repository,head_sha,target_branch,pr_ref,resources_digest)
+        values($1,$2,$3,$4,$5,$6,'main',$7,$6)`, args);
+      const { id } = await one(`select clued_private.ci_train_record_landing_v2(b,$2,$3,$4,$5) id
+        from public.clued_agent_bindings b where b.id=$1`, [f.binding,scope,repository,intent,
+        { state: 'landed', mainSha: intent.testSha, generationRefOid: intent.landedRefOid }]);
+      // The already-dispatched adopt carries H1 after the remote PR changes to H2.
+      return {
+        async adopt() {
+          const { result } = await one(`select clued_private.ci_train_adopt_member_v2(b,$2,$3,$4,$5,$6) result
+            from public.clued_agent_bindings b where b.id=$1`, [f.binding,scope,id,intent.effectId,member,member.headSha]);
+          return result;
+        },
+        snapshot: () => one(`select t.status binding, w.status claim, exists(
+          select 1 from clued_private.work_claim_head_authorizations_v1 a where a.claim_id=w.claim_id
+            and a.head_sha=$5 and a.revoked_at is null
+          ) "newerAuthorized" from clued_private.work_claim_pr_task_bindings_v1 t
+          join clued_private.work_claims_v1 w on w.user_id=t.user_id and w.task_id=t.task_id
+          where t.user_id=$1 and t.repo_id=$2 and t.pr_number=$3 and w.claim_id=$4`,
+        [f.user,repository,member.pr,member.claimId,newerHead]),
+      };
+    },
     async watchdog() {
       const { result } = await one('select clued_private.ci_admission_failover_tick_v1() as result');
       return result.accounts.find(account => account.user_id === f.user);
@@ -87,4 +118,23 @@ export async function mergeTrainTestDatabase(t, { repository, nodeCount = 2 }) {
       return { queueJoins: joins, adoptions };
     },
   };
+}
+
+export async function verifyInFlightAdoptPreservesNewHead(t) {
+  const repository = 'tdoljyj/cross-memory-system';
+  const db = await mergeTrainTestDatabase(t, { repository, nodeCount: 1 });
+  const member = { pr: 30, headSha: sha('old head'), claimId: db.claim.claim_id,
+    fence: Number(db.claim.fence), epoch: Number(db.claim.execution_epoch) };
+  const scope = { tenantId: 'fixture-tenant', projectId: db.config.scope, repositoryId: 11, targetBranch: 'main' };
+  const baseSha = sha('base'), testSha = sha('tested'), generationRefOid = sha('generation');
+  const batchId = trainBatchKey({ ...scope, baseSha, members: [member], sourceSha256: digest('source'), policyVersion: 'test' });
+  const intent = { batchId, slotId: trainLandingSlotKey(scope), generation: 1, baseSha, testSha, generationRefOid,
+    members: [member], landedRefOid: sha('landed'), expiresAt: new Date(db.startAt + 90_000).toISOString(),
+    effectId: trainEffectKey({ ...scope, action: 'landing_send', subject: [batchId, 1, generationRefOid, baseSha, testSha] }) };
+  const race = await db.prepareInFlightAdopt({ intent, newerHead: sha('new head') });
+  const result = await race.adopt();
+  assert.deepEqual(await race.snapshot(), { binding: 'active', claim: 'ACTIVE', newerAuthorized: true },
+    'H1 的在途报告不能结束 H2 的 PR 绑定或释放它的认领');
+  assert.equal(result.state, 'claim_changed');
+  assert.deepEqual(await race.adopt(), result);
 }

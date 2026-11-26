@@ -121,6 +121,7 @@ declare
   merge_ref text;
   latest_head text;
   latest_claim uuid;
+  authorized_head text;
   served_at timestamptz;
   state text := 'claim_changed';
   old_result jsonb;
@@ -168,8 +169,15 @@ begin
     select a.head_sha, a.claim_id, a.issued_at as observed_at from clued_private.work_claim_head_authorizations_v1 a
       where a.user_id=b.user_id and lower(a.pr_ref)=v_pr_ref and a.repository=r.repository and a.target_branch='main' and a.revoked_at is null
   ) x order by x.observed_at desc, (x.claim_id=claim and x.head_sha=p_observed_head) asc limit 1;
+  -- A late admission for H1 must not hide the current generation's newer
+  -- live head authorization for the same PR. Compare within authorizations.
+  select a.head_sha into authorized_head from clued_private.work_claim_head_authorizations_v1 a
+    where a.user_id=c.user_id and a.claim_id=claim and a.execution_epoch=c.execution_epoch
+      and lower(a.pr_ref)=v_pr_ref and a.repository=r.repository and a.target_branch='main' and a.revoked_at is null
+    order by a.issued_at desc, (a.head_sha=p_observed_head) asc limit 1;
   if c.status in ('ACTIVE','DRAINING') and c.fence=(p_member->>'fence')::bigint and c.execution_epoch=(p_member->>'epoch')::bigint
     and c.task_id=t.task_id and latest_claim=claim and latest_head=p_member->>'headSha' and p_observed_head=p_member->>'headSha'
+    and (authorized_head is null or authorized_head=p_observed_head)
     and exists (select 1 from clued_private.work_claim_execution_admissions_v1 a
       where a.user_id=b.user_id and a.claim_id=claim and a.execution_epoch=c.execution_epoch
         and a.repository=r.repository and a.target_branch='main' and lower(a.pr_ref)=v_pr_ref and a.head_sha=p_observed_head)

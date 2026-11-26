@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { createRequire, registerHooks } from 'node:module';
 import { generateKeyPairSync } from 'node:crypto';
 import { tempDir } from './resident-v2-fixtures.mjs';
 import * as L from '../src/independent-control-checks-v2/train-landing.mjs';
@@ -19,14 +20,17 @@ import { SCAFFOLD_RULESET, checkRun, mainRules, portRules, s7Green, scaffoldRule
 import { multiDutyClock, multiDutyGitHub } from '../../../independent-ci-resident-v1/test/multi-duty-fixture.mjs';
 import { TRAIN_FAILURE, TRAIN_PROTOCOL_VERSION, trainBatchKey, trainEffectKey, trainLandingSlotKey } from '../src/merge-train-v2-contract.mjs';
 import * as maintenance from '../src/independent-control-checks-v2/train-maintenance.mjs';
-import { createFixtureControlPublisherV2 } from '../src/independent-control-checks-v2/publisher.mjs';
+import { createFixtureControlPublisherV2, createProductionControlPublisherV2 } from '../src/independent-control-checks-v2/publisher.mjs';
 import { makeJobV2 } from '../src/job-v2.mjs';
+import { trainPortsV2, stageTrainModeText, readStageTrainModeFact, STAGE_TRAIN_MODE_FILE } from '../src/independent-control-checks-v2/train-mode.mjs';
+import { FIXED_APP } from '../src/resident-v2/record.mjs';
+import { makeTrainRun, TRAIN_RUN_SHADOW_DEFAULTS } from '../src/resident-v2/train-run.mjs';
 
 const sha = n => n.toString(16).padStart(40, '0');
 const T = sha(1), H1 = sha(2), H2 = sha(3), H3 = sha(4), S1 = sha(5), S2 = sha(6), S3 = sha(7);
 const APP = 5368905, REPO = 'tdoljyj/cross-memory-system';
 
-const scope = { tenantId: 'tenant', projectId: 'project', repositoryId: 11, targetBranch: 'main' };
+const scope = { tenantId: 'tenant', projectId: 'project', repositoryId: FIXED_APP.repositoryId, targetBranch: 'main' };
 const members = [
   { pr: 30, headSha: H1, claimId: 'front', fence: 2, epoch: 3 },
   { pr: 31, headSha: H2, claimId: 'rider', fence: 4, epoch: 5 },
@@ -51,7 +55,7 @@ function v2World() {
     if (url.endsWith('/app')) return json({ id: APP });
     if (url.endsWith('/access_tokens')) return json({
       permissions: LANDING_PERMISSIONS, token: 'fixture', expires_at: new Date(clock.now() + 3_600_000).toISOString(),
-      repositories: [{ id: 11, full_name: REPO, node_id: 'R_fixture' }],
+      repositories: [{ id: scope.repositoryId, full_name: REPO, node_id: 'R_fixture' }],
     }, 201);
     if (url.endsWith('/graphql')) {
       if (body.query.includes('query TrainRefs')) return json({ data: { repository: { id: 'R_fixture',
@@ -77,8 +81,23 @@ function v2World() {
         return json({ data: { updateRefs: { clientMutationId: input.clientMutationId } } });
       }, () => applied && (isLanding || isStaging) ? [isLanding ? 'mainUpdates' : 'stagingUpdates', S3] : null);
     }
+    if (url.endsWith('/git/commits') && options.method === 'POST') {
+      return remote.write('marker', () => json({ sha: sha(70), tree: { sha: body.tree }, parents: body.parents.map(sha => ({ sha })) }, 201));
+    }
+    if (url.includes('/git/refs/heads/main') && options.method === 'PATCH') {
+      return remote.write('land', () => {
+        refs.set(L.MAIN_REF, body.sha);
+        return json({ object: { sha: body.sha } });
+      }, () => ['mainUpdates', body.sha]);
+    }
+    if (url.includes('/git/refs/' + L.STAGING_TMP_REF) && options.method === 'PATCH') {
+      return remote.write('temp', () => {
+        refs.set(L.STAGING_TMP_REF, body.sha);
+        return json({ object: { sha: body.sha } });
+      });
+    }
     if (url.endsWith('/merges')) {
-      assert.match(body.base, /^clued-train\/tmp\//);
+      assert.match(body.base, /^clued-train\/(?:tmp\/|staging\.tmp$)/);
       tempMerges.push(body.base);
       const sha = new Map([[H1, S1], [H2, S2], [H3, S3]]).get(body.head);
       refs.set(`heads/${body.base}`, sha);
@@ -86,7 +105,7 @@ function v2World() {
     }
     throw Error(`unexpected request: ${url}`);
   };
-  const port = createLandingPort({ repository: REPO, repositoryId: 11, appId: APP, installationId: 22,
+  const port = createLandingPort({ repository: REPO, repositoryId: scope.repositoryId, appId: APP, installationId: 22,
     privateKeyProvider: async () => privateKey, fetchImpl, clock: clock.now });
   const readRefs = async () => ({ mainSha: refs.get(L.MAIN_REF), generationRefOid: refs.get('heads/clued-train/generation'),
     stagingSha: refs.get(L.STAGING_REF) });
@@ -189,7 +208,9 @@ test('列车 v2：迟到临时 ref 隔离，旧暂存被拒，已暂存 S 不重
 
 test('列车 v2：第 10 段先封存有序合成链，再凭共享暂存票发送一次', async () => {
   const w = v2World();
-  const batch = { batchId, generation: 1, baseSha: T, members, expiresAt: w.intent.expiresAt };
+  const batch = { batchId, scope, policyVersion: 'test', generation: 1, baseSha: T, members, expiresAt: w.intent.expiresAt };
+  const existingRuns = [{ runId: 50, testSha: S3, platform: 'linux', policyVersion: batch.policyVersion },
+    { runId: 51, testSha: S3, platform: 'windows', policyVersion: batch.policyVersion }];
   const steps = [S1, S2, S3];
   const trees = new Map(steps.map((step, i) => [step, { sha: step, tree: sha(60 + i),
     parents: [(i === 0 ? T : steps[i - 1]), members[i].headSha] }]));
@@ -197,20 +218,22 @@ test('列车 v2：第 10 段先封存有序合成链，再凭共享暂存票发�
   let state = 'reserved', sealed, grants = 0;
   const native = {
     authorizeComposition: async value => value === batch,
-    async sealBatch(value) { sealed = value; return value; },
+    async sealBatch(value) { sealed = { ...batch, ...value }; return sealed; },
     async prepareStaging(value) {
       assert.equal(value, sealed);
-      return { state, intent: { ...w.intent, stagingBeforeOid: T, stagedRefOid: STAGED } };
+      return { state, intent: stagingIntent(w), runs: state === 'settled' ? existingRuns : null };
     },
     async authorizeStagingSend() { state = 'sent'; grants++; return true; },
+    async readStagingRuns() { return { complete: true, runs: [...existingRuns].reverse() }; },
     async reconcileStaging({ result }) {
       assert.equal(result.state, 'staged');
+      assert.deepEqual(result.runs, existingRuns);
       state = 'settled';
       return result;
     },
   };
   const composed = await maintenance.composeTrainV2Batch({ batch, github, landing: w.port, native, clock: w.clock.now });
-  assert.deepEqual(composed, { batchId, generation: 1, baseSha: T, testSha: S3, testTree: sha(62), members, steps });
+  assert.deepEqual(composed, { ...batch, testSha: S3, testTree: sha(62), steps });
   assert.equal(w.remote.totals().requiredRuns, 0);
   const stage = () => maintenance.stageTrainV2Batch({ batch: composed, landing: w.port, native, clock: w.clock.now });
   w.remote.arm('stage', { loseReply: true });
@@ -220,10 +243,17 @@ test('列车 v2：第 10 段先封存有序合成链，再凭共享暂存票发�
   assert.equal(w.remote.totals().requiredRuns, 1);
 });
 
-test('列车 v2：第 8 段只消费一次 Native 发送权，重启从共享回执续办', async () => {
+const CONTROL_PAIR = new Set(['kooyumi-admission-verified', 'kooyumi-merge-slot']);
+const platformOf = name => name.endsWith('-windows') ? 'windows' : 'linux';
+
+function stage8World({ policyVersion = 'test' } = {}) {
   const w = v2World();
-  const batch = { ...w.intent, scope, steps: [S1, S2, S3], testTree: sha(60), sourceSha256: 'a'.repeat(64), policyVersion: 'test' };
-  const { rules, rulesets } = s7State();
+  w.intent.batchId = trainBatchKey({ ...scope, baseSha: T, members, sourceSha256: 'a'.repeat(64), policyVersion });
+  w.intent.effectId = trainEffectKey({ ...scope, action: 'landing_send', subject: [w.intent.batchId, 1, G, T, S3] });
+  const batch = { ...w.intent, scope, steps: [S1, S2, S3], testTree: sha(60), sourceSha256: 'a'.repeat(64), policyVersion };
+  let { rules } = s7State();
+  const { rulesets } = s7State();
+  let runPolicy = policyVersion;
   let inventory = s7Green(S3), qualified = false, sent = 0;
   const verified = [];
   const trainV2 = {
@@ -232,6 +262,16 @@ test('列车 v2：第 8 段只消费一次 Native 发送权，重启从共享回
     atomicLandingQualified: async () => qualified,
     readRuleBypass: async ({ rulesetId }) => rulesetId === FF_RS ? [] : [{ actor_id: APP, actor_type: 'Integration', bypass_mode: 'always' }],
     verifyMember: async ({ member }) => { verified.push(member); return true; },
+    readRequiredRuns: async () => ({
+      complete: true,
+      requirements: [...new Map(rules.filter(r => r.type === 'required_status_checks')
+        .flatMap(r => r.parameters.required_status_checks)
+        .filter(c => !CONTROL_PAIR.has(c.context) && c.context !== L.TRAIN_ONLY_CHECK)
+        .map(c => [JSON.stringify([c.context, c.integration_id]),
+          { checkName: c.context, appId: c.integration_id, platform: platformOf(c.context) }])).values()],
+      runs: inventory.map(c => ({ checkRunId: c.id, testSha: c.head_sha, checkName: c.name,
+        platform: platformOf(c.name), appId: c.app.id, policyVersion: runPolicy })),
+    }),
     prepareLanding: async () => ({ state: 'reserved', intent: w.intent }),
     async authorizeLandingSend(intent) {
       assert.deepEqual(intent, w.intent);
@@ -253,31 +293,381 @@ test('列车 v2：第 8 段只消费一次 Native 发送权，重启从共享回
     readPullRequest: async pr => ({ number: pr, state: 'open', draft: false,
       head: { sha: members.find(m => m.pr === pr).headSha, repo: { full_name: REPO } },
       base: { sha: T, ref: 'main', repo: { full_name: REPO } } }),
+    readCompare: async (baseSha, headSha) => ({ baseSha, headSha, mergeBaseSha: baseSha, status: 'ahead', behindBy: 0 }),
     readChecks: async sha => { assert.equal(sha, S3); return { complete: true, checks: inventory }; },
   };
-  const run = () => createFixtureControlPublisherV2({ github, journal: {}, admission: {}, assertLive() {}, record() {}, trainV2,
-    clock: w.clock.now, landing: w.port, trainMode: 'on', trainLanding: { landing: 'push' } }).publishPair(
-    ['control-admission', 'control-merge-slot'].map(role => makeJobV2({ repo: REPO, pr: members[0].pr, headSha: H1,
-      baseSha: T, testSha: S3, role, sourceManifestSha256: batch.sourceSha256, createdAt: batch.expiresAt, attempt: 1 })),
-    { waitUntil: Date.parse(batch.expiresAt) });
+  const jobs = ['control-admission', 'control-merge-slot'].map(role => makeJobV2({ repo: REPO, pr: members[0].pr, headSha: H1,
+    baseSha: T, testSha: S3, role, sourceManifestSha256: batch.sourceSha256, createdAt: batch.expiresAt, attempt: 1 }));
+  const run = (ports = { trainV2 }, createPublisher = createFixtureControlPublisherV2) => createPublisher({ github, journal: {}, admission: {}, assertLive() {}, record() {}, ...ports,
+    clock: w.clock.now, sleep: async ms => w.clock.advance(ms), landing: w.port, trainMode: 'on', trainLanding: { landing: 'push' } }).publishPair(jobs, { waitUntil: Date.parse(batch.expiresAt) });
+  return { ...w, batch, trainV2, github, run, jobs, verified, get sent() { return sent; },
+    qualify: () => { qualified = true; }, get inventory() { return inventory; },
+    setInventory: value => { inventory = value; }, setRunPolicy: value => { runPolicy = value; },
+    retireControlPair: () => { rules = rules.map(r => r.type !== 'required_status_checks' ? r : ({
+      ...r, parameters: { ...r.parameters, required_status_checks: r.parameters.required_status_checks.filter(c => !CONTROL_PAIR.has(c.context) && c.context !== 'kooyumi-work-admission') },
+    })); } };
+}
+
+test('列车 v2：第 8 段只消费一次 Native 发送权，重启从共享回执续办', async () => {
+  const w = stage8World();
+  const { run, batch, verified } = w;
   assert.equal((await run()).reason, L.TRAIN_LANDING_RULES_MISSING);
-  qualified = true;
-  const full = inventory;
-  const missing = inventory.find(r => r.name === 'ci-suites');
-  inventory = [...full.filter(r => r !== missing),
-    checkRun(1000, missing.name, APP, S3), checkRun(1001, missing.name, missing.app.id, H1)];
+  w.qualify();
+  const full = w.inventory;
+  const missing = full.find(r => r.name === 'ci-suites');
+  w.setInventory([...full.filter(r => r !== missing),
+    checkRun(1000, missing.name, APP, S3), checkRun(1001, missing.name, missing.app.id, H1)]);
   assert.equal((await run()).reason, L.TRAIN_LANDING_CHECKS_PENDING);
-  assert.equal(sent, 0);
+  assert.equal(w.sent, 0);
   assert.deepEqual(verified, members);
-  inventory = full;
+  w.setInventory(full);
   w.remote.arm('land', { loseReply: true });
   assert.equal((await run()).status, 'SETTLED');
   batch.generation++;
   w.refs.set(L.GENERATION_REF, CANCEL);
   assert.equal((await run()).status, 'SETTLED');
-  assert.equal(sent, 1);
+  assert.equal(w.sent, 1);
   assert.equal(w.remote.totals().mainUpdates, 1);
 });
+
+function productionTrainPorts(w, command) {
+  return trainPortsV2({ trainMode: 'on', record: { config: { scope: 'project:fixture', repository: REPO } },
+    github: w.github, nativeCommand: command, sourceManifestSha256: w.batch.sourceSha256, repositoryId: scope.repositoryId,
+    openStore: async () => null, queueReturn: true });
+}
+
+function sharedCommand(w, protocolVersion = TRAIN_PROTOCOL_VERSION) {
+  return async ({ action, operation, subject }) => {
+    if (action === 'role_probe') return { ...(protocolVersion === null ? {} : { protocol_version: protocolVersion }),
+      on_duty: true, stop_scope: 'none',
+      source_manifest_sha256: w.batch.sourceSha256, node_id: 'fixture-node', binding_generation: 1 };
+    let result;
+    switch (operation) {
+      case 'read_batch': result = w.batch; break;
+      case 'atomic_landing_qualified': result = await w.trainV2.atomicLandingQualified(subject); break;
+      case 'read_rule_bypass': result = await w.trainV2.readRuleBypass(subject); break;
+      case 'verify_member': result = await w.trainV2.verifyMember(subject); break;
+      case 'read_required_runs': result = await w.trainV2.readRequiredRuns(subject); break;
+      case 'prepare_landing': result = await w.trainV2.prepareLanding(subject); break;
+      case 'authorize_landing_send': result = await w.trainV2.authorizeLandingSend(subject.intent, subject.evidence); break;
+      case 'reconcile_landing': result = await w.trainV2.reconcileLanding(subject); break;
+      default: assert.fail(`unexpected Native action: ${action}/${operation}`);
+    }
+    return { protocol_version: TRAIN_PROTOCOL_VERSION, result };
+  };
+}
+
+async function runStage8Startup(t, w, command) {
+  const dir = await tempDir(t);
+  await fs.writeFile(path.join(dir, STAGE_TRAIN_MODE_FILE), stageTrainModeText('on'));
+  await fs.writeFile(path.join(dir, L.STAGE_TRAIN_LANDING_FILE), L.stageTrainLandingText({ landing: 'push' }));
+  t.mock.timers.enable({ apis: ['Date'], now: w.clock.now() });
+  const record = { config: { repository: REPO, scope: 'project:fixture' }, accepted: { validUntil: w.batch.expiresAt } };
+  const github = { ...w.github, readChangedPaths() { throw Object.assign(new Error('no local batch'), { code: 'full_admission_claim_missing' }); } };
+  globalThis.trainStartupFixture = {
+    runEntry: ({ body }) => body({ args: {}, inputs: { record, jobs: w.jobs, dir }, held: {}, live() {}, sourceRoot: dir }),
+    controllerPrincipal: async () => ({ nativeToken: 'fixture', bindingId: 'fixture' }),
+    controllerPorts: () => ({ github, native: { command }, admission: {} }),
+    publicationControllerGithub: () => github,
+    observationLog: () => () => {}, authorityOf: () => ({}),
+    readBatchClaim: async () => null,
+    EffectJournal: { open: async () => ({}) }, GreenLedger: { open: async () => null },
+    createLandingPort: () => w.port, createClaimAssistNative: () => ({}),
+    readStageTrainModeFact,
+    trainPortsV2: options => trainPortsV2({ ...options, openStore: async () => null }),
+  };
+  const entry = new URL('../src/independent-control-checks-v2/startup.mjs?train-r1-fixture', import.meta.url);
+  const replacements = new Map([
+    ['entry-runtime.mjs', 'runEntry, controllerPrincipal, controllerPorts, publicationControllerGithub, observationLog, authorityOf'],
+    ['batch-claim-v2.mjs', 'readBatchClaim'], ['effect-journal.mjs', 'EffectJournal'],
+    ['green-ledger.mjs', 'GreenLedger'], ['train-landing-port.mjs', 'createLandingPort'],
+    ['train-mode.mjs', 'readStageTrainModeFact, trainPortsV2'], ['claim-assist-native.mjs', 'createClaimAssistNative'],
+  ]);
+  const hook = registerHooks({ resolve(spec, context, next) {
+    const url = next(spec, context);
+    const names = context.parentURL === entry.href && replacements.get(spec.split('/').pop());
+    if (!names) return url;
+    return { url: 'data:text/javascript,' + encodeURIComponent(`export const { ${names} } = globalThis.trainStartupFixture;`), shortCircuit: true };
+  } });
+  try { return await (await import(entry.href)).main([]); }
+  finally { hook.deregister(); delete globalThis.trainStartupFixture; }
+}
+
+function runStage10(w, ports) {
+  return maintenance.runTrain({ ...ports, job: makeTrainRun({
+    ...TRAIN_RUN_SHADOW_DEFAULTS, repo: REPO, runId: 'a'.repeat(16) + '-' + 'b'.repeat(12),
+    mode: 'on', onSince: new Date(w.clock.now()).toISOString(), sweep: 'off',
+    sourceManifestSha256: w.batch.sourceSha256, createdAt: new Date(w.clock.now()).toISOString(),
+  }), clock: w.clock.now, github: w.github, landing: w.port, trainLanding: { landing: 'push' },
+  native: { holders: async () => ({ onDuty: false, holders: [] }) },
+  sweepStore: { landingBatches: async () => [] } });
+}
+
+test('返修 1：第 10 段创建标记，由 Native 固定 OID 后激活并读回', async () => {
+  const w = stage8World();
+  w.qualify();
+  const intent = { batchId, generation: 1, baseSha: T, generationRefOid: G, expiresAt: w.intent.expiresAt,
+    effectId: trainEffectKey({ ...scope, action: 'batch_reserve', subject: [batchId, 1, G, T] }) };
+  const marker = { effectId: intent.effectId, parentOid: G, treeOid: w.batch.testTree, transition: 'activate',
+    createdAt: '2026-11-26T09:00:00Z' };
+  let fixed = null, reconciled = null;
+  const command = sharedCommand(w);
+  const ports = await productionTrainPorts(w, async input => {
+    const { operation, subject } = input;
+    let result;
+    switch (operation) {
+      case 'read_maintenance': result = { kind: 'activate', batch: w.batch, activation: { state: fixed ? 'settled' : 'reserved', intent: fixed ?? intent, marker } }; break;
+      case 'fix_marker':
+        assert.equal(w.refs.get(L.GENERATION_REF), G);
+        assert.deepEqual(subject.marker, marker);
+        fixed = { ...intent, activatedRefOid: subject.markerOid };
+        result = { state: 'reserved', intent: fixed };
+        break;
+      case 'authorize_generation_activation':
+        assert.deepEqual(subject, fixed);
+        result = true;
+        break;
+      case 'reconcile_generation_activation': reconciled = subject.result; result = { state: 'settled' }; break;
+      default: return command(input);
+    }
+    return { protocol_version: 2, result };
+  });
+  await runStage10(w, ports);
+  assert.equal(w.refs.get(L.GENERATION_REF), sha(70));
+  assert.equal(reconciled.state, 'activated');
+  assert.equal(w.remote.totals().mainUpdates, 0);
+  await runStage10(w, ports);
+  assert.equal(w.remote.requests().length, 2, '重放只读回，合计一次创建及一次引用更新');
+});
+
+test('返修 1：第 10 段从可信 PR 读口取单员合成对象，核父链后封存', async () => {
+  const w = stage8World();
+  const batch = { scope, baseSha: T, sourceSha256: w.batch.sourceSha256, policyVersion: w.batch.policyVersion,
+    members: [members[0]], generation: 1, expiresAt: w.intent.expiresAt };
+  batch.batchId = trainBatchKey({ ...batch, ...scope });
+  const readPullRequest = w.github.readPullRequest;
+  w.github.readPullRequest = async pr => ({ ...await readPullRequest(pr), merge_commit_sha: S1 });
+  const command = sharedCommand(w);
+  let sealed;
+  const ports = await productionTrainPorts(w, async input => {
+    const { operation, subject } = input;
+    let result;
+    switch (operation) {
+      case 'read_maintenance': result = { kind: 'compose', batch }; break;
+      case 'authorize_composition': assert.deepEqual(subject, batch); result = true; break;
+      case 'seal_batch': sealed = subject; result = subject; break;
+      default: return command(input);
+    }
+    return { protocol_version: 2, result };
+  });
+  await runStage10(w, ports);
+  assert.equal(sealed?.testSha, S1, '可信的 [T,H] 对象必须被共享账本封存');
+  assert.deepEqual(sealed.steps, [S1]);
+  assert.equal(w.remote.requests().length, 0);
+});
+
+test('返修 7：A 只结清一个成员便断线，B 通过第 10 段从空本机存储续办', async () => {
+  const w = stage8World();
+  w.refs.set(L.MAIN_REF, S3);
+  w.refs.set(L.GENERATION_REF, DONE);
+  const receipt = { receiptId: 'receipt', intent: w.intent, mainSha: S3, generationRefOid: DONE, settledMembers: [] };
+  const command = sharedCommand(w);
+  const adoptions = [];
+  const node = (name) => productionTrainPorts(w, async input => {
+    if (input.operation === 'read_maintenance') return { protocol_version: 2, result: { kind: 'adopt', batch: w.batch, receipt } };
+    if (input.operation !== 'adopt_member') return command(input);
+    const { member } = input.subject;
+    adoptions.push([name, member.pr]);
+    receipt.settledMembers.push(member);
+    if (name === 'A') throw Error('成员回执已入共享账本，原节点丢回复');
+    return { protocol_version: 2, result: { state: 'adopted', member } };
+  });
+  await runStage10(w, await node('A'));
+  await runStage10(w, await node('B'));
+  assert.deepEqual(adoptions, [['A', 31], ['B', 32], ['B', 30]]);
+});
+
+// Run the same external-effect assertions before and after the production port switches.
+async function landingTransport(w) {
+  const ports = await productionTrainPorts(w, sharedCommand(w));
+  const actual = ports.trainV2?.protocolVersion === 2;
+  return {
+    land: () => actual ? w.land() : L.landMain({ port: w.port, readMain: async () => (await w.readRefs()).mainSha,
+      baseSha: T, testSha: S3, clock: w.clock.now, sleep: async ms => w.clock.advance(ms) }),
+    tmp: generation => actual ? w.port.prepareBatchTmp({ batchId, generation, baseSha: T })
+      : w.port.pointRef(L.STAGING_TMP_REF, T),
+    mergeTmp: generation => actual ? w.port.mergeIntoBatchTmp({ batchId, generation, headSha: H1, message: 'fixture' })
+      : w.port.mergeIntoTmp(H1, 'fixture'),
+    tempRef: generation => actual ? `heads/clued-train/tmp/${batchId}/${generation}` : L.STAGING_TMP_REF,
+  };
+}
+
+for (const intervening of ['invalidate', 'advance-main']) test(`返修 7：旧发送已在途，${intervening} 先赢后 main 零效果`, async () => {
+  const w = stage8World();
+  const transport = await landingTransport(w);
+  w.remote.arm('land', { delay: true });
+  const late = transport.land();
+  await waitForRemote(w.remote, 'land');
+  if (intervening === 'invalidate') {
+    await L.invalidateTrainIntent({ intent: { ...w.intent, invalidatedRefOid: CANCEL }, port: w.port, readRefs: w.readRefs });
+  } else {
+    w.refs.set(L.MAIN_REF, S1);
+  }
+  w.remote.release('land');
+  await late;
+  assert.equal(w.remote.totals().mainUpdates, 0, '已发出的请求必须在远端同时比较 T 和 G');
+  assert.equal(w.refs.get(L.MAIN_REF), intervening === 'invalidate' ? T : S1);
+});
+
+test('返修 7：写成丢回复，读回留下恰好一次落地及其后继标记', async () => {
+  const w = stage8World();
+  w.remote.arm('land', { loseReply: true });
+  await (await landingTransport(w)).land();
+  assert.deepEqual([w.remote.totals().mainUpdates, w.refs.get(L.MAIN_REF), w.refs.get(L.GENERATION_REF)], [1, S3, DONE]);
+});
+
+test('返修 7：旧临时引用晚写不覆盖新代次已写入的合成提交', async () => {
+  const w = stage8World();
+  const transport = await landingTransport(w);
+  w.remote.arm('temp', { delay: true });
+  const late = transport.tmp(1);
+  await waitForRemote(w.remote, 'temp');
+  await transport.tmp(2);
+  await transport.mergeTmp(2);
+  w.remote.release('temp');
+  await late;
+  assert.equal(w.refs.get(transport.tempRef(2)), S1, '新代次提交应留在独立临时引用');
+});
+
+test('返修 1、7：B 通过正式第 8、10 段接同一个已暂存 S，丢回复后仍逐成员结清', async t => {
+  const w = stage8World();
+  w.qualify();
+  w.refs.set(L.STAGING_REF, S3);
+  w.batch.staging = { state: 'settled', sender: 'A' };
+  w.remote.arm('land', { loseReply: true });
+  const adopted = [];
+  const command = sharedCommand(w);
+  const result = await runStage8Startup(t, w, command);
+  assert.equal(w.remote.totals().mainUpdates, 1, 'B 应从共享批对 main 生效一次');
+  assert.equal(result.status, 'SETTLED', JSON.stringify(result));
+  const stage10 = await productionTrainPorts(w, async input => {
+    if (input.operation === 'read_maintenance') return { protocol_version: 2,
+      result: { kind: 'adopt', batch: w.batch, receipt: { ...w.batch.landing.receipt, mainSha: S3 } } };
+    if (input.operation === 'adopt_member') {
+      adopted.push(input.subject.member.pr);
+      return { protocol_version: 2, result: { state: 'adopted', member: input.subject.member } };
+    }
+    return command(input);
+  });
+  const { sideEffects } = await runStage10(w, stage10);
+  assert.deepEqual(adopted, [31, 32, 30], 'B 本机空存储不阻碍共享收尾');
+  assert.equal(sideEffects, 3);
+  assert.equal(w.remote.totals().stagingUpdates, 0);
+});
+
+for (const protocol of [null, 11]) test(`返修 1：协议投影 ${protocol} 时旧写入口关闭`, async () => {
+  const w = stage8World();
+  w.qualify();
+  const ports = await productionTrainPorts(w, sharedCommand(w, protocol));
+  const result = await w.run(ports, createProductionControlPublisherV2);
+  assert.deepEqual([result.status, result.reason, w.sent, w.remote.totals().mainUpdates],
+    ['BLOCKED', TRAIN_FAILURE.LEASE_STALE.resident, 0, 0]);
+  const maintenance = await runStage10(w, ports);
+  assert.equal(maintenance.facts.decision, 'TRAIN_SOURCE_UNREADABLE');
+  assert.equal(maintenance.sideEffects, 0);
+});
+
+for (const retired of [false, true]) test(`返修 2：控制对已从规则移除=${retired}，逐项核精确 S`, async () => {
+  const w = stage8World();
+  w.qualify();
+  if (retired) w.retireControlPair();
+  const produced = w.inventory.filter(c => !CONTROL_PAIR.has(c.name)
+    && !(retired && c.name === 'kooyumi-work-admission'));
+  const withoutOne = [];
+  for (const check of produced) {
+    w.setInventory(produced.filter(c => c !== check));
+    withoutOne.push(await w.run());
+  }
+  w.setInventory(produced);
+  const ready = await w.run();
+  assert.deepEqual([...new Set(withoutOne.map(result => result.reason)), ...new Set(withoutOne.map(result => result.sideEffects)),
+    ready.status, w.sent, w.remote.totals().mainUpdates],
+  [L.TRAIN_LANDING_CHECKS_PENDING, 0, 'SETTLED', 1, 1], JSON.stringify({ missing: withoutOne[0], ready }));
+});
+
+test('返修 3：策略 B 重建同 S 批，策略 A 绿不能消费发送权', async () => {
+  const w = stage8World({ policyVersion: 'B' });
+  w.qualify();
+  w.setRunPolicy('A');
+  const result = await w.run();
+  assert.deepEqual([result.reason, w.sent, w.remote.totals().mainUpdates], [L.TRAIN_LANDING_CHECKS_PENDING, 0, 0]);
+  w.setRunPolicy('B');
+  assert.equal((await w.run()).status, 'SETTLED');
+});
+
+test('返修 3：同 SHA、同策略、同检查 ID 的错平台证据仍不能落地', async () => {
+  const w = stage8World();
+  w.qualify();
+  const readRuns = w.trainV2.readRequiredRuns;
+  w.trainV2.readRequiredRuns = async () => {
+    const evidence = await readRuns();
+    return { ...evidence, runs: evidence.runs.map(run => run.checkName === 'ci-suites-windows' ? { ...run, platform: 'linux' } : run) };
+  };
+  const result = await w.run();
+  assert.deepEqual([result.reason, w.sent, w.remote.totals().mainUpdates], [L.TRAIN_LANDING_CHECKS_PENDING, 0, 0]);
+});
+
+test('返修 5：准备落地时读到竞争回执且远端 G 已推进', async () => {
+  const w = stage8World();
+  w.qualify();
+  w.trainV2.prepareLanding = async () => {
+    w.refs.set(L.MAIN_REF, sha(40));
+    w.refs.set(L.GENERATION_REF, CANCEL);
+    return { state: 'settled', intent: w.intent, receipt: { receiptId: 'race', intent: w.intent, generationRefOid: DONE, mainSha: S3 } };
+  };
+  const result = await w.run();
+  assert.deepEqual([result.status, w.sent, w.remote.requests().length], ['SETTLED', 0, 0]);
+});
+
+function stagingIntent(w, { action = 'staging_publish', ...fields } = {}) {
+  const intent = { ...w.intent, stagingBeforeOid: T, stagedRefOid: STAGED, ...fields };
+  return { ...intent, effectId: trainEffectKey({ ...scope, action,
+    subject: [intent.batchId, intent.generation, intent.generationRefOid, intent.baseSha, intent.testSha] }) };
+}
+
+for (const scenario of ['old-marker', 'wrong-effect', 'wrong-run']) test(`返修 4：暂存 ${scenario} 留待核对且零更新`, async () => {
+  const w = stage8World();
+  const intent = stagingIntent(w, { action: scenario === 'wrong-effect' ? 'landing_send' : 'staging_publish' });
+  const expected = [{ runId: 8, testSha: S3, platform: 'linux', policyVersion: 'test' },
+    { runId: 9, testSha: S3, platform: 'windows', policyVersion: 'test' }];
+  let grants = 0;
+  if (scenario !== 'wrong-effect') w.refs.set(L.STAGING_REF, S3);
+  if (scenario === 'wrong-run') w.refs.set(L.GENERATION_REF, STAGED);
+  const native = {
+    prepareStaging: async () => ({ state: scenario === 'wrong-effect' ? 'reserved' : 'sent', intent, runs: expected }),
+    authorizeStagingSend: async () => { grants++; return true; },
+    readStagingRuns: async () => ({ complete: true, runs: expected.map(run => run.platform === 'linux' ? { ...run, runId: 10 } : run) }),
+    reconcileStaging: async ({ result }) => result,
+  };
+  let response;
+  try { response = (await maintenance.stageTrainV2Batch({ batch: w.batch, landing: w.port, native, clock: w.clock.now })).state; }
+  catch (error) { response = error.code; }
+  assert.deepEqual([response, grants, w.remote.totals().stagingUpdates],
+    [scenario === 'wrong-effect' ? TRAIN_FAILURE.LEASE_STALE.resident : 'unknown', 0, 0]);
+});
+
+const dbFixture = new URL('../../../../apps/clued-cloud/tests/merge-train-v2-db.fixture.mjs', import.meta.url);
+let dbAvailable = true;
+try { createRequire(dbFixture).resolve('embedded-postgres'); }
+catch (error) {
+  if (error.code !== 'MODULE_NOT_FOUND') throw error;
+  dbAvailable = false;
+}
+test('返修 6：隔离 PostgreSQL 中 H2 有效授权早于迟到的 H1 准入，H1 收尾保留 H2',
+  { skip: !dbAvailable && '应用未安装嵌入式 PostgreSQL。生产模式迁移套件也注册此用例。' }, async t => {
+    const { verifyInFlightAdoptPreservesNewHead } = await import(dbFixture);
+    await verifyInFlightAdoptPreservesNewHead(t);
+  });
 
 test('stage file: exact bytes, defaults, refusals; only push may carry a batch; one PR per batch unless the stage file says the chain is installed', async t => {
   assert.equal(L.stageTrainLandingText({ landing: 'push', batchMax: 3 }), '{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchMax":3}');

@@ -583,3 +583,8 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
     assert.equal(stopped,true,'this fixture must stop its own PostgreSQL child');
   }
 });
+
+test('列车协议 2 已落地的 H1 在途结清保留同 PR 的较新有效授权', async t => {
+  const { verifyInFlightAdoptPreservesNewHead } = await import('./merge-train-v2-db.fixture.mjs');
+  await verifyInFlightAdoptPreservesNewHead(t);
+});

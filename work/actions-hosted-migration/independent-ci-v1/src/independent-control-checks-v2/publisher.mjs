@@ -69,7 +69,7 @@ import { digest } from '../proof.mjs';
 import { freshStamp } from '../clock-skew.mjs';
 import { LANDING_NOT_READY_REASONS, LANDING_FINAL_REASONS, TRAIN_BATCH_CHANGED, TRAIN_BATCH_WITHOUT_PUSH, TRAIN_LANDING_REFUSED, TRAIN_LANDING_UNCONFIRMED,
   TRAIN_LANDING_RULES_MISSING, readLandingRoute, rehearsalOf, externalChecksDecision, readBatchChain, landMain, landTrainIntent,
-  reconcileTrainIntent, trainMainContains, validTrainMembers, exactTrainChecksDecision, trainV2RulesValid } from './train-landing.mjs';
+  reconcileTrainIntent, trainMainContains, validTrainMembers, exactTrainChecksDecision, trainV2RulesValid, fixTrainMarker, ABSENT_OID } from './train-landing.mjs';
 import { TRAIN_FAILURE, TRAIN_PROTOCOL_VERSION, trainBatchKey, trainEffectKey, trainLandingSlotKey } from '../merge-train-v2-contract.mjs';
 import { makeJobV2, validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';
@@ -685,8 +685,8 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   }
 
   async function landOneV2(input) {
-    const blocked = reason => ({ status: 'BLOCKED', reason, sideEffects: 0, productionAuthorized: false });
     let intent, mayHaveSent = false, sideEffects = 0;
+    const blocked = reason => ({ status: 'BLOCKED', reason, sideEffects, productionAuthorized: false });
     try {
       const job = fixedJob(input);
       check(push && job.role === 'control-merge-slot' && isTrainFrontJobV2(job)
@@ -696,7 +696,9 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       check(batch?.baseSha === job.baseSha && batch.testSha === job.testSha && batch.sourceSha256 === job.sourceManifestSha256
         && validTrainMembers(batch.members) && batch.members[0].pr === job.pr && batch.members[0].headSha === job.headSha, TRAIN_BATCH_CHANGED);
       const { scope } = batch;
-      check(scope?.targetBranch === 'main' && trainBatchKey({ ...batch, ...scope }) === batch.batchId, TRAIN_BATCH_CHANGED);
+      check(scope?.targetBranch === 'main' && (trainV2.repositoryId === undefined || scope.repositoryId === trainV2.repositoryId)
+        && trainBatchKey({ ...scope, baseSha: batch.baseSha, members: batch.members,
+          sourceSha256: batch.sourceSha256, policyVersion: batch.policyVersion }) === batch.batchId, TRAIN_BATCH_CHANGED);
       const slotId = trainLandingSlotKey(scope);
 
       const matches = candidate => candidate?.batchId === batch.batchId
@@ -715,10 +717,9 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         // Cutover authorization includes the isolated-repository App/rules proof.
         check(await trainV2.atomicLandingQualified({ repository: job.repo, appId: APP_ID }) === true, TRAIN_LANDING_RULES_MISSING);
         const { rules } = await readMainRules(github, APP_ID);
-        const route = await readLandingRoute({ github, appId: APP_ID, rules });
         const observedAt = new Date(clock()).toISOString();
         const bypass = [];
-        check(route.route === 'push' && await trainV2RulesValid({ rules, appId: APP_ID,
+        check(await trainV2RulesValid({ rules, appId: APP_ID,
           readBypass: async id => {
             const actors = await trainV2.readRuleBypass({ repository: job.repo, rulesetId: id });
             bypass.push({ id, actors });
@@ -736,20 +737,31 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
           check(await trainV2.verifyMember({ batch, member }) === true, TRAIN_BATCH_CHANGED);
         }
         const inventory = await github.readChecks(job.testSha);
-        const reason = exactTrainChecksDecision({ rules, inventory,
-          commitSha: job.testSha, now: clock() });
+        const runEvidence = await trainV2.readRequiredRuns({ batch });
+        const reason = exactTrainChecksDecision({ rules, inventory, runEvidence,
+          commitSha: job.testSha, appId: APP_ID, policyVersion: batch.policyVersion, now: clock() });
         if (reason) return blocked(reason);
 
         assertLive();
-        const evidence = { observedAt, rulesSha256: digest({ rules, bypass }), checkInventorySha256: digest(inventory) };
-        const prepared = await trainV2.prepareLanding({ batch, evidence });
+        const evidence = { observedAt, rulesSha256: digest({ rules, bypass }), checkInventorySha256: digest(inventory), runEvidenceSha256: digest(runEvidence) };
+        let prepared = await trainV2.prepareLanding({ batch, evidence });
         intent = prepared?.intent;
+        check(matches(intent), TRAIN_FAILURE.LEASE_STALE.resident);
+        if (prepared.state === 'reserved') check(intent.generation === batch.generation, TRAIN_FAILURE.LEASE_STALE.resident);
+        prepared = await fixTrainMarker({ prepared, transition: 'land', field: 'landedRefOid', clock,
+          fix: trainV2.fixLandingMarker, port: { createGenerationMarker: async value => {
+            assertLive();
+            sideEffects++;
+            return landing.createGenerationMarker(value);
+          } } });
+        intent = prepared.intent;
         check(matches(intent), TRAIN_FAILURE.LEASE_STALE.resident);
         if (prepared.state === 'reserved') {
           // True is issued only to the caller that durably moved this intent reserved -> sent.
           // An ambiguous response leaves recovery to the next claimant and never sends GitHub.
           assertLive();
-          check(intent.generation === batch.generation, TRAIN_FAILURE.LEASE_STALE.resident);
+          check(intent.generation === batch.generation && SHA.test(intent.landedRefOid ?? '') && intent.landedRefOid !== intent.generationRefOid
+            && intent.landedRefOid !== ABSENT_OID && Date.parse(intent.expiresAt) > clock(), TRAIN_FAILURE.LEASE_STALE.resident);
           mayHaveSent = true;
           if (await trainV2.authorizeLandingSend(intent, evidence) !== true) return blocked(TRAIN_FAILURE.LEASE_STALE.resident);
           result = await landTrainIntent({ ...ports(), port: { landIntent: async value => {
@@ -760,7 +772,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         } else {
           check(['sent', 'unknown', 'settled'].includes(prepared.state), TRAIN_FAILURE.LEASE_STALE.resident);
           mayHaveSent = true;
-          result = await reconcileTrainIntent(ports());
+          result = await reconcileTrainIntent({ ...ports(), receipt: prepared.state === 'settled' ? prepared.receipt : null });
         }
       }
       const settled = await trainV2.reconcileLanding({ intent, result });
@@ -773,7 +785,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         return blocked(TRAIN_FAILURE.LANDING_REF_MISMATCH.resident);
       return { status: 'UNCERTAIN', effectKey: intent.effectId, reason: result.reason ?? TRAIN_FAILURE.EFFECT_UNKNOWN.resident, sideEffects, productionAuthorized: false };
     } catch (error) {
-      if (!mayHaveSent) return blocked(safe(error));
+      if (!mayHaveSent && sideEffects === 0) return blocked(safe(error));
       return { status: 'UNCERTAIN', effectKey: intent?.effectId, reason: TRAIN_FAILURE.EFFECT_UNKNOWN.resident, sideEffects, productionAuthorized: false };
     }
   }

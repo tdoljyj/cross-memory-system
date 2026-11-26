@@ -211,7 +211,7 @@ export function immutableReadCache(fetchImpl, { live = () => {}, onHit = () => {
 }
 // batchRoute (stages 1 and 8 only, bc982192): the batch's route stamp read from the stage directory (batch-route.mjs); null for every other
 // stage and whenever the stage has none, which keeps both ports exactly as on origin/main.
-export function controllerPorts({ record, appKey, nativeToken, bindingId, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {}, stagedScanJournal = null, batchRoute = null }) {
+export function controllerPorts({ record, appKey, nativeToken, bindingId, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {}, stagedScanJournal = null, batchRoute = null, trainControl = false }) {
   const budgetObserver = guardedGitHubBudgetObserver(createGitHubBudgetObserver());
   // One timing line per network attempt and per cache hit (URL pattern, status, milliseconds), for later re-measurement.
   const timing = (url, data) => { try { log?.timing?.({ url: fetchUrlPattern(url), ...data }); } catch { /* best-effort */ } };
@@ -238,8 +238,13 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
     CLUED_SUPABASE_PUBLISHABLE_KEY: record.config.publishableKey };
   const commands = new Set(['publication_begin_independent','publication_finish','publication_abort_independent','publication_reconcile','revocations_list',
     'independent_revocation_heads','independent_legacy_drain_finish','scan_start_independent','resolve_pr_claim']);
+  const trainCommands = new Set(['role_probe', 'batch_reserve', 'batch_seal', 'staging_publish',
+    'landing_prepare', 'landing_send', 'landing_reconcile', 'landing_invalidate', 'claim_adopt']);
   const native = Object.freeze({ async command(input, options = {}) {
-    live(); check(commands.has(input?.action) && input.scope === record.config.scope, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+    live();
+    const authorizedTrainCommand = trainControl && trainCommands.has(input?.action) && input.repository === record.config.repository
+      && input.repository_id === FIXED_APP.repositoryId && input.target_branch === 'main';
+    check((commands.has(input?.action) || authorizedTrainCommand) && input.scope === record.config.scope, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
     if (input.action === 'resolve_pr_claim') check(typeof input.pr_ref === 'string'
       && input.pr_ref.startsWith(`${record.config.repository}#`)
       && /^[1-9][0-9]*$/.test(input.pr_ref.slice(record.config.repository.length + 1)), 'NATIVE_PUBLICATION_SCOPE_REFUSED');

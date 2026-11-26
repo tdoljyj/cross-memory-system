@@ -118,13 +118,15 @@ export function createLandingPort({ repository, repositoryId, appId, installatio
         || !(repo.staging === null || oid(repo.staging?.target?.oid))) fail('LANDING_REF_UNCONFIRMED');
       return { mainSha: repo.main.target.oid, generationRefOid: repo.generation?.target.oid ?? ABSENT_OID, stagingSha: repo.staging?.target.oid ?? ABSENT_OID };
     },
-    async createGenerationMarker({ parentOid, treeOid, effectId, transition }) {
+    async createGenerationMarker({ parentOid, treeOid, effectId, transition, createdAt }) {
       requireV2();
       if (!oid(parentOid) || !oid(treeOid) || typeof effectId !== 'string' || !HASH.test(effectId)
-        || !['activate', 'stage', 'land', 'invalidate'].includes(transition)) fail('LANDING_REF_REFUSED');
+        || !['activate', 'stage', 'land', 'invalidate'].includes(transition)
+        || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(createdAt ?? '') || !Number.isFinite(Date.parse(createdAt))) fail('LANDING_REF_REFUSED');
       const bearer = await credential();
+      const identity = { name: 'BeamingFace Merge Train', email: 'beamingface-merge-train@users.noreply.github.com', date: createdAt };
       const r = await send(`${root}/git/commits`, 'POST', bearer, {
-        message: `clued-train/2 ${transition} ${effectId}`, tree: treeOid, parents: [parentOid],
+        author: identity, committer: identity, message: `clued-train/2 ${transition} ${effectId}`, tree: treeOid, parents: [parentOid],
       });
       if (r.status !== 201 || !oid(r.body?.sha) || r.body?.tree?.sha !== treeOid
         || r.body?.parents?.length !== 1 || r.body.parents[0]?.sha !== parentOid) fail('LANDING_REF_UNCONFIRMED');
