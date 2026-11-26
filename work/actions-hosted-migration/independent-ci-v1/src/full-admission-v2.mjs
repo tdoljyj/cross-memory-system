@@ -20,6 +20,7 @@ import { validateJobV2, claimGeneration, sameClaimGeneration, prBaseAcceptedV2, 
 import { isCurrentMergeQueueHeadV2 } from './independent-control-checks-v2/queue-facts.mjs';
 import { evaluate, githubJson, mergeSlotState, VERIFY_RPC } from '../../../../scripts/ci/clued-work-admission.mjs';
 import { normalizePRTaskBinding } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
+import { TRAIN_FAILURE } from './merge-train-v2-contract.mjs';
 
 import { FULL_ADMISSION_CONTRACT_V2, FULL_ADMISSION_CONTRACT_V3, effectiveGuard, supportedNativeExecution, ownerKind, reasonCodes, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2, verdict } from './admission-facts-v2.mjs';
 const REPO = 'tdoljyj/cross-memory-system';
@@ -34,6 +35,7 @@ const fresh = (value, now) => freshStamp(at(value), now);
 const FAILURE_REASONS = new Set(['not_configured', 'subject_invalid', 'source_changed', 'clock_invalid', 'mode_unknown',
   'principal_unknown', 'observer_unknown', 'subject_changed', 'claim_changed', 'claim_missing', 'observation_expired', 'rejected',
   'native_unsupported', 'native_changed', 'incomplete', 'unavailable'].map(value => `full_admission_${value}`));
+FAILURE_REASONS.add(TRAIN_FAILURE.LEASE_STALE.native);
 const rejectionDiagnostic = (outcome, native, extra = {}) => ({ verdict: verdict(outcome?.verdict), reasonCodes: reasonCodes(outcome?.reasons),
   nativeVerdict: verdict(native?.verdict), nativeReasonCodes: reasonCodes(native?.reasons), ownerReviewKind: ownerKind(outcome?.owner_review?.kind),
   workflowGateFindingsPresent: Array.isArray(outcome?.workflow_gate_findings) && outcome.workflow_gate_findings.length > 0,
@@ -158,12 +160,15 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
   });
   async function evaluateWith(job, packet, options, { deferred, packetGate, refusedNow, past }) {
       let phase = 'mode';
+      let staleLease = false;
       // Every GitHub read of a deferred-packet evaluation stops at once when the packet has already failed.
       const readFetch = deferred ? (url, opts) => { refusedNow(); return fetchImpl(url, opts); } : fetchImpl;
       try {
         validateJobV2(job);
         const batchClaim = options?.batchClaim ?? null;
-        if (!plain(options) || Object.keys(options).some(k => !['batchClaim', 'scheduling'].includes(k)) || !batchClaimValid(batchClaim)
+        const admissionCommand = options?.admissionCommand;
+        if (!plain(options) || Object.keys(options).some(k => !['batchClaim', 'scheduling', 'admissionCommand'].includes(k)) || !batchClaimValid(batchClaim)
+          || (admissionCommand !== undefined && (typeof admissionCommand !== 'function' || job.role !== 'work-admission' || isTrainFrontJobV2(job)))
           || !(options.scheduling === undefined || typeof options.scheduling === 'function')) return blocked('full_admission_subject_invalid');
         const tell = (outcome, native) => { try { options.scheduling?.(Object.freeze(sanitizeSchedulingV2(schedulingFactsV2(outcome, native, REPO)))); } catch { /* told, never asked */ } };
         if (job.repo !== config.repository || job.sourceManifestSha256 !== config.sourceManifestSha256 || (!deferred && !packetValid(job, packet))) return blocked('full_admission_subject_invalid');
@@ -220,11 +225,18 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         // (Decision 1100a0ed); without a seen send, from the start of the evaluation, which is earlier.
         let native = null, nativeSentMono = null, verifySentMono = null;
         const evaluateStartMono = monotonic();
+        const verifyUrl = new URL(`/rest/v1/rpc/${VERIFY_RPC}`, config.supabaseUrl).href;
         // A deferred packet gates every Native RPC of the evaluation: none is sent before the packet is complete and valid.
         const timedFetch = async (url, opts) => {
           if (deferred && String(url).includes('/rest/v1/rpc/')) await packetGate();
           else if (deferred) refusedNow();
           if (String(url).endsWith(`/rest/v1/rpc/${VERIFY_RPC}`)) verifySentMono = monotonic();
+          if (admissionCommand && new URL(url).origin !== 'https://api.github.com') {
+            if (String(url) !== verifyUrl || opts?.method !== 'POST' || staleLease) throw new Error('train_admission_command_refused');
+            const reply = await admissionCommand(JSON.parse(opts.body).p_input);
+            staleLease = reply.status === 'rejected' && reply.error_code === TRAIN_FAILURE.LEASE_STALE.native;
+            return Response.json(reply);
+          }
           return fetchImpl(url, opts);
         };
         const recorder = { newId: () => baseRecorder.newId(), record(kind, data) {
@@ -234,6 +246,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         phase = 'evaluate'; const outcome = await evaluateImpl({ env, event: { pull_request: pr }, eventName: 'pull_request', fetchImpl: timedFetch,
           workspace: config.workspace, bindingScope: config.scope, withSummary: false, readPolicyFile: () => config.policyText,
           observation_recorder: recorder, observation_entry: 'independent_pr' });
+        if (staleLease) return blocked(TRAIN_FAILURE.LEASE_STALE.native);
         phase = 'post_evaluate'; tell(outcome, native); const finished = clock(), prRef = `${REPO}#${job.pr}`;
         if (!Number.isSafeInteger(finished) || finished < started || !fresh(mode.observedAt, finished)
           || !fresh(observation.observedAt, finished)) return blocked('full_admission_observation_expired', rejectionDiagnostic(outcome, native, { modeFresh: fresh(mode.observedAt, finished), recorderFresh: fresh(observation.observedAt, finished) }));
@@ -289,7 +302,10 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
           packetSha256: digest(packet), evaluationSha256: digest(outcome) };
         return retainServerAnswerForFacts(Object.freeze({ ...facts, observationSha256: digest(facts) }),
           { verifiedAt: native.verified_at, expiresAt: claim.expires_at, sentMono: nativeSentMono ?? evaluateStartMono }, monotonic);
-      } catch (error) { return blocked('full_admission_unavailable', { phase, transport: transportFault(error) }); }
+      } catch (error) {
+        if (staleLease) return blocked(TRAIN_FAILURE.LEASE_STALE.native);
+        return blocked('full_admission_unavailable', { phase, transport: transportFault(error) });
+      }
   }
 }
 

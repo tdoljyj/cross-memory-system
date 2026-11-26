@@ -29,6 +29,7 @@ import { ALL_STAGE_CODES } from './stage-fact.mjs';
 import { withReadRetry } from '../read-retry.mjs';
 import { createIndependentScanStartPort } from '../scan-start-v1/native-port.mjs';
 import { HOLDERS_RPC } from '../independent-control-checks-v2/merge-slot-native.mjs';
+import { TRAIN_PROTOCOL_VERSION } from '../merge-train-v2-contract.mjs';
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
@@ -38,6 +39,7 @@ const check = (ok, code) => { if (!ok) fail(code); };
 const PUBLIC_ENTRY_REASONS = new Set([...ALL_STAGE_CODES,
   'ENTRY_OPERATION_UNCONFIRMED', 'FIXED_WINDOWS_ENTRY_REQUIRED', 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED', 'CI_CONNECTION_RECORD_REFUSED',
   'NATIVE_PUBLICATION_SCOPE_REFUSED', 'NATIVE_PUBLICATION_UNAVAILABLE', 'independent_revoker_qualification_required',
+  'ci_train_protocol_unconfirmed',
   'MERGE_SLOT_HOLDERS_PROJECTION_UNSUPPORTED',
   'OBSERVATION_KIND_REFUSED', 'OBSERVATION_LOG_BOUNDARY', 'OBSERVATION_LOG_UNCONFIRMED', 'HELD_SOURCE_PINS_CHANGED',
   'ACTUAL_HELD_RECORD_LEASE_REQUIRED', 'ACTUAL_WINDOWS_HELD_RECORD_REQUIRED', 'ENTRY_OUTSIDE_HELD_SOURCE_REFUSED',
@@ -211,7 +213,8 @@ export function immutableReadCache(fetchImpl, { live = () => {}, onHit = () => {
 }
 // batchRoute (stages 1 and 8 only, bc982192): the batch's route stamp read from the stage directory (batch-route.mjs); null for every other
 // stage and whenever the stage has none, which keeps both ports exactly as on origin/main.
-export function controllerPorts({ record, appKey, nativeToken, bindingId, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {}, stagedScanJournal = null, batchRoute = null }) {
+export function controllerPorts({ record, appKey, nativeToken, bindingId, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {}, stagedScanJournal = null, batchRoute = null, protectedTrainTransport }) {
+  const train = protectedTrainPort(record, protectedTrainTransport, live);
   const budgetObserver = guardedGitHubBudgetObserver(createGitHubBudgetObserver());
   // One timing line per network attempt and per cache hit (URL pattern, status, milliseconds), for later re-measurement.
   const timing = (url, data) => { try { log?.timing?.({ url: fetchUrlPattern(url), ...data }); } catch { /* best-effort */ } };
@@ -238,7 +241,7 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
     CLUED_SUPABASE_PUBLISHABLE_KEY: record.config.publishableKey };
   const commands = new Set(['publication_begin_independent','publication_finish','publication_abort_independent','publication_reconcile','revocations_list',
     'independent_revocation_heads','independent_legacy_drain_finish','scan_start_independent','resolve_pr_claim']);
-  const native = Object.freeze({ async command(input, options = {}) {
+  const native = Object.freeze({ trainProtocolVersion: train?.protocolVersion ?? null, train, async command(input, options = {}) {
     live(); check(commands.has(input?.action) && input.scope === record.config.scope, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
     if (input.action === 'resolve_pr_claim') check(typeof input.pr_ref === 'string'
       && input.pr_ref.startsWith(`${record.config.repository}#`)
@@ -247,19 +250,22 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
     const reply = await cluedRpc(commandFetch, env, sourceRoot, 'clued_work_verify_v1', input);
     check(reply.status === 200 && reply.body && typeof reply.body === 'object', 'NATIVE_PUBLICATION_UNAVAILABLE');
     return reply.body;
-  }, async current(identity,mode) {
+  }, async current(identity,mode,admissionCommand) {
     live();if(mode?.scope!==record.config.scope||identity.job.repo!==record.config.repository
       ||!Array.isArray(mode.paths)||!mode.paths.length)return false;
     let binding;
     try {
-      binding = await resolvePRTaskBinding({ command: input => native.command(input), scope: record.config.scope,
+      binding = await resolvePRTaskBinding({ command: admissionCommand ?? (input => native.command(input)), scope: record.config.scope,
         repository: record.config.repository, prNumber: identity.job.pr, headSha: identity.job.headSha,
         baseSha: identity.job.baseSha, targetBranch: 'main', readOnly: true });
     } catch { return false; }
     if (binding.binding_status !== 'bound') return false;
     const sentMono = monotonic();
-    const reply = await cluedRpc(fetchImpl, env, sourceRoot, 'clued_work_verify_v1', { scope: mode.scope, claim_id: identity.claim.claim_id,
-      head_sha: identity.job.headSha, base_sha: identity.job.baseSha, changed_paths: mode.paths });
+    const input = { scope: mode.scope, claim_id: identity.claim.claim_id,
+      head_sha: identity.job.headSha, base_sha: identity.job.baseSha, changed_paths: mode.paths };
+    const reply = admissionCommand
+      ? { status: 200, body: await admissionCommand({ ...input, action: 'verify_head', read_only: true }) }
+      : await cluedRpc(fetchImpl, env, sourceRoot, 'clued_work_verify_v1', input);
     const b=reply.body,c=b?.claim,failed=[];
     for (const [name, ok] of [['reply',reply.status===200&&b?.status==='ok'],['verdict',b?.verdict==='ADMITTED'],
       ['execution_policy',b?.execution_policy===mode.executionPolicy],['lease_key_required',effectiveGuard(b?.execution_policy,c?.lease_key_required)===mode.guarded],
@@ -283,6 +289,31 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
   return { github, admission, fetchImpl, native, scanStart, scanStartRegistrySha256, bindingId };
 }
 
+// 协议来自持有记录中的已验收安装配置。受信启动器在进程内注入机器签名命令端口。
+// 作业、阶段文件、环境变量和旧 RPC 均不能选择协议或提供端口。
+export function protectedTrainPort(record, transport, live) {
+  const { mergeTrainProtocolVersion: version, scope, repositoryId } = record.config;
+  if (version === undefined || version === 1) return undefined;
+  const protocolVersion = version === TRAIN_PROTOCOL_VERSION ? version : 0;
+  const { nodeId, bindingGeneration, scope: transportScope, command } = transport ?? {};
+  const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+  if (protocolVersion !== TRAIN_PROTOCOL_VERSION || typeof command !== 'function'
+    || !uuid.test(nodeId ?? '') || !Number.isSafeInteger(bindingGeneration) || bindingGeneration < 1
+    || transportScope?.contextKey !== scope || transportScope.repositoryId !== repositoryId || transportScope.targetBranch !== 'main'
+    || !uuid.test(transportScope.tenantId ?? '') || !uuid.test(transportScope.projectId ?? '')
+    || (scope !== 'global' && scope !== 'project:' + transportScope.projectId)) return Object.freeze({ protocolVersion });
+  return Object.freeze({ protocolVersion, nodeId, bindingGeneration, scope: Object.freeze({ ...transportScope }),
+    async command(input) {
+      live();
+      check(input.scope === scope && input.repository === record.config.repository
+        && input.source_manifest_sha256 === record.config.sourceManifestSha256
+        && input.protocol_version === protocolVersion, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+      const reply = await command.call(transport, input);
+      live();
+      return reply;
+    } });
+}
+
 // Root-held Source/record verification and the existing protected permanent
 // role journal remain prerequisites. No extra secret reader or worker token.
 export function publicationControllerGithub({ ports, jobs, journal, args, record, plan }) {
@@ -292,7 +323,7 @@ export function publicationControllerGithub({ ports, jobs, journal, args, record
       if(mode.executionPolicy==='active'&&!revocationQualification(record,{reserveMs:300_000}))fail('independent_revoker_qualification_required');
       return registerIndependentController({ identity, journal, args, record, plan });
     },
-    assertCurrent: (identity,mode) => ports.native.current(identity,mode) });
+    assertCurrent: (identity,mode,admissionCommand) => ports.native.current(identity,mode,admissionCommand) });
 }
 
 // The authority facts every v2 publisher binds (the seven install refs + acceptance window).

@@ -76,12 +76,12 @@ export function createIndependentPublicationPort({ job, controllerId, github, na
     handles.set(handle, { identity, mode, payloadSha256: digest(payload), nativeHandle });
     return handle;
   };
-  if (job.role === 'work-admission' && job.testSha === job.headSha && native.train !== undefined) {
+  if (job.role === 'work-admission' && job.testSha === job.headSha && native.trainProtocolVersion != null) {
     const train = native.train;
-    facade.trainHeadProtocol = train?.protocolVersion ?? 0;
+    facade.trainHeadProtocol = native.trainProtocolVersion;
     const leases = new WeakMap();
     const shared = createTrainHeadPublicationRuntime({ train, github: nativeGithub,
-      assertCurrent: identity => assertCurrent(clone(identity), clone(modes.get(identity.effect_key))) });
+      assertCurrent: (identity, admissionCommand) => assertCurrent(clone(identity), clone(modes.get(identity.effect_key)), admissionCommand) });
     facade.acquireTrainHead = async () => {
       if (facade.trainHeadProtocol !== TRAIN_PROTOCOL_VERSION || typeof train?.command !== 'function'
         || train.scope?.targetBranch !== 'main'
@@ -90,7 +90,7 @@ export function createIndependentPublicationPort({ job, controllerId, github, na
       if (reply.reason) return reply;
       const handle = Object.freeze({});
       leases.set(handle, reply);
-      return { handle, resumeRequired: reply.resumeRequired };
+      return { handle, resumeRequired: reply.resumeRequired, admissionCommand: reply.admissionCommand };
     };
     facade.publishTrainHead = async ({ handle, ...input }) => {
       const lease = leases.get(handle);

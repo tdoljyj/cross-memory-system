@@ -188,11 +188,11 @@ export async function evaluateFirstTrainQueue({ work, job, github, admission, sl
     check(facts.observationOnly !== true && sameClaimGeneration(facts.observedClaim, claim), 'ACTUAL_COMPLETE_NATIVE_ADMISSION_REQUIRED');
     const { rules, facts: ruleFacts } = await readMainRules(github, APP_ID);
     const inventory = await github.readChecks(job.headSha);
-    failures = requiredCheckFailure(rules, inventory, job.headSha, APP_ID);
     const queueOnly = new Set([...Object.values(CONTROL_CHECKS_V2).map(c => c.name), TRAIN_ONLY_CHECK]);
+    const preQueueCheck = c => c.integration_id !== APP_ID || !queueOnly.has(c.context);
+    failures = requiredCheckFailure(rules, inventory, job.headSha, APP_ID, { include: preQueueCheck });
     const preQueueRules = rules.filter(r => r.type === 'required_status_checks').map(r => ({ ...r, parameters: {
-      ...r.parameters, required_status_checks: r.parameters.required_status_checks.filter(c =>
-        c.integration_id !== APP_ID || !queueOnly.has(c.context)),
+      ...r.parameters, required_status_checks: r.parameters.required_status_checks.filter(preQueueCheck),
     } }));
     ready = ruleFacts().strict && requiredOnHead({ rules: preQueueRules, checks: inventory.checks, headSha: job.headSha, appId: APP_ID })?.missing.length === 0;
     const matches = inventory.checks.filter(c => c.app.id === APP_ID && c.name === REQUIRED_CHECK_NAMES[0]);

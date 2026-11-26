@@ -4,7 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { EffectJournal } from '../effect-journal.mjs';
 import { recordBatchClaim, readBatchClaim, rewriteUnpublishedBatchClaim, withBatchClaimPublication } from '../batch-claim-v2.mjs';
-import { runEntry, controllerPrincipal, controllerPorts, publicationControllerGithub, observationLog, authorityOf } from '../resident-v2/entry-runtime.mjs';
+import { runEntry, controllerPrincipal, controllerPorts, protectedTrainPort, publicationControllerGithub, observationLog, authorityOf } from '../resident-v2/entry-runtime.mjs';
 import { STATE_V2 } from '../resident-v2/layout.mjs';
 import { createProductionWorkAdmissionPublisherV2 } from './publisher.mjs';
 import { readStageTrainModeFact, trainPortsV2 } from '../independent-control-checks-v2/train-mode.mjs';
@@ -13,16 +13,21 @@ import { createClaimAssistNative, stage1WithLease, stage1FrontRequeue } from '..
 import { trainHeadProtocolOf } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { isTrainFrontJobV2 } from '../job-v2.mjs';
 
-export async function main(argv = process.argv.slice(2), output = process.stdout) {
-  return runEntry({ argv, entryRole: 'work-admission', moduleUrl: import.meta.url, output, body: async ({ args, inputs, held, live, sourceRoot }) => {
+export async function main(argv = process.argv.slice(2), output = process.stdout,
+  { run = runEntry, readPrincipal = controllerPrincipal, effectsRoot = STATE_V2.effectsWorkAdmission, protectedTrainTransport, fetchImpl } = {}) {
+  return run({ argv, entryRole: 'work-admission', moduleUrl: import.meta.url, output, body: async ({ args, inputs, held, live, sourceRoot }) => {
     const job = inputs.jobs[0];
-    const { appKey, nativeToken, bindingId } = await controllerPrincipal(inputs.record);
-    const log = observationLog(STATE_V2.effectsWorkAdmission, job.id);
+    const train = protectedTrainPort(inputs.record, protectedTrainTransport, live);
+    if (train !== undefined && typeof train.command !== 'function')
+      return { status: 'BLOCKED', reason: 'ci_train_protocol_unconfirmed', sideEffects: 0 };
+    const { appKey, nativeToken, bindingId } = await readPrincipal(inputs.record);
+    const log = observationLog(effectsRoot, job.id);
     // bc982192: the batch's own route stamp from this stage directory (batch-route.mjs; none: main's tip is the batch base).
     const batchRoute = await readStageBatchRoute(inputs.dir);
-    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot, live, log, batchRoute });
+    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot,
+      live, log, batchRoute, baseFetch: fetchImpl, protectedTrainTransport });
     const { admission } = ports;
-    const journal = await EffectJournal.open(STATE_V2.effectsWorkAdmission);
+    const journal = await EffectJournal.open(effectsRoot);
     const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record, plan: inputs.plan });
     const batchClaims = {
       read: async j => { try { return await readBatchClaim(STATE_V2.batchClaims, j); } catch (e) { if (e.code === 'BATCH_CLAIM_MISSING') return null; throw e; } },

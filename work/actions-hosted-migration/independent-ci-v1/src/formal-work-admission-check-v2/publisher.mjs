@@ -186,8 +186,12 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     return result;
   }
   // The admission boundary in two steps, so a refusal can be told apart from a failure after the facts were admitted.
-  async function evaluate(job, batchClaim, scheduling = null) {
-    assertLive(); const packet = await github.readChangedPaths(job), facts = await admission.evaluatePr(job, packet, { batchClaim, ...(scheduling ? { scheduling } : {}) }); assertLive();
+  async function evaluate(job, batchClaim, scheduling = null, admissionCommand = undefined) {
+    assertLive();
+    const packet = await github.readChangedPaths(job);
+    const facts = await admission.evaluatePr(job, packet, { batchClaim, ...(scheduling ? { scheduling } : {}),
+      ...(admissionCommand ? { admissionCommand } : {}) });
+    assertLive();
     factsValid(job, packet, facts, domain, clock(), batchClaim);
     return { packet, facts };
   }
@@ -304,8 +308,9 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       }
       const publication = { handle: acquired.handle };
       if (!acquired.resumeRequired) {
+        check(typeof acquired.admissionCommand === 'function', 'ci_train_head_work_unconfirmed');
         const claimed = await batchClaims.read(job);
-        const before = bound(job, await evaluate(job, claimed, facts => { scheduling = facts; }));
+        const before = bound(job, await evaluate(job, claimed, facts => { scheduling = facts; }, acquired.admissionCommand));
         if (!claimed) await batchClaims.record(job, before.facts.observedClaim, before.facts.observedAt);
         check(fresh(before.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_BEFORE_WRITE');
         Object.assign(publication, { facts: before.facts, packet: before.packet, payload: payloadFor(job, before.facts, null, true) });
