@@ -46,7 +46,7 @@ export function acceptanceOf(release, over = {}) {
 // site has neither), writing the PASS report prep.py checks (this package, commit and configuration bytes); prep.py and generate.py
 // stubs unless named in `real`. Every call is recorded, with the plan as generate.py saw it.
 // liveRoot: generate.py's LIVE_ROOT (a constant: the real C:\ProgramData root) replaced by the fixture site's, in a copy next to it.
-function pythonTools({ real = [], rehearsal = 'REHEARSAL_PASS', liveRoot = null, pause = 'confirm', check = 0 } = {}) {
+function pythonTools({ real = [], rehearsal = 'REHEARSAL_PASS', liveRoot = null, pause = 'confirm', check = 0, now } = {}) {
   const calls = [], pauses = [];
   const fn = (script, args) => {
     const opt = n => args[args.indexOf(n) + 1];
@@ -67,7 +67,7 @@ function pythonTools({ real = [], rehearsal = 'REHEARSAL_PASS', liveRoot = null,
       const cfg = readJson(args[0]);
       const report = { contract: 'clued.independent-ci.reinstall-rehearsal/1', status: rehearsal, findings: rehearsal === 'REHEARSAL_PASS' ? [] : [{ code: 'FIXTURE_FINDING' }],
         node: cfg.node, commit: opt('--commit'), packageManifestSha256: sha(fsSync.readFileSync(path.join(opt('--package'), 'package-manifest.json'))),
-        configSha256: sha(fsSync.readFileSync(args[0])), observedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z') };
+        configSha256: sha(fsSync.readFileSync(args[0])), observedAt: new Date(now ?? Date.now()).toISOString().replace(/\.\d+Z$/, 'Z') };
       const file = path.join(cfg.workDir, 'rehearsal', 'rehearsal.stub.json');
       fsSync.writeFileSync(file, JSON.stringify(report), { flag: 'wx' });
       return { status: rehearsal === 'REHEARSAL_PASS' ? 0 : 1, stdout: JSON.stringify({ status: rehearsal, report: file, findings: report.findings }, null, 1), stderr: '' };
@@ -127,15 +127,16 @@ async function getWorld() {
 const prepare = (w, n, work, over = {}) => prepareInstall({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: w.acceptance, root: n.root,
   workDir: work, scm: SCM, ...over });
 
-test('旧包重装入口把正式包身份带进生成启动器的计划', { timeout: 600_000 }, async t => {
+test('旧包重装入口把正式包身份带进生成启动器的计划', async t => {
   const w = await getWorld();
-  const node = await nodeSite(t, 'a', fleetFacts());
+  const now = Date.parse(w.acceptance.acceptedAt);
+  const node = await nodeSite(t, 'a', fleetFacts(), { now });
   const dir = await tempDir(t, 'fleet-label');
   const built = await buildUniversal({ repo: w.repo, commit: w.commit, version: 'g000023', out: path.join(dir, 'build') });
   const acceptance = { ...w.acceptance, version: built.source.version, archive_sha256: built.source.archive_sha256 };
-  const tools = pythonTools();
+  const tools = pythonTools({ now });
   const result = await prepareInstall({ artifactPath: built.tar, artifactSha256: acceptance.archive_sha256, acceptance, root: node.root,
-    workDir: path.join(dir, 'reinstall'), python: tools.fn, scm: SCM, wslConfigPath: path.join(dir, '.wslconfig') });
+    workDir: path.join(dir, 'reinstall'), now, python: tools.fn, scm: SCM, wslConfigPath: path.join(dir, '.wslconfig') });
   assert.equal(result.status, 'FLEET_NODE_INSTALL_PREPARED');
   const identity = { packageGeneration: 23, version: 'g000023', releaseTag: 'fleet-node-g000023', commit: w.commit,
     archiveSha256: acceptance.archive_sha256, ciSourceManifestSha256: acceptance.ciSourceManifestSha256 };
