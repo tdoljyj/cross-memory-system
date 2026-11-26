@@ -110,6 +110,13 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     };
     const release = (who, c) => agent(who, 'clued_work_release_v1',
       { scope: 'global', claim_id: c.claim_id, fence: c.fence, outcome: 'completed' });
+    const releaseHeld = async (who, c) => {
+      const result = await release(who, c);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'work_claim_release_pr_open']);
+      await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '1 hour',
+        expires_at=clock_timestamp()+interval '1 hour' where claim_id=$1`, [c.claim_id]);
+      return release(who, c);
+    };
     const verify = (c, pr, head = crypto.randomBytes(20).toString('hex')) => agent('reader', 'clued_work_verify_v1',
       { scope: 'global', claim_id: c.claim_id, pr_ref: pr, head_sha: head });
     const gate = async (who, c, resources) => (await admin.query(
@@ -193,7 +200,7 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     assert.equal(v.bound_pr, 'o/r#1');
     assert.equal(await relation('o/r#1'), 'unknown');
     assert.equal(await usage(legacyTask), 0);
-    committed(await release('claude', legacy));
+    committed(await releaseHeld('claude', legacy));
 
     // --- Only the Owner's Native session manages roles. ---
     for (const name of ['clued_binding_roles_list_v1', 'clued_binding_role_confirmation_issue_v1', 'clued_binding_role_set_v1']) {
@@ -279,7 +286,7 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
       { head_sha: sha(4), ci_dispatch: true, pr_ref: 'o/r#7' }]) {
       await assert.rejects(() => verifyAs('ci', mine, input), /work_claim_ci_dispatch_invalid/, JSON.stringify(input));
     }
-    committed(await release('claude', mine));
+    committed(await releaseHeld('claude', mine));
 
     // --- N1: only the CI Binding reports a merge. ---
     const raceTask = await createTask('roles race');
