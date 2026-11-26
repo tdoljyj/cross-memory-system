@@ -109,7 +109,7 @@ test('a draft PR\'s queue row is never reserved; the trigger after it turned rea
   assert.equal((await f.ledger.state(KEY)).state, 'ABSENT', 'not reserved');
   assert.equal(readsOf(f, A), 1);
   for (let i = 0; i < 4; i++) { f.advance(10 * MIN); await f.exec.tick(); }
-  assert.equal(readsOf(f, A), 1, 'held: no read, no reservation while nothing new arrives');
+  assert.equal(readsOf(f, A), 5, 'held: one terminal check every ten minutes');
   assert.equal((await f.ledger.state(KEY)).state, 'ABSENT');
   f.prs[A].draft = false;
   await f.drop(readyTrigger(f));
@@ -135,7 +135,7 @@ test('parked at B, turned draft: the 10-minute read ends it pr-draft and frees t
   const reads = readsOf(f, A);
   for (let i = 0; i < 4; i++) { f.advance(10 * MIN); await f.exec.tick(); }
   assert.equal(count(f.engine, 8), tries, 'held: no stage-8 try');
-  assert.equal(readsOf(f, A), reads, 'held: no live read');
+  assert.equal(readsOf(f, A), reads + 4, 'held: only the periodic terminal checks run');
   assert.equal((await f.ledger.pendingFlowEnds()).length, 1, 'the continuation is kept');
   // ready for review again: the same head goes on from stage 8 (DESIGN §72.10), nothing of stages 2-7 runs again
   f.prs[A].draft = false;
@@ -160,7 +160,7 @@ test('resting at A, turned draft: ended pr-draft at stage 1; ready again, it is 
   assert.deepEqual((await f.ledger.pendingFlowEnds()).map(x => [x.terminal.facts.basis, x.terminal.facts.stage]), [['pr-draft', 1]]);
   const stage1 = count(f.engine, 1), reads = readsOf(f, A);
   for (let i = 0; i < 3; i++) { f.advance(10 * MIN); await f.exec.tick(); }
-  assert.deepEqual([count(f.engine, 1), readsOf(f, A)], [stage1, reads], 'held');
+  assert.deepEqual([count(f.engine, 1), readsOf(f, A)], [stage1, reads + 3], 'held: terminal checks do not admit the row');
   hold.release();
   f.prs[A].draft = false;
   await f.drop(readyTrigger(f));

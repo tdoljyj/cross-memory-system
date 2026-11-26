@@ -76,6 +76,13 @@ test('merge_queue_yield turn_short: a head whose turn is too short joins again, 
       action: 'resolve_pr_claim', pr_ref: `${repo}#${n}`, head_sha: head, base_sha: 'b'.repeat(40), target_branch: 'main' });
     const release = r => call('holder', 'clued_work_release_v1', { scope: r.claim.context_key, claim_id: r.claim.claim_id,
       fence: r.claim.fence, lease_key: r.lease_key, outcome: 'completed', evidence_ref: 'fixture:' + uuid() });
+    const releaseHeld = async r => {
+      const result = await release(r);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'work_claim_release_pr_open']);
+      await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '1 hour',
+        expires_at=clock_timestamp()+interval '1 hour' where claim_id=$1`, [r.claim.claim_id]);
+      return release(r);
+    };
     const admitted = async (r, n, head) => {
       committed(await authorize(r, head, n));
       assert.equal((await resolve(n, head)).binding_status, 'bound');
@@ -120,7 +127,7 @@ test('merge_queue_yield turn_short: a head whose turn is too short joins again, 
       const r = await rejoins(a);
       assert.deepEqual(r.map(x => [x.binding_id, x.metadata.receipt_kind, x.metadata.why, x.metadata.pr, x.metadata.head_sha]),
         [[ids.ci, 'WORK_CLAIM_MERGE_QUEUE_REJOINED', 'turn_short', `${repo}#61`, headA]]);
-      committed(await release(a));
+      committed(await releaseHeld(a));
     });
 
     await t.test('behind a waiting claim: the waiting claim is head, the yielding one waits at the back', async () => {
@@ -138,7 +145,7 @@ test('merge_queue_yield turn_short: a head whose turn is too short joins again, 
       assert.deepEqual({ state: entry(q, a).state, position: entry(q, a).position }, { state: 'waiting', position: 2 });
       assert.deepEqual((await rejoins(a)).map(x => x.metadata.why), ['turn_short']);
       assert.deepEqual(await rejoins(b), []);
-      committed(await release(a)); committed(await release(b));
+      committed(await releaseHeld(a)); committed(await releaseHeld(b));
     });
 
     await t.test('any other reason is refused (22023) and writes nothing', async () => {
@@ -148,7 +155,7 @@ test('merge_queue_yield turn_short: a head whose turn is too short joins again, 
       for (const reason of ['whatever', '', null, 7, ['turn_short']])
         await assert.rejects(() => yieldSlot(81, headA, { reason }), { code: '22023' }, JSON.stringify(reason));
       assert.deepEqual(await rejoins(a), []);
-      committed(await release(a));
+      committed(await releaseHeld(a));
     });
 
     await t.test('the CI door still carries merge_queue_yield, and the yield knows turn_short, after every migration', async () => {
