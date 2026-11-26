@@ -347,14 +347,15 @@ export function waitLimitSeconds(env) {
 }
 // fetchImpl with bounded retries of transient read failures. A request is a read when its method is GET, or when its caller marks it
 // (init.retryRead, a POST that only reads). Each attempt gets its own time bound (init.attemptMs, else READ_ATTEMPT_MS, never past
-// deadlineAt) and reads the whole body inside it, so a reply cut off mid-body is a failed attempt too. A failure left at the end is
+// deadlineAt) and reads the whole body inside it, so a reply cut off mid-body is a failed attempt too. Reads may lower maxAttempts
+// for diagnostics. A failure left at the end is
 // marked transient (a transient status is returned as it is: github() marks its error). No attempt starts and no retry waits past
 // deadlineAt. Wrapping twice adds nothing. Nothing that is not a read is ever repeated.
 export function retryingFetch(fetchImpl, { sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now = () => Date.now(),
   deadlineAt = () => Infinity, timeoutSignal = (ms) => AbortSignal.timeout(ms) } = {}) {
   if (fetchImpl[RETRYING]) return fetchImpl;
   const wrapped = async (url, init = {}) => {
-    const { retryRead = false, attemptMs = READ_ATTEMPT_MS, ...request } = init;
+    const { retryRead = false, attemptMs = READ_ATTEMPT_MS, maxAttempts = READ_ATTEMPTS, ...request } = init;
     if (String(request.method ?? "GET").toUpperCase() !== "GET" && retryRead !== true) return fetchImpl(url, request);
     let failure = null;
     for (let attempt = 1; ; attempt += 1) {
@@ -376,7 +377,7 @@ export function retryingFetch(fetchImpl, { sleep = (ms) => new Promise((resolve)
         failure = error;
       }
       const delay = READ_RETRY_DELAYS_MS[attempt - 1];
-      if (attempt >= READ_ATTEMPTS || now() + delay >= deadlineAt()) {
+      if (attempt >= maxAttempts || now() + delay >= deadlineAt()) {
         if (response) return response;
         throw markTransient(failure);
       }
@@ -553,6 +554,35 @@ export async function nativeAdmissionCheck(fetchImpl, token, repository, headSha
     && Number.isFinite(started) && Number.isFinite(completed) && completed >= started
     && completed <= observed + SAME_EVENT_MS && Number.isFinite(since) && started >= since - SAME_EVENT_MS;
   return { settled: true, check: newest, admitted: bound && newest.conclusion === "success" };
+}
+
+// 提交 D (PLAN-claim-pr-binding-20261125 §3): why a head has no Native admission is said once, by the admission side, in its
+// resident-queue/<node> status on the head (the resident package's src/pr-status.mjs: CLAIM_NOT_CURRENT and what to do, a wait, a
+// stop). A refusal for an absent admission quotes each node's newest text. Text only: it never admits or refuses anything, so who
+// posted the status does not matter, and a read that fails, or no such status, leaves the refusal word for word. Installed alone:
+// keep RESIDENT_STATUS_CONTEXT_PREFIX and residentSaying identical to scripts/ci/clued-work-admission.mjs (a test compares them).
+export const RESIDENT_STATUS_CONTEXT_PREFIX = "resident-queue/";
+export function residentSaying(statuses) {
+  if (!Array.isArray(statuses)) return "";
+  const oneLine = (value, max) => { const text = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+    return text.length <= max ? text : `${text.slice(0, max - 1)}…`; };
+  const newest = new Map();
+  for (const status of statuses.filter((s) => s && typeof s.context === "string" && s.context.startsWith(RESIDENT_STATUS_CONTEXT_PREFIX))
+    .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0))) if (!newest.has(status.context)) newest.set(status.context, status.description);
+  return [...newest].filter(([, description]) => typeof description === "string" && description.trim()).slice(0, 3)
+    .map(([context, description]) => `${oneLine(context, 80)}: ${oneLine(description, 200)}`).join("; ");
+}
+// The read for it, with the hook's token as it is: no new token and no new App permission. The repository is public, so its
+// statuses read like any public data (the gate's residentHeldHint reads them the same way); were it not, the read fails and the
+// refusal stays as it was. Keep the no-wait refusal prompt with one short attempt inside the hook's read deadline.
+const RESIDENT_STATUS_ATTEMPT_MS = 1_000;
+async function residentStatusSaying(fetchImpl, token, repository, headSha) {
+  try {
+    const readOnce = (url, init) => fetchImpl(url, { ...init, attemptMs: RESIDENT_STATUS_ATTEMPT_MS, maxAttempts: 1 });
+    return residentSaying(await github(readOnce, token, `/repos/${repository}/commits/${headSha}/statuses?per_page=100`));
+  } catch {
+    return "";
+  }
 }
 
 // The workflows whose required checks the train needs on S (ADR 0018 §8):
@@ -1090,6 +1120,11 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
     result.allow = Boolean(native.admitted && live && repair.ok);
     result.reason = `pull request #${pr.number} changes ${[...new Set(changed)].join(", ")}; Native admission ${native.check?.id ?? "absent"}: `
       + `${result.allow ? `succeeded${merged ? "; merged with this head meanwhile" : ""}` : `not admitted (binding, current head, conclusion, freshness or rerun${repair.why ? `: ${repair.why}` : ""})`}${rerun}`;
+    // 提交 D: no admission at all; the admission side's own words say why (CLAIM_NOT_CURRENT, a wait, a stop). Text only.
+    if (!result.allow && !native.check) {
+      const saying = await residentStatusSaying(fetchImpl, token, repository, pr.head.sha);
+      if (saying) result.reason += `; admission side's status: ${saying}`;
+    }
     return result;
   }
   throw new Error(`unreachable event ${event}`);
