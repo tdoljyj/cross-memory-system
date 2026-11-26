@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import { writeFileSync } from 'node:fs';
+import { accessSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { BRIDGE_POLL_MS, BRIDGE_STAGE_STOPPED_PUMP_LOST, BRIDGE_STOP_GRACE_MS, PUMP_CODES, PUMP_DEAD_CODES, PUMP_HEARTBEAT_STALE_MS, PUMP_QUIET_MS, WindowsEngine } from '../src/engine-windows.mjs';
@@ -266,6 +266,8 @@ async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, sc
   const tick = async () => { await script(now - T0, mb, ev); if (beats && mb.beatAt !== null) mb.beatAt = now; };
   const exists = async p => fs.access(p).then(() => true, () => false);
   const stopFile = path.join(brokerRoot, 'requests', `${SWAP}.stop`);
+  const takenFile = path.join(brokerRoot, 'responses', `${SWAP}.taken`);
+  const childReady = Promise.withResolvers();
   const sleep = async ms => {
     if (ev.stopAt === null && await exists(stopFile)) ev.stopAt = now - T0;
     now += ms; await tick(); await new Promise(r => setImmediate(r));
@@ -277,7 +279,8 @@ async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, sc
     // Taking the swap is one virtual-time event too. Yielding to real disk I/O
     // here let the observer advance its fake clock before the child had begun.
     writeFileSync(path.join(brokerRoot, 'requests', `${SWAP}.json`), JSON.stringify({ contract: 'clued.independent-ci.swap-broker-request/2', stage: number, nonce: 'a'.repeat(32), deadline: '2026-10-28T12:00:00Z', configSha256: 'c'.repeat(64) }));
-    writeFileSync(path.join(brokerRoot, 'responses', `${SWAP}.taken`), Buffer.from([1]));
+    writeFileSync(takenFile, Buffer.from([1]));
+    childReady.resolve(takenFile);
     for (;;) {
       // Test disposal is independent of the observer under test. A failed
       // assertion must not strand a held fake child in an infinite loop.
@@ -302,24 +305,50 @@ async function engineWith(t, { endsAt = null, ownEnding = null, beats = true, sc
   const stage = { ...stages[number - 1], linuxWorker };
   const invoke = () => engine.invoke(batch, stage, rows[number - 1]);
   const stopFiles = async () => (await fs.readdir(path.join(brokerRoot, 'requests'))).filter(n => n.endsWith('.stop'));
-  return { engine, batch, mb, ev, invoke, stopFiles, brokerRoot, now: () => now - T0 };
+  return { engine, batch, mb, ev, invoke, stopFiles, brokerRoot, childReady: childReady.promise, now: () => now - T0 };
 }
 const DEAD = { ok: false, code: 'RELAY_REFUSED_NO_RETRY' };
 
-test('a held fake child can be disposed when the observer never advances its clock', { timeout: 5000 }, async t => {
-  const f = await engineWith(t, { holdStop: true });
+async function disposeHeldChild(f) {
   f.engine.observePump = () => ({ state: { answer: null, pumpCode: null, lostAt: null, stop: null }, stop: async () => {} });
+  f.mb.onCancel = () => { f.mb.answer = { ok: false, code: 'COMPANION_PUMP_CANCELLED' }; };
   const running = f.invoke();
   try {
-    const deadline = Date.now() + 2000;
-    const taken = path.join(f.brokerRoot, 'responses', `${SWAP}.taken`);
-    while (!(await fs.access(taken).then(() => true, () => false)) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 1));
+    const taken = await Promise.race([
+      f.childReady,
+      running.then(() => assert.fail('stage ended before the fake child took the swap')),
+    ]);
     await fs.access(taken);
     assert.equal(f.now(), 0, 'no observer advanced virtual time');
   } finally {
     f.ev.forceEnd = true;
     await running;
   }
+  assert.equal(f.now(), 0, 'disposal did not need to advance virtual time');
+}
+
+test('a held fake child can be disposed when the observer never advances its clock', async t => {
+  await disposeHeldChild(await engineWith(t, { holdStop: true }));
+});
+
+test('a held fake child can be disposed when its start crosses the wall-clock deadline', async t => {
+  const f = await engineWith(t, { holdStop: true });
+  const start = Promise.withResolvers();
+  const requireV2 = f.engine.requireV2.bind(f.engine);
+  f.engine.requireV2 = async name => { await start.promise; return requireV2(name); };
+
+  let wall = T0;
+  t.mock.method(Date, 'now', () => wall);
+  const taken = path.join(f.brokerRoot, 'responses', `${SWAP}.taken`);
+  const access = fs.access;
+  // Keep the early probe in the event-loop turn where the child is still held.
+  t.mock.method(fs, 'access', async (file, ...args) => file === taken ? accessSync(file, ...args) : access(file, ...args));
+
+  const checking = disposeHeldChild(f);
+  wall += 6_000;
+  await new Promise(resolve => setImmediate(resolve));
+  start.resolve();
+  await checking;
 });
 
 test('signal A: no stop within the 60 s grace after the pump died, then exactly one stop; the stage ends BRIDGE_STAGE_STOPPED_PUMP_LOST', async t => {
