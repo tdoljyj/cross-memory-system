@@ -30,6 +30,8 @@ const MAX_OUTPUT = 4 * 1024 * 1024;
 export const JOB_HOST_EXE = 'CluedCompanionJobHost.exe'; // in the resident root's bin directory, compiled at install
 export const JOB_HOST_REPORT_CONTRACT = 'clued.independent-ci.companion-job-host-report/1';
 export const JOB_HOST_GRACE_MS = 60_000;
+// PR 查询窗口较短，仍为 Job Host 保留 30 秒清树和 5 秒余量。
+export const PR_HEAD_JOB_HOST_GRACE_MS = 35_000;
 export const JOB_HOST_MIN_TIMEOUT_MS = 1000;
 export const JOB_HOST_MAX_TIMEOUT_MS = 3_600_000;
 const REPORT_TAIL = 4096;
@@ -58,18 +60,32 @@ const withoutReport = (stderr, nonce) => stderr.replace(new RegExp(`\\r?\\n?clue
 
 export class Runner {
   // jobHost: the absolute path of the installed job host (companion only), or null for the service's direct children.
-  constructor({ env = FIXED_ENV, spawnImpl = spawn, jobHost = null, nonce = () => randomBytes(16).toString('hex') } = {}) {
+  constructor({ env = FIXED_ENV, spawnImpl = spawn, jobHost = null, nonce = () => randomBytes(16).toString('hex'),
+    graceMs = JOB_HOST_GRACE_MS } = {}) {
     if (jobHost !== null && (typeof jobHost !== 'string' || !/^[A-Za-z]:\\/.test(jobHost) || /[\0"]/.test(jobHost))) throw new Error('RUNNER_JOB_HOST_REFUSED');
     this.env = { ...env };
     this.spawnImpl = spawnImpl;
     this.jobHost = jobHost;
     this.nonce = nonce;
+    this.graceMs = graceMs;
     this.outstanding = new Set();
+    this.probeRunners = new Map();
   }
 
   get busy() { return this.outstanding.size > 0; }
 
-  run(argv, { timeoutMs, measureHost = false }) {
+  run(argv, { timeoutMs, measureHost = false, mailboxProbe } = {}) {
+    if (mailboxProbe !== undefined) {
+      if (mailboxProbe !== 'pr-head' && mailboxProbe !== 'linux-quiescence') {
+        return Promise.resolve({ code: null, stdout: '', stderr: '', refused: 'RUNNER_MAILBOX_PROBE_REFUSED' });
+      }
+      if (!this.probeRunners.has(mailboxProbe)) {
+        const graceMs = mailboxProbe === 'pr-head' ? PR_HEAD_JOB_HOST_GRACE_MS : JOB_HOST_GRACE_MS;
+        this.probeRunners.set(mailboxProbe, new Runner({ env: this.env, spawnImpl: this.spawnImpl,
+          jobHost: this.jobHost, nonce: this.nonce, graceMs }));
+      }
+      return this.probeRunners.get(mailboxProbe).run(argv, { timeoutMs, measureHost });
+    }
     if (!Array.isArray(argv) || argv.length === 0 || !argv.every(a => typeof a === 'string' && !a.includes('\0'))) {
       return Promise.resolve({ code: null, stdout: '', stderr: '', refused: 'RUNNER_ARGV_REFUSED' });
     }
@@ -126,7 +142,7 @@ export class Runner {
       const guard = setTimeout(() => {
         settle({ code: null, stdout, stderr, timedOut: true, tree: 'unconfirmed' });
         try { child.kill(); } catch { /* the close event still ends the busy state */ }
-      }, timeoutMs + JOB_HOST_GRACE_MS);
+      }, timeoutMs + this.graceMs);
       // 'error' without a pid: the host never started. With a pid (for example a refused kill) the host may still run: the
       // runner stays busy until its close event.
       child.on('error', () => {
