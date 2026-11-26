@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { executeSuite, expandArgv, SUITE_COMMANDS } from './ci-required-selection.mjs';
-import reporter from './ci-test-failures-reporter.mjs';
+import reporter, { metronomeWorkload } from './ci-test-failures-reporter.mjs';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -74,6 +76,19 @@ test('fixture [needs:non-elevated]', () => { throw new Error('must be skipped');
   assert.deepEqual(Object.keys(JSON.parse(match[1])), alphabetical.toSorted().map((file) => `${suite.cwd}/${file}`));
   writeFileSync(shardSecondsFile, '{"a.test.mjs": -1}');
   assert.deepEqual(expand(), alphabetical.toSorted());
+});
+
+test('B4: the metronome workload does not use native hash acceleration', (t) => {
+  const createHash = t.mock.method(crypto, 'createHash', () => {
+    throw new Error('the metronome must not call crypto.createHash');
+  });
+  try {
+    syncBuiltinESMExports();
+    assert.doesNotThrow(() => metronomeWorkload());
+  } finally {
+    createHash.mock.restore();
+    syncBuiltinESMExports();
+  }
 });
 
 test('Windows ci-suites-windows 作业上限覆盖两遍实测耗时并留出 25% 余量', () => {

@@ -23,6 +23,8 @@
 // failed, so a known test failing for another reason is a new failure.
 // The top-level file's completion includes loading, hooks and process exit. Its
 // ms is the shard weight, with top-level test ms as a fallback.
+// The metronome uses fixed JavaScript integer work because SHA-256 throughput
+// varies with hardware SHA instruction support and skews comparisons between hosts.
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
@@ -63,14 +65,22 @@ export function failureFingerprint(error) {
 // A top-level test's duration as {ms}, or nothing.
 const timed = (data) => (data.nesting === 0 && Number.isFinite(data.details?.duration_ms) ? { ms: Math.round(data.details.duration_ms) } : {});
 
-const METRONOME_INPUT = Buffer.alloc(64 * 1024);
+const METRONOME_WORDS = 16 * 1024;
+const METRONOME_ROUNDS = 640;
 
 export function metronomeWorkload() {
-  let digest = Buffer.alloc(0);
-  for (let round = 0; round < 640; round += 1) {
-    digest = createHash('sha256').update(METRONOME_INPUT).update(digest).digest();
+  const words = new Uint32Array(METRONOME_WORDS);
+  let mixed = 1;
+  for (let round = 0; round < METRONOME_ROUNDS; round += 1) {
+    for (let index = 0; index < words.length; index += 1) {
+      mixed ^= words[index];
+      mixed ^= mixed << 13;
+      mixed ^= mixed >>> 17;
+      mixed ^= mixed << 5;
+      words[index] = mixed;
+    }
   }
-  return digest;
+  return words;
 }
 
 export default async function* reporter(source, { workload = metronomeWorkload } = {}) {
