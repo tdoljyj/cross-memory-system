@@ -5165,3 +5165,42 @@ test("G-5 gate side: the gate holds pr-status.mjs's held-texts block byte for by
     assert.deepEqual(gateModule.heldPartOf(prStatus.withWatchdogLine(written, true).description), { hint, text: written.description });
   }
 });
+
+// 提交 D (PLAN-claim-pr-binding-20261125 §3): with no Native admission on the head, the gate's refusal (annotation and step
+// summary) says why in the admission side's own words: each resident-queue/<node>'s newest text on the head. #1320's head
+// f052a0bc6, 11-25 08:32 Beijing: the resident wrote CLAIM_NOT_CURRENT, the gate said only "has posted no check". Text only:
+// the verdict, the wait and the held-text rule are as before; a read that fails or no such status leaves the reasons as they were.
+const FIELD_CLAIM_TEXT = "当班：等待中（CLAIM_NOT_CURRENT，当前提交未授权：认领持有人对这个提交做 authorize_head 后自动继续）…";
+const claimStatuses = [
+  { id: 8003, context: "resident-queue/turing (info only)", state: "pending", created_at: "2026-11-25T00:46:00Z", description: FIELD_CLAIM_TEXT },
+  { id: 8002, context: "resident-queue/turing (info only)", state: "pending", created_at: "2026-11-25T00:32:00Z", description: "当班：运行中：第 1 段（准入）" },
+  { id: 8001, context: "ci/other", state: "pending", created_at: "2026-11-25T00:31:00Z", description: "unrelated" },
+];
+const absentReason = (seconds) => `kooyumi-work-admission of App 5368905 for #452 on ${HEAD}: has posted no check after ${seconds}s`;
+test("提交 D gate: Native admission absent, the not-admitted reason carries the resident's newest resident-queue text (#1320)", async () => {
+  for (const [wait, seconds] of [["0", 0], [undefined, INDEPENDENT_GATE_WAIT_SECONDS]]) {
+    const { outcome, slept } = await independentGate([], { envOverrides: wait === undefined ? {} : { CLUED_ADMISSION_GATE_WAIT_SECONDS: wait },
+      script: statusesScript(claimStatuses) });
+    assert.deepEqual([outcome.admitted, outcome.verdict, waitedSeconds(slept)], [false, "ADMISSION_PENDING", seconds], "the wait is as before");
+    assert.equal(outcome.reasons.length, 1, JSON.stringify(outcome.reasons));
+    assert.ok(outcome.reasons[0].startsWith(absentReason(seconds)), outcome.reasons[0]);
+    assert.ok(outcome.reasons[0].includes("当前提交未授权") && outcome.reasons[0].includes("CLAIM_NOT_CURRENT"), outcome.reasons[0]);
+    assert.ok(!outcome.reasons[0].includes("第 1 段") && !outcome.reasons[0].includes("unrelated"), outcome.reasons[0]);
+    assert.ok(renderSummary(outcome).includes("当前提交未授权"), "the step summary, which ci-failures.sh reads, says it");
+  }
+});
+test("提交 D gate: a statuses read that fails, or no resident-queue text, leaves the reason word for word; an existing check is not annotated", async () => {
+  for (const [label, script] of [
+    ["403", statusesScript(() => ({ status: 403, body: { message: "Resource not accessible by integration" } }))],
+    ["502", statusesScript(() => ({ status: 502, body: {} }))], ["thrown", statusesScript(() => { throw new Error("ECONNRESET"); })],
+    ["unexpected body", statusesScript({ statuses: claimStatuses })], ["none", statusesScript([])],
+    ["another context", statusesScript([claimStatuses[2]])], ["no statuses route", {}],
+  ]) {
+    const { outcome } = await independentGate([], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" }, script });
+    assert.deepEqual([label, outcome.admitted, outcome.verdict, outcome.reasons], [label, false, "ADMISSION_PENDING", [absentReason(0)]]);
+  }
+  const failed = await independentGate([nativeCheck({ conclusion: "failure" })], { script: statusesScript(claimStatuses) });
+  assert.equal(failed.outcome.reasons.some((reason) => reason.includes("当前提交未授权")), false, JSON.stringify(failed.outcome.reasons));
+  const admitted = await independentGate([nativeCheck()], { script: statusesScript(claimStatuses) });
+  assert.deepEqual([admitted.outcome.admitted, admitted.outcome.reasons], [true, []]);
+});
