@@ -31,13 +31,17 @@ SendSIGKILL=no
 # its root-owned state and the Ed25519 result key, nothing else).
 NoNewPrivileges=yes
 ProtectSystem=strict
+ReadWritePaths=/var/lib/clued-independent-ci
 # The trivy role's cache root (Source manifest roles.trivy.formalTrivy.cacheRoot) is a sibling of the
 # state root, not inside it: the role takes its prepare.lock there and stages and promotes the DB and
-# checks generations. Without it the cache is read-only here and every trivy job ends before its first
-# container (EROFS on prepare.lock). The '-' keeps a missing cache root from failing every worker unit at
-# namespace setup: gitleaks and placement are unaffected, and a trivy job then ends UNCERTAIN (its role
-# session checks the cache root as a protected path), which halts the resident: fail closed.
-ReadWritePaths=/var/lib/clued-independent-ci -/var/lib/clued-independent-ci-trivy-cache
+# checks generations. Its session wants it to exist already as a protected path (root at every level, no
+# group/other write, not a link), and the worker cannot create it (/var/lib is read-only here). So this
+# unit creates it: systemd makes /var/lib/<StateDirectory> on every start, before ExecStartPre, owned by
+# User=/Group= (root:root) with StateDirectoryMode, and keeps it writable under ProtectSystem=strict. No
+# install path creates it; first install, reinstall and the universal upgrade all install this one file.
+# test/test_trivy_cache_root.py holds it to the resident tool's TRIVY_CACHE and to the role material.
+StateDirectory=clued-independent-ci-trivy-cache
+StateDirectoryMode=0700
 # L2 (DESIGN 70.2): every run gets a view built when the unit starts and gone when its last process exits, success or failure.
 # Each Exec line builds it again from these settings. It shows only what this one job uses:
 #   - formal-spool: an empty read-only tmpfs with the live incoming/ and outgoing/ bound back in (the relay keeps writing

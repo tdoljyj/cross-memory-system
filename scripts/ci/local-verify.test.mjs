@@ -4,6 +4,7 @@
 // change, hands commits to the Linux clone and compares a failure with main.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,7 +12,7 @@ import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as selection from './ci-required-selection.mjs';
 import { acquireLock, bundleFor, cacheHome, changedFiles, chooseSuites, compareCommand, compareSuite, dataRoot, dependencyKey, fixedDrives, githubRefs,
-  killCommand, linkDependencies, linuxScript, mainResultsFile, mergedCandidate, newestMain, npmCommand, parseArgs, present,
+  killCommand, linkDependencies, linuxScript, loadSelector, mainResultsFile, mergedCandidate, newestMain, npmCommand, parseArgs, present,
   readCached, readResults, realpathLoose, refUpdates, residentBusy, RESIDENT_STATUS, runCommands, runsLinux, selectAffected, snapshot, startLinux, systemDriveNotes, testEnvironment, testsRun,
   toWslPath, verifySuites, watchdogLevels, windowsPathOf, withFailureReport, worktree, worktreePath, writeCached, YIELD_TIMEOUT_MS, yieldToResident } from './local-verify.mjs';
 
@@ -137,17 +138,65 @@ test('yielding: waits while the resident runs, says why, keeps the run alive, go
   assert.equal(lines.length, 1);
 });
 
-test('each suite first yields to the resident, from one wait for the whole run; --no-yield (null) never asks', (t) => {
+test('each suite first yields to the resident, from one wait for the whole run; --no-yield (null) never asks', async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-yield-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const args = { root: home, home, selector: { readKnownFailures: () => ({}) }, main: 'b'.repeat(40), dir: path.join(home, 'missing'), suites: ['one', 'two', 'three'],
     logs: home, freshBase: false, run: { run: { pid: process.pid }, touch: () => {} }, platform: 'windows', temp: home };
   const asked = [];
-  const results = verifySuites({ ...args, yieldTo: (label, o) => { asked.push([label, o.timeoutMs, typeof o.keepAlive]); return 20 * 60_000; } });
+  const results = await verifySuites({ ...args, yieldTo: (label, o) => { asked.push([label, o.timeoutMs, typeof o.keepAlive]); return 20 * 60_000; } });
   assert.deepEqual(asked, [['windows: one', YIELD_TIMEOUT_MS, 'function'], ['windows: two', YIELD_TIMEOUT_MS - 20 * 60_000, 'function'],
     ['windows: three', YIELD_TIMEOUT_MS - 40 * 60_000, 'function']]);
   assert.equal(results.length, 3, 'every suite still gets its verdict (here: the worktree is missing)');
-  assert.equal(verifySuites({ ...args, yieldTo: null }).length, 3);
+  assert.equal((await verifySuites({ ...args, yieldTo: null })).length, 3);
+});
+
+// Gap A (FABLE r8 B2): local verification runs what CI runs, a command the change adds to a suite included.
+test('local verification reports a failing candidate addition without running that command on main', async (t) => {
+  const { dir, commit } = repository(t);
+  fs.mkdirSync(path.join(dir, 'scripts/ci'), { recursive: true });
+  const main = commit({ 'scripts/ci/retrigger-counter.test.mjs': "import test from 'node:test'; test('baseline', () => {});" });
+  commit({ 'scripts/ci/ci-required-selection.mjs': `export const SUITE_COMMANDS = {
+    'retrigger-counter': [{ cwd: '.', argv: ['node', '-e', 'process.exit(23)'] }]
+  };` });
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-addition-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  // In-process, as on Linux and in Actions: this test takes no machine-wide suite slot.
+  const saved = process.env.GITHUB_ACTIONS;
+  process.env.GITHUB_ACTIONS = 'true';
+  t.after(() => { if (saved === undefined) delete process.env.GITHUB_ACTIONS; else process.env.GITHUB_ACTIONS = saved; });
+  const selector = { ...selection, reporterUrl: pathToFileURL(selection.REPORTER_PATH).href };
+  const [result] = await verifySuites({ root: dir, home, dir, selector, main, suites: ['retrigger-counter'], logs: home,
+    run: { run: { pid: process.pid }, touch() {} }, platform: process.platform, temp: home, yieldTo: null });
+  assert.equal(result.verdict, 'new', result.detail);
+  assert.match(result.detail, /command 2: new .*23/);
+  assert.match(fs.readFileSync(result.log, 'utf8'), /retrigger-counter\.test\.mjs[\s\S]*process\.exit\(23\)/);
+  assert.equal(fs.existsSync(path.join(home, `${process.platform}-retrigger-counter.main.log`)), false);
+});
+
+// Gap A review finding 4: as CI, a test file the change adds to a trusted command's list runs alone after that command.
+test('local verification runs a test file added to a trusted command list alone', async (t) => {
+  const { dir, commit } = repository(t);
+  fs.mkdirSync(path.join(dir, 'scripts/ci'), { recursive: true });
+  const main = commit({ 'scripts/ci/retrigger-counter.test.mjs': "import test from 'node:test'; test('baseline', () => {});" });
+  commit({ 'scripts/ci/added.test.mjs': "import test from 'node:test'; test('added', () => { process.exitCode = 23; throw new Error('added failed'); });",
+    'scripts/ci/ci-required-selection.mjs': `export const SUITE_COMMANDS = {
+    'retrigger-counter': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/added.test.mjs', 'scripts/ci/retrigger-counter.test.mjs'] }]
+  };` });
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-added-file-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const saved = process.env.GITHUB_ACTIONS;
+  process.env.GITHUB_ACTIONS = 'true';
+  t.after(() => { if (saved === undefined) delete process.env.GITHUB_ACTIONS; else process.env.GITHUB_ACTIONS = saved; });
+  const selector = { ...selection, reporterUrl: pathToFileURL(selection.REPORTER_PATH).href };
+  const [result] = await verifySuites({ root: dir, home, dir, selector, main, suites: ['retrigger-counter'], logs: home,
+    run: { run: { pid: process.pid }, touch() {} }, platform: process.platform, temp: home, yieldTo: null });
+  assert.equal(result.verdict, 'new', result.detail);
+  assert.match(result.detail, /command 2: new/);
+  const groups = fs.readFileSync(result.log, 'utf8').split(/\r?\n/).filter((line) => line.startsWith('::group::'))
+    .map((line) => line.split(' ').filter((arg) => !arg.startsWith('--test-reporter')).join(' '));
+  assert.deepEqual(groups, ['::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter.test.mjs',
+    '::group::retrigger-counter: (.) node --test scripts/ci/added.test.mjs']);
 });
 
 test('Windows starts npm through its CLI next to node.exe (npm.cmd needs a shell); elsewhere npm itself', () => {
@@ -189,13 +238,89 @@ test('paths, keys and the environment the commands get', () => {
   }
   const env = testEnvironment({ Path: 'C:\\bin', HOME: '/h', TEMP: '/t', LC_ALL: 'C', HTTPS_PROXY: 'p', GITHUB_TOKEN: 'secret', SUPABASE_URL: 's',
     CLUED_HOME: 'c', NODE_OPTIONS: '--x', CI: 'true' }, { CI_BASE_SHA: 'm' }, 'linux');
-  assert.deepEqual(env, { Path: 'C:\\bin', HOME: '/h', TEMP: '/t', LC_ALL: 'C', HTTPS_PROXY: 'p', CI_BASE_SHA: 'm' });
-  assert.deepEqual(testEnvironment({ TEMP: '/t' }, {}, 'win32'), { TEMP: '/t', PYTHONUTF8: '1' }, "Windows Python in UTF-8 mode, like the runners' locale");
+  // Codex review of 2ee162c2, high 1: local-verify's commands get the selector's test environment, fake identity included.
+  const identity = new Set([...Object.keys(selection.fakeIdentityEnv('d')), 'CLUED_UNDER_TEST']);
+  const own = (vars) => Object.fromEntries(Object.entries(vars).filter(([name]) => !identity.has(name)));
+  assert.deepEqual(own(env), { Path: 'C:\\bin', HOME: '/h', TEMP: '/t', LC_ALL: 'C', HTTPS_PROXY: 'p', CI_BASE_SHA: 'm' });
+  assert.equal(env.GITHUB_TOKEN, selection.FAKE_GITHUB_TOKEN);
+  assert.equal(env.CLUED_UNDER_TEST, '1');
+  assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
+  assert.deepEqual(own(testEnvironment({ TEMP: '/t' }, {}, 'win32')), { TEMP: '/t', PYTHONUTF8: '1' }, "Windows Python in UTF-8 mode, like the runners' locale");
+});
+
+// Codex review of 2ee162c2, high 1: the in-process path (Linux, Actions) listed the application's unit tests with the
+// caller's whole environment, and ran the commands with whatever env it was given.
+test("runCommands lists unit tests and runs every command with the test environment, never the caller's", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-env-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  fs.writeFileSync(path.join(root, 'scripts', 'select-tests.mjs'), `import { writeFileSync } from 'node:fs';
+writeFileSync('listing-env.json', JSON.stringify({ pat: process.env.GITHUB_PAT_TOKEN ?? null, gh: process.env.GH_TOKEN ?? null,
+  marker: process.env.CLUED_UNDER_TEST ?? null, nosystem: process.env.GIT_CONFIG_NOSYSTEM ?? null }));
+console.log('tests/a.test.mjs');
+`);
+  const saved = process.env.GITHUB_PAT_TOKEN;
+  process.env.GITHUB_PAT_TOKEN = 'owner-pat';
+  t.after(() => { if (saved === undefined) delete process.env.GITHUB_PAT_TOKEN; else process.env.GITHUB_PAT_TOKEN = saved; });
+  const selector = { ...selection, reporterUrl: 'file:///r.mjs', SUITE_COMMANDS: { s: [{ cwd: '.', argv: ['node', '--test', '{unit-tests}'] }] } };
+  const seen = [];
+  const results = runCommands(selector, 's', root, 'm'.repeat(40), path.join(root, 'log.txt'), {
+    env: { ...process.env, GH_TOKEN: 'owner-token', ANTHROPIC_API_KEY: 'owner-key' },
+    spawn: (file, args, options) => { seen.push(options.env); return { status: 0 }; }, kill: () => {} });
+  assert.equal(results[0].error, null, fs.readFileSync(path.join(root, 'log.txt'), 'utf8'));
+  const fake = selection.FAKE_GITHUB_TOKEN;
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'listing-env.json'), 'utf8')), { pat: null, gh: fake, marker: '1', nosystem: '1' },
+    'the unit-test listing');
+  assert.equal(seen.length, 1);
+  assert.deepEqual(['GITHUB_PAT_TOKEN', 'ANTHROPIC_API_KEY'].filter((name) => name in seen[0]), [], 'the command');
+  assert.equal(seen[0].GH_TOKEN, fake);
+  assert.equal(seen[0].CLUED_UNDER_TEST, '1');
+});
+
+// Codex review of 2ee162c2, low 7: the Linux side ran a copy of local-verify.mjs alone, without the modules it imports
+// (ci-deps.mjs, the test environment), so it could not load there.
+// Fable ruling 11-20 "补：止血 PR 第四轮" §3: the environment version is the hash of the whole file that defines the
+// environment rules (test-env.mjs), so any change in it, wherever, is another version. local-verify's additions are rules
+// of that file too.
+test('the environment version is the hash of the whole test-env.mjs, and changes with any edit to it', (t) => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(path.join(here, 'test-env.mjs'));
+  assert.equal(selection.TEST_ENV_VERSION, createHash('sha256').update(source).digest('hex'));
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'test-env-version-'));
+  t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(copy, 'test-env.mjs'), Buffer.concat([source, Buffer.from('\n// an edit\n')]));
+  const edited = spawnSync(process.execPath, ['--input-type=module', '-e',
+    `const { TEST_ENV_VERSION } = await import(${JSON.stringify(pathToFileURL(path.join(copy, 'test-env.mjs')).href)}); console.log(TEST_ENV_VERSION);`],
+  { encoding: 'utf8' });
+  assert.equal(edited.status, 0, edited.stderr);
+  assert.notEqual(edited.stdout.trim(), selection.TEST_ENV_VERSION);
+  assert.equal(testEnvironment({ TEMP: '/t' }, {}, 'win32').PYTHONUTF8, selection.TEST_ENV_RULES.localVerify.win32.PYTHONUTF8,
+    "local-verify's additions are rules of that file");
+});
+
+test('the Linux side gets local-verify with every module it imports, and that copy loads', async (t) => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const closure = new Set();
+  const visit = (name) => {
+    if (closure.has(name)) return;
+    closure.add(name);
+    for (const [, file] of fs.readFileSync(path.join(here, name), 'utf8').matchAll(/^import [^;]*? from '\.\/([^'/]+\.mjs)';$/gm)) visit(file);
+  };
+  visit('local-verify.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-tool-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const { copyTool } = await import('./local-verify.mjs');
+  assert.equal(typeof copyTool, 'function');
+  copyTool(dir);
+  assert.deepEqual(fs.readdirSync(dir).sort(), [...closure].sort());
+  const load = spawnSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(pathToFileURL(path.join(dir, 'local-verify.mjs')).href)})`],
+    { encoding: 'utf8' });
+  assert.equal(load.status, 0, load.stderr);
 });
 
 test("the Linux run takes objects only from this side's bundle (no GitHub login there), sets origin/* and tags exactly, and runs this side's copy", () => {
   const candidate = 'a'.repeat(40), main = 'b'.repeat(40);
-  const script = linuxScript({ bundle: "/mnt/c/L/it's.bundle", refs: '/mnt/c/L/run.refs', tool: '/mnt/c/L/tool.mjs', run: 'run-7', candidate, main,
+  const script = linuxScript({ bundle: "/mnt/c/L/it's.bundle", refs: '/mnt/c/L/run.refs', tool: '/mnt/c/L/tool', run: 'run-7', candidate, main,
     suites: ['clued-cloud', "x'y"], freshBase: true });
   assert.match(script, /^set -e\n/);
   assert.ok(script.includes('remote add origin https://github.com/tdoljyj/cross-memory-system.git'), 'an origin remote, as in CI');
@@ -210,7 +335,7 @@ test("the Linux run takes objects only from this side's bundle (no GitHub login 
   assert.ok(script.indexOf('trap ') < script.indexOf('flock -w'), 'the clean-up is set before anything is created');
   assert.ok(script.includes('refs/local-verify/run-7/ refs/local-verify/incoming/run-7/'), 'and removes the refs of this run only');
   assert.ok(script.includes(`for commit in ${candidate} ${main}; do`));
-  assert.ok(script.includes(`cp '/mnt/c/L/tool.mjs' "$tool/local-verify.mjs"`), 'the same tool on both sides, whatever the change holds');
+  assert.ok(script.includes(`cp '/mnt/c/L/tool'/*.mjs "$tool/"`), 'the same tool on both sides, whatever the change holds');
   assert.ok(script.endsWith(`--candidate ${candidate} --base ${main} --no-fetch --fresh-base --suite 'clued-cloud' --suite 'x'\\''y'`));
   assert.ok(linuxScript({ bundle: null, refs: '/r', tool: '/t', run: 'r', candidate, main, suites: ['a'], noYield: true }).endsWith("--no-fetch --no-yield --suite 'a'"),
     'the Linux side skips the wait for the resident too when asked');
@@ -284,10 +409,14 @@ test('runCommands starts every command, also after a failure, with the report, a
     { cwd: '.', argv: ['python', '-m', 'x'] },
   ] } };
   const calls = [];
+  const tick = { type: 'metronome', n: 2, median_ms: 20.5 };
   const spawn = (file, args) => {
     calls.push([file, args]);
     const destination = args.find((arg) => arg.startsWith('--test-reporter-destination=') && arg.endsWith('.jsonl'));
-    if (destination) fs.writeFileSync(destination.split('=')[1], `${JSON.stringify(fail('t'))}\n${JSON.stringify(summary)}\n`);
+    if (destination) {
+      const events = calls.length === 2 ? [fail('t'), summary, tick] : [fail('t')];
+      fs.writeFileSync(destination.split('=')[1], events.map((event) => JSON.stringify(event)).join('\n'));
+    }
     return [{ status: 1 }, { status: 1 }, { status: null, signal: 'SIGTERM' }, { error: new Error('spawn python ENOENT') }][calls.length - 1];
   };
   const killed = [];
@@ -296,13 +425,14 @@ test('runCommands starts every command, also after a failure, with the report, a
   assert.deepEqual(killed, [root, root], 'what a stopped or unstartable command left is ended');
   assert.deepEqual(results.map((result) => [result.status, result.report !== null, result.known]), [[1, false, null], [1, true, null], [128, true, 's'], [null, false, null]]);
   assert.equal(results[1].report.events[0].type, 'fail');
+  assert.deepEqual(results[1].report.metronome, tick);
   assert.equal(calls[1][0], process.execPath, 'node is the running Node, not whatever PATH finds');
   assert.match(results[3].error, /ENOENT/);
   assert.match(fs.readFileSync(path.join(root, 'log.txt'), 'utf8'), /::group::s: \(\.\) npm run lint/);
   // a known-failure command that exits 0 without its report did not finish, as runSuite judges it
   const silent = runCommands({ ...selector, SUITE_COMMANDS: { k: [{ cwd: '.', known: 'k', argv: ['node', 'run.mjs', '--test', 'b.test.mjs'] }] } },
     'k', root, 'm'.repeat(40), path.join(root, 'log2.txt'), { spawn: () => ({ status: 0 }), kill: () => {} });
-  assert.deepEqual(silent[0].report, { events: [], summary: null, corrupt: false });
+  assert.deepEqual(silent[0].report, { events: [], summary: null, metronome: null, corrupt: false });
   assert.notEqual(compareSuite(silent, null, { selector: selection, knownLists: { k: [] } }).verdict, 'pass');
 });
 
@@ -444,6 +574,27 @@ test('the dependency link: made, kept, replaced when stale or broken, never over
   assert.equal(fs.readFileSync(path.join(a, 'mark'), 'utf8'), 'a');
 });
 
+test('the local selector uses the timing table from its base commit', async (t) => {
+  const { dir, commit } = repository(t);
+  const table = 'scripts/ci/ci-shard-seconds.json';
+  fs.mkdirSync(path.join(dir, 'scripts/ci'), { recursive: true });
+  const main = commit({
+    'scripts/ci/ci-required-selection.mjs': "export const SHARD_SECONDS_PATH = new URL('./ci-shard-seconds.json', import.meta.url);",
+    'scripts/ci/ci-known-failures.json': '{}',
+    'scripts/ci/ci-test-failures-reporter.mjs': '',
+    [table]: '{"tests/heavy.test.mjs":30}',
+  });
+  commit({ [table]: '{"tests/other.test.mjs":40}' });
+  const home = path.join(dir, 'cache');
+  const old = path.join(home, 'selectors', main);
+  fs.mkdirSync(old, { recursive: true });
+  fs.copyFileSync(path.join(dir, 'scripts/ci/ci-required-selection.mjs'), path.join(old, 'ci-required-selection.mjs'));
+  fs.writeFileSync(path.join(old, 'complete'), '');
+
+  const selector = await loadSelector(dir, main, home);
+  assert.equal(fs.readFileSync(selector.SHARD_SECONDS_PATH, 'utf8'), '{"tests/heavy.test.mjs":30}');
+});
+
 test('runCommands starts each command as runSuite would: same cwd, command line and known-failure reporter', () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const main = 'b'.repeat(40);
@@ -468,7 +619,7 @@ test('runCommands starts each command as runSuite would: same cwd, command line 
   try {
     for (const id of Object.keys(selection.SUITE_COMMANDS)) {
       const theirs = [];
-      const status = selection.runSuite(id, { root, spawn: record(theirs), log: () => {}, env: { ...process.env, CI_BASE_SHA: main, RUNNER_TEMP: scratch } });
+      const status = selection.executeSuite(id, { root, spawn: record(theirs), log: () => {}, env: { ...process.env, CI_BASE_SHA: main, RUNNER_TEMP: scratch } });
       assert.equal(status, 0, id);
       const ours = [];
       runCommands(selector, id, root, main, path.join(scratch, `${id}.log`), { spawn: record(ours) });
@@ -486,25 +637,25 @@ test('the run lock: taken, waited for while its run is alive, taken over when st
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-lock-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const file = path.join(home, 'run.lock');
-  const quiet = { log: () => {} };
+  const T = Date.parse("2026-11-01T00:00:00Z"), quiet = { log: () => {}, now: () => T };
   const release = acquireLock(home, { ...quiet, pid: 11 });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).pid, 11);
   release();
   assert.equal(fs.existsSync(file), false);
   // alive: waits until it is gone
-  fs.writeFileSync(file, JSON.stringify({ pid: 22, token: 'held', started: Date.now() }));
+  fs.writeFileSync(file, JSON.stringify({ pid: 22, token: 'held', started: T }));
   let waits = 0;
   acquireLock(home, { ...quiet, pid: 12, alive: () => true, wait: () => { waits += 1; fs.rmSync(file); } })();
   assert.equal(waits, 1);
   // gone, older than any run, or unreadable: taken over
-  for (const [held, alive] of [[{ pid: 33, token: 'dead', started: Date.now() }, () => false],
-    [{ pid: 34, token: 'old', started: Date.now() - 7 * 60 * 60_000 }, () => true], ['not json', () => true]]) {
+  for (const [held, alive] of [[{ pid: 33, token: 'dead', started: T }, () => false],
+    [{ pid: 34, token: 'old', started: T - 7 * 60 * 60_000 }, () => true], ['not json', () => true]]) {
     fs.writeFileSync(file, typeof held === 'string' ? held : JSON.stringify(held));
-    if (typeof held === 'string') fs.utimesSync(file, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    if (typeof held === 'string') fs.utimesSync(file, new Date(T - 60_000), new Date(T - 60_000));
     const mine = acquireLock(home, { ...quiet, pid: 13, alive, wait: () => assert.fail('a stale lock is not waited for') });
     assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).pid, 13);
     // another run's lock is never removed by this one's release
-    fs.writeFileSync(file, JSON.stringify({ pid: 44, token: 'theirs', started: Date.now() }));
+    fs.writeFileSync(file, JSON.stringify({ pid: 44, token: 'theirs', started: T }));
     mine();
     assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).token, 'theirs');
     fs.rmSync(file);
@@ -518,12 +669,12 @@ test('the run lock: taken, waited for while its run is alive, taken over when st
   // (and a stale lock taken over but not yet removed)
   for (const leftover of [`${file}.x-1-2.new`, `${file}.x-3-4`]) {
     fs.writeFileSync(leftover, '{}');
-    fs.utimesSync(leftover, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    fs.utimesSync(leftover, new Date(T - 60_000), new Date(T - 60_000));
   }
   acquireLock(home, { ...quiet, pid: 16 })();
   assert.deepEqual(fs.readdirSync(home), [], 'both cleared');
   // a long run renews its lock's age
-  let clock = Date.now();
+  let clock = T;
   const long = acquireLock(home, { ...quiet, pid: 15, now: () => clock });
   clock += 5 * 60 * 60_000;
   long.refresh();
@@ -546,9 +697,14 @@ test('main: the newest copy; main results kept per main, platform, suite, versio
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const at = { main: a, id: 'clued-cloud', platform: 'linux', node: 'v24.19.0', python: 'Python 3.12.3', dependencies: 'd' };
   const file = mainResultsFile(home, at);
-  for (const changed of [{ main: b }, { id: 'components' }, { platform: 'win32' }, { node: 'v24.21.0' }, { python: 'Python 3.13.0' }, { dependencies: null }]) {
+  for (const changed of [{ main: b }, { id: 'components' }, { platform: 'win32' }, { node: 'v24.21.0' }, { python: 'Python 3.13.0' }, { dependencies: null },
+    { environment: 'another' }]) {
     assert.notEqual(mainResultsFile(home, { ...at, ...changed }), file, JSON.stringify(changed));
   }
+  // Codex second review of 2ee162c2, medium 2: the suites' environment is part of the key, so main's results run under
+  // another environment (variable list, fake identity) are not compared with this one's. Its version is test-env.mjs's.
+  assert.match(String(selection.TEST_ENV_VERSION), /^[0-9a-f]{64}$/);
+  assert.equal(mainResultsFile(home, { ...at, environment: selection.TEST_ENV_VERSION }), file, 'by default the version in force');
   assert.equal(readCached(file), null);
   writeCached(file, [{ status: 0 }]);
   assert.deepEqual(readCached(file), [{ status: 0 }]);
@@ -716,18 +872,18 @@ const PR_1015_FILES = [
 const forCheck = (picked, check) => picked.selections.find((entry) => entry.check === check);
 
 test('--affected selects exactly what the ci-suites job selects, from the selection it imports', () => {
-  // The literal list of eight below is the regression lock: it is what the real run
+  // The literal list below is the regression lock: it is what the real run
   // selected for #1015 (plus ci-deps-entry, added since), so a change to the selection that alters it is to be looked at.
   const picked = selectAffected(selection, PR_1015_FILES);
   assert.deepEqual(forCheck(picked, 'ci-suites').suites, selection.selectSuites('ci-suites', PR_1015_FILES).suites, 'the same call the workflow makes');
   assert.deepEqual(forCheck(picked, 'ci-suites').suites,
-    ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry']);
+    ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry', 'selection']);
   assert.equal(forCheck(picked, 'ci-suites').reason, 'selected by changed paths');
   assert.deepEqual(picked.selections.map((entry) => entry.check), ['ci-suites', 'clued-cloud-tests', 'migration-verify']);
   assert.deepEqual(picked.suites, [...forCheck(picked, 'ci-suites').suites, 'clued-cloud'], "the application's tests run for every change; no schema file changed");
   // the line CI logs for the check, then why each suite is in
   assert.equal(picked.lines[0],
-    'ci-suites: selected by changed paths; suites: resident-node, resident-python, reinstall-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries, mechanical-outputs, ci-deps-entry');
+    'ci-suites: selected by changed paths; suites: resident-node, resident-python, reinstall-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries, mechanical-outputs, ci-deps-entry, selection');
   // the first file of each top-level directory leads, so the resident's own files show too
   assert.ok(picked.lines.some((line) => /^ {2}offline-drill: scripts\/ci\/\S+, work\/independent-ci-resident-v1\/\S+, scripts\/ci\/\S+, \.\.\. \(10 more\)$/.test(line)), picked.lines.join('\n'));
   assert.ok(picked.lines.includes('  components: config/clued-components.json'));

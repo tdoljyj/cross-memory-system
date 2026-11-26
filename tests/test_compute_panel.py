@@ -130,7 +130,7 @@ class ResidentTests(unittest.TestCase):
         self.assertEqual((summary["batches"], summary["failure_rate"]), (1, 0.0))
 
     def test_a_hint_that_never_ran_is_not_a_batch(self) -> None:
-        rows = [status(10, "failure", "落后 main 3 个提交：请合入最新 main 并推送")]
+        rows = [status(10, "pending", "落后 main 3 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）")]
         self.assertEqual(panel.resident_batches(rows), {})
 
     def test_burned_head_and_failure_rate(self) -> None:
@@ -140,9 +140,40 @@ class ResidentTests(unittest.TestCase):
         summary = panel.summarize_batches([batch, {**batch, "outcome": "running", "ended_at": None}], NOW, 7)
         self.assertEqual((summary["batches"], summary["failed"], summary["burned_heads"]), (1, 1, 1))
 
+    def test_halt_row_on_a_head_never_queued_shows_the_code(self) -> None:
+        # Field defect 2026-11-23: both residents HALTed (PUBLICATION_UNCERTAIN), the panel said idle. The node on duty now
+        # writes its HALT on every eligible open PR head (node-duty.mjs#want); the panel names the code.
+        text = "执行器已停机（PUBLICATION_UNCERTAIN），等 Owner 复位"
+        combined = [(1240, {"statuses": [status(9, "error", text, "desk")]}), (1241, {"statuses": [status(9, "error", text, "desk")]})]
+        residents = panel.resident_latest(combined)
+        self.assertEqual((residents["desk"]["halted"], residents["desk"]["activity"]), (True, "halted"))
+        report = {"schema": panel.SCHEMA, "generated_at": panel.iso(NOW), "pool": {}, "utilization": {}, "residents": residents,
+                  "others": panel.OTHERS, "metrics": {}, "alerts": {}}
+        body = panel.render(report, {})
+        self.assertIn("| 常驻 desk | 停机（PUBLICATION_UNCERTAIN） |", body)
+        self.assertNotIn("空闲", body.split("| 常驻 desk |")[1].split("\n")[0])
+        # A stall code reads the same way; an error row without a code stays 停机.
+        for description, shown in (("停摆（STATUS_STALE）：执行器状态自 00:10Z 起未更新，可能已停止", "停机（STATUS_STALE）"), ("停机", "停机")):
+            row = {"desk": {"halted": True, "activity": "halted", "description": description, "pr": 3, "at": at(9)}}
+            self.assertIn(f"| 常驻 desk | {shown} |", panel.render({**report, "residents": row}, {}))
+
+    def test_halt_row_rewritten_after_the_reset_is_neither_halt_nor_stall(self) -> None:
+        # Follow-up 2026-11-23: after the Owner's reset the node rewrites its HALT rows (node-duty.mjs#extra) as a
+        # success row without a duty word. The panel then shows no HALT for the node and no stalled PR; while the
+        # error rows are still there it shows both.
+        halt = "执行器已停机（PUBLICATION_UNCERTAIN），等 Owner 复位"
+        before = [(1240, {"sha": "a" * 40, "statuses": [status(30, "error", halt, "desk")]})]
+        after = [(1240, {"sha": "a" * 40, "statuses": [status(1, "success", "执行器已复位", "desk")]})]
+        pulls = [{"number": 1240, "draft": False}]
+        self.assertTrue(panel.resident_latest(before)["desk"]["halted"])
+        self.assertEqual([row["pr"] for row in panel.resident_stall(None, pulls, before, NOW)], [1240])
+        row = panel.resident_latest(after)["desk"]
+        self.assertEqual((row["halted"], row["activity"]), (False, "idle"))
+        self.assertEqual(panel.resident_stall(None, pulls, after, NOW), [])
+
     def test_error_row_wins_as_halt(self) -> None:
         combined = [
-            (1, {"statuses": [status(1, "failure", "落后 main 1 个提交：请合入最新 main 并推送")]}),
+            (1, {"statuses": [status(1, "pending", "落后 main 1 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）")]}),
             (2, {"statuses": [status(3, "error", "执行器已停机（X），等 Owner 复位")]}),
         ]
         row = panel.resident_latest(combined)["turing"]
@@ -158,7 +189,7 @@ class ResidentTests(unittest.TestCase):
         self.assertEqual((row["halted"], row["activity"]), (False, "running"))
 
     def test_queue_wait_ignores_hints_before_the_queue(self) -> None:
-        rows = [status(90, "failure", "落后 main 1 个提交：请合入最新 main 并推送"),
+        rows = [status(90, "pending", "落后 main 1 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）"),
                 status(30, "pending", "排队第 2 位"),
                 status(20, "pending", "当班：运行中：第 0 段（准备）"),
                 status(10, "success", "已完成")]
@@ -171,7 +202,7 @@ class ResidentTests(unittest.TestCase):
 
     def test_running_row_beats_a_newer_hint(self) -> None:
         combined = [
-            (1, {"statuses": [status(1, "failure", "落后 main 1 个提交：请合入最新 main 并推送")]}),
+            (1, {"statuses": [status(1, "pending", "落后 main 1 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）")]}),
             (2, {"statuses": [status(4, "pending", "当班：运行中：第 4 段（trivy 扫描）")]}),
         ]
         self.assertEqual(panel.resident_latest(combined)["turing"]["activity"], "running")
@@ -332,11 +363,22 @@ class StallTests(unittest.TestCase):
 
     def test_finished_hinted_and_draft_heads_are_no_work(self) -> None:
         combined = [(1, {"sha": "1" * 40, "statuses": [status(90, "success", "已完成：常驻执行器跑完八段，检查已发布")]}),
-                    (2, {"sha": "2" * 40, "statuses": [status(90, "failure", "落后 main 1 个提交：请合入最新 main 并推送")]}),
+                    (2, {"sha": "2" * 40, "statuses": [status(90, "pending", "落后 main 1 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）")]}),
+                    # A node on an older package still writes the hint as failure.
+                    (9, {"sha": "9" * 40, "statuses": [status(90, "failure", "落后 main 1 个提交：请合入最新 main 并推送")]}),
                     (3, {"sha": "3" * 40, "statuses": [status(90, "error", "执行器停机（X），等 Owner 复位")]}),
                     (4, {"sha": "4" * 40, "statuses": [{"context": "gitleaks", "state": "pending", "created_at": at(90)}]})]
-        pulls = [{"number": 1}, {"number": 2}, {"number": 3, "draft": True}, {"number": 4}]
+        pulls = [{"number": 1}, {"number": 2}, {"number": 3, "draft": True}, {"number": 4}, {"number": 9}]
         self.assertEqual(self.stall(combined, pulls), [])
+
+    def test_a_behind_head_waiting_for_the_robot_is_no_stall(self) -> None:
+        # Task bc982192: a behind head is pending now, "落后 main …" with no 当班 prefix, until the robot
+        # (clued-front-main-merge) takes main in; waiting past the duty window for its turn is not a stall.
+        line = "落后 main 3 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）"
+        behind = [(8, {"sha": "8" * 40, "statuses": [status(90, "pending", line)]})]
+        client = self.History([status(90, "pending", line), status(120, "pending", "当班：排队第 1 位")])
+        self.assertEqual(self.stall(behind, client=client), [])
+        self.assertEqual(client.paths, [])
 
     def test_a_silent_node_is_a_stall_after_the_duty_window(self) -> None:
         # The node stopped writing (machine off, companion gone): its last 当班 ages past the window.
@@ -825,7 +867,7 @@ class DuplicateKeepTests(unittest.TestCase):
         self.assertNotIn("/commits/" + "0000" + "a" * 36 + "/check-runs", again.paths)
         self.assertEqual(state["duplicates"]["total"], 36)
         self.assertEqual((len(state["duplicates"]["found"]), len(state["duplicates"]["rest"])), (panel.DUP_KEEP, 36 - panel.DUP_KEEP))
-        self.assertIn("共 36 项，只列最近 10 项", panel.render(report, state))
+        self.assertIn("违规 36 项，只列最近 10 项", panel.render(report, state))
         # and a third pass still has them (the short records are carried, not dropped)
         panel.build(BuildClient(pulls, checks), NOW + timedelta(hours=2), state)
         self.assertEqual(state["duplicates"]["total"], 36)
@@ -1437,7 +1479,7 @@ class RecordedDataTests(unittest.TestCase):
         body = panel.render(report, state)
         self.assertIn("### 重复执行", body)
         self.assertEqual(sum(1 for line in body.splitlines() if line.startswith("| #")), panel.DUP_ROWS)
-        self.assertIn("共 33 项，只列最近 10 项", body)
+        self.assertIn("违规 33 项，只列最近 10 项", body)
         self.assertLess(len(body), 40000)
         self.assertEqual([key for key in report["events"] if key.startswith("dup")], [])  # the first scan announces nothing
         self.assertEqual(len(state["announced_dup"]), 33)
@@ -1449,6 +1491,372 @@ class RecordedDataTests(unittest.TestCase):
         self.assertEqual(sum(1 for key in announce if key.startswith("dup-more:")), 1)
         self.assertIn("另有 23 项", report["events"][[key for key in announce if key.startswith("dup-more:")][0]])
         self.assertEqual(len(later["announced_dup"]), 33 - panel.DUP_ROWS)
+
+
+# Rule 41ab823a by tree (FABLE-main-push-tree-reuse §4, §5 T4/T5): real GitHub replies of #1178, #1156 and #1170.
+# GitHub REST replies recorded read-only on 2026-11-19 (Beijing), trimmed to the fields the scan reads.
+# check: (id, name, app slug, status, conclusion, started_at, completed_at, run id, external_id)
+# run: (id, path, event, run_attempt, head_commit.tree_id, head_sha); job: (id, name, run_attempt, status, conclusion, started_at, completed_at)
+TREE_RECORDED = {
+    1156: {
+        "pull": {"number": 1156, "title": "test(owner-grants): assert grant duration from server timestamps, not the wall clock", "state": "open", "head": {"sha": "43361ab833d68b2d6b9e53f7bc6e27ccbd6776e5"}, "merge_commit_sha": None, "merged_at": None, "closed_at": None, "updated_at": "2026-11-17T17:25:31Z"},
+        "checks": [
+            (134244333953, "clued-cloud-tests", "github-actions", "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:37:21Z", 44136843405, "7ca72b2f-22af-5985-90e5-009600d3a533"),
+            (134244255605, "ci-suites", "github-actions", "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:32:20Z", 44136843405, "672ba5f8-5d12-5704-a447-4e8f1bdde9c2"),
+            (134244253929, "admission-gate", "github-actions", "completed", "success", "2026-11-17T17:25:39Z", "2026-11-17T17:27:36Z", 44136843405, "4b9d1ded-144f-55f2-be56-aa1a1f82a449"),
+            (134244251063, "migration-verify", "github-actions", "completed", "failure", "2026-11-17T17:49:46Z", "2026-11-17T17:49:59Z", 44136843405, "cb8ddb09-fa77-517a-88f9-511726301d58"),
+            (134238390986, "contract-placement", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-17T17:40:36Z", "2026-11-17T17:40:36Z", 0, "independent-ci:staged:v2:b6d3f34bd31f84e4833a17e3da75db1a5381fafb478821694b3bdd0f4dcd7271:a1"),
+            (134237153383, "trivy", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-17T17:38:40Z", "2026-11-17T17:38:40Z", 0, "independent-ci:staged:v2:628999bb39141e269fdb3bd14fb4a346d1795062c26f4b0023f31fd8b441cc79:a1"),
+            (134235150300, "gitleaks", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-17T17:35:34Z", "2026-11-17T17:35:34Z", 0, "independent-ci:staged:v2:8d890ea49378a00962d1de8adcebde4400b5c171eb8f011f59857cd25aa7e62b:a1"),
+            (134231302422, "kooyumi-work-admission", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-17T17:29:46Z", "2026-11-17T17:29:46Z", 0, "independent-ci:native-work-admission:v2:17249ee85b8a512ffcb1d7f6813f3c16492fac5760a800138921b2fddc78e690:a1:c1859e94e:f1:e1"),
+            (134229895984, "migration-verify", "github-actions", "completed", "failure", "2026-11-17T17:27:39Z", "2026-11-17T17:48:26Z", 44136843405, "62a7d4fd-fbec-5a3e-a855-ea1fe40618d5"),
+            (134229895876, "clued-cloud-tests", "github-actions", "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:37:21Z", 44136843405, "1895fd81-3583-5369-b90a-51993c4f4dae"),
+            (134229895867, "ci-suites", "github-actions", "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:32:20Z", 44136843405, "b11f64ab-6838-5ef7-8f95-4ee423fa9935"),
+            (134229894294, "ci-suites-windows", "github-actions", "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:31:58Z", 44136843505, "57b39bfa-d66a-55e4-b54c-1f855d3748cd"),
+            (134229684764, "kooyumi-work-admission", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-17T17:27:16Z", "2026-11-17T17:27:16Z", 0, "independent-ci:native-work-admission:v2:46277db4d5e765dbb0d092c2a2afe34588df78ed8424e256ef155a56d7169537:a1:c1859e94e:f1:e1"),
+            (134228583490, "admission-gate", "github-actions", "completed", "success", "2026-11-17T17:25:39Z", "2026-11-17T17:27:36Z", 44136843505, "aa3533a5-17aa-5cb0-a385-38a4668484aa"),
+            (134228580664, "admission-gate", "github-actions", "completed", "success", "2026-11-17T17:25:39Z", "2026-11-17T17:27:36Z", 44136843405, "278c005b-2622-5000-b9ec-73c6354d5887"),
+        ],
+        "runs": [(44136843405, ".github/workflows/clued-required-tests.yml", "pull_request", 2, "a9e5b439dce5ecdfe7a63ee4f042f827595b1477", "43361ab833d68b2d6b9e53f7bc6e27ccbd6776e5"), (44136843505, ".github/workflows/clued-required-tests-windows.yml", "pull_request", 1, "a9e5b439dce5ecdfe7a63ee4f042f827595b1477", "43361ab833d68b2d6b9e53f7bc6e27ccbd6776e5")],
+        "push_runs": [],
+        "jobs": {
+            44136843405: [(134228580664, "admission-gate", 1, "completed", "success", "2026-11-17T17:25:39Z", "2026-11-17T17:27:36Z"),
+                (134229895867, "ci-suites", 1, "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:32:20Z"),
+                (134229895876, "clued-cloud-tests", 1, "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:37:21Z"),
+                (134229895984, "migration-verify", 1, "completed", "failure", "2026-11-17T17:27:39Z", "2026-11-17T17:48:26Z"),
+                (134244251063, "migration-verify", 2, "completed", "failure", "2026-11-17T17:49:46Z", "2026-11-17T17:49:59Z"),
+                (134244253929, "admission-gate", 2, "completed", "success", "2026-11-17T17:25:39Z", "2026-11-17T17:27:36Z"),
+                (134244255605, "ci-suites", 2, "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:32:20Z"),
+                (134244333953, "clued-cloud-tests", 2, "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:37:21Z")],
+        },
+    },
+    1170: {
+        "pull": {"number": 1170, "title": "First install: drill VM, first-install kit and on-duty guard (rebuilt)", "state": "closed", "head": {"sha": "8086d0e404dfc8f5bfcc8c467bd58658dea6efa9"}, "merge_commit_sha": "3ab8380d121b76a4256dd87d849897a535a48ab3", "merged_at": "2026-11-19T02:31:47Z", "closed_at": "2026-11-19T02:31:47Z", "updated_at": "2026-11-19T02:31:47Z"},
+        "checks": [
+            (135294798064, "kooyumi-merge-slot", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T02:31:45Z", "2026-11-19T02:31:45Z", 0, "independent-ci:control:control-merge-slot:v2:1eab0d55eb4999850da0dda699f9580024514f644d4bbf6b11798c33500434cf:a1:cd924089f:f2:e1"),
+            (135294632467, "kooyumi-admission-verified", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T02:31:20Z", "2026-11-19T02:31:20Z", 0, "independent-ci:control:control-admission:v2:4b430d371793f24636dbd12447133479bc7690c7eb9fd67d339d0072327c4b07:a1:cd924089f:f2:e1"),
+            (135294340231, "contract-placement", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T02:30:36Z", "2026-11-19T02:30:36Z", 0, "independent-ci:staged:v2:1bc4ca39304e5a519bc0218793246015836c7e3481979700402ef65190f2a7b9:a1"),
+            (135293207330, "trivy", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T02:27:49Z", "2026-11-19T02:27:49Z", 0, "independent-ci:staged:v2:ddb6c24e7fbe584101ed04796945a16a5bc34a9ff4a1bbb9a2b5f9435014c0c4:a1"),
+            (135292314263, "gitleaks", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T02:25:38Z", "2026-11-19T02:25:38Z", 0, "independent-ci:staged:v2:c73bc1ea0a04e0dfad0304cc44eb8c21b4177e91c668f037f7452675a88c25fa:a1"),
+            (135290350282, "kooyumi-work-admission", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T02:20:56Z", "2026-11-19T02:20:56Z", 0, "independent-ci:native-work-admission:v2:965bc6a7b8b090d6637a85aed7cea41ddeac13f172efc7934d3fd31df6b03bfd:a1:cd924089f:f2:e1"),
+            (135222860319, "contract-placement", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-18T23:47:13Z", "2026-11-18T23:47:13Z", 0, "independent-ci:staged:v2:ae70e963000e8540d956cac6e325525bc75b9ca50bb4e0de01256a890ce1c5d8:a1"),
+            (135221915080, "trivy", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-18T23:45:13Z", "2026-11-18T23:45:13Z", 0, "independent-ci:staged:v2:c42571a5b0dd6fdba6945a10eef4a48b6228fffed60793c26a4a8482b117842a:a1"),
+            (135220645414, "gitleaks", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-18T23:42:33Z", "2026-11-18T23:42:33Z", 0, "independent-ci:staged:v2:34278a0680c3981dffdda30c8a12ed7c5a1d62a50886bdc0941b3c1753a11d74:a1"),
+            (135218157960, "ci-suites", "github-actions", "completed", "success", "2026-11-18T23:37:25Z", "2026-11-18T23:45:11Z", 44422035542, "5a0a0de1-5628-5add-b193-7b27b40af327"),
+            (135218157827, "migration-verify", "github-actions", "completed", "success", "2026-11-18T23:37:25Z", "2026-11-18T23:40:55Z", 44422035542, "72fc1695-55fe-52db-bf1a-46086ea85df5"),
+            (135218157807, "clued-cloud-tests", "github-actions", "completed", "success", "2026-11-18T23:37:25Z", "2026-11-18T23:46:19Z", 44422035542, "e4465580-8a6d-56a4-b1f7-c923bc88da99"),
+            (135218142012, "ci-suites-windows", "github-actions", "completed", "success", "2026-11-18T23:37:23Z", "2026-11-18T23:50:33Z", 44422035579, "f7003d14-88f2-50b0-be20-6e75760c534d"),
+            (135217997505, "kooyumi-work-admission", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-18T23:37:03Z", "2026-11-18T23:37:03Z", 0, "independent-ci:native-work-admission:v2:8fc746f34586862c931ab2999316fed563f75bc6a0cc728423fff3a353b5bdeb:a1:cd924089f:f2:e1"),
+            (135217187194, "admission-gate", "github-actions", "completed", "success", "2026-11-18T23:35:27Z", "2026-11-18T23:37:22Z", 44422035542, "4151a308-b8a5-5df7-b7dc-9334ca776cd1"),
+            (135217187048, "admission-gate", "github-actions", "completed", "success", "2026-11-18T23:35:27Z", "2026-11-18T23:37:20Z", 44422035579, "c47b2b97-f21b-5090-b229-190279992f02"),
+        ],
+        "runs": [(44422035579, ".github/workflows/clued-required-tests-windows.yml", "pull_request", 1, "055b4a666fa4b7adf6e4c23846f32ff3957ada09", "8086d0e404dfc8f5bfcc8c467bd58658dea6efa9"), (44422035542, ".github/workflows/clued-required-tests.yml", "pull_request", 1, "055b4a666fa4b7adf6e4c23846f32ff3957ada09", "8086d0e404dfc8f5bfcc8c467bd58658dea6efa9")],
+        "push_runs": [(44444986057, ".github/workflows/clued-required-tests.yml", "push", 1, "055b4a666fa4b7adf6e4c23846f32ff3957ada09", "3ab8380d121b76a4256dd87d849897a535a48ab3"), (44444986420, ".github/workflows/clued-required-tests-windows.yml", "push", 1, "055b4a666fa4b7adf6e4c23846f32ff3957ada09", "3ab8380d121b76a4256dd87d849897a535a48ab3")],
+        "jobs": {
+            44444986057: [(135294837874, "admission-gate", 1, "completed", "success", "2026-11-19T02:31:53Z", "2026-11-19T02:32:12Z"),
+                (135294983680, "migration-verify", 1, "completed", "success", "2026-11-19T02:32:15Z", "2026-11-19T02:51:26Z"),
+                (135294983707, "clued-cloud-tests", 1, "completed", "success", "2026-11-19T02:32:15Z", "2026-11-19T02:41:59Z"),
+                (135294984175, "ci-suites", 1, "completed", "success", "2026-11-19T02:32:15Z", "2026-11-19T02:42:21Z")],
+            44444986420: [(135294839149, "admission-gate", 1, "completed", "success", "2026-11-19T02:31:54Z", "2026-11-19T02:32:14Z"),
+                (135294998909, "ci-suites-windows", 1, "completed", "success", "2026-11-19T02:32:17Z", "2026-11-19T02:46:06Z")],
+        },
+    },
+    1178: {
+        "pull": {"number": 1178, "title": "Fleet: a package without the first-install kit fails to publish, an acceptance without its sha is refused", "state": "closed", "head": {"sha": "76783d4ad8b3b5584f80cae400e4465e14250241"}, "merge_commit_sha": "0a1d2f0b955833aaace9971ca634a5bd74371dab", "merged_at": "2026-11-19T06:43:24Z", "closed_at": "2026-11-19T06:43:24Z", "updated_at": "2026-11-19T06:43:24Z"},
+        "checks": [
+            (135390784412, "kooyumi-merge-slot", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:43:22Z", "2026-11-19T06:43:22Z", 0, "independent-ci:control:control-merge-slot:v2:7bba4aa046c6a8781575c6d432d0ff1d92aff52447de416b9c5cc682ee33cb22:a1:c06b37ff7:f1:e1"),
+            (135390656324, "kooyumi-admission-verified", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:43:03Z", "2026-11-19T06:43:03Z", 0, "independent-ci:control:control-admission:v2:37a5b028b7ac72b9eefe59efa5cc2c422318c281726a81d2f609ba9cb2697c7b:a1:c06b37ff7:f1:e1"),
+            (135390008323, "contract-placement", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:41:25Z", "2026-11-19T06:41:25Z", 0, "independent-ci:staged:v2:efdcf52ebf541444b5f83fe757b3ff1fc175279fc1cbec38fe2964f04e812ad1:a1"),
+            (135389269289, "trivy", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:39:35Z", "2026-11-19T06:39:35Z", 0, "independent-ci:staged:v2:1f0bd2b1eef35507756b2019ad5584620b36872b52cbd9493f7ee45605b06e4a:a1"),
+            (135388000825, "gitleaks", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:36:23Z", "2026-11-19T06:36:23Z", 0, "independent-ci:staged:v2:0893d0411875dd72b509a27d08b949efdce96e2e58e3d72b9274b35446199a2e:a1"),
+            (135385622189, "kooyumi-work-admission", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:30:26Z", "2026-11-19T06:30:26Z", 0, "independent-ci:native-work-admission:v2:463d345ad58c3b184c26c1bbde252b0bc35419397c3118498260fa23c7786cca:a1:c06b37ff7:f1:e1"),
+            (135383262052, "clued-cloud-tests", "github-actions", "completed", "success", "2026-11-19T06:31:06Z", "2026-11-19T06:38:40Z", 44471531779, "af4c9705-c9ce-557c-a135-35038fe38137"),
+            (135383261896, "ci-suites", "github-actions", "completed", "success", "2026-11-19T06:27:09Z", "2026-11-19T06:34:59Z", 44471531779, "bf231b43-88a0-562b-9956-15ed908afe0a"),
+            (135383261850, "migration-verify", "github-actions", "completed", "success", "2026-11-19T06:25:01Z", "2026-11-19T06:26:47Z", 44471531779, "d5dbac6a-6817-587e-9e57-04f6d06472db"),
+            (135383024242, "ci-suites-windows", "github-actions", "completed", "success", "2026-11-19T06:23:59Z", "2026-11-19T06:39:24Z", 44471531651, "9b2a4e48-2a23-57f0-b8ce-c2a0773b353f"),
+            (135382930538, "kooyumi-work-admission", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:23:43Z", "2026-11-19T06:23:43Z", 0, "independent-ci:native-work-admission:v2:cdbe9243d136e3542c7a8b7a350b73b5405a8a4d9d9499b01f66bb9495a58dd8:a1:c06b37ff7:f1:e1"),
+            (135381926463, "admission-gate", "github-actions", "completed", "success", "2026-11-19T06:24:01Z", "2026-11-19T06:24:32Z", 44471531779, "51f28859-8c5f-55c6-832f-07104069eb04"),
+            (135381925792, "admission-gate", "github-actions", "completed", "success", "2026-11-19T06:22:22Z", "2026-11-19T06:23:56Z", 44471531651, "e62c7eb8-8335-5c99-89af-841634724ccc"),
+        ],
+        "runs": [(44471531779, ".github/workflows/clued-required-tests.yml", "pull_request", 1, "80b9c36e57f95261b59af5aac6f5a1fb649fd33f", "76783d4ad8b3b5584f80cae400e4465e14250241"), (44471531651, ".github/workflows/clued-required-tests-windows.yml", "pull_request", 1, "80b9c36e57f95261b59af5aac6f5a1fb649fd33f", "76783d4ad8b3b5584f80cae400e4465e14250241")],
+        "push_runs": [(44474248138, ".github/workflows/clued-required-tests-windows.yml", "push", 1, "80b9c36e57f95261b59af5aac6f5a1fb649fd33f", "0a1d2f0b955833aaace9971ca634a5bd74371dab"), (44474248339, ".github/workflows/clued-required-tests.yml", "push", 1, "80b9c36e57f95261b59af5aac6f5a1fb649fd33f", "0a1d2f0b955833aaace9971ca634a5bd74371dab")],
+        "jobs": {
+            44474248339: [(135390823271, "admission-gate", 1, "completed", "success", "2026-11-19T06:43:30Z", "2026-11-19T06:43:48Z"),
+                (135390957668, "migration-verify", 1, "completed", "success", "2026-11-19T06:43:52Z", "2026-11-19T07:03:37Z"),
+                (135390957680, "clued-cloud-tests", 1, "completed", "success", "2026-11-19T06:43:53Z", "2026-11-19T06:54:06Z"),
+                (135390957746, "ci-suites", 1, "completed", "success", "2026-11-19T06:43:51Z", "2026-11-19T06:54:08Z")],
+            44474248138: [(135390822631, "admission-gate", 1, "completed", "success", "2026-11-19T06:43:30Z", "2026-11-19T06:43:50Z"),
+                (135390971555, "ci-suites-windows", 1, "completed", "success", "2026-11-19T06:43:53Z", "2026-11-19T06:59:33Z")],
+        },
+    },
+}
+
+REC_NOW = datetime(2026, 11, 19, 8, 0, tzinfo=timezone.utc)
+REC_REPO = "https://github.com/tdoljyj/cross-memory-system"
+
+
+def rec_check(row: tuple) -> dict:
+    cid, name, slug, status, conclusion, started, completed, run, external = row
+    return {"id": cid, "name": name, "app": {"slug": slug}, "status": status, "conclusion": conclusion,
+            "started_at": started, "completed_at": completed, "external_id": external or None,
+            "details_url": f"{REC_REPO}/actions/runs/{run}/job/{cid}" if run else REC_REPO}
+
+
+def rec_run(row: tuple) -> dict:
+    rid, path, event, attempt, tree, head = row
+    return {"id": rid, "path": path, "name": path.rsplit("/", 1)[-1], "event": event, "run_attempt": attempt,
+            "head_sha": head, "head_commit": {"id": head, "tree_id": tree}}
+
+
+def rec_job(run: int, row: tuple) -> dict:
+    jid, name, attempt, status, conclusion, started, completed = row
+    return {"id": jid, "run_id": run, "name": name, "run_attempt": attempt, "status": status, "conclusion": conclusion,
+            "started_at": started, "completed_at": completed}
+
+
+class TreeRecordedGitHub:
+    """Serves one recorded PR: its head's check runs and runs, the merge commit's push runs, and run jobs."""
+
+    def __init__(self, case: dict, skipped_push: bool = False) -> None:
+        self.case, self.skipped_push = case, skipped_push
+        self.paths: list[str] = []
+
+    def low(self) -> bool:
+        return False
+
+    def get(self, path: str, params: dict | None = None):
+        params = params or {}
+        self.paths.append(path)
+        case = self.case
+        head, merge = case["pull"]["head"]["sha"], case["pull"].get("merge_commit_sha")
+        if path == "/pulls":
+            return [case["pull"]]
+        if path == f"/commits/{head}/check-runs":
+            rows = [rec_check(row) for row in case["checks"]]
+            page = params.get("page", 1)
+            return {"total_count": len(rows), "check_runs": rows[(page - 1) * 100: page * 100]}
+        if path == "/actions/runs" and params.get("head_sha") == head:
+            return {"workflow_runs": [rec_run(row) for row in case["runs"]]}
+        if path == "/actions/runs" and merge and params.get("head_sha") == merge:
+            runs = [rec_run(row) for row in case["push_runs"]]
+            return {"workflow_runs": [run for run in runs if params.get("event") in (None, run["event"])]}
+        if path.startswith("/actions/runs/") and path.endswith("/jobs"):
+            run = int(path.split("/")[3])
+            jobs = [rec_job(run, row) for row in case["jobs"].get(run, [])]
+            if self.skipped_push and any(run == row[0] for row in case["push_runs"]):
+                for job in jobs:
+                    if job["name"] != "admission-gate":
+                        job.update(name=job["name"] + "-skipped", conclusion="skipped")
+            return {"total_count": len(jobs), "jobs": jobs}
+        raise panel.RequestError(f"GET {path} unscripted", 404)
+
+
+def scan_recorded(number: int, **kwargs) -> list[dict]:
+    return panel.scan_duplicates(TreeRecordedGitHub(TREE_RECORDED[number], **kwargs), REC_NOW, {})["found"]
+
+
+class TreeDuplicateTests(unittest.TestCase):
+    def test_t4_the_main_push_of_1178_ran_four_checks_again_on_the_same_tree(self) -> None:
+        found = scan_recorded(1178)
+        self.assertEqual(sorted(item["label"] for item in found),
+                         ["ci-suites-windows（clued-required-tests-windows.yml）", "ci-suites（clued-required-tests.yml）",
+                          "clued-cloud-tests（clued-required-tests.yml）", "migration-verify（clued-required-tests.yml）"])
+        for item in found:
+            self.assertEqual((item["pr"], item["count"], item["kind"]), (1178, 2, "rerun"))
+            self.assertIn("main-push", item["causes"])
+            self.assertEqual(item["tree"], "80b9c36e57f9")
+            self.assertEqual([run["event"] for run in item["runs"]], ["pull_request", "push"])
+            self.assertEqual([run["attempt"] for run in item["runs"]], [1, 1])
+        key, text = panel.duplicate_event(found[0])
+        self.assertIn("合入后 main push", text)
+
+    def test_t5_1156_reran_only_migration_verify_and_that_is_a_retry_after_a_failure(self) -> None:
+        (item,) = scan_recorded(1156)
+        self.assertEqual((item["check"], item["count"], item["kind"]),
+                         (".github/workflows/clued-required-tests.yml::migration-verify", 2, "retry"))
+        self.assertEqual([run["attempt"] for run in item["runs"]], [1, 2])
+        self.assertEqual([run["conclusion"] for run in item["runs"]], ["failure", "failure"])
+
+    def test_guard_1170_resident_scans_run_twice_on_one_head_stay_found(self) -> None:
+        found = {item["check"]: item for item in scan_recorded(1170)}
+        for name in ("gitleaks", "trivy", "contract-placement"):
+            self.assertEqual(found[name]["count"], 2)
+            self.assertEqual([run["executor"] for run in found[name]["runs"]], ["resident", "resident"])
+
+    def test_guard_a_main_push_whose_heavy_jobs_were_skipped_is_no_run(self) -> None:
+        self.assertEqual(scan_recorded(1178, skipped_push=True), [])
+
+    def test_two_copies_at_once_or_one_still_running_are_parallel_not_after_a_pass(self) -> None:
+        (item,) = findings([check("validate", 30, run=21), check("validate", 29.5, run=23)])  # the first ended at 29
+        self.assertEqual(item["kind"], "parallel")
+        (item,) = findings([check("validate", 30, None, run=21), check("validate", 20, "failure", run=23)])
+        self.assertEqual(item["kind"], "parallel")
+        self.assertIn("并行或前一次未结束又跑", panel.duplicate_event(item)[1])
+        # after a pass it is a rerun, whatever ran alongside; after failures only, a retry
+        (item,) = findings([check("validate", 30, run=21), check("validate", 25, None, run=23), check("validate", 24, run=21)])
+        self.assertEqual(item["kind"], "rerun")
+        (item,) = findings([check("validate", 30, "failure", run=21), check("validate", 20, run=23)])
+        self.assertEqual(item["kind"], "retry")
+
+    def test_a_retry_after_a_failure_is_listed_but_not_announced(self) -> None:
+        state: dict = {"duplicates": {"as_of": panel.iso(REC_NOW - timedelta(hours=2))}}
+
+        class Client(TreeRecordedGitHub):
+            def get(self, path: str, params: dict | None = None):
+                params = params or {}
+                if path == "/pulls" and params.get("state") != "all":
+                    return []
+                if path.startswith("/actions/workflows") or (path == "/actions/runs" and "head_sha" not in params):
+                    return {"workflow_runs": []}
+                if path.endswith("/status"):
+                    return {}
+                if path.endswith("/statuses"):
+                    return []
+                return super().get(path, params)
+
+        report = panel.build(Client(TREE_RECORDED[1156]), REC_NOW, state)
+        self.assertEqual(len(report["duplicates"]["found"]), 1)
+        self.assertEqual([key for key in report["events"] if key.startswith("dup")], [])
+        body = panel.render(report, state)
+        self.assertIn("失败后重试", body)
+        self.assertIn("同一棵树", body)
+        report = panel.build(Client(TREE_RECORDED[1178]), REC_NOW, {"duplicates": {"as_of": panel.iso(REC_NOW - timedelta(hours=2))}})
+        self.assertEqual(len([key for key in report["events"] if key.startswith("dup:")]), 4)
+
+
+# R5 (FABLE-tree-reuse-close-out §5): violations and allowed retries are counted apart. GitHub REST replies recorded
+# read-only on 2026-11-21 (Beijing) in the TREE_RECORDED shape: #1202, whose two main push runs ran the head's tree
+# again (the reuse refused the executor bot's head run), and #1204, whose ci-suites-windows died in "Set up job" on
+# attempt 1 and passed on attempt 2 (a retry) and whose merge push ran clued-capture-guard again.
+TREE_1202_1204 = {
+    int(number): {**case, **{key: [tuple(row) for row in case[key]] for key in ("checks", "runs", "push_runs")},
+                  "jobs": {int(run): [tuple(row) for row in rows] for run, rows in case["jobs"].items()}}
+    for number, case in json.loads((ROOT / "tests" / "fixtures" / "compute-panel-tree-1202-1204.json").read_text(encoding="utf-8")).items()}
+TOTALS_NOW = datetime(2026, 11, 21, 8, 0, tzinfo=timezone.utc)
+
+
+class TreeRecordedPulls(TreeRecordedGitHub):
+    """Several recorded PRs at once, with the empty replies build() needs for everything else."""
+
+    def __init__(self, cases: list[dict]) -> None:
+        super().__init__(cases[0])
+        self.cases = cases
+
+    def get(self, path: str, params: dict | None = None):
+        params = params or {}
+        if path == "/pulls":
+            self.paths.append(path)
+            return [case["pull"] for case in self.cases] if params.get("state") == "all" else []
+        if path.startswith("/actions/workflows") or (path == "/actions/runs" and "head_sha" not in params):
+            return {"workflow_runs": []}
+        if path.endswith("/status"):
+            return {}
+        if path.endswith("/statuses"):
+            return []
+        if path.startswith("/actions/runs/") and path.endswith("/jobs"):
+            owners = [case for case in self.cases if int(path.split("/")[3]) in case["jobs"]]
+            self.case = owners[0] if owners else self.cases[0]
+            return super().get(path, params)
+        for case in self.cases:
+            self.case = case
+            try:
+                return super().get(path, params)
+            except panel.RequestError:
+                continue
+        raise panel.RequestError(f"GET {path} unscripted", 404)
+
+
+class DuplicateTotalsTests(unittest.TestCase):
+    HEADER = "违规 5 项（通过后又跑 5、并行 0）；失败后重试 1 项（规则允许，只列出）"
+
+    def both(self) -> TreeRecordedPulls:
+        return TreeRecordedPulls([TREE_1202_1204[1204], TREE_1202_1204[1202]])
+
+    def test_r5_the_scan_counts_violations_and_retries_apart_and_lists_violations_first(self) -> None:
+        scan = panel.scan_duplicates(self.both(), TOTALS_NOW, {})
+        self.assertEqual(scan["totals"], {"rerun": 5, "parallel": 0, "retry": 1, "unknown": 0})
+        self.assertEqual(scan["total"], 6)
+        self.assertEqual([item["kind"] for item in scan["found"]], ["rerun"] * 5 + ["retry"])
+        # each class newest first: #1204's capture guard push (17:02Z) before #1202's pushes (15:35Z)
+        self.assertEqual([item["pr"] for item in scan["found"]], [1204, 1202, 1202, 1202, 1202, 1204])
+        retry = scan["found"][-1]
+        self.assertEqual((retry["head"][:8], retry["label"], [run["attempt"] for run in retry["runs"]]),
+                         ("bed9cd12", "ci-suites-windows（clued-required-tests-windows.yml）", [1, 2]))
+        self.assertEqual(panel.pack_duplicates(scan)["totals"], scan["totals"])
+
+    def test_r5_the_panel_header_says_both_counts_and_no_retry_is_announced(self) -> None:
+        state: dict = {"duplicates": {"as_of": panel.iso(TOTALS_NOW - timedelta(hours=2))}}
+        report = panel.build(self.both(), TOTALS_NOW, state)
+        self.assertEqual(report["duplicates"]["totals"], {"rerun": 5, "parallel": 0, "retry": 1, "unknown": 0})
+        body = panel.render(report, state)
+        self.assertIn(self.HEADER + "。", body)
+        self.assertNotIn("旧记录未记类别", body)
+        self.assertNotIn("共 6 项", body)
+        rows = [line for line in body.splitlines() if line.startswith("| #12")]
+        self.assertEqual(["失败后重试" in row for row in rows], [False] * 5 + [True])
+        announced = {key: text for key, text in report["events"].items() if key.startswith("dup")}
+        self.assertEqual(len(announced), 5)
+        self.assertEqual([text for text in announced.values() if "失败后重试" in text], [])
+        # A main push finding names its push run, the place to read the gate's reason code.
+        by_check = {text.split(" 的检查 ")[1].split(" 真跑")[0]: text for text in announced.values() if "#1202" in text}
+        self.assertIn("合入后 main push（运行 44764733435）", by_check["ci-suites-windows（clued-required-tests-windows.yml）"])
+        for name in ("ci-suites", "clued-cloud-tests", "migration-verify"):
+            self.assertIn("合入后 main push（运行 44764733439）", by_check[f"{name}（clued-required-tests.yml）"])
+
+    def test_r5_what_is_cut_off_and_what_is_left_out_are_said_in_violations(self) -> None:
+        state: dict = {"duplicates": {"as_of": panel.iso(TOTALS_NOW - timedelta(hours=2))}}
+        report = panel.build(self.both(), TOTALS_NOW, state)
+        report["duplicates"]["totals"] = {"rerun": 29, "parallel": 1, "retry": 7}
+        body = panel.render(report, state)
+        self.assertIn("违规 30 项（通过后又跑 29、并行 1）；失败后重试 7 项（规则允许，只列出）", body)
+        self.assertIn("违规 30 项，只列最近 5 项。", body)
+        report["duplicates"].update(found=[], omitted=True)
+        body = panel.render(report, state)
+        self.assertIn("违规 30 项（通过后又跑 29、并行 1）；失败后重试 7 项（规则允许，只列出）", body)
+        self.assertIn("明细已省略", body)
+
+    def test_r5_a_short_record_keeps_its_kind_and_one_saved_without_it_is_counted_apart_not_as_a_violation(self) -> None:
+        # Ruling 12.2 #8: a short record an older panel saved has no kind. It is neither read again nor a violation:
+        # it is counted on its own until it leaves the window.
+        case = TREE_1202_1204[1202]
+        head = case["pull"]["head"]["sha"]
+        scan = panel.scan_duplicates(TreeRecordedGitHub(case), TOTALS_NOW, {})
+        self.assertEqual(panel.short_finding(scan["found"][0])["kind"], "rerun")
+        old = {"head": head[:12], "pr": 1202, "check": "an-older-panel::record", "count": 2, "last": "2026-11-20T15:35:31Z"}
+        previous = {"as_of": panel.iso(TOTALS_NOW - timedelta(hours=2)), "found": [], "rest": [old, {**old, "check": "b", "kind": "retry"}],
+                    "settled": {panel.settle_key(case["pull"], head): case["pull"]["updated_at"]}}
+        client = TreeRecordedGitHub(case)
+        scan = panel.scan_duplicates(client, TOTALS_NOW, previous)
+        self.assertNotIn(f"/commits/{head}/check-runs", client.paths)  # a settled head is carried over unread
+        self.assertEqual(scan["totals"], {"rerun": 0, "parallel": 0, "retry": 1, "unknown": 1})
+        self.assertEqual(panel.violations(scan["totals"]), 0)
+
+    def test_r5_the_line_for_what_a_burst_cut_off_counts_violations_only_and_old_records_apart(self) -> None:
+        # Ruling 12.2 #8 again: an old record without a kind is not a violation, in the burst line as anywhere else.
+        def record(index: int, kind: str | None) -> dict:
+            row = {"head": f"{index:012x}", "pr": 9000 + index, "check": "a-check", "count": 2, "last": "2026-11-20T15:35:31Z"}
+            return {**row, "kind": kind} if kind else row
+        found = [record(i, "rerun") for i in range(panel.DUP_ROWS + 1)] + [record(50, "parallel")] + [record(60 + i, None) for i in range(3)]
+        state: dict = {"events_at": panel.iso(TOTALS_NOW), "duplicates": {"as_of": panel.iso(TOTALS_NOW), "found": found}}  # no scan is due
+        report = panel.build(self.both(), TOTALS_NOW, state)
+        more = [text for key, text in report["events"].items() if key.startswith("dup-more:")]
+        self.assertEqual(len(more), 1)
+        self.assertIn("另有 2 项违规", more[0])  # one rerun and one parallel beyond the first DUP_ROWS
+        self.assertIn("另有 3 项旧记录未记类别（不算违规）", more[0])
+        self.assertNotIn("5 项违规", more[0])
+        # Only old records cut off: the line says no violation at all.
+        found = [record(i, "rerun") for i in range(panel.DUP_ROWS)] + [record(60 + i, None) for i in range(2)]
+        state = {"events_at": panel.iso(TOTALS_NOW), "duplicates": {"as_of": panel.iso(TOTALS_NOW), "found": found}}
+        more = [text for key, text in panel.build(self.both(), TOTALS_NOW, state)["events"].items() if key.startswith("dup-more:")]
+        self.assertEqual(more, ["重复执行：另有 2 项旧记录未记类别（不算违规），见面板“重复执行”表"])
+
+    def test_r5_the_header_names_old_records_without_a_kind_only_when_there_are_some(self) -> None:
+        state: dict = {"duplicates": {"as_of": panel.iso(TOTALS_NOW - timedelta(hours=2))}}
+        report = panel.build(self.both(), TOTALS_NOW, state)
+        report["duplicates"]["totals"] = {"rerun": 2, "parallel": 0, "retry": 1, "unknown": 3}
+        body = panel.render(report, state)
+        self.assertIn(f"违规 2 项（通过后又跑 2、并行 0）；失败后重试 1 项（规则允许，只列出）；另有 3 项旧记录未记类别（{panel.DUP_LOOKBACK.days} 天内滚出）。", body)
+        self.assertNotIn("只列最近", body)  # 5 violation rows are listed for 2 counted: nothing is cut off
 
 
 if __name__ == "__main__":

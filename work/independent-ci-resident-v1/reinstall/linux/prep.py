@@ -144,6 +144,8 @@ for f in UPG_FILES:
 TREE_LINUX = os.path.join(HERE, '..', '..', 'linux') if FLEET else os.path.join(R, 'tree-' + COMMIT[:8], 'work', 'independent-ci-resident-v1', 'linux')
 for f in ('install-resident-linux.sh', 'verify-resident-linux.sh', 'uninstall-resident-linux.sh'):   # r7: + uninstall
     assert sha(os.path.join(IN, 'tools', f)) == sha(os.path.join(TREE_LINUX, f)), ('TOOL_NOT_THE_TREES', f)
+# the success word step (7) of phase B waits for, read from the verify script's own verdict line by the one reader (rconfig.py)
+VERIFIED = rconfig.verified_status(open(os.path.join(IN, 'tools', 'verify-resident-linux.sh'), 'rb').read().decode('utf-8'))
 # r7: the package's Linux resident files (install-resident-linux.sh FILES, in its order) and their install plan on the host as it will
 # be after the uninstall: systemd enabled in wsl.conf, systemd pid 1, cgroup v2 (verify-resident-linux showed all three on r5c2),
 # no resident-v1, no unit file. Phase A and B0 recompute it live (with those lines) and phase B applies exactly it.
@@ -229,22 +231,80 @@ WANT_A_CHECK = '' if FLEET else '[ "$(sha256sum "$STG/phaseA.sha256" | cut -d\' 
 BASE = '/root/clued-ci-reinstall-' + COMMIT[:8] + '-' + SUFFIX
 CI = 'work/actions-hosted-migration/independent-ci-v1'
 DOCKER_READY = r"""# Docker may still be starting after the WSL cold boot. Observe only: never
-# start/restart a unit, and never turn failed/inactive/unknown into a retry.
+# start/restart a unit. One read of ActiveState and Job decides (Fable ruling 0e418483, 1.2, with
+# the phase A systemd ruling, task 87d330d0, 1.1):
+#   active                          -> ready
+#   activating, any job             -> not settled: read again after a second
+#   any other state, a queued job   -> not settled (systemd keeps a start job queued behind
+#                                      network-online.target and containerd as inactive)
+#   any other state, no job         -> final: refused at once (a failed job lands here)
+#   the query itself fails          -> not settled (on a cold boot systemd's bus may not be up
+#                                      yet; a failure's cause is never told by its message)
+# One bound for all unsettled reads together, on the boot clock (/proc/uptime; bash's SECONDS is
+# the wall clock, which a suspended guest steps). At the bound the last read gives the code:
+# SYSTEMCTL_FAILED after a failed query, else DOCKER_SERVICE_ACTIVATION_TIMEOUT. A refusal writes
+# the scene to stderr first: the long parts first, then the unit, the job queue and the boot
+# state, then a short block (uptime, the manager's private socket, PID 1's state, memory,
+# pressure) and the code last, so that the launcher's last 2000 characters keep them; a query of
+# the scene that fails changes no code. Passing, one line: the seconds waited, the seconds until
+# the first query that answered, and the boot clock at the start (null when unreadable).
+# Active, the image store decides (Fable ruling 0e418483, r7 phase B, 2.2): an image ID means
+# the containerd store's .Id, so docker info's DriverStatus must name io.containerd.snapshotter,
+# else DOCKER_IMAGE_STORE_NOT_CONTAINERD, the Driver and DriverStatus on stderr first.
+# The boot clock's file, set once here; a test sets UPTIME after this text. docker_ready takes no
+# argument: root-run passes none.
+UPTIME=/proc/uptime
 docker_ready() {
-  local started=$SECONDS remaining state
+  local limit=180 up=$UPTIME boot t0 now mark=0 marked=$SECONDS remaining out state job code= last=DOCKER_SERVICE_ACTIVATION_TIMEOUT waited failed= store k v p
+  # the boot clock in whole seconds; unreadable, the last reading moved on by SECONDS
+  docker_ready_now() { local s; if { IFS=. read -r s _ <"$up"; } 2>/dev/null && [[ $s =~ ^[0-9]+$ ]]; then now=$s mark=$s marked=$SECONDS; else now=$((mark + SECONDS - marked)); fi; }
+  if { IFS=. read -r boot _ <"$up"; } 2>/dev/null && [[ $boot =~ ^[0-9]+$ ]]; then :; else boot=null; fi
+  docker_ready_now; t0=$now
   while :; do
-    remaining=$((60 - (SECONDS - started)))
-    [ "$remaining" -gt 0 ] || refuse DOCKER_SERVICE_ACTIVATION_TIMEOUT
-    state=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --value docker.service) || refuse SYSTEMCTL_FAILED
-    case "$state" in
-      active) return 0 ;;
-      activating)
-        [ "$((SECONDS - started))" -lt 60 ] || refuse DOCKER_SERVICE_ACTIVATION_TIMEOUT
-        sleep 1 || refuse DOCKER_SERVICE_WAIT_FAILED
-        ;;
-      *) refuse DOCKER_SERVICE_NOT_ACTIVE ;;
-    esac
+    docker_ready_now; remaining=$((limit - (now - t0)))
+    if [ "$remaining" -le 0 ]; then code=$last; break; fi
+    if out=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --property=Job docker.service); then
+      docker_ready_now; [ -n "$failed" ] || failed=$((now - t0)); last=DOCKER_SERVICE_ACTIVATION_TIMEOUT
+      state=$(printf '%s\n' "$out" | sed -n 's/^ActiveState=//p'); job=$(printf '%s\n' "$out" | sed -n 's/^Job=//p')
+      if [ "$state" = active ]; then waited=$((now - t0)); break; fi
+      if [ "$state" != activating ] && [ -z "$job" ]; then code=DOCKER_SERVICE_NOT_ACTIVE; break; fi
+    else
+      docker_ready_now; last=SYSTEMCTL_FAILED
+    fi
+    if [ "$((now - t0))" -ge "$limit" ]; then code=$last; break; fi
+    if ! sleep 1; then code=DOCKER_SERVICE_WAIT_FAILED; break; fi
   done
+  if [ -z "$code" ]; then
+    store=$(timeout --signal=KILL 60s docker info --format '{{json .DriverStatus}}' 2>/dev/null) || store="(docker info: exit $?)"
+    case "$store" in *io.containerd.snapshotter*) echo "{\"dockerReady\":\"active\",\"waitedSeconds\":$waited,\"queryFailedSeconds\":$failed,\"bootSeconds\":$boot}"; return 0 ;; esac
+    {
+      echo "docker_ready: DOCKER_IMAGE_STORE_NOT_CONTAINERD; the store:"
+      echo "Driver=$(timeout --signal=KILL 10s docker info --format '{{.Driver}}' 2>&1 || echo "(docker info: exit $?)")"
+      echo "DriverStatus=$store"
+    } >&2 || :
+    refuse DOCKER_IMAGE_STORE_NOT_CONTAINERD
+  fi
+  {
+    echo "docker_ready: $code; the scene:"
+    echo "-- journalctl -b 0, its last 40 lines:"
+    { timeout --signal=KILL 10s journalctl -b 0 -o short-monotonic --no-pager || echo "(journalctl: exit $?)"; } | tail -n 40
+    echo "-- ps, its first 25 lines:"
+    { timeout --signal=KILL 10s ps -eo pid,ppid,etimes,stat,comm --sort=start_time || echo "(ps: exit $?)"; } | head -n 25
+    echo "-- dmesg, its last 15 lines:"
+    { timeout --signal=KILL 10s dmesg || echo "(dmesg: exit $?)"; } | tail -n 15
+    timeout --signal=KILL 10s systemctl show -p ActiveState,SubState,Result,Job docker.service || echo "(systemctl show: exit $?)"
+    { timeout --signal=KILL 10s systemctl list-jobs --no-legend || echo "(systemctl list-jobs: exit $?)"; } | head -n 20
+    timeout --signal=KILL 10s systemctl is-system-running || echo "(systemctl is-system-running: exit $?)"
+    echo "uptime=$(timeout --signal=KILL 10s cat "$up" 2>&1 || echo "(cat: exit $?)")"
+    if [ -S /run/systemd/private ]; then echo private=socket; elif [ -e /run/systemd/private ]; then echo private=not-a-socket; else echo private=absent; fi
+    echo "pid1=$(timeout --signal=KILL 10s sed -n 's/^State:[[:space:]]*//p' /proc/1/status 2>&1 || echo "(sed: exit $?)")"
+    v=$(timeout --signal=KILL 10s free -m 2>&1) && v=$(printf '%s\n' "$v" | awk '/^Mem:/ { print $7 }') || v="(free: exit $?)"
+    echo "mem=$v"
+    p=; for k in cpu memory io; do v=$(timeout --signal=KILL 10s sed -n 's/^some avg10=\([0-9.]*\).*/\1/p' "/proc/pressure/$k" 2>/dev/null) && [ -n "$v" ] || v='?'; p="$p${p:+ }$k:$v"; done
+    echo "psi=$p"
+    echo "docker_ready: $code after $((now - t0))s"
+  } >&2 || :
+  refuse "$code"
 }
 """
 
@@ -316,8 +376,9 @@ quiet_and_installed_after_switch() {{
 # this again after a failure without repeating a step; nothing here rolls a step back.
 reinstall_tail() {{
   T="$STG/tail-$(date -u +%Y%m%dT%H%M%SZ)"; install -d -m 0700 "$T"
-  quiet_and_installed_after_switch
+  # first: the resume's first systemctl is docker_ready's (task 87d330d0, 1.1 item 2)
   docker_ready
+  quiet_and_installed_after_switch
   UPA=$(grep -o '"planSha256":"[0-9a-f]\\{{64\\}}"' "$STG/uninstall-plan.A.stdout.txt" | cut -d'"' -f4) || refuse UNINSTALL_PLAN_UNREADABLE
   # (1) backup of what the uninstall moves and of the resident state it leaves, once, before the uninstall
   if [ -e "$BASE/pre-uninstall-backup.tar.sha256" ]; then
@@ -363,7 +424,7 @@ reinstall_tail() {{
   $CLEAN $PY -I -c 'import json,sys; f=json.load(open(sys.argv[1])); sys.exit(not (f.get("contract")=="clued.independent-ci.linux-version-facts/1" and f.get("generation")==1 and f.get("staged") is None and f.get("ciSourceManifestSha256")==sys.argv[2] and f.get("manifestSha256")==sys.argv[3] and f.get("pinsOk") is True and f.get("sourceCommit")==sys.argv[4] and f.get("upgradeToolSha256")==sys.argv[5]))' "$VF" "$NEW_MANIFEST" "$LINUX_RES_MANIFEST" "$COMMIT" "$UPG_TOOL_SHA" || refuse VERSION_FACTS_NOT_THIS_PACKAGE
   # (7) verify-resident-linux, every check fatal (the resident half and the upgrade channel were just installed)
   bash --noprofile --norc "$STG/tools/verify-resident-linux.sh" > "$T/l7-verify.stdout.json" || true
-  grep -q RESIDENT_LINUX_VERIFIED "$T/l7-verify.stdout.json" && grep -q '"upgrade-v1-pins":true' "$T/l7-verify.stdout.json" && grep -q '"generation-current":true' "$T/l7-verify.stdout.json" || {{ cat "$T/l7-verify.stdout.json"; refuse RESIDENT_LINUX_NOT_VERIFIED_SEE_RECOVERY; }}
+  grep -q '"status":"{VERIFIED}"' "$T/l7-verify.stdout.json" && grep -q '"upgrade-v1-pins":true' "$T/l7-verify.stdout.json" && grep -q '"generation-current":true' "$T/l7-verify.stdout.json" || {{ cat "$T/l7-verify.stdout.json"; refuse RESIDENT_LINUX_NOT_VERIFIED_SEE_RECOVERY; }}
   # (8) evidence for the Windows generator, and a public review copy in a new directory each run
   E="{OUT}/linux-live-manifest.$(date -u +%Y%m%dT%H%M%SZ).txt"
   {{ echo "source: reinstall-linux-B (root, Owner)"; echo "package: $PKG_SHA"; echo "capturedAt: $(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "command: /usr/bin/sha256sum /etc/clued-independent-ci/formal-source-manifest-v2.json"; echo "exit: 0"; echo "sha256: $(sha256sum /etc/clued-independent-ci/formal-source-manifest-v2.json | cut -d' ' -f1)"; }} > "$E"
@@ -388,7 +449,9 @@ A = "#!/bin/bash\n" + f"""# r7 Linux phase A (root, NO private key, changes noth
 # = 10-23 stage-root.sh (b7ff5a32) + the read-only part of run-linux-p2.py, Source values changed; derive-roles-r4.py
 # replaces derive-linux-v2.mjs. Writes only under $BASE, then (after staging) a review copy of public data next to $W.
 {HOW[0]}
-""" + COMMON + A_GUARD + f"""quiet_and_installed
+""" + COMMON + A_GUARD + f"""# the first systemctl of every script is docker_ready's: on a cold boot it waits for systemd (task 87d330d0, 1.1 item 2)
+docker_ready
+quiet_and_installed
 # Source v1 is retired and nothing reads it: any leftover of it is moved whole (mv -n: never overwritten, never deleted) into this run's
 # evidence directory, before $BASE exists; already moved (or never there): skipped. The phase A result lists what was moved.
 V1KEEP="$BASE.v1-retired"

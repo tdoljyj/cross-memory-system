@@ -42,9 +42,10 @@
 | Worker，发行方路径（10 个存储与授权后台 RPC） | 同上 | `anon` | `p_issuer_hash = sha256(CLUED_STORAGE_CONNECTOR_ISSUER 或 CLUED_AUTHORIZATION_ISSUER_TOKEN)` |
 | Worker，两者都要（`clued_storage_read_v1`、`clued_storage_staging_v1`） | 同上 | `anon` | 两个哈希 |
 | Worker，P5（8 个 `clued_p5_*`） | `Authorization: Bearer CLUED_P5_GATEWAY_TOKEN` | `clued_p5_gateway`（NOLOGIN，授予 `authenticator`） | 网关 JWT + `p_token_hash` |
+| Worker，GitHub 默认分支 PR 合入事件 | `POST /v1/github/events` 验签后调用 `clued_work_pr_merged_event_v1(jsonb)` | 仅 `clued_worker_gateway` | 原始请求体的 HMAC-SHA256 证明投递来源。数据库调用使用 Worker 网关 JWT，释放回执的 `released_by_binding_id` 为 null。 |
 | Worker，人类会话转发（33 个 `clued_user_*` 等，及 7 个带发行方哈希、5 个带原始发行方密钥 `p_issuer_secret` 的） | `Authorization: Bearer <用户 JWT>` | `authenticated` | 用户 JWT（+ 发行方哈希或原始密钥） |
 | CI 准入 `scripts/ci/clued-work-admission.mjs` | publishable key | `anon` | `sha256(CLUED_ADMISSION_CLUED_TOKEN)`：`clued_owner_grant_admission_door_v1`、`clued_work_verify_v1`、`clued_work_claim_adopt_v1`、`clued_work_merge_slot_return_v1` |
-| CI 发布 `scripts/ci/clued-release-grant.mjs` | publishable key | `anon` | `sha256(CLUED_RELEASE_TOKEN)`：`clued_owner_grant_door_consume_v1` |
+| CI 发布 `scripts/ci/clued-release-grant.mjs`（2026-11-19 起，迁移 `20261119130000_release_door_db_identity_v1`） | 直连 Postgres（`CLUED_MIGRATION_DATABASE_URL`） | 登录角色（只有它能执行） | 数据库口令：`clued_private.release_door_v1`。`CLUED_RELEASE_TOKEN` 与公开门的发布动作已退役 |
 | 钩子 `scripts/hooks/clued_work_claim_guard.py` | publishable key | `anon` | `sha256(CLUED_CONTEXT_READ_TOKEN)`：`clued_work_claims_active_v1` |
 | Console `app/supabase-browser.ts` | supabase-js + 用户会话 | `authenticated` | 用户 JWT |
 | 部署核验 `scripts/verify-currentness-transport.mjs` | 直连 Postgres（`CLUED_ATTESTATION_DATABASE_URL`） | 登录角色 | 数据库口令；写 G6 运输证明行 |

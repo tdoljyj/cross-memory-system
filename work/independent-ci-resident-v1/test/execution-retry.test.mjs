@@ -45,6 +45,29 @@ function engineWith(n, answers, engine = fakeEngine()) {
   return engine;
 }
 
+test('a scanner child timeout gets one proven same-batch retry and its publisher runs once', async t => {
+  const timeout = { ok: false, code: 'STAGE_CHILD_TIMEOUT', proof: WINDOWS_CLEAN };
+  const f = await executorFixture(t, { engine: engineWith(4, [timeout]) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.deepEqual(stagesRun(f.engine), [1, 2, 3, 4, 4, 5, 6, 7, 8]);
+  const [retry] = await bodies(f, 'execution-retry');
+  assert.deepEqual([retry.basis, retry.archive], ['child-timeout', 'retry-stage-4-1']);
+
+  const g = await executorFixture(t, { engine: engineWith(4, [timeout, timeout]) });
+  await g.drop(triggerBytes());
+  assert.deepEqual([(await g.exec.tick()).failureCode, ...stagesRun(g.engine)], ['STAGE_CHILD_TIMEOUT', 1, 2, 3, 4, 4]);
+});
+
+test('a publisher missing its signed input repeats only its corresponding scanner before publishing', async t => {
+  const f = await executorFixture(t, { engine: engineWith(5, [{ ok: false, code: 'STAGE_INPUT_RESULT_MISSING', proof: WINDOWS_CLEAN }]) });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.deepEqual(stagesRun(f.engine), [1, 2, 3, 4, 5, 4, 5, 6, 7, 8]);
+  const [retry] = await bodies(f, 'execution-retry');
+  assert.deepEqual([retry.basis, retry.archive], ['missing-signed-result', 'retry-stage-4-1']);
+});
+
 test('the pure rule: stages 4 and 6 (and 2, abandoned only); abandoned-unpublished, a clean environment refusal or the memory gate; never a refusal about the PR', () => {
   assert.deepEqual([...EXECUTION_RETRY_STAGES], [2, 4, 6]);
   assert.deepEqual(EXECUTION_RETRY_MS.map(ms => ms / 60_000), [1, 5]);

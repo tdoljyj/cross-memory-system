@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
@@ -16,7 +15,8 @@ import { fitNode } from './fit-node-fixture.mjs';
 // Binding roles (migration 20261003200000, Task 869d2db7, Owner Decision
 // 38ddb8cf): once the Owner marks a CI admission Binding, only it binds claims
 // to pull requests, meters heads, admits hand dispatches and reports merges;
-// once the Owner marks a release-door Binding, only it consumes release grants.
+// the release-door role is still marked and listed, but since 20261119130000 no token, marked or not,
+// consumes release grants: the release workflow is its database login.
 // Before a role is marked, every Binding keeps the earlier behaviour.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -26,26 +26,18 @@ const nowEpoch = () => Math.floor(Date.now() / 1000);
 const fresh = (sub, session = 'sess-main') =>
   ({ sub, role: 'authenticated', session_id: session, aal: 'aal1', amr: [{ method: 'password', timestamp: nowEpoch() }] });
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 test('binding roles: CI admission and release-door Bindings, set by the Owner in two Native steps',
   { timeout: 300000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-binding-roles-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: hash(), 
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = server.getPgClient();
     clients.push(admin);
     await admin.connect();
@@ -182,14 +174,24 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     // Since 20261108161615 only the CI admission Binding's observation makes a
     // PR -> Task relation active; the holder's authorization alone leaves it
     // unknown, and nobody else's verify or observation activates or meters it.
+    // Since 20261122090000 an unknown relation reads as open (work_claim_pr_binding_open_v1): the
+    // observation answers what the holder authorized, still without binding anything.
+    const relation = async (pr) => (await admin.query(`select status from clued_private.work_claim_pr_task_bindings_v1
+      where user_id=$1 and repo_id=$2 and pr_number=$3`, [userId, pr.split('#')[0], Number(pr.split('#')[1])])).rows[0]?.status;
     const legacyTask = await createTask('legacy');
     const legacy = committed(await claim(legacyTask, 'claude', 'session-a', ['legacy/**'])).claim;
     await authorizeHead(legacy, 'o/r#1', sha(1));
     for (const who of ['reader', 'ci']) {
-      assert.deepEqual([(await observe(who, 'o/r#1', sha(1))).reason], ['pr_task_binding_unknown'], who);
+      const seen = await observe(who, 'o/r#1', sha(1));
+      assert.deepEqual([seen.binding_status, seen.claim?.claim_id, seen.auto_bound], ['bound', legacy.claim_id, false], who);
     }
+    assert.equal(await relation('o/r#1'), 'unknown', 'no observation before the role activates the relation');
     let v = await verifyAs('reader', legacy, { pr_ref: 'o/r#1', head_sha: sha(1) });
-    assert.deepEqual([v.verdict, v.reasons, v.bound_pr], ['REJECTED', ['pr_task_binding_unknown'], undefined]);
+    // The verify itself still needs an active relation (only the CI's write resolve makes one).
+    assert.deepEqual([v.verdict, v.reasons], ['REJECTED', ['pr_task_binding_required']]);
+    // bound_pr now appears on the rejected result (the wrapper attaches it); the verdict is still REJECTED, so it is not an admission.
+    assert.equal(v.bound_pr, 'o/r#1');
+    assert.equal(await relation('o/r#1'), 'unknown');
     assert.equal(await usage(legacyTask), 0);
     committed(await release('claude', legacy));
 
@@ -248,8 +250,9 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     const mine = committed(await claim(task, 'claude', 'session-a', ['roles/**'])).claim;
     // Another Binding's observation does not activate a PR either.
     await authorizeHead(mine, 'o/r#7', sha(2));
-    assert.equal((await observe('reader', 'o/r#7', sha(2))).reason, 'pr_task_binding_unknown');
-    assert.equal((await observe('ci', 'o/r#7', sha(2))).binding_status, 'bound');
+    assert.deepEqual([(await observe('reader', 'o/r#7', sha(2))).auto_bound, await relation('o/r#7')], [false, 'unknown']);
+    assert.equal((await observe('ci', 'o/r#7', sha(2))).auto_bound, true);
+    assert.equal(await relation('o/r#7'), 'active');
     for (const who of ['claude', 'codex', 'reader']) {
       v = await verifyAs(who, mine, { pr_ref: 'o/r#7', head_sha: sha(2) });
       assert.deepEqual([v.verdict, v.reasons], ['REJECTED', ['admission_binding_required']], who);
@@ -302,20 +305,20 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     assert.deepEqual([adopted.adopted, adopted.copy_index], [true, 2], JSON.stringify(adopted));
     assert.equal((await row(copyA.claim_id)).outcome, 'not_adopted');
 
-    // --- N5: the release door, legacy first, then only the marked Binding. ---
+    // --- N5: the public release door refuses every token, marked or not. ---
     const commit = 'repo:tdoljyj/cross-memory-system/' + sha(12);
     const door = (who) => agent(who, 'clued_owner_grant_door_consume_v1', { action: 'release.production', resources: [commit] });
-    const pending = await door('codex');
-    assert.equal(pending.consumed, false, 'legacy: any write Binding reaches the door');
-    await assert.rejects(() => door('reader'), /binding_not_authorized/);
+    const retired = /owner_grant_door_release_token_retired/;
+    await assert.rejects(() => door('codex'), retired, 'no write Binding reaches the release actions');
+    await assert.rejects(() => door('reader'), retired);
     committed(await setRole(bindingIds.release, 'release-door', true));
-    await assert.rejects(() => door('codex'), /owner_grant_door_binding_not_authorized/);
-    await assert.rejects(() => door('claude'), /owner_grant_door_binding_not_authorized/);
-    assert.equal((await door('release')).consumed, false, 'the marked Binding opens its own request');
+    await assert.rejects(() => door('codex'), retired);
+    await assert.rejects(() => door('claude'), retired);
+    await assert.rejects(() => door('release'), retired, 'the marked Binding is refused too');
 
     // --- Ending a role explicitly returns to the earlier behaviour. ---
     committed(await setRole(bindingIds.release, 'release-door', false));
-    assert.equal((await door('codex')).consumed, false);
+    await assert.rejects(() => door('codex'), retired);
     assert.equal(await issueErr({ binding_id: bindingIds.release, role: 'release-door', enabled: false }), 'binding_role_unchanged');
 
     // --- Re-review 2, finding A: a revoked or expired holder keeps the role locked. ---
@@ -330,8 +333,8 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     assert.deepEqual([stillLocked.adopted, stillLocked.reason], [false, 'admission_binding_required']);
     committed(await setRole(bindingIds.release, 'release-door', true));
     await admin.query("update public.clued_agent_bindings set expires_at=now()-interval '1 minute' where id=$1", [bindingIds.release]);
-    await assert.rejects(() => door('release'), /binding_not_authorized/, 'the expired holder itself is refused');
-    await assert.rejects(() => door('codex'), /owner_grant_door_binding_not_authorized/, 'an expired release Binding keeps the door locked');
+    await assert.rejects(() => door('release'), retired, 'the expired holder itself is refused');
+    await assert.rejects(() => door('codex'), retired);
     // The Owner sees the dead holders and can end their roles, but cannot mark a dead Binding.
     const held = (await native('clued_binding_roles_list_v1', {})).bindings;
     assert.deepEqual(held.filter((b) => !b.live).map((b) => [b.binding_id, b.roles]).sort(),
@@ -340,8 +343,8 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     assert.equal(await issueErr({ binding_id: bindingIds.ci, role: 'release-door', enabled: true }), 'binding_role_binding_invalid');
     // Rotation: mark a new live Binding; the dead one keeps nothing open.
     committed(await setRole(bindingIds.codex, 'release-door', true));
-    assert.equal((await door('codex')).consumed, false, 'the new holder reaches the door');
-    await assert.rejects(() => door('claude'), /owner_grant_door_binding_not_authorized/);
+    await assert.rejects(() => door('codex'), retired, 'the new holder is refused too');
+    await assert.rejects(() => door('claude'), retired);
     // Ending the dead CI holder's role, the last one, reopens binding to every Binding.
     committed(await setRole(bindingIds.ci, 'ci-admission', false));
     const v2 = await verifyAs('claude', c2, { pr_ref: 'o/r#12', head_sha: sha(13) });

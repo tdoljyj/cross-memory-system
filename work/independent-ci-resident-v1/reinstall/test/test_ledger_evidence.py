@@ -72,9 +72,10 @@ class LedgerEvidence(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'LIVE_LEDGER_NOT_TERMINAL'):
             self.select()
 
-    def test_missing_history_is_refused(self):
-        with self.assertRaisesRegex(ValueError, 'NO_TERMINAL_LEDGER_ENTRY'):
-            self.select()
+    def test_no_history_at_all_is_the_explicit_empty_evidence(self):
+        # Fable 11-21 r5 preflight gaps 2.4 (N9): no ledger holds any entry (no batch ever ran) -- the explicit empty evidence, no key
+        # invented; an entry without a terminal record is still refused (test_r5_ledger_empty.py)
+        self.assertEqual(self.select(), {'relativeDirectory': 'state/ledger', 'key': None, 'terminalSha256': None, 'backfillManifestSha256': None, 'empty': True})
 
     def test_changed_backfill_is_not_relabelled_as_valid_history(self):
         path = self.backfill()

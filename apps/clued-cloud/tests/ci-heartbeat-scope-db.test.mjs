@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
@@ -27,19 +26,12 @@ const fresh = (sub, session = 'sess-main') =>
   ({ sub, role: 'authenticated', session_id: session, aal: 'aal1', amr: [{ method: 'password', timestamp: nowEpoch() }] });
 const EXISTING_SCOPES = ['context:read', 'context:write', 'audit:read', 'canonical:read', 'canonical:write', 'project:read', 'project:write'];
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 test('ci:heartbeat: Owner-only issuance, alone, unreachable by every existing interface, one resolver', { timeout: 600000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-ci-heartbeat-scope-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: hex(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: hex(), 
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
@@ -49,8 +41,7 @@ test('ci:heartbeat: Owner-only issuance, alone, unreachable by every existing in
     return client;
   };
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = await connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;

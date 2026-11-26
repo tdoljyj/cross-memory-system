@@ -7,6 +7,7 @@
       "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip",
       "fileName": "node-v24.21.0-win-x64.zip",
       "kind": "zip",
+      "maxEntryPathLength": 125,
       "sha256": "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541",
       "bytes": 37618919,
       "pinSource": "https://nodejs.org/dist/v24.21.0/SHASUMS256.txt; its node.exe is ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32 = controllerNodeSha256 (DESK measured, 2026-11-17)"
@@ -17,6 +18,7 @@
       "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
       "fileName": "python-3.12.10-embed-amd64.zip",
       "kind": "zip",
+      "maxEntryPathLength": 20,
       "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3",
       "bytes": 11133606,
       "pinSource": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip.spdx.json (CPython package SHA256)"
@@ -27,6 +29,7 @@
       "url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.3/MinGit-2.55.0.3-64-bit.zip",
       "fileName": "MinGit-2.55.0.3-64-bit.zip",
       "kind": "zip",
+      "maxEntryPathLength": 64,
       "sha256": "f48e2d2dc74a24454adc6d8fd0ac25bf9c2386f19cfb06202b9465aaad4f9f05",
       "bytes": 38791206,
       "pinSource": "git-for-windows/git release v2.55.0.windows.3 notes (SHA-256 of MinGit-2.55.0.3-64-bit.zip)"
@@ -47,6 +50,7 @@
       "url": "https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-win-x64-2.337.0.zip",
       "fileName": "actions-runner-win-x64.zip",
       "kind": "zip",
+      "maxEntryPathLength": 61,
       "sha256": "1150692afa94e71f872017e254ea55b6eece1eece3fe7e3a6d4c93d0a1b85cfc",
       "bytes": 103528051,
       "pinSource": "actions/runner release v2.337.0 notes (SHA-256 of actions-runner-win-x64-2.337.0.zip); equals the installed nodes runner-package.zip sha256 (host-baseline.ps1)"
@@ -71,6 +75,28 @@
       "sha256": "a3505a50f4cc585551d11d9de824ba4375448d7a68f2e71d3fb315fa986fc754",
       "bytes": 258985984,
       "pinSource": "GitHub release asset digest (sha256); Authenticode Valid, CN=Microsoft Corporation"
+    },
+    {
+      "name": "gh",
+      "use": "the GitHub CLI the companion runs (its own API calls and git's credential helper): installed by first-install-host.ps1 (msiexec /i /qn /norestart) when the kit's companion ghExe is absent, then ghExe must exist",
+      "url": "https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_windows_amd64.msi",
+      "fileName": "gh_2.103.3_windows_amd64.msi",
+      "kind": "msi",
+      "version": "2.103.3",
+      "sha256": "5073112b7abb5ffbba24b76aee7e89269af531218c0a42751f5f0bfb6440c2cc",
+      "bytes": 15450112,
+      "pinSource": "GitHub release asset digest (sha256) = gh_2.103.3_checksums.txt; Authenticode Valid, CN=GitHub, Inc. (DESK, 2026-11-20)"
+    },
+    {
+      "name": "git-for-windows",
+      "use": "Git for Windows at C:\\Program Files\\Git (the companion's PATH and git): installed by first-install-host.ps1 (/VERYSILENT /NORESTART) when cmd\\git.exe is absent, then it must exist",
+      "url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.3/Git-2.55.0.3-64-bit.exe",
+      "fileName": "Git-2.55.0.3-64-bit.exe",
+      "kind": "exe",
+      "version": "2.55.0.3",
+      "sha256": "af12577d0fdff74243a5988197aa49b957d5044edc17004f6ddf0768996f1dca",
+      "bytes": 65388144,
+      "pinSource": "GitHub release asset digest (sha256); Authenticode Valid, CN=Johannes Schindelin (DESK, 2026-11-20)"
     }
   ],
   "debs": [
@@ -171,6 +197,30 @@
       "bytes": 65986
     },
     {
+      "package": "libpython3.12-minimal",
+      "version": "3.12.3-1ubuntu0.17",
+      "fileName": "libpython3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb",
+      "sha256": "d646ad7112b5adec21ba0e1af015f04ae8ca7f5efdc619622547dd6673c4c14b",
+      "bytes": 838536
+    },
+    {
+      "package": "libpython3.12-stdlib",
+      "version": "3.12.3-1ubuntu0.17",
+      "fileName": "libpython3.12-stdlib_3.12.3-1ubuntu0.17_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12-stdlib_3.12.3-1ubuntu0.17_amd64.deb",
+      "sha256": "45d3f530ba1f9d6e879ad46b92046fabab13fe50a82450e4f65557a3bbad1489",
+      "bytes": 2070530
+    },
+    {
+      "package": "libpython3.12t64",
+      "version": "3.12.3-1ubuntu0.17",
+      "fileName": "libpython3.12t64_3.12.3-1ubuntu0.17_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/libpython3.12t64_3.12.3-1ubuntu0.17_amd64.deb",
+      "sha256": "0d29f4763eb95b8a4283a4aca3ef1d9658629c618be1778def41bdc31be12b46",
+      "bytes": 2348034
+    },
+    {
       "package": "nftables",
       "version": "1.0.9-1ubuntu0.1",
       "fileName": "nftables_1.0.9-1ubuntu0.1_amd64.deb",
@@ -185,6 +235,22 @@
       "url": "http://archive.ubuntu.com/ubuntu/pool/universe/p/pigz/pigz_2.8-1_amd64.deb",
       "sha256": "9c90b8ada9e9c346b787aa7e827c1f70c4a8933ee322171689f2a0311e3f7b5e",
       "bytes": 65554
+    },
+    {
+      "package": "python3.12",
+      "version": "3.12.3-1ubuntu0.17",
+      "fileName": "python3.12_3.12.3-1ubuntu0.17_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12_3.12.3-1ubuntu0.17_amd64.deb",
+      "sha256": "6745c9463432e619d7402b117ad4ac86c31dcd3999ba20daa9e395f6f9909d86",
+      "bytes": 650732
+    },
+    {
+      "package": "python3.12-minimal",
+      "version": "3.12.3-1ubuntu0.17",
+      "fileName": "python3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb",
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/python3.12-minimal_3.12.3-1ubuntu0.17_amd64.deb",
+      "sha256": "d452689b9660845345a4c3e05e4ad82c082d5474e04031b7aa47f1a6d5610a6e",
+      "bytes": 2334634
     },
     {
       "package": "runc",
@@ -203,5 +269,5 @@
       "bytes": 34228
     }
   ],
-  "debsPinSource": "apt Packages SHA256 of noble, noble-updates, noble-security (main, universe, amd64); each Packages.xz checked against its InRelease; each InRelease verified by gpgv with ubuntu-archive-keyring.gpg taken from the pinned rootfs; the closure of apt install docker.io (Depends, Pre-Depends, Recommends) against the rootfs dpkg status. Installed offline by linux/first-host-prep.sh with dpkg -i from these files only (sha256sum -c first); python3.12 and git are the pinned rootfs own packages."
+  "debsPinSource": "apt Packages SHA256 of noble, noble-updates, noble-security (main, universe, amd64); each Packages.xz checked against its InRelease; each InRelease verified by gpgv with ubuntu-archive-keyring.gpg taken from the pinned rootfs; the closure of apt install docker.io (Depends, Pre-Depends, Recommends) against the rootfs dpkg status; and python3.12 at 3.12.3-1ubuntu0.17, the five packages of that source the rootfs has at 3.12.3-1ubuntu0.16 (python3.12, python3.12-minimal, libpython3.12-minimal, libpython3.12-stdlib, libpython3.12t64; their Depends and Pre-Depends met by the rootfs), so that /usr/bin/python3.12 is the file the fleet pins (the source manifest hostTools). Installed offline by linux/first-host-prep.sh with dpkg -i from these files only (sha256sum -c first); git is the pinned rootfs own package."
 }

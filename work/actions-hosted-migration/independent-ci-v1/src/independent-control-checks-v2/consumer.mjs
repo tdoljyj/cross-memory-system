@@ -96,10 +96,10 @@ async function withInstalledControlV2(selector, operation) {
     const held = lease.data, live = () => { takeHeldRecord(lease); };
     const record = validateRecordV2(held.documents, { identity: { platform: process.platform, arch: process.arch, hostname: os.hostname(), account: os.userInfo().username } });
     const candidates = controlJobsFor(await readBatchClaims(STATE_V2.batchClaims), selector, record.config.sourceManifestSha256);
-    const { appKey, nativeToken } = await controllerPrincipal(record);
+    const { appKey, nativeToken, bindingId } = await controllerPrincipal(record);
     const log = observationLog(STATE_V2.effectsControl, candidates[0]?.job.id ?? '0'.repeat(64));
     const sourceRoot = held.sourceRoot;
-    const { github, admission } = controllerPorts({ record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
+    const { github, admission } = controllerPorts({ record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot, live, log });
     const journal = await EffectJournal.open(STATE_V2.effectsControl);
     const consumerFor = batchClaim => createProductionControlPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(record.accepted), batchClaim });
     return await operation({ candidates, consumerFor });

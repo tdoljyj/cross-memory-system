@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test,{mock} from 'node:test';
 import assert from 'node:assert/strict';
 import {resolveFixtureLocator,assertFixturePull,fixturePublicationInput} from './clued-handover-external-fixture-locator.mjs';
 import {assertEarlyFixtureLocators,assertFixtureSelectionPolicy,applyFixtureLocator,fixtureClaimDomains,
@@ -10,7 +10,8 @@ const project='0597aa60-9b98-4da6-a4ab-63d7705b632f',scope='project:'+project;
 const canonical='11111111-1111-4111-8111-111111111111',synthetic='22222222-2222-4222-8222-222222222222';
 const main='a'.repeat(40),head='b'.repeat(40),h64='a'.repeat(64),branch='clued-handover-disposable-exact';
 const paths=['work/handover-protection/disposable-fixture/exact.txt'];
-const iso=offset=>new Date(Date.now()+offset).toISOString();
+const NOW=Date.parse('2026-11-01T00:00:00Z'),iso=offset=>new Date(NOW+offset).toISOString();
+mock.timers.enable({apis:['Date'],now:NOW}); // the code under test reads Date.now(): hold it at NOW so the offsets below stay in the window
 function fixture(){
   const p={repository:repo,engineering_task_id:task,project_id:project,target_branch:'main',fixture_mode:'continuous',
     fixture_idle_workflow:'clued-handover-disposable-idle.yml',qualifier_workflow:'clued-handover-external-qualification.yml',

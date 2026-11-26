@@ -1,32 +1,27 @@
-import { stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
+import { CI_SIGNATURES, PR_LIFECYCLE_REPORT_SIGNATURE, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 const repo = 'fixture/pr-task';
-async function freePort() {
-  const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r));
-  const p = s.address().port; await new Promise(r => s.close(r)); return p;
-}
 
 test('PR binding is stable Task identity, derived current claims and holder-authorized discovery', { timeout: 300000 }, async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-pr-task-'));
-  const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
+  const server = newCluster({ databaseDir: dir, user: 'postgres', password: hash(), 
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
   const clients = [];
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     process.stderr.write('PR binding fixture started own PostgreSQL pid=' + server.process?.pid + '\n');
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;
@@ -71,10 +66,12 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
       await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)", [user, JSON.stringify(claims)]);
       return (await human.query(`select public.${name}($1) value`, [input])).rows[0].value;
     };
-    const call = async (who, name, input) => CI_SIGNATURES.includes(name + '(text,jsonb)')
+    const call = async (who, name, input) => [...CI_SIGNATURES, PR_LIFECYCLE_REPORT_SIGNATURE].includes(name + '(text,jsonb)')
       ? (await anon.query(`select public.${name}($1,$2) value`, [tokens[who], input])).rows[0].value
       : workerGatewayRpc(gateway, name, tokens[who], input);
     const committed = r => { assert.equal(r.status, 'committed', JSON.stringify(r)); return r; };
+    // GitHub shows the PR closed: the resident's lifecycle report ends its binding (20261119140000).
+    const reportClosed = n => call('ci', 'clued_work_pr_lifecycle_report_v1', { scope: 'global', repository: repo, prs: [{ pr_number: n, state: 'closed' }] });
     const task = async (scope = 'global') => committed(await call('holder', 'clued_record_mutate', {
       operation: 'create', record_type: 'task', record_schema_version: 1, lifecycle_status: 'active', scope,
       idempotency_key: uuid(), authority: 'observed', confidence_reason: 'isolated binding fixture', source_refs: [], source_unavailable_reason: 'fixture',
@@ -122,15 +119,17 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
 
     await t.test('historical closed PR imports identity as unknown and cannot keep a new PR queue slot', async () => {
       const read = await resolve('reader', 90, historicalHead);
-      assert.equal(read.binding_status, 'no_live_claim'); assert.equal(read.reason, 'pr_task_binding_unknown');
-      assert.equal(read.task_id, historical.claim.task_id); assert.equal(read.scope, 'global'); assert.equal(read.claim, null);
+      // 'unknown' counts as open: the read-only answer reports the holder's exact head grant, without binding or activating.
+      assert.equal(read.binding_status, 'bound'); assert.equal(read.auto_bound, false);
+      assert.equal(read.task_id, historical.claim.task_id); assert.equal(read.scope, 'global');
+      assert.equal(read.claim.claim_id, historical.claim.claim_id);
       const before = await counts();
       const observing = await resolve('ci', 90, historicalHead, { read_only: true });
-      assert.equal(observing.reason, 'pr_task_binding_unknown'); assert.equal(observing.auto_bound, false);
+      assert.equal(observing.binding_status, 'bound'); assert.equal(observing.auto_bound, false); assert.equal(observing.receipt_id, null);
       assert.deepEqual(await counts(), before);
       committed(await authorize(historical, historicalHead, 90));
-      assert.equal((await resolve('reader', 90, historicalHead)).reason, 'pr_task_binding_unknown',
-        'holder head authorization alone does not prove a historical PR is open');
+      assert.equal((await resolve('reader', 90, historicalHead)).binding_status, 'bound',
+        'read-only answer reports the authorization; only the CI write resolve activates the relation');
       const currentHead = 'd'.repeat(40);
       committed(await authorize(historical, currentHead, 91));
       assert.equal((await resolve('ci', 91, currentHead)).binding_status, 'bound');
@@ -184,10 +183,10 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
       assert.deepEqual(await counts(), beforeInvalid, 'invalid holder proof cannot create a relation or meter a head');
       committed(await authorize(r, head, 2)); committed(await authorize(r, head, 3));
       const knownUnknown = await resolve('reader', 2, head);
-      assert.equal(knownUnknown.reason, 'pr_task_binding_unknown'); assert.equal(knownUnknown.task_id, r.claim.task_id);
-      assert.equal(knownUnknown.claim, null, 'atomic Task identity is not a holder assertion that the PR is open');
+      assert.equal(knownUnknown.binding_status, 'bound'); assert.equal(knownUnknown.task_id, r.claim.task_id);
+      assert.equal(knownUnknown.claim.claim_id, r.claim.claim_id, 'unknown counts as open: the live claim is reported');
       const knownObserve = await resolve('ci', 2, head, { read_only: true });
-      assert.equal(knownObserve.reason, 'pr_task_binding_unknown'); assert.equal(knownObserve.auto_bound, false);
+      assert.equal(knownObserve.binding_status, 'bound'); assert.equal(knownObserve.auto_bound, false);
       const knownOpen = await resolve('ci', 2, head);
       assert.equal(knownOpen.binding_status, 'bound'); assert.equal(knownOpen.auto_bound, true); assert.ok(knownOpen.receipt_id);
       assert.equal((await resolve('ci', 3, head)).binding_status, 'bound');
@@ -222,7 +221,8 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
         fence: r.claim.fence, lease_version: r.claim.lease_version, lease_key: r.lease_key,
         progress_ref: 'queue:' + uuid(), trigger_refs: [`merge:${repo}:main`] }));
       const beforeClose = (await admin.query('select trigger_refs,merge_queued_at,admitted_heads from clued_private.work_claims_v1 where claim_id=$1', [r.claim.claim_id])).rows[0];
-      const closed = await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#2` });
+      assert.equal((await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#2` })).status, 'ok');
+      const closed = await reportClosed(2);
       assert.equal(closed.status, 'ok');
       const terminal = await resolve('reader', 2, head);
       assert.equal(terminal.binding_status, 'no_live_claim'); assert.equal(terminal.task_id, r.claim.task_id);
@@ -321,7 +321,7 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
       const r = await claim(await task()), head = '6'.repeat(40), otherRepo = 'fixture/other';
       for (const number of [30, 31, 32, 33]) committed(await authorize(r, head, number));
       for (const number of [30, 31, 33]) assert.equal((await resolve('ci', number, head)).binding_status, 'bound');
-      await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#33` });
+      await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#33` }); await reportClosed(33);
       committed(await authorize(r, head, 40, { repository: otherRepo }));
       assert.equal((await resolve('ci', 40, head, { pr_ref: `${otherRepo}#40` })).binding_status, 'bound');
       committed(await call('holder', 'clued_work_renew_v1', { scope: 'global', claim_id: r.claim.claim_id,
@@ -339,7 +339,7 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
       const other = await holders(otherRepo);
       assert.equal(other.task_id, r.claim.task_id); assert.deepEqual(other.bound_prs, [`${otherRepo}#40`]);
       assert.equal(other.bound_pr, `${otherRepo}#40`); assert.deepEqual(other.merge_refs, [`merge:${otherRepo}:main`]);
-      await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#30` });
+      await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#30` }); await reportClosed(30);
       const remaining = await holders(repo);
       assert.deepEqual(remaining.bound_prs, [`${repo}#31`]); assert.equal(remaining.bound_pr, `${repo}#31`);
       assert.deepEqual((await holders(otherRepo)).bound_prs, [`${otherRepo}#40`]);

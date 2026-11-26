@@ -1,4 +1,4 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, startCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
@@ -26,26 +26,83 @@ const nowEpoch = () => Math.floor(Date.now() / 1000);
 const fresh = (sub, session = 'sess-main') =>
   ({ sub, role: 'authenticated', session_id: session, aal: 'aal1', amr: [{ method: 'password', timestamp: nowEpoch() }] });
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
+const ephemeralCluster = async () => newCluster({
+  databaseDir: await fs.mkdtemp(path.join(os.tmpdir(), 'clued-work-claims-owner-grants-')),
+  user: 'postgres', password: hash(),
+  persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
+  onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
+});
+
+// The database suite starts four files' clusters at once (--test-concurrency=4), and a free port is
+// only free until something binds it. Run 45380641278 failed this file 663 ms in with a bare
+// `undefined`: its postmaster exited during start, which embedded-postgres rejects with no reason.
+// Here the port is taken on purpose: the second cluster's first pick is the port a running cluster holds.
+test('a cluster whose port another cluster already holds still starts', async () => {
+  const servers = [];
+  try {
+    const holder = await ephemeralCluster();
+    servers.push(holder);
+    await startCluster(holder);
+    const late = await ephemeralCluster();
+    servers.push(late);
+    const retries = [];
+    let picks = 0;
+    await startCluster(late, {
+      pickPort: (pick) => (picks++ === 0 ? holder.options.port : pick()),
+      log: (line) => { retries.push(line); process.stderr.write(`cluster-cleanup: ${line}\n`); },
+    });
+    assert.notEqual(late.options.port, holder.options.port);
+    assert.equal(retries.length, 1, 'one line for the one retry');
+    assert.match(retries[0], new RegExp(`^端口 ${holder.options.port} 上 postmaster 启动即退出（端口冲突），改用端口 ${late.options.port}：`));
+    const client = late.getPgClient();
+    await client.connect();
+    try { assert.equal((await client.query('select 1 as v')).rows[0].v, 1); } finally { await client.end(); }
+  } finally {
+    for (const server of servers.reverse()) await stopCluster(server);
+  }
+});
+
+// One address family taken is not a taken port to a postmaster that listens on both: it comes up on the
+// other and the test would talk to whoever holds this one. newCluster listens on 127.0.0.1 only, so this
+// is the same retry as above. Without ::1 on the machine the case cannot tell the two apart.
+test('a port held on 127.0.0.1 alone is still a taken port', async () => {
+  const holder = net.createServer();
+  await new Promise((resolve, reject) => { holder.once('error', reject); holder.listen(0, '127.0.0.1', resolve); });
+  const held = holder.address().port;
+  const servers = [];
+  try {
+    const late = await ephemeralCluster();
+    servers.push(late);
+    const retries = [];
+    let picks = 0;
+    await startCluster(late, {
+      pickPort: (pick) => (picks++ === 0 ? held : pick()),
+      log: (line) => { retries.push(line); process.stderr.write(`cluster-cleanup: ${line}
+`); },
+    });
+    assert.notEqual(late.options.port, held);
+    assert.equal(retries.length, 1);
+    assert.match(retries[0], /could not create any TCP\/IP sockets/);
+    const client = late.getPgClient();
+    client.host = '127.0.0.1';
+    await client.connect();
+    try { assert.equal((await client.query('select 1 as v')).rows[0].v, 1); } finally { await client.end(); }
+  } finally {
+    for (const server of servers.reverse()) await stopCluster(server);
+    await new Promise((resolve) => holder.close(resolve));
+  }
+});
+
+test('a cluster is not given a port: startCluster picks it', () => {
+  assert.throws(() => newCluster({ databaseDir: 'unused', port: 5432 }), /端口由 startCluster 选/);
+});
 
 test('work claims over the per-Task cap consume Owner Grants; refusals carry an Owner Request',
   { timeout: 300000 }, async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-work-claims-owner-grants-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
-    onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
-  });
+  const server = await ephemeralCluster();
   const clients = [];
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = server.getPgClient();
     clients.push(admin);
     await admin.connect();

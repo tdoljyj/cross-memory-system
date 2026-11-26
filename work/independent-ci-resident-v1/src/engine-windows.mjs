@@ -20,10 +20,14 @@ import { ABORTABLE_IN_FLIGHT, EXECUTION_RETRY_STAGES, LINUX_MEMORY_NOT_READY } f
 import { pinnedNodeProfile, validateNodeProfile } from './node-profile.mjs';
 import { validateRoleProbeFact } from './role-probe.mjs';
 import { RELAY_TIMEOUT_MS } from './companion.mjs';
+import { powershellArgv } from './powershell-argv.mjs';
 import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS } from './mailbox.mjs';
 import { REVOCATION_STAGE, REVOCATION_RUN_MS, REVOCATION_PENDING_STATE, REVOCATION_RUN_ID,
   validateRevocationFacts,validateRevocationQualification } from './revocation-maintenance.mjs';
 import { RUN_MODES, TRAIN_RUN_INPUT_FIELDS, chainOfFront, validateTrainRunInput } from './train.mjs';
+// Rule 41ab823a (DESIGN §75): stage 1's headScans, in the shape head-scans.mjs checks (re-exported for the tests that cross-check it).
+import { HEAD_SCAN_EXTERNAL_ID, HEAD_SCAN_ROLES, stageHeadScans } from './head-scans.mjs';
+export { HEAD_SCAN_EXTERNAL_ID, HEAD_SCAN_ROLES, stageHeadScans };
 
 // How long a failed read of the installed Source's watch support waits before it is read again (queueWatchSupported).
 export const QUEUE_WATCH_SUPPORT_RETRY_MS = 5 * 60_000;
@@ -46,6 +50,12 @@ export const DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descript
 // Written only for a batch whose stage 10 named members, and stage 10 names members only when this engine told it the installed
 // components take /4 (batchChainSupported).
 export const DESCRIPTOR_CHAIN_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/4';
+// bc982192: the descriptor's optional baseRule. 'on-main': baseSha is an ancestor of the head and of main's tip, or that tip (a batch
+// stamped push that tests its head, S = H); absent: main's tip is baseSha (build-bundle.ps1 and prepare-workspaces.py read it; neither
+// accepts another value).
+export const DESCRIPTOR_BASE_RULE_ON_MAIN = 'on-main';
+// bc982192: the invoker's --batch-route for stages 1 and 8 (Source v2 batch-route.mjs#BATCH_ROUTE_STAGES): the batch's own stamp.
+export const BATCH_ROUTE_STAGES = Object.freeze([1, 8]);
 // The literals batchChainSupported looks for in the installed Source v2 (resident-v2/): the bundle and the workspace preparation take
 // /4, and the invoker takes the stage-10 argument ':chain' (Source v2 invoke-stage.mjs#parseLandingArg).
 export const BATCH_CHAIN_SOURCE_MARKERS = Object.freeze([
@@ -167,6 +177,11 @@ export function parseStageOutcome(o) {
     safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false,
     // Generation 28 (docs/adr/0015): the scanner publisher's "withdrawn for unavailability only, a republication may follow", only on REVOKED.
     ...(o.republishSafe === true && o.status === 'REVOKED' ? { republishSafe: true } : {}),
+    // Rule 41ab823a (DESIGN §75): only on a settled stage 1 of a front batch (executor.mjs#frontScansReused reads it).
+    ...(o.status === 'SETTLED' && stageHeadScans(o.headScans) ? { headScans: stageHeadScans(o.headScans) } : {}),
+    // Stage 1 settled on a PR that merged meanwhile (Source publisher settledMerged): only the boolean, only on SETTLED
+    // (executor.mjs reads it after stage 1: that stage was no live read of an open PR).
+    ...(o.status === 'SETTLED' && o.settledMerged === true ? { settledMerged: true } : {}),
   };
 }
 
@@ -442,9 +457,10 @@ export class WindowsEngine {
   }
 
   // The invoker's arguments for a stage: trainModeArgs, and for stage 10 in push mode with batchMax > 1 the ':chain' suffix when
-  // batchChainSupported says yes (ADR 0019; without it stage 10 composes one PR per batch, as before).
-  async stageArgs(number) {
-    const args = this.trainModeArgs(number);
+  // batchChainSupported says yes (ADR 0019; without it stage 10 composes one PR per batch, as before). bc982192: for stages 1 and 8 of
+  // a batch stamped push (derive: batch.batchRoute, from its subject), --batch-route push; nothing for any other batch or stage.
+  async stageArgs(number, batch = null) {
+    const args = [...this.trainModeArgs(number), ...(batch?.batchRoute === 'push' && BATCH_ROUTE_STAGES.includes(number) ? ['--batch-route', 'push'] : [])];
     if (number !== 10 || this.trainLanding?.landing !== 'push' || !(this.trainLanding.batchMax > 1)) return args;
     const i = args.indexOf('--train-landing');
     let chain = false;
@@ -496,10 +512,15 @@ export class WindowsEngine {
     check(chain === null || c !== null, 'RESIDENT_DERIVATION_REFUSED');
     const dir = path.join(this.paths.outboxRoot, batchId);
     await ensureDir(dir);
+    // bc982192: a batch stamped push (its subject's batchRoute, from the queue row: executor.mjs#batchRoute) that tests its head runs on
+    // the merge base of its head and main; the bundle scripts then require only that baseSha be an ancestor of the head and of main's
+    // tip (or that tip). Without baseRule (no stamp, a front batch, an older script that ignores it): main's tip must be baseSha exactly.
+    const route = subject.batchRoute === 'push' ? 'push' : null;
+    const onMain = route === 'push' && v.testSha === subject.headSha;
     await writeNew(path.join(dir, 'descriptor.json'), { contract: c ? DESCRIPTOR_CHAIN_CONTRACT : DESCRIPTOR_CONTRACT, batchId, batchKey: key, repo: subject.repo, pr: subject.pr,
-      headSha: subject.headSha, baseSha: subject.baseSha, testSha: v.testSha, ...(c ? { testTree: c.testTree, members: c.members } : {}), attempt: subject.attempt,
+      headSha: subject.headSha, baseSha: subject.baseSha, ...(onMain ? { baseRule: DESCRIPTOR_BASE_RULE_ON_MAIN } : {}), testSha: v.testSha, ...(c ? { testTree: c.testTree, members: c.members } : {}), attempt: subject.attempt,
       ciSourceManifestSha256: v.ciSourceManifestSha256, sourceCommit: v.sourceCommit, gitleaksTomlSha256: v.gitleaksTomlSha256, linuxJobIds, createdAt: v2.createdAt });
-    return { batchId, key, dir: out, packageSha256: v.packageSha256, stages: v.stages, ciSourceManifestSha256: v.ciSourceManifestSha256 };
+    return { batchId, key, dir: out, packageSha256: v.packageSha256, stages: v.stages, ciSourceManifestSha256: v.ciSourceManifestSha256, ...(route ? { batchRoute: route } : {}) };
   }
 
   // Windows half of a protocol archive through the Source v2 handle-based tool (never Node path
@@ -508,7 +529,7 @@ export class WindowsEngine {
   // verdict with that code also when it exits 2), or the engine's own fixed code when the tool said none (windowsArchiveCode).
   async archiveWindows(batch, reason) {
     const tool = await this.requireV2('archive-windows-spool.ps1');
-    const r = await this.run([this.paths.powershellExe, '-NoProfile', '-NonInteractive', '-File', tool, '-BatchKey', batch.key, '-Reason', reason, '-ExpectedNodeProfileSha256', this.nodeProfileSha256], { timeoutMs: 120_000 });
+    const r = await this.run(powershellArgv(this.paths.powershellExe, '-File', tool, '-BatchKey', batch.key, '-Reason', reason, '-ExpectedNodeProfileSha256', this.nodeProfileSha256), { timeoutMs: 120_000 });
     let v = null;
     if (r.code === 0) v = parseBoundedJson(Buffer.from(r.stdout, 'utf8'), 65536, 'WINDOWS_ARCHIVE_UNCONFIRMED');
     else if (r.code !== null) { try { v = parseBoundedJson(Buffer.from(r.stdout ?? '', 'utf8'), 65536, 'WINDOWS_ARCHIVE_UNCONFIRMED'); } catch { v = null; } }
@@ -524,7 +545,7 @@ export class WindowsEngine {
   // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): one train run outside any batch. Its package is derived into a
   // new work\train\<runId> directory (create-only), then it runs like any Windows-only stage. The run key and id are
   // fresh random values (the derivation checks their shape); the fact carries the train facts.
-  // Step 3c-2b (train-run job /2, /3 since DESIGN §65, INTERFACES §2): input is the resident's part of the job (train.mjs#trainRunInput: mode, the
+  // Step 3c-2b (train-run job /2, /3 since DESIGN §65, /4 since R3 batch 2 (frontFailed), INTERFACES §2): input is the resident's part of the job (train.mjs#trainRunInput: mode, the
   // installed train settings, onSince, frontOutcome, revokeHeadRequestId, sweep); everything but the mode goes as one JSON object in
   // --train-params (Source v2 train-run.mjs#TRAIN_RUN_PARAMS, in that order); the derivation adds the record's repo and Source,
   // the run id and createdAt (makeTrainRun). Modes on and revoke-only need it; a call without it is a shadow run of step
@@ -726,7 +747,7 @@ export class WindowsEngine {
       let r;
       try {
         r = await this.run([this.paths.nodeExe, invoke, '--batch-dir', batch.dir, '--stage', String(stage.number), '--work-manifest-sha256', row.workManifestSha256,
-          '--batch-key', batch.key, ...(await this.stageArgs(stage.number))], { timeoutMs: stage.runMilliseconds + 360_000 });
+          '--batch-key', batch.key, ...(await this.stageArgs(stage.number, batch))], { timeoutMs: stage.runMilliseconds + 360_000 });
       } finally {
         await observer?.stop();
       }

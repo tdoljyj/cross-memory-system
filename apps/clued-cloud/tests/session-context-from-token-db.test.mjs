@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import EmbeddedPostgres from "embedded-postgres";
+import { newCluster } from "./pg-cluster-fixture.mjs";
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
@@ -15,34 +14,25 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString("hex");
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
-  const value = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return value;
-}
 
 // 2026-10-01: a project session checkpointed five times without context_key.
 // The server looked the token up as a Global session and answered
 // resume_required_or_session_expired, which no resume could cure.
 test("checkpoint and reconcile take the context from the session token", { timeout: 180000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-session-context-"));
-  const server = new EmbeddedPostgres({
+  const server = newCluster({
     databaseDir: directory,
     user: "postgres",
     password: hash(),
-    port: await freePort(),
     persistent: false,
     // track_functions lets the test count binding_read_scopes_v2 calls.
-    postgresFlags: ["-c", "io_method=sync", "-c", "track_functions=all"],
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, "-c", "track_functions=all"],
     onLog() {},
     onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = server.getPgClient();
     clients.push(admin);
     await admin.connect();

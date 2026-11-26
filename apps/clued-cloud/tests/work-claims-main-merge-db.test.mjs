@@ -1,16 +1,17 @@
 // Migration 20261116090000 (resident DESIGN §80): a head that only merged main into an authorized head keeps that authorization when
 // the CI admission issuer says so (carry_main_merge). Before it, the same merge commit stayed head_not_authorized until the holder
 // authorized it with the private lease key (CLUED_MAIN_MERGE_BASELINE=1 runs this file without the migration: the first case fails).
-import { stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
+// Migration 20261122090000 lets the same carry and every read-only resolve treat a relation the CI has not yet seen ('unknown')
+// as open; T1a, T1c and T1d failed before it, T1b guards the terminal states either way.
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
@@ -19,18 +20,14 @@ const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 const sha = c => c.repeat(40);
 const repo = 'fixture/main-merge';
-async function freePort() {
-  const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r));
-  const p = s.address().port; await new Promise(r => s.close(r)); return p;
-}
 
 test('a merge of main into an authorized head keeps the authorization, only by the CI issuer and only from a live source', { timeout: 300000 }, async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-main-merge-'));
-  const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
+  const server = newCluster({ databaseDir: dir, user: 'postgres', password: hash(), 
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
   const clients = [];
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;
@@ -128,13 +125,134 @@ test('a merge of main into an authorized head keeps the authorization, only by t
         assert.notEqual((await resolve(12, X)).binding_status, 'bound', who);
       }
       assert.equal((await carry('ci', 12, sha('6'), X)).error_code, 'source_head_not_authorized', 'an unauthorized source');
-      assert.equal((await carry('ci', 13, H, X)).error_code, 'pr_task_binding_unbound', 'another PR');
+      assert.equal((await carry('ci', 13, H, X)).error_code, 'head_authorization_required', 'an authorization limited to another PR');
       for (const bad of [{ head_sha: H }, { main_sha: X }, { extra: 1 }, { scope: 'nope' }]) {
         assert.equal((await carry('ci', 12, H, X, bad)).status, 'error', JSON.stringify(bad));
       }
       assert.equal((await resolve(12, X)).binding_status, 'head_not_authorized');
       committed(await release(r));
       assert.equal((await carry('ci', 12, H, X)).status, 'rejected', 'a released claim carries nothing');
+    });
+
+    // Migration 20261122090000 (FABLE-botmerge-auth-carry-20261122 §2 step 1, T1): a PR the holder bound through authorize_head
+    // and the CI never admitted stays 'unknown'. Before it, carry refused such a PR (pr_task_binding_unbound: #1220, 11-22) and
+    // every read-only resolve answered no_live_claim / pr_task_binding_unknown whatever its heads' authorizations were.
+    const bindingStatus = async n => (await admin.query('select status from clued_private.work_claim_pr_task_bindings_v1 where user_id=$1 and repo_id=$2 and pr_number=$3',
+      [user, repo, n])).rows[0]?.status;
+    const observeAs = (who, number, head) => call(who, 'clued_work_verify_v1', { action: 'resolve_pr_claim', scope: 'global',
+      pr_ref: `${repo}#${number}`, head_sha: head, base_sha: sha('b'), target_branch: 'main', read_only: true });
+    const writes = async () => (await admin.query(`select (select count(*)::int from public.clued_audit_receipts where user_id=$1) receipts,
+      (select count(*)::int from clued_private.work_claim_head_authorizations_v1 where user_id=$1) authorizations,
+      (select count(*)::int from clued_private.work_claim_door_usage_v1 where user_id=$1) usage`, [user])).rows[0];
+
+    await t.test('an unbound PR is bound and its main merge authorized from the one holder-authorized source Task', async sub => {
+      const H = sha('a'), r = await claim(await task());
+      sub.after(async () => committed(await release(r)));
+      const source = committed(await authorize(r, H));
+      for (const [number, M, scope] of [[31, sha('c'), 'global'], [34, sha('b'), undefined]]) {
+        assert.equal(await bindingStatus(number), undefined);
+        const before = await writes();
+        const result = committed(await carry('ci', number, H, M, { scope }));
+        assert.equal(result.carried_from, source.authorization_id);
+        assert.equal(await bindingStatus(number), 'active', 'carry binds before the next resolve');
+        const bound = await resolve(number, M);
+        assert.equal(bound.binding_status, 'bound', JSON.stringify(bound));
+        assert.equal(bound.task_id, r.claim.task_id);
+        assert.equal(bound.head_authorization_id, result.authorization_id);
+        assert.deepEqual(await writes(), { receipts: before.receipts + 2, authorizations: before.authorizations + 1, usage: before.usage });
+        assert.equal((await verify(r, number, M)).verdict, 'ADMITTED');
+      }
+      const direct = await resolve(35, H);
+      assert.deepEqual([direct.binding_status, direct.task_id, direct.head_authorization_id, direct.auto_bound],
+        ['bound', r.claim.task_id, source.authorization_id, true], 'ordinary discovery uses the same source rule');
+    });
+
+    await t.test('an unbound PR with two holder-authorized source Tasks stays unbound', async () => {
+      const H = sha('a'), M = sha('c'), first = await claim(await task()), second = await claim(await task());
+      committed(await authorize(first, H));
+      committed(await authorize(second, H));
+      const before = await writes();
+      const result = await carry('ci', 32, H, M);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'pr_task_binding_ambiguous']);
+      assert.equal(await bindingStatus(32), undefined);
+      assert.deepEqual(await writes(), before);
+      committed(await release(first));
+      committed(await release(second));
+    });
+
+    await t.test('an unbound PR without a holder-authorized source stays unbound', async () => {
+      const r = await claim(await task());
+      const before = await writes();
+      const result = await carry('ci', 33, sha('8'), sha('c'));
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'head_authorization_required']);
+      assert.equal(await bindingStatus(33), undefined);
+      assert.deepEqual(await writes(), before);
+      committed(await release(r));
+    });
+
+    // Authorized by the holder with pr_number only: no CI resolve, no admission.
+    const unadmitted = async (n, H) => {
+      const r = await claim(await task());
+      committed(await authorize(r, H, n));
+      assert.equal(await bindingStatus(n), 'unknown', 'authorize_head alone leaves the relation unknown');
+      return r;
+    };
+
+    await t.test('T1a: the issuer carries a head of a PR the CI never admitted; its next CI resolve binds and activates it', async () => {
+      const H = sha('a'), M = sha('c'), r = await unadmitted(21, H);
+      const carried = await carry('ci', 21, H, M);
+      assert.equal(carried.status, 'committed', JSON.stringify(carried));
+      const source = (await admin.query('select authorization_id from clued_private.work_claim_head_authorizations_v1 where claim_id=$1 and head_sha=$2',
+        [r.claim.claim_id, H])).rows[0].authorization_id;
+      assert.equal(carried.carried_from, source);
+      assert.equal(await bindingStatus(21), 'unknown', 'carry itself does not change the relation');
+      const bound = await resolve(21, M);
+      assert.equal(bound.binding_status, 'bound', JSON.stringify(bound));
+      assert.equal(bound.head_authorization_id, carried.authorization_id);
+      assert.equal(bound.auto_bound, true);
+      assert.equal(await bindingStatus(21), 'active');
+      committed(await release(r));
+    });
+
+    await t.test('T1b: a closed or merged relation still carries nothing and still reads as no live claim', async () => {
+      for (const [n, end] of [[22, 'closed'], [23, 'merged']]) {
+        const H = sha('d'), M = sha('e'), r = await unadmitted(n, H);
+        await admin.query('update clued_private.work_claim_pr_task_bindings_v1 set status=$4 where user_id=$1 and repo_id=$2 and pr_number=$3', [user, repo, n, end]);
+        const refused = await carry('ci', n, H, M);
+        assert.deepEqual([refused.status, refused.error_code], ['rejected', 'pr_task_binding_unbound'], end);
+        for (const who of ['ci', 'reader']) {
+          const seen = await observeAs(who, n, H);
+          assert.deepEqual([seen.binding_status, seen.reason, seen.claim], ['no_live_claim', `pr_task_binding_${end}`, null], `${who} ${end}`);
+        }
+        assert.equal(await bindingStatus(n), end);
+        committed(await release(r));
+      }
+    });
+
+    await t.test('T1c: a read-only resolve of an authorized head of an unknown relation answers bound and writes nothing', async () => {
+      const H = sha('f'), r = await unadmitted(24, H), before = await writes();
+      const authorization = (await admin.query('select authorization_id from clued_private.work_claim_head_authorizations_v1 where claim_id=$1 and head_sha=$2',
+        [r.claim.claim_id, H])).rows[0].authorization_id;
+      for (const who of ['ci', 'reader']) {
+        const seen = await observeAs(who, 24, H);
+        assert.deepEqual([seen.binding_status, seen.reason, seen.head_authorization_id, seen.claim?.claim_id, seen.auto_bound, seen.receipt_id],
+          ['bound', null, authorization, r.claim.claim_id, false, null], `${who}: ${JSON.stringify(seen)}`);
+      }
+      assert.equal(await bindingStatus(24), 'unknown', 'only the CI write resolve activates a relation');
+      assert.deepEqual(await writes(), before, 'no receipt, authorization or head meter');
+      committed(await release(r));
+    });
+
+    await t.test('T1d: a read-only resolve of an unauthorized head of an unknown relation names the claim', async () => {
+      const H = sha('0'), G = sha('9'), r = await unadmitted(25, H), before = await writes();
+      for (const who of ['ci', 'reader']) {
+        const seen = await observeAs(who, 25, G);
+        assert.deepEqual([seen.binding_status, seen.reason, seen.claim?.claim_id, seen.head_authorization_id],
+          ['head_not_authorized', 'head_authorization_required', r.claim.claim_id, null], `${who}: ${JSON.stringify(seen)}`);
+      }
+      assert.equal(await bindingStatus(25), 'unknown');
+      assert.deepEqual(await writes(), before);
+      committed(await release(r));
     });
   } finally {
     for (const c of clients.reverse()) await c.end().catch(() => {});

@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, CLOSEOUT_MIGRATION, WORKER_SIGNATURES,
@@ -22,13 +21,6 @@ const CLOCK_MIGRATION = '20261011113259_merge_admission_measurement_clock_target
 const CLOCK_SOURCE_SHA256 = 'a895a6593187dc0dd48e79c9f997929fca5ba8ca5033fd3ed8a869f88dbc9bd3';
 const role = 'clued_worker_gateway';
 const hex = () => crypto.randomBytes(32).toString('hex');
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise(resolve => listener.close(resolve));
-  return port;
-}
 const priorGrants = `select p.oid::regprocedure::text signature, p.proowner::regrole::text owner,
   p.prosecdef, p.proconfig, pg_get_functiondef(p.oid) definition,
   has_function_privilege('anon',p.oid,'EXECUTE') anon,
@@ -117,13 +109,13 @@ async function applyClockFixtureCapability(admin, migrator, caller, clockSql) {
 
 test('Worker gateway is additive, least privileged, and still requires a live Binding', { timeout: 600000 }, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-worker-gateway-'));
-  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'supabase_admin', password: hex(),
-    port: await freePort(), persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+  const server = newCluster({ databaseDir: directory, user: 'supabase_admin', password: hex(),
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
   const clients = [];
   let failure;
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
     await admin.query(`create role postgres nologin superuser createrole inherit;
       create role anon nologin; create role authenticated nologin;
@@ -343,7 +335,7 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
       await migrator.query('select pg_temp.apply_gateway($1)', [sql]);
     });
 
-    await t.test('the reviewed grant list covers live source call sites and no Native-only RPC', async () => {
+    await t.test('the reviewed grant list covers live call sites and the retained heartbeat grant only', async () => {
       const workerFiles = (await fs.readdir(path.join(root, 'worker'))).filter(n => /\.(ts|mjs)$/.test(n));
       const sources = (await Promise.all(workerFiles.map(n => fs.readFile(path.join(root, 'worker', n), 'utf8')))).join('\n');
       const mentioned = new Set(sources.match(/\bclued_[a-z0-9_]+\b/g));
@@ -356,7 +348,11 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
         and p.proargnames && array['p_token_hash','p_issuer_hash']::text[] order by signature`)).rows
         .filter(r => mentioned.has(r.proname) && !excluded.has(r.proname) && !r.proname.startsWith('clued_p5_'))
         .map(r => 'public.' + r.signature);
-      assert.deepEqual(signatures, expected);
+      // This historical migration predates the on-demand scheduler. The
+      // heartbeat RPC remains in the database until its separate retirement.
+      const heartbeat = 'public.clued_mcp_projection_refresh_heartbeat(text,jsonb)';
+      assert.ok(!expected.includes(heartbeat), 'the Worker no longer calls the heartbeat RPC');
+      assert.deepEqual(signatures, [...expected, heartbeat].sort());
     });
 
     const user = crypto.randomUUID(), proof = hex();

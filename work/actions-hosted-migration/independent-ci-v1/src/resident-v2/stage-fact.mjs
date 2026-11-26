@@ -10,7 +10,7 @@ import { validateTrainFacts } from '../independent-control-checks-v2/train-facts
 import { roleProbeFact } from './role-probe-run.mjs';
 import { validateRevocationFacts } from './revocation-run.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
-import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
+import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON, validHeadScans } from '../published-on-github-v2.mjs';
 import { admissionVerificationRetryable } from '../withdrawal-text.mjs';
 
 export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
@@ -51,7 +51,7 @@ export const TRAIN_CODES = Object.freeze(['TRAIN_FRONT_JOB_WITHOUT_TRAIN', 'TRAI
   'TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_RULES_MISSING', 'TRAIN_LANDING_REFUSED', 'TRAIN_LANDING_CHECK_FAILED', 'TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH']);
 // Clean, but final for this head and attempt (never retried automatically).
 export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_INPUT_RESULT_MISSING', 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED', 'BROKER_REQUEST_EXPIRED',
-  'BROKER_REQUEST_REFUSED', 'STAGE_HELPER_PREFLIGHT_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
+  'BROKER_REQUEST_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
   'NATIVE_POLICY_UNSUPPORTED', 'PUBLICATION_BLOCKED', 'PUBLICATION_REVOKED', 'EVIDENCE_REFUSED', 'WORKSPACE_PREPARATION_REFUSED',
   // The removed stage R's clean refusal (resident DESIGN §76): kept so the catalogue stays the resident's, which reads old receipts.
   'RELAY_STAGE_REFUSED',
@@ -61,6 +61,8 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   // all before any journal write. The last one is final for the head (STAGE8_FINAL_REASONS).
   'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',
   'TRAIN_TEST_MERGE_TREE_DIFFERS',
+  // Task bd07449b: main's rules were not read (train-rules.mjs#readMainRules); zero side effects, the resident reads again soon.
+  'RULESET_READ_FAILED',
   // App 5368905 already published on this head (primary/standby design v0.4 §6.2, C4; published-on-github-v2.mjs):
   // stage 1 found a role or control check before Native was asked, or a role this node knew nothing of was already
   // there before its first publication. Nothing was published for that role (an earlier
@@ -71,7 +73,7 @@ export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_
   // the stage-10 decisions; the relay's reason for keeping a front batch local (not a failure).
   ...TRAIN_CODES]);
 // The stage-8 answers that travel as their own code (publisher.mjs STAGE8_NOT_READY_REASONS and STAGE8_FINAL_REASONS).
-const STAGE8_OWN_CODES = new Set(['RESIDENT_QUEUE_HEAD_NOT_REACHED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED', 'REQUIRED_CHECK_FAILED', 'REQUIRED_CHECKS_UNREADABLE', 'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN',
+const STAGE8_OWN_CODES = new Set(['RESIDENT_QUEUE_HEAD_NOT_REACHED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED', 'REQUIRED_CHECK_FAILED', 'REQUIRED_CHECKS_UNREADABLE', 'RULESET_UNREADABLE', 'RULESET_READ_FAILED', 'STRICT_OFF_WITHOUT_TRAIN',
   'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE', 'TRAIN_TEST_MERGE_TREE_DIFFERS', 'TRAIN_SINGLE_GREEN_NOT_PROVEN', 'TRAIN_TEST_COMMIT_GONE',
   'TRAIN_MODE_UNREADABLE', 'TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_RULES_MISSING', 'TRAIN_LANDING_REFUSED', 'TRAIN_LANDING_CHECK_FAILED', 'TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH']);
 // Never clean: something may still run, or a publication may exist unsettled, or an identity conflicts.
@@ -135,6 +137,9 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (!plain(outcome)) return 'STAGE_OUTCOME_MISSING';
   if (outcome.status === 'UNCERTAIN') return 'PUBLICATION_UNCERTAIN';
   if (outcome.status === 'RECONCILIATION_REQUIRED') return 'RECONCILIATION_REQUIRED';
+  // A staged scan had only a pending run, or sent its final conclusion after
+  // verification but could not confirm it. End the head without a HALT.
+  if (outcome.status === 'STAGED_SCAN_FAILED' && [3, 5, 7].includes(stageNumber)) return 'PUBLICATION_REVOKED';
   // Generation 10: only stage 1's own admission check, only when it was withdrawn because it could not be verified for a passing cause
   // (withdrawal-text.mjs#admissionVerificationRetryable, with the outcome's bound diagnostic: the entry's own result names it
   // admissionDiagnostic, the bound outcome diagnostic), is transient. Every other withdrawal, and every one at any other stage (a role
@@ -214,7 +219,11 @@ export function outcomeFacts(o) {
     diagnostic: sanitizeAdmissionDiagnosticV2(o.diagnostic), scheduling: sanitizeSchedulingV2(o.scheduling),
     safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false,
     // Generation 28 (resident docs/adr/0015): the check publisher's own republishSafe, only on a REVOKED ending (stage-inputs.mjs#writeOutcome).
-    ...(o.republishSafe === true && o.status === 'REVOKED' ? { republishSafe: true } : {}) };
+    ...(o.republishSafe === true && o.status === 'REVOKED' ? { republishSafe: true } : {}),
+    // Rule 41ab823a (resident DESIGN §75): stage 1's report of the scans H already carries (stage-inputs.mjs#writeOutcome), validated again.
+    ...(o.status === 'SETTLED' && validHeadScans(o.headScans)?.length ? { headScans: validHeadScans(o.headScans) } : {}),
+    // Stage 1 settled on a PR that merged meanwhile (stage-inputs.mjs#writeOutcome): only the boolean, only on SETTLED.
+    ...(o.status === 'SETTLED' && o.settledMerged === true ? { settledMerged: true } : {}) };
 }
 // The broker's refusals that it gives before any start, with the runner re-read as the original (no launch, state
 // restored): the second way a stage may be released (v0.6 §9 phase 1, item 2). BROKER_BUSY and BROKER_UNCONFIRMED
@@ -249,10 +258,11 @@ export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha
   if (!broker.stoppedInTime) return done('STAGE_HELPER_NOT_STOPPED_IN_TIME');
   if (!broker.restored || !broker.stableAfter || !broker.accountUnchanged) return done('STAGE_ORIGINAL_NOT_RESTORED');
   if (!receipt) {
-    // The helper stopped without a receipt: its preflight refused before any child (FormalSession0V2
-    // writes a receipt only once its boundary validated). No child means a zero tree.
-    return { ...done(broker.started && broker.helperPid ? 'STAGE_HELPER_PREFLIGHT_REFUSED' : 'NATIVE_RECEIPT_UNCONFIRMED'),
-      tree_cleanup_confirmed: true, tree_active_processes: 0, root_exit_confirmed: true };
+    // No receipt. The broker reads `started` only once the helper reached RUNNING, which FormalSession0V2 reports after its
+    // boundary validated: a helper that never started refused in its preflight before any child (a zero tree, as before);
+    // a started one passed it and may have run a child, so its tree stays unconfirmed (board 271: no clean, retryable code).
+    if (broker.started) return done('NATIVE_RECEIPT_UNCONFIRMED');
+    return { ...done('NATIVE_RECEIPT_UNCONFIRMED'), tree_cleanup_confirmed: true, tree_active_processes: 0, root_exit_confirmed: true };
   }
   const n = validateNativeReceiptV2(receipt, { nonce, plan, planSha256, controllerSid, helperPid: broker.helperPid });
   fact.native_receipt_sha256 = hash(receiptBytes);

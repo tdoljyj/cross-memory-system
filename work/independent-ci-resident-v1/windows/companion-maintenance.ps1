@@ -306,6 +306,28 @@ function Get-CompanionMaintenanceWsl {
     }finally{$p.Dispose()}
   }finally{$held.Dispose()}
 }
+# H1, one rule for every child a package script starts (first-install-host.ps1's own; test/native-child.test.mjs holds every copy the same
+# text and no package .ps1 merging a stream into its output): stdout, stderr and the exit code read apart; never an error from stderr.
+function Invoke-NativeChild([string]$exe, [string[]]$arguments, [int]$seconds = 3600, [Text.Encoding]$encoding = (New-Object Text.UTF8Encoding($false)), [bool]$shareConsole = $false, [byte[]]$stdin = $null) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $exe; $psi.Arguments = (($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = ($null -ne $stdin); $psi.CreateNoWindow = (-not $shareConsole)
+  $psi.StandardOutputEncoding = $encoding; $psi.StandardErrorEncoding = $encoding
+  # Windows PowerShell 5.1 (.NET Framework) opens a redirected stdin as a StreamWriter in Console.InputEncoding and writes that
+  # encoding's preamble at once: on a UTF-8 console (code page 65001) the child reads a BOM before $stdin (run 44705707829). While the
+  # child starts, Console's cached input encoding (what its getter returns) is a UTF-8 without one; .NET Core has no such field and
+  # writes no preamble. Our bytes go to the base stream, so the writer's encoding is otherwise unused.
+  $cie = if ($psi.RedirectStandardInput) { [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static') } else { $null }
+  $was = if ($null -ne $cie) { $cie.GetValue($null) } else { $null }
+  if ($null -ne $cie) { $cie.SetValue($null, (New-Object Text.UTF8Encoding($false))) }
+  try { $p = [Diagnostics.Process]::Start($psi) } finally { if ($null -ne $cie) { $cie.SetValue($null, $was) } }
+  $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+  if ($null -ne $stdin) { try { $p.StandardInput.BaseStream.Write($stdin, 0, $stdin.Length); $p.StandardInput.BaseStream.Flush() } finally { $p.StandardInput.Close() } }   # a secret: never a command line
+  if (-not $p.WaitForExit($seconds * 1000)) { return [ordered]@{ exit = $null; stdout = ''; stderr = ''; timedOut = $true } }
+  $p.WaitForExit()   # the asynchronous reads end with the child
+  $tail = { param($t) $t = ([string]$t) -replace "`0", ''; if ($t.Length -gt 1500) { $t.Substring($t.Length - 1500) } else { $t } }
+  [ordered]@{ exit = $p.ExitCode; stdout = ([string]$o.Result -replace "`0", ''); stderr = (& $tail $e.Result); timedOut = $false }
+}
 function Get-CompanionMaintenanceService([string]$Name) {
   if($Name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\z'){throw 'MAINTENANCE_SERVICE_NAME_REFUSED'}
   $rows=@(Get-CimInstance -ClassName Win32_Service -Filter ("Name='"+$Name+"'") -ErrorAction Stop)
@@ -313,7 +335,9 @@ function Get-CompanionMaintenanceService([string]$Name) {
   if(([string]$s.State -ceq 'Running' -and [long]$s.ProcessId -le 0) -or ([string]$s.State -ceq 'Stopped' -and [long]$s.ProcessId -ne 0)){throw 'MAINTENANCE_SERVICE_PID_UNKNOWN'}
   $config=[ordered]@{name=$Name;binary=[string]$s.PathName;account=[string]$s.StartName;startMode=[string]$s.StartMode;type=[string]$s.ServiceType;errorControl=[string]$s.ErrorControl;desktopInteract=[bool]$s.DesktopInteract;sc=@()}
   foreach($command in @('qc','qfailure','qfailureflag','qsidtype','qprivs','sdshow')){
-    $output=@(& 'C:\Windows\System32\sc.exe' $command $Name 2>&1);if($LASTEXITCODE -ne 0){throw 'MAINTENANCE_SERVICE_CONFIG_UNREADABLE'};$config.sc+=,[string]($output -join "`n")
+    $run=Invoke-NativeChild 'C:\Windows\System32\sc.exe' @($command,$Name) 120 ([Console]::OutputEncoding);if($run.exit -ne 0){throw 'MAINTENANCE_SERVICE_CONFIG_UNREADABLE'}
+    # the lines as PowerShell's own capture gave them: one per line, the last line's terminator making no empty line
+    $output=@([string]$run.stdout -split "`r?`n");if($output[$output.Count-1] -ceq ''){$output=@(if($output.Count -gt 1){$output[0..($output.Count-2)]})};$config.sc+=,[string]($output -join "`n")
   }
   return @{name=$Name;state=[string]$s.State;pid=[long]$s.ProcessId;config=$config;configSha256=(Get-CompanionMaintenanceHash (ConvertTo-CompanionMaintenanceBytes $config));stoppedByOperation=$false;originallyRunning=([string]$s.State -ceq 'Running')}
 }

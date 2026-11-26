@@ -1,12 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { readWranglerConfig } from "../scripts/projection-postflight.mjs";
 import { OAuthOriginConfigurationError, selectOAuthOrigin } from "../worker/oauth-origin.mjs";
 
 const old = "https://clued.pixelgrav.com";
 const current = "https://kooyumi.pixelgrav.com";
 test("production binds the reviewed separate OAuth namespaces and exact new origin", async () => {
-  const config = JSON.parse(await readFile(new URL("../wrangler.production.jsonc", import.meta.url), "utf8"));
+  // Read as Wrangler reads it (JSONC), like every release-path reader (Fable 1121 §7).
+  const config = await readWranglerConfig(fileURLToPath(new URL("../wrangler.production.jsonc", import.meta.url)));
   assert.equal(config.vars.KOOYUMI_OAUTH_ORIGIN, current);
   const oldBindings = config.kv_namespaces.filter(binding => binding.binding === "OAUTH_KV");
   const newBindings = config.kv_namespaces.filter(binding => binding.binding === "KOOYUMI_OAUTH_KV");

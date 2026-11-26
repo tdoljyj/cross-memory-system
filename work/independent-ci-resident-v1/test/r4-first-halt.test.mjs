@@ -154,9 +154,13 @@ test('the install plan carries the CI root entry, the verify checks it from the 
   assert.ok(at("Step 'directories'") < at("Step 'parent-acl'") && at("Step 'parent-acl'") < at("Step 'package-copy'"));
   assert.match(install, /Step 'parent-acl' \{\s*\$wrote = Add-ParentAce \$plan\.parentAcl/);
   // The one ACE appended to an existing folder: the code only ever calls SetAccessControl for it, and writes no owner/group/SACL section.
-  const appendFn = install.slice(install.indexOf('function Add-ParentAce'), install.indexOf('# ---- Carry-forward'));
+  const appendFn = install.slice(install.indexOf('function Add-ParentAce'), install.indexOf('# ---- <CiRoot>\\state'));
   assert.match(appendFn, /SetSecurityDescriptorSddlForm\(\$now \+ \$p\.ace, \[Security\.AccessControl\.AccessControlSections\]::Access\)/);
-  assert.equal([...install.matchAll(/SetAccessControl\(\$p\.path/g)].length, 1);
+  assert.equal([...appendFn.matchAll(/SetAccessControl\(\$p\.path/g)].length, 1);
+  // r13 (0e418483): the second and last writer is state-parent-acl, the Access section of <CiRoot>\state only (first-install-state-parent.test.mjs)
+  const stateFn = install.slice(install.indexOf('function Invoke-StateParentAcl'), install.indexOf('# ---- Carry-forward'));
+  assert.equal([...stateFn.matchAll(/SetAccessControl\(\$p\.path/g)].length, 1);
+  assert.equal([...install.matchAll(/SetAccessControl\(\$p\.path/g)].length, 2);
   assert.doesNotMatch(code(install), /icacls|takeown|Set-Acl\b/i, 'no other way of changing an ACL was added');
   // verify: live ACL of the CI root for the service SID, and the companion scripts
   assert.match(verify, /Record 'ci-root-resident-read-control' \$\(if \(\[string\]::IsNullOrEmpty\(\$ciRootSddl\)\) \{ 'unreadable' \} else \{ try \{ Test-ParentAclRule \$ciRootSddl \(Get-ServiceSid 'CluedCIResident'\) \} catch \{ \$false \} \}\)/);
@@ -276,7 +280,7 @@ test('no archive code, or one that is not a fixed code: the records are exactly 
 });
 
 test('the same for a failure archive (FAILURE_ARCHIVE_UNCONFIRMED) and for the success path (SUCCESS_PATH_ARCHIVE_UNCONFIRMED)', async t => {
-  const failure = await executorFixture(t, { engine: fakeEngine({ stages: { 3: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: { ...WINDOWS_CLEAN, linuxUnitsInactive: true, containersZero: true } } },
+  const failure = await executorFixture(t, { engine: fakeEngine({ stages: { 3: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: { ...WINDOWS_CLEAN, linuxUnitsInactive: true, containersZero: true } } },
     archiveWindows: { verified: false, directory: null, moved: null, archiveCode: 'SPOOL_PATH_REDIRECTED' } }) });
   await failure.drop(triggerBytes());
   const a = await failure.exec.tick();
@@ -295,7 +299,7 @@ test('the same for a failure archive (FAILURE_ARCHIVE_UNCONFIRMED) and for the s
 test('a re-arm whose Windows archive is refused says why in its refusal receipt', async t => {
   // First a failure that halts with an unarchived FAILED_UNKNOWN scene (the Windows archive fails), then the Owner's re-arm, whose archive fails the same way.
   const archiveWindows = { verified: false, directory: null, moved: null, archiveCode: 'SPOOL_PARENT_HOLD_REFUSED' };
-  const f = await executorFixture(t, { engine: fakeEngine({ stages: { 3: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: { ...WINDOWS_CLEAN, linuxUnitsInactive: true, containersZero: true } } }, archiveWindows }),
+  const f = await executorFixture(t, { engine: fakeEngine({ stages: { 3: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: { ...WINDOWS_CLEAN, linuxUnitsInactive: true, containersZero: true } } }, archiveWindows }),
     companion: fakeCompanion() });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'HALTED');

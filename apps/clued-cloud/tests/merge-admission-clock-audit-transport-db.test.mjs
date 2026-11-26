@@ -1,29 +1,27 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import net from 'node:net';
 import test from 'node:test';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {build,stop} from 'esbuild';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url)),cloud=path.resolve(here,'..');
 const transportMigration='20261012030548_merge_admission_clock_audit_transport_v1.sql';
 const {allowRawTestBindings}=await import(pathToFileURL(path.join(cloud,'tests/raw-binding-grants-fixture.mjs')));
 const {workerGatewayRpc}=await import(pathToFileURL(path.join(cloud,'tests/worker-gateway-caller-fixture.mjs')));
 const hash=value=>crypto.createHash('sha256').update(value).digest('hex'),uuid=()=>crypto.randomUUID();
 const queue='merge:tdoljyj/cross-memory-system:main',counterexample=false;
-async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 
 test('typed C1 audit transport: actual database authorization and transaction boundaries',{timeout:300000},async t=>{
  const parent=await fs.realpath(process.env.CLUED_TEST_TMP_ROOT??os.tmpdir()),directory=await fs.mkdtemp(path.join(parent,'clued-clock-audit-'));
  const workerDirectory=await fs.mkdtemp(path.join(parent,'clued-clock-audit-worker-'));
- const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:crypto.randomBytes(32).toString('hex'),port:await port(),
-   persistent:true,postgresFlags:['-c','io_method=sync'],onLog(){},onError(){}}),clients=[];let db;
+ const server=newCluster({databaseDir:directory,user:'postgres',password:crypto.randomBytes(32).toString('hex'),
+   persistent:true,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(){}}),clients=[];let db;
  try{
-  await server.initialise();await server.start();db=server.getPgClient();clients.push(db);await db.connect();
+  await startCluster(server);db=server.getPgClient();clients.push(db);await db.connect();
   await db.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;
    create schema auth;create schema extensions;create extension pgcrypto with schema extensions;
    create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz);
@@ -77,7 +75,15 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   // #1106 only dropped the hosted scan-start import and door; C1 audit tool, RPC mapping, error mapping and REST route are unchanged.
     // Prior pin (before the continuity-fold change): d09c61e3ced3d1c919477a0faef8493d310ee186b7801c712e90bbdac8345728.
   // That change only runs the resume/renew inbox-summary read beside the live-claims read (Task 8ba4ef85); C1 audit tool, RPC mapping, error mapping and REST route are unchanged.
-  assert.equal(hash(workerSource),'d3ffdf5ba5b45c1c999f4a859490005134f63ad6088b9442660d1776c7019528');
+  // T3 changes scheduled dispatch and post-write projection wakeups; #1161 adds the exact /v1/github/events
+  // dispatch before ordinary tracing. Other paths still go through the original CI and audit handling.
+  // Database configuration now shares the same defaults with both Worker gateways. C1 audit transport is unchanged.
+  // Prior pin (#1173 shared database configuration, before D1): d4bfa2ad260fddff58ae7a40d8684d59aa0264c72fa9b6c04a5001b0a264f3a2.
+  // D1 dispatches the signed node renewal route before ordinary tracing, using the shared database transport.
+  // Prior pin (D1 before merging #1173): ef2ce85811741d2220e000d84302549628b768ef1f2b9f3c4752dead1d18b5a3.
+  // The renewal route's gateway fetch now passes redirect "manual" (workerd does not implement "error"; Task 942adbdb).
+  // Prior pin (before that one-literal change): dbecf6920f7d592abe0751c8e11da1fcd2108368bd92412a1341b46a1b0ed0e3.
+  assert.equal(hash(workerSource),'2087d718c3f9cc99e854a97e80f2e5e2dfd9b515b2e5065579c477b95c83b594');
   // The historical 8afae4cb pin predates the comment-only Global -> personal records (global) clarification.
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'7615083917d9cd19460caa1ca23fd531eec804a6a15acea4a821a6eabb03c40c');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');

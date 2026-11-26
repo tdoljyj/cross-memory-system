@@ -1,13 +1,12 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
 import { CI_SIGNATURES, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
@@ -79,26 +78,18 @@ const session = (sub, sessionId = 'sess-main', extra = {}) =>
   ({ sub, role: 'authenticated', session_id: sessionId, aal: 'aal1',
     amr: [{ method: 'password', timestamp: nowEpoch() - 3 * 86400 }], ...extra });
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 test('owner grants: requests, Native two-step grants, consumption and revocation',
   { timeout: 300000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-owner-grants-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: hash(), 
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = server.getPgClient();
     clients.push(admin);
     await admin.connect();
@@ -164,6 +155,13 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
     };
     const grant = (issued, claims, digest = issued.view_digest) =>
       native('clued_owner_grant_v1', { confirmation_token: issued.confirmation_token, view_digest: digest }, claims);
+    const assertGrantDuration = async (granted, seconds, message) => {
+      // The grant response omits granted_at; use the grant's own server-side timestamp.
+      const { granted_at: grantedAt } = (await admin.query(
+        'select granted_at from clued_private.owner_grants_v1 where id=$1', [granted.grant_id])).rows[0];
+      const durationMs = new Date(granted.expires_at).getTime() - grantedAt.getTime();
+      assert.ok(Math.abs(durationMs - seconds * 1000) <= 1, `${message}: ${durationMs} ms`);
+    };
 
     // --- Agent creates a request; a retry with the same key replays it. ---
     const commit = 'repo:tdoljyj/cross-memory-system/4f49b0e8';
@@ -224,7 +222,8 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
     assert.equal(view.view.expires_seconds, 86400);
     assert.equal(view.view.max_uses, 1);
     assert.deepEqual((await admin.query(`select action,risk from clued_private.owner_grant_actions order by action`)).rows,
-      [{ action: 'ci.resident_upgrade', risk: 'high' }, { action: 'connection.permission', risk: 'high' }, { action: 'migration.production', risk: 'high' },
+      [{ action: 'ci.connection_renew', risk: 'high' }, { action: 'ci.resident_upgrade', risk: 'high' },
+        { action: 'connection.permission', risk: 'high' }, { action: 'fleet.accept', risk: 'high' }, { action: 'migration.production', risk: 'high' },
         { action: 'model.dataset_split.bootstrap', risk: 'high' },
         { action: 'model.dataset_split.producer', risk: 'high' }, { action: 'model.dataset_split.recognize', risk: 'high' },
         { action: 'model.dataset_split.verify', risk: 'high' },
@@ -253,8 +252,7 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
     const status = await agent('claude', 'clued_owner_request_status_v1', { request_id: request.request_id });
     assert.equal(status.request.status, 'granted');
     assert.equal(status.request.grant.grant_id, given.grant.grant_id);
-    const expiresIn = (new Date(given.grant.expires_at) - Date.now()) / 1000;
-    assert.ok(expiresIn > 3500 && expiresIn <= 3600, String(expiresIn));
+    await assertGrantDuration(given.grant, 3600, 'requested 1 hour');
     // A decided request takes no further confirmation.
     assert.equal((await native('clued_owner_grant_confirmation_issue_v1', { request_id: request.request_id })).error_code,
       'owner_request_decided');
@@ -303,8 +301,7 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
     const direct = committed(await grant(await confirm({ action: 'release.production',
       resources: ['repo:tdoljyj/cross-memory-system/**'] })));
     assert.equal(direct.grant.any_agent, true);
-    const directExpires = (new Date(direct.grant.expires_at) - Date.now()) / 1000;
-    assert.ok(directExpires > 14300 && directExpires <= 14400, 'default 4 hours');
+    await assertGrantDuration(direct.grant, 14400, 'default 4 hours');
     assert.equal((await consume(bindingIds.codex, 'release.production', ['repo:tdoljyj/cross-memory-system/abc1234']))
       .grant_id, direct.grant.grant_id);
     committed(await native('clued_owner_grant_revoke_v1', { grant_id: direct.grant.grant_id }));

@@ -1,15 +1,14 @@
 // Actual disposable PostgreSQL; no production SQL, provider requests or credentials.
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import net from "node:net";
 import crypto from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build, stop as stopBuild } from "esbuild";
-import EmbeddedPostgres from "embedded-postgres";
+import { newCluster } from "./pg-cluster-fixture.mjs";
 import { allowRawTestBindings } from "./raw-binding-grants-fixture.mjs";
 import { assertGatewayCloseoutBoundary } from "./worker-gateway-caller-fixture.mjs";
 import { testStorageModifyExecution } from "./resource-center-storage-modify-execution-db.fixture.mjs";
@@ -17,16 +16,14 @@ import { testStorageReplace } from "./resource-center-storage-replace-db.fixture
 import { testStorageDestructive } from "./resource-center-storage-destructive-db.fixture.mjs";
 import { createGoogleDriveSemanticAttempt } from "../../../kernel/host/resource-center-google-drive-semantic-recovery.mjs";
 const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-async function freePort() { const s = net.createServer(); await new Promise(r => s.listen(0, "127.0.0.1", r));
- const p = s.address().port; await new Promise(r => s.close(r)); return p; }
 
 test("semantic recovery: actual migration, independent predicates and private boundary", { timeout: 240000 }, async t => {
  const temporaryRoot = await fs.realpath(process.env.KOOYUMI_TEST_TEMP_ROOT ?? os.tmpdir()), dir = await fs.mkdtemp(path.join(temporaryRoot, "kooyumi-semantic-db-"));
- const server = new EmbeddedPostgres({ databaseDir: dir, user: "postgres", password: crypto.randomUUID(),
-   port: await freePort(), persistent: true, postgresFlags: ["-c", "listen_addresses=127.0.0.1"], onLog() {}, onError() {} });
+ const server = newCluster({ databaseDir: dir, user: "postgres", password: crypto.randomUUID(),
+   persistent: true, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, "-c", "listen_addresses=127.0.0.1"], onLog() {}, onError() {} });
  let db, started = false;
  try {
-  await server.initialise(); await server.start(); started = true; db = server.getPgClient(); await db.connect();
+  await startCluster(server); started = true; db = server.getPgClient(); await db.connect();
   const modulePath = path.join(dir, "recovery-test.mjs"), vaultPath = path.join(dir, "vault-test.mjs");
   for (const [name, output] of [["storage-cloud-recovery", modulePath], ["storage-credential-vault", vaultPath]])
    await build({ entryPoints: [path.join(cloud, "worker", name + ".ts")], outfile: output, bundle: true, platform: "node", format: "esm" });

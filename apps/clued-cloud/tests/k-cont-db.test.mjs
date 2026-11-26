@@ -1,14 +1,13 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import EmbeddedPostgres from "embedded-postgres";
+import { newCluster } from "./pg-cluster-fixture.mjs";
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
@@ -85,30 +84,21 @@ async function guardedProjectInsert(admin, owner, sql, values) {
   }
 }
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
-  const value = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return value;
-}
 
 test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 180000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-k-cont-"));
-  const server = new EmbeddedPostgres({
+  const server = newCluster({
     databaseDir: directory,
     user: "postgres",
     password: hash(),
-    port: await freePort(),
     persistent: false,
-    postgresFlags: ["-c", "io_method=sync"],
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {},
     onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = server.getPgClient();
     clients.push(admin);
     await admin.connect();

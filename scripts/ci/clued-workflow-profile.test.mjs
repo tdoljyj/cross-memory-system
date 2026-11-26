@@ -68,14 +68,14 @@ test('unsupported triggers, routes, reuse, matrix and empty execution never regi
   }
 });
 
-test('only the exact required-tests Source and its three complete independent roles compile compound mode',()=>{
+test('only the exact required-tests Source and its six complete independent roles compile compound mode',()=>{
   const require=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url)),yaml=require('yaml');
   const raw=fs.readFileSync(new URL('../../'+REQUIRED_TESTS_SOURCE.file,import.meta.url),'utf8'),value=yaml.parse(raw);
   const primary_ids=[...REQUIRED_TESTS_SOURCE.primary_ids],roles=primary_ids.map(job_id=>({job_id,
     definition_sha256:roleDefinitionDigest(value.jobs[job_id]),definition:value.jobs[job_id]}));
   const options={primary_ids,parseYaml:yaml.parse,accepted_roles:roles},compiled=compileRegisteredWorkflow(raw,options);
   assert.equal(isExactAllRequiredPrimariesProfile(compiled,REQUIRED_TESTS_SOURCE.file),true);
-  assert.equal(compiled.execution_mode,'all_required_primaries');assert.equal(compiled.routes.length,3);
+  assert.equal(compiled.execution_mode,'all_required_primaries');assert.equal(compiled.routes.length,primary_ids.length);assert.equal(primary_ids.length,6);
   assert.equal(compiled.routes.every(route=>route.self_hosted),true);
   assert.equal(compiled.routes[2].required_steps['Not affected'],undefined);
   assert.equal(compiled.routes[2].command_digests['Not affected'].length,1,'the auxiliary command is not removed from Source');
@@ -115,25 +115,44 @@ test('the compound pin, its registered entry and its three roles are the committ
   assert.deepEqual(roles,ids.map(job_id=>({job_id,definition_sha256:actual.role_sha256[job_id],definition:value.jobs[job_id]})));
   assert.deepEqual(compileRegisteredWorkflow(raw,{primary_ids:ids,parseYaml:yaml.parse,accepted_roles:roles}),entry);
 });
-// Catalogues kept as Git objects (the retired catalogue of main 4a3e0485 and every earlier main) carry the compound
-// entry of the bytes before G3. They must still decode, and that entry must still compile, as exactly those bytes and
-// roles: the earlier pin is history for reading them, never a second current Source.
+// Retired generations remain Git objects at their exact commits.
+// Each must decode and compile only as its own exact bytes and roles, never as a second current Source.
 test('the earlier exact compound Source still decodes from its catalogue and compiles only as its own bytes',async()=>{
   const {REQUIRED_TESTS_PREVIOUS_SOURCES:previous}=await import('./clued-workflow-profile.mjs');
   const require=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url)),yaml=require('yaml');
-  const {registry,specs}=retiredCatalogue(),file=REQUIRED_TESTS_SOURCE.file,old=registry.workflows[file];
-  assert.notEqual(old.workflow_blob,REQUIRED_TESTS_SOURCE.workflow_blob,'the retired catalogue holds the predecessor bytes');
-  assert.deepEqual(previous.map(pin=>pin.workflow_blob),[old.workflow_blob]);
-  assert.equal(isExactAllRequiredPrimariesProfile(old,file),true);
-  assert.equal(registeredWorkflowSource(registry,file,old.workflow_blob).passed,true);
-  const value=yaml.parse(old.source_yaml),roles=rolesForSource(specs,file,old.workflow_blob).map(({job_id,definition_sha256})=>
-    ({job_id,definition_sha256,definition:value.jobs[job_id]}));
-  assert.deepEqual(compileRegisteredWorkflow(old.source_yaml,{primary_ids:old.primary_ids,parseYaml:yaml.parse,accepted_roles:roles}),old);
-  for(const edit of [p=>p.source_yaml+='# changed\n',p=>p.routes[0].required_steps['Select suites']=2,
-    p=>p.workflow_blob=REQUIRED_TESTS_SOURCE.workflow_blob,p=>p.source_sha256=REQUIRED_TESTS_SOURCE.source_sha256]) {
-    const p=structuredClone(old);edit(p);assert.equal(isExactAllRequiredPrimariesProfile(p,file),false);
+  const generations=[
+    {commit:'4a3e048579e766d66285246b7fa93cd545514fb3',blob:'8a22de3a97425d9f85bc9f605dbdbf748b8e0946'},
+    {commit:'20edb51c585beb6c31f97798983b2a5065899fca',blob:'2570781ab5a29d2fa9d09ac72f0ed6118f9e5686'},
+    {commit:'7b0b1e2485dec24229212b3bc1eba4405c4a259b',blob:'5470897712b63448447b45c86d233b782163960d'},
+    {commit:'0bfafe959f106f94078735728bcaaab6f639c177',blob:'90018809f94ceb6ba6ffcea8dcfac94a5d23b1e8'},
+    {commit:'f45ef3e02bf8c3ef9c4e64ad5a549ce9ad0496ac',blob:'e600d8b2223e897008a2e07020b6c4d7731f2285'},
+    {commit:'912c7aba9eff96e0957be311443c3d6339d310d2',blob:'2e14516b6813ce3024d42ab5ffde63fb399fb20b'},
+    {commit:'709e474e83bae54f5985ad24b04ecc90bd6c11d5',blob:'00a9b5d1b1a0eaed1cc0d82d05753bfe984743ae'},
+    {commit:'304f48f466bac8d15d4289358f617699179b27de',blob:'d05ee2b2e7779cb2b8dda780b9203ad9a9e4e789'},
+    {commit:'777edf3a49e21ac9811a1534f4708d7b75e1b4e2',blob:'095d75173b66e6f10fd733a00edbd251a14ca819'},
+    {commit:'b404f735a0d1118d9da66e99e54a7bff54752aa0',blob:'a39bec437446a92a670fb3ef09f1a31f7f785e7b'},
+    {commit:'df2274d959193988763fd6caa87d3bbf4bba7eb6',blob:'9066264ff4b0f07274ee67f07e16ca86a6db60f6'},
+    {commit:'b9903659c32206a9495fc0210adc0cb5124d7495',blob:'d044a9124ae24721d510ad6bf1100d608501efbe'},
+    {commit:'5b2c291dac65ae8b6ef1964bd996604f3cd47600',blob:'27b43473d13a1c26749c4f32a27be0d593476c29'},
+  ],file=REQUIRED_TESTS_SOURCE.file;
+  assert.deepEqual(previous.map(pin=>pin.workflow_blob),generations.map(generation=>generation.blob));
+  for(const {commit,blob} of generations){
+    const {registry,specs}=retiredCatalogue(commit),old=registry.workflows[file];
+    assert.equal(old.workflow_blob,blob,`retired catalogue ${commit} holds its own bytes`);
+    assert.notEqual(old.workflow_blob,REQUIRED_TESTS_SOURCE.workflow_blob,'the retired catalogue holds the predecessor bytes');
+    assert.equal(isExactAllRequiredPrimariesProfile(old,file),true);
+    assert.equal(registeredWorkflowSource(registry,file,old.workflow_blob).passed,true);
+    const value=yaml.parse(old.source_yaml),roles=rolesForSource(specs,file,old.workflow_blob).map(({job_id,definition_sha256})=>
+      ({job_id,definition_sha256,definition:value.jobs[job_id]}));
+    assert.deepEqual(compileRegisteredWorkflow(old.source_yaml,{primary_ids:old.primary_ids,parseYaml:yaml.parse,accepted_roles:roles}),old);
+    assert.throws(()=>compileRegisteredWorkflow(old.source_yaml+'# changed\n',
+      {primary_ids:old.primary_ids,parseYaml:yaml.parse,accepted_roles:roles}));
+    for(const edit of [p=>p.source_yaml+='# changed\n',p=>p.routes[0].required_steps['Select suites']=2,
+      p=>p.workflow_blob=REQUIRED_TESTS_SOURCE.workflow_blob,p=>p.source_sha256=REQUIRED_TESTS_SOURCE.source_sha256]) {
+      const p=structuredClone(old);edit(p);assert.equal(isExactAllRequiredPrimariesProfile(p,file),false);
+    }
+    assert.equal(isExactAllRequiredPrimariesProfile(old,'.github/workflows/borrowed.yml'),false);
   }
-  assert.equal(isExactAllRequiredPrimariesProfile(old,'.github/workflows/borrowed.yml'),false);
   const current=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))).workflows[file];
   assert.equal(current.workflow_blob,REQUIRED_TESTS_SOURCE.workflow_blob,'the live catalogue registers the current bytes');
 });

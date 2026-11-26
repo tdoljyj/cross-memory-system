@@ -23,11 +23,11 @@ export async function makePackages(t, { packages = ['n2'], packageOptions = {}, 
   return pkgs;
 }
 
-export async function makeEnv(t, { packages = ['n2'], residentOptions = {}, windowsOptions = {}, linuxOptions = {}, doorOptions = {}, configOver = {}, packageOptions = {}, base = 'n1', shared = null } = {}) {
-  const root = await tempDir(t, 'clued-upg-root-');
+export async function makeEnv(t, { packages = ['n2'], residentOptions = {}, windowsOptions = {}, linuxOptions = {}, doorOptions = {}, configOver = {}, packageOptions = {}, base = 'n1', shared = null, residentRoot, installedIdentity } = {}) {
+  const root = residentRoot ?? await tempDir(t, 'clued-upg-root-');
   const clock = fakeClock(T0);
   const pkgs = shared ?? await makePackages(t, { packages, packageOptions, base });
-  await installGeneration1(root, pkgs[base]);
+  await installGeneration1(root, pkgs[base], { nodeIdentity: installedIdentity });
   const resident = new FakeResident(clock, residentOptions);
   const env = {
     root, clock, pkgs, resident,

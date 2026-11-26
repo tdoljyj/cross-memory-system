@@ -1,7 +1,8 @@
 // The universal values of one accepted Source (Decisions ddb4300f, b5d041d2 v2), computed from the commit's tree alone, with the
 // commit's own code where it exports it (build-package.mjs upgraderCopy). They are the values every node's assembled /4 package
 // carries, and the ones release.json states:
-//   residentManifestSha256   build-package.mjs: src/, tools/, windows/ of the resident tree (per-directory sorted walk, no __pycache__)
+//   residentManifestSha256   build-package.mjs: src/, tools/, windows/ of the resident tree (per-directory sorted walk, no __pycache__),
+//                            then the tree's build-package.mjs RESIDENT_EXTERNAL files (residentExternal; none in a tree without it)
 //   sourceManifestSha256     build-package.mjs: the CI Source closure in its listed order, plus the generated bridge v4 manifest
 //   upgraderManifestSha256   build-package.mjs upgraderCopy
 //   universalFilesSha256     the server's definition over the package's resident\<r>\ and source\<c>\ files, hash segment removed
@@ -17,6 +18,8 @@ export const RESIDENT = 'work/independent-ci-resident-v1';
 export const CIV1 = 'work/actions-hosted-migration/independent-ci-v1';
 export const CLOSURE = `${CIV1}/src/resident-v2/source-closure.json`;
 export const PREPARE_RECORD = `${CIV1}/src/resident-v2/prepare-record.mjs`;
+// The nodes' capacity profiles, carried in the package at this repository path (wsl-capacity.mjs; Task 87d330d0).
+export const NODE_PROFILES = 'scripts/ci/self-hosted/node-profiles.json';
 // build-package.mjs RESIDENT_FILES, BRIDGE_DIR, BRIDGE_FILES (not exported there; the fleet test proves the copy against a real build)
 const RESIDENT_FILES = ['src', 'tools', 'windows'];
 const BRIDGE_DIR = `${CIV1}/worker/protected-job-bridge-v4`;
@@ -54,12 +57,13 @@ export async function computeUniversalFacts({ tree }) {
   const imp = rel => import(pathToFileURL(path.join(tree, ...rel.split('/'))).href);
   const { canonicalJson } = await imp(`${RESIDENT}/src/canonical.mjs`);
   const { INSTALLED_MANIFEST_CONTRACT } = await imp(`${RESIDENT}/src/service-ports.mjs`);
-  const { BRIDGE_MANIFEST_CONTRACT, upgraderCopy } = await imp(`${RESIDENT}/tools/build-package.mjs`);
+  const { BRIDGE_MANIFEST_CONTRACT, upgraderCopy, residentExternal } = await imp(`${RESIDENT}/tools/build-package.mjs`);
   const residentDir = path.join(tree, ...RESIDENT.split('/'));
   const manifestSha = m => sha(Buffer.from(canonicalJson(m) + '\n'));
 
   const residentEntries = [];
   for (const rel of RESIDENT_FILES) for (const f of await listFiles(residentDir, rel)) residentEntries.push(await fileEntry(path.join(residentDir, ...f.split('/')), f));
+  for (const e of residentExternal ? residentExternal(residentEntries.map(x => x.path), residentDir) : []) residentEntries.push(await fileEntry(e.file, e.path));
   const residentManifestSha256 = manifestSha({ contract: INSTALLED_MANIFEST_CONTRACT, root: 'resident', files: residentEntries });
 
   const closure = JSON.parse((await fs.readFile(path.join(tree, ...CLOSURE.split('/')))).toString('utf8'));

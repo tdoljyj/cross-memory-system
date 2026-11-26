@@ -13,9 +13,9 @@ const freeze=value=>{if(value&&typeof value==='object'){Object.values(value).for
 export const NON_PR_CONTROL_FILES=freeze({
   ".github/workflows/clued-compute-panel.yml": {
     "family": "compute_panel",
-    "workflow_blob": "baa297ef49804984999afd5b05d51386aa84cac4",
-    "source_sha256": "5a922a93e1b8b97d35103079ea19246238da319eadc86be9fe0d475d46111483",
-    "workflow_definition_sha256": "0bac13a8f87320e17f74205826c98b78d4d2513133f51e628181538fc6f7869d",
+    "workflow_blob": "f3171203ca531f0cb4ce47574d4dc1c356a2e93e",
+    "source_sha256": "cafc0ca821d1be2ada06295bf19a313cab7b4bb8bfe22bf991ff77657e82f18a",
+    "workflow_definition_sha256": "0a09a6a88ff14065d1941ac60c3ca3fe6e615efe873b19d737efded4546b7d5d",
     "triggers": [
       "schedule",
       "workflow_dispatch"
@@ -33,15 +33,17 @@ export const NON_PR_CONTROL_FILES=freeze({
   },
   ".github/workflows/clued-front-main-merge.yml": {
     "family": "front_main_merge_dispatch",
-    "workflow_blob": "74a96c7ab1de73c64259f78f8072deee06ec8686",
-    "source_sha256": "86cd1f4481defe3303ad627ff5808d16b5fc493b274b845c542e1d7abcd4a840",
-    "workflow_definition_sha256": "8579bf1b7f0fece985d2c09ae70a37ec7286e8bfdeb2296ff1eb7b9cfe09c6d3",
+    "workflow_blob": "eab092359b4d5d839251b67ecff557387fac604d",
+    "source_sha256": "108d5382120c6eb5fc1a7cbd3a9f21152bf727cf5ff8ef527b86208ea49029ca",
+    "workflow_definition_sha256": "9823eed4cd50ff7863f86b8d5f54f88a7f9f923afa990352726d53a46a5db287",
     "triggers": [
+      "push",
+      "schedule",
       "workflow_dispatch"
     ],
     "roles": {
       "admission-gate": "2b609bfa2f0df5218d4f2db824737fb6066b54f132626a1470a49bc606743348",
-      "merge-main": "0b93443b5f9ebfbaa14134ef74e33eede99446b4683a90105489415569f492df"
+      "merge-main": "8761344f2484918e9b1aa2504824f9bdc1cf38ae4a040dcb8d0799e41c0f59a8"
     }
   },
   ".github/workflows/clued-native617-admission-dispatch.yml": {

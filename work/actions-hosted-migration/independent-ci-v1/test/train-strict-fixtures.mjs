@@ -1,5 +1,6 @@
 // Offline ports shared by the strict coverage and scheduler-to-publisher integration tests. No production access.
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { runTrain } from '../src/independent-control-checks-v2/train-maintenance.mjs';
 import { TrainSweepStore } from '../src/independent-control-checks-v2/train-sweep-store.mjs';
@@ -7,6 +8,7 @@ import { GreenLedger } from '../src/independent-control-checks-v2/green-ledger.m
 import { TRAIN_RUN_SHADOW_DEFAULTS, makeTrainRun } from '../src/resident-v2/train-run.mjs';
 import { tempDir } from './resident-v2-fixtures.mjs';
 import { resolvePRTaskBinding } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
+import { scanExternalIdV2 } from '../src/job-v2.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system', APP = 5368905, SLOT = 'kooyumi-merge-slot';
 const sha = n => n.toString(16).padStart(40, '0');
@@ -31,8 +33,10 @@ function fakeGithub(e, w) {
     async readChangedPaths(job) { return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] }; },
     async createCheck(body) { const id = Math.max(100, ...world.checks.keys()) + 1; const c = { id, app: { id: APP }, ...structuredClone(body) }; world.checks.set(id, c); world.hooks.create?.(c); return structuredClone(c); },
     async readBranchHead(name) { call('branch'); return { name, sha: world.main }; },
-    async readBranchRules() { call('rules'); return { complete: true, branch: 'main', rules: [{ type: 'pull_request', parameters: { allowed_merge_methods: ['merge'] } },
-      { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: world.strict === true, required_status_checks: ['kooyumi-work-admission', 'gitleaks', 'trivy',
+    // world.rules: the whole rules reply's list as given (the scaffold ruleset, task 04f9b91b); world.rulesIncomplete: GitHub did not give it whole.
+    async readBranchRules() { call('rules'); if (world.rules) return { complete: world.rulesIncomplete !== true, branch: 'main', rules: structuredClone(world.rules) };
+      return { complete: world.rulesIncomplete !== true, branch: 'main', rules: [{ type: 'pull_request', parameters: { allowed_merge_methods: ['merge'] } },
+      { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: world.strict === true, required_status_checks: world.ruleChecks ?? ['kooyumi-work-admission', 'gitleaks', 'trivy',
         'contract-placement', 'kooyumi-admission-verified', SLOT].map(context => ({ context, integration_id: APP })) } }] }; },
     async readPullRequest(n) { call('pull'); const p = world.pulls.get(n); return { number: n, state: p.state, draft: false, merged: !!p.merged, mergeable: true,
       merge_commit_sha: p.mergeCommitSha ?? null, head: { sha: p.head }, base: { ref: p.base ?? 'main', sha: world.main } }; },
@@ -41,7 +45,9 @@ function fakeGithub(e, w) {
       const hooked = world.hooks.compare?.(base, head);
       if (hooked instanceof Error) throw hooked;
       if (hooked) return hooked;
-      if (world.behindHeads?.has(head)) return { status: 'diverged', aheadBy: 1, behindBy: 1 }; return world.inMain.has(head) ? { status: 'behind', aheadBy: 0, behindBy: 1 } : { status: 'ahead', aheadBy: 1, behindBy: 0 }; },
+      // The ends GitHub's compare names, as github.mjs#readCompare returns them.
+      const ends = { baseSha: base, headSha: head, mergeBaseSha: base };
+      if (world.behindHeads?.has(head)) return { ...ends, status: 'diverged', aheadBy: 1, behindBy: 1 }; return world.inMain.has(head) ? { ...ends, status: 'behind', aheadBy: 0, behindBy: 1 } : { ...ends, status: 'ahead', aheadBy: 1, behindBy: 0 }; },
     async readGitCommit(s) { call('commit'); return structuredClone(world.commits.get(s)); },
     async readChecks(head) { call('checks'); return { complete: true, checks: [...world.checks.values()].filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
     async readOwnChecksByName(head, name) {
@@ -78,6 +84,15 @@ function fakeGithub(e, w) {
   };
   gh.green = (id, head, o = {}) => world.checks.set(id, { id, app: { id: o.app ?? APP }, name: o.name ?? SLOT, head_sha: head, status: 'completed', conclusion: o.conclusion ?? 'success',
     output: { title: 'Complete Native control', summary: o.summary ?? summaryOf(world.main) } });
+  // A front batch's stages 2-7 passed (review of R3, problem A): this App's successful scans on H under the batch's own job ids
+  // (jobs: batchJobsV2 of the front subject), each once; stage 8 lands S only with them.
+  gh.frontScans = jobs => { for (const role of ['gitleaks', 'trivy', 'contract-placement']) {
+    const job = jobs[role], external_id = scanExternalIdV2(job);
+    if ([...world.checks.values()].some(c => c.external_id === external_id)) continue;
+    const id = Math.max(900000, ...world.checks.keys()) + 1;
+    world.checks.set(id, { id, app: { id: APP }, name: role, head_sha: job.headSha, status: 'completed', conclusion: 'success', external_id,
+      output: { title: role, summary: `tested ${job.testSha}` } });
+  } };
   gh.pull = (number, o = {}) => world.pulls.set(number, { number, state: 'open', updated: iso(NOW - 3_600_000), head: sha(0x8000 + number), ...o });
   return gh;
 }
@@ -142,8 +157,20 @@ async function setup(t, o = {}) {
   e.publications = { async heads() { if (e.streamDown) throw new Error('down'); return { complete: true, heads: e.stream }; } };
   if (o.fullDone !== false) await e.store.writeFullSweep({ writtenAt: iso(NOW - 1000), runId: RUN, mode: 'on', incrementalCursor: CURSOR, inMain: [],
     full: { ...FULL0, state: 'complete', via: 'sweep', startedAt: iso(NOW - 1_800_000), completedAt: iso(NOW - 1_200_000), onSince: ON_SINCE, mainSha: T } });
+  // Board 269: the store stamps every record after the newest one (train-sweep-store.mjs#write), so a burst of writes in one
+  // millisecond of this standing clock lands ahead of it. A real run ends no earlier than its last write: settle() moves the clock
+  // up to the newest stamp, for a reader that comes after the run (stage 8, the next stage-10 run).
+  e.settle = async () => { e.now = Math.max(e.now, await newestStamp(e.store.directory)); };
   e.run = (job = jobOf(o.job)) => runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep });
   return e;
+}
+async function newestStamp(directory) {
+  let newest = -Infinity;
+  for (const name of await fs.readdir(directory)) {
+    const m = /-(\d{13})-[0-9a-f]{16}-[0-9a-f]{12}-[0-9a-f]{8}\.json$/.exec(name);
+    if (m) newest = Math.max(newest, Number(m[1]));
+  }
+  return newest;
 }
 const FULL0 = { state: 'none', via: null, startedAt: null, completedAt: null, onSince: null, mainSha: null, nextPage: 1, nextIndex: 0, prs: 0, commits: 0, heads: 0,
   revoked: 0, unconfirmed: 0, wouldRevoke: 0, calls: 0, ms: 0, reason: null };
@@ -156,4 +183,4 @@ async function ledgered(ledger, { pr = 900, headSha, baseSha = T, checkRunId, ph
 }
 
 
-export { setup, jobOf, holderOf, ledgered, fakeGithub, fakeNative, sha, iso, T, H, S, TREE, OLD_T, CLAIM, RUN, SOURCE, REPO, APP, SLOT, NOW, ON_SINCE, CURSOR, FULL0 };
+export { setup, newestStamp, jobOf, holderOf, ledgered, fakeGithub, fakeNative, sha, iso, T, H, S, TREE, OLD_T, CLAIM, RUN, SOURCE, REPO, APP, SLOT, NOW, ON_SINCE, CURSOR, FULL0 };

@@ -111,12 +111,14 @@ test('work claims page: recently ended claims on request, with when and how they
   assert.deepEqual(plain(f.calls[1].args), { p_input: { ended_within_hours: 24 } });
   f.calls[1].resolve({ data: { status: 'ok', claims: [row()], ended: [
     row({ claim_id: OTHER, task_title: 'Done task', state: 'RELEASED', status: 'RELEASED', released_outcome: 'completed',
-      ended_at: '2026-10-05T18:59:00Z', handover_available: false }),
+      ended_at: '2026-10-05T18:59:00Z', handover_available: false, released_by: 'pr_end',
+      released_evidence_ref: 'owner/repo#12@' + 'f'.repeat(40), released_at: '2026-10-05T18:59:00Z' }),
     row({ claim_id: '44444444-4444-4444-8444-444444444444', task_title: 'Lapsed task', state: 'EXPIRED', status: 'ACTIVE',
       ended_at: '2026-10-05T19:03:56Z', handover_available: false })] }, error: null });
   await f.settle();
   const page = f.text();
   for (const expected of ['最近 24 小时结束的认领', 'Done task', '已释放（完成） · 结束于 2026/10/06 02:59（北京时间）',
+    '释放来源', 'PR 终结自动释放', '释放证据', 'owner/repo#12@' + 'f'.repeat(40), '释放时间', '未记录（历史认领）',
     'Lapsed task', '已过期 · 结束于 2026/10/06 03:03（北京时间）']) assert.ok(page.includes(expected), expected);
   // Ended claims cannot be handed over.
   assert.equal(f.buttons('交给新会话').length, 1);

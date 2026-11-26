@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { CI_SIGNATURES, GATEWAY_ROLE, assertGatewayCloseoutBoundary, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
@@ -33,20 +32,13 @@ const session = (sub, sessionId = 'sess-main') =>
 const pkg = (c) => c.repeat(64);
 const resource = (node, c) => `ci-resident:${node}/${pkg(c)}`;
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 test('owner grants: the resident-upgrader door uses an exact Owner Grant once per op (switch off: the Owner approves)',
   { timeout: 300000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-resident-upgrade-door-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: hash(), 
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
@@ -56,8 +48,7 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
     return client;
   };
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = await connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;
@@ -258,9 +249,9 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
       [false, pending.request_id, 'pending']);
     assert.equal(await requests(ids['node-a']), 1);
     await fails(upgrade('node-a', [A2], op1), '22023', /owner_grant_door_input_invalid/);
-    // With the switch off nothing is approved automatically, release.production included.
-    result = await door('release', { action: 'release.production', resources: [`repo:tdoljyj/cross-memory-system/${'c'.repeat(40)}`] });
-    assert.equal(result.consumed, false);
+    // The release actions are no token's any more (the release workflow is its database login).
+    await assert.rejects(() => door('release', { action: 'release.production', resources: [`repo:tdoljyj/cross-memory-system/${'c'.repeat(40)}`] }),
+      /owner_grant_door_release_token_retired/);
     assert.equal((await admin.query(`select count(*)::int n from clued_private.owner_grants_v1 where action=$1`, [ACTION])).rows[0].n, 0,
       'no automatic grant for ci.resident_upgrade with the switch off');
 
@@ -362,7 +353,7 @@ test('owner grants: the resident-upgrader door uses an exact Owner Grant once pe
       actions: [{ action: ACTION, resources: [A1] }, { action: 'release.production', resources: ['repo:tdoljyj/cross-memory-system/x'] }],
       idempotency_key: 'resident-upgrade-bundle' }), /owner_request_bundle_invalid/);
     await assert.rejects(() => door('release', { action: 'migration.production', resources: ['repo:tdoljyj/cross-memory-system/y'],
-      with: [{ action: ACTION, resources: [A1] }] }), /owner_grant_door_action_invalid/);
+      with: [{ action: ACTION, resources: [A1] }] }), /owner_grant_door_release_token_retired/);
     assert.equal((await admin.query(`select count(*)::int n from clued_private.owner_requests_v1 where action=$1 and binding_id=$2`,
       [ACTION, ids.claude])).rows[0].n, 0);
 

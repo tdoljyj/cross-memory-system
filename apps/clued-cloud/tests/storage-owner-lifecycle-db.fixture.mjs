@@ -1,34 +1,29 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, startCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import net from 'node:net';
 import crypto from 'node:crypto';
-import {createRequire} from 'node:module';
-import {fileURLToPath,pathToFileURL} from 'node:url';
-import DefaultEmbeddedPostgres from 'embedded-postgres';
+import {fileURLToPath} from 'node:url';
+import { newCluster } from './pg-cluster-fixture.mjs';
+import { until } from '../../../scripts/ci/test-clock-guard.mjs';
 import {allowTestIssuerCredentials} from './issuer-credentials-fixture.mjs';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
 import {findGatewayCloseoutMigration,assertGatewayCloseoutBoundary,snapshotCallerCatalog, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
-const runtime=createRequire(process.env.CLUED_POSTGRES_TEST_RUNTIME || import.meta.url);
-const EmbeddedPostgres=process.env.CLUED_POSTGRES_TEST_RUNTIME
-  ?(await import(pathToFileURL(runtime.resolve('embedded-postgres')))).default:DefaultEmbeddedPostgres;
 const cloud=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const sha=v=>crypto.createHash('sha256').update(v).digest('hex'),id=()=>crypto.randomUUID();
 const envelope=()=>({contract:'clued.storage-credential/1',key_id:'synthetic',nonce:'N'.repeat(16),ciphertext:'X'.repeat(64)});
 const rpcName='public.clued_storage_owner_lifecycle_v1(text,jsonb)';
 const wholeRootMigration='20261010150000_storage_owner_root_trash_scope_v2.sql';
-async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
-test('Native owner lifecycle, real migrations and synthetic Google observations',{timeout:240000},async t=>{
+test('Native owner lifecycle, real migrations and synthetic Google observations',async t=>{
   const tempParent=await fs.realpath(os.tmpdir());
   const dir=await fs.mkdtemp(path.join(tempParent,'clued-owner-lifecycle-'));
-  const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:sha(id()),port:await port(),persistent:true,
-    postgresFlags:['-c','listen_addresses=127.0.0.1'],onLog(){},onError(){}});
+  const server=newCluster({databaseDir:dir,user:'postgres',password:sha(id()),persistent:true,
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],onLog(){},onError(){}});
   const clients=[];let started=false;
   try{
-    await server.initialise();await server.start();started=true;
+    await startCluster(server);started=true;
     const db=server.getPgClient();clients.push(db);await db.connect();
     const pgVersion=(await db.query('show server_version')).rows[0].server_version;
     console.log('Synthetic Native lifecycle PostgreSQL:',pgVersion);
@@ -39,9 +34,10 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
-    let wholeRootPreMasterDefinition,reconnectRetryPredecessorDefinition,reconnectRefreshPredecessorDefinition,demandRuntimePredecessorDefinition,demandRuntimeSuccessorWorkerDefinition;
+    let wholeRootPreMasterDefinition,reconnectRetryPredecessorDefinition,reconnectRefreshPredecessorDefinition,demandRuntimePredecessorDefinition;
     const renewalSignatures=['clued_private.ii_pub_clued_storage_refresh_worker_v1(text,jsonb)','clued_private.clued_storage_refresh_manage_v1(jsonb)'];
-    const renewalPredecessors=[];
+    const demandRuntimeSignatures=[renewalSignatures[0],'clued_private.storage_demand_due_v1(text)'];
+    const renewalPredecessors=[],demandRuntimeSuccessorDefinitions=[];
     for(const file of (await fs.readdir(path.join(cloud,'supabase/migrations'))).filter(n=>n.endsWith('.sql')).sort()){
       if(file.endsWith('_storage_master_control_v1.sql'))wholeRootPreMasterDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
       if(file.endsWith('_storage_reconnect_retry_v1.sql'))reconnectRetryPredecessorDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
@@ -50,7 +46,8 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       if(file.endsWith('_storage_refresh_intent_v1.sql'))for(const signature of renewalSignatures)
         renewalPredecessors.push((await db.query('select pg_get_functiondef($1::regprocedure) def',[signature])).rows[0].def);
       try{await db.query(await fs.readFile(path.join(cloud,'supabase/migrations',file),'utf8'));}catch(e){throw new Error('Migration '+file+': '+e.message,{cause:e});}
-      if(file.endsWith('_storage_demand_refresh_runtime_v1.sql'))demandRuntimeSuccessorWorkerDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[renewalSignatures[0]])).rows[0].def;
+      if(file.endsWith('_storage_demand_refresh_runtime_v1.sql'))for(const signature of demandRuntimeSignatures)
+        demandRuntimeSuccessorDefinitions.push((await db.query('select pg_get_functiondef($1::regprocedure) def',[signature])).rows[0].def);
     }
     const closeout=await findGatewayCloseoutMigration(cloud);
     await assertGatewayCloseoutBoundary(db);
@@ -305,20 +302,29 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       const pid=(await waiting.query('select pg_backend_pid() pid')).rows[0].pid;
       await locker.query('begin');await locker.query('select pg_advisory_xact_lock(hashtextextended($1,0))',[owner+':'+r.rootId]);
       let settled=false;const pending=call(request,waiting).then(v=>{settled=true;return {v};},error=>{settled=true;return {error};});
-      for(let i=0;i<100;i++){
+      await until(async()=>{
         const waitingNow=(await db.query("select wait_event='advisory' waiting from pg_stat_activity where pid=$1",[pid])).rows[0]?.waiting;
-        if(waitingNow)break;if(settled)assert.fail('Native call did not wait for Root serialization');await new Promise(resolve=>setTimeout(resolve,10));
-        if(i===99)assert.fail('Native root lock wait was not observed');
-      }
+        assert.equal(settled,false,'Native call did not wait for Root serialization');
+        return waitingNow;
+      },'Native root lock wait');
       // The session row SHARE check has already run. Changing only its TTL
       // under the same fixture's administrative connection waits on that row,
       // so use a short initial TTL to prove wall-clock recheck after the wait.
       await locker.query('rollback');assert.equal((await pending).error,undefined);
-      const sid=id();await db.query("insert into auth.sessions(id,user_id,not_after) values($1,$2,clock_timestamp()+interval '200 milliseconds')",[sid,owner]);
-      await login(waiting,owner,sid);const r2=await root(),request2=await deletion(r2);
+      const sid=id(),r2=await root(),request2=await deletion(r2);
       await locker.query('begin');await locker.query('select pg_advisory_xact_lock(hashtextextended($1,0))',[owner+':'+r2.rootId]);
-      const denied=call(request2,waiting).then(v=>({v}),error=>({error}));
-      await new Promise(resolve=>setTimeout(resolve,250));await locker.query('rollback');
+      await db.query("insert into auth.sessions(id,user_id,not_after) values($1,$2,clock_timestamp()+interval '2 seconds')",[sid,owner]);
+      await login(waiting,owner,sid);
+      let secondSettled=false;
+      const denied=call(request2,waiting).then(v=>({v}),error=>({error})).finally(()=>{secondSettled=true;});
+      await until(async()=>{
+        const waitingNow=(await db.query("select wait_event='advisory' waiting from pg_stat_activity where pid=$1",[pid])).rows[0]?.waiting;
+        assert.equal(secondSettled,false,'Native call did not start before the session expired');
+        return waitingNow;
+      },'Native root lock wait before session expiration');
+      await until(async()=>(await db.query('select not_after<=clock_timestamp() expired from auth.sessions where id=$1',[sid])).rows[0].expired,
+        'Native session expiration');
+      await locker.query('rollback');
       assert.equal((await denied).error?.code,'42501');
       assert.equal((await db.query('select count(*)::int n from clued_private.storage_owner_lifecycle_v1 where profile_id=$1',[r2.profile])).rows[0].n,0);
       await login(waiting);
@@ -616,7 +622,7 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
           idempotency_key:id(),...(action==='enable'?{until_revoked:true}:{})})])).rows[0].v;};
       await manage('enable');
       const current=await prepare();assert.equal(current.renewal_enabled,true);
-      const expiry=new Date(Date.now()-1000).toISOString();
+      const expiry='2000-01-01T00:00:00.000Z';
       assert.deepEqual(await refresh({action:'observe_credential',proof:current.proof,credential_version:current.credential_version,expires_at:expiry}),{status:'current'});
       const observed=(await db.query('select * from clued_private.storage_refresh_activity_v1 where connection_id=$1',[r.connection])).rows[0];
       assert.equal(observed.last_demand_at,null,'opening an Owner page is not an active background task');
@@ -635,9 +641,10 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       const attempt=id(),claim={action:'claim',connection_id:r.connection,attempt_id:attempt,demand_proof:current.proof};
       const acquired=await refresh(claim);assert.equal(acquired.status,'acquired');
       const original=await row(r.connection);
+      const futureExpiry=(await db.query("select clock_timestamp()+interval '1 hour' expiry")).rows[0].expiry.toISOString();
       await manage('disable');
       await assert.rejects(refresh({action:'commit',connection_id:r.connection,attempt_id:attempt,demand_proof:current.proof,
-        credential_envelope:envelope(),expires_at:new Date(Date.now()+3600000).toISOString()}),e=>e.code==='42501');
+        credential_envelope:envelope(),expires_at:futureExpiry}),e=>e.code==='42501');
       const stopped=await row(r.connection);assert.equal(stopped.credential_version,original.credential_version);
       assert.equal((await renewalStatus()).enabled,false);
       await assert.rejects(refresh({...claim,attempt_id:id()}),e=>e.code==='42501');
@@ -659,7 +666,7 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
         const current=await call(input,db,rotated);assert.equal(current.connection_id,r.connection);
         await db.query('savepoint old_identity');await assert.rejects(call(input,db,proof),e=>e.code==='42501');await db.query('rollback to savepoint old_identity');
         await db.query("reset role");
-        const expiry=new Date(Date.now()+3600000).toISOString();
+        const expiry=(await db.query("select clock_timestamp()+interval '1 hour' expiry")).rows[0].expiry.toISOString();
         await db.query("set local role clued_worker_gateway");
         const observed=(await db.query('select public.clued_storage_refresh_worker_v1($1,$2::jsonb) v',
           [rotated,JSON.stringify({action:'observe_credential',proof:current.proof,credential_version:current.credential_version,expires_at:expiry})])).rows[0].v;
@@ -667,22 +674,22 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       }finally{await db.query('rollback');}
     });
     await t.test('demand runtime replay preserves GW80 and every function definition/ACL; catalog drift fails atomically',async()=>{
-      // This is a replay of the historical demand-runtime subject. Restore its
-      // exact predecessor within this test, then put the current successor back.
-      const renewalCurrent=[];
-      for(const signature of renewalSignatures)renewalCurrent.push((await db.query('select pg_get_functiondef($1::regprocedure) def',[signature])).rows[0].def);
+      // Replay the historical subject before the later Worker due and renewal
+      // changes. Roll back the disposable database to its current catalog.
+      assert.equal(demandRuntimeSuccessorDefinitions.length,demandRuntimeSignatures.length);
+      await db.query('begin');
       try{
-      assert.ok(demandRuntimeSuccessorWorkerDefinition);await db.query(demandRuntimeSuccessorWorkerDefinition);
-      const sql=await fs.readFile(path.join(cloud,'supabase/migrations','20261012113128_storage_demand_refresh_runtime_v1.sql'),'utf8');
-      const before=await snapshotCallerCatalog(db);await db.query(sql);assert.deepEqual(await snapshotCallerCatalog(db),before);
-      await db.query('begin');try{
+        for(const definition of demandRuntimeSuccessorDefinitions)await db.query(definition);
+        const sql=await fs.readFile(path.join(cloud,'supabase/migrations','20261012113128_storage_demand_refresh_runtime_v1.sql'),'utf8');
+        const before=await snapshotCallerCatalog(db);await db.query(sql);assert.deepEqual(await snapshotCallerCatalog(db),before);
+        await db.query('savepoint restore_historical_catalog');
         await db.query('alter function public.clued_storage_owner_lifecycle_v1(text,jsonb) security invoker');
         const drift=await snapshotCallerCatalog(db);await db.query('savepoint bad_catalog');
         await assert.rejects(db.query(sql),/storage_demand_owner_catalog_mismatch/);
         await db.query('rollback to savepoint bad_catalog');assert.deepEqual(await snapshotCallerCatalog(db),drift);
+        await db.query('rollback to savepoint restore_historical_catalog');
+        await assertGatewayCloseoutBoundary(db);
       }finally{await db.query('rollback');}
-      await assertGatewayCloseoutBoundary(db);
-      }finally{for(const definition of renewalCurrent)await db.query(definition);}
     });
     const refreshStatus=async r=>(await native.query('select public.clued_storage_refresh_manage_v1($1::jsonb) v',
       [JSON.stringify({action:'status',connection_id:r.connection})])).rows[0].v;

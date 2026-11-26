@@ -74,6 +74,14 @@ test('reuse qualifies only earlier PR evidence and never claims main PASS', asyn
   assert.match(fake.calls[5], /\/attempts\/2\/jobs/);
 });
 
+// 甲 (FABLE-main-push-same-tree-parallel-20261123 §3) reads an in-flight head run for the gate-decided ('ancestry')
+// workflows only: a tree-report workflow whose head run is still going runs its heavy job, as before, after five reads.
+test('a tree-report workflow whose head run is still in flight runs, as before; the in-flight reading is the gate\'s alone', async () => {
+  const fake = api(proof(), { 4: { total_count: 1, workflow_runs: [{ ...proof().run, status: 'in_progress', conclusion: null }] } });
+  assert.deepEqual(await evaluatePush(env, fake.fetch), { run_heavy: true, reason: 'pr_run_not_passed', current_sha_pass: false });
+  assert.equal(fake.calls.length, 5);
+});
+
 test('the existing executor bot can reuse an Owner PR without widening runner trust', async () => {
   const p = proof(); p.pr.merged_by = { login: 'clued-admission[bot]', id: 337003645, type: 'Bot' };
   assert.equal((await evaluatePush({ ...env, GITHUB_ACTOR: 'clued-admission[bot]' }, api(p).fetch)).run_heavy, false);
@@ -135,6 +143,15 @@ test('archive parser rejects multiple entries, wrong names, truncated and inflat
   assert.throws(() => readReportZip(zip({ value: 'a'.repeat(70000) }, REPORT_NAME, 8)));
 });
 
+// R3b (FABLE-tree-reuse-close-out 12.2 #1): the reads of the tested-tree proof are the step "report".
+test('a failed read of the tested-tree proof names the step report and the HTTP status', async () => {
+  for (const [index, status] of [[6, 503], [7, 404]]) {
+    const fake = api();
+    let count = 0;
+    const result = await evaluatePush(env, async (url) => (count++ === index ? { ok: false, status } : fake.fetch(url)));
+    assert.deepEqual(result, { run_heavy: true, reason: `github_request_failed@report:${status}`, current_sha_pass: false });
+  }
+});
 test('API failure, pagination, stale retry and archive digest mismatch fall back to actual work', async () => {
   for (const override of [{ 0: new Error('offline') }, { 1: Array(100).fill(proof().pr) },
     { 4: { total_count: 100, workflow_runs: [] } },
@@ -173,7 +190,7 @@ test('only the exact registered listener and run-specific project changes qualif
 });
 
 test('workflow integration leaves the registered admission gate unchanged and records proof after tests', () => {
-  for (const file of Object.keys(TARGETS)) {
+  for (const file of Object.keys(TARGETS).filter((name) => TARGETS[name].proof === 'tree-report')) {
     const text = fs.readFileSync(fixtureFile(`.github/workflows/${file}`), 'utf8');
     assert.match(text, /needs: \[admission-gate, push-reuse\]/);
     assert.match(text, /needs\.admission-gate\.outputs\.admitted == 'true' &&\s+\(!cancelled\(\) && needs\.admission-gate\.result == 'success'/);

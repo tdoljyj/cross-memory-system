@@ -34,6 +34,13 @@ export const FRONT_BATCH_CONTRACT = 'clued.independent-ci.train-front-batch/1';
 export const PENDING_REVOCATIONS_CONTRACT = 'clued.independent-ci.pending-revocations/1';
 export const LANDING_BATCH_CONTRACT = 'clued.independent-ci.train-landing-batch/1';
 export const LANDING_STATE_CONTRACT = 'clued.independent-ci.train-landing-state/1';
+// Review 3 medium 1: when stage 10 saw the merge slot of a front head go green, so the 60-minute wait keeps its one start when a later round
+// cannot read the checks.
+export const SLOT_GREEN_CONTRACT = 'clued.independent-ci.train-slot-green/1';
+export const SLOT_GREEN_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'pr', 'headSha', 'slotGreenAt']);
+// Review 4 medium 2: when this node first saw a head at the front, the 60 minutes' start when no merge-slot time is known.
+export const FRONT_SEEN_CONTRACT = 'clued.independent-ci.train-front-seen/1';
+export const FRONT_SEEN_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'pr', 'headSha', 'seenAt']);
 export const LANDING_BATCH_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'frontPr', 'frontHeadSha', 'baseSha', 'testSha', 'testTree', 'attempt', 'members']);
 export const LANDING_STATE_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'bad', 'suspect', 'adopted', 'handled']);
 export const PROOF_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'mode', 'pr', 'headSha', 'claimId', 'since', 'mainSha', 'clean', 'unconfirmed',
@@ -55,7 +62,7 @@ export const FULL_STATES = Object.freeze(['none', 'running', 'complete', 'abando
 export const MAX_IN_MAIN = 2000;
 const RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/, SHA = /^[0-9a-f]{40}$/, CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const NAME = /^(scan-on|scan-shadow|scan-strict|landing-batch|landing-state|pending-revocations|strict-front-proof|strict-proof|strict-round|proof|full-shadow|full-on|front)-(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})-[0-9a-f]{8}\.json$/;
+const NAME = /^(scan-on|scan-shadow|scan-strict|landing-batch|landing-state|slot-green|front-seen|pending-revocations|strict-front-proof|strict-proof|strict-round|proof|full-shadow|full-on|front)-(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})-[0-9a-f]{8}\.json$/;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const iso = v => typeof v === 'string' && Number.isFinite(Date.parse(v)) && new Date(Date.parse(v)).toISOString() === v;
@@ -124,7 +131,17 @@ export function validateLandingState(r) {
   return r;
 }
 
-const KIND = { 'landing-batch': [LANDING_BATCH_CONTRACT, validateLandingBatch], 'landing-state': [LANDING_STATE_CONTRACT, validateLandingState], proof: [SWEEP_PROOF_CONTRACT, validateSweepProof], 'full-shadow': [FULL_SWEEP_CONTRACT, validateFullSweep], 'full-on': [FULL_SWEEP_CONTRACT, validateFullSweep],
+export function validateSlotGreen(r) {
+  if (!exact(r, SLOT_GREEN_FIELDS) || r.contract !== SLOT_GREEN_CONTRACT || !iso(r.writtenAt) || !RUN_ID.test(r.runId ?? '') || !Number.isSafeInteger(r.pr) || r.pr <= 0
+    || !SHA.test(r.headSha ?? '') || !iso(r.slotGreenAt)) fail('invalid_train_slot_green');
+  return r;
+}
+export function validateFrontSeen(r) {
+  if (!exact(r, FRONT_SEEN_FIELDS) || r.contract !== FRONT_SEEN_CONTRACT || !iso(r.writtenAt) || !RUN_ID.test(r.runId ?? '') || !Number.isSafeInteger(r.pr) || r.pr <= 0
+    || !SHA.test(r.headSha ?? '') || !iso(r.seenAt)) fail('invalid_train_front_seen');
+  return r;
+}
+const KIND = { 'front-seen': [FRONT_SEEN_CONTRACT, validateFrontSeen], 'slot-green': [SLOT_GREEN_CONTRACT, validateSlotGreen], 'landing-batch': [LANDING_BATCH_CONTRACT, validateLandingBatch], 'landing-state': [LANDING_STATE_CONTRACT, validateLandingState], proof: [SWEEP_PROOF_CONTRACT, validateSweepProof], 'full-shadow': [FULL_SWEEP_CONTRACT, validateFullSweep], 'full-on': [FULL_SWEEP_CONTRACT, validateFullSweep],
   front: [FRONT_BATCH_CONTRACT, validateFrontBatch], 'strict-proof': [STRICT_PROOF_CONTRACT, validateStrictProof], 'strict-round': [STRICT_ROUND_CONTRACT, validateStrictRound],
   'strict-front-proof': [STRICT_FRONT_PROOF_CONTRACT, validateStrictFrontProof], 'pending-revocations': [PENDING_REVOCATIONS_CONTRACT, validatePendingRevocations],
   'scan-on': [SCAN_CONTRACT, validateScanProgress], 'scan-shadow': [SCAN_CONTRACT, validateScanProgress], 'scan-strict': [SCAN_CONTRACT, validateScanProgress] };
@@ -153,10 +170,21 @@ export class TrainSweepStore {
     return [...this.tornNames.values()].filter(t => ['strict-proof', 'strict-round', 'front'].includes(t.kind)
       && (this.newestStrictMs === null || t.ms >= this.newestStrictMs)).length;
   }
+  // The name's millisecond stamp is the store's only order ("which record is newest"), so it is strictly increasing across the
+  // whole store: the actual stamp is max(the caller's writtenAt, newest stamp of any name of this store, torn ones included, + 1),
+  // written to both record.writtenAt and the name. Two records never share a stamp and name order is write order, also after the
+  // clock steps back. One writer at a time (one node on duty, its stages run serially); readdir and link are not atomic together.
   async write(kind, record) {
     if (!Object.hasOwn(KIND, kind)) fail('invalid_train_sweep_record');
     KIND[kind][1](record);
-    const name = `${kind}-${String(Date.parse(record.writtenAt)).padStart(13, '0')}-${record.runId}-${randomBytes(4).toString('hex')}.json`;
+    let newest = -1;
+    for (const existing of await fs.readdir(this.directory)) {
+      const parts = existing.endsWith('.tmp') ? null : NAME.exec(existing);
+      if (parts) newest = Math.max(newest, Number(parts[2]));
+    }
+    const stamp = Math.max(Date.parse(record.writtenAt), newest + 1);
+    if (stamp !== Date.parse(record.writtenAt)) record = KIND[kind][1]({ ...record, writtenAt: new Date(stamp).toISOString() });
+    const name = `${kind}-${String(stamp).padStart(13, '0')}-${record.runId}-${randomBytes(4).toString('hex')}.json`;
     const temporary = path.join(this.directory, `${name}.tmp`);
     const handle = await fs.open(temporary, 'wx', 0o600);
     try { await handle.writeFile(canonical(record)); await handle.sync(); } finally { await handle.close(); }
@@ -272,6 +300,10 @@ export class TrainSweepStore {
   // Push mode (ADR 0018 §3): batch records, newest first (at most `limit`), and the landing state (newest valid; none: empty).
   async appendLandingBatch(r) { return this.write('landing-batch', { contract: LANDING_BATCH_CONTRACT, ...r }); }
   async landingBatches(limit = 20) { return this.read('landing-batch', limit); }
+  async writeSlotGreen(r) { return this.write('slot-green', { contract: SLOT_GREEN_CONTRACT, ...r }); }
+  async readSlotGreen({ pr, headSha }) { return (await this.read('slot-green', 1, r => r.pr === pr && r.headSha === headSha))[0] ?? null; }
+  async writeFrontSeen(r) { return this.write('front-seen', { contract: FRONT_SEEN_CONTRACT, ...r }); }
+  async readFrontSeen({ pr, headSha }) { return (await this.read('front-seen', 1, r => r.pr === pr && r.headSha === headSha))[0] ?? null; }
   async landingBatchByTest(testSha) { return (await this.read('landing-batch', 1, r => r.testSha === testSha))[0] ?? null; }
   async writeLandingState({ writtenAt, runId, bad, suspect, adopted, handled }) {
     const r = { writtenAt, runId, bad, suspect, adopted, handled };
@@ -283,9 +315,21 @@ export class TrainSweepStore {
     if ([...this.tornNames.values()].some(t => t.kind === 'landing-state' && (p === null || t.ms >= Date.parse(p.writtenAt)))) fail('TRAIN_LANDING_STATE_UNREADABLE');
     return p ? { bad: p.bad, suspect: p.suspect, adopted: p.adopted, handled: p.handled } : { bad: [], suspect: null, adopted: [], handled: [] };
   }
+  // D6 §8.4 (a): whether this node has any landing batch, readable or not (a name of the kind is enough); a readdir that fails throws.
+  async anyLandingBatch() {
+    return (await fs.readdir(this.directory)).some(name => !name.endsWith('.tmp') && NAME.exec(name)?.[1] === 'landing-batch');
+  }
   async appendFrontBatch(r) { return this.write('front', { contract: FRONT_BATCH_CONTRACT, ...r }); }
-  // This node's front batches of one head, newest first.
-  async frontBatches({ pr, headSha }) { return this.read('front', Infinity, r => r.pr === pr && r.headSha === headSha); }
+  // Newest revision of each actual execution, newest first. A timestamp refresh preserves every tested identity
+  // field and the attempt; its append-only record is not another execution or another consumed front attempt.
+  async frontBatches({ pr, headSha }) {
+    const records = await this.read('front', Infinity, r => r.pr === pr && r.headSha === headSha), seen = new Set();
+    return records.filter(r => {
+      const key = JSON.stringify([r.claimId, r.pr, r.headSha, r.baseSha, r.testSha, r.testTree, r.attempt]);
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+  }
   // Generation 28 (resident docs/adr/0016): the newest front batch this node opened, of any PR, or null; a torn front record at or after it
   // refuses (a newer front this node cannot read must not let an older one count as the newest).
   async latestFrontBatch() {

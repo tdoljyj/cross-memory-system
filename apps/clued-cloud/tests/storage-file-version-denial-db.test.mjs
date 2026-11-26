@@ -1,29 +1,21 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import EmbeddedPostgres from "embedded-postgres";
+import { newCluster } from "./pg-cluster-fixture.mjs";
 import test from "node:test";
 import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary, assertAuthorizationSuccessorBoundary, snapshotCallerCatalog, findGatewayCloseoutMigration, setWorkerGatewayCaller, assertGatewayCloseoutBoundary, replayGatewayCloseout } from "./worker-gateway-caller-fixture.mjs";
 
-async function freePort() {
-  const server = net.createServer();
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  const port = server.address().port;
-  await new Promise(resolve => server.close(resolve));
-  return port;
-}
 
 test("file-version diagnosis on the current full migration chain remains read-only and fail-closed", { timeout: 180000 }, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-file-version-db-"));
-  const server = new EmbeddedPostgres({ databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
-    port: await freePort(), persistent: false, postgresFlags: ["-c", "io_method=sync"], onLog() {}, onError(message) { process.stderr.write(message + "\n"); } });
+  const server = newCluster({ databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(message + "\n"); } });
   let admin, caller;
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     admin = server.getPgClient(); await admin.connect();
     await admin.query("create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;" +
       "create role authenticator nologin noinherit; create schema auth; create schema extensions; create extension pgcrypto with schema extensions;" +

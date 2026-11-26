@@ -44,6 +44,16 @@ async function fx(t, { answer = () => HELD, stage8 = [notReady('RESIDENT_MERGE_Q
 }
 const watches = f => f.engine.probes.filter(p => p?.watchPr);
 const tries = f => f.engine.calls.filter(c => c[0] === 'stage' && c[1] === 8).length;
+async function watchTimes(f, ticks) {
+  const times = [];
+  for (let i = 0; i < ticks; i++) {
+    f.advance(QUEUE_WATCH_MS);
+    const before = f.engine.probes.length;
+    await f.exec.tick();
+    if (f.engine.probes.slice(before).some(probe => probe?.watchPr)) times.push(f.clock() - T0);
+  }
+  return times;
+}
 const receiptBodies = async (f, type) => {
   const dir = path.join(f.root, 'state', 'receipts');
   const out = [];
@@ -158,8 +168,7 @@ test('the gap is counted from the end of the last probe: a 40 s urgent probe and
 
 test('the cadence slows with the time at B: 30 s for 30 minutes, then 2 minutes', async t => {
   const f = await fx(t, { stage8: [notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), ...Array.from({ length: 10 }, () => notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'))] });
-  const at = [];
-  for (let i = 0; i < 200; i++) { f.advance(QUEUE_WATCH_MS); const n = watches(f).length; await f.exec.tick(); if (watches(f).length > n) at.push(f.clock() - T0); }
+  const at = await watchTimes(f, 200);
   const early = at.filter(x => x < 30 * MIN), late = at.filter(x => x > 40 * MIN && x < 90 * MIN);
   assert.ok(early.length >= 40, `about one every 30 s at first (${early.length})`);
   const lateGaps = late.slice(1).map((x, i) => x - late[i]).filter(g => g < 10 * MIN);
@@ -173,6 +182,14 @@ test('no watch while the stage-8 tries of the day are used up', async t => {
   assert.equal(await f.exec.queueWatchMaintenance(), null);
   assert.equal(watches(f).length, 0);
   assert.equal(f.exec.queueWatchView.size, 0, 'and the PR page is not told it is watched');
+});
+
+test('#1144: a different PR exhausting stage 8 cannot disable this PR queue watch', async t => {
+  const f = await fx(t);
+  f.advance(QUEUE_WATCH_MS);
+  f.ledger.usage = async (_since, options) => ({ stage8Retries: options?.stage8Pr === 884 ? 0 : 100 });
+  await f.exec.queueWatchMaintenance();
+  assert.deepEqual(watches(f), [{ watchPr: 884 }]);
 });
 
 test('a watch that leaves no confirmed fact HALTs like any role probe (the swap may not be clean); a busy engine only defers', async t => {
@@ -246,8 +263,7 @@ test('the role fact of a watch: validated as held; the book stores ROLE_PROBE_HE
 test('review round 2: the first place is watched once its 60 s streak is over, not during it', async t => {
   const first = () => notReady('RESIDENT_QUEUE_HEAD_NOT_REACHED', { entered: true, state: 'head', position: 1 });
   const f = await fx(t, { stage8: Array.from({ length: 40 }, first) });
-  const at = [];
-  for (let i = 0; i < 60; i++) { f.advance(QUEUE_WATCH_MS); const n = watches(f).length; await f.exec.tick(); if (watches(f).length > n) at.push(f.clock() - T0); }
+  const at = await watchTimes(f, 60);
   assert.ok(at.length > 0, 'watched after the streak');
   assert.ok(at.every(x => x > 15 * MIN), JSON.stringify(at));
 });

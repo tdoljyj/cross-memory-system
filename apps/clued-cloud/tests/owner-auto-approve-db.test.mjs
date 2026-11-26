@@ -1,14 +1,14 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { installReleaseIdentityFixture, releaseDoor } from './release-identity-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 // Persistent successor: default On, one Native CAS call, exact grants and the
@@ -22,26 +22,18 @@ const session = (sub, sessionId = 'sess-main', extra = {}) =>
   ({ sub, role: 'authenticated', session_id: sessionId, aal: 'aal1',
     amr: [{ method: 'password', timestamp: nowEpoch() - 3 * 86400 }], ...extra });
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 test('owner auto-approval: the switch approves requests at once, never connection.permission, and stops when off',
   { timeout: 300000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-owner-auto-approve-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: hash(), 
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = server.getPgClient();
     clients.push(admin);
     await admin.connect();
@@ -111,6 +103,8 @@ test('owner auto-approval: the switch approves requests at once, never connectio
     const ask = (input) => agent('claude', 'clued_owner_request_v1', { idempotency_key: uuid(), ...input });
     const listed = () => native('clued_owner_grants_list_v1', {});
     const sha = (c) => `repo:tdoljyj/cross-memory-system/${c.repeat(40)}`;
+    // The release workflow is the database login; the release Binding is retired by the install.
+    await installReleaseIdentityFixture(admin, bindingIds.release);
 
     // --- On by default, including users created after the migration. ---
     let list = await listed();
@@ -241,10 +235,10 @@ test('owner auto-approval: the switch approves requests at once, never connectio
     assert.deepEqual(bundled.request.bundle.map((m) => m.status), ['approved_once', 'approved_once']);
 
     // --- The release door approves and uses the grant in one call. ---
-    let result = await agent('release', 'clued_owner_grant_door_consume_v1', { action: 'release.production', resources: [sha('d')] });
+    let result = await releaseDoor(admin, { action: 'release.production', resources: [sha('d')] });
     assert.deepEqual([result.status, result.consumed, result.auto_approved], ['ok', true, true]);
     assert.equal(result.grant.use, 1);
-    result = await agent('release', 'clued_owner_grant_door_consume_v1', { action: 'release.production', resources: [sha('d')] });
+    result = await releaseDoor(admin, { action: 'release.production', resources: [sha('d')] });
     assert.equal(result.consumed, true, 'the next run gets a new approval while the switch is on');
 
     // --- The admission door, for repo.protected_change. ---
@@ -290,7 +284,7 @@ test('owner auto-approval: the switch approves requests at once, never connectio
     assert.equal(off.auto_approve.on, false);
     assert.equal((await setSwitch(false)).replayed, true);
     assert.equal(committed(await ask({ action: 'release.production', resources: [sha('f')] })).request.status, 'pending');
-    result = await agent('release', 'clued_owner_grant_door_consume_v1', { action: 'release.production', resources: [sha('9')] });
+    result = await releaseDoor(admin, { action: 'release.production', resources: [sha('9')] });
     assert.deepEqual([result.consumed, result.owner_request.status], [false, 'pending']);
     assert.ok((await listed()).grants.some((g) => g.grant_id === routine.request.grant.grant_id));
 

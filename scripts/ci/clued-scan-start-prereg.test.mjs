@@ -157,11 +157,13 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
     .map(id => [id, REQUIRED_TESTS_SOURCE.role_sha256[id]]));
   delete profileBefore.workflows[REQUIRED_TESTS_SOURCE.file];
   delete rolesBefore.workflows[REQUIRED_TESTS_SOURCE.file];
-  // Resident ADR 0032 step 2: the Windows side of the required tests is registered after this generation, additive too.
-  const WINDOWS = '.github/workflows/clued-required-tests-windows.yml', WINDOWS_BLOB = 'bf46c22f3ff1c9e491d181ca1464f174b4a21d9b';
+  // Resident ADR 0032 step 2: the Windows side of the required tests is registered after this generation, additive too
+  // The current Source exports the trusted base from the local candidate object store (Task 04f9b91b).
+  const WINDOWS = '.github/workflows/clued-required-tests-windows.yml';
+  const WINDOWS_BLOB = workflowBlob(fs.readFileSync(new URL(WINDOWS, ROOT), 'utf8'));
   assert.equal(profileBefore.workflows[WINDOWS].workflow_blob, WINDOWS_BLOB);
   assert.deepEqual(rolesBefore.workflows[WINDOWS].sources[WINDOWS_BLOB].map(role => [role.job_id, role.definition_sha256]),
-    [['ci-suites-windows', '67a8d5c72a1499e0f6445a9e5f266b281e4b8f9734c45e7a5bd268278dc43936']]);
+    [['ci-suites-windows', 'bc032f2225f9efc593770491dca2790a7beccfd81c95e85276e74860cede23bd']]);
   delete profileBefore.workflows[WINDOWS];
   delete rolesBefore.workflows[WINDOWS];
   // #988: the Node 22 install managed-cache Source is registered after this generation; strip it like the other later successors.
@@ -170,6 +172,17 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
   profileBefore.workflows[NODE22].accepted_sources = profileBefore.workflows[NODE22].accepted_sources.filter(x => x.workflow_blob !== NODE22_BLOB);
   assert.equal(Object.hasOwn(rolesBefore.workflows[NODE22].sources, NODE22_BLOB), true);
   delete rolesBefore.workflows[NODE22].sources[NODE22_BLOB];
+  // #1217 R2b: three gated workflows lost their main push trigger; each new byte form is a later additive Source and is
+  // the workflow on disk. Strip it like the other later successors.
+  for (const [file, blob] of [['.github/workflows/clued-cloud-node22-install.yml', 'a07a290c763654a7aaa749a1c2088d484afc4eed'],
+    ['.github/workflows/design-refs.yml', '0d5575fdabf9f2e811b893d6a09eb4b36d2e7600'],
+    ['.github/workflows/model-program-m2-scoped-consumer.yml', 'da6c77d5758f8f3e7a124fc3ab667fceebe235f8']]) {
+    assert.equal(profileBefore.workflows[file].accepted_sources.filter(x => x.workflow_blob === blob).length, 1, file);
+    assert.equal(workflowBlob(fs.readFileSync(new URL(file, ROOT), 'utf8')), blob, file);
+    profileBefore.workflows[file].accepted_sources = profileBefore.workflows[file].accepted_sources.filter(x => x.workflow_blob !== blob);
+    assert.equal(Object.hasOwn(rolesBefore.workflows[file].sources, blob), true, file);
+    delete rolesBefore.workflows[file].sources[blob];
+  }
   // A preregisters this exact later successor without consuming its YAML.
   // Authenticate its full Source and unchanged roles before projecting history.
   // Verify the later automation route's exact bytes and both complete roles,

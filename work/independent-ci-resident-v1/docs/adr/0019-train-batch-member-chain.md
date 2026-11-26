@@ -1,6 +1,6 @@
 # ADR 0019：批量真正上生产——描述符 /4 与两侧的成员链核对
 
-- 状态：已实施（第 28 代，未安装）。只在 `train.landing=push` 且 `train.batchMax>1` 时起作用，两者默认都是关的（`github-merge`、1）。
+- 状态：实现已合入；Owner 于 2026-11-17 决定准备启用 ADR 0018 的 push 落地，仓库侧前提正在补齐。船队统一值 `FLEET_TRAIN` 自 2026-11-20 起为 `push`、1（ADR 0018 §8 第 7 条，随通用包生效）；多人批次仅在 `train.landing=push`、`train.batchMax>1` 且已装同代链核对时生效，生产安装与首批结果须另行核实。
 - 日期：2026-11-08（设计与实现，合入第 28 代）
 - Owner Decision：同 [ADR 0018](0018-bors-landing.md)（`9e2511fe` 第 6 项，Task `7d86cf41`）
 - 来源：分支 `claude/train-bors-chain` 提交 `bf444310d`。原为常驻 DESIGN 的 §67，与冻结档案的 §67（准入往返去掉重复开销）撞号，所以合入时改为本 ADR。代码注释里的 “ADR 0019 §n” 指本文第 n 节。
@@ -94,9 +94,9 @@ ADR 0018 第 3 节已经实现了组批、累积合并、二分和推 main，但
 
 ### 8. 上线要求
 
-1. **一次新一代的原地升级**（`rollout/build-upgrade.ps1`，不需要整套重装：`upgrader/src` 与冻结 Linux 文件未变）。这一代同时带：新的 Source 清单（`ciSourceManifestSha256`：两个工具、调用器、第 10 段）、新的常驻清单（`residentManifestSha256`）、新的 Linux 清单（`clued-ci-resident-linux` 与 `/opt/.../source-v2`）。policy 里的两个清单哈希随这一代重签（Owner 一次 UAC）。
+1. **新一代通用包原地升级**（不需要整套重装：`upgrader/src` 与冻结 Linux 文件未变）。这一代同时带：新的 Source 清单（`ciSourceManifestSha256`：两个工具、调用器、第 10 段）、新的常驻清单（`residentManifestSha256`）、新的 Linux 清单（`clued-ci-resident-linux` 与 `/opt/.../source-v2`）。policy 里的两个清单哈希随这一代重签，`FLEET_TRAIN` 随通用包下发，取代一次 UAC 写策略；按通用升级流程先待命、后当班，核实两侧同代。
 2. **重签的角色**：Linux 三个角色 gitleaks、trivy、contract-placement 随新 Source 清单在切代时由 Linux 侧重新派生、重签 policy 与 qualification（每一代都做；§63 装上后打包不再需要 UAC 导出角色副本，没装时仍按 §57.7 导出一次）。Windows 一侧没有新的签名角色；App 权限、规则集不变（ADR 0018 第 8 节的前提照旧）。
-3. **策略**：装好这一代、`status` 里版本一致之后，再把 policy 的 `train.batchMax` 改成 3（`train.landing` 须已是 `push`；一次 UAC）。顺序反了也安全：常驻层读不到 `/4` 字面量或版本不一致时只发 `push:3`，第 10 段一批一个。
+3. **策略**：先按 ADR 0018 §8 配齐前提并通过通用包启用 `FLEET_TRAIN.landing: push`；待单 PR 落地稳定、`status` 里版本一致之后，再以单独 PR 将 `FLEET_TRAIN.batchMax` 改成 3，随下一通用包下发，不直接写节点 policy。顺序反了也安全：常驻层读不到 `/4` 字面量或版本不一致时只发 `push:3`，第 10 段一批一个。
 4. 第一批多 PR 批次跑完后核对：常驻层 outbox 里该批的 `descriptor.json` 是 `/4`，bundle 回执有 `chainMembers`，Linux ws-prep 回执 `RESIDENT_WORKSPACES_PREPARED`，main 一次前进到 S。
 
 ### 9. 残余

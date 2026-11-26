@@ -159,7 +159,7 @@ App 私钥和 ci-admission token 不在 `<root>` 下，放在 `C:\ProgramData\Cl
 |---|---|---|
 | 预留 | `00-reserved.json` | 带 `origin`：queued、backoff-retry、waiting-retry、new-trigger、restored、attempt2 等 |
 | 导出 | — | Source v2 `derive-batch.mjs` 从"已安装 Source + 触发数据"确定性导出批次包，写描述符 |
-| 第 0 段 | — | companion 运行 `build-bundle.ps1` 打 bundle。失败 → 只关 Windows 侧，释放 |
+| 第 0 段 | — | companion 运行 `build-bundle.ps1` 打 bundle。失败 → 只关 Windows 侧，释放。出生时读到无本地角色且无 S 的批次不做（盖 push 戳，或最近一次第 10 段读到本 App 不出扫描）：写回执 `bundle-skipped`，直接进第 1 段，`10-started.json` 的 facts 记 `lean: true`，计划只认这条记录。lean 批次在第 1 段前遇到 main 前移，照过第 1 段（开着的 PR 的 `base.sha` 不随 main 前移），由第 8 段以 `RESIDENT_BASE_MOVED` 结束；切换日不重盖戳 |
 | 第 1 段 | — | Native 工作准入（见 §4.4）。未准入、不当班（`NODE_ROLE_NOT_HELD`），以及能证明什么都没写的 `GITHUB_TRANSIENT_UNAVAILABLE` / `NATIVE_ADMISSION_UNAVAILABLE`（`STAGE1_TRANSIENT_RELEASE_CODES`）→ 释放；其他失败 → 烧号 |
 | 开始 | `10-started.json` + `state\ledger-heads\<headKey>.json` | 这一步烧号 |
 | 资格冻结 | `14-qualification-hold.json` | 只收紧的转发资格冻结标记（`relay-qualification-hold.mjs`），存在就挡住这个 head；转发关着时不出现 |
@@ -312,7 +312,7 @@ B 上的第 8 段尝试：
 | 上次在合并队列第 1 位 | 1 分钟后再试（`PARK_HEAD_RETRY_MS`），连续最多 15 分钟（`PARK_HEAD_STREAK_MS`） |
 | 计数的尝试上限 | `park.stage8MaxTries` = 12 |
 | 停留上限 | `park.maxMs` = 24 小时 |
-| 全部停靠批次第 2 次及以后的尝试 | 24 小时 ≤ `park.stage8RetriesPer24h` = 100 |
+| 每个 PR 的停靠批次第 2 次及以后的尝试（含安全点续跑） | 每 PR 滚动 24 小时 ≤ `park.stage8RetriesPer24h` = 100；不同 PR 独立计算 |
 | 名额 | A 加上 B 中前 2 位 ≤ `park.maxParked` = 4；B 中其他 ≤ `maxParkedOutsideTop2` = 8；满了就 `DEFERRED PARKING_FULL` |
 | 第 8 段零副作用的暂时失败（`NATIVE_ADMISSION_UNAVAILABLE`、`GITHUB_TRANSIENT_UNAVAILABLE`） | 停在 B 最多 3 次，间隔 1 / 3 / 10 分钟，第 4 次烧号 |
 | main 移动（`RESIDENT_BASE_MOVED`）、超出上限 | 中性结束 |
@@ -562,7 +562,7 @@ P2 的停止路径：经代理写 `.stop`，助手走自己的停止路径（只
 
 ## 9. companion
 
-代码：`R/src/companion-main.mjs`（各通道）、`companion.mjs`、`poller.mjs`、`pr-status.mjs`、`node-duty.mjs`、`ruleset-backstop.mjs`、`companion-heartbeat.mjs`、`panel-dispatch.mjs`、`admission-rerun.mjs`、`merge-reconcile.mjs`、`upgrade-mailbox.mjs`、`roles-public.mjs`、`runner.mjs`、`windows/CompanionJobHost.cs`
+代码：`R/src/companion-main.mjs`（各通道）、`companion.mjs`、`poller.mjs`、`pr-status.mjs`、`node-duty.mjs`、`ruleset-backstop.mjs`、`companion-heartbeat.mjs`、`panel-dispatch.mjs`、`admission-rerun.mjs`、`merge-reconcile.mjs`、`upgrade-mailbox.mjs`、`roles-public.mjs`、`pool-alert.mjs`、`runner.mjs`、`windows/CompanionJobHost.cs`
 档案：DESIGN §16.6、§24–§26、§39、§43、§56.5、§63
 
 companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起由计划任务的固定动作 `bin\CluedCompanionSupervisor.exe` 按管理员专用的 `config\companion-launch.json` 启动并退避重启（ADR 0022 §4.2）。每个通道有自己的 Runner，一个通道卡住不影响别的通道。每个子进程都建在作业宿主（`bin\CluedCompanionJobHost.exe`）自己的作业对象里，超时后整棵树一起结束。
@@ -570,13 +570,15 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 | 通道 | 周期 | 做什么 |
 |---|---|---|
 | 信箱 | 持续 | 打 bundle（第 0 段）、refs 闸门、建工作区、Linux 归档与静止证明、泵（第 2/4/6 段）、`pr-head` 实时读、内存读数 |
-| 咨询 | 1 分钟 | 轮询：用 Owner 的 gh 登录，带 ETag 条件请求读 `git/ref/heads/main` 和 open PR，只提议已跟上 main 的 head；写 PR 页面状态（`resident-queue/<node> (info only)`）；发 Windows 通知；每 5 分钟做一次规则集兜底 |
+| 轮询 | 15 秒 | 用 Owner 的 gh 登录，带 ETag 条件请求读 `git/ref/heads/main` 和 open PR（没变就是两次 304，不计速率额度），只提议已跟上 main 的 head；顺带观察停靠批次。读 `status.json` 取排队表代次最多等 5 秒，读不到按“代次未知”走。自己的 Runner：咨询通道里任何一步卡住，都不推迟发现新 head（任务 f79929d9） |
+| 咨询 | 2 秒检查，PR 页面每 1 分钟 | 保留通知；每小时清旧 bundle；写 PR 页面状态（`resident-queue/<node> (info only)`，只读轮询通道的上一轮结果）；发 Windows 通知；每 5 分钟做一次规则集兜底 |
 | 升级信箱 | 5 秒 | 把升级代理的请求交给冻结的 Linux 升级工具；刷新 Linux 版本事实和角色公开副本 |
 | 心跳 | 30 秒检查，每 1 分钟发一次（ADR 0026） | 用本节点专用的心跳令牌上报自身状态（§10.3） |
 | 面板触发 | 30 秒 | 当班节点每 5 分钟对算力面板发一次 `workflow_dispatch` |
 | 准入补跑 | 1 分钟 | `admission-gate` 以 `ADMISSION_PENDING` 结束时，用 Owner 的 gh 登录点一次 "Re-run all jobs"，每个 head 最多一次（Decision `207c0cd0`） |
 | 合并对账 | 30 秒 | 唤醒原合并控制器（`clued-merge-reconcile.yml`），不做任何合并判断。**默认关闭**：只有 companion.json 写了 `mergeReconcile.enabled=true` 的包才运行，仓库里现有配置都没有打开 |
 | 信箱心跳 | 每 10 秒 | 执行器据此判断 companion 是否活着；超过 120 秒没更新算失联（信号 D） |
+| 内核池到线通知 | 每 10 分钟 | 内核分页池最大标签过软线或硬线，只通知 Owner，绝不自动重启（§9.1） |
 
 安全边界：
 
@@ -593,6 +595,23 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 - GitHub：companion 用只限本仓库的细粒度令牌，放在 `%LOCALAPPDATA%\CluedIndependentCI\companion-gh\`，读不到就不启动。
 - 状态：`executor.companion.firstBeatAfterServiceStartMs`；服务启动 10 分钟仍无心跳时出 `companion-absent`。
 - 上线只能整套重装（R 类），步骤见 [`../rollout/M5-COMPANION-HEADLESS-RUNBOOK.md`](../rollout/M5-COMPANION-HEADLESS-RUNBOOK.md)。
+
+### 9.1 内核池到线通知
+
+代码：`R/src/pool-alert.mjs`、`R/windows/read-pool-tags.ps1`、`R/src/companion.mjs`（固定命令 `poolTags`）、`R/src/companion-main.mjs`（通道）
+档案：看板第 140 行；`D:/w/tmp/FABLE-admission-reboot-batch-20261124.md` 第 4 节原定“到线自动重启”，Owner 11-24 改为“到线通知我，别擅自自动重启”。
+
+内核持有的对象只增不减时，只有重启整机才回收。companion 的一个通道每 10 分钟量一次内核分页池里在用字节最大的那个标签（不认标签名，`NtQuerySystemInformation(22)`，不用提权），同时读分页池总量、已提交量和提交上限（`K32GetPerformanceInfo`）。过线只通知 Owner，由他找时间重启。随通用升级下发（U 类），零 UAC；不新增服务、计划任务、账户、权限。
+
+| 线 | 默认 | 到线后 |
+|---|---|---|
+| 软线 | 3 GiB | 通知一次：请安排重启 |
+| 硬线 | 5 GiB | 通知一次：请尽快重启 |
+
+- 绝不重启：本通道只运行 `read-pool-tags.ps1` 这一条只读命令；不关机、不重启、不暂停接新、不等空闲。常驻包（`src`、`tools`、`windows`）和升级代理里不出现任何重启或关机命令、接口和权限名，由 `test/pool-alert.test.mjs` 扫描把关。
+- 阈值与开关：`companion.json` 的可选键 `poolAlert: { enabled, softBytes, hardBytes }`，缺省开、取上表默认值；`tools/build-package.mjs` 校验。连续 2 次过线才算；量不出就什么都不做。
+- 节流（固定，不可配）：从第一次到线起算一轮，每条线每轮只通知一次；先到硬线就只发硬线；连续 2 次低于软线这一轮才结束，再到线算新一轮。通知没写进队列就在下一次读数时重发。轮次存在 companion 自己的 `%LOCALAPPDATA%\CluedIndependentCI\pool-alert\state.json`，companion 重启不重发。
+- 通知内容（走通知队列 `notify-queue.mjs`，由通知任务弹给 Owner）：分页池总量与最大标签、离提交上限还有多少、本次开机近 6 小时（至少 1 小时）的增速，以及按此增速几小时到硬线、几小时用完提交余量；建议重启时刻（北京时间）：软线为到硬线或用完余量中较早的时刻之前，硬线为今天尽快、最迟用完余量之前。增速不足 1 小时或不增长时照实写“估不出”。代码 `POOL_ALERT_SOFT` / `POOL_ALERT_HARD`。
 
 ---
 
@@ -790,7 +809,7 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 | 第 8 段 | — | `independent-control-checks-v2/publisher.mjs`、`train-rules.mjs`、`green-ledger.mjs`、`claim-assist-native.mjs` |
 | 列车 | `src/train.mjs`、`src/executor.mjs` | `independent-control-checks-v2/train-*.mjs`、`resident-v2/train-run.mjs` |
 | 节点 | `src/role-probe.mjs`、`src/node-identity.mjs`、`src/node-duty.mjs`、`src/companion-heartbeat.mjs` | — |
-| companion | `src/companion*.mjs`、`src/poller.mjs`、`src/pr-status.mjs`、`src/runner.mjs`、`windows/CompanionJobHost.cs` | — |
+| companion | `src/companion*.mjs`、`src/poller.mjs`、`src/pr-status.mjs`、`src/runner.mjs`、`src/pool-alert.mjs`、`windows/read-pool-tags.ps1`、`windows/CompanionJobHost.cs` | — |
 | Owner 请求 | `windows/rearm-resident.ps1`、`tools/rearm-tool.mjs`、`src/intake-pause.mjs`、`src/resident-requests.mjs` | — |
 | 升级 | `upgrader/src/`、`windows/request-upgrade.ps1`、`windows/upgrade-apply.ps1`、`rollout/`、`src/upgrade-mailbox.mjs` | — |
 | 安装 | `windows/install-resident.ps1`、`windows/verify-resident.ps1`、`linux/*.sh`、`tools/build-package.mjs`、`reinstall/` | `resident-v2/prepare-record.mjs` |

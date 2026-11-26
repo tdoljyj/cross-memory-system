@@ -1,28 +1,25 @@
 // Live, request-bound applicability only. No Source, installation or execution
 // authority is minted here. Raw logs and provider bodies never leave this module.
 import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import {performance} from 'node:perf_hooks';
 import {REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.6';
-export const REQUIRED_SELECTOR_SOURCE=Object.freeze({
-  path:'scripts/ci/ci-required-selection.mjs',
-  blob:'068dab395912ea8bf73302898745013330017be3',
-  sha256:'a9d2d2616ec0ea4e86389e0024e1a91e7cf14a6769215d64b9d7003192ab7812',
-});
-export const REQUIRED_MIGRATION_PATHS=Object.freeze([
-  'apps/clued-cloud/supabase/**','apps/clued-cloud/scripts/production-schema-*.mjs',
-  'apps/clued-cloud/scripts/migration-ledger.mjs','apps/clued-cloud/scripts/production-release-baseline.json',
-  'apps/clued-cloud/tests/production-schema-drift.test.mjs','apps/clued-cloud/package.json','apps/clued-cloud/package-lock.json',
-]);
-export const REQUIRED_SELECT_ALL_PATHS=Object.freeze([
-  'scripts/ci/ci-required-selection.mjs','scripts/ci/ci-known-failures.json','scripts/ci/ci-test-failures-reporter.mjs',
-  '.github/workflows/clued-required-tests.yml','.github/actions/**',
-]);
+export const COMPONENT_VERSION='1.0.16';
 const tokens=new WeakMap(),SHA=/^[a-f0-9]{40}$/,REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SOURCE_GATE='scripts/ci/clued-work-admission.mjs',MAX_READ_MS=20000,MAX_CONTEXT_AGE_MS=120000;
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const blob=value=>createHash('sha1').update('blob '+Buffer.byteLength(value)+'\0').update(value).digest('hex');
+function localSelectorSource(){
+  const path='scripts/ci/ci-required-selection.mjs';
+  try{
+    const bytes=readFileSync(new URL('./ci-required-selection.mjs',import.meta.url));
+    return Object.freeze({path,blob:blob(bytes),sha256:hash(bytes)});
+  }catch{
+    return Object.freeze({path,blob:null,sha256:null});
+  }
+}
+export const REQUIRED_SELECTOR_SOURCE=localSelectorSource();
 const canonical=x=>Array.isArray(x)?x.map(canonical):x&&typeof x==='object'?
   Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
 const freeze=x=>{if(x&&typeof x==='object'){Object.values(x).forEach(freeze);Object.freeze(x);}return x;};
@@ -31,16 +28,6 @@ const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const positive=n=>Number.isSafeInteger(n)&&n>0;
 const safePath=p=>typeof p==='string'&&p.length>0&&p.length<=4096&&!/[\u0000-\u001f\u007f\u0085\u2028\u2029\\]/.test(p)&&
   !p.startsWith('/')&&!p.split('/').some(x=>!x||x==='.'||x==='..');
-function glob(pattern) {
-  let out='';
-  for(let i=0;i<pattern.length;i++) {
-    if(pattern[i]==='*'&&pattern[i+1]==='*'){out+='.*';i++;if(pattern[i+1]==='/')i++;}
-    else out+=pattern[i]==='*'?'[^/]*':pattern[i].replace(/[.+?^${}()|[\]\\]/g,'\\$&');
-  }
-  return new RegExp('^'+out+'$');
-}
-const migrationPatterns=[...REQUIRED_MIGRATION_PATHS,...REQUIRED_SELECT_ALL_PATHS].map(glob);
-const policySha=digest({migration:REQUIRED_MIGRATION_PATHS,select_all:REQUIRED_SELECT_ALL_PATHS});
 function pull(pr,{repository,prNumber,head,base}) {
   if(pr?.number!==prNumber||pr.state!=='open'||pr.head?.sha!==head||pr.base?.sha!==base||
     pr.base?.repo?.full_name!==repository||!REPO.test(pr.head?.repo?.full_name??'')||
@@ -93,9 +80,15 @@ function gateBase(log,job,s) {
 // The only issuer performs the protected reads itself. No importable
 // mint-from-boolean, serialized proof, or caller-supplied path policy exists.
 export async function readRequiredApplicability(options) {
+  if(!REQUIRED_SELECTOR_SOURCE.blob)return null;
   let active=true,timer,externalAbort,externalSignal;const abort=new AbortController();
   const refused=new Error('REQUIRED_APPLICABILITY_UNCONFIRMED');
   try {
+    // Which changes need the migration verification is the selector's own answer (board line 251). It is loaded here, not
+    // statically: a selector that cannot load only withholds the evidence (the catch below) and never stops the runtimes
+    // that import this module. Its base bytes are checked against the local ones below, so the selection is the reviewed one.
+    const {SELECT_ALL,SUITES,selectSuites}=await import('./ci-required-selection.mjs');
+    const policySha=digest({migration:SUITES['migration-verify'],select_all:SELECT_ALL});
     const allowed=new Set(['read','readLog','repository','prNumber','head','base','runId','runAttempt','requestKey','trustedGateBlob','signal']);
     if(!options||typeof options!=='object'||Object.keys(options).some(k=>!allowed.has(k)))return null;
     const {read,readLog,requestKey,signal,...subject}=options;
@@ -138,13 +131,13 @@ export async function readRequiredApplicability(options) {
     }
     const changedPaths=[...paths].sort();
     if(!changedPaths.length||Buffer.byteLength(JSON.stringify(changedPaths))>131072||
-      changedPaths.some(p=>migrationPatterns.some(pattern=>pattern.test(p))))return null;
+      selectSuites('migration-verify',changedPaths,'linux').suites.length>0)return null;
     const body=await get(runRoute+'/attempts/'+subject.runAttempt+'/jobs?per_page=100&page=1');
-    const requiredNames=['admission-gate',...REQUIRED_TESTS_SOURCE.primary_ids];
-    if(body?.total_count!==4||!Array.isArray(body.jobs)||body.jobs.length!==4||
+    const requiredNames=['admission-gate',...REQUIRED_TESTS_SOURCE.primary_ids],count=requiredNames.length;
+    if(body?.total_count!==count||!Array.isArray(body.jobs)||body.jobs.length!==count||
       body.jobs.some(j=>!positive(j?.id)||j.run_id!==subject.runId||j.run_attempt!==subject.runAttempt||
         !requiredNames.includes(j.name)||j.status!=='completed'||j.conclusion!=='success')||
-      new Set(body.jobs.map(j=>j.id)).size!==4||new Set(body.jobs.map(j=>j.name)).size!==4)return null;
+      new Set(body.jobs.map(j=>j.id)).size!==count||new Set(body.jobs.map(j=>j.name)).size!==count)return null;
     const gate=body.jobs.find(j=>j.name==='admission-gate');
     const logSha=gateBase(await call(()=>readLog(gate,nativeRun,{signal:abort.signal})),gate,subject);if(!logSha)return null;
     const selector=sourceBytes(await get('/repos/'+subject.repository+'/contents/'+REQUIRED_SELECTOR_SOURCE.path+'?ref='+subject.base),

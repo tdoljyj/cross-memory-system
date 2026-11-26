@@ -43,10 +43,12 @@ const deferred = () => { let resolve, reject; const promise = new Promise((a, b)
 // A'. formal-spool-acl.ps1 with several targets, run for real against a temp spool. The test copy differs from the
 // script only in four fixed install facts: no node profile (the controller and Owner SIDs come from the test), the spool
 // root, and the test user counted among the administrators (so a user-owned temp chain can pass at all). Every other
-// line, the whole per-path decision code included, is the script's own.
+// line, the whole per-path decision code included, is the script's own, except that on a refusal the copy also prints
+// its code and the path it stopped at to stderr, which the assertions show (the script itself says nothing on purpose;
+// task 04f9b91b: on the GitHub-hosted runner the spool itself was refused and only the exit code 2 was seen).
 // ================================================================================================================
 const WIN = process.platform === 'win32';
-const ps = (args, env = {}) => { try { execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...args], { env: { ...process.env, ...env }, stdio: 'pipe', windowsHide: true }); return 0; } catch (e) { return e.status ?? -1; } };
+const ps = (args, env = {}) => { ps.reason = ''; try { execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...args], { env: { ...process.env, ...env }, stdio: 'pipe', windowsHide: true }); return 0; } catch (e) { ps.reason = String(e.stderr ?? '').trim(); return e.status ?? -1; } };
 function aclTestCopy(text) {
   const swaps = [
     ["Add-Type -Path (Join-Path $PSScriptRoot '..\\..\\src\\resident-v2\\windows\\NodeProfileV2.cs') -ReferencedAssemblies @('System.dll','System.Core.dll','System.Web.Extensions.dll')", ''],
@@ -54,6 +56,7 @@ function aclTestCopy(text) {
       "$NodeLease=New-Object psobject -Property @{Profile=(New-Object psobject -Property @{ControllerSid=$env:ACL_T_CONTROLLER;OwnerSid=$env:ACL_T_OWNER})};Add-Member -InputObject $NodeLease -MemberType ScriptMethod -Name Dispose -Value {}"],
     ["$spool = 'C:\\ProgramData\\CluedIndependentCI\\formal-spool'", '$spool = $env:ACL_T_SPOOL'],
     ["$admins = @('S-1-5-18',", "$admins = @($env:ACL_T_ADMIN.Split(',')) + @('S-1-5-18',"],
+    ['} catch { exit 2 }', "} catch { [Console]::Error.WriteLine(('ACL_TEST_REFUSED {0} at {1} (current {2}; administrators here {3})' -f $_.Exception.Message,$item,$currentSid,$env:ACL_T_ADMIN)); exit 2 }"],
   ];
   for (const [from, to] of swaps) { assert.equal(text.split(from).length, 2, `one ${from.slice(0, 40)}`); text = text.replace(from, () => to); }
   return text;
@@ -63,12 +66,17 @@ async function aclWorld(t) {
   const helper = path.join(dir, 'protected-job-bridge-v4');
   await fs.mkdir(helper);
   await fs.writeFile(script, aclTestCopy(await fs.readFile(new URL('formal-spool-acl.ps1', BRIDGE), 'utf8')));
-  for (const d of ['outgoing', 'incoming']) await fs.mkdir(path.join(spool, d), { recursive: true });
+  const me = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Security.Principal.WindowsIdentity]::GetCurrent().User.Value'], { encoding: 'utf8' }).trim();
+  // The spool gets its own protected DACL (this user, SYSTEM, Administrators), as the production spool has one, so it
+  // inherits nothing from TEMP: an inherited create-only grant above it (Users may append on the GitHub-hosted runner's
+  // TEMP, task 04f9b91b) is no replace right of an ancestor, but it is a write right on the spool and was refused there.
+  await fs.mkdir(spool);
+  execFileSync('icacls', [spool, '/inheritance:r', '/grant:r', ...[me, 'S-1-5-18', 'S-1-5-32-544'].map(sid => `*${sid}:(OI)(CI)F`)], { stdio: 'pipe' });
+  for (const d of ['outgoing', 'incoming']) await fs.mkdir(path.join(spool, d));
   for (const f of ['outgoing/response-01.json', 'outgoing/response-01.ready.json', 'outgoing/issue.json', 'outgoing/notaleaf.json', 'incoming/result.json'])
     await fs.writeFile(path.join(spool, f), '{}');
   execFileSync('icacls', [path.join(spool, 'outgoing', 'issue.json'), '/grant', '*S-1-1-0:(W)'], { stdio: 'pipe' }); // anyone may write: refused
   execFileSync('cmd.exe', ['/d', '/c', 'mklink', '/J', path.join(spool, 'outgoing', 'blocked.json'), path.join(spool, 'incoming')], { stdio: 'pipe' }); // a junction: refused
-  const me = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Security.Principal.WindowsIdentity]::GetCurrent().User.Value'], { encoding: 'utf8' }).trim();
   // The temp directory's own ancestors (the user profile) carry grants the production chain does not have (the user, app
   // container capabilities): their owners and every SID with a replace right there count as administrators in the test
   // copy. Nothing inside the spool is affected: a grant there to anyone else (Everyone below) is still refused.
@@ -80,7 +88,7 @@ $p=[IO.Path]::GetDirectoryName($p.TrimEnd([char]92))};($o|Sort-Object -Unique) -
   const run = (targets, { mode = '-RelayReadOutgoing', controller = 'S-1-5-21-1-2-3-1015', owner = me } = {}) => ps(['-File', script, '-LiteralTarget', targets.join('|'),
     '-ProtectedRoot', spool, mode, '-ExpectedNodeProfileSha256', '0'.repeat(64)], { ACL_T_SPOOL: spool, ACL_T_ADMIN: admins, ACL_T_CONTROLLER: controller, ACL_T_OWNER: owner });
   const p = rel => path.join(spool, ...rel.split('/').filter(Boolean));
-  return { spool, run, p, me };
+  return { spool, run, p, me, reason: () => ps.reason };
 }
 
 test("A': the ACL helper checks several targets with the per-path code: one refusal refuses all, all passing pass", { skip: !WIN && 'Windows PowerShell' }, async t => {
@@ -89,12 +97,13 @@ test("A': the ACL helper checks several targets with the per-path code: one refu
   const bad = { leaf: w.p('outgoing/notaleaf.json'), relayIncomingFile: w.p('incoming/result.json'), missing: w.p('outgoing/challenge-01.json'),
     writable: w.p('outgoing/issue.json'), junction: w.p('outgoing/blocked.json'), outside: path.dirname(w.spool), relative: 'formal-spool\\outgoing' };
   // each path alone: the reference
-  const single = Object.fromEntries([...good.map(g => [g, w.run([g])]), ...Object.entries(bad).map(([k, b]) => [k, w.run([b])])]);
-  for (const g of good) assert.equal(single[g], 0, `alone passes: ${g}`);
+  const single = {}, why = {};
+  for (const [k, targets] of [...good.map(g => [g, [g]]), ...Object.entries(bad).map(([k, b]) => [k, [b]])]) { single[k] = w.run(targets); why[k] = w.reason(); }
+  for (const g of good) assert.equal(single[g], 0, `alone passes: ${g}: ${why[g]}`);
   for (const k of Object.keys(bad)) assert.equal(single[k], 2, `alone refused: ${k}`);
   // a whole transfer in one call: exactly the conjunction of the singles
-  assert.equal(w.run(good.slice(0, 3)), 0, 'a Receive: spool, outgoing, incoming');
-  assert.equal(w.run(good), 0, 'a Send: the three directories, the record and its ready marker');
+  assert.equal(w.run(good.slice(0, 3)), 0, `a Receive: spool, outgoing, incoming: ${w.reason()}`);
+  assert.equal(w.run(good), 0, `a Send: the three directories, the record and its ready marker: ${w.reason()}`);
   for (const [k, b] of Object.entries(bad)) {
     assert.equal(w.run([...good, b]), 2, `refused last: ${k}`);
     assert.equal(w.run([b, ...good]), 2, `refused first: ${k}`);
@@ -103,7 +112,7 @@ test("A': the ACL helper checks several targets with the per-path code: one refu
   assert.equal(w.run(Array(9).fill(good[0])), 2, 'more than 8 targets');
   // the principal rules are unchanged: controller mode needs the controller SID; then incoming files are allowed
   assert.equal(w.run([w.p('incoming/result.json')], { mode: '-AllowControllerWrite' }), 2);
-  assert.equal(w.run([w.p('incoming/result.json'), good[0]], { mode: '-AllowControllerWrite', controller: w.me }), 0);
+  assert.equal(w.run([w.p('incoming/result.json'), good[0]], { mode: '-AllowControllerWrite', controller: w.me }), 0, w.reason());
   assert.equal(w.run(good, { owner: 'S-1-5-21-1-2-3-1001' }), 2, 'relay mode needs the Owner SID');
 });
 

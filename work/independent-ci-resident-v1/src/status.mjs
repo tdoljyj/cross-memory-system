@@ -1,3 +1,4 @@
+import { parseBudget } from './budget-alert.mjs';
 // The resident's status snapshot (resident quota redesign v0.6 + §9, phase 1, item 7; Owner Decision 38936534).
 //
 // state\status.json is a VIEW, never evidence (the ledger and the receipt chain are): the executor keeps one in-memory
@@ -32,15 +33,17 @@
 // only when it has a value, so a reader before 3c-2b and the train shapes of today stay as they were. A notice kind `train-owner`
 // carries stage 10's decisions the Owner must hear of (a PAUSE for a landed tree that differs, another node's Source).
 // Defect 15894c2a (still /8: only `train` grows, written only when it has a value): `train.nodes`, the nodes the newest on-mode run
-// compared in its §41.6 Source check (train.mjs#trainNodesView), for the NON-elevated upgrade precheck (rollout/precheck.mjs).
+// compared in its §41.6 Source check (train.mjs#trainNodesView), for the fleet-lag alert and the landing precheck (rollout/landing-precheck.mjs).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
 import { readBounded } from './store.mjs';
+import { reasonCodeList } from './queue.mjs';
 import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
 import { parseRevokeHead, parseTrainLast, parseTrainNodes, parseTrainSweep } from './train.mjs';
 import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
 import { StageTimings, parseTiming } from './stage-timing.mjs';
+import { renewalStatus, parseRenewalStatus, RESPONSE_WAITING } from './connection-renewal.mjs';
 import { parseSelfcheckView, readSelfcheck, selfcheckNotice, selfcheckView } from './selfcheck.mjs';
 import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE,
   consistent as versionsConsistent } from './upgrade-mailbox.mjs';
@@ -65,14 +68,14 @@ export const EXECUTOR_STATES = Object.freeze(['STARTING', 'IDLE', 'RUNNING', 'WA
 export const RECENT_OUTCOMES = Object.freeze(['COMPLETED', 'FAILED_CLEAN', 'FAILED_UNKNOWN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED']);
 const RECENT_MAX = 50, PENDING_MAX = 100, NOTICES_MAX = 50;
 export const ROW_STATES = Object.freeze(['QUEUED', 'RUNNING', 'PARKED', 'WAITING', 'BACKOFF', 'STOPPED', 'DONE']);
-export const NOTICE_KINDS = Object.freeze(['new-trigger', 'stopped', 'waiting-budget', 'batch-limit', 'breaker-open', 'queue-full', 'queue-unsaved', 'stage8-budget',
+export const NOTICE_KINDS = Object.freeze(['budget', 'new-trigger', 'stopped', 'waiting-budget', 'batch-limit', 'breaker-open', 'queue-full', 'queue-unsaved', 'stage8-budget',
   // Phase 2, step 3a: main's branch rules do not hold it for a green, or a test merge is not the tested tree.
   'stage8-rules', 'role-probe-uncertain', 'role-probe-connection', 'role-probe-interrupted',
   // Status /7 (DESIGN §34): the two sides run different versions; the upgrade waits for the Owner's page approval, is deferred,
   // was rolled back (the node stays paused), or its rollback failed (the Owner must act).
   'version-skew', 'upgrade-grant-pending', 'upgrade-deferred', 'upgrade-rolled-back', 'upgrade-rollback-failed',
   // Task 4a: the node's own self-check (selfcheck.mjs) ran and failed.
-  'selfcheck-failed',
+  'selfcheck-failed', 'renewal-failed', 'fleet-pull-refused',
   // Step 3c-2b: stage 10's decisions for the Owner (code: the decision).
   'train-owner',
   // Generation 12 (DESIGN §56.3): the claim of a running or parked batch is about to end (or has ended); its holder must renew.
@@ -99,7 +102,13 @@ export const PROBE_RESULTS = Object.freeze(['held', 'not-held', 'uncertain']);
 const iso = ms => new Date(ms).toISOString();
 const isoOrNull = v => (Number.isSafeInteger(v) && v > 0) ? iso(v) : (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? iso(Date.parse(v)) : null);
 const codeOrNull = v => typeof v === 'string' && CODE.test(v) ? v : null;
+// A parked row's ended stage-8 tries (queue.mjs#park; task bd07449b r2), null when none is named.
+const parkTryOf = v => (Number.isSafeInteger(v) && v >= 0 ? v : null);
 const key12 = key => (typeof key === 'string' && HEX64.test(key)) ? key.slice(0, 12) : null;
+const pendingReasonCodes = (values, code) => {
+  const reasonCodes = reasonCodeList(values, code);
+  return reasonCodes.length ? { reasonCodes } : {};
+};
 
 export class StatusBoard {
   constructor({ clock = Date.now, pid = process.pid } = {}) {
@@ -179,18 +188,26 @@ export class StatusBoard {
       leaseFrom: isoOrNull(current.leaseFrom ?? null) };
     this.timing.setCurrent({ pr: c.pr, headSha: c.headSha, attempt: c.attempt, stage: c.stage, phase: c.phase, since: c.since });
     this.touchTiming();
-    return this.update({ current: c });
+    // A released stage-1 refusal can retry with the same attempt. Its reason stops applying when the retry starts.
+    const recent = this.content.recent.filter(r => !(r.pr === c.pr && r.headSha === c.headSha && r.attempt === c.attempt
+      && r.code === 'NATIVE_NOT_ADMITTED' && Array.isArray(r.reasonCodes)));
+    return this.update({ current: c, recent });
   }
 
   // The newest outcome per (PR, head, attempt), newest first, bounded.
-  outcome({ pr, headSha, attempt = 1, outcome, code = null, klass = null, retry = null, key = null, pushedAt = null }) {
+  outcome({ pr, headSha, attempt = 1, outcome, code = null, klass = null, retry = null, key = null, pushedAt = null, reasonCodes = null }) {
     if (!Number.isSafeInteger(pr) || !HEX40.test(headSha ?? '') || !RECENT_OUTCOMES.includes(outcome)) return false;
     if (this.timing.finish({ pr, headSha, attempt, outcome, code, pushedAt })) this.touchTiming();
     const entry = { pr, headSha, attempt, outcome, code: typeof code === 'string' && CODE.test(code) ? code : null,
       class: typeof klass === 'string' && /^[a-z0-9-]{1,40}$/.test(klass) ? klass : null, retry: typeof retry === 'string' && /^[a-z0-9-]{1,40}$/.test(retry) ? retry : null,
       key: key12(key), at: iso(this.clock()) };
+    if (Array.isArray(reasonCodes)) entry.reasonCodes = reasonCodeList(reasonCodes, entry.code);
     const rest = this.content.recent.filter(r => !(r.pr === pr && r.headSha === headSha && r.attempt === attempt));
-    return this.update({ recent: [entry, ...rest].slice(0, RECENT_MAX) });
+    const current = this.content.current;
+    const refusedCurrent = entry.code === 'NATIVE_NOT_ADMITTED' && Array.isArray(reasonCodes) && current?.stage === 1
+      && current.pr === pr && current.headSha === headSha && current.attempt === attempt;
+    if (refusedCurrent) { this.timing.setCurrent(null); this.touchTiming(); }
+    return this.update({ recent: [entry, ...rest].slice(0, RECENT_MAX), ...(refusedCurrent ? { current: null } : {}) });
   }
 
   // The run queue's rows (queue.mjs#view). position: the place among the rows that may run now (null for a row that waits,
@@ -202,7 +219,11 @@ export class StatusBoard {
       level: Number.isSafeInteger(p.level) ? p.level : 0, origin: typeof p.origin === 'string' && /^[a-z0-9-]{1,20}$/.test(p.origin) ? p.origin : null,
       stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null,
       queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null, claimExpiresAt: isoOrNull(p.claimExpiresAt ?? null), watched: p.watched === true, network: p.network === true,
-      heldBy: codeOrNull(p.heldBy ?? null) })) });
+      parkTry: parkTryOf(p.parkTry),
+      ...(HEX40.test(p.testSha ?? '') ? { testSha: p.testSha } : {}),
+      heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true,
+      // Task 0ca0479d: the row's last release reason codes (queue.mjs#view), for the PR page only.
+      ...pendingReasonCodes(p.reasonCodes, p.reason ?? p.deferred) })) });
   }
 
   snapshot() {
@@ -276,20 +297,22 @@ export function parseStatus(bytes) {
         claimExpiresAt: ms(v.current.claimExpiresAt), leaseFrom: ms(v.current.leaseFrom) } : null,
     pending: Array.isArray(v.pending) ? v.pending.filter(p => Number.isSafeInteger(p?.pr) && head(p.headSha)).slice(0, PENDING_MAX)
       .map(p => ({ pr: p.pr, headSha: p.headSha, state: ROW_STATES.includes(p.state) ? p.state : 'QUEUED', position: Number.isSafeInteger(p.position) ? p.position : null,
+        ...(head(p.baseSha) ? { baseSha: p.baseSha } : {}), ...(head(p.testSha) ? { testSha: p.testSha } : {}),
         deferred: codeOrNull(p.deferred), since: ms(p.since), nextAt: ms(p.nextAt), eta: ms(p.eta), level: Number.isSafeInteger(p.level) ? p.level : 0,
         stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null, queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null,
-        claimExpiresAt: ms(p.claimExpiresAt), watched: p.watched === true, network: p.network === true, heldBy: codeOrNull(p.heldBy ?? null) })) : [],
+        parkTry: parkTryOf(p.parkTry), claimExpiresAt: ms(p.claimExpiresAt), watched: p.watched === true, network: p.network === true, heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true,
+        ...pendingReasonCodes(p.reasonCodes, p.deferred) })) : [],
     recent: Array.isArray(v.recent) ? v.recent.filter(r => Number.isSafeInteger(r?.pr) && head(r.headSha) && RECENT_OUTCOMES.includes(r.outcome)).slice(0, RECENT_MAX)
       .map(r => ({ pr: r.pr, headSha: r.headSha, attempt: r.attempt, outcome: r.outcome, code: typeof r.code === 'string' && CODE.test(r.code) ? r.code : null,
         class: typeof r.class === 'string' && /^[a-z0-9-]{1,40}$/.test(r.class) ? r.class : null, retry: typeof r.retry === 'string' && /^[a-z0-9-]{1,40}$/.test(r.retry) ? r.retry : null,
-        at: Date.parse(r.at) || null })) : [],
+        at: Date.parse(r.at) || null, ...(Array.isArray(r.reasonCodes) ? { reasonCodes: reasonCodeList(r.reasonCodes, r.code) } : {}) })) : [],
     limits: v.limits && Number.isSafeInteger(v.limits.batches24h) ? { batches24h: v.limits.batches24h, maxBatches: v.limits.maxBatches, evaluations24h: v.limits.evaluations24h, maxEvaluations: v.limits.maxEvaluations } : null,
-    queue: v.queue && /^[0-9a-f]{12}$/.test(v.queue.generation ?? '') ? { generation: v.queue.generation, live: Number.isSafeInteger(v.queue.live) ? v.queue.live : null, parkingFull: v.queue.parkingFull === true,
+    queue: v.queue && /^[0-9a-f]{12}$/.test(v.queue.generation ?? '') ? { generation: v.queue.generation, live: Number.isSafeInteger(v.queue.live) ? v.queue.live : null, depth: Number.isSafeInteger(v.queue.depth) ? v.queue.depth : null, parkingFull: v.queue.parkingFull === true,
       hold: codeOrNull(v.queue.hold ?? null) } : null,
     breaker: v.breaker && BREAKER_STATES.includes(v.breaker.state) ? { state: v.breaker.state, nextTrialAt: ms(v.breaker.nextTrialAt), openedAt: ms(v.breaker.openedAt),
       cause: v.breaker.cause === 'network' ? 'network' : null } : null,
     notices: Array.isArray(v.notices) ? v.notices.filter(n => n && NOTICE_KINDS.includes(n.kind) && typeof n.key === 'string' && /^[A-Za-z0-9:_-]{1,160}$/.test(n.key)).slice(0, NOTICES_MAX)
-      .map(n => ({ key: n.key, kind: n.kind, pr: Number.isSafeInteger(n.pr) ? n.pr : null, headSha: head(n.headSha) ? n.headSha : null, code: codeOrNull(n.code), at: ms(n.at), until: ms(n.until) })) : [],
+      .map(n => ({ key: n.key, kind: n.kind, pr: Number.isSafeInteger(n.pr) ? n.pr : null, headSha: head(n.headSha) ? n.headSha : null, code: codeOrNull(n.code), at: ms(n.at), until: ms(n.until), ...(parseBudget(n.budget) ? { budget: parseBudget(n.budget) } : {}) })) : [],
     train: trainOf(v.train),
     // /7 only; /6 has none. Read with the same rules as written (parseVersions), so what does not fit is null, never a refusal.
     versions: v.contract === STATUS_CONTRACT || v.contract === STATUS_CONTRACT_V7 ? parseVersions(v.versions) : null,
@@ -304,7 +327,7 @@ function trainOf(t) {
   const out = { enabled: ['off', 'shadow', 'on'].includes(t?.enabled) ? t.enabled : null, last: parseTrainLast(t?.last) };
   const sweep = parseTrainSweep(t?.sweep), revokeHead = parseRevokeHead(t?.revokeHead), onSince = ms(t?.onSince);
   if (sweep) out.sweep = sweep;
-  // Defect 15894c2a: the nodes the newest on-mode run compared (train.mjs#trainNodesView); read by the upgrade precheck.
+  // Defect 15894c2a: the nodes the newest on-mode run compared (train.mjs#trainNodesView); read by the fleet-lag alert and the landing precheck.
   const nodes = parseTrainNodes(t?.nodes);
   if (nodes) out.nodes = nodes;
   if (revokeHead) out.revokeHead = revokeHead;
@@ -317,6 +340,8 @@ function trainOf(t) {
   if (['gate', 'audit', 'off'].includes(t?.sweepMode)) out.sweepMode = t.sweepMode;
   // ADR 0018: the policy's train.landing (github-merge: GitHub merges after the merge-slot green; push: the train lands main itself).
   if (['github-merge', 'push'].includes(t?.landing)) out.landing = t.landing;
+  // bc982192: the batch route a batch born now gets (executor.mjs#batchRoute); only 'push' is ever written, anything else is none.
+  if (t?.batchRoute === 'push') out.batchRoute = 'push';
   for (const k of ['fullPending', 'backgroundAllPending']) if (typeof t?.[k] === 'boolean') out[k] = t[k];
   for (const k of ['maintenanceExtraUsed', 'maintenanceExtraLimit'])
     if (Number.isSafeInteger(t?.[k]) && t[k] >= 0 && t[k] <= 200) out[k] = t[k];
@@ -353,6 +378,8 @@ export function parseVersions(v) {
       manifestSha256: hexOrNull(l.manifestSha256), pinsOk: l.pinsOk === true } : null,
     consistent: [true, false].includes(v.consistent) ? v.consistent : null,
     // Task 4a: the node's self-check (selfcheck.mjs); null before the first one. Only shown, nothing decides on it.
+    ...(v.renewal ? {renewal:parseRenewalStatus(v.renewal)} : {}),
+    ...(v.fleetPull ? { fleetPull: fleetPullView(v.fleetPull) } : {}),
     selfcheck: parseSelfcheckView(v.selfcheck),
     upgrade: u ? { opId: u.opId, state: u.state, phase: typeof u.phase === 'string' && PHASE.test(u.phase) ? u.phase : null, since: isoMs(u.since),
       code: codeOrNull(u.code), confirmUrl: typeof u.confirmUrl === 'string' && CONFIRM_URL.test(u.confirmUrl) ? u.confirmUrl : null } : null,
@@ -361,6 +388,12 @@ export function parseVersions(v) {
 
 async function readJsonLenient(file) {
   try { return JSON.parse((await readBounded(file, VERSION_FILE_MAX_BYTES, 'VERSION_FILE_REFUSED')).toString('utf8')); } catch { return null; }
+}
+
+function fleetPullView(v) {
+  if (!plain(v) || !UUID.test(v.grantId ?? '') || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,88}$/.test(v.targetVersion ?? '')
+    || !['DOWNLOADING', 'WAITING_FOR_PEERS', 'PREPARING', 'PREPARE_FAILED', 'REQUESTED', 'REFUSED', 'NEEDS_REINSTALL', 'ROLLED_BACK', 'CURRENT'].includes(v.phase)) return null;
+  return { grantId: v.grantId, targetVersion: v.targetVersion, phase: v.phase, code: codeOrNull(v.code) };
 }
 
 // The three files of one root as raw values (null for a file that cannot be read now).
@@ -397,7 +430,18 @@ export function versionsView({ current, facts, status, selfcheck = null }, { pol
 export async function readVersionState({ root, policy, policySha256 = null, clock = Date.now }) {
   const inputs = await readVersionInputs(root);
   const view = versionsView(inputs, { policy, policySha256, now: clock() });
-  return { view, notices: versionNotices(view, inputs.status) };
+  const renewal=await renewalStatus(root,clock());
+  if(renewal) view.renewal=renewal;
+  const fleetPull = fleetPullView(await readJsonLenient(path.join(root, 'state', 'fleet-pull.json')));
+  if (fleetPull) view.fleetPull = fleetPull;
+  const notices=versionNotices(view, inputs.status);
+  if(renewal) {
+    // 等回包（未满一小时）不是失败：状态视图显示等待码，不发续期失败通知。
+    const codes=Object.values(renewal.connections).map(v=>v.code).filter(code=>code && code!==RESPONSE_WAITING);
+    if(renewal.keyCheck==='FAIL') codes.push('RENEW_KEY_CHECK_FAILED');
+    for(const code of new Set(codes)) notices.push({key:'renewal-failed:'+code,kind:'renewal-failed',code,pr:null,headSha:null,at:renewal.checkedAt,until:null});
+  }
+  return { view, notices };
 }
 
 // The upgrade's notices (one key per fact, so the companion shows each once): the two sides disagree; the op in upgrade\status.json
@@ -408,6 +452,8 @@ export function versionNotices(view, upgradeStatus = null) {
   if (!view) return out;
   const failed = selfcheckNotice(view.selfcheck);
   if (failed) out.push(failed);
+  if (['REFUSED', 'NEEDS_REINSTALL'].includes(view.fleetPull?.phase)) out.push({ key: `fleet-pull:${view.fleetPull.grantId}`,
+    kind: 'fleet-pull-refused', code: view.fleetPull.code, pr: null, headSha: null, at: null, until: null });
   if (view.consistent === false) out.push({ key: `version-skew:w${view.generation ?? 'x'}:l${view.linux?.generation ?? 'x'}`, kind: 'version-skew', pr: null, headSha: null, code: 'UPGRADE_VERSION_SKEW', at: view.linux?.observedAt ?? null, until: null });
   const u = view.upgrade;
   if (u?.state === 'WAITING_GRANT') out.push({ key: `upgrade-grant-pending:${u.opId}`, kind: 'upgrade-grant-pending', pr: null, headSha: null, code: null, at: u.since, until: null });
@@ -433,3 +479,7 @@ export function versionNotices(view, upgradeStatus = null) {
 export async function readStatus(root) {
   return parseStatus(await readBounded(path.join(root, 'state', STATUS_FILE), STATUS_MAX_BYTES, 'STATUS_REFUSED'));
 }
+
+// bc982192 (C3, plan 戊): the landing mode the companion's poller proposes by (poller.mjs#landingMode): 'push' only when the status board
+// says a batch born now is stamped push (train.batchRoute, executor.mjs#batchRoute); no status, no field: github-merge.
+export const pollerLandingOf = status => (status?.train?.batchRoute === 'push' ? 'push' : 'github-merge');

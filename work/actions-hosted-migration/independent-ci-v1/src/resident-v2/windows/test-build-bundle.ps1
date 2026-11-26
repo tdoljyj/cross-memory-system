@@ -14,7 +14,7 @@ foreach($name in @('Utc','Hash-Bytes','Hash-Text','Absent','Quote-Arg','Invoke-G
  $f=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq $name});if($f.Count -ne 1){throw ('FUNCTION_MISSING:'+$name)};. ([scriptblock]::Create($f[0].Extent.Text))
 }
 # The fixed values exactly as the script assigns them.
-foreach($name in @('Common','NetworkSteps','RetryWithinSeconds','MaxStoreAttempts','ChainContract','ChainMembersMax','SeedNs','SeedMetaContract','SeedMinFullFetchSeconds','SeedConfigKeys','seedUse','seedAttempt','seedBusy','seedLockHeld','seedAvailable','seedReport','SeedAfterNetworkFailureSeconds')){
+foreach($name in @('Common','NetworkSteps','RetryWithinSeconds','MaxStoreAttempts','ChainContract','ChainMembersMax','SeedNs','SeedMetaContract','SeedMinFullFetchSeconds','SeedConfigKeys','seedUse','seedAttempt','seedBusy','seedLockHeld','seedAvailable','seedReport','SeedAfterNetworkFailureSeconds','GitTimings')){
  $s=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -ceq ('$'+$name)});if($s.Count -ne 1){throw ('ASSIGNMENT_MISSING:'+$name)};. ([scriptblock]::Create($s[0].Extent.Text))
 }
 $FixedCommon=[string[]]$Common

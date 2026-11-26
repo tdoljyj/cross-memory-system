@@ -1,0 +1,393 @@
+{
+    "contract":  "clued.independent-ci.drill-receipt/1",
+    "machine":  "Hyper-V VM on DESK (drill machine, not a node; phase A)",
+    "entryMode":  "adapted-unattended",
+    "bootstrapException":  "README section 5: drill VM only exception to do not bypass bootstrap to run prepare; non-elevated check, RunAs and credential dialogs bypassed",
+    "version":  "2026.11.23-d5da6825",
+    "tarSha256":  "463ad748a0f60c02bf2a6329c9d8e42d5d49bf412e63b5760343ff22ef9f8bd1",
+    "ciSourceManifestSha256":  "1e379319250cd3fea679ad587f842edc5a036a93230edd2ea7d396212b1691f8",
+    "firstInstallKitSha256":  "43310b4d5393863442d5d5febeb5137dd0434c14963667a64bc081fc2a9d4f27",
+    "candidate":  true,
+    "kitSha256":  "30a13f165c92cf6725e9ef006dd6e36c850aca9909998ce6fb2fd30280e096d4",
+    "prereqSha256":  "36f6c1e973e256afc6858f950b7335566f52297509d3f05295cef5d5dd01d56d",
+    "baseline":  {
+                     "checkpoint":  "S0-clean-os",
+                     "build":  {
+                                   "action":  "ready",
+                                   "checkpoint":  "S0-clean-os",
+                                   "hostPreBoot":  null
+                               }
+                 },
+    "startedAt":  "2026-11-23T12:36:42Z",
+    "endedAt":  "2026-11-23T12:46:46Z",
+    "hostFreeGBAtStart":  19.6,
+    "failure":  {
+                    "code":  "DRILL_RUN_TIMEOUT",
+                    "detail":  {
+                                   "ok":  false,
+                                   "code":  "DRILL_RUN_TIMEOUT",
+                                   "deadline":  "\/Date(1795438002454)\/"
+                               }
+                },
+    "restoredToCheckpoint":  true,
+    "runTimeoutMinutes":  10,
+    "ladder":  {
+                   "minutes":  10,
+                   "rule":  "first",
+                   "basis":  null,
+                   "previousMinutes":  null,
+                   "reached":  null,
+                   "ceiling":  70
+               },
+    "evidence":  {
+                     "localSource":  null,
+                     "hostExecutorStates":  [
+                                                {
+                                                    "state":  "DEFERRED",
+                                                    "reason":  "NODE_STANDBY",
+                                                    "current":  null,
+                                                    "firstSeenAt":  "2026-11-23T12:36:44.1188423+00:00"
+                                                },
+                                                {
+                                                    "state":  "DEFERRED",
+                                                    "reason":  "BETWEEN_BATCHES_RUNNING",
+                                                    "current":  null,
+                                                    "firstSeenAt":  "2026-11-23T12:37:43.2513643+00:00"
+                                                }
+                                            ],
+                     "hostPreBoot":  {
+                                         "wait":  {
+                                                      "samples":  1,
+                                                      "firstAt":  "2026-11-23T12:36:41.8696356+00:00",
+                                                      "lastAt":  "2026-11-23T12:36:41.8696356+00:00",
+                                                      "firstFreeGB":  19.6,
+                                                      "lastFreeGB":  19.6,
+                                                      "requiredFreeGB":  15,
+                                                      "ok":  true,
+                                                      "unreadable":  null
+                                                  },
+                                         "early":  {
+                                                       "at":  "2026-11-23T12:36:42.7334109+00:00",
+                                                       "ok":  true,
+                                                       "code":  null,
+                                                       "busyWith":  "WSL_ACTIONS_RUNNER_JOB",
+                                                       "runnerJob":  "yes",
+                                                       "requiredFreeGB":  null,
+                                                       "requiredBasis":  null,
+                                                       "freeGB":  null,
+                                                       "wslRunning":  [
+                                                                          "CluedCI-Linux"
+                                                                      ],
+                                                       "wslJobs":  [
+                                                                       "CluedCI-Linux"
+                                                                   ],
+                                                       "wslUnreadable":  null,
+                                                       "wslListCall":  {
+                                                                           "exit":  0,
+                                                                           "stdoutBytes":  15
+                                                                       },
+                                                       "windowsUnreadable":  null
+                                                   },
+                                         "release":  {
+                                                         "at":  "2026-11-23T12:36:42.7384201+00:00",
+                                                         "distributions":  [
+
+                                                                           ],
+                                                         "results":  [
+
+                                                                     ],
+                                                         "released":  [
+
+                                                                      ],
+                                                         "skipped":  {
+                                                                         "where":  "early",
+                                                                         "reason":  "WSL_ACTIONS_RUNNER_JOB"
+                                                                     },
+                                                         "failed":  null
+                                                     },
+                                         "bootGate":  {
+                                                          "at":  "2026-11-23T12:36:44.6287830+00:00",
+                                                          "ok":  true,
+                                                          "code":  null,
+                                                          "busyWith":  "WSL_ACTIONS_RUNNER_JOB",
+                                                          "runnerJob":  "yes",
+                                                          "requiredFreeGB":  15,
+                                                          "requiredBasis":  {
+                                                                                "guestGB":  8,
+                                                                                "bootMarginGB":  1,
+                                                                                "productionReserveGB":  6
+                                                                            },
+                                                          "freeGB":  19.6,
+                                                          "wslRunning":  [
+                                                                             "CluedCI-Linux"
+                                                                         ],
+                                                          "wslJobs":  [
+                                                                          "CluedCI-Linux"
+                                                                      ],
+                                                          "wslUnreadable":  null,
+                                                          "wslListCall":  {
+                                                                              "exit":  0,
+                                                                              "stdoutBytes":  15
+                                                                          },
+                                                          "windowsUnreadable":  null,
+                                                          "wslMemory":  [
+                                                                            {
+                                                                                "distribution":  "CluedCI-Linux",
+                                                                                "memTotalGB":  27.41,
+                                                                                "memFreeGB":  19.53,
+                                                                                "cachedGB":  3.7,
+                                                                                "anonPagesGB":  2,
+                                                                                "runnerWorkers":  2
+                                                                            }
+                                                                        ]
+                                                      }
+                                     },
+                     "reinstallUpgrade":  null,
+                     "guestEvidence":  {
+                                           "ok":  false,
+                                           "code":  null,
+                                           "detail":  null,
+                                           "missing":  [
+                                                           "host.stdout.log",
+                                                           "prepare.stdout.log",
+                                                           "launcher.stdout.log",
+                                                           "host-result.json",
+                                                           "launcher-result.json",
+                                                           "wsl-cold-start.json",
+                                                           "stage-timings.json",
+                                                           "resident-failure-snapshot.json"
+                                                       ],
+                                           "entryLog":  "guest-log",
+                                           "entryLogError":  null,
+                                           "launcherReadback":  null,
+                                           "at":  "2026-11-23T12:45:54.5914681+00:00",
+                                           "stageFiles":  {
+                                                              "host.stdout.log":  {
+                                                                                      "state":  "absent"
+                                                                                  },
+                                                              "prepare.stdout.log":  {
+                                                                                         "state":  "absent"
+                                                                                     },
+                                                              "launcher.stdout.log":  {
+                                                                                          "state":  "absent"
+                                                                                      },
+                                                              "host-result.json":  {
+                                                                                       "state":  "absent"
+                                                                                   },
+                                                              "launcher-result.json":  {
+                                                                                           "state":  "absent"
+                                                                                       },
+                                                              "wsl-cold-start.json":  {
+                                                                                          "state":  "absent"
+                                                                                      },
+                                                              "stage-timings.json":  {
+                                                                                         "state":  "absent"
+                                                                                     },
+                                                              "resident-failure-snapshot.json":  {
+                                                                                                     "state":  "absent"
+                                                                                                 }
+                                                          }
+                                       },
+                     "guestProgress":  {
+                                           "startedAt":  "2026-11-23T12:41:16.0413972+00:00",
+                                           "at":  "2026-11-23T12:43:53.5458272+00:00",
+                                           "ticks":  5,
+                                           "failedPulls":  0,
+                                           "stage":  "entry",
+                                           "stageSince":  "2026-11-23T12:41:16.0413972+00:00",
+                                           "lastGrowthAt":  "2026-11-23T12:41:16.0413972+00:00",
+                                           "files":  {
+                                                         "first-install.stdout.log":  {
+                                                                                          "bytes":  0,
+                                                                                          "changedAt":  "2026-11-23T12:41:52.3962582+00:00",
+                                                                                          "saved":  true
+                                                                                      },
+                                                         "stage-progress.jsonl":  {
+                                                                                      "bytes":  447,
+                                                                                      "changedAt":  "2026-11-23T12:41:52.3962582+00:00",
+                                                                                      "saved":  true
+                                                                                  }
+                                                     },
+                                           "gates":  {
+                                                         "entryHostLogMinutes":  15,
+                                                         "stages":  {
+                                                                        "host":  {
+                                                                                     "stallMinutes":  10,
+                                                                                     "maxMinutes":  30
+                                                                                 },
+                                                                        "prepare":  {
+                                                                                        "stallMinutes":  null,
+                                                                                        "maxMinutes":  6
+                                                                                    },
+                                                                        "launcher":  {
+                                                                                         "stallMinutes":  null,
+                                                                                         "maxMinutes":  null
+                                                                                     }
+                                                                    }
+                                                     },
+                                           "stop":  null
+                                       },
+                     "stageTimeline":  {
+                                           "source":  "stage-progress",
+                                           "reached":  2,
+                                           "abortedIn":  "prereq",
+                                           "stages":  [
+                                                          {
+                                                              "stage":  "assets",
+                                                              "startedAt":  "2026-11-23T12:41:41.4356189+00:00",
+                                                              "endedAt":  "2026-11-23T12:41:42.1868267+00:00",
+                                                              "result":  "ok",
+                                                              "code":  null,
+                                                              "tail":  null,
+                                                              "n":  1
+                                                          },
+                                                          {
+                                                              "stage":  "prereq",
+                                                              "startedAt":  "2026-11-23T12:41:42.1888369+00:00",
+                                                              "endedAt":  null,
+                                                              "result":  "aborted-in-progress",
+                                                              "code":  null,
+                                                              "tail":  null,
+                                                              "label":  "进行中被中止",
+                                                              "n":  2
+                                                          }
+                                                      ]
+                                       },
+                     "firstInstallSteps":  {
+                                               "missing":  true,
+                                               "incomplete":  false,
+                                               "incompleteStages":  [
+
+                                                                    ],
+                                               "incompleteReasons":  {
+
+                                                                     },
+                                               "noStageVerdict":  [
+
+                                                                  ],
+                                               "stages":  {
+                                                              "entry":  0,
+                                                              "host":  null,
+                                                              "prepare":  null,
+                                                              "launcher":  null
+                                                          },
+                                               "steps":  [
+
+                                                         ],
+                                               "lastStep":  null,
+                                               "lastCompletedStep":  null,
+                                               "firstRejected":  null,
+                                               "verdict":  null,
+                                               "stageVerdicts":  {
+                                                                     "host":  null,
+                                                                     "launcher":  null
+                                                                 },
+                                               "noVerdict":  true
+                                           },
+                     "hostMemory":  {
+                                        "beforeBootFreeGB":  19.6,
+                                        "requiredFreeGB":  15,
+                                        "runnerJobAtBoot":  "yes",
+                                        "runnerJobBefore":  "WSL_ACTIONS_RUNNER_JOB",
+                                        "afterBootFreeGB":  12.3,
+                                        "minRunningFreeGB":  11,
+                                        "lowestFreeGB":  11
+                                    },
+                     "guardEmergencyRestore":  {
+                                                   "note":  "由守护紧急还原，证据部分已取",
+                                                   "code":  "DRILL_RUN_TIMEOUT",
+                                                   "restore":  "RESTORED",
+                                                   "cleanupFailure":  null,
+                                                   "evidence":  "PARTIAL",
+                                                   "taken":  [
+                                                                 "first-install.log"
+                                                             ],
+                                                   "notTaken":  [
+                                                                    "stage-evidence.json",
+                                                                    "read-after-install.json",
+                                                                    "read-after-reboot.json",
+                                                                    "m5"
+                                                                ],
+                                                   "m5Observations":  [
+
+                                                                      ],
+                                                   "stageLogs":  [
+
+                                                                 ],
+                                                   "stepsComplete":  false
+                                               }
+                 },
+    "files":  [
+                  {
+                      "name":  "fake-credentials.public.json",
+                      "sha256":  "8d661923119ac36ff28589657f1546876137602a253e1253aa1f632fb96e4b34"
+                  },
+                  {
+                      "name":  "first-install.log",
+                      "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                  },
+                  {
+                      "name":  "guest-evidence.json",
+                      "sha256":  "04dbf7215ba27793385df74961b7b6d6a4653c48a3f4e3cc185040503bf5181e"
+                  },
+                  {
+                      "name":  "guest-progress.json",
+                      "sha256":  "3b9aab215bf31ae62c846b27010b74d073839d575ec1e5f81372cc33232c7b15"
+                  },
+                  {
+                      "name":  "guest-shutdown.armed",
+                      "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                  },
+                  {
+                      "name":  "guest-shutdown.ready",
+                      "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                  },
+                  {
+                      "name":  "guest-shutdown.starting",
+                      "sha256":  "59dbf36d9930a99bfc1e13a10518cd5cf42d29ef9b21993c424b4146a81aa30e"
+                  },
+                  {
+                      "name":  "host-guard.json",
+                      "sha256":  "4dc41f2699c9db9c6b548e7a3b6f0a2fc7c2b8427f4c51b7f3b2ef19fdbfcb34"
+                  },
+                  {
+                      "name":  "stage-files.json",
+                      "sha256":  "0ac7bd7da4cec615b026308aa5ff251c138537d5f206fd777744b5de75665d78"
+                  },
+                  {
+                      "name":  "stage-progress.jsonl",
+                      "sha256":  "31cdfb3964aaa06e98f262f16d50c58cc8e289445b49e58659583357aae3895d"
+                  }
+              ],
+    "items":  [
+
+              ],
+    "m5":  {
+               "detail":  "DRILL_M5_RUN_INCOMPLETE",
+               "result":  "NOT_EVALUATED"
+           },
+    "conclusion":  "FAIL",
+    "credentials":  {
+                        "given":  [
+                                      "app-private-key.pem",
+                                      "ci-admission.token",
+                                      "resident-upgrade.token",
+                                      "public.json",
+                                      "companion-github.token"
+                                  ],
+                        "fake":  [
+                                     "app-key.pem",
+                                     "ci-admission.token",
+                                     "resident-upgrade.token",
+                                     "public.json",
+                                     "companion-github.token"
+                                 ],
+                        "withheld":  [
+                                         {
+                                             "name":  "ci-node-heartbeat.token",
+                                             "reason":  "a fake token would make the guest\u0027s resident send requests to the production heartbeat endpoint: the guest would behave otherwise and the drill\u0027s production read-back would no longer be zero"
+                                         }
+                                     ]
+                    },
+    "productionReadbackSql":  "select\n (select count(*) from clued_private.ci_nodes_v1 where created_at \u003e= \u00272026-11-23T12:36:42Z\u0027 or updated_at \u003e= \u00272026-11-23T12:36:42Z\u0027) as nodes_changed,\n (select count(*) from clued_private.ci_failover_members_v1 where marked_at \u003e= \u00272026-11-23T12:36:42Z\u0027) as failover_marked,\n (select count(*) from clued_private.binding_roles_v1 where granted_at \u003e= \u00272026-11-23T12:36:42Z\u0027 or revoked_at \u003e= \u00272026-11-23T12:36:42Z\u0027) as roles_changed,\n (select count(*) from public.clued_agent_bindings where created_at \u003e= \u00272026-11-23T12:36:42Z\u0027) as bindings_created,\n (select count(*) from clued_private.ci_node_liveness_v1 l join clued_private.ci_nodes_v1 n using (node_id) where n.name ilike \u0027%drill%\u0027) as drill_liveness,\n (select coalesce(jsonb_agg(distinct l.reported_source_sha256), \u0027[]\u0027::jsonb) from clued_private.ci_node_liveness_v1 l where l.last_heartbeat_at \u003e= now() - interval \u002724 hours\u0027) as live_sources;"
+}

@@ -1,7 +1,7 @@
 // Production-schema drift check (Task 2a5fdb66; design in
 // work/ci-required-tests-v1/DESIGN.md).
 //
-//   node scripts/production-schema-drift.mjs check [--report <file>]
+//   node scripts/production-schema-drift.mjs check [--base <main commit>] [--report <file>]
 //   node scripts/production-schema-drift.mjs import --catalog <file> --applied <file>
 //
 // check needs no credential and no network. It boots two throwaway embedded
@@ -26,6 +26,7 @@
 // against production by whoever refreshes the snapshot) into catalog.json.
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
@@ -72,6 +73,14 @@ alter default privileges in schema public grant truncate, references, trigger, m
 alter default privileges in schema public grant all on sequences to postgres;
 alter default privileges in schema public grant all on functions to postgres;
 `;
+
+// What the platform image newer than production's (17.11.0.003 against
+// 17.6.1.155) adds beyond PLATFORM_SQL: PUBLIC SELECT on pg_cron's own sequence, granted by
+// supabase_admin, which postgres cannot revoke. Production meets it when it is
+// upgraded to that image. The applied rows ran on the older image, so it is
+// granted only before the pending migrations (runCheck): a pending migration
+// that refuses any privilege on any sequence fails here, however it is written.
+export const PLATFORM_IMAGE_GRANTS_SQL = 'grant select on sequence cron.job_jobid_seq to public';
 
 // How the release workflow's migrate mode runs a file (clued-cloud-production-release.yml):
 // one plpgsql EXECUTE inside its own transaction, so transaction control or a
@@ -396,6 +405,14 @@ export async function runCheck({ repository, snapshot, catalogSql, baseMigration
         return null;
       }
     }
+    // Pending migrations meet the newer platform image (PLATFORM_IMAGE_GRANTS_SQL).
+    try {
+      await client.query(PLATFORM_IMAGE_GRANTS_SQL);
+    } catch (error) {
+      report.errors.push('platform_image_grant_failed');
+      report.production_failure = { file: 'PLATFORM_IMAGE_GRANTS_SQL', message: failureMessage(error) };
+      return null;
+    }
     log(`production chain: applying ${chain.pending.length} pending migrations in migrate mode`);
     for (const step of chain.pending) {
       try {
@@ -481,22 +498,38 @@ function argument(args, name) {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
-// Migration file names the base has: the trusted base checkout that
-// migration-verify puts next to the candidate checkout (workspace/trusted), else
-// the base commit tree (CI_BASE_SHA, local-verify); undefined when neither is known.
-export async function readBaseMigrations(env = process.env,
-  trusted = path.join(appDirectory, '..', '..', '..', 'trusted', 'apps', 'clued-cloud', 'supabase', 'migrations')) {
-  const sibling = await readdir(trusted).catch(() => null);
-  if (sibling) return new Set(sibling);
-  if (env.CI_BASE_SHA && !/^0+$/.test(env.CI_BASE_SHA)) {
-    const run = spawnSync('git', ['ls-tree', '--name-only', '-r', env.CI_BASE_SHA, '--', 'supabase/migrations'],
-      { cwd: appDirectory, encoding: 'utf8' });
-    if (run.status === 0) { const names = run.stdout.split(String.fromCharCode(10)).map((file) => path.basename(file.trim())).filter(Boolean); if (names.length > 0) return new Set(names); }
+// Migration file names the base has. In migration-verify the trusted base is
+// checked out next to the candidate (workspace/trusted) with only the directories
+// the selector reads (sparse, blob:none), so the migrations directory is usually
+// not on disk there: its commit tree still is, and ls-tree reads the names from it
+// without fetching a blob. A full trusted checkout is listed directly; without a
+// trusted checkout the base commit tree is read: base, the command's --base (the
+// command table's {base}, Task 700f2b68), else CI_BASE_SHA (local-verify). A
+// --base that cannot be read is an error, never a fallback to the environment.
+// Neither known is an error: an unknown base would judge no pending migration,
+// which passes a change that breaks the previous Worker.
+const MIGRATIONS_PATH = 'apps/clued-cloud/supabase/migrations';
+export async function readBaseMigrations(env = process.env, trustedRoot = path.join(appDirectory, '..', '..', '..', 'trusted'), base = undefined) {
+  const listed = await readdir(path.join(trustedRoot, ...MIGRATIONS_PATH.split('/'))).catch(() => null);
+  if (listed) return new Set(listed);
+  const names = (args, cwd) => {
+    const run = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    const files = run.status === 0 ? run.stdout.split(String.fromCharCode(10)).map((file) => path.basename(file.trim())).filter(Boolean) : [];
+    return files.length > 0 ? new Set(files) : null;
+  };
+  // Only the trusted checkout's own repository: a plain directory inside another repository would answer for that one.
+  const sparse = existsSync(path.join(trustedRoot, '.git')) && names(['-C', trustedRoot, 'ls-tree', '--name-only', 'HEAD', `${MIGRATIONS_PATH}/`]);
+  if (sparse) return sparse;
+  const [commit, given] = base ? [base, `--base ${base}`] : [env.CI_BASE_SHA, 'CI_BASE_SHA'];
+  if (commit && !/^0+$/.test(commit)) {
+    const listed = names(['ls-tree', '--name-only', '-r', commit, '--', 'supabase/migrations'], appDirectory);
+    if (listed) return listed;
   }
-  return undefined;
+  throw new Error(`the base migrations are unknown: no ${MIGRATIONS_PATH} in the trusted checkout ${trustedRoot} (directory or HEAD tree) and no readable ${given} tree`);
 }
 
-async function main(argv) {
+// The command (exported for its test): env and trustedRoot are readBaseMigrations' own.
+export async function main(argv, { env = process.env, trustedRoot = undefined } = {}) {
   const [command, ...args] = argv;
   const catalogSql = await readFile(catalogSqlPath, 'utf8');
   if (command === 'import') {
@@ -514,11 +547,11 @@ async function main(argv) {
     return 0;
   }
   if (command !== 'check') {
-    console.error('usage: node scripts/production-schema-drift.mjs <check [--report <file>]|import --catalog <file> --applied <file>>');
+    console.error('usage: node scripts/production-schema-drift.mjs <check [--base <main commit>] [--report <file>]|import --catalog <file> --applied <file>>');
     return 2;
   }
   const report = await runCheck({
-    repository: await readRepository(), snapshot: await readSnapshot(), catalogSql, baseMigrations: await readBaseMigrations(),
+    repository: await readRepository(), snapshot: await readSnapshot(), catalogSql, baseMigrations: await readBaseMigrations(env, trustedRoot, argument(args, '--base')),
     log: (line) => console.error(`production-schema: ${line}`),
   });
   const reportFile = argument(args, '--report');

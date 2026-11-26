@@ -4,7 +4,7 @@
  *
  * The Worker dispatches a job once after submit. When that dispatch is lost, or
  * the database refuses its load (for example while an unsettled job fences the
- * root), the job used to stay queued for good. Every minute this run calls
+ * root), the job used to stay queued for good. Every ten minutes this run calls
  * `clued_storage_queued_sweep_v1`, which settles text jobs still queued after
  * 2 hours as attention_required (reason DISPATCH_NOT_STARTED) and, with the
  * executor switch on, lists queued jobs of quiet roots with backoff. Each listed
@@ -13,6 +13,7 @@
  * that already started only answers its status at load.
  */
 import { resolveSupabasePublicConfig } from "../app/supabase-public-config";
+import { storageScheduleEnabled } from "./storage-scheduled-flags";
 import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
 
 export interface StorageQueuedSweepEnv extends DatabaseGatewayEnv {
@@ -45,8 +46,7 @@ const count = (value: unknown, max: number) =>
 /** The settlement runs with the storage account, Google and jobs flags; dispatch also needs the executor switch. */
 export async function runStorageQueuedSweepScheduled(env: StorageQueuedSweepEnv,
   deps: { runJob: (env: StorageQueuedSweepEnv, reference: Reference) => Promise<unknown> }): Promise<StorageQueuedSweepResult> {
-  if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_JOBS_V1 !== "true" ||
-      env.CLUED_STORAGE_GOOGLE_V1 !== "true" || env.CLUED_STORAGE_JOBS_V2 !== "true") return { status: "disabled" };
+  if (!storageScheduleEnabled.queuedSweep(env)) return { status: "disabled" };
   const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
   const gatewayToken = databaseGatewayToken(env);
   if (!issuer || issuer.length < 32 || !gatewayToken) return { status: "unavailable" };

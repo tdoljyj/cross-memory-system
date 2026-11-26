@@ -1,4 +1,5 @@
 name: clued-required-tests
+run-name: ${{ github.event_name == 'workflow_dispatch' && (inputs.resident_node && inputs.resident_dispatch_id && format('clued-resident-dispatch/v1 {0} {1}', inputs.resident_node, inputs.resident_dispatch_id) || 'clued-required-tests') || '' }}
 
 # Required checks clued-cloud-tests, ci-suites and migration-verify (Task
 # 2a5fdb66; work/ci-required-tests-v1/DESIGN.md), on the self-hosted Linux
@@ -16,6 +17,10 @@ name: clued-required-tests
 #   requires its catalog to equal production's, applies pending migrations the
 #   way release migrate mode does, and fails a pending migration that reads a
 #   column only the repository chain has. No production credential.
+# - gitleaks, trivy, contract-placement: the three scans (FABLE-cicd-simplify-
+#   20261122 3.1, R1), beside the tests after the same gate: gitleaks over the
+#   change's commits with merge resolutions (scripts/ci/gitleaks-range.sh),
+#   trivy's three scanners over the commit, and the contract placement checks.
 #
 # Every check always reports, so each can be a required check under one name.
 # scripts/ci/ci-required-selection.mjs, from the trusted base checkout, decides
@@ -44,16 +49,24 @@ on:
         description: 'PR 当前完整 head SHA'
         required: true
         type: string
+      resident_node:
+        description: '常驻自动补发节点（手工运行留空）'
+        required: false
+        type: string
+      resident_dispatch_id:
+        description: '常驻自动补发一次性编号（手工运行留空）'
+        required: false
+        type: string
   push:
-    branches: [main]
+    branches: [main, clued-train/staging]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr || github.ref }}
-  # A push to main never cancels a running main run (GitHub still keeps only
-  # the newest queued run of a group).
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr || (github.ref == 'refs/heads/clued-train/staging' && github.sha) || github.ref }}
+  # Staging has one group per S, so later batches cannot replace queued CI.
+  # Main pushes never cancel a running main run.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -100,6 +113,8 @@ jobs:
       ${{ needs.admission-gate.outputs.admitted == 'true' &&
           ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
            (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
            (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
             github.event.pull_request.head.repo.full_name == github.repository &&
             (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -109,6 +124,8 @@ jobs:
       needs.admission-gate.outputs.admitted == 'true' &&
       ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
        (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
         (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -118,12 +135,6 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: Check out the trusted base (selection and commands)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
-          path: trusted
       - name: Check out the candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -134,6 +145,46 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
+      - name: Resolve push baseline before loading trusted commands
+        id: train-base
+        working-directory: candidate
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # CI_BASE_SHA and the staging trusted ref, for every event, from the one rule in scripts/ci/ci-base.mjs read from main
+          # (the candidate copy only while main has none: the change that adds it). Later steps read CI_BASE_SHA from GITHUB_ENV.
+          node --input-type=module -e "
+            const { execFileSync } = await import('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+            const onMain = git('ls-tree', '--name-only', 'origin/main', 'scripts/ci/ci-base.mjs').trim() !== '';
+            if (!onMain) console.log('::warning title=CI base::main has no scripts/ci/ci-base.mjs yet; the candidate copy resolves the base');
+            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');
+            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+            process.exitCode = await writeCiBase();"
+      - name: Export the trusted base (selection and commands)
+        shell: bash
+        env:
+          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
+          GIT_NO_LAZY_FETCH: "1"
+          GIT_NO_REPLACE_OBJECTS: "1"
+        run: |
+          set -euo pipefail
+          cd -P -- "$GITHUB_WORKSPACE"
+          ref="$TRUSTED_REF"
+          [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]] || ref="refs/remotes/origin/$ref"
+          if ! base="$(git -C candidate rev-parse --verify --quiet --end-of-options "${ref}^{commit}")"; then
+            echo "::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)"
+            exit 1
+          fi
+          rm -rf -- trusted
+          mkdir -- trusted
+          git -C candidate archive "$base" -- scripts/ci config .github | tar -xf - -C trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
       - name: Select suites
@@ -143,9 +194,8 @@ jobs:
         run: |
           selector=trusted/scripts/ci/ci-required-selection.mjs
           if [ ! -f "$selector" ]; then
-            # Only while the base predates the selection (the pull request that adds it).
-            echo "::warning title=clued-cloud-tests bootstrap::the base has no selection; the candidate's own copy decides"
-            selector=candidate/scripts/ci/ci-required-selection.mjs
+            echo "::error::Trusted selector is missing: $selector"
+            exit 1
           fi
           echo "selector=$selector" >> "$GITHUB_OUTPUT"
           node "$selector" --check clued-cloud-tests
@@ -155,11 +205,15 @@ jobs:
         working-directory: candidate/apps/clued-cloud
         env:
           npm_config_logs_dir: ${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline --fetch-retries=2 --fetch-timeout=30000
+        run: |
+          timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline --fetch-retries=2 --fetch-timeout=30000
+          timeout --signal=TERM --kill-after=15s 2m npm rebuild @embedded-postgres/linux-x64
       - name: Lint, ledger, typecheck, build and unit tests
         if: steps.select.outputs.run_clued_cloud == 'true'
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
+          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
+          CLUED_UNDER_TEST: "1"
         run: node "$SELECTOR" --run clued-cloud --root candidate
 
   ci-suites:
@@ -167,6 +221,8 @@ jobs:
       ${{ needs.admission-gate.outputs.admitted == 'true' &&
           ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
            (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
            (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
             github.event.pull_request.head.repo.full_name == github.repository &&
             (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -176,6 +232,8 @@ jobs:
       needs.admission-gate.outputs.admitted == 'true' &&
       ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
        (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
         (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -185,12 +243,6 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: Check out the trusted base (selection and commands)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
-          path: trusted
       - name: Check out the candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -200,6 +252,46 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
+      - name: Resolve push baseline before loading trusted commands
+        id: train-base
+        working-directory: candidate
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # CI_BASE_SHA and the staging trusted ref, for every event, from the one rule in scripts/ci/ci-base.mjs read from main
+          # (the candidate copy only while main has none: the change that adds it). Later steps read CI_BASE_SHA from GITHUB_ENV.
+          node --input-type=module -e "
+            const { execFileSync } = await import('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+            const onMain = git('ls-tree', '--name-only', 'origin/main', 'scripts/ci/ci-base.mjs').trim() !== '';
+            if (!onMain) console.log('::warning title=CI base::main has no scripts/ci/ci-base.mjs yet; the candidate copy resolves the base');
+            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');
+            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+            process.exitCode = await writeCiBase();"
+      - name: Export the trusted base (selection and commands)
+        shell: bash
+        env:
+          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
+          GIT_NO_LAZY_FETCH: "1"
+          GIT_NO_REPLACE_OBJECTS: "1"
+        run: |
+          set -euo pipefail
+          cd -P -- "$GITHUB_WORKSPACE"
+          ref="$TRUSTED_REF"
+          [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]] || ref="refs/remotes/origin/$ref"
+          if ! base="$(git -C candidate rev-parse --verify --quiet --end-of-options "${ref}^{commit}")"; then
+            echo "::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)"
+            exit 1
+          fi
+          rm -rf -- trusted
+          mkdir -- trusted
+          git -C candidate archive "$base" -- scripts/ci config .github | tar -xf - -C trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
       - name: Select suites
@@ -209,17 +301,35 @@ jobs:
         run: |
           selector=trusted/scripts/ci/ci-required-selection.mjs
           if [ ! -f "$selector" ]; then
-            echo "::warning title=ci-suites bootstrap::the base has no selection; the candidate's own copy decides"
-            selector=candidate/scripts/ci/ci-required-selection.mjs
+            echo "::error::Trusted selector is missing: $selector"
+            exit 1
           fi
           echo "selector=$selector" >> "$GITHUB_OUTPUT"
           node "$selector" --check ci-suites
+      # Clued Task 10399304: the applications whose dependencies the selected suites need (SUITE_APP_DEPENDENCIES in the
+      # selection, written as app_deps), installed offline from the runner's store by the trusted ci-deps.mjs. The marker
+      # tells those suites a missing dependency is a failure, not a skip. A base selection without app_deps installs nothing.
+      # The step runs every time (the execution proof requires each registered step to succeed) and decides from app_deps.
+      - name: Install the application dependencies the selected suites need
+        env:
+          APP_DEPS: ${{ steps.select.outputs.app_deps }}
+        run: |
+          apps=$(node -e 'for (const a of JSON.parse(process.env.APP_DEPS || "[]")) console.log(a)')
+          if [ -z "$apps" ]; then
+            echo "No selected suite needs application dependencies; nothing installed."
+            exit 0
+          fi
+          for app in $apps; do
+            node trusted/scripts/ci/ci-deps.mjs install "candidate/$app"
+          done
+          echo "CLUED_CI_APP_DEPS=1" >> "$GITHUB_ENV"
       - name: Run the selected suites
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
           SUITES: ${{ steps.select.outputs.suites }}
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           PYTHONDONTWRITEBYTECODE: "1"
+          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
+          CLUED_UNDER_TEST: "1"
         run: |
           failed=""
           for suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do
@@ -240,6 +350,8 @@ jobs:
       ${{ needs.admission-gate.outputs.admitted == 'true' &&
           ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
            (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
            (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
             github.event.pull_request.head.repo.full_name == github.repository &&
             (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -249,6 +361,8 @@ jobs:
       needs.admission-gate.outputs.admitted == 'true' &&
       ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
        (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
         (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -258,20 +372,55 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: Check out the trusted base (selection and commands)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
-          path: trusted
       - name: Check out the candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+          fetch-depth: 0
           path: candidate
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
+      - name: Resolve push baseline before loading trusted commands
+        id: train-base
+        working-directory: candidate
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # CI_BASE_SHA and the staging trusted ref, for every event, from the one rule in scripts/ci/ci-base.mjs read from main
+          # (the candidate copy only while main has none: the change that adds it). Later steps read CI_BASE_SHA from GITHUB_ENV.
+          node --input-type=module -e "
+            const { execFileSync } = await import('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+            const onMain = git('ls-tree', '--name-only', 'origin/main', 'scripts/ci/ci-base.mjs').trim() !== '';
+            if (!onMain) console.log('::warning title=CI base::main has no scripts/ci/ci-base.mjs yet; the candidate copy resolves the base');
+            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');
+            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+            process.exitCode = await writeCiBase();"
+      - name: Export the trusted base (selection and commands)
+        shell: bash
+        env:
+          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
+          GIT_NO_LAZY_FETCH: "1"
+          GIT_NO_REPLACE_OBJECTS: "1"
+        run: |
+          set -euo pipefail
+          cd -P -- "$GITHUB_WORKSPACE"
+          ref="$TRUSTED_REF"
+          [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]] || ref="refs/remotes/origin/$ref"
+          if ! base="$(git -C candidate rev-parse --verify --quiet --end-of-options "${ref}^{commit}")"; then
+            echo "::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)"
+            exit 1
+          fi
+          rm -rf -- trusted
+          mkdir -- trusted
+          git -C candidate archive "$base" -- scripts/ci config .github | tar -xf - -C trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
       - name: Select suites
@@ -281,8 +430,8 @@ jobs:
         run: |
           selector=trusted/scripts/ci/ci-required-selection.mjs
           if [ ! -f "$selector" ]; then
-            echo "::warning title=migration-verify bootstrap::the base has no selection; the candidate's own copy decides"
-            selector=candidate/scripts/ci/ci-required-selection.mjs
+            echo "::error::Trusted selector is missing: $selector"
+            exit 1
           fi
           echo "selector=$selector" >> "$GITHUB_OUTPUT"
           node "$selector" --check migration-verify
@@ -301,6 +450,8 @@ jobs:
         if: steps.select.outputs.run_production_schema == 'true'
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
+          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
+          CLUED_UNDER_TEST: "1"
         run: |
           status=0
           node "$SELECTOR" --run production-schema --root candidate || status=$?
@@ -315,3 +466,497 @@ jobs:
       - name: Not affected
         if: steps.select.outputs.run_production_schema != 'true'
         run: echo "No migration, ledger, snapshot or drift-check file changed; nothing to verify." >> "$GITHUB_STEP_SUMMARY"
+
+  # FABLE-cicd-simplify-20261122 3.1 (R1): the three scans are jobs of this workflow, beside the tests after the same
+  # gate (needs only admission-gate; nothing needs them), instead of stages of the resident's batch. They read the
+  # candidate as data and run pinned scanner images without network, or the repository's own placement checks.
+  #
+  # gitleaks: the commits of the change, merge commits included (--remerge-diff: what a merge's author wrote over
+  # the automatic merge, the conflict resolution), refusing an octopus merge and a scan that did not finish
+  # (scripts/ci/gitleaks-range.sh of the trusted base). The history is copied into a fresh Git directory with
+  # nothing checked out but the trusted .gitleaks.toml, so no attribute or configuration file of the change is read.
+  # Reviewed findings are fingerprints of historical commits outside any new range, so no ignore file is passed.
+  gitleaks:
+    name: >-
+      ${{ needs.admission-gate.outputs.admitted == 'true' &&
+          ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
+           (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+          && 'gitleaks' || 'gitleaks-skipped' }}
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
+       (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          # The changed range and its merge parents.
+          fetch-depth: 0
+          path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Resolve push baseline before loading trusted commands
+        id: train-base
+        working-directory: candidate
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # CI_BASE_SHA and the staging trusted ref, for every event, from the one rule in scripts/ci/ci-base.mjs read from main
+          # (the candidate copy only while main has none: the change that adds it). Later steps read CI_BASE_SHA from GITHUB_ENV.
+          node --input-type=module -e "
+            const { execFileSync } = await import('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+            const onMain = git('ls-tree', '--name-only', 'origin/main', 'scripts/ci/ci-base.mjs').trim() !== '';
+            if (!onMain) console.log('::warning title=CI base::main has no scripts/ci/ci-base.mjs yet; the candidate copy resolves the base');
+            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');
+            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+            process.exitCode = await writeCiBase();"
+      - name: Export the trusted base (scanner script and configuration)
+        id: trusted-base
+        shell: bash
+        env:
+          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
+          GIT_NO_LAZY_FETCH: "1"
+          GIT_NO_REPLACE_OBJECTS: "1"
+        run: |
+          set -euo pipefail
+          cd -P -- "$GITHUB_WORKSPACE"
+          ref="$TRUSTED_REF"
+          [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]] || ref="refs/remotes/origin/$ref"
+          if ! base="$(git -C candidate rev-parse --verify --quiet --end-of-options "${ref}^{commit}")"; then
+            echo "::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)"
+            exit 1
+          fi
+          rm -rf -- trusted
+          mkdir -- trusted
+          git -C candidate archive "$base" -- scripts/ci config .github | tar -xf - -C trusted
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+      - name: Configure job temporary storage
+        uses: ./trusted/.github/actions/ci-temporary-storage
+      # Scan containers once ran as uid 65532 and left files in $RUNNER_TEMP the runner account cannot delete; the
+      # runner's own cleanup of _temp stops at the first directory it cannot delete, so fixed-name directories
+      # survived into later jobs ("File exists", task 79a20873). (a) Transitional: a 65532 container makes its own
+      # leftovers deletable (only an owner can change a mode); delete (a) once every cap-docker-linux runner has
+      # logged "none". (b) This job's fixed-name directories start fresh; one that cannot be deleted fails here.
+      - name: Reclaim the scan directories
+        env:
+          TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(find "$RUNNER_TEMP" -mindepth 1 -user 65532 -print -quit 2>/dev/null)" ]; then
+            if { docker image inspect "$TRIVY_IMAGE" > /dev/null 2>&1 || docker pull --quiet "$TRIVY_IMAGE" > /dev/null; } &&
+              docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+              --cap-drop=ALL --security-opt=no-new-privileges:true \
+              --mount "type=bind,src=$RUNNER_TEMP,dst=/t,bind-propagation=rprivate" \
+              --entrypoint find "$TRIVY_IMAGE" /t -user 65532 -exec chmod a+rwX {} +; then
+              echo "clued-scan-reclaim: reclaimed"
+            else
+              echo "::warning title=clued-scan-reclaim::the uid 65532 container did not finish; deleting what it opened"
+            fi
+          else
+            echo "clued-scan-reclaim: none"
+          fi
+          rm -rf --one-file-system -- "$RUNNER_TEMP"/clued-gitleaks "$RUNNER_TEMP"/clued-trivy-*
+      # The change: a pull request's head against its base (the run's commit is GitHub's merge of the two), a push
+      # against the baseline resolved above (main: the first parent; staging: the root T of its member chain), a
+      # dispatch against its merge base with main.
+      - name: Resolve the changed range
+        id: range
+        working-directory: candidate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BASE: ${{ steps.train-base.outputs.ci_base }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request)
+              base=$PR_BASE head=$PR_HEAD
+              test "$(git rev-parse --verify --quiet "$GITHUB_SHA^2")" = "$head" ;;
+            push) base=$PUSH_BASE head=$GITHUB_SHA ;;
+            workflow_dispatch) head=$GITHUB_SHA base=$(git merge-base origin/main "$GITHUB_SHA") ;;
+            *) echo "::error::no changed range for event $EVENT_NAME"; exit 1 ;;
+          esac
+          for sha in "$base" "$head"; do
+            [[ "$sha" =~ ^[0-9a-f]{40}$ && ! "$sha" =~ ^0+$ ]] || { echo "::error::not a commit id: '$sha'"; exit 1; }
+          done
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+      - name: Copy the changed history into a fresh Git directory
+        env:
+          BASE: ${{ steps.range.outputs.base }}
+          HEAD: ${{ steps.range.outputs.head }}
+          TRUSTED_BASE_SHA: ${{ steps.trusted-base.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1
+          scan="$RUNNER_TEMP/clued-gitleaks"; repo="$scan/repo"
+          mkdir "$scan" "$repo"
+          git -C candidate update-ref refs/clued-scan/base "$BASE"
+          git -C candidate update-ref refs/clued-scan/head "$HEAD"
+          git init --quiet --template= "$repo"
+          git -C "$repo" -c protocol.file.allow=always fetch --quiet --no-tags --no-recurse-submodules \
+            "$GITHUB_WORKSPACE/candidate" refs/clued-scan/base:refs/heads/base refs/clued-scan/head:refs/heads/head
+          test "$(git -C "$repo" rev-parse refs/heads/head)" = "$HEAD"
+          # The root policy comes from the same local commit as the trusted export.
+          GIT_NO_LAZY_FETCH=1 git -C candidate show "$TRUSTED_BASE_SHA:.gitleaks.toml" > "$repo/.gitleaks.toml"
+          chmod 0444 "$repo/.gitleaks.toml"
+          printf '[safe]\n\tdirectory = /repo\n' > "$scan/git-safe.config"
+      - name: Scan the changed range with Gitleaks 8.30.1
+        env:
+          BASE: ${{ steps.range.outputs.base }}
+          HEAD: ${{ steps.range.outputs.head }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          scan="$RUNNER_TEMP/clued-gitleaks"
+          image=ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          docker image inspect "$image" > /dev/null 2>&1 || docker pull --quiet "$image" > /dev/null
+          bash trusted/scripts/ci/gitleaks-range.sh "$scan/repo" "$BASE" "$HEAD" -- \
+            docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user="$(id -u):$(id -g)" --read-only \
+            --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
+            --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=HOME=/scratch --env=TMPDIR=/scratch \
+            --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid="$(id -u)",gid="$(id -g)" \
+            --mount "type=bind,src=$scan/repo,dst=/repo,bind-propagation=rprivate" \
+            --mount "type=bind,src=$scan/git-safe.config,dst=/etc/gitconfig,readonly,bind-propagation=rprivate" \
+            --workdir=/repo --entrypoint /usr/bin/gitleaks "$image" \
+            git /repo --config /repo/.gitleaks.toml --redact --no-banner --exit-code 1
+
+  # trivy: the steps of the disabled trivy.yml (the local formal role's input refusals, vulnerability DB and pinned
+  # checks preparation, and its three scanners) over the run's commit. The node cache keeps complete,
+  # immutable generations. A still-current DB can cover a refresh outage.
+  trivy:
+    name: >-
+      ${{ needs.admission-gate.outputs.admitted == 'true' &&
+          ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
+           (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+          && 'trivy' || 'trivy-skipped' }}
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
+       (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Resolve push baseline before loading trusted commands
+        id: train-base
+        working-directory: candidate
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # CI_BASE_SHA and the staging trusted ref, for every event, from the one rule in scripts/ci/ci-base.mjs read from main
+          # (the candidate copy only while main has none: the change that adds it). Later steps read CI_BASE_SHA from GITHUB_ENV.
+          node --input-type=module -e "
+            const { execFileSync } = await import('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+            const onMain = git('ls-tree', '--name-only', 'origin/main', 'scripts/ci/ci-base.mjs').trim() !== '';
+            if (!onMain) console.log('::warning title=CI base::main has no scripts/ci/ci-base.mjs yet; the candidate copy resolves the base');
+            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');
+            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+            process.exitCode = await writeCiBase();"
+      - name: Export the trusted base (temporary storage)
+        shell: bash
+        env:
+          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
+          GIT_NO_LAZY_FETCH: "1"
+          GIT_NO_REPLACE_OBJECTS: "1"
+        run: |
+          set -euo pipefail
+          cd -P -- "$GITHUB_WORKSPACE"
+          ref="$TRUSTED_REF"
+          [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]] || ref="refs/remotes/origin/$ref"
+          if ! base="$(git -C candidate rev-parse --verify --quiet --end-of-options "${ref}^{commit}")"; then
+            echo "::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)"
+            exit 1
+          fi
+          rm -rf -- trusted
+          mkdir -- trusted
+          git -C candidate archive "$base" -- scripts/ci config .github | tar -xf - -C trusted
+          # The introduction PR and its staging run can have a base without the helper.
+          # In that case the protected workflow pins the exact local blob and checks its bytes.
+          helper=trusted/scripts/ci/trivy-cache.mjs
+          if [ ! -f "$helper" ]; then
+            git -C candidate cat-file blob ab6e8e120274eefada13480e342fb9dcaca72520 > "$helper"
+            printf '%s  %s\n' 16aa81c1824d4965387ed2279d256ded48587901993f9e2dcbf11d672501bfc6 "$helper" | sha256sum --check --status
+          fi
+      - name: Configure job temporary storage
+        uses: ./trusted/.github/actions/ci-temporary-storage
+      # Scan containers once ran as uid 65532 and left files in $RUNNER_TEMP the runner account cannot delete; the
+      # runner's own cleanup of _temp stops at the first directory it cannot delete, so fixed-name directories
+      # survived into later jobs ("File exists", task 79a20873). (a) Transitional: a 65532 container makes its own
+      # leftovers deletable (only an owner can change a mode); delete (a) once every cap-docker-linux runner has
+      # logged "none". (b) This job's fixed-name directories start fresh; one that cannot be deleted fails here.
+      - name: Reclaim the scan directories
+        env:
+          TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(find "$RUNNER_TEMP" -mindepth 1 -user 65532 -print -quit 2>/dev/null)" ]; then
+            if { docker image inspect "$TRIVY_IMAGE" > /dev/null 2>&1 || docker pull --quiet "$TRIVY_IMAGE" > /dev/null; } &&
+              docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+              --cap-drop=ALL --security-opt=no-new-privileges:true \
+              --mount "type=bind,src=$RUNNER_TEMP,dst=/t,bind-propagation=rprivate" \
+              --entrypoint find "$TRIVY_IMAGE" /t -user 65532 -exec chmod a+rwX {} +; then
+              echo "clued-scan-reclaim: reclaimed"
+            else
+              echo "::warning title=clued-scan-reclaim::the uid 65532 container did not finish; deleting what it opened"
+            fi
+          else
+            echo "clued-scan-reclaim: none"
+          fi
+          rm -rf --one-file-system -- "$RUNNER_TEMP"/clued-gitleaks "$RUNNER_TEMP"/clued-trivy-*
+      # The local role's input refusals: only regular blobs (prepare-workspaces.py tree_modes_regular),
+      # no path with a backslash, colon or control character, at most 100000 paths (formal-trivy-v4
+      # snapshotTree), and no Java archive, which needs a Java DB the local role does not prepare
+      # (required-trivy-v3/plans.mjs). Such a tree is never scanned here, only locally.
+      - name: Refuse symlinks, submodules and other non-regular tree entries
+        working-directory: candidate
+        run: |
+          set -eu
+          git ls-tree -r -z --full-tree HEAD > "$RUNNER_TEMP/clued-trivy-tree"
+          if tr '\0' '\n' < "$RUNNER_TEMP/clued-trivy-tree" | grep -Ev '^(100644|100755) blob [0-9a-f]{40}[[:space:]]' | grep -q .; then
+            echo "::error title=trivy::the tree has a symlink, submodule or other non-regular entry"
+            exit 1
+          fi
+          git ls-files -z > "$RUNNER_TEMP/clued-trivy-paths"
+          if grep -qzE '[\\:[:cntrl:]]|.{4096,}' "$RUNNER_TEMP/clued-trivy-paths"; then
+            echo "::error title=trivy::a path has a backslash, colon or control character, or is too long"
+            exit 1
+          fi
+          if grep -qziE '\.(jar|war|ear|par)$' "$RUNNER_TEMP/clued-trivy-paths"; then
+            echo "::error title=trivy::a Java archive needs the Java DB the local role does not prepare"
+            exit 1
+          fi
+          test "$(tr -cd '\0' < "$RUNNER_TEMP/clued-trivy-paths" | wc -c)" -le 100000
+      # The local role scans a copy of the checked-out tree without .git (formal-trivy-v4 snapshotTree).
+      - name: Snapshot the tree for the scanners
+        working-directory: candidate
+        run: |
+          set -eu
+          snap="$RUNNER_TEMP/clued-trivy-snapshot"
+          mkdir "$snap"
+          git ls-files -z | tar --null --no-recursion -T - -cf - | tar -xf - -C "$snap"
+      # The trusted helper reuses complete generations from the node cache. Only downloads can use
+      # the network, with fresh cache-only mounts and nothing from the checkout. The DB must be
+      # current and the checks bundle must match its digest and major version, with Rego content.
+      - name: Prepare the vulnerability DB and the pinned checks bundle
+        timeout-minutes: 10
+        env:
+          TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9
+          CHECKS_DIGEST: sha256:b0e12d009b01dcc8ca2ebbc199b9caf3922491978d21c17b61c1d7f6dc75220b
+        run: node trusted/scripts/ci/trivy-cache.mjs
+      # The three scanners exactly as the local role (required-trivy-v3/plans.mjs requiredTrivyPlans,
+      # verify-worker.mjs createArguments): no network, read-only root and mounts, cwd /scratch, the prepared
+      # DB and checks only, no update of either, five minutes each. Every scan container runs as the job account,
+      # not the local role's uid 65532: that role runs as root and chowns and deletes what 65532 wrote, which a
+      # runner account cannot (task 79a20873).
+      - name: Vulnerabilities (HIGH/CRITICAL)
+        timeout-minutes: 5
+        run: |
+          set -eu
+          docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user="$(id -u):$(id -g)" --read-only \
+            --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
+            --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \
+            --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid="$(id -u)",gid="$(id -g)" \
+            --mount "type=bind,src=$RUNNER_TEMP/clued-trivy-snapshot,dst=/repo,readonly,bind-propagation=rprivate" \
+            --mount "type=bind,src=$CLUED_TRIVY_DB,dst=/scratch/db,readonly,bind-propagation=rprivate" \
+            --mount "type=bind,src=$CLUED_TRIVY_POLICY,dst=/scratch/policy,readonly,bind-propagation=rprivate" \
+            --workdir=/scratch --entrypoint /usr/local/bin/trivy \
+            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
+            fs --skip-db-update --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo
+      - name: Secrets
+        timeout-minutes: 5
+        run: |
+          set -eu
+          docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user="$(id -u):$(id -g)" --read-only \
+            --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
+            --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \
+            --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid="$(id -u)",gid="$(id -g)" \
+            --mount "type=bind,src=$RUNNER_TEMP/clued-trivy-snapshot,dst=/repo,readonly,bind-propagation=rprivate" \
+            --mount "type=bind,src=$CLUED_TRIVY_DB,dst=/scratch/db,readonly,bind-propagation=rprivate" \
+            --mount "type=bind,src=$CLUED_TRIVY_POLICY,dst=/scratch/policy,readonly,bind-propagation=rprivate" \
+            --workdir=/scratch --entrypoint /usr/local/bin/trivy \
+            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
+            fs --scanners secret --exit-code 1 \
+            --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo
+      - name: Misconfiguration (HIGH/CRITICAL)
+        timeout-minutes: 5
+        run: |
+          set -eu
+          docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user="$(id -u):$(id -g)" --read-only \
+            --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
+            --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \
+            --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid="$(id -u)",gid="$(id -g)" \
+            --mount "type=bind,src=$RUNNER_TEMP/clued-trivy-snapshot,dst=/repo,readonly,bind-propagation=rprivate" \
+            --mount "type=bind,src=$CLUED_TRIVY_DB,dst=/scratch/db,readonly,bind-propagation=rprivate" \
+            --mount "type=bind,src=$CLUED_TRIVY_POLICY,dst=/scratch/policy,readonly,bind-propagation=rprivate" \
+            --workdir=/scratch --entrypoint /usr/local/bin/trivy \
+            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
+            fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 \
+            --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo
+
+  # contract-placement: the five commands of the formal role (formal-contract-placement-v2) over the change, in the
+  # candidate checkout.
+  contract-placement:
+    name: >-
+      ${{ needs.admission-gate.outputs.admitted == 'true' &&
+          ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
+           (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+          && 'contract-placement' || 'contract-placement-skipped' }}
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
+       (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Resolve push baseline before loading trusted commands
+        id: train-base
+        working-directory: candidate
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # CI_BASE_SHA and the staging trusted ref, for every event, from the one rule in scripts/ci/ci-base.mjs read from main
+          # (the candidate copy only while main has none: the change that adds it). Later steps read CI_BASE_SHA from GITHUB_ENV.
+          node --input-type=module -e "
+            const { execFileSync } = await import('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+            const onMain = git('ls-tree', '--name-only', 'origin/main', 'scripts/ci/ci-base.mjs').trim() !== '';
+            if (!onMain) console.log('::warning title=CI base::main has no scripts/ci/ci-base.mjs yet; the candidate copy resolves the base');
+            const source = onMain ? git('show', 'origin/main:scripts/ci/ci-base.mjs') : (await import('node:fs')).readFileSync('scripts/ci/ci-base.mjs', 'utf8');
+            const { writeCiBase } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+            process.exitCode = await writeCiBase();"
+      - name: Export the trusted base (temporary storage)
+        shell: bash
+        env:
+          TRUSTED_REF: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
+          GIT_NO_LAZY_FETCH: "1"
+          GIT_NO_REPLACE_OBJECTS: "1"
+        run: |
+          set -euo pipefail
+          cd -P -- "$GITHUB_WORKSPACE"
+          ref="$TRUSTED_REF"
+          [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]] || ref="refs/remotes/origin/$ref"
+          if ! base="$(git -C candidate rev-parse --verify --quiet --end-of-options "${ref}^{commit}")"; then
+            echo "::error title=Trusted base::trusted baseline commit is missing from the candidate checkout ($TRUSTED_REF)"
+            exit 1
+          fi
+          rm -rf -- trusted
+          mkdir -- trusted
+          git -C candidate archive "$base" -- scripts/ci config .github | tar -xf - -C trusted
+      - name: Configure job temporary storage
+        uses: ./trusted/.github/actions/ci-temporary-storage
+      - name: Placement and renderer fixtures
+        working-directory: candidate
+        run: |
+          python3 -I -B -m unittest discover -s scripts/ci -p test_check_contract_placement.py -v
+          node --test apps/clued-cloud/tests/agent-contract-bootstrap.test.mjs
+      - name: Build actual public bootstrap without the application dependency tree
+        working-directory: candidate
+        env:
+          CANDIDATE: ${{ github.sha }}
+        run: |
+          # esbuild alone, from the runner's dependency store (offline) by the trusted ci-deps.mjs; installed outside
+          # the candidate tree so the placement check sees no node_modules of its own.
+          mkdir -p "$RUNNER_TEMP/contract-build"
+          cp scripts/ci/contract-build/package.json scripts/ci/contract-build/package-lock.json "$RUNNER_TEMP/contract-build/"
+          node ../trusted/scripts/ci/ci-deps.mjs install "$RUNNER_TEMP/contract-build"
+          node "$RUNNER_TEMP/contract-build/node_modules/esbuild/bin/esbuild" apps/clued-cloud/worker/continuity.ts \
+            --bundle --platform=node --format=esm --external:js-tiktoken/* \
+            --define:__CLUED_BUILD_SHA__="\"$CANDIDATE\"" --outfile="$RUNNER_TEMP/contract-bootstrap.mjs"
+      - name: Render all actual and synthetic contract parts
+        working-directory: candidate
+        run: node apps/clued-cloud/scripts/render-agent-contract-budget.mjs --worker-module "$RUNNER_TEMP/contract-bootstrap.mjs" --output "$RUNNER_TEMP/contract-responses.json"
+      - name: Enforce placement and one-time production gate
+        working-directory: candidate
+        env:
+          CANDIDATE: ${{ github.sha }}
+        run: python3 -I -B scripts/ci/check_contract_placement.py --base "$CI_BASE_SHA" --head "$CANDIDATE" --minimum-service-version 0.4.5 --rendered-responses "$RUNNER_TEMP/contract-responses.json"

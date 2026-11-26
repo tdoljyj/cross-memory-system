@@ -1,33 +1,32 @@
+import { EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import net from 'node:net';
 import {randomUUID,createHash} from 'node:crypto';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
 const here=path.dirname(fileURLToPath(import.meta.url));
 const standalone=!!process.env.D01D02_SOURCE_REPO;
 if(standalone&&process.env.GITHUB_ACTIONS==='true')throw new Error('standalone source inspection cannot replace the required migration regressions');
-// The existing required migration entry owns the related storage qualification,
-// original-delivery and renewal regressions. Both fixtures match the accepted
-// selector's fixture input rule, including when only a fixture changes.
+// Run the renewal fixture through this required migration entry. The
+// original-delivery test already has its own required authorization command.
 if(!standalone){
- await import('./task-goal-delivery-db.fixture.mjs');
  await import('./storage-owner-lifecycle-db.fixture.mjs');
  const {selectSuites,SUITE_COMMANDS}=await import('../../../scripts/ci/ci-required-selection.mjs');
  test('required storage entry selects every delivery and renewal regression input',()=>{
-  for(const changed of ['apps/clued-cloud/tests/task-goal-delivery-db.fixture.mjs',
+  for(const changed of ['apps/clued-cloud/tests/task-goal-delivery-db.test.mjs',
    'apps/clued-cloud/tests/storage-owner-lifecycle-db.fixture.mjs',
    'apps/clued-cloud/tests/storage-runtime-authority-db.test.mjs',
    'apps/clued-cloud/supabase/migrations/20261117102000_task_goal_delivery_reconnect_v1.sql',
    'apps/clued-cloud/supabase/migrations/20261117113000_storage_refresh_intent_v1.sql'])
     assert.deepEqual(selectSuites('migration-verify',[changed]).suites,['production-schema'],changed);
-  assert.ok(SUITE_COMMANDS['production-schema'].some(command=>command.cwd==='apps/clued-cloud'
-   &&command.argv.includes('tests/storage-runtime-authority-db.test.mjs')),'the unchanged required command actually runs this entry');
+  for(const file of ['tests/storage-runtime-authority-db.test.mjs','tests/task-goal-delivery-db.test.mjs'])
+   assert.ok(SUITE_COMMANDS['production-schema'].some(command=>command.cwd==='apps/clued-cloud'
+    &&command.argv.includes(file)),`a required command runs ${file}`);
  });
 }
 const repo=process.env.D01D02_SOURCE_REPO;
@@ -38,15 +37,14 @@ const candidate='20261117050000_storage_runtime_authority_v1.sql';
 const migration=await fs.readFile(standalone?path.join(here,candidate):path.join(cloud,'supabase/migrations',candidate),'utf8');
 const helper=migration.split('-- Apply the exact registered profile;')[0];
 const sig='clued_private.storage_runtime_authority_repair_v1(uuid,uuid,text,uuid,bigint,text)';
-async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const n=s.address().port;await new Promise(r=>s.close(r));return n;}
 
 test('runtime reference repair preserves frozen layout and creates independently verifiable qualification',{timeout:300000},async t=>{
  const temp=await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()),'clued-runtime-authority-'));
- const server=new EmbeddedPostgres({databaseDir:temp,user:'postgres',password:sha(id()),port:await port(),persistent:true,
-  postgresFlags:['-c','listen_addresses=127.0.0.1'],onLog(){},onError(){}});
+ const server=newCluster({databaseDir:temp,user:'postgres',password:sha(id()),persistent:true,
+  initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],onLog(){},onError(){}});
  let started=false;const clients=[];
  try{
-  await server.initialise();await server.start();started=true;
+  await startCluster(server);started=true;
   const db=server.getPgClient();clients.push(db);await db.connect();
   await db.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;
    create role authenticator nologin noinherit;create schema auth;create schema extensions;create extension pgcrypto with schema extensions;

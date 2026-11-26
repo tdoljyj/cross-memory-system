@@ -47,3 +47,67 @@ test('L4: continue.py says how a stopped first install continues (the same boots
   const comment = text.slice(text.lastIndexOf('\n    need(lit(', at), at);
   assert.match(comment, /the same bootstrap command/);
 });
+
+test('the acceptance has two commands in the README, prepare before the Owner and seal after; no draft entry, no hand-attached kit or acceptance', () => {
+  // Fable 3bc571a6 ruling section 3 (Task 758989fa): the two halves, each one command; the steps under them have no command of their own
+  assert.match(readme, /^node [^\n]*publish\.mjs prepare --version <version> --dir /m);
+  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--wait </m);
+  assert.ok(!/acceptance-draft/.test(readme), 'the old entry is gone from the README');
+  assert.ok(!/attach-acceptance|attach-first-install-kit/.test(readme), 'no manual attach step is named in the README');
+  assert.ok(!/install\.mjs first-install-kit/.test(readme), 'the manual take-the-kit step is gone from the README');
+  assert.ok(!/^node [^\n]*first-install-kit/m.test(readme), 'no command line of the README runs a kit step by hand');
+  assert.ok(!/^node [^\n]*install\.mjs source-hash/m.test(readme), 'the Source is prepare\'s, nobody fills it in by hand');
+  // the flow: candidate -> drill -> the Owner's one acceptance -> seal; no release step before prepare (FABLE-drill-release-step-20261121.md)
+  assert.match(readme, /build（一次） -> publish prepare[^\n]*-> 候选演练[^\n]*-> Owner 接受[^\n]*-> publish seal/);
+  assert.ok(!/^node [^\n]*publish\.mjs release /m.test(readme), 'the release command is gone from the README');
+  assert.match(readme, /候选 commit 必须已在远端/);
+});
+
+test('the acceptance in the README: seal asks the acceptance door (one fleet.accept Grant), no Decision record and no three hand-copied values; the delivery directory is the Release\'s assets, not prepare\'s --out', () => {
+  // FABLE-renew-key-algorithm-ruling-20261119.md section 4 and its supplement; review suggestions 3 and 4
+  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--wait </m);
+  // PLAN-accept-auto-seal-20261125 2.2: the acceptance is the Owner's fleet.accept Grant; the Decision record has no way in
+  assert.ok(!/^node [^\n]*publish\.mjs seal [^\n]*--(decision|decision-record|receipt|accepted-at|grant) /m.test(readme), 'no Decision record, Grant, receipt or time on seal\'s command line');
+  assert.match(readme, /`fleet\.accept`/);
+  assert.match(readme, /FLEET_ACCEPTANCE_WAITING_OWNER/);
+  // PLAN-accept-binding-20261125: seal opens the request through the release workflow's fleet-accept mode and reads the answer anonymously;
+  // no token of a publisher Binding, no op id
+  assert.match(readme, /mode=fleet-accept/);
+  assert.match(readme, /clued_fleet_accept_status_v1/);
+  assert.ok(!/op_id|CLUED_SUPABASE_URL/.test(readme), 'no op id, no Supabase address in the environment');
+  assert.match(readme, /PASS_A_FULL/);
+  assert.match(readme, /PASS_A_PER_NODE_STEPS_REMAIN/);
+  assert.ok(!/可直接交给 `install\.mjs first-install-check --from` 和 `bootstrap\.ps1 -From`/.test(readme), 'prepare\'s --out is not the delivery directory');
+  assert.match(readme, /交付目录/);
+  // the three references every acceptance carries: where they come from is written once
+  assert.match(fs.readFileSync(path.join(FLEET, 'BATCH1-INTERFACES.md'), 'utf8'), /\| `ownerAuthorizationRef`、`publisherQualificationRef`、`ownerPackageAcceptanceRef` \|[^\n]*publish\.mjs prepare/);
+});
+
+test('no file of the package names a publish.mjs command that no longer exists', () => {
+  for (const f of [path.join(FLEET, 'bootstrap.ps1'), path.join(RES, 'reinstall', 'tools', 'export-role-image.ps1')]) {
+    assert.ok(!/publish\.mjs (attach-first-install-kit|attach-acceptance|acceptance-draft)/.test(fs.readFileSync(f, 'utf8')), f);
+  }
+});
+
+// review r2: the README's delivery directory is fetched by a command whose patterns take every asset bootstrap.ps1 requires for a first install
+// (the list read from bootstrap.ps1's own Get-RequiredAssets), and a role image; no other way of fetching it is named there
+test('the README\'s delivery directory: its one command takes every asset bootstrap.ps1 requires for a first install, and role images', () => {
+  const boot = fs.readFileSync(path.join(FLEET, 'bootstrap.ps1'), 'utf8');
+  const body = boot.slice(boot.indexOf('function Get-RequiredAssets'), boot.indexOf('function Test-AssetSet'));
+  const v = '2026.11.19-0123abcd', t = `fleet-node-${v}`;
+  const required = [...body.matchAll(/"\$t\.([^"]+)"|'([^']+)'/g)].map(m => (m[1] ? `${t}.${m[1]}` : m[2])).filter(n => n !== 'fleet-node-');
+  assert.deepEqual(required.sort(), [`${t}.acceptance.json`, `${t}.bootstrap.ps1`, `${t}.first-install-kit.json`, `${t}.first-install.SHA256SUMS`, `${t}.prereq-manifest.json`,
+    `${t}.release.json`, `${t}.tar`, 'SHA256SUMS'].sort(), 'bootstrap.ps1\'s list as this test reads it');
+  const para = readme.split('\n').find(l => l.startsWith('**交付目录**'));
+  assert.ok(para, 'the README has its delivery directory paragraph');
+  assert.ok(!/fetch\.mjs/.test(para), 'fetch.mjs takes only the tar, the acceptance and SHA256SUMS: not a way to a delivery directory');
+  const commands = [...para.matchAll(/`(gh release download [^`]+)`/g)].map(m => m[1]);
+  assert.equal(commands.length, 1, 'one command');
+  const patterns = [...commands[0].matchAll(/--pattern "([^"]+)"/g)].map(m => m[1].replaceAll('<version>', v));
+  const glob = p => new RegExp(`^${p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*').replaceAll('?', '.')}$`);
+  for (const n of [...required, `role-image-${'c'.repeat(64)}.tar.gz`]) assert.ok(patterns.some(p => glob(p).test(n)), `${n} is fetched`);
+  // the acceptance request is a Release asset too (the release workflow's fleet-accept mode reads it there); bootstrap refuses a file neither
+  // sums file lists (ASSET_NOT_LISTED), so the delivery directory never fetches it
+  assert.ok(!patterns.some(p => glob(p).test(`${t}.acceptance-request.json`)), 'the acceptance request is not fetched into the delivery directory');
+  assert.match(commands[0], /^gh release download fleet-node-<version> /);
+});

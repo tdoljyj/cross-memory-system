@@ -89,6 +89,8 @@ $Common=@('-c','core.hooksPath=C:/nonexistent-clued-hooks','-c','core.fsmonitor=
 # and the second attempt has the rest of the 30 minutes: one complete transfer at the slowest rate plus one stall.
 $NetworkSteps=@('fetch','ls-remote','fetch-reviewed','fetch-test','ls-remote-members');$RetryWithinSeconds=900;$MaxStoreAttempts=3
 $Clock=[Diagnostics.Stopwatch]::StartNew()
+# Diagnostic only: no arguments, URLs, stdout or stderr are retained. Retries aggregate by fixed step label.
+$GitTimings=New-Object 'Collections.Generic.List[object]'
 # The persistent seed. Under bundles\ so that it inherits bundles\'s ACL (Owner modify, resident read): installing it needs no ACL change.
 $SeedRoot=Join-Path $Resident 'bundles\_seed';$SeedDir=Join-Path $SeedRoot 'seed.git';$SeedNew=Join-Path $SeedRoot 'seed-new.git';$SeedLock=Join-Path $SeedRoot 'seed.lock';$SeedMeta=Join-Path $SeedRoot 'seed-meta.json'
 $SeedNs='refs/clued-seed/';$SeedMetaContract='clued.independent-ci.bundle-seed-meta/1'
@@ -142,6 +144,7 @@ function Quote-Arg([string]$A){
 }
 # $InputText (optional) is written to git's standard input after both output readers have started, then input is closed.
 function Invoke-Git([string]$Label,[string[]]$GitArgs,[string]$InputText=''){
+ $gitWatch=[Diagnostics.Stopwatch]::StartNew()
  $psi=New-Object Diagnostics.ProcessStartInfo;$psi.FileName=$Git;$psi.Arguments=((@($GitArgs)|ForEach-Object{Quote-Arg $_})-join ' ')
  $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
  $psi.StandardOutputEncoding=New-Object Text.UTF8Encoding($false);$psi.StandardErrorEncoding=New-Object Text.UTF8Encoding($false);$psi.WorkingDirectory=$Root
@@ -151,10 +154,24 @@ function Invoke-Git([string]$Label,[string[]]$GitArgs,[string]$InputText=''){
  $o=$p.StandardOutput.ReadToEndAsync();$e=$p.StandardError.ReadToEndAsync()
  if($InputText.Length -gt 0){$p.StandardInput.Write($InputText)};$p.StandardInput.Close()
  $p.WaitForExit();$out=$o.Result;$err=$e.Result
+ $gitWatch.Stop()
+ $script:GitTimings.Add([pscustomobject]@{label=$Label;ms=[long][Math]::Ceiling($gitWatch.Elapsed.TotalMilliseconds);exitCode=$p.ExitCode})
  # Stderr is never printed: it is counted only, so no credential/URL text can leak.
  $script:lastGit=[ordered]@{label=$Label;exitCode=$p.ExitCode;stderrChars=$err.Length}
  if($p.ExitCode -ne 0){throw 'GIT_STEP_FAILED'}
  return $out
+}
+# A 90-second bundle budget is an observation, never authority or a timeout: keep complete history, all checks and retries.
+# The receipt measures through bundle verification; the final answer also includes the advisory seed update.
+function Build-Timing([double]$ElapsedMs){
+ $steps=New-Object 'Collections.Generic.List[object]';$byLabel=@{}
+ foreach($g in $script:GitTimings){
+  if(-not $byLabel.ContainsKey($g.label)){
+   $row=[ordered]@{label=$g.label;calls=0;ms=[long]0;failures=0};$byLabel[$g.label]=$row;$steps.Add($row)
+  }
+  $s=$byLabel[$g.label];$s.calls++;$s.ms+=$g.ms;if($g.exitCode -ne 0){$s.failures++}
+ }
+ return [ordered]@{contract='clued.independent-ci.bundle-timing/1';elapsedMs=[long][Math]::Ceiling($ElapsedMs);budgetMs=90000;overBudget=($ElapsedMs -gt 90000);steps=@($steps.ToArray())}
 }
 function Assert-FormalRefName([string]$Name){
  if($Name -cnotmatch '\Arefs/(heads|tags)/' -or $Name -match '[\\:\x00-\x20\x7f]' -or $Name.StartsWith('/') -or $Name -match '[~^?*\[\]@{]' -or
@@ -254,7 +271,17 @@ function Read-Descriptor{
  $chain=$null
  if($d.contract -ceq $ChainContract){$chain=Chain-Of $d}
  elseif($null -ne $d.PSObject.Properties['members'] -or $null -ne $d.PSObject.Properties['testTree']){throw 'DESCRIPTOR_REFUSED'}
- return [pscustomobject]@{value=$d;sha256=(Hash-Bytes $raw);chain=$chain}
+ # bc982192: the optional baseRule, exactly 'on-main' (push landing, S = H: baseSha an ancestor of the head and of main's tip, or that
+ # tip; Base-On-Main), never on a front batch; absent: main's tip must be baseSha (the twin of prepare-workspaces.py#base_rule).
+ $rule=$d.PSObject.Properties['baseRule'];$onMain=$null -ne $rule
+ if($onMain -and ($rule.Value -isnot [string] -or $rule.Value -cne 'on-main' -or $d.testSha -cne $d.headSha)){throw 'DESCRIPTOR_REFUSED'}
+ return [pscustomobject]@{value=$d;sha256=(Hash-Bytes $raw);chain=$chain;onMain=$onMain}
+}
+# bc982192 (pure over a reader): $Count.Invoke(a, b) is `git rev-list --count a..b` (commits of b that a lacks). Base is an ancestor of
+# Head and of Main, or Main itself, exactly when neither lacks a commit of Base.
+function Base-On-Main($Count,[string]$Base,[string]$Head,[string]$Main){
+ foreach($x in @($Head,$Main)){if([string]($Count.Invoke($x,$Base)|Select-Object -Last 1) -cne '0'){return $false}}
+ return $true
 }
 # ADR 0019: descriptor /4's own shape, the twin of prepare-workspaces.py#chain_members_ok: 2..4 members {pr, headSha}, the front (the
 # descriptor's pr and head) first, distinct PRs and heads, none of them T or S, and S's tree. -> {members, heads, testTree}.
@@ -545,7 +572,7 @@ function Ref-Target-Types([string]$Gd,$Refs){
  try{$out=Invoke-Git 'ref-types' ($Common+@($Gd,'cat-file','--batch-check')) (($shas -join "`n")+"`n")}catch{return $null}
  $lines=@($out -split "`n"|Where-Object{$_ -ne ''});if($lines.Count -ne $shas.Count){return $null}
  $types=New-RefMap
- for($i=0;$i -lt $shas.Count;$i++){$f=$lines[$i].Split(' ')
+ for($i=0;$i -lt $shas.Count;$i++){$f=$lines[$i].TrimEnd("`r").Split(' ')
   if($f.Count -ne 3 -or $f[0] -cne $shas[$i] -or $f[1] -cnotmatch '\A(commit|tag|tree|blob)\z' -or $f[2] -cnotmatch '\A[0-9]+\z'){return $null};$types[$shas[$i]]=$f[1]}
  return ,$types
 }
@@ -561,7 +588,7 @@ function Build-Store([string]$Dir){
  if($script:seedAttempt){Seed-Prime $gd}
  $script:stage='fetch-all-heads-and-tags';$fetchStartedAt=Utc;$fetchWatch=[Diagnostics.Stopwatch]::StartNew()
  $null=Invoke-Git 'fetch' ($Common+@($gd,'fetch','--quiet','--no-tags','--no-write-fetch-head','--no-recurse-submodules',$Url,'+refs/heads/*:refs/heads/*','+refs/tags/*:refs/tags/*'))
- $fetchCompletedAt=Utc
+ $fetchWatch.Stop();$fetchCompletedAt=Utc
  if($script:seedAttempt){Seed-Drop-Refs $Dir $gd}
  $script:stage='ls-remote-after-fetch'
  $remote=Ref-Map (Invoke-Git 'ls-remote' ($Common+@($gd,'ls-remote','--branches','--tags',$Url))) "`t" $true
@@ -572,12 +599,13 @@ function Build-Store([string]$Dir){
  $local=Ref-Map (Invoke-Git 'for-each-ref' ($Common+@($gd,'for-each-ref','--format=%(objectname) %(refname)'))) ' ' $false
  # The one inconsistency a push between the fetch and the ls-remote makes; Fetch-Store retries only this one.
  if(-not (Same-Map $local $remote)){$script:refsDiffer=Ref-Diff $local $remote;throw 'FETCHED_REFS_DIFFER_FROM_LS_REMOTE'}
- if(-not $local.ContainsKey('refs/heads/main') -or $local['refs/heads/main'] -cne $Base){throw 'REMOTE_MAIN_BASE_CHANGED'}
+ if(-not $local.ContainsKey('refs/heads/main') -or (-not $desc.onMain -and $local['refs/heads/main'] -cne $Base)){throw 'REMOTE_MAIN_BASE_CHANGED'}
  # Generation 13 (DESIGN §57.6, Task 3edfc598): the installed Source commit is read from the store fetched from GitHub; one that GitHub
  # does not have (a Source built from an unpushed local branch) is said so by name, not as a failed git step: push that branch.
  $sourceType=$null;try{$sourceType=(Invoke-Git 'source-cat-file' ($Common+@($gd,'cat-file','-t',$desc.value.sourceCommit))).Trim()}catch{if($_.Exception.Message -cne 'GIT_STEP_FAILED'){throw}}
  if($sourceType -cne 'commit'){throw 'SOURCE_COMMIT_NOT_ON_REMOTE'}
  foreach($s in @($Head,$Base)){if((Invoke-Git 'cat-file' ($Common+@($gd,'cat-file','-t',$s))).Trim() -cne 'commit'){throw 'HEAD_BASE_SOURCE_COMMIT_MISSING'}}
+ if($desc.onMain -and -not (Base-On-Main {param($a,$b) (Invoke-Git 'base-on-main' ($Common+@($gd,'rev-list','--count',"$a..$b"))).Trim()} $Base $Head $local['refs/heads/main'])){throw 'REMOTE_MAIN_BASE_CHANGED'}
  # One batch answer when every ref passes; otherwise (or with no usable answer) the per-ref loop decides, unchanged.
  $types=Ref-Target-Types $gd $local
  if($null -ne $types){foreach($k in $local.Keys){if(-not (Ref-Type-Allowed $k $types[$local[$k]])){$types=$null;break}}}
@@ -739,7 +767,7 @@ try{
   fetchStartedAt=$store.fetchStartedAt;fetchCompletedAt=$store.fetchCompletedAt;lsRemoteCompletedAt=$store.lsRemoteCompletedAt
   reviewedFetchStartedAt=$store.reviewedFetchStartedAt;reviewedFetchCompletedAt=$store.reviewedFetchCompletedAt;bundleCreatedAt=$bundleCreatedAt
   storeAttempts=$attempts;firstAttempt=$firstAttempt;failedAttempts=@($failedAttempts)
-  gitExecutableSha256=$gitSha;gitVersion=$gitVersion
+  gitExecutableSha256=$gitSha;gitVersion=$gitVersion;timing=(Build-Timing $Clock.Elapsed.TotalMilliseconds)
   credentialsPrinted=$false;credentialsWrittenByScript=$false;existingCheckoutTouched=$false;wslTouched=$false;automaticRetryAllowed=$false}
  if($Rebundle){$receipt['generation']=2;$receipt['previousBundleSha256']=$previous.bundleSha256;$receipt['previousRefListSha256']=$previous.refListSha256}
  # ADR 0019: the chain this bundle was checked against (prepare-workspaces.py takes a /4 bundle only with the same members and tree).
@@ -747,7 +775,7 @@ try{
  $json=($receipt|ConvertTo-Json -Depth 5 -Compress)
  $rb=(New-Object Text.UTF8Encoding($false)).GetBytes($json+[char]10);$f=[IO.File]::Open($ReceiptPath,'CreateNew','Write','None');try{$f.Write($rb,0,$rb.Length);$f.Flush($true)}finally{$f.Dispose()};$created+=$ReceiptPath
  Seed-Update $store
- [ordered]@{status='BUNDLE_WRITTEN';batchId=$BatchId;generation=$(if($Rebundle){2}else{1});bundleSha256=$sha;bundleBytes=$bytes;receiptSha256=(Hash-Bytes $rb);refListSha256=$receipt.refListSha256;lsRemoteCompletedAt=$store.lsRemoteCompletedAt;seed=$seedReport;setAside=$setAside}|ConvertTo-Json -Depth 4 -Compress
+ [ordered]@{status='BUNDLE_WRITTEN';batchId=$BatchId;generation=$(if($Rebundle){2}else{1});bundleSha256=$sha;bundleBytes=$bytes;receiptSha256=(Hash-Bytes $rb);refListSha256=$receipt.refListSha256;lsRemoteCompletedAt=$store.lsRemoteCompletedAt;timing=(Build-Timing $Clock.Elapsed.TotalMilliseconds);seed=$seedReport;setAside=$setAside}|ConvertTo-Json -Depth 6 -Compress
  exit 0
 }catch{
  $code=if($_.Exception.Message -cmatch '\A[A-Z][A-Z0-9_]{1,90}\z'){$_.Exception.Message}else{'FIXED_BUNDLE_BUILD_UNCONFIRMED'}
@@ -758,5 +786,5 @@ try{
  $failStatus=if($writesStarted){if($Rebundle){'PARTIAL_STATE_SET_ASIDE_BY_NEXT_REBUNDLE'}else{'PARTIAL_STATE_PRESERVED_NO_RETRY'}}else{'REFUSED_BEFORE_WRITE'}
  [ordered]@{status=$failStatus;stage=$stage;reason=$code;hint=(Branch-Only-Hint $stage $code $reviewedCommits);git=$lastGit;created=$created;setAside=$setAside
   storeAttempts=$attempts;firstAttempt=$firstAttempt;failedAttempts=@($failedAttempts);seed=$seedReport;credentialsPrinted=$false;existingCheckoutTouched=$false
-  automaticRetryAllowed=([bool]$Rebundle -and $code -ceq 'GIT_STEP_FAILED' -and $null -ne $lastGit -and @('fetch','ls-remote') -ccontains $lastGit.label)}|ConvertTo-Json -Depth 5 -Compress;exit 2
+  timing=(Build-Timing $Clock.Elapsed.TotalMilliseconds);automaticRetryAllowed=([bool]$Rebundle -and $code -ceq 'GIT_STEP_FAILED' -and $null -ne $lastGit -and @('fetch','ls-remote') -ccontains $lastGit.label)}|ConvertTo-Json -Depth 6 -Compress;exit 2
 }

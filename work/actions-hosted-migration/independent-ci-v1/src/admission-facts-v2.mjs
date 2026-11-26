@@ -26,7 +26,7 @@ export const REASON_CODES = Object.freeze(['claim_trailer_missing', 'claim_not_f
   'merge_slot_missing', 'owner_grant_required', 'owner_grant_missing', 'owner_grant_revoked', 'owner_grant_expired',
   'admission_binding_required', 'authorization_revoked_or_expired', 'binding_not_authorized', 'resource_action_not_authorized',
   'evaluation_not_completed', 'workflow_change_not_authorized', 'workflow_missing_admission_gate', 'work_claim_execution_epoch_stale']);
-export const REASON_PREFIXES = Object.freeze({ 'changed_files_truncated:': 'changed_files_truncated', 'claim_base_unknown:': 'claim_base_unknown',
+export const REASON_PREFIXES = Object.freeze({ 'changed_files_truncated:': 'changed_files_truncated',
   'workflow_gate:': 'workflow_gate', 'policy_file_removed:': 'policy_file_removed', 'policy_file_invalid:': 'policy_file_invalid',
   'protected_change_not_up_to_date:': 'protected_change_not_up_to_date', 'owner_review_required (': 'owner_review_required',
   'owner_review_unavailable:': 'owner_review_unavailable', 'workflow runs unavailable:': 'workflow_runs_unavailable' });

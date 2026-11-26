@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { PACKAGE_CONTRACT, UPGRADER_CONFIG_CONTRACT, buildPackage, importClosure, upgraderCopy } from '../tools/build-package.mjs';
+import * as packageTool from '../tools/build-package.mjs';
+import { selectSuites } from '../../../scripts/ci/ci-required-selection.mjs';
 import { installedIntegrity } from '../src/service-ports.mjs';
-import { validatePolicy } from '../src/policy.mjs';
+import { FLEET_TRAIN, installedTrainLanding, validatePolicy } from '../src/policy.mjs';
 import { canonicalJson, sha256 } from '../src/canonical.mjs';
 import { nodeProfileSha256 } from '../src/node-profile.mjs';
 import { tempRoot } from './helpers.mjs';
@@ -20,6 +22,8 @@ const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const CI = path.resolve(HERE, '..', 'actions-hosted-migration', 'independent-ci-v1');
 const REPO_ROOT = path.resolve(HERE, '..', '..');
 const BRIDGE = 'work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v4';
+// 续期合同只有服务端这一份（D2c 裁定 B1）：包构建时取它，常驻树里没有副本。
+const SERVER_CONTRACT = 'apps/clued-cloud/worker/ci-connection-renew.contract.json';
 const BRIDGE_FILES = ['boundary.mjs', 'formal-spool-acl.ps1', 'issue-job.mjs', 'linux-worker.mjs', 'mailbox.mjs', 'protocol.mjs', 'relay-public.ps1', 'relay-record.mjs', 'signed-result.mjs', 'windows-issuer.mjs'];
 
 test('the install package is assembled create-only, pins every file and binds policy to both manifests and the record', async t => {
@@ -62,6 +66,20 @@ test('the install package is assembled create-only, pins every file and binds po
   for (const parts of [['src', 'wsl-client.mjs'], ['windows', 'wsl-client.ps1']]) {
     assert.ok(pkg.files.some(f => f.target === ['resident', r.residentManifestSha256, ...parts].join('\\')), 'the runtime and its WSL trust validator belong to the same pinned generation');
   }
+  const brokerSource = pkg.files.find(f => f.target === 'bin\\SwapBroker.cs');
+  const installedManifest = JSON.parse(await fs.readFile(path.join(out, 'config', 'resident-installed-manifest.json')));
+  const policyFilePath='windows/ci-connection-renew.contract.json';
+  const installedPolicy=installedManifest.files.filter(f=>f.path===policyFilePath);
+  assert.equal(installedPolicy.length, 1, '续期合同在 Broker 所属代次的清单里有且只有一行');
+  const copy=await fs.readFile(path.join(out,'resident',policyFilePath));
+  assert.equal(sha256(copy),installedPolicy[0].sha256);
+  assert.deepEqual(copy,await fs.readFile(path.join(REPO_ROOT,...SERVER_CONTRACT.split('/'))), '包内合同字节等于服务端文件');
+  assert.equal(pkg.files.filter(f=>f.target===['resident',r.residentManifestSha256,'windows','ci-connection-renew.contract.json'].join('\\')).length, 1);
+  await assert.rejects(fs.access(path.join(HERE,...policyFilePath.split('/'))), '常驻树里不存第二份续期合同');
+  const compiledSource = installedManifest.files.find(f => f.path === 'windows/SwapBroker.cs');
+  assert.equal(brokerSource.sha256, compiledSource.sha256);
+  assert.equal(compiledSource.sha256, sha256(await fs.readFile(path.join(HERE, 'windows/SwapBroker.cs'))));
+  assert.ok(!installedManifest.files.some(f => f.path.endsWith('/replace-ci-token.ps1')));
   // S5/S12: the Source sits under the record's CI Source manifest hash; the record is admin-only in record\
   assert.ok(pkg.files.some(f => f.target === ['source', r.ciSourceManifestSha256, ...sourceFiles[0].split('/')].join('\\')));
   for (const n of ['installation.json', 'acceptance.json', 'source-manifest.json', 'signers.json', 'record-manifest.json']) assert.ok(pkg.files.some(f => f.target === `record\\${n}`), n);
@@ -116,23 +134,29 @@ async function inputs(t) {
 // DESIGN §41.9 step 4: the train mode is one fleet value. The generic upgrade hands each node's installed policy back to build-package
 // unchanged (rollout/fleet/install.mjs#configInputsFor), so the mode a node was first installed with stayed for good (2026-11-14:
 // turing ACTIVE on shadow, desk-w-591 STANDBY on on, one Source). Every /8+ package carries the fleet's train instead.
-test('package: every /8+ policy gets the fleet train (on, nonFrontRuns, audit), whatever the installed node carried; /7 is left alone', async t => {
+test('package: every /8+ policy gets the fleet train (on, nonFrontRuns, audit, push landing, batchMax 1), whatever the installed node carried; /7 is left alone', async t => {
   const i = await inputs(t);
   const v10 = JSON.parse(await fs.readFile(path.join(HERE, 'config', 'policy.v10.example.json'), 'utf8'));
   Object.assign(v10, { node: i.policyInput.node, nodeProfileSha256: i.policyInput.nodeProfileSha256 });
   v10.companion.userSid = i.policyInput.companion.userSid; v10.linux.distribution = i.policyInput.linux.distribution;
   const built = [];
   for (const [name, train] of [['shadow', { ...v10.train, enabled: 'shadow' }], ['on-other-tuning', { ...v10.train, enabled: 'on', nonFrontRuns: false, maintenanceEveryMs: 1_200_000 }],
-    ['off', { ...v10.train, enabled: 'off', sweep: 'gate' }]]) {
+    ['off', { ...v10.train, enabled: 'off', sweep: 'gate' }], ['push-batch', { ...v10.train, sweep: 'audit', landing: 'push', batchMax: 3 }]]) {
     const policyFile = path.join(i.root, `policy-${name}.json`), out = path.join(i.root, `pkg-${name}`);
     await fs.writeFile(policyFile, JSON.stringify({ ...v10, train }));
     await buildPackage({ out, policyFile, companionFile: i.companionFile, nodeExe: i.node, recordDir: i.record });
     built.push(JSON.parse(await fs.readFile(path.join(out, 'config', 'policy.json'), 'utf8')).train);
   }
   assert.deepEqual(built[0], { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 600_000, maintenanceMaxPerDay: 200, slotHardCapMinutes: 120,
-    frontBatchBudgetMs: 3_600_000, sweepFreshMs: 900_000, fullSweepMaxMs: 21_600_000, sweep: 'audit' });
-  assert.deepEqual(built[1], built[0]);
-  assert.deepEqual(built[2], built[0]);
+    frontBatchBudgetMs: 3_600_000, sweepFreshMs: 900_000, fullSweepMaxMs: 21_600_000, sweep: 'audit', landing: 'push' });
+  // ADR 0018 §8.7: push with one PR per batch; batchMax stays out of FLEET_TRAIN, so 1 comes from its one default (trainBatchMax)
+  assert.equal(FLEET_TRAIN.landing, 'push');
+  assert.equal(Object.hasOwn(FLEET_TRAIN, 'batchMax'), false, 'FLEET_TRAIN carries no batchMax: the default 1');
+  for (const train of built) {
+    assert.deepEqual(train, built[0]);
+    assert.equal(Object.hasOwn(train, 'batchMax'), false);
+    assert.deepEqual(installedTrainLanding({ train }), { landing: 'push', batchMax: 1 });
+  }
   // a /7 policy cannot carry 'on' (POLICY_TRAIN_ON_NOT_SUPPORTED): its train goes through as it was
   const out7 = path.join(i.root, 'pkg-v7');
   await buildPackage({ out: out7, policyFile: i.policyFile, companionFile: i.companionFile, nodeExe: i.node, recordDir: i.record });
@@ -240,6 +264,50 @@ test('package /4 for a fresh install: the upgrader copy, host source, node and c
   const badCfg = path.join(i.root, 'bad-upgrader.json');
   await fs.writeFile(badCfg, JSON.stringify({ contract: UPGRADER_CONFIG_CONTRACT, nodeProfileSha256: 'd'.repeat(64) }));
   await assert.rejects(buildPackage({ out: path.join(i.root, 'x4'), policyFile: i.policyFile, companionFile: i.companionFile, nodeExe: i.node, recordDir: i.record, freshInstall: true, upgraderConfigFile: badCfg }), { code: 'PACKAGE_UPGRADER_CONFIG_REFUSED' });
+});
+
+// D2c 裁定 B1：续期合同的单一来源在服务端，常驻树里的同名合同会导致构建被拒。
+// 续期合同与两个自拉模块按 RESIDENT_EXTERNAL 的顺序追加，三处来源的变更均选中节点套件。
+test('常驻包按顺序追加外部条目，变更来源即选中节点套件，重复续期合同被拒', async t => {
+  const external = [
+    { path: 'windows/ci-connection-renew.contract.json', source: SERVER_CONTRACT },
+    { path: 'rollout/fleet/fetch.mjs', source: 'work/independent-ci-resident-v1/rollout/fleet/fetch.mjs' },
+    { path: 'rollout/fleet/tar.mjs', source: 'work/independent-ci-resident-v1/rollout/fleet/tar.mjs' },
+  ];
+  assert.deepEqual(packageTool.RESIDENT_EXTERNAL, external);
+  for (const e of packageTool.RESIDENT_EXTERNAL) assert.ok(selectSuites('ci-suites', [e.source]).suites.includes('resident-node'), e.source);
+  const i = await inputs(t);
+  // 与通用包冻结树相同的布局：仓库相对路径，节点上用树里的 build-package.mjs 组包。
+  const tree = path.join(i.root, 'tree');
+  const res = path.join(tree, 'work', 'independent-ci-resident-v1');
+  for (const d of ['src', 'tools', 'windows', 'linux', 'upgrader']) await fs.cp(path.join(HERE, d), path.join(res, d), { recursive: true });
+  const server = path.join(tree, ...SERVER_CONTRACT.split('/'));
+  const externalRows = [];
+  for (const e of external) {
+    const source = e.source.split('/');
+    const dest = path.join(tree, ...source);
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.copyFile(path.join(REPO_ROOT, ...source), dest);
+    const bytes = await fs.readFile(dest);
+    externalRows.push({ path: e.path, sha256: sha256(bytes), bytes: bytes.length });
+  }
+  const copied = await import(pathToFileURL(path.join(res, 'tools', 'build-package.mjs')).href);
+  const build = name => copied.buildPackage({ out: path.join(i.root, name), policyFile: i.policyFile, companionFile: i.companionFile, nodeExe: i.node, recordDir: i.record });
+  const built = await build('pkg-tree');
+  const manifest = JSON.parse(await fs.readFile(path.join(i.root, 'pkg-tree', 'config', 'resident-installed-manifest.json'), 'utf8'));
+  const rows = manifest.files.filter(f => f.path === 'windows/ci-connection-renew.contract.json');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sha256, sha256(await fs.readFile(server)), '树里的服务端文件就是包内合同');
+  assert.deepEqual(manifest.files.slice(-3), externalRows, '三条外部条目按表中顺序追加');
+  assert.match(built.residentManifestSha256, /^[0-9a-f]{64}$/);
+  await fs.copyFile(server, path.join(res, 'windows', 'ci-connection-renew.contract.json'));
+  await assert.rejects(build('pkg-duplicate'), { code: 'PACKAGE_RESIDENT_DUPLICATE' });
+});
+
+test('升级器副本与第 19、20 代节点已安装的冻结通道一致', async () => {
+  const { manifestSha256 } = await upgraderCopy();
+  // 改这个值等于改冻结通道，节点只能重装，必须走规划。
+  assert.equal(manifestSha256, '5e3589e46e647836053bc6cbbba270d3495204393edf7c46159dfe3c173669c7');
 });
 
 test('the upgrader copy follows relative imports only inside src/ and upgrader/src/', async t => {

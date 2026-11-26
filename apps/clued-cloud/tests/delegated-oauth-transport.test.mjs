@@ -100,6 +100,7 @@ function fixture({ dualOrigin = false } = {}) {
       return Response.json(binding ? { ...binding, active: binding.active && Date.parse(binding.expires_at) > Date.now() } : { active: false });
     }
     if (name === 'clued_record_list') return Response.json({ status: 'ok', records: [] });
+    if (name === 'clued_mcp_append_event') return Response.json({ status: 'committed' });
     if (name === 'clued_authorization_manage_v12') return Response.json(nativeManagement.response, { status: nativeManagement.status });
     if (name === 'clued_storage_jobs_v1') {
       if (!bindings.get(body.p_token_hash)?.active || !storageGrants.has(body.p_token_hash)) {
@@ -148,8 +149,8 @@ async function approve(f, clientId, flow, days = 1, requestOrigin = origin, extr
   assert.equal(token.status, 200, await token.clone().text());
   return await token.json();
 }
-const call = (token, name) => ({ method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
-  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: { record_type: 'state' } } }) });
+const call = (token, name, args = { record_type: 'state' }) => ({ method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
 
 test('consent forwards independent future policies and exact current environment actions without rewriting the selection', async () => {
   // The controlled DB only checks HTTP wiring here; the PostgreSQL suite proves eligibility and enforcement.
@@ -752,11 +753,16 @@ test('refresh token lifetime follows the chosen authorization lifetime, up to 36
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test('OAuth MCP forwards the Worker execution context to the independent projection Builder', async () => {
+test('OAuth MCP wakes the independent projection Builder only after a successful write', async () => {
   const f = fixture(); try {
     f.env.CLUED_PROJECTION_BUILDER_TOKEN = `clued_bnd_${'p'.repeat(43)}`;
     const id = await client(f); const token = await approve(f, id, await begin(f, id));
     assert.equal((await f.run('/mcp', call(token.access_token, 'clued_record_list'))).status, 200);
+    await Promise.all(f.background);
+    assert.equal(f.calls.filter(c => c.name === 'clued_mcp_projection_refresh_claim').length, 0);
+    const response = await f.run('/mcp', call(token.access_token, 'clued_append_event', { context_key: 'global', event_type: 'action' }));
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).result.isError, false);
     await Promise.all(f.background);
     const claims = f.calls.filter(c => c.name === 'clued_mcp_projection_refresh_claim');
     assert.equal(claims.length, 1);

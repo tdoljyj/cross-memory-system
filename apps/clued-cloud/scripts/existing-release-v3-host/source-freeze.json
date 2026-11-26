@@ -1,13 +1,13 @@
 {
   "contract": "clued.existing-release-v3-host-source-freeze/1",
-  "revision": 7,
+  "revision": 8,
   "status": "AUTHOR_CHECKED_DISABLED_CANDIDATE_NOT_QUALIFIED_OR_INSTALLED",
-  "predecessorSourceFreezeSha256": "e28ed179837a91ff88e3a3b979d93c23abed8c73ec01e552fa5bf407ba9f4534",
-  "packageManifestSha256": "c9b1a43105bdfcf8631e1abeec0c3552a56797bb259f3bccd767899953bacc8c",
+  "predecessorSourceFreezeSha256": "75e8840f76f9a8e6a795b158107d7cce795bd592e9f01e3147722f5ed4801b2f",
+  "packageManifestSha256": "39705672a485658219ab6b9d7d96f2e4309d1e854e91cbc84d2a24bd7ee4f9d3",
   "sourceFiles": {
     "README.md": {
-      "bytes": 17399,
-      "sha256": "64c2caca0e14d2007e2a0920fc0b711fd934feb6752e5560c5f8f416bfef6384"
+      "bytes": 17871,
+      "sha256": "0e23c5c7aee503f5a98b1f4bef3ec0bb01158e70c97930286d89e571bc2a69ea"
     },
     "build-files.template.json": {
       "bytes": 101,
@@ -34,16 +34,16 @@
       "sha256": "d4267a1d5bd97808be6b2d002d29249d685e4a03268e16ba75c1a7a9394e8a37"
     },
     "offline-checks-v7.mjs": {
-      "bytes": 7821,
-      "sha256": "d081d21835db9ff3de6a3e4df0d0417dd98e39038d82bad15699719cf9447169"
+      "bytes": 8317,
+      "sha256": "50dd2a9a714387b234138c2f3ab45cd95929b80181c52e6ec95972bb754cbd57"
     },
     "offline-source-checks.json": {
-      "bytes": 1078,
-      "sha256": "1651d571dc7d9a72eba916efd620c13dfc708e001b8c82c7260fa3c2a998479b"
+      "bytes": 1055,
+      "sha256": "a22d94f67e54515fa49e345a9904fd60d8ee7974b24d331a5d342daf81caf0a0"
     },
     "package-manifest.json": {
-      "bytes": 1960,
-      "sha256": "c9b1a43105bdfcf8631e1abeec0c3552a56797bb259f3bccd767899953bacc8c"
+      "bytes": 1811,
+      "sha256": "39705672a485658219ab6b9d7d96f2e4309d1e854e91cbc84d2a24bd7ee4f9d3"
     },
     "payload/release/existing-release-entry-v1/fixed-currentness-ports.mjs": {
       "bytes": 5610,
@@ -54,12 +54,12 @@
       "sha256": "5199b7aa04c738224a1f8b90fe0c85cb8afecb18e7e6d9f47930e97c62a4749e"
     },
     "payload/release/existing-release-entry-v1/v3-host/release-once.mjs": {
-      "bytes": 8685,
-      "sha256": "c3e7dff762266b8befa57a780761d8a30159233937c6c581d14a25ed14181817"
+      "bytes": 8322,
+      "sha256": "a82ed5d4c874b0067895bfb9822180fe797eda3d28803b62f05385dbdbc47336"
     },
     "payload/release/existing-release-entry-v1/v3/existing-stages.mjs": {
-      "bytes": 20403,
-      "sha256": "eb4f26f876fb22c692f05c528ec13a718bf26f89f3c75bab0911fb3321f33d85"
+      "bytes": 20467,
+      "sha256": "c8ee412f2e47cf3b7d5085f2ed3a0987aea9e1e50fea20cb9785221a4b9e315e"
     },
     "payload/release/linux-process-manager.mjs": {
       "bytes": 28776,
@@ -88,6 +88,14 @@
     "v6-to-v7-executable.patch": {
       "bytes": 8284,
       "sha256": "82b44d099e3510e7d3630daa090482324f5e20da86c6578343c85a08fa209f73"
+    },
+    "prepare-v8.mjs": {
+      "bytes": 3742,
+      "sha256": "1e6fcde8c07389ad31910e4d6c254c8cd3f3e218b44854f33b64807ebd91740d"
+    },
+    "v7-to-v8-executable.patch": {
+      "bytes": 4376,
+      "sha256": "ce5e71a6d6f18ab1e09936ba5158eba7ccbfbc5f457ad9084db0fd982b5d875a"
     }
   }
 }
