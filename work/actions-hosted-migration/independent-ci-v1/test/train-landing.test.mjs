@@ -388,7 +388,7 @@ function sharedCommand(w, protocolVersion = TRAIN_PROTOCOL_VERSION) {
       source_manifest_sha256: w.batch.sourceSha256, node_id: 'fixture-node', binding_generation: 1 };
     let result;
     switch (operation) {
-      case 'read_batch': result = w.batch; break;
+      case 'read_batch': result = await w.trainV2.readBatch(subject); break;
       case 'atomic_landing_qualified': result = await w.trainV2.atomicLandingQualified(subject); break;
       case 'read_rule_bypass': result = await w.trainV2.readRuleBypass(subject); break;
       case 'verify_member': result = await w.trainV2.verifyMember(subject); break;

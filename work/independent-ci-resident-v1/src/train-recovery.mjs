@@ -5,6 +5,7 @@ import path from 'node:path';
 import { appJwt } from '../../../scripts/runner/clued-runner-job-started.mjs';
 
 const SHA = /^[a-f0-9]{40}$/;
+const UUID = /^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const STAGING = 'clued-train/staging';
 const TRAIN_ACTOR = 'clued-ci-checks-turing-20261018[bot]';
 const WORKFLOWS = new Set(['.github/workflows/clued-required-tests.yml', '.github/workflows/clued-required-tests-windows.yml']);
@@ -13,7 +14,7 @@ const ACTOR = 'CLUED_TRAIN_REPAIR_ACTOR_ID';
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const unsent = why => ({ outcome: 'unsent', why });
 
-export function createTrainRecoveryPort({ repository, appId, keyFile, fetchImpl = globalThis.fetch, readKey = readFile, now = Date.now }) {
+export function createTrainRecoveryPort({ repository, appId, keyFile, authorize, fetchImpl = globalThis.fetch, readKey = readFile, now = Date.now }) {
   const id = Number(appId);
   const configured = /^[\w.-]+\/[\w.-]+$/.test(repository ?? '') && positive(id)
     && ![5368905, 5164952, 5365273].includes(id) && typeof keyFile === 'string' && path.isAbsolute(keyFile);
@@ -33,10 +34,10 @@ export function createTrainRecoveryPort({ repository, appId, keyFile, fetchImpl 
   }
 
   return async ({ runId, testSha, attempt, read }) => {
-    if (!configured || !positive(runId) || !SHA.test(testSha ?? '') || ![1, 2].includes(attempt))
+    if (!configured || typeof authorize !== 'function' || !positive(runId) || !SHA.test(testSha ?? '') || ![1, 2].includes(attempt))
       return unsent('列车 v2 恢复 App 或运行标识未就绪');
     const route = '/actions/runs/' + runId;
-    let token;
+    let token, actorId;
     try {
       const jwt = appJwt(id, await readKey(keyFile, 'utf8'), Math.floor(now() / 1000));
       const app = await json('/app', jwt);
@@ -66,12 +67,19 @@ export function createTrainRecoveryPort({ repository, appId, keyFile, fetchImpl 
         || run.head_branch !== STAGING || run.actor?.login !== TRAIN_ACTOR || !WORKFLOWS.has(run.path)
         || run.status !== 'completed' || ref?.ref !== 'refs/heads/' + STAGING || ref.object?.sha !== testSha)
         return unsent('列车 v2 恢复身份、模式或原运行已变化');
+      actorId = actor.id;
     } catch {
       return unsent('列车 v2 恢复身份或原运行无法核对');
     }
 
-    // A lost reply is ambiguous. The caller's preceding durable intent
-    // prevents another POST for the same run and target attempt.
+    // A permit is single-use across all nodes. An ambiguous permit reply
+    // leaves the shared record for read-back and never reaches GitHub here.
+    try {
+      const permit = await authorize({ runId, testSha, attempt: attempt + 1, actorId });
+      if (permit?.status !== 'committed' || permit.state !== 'sent' || permit.send_authorized !== true
+        || permit.runId !== runId || permit.attempt !== attempt + 1 || permit.actorId !== actorId
+        || !UUID.test(permit.receipt_id ?? '')) return unsent('共享账本没有确认本次恢复发送权');
+    } catch { return unsent('共享账本恢复发送权未读回'); }
     try {
       const reply = await request(repoPath + route + '/rerun', token, undefined, 'POST');
       if (reply.status === 201) return { outcome: 'sent' };

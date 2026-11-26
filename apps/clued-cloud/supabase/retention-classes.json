@@ -231,6 +231,14 @@
       "class": "state",
       "reason": "在途工作（租约、队列、暂存、令牌）：每件在途的事一行，完成或过期后更新或删除"
     },
+    "clued_private.ci_train_required_recovery_v2": {
+      "class": "ledger",
+      "reason": "按批和运行保留恢复预算、尝试与读回收据，防止跨节点重复发送"
+    },
+    "clued_private.ci_train_required_runs_v2": {
+      "class": "ledger",
+      "reason": "按已暂存提交、检查名、平台和策略保留原运行与尝试，供跨节点核验"
+    },
     "clued_private.ci_train_work_v2": {
       "class": "ledger",
       "reason": "每个精确 head 和动作保留一行，已结清工作键及回执用于跨节点重放去重"

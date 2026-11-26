@@ -276,7 +276,13 @@ test('train v2: the real rerun port sends an admitted setup repair from the bot,
   };
   let posts = 0;
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  let grant = false;
   const recovery = createTrainRecoveryPort({ repository: 'o/r', appId: '98765', keyFile: path.resolve('fixture-key'),
+    authorize: async subject => {
+      assert.deepEqual(subject, { runId: 555, testSha: SHA, attempt: 2, actorId: REPAIR_ACTOR.id });
+      return { ...subject, status: 'committed', state: 'sent', send_authorized: grant,
+        receipt_id: '00000000-0000-0000-0000-000000000001' };
+    },
     now: () => Date.parse(RUN_STARTED), readKey: async () => privateKey,
     fetchImpl: async (url, options) => {
       const pathname = new URL(url).pathname;
@@ -308,6 +314,9 @@ test('train v2: the real rerun port sends an admitted setup repair from the bot,
   script[JOBS(1)] = jobsOf(gateJob({ run_attempt: 1, head_sha: SHA, conclusion: 'failure',
     steps: [{ name: 'Set up job', conclusion: 'failure' }] }),
     heavyJob({ run_attempt: 1, head_sha: SHA, status: 'completed', conclusion: 'skipped' }));
+  assert.equal((await gh.rerun(555, { testSha: SHA, attempt: 1 })).outcome, 'unsent');
+  assert.equal(posts, 0);
+  grant = true;
   assert.deepEqual(await gh.rerun(555, { testSha: SHA, attempt: 1 }), { outcome: 'sent' });
   assert.equal(posts, 1);
   const attempt = { GITHUB_RUN_ATTEMPT: '2' };

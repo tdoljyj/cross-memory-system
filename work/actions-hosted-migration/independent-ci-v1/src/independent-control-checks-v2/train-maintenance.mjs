@@ -64,7 +64,8 @@ import { ScanProgress } from './train-scan-progress.mjs';
 import { layerOf, loadPolicy } from '../../../../../scripts/ci/merge-admission-policy.mjs';
 import { resolvePRTaskBinding } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
 import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact, readLandingRoute,
-  invalidateTrainIntent, publishTrainStaging, reconcileTrainIntent, trainMainContains, validTrainMembers, fixTrainMarker, sharedTrainMembers, ABSENT_OID } from './train-landing.mjs';
+  invalidateTrainIntent, publishTrainStaging, reconcileTrainIntent, trainMainContains, validTrainMembers, fixTrainMarker, sharedTrainMembers,
+  TRAIN_STAGING_WORKFLOWS, runsOfRequired, ABSENT_OID } from './train-landing.mjs';
 import { createLandingPort } from './train-landing-port.mjs';
 import { TRAIN_FAILURE, TRAIN_PROTOCOL_VERSION, trainBatchKey, trainEffectKey, trainHeadWorkKey, trainLandingSlotKey } from '../merge-train-v2-contract.mjs';
 import { trainPortsV2 } from './train-mode.mjs';
@@ -333,6 +334,50 @@ async function runSharedTrain({ job, trainV2: train, github, native, landing, tr
   }
 }
 
+// Before evaluating S, register only the uniquely observed original runs and
+// reconcile recovery by reading the authorized actor's new attempt and its jobs.
+async function observeRequiredRuns(batch, github, write) {
+  const { testSha, checksPolicyVersion: policyVersion } = batch;
+  if (!Array.isArray(batch.requiredRuns) || !Array.isArray(batch.requiredRunRecovery)) return batch;
+  const handle = batchHandle(batch);
+  const { rules } = await readMainRules(github, APP_ID);
+  const required = new Set(rules.filter(rule => rule.type === 'required_status_checks')
+    .flatMap(rule => rule.parameters.required_status_checks).filter(c => c.integration_id === ACTIONS_APP_ID).map(c => c.context));
+  const { complete, checks } = await github.readChecks(testSha);
+  if (!complete || !Array.isArray(checks)) return batch;
+  function observedJob(job) {
+    return required.has(job.name) && runsOfRequired(checks, { context: job.name, pin: ACTIONS_APP_ID }, testSha)
+      .some(check => check.id === job.checkRunId);
+  }
+  for (const repair of batch.requiredRunRecovery) {
+    if (!['sent', 'unknown'].includes(repair.state)) continue;
+    const old = batch.requiredRuns.filter(row => row.runId === repair.runId && row.attempt === repair.attempt - 1);
+    if (!old.length || !Object.hasOwn(TRAIN_STAGING_WORKFLOWS, old[0].platform)) continue;
+    const observed = await github.readTrainRun({ ...repair, testSha, workflow: TRAIN_STAGING_WORKFLOWS[old[0].platform] }).catch(() => null);
+    if (observed?.triggeringActorId !== repair.actorId) continue;
+    const jobs = observed.jobs.filter(job => observedJob(job) && old.some(row => row.checkName === job.name));
+    if (jobs.length !== old.length) continue;
+    await write('required_run_recovery_observe', { ...handle, runId: repair.runId, attempt: repair.attempt, actorId: repair.actorId, testSha,
+      jobs: jobs.map(job => ({ checkName: job.name, checkRunId: job.checkRunId })) });
+  }
+  for (const [platform, workflow] of Object.entries(TRAIN_STAGING_WORKFLOWS)) {
+    const prior = batch.requiredRuns.filter(run => run.platform === platform);
+    if (prior.some(run => run.attempt !== 1) || batch.requiredRunRecovery.some(repair => prior.some(run => run.runId === repair.runId))) continue;
+    const runId = prior[0]?.runId ?? await github.readTrainStagingRun({ testSha, workflow }).catch(() => null);
+    if (!Number.isSafeInteger(runId) || runId < 1) continue;
+    const observed = await github.readTrainRun({ runId, attempt: 1, testSha, workflow }).catch(() => null);
+    if (!Number.isSafeInteger(observed?.actorId) || observed.actorId < 1) continue;
+    for (const job of observed.jobs.filter(observedJob)) {
+      if (prior.some(run => run.checkName === job.name)) continue;
+      await write('required_run_register', { ...handle, run: { testSha, policyVersion, platform, workflow, runId, attempt: 1,
+        actorId: observed.actorId, event: 'push', ref: 'refs/heads/clued-train/staging',
+        checkName: job.name, checkRunId: job.checkRunId, appId: ACTIONS_APP_ID } });
+    }
+  }
+  const result = await write('batch_read', { batchId: batch.batchId });
+  return result?.batchId === batch.batchId && result.generation === batch.generation && result.testSha === testSha ? result : batch;
+}
+
 function sharedTrainRuntime({ transport, batchEffects, admission, github, job, live }) {
   if (transport == null) return transport;
   const command = payload => transport.command({ ...payload, scope: transport.scope.contextKey, repository: job.repo });
@@ -345,6 +390,7 @@ function sharedTrainRuntime({ transport, batchEffects, admission, github, job, l
   };
   return {
     ...batchEffects, protocolVersion: transport.protocolVersion, scope: transport.scope, command,
+    observeRequiredRuns: batch => observeRequiredRuns(batch, github, write),
     async verifyMember({ member, pull, baseSha }) {
       if (typeof batchEffects?.verifyMember === 'function') return batchEffects.verifyMember({ member, pull, baseSha });
       const candidate = makeJobV2({ repo: job.repo, pr: member.pr, headSha: member.headSha,
@@ -425,18 +471,22 @@ async function processSharedBatch({ batch, batchKey, mainSha, train, github, job
     if (batch.state === 'waiting_checks') {
       if (batch.stagingState !== 'settled' || typeof train.inspectBatch !== 'function') return false;
       fx.n++;
-      const result = await train.inspectBatch(batch);
+      const observed = typeof train.observeRequiredRuns === 'function' ? await train.observeRequiredRuns(batch) : batch;
+      if (observed.requiredRunRecovery?.length) return false;
+      const result = await train.inspectBatch(observed);
+      const runEvidence = typeof train.observeRequiredRuns === 'function'
+        ? { requiredRunsSha256: observed.requiredRunsSha256, terminal: result?.terminal } : {};
       if (result?.state !== 'failed' || result.testSha !== batch.testSha || result.policyVersion !== policyVersion || !HASH.test(result.evidenceDigest ?? '')
         || (await github.readBranchHead('main')).sha !== batch.baseSha || !alive()) return result?.state === 'landed';
       if (members.length > 1) {
-        const prefix = await command('batch_bisect', { ...handle, testSha: batch.testSha, evidence_digest: result.evidenceDigest });
+        const prefix = await command('batch_bisect', { ...handle, testSha: batch.testSha, evidence_digest: result.evidenceDigest, ...runEvidence });
         const expected = members.slice(0, Math.ceil(members.length / 2));
         if (prefix?.state === 'forming' && prefix.parentBatchId === batch.batchId
           && prefix.batchId === batchKey(batch.baseSha, expected) && digest(prefix.members) === digest(expected))
           await processSharedBatch({ batch: prefix, batchKey, mainSha, train, github, job, landing, command, policyVersion, clock, live, fx });
       } else {
         await command('batch_cleanup', { ...handle, reason: 'TRAIN_LANDING_CHECK_FAILED', observedBaseSha: mainSha,
-          testSha: batch.testSha, evidence_digest: result.evidenceDigest, hard_cap_minutes: job.slotHardCapMinutes });
+          testSha: batch.testSha, evidence_digest: result.evidenceDigest, hard_cap_minutes: job.slotHardCapMinutes, ...runEvidence });
       }
       return true;
     }

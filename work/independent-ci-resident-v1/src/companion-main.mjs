@@ -324,7 +324,7 @@ export async function companionTrainDispatchPorts({ root, repo, ciSourceManifest
   return { trainProtocolVersion: protocolVersion, dispatchTrainEffect };
 }
 
-export async function main(args = process.argv.slice(2), { dispatchTrainEffect } = {}) {
+export async function main(args = process.argv.slice(2), { dispatchTrainEffect, authorizeTrainRecovery } = {}) {
   const { values } = parseArgs({ args, options: { root: { type: 'string' }, 'config-sha256': { type: 'string' } } });
   check(typeof values.root === 'string' && path.isAbsolute(values.root) && HEX64.test(values['config-sha256'] ?? ''), 'COMPANION_ARGS_REQUIRED');
   const bytes = await fs.readFile(path.join(values.root, 'config', 'companion.json'));
@@ -444,7 +444,7 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect }
   const rerunRunner = new Runner({ env: { ...process.env }, jobHost });
   const rerunner = new AdmissionRerunner({ gh: ghPort({ ghExe: raw.ghExe, repo: raw.repo, nodeName: cfg.node.nodeName, run: (a, o) => rerunRunner.run(a, o),
     trainRecovery: createTrainRecoveryPort({ repository: raw.repo, appId: process.env.CLUED_TRAIN_REPAIR_APP_ID,
-      keyFile: process.env.CLUED_TRAIN_REPAIR_APP_KEY_FILE }) }),
+      keyFile: process.env.CLUED_TRAIN_REPAIR_APP_KEY_FILE, authorize: authorizeTrainRecovery }) }),
     state: await AdmissionRerunState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-admission-rerun.json')),
     clock: Date.now, readStatus: () => readStatus(values.root), pulls: () => (poller.lastPass ? poller.lastPass.pulls : null),
     notify });

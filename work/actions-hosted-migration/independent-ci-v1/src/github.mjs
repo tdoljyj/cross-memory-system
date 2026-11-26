@@ -436,6 +436,16 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: [...packet.paths] };
     },
     async readChecks(headSha) { return inventory(headSha); },
+    async readTrainStagingRun({ testSha, workflow }) {
+      if (!sha.test(testSha) || !TRAIN_WORKFLOWS.has(workflow)) fail('invalid_train_run');
+      const query = new URLSearchParams({ head_sha: testSha, event: 'push', branch: 'clued-train/staging', per_page: '2' });
+      const list = await scoped('/actions/workflows/' + workflow.split('/').at(-1) + '/runs?' + query);
+      if (list?.total_count !== 1 || list.workflow_runs?.length !== 1) fail('train_run_unconfirmed');
+      const run = list.workflow_runs[0];
+      if (run.head_sha !== testSha || run.path !== workflow || !positive(run.id) || run.run_attempt !== 1
+        || run.event !== 'push' || run.head_branch !== 'clued-train/staging') fail('train_run_unconfirmed');
+      return run.id;
+    },
     async readTrainRun({ runId, attempt, testSha, workflow }) {
       if (!positive(runId) || !positive(attempt) || !sha.test(testSha) || !TRAIN_WORKFLOWS.has(workflow))
         fail('invalid_train_run');
@@ -456,8 +466,11 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
         return { checkRunId, name: job.name, status: job.status, conclusion: job.conclusion, steps: Array.isArray(job.steps) ? job.steps : [] };
       });
       if (new Set(jobs.map(job => job.checkRunId)).size !== jobs.length) fail('train_jobs_unconfirmed');
-      if ((await scoped(route))?.run_attempt !== attempt) fail('train_run_unconfirmed');
-      return { jobs };
+      const latest = await scoped(route);
+      if (latest?.run_attempt !== attempt || latest.id !== runId || latest.head_sha !== testSha
+        || latest.actor?.id !== current.actor?.id || latest.triggering_actor?.id !== current.triggering_actor?.id)
+        fail('train_run_unconfirmed');
+      return { jobs, actorId: current.actor?.id, triggeringActorId: current.triggering_actor?.id };
     },
     async sameTrainWorkflow({ workflow, baseSha, testSha }) {
       if (!TRAIN_WORKFLOWS.has(workflow) || !sha.test(baseSha) || !sha.test(testSha)) fail('invalid_train_workflow');

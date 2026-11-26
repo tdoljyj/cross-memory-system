@@ -312,10 +312,10 @@ function checksDecision(required, checks, commitSha, now) {
 
 // A completed Actions check must belong to the shared attempt of this
 // batch. Only the registered, provider-observed job can attest a test red.
-const TRAIN_STAGING_WORKFLOWS = {
+export const TRAIN_STAGING_WORKFLOWS = Object.freeze({
   linux: '.github/workflows/clued-required-tests.yml',
   windows: '.github/workflows/clued-required-tests-windows.yml',
-};
+});
 const workflowForRun = run => run.checkName.startsWith('hosted-')
   ? '.github/workflows/hosted-required.yml' : TRAIN_STAGING_WORKFLOWS[run.platform];
 const TRAIN_TERMINAL_STEP = 'Confirm merge train test failure';

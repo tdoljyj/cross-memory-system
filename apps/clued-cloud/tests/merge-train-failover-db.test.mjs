@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { newCluster } from './pg-cluster-fixture.mjs';
+import { digest as trainDigest } from '../../../work/actions-hosted-migration/independent-ci-v1/src/proof.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
@@ -1400,7 +1401,8 @@ async function trainFixture(t, repository = 'fixture/repository-12345') {
   await admin.query(`update clued_private.ci_quota_counters_v1 set policy=policy||$2::jsonb
     where project_id=$1 and row_kind='pool_policy'`, [project, {
     signature_gateway_active: true,
-    merge_train_v2: { source_manifest_sha256: SRC, source_commit: sha('source'), policy_version: 'fixture-v1', stop_scope: 'none' },
+    merge_train_v2: { source_manifest_sha256: SRC, source_commit: sha('source'), policy_version: 'fixture-v1', stop_scope: 'none',
+      staging_actor_id: 501, recovery_actor_id: 502, admission_mode: 'normal' },
   }]);
   const head = sha('merge-train-v2-head');
   const pr = 1788;
@@ -1707,13 +1709,76 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
     const stage = data(await call(builder, 'staging_publish', { ...handle, observation: { testSha, generationRefOid,
       evidence_digest: digest('staging readback') } }));
     assert.equal(stage.state, 'waiting_checks', JSON.stringify(stage));
+    const firstRunLease = data(await call(builder, 'batch_acquire', { batchId: batch.batchId }));
+    const firstRunHandle = { batchId: batch.batchId, generation: firstRunLease.generation };
+    const runs = [{ checkName: 'ci-suites', platform: 'linux', runId: 811, checkRunId: 921 },
+      { checkName: 'ci-suites-windows', platform: 'windows', runId: 812, checkRunId: 922 }]
+      .map(run => ({ ...run, testSha, policyVersion: 'fixture-v1', attempt: 1, appId: 15368, actorId: 501, event: 'push',
+        ref: 'refs/heads/clued-train/staging',
+        workflow: '.github/workflows/clued-required-tests' + (run.platform === 'windows' ? '-windows' : '') + '.yml' }));
+    const repair = { testSha, runId: runs[0].runId, attempt: 2, actorId: 502 };
+    const runReceipts = new Map();
+    await t.test('片 6：共享运行按 S、平台与策略登记，恢复发送预算只消费一次', async () => {
+      const original = async run => data(await call(builder, 'required_run_register', { ...firstRunHandle, run }));
+      for (const run of runs) {
+        const registered = await original(run);
+        assert.equal(registered.status, 'committed', JSON.stringify(registered));
+        runReceipts.set(run.runId, registered.receipt_id);
+        const replay = await original(run);
+        assert.equal(replay.receipt_id, registered.receipt_id);
+        assert.equal(replay.replayed, true);
+        assert.equal((await original({ ...run, runId: 999 })).error_code, TRAIN_FAILURE.EFFECT_UNKNOWN.native);
+        assert.equal((await original({ ...run, actorId: 999 })).error_code, TRAIN_FAILURE.EFFECT_UNKNOWN.native);
+        assert.equal((await original({ ...run, policyVersion: 'obsolete' })).error_code, TRAIN_FAILURE.EFFECT_UNKNOWN.native);
+      }
+      const projection = data(await call(reader, 'batch_read', { batchId: batch.batchId }));
+      assert.deepEqual(projection.requiredRuns, runs.map(({ testSha, checkName, platform, policyVersion, runId, attempt }) =>
+        ({ testSha, checkName, platform, policyVersion, runId, attempt })));
+      assert.equal(projection.requiredRunsSha256, trainDigest(projection.requiredRuns));
+      const reserve = async patch => data(await call(builder, 'required_run_recovery_reserve', { ...firstRunHandle, ...repair, ...patch }));
+      assert.equal((await reserve({ attempt: 3 })).error_code, TRAIN_FAILURE.EFFECT_UNKNOWN.native);
+      assert.equal((await reserve({ actorId: 501 })).error_code, TRAIN_FAILURE.EFFECT_UNKNOWN.native);
+      assert.equal((await reserve({})).state, 'reserved');
+      const sends = await Promise.all([1, 2].map(async () =>
+        data(await call(builder, 'required_run_recovery_send', { ...firstRunHandle, ...repair }))));
+      assert.equal(sends.filter(send => send.send_authorized === true).length, 1);
+      assert.equal(data(await call(builder, 'required_run_recovery_observe', { ...firstRunHandle, ...repair })).state, 'unknown');
+      const blocked = data(await call(builder, 'landing_prepare', { ...firstRunHandle, generationRefOid,
+        successorRefOid: sha('must not reserve landing'), evidence_digest: digest('old green'),
+        requiredRunsSha256: projection.requiredRunsSha256 }));
+      assert.equal(blocked.error_code, TRAIN_FAILURE.EFFECT_UNKNOWN.native);
+    });
+    await call(builder, 'batch_release', firstRunHandle);
     const resume = data(await call(reader, 'batch_acquire', { batchId: batch.batchId }));
     assert.equal(resume.testSha, testSha);
-    assert.equal(resume.generation, batch.generation+1);
+    assert.equal(resume.generation, firstRunLease.generation+1);
+    const resumeHandle = { batchId: batch.batchId, generation: resume.generation };
+    await t.test('片 6：接手读回同一运行的新尝试，旧代次和错检查不能改账', async () => {
+      assert.equal(resume.requiredRunRecovery[0]?.state, 'unknown');
+      const prior = data(await call(reader, 'required_run_recovery_read', { ...resumeHandle, ...repair }));
+      assert.equal(prior.state, 'unknown');
+      assert.equal(data(await call(reader, 'required_run_recovery_send', { ...resumeHandle, ...repair })).send_authorized, false);
+      const jobs = [{ checkName: 'ci-suites', checkRunId: 923 }];
+      assert.equal(data(await call(builder, 'required_run_recovery_observe', { ...firstRunHandle, ...repair, jobs })).error_code,
+        TRAIN_FAILURE.LEASE_STALE.native);
+      assert.equal(data(await call(reader, 'required_run_recovery_observe', { ...resumeHandle, ...repair,
+        jobs: [{ checkName: 'ci-suites-windows', checkRunId: 923 }] })).error_code, TRAIN_FAILURE.EFFECT_UNKNOWN.native);
+      const observed = data(await call(reader, 'required_run_recovery_observe', { ...resumeHandle, ...repair, jobs }));
+      assert.equal(observed.state, 'settled', JSON.stringify(observed));
+      assert.equal(data(await call(reader, 'required_run_recovery_observe', { ...resumeHandle, ...repair, jobs })).receipt_id, observed.receipt_id);
+      const replay = data(await call(reader, 'required_run_register', { ...resumeHandle, run: runs[0] }));
+      assert.equal(replay.receipt_id, runReceipts.get(runs[0].runId));
+      assert.equal(replay.replayed, true);
+    });
+    const verifiedRuns = data(await call(reader, 'batch_read', { batchId: batch.batchId }));
+    assert.deepEqual(verifiedRuns.requiredRuns.map(run => [run.runId, run.attempt]), [[811, 2], [812, 1]]);
+    assert.deepEqual(verifiedRuns.requiredRunRecovery, []);
+    assert.equal(verifiedRuns.requiredRunsSha256, trainDigest(verifiedRuns.requiredRuns));
+    assert.notEqual(verifiedRuns.requiredRunsSha256, resume.requiredRunsSha256);
     const successorRefOid = sha('landed ref');
     const originalLandingOid = sha('independent landing generation');
     const landing = data(await call(reader, 'landing_prepare', { batchId: batch.batchId, generation: resume.generation, generationRefOid: originalLandingOid, successorRefOid,
-      evidence_digest: digest('required checks on S') }));
+      evidence_digest: digest('required checks on S'), requiredRunsSha256: verifiedRuns.requiredRunsSha256 }));
     assert.equal(landing.state, 'reserved', JSON.stringify(landing));
     assert.deepEqual(landing.intent.members, members);
     assert.equal(data(await call(builder, 'landing_send', { ...handle, effect_key: landing.effect_key })).error_code, TRAIN_FAILURE.LEASE_STALE.native);

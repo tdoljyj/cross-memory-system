@@ -185,6 +185,7 @@ create table clued_private.ci_train_batches_v2 (
   checks_policy_version text,
   parent_batch_id text references clued_private.ci_train_batches_v2(batch_id),
   adoption_receipts jsonb not null default '{}'::jsonb,
+  bisection jsonb,
   staging_state text check (staging_state in ('reserved','sent','unknown','settled')),
   staging_intent jsonb,
   staging_observation jsonb,
@@ -225,12 +226,227 @@ alter table clued_private.ci_train_landing_v2 enable row level security;
 revoke all on clued_private.ci_train_batches_v2,clued_private.ci_train_landing_v2
   from public,anon,authenticated,service_role,clued_worker_gateway;
 
+-- GitHub owns the run and job IDs. The signed node verifies them against the
+-- platform endpoints, then records the exact check/attempt under the batch lock.
+create table clued_private.ci_train_required_runs_v2 (
+  batch_id text not null references clued_private.ci_train_batches_v2(batch_id),
+  test_sha text not null,
+  check_name text collate "C" not null,
+  platform text not null check (platform in ('linux','windows')),
+  policy_version text not null,
+  run_id bigint not null,
+  attempt integer not null check (attempt between 1 and 3),
+  workflow text not null,
+  actor_id bigint not null,
+  original_check_run_id bigint not null,
+  check_run_id bigint not null,
+  receipt_id uuid not null references public.clued_audit_receipts(id),
+  primary key (batch_id,test_sha,check_name,platform,policy_version),
+  unique (batch_id,test_sha,check_name,policy_version),
+  unique (batch_id,check_run_id)
+);
+create table clued_private.ci_train_required_recovery_v2 (
+  batch_id text not null references clued_private.ci_train_batches_v2(batch_id),
+  run_id bigint not null,
+  attempt integer not null check (attempt between 2 and 3),
+  actor_id bigint not null,
+  generation bigint not null,
+  state text not null check (state in ('reserved','sent','unknown','settled')),
+  receipt_id uuid not null references public.clued_audit_receipts(id),
+  primary key (batch_id,run_id,attempt)
+);
+alter table clued_private.ci_train_required_runs_v2 enable row level security;
+alter table clued_private.ci_train_required_recovery_v2 enable row level security;
+revoke all on clued_private.ci_train_required_runs_v2,clued_private.ci_train_required_recovery_v2
+  from public,anon,authenticated,service_role,clued_worker_gateway;
+
+create function clued_private.ci_train_required_runs_view_v2(batch clued_private.ci_train_batches_v2) returns jsonb
+language sql stable set search_path='' as $$
+  select coalesce(jsonb_agg(jsonb_build_object('testSha',r.test_sha,'checkName',r.check_name,
+    'platform',r.platform,'policyVersion',r.policy_version,'runId',r.run_id,'attempt',r.attempt)
+    order by r.check_name,r.platform),'[]') from clued_private.ci_train_required_runs_v2 r
+    where r.batch_id=batch.batch_id and r.test_sha=batch.test_sha and r.policy_version=batch.policy_version
+$$;
+
+create function clued_private.ci_train_runs_sha_v2(batch clued_private.ci_train_batches_v2) returns text
+language sql stable set search_path='' as $$
+  select encode(sha256(convert_to('['||coalesce(string_agg(
+    '{"attempt":'||(r->'attempt')::text||',"checkName":'||(r->'checkName')::text
+    ||',"platform":'||(r->'platform')::text||',"policyVersion":'||(r->'policyVersion')::text
+    ||',"runId":'||(r->'runId')::text||',"testSha":'||(r->'testSha')::text||'}',',' order by i),'')||']','UTF8')),'hex')
+  from jsonb_array_elements(clued_private.ci_train_required_runs_view_v2(batch)) with ordinality a(r,i)
+$$;
+
+create function clued_private.ci_train_run_evidence_v2(batch clued_private.ci_train_batches_v2,payload jsonb) returns boolean
+language sql stable set search_path='' as $$
+  select payload->>'requiredRunsSha256'=clued_private.ci_train_runs_sha_v2(batch)
+    and (select count(distinct platform)=2 from clued_private.ci_train_required_runs_v2 r where r.batch_id=batch.batch_id)
+    and not exists(select 1 from clued_private.ci_train_required_recovery_v2 r
+      where r.batch_id=batch.batch_id and r.state<>'settled')
+$$;
+
+create function clued_private.ci_train_terminal_run_v2(batch clued_private.ci_train_batches_v2,terminal jsonb) returns boolean
+language sql stable set search_path='' as $$
+  select terminal->'appId'='15368'::jsonb and exists(
+    select 1 from clued_private.ci_train_required_runs_v2 r where r.batch_id=batch.batch_id
+      and terminal-array['appId','checkRunId']=jsonb_build_object('testSha',r.test_sha,'checkName',r.check_name,
+        'platform',r.platform,'policyVersion',r.policy_version,'runId',r.run_id,'attempt',r.attempt)
+      and terminal->'checkRunId'=to_jsonb(r.check_run_id))
+$$;
+
+-- The caller already holds the batch row, current node/binding/key and live
+-- member checks. Registration/recovery cannot race a landing or a split.
+create function clued_private.ci_train_required_run_command_v2(n clued_private.ci_nodes_v1,
+  batch clued_private.ci_train_batches_v2,cfg jsonb,payload jsonb) returns jsonb
+language plpgsql volatile set search_path='' as $$
+declare
+  op text:=payload->>'action'; run jsonb:=payload->'run'; job jsonb; receipt uuid;
+  row_run clued_private.ci_train_required_runs_v2;
+  repair clued_private.ci_train_required_recovery_v2;
+  observed_run_id bigint; next_attempt integer; actor bigint; send_authorized boolean:=false;
+  check_id bigint; run_workflow text; run_platform text;
+begin
+  if batch.state<>'waiting_checks' or batch.staging_state is distinct from 'settled'
+    or not n.publisher_approved or not n.hardening_observed
+    or exists(select 1 from clued_private.ci_train_landing_v2 l
+      where l.batch_id=batch.batch_id and l.state in ('reserved','sent','unknown','settled')) then
+    return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+  if op='required_run_register' then
+    perform clued_private.ci_input_v1(run,
+      array['testSha','checkName','platform','policyVersion','runId','attempt','workflow','actorId','event','ref','appId','checkRunId'],
+      array['testSha','checkName','platform','policyVersion','runId','attempt','workflow','actorId','event','ref','appId','checkRunId'],4096);
+    run_platform:=run->>'platform'; run_workflow:=run->>'workflow';
+    if run->>'testSha' is distinct from batch.test_sha or run->>'policyVersion' is distinct from batch.policy_version
+      or run->'attempt' is distinct from '1'::jsonb or run->'appId' is distinct from '15368'::jsonb
+      or run->>'event' is distinct from 'push' or run->>'ref' is distinct from 'refs/heads/clued-train/staging'
+      or run->>'actorId' is distinct from cfg->>'staging_actor_id'
+      or run_workflow is distinct from (case run_platform when 'linux' then '.github/workflows/clued-required-tests.yml'
+        when 'windows' then '.github/workflows/clued-required-tests-windows.yml' end)
+      or coalesce(run_platform,'') not in ('linux','windows')
+      or jsonb_typeof(run->'checkName') is distinct from 'string'
+      or char_length(run->>'checkName') not between 1 and 200
+      or exists(select 1 from unnest(array['runId','actorId','checkRunId']) f
+        where jsonb_typeof(run->f) is distinct from 'number' or coalesce(run->>f,'') !~ '^[1-9][0-9]{0,14}$') then
+      return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+    observed_run_id:=(run->>'runId')::bigint;
+    check_id:=(run->>'checkRunId')::bigint;
+    select * into row_run from clued_private.ci_train_required_runs_v2 r
+      where r.batch_id=batch.batch_id and r.check_name=run->>'checkName';
+    if row_run.batch_id is not null then
+      if row_run.run_id<>observed_run_id or row_run.platform<>run_platform or row_run.actor_id<>(run->>'actorId')::bigint
+        or row_run.original_check_run_id<>check_id then
+        return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+      return jsonb_build_object('status','committed','replayed',true,'receipt_id',row_run.receipt_id);
+    end if;
+    if exists(select 1 from clued_private.ci_train_required_runs_v2 r where r.batch_id=batch.batch_id
+      and (r.check_run_id=check_id or r.platform=run_platform and (r.run_id<>observed_run_id or r.attempt<>1)
+        or r.platform<>run_platform and r.run_id=observed_run_id))
+      or exists(select 1 from clued_private.ci_train_required_recovery_v2 r
+        where r.batch_id=batch.batch_id and r.run_id=observed_run_id) then
+      return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+    receipt:=clued_private.ci_receipt_v1(n.user_id,n.project_id,'ci_train_required_run_register',batch.batch_id,
+      run||jsonb_build_object('generation',batch.generation));
+    insert into clued_private.ci_train_required_runs_v2
+      values(batch.batch_id,batch.test_sha,run->>'checkName',run_platform,batch.policy_version,observed_run_id,
+        1,run_workflow,(run->>'actorId')::bigint,check_id,check_id,receipt);
+    return jsonb_build_object('status','committed','receipt_id',receipt);
+  end if;
+
+  if exists(select 1 from unnest(array['runId','attempt','actorId']) f
+        where jsonb_typeof(payload->f) is distinct from 'number' or coalesce(payload->>f,'') !~ '^[1-9][0-9]{0,14}$')
+    or payload->>'attempt' not in ('2','3') or payload->>'testSha' is distinct from batch.test_sha
+    or payload->>'actorId' is distinct from cfg->>'recovery_actor_id'
+    or coalesce(cfg->>'admission_mode','') not in ('normal','efficiency') then
+    return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+  observed_run_id:=(payload->>'runId')::bigint; next_attempt:=(payload->>'attempt')::integer; actor:=(payload->>'actorId')::bigint;
+  select * into repair from clued_private.ci_train_required_recovery_v2 r
+    where r.batch_id=batch.batch_id and r.run_id=observed_run_id and r.attempt=next_attempt;
+  if repair.batch_id is not null and repair.actor_id<>actor then
+    return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+  if op='required_run_recovery_read' then
+    if repair.batch_id is null then return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+  elsif op='required_run_recovery_reserve' and repair.batch_id is not null
+    or op='required_run_recovery_observe' and repair.state='settled' then
+    return jsonb_build_object('status','committed','state',repair.state,'receipt_id',repair.receipt_id,'replayed',true);
+  else
+    if not exists(select 1 from clued_private.ci_train_required_runs_v2 r where r.batch_id=batch.batch_id
+      and r.run_id=observed_run_id and r.attempt=next_attempt-1) then
+      return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+    if op='required_run_recovery_reserve' then
+      if exists(select 1 from clued_private.ci_train_required_recovery_v2 r where r.batch_id=batch.batch_id
+        and r.run_id=observed_run_id and r.state<>'settled') then
+        return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+      receipt:=clued_private.ci_receipt_v1(n.user_id,n.project_id,'ci_train_required_run_recovery_reserve',batch.batch_id,payload);
+      insert into clued_private.ci_train_required_recovery_v2
+        values(batch.batch_id,observed_run_id,next_attempt,actor,batch.generation,'reserved',receipt) returning * into repair;
+    elsif repair.batch_id is null then
+      return clued_private.ci_train_reject_v2('ci_effect_unknown');
+    elsif op='required_run_recovery_send' then
+      if repair.state='reserved' then
+        receipt:=clued_private.ci_receipt_v1(n.user_id,n.project_id,'ci_train_required_run_recovery_send',batch.batch_id,payload);
+        update clued_private.ci_train_required_recovery_v2 r set state='sent',generation=batch.generation,receipt_id=receipt
+          where r.batch_id=batch.batch_id and r.run_id=repair.run_id and r.attempt=next_attempt returning * into repair;
+        send_authorized:=true;
+      end if;
+    elsif repair.state in ('sent','unknown') then
+      if payload->'jobs' is null then
+        if repair.state='sent' then
+          receipt:=clued_private.ci_receipt_v1(n.user_id,n.project_id,'ci_train_required_run_recovery_unknown',batch.batch_id,payload);
+          update clued_private.ci_train_required_recovery_v2 r set state='unknown',receipt_id=receipt
+            where r.batch_id=batch.batch_id and r.run_id=repair.run_id and r.attempt=next_attempt returning * into repair;
+        end if;
+      else
+        if jsonb_typeof(payload->'jobs') is distinct from 'array'
+          or jsonb_array_length(payload->'jobs')<>(select count(*) from clued_private.ci_train_required_runs_v2 r
+            where r.batch_id=batch.batch_id and r.run_id=repair.run_id)
+          or (select count(distinct x->>'checkRunId') from jsonb_array_elements(payload->'jobs') x)<>jsonb_array_length(payload->'jobs')
+          or (select count(distinct x->>'checkName') from jsonb_array_elements(payload->'jobs') x)<>jsonb_array_length(payload->'jobs') then
+          return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+        for job in select value from jsonb_array_elements(payload->'jobs') loop
+          perform clued_private.ci_input_v1(job,array['checkName','checkRunId'],array['checkName','checkRunId'],2048);
+          if jsonb_typeof(job->'checkRunId') is distinct from 'number' or coalesce(job->>'checkRunId','') !~ '^[1-9][0-9]{0,14}$'
+            or not exists(select 1 from clued_private.ci_train_required_runs_v2 r where r.batch_id=batch.batch_id
+              and r.run_id=repair.run_id and r.attempt=next_attempt-1 and r.check_name=job->>'checkName')
+            or exists(select 1 from clued_private.ci_train_required_runs_v2 r where r.batch_id=batch.batch_id
+              and r.check_run_id=(job->>'checkRunId')::bigint) then
+            return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+        end loop;
+        receipt:=clued_private.ci_receipt_v1(n.user_id,n.project_id,'ci_train_required_run_recovery_observe',batch.batch_id,payload);
+        update clued_private.ci_train_required_runs_v2 r set attempt=next_attempt,
+          check_run_id=(j->>'checkRunId')::bigint
+          from jsonb_array_elements(payload->'jobs') j where r.batch_id=batch.batch_id and r.run_id=repair.run_id
+            and r.check_name=j->>'checkName';
+        update clued_private.ci_train_required_recovery_v2 r set state='settled',receipt_id=receipt
+          where r.batch_id=batch.batch_id and r.run_id=repair.run_id and r.attempt=next_attempt returning * into repair;
+      end if;
+    else
+      return clued_private.ci_train_reject_v2('ci_effect_unknown');
+    end if;
+  end if;
+  return jsonb_build_object('status','committed','state',repair.state,'receipt_id',repair.receipt_id,
+    'send_authorized',send_authorized,'runId',repair.run_id,'attempt',repair.attempt,'actorId',repair.actor_id);
+end $$;
+
+revoke all on function clued_private.ci_train_required_runs_view_v2(clued_private.ci_train_batches_v2),
+  clued_private.ci_train_runs_sha_v2(clued_private.ci_train_batches_v2),
+  clued_private.ci_train_run_evidence_v2(clued_private.ci_train_batches_v2,jsonb),
+  clued_private.ci_train_terminal_run_v2(clued_private.ci_train_batches_v2,jsonb),
+  clued_private.ci_train_required_run_command_v2(clued_private.ci_nodes_v1,clued_private.ci_train_batches_v2,jsonb,jsonb)
+  from public,anon,authenticated,service_role,clued_worker_gateway;
+
+
 create function clued_private.ci_train_batch_view_v2(batch clued_private.ci_train_batches_v2) returns jsonb
 language sql stable set search_path='' as $$
   select jsonb_build_object('batchId',batch.batch_id,'generation',batch.generation,'baseSha',batch.base_sha,
     'testSha',batch.test_sha,'treeSha',batch.tree_sha,'members',batch.members,'steps',batch.steps,
     'checksPolicyVersion',batch.checks_policy_version,'parentBatchId',batch.parent_batch_id,'state',batch.state,
-    'adoptionReceipts',batch.adoption_receipts,
+    'adoptionReceipts',batch.adoption_receipts,'bisection',batch.bisection-'input',
+    'requiredRuns',clued_private.ci_train_required_runs_view_v2(batch),
+    'requiredRunsSha256',clued_private.ci_train_runs_sha_v2(batch),
+    'requiredRunRecovery',coalesce((select jsonb_agg(jsonb_build_object(
+      'runId',r.run_id,'attempt',r.attempt,'actorId',r.actor_id,'state',r.state,'receipt_id',r.receipt_id)
+      order by r.run_id,r.attempt) from clued_private.ci_train_required_recovery_v2 r
+      where r.batch_id=batch.batch_id and r.state<>'settled'),'[]'::jsonb),
     'stagingState',batch.staging_state,'stagingIntent',batch.staging_intent,
     'stagingObservation',batch.staging_observation,'expiresAt',batch.expires_at,'receipt_id',batch.receipt_id,
     'landingState',(select d.state from clued_private.ci_train_landing_v2 d
@@ -367,12 +583,17 @@ begin
     when 'batch_acquire' then array['batchId']
     when 'batch_release' then handle
     when 'batch_seal' then handle||array['testSha','treeSha','steps','checksPolicyVersion']
-    when 'batch_bisect' then handle||array['testSha','evidence_digest']
+    when 'batch_bisect' then handle||array['testSha','evidence_digest','requiredRunsSha256','terminal']
+    when 'required_run_register' then handle||array['run']
+    when 'required_run_recovery_reserve' then handle||array['runId','attempt','actorId','testSha']
+    when 'required_run_recovery_send' then handle||array['runId','attempt','actorId','testSha']
+    when 'required_run_recovery_read' then handle||array['runId','attempt','actorId','testSha']
+    when 'required_run_recovery_observe' then handle||array['runId','attempt','actorId','testSha']
     when 'batch_cleanup' then handle
     when 'staging_prepare' then handle||array['generationRefOid']
     when 'staging_send' then handle
     when 'staging_publish' then handle||array['observation']
-    when 'landing_prepare' then handle||array['generationRefOid','successorRefOid','evidence_digest']
+    when 'landing_prepare' then handle||array['generationRefOid','successorRefOid','evidence_digest','requiredRunsSha256']
     when 'landing_send' then handle||array['effect_key']
     when 'landing_reconcile' then handle||array['effect_key','observation']
     when 'landing_invalidate' then handle||array['effect_key','observation']
@@ -381,7 +602,9 @@ begin
   if keys is null then raise exception 'CI_OPERATION_NOT_SERVED' using errcode='42501'; end if;
   perform clued_private.ci_input_v1(payload,fields||keys
     ||case when op='staging_prepare' then array['successorRefOid'] else array[]::text[] end
-    ||case when op='batch_cleanup' then array['reason','observedBaseSha','blockedMember','testSha','evidence_digest','hard_cap_minutes']
+    ||case when op='required_run_recovery_observe' then array['jobs'] else array[]::text[] end
+    ||case when op='batch_cleanup' then array['reason','observedBaseSha','blockedMember','testSha','evidence_digest','hard_cap_minutes',
+      'requiredRunsSha256','terminal']
       else array[]::text[] end,
     fields||case when op='landing_reconcile' then array_remove(keys,'observation') else keys end,32768);
   if op='batch_reserve' then
@@ -412,6 +635,9 @@ begin
     if batch.batch_id is null then return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
     k:=batch.batch_id;
     if op='batch_read' then return clued_private.ci_train_batch_view_v2(batch); end if;
+    if op='batch_bisect' and batch.bisection->'input'=payload then
+      return batch.bisection-'input'||jsonb_build_object('replayed',true);
+    end if;
     if batch.state in ('completed','invalidated') and op<>'claim_adopt' then
       return clued_private.ci_train_reject_v2('ci_head_lease_completed'); end if;
     if op='batch_acquire' and batch.expires_at>t then
@@ -426,6 +652,10 @@ begin
     expiry:=clued_private.ci_train_batch_members_v2(batch,repo,op not in ('landing_reconcile','landing_invalidate'));
     if expiry is null and op not in ('batch_acquire','landing_reconcile','landing_invalidate','batch_release','batch_cleanup','staging_publish') then
       return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
+  end if;
+  if op in ('required_run_register','required_run_recovery_reserve','required_run_recovery_send',
+      'required_run_recovery_read','required_run_recovery_observe') then
+    return clued_private.ci_train_required_run_command_v2(n,batch,cfg,payload);
   end if;
   if op in ('batch_reserve','batch_acquire') then
     if exists(select 1 from clued_private.ci_train_batches_v2 d where d.node_id=n.node_id and d.batch_id<>k
@@ -480,6 +710,8 @@ begin
         or not n.publisher_approved or not n.hardening_observed
         or payload->>'testSha' is distinct from batch.test_sha or payload->>'observedBaseSha' is distinct from batch.base_sha
         or coalesce(payload->>'evidence_digest','') !~ '^[0-9a-f]{64}$'
+        or clued_private.ci_train_run_evidence_v2(batch,payload) is distinct from true
+        or clued_private.ci_train_terminal_run_v2(batch,payload->'terminal') is distinct from true
         or coalesce(payload->>'hard_cap_minutes','') !~ '^[0-9]{2,3}$'
         then return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
       insert into clued_private.ci_train_call_v2 values (pg_current_xact_id(),n.user_id,n.binding_id,n.project_id,'merge_slot_touch');
@@ -498,6 +730,8 @@ begin
   elsif op='batch_bisect' then
     if batch.state<>'waiting_checks' or batch.staging_state is distinct from 'settled' or not n.publisher_approved or not n.hardening_observed
       or jsonb_array_length(batch.members)<2 or payload->>'testSha' is distinct from batch.test_sha
+      or clued_private.ci_train_run_evidence_v2(batch,payload) is distinct from true
+      or clued_private.ci_train_terminal_run_v2(batch,payload->'terminal') is distinct from true
       or coalesce(payload->>'evidence_digest','') !~ '^[0-9a-f]{64}$'
       or exists(select 1 from clued_private.ci_train_landing_v2 d where d.batch_id=k and d.state in ('reserved','sent','unknown')) then
       return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
@@ -510,8 +744,11 @@ begin
       then return clued_private.ci_train_reject_v2('ci_head_lease_completed'); end if;
     r:=clued_private.ci_receipt_v1(n.user_id,n.project_id,'ci_train_batch_bisect',k,
       jsonb_build_object('generation',batch.generation,'testSha',batch.test_sha,'prefixBatchId',candidate.batch_id,
-        'terminal_failure_evidence_digest',payload->>'evidence_digest'));
-    update clued_private.ci_train_batches_v2 set state='invalidated',expires_at=t,receipt_id=r where batch_id=k;
+        'terminal_failure_evidence_digest',payload->>'evidence_digest','terminal',payload->'terminal',
+        'requiredRunsSha256',payload->'requiredRunsSha256'));
+    update clued_private.ci_train_batches_v2 set state='invalidated',expires_at=t,receipt_id=r,
+      bisection=jsonb_build_object('input',payload,'prefixBatchId',candidate.batch_id,'receipt_id',r)
+      where batch_id=k;
     insert into clued_private.ci_train_batches_v2(batch_id,user_id,project_id,repository_id,target_branch,base_sha,
       source_manifest_sha256,policy_version,members,state,node_id,binding_id,binding_generation,key_version,expires_at,
       parent_batch_id,receipt_id)
@@ -586,6 +823,8 @@ begin
         or op<>'landing_prepare' and l.effect_key=payload->>'effect_key') for update;
     if op='landing_prepare' then
       if landing.effect_key is not null then return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
+      if clued_private.ci_train_run_evidence_v2(batch,payload) is distinct from true then
+        return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
       if batch.state<>'waiting_checks' or coalesce(payload->>'generationRefOid','') !~ '^[0-9a-f]{40}$'
         or coalesce(payload->>'successorRefOid','') !~ '^[0-9a-f]{40}$'
         or payload->>'generationRefOid'=payload->>'successorRefOid'
@@ -593,6 +832,7 @@ begin
         then raise exception 'CI_COMMAND_INVALID' using errcode='22023'; end if;
       subject:=jsonb_build_object('batchId',k,'generation',batch.generation,'baseSha',batch.base_sha,'testSha',batch.test_sha,
         'generationRefOid',payload->>'generationRefOid','members',batch.members,'expiresAt',least(batch.expires_at,expiry));
+      subject:=subject||jsonb_build_object('requiredRunsSha256',payload->'requiredRunsSha256');
       r:=clued_private.ci_receipt_v1(n.user_id,n.project_id,'ci_train_landing_prepare',k,
         subject||jsonb_build_object('successorRefOid',payload->>'successorRefOid'));
       insert into clued_private.ci_train_landing_v2(effect_key,landing_slot_key,batch_id,generation,state,intent,
@@ -603,7 +843,8 @@ begin
     elsif landing.effect_key is null or landing.effect_key is distinct from payload->>'effect_key' then
       return clued_private.ci_train_reject_v2('ci_effect_unknown');
     elsif op='landing_send' then
-      if landing.state<>'reserved' or landing.generation<>batch.generation
+      if clued_private.ci_train_run_evidence_v2(batch,landing.intent) is distinct from true
+        or landing.state<>'reserved' or landing.generation<>batch.generation
         or (landing.intent->>'expiresAt')::timestamptz<=t then return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
       r:=clued_private.ci_receipt_v1(n.user_id,n.project_id,'ci_train_landing_send',landing.effect_key,landing.intent);
       update clued_private.ci_train_landing_v2 set state='sent',receipt_id=r where effect_key=landing.effect_key returning * into landing;
@@ -904,7 +1145,8 @@ begin
     return clued_private.ci_train_job_command_v2(n,proof,repo_id,repo,source,payload);
   end if;
   if op in ('batch_reserve','batch_read','batch_acquire','batch_release','batch_seal','batch_bisect','batch_cleanup',
-      'staging_prepare','staging_send','staging_publish',
+      'staging_prepare','staging_send','staging_publish','required_run_register','required_run_recovery_reserve',
+      'required_run_recovery_send','required_run_recovery_read','required_run_recovery_observe',
       'landing_prepare','landing_send','landing_reconcile','landing_invalidate','claim_adopt') then
     if stop<>'none' and op<>'batch_read' then raise exception 'CI_NODE_NOT_ELIGIBLE' using errcode='42501'; end if;
     return clued_private.ci_train_batch_command_v2(n,proof,repo_id,repo,cfg,payload);
