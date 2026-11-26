@@ -22,7 +22,9 @@ test('happy path: bundle, stage 1, start, workspaces, stages 2..8 once; the same
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
   assert.deepEqual(stagesRun(f.engine), [1, 2, 3, 4, 5, 6, 7, 8]);
-  assert.deepEqual(f.companion.calls.map(c => c[0]), ['pr-head', 'bundle', 'wsprep'], 'one live PR read before the reservation');
+  // The fixture's companion has no answer: stage 1 is then not the batch's first live read (PLAN-resident-draft-batch-20261123 §2
+  // item 7), so its first safe point (before the workspace) reads once more.
+  assert.deepEqual(f.companion.calls.map(c => c[0]), ['pr-head', 'bundle', 'pr-head', 'wsprep'], 'one live PR read before the reservation, one at the first safe point');
   assert.equal((await f.ledger.state(keyFor())).outcome, 'COMPLETED');
   assert.equal(await f.ledger.headBurned(headKey(subject())), true);
   // The same head again: the run queue has seen it, nothing is reserved (phase 2).
@@ -122,7 +124,7 @@ test('stage-1 "not admitted" releases the key; the queue retries on its own back
 });
 
 test('any other stage-1 failure burns the head even before 10-started (review M4)', async t => {
-  const engine = fakeEngine({ stages: { 1: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: WINDOWS_CLEAN } } });
+  const engine = fakeEngine({ stages: { 1: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: WINDOWS_CLEAN } } });
   const f = await executorFixture(t, { engine });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'FAILED_CLEAN');
@@ -132,12 +134,12 @@ test('any other stage-1 failure burns the head even before 10-started (review M4
 });
 
 test('the cleanup proof is gathered fresh: a stage claiming clean while Linux is busy halts (review M5)', async t => {
-  const engine = fakeEngine({ stages: { 3: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: CLEAN_PROOF } } });
+  const engine = fakeEngine({ stages: { 3: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: CLEAN_PROOF } } });
   const f = await executorFixture(t, { engine, companion: fakeCompanion({ linux: { linuxUnitsInactive: false, containersZero: true } }) });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'HALTED');
   assert.equal(engine.calls.some(c => c[0].startsWith('archive')), false);
-  const busyWindows = await executorFixture(t, { engine: fakeEngine({ stages: { 5: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: CLEAN_PROOF } }, windows: { windowsTreeZero: false, serviceOriginalStopped: true } }) });
+  const busyWindows = await executorFixture(t, { engine: fakeEngine({ stages: { 5: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: CLEAN_PROOF } }, windows: { windowsTreeZero: false, serviceOriginalStopped: true } }) });
   await busyWindows.drop(triggerBytes());
   assert.equal((await busyWindows.exec.tick()).state, 'HALTED');
 });
@@ -158,7 +160,7 @@ test('unrecognised codes, engine exceptions and archive failures all halt', asyn
     { stages: { 5: { ok: false, code: 'SOMETHING_NEVER_SEEN', proof: CLEAN_PROOF } } },
     { stages: { 6: { ok: false, code: 'lowercase code', proof: CLEAN_PROOF } } },
     { deriveThrows: true },
-    { stages: { 3: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: CLEAN_PROOF } }, archiveWindows: { verified: false } },
+    { stages: { 3: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: CLEAN_PROOF } }, archiveWindows: { verified: false } },
   ]) {
     const f = await executorFixture(t, { engine: fakeEngine(script) });
     await f.drop(triggerBytes());
@@ -365,6 +367,41 @@ test('a role probe ending without proven cleanup, busy, or with a missing outcom
     assert.equal((await f.exec.tick()).state, 'HALTED', name);
     assert.equal((await f.ledger.halted()).value.code, 'ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED', name);
   }
+});
+// r9 (task 0e418483, FABLE-drill-r9-followup §1.3 A): the first probe of a drilled first install ended without a fact in 5.5 s and the
+// HALT said only failureCode. The HALT's facts now tell the endings apart: what the engine threw, and what the answer held.
+test('a role probe the engine threw on HALTs with the thrown code in facts.engineError', async t => {
+  const f = await executorFixture(t);
+  f.engine.runRoleProbe = async () => { throw Object.assign(new Error('source v2 required'), { code: 'SOURCE_V2_REQUIRED' }); };
+  assert.equal((await f.exec.tick()).state, 'HALTED');
+  const halt = (await f.ledger.halted()).value;
+  assert.equal(halt.code, 'ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED');
+  assert.equal(halt.facts.engineError, 'SOURCE_V2_REQUIRED');
+  assert.deepEqual([halt.facts.failureCode, halt.facts.ok, halt.facts.proof, halt.facts.outcomeStatus, halt.facts.outcomeReason, halt.facts.roleProbeFact], [null, null, null, null, null, false]);
+  // an error without a code, or with one that is not a code, is still told apart from "no error"
+  for (const thrown of [new Error('plain'), Object.assign(new Error('x'), { code: 'not a code; holder=someone' }), null]) {
+    const g = await executorFixture(t);
+    g.engine.runRoleProbe = async () => { throw thrown; };
+    assert.equal((await g.exec.tick()).state, 'HALTED');
+    assert.equal((await g.ledger.halted()).value.facts.engineError, 'ENGINE_THREW');
+  }
+});
+test('a role probe answered ok with a FAILED outcome HALTs with the outcome, the proof and the fact flag in facts', async t => {
+  const f = await executorFixture(t);
+  f.engine.runRoleProbe = async () => probeResult(undefined, { outcome: { status: 'FAILED', reason: 'CI_CREDENTIAL_REFUSED', sideEffects: 0, mayHavePublished: false } });
+  assert.equal((await f.exec.tick()).state, 'HALTED');
+  const halt = (await f.ledger.halted()).value;
+  assert.equal(halt.code, 'ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED');
+  assert.deepEqual(Object.keys(halt.facts).sort(), ['engineError', 'failureCode', 'intentSeq', 'ok', 'outcomeReason', 'outcomeStatus', 'proof', 'roleProbeFact']);
+  assert.deepEqual({ ...halt.facts, intentSeq: null }, { intentSeq: null, failureCode: null, engineError: null, ok: true,
+    proof: { windowsTreeZero: true, serviceOriginalStopped: true }, outcomeStatus: 'FAILED', outcomeReason: 'CI_CREDENTIAL_REFUSED', roleProbeFact: true });
+  // codes and booleans only: nothing the answer carries beside them reaches the HALT
+  const g = await executorFixture(t);
+  g.engine.runRoleProbe = async () => ({ ok: false, code: 'STAGE_PACKAGE_REFUSED', proof: { windowsTreeZero: 'yes', serviceOriginalStopped: true, holder: 'someone' },
+    roleProbe: null, outcome: { status: 'not a code', reason: { text: 'free' } } });
+  assert.equal((await g.exec.tick()).state, 'HALTED');
+  assert.deepEqual({ ...(await g.ledger.halted()).value.facts, intentSeq: null }, { intentSeq: null, failureCode: 'STAGE_PACKAGE_REFUSED', engineError: null, ok: false,
+    proof: { windowsTreeZero: false, serviceOriginalStopped: true }, outcomeStatus: null, outcomeReason: null, roleProbeFact: false });
 });
 test('C2 tick serialization refuses overlap while its one controller read is in flight', async t => {
   const f = await executorFixture(t); let release, started;

@@ -1,34 +1,28 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, startCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import net from 'node:net';
 import crypto from 'node:crypto';
-import {createRequire} from 'node:module';
-import {fileURLToPath,pathToFileURL} from 'node:url';
-import DefaultEmbeddedPostgres from 'embedded-postgres';
+import {fileURLToPath} from 'node:url';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import {allowTestIssuerCredentials} from './issuer-credentials-fixture.mjs';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
 import {findGatewayCloseoutMigration,assertGatewayCloseoutBoundary,snapshotCallerCatalog, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
-const runtime=createRequire(process.env.CLUED_POSTGRES_TEST_RUNTIME || import.meta.url);
-const EmbeddedPostgres=process.env.CLUED_POSTGRES_TEST_RUNTIME
-  ?(await import(pathToFileURL(runtime.resolve('embedded-postgres')))).default:DefaultEmbeddedPostgres;
 const cloud=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const sha=v=>crypto.createHash('sha256').update(v).digest('hex'),id=()=>crypto.randomUUID();
 const envelope=()=>({contract:'clued.storage-credential/1',key_id:'synthetic',nonce:'N'.repeat(16),ciphertext:'X'.repeat(64)});
 const rpcName='public.clued_storage_owner_lifecycle_v1(text,jsonb)';
 const wholeRootMigration='20261010150000_storage_owner_root_trash_scope_v2.sql';
-async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 test('Native owner lifecycle, real migrations and synthetic Google observations',{timeout:240000},async t=>{
   const tempParent=await fs.realpath(os.tmpdir());
   const dir=await fs.mkdtemp(path.join(tempParent,'clued-owner-lifecycle-'));
-  const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:sha(id()),port:await port(),persistent:true,
-    postgresFlags:['-c','listen_addresses=127.0.0.1'],onLog(){},onError(){}});
+  const server=newCluster({databaseDir:dir,user:'postgres',password:sha(id()),persistent:true,
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],onLog(){},onError(){}});
   const clients=[];let started=false;
   try{
-    await server.initialise();await server.start();started=true;
+    await startCluster(server);started=true;
     const db=server.getPgClient();clients.push(db);await db.connect();
     const pgVersion=(await db.query('show server_version')).rows[0].server_version;
     console.log('Synthetic Native lifecycle PostgreSQL:',pgVersion);

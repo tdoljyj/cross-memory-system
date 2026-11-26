@@ -1,14 +1,13 @@
 // issuer-credentials: this historical test selects a migration chain before step 2b.
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const migration='20260907173032_clued_project_invitations_v13.sql';
@@ -19,14 +18,13 @@ const key=()=>crypto.randomUUID(), hash=()=>crypto.randomBytes(32).toString('hex
 const future=()=>new Date(Date.now()+3600000).toISOString();
 const scope=(id,actions)=>({resource_kind:'scope',resource_id:id,environment:'canonical',actions});
 const ctx=(id,actions)=>({resource_kind:'context',resource_id:id,environment:'test',actions});
-async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 
 test('Project invitations v1.3: real PostgreSQL qualification and actor boundaries',{timeout:180000},async(t)=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'clued-auth-v13-'));
- const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:hash(),port:await port(),persistent:false,postgresFlags:['-c','io_method=sync'],onLog(){},onError(m){process.stderr.write(m+'\n');}});
+ const server=newCluster({databaseDir:dir,user:'postgres',password:hash(),persistent:false,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(m){process.stderr.write(m+'\n');}});
  const clients=[];let admin,cid;const issuer=hash();
  try{
-  await server.initialise();await server.start();admin=server.getPgClient();clients.push(admin);await admin.connect();
+  await startCluster(server);admin=server.getPgClient();clients.push(admin);await admin.connect();
   await admin.query("create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;create schema auth;create schema extensions;create extension pgcrypto with schema extensions;create table auth.users(id uuid primary key,email text);create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;grant usage on schema auth,extensions to anon,authenticated,service_role;grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;");
   const names=(await fs.readdir(path.join(root,'supabase/migrations'))).filter(n=>n.endsWith('.sql')&&(n<'20260826000000'||n.startsWith('20260907123955_')||n.startsWith('20260907131834_')||n.startsWith('20260907172309_')||n.startsWith('2026090717303'))).sort();
   for(const name of names){if(name.startsWith('20260907173030_')){assert.equal((await admin.query("select to_regclass('clued_private.context_spaces_v11') old")).rows[0].old,null);}try{await admin.query(await fs.readFile(path.join(root,'supabase/migrations',name),'utf8'));}catch(e){e.message=name+': '+e.message;throw e;}}

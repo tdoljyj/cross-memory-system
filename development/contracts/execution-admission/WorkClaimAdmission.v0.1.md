@@ -279,6 +279,8 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 第 3 条按不区分大小写比较：`ghsa:GHSA-x` 与 `ghsa:ghsa-x` 相同。`@` 后都是至少 7 位十六进制、且一方是另一方前缀时也算相同，所以 `ci:trivy@f7ba6ff` 与完整 SHA 冲突。存储的 ref 保留声明时的大小写。
 - 第 2 条中 `**/` 也匹配零层目录：`**/package-lock.json` 覆盖根目录的 `package-lock.json`，与 CI 路径过滤的理解一致。
 
+**实现（仓库路径互斥到交付为止，2026-11-24，迁移 `20261124160000`）**：第 2 条只对未交付的认领生效。已有的那条认领一旦有有效的 head 授权（`authorize_head` 成功；`work_claim_head_authorizations_v1` 中属于该认领当前 `execution_epoch` 且 `revoked_at` 为空的行），它的仓库路径（裸路径与 `repo:` 资源）不再参与第 2 条的重叠判定，别的认领可以认领同一路径。交付之后两个 PR 是否相撞由 git 判（推送入口对 main 的 `git merge-tree`、GitHub、列车合成），语义是否相撞由合成结果上的必需检查判；按文件名排队在这一段只多出空等。不变的有：认领的 write_set 本身、准入的覆盖校验（4.6，PR 的全部改动路径仍须在 write_set 内）、第 1 条与第 3 条、机械文件豁免；非仓库资源（`storage:`、`record:` 及以后登记的种类）在认领整个存续期照旧互斥。判的是已有的那条：已交付的认领续期扩大 write_set 时，撞上别人未交付的认领照旧冲突。授权全部被撤销（含接管、交接导致的换代）后，路径互斥恢复。所以交付后不需要、也不应当收窄 write_set。
+
 不做：标题相似度、语义去重、自动合并意图（Decision `78ca0c07`）。语义不明确时 Agent 可以用 `clued_search_context` 做有上限的探索，但那不是准入判断。
 
 ### 4.4 租约、续期、过期、接管、fence
@@ -315,7 +317,8 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
   - 兼容：迁移后、Worker 发布前，旧 Worker（合同 v31）照常工作。自报列均可为空，`work_claim_self_report_v1` 对没送的字段返回空值；`holder_label` 必填只在 v32 的 MCP 工具入参里检查，数据库不要求。所以这段时间认领的标签为空，页面上显示为空。回滚只需回退 Worker；迁移新增的列与函数不影响 v31。
 
 - **合并位（Task `f89eaf0a`，Owner Decision `0edf7889`，合同 v33 §1.7）**：`main` 要求 PR 合并前跟上最新 main，CI 跑到一半时别的会话一合并，这一轮就白跑了。2026-10-06 PR 571 因 575、576 插队连续重跑两轮。合并位是共享触发来源 `merge:<owner>/<name>:<branch>`：会话准备合并时，续期自己 PR 的认领，把它加进 `trigger_refs`；冲突检测（`work_claim_conflicts`，同账号所有 Binding、精确匹配）保证同一时间只有一个持有者。拿到合并位的会话同步 main、跑 CI、合并，然后立刻续期去掉它或释放认领；拿不到的等着重试，被拒的续期不计次数、不耗令牌。
-  - **自己的计时（Owner Decision `2ea795e4`，迁移 `20261006120000`）**：合并位在最后一次拿到或续期后 45 分钟失效（profile `merge_slot_seconds`=2700，不超过认领租约），认领视图给出 `merge_slot_until`。冲突检测只算仍有效的合并位，多副本竞赛的副本之间也互相检查有效合并位（只看合并位，不看路径和其他引用）；续期时引用没变但带着合并位，也要对其他认领的有效合并位做一次检查，所以失效后被别人拿走的合并位，原持有者续期拿不回来。Owner 交接不刷新合并位。PR 合并（`clued_work_claim_adopt_v1`）或不合并就关闭（`clued_work_merge_slot_return_v1`，同样只限 CI 准入 Binding）时，绑定该 PR 的认领去掉合并位引用，只去掉该 PR 所在仓库的合并位引用，留 `WORK_CLAIM_MERGE_SLOT_RETURNED` 回执。续期刷新合并位每次都算一次续期，计入认领的续期上限。
+  - **自己的计时（Owner Decision `2ea795e4`，迁移 `20261006120000`）**：合并位在最后一次拿到或续期后 45 分钟失效（profile `merge_slot_seconds`=2700，不超过认领租约），认领视图给出 `merge_slot_until`。冲突检测只算仍有效的合并位，多副本竞赛的副本之间也互相检查有效合并位（只看合并位，不看路径和其他引用）；续期时引用没变但带着合并位，也要对其他认领的有效合并位做一次检查，所以失效后被别人拿走的合并位，原持有者续期拿不回来。Owner 交接不刷新合并位。续期刷新合并位每次都算一次续期，计入认领的续期上限。
+  - **归还合并位与结束 PR 绑定（迁移 `20261119001000`、`20261119140000`）**：`clued_work_merge_slot_return_v1` 只归还该 PR 所在仓库的合并位，归还时留下 `WORK_CLAIM_MERGE_SLOT_RETURNED` 回执，PR 绑定状态和认领保持原样；它不收任何结束参数，带 `github_state` 一律是输入错误。PR 绑定只按 GitHub 上这个 PR 的真实生命周期结束，事实只有 merged、closed 两个，来源只有三个，都写同一个内部函数：GitHub 合入或关闭未合入事件（webhook，`clued_work_pr_merged_event_v1`）、常驻对账报告（`clued_work_pr_lifecycle_report_v1`，仅 ci-admission）、列车 adopt（`clued_work_claim_adopt_v1`，已合入）。常驻每轮先以空报告取回该账号该仓库仍未结束（active/unknown）的绑定 PR 号 `tracked`，对其中 GitHub 已不再列为打开的 PR 逐个读取，把 merged（带合并提交）或 closed 报回；仍打开的不报，`state` 传 `open` 是输入错误。每条 `WORK_CLAIM_PR_TASK_FINISHED` 回执记来源 `metadata.source`（`webhook`、`reconcile`、`adopt`），来源为 `reconcile` 的条数就是 webhook 漏投的次数。结束绑定后，服务按 PR 结束规则判断是否释放认领；已合入的不被迟到的关闭覆盖。
   - **GitHub 强制**：准入运行另发一个 App 检查 `clued-merge-slot`（Merge Admission 第 6 步之前，准入为提示模式时不检查）：头提交已包含基础分支最新提交时，只有认领持有有效合并位才通过；没包含时通过（GitHub 本来就不让合并）；服务还不报 `merge_slot_until` 时通过并注明未检查。它不并进 `clued-admission-verified`，因为重型工作流的准入关卡看那个检查，恰好包含最新 main 的中间推送仍要跑 CI。每小时的复核对已通过但合并位已失效或已归还的头提交补发失败检查。拿合并位时 PR 已包含最新提交，就编辑 PR 正文重跑检查。
   - **上线顺序**：合并 → 备份 → 迁移 → Worker 发布（合同 v33）→ Owner 在 main 规则集里把 clued-admission App 的 `clued-merge-slot` 加为必需检查。加之前它只是提示。
   - **剩余限制**：检查结果是某一时刻的判断；合并位在两次复核之间失效或被归还，已通过的检查最多一小时后才转为失败；这段时间里能合并的只有已包含最新 main 的那一个 PR，别的 PR 都还要先合入 main，所以不会白跑 CI。账号里还没有标记 `ci-admission` 角色的 Binding 时，任何 Binding 都能调用归还接口（与 adopt 相同）。仓库管理员权限可以改规则集。
@@ -334,6 +337,8 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 - **每 Binding 并发 claim 上限**（默认 3）：一个失控 Host 不能把所有 Task 都占了。
   - **实现（2026-10-02，Owner Decision `533a5286`，迁移 `20261002060001`）**：改为每个会话（Agent 自报的 `holder_session_ref`）最多 3 个活认领、每个 Binding 合计最多 10 个。原因：Owner 的所有 Claude Code 会话共用一个 Binding，原来的「每 Binding 3 个」会让并行会话互相挤占。会话标识是自报的，所以保留 Binding 总上限兜底；没有 `holder_session_ref` 的认领单独算一组。拒绝时 `limit` 字段写明撞到的是哪个上限。
+  - **实现（2026-11-22，Task `e642d087`，迁移 `20261122130000`）**：会话上限只数在手的认领。认领所属 Task 已有 CI 确认为 active 的 PR 绑定时不计入；持有者自己 authorize_head 写出的 `unknown` 仍计入。发放和接收交接两处口径相同。Binding 10 个的上限照旧数全部活认领。会话上限的拒绝回执多带 `delivered`（本会话已交付几条）。
+  - **实现（2026-11-24，Task `e642d087`，迁移 `20261124190000`）**：“在手”的口径从“PR 绑定是 active”改为“PR 绑定开着”（`work_claim_pr_binding_open_v1`：active 或 unknown），推翻 11-22 那条“unknown 仍计入”。列车里非车头的 PR 跑不到 CI 第 1 段，绑定一直是 unknown，三辆车在途时会话就拿不到第四条认领（11-24 现场）。依据四条：会话标识是自报的，机制上的兜底是 Binding 10 个，改前改后不变、仍数全部活认领；库已凭持有者带 PR 号的 authorize_head 认定“已交付”（`20261112090000` 据此把租约钉到硬期限），会话名额凭同一件事，不引入新的信任；“绑定是否开着”只有 `work_claim_pr_binding_open_v1` 一个答案（`20261122090000`）；unknown 与 active 走同一个结束出口（webhook、常驻对账、列车 adopt，只认 GitHub 的 merged/closed）。发放、接收交接、lease key 移交续期三处同口径，lease key 移交的拒绝回执也带 `delivered`、`active_binding`。残余：持有者带一个不存在的 PR 号 authorize_head 时，这个 Task 的 PR 绑定一直开着。绑定挂在 Task 上（主键 user_id、repo_id、pr_number，`20261108161615`），认领释放或到期都不结束它；能结束它的只有 GitHub 的 merged/closed（`20261119140000`），常驻对账读这个号遇 404 就跳过，永远等不到。此后同一用户对这个 Task 的认领一开始就算已交付，不受 24 小时限制。号属于常驻不对账的仓库、或其实是 issue 时同样如此。上界仍是每 Binding 10 条活认领。
 - **每 claim CI 分钟上限**（原设计）：`admission-gate` 在放行重任务前调用 `clued_work_verify` 并上报本次预计分钟数；超出上限返回 REJECTED，重任务不启动。实际消耗由 workflow 完成后以 observed 回写（finalize）。
 - **模型 token**：claim 只记录 Agent 自报的估算，标为 `declared_unenforced`。不宣称预留。
 - （原设计）取消、失联或 UNKNOWN 时**不释放预留**；只有 finalize 或 takeover 事务才结算。没有分钟预留后不再适用。
@@ -350,7 +355,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 一个无路径过滤的 workflow，GitHub 托管 runner，只做一次 HTTPS 调用 `clued_work_verify`（只读 Binding 放在 GitHub secret）。
 - 输入：PR head SHA、base SHA、变更文件集（`gh api .../files`）、PR body 或最后一个 commit trailer 中的 `Clued-Work-Claim: <claim_id>`。
 - 判定：claim ACTIVE 或 DRAINING 且未过期；holder 不校验 GitHub 身份（都是 Owner），校验 fence 为该 task 当前最大；变更文件集 ⊆ write_set；base_sha 等于或晚于 claim.base_commit。任一不满足 → 失败并写明原因。
-  - **实现（2026-10-02，Owner Decision `36b50981`，Task `d95ee6ea`）**：「base_sha 等于或晚于 claim.base_commit」改为只提示。claim 的 base_commit 比 PR 的 base 新时，检查摘要写一条 `base_behind_claim` 提示，仍放行。原因：base_commit 由 Agent 自报，这条比较拦不住错误的 claim；Codex 在新 main 上重新认领而分支仍基于旧 main 时，#441 因此被拒三次。base_commit 在仓库里找不到（`claim_base_unknown`）仍拒绝。
+  - **实现（Owner Decision `36b50981`，Task `d95ee6ea`、`3576b29c`）**：claim 的 base_commit 比 PR 的 base 新时，检查摘要写 `base_behind_claim` 提示。GitHub compare 返回 404 时写 `claim_base_unknown` 提示。两条提示均不改变准入结论。base_commit 由 Agent 自报，这项比较无法识别认领错配。
 - **Owner 在 GitHub 网页直接改文件开的 PR**（Owner Decision `36b50981`）：同样需要 claim，没有豁免。Agent 与 Owner 共用一个 GitHub 账号，CI 分不出是谁改的，豁免会被 Agent 用来绕过。做法：网页改动前让任一 Agent 为该 Task 建 claim，把 `Clued-Work-Claim: <claim_id>` 贴进 PR 正文；改正文会重跑检查。
 - 范围扩张（变更文件超出 write_set）→ 失败，提示先 `clued_work_renew` 携带扩大的 write_set（扩大时重新做冲突判定）。
 - 加入 ruleset required 列表后，这条和 gitleaks、trivy 一样是无过滤 check，不会出现"等不到"的问题。
@@ -515,6 +520,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 撤销者通过现行 CI8 的受保护 `revocations_contexts` 发现 durable pending outbox/open publication 对应的当前授权 Scope，不依赖 claim 仍为 ACTIVE；Scope 与两类票据均使用有界游标，截断不当成已排清。ACK 与 publication begin/finish/reconcile/abort 变更原子写不可变审计 Receipt；精确 check 身份和原回执重放不改变。公开观察分支不提供这些能力。
 - 保持公开函数集合 GW80/CI8。CI8 `clued_work_verify_v1` 的新 `execution_current` 分支仅作有界只读观察（`p_token_hash=null`、固定精确公开目标，无 Scope/Owner/claim DTO/私钥返回、无写入）；它只补充已合格 GitHub 门/独立 runner 的即时 epoch 观察，不产生执行准入。其他 CI 操作仍需现行 Owner 指定 CI Binding。须在精确源码审核中明确新观察 Caller 与全部负例资格，不能以函数数量相同代替审查。
 - 分三阶段部署：①先合并并批准应用 staged SQL 与 Worker/页面/合同，旧模式兼容，自动交换仍 not-ready；②再合并并部署 CI publication/revoker、分支 gate 与独立 runner，验证真实消费和故障边界；③对精确源码和全部消费证据独立批准激活。新 RPC 未可用时不可将新强制 probe 投入分支门；页面 On 或单元绿色不代表完成。各 PR/生产迁移/发布/启用分别走现行门，保留实际 Receipt。
+- 在使用 `work_claim_execution_activate_v1` 设置 `work_claim_execution_policy_v1.activated_at` 前，以 `CLUED_TEST_NATIVE_ACTIVE_ACTIVATION=1` 运行 `node scripts/ci/ci-required-selection.mjs --run source-v2-node`。启用验收中的扫描发布必须实际通过票据开始、建立进行中检查、重验、成功写入及读回、票据结算的顺序断言。常规 staged 验收将这条断言标为待完成。
 
 每阶段部署必须固定已合并的真实 source commit，并使用配置 publisher 的独立输入：先获得该提交的只读 preflight 和已验证加密 backup；`migrate` 只指定本阶段实际审查的 migration 文件名，不隐含全部 pending migration，`deploy` 另走精确提交的发布门。保留两个动作各自的真实 Receipt，启动 workflow 不是完成证明。
 

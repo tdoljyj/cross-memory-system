@@ -2,7 +2,9 @@
 // the Owner's acceptance file, and from nothing but what is installed on this node, the node's fresh-install /4 package, the Linux A/B
 // inputs, the Linux root scripts and the elevated launcher. No per-node configuration file: every node value is read from the installed
 // record and state (read-only); every value that must be equal on every node (fleetRefs) comes from the acceptance file.
-// NON-elevated, Owner session; writes only under a new work directory; no WSL, no network.
+// NON-elevated, Owner session; writes only under a new work directory and the Owner's %USERPROFILE%\.wslconfig (only the [wsl2]
+// memory= value, from the node's capacity profile in the package, after a backup next to it: wsl-capacity.mjs; ADR 0030 revision 1;
+// only once everything else is prepared, so a refusal writes nothing and a write is always in the answer's wslCapacity); no WSL, no network.
 //
 //   node <unpacked>/tree/work/independent-ci-resident-v1/rollout/fleet/install.mjs prepare
 //        --artifact <fleet-node-<v>.tar> --artifact-sha <hex> --acceptance <fleet-node-<v>.acceptance.json>
@@ -59,19 +61,22 @@ import { PIN_FILES, RECORD_FILES, Refused, TRUSTED_SOURCE, companionCopy, nodeIn
 import { pyCanonical, pyDumps, pyEqual, pyLoads } from './pyjson.mjs';
 import { extractTar, readTar } from './tar.mjs';
 import { BUNDLE_NAME, MANIFEST_NAME, UNIVERSAL_CONTRACT, VERSION, bundleHeads } from './universal.mjs';
+import { defaultWslConfigPath, wslCapacityOfArchive } from './wsl-capacity.mjs';
 
 export const ACCEPTANCE_CONTRACT = 'clued.independent-ci.fleet-node-acceptance/1';
 export const PLAN_CONTRACT = 'clued.independent-ci.fleet-node-install-plan/1';
 export const CONFIG_CONTRACT = 'clued.independent-ci.reinstall-config/1';
 export const DEFAULT_ROOT = 'C:\\ProgramData\\CluedIndependentCI\\resident';
 export const CI_ROOT = 'C:\\ProgramData\\CluedIndependentCI';   // where the launcher makes the Linux out directory (always the live one)
+// the Owner's confirm page: the upgrader's config (confirmOrigin) and the acceptance door's link (accept-door.mjs) are made from it
+export const CONFIRM_ORIGIN = 'https://kooyumi.pixelgrav.com';
 // fleetRefs (BATCH1-INTERFACES.md section 6): every acceptance reference of the record, the same on every node. sourceAcceptanceRef,
 // hostQualificationRef and formalRoles enter source-manifest.json (ciSourceManifestSha256); the others enter acceptance.json / policy.
 export const FLEET_REF_KEYS = Object.freeze(['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef',
   'ownerPackageAcceptanceRef', 'installationReceiptRef', 'ownerDecisionRef', 'ownerReceiptRef']);
 export const FORMAL_ROLES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
 // The modules of this directory that run before the archive is extracted: they must be the archive's bytes.
-export const OWN_MODULES = Object.freeze(['install.mjs', 'facts.mjs', 'fetch.mjs', 'ports.mjs', 'pyjson.mjs', 'tar.mjs', 'universal.mjs']);
+export const OWN_MODULES = Object.freeze(['install.mjs', 'facts.mjs', 'fetch.mjs', 'ports.mjs', 'pyjson.mjs', 'tar.mjs', 'universal.mjs', 'wsl-capacity.mjs']);
 export const LINUX_TIMEOUT_SECONDS = Object.freeze({ A: 1800, B: 7200 });
 export const LINUX_SCRIPTS = Object.freeze({ A: 'A.sh', B: 'B.sh', BResume: 'B-resume.sh' });
 const TOOLCHAIN_NODE = '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node';
@@ -95,13 +100,19 @@ const jsonOf = b => JSON.parse(Buffer.from(b).toString('utf8').replace(/^\uFEFF/
 // The acceptance file (sections 2, 6): repository and ciSourceManifestSha256 are what the Owner accepts (the Source the train compares);
 // `draft` (install.mjs source-hash) is the same file before its ciSourceManifestSha256 is known.
 export const ACCEPTANCE_KEYS = Object.freeze(['contract', 'version', 'archive_sha256', 'commit', 'repository', 'ciSourceManifestSha256', 'cluedDecision', 'acceptedAt', 'fleetRefs']);
-// firstInstallKitSha256 (optional): the version's first-install kit the Owner accepts with it (firstInstallKitOf); a first install
-// (prepare without an install receipt) refuses an acceptance without it, a reinstall never reads it.
-export function validateAcceptance(a, now = Date.now(), { draft = false } = {}) {
+// firstInstallKitSha256: the version's first-install kit the Owner accepts with it (firstInstallKitOf). Every acceptance of a version a
+// node is to install or upgrade to carries it (FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT: a package that cannot first-install a new node is
+// not accepted at all; publish.mjs prepare and seal hold the same line). Only the draft source-hash reads (`draft`)
+// may lack it, and so may the outer read of `upgrade.mjs fetch` (requireKit: false): that copy may be NEWER than the package it fetches, and
+// the rule of a package is its own (the unpacked upgrade.mjs reads the acceptance again, with the rule it was built with), so a rollback to an
+// older package with no kit field stays one command. The record of an OLDER installed version (record/acceptance.json) never goes through here, so a node installed before
+// the field existed stays readable and upgradable.
+export function validateAcceptance(a, now = Date.now(), { draft = false, requireKit = true } = {}) {
   const keys = [...(draft ? ACCEPTANCE_KEYS.filter(k => k !== 'ciSourceManifestSha256' || Object.hasOwn(a ?? {}, k)) : ACCEPTANCE_KEYS),
     ...(Object.hasOwn(a ?? {}, 'firstInstallKitSha256') ? ['firstInstallKitSha256'] : [])];
   need(exact(a, keys) && a.contract === ACCEPTANCE_CONTRACT, 'FLEET_ACCEPTANCE_REFUSED', 'shape');
   need(a.firstInstallKitSha256 === undefined || HEX64.test(a.firstInstallKitSha256), 'FLEET_ACCEPTANCE_REFUSED', 'firstInstallKitSha256');
+  need(draft || !requireKit || a.firstInstallKitSha256 !== undefined, 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT');
   need(VERSION.test(a.version ?? '') && HEX64.test(a.archive_sha256 ?? '') && /^[0-9a-f]{40}$/.test(a.commit ?? ''), 'FLEET_ACCEPTANCE_REFUSED', 'archive');
   need(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(a.repository ?? '') && (draft && a.ciSourceManifestSha256 === undefined || HEX64.test(a.ciSourceManifestSha256 ?? '')),
     'FLEET_ACCEPTANCE_REFUSED', 'source');
@@ -289,7 +300,7 @@ export async function upgraderConfigFor({ recordDir, residentTree }) {
   const target = /^\$UpgradeTokenTarget = '([^']+)'/m.exec(installer)?.[1];
   const root = /^\$Root = '([^']+)'/m.exec(installer)?.[1];
   const cfg = { contract: 'clued.independent-ci.resident-upgrader-config/1', node: node.nodeName, nodeProfileSha256: manifest.nodeProfileSha256,
-    ownerSid: node.ownerSid, root, supabaseUrl: inst.supabaseUrl, publishableKey: inst.publishableKey, confirmOrigin: 'https://kooyumi.pixelgrav.com', tokenFile: target,
+    ownerSid: node.ownerSid, root, supabaseUrl: inst.supabaseUrl, publishableKey: inst.publishableKey, confirmOrigin: CONFIRM_ORIGIN, tokenFile: target,
     timeouts: { drainMaxMinutes: 120, drainRetryMinutes: 60, deferMaxHours: 24, pauseConfirmMs: 600000, verifyMaxMs: 2700000, grantPollMs: [30000, 120000] },
     keepGenerations: 3 };
   need(/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(cfg.node ?? '') && cfg.root === DEFAULT_ROOT && typeof target === 'string', 'UPGRADER_CONFIG_INPUT_REFUSED');
@@ -298,13 +309,34 @@ export async function upgraderConfigFor({ recordDir, residentTree }) {
   return Buffer.from(pyDumps(cfg, { indent: 2 }) + '\n', 'utf8');
 }
 
-// The installed tokens the launcher carries into the new install (section 8.1), from the receipt only (their content is never opened, and
+async function readUpgradePin(root) {
+  const file = path.join(root, 'install', 'resident-upgrade.connection.json');
+  let stat;
+  try { stat = await fs.lstat(file); }
+  catch (e) { if (e.code === 'ENOENT') return undefined; throw e; }
+  need(stat.isFile() && stat.nlink === 1 && stat.size > 0 && stat.size <= 4096, 'INSTALLED_UPGRADE_PIN_REFUSED');
+  const bytes = await fs.readFile(file);
+  try { return jsonOf(bytes); }
+  catch { throw new Refused('INSTALLED_UPGRADE_PIN_REFUSED'); }
+}
+
+// The installed tokens the launcher carries into the new install (section 8.1), from the upgrade pin and receipt (their content is never opened, and
 // nothing outside the node is asked for): the upgrade token must be installed with its target and fingerprint; the heartbeat token is
 // either not installed (no entry, null, or placed false: null) or installed with target, fingerprint and a binding id (or null).
 // Anything else is refused with what is missing.
-export function installedSecretsOf(receipt) {
+export function installedSecretsOf(receipt, renewed) {
   const missing = (t, keys) => keys.filter(k => !(k === 'target' ? typeof t?.[k] === 'string' && TOKEN_PATH.test(t[k]) : k === 'fingerprint' ? HEX64.test(t?.[k] ?? '') : t?.[k] === true));
-  const up = receipt.upgradeToken;
+  let up = receipt.upgradeToken;
+  if (renewed !== undefined) {
+    const id = value => typeof value === 'string' && UUID.test(value) && value !== '00000000-0000-0000-0000-000000000000';
+    need(exact(renewed, ['contract','baseNodeIdentitySha256','bindingGeneration','bindingId','receiptId','tokenPinSha256'])
+      && renewed.contract === 'clued.independent-ci.upgrade-connection/1' && HEX64.test(receipt.nodeIdentitySha256 ?? '')
+      && renewed.baseNodeIdentitySha256 === receipt.nodeIdentitySha256 && id(renewed.bindingId)
+      && Number.isSafeInteger(renewed.bindingGeneration) && renewed.bindingGeneration > 1
+      && (renewed.receiptId === null || id(renewed.receiptId)) && typeof renewed.tokenPinSha256 === 'string' && HEX64.test(renewed.tokenPinSha256),
+      'INSTALLED_UPGRADE_PIN_REFUSED');
+    up = {...up, fingerprint: renewed.tokenPinSha256};
+  }
   const upMissing = missing(up, ['placed', 'target', 'fingerprint']);
   need(upMissing.length === 0, 'INSTALLED_UPGRADE_TOKEN_UNKNOWN', { missing: upMissing.map(k => `upgradeToken.${k}`) });
   const hb = receipt.heartbeatToken;
@@ -473,7 +505,7 @@ export function runCommandOf(launcher, launcherSha256) {
 export async function prepareInstall({ artifactPath, artifactSha256, acceptance, root = DEFAULT_ROOT, workDir, now = Date.now(),
   node: nodeBin = process.execPath, python = defaultPython, scm = defaultScm, selfDir = HERE,
   from = null, ciRoot = CI_ROOT, serviceState = defaultServiceState, hostname = defaultHostname, controllerNode = process.execPath, ciRootSddl = defaultCiRootSddl,
-  listDir = undefined }) {
+  listDir = undefined, wslConfigPath = defaultWslConfigPath() }) {
   validateAcceptance(acceptance, now);
   need(typeof workDir === 'string' && WIN_PATH.test(path.resolve(workDir)), 'WORK_DIR_PATH_REFUSED');
   const bytes = await fs.readFile(artifactPath);
@@ -484,6 +516,9 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
     const want = byPath.get(`tree/${RESIDENT}/rollout/fleet/${n}`);
     need(want && want.equals(await fs.readFile(path.join(selfDir, n))), 'FLEET_INSTALLER_NOT_THE_ARCHIVES', n);
   }
+  // the Owner's WSL memory limit from this package's capacity profile (wsl-capacity.mjs, as upgrade.mjs): a file write only, never a refusal,
+  // and the last step of a prepare that answers PREPARED (nothing after it can refuse): a refused prepare leaves the file as it was
+  const applyWslCapacity = () => wslCapacityOfArchive(byPath, { hostname: hostname(), configPath: wslConfigPath, now });
   const fresh = (await readOrNull(path.join(root, 'install', 'install-receipt.json'))) === null;
   const node = fresh ? await readFreshNode({ root, ciRoot, from, acceptance, controllerNode, serviceState, hostname, ciRootSddl, listDir }) : await readNode({ root, now });
   // The Linux side is already this package's and the Windows side is not: this package's own launch stopped between the two. Its
@@ -491,7 +526,7 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   need(fresh || !(node.facts.ciSourceManifestSha256 === acceptance.ciSourceManifestSha256 && node.current.ciSourceManifestSha256 !== acceptance.ciSourceManifestSha256),
     'LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH', { continueWith: 'python -I <tree>/work/independent-ci-resident-v1/reinstall/launcher/generate.py --fleet-continue <the stopped launch: launcher.ps1> --out <new launcher.ps1>' });
   need(typeof node.distribution === 'string' && node.distribution === node.profile.wslDistribution && /^[A-Za-z0-9._-]{1,64}$/.test(node.distribution), 'NODE_DISTRIBUTION_REFUSED');
-  const secrets = fresh ? node.secrets : installedSecretsOf(node.receipt);
+  const secrets = fresh ? node.secrets : installedSecretsOf(node.receipt, await readUpgradePin(root));
   need(acceptance.repository === node.inst.repository, 'FLEET_ACCEPTANCE_NOT_THIS_REPOSITORY', { accepted: acceptance.repository, installed: node.inst.repository });
   const work = path.resolve(workDir);
   await fs.mkdir(work, { recursive: false });
@@ -572,8 +607,9 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   await fs.mkdir(linuxIn);
   await assembleLinuxIn({ pkg: packageDir, residentTree: R, bundle, commit: universal.commit, out: linuxIn, scratch: x });
   if (fresh) {
-    return prepareFirstInstallTail({ node, acceptance, universal, work, inputs, R, packageDir, linuxIn, linuxOut, pkgSha256: first.packageManifestSha256, m,
+    const prepared = await prepareFirstInstallTail({ node, acceptance, universal, work, inputs, R, packageDir, linuxIn, linuxOut, pkgSha256: first.packageManifestSha256, m,
       ciSourceManifestSha256, now, python, scm, secrets });
+    return { ...prepared, wslCapacity: applyWslCapacity() };
   }
 
   // the synthesized reinstall configuration and the installed copies it names (section 7.1)
@@ -656,7 +692,7 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   plan.launcher = { path: launcherFile, sha256: sha(lb) };
   await writePlan(planFile, plan);
   return { status: 'FLEET_NODE_INSTALL_PREPARED', node: plan.node, version: plan.version, workDir: work, installPlan: planFile,
-    launcher: plan.launcher, runCommand: runCommandOf(launcherFile, plan.launcher.sha256) };
+    launcher: plan.launcher, runCommand: runCommandOf(launcherFile, plan.launcher.sha256), wslCapacity: applyWslCapacity() };
 }
 
 // ---------------------------------------------------------------- first install (no install receipt)
@@ -705,10 +741,12 @@ export function serviceSid(name) {
   return `S-1-5-80-${[0, 4, 8, 12, 16].map(i => h.readUInt32LE(i)).join('-')}`;
 }
 export const RESIDENT_SERVICE_SID = serviceSid('CluedCIResident');
+// This module runs before the package is unpacked and is copied by the installer (OWN_MODULES), so it cannot import src/powershell-argv.mjs;
+// the four options are written out here and test/ps-execution-policy.test.mjs holds this line to them like every other.
 // The CI root's DACL as Windows PowerShell 5.1 reads it (Get-Acl, read-only); no CI root yet: ''; unreadable: null (residue, not absence).
 export const defaultCiRootSddl = dir => {
   if (!fsSync.existsSync(dir)) return '';
-  const r = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '(Get-Acl -LiteralPath $env:FI_CI_ROOT).Sddl'],
+  const r = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', '(Get-Acl -LiteralPath $env:FI_CI_ROOT).Sddl'],
     { env: { ...process.env, FI_CI_ROOT: dir, PSModulePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules' }, encoding: 'utf8', windowsHide: true });
   const sddl = String(r.stdout ?? '').trim();
   return r.status === 0 && sddl.startsWith('O:') ? sddl : null;
@@ -1007,13 +1045,15 @@ export async function sourceHashOf({ artifactPath, artifactSha256, acceptance, n
   }
 }
 
-// fleet-refs: what an acceptance file's fleetRefs.formalRoles is today on this node (the installed record), read-only.
+// fleet-refs: what an acceptance file's fleetRefs carry today on this node (the installed record), read-only: formalRoles and the references every
+// acceptance takes over (publish.mjs prepare writes them into the acceptance request; the Decision and receipt are the new acceptance's own).
 export async function installedFleetMaterial(root = DEFAULT_ROOT) {
   const man = jsonOf(await fs.readFile(path.join(root, 'record', 'source-manifest.json')));
   const acc = jsonOf(await fs.readFile(path.join(root, 'record', 'acceptance.json')));
   const formalRoles = Object.fromEntries(FORMAL_ROLES.map(r => [r, Object.fromEntries(Object.entries(man.roles[r]).filter(([k]) => k !== 'sourceFiles' && k !== 'controllerRelay'))]));
   return { formalRoles, formalRolesSha256: sha(Buffer.from(pyCanonical(formalRoles), 'utf8')),
-    installed: { sourceAcceptanceRef: acc.sourceAcceptanceRef, hostQualificationRef: acc.hostQualificationRef, ciSourceManifestSha256: sha(await fs.readFile(path.join(root, 'record', 'source-manifest.json'))) } };
+    installed: { sourceAcceptanceRef: acc.sourceAcceptanceRef, hostQualificationRef: acc.hostQualificationRef, ownerAuthorizationRef: acc.ownerAuthorizationRef,
+      publisherQualificationRef: acc.publisherQualificationRef, ownerPackageAcceptanceRef: acc.ownerPackageAcceptanceRef, ciSourceManifestSha256: sha(await fs.readFile(path.join(root, 'record', 'source-manifest.json'))) } };
 }
 
 // The command is the same on every node (section 8): no node-specific argument exists. `deps` is for tests only (a fixture root and

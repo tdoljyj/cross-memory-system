@@ -15,7 +15,7 @@
     against the shared cases (test/fixtures/node-identity-cases.json), the package side, the receipt checks, the secret files'
     security descriptors, and the fingerprint check and create-only placement against a scratch package and scratch targets with a
     throw-away key and a made-up token (needs a node on this machine; the result says whether it ran).
-  powershell -NoProfile -File test-resident-windows.ps1 -Scratch <new empty directory>
+  powershell -NoProfile -ExecutionPolicy Bypass -File test-resident-windows.ps1 -Scratch <new empty directory>
 #>
 param([Parameter(Mandatory)][string]$Scratch)
 Set-StrictMode -Version 2.0
@@ -24,6 +24,28 @@ if (Test-Path -LiteralPath $Scratch) { if (@(Get-ChildItem -LiteralPath $Scratch
 $here = $PSScriptRoot
 $n = 0
 function Yes([bool]$ok, [string]$what) { if (-not $ok) { throw ('FAILED:' + $what) }; $script:n++ }
+# H1, one rule for every child a package script starts (first-install-host.ps1's own; test/native-child.test.mjs holds every copy the same
+# text and no package .ps1 merging a stream into its output): stdout, stderr and the exit code read apart; never an error from stderr.
+function Invoke-NativeChild([string]$exe, [string[]]$arguments, [int]$seconds = 3600, [Text.Encoding]$encoding = (New-Object Text.UTF8Encoding($false)), [bool]$shareConsole = $false, [byte[]]$stdin = $null) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $exe; $psi.Arguments = (($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = ($null -ne $stdin); $psi.CreateNoWindow = (-not $shareConsole)
+  $psi.StandardOutputEncoding = $encoding; $psi.StandardErrorEncoding = $encoding
+  # Windows PowerShell 5.1 (.NET Framework) opens a redirected stdin as a StreamWriter in Console.InputEncoding and writes that
+  # encoding's preamble at once: on a UTF-8 console (code page 65001) the child reads a BOM before $stdin (run 44705707829). While the
+  # child starts, Console's cached input encoding (what its getter returns) is a UTF-8 without one; .NET Core has no such field and
+  # writes no preamble. Our bytes go to the base stream, so the writer's encoding is otherwise unused.
+  $cie = if ($psi.RedirectStandardInput) { [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static') } else { $null }
+  $was = if ($null -ne $cie) { $cie.GetValue($null) } else { $null }
+  if ($null -ne $cie) { $cie.SetValue($null, (New-Object Text.UTF8Encoding($false))) }
+  try { $p = [Diagnostics.Process]::Start($psi) } finally { if ($null -ne $cie) { $cie.SetValue($null, $was) } }
+  $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+  if ($null -ne $stdin) { try { $p.StandardInput.BaseStream.Write($stdin, 0, $stdin.Length); $p.StandardInput.BaseStream.Flush() } finally { $p.StandardInput.Close() } }   # a secret: never a command line
+  if (-not $p.WaitForExit($seconds * 1000)) { return [ordered]@{ exit = $null; stdout = ''; stderr = ''; timedOut = $true } }
+  $p.WaitForExit()   # the asynchronous reads end with the child
+  $tail = { param($t) $t = ([string]$t) -replace "`0", ''; if ($t.Length -gt 1500) { $t.Substring($t.Length - 1500) } else { $t } }
+  [ordered]@{ exit = $p.ExitCode; stdout = ([string]$o.Result -replace "`0", ''); stderr = (& $tail $e.Result); timedOut = $false }
+}
 
 # 1. Parse, and take the helpers from the real scripts.
 $functions = @{}
@@ -138,6 +160,11 @@ $killAt = $uninstallText.IndexOf("'COMPANION_STILL_RUNNING_RESIDENT_NOT_RENAMED'
 Yes ($killAt -gt $uninstallText.IndexOf('Unregister-ScheduledTask') -and $killAt -lt $uninstallText.IndexOf('[IO.Directory]::Move($Root')) 'uninstall-stops-companion-before-rename'
 Yes ($uninstallText.IndexOf("Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion'") -gt 0 -and $uninstallText.IndexOf("Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion'") -lt $uninstallText.IndexOf("Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion'") -and
   $uninstallText.Contains("Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier'") -and $uninstallText.Contains("Name='CluedCompanionSupervisor.exe'")) 'uninstall-stops-the-supervisor-and-deletes-both-tasks'
+# K3 (task 87d330d0): the SYSTEM start task (\Clued\CluedCIResidentCompanionStart) is deleted before the companion is stopped, and verify
+# records it (companion-start-task); test/companion-run-ignores-constraints.test.mjs T9 runs both in CI.
+$startDel = $uninstallText.IndexOf("Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanionStart' -Confirm:`$false")
+Yes ($startDel -gt 0 -and $startDel -lt $uninstallText.IndexOf("Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction Stop")) 'uninstall-deletes-the-start-task-first'
+Yes ((Get-Content -LiteralPath (Join-Path $here 'verify-resident.ps1') -Raw).Contains('Record ''companion-start-task'' $companionStart.ok $companionStart.detail')) 'verify-records-the-start-task'
 $probeNode = 'C:\Program Files\nodejs\node.exe'
 if ((Test-Path -LiteralPath $probeNode) -and (Test-Path -LiteralPath $na.path)) {
   $probeDir = Join-Path $Scratch 'conhost probe'; [void][IO.Directory]::CreateDirectory($probeDir)   # a space, quoted like the real paths
@@ -563,8 +590,8 @@ if (Test-Path -LiteralPath $probeNode) {
   try {
     $control = Join-Path $Scratch 'dll-control'; [void][IO.Directory]::CreateDirectory($control); Copy-Item -LiteralPath $probeNode -Destination (Join-Path $control 'node.exe')
     foreach ($dll in $dlls) { [IO.File]::WriteAllBytes((Join-Path $control ($dll + '.dll')), [byte[]](1..64)) }
-    $null = & (Join-Path $control 'node.exe') -v 2>&1
-    Yes ($LASTEXITCODE -ne 0) 'sideload-control:planted-dlls-break-a-node-run-from-its-own-directory'
+    $sideload = Invoke-NativeChild (Join-Path $control 'node.exe') @('-v') 120
+    Yes ($sideload.exit -ne 0) 'sideload-control:planted-dlls-break-a-node-run-from-its-own-directory'
     Remove-Item -LiteralPath $control -Recurse -Force
     # The same files next to the PACKAGE's node.exe: they are not in the manifest, so the hash checks cannot see them, and the fingerprint
     # still comes out right because the copy in the fresh directory is what runs.
@@ -689,7 +716,7 @@ if (Test-Path -LiteralPath $probeNode) {
 #     (b) the CI root's READ_CONTROL entry for the resident service: the install plan's state and append (install-resident.ps1#
 #         Get-ParentAclState, Add-ParentAce) on scratch folders with a protected DACL like the real one, and verify's rule
 #         (verify-resident.ps1#Test-ParentAclRule) over the same folders.
-foreach ($name in @('install-resident.ps1:Get-ServiceSid', 'install-resident.ps1:Get-ParentAce', 'install-resident.ps1:Get-AceKeys', 'install-resident.ps1:Get-ParentAclState', 'install-resident.ps1:Add-ParentAce')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
+foreach ($name in @('install-resident.ps1:Get-ServiceSid', 'install-resident.ps1:Get-DaclShape', 'install-resident.ps1:Get-ParentAce', 'install-resident.ps1:Get-AceKeys', 'install-resident.ps1:Get-ParentAclState', 'install-resident.ps1:Add-ParentAce')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
 foreach ($name in @('Get-ServiceSid', 'Test-ParentAclRule', 'Test-CompanionSourceScripts')) { Yes ($functions.ContainsKey('verify-resident.ps1:' + $name)) ('verify-present:' + $name); . ([scriptblock]::Create($functions['verify-resident.ps1:' + $name])) }
 Yes ($functions['install-resident.ps1:Get-ServiceSid'] -ceq $functions['verify-resident.ps1:Get-ServiceSid']) 'service-sid-function-identical'
 $svcSid = Get-ServiceSid 'CluedCIResident'
@@ -829,7 +856,7 @@ foreach ($case in @(
   Yes ($v.status -ceq $case[1] -and $v.exit -eq $case[2]) ('verify-verdict:' + $case[3])
 }
 
-# 4z. Language-independent service facts (NODE-A, 2026-10-30: sc qfailure printed 重新启动) and the controller's right to log on
+# 4z. Language-independent service facts (NODE-A, 2026-10-30: sc qfailure printed the Chinese word for restart) and the controller's right to log on
 #     as a service (SCM 7041, then ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED).
 foreach ($name in @('ConvertFrom-FailureActions', 'Test-BrokerFailureActions', 'Test-ServiceLogonRight')) {
   Yes ($functions.ContainsKey('verify-resident.ps1:' + $name)) ('verify-present:' + $name); . ([scriptblock]::Create($functions['verify-resident.ps1:' + $name]))

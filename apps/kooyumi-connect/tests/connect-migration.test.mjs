@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { readWranglerConfig } from '../../clued-cloud/scripts/projection-postflight.mjs';
 import worker from '../worker.mjs';
 
 // Every storage operation uses this in-memory map. Every external request is intercepted.
@@ -69,7 +71,8 @@ test('candidate records captured provenance and preserves the reviewed source an
   assert.equal(captured.source.extracted_module_sha256, 'fe2677bd4f9c34ad467aa47e121e78877487126ae97004d04bb0e1f9c2c581c3');
   const reviewed = await readFile(new URL('../worker.mjs', import.meta.url));
   assert.equal(createHash('sha256').update(reviewed).digest('hex'), captured.candidate.module_sha256);
-  const config = JSON.parse(await readFile(new URL('../wrangler.production.jsonc', import.meta.url), 'utf8'));
+  // Read as Wrangler reads it (JSONC), like every release-path reader (Fable 1121 §7).
+  const config = await readWranglerConfig(fileURLToPath(new URL('../wrangler.production.jsonc', import.meta.url)));
   assert.equal(config.name, 'clued-connect');
   assert.equal(config.kv_namespaces[0].id, captured.bindings.find(b => b.type === 'kv_namespace').namespace_id);
   assert.deepEqual(config.services, [{ binding: 'CLUED_CLOUD_SERVICE', service: 'clued-cloud', environment: 'production' }]);

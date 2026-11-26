@@ -77,6 +77,8 @@ test('signed out: no calls, a link to sign in', async t => {
 test('the default is join order; the queue shows each claim with its automatic priority', async t => {
   const f = fixture(PAGE); t.after(() => f.unmount());
   await open(f);
+  assert.ok(f.text().includes('这里列出由常驻 CI 测试并放入合并队列的拉取请求。同一个分支一次只合并其中一个。'),
+    'the introduction describes only pull requests queued by resident CI');
   assert.ok(f.text().includes('现在：按排队先后（默认）'));
   assert.ok(f.text().includes('Agent 改不了'));
   assert.ok(f.text().includes('tdoljyj/cross-memory-system 的 main 分支'));
@@ -122,15 +124,19 @@ test('a stale page is told so and shows the current setting', async t => {
   assert.ok(f.nodes('button').some(n => f.text(n) === '改为按排队先后'));
 });
 
-test('a delegated login is refused in plain words; an empty queue says so', async t => {
+test('a delegated login is refused in plain words', async t => {
   const f = fixture(PAGE); t.after(() => f.unmount());
   f.emit('INITIAL_SESSION', session('owner'));
   f.calls[0].resolve({ data: null, error: { message: 'direct_human_session_required', code: '42501' } }); await f.settle();
   assert.ok(f.text().includes('需要你本人直接登录 BeamingFace'));
   assert.equal(f.nodes('button').some(n => f.text(n).startsWith('改为')), false, 'no switch without a read setting');
-  const g = fixture(PAGE); t.after(() => g.unmount());
-  await open(g, page('fifo', 0, []));
-  assert.ok(g.text().includes('现在没有排队的拉取请求'));
+});
+
+test('an empty queue explains when the ordering setting has no effect', async t => {
+  const f = fixture(PAGE); t.after(() => f.unmount());
+  await open(f, page('fifo', 0, []));
+  assert.ok(f.text().includes('现在没有经常驻 CI 入队的拉取请求。仓库的合入不经常驻 CI 时（例如由 GitHub 自动合入），这里会一直是空的，本页的顺序设置也不起作用。'),
+    'the empty state describes the scope of the queue and the ordering setting');
 });
 
 test('switching accounts drops the previous account’s view', async t => {

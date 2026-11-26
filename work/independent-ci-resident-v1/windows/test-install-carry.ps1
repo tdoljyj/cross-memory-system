@@ -6,7 +6,7 @@
   - a link anywhere refuses before anything is written;
   - the manifest it writes is exactly what the resident's backfill (src/executed-heads.mjs) reads: node runs the real
     backfill over it and finds the published head.
-  powershell -NoProfile -File test-install-carry.ps1 -Scratch <new empty directory> [-Node <node.exe>]
+  powershell -NoProfile -ExecutionPolicy Bypass -File test-install-carry.ps1 -Scratch <new empty directory> [-Node <node.exe>]
 #>
 param([Parameter(Mandatory)][string]$Scratch, [string]$Node = 'node')
 Set-StrictMode -Version 2.0

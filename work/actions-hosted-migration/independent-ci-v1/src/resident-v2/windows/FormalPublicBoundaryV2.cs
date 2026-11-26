@@ -38,7 +38,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  // Stage 9 is a reserved number (the hosted relay, removed; resident DESIGN §76): it has no entry role, no jobs and
  // no cap, so PlanStage, SelectedJobRoles and BoundedDeadline refuse it. Stages 10-12 keep their numbers.
  // Stage 10 (quota phase 2 step 3c-1, DESIGN §22.1): train maintenance, outside every batch. Its one job is a train run
- // (train-run.mjs: contract clued.independent-ci.train-run/3, mode shadow, on or revoke-only), never a formal job (of contract /3).
+ // (train-run.mjs: contract clued.independent-ci.train-run/4, mode shadow, on or revoke-only), never a formal job (of contract /3).
  public const int TrainStage=10;
  public const int RoleProbeStage=11;
  public const int RevocationStage=12;
@@ -126,8 +126,11 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   var danger=DangerFor(path);
   foreach(FileSystemAccessRule r in a.GetAccessRules(true,true,typeof(SecurityIdentifier))){if(r.AccessControlType!=AccessControlType.Allow||(r.PropagationFlags&PropagationFlags.InheritOnly)!=0)continue;if((r.FileSystemRights&danger)!=0&&!WriterAllowed(path,r.IdentityReference.Value))Deny("UNTRUSTED_PUBLIC_MUTATION_RIGHT_REFUSED");}
  }
+ // The path being opened, for the helper's refusal event before ready (FormalSession0V2 ReportRefusedBeforeReady): set before the checkpoint
+ // and CreateFileW, so a refusal anywhere in Open, or in Read after it, names its path.
+ public string LastOpenPath;
  SafeFileHandle Open(string path,bool file){
-  Check();var h=CreateFileW(path,file?0x80020080u:0x20080u,file?1u:3u,IntPtr.Zero,3,0x02200000,IntPtr.Zero);if(h.IsInvalid){h.Dispose();Deny("PUBLIC_HANDLE_OPEN_REFUSED");}
+  LastOpenPath=path;Check();var h=CreateFileW(path,file?0x80020080u:0x20080u,file?1u:3u,IntPtr.Zero,3,0x02200000,IntPtr.Zero);if(h.IsInvalid){h.Dispose();Deny("PUBLIC_HANDLE_OPEN_REFUSED");}
   try{var i=Metadata(h);uint maximum=path==Node?256u*1024*1024:16u*1024*1024;if((i.Attributes&0x400)!=0||file&&((i.Attributes&0x10)!=0||i.Links!=1||i.SizeHigh!=0||i.SizeLow==0||i.SizeLow>maximum)||!file&&(i.Attributes&0x10)==0)Deny("PUBLIC_TYPE_LINK_SIZE_REFUSED");Final(h,path);Acl(h,path);held.Add(h);return h;}catch{h.Dispose();throw;}
  }
  void Parents(string path){var chain=new List<string>();for(string p=Path.GetDirectoryName(path);p!=null;p=Path.GetDirectoryName(p))chain.Insert(0,p);foreach(string p in chain)if(directories.Add(p))Open(p,false);}
@@ -150,13 +153,14 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
  }
  // Train run /2 (step 3c-2b, DESIGN §41.7; train-run.mjs is the same table, test/fixtures/train-run-cases.json runs on both):
- // id = sha256(JSON(["clued.independent-ci.train-run/3",repo,runId,mode,sourceManifestSha256,slotHardCapMinutes,frontBatchBudgetMs,
- // sweepFreshMs,fullSweepMaxMs,onSince,frontPr,frontHeadSha,frontTestSha,frontAttempt,frontCode,revokeHeadRequestId,sweep])).
+ // id = sha256(JSON(["clued.independent-ci.train-run/4",repo,runId,mode,sourceManifestSha256,slotHardCapMinutes,frontBatchBudgetMs,
+ // sweepFreshMs,fullSweepMaxMs,onSince,frontPr,frontHeadSha,frontTestSha,frontAttempt,frontCode,frontFailed,revokeHeadRequestId,sweep])).
  // /3 (strict-permanent mode, resident DESIGN §65): /2 plus sweep (gate|audit|off, the policy's train.sweep); /2 is refused.
- static readonly string[] TrainRunFields={"contract","id","repo","runId","mode","sourceManifestSha256","createdAt","slotHardCapMinutes","frontBatchBudgetMs","sweepFreshMs","fullSweepMaxMs","onSince","frontPr","frontHeadSha","frontTestSha","frontAttempt","frontCode","revokeHeadRequestId","sweep"};
- static readonly string[] TrainRunFront={"frontPr","frontHeadSha","frontTestSha","frontAttempt","frontCode"};
+ // R3 batch 2 (task 04f9b91b): frontFailed (a bool) after frontCode; set with the other front fields, null with them. That is /4; /3 is refused.
+ static readonly string[] TrainRunFields={"contract","id","repo","runId","mode","sourceManifestSha256","createdAt","slotHardCapMinutes","frontBatchBudgetMs","sweepFreshMs","fullSweepMaxMs","onSince","frontPr","frontHeadSha","frontTestSha","frontAttempt","frontCode","frontFailed","revokeHeadRequestId","sweep"};
+ static readonly string[] TrainRunFront={"frontPr","frontHeadSha","frontTestSha","frontAttempt","frontCode","frontFailed"};
  public static string TrainRunId(Dictionary<string,object> job){
-  var identity=new List<object>{"clued.independent-ci.train-run/3"};foreach(string f in TrainRunFields)if(f!="contract"&&f!="id"&&f!="createdAt")identity.Add(At(job,f));
+  var identity=new List<object>{"clued.independent-ci.train-run/4"};foreach(string f in TrainRunFields)if(f!="contract"&&f!="id"&&f!="createdAt")identity.Add(At(job,f));
   byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
  }
  static void Within(Dictionary<string,object> m,string k,long lo,long hi){long v=Int(m,k);if(v<lo||v>hi)Deny("TRAIN_RUN_PARAMS_REQUIRED");}
@@ -165,7 +169,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  public static bool LowerUuid(object v){var s=v as string;if(s==null||s.Length!=36)return false;for(int i=0;i<36;i++){char c=s[i];if(i==8||i==13||i==18||i==23){if(c!='-')return false;}else if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')))return false;}return true;}
  public static bool UpperCode(object v){var s=v as string;if(s==null||s.Length<2||s.Length>80||s[0]<'A'||s[0]>'Z')return false;foreach(char c in s)if(!((c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'))return false;return true;}
  public static Dictionary<string,object> ValidateTrainRun(Dictionary<string,object> job,string sourceManifest,string batchId){
-  Fields(job,TrainRunFields);Exact(job,"contract","clued.independent-ci.train-run/3");Exact(job,"repo","tdoljyj/cross-memory-system");
+  Fields(job,TrainRunFields);Exact(job,"contract","clued.independent-ci.train-run/4");Exact(job,"repo","tdoljyj/cross-memory-system");
   string mode=Text(job,"mode");if(mode!="shadow"&&mode!="on"&&mode!="revoke-only")Deny("FIXED_PUBLIC_IDENTITY_REFUSED");Sha(job,"id");string run=Text(job,"runId");
   if(run!=batchId||run.Length!=29||run[16]!='-'||!LowerHex(run.Substring(0,16))||!LowerHex(run.Substring(17))||Sha(job,"sourceManifestSha256")!=sourceManifest)Deny("FIXED_TRAIN_RUN_REQUIRED");
   DateTimeOffset created;if(!DateTimeOffset.TryParse(Text(job,"createdAt"),CultureInfo.InvariantCulture,DateTimeStyles.None,out created)||created>DateTimeOffset.UtcNow.AddMinutes(5))Deny("FIXED_FORMAL_JOB_TIME_REQUIRED");
@@ -173,7 +177,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   // onSince: null in shadow, set in on, either in revoke-only. frontOutcome: all null, or all set in on only. revokeHeadRequestId: null in shadow.
   object since=At(job,"onSince");if(!(since==null||IsoMs(since))||(mode=="shadow"&&since!=null)||(mode=="on"&&since==null))Deny("TRAIN_RUN_PARAMS_REQUIRED");
   bool none=true;foreach(string f in TrainRunFront)if(At(job,f)!=null)none=false;
-  if(!none){if(mode!="on"||!Commit(At(job,"frontHeadSha") as string)||!Commit(At(job,"frontTestSha") as string)||!UpperCode(At(job,"frontCode")))Deny("TRAIN_RUN_PARAMS_REQUIRED");Within(job,"frontPr",1,9007199254740991);Within(job,"frontAttempt",1,2);}
+  if(!none){if(mode!="on"||!Commit(At(job,"frontHeadSha") as string)||!Commit(At(job,"frontTestSha") as string)||!UpperCode(At(job,"frontCode"))||!(At(job,"frontFailed") is bool))Deny("TRAIN_RUN_PARAMS_REQUIRED");Within(job,"frontPr",1,9007199254740991);Within(job,"frontAttempt",1,2);}
   object request=At(job,"revokeHeadRequestId");if(!(request==null||(mode!="shadow"&&LowerUuid(request))))Deny("TRAIN_RUN_PARAMS_REQUIRED");
   string sweep=At(job,"sweep") as string;if(sweep!="gate"&&sweep!="audit"&&sweep!="off")Deny("TRAIN_RUN_PARAMS_REQUIRED");
   if(TrainRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;

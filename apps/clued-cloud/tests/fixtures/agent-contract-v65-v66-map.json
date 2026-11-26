@@ -1,0 +1,19 @@
+{
+  "schema": "clued.agent-contract-pr-end-release-served-only-successor/1",
+  "source_version": 65,
+  "target_version": 66,
+  "source_document_normalized_sha256": "902e86204151a1cdc2d94723871ade9a40117aa0970c9e88883e1cc131f1b3a4",
+  "target_document_normalized_sha256": "0612398ac6b1a7911cdfce2e7d8183bd7b41e930a9ad28011d16649183f82fdf",
+  "edits": [
+    {
+      "id": "version",
+      "before": "Contract version: 65",
+      "after": "Contract version: 66"
+    },
+    {
+      "id": "served-open-pr",
+      "before": "the Task has no other open pull request",
+      "after": "no other open pull request of the Task was served by this claim (authorized with that pull request or admitted for it)"
+    }
+  ]
+}

@@ -39,15 +39,17 @@ export const TRAIN_CLEAN_CODES = Object.freeze(['TRAIN_FRONT_JOB_WITHOUT_TRAIN',
   'TRAIN_LANDING_CHECKS_PENDING', 'TRAIN_LANDING_RULES_MISSING', 'TRAIN_LANDING_REFUSED', 'TRAIN_LANDING_CHECK_FAILED', 'TRAIN_BATCH_CHANGED', 'TRAIN_BATCH_WITHOUT_PUSH']);
 // Clean, but final for this head and attempt.
 export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_INPUT_RESULT_MISSING', 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED', 'BROKER_REQUEST_EXPIRED',
-  'BROKER_REQUEST_REFUSED', 'STAGE_HELPER_PREFLIGHT_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
+  'BROKER_REQUEST_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
   'NATIVE_POLICY_UNSUPPORTED', 'PUBLICATION_BLOCKED', 'PUBLICATION_REVOKED', 'EVIDENCE_REFUSED', 'WORKSPACE_PREPARATION_REFUSED',
   'RELAY_STAGE_REFUSED',
-  // Stage 8 not ready (phase 2, step 2): parked and tried again; final only when main moved or the tries ran out.
+  // Stage 8 not ready: bounded retries, then sleeping until a change. A moved base is final for this base.
   'RESIDENT_MERGE_QUEUE_NOT_JOINED', 'RESIDENT_BASE_MOVED', 'REQUIRED_CHECK_FAILED', 'REQUIRED_CHECKS_UNREADABLE',
   // Phase 2, step 3a: main's live branch rules, GitHub's test merge, the green ledger (parked and tried again), and a
   // test merge of exactly [T, H] that is not the tested tree (final for the head).
   'RULESET_UNREADABLE', 'STRICT_OFF_WITHOUT_TRAIN', 'MERGE_METHODS_NOT_MERGE_ONLY', 'TRAIN_TEST_MERGE_NOT_READY', 'GREEN_LEDGER_UNAVAILABLE',
   'TRAIN_TEST_MERGE_TREE_DIFFERS',
+  // Task bd07449b: main's rules were not read (parked, read again within minutes); RULESET_UNREADABLE is rules read and not this App's six.
+  'RULESET_READ_FAILED',
   // App 5368905 already published on this head, found on GitHub (primary/standby design v0.4 §6.2, C4): at stage 1
   // before Native was asked, or before a role's first publication that this node knew nothing of. A new commit is needed.
   'HEAD_PUBLISHED_ON_GITHUB', 'ROLE_ALREADY_ON_GITHUB',
@@ -69,8 +71,8 @@ export const UNKNOWN_CODES = Object.freeze(['BROKER_RESPONSE_UNCONFIRMED', 'STAG
 // LINUX_MEMORY_NOT_READY (DESIGN §32, Task 25851665): the pre-stage memory gate refused a scanner stage before it was invoked
 // (the VM showed too few free hv_sock-sized blocks for the whole bounded wait); nothing of the stage ran.
 export const LINUX_MEMORY_NOT_READY = 'LINUX_MEMORY_NOT_READY';
-const RESIDENT_CLEAN = Object.freeze(['FULL_NEXT_STAGE_AUTHORITY_WINDOW_REQUIRED', 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED', 'FIXED_PUBLIC_CHILD_REFUSED',
-  'ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'REFS_GATE_UNCONFIRMED', LINUX_MEMORY_NOT_READY]);
+const RESIDENT_CLEAN = Object.freeze(['ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED',
+  'FORMAL_BRIDGE_STAGE_DEADLINE', 'REFS_GATE_UNCONFIRMED', LINUX_MEMORY_NOT_READY]);
 
 const NOT_ADMITTED = new Set(NOT_ADMITTED_CODES);
 const TRANSIENT = new Set(TRANSIENT_CODES);
@@ -163,7 +165,7 @@ export function scannerAbandonEligible({ stage, phase = 'stage', code, bridge = 
 // at stage 1 (it had not started) or 2 (it had, and no publication stage had begun) and takes the same one attempt 2.
 export const EXECUTOR_RESTARTED_UNPUBLISHED = 'EXECUTOR_RESTARTED_UNPUBLISHED';
 export const ATTEMPT2_RESIDENT_CODES = Object.freeze({ [BRIDGE_ABANDONED_UNPUBLISHED]: Object.freeze([2]), [LINUX_MEMORY_NOT_READY]: Object.freeze([2]),
-  [EXECUTOR_RESTARTED_UNPUBLISHED]: Object.freeze([1, 2]) });
+  [EXECUTOR_RESTARTED_UNPUBLISHED]: Object.freeze([1, 2]), REFS_GATE_UNCONFIRMED: Object.freeze([2]), UPGRADE_VERSION_SKEW: Object.freeze([2]) });
 const residentAttempt2 = (code, stages) => Object.hasOwn(ATTEMPT2_RESIDENT_CODES, code) && Array.isArray(stages) && stages.every(s => ATTEMPT2_RESIDENT_CODES[code].includes(s));
 
 // The archive reason segment is derived from the stable code, never taken from untrusted text.
@@ -180,8 +182,8 @@ export const FAILURE_TABLE_CONTRACT = 'clued.independent-ci.resident-failure-tab
 // 'node-role' (primary/standby C3, DESIGN §29): this node holds no ci-admission role. It says nothing about the PR: the release
 // is counted neither as an evaluation nor towards the head's release cap (ledger.mjs#usage), and the executor goes to STANDBY.
 export const FAILURE_CLASSES_V1 = Object.freeze(['not-admitted', 'node-role', 'waiting', 'deterministic-pr', 'unmapped-stage-1', 'transient', 'environment', 'clean-final', 'queue', 'abort', 'unknown']);
-export const DISPOSITIONS = Object.freeze(['release', 'release-if-safe', 'burn', 'halt']);
-export const RETRY_RULES = Object.freeze(['new-trigger', 'attempt2', 'new-commit', 'owner-rearm']);
+export const DISPOSITIONS = Object.freeze(['release', 'release-if-safe', 'park', 'safe-point-release', 'burn', 'halt']);
+export const RETRY_RULES = Object.freeze(['new-trigger', 'attempt2', 'same-batch', 'continuation', 'park', 'new-commit', 'owner-rearm']);
 const ROW_KEYS = ['code', 'stages', 'phase', 'reasons', 'reasonCodesAny', 'reasonCodesWithin', 'class', 'disposition', 'retry', 'breaker', 'note'];
 const LOWER = /^[a-z][a-z0-9_]{0,63}$/, REASON = /^[A-Za-z][A-Za-z0-9_]{0,79}$/;
 // Stage 1 of these two transient codes is released (not burned into attempt 2) when the entry proves it wrote nothing: DESIGN 49.
@@ -304,10 +306,21 @@ export const EXECUTION_RETRY_STAGES = Object.freeze([2, 4, 6]);
 export const STAGE2_RETRY_KEEPS_ABANDONED = Object.freeze(['REFS_GATE_UNCONFIRMED', 'UPGRADE_VERSION_SKEW']);
 export const EXECUTION_RETRY_BLOCKED_REASONS = Object.freeze(['LINUX_PREPARATION_REFUSED', 'BRIDGE_CALLBACK_DEADLINE', 'REMOTE_REFS_UNAVAILABLE',
   ...NETWORK_GITHUB_REASONS, ...NETWORK_NATIVE_REASONS]);
-export function executionRetryable({ stage, code, outcome = null, bridge = null, proof = null } = {}) {
+export function noLaunchRetryable(stage, result) {
+  return result.brokerNoLaunch === true && result.proof?.windowsTreeZero === true
+    && result.proof?.serviceOriginalStopped === true
+    && failureRow({ stage, code: result.code })?.retry === 'same-batch';
+}
+
+export function executionRetryable({ stage, code, outcome = null, bridge = null, proof = null, retry = 0 } = {}) {
   const no = reason => ({ retry: false, basis: null, reason });
   if (!EXECUTION_RETRY_STAGES.includes(stage)) return no('EXECUTION_RETRY_STAGE_NOT_LISTED');
   if (proof?.windowsTreeZero !== true || proof?.serviceOriginalStopped !== true) return no('EXECUTION_RETRY_WINDOWS_PROOF_INCOMPLETE');
+  if (code === 'STAGE_CHILD_TIMEOUT') return retry === 0 && bridge?.pumpQuiet !== false
+    ? { retry: true, basis: 'child-timeout', reason: null } : no('EXECUTION_RETRY_TIMEOUT_LIMIT');
+  if (['ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE'].includes(code)
+      && bridge?.pumpQuiet === true && !PUMP_CODES_UNPROVABLE.includes(bridge.pumpCode))
+    return { retry: true, basis: 'bridge-transfer-refused', reason: null };
   const abandoned = scannerAbandonEligible({ stage, code, bridge, proof }).eligible;
   if (stage === 2 && !abandoned) return no('EXECUTION_RETRY_STAGE2_NOT_ABANDONED');
   if (code === LINUX_MEMORY_NOT_READY) return { retry: true, basis: 'memory-gate', reason: null };
@@ -331,13 +344,16 @@ export function decideFailure({ code, stage, phase = 'stage', outcome = null, br
   let row = typeof code === 'string' && CODE.test(code) ? failureRow({ code, stage, phase, reason: outcome?.reason ?? null, diagnostic: outcome?.diagnostic ?? null }) : null;
   if (!row || row.disposition === 'halt') return { klass: 'UNKNOWN', basis: row ? 'failure-table-halt' : 'not-an-allow-listed-clean-failure', row, release: null };
   const windows = proof?.windowsTreeZero === true && proof?.serviceOriginalStopped === true;
+  const zeroEffect = outcome?.status === 'BLOCKED' && outcome.sideEffects === 0 && outcome.mayHavePublished === false;
+  if (!zeroEffect && (row.disposition === 'park' && stage === 8 || code === 'STAGE_CHILD_TIMEOUT' && [1, 3, 5, 7, 8].includes(stage)))
+    return { klass: 'UNKNOWN', basis: 'publication-not-proven-absent', row, release: null };
   const deterministic = diagnosticCodes(outcome?.diagnostic).some(c => DETERMINISTIC_REASON_CODES.includes(c));
   // What the deterministic code makes of a release-if-safe row is what the ledger and the status record. Except a node that
   // holds no role (DESIGN §29): it decided nothing about the PR, so no reason beside it can burn the head.
   if (deterministic && row.disposition === 'release-if-safe' && row.class !== 'node-role') row = Object.freeze({ ...row, class: 'deterministic-pr', disposition: 'burn', retry: 'new-commit', breaker: 'neutral' });
   // A stage-1 row of disposition release (today only TRAIN_MODE_UNREADABLE; BUNDLE_UNAVAILABLE is released before this, at the
   // bundle): released on a bound BLOCKED outcome with zero side effects that published nothing, whatever its safeToRerun says.
-  if (started !== true && stage === 1 && row.disposition === 'release' && windows && outcome?.status === 'BLOCKED' && outcome.sideEffects === 0 && outcome.mayHavePublished === false)
+  if (started !== true && stage === 1 && row.disposition === 'release' && windows && zeroEffect && !deterministic)
     return { klass: 'NOT_ADMITTED', basis: 'stage-1-zero-side-effects', row, release: 'NOT_ADMITTED' };
   if (started !== true && row.disposition === 'release-if-safe' && windows) {
     if (outcome?.safeToRerun === true) return { klass: 'NOT_ADMITTED', basis: 'stage-1-safe-to-rerun', row, release: 'NOT_ADMITTED' };

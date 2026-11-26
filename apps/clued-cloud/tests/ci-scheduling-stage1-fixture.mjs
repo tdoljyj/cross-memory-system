@@ -1,11 +1,11 @@
+import { EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
 import {workerGatewayRpc, assertGatewayCloseoutBoundary} from './worker-gateway-caller-fixture.mjs';
 
@@ -14,15 +14,14 @@ export const uuid=()=>crypto.randomUUID();
 export const digest=(value='fixture')=>crypto.createHash('sha256').update(value).digest('hex');
 export const sha=(value='fixture')=>crypto.createHash('sha1').update(value).digest('hex');
 export const limits=(cap=100)=>Object.fromEntries(['execution_start','evaluation','PR_batch','head_release','stage8_retry','head_distinct_combination_24h'].map(k=>[k,cap]));
-async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 
 // through: the last migration file to apply (a test of an earlier migration's repair that a later one supersedes);
 // every migration by default.
 export async function schedulingFixture({through}={}){
   const parent=await fs.realpath(os.tmpdir());
   const directory=await fs.mkdtemp(path.join(parent,'clued-ci-stage1-'));
-  const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:crypto.randomBytes(32).toString('hex'),port:await port(),persistent:false,
-    postgresFlags:['-c','io_method=sync'],onLog(){},onError(message){process.stderr.write(String(message)+'\n');}});
+  const server=newCluster({databaseDir:directory,user:'postgres',password:crypto.randomBytes(32).toString('hex'),persistent:false,
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(message){process.stderr.write(String(message)+'\n');}});
   const clients=[];
   const connect=async(role)=>{const c=server.getPgClient();clients.push(c);await c.connect();if(role)await c.query(`set role ${role}`);return c;};
   const close=async()=>{for(const c of clients.reverse())await c.end().catch(()=>{});
@@ -32,7 +31,7 @@ export async function schedulingFixture({through}={}){
     // Windows may hold the stopped cluster's files for a moment (EBUSY); fs.rm retries those.
     if(actual!==null)await fs.rm(directory,{recursive:true,force:true,maxRetries:10,retryDelay:200});};
   try{
-    await server.initialise();await server.start();const admin=await connect();
+    await startCluster(server);const admin=await connect();
     await admin.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;
       create schema auth;create schema extensions;create extension pgcrypto with schema extensions;
       create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz);

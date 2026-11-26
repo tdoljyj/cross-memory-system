@@ -1,12 +1,11 @@
-import { removeTestDirectory } from './cluster-cleanup.mjs';
+import { EPHEMERAL_INITDB_FLAGS, EPHEMERAL_POSTGRES_FLAGS, removeTestDirectory, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { stopOwnedPostgres } from './model-domain-postgres-lifecycle.fixture.mjs';
 import {DOMAIN_POLICY as P} from '../worker/model-domain-policy.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
@@ -40,14 +39,9 @@ async function lockedMigrations() {
   console.log(JSON.stringify({migration_count:names.length,migration_bundle_sha256:crypto.createHash('sha256').update(JSON.stringify(held.map(({name,sha256})=>({name,sha256})))).digest('hex'),successor:changes[0],successor_sha256:held.find(m=>m.name===changes[0]).sha256,full_source_positive:'NOT_RUN_FIXED_CANONICAL_OWNER_SOURCES_UNAVAILABLE'}));
   return held;
 }
-async function freePort() {
-  const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r));
-  const p = s.address().port; await new Promise(r => s.close(r)); return p;
-}
 test('actor-free successor: real M1 normalization and Native denial boundaries only',
   { timeout: 300000 }, async t => {
   const migrationBundle=await lockedMigrations();
-  const port=await freePort(); // Fail before creating a fixture root when sockets are unavailable.
   // Host-owned test location, derived from this test's checkout. An override
   // is diagnostic only and must resolve to the very same fixed location.
   if(process.env.M2_TEST_ROOT)assert.equal(path.resolve(process.env.M2_TEST_ROOT).toLowerCase(),path.resolve(defaultTestRoot).toLowerCase(),'M2_TEST_ROOT cannot widen the fixed owned test root');
@@ -71,17 +65,16 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
   }
   const tempBefore=Object.fromEntries(['TEMP','TMP','TMPDIR'].map(k=>[k,process.env[k]]));
   for(const key of ['TEMP','TMP','TMPDIR'])process.env[key]=directory;
-  const server = new EmbeddedPostgres({
-    databaseDir, user: 'postgres', password: hash(), port,
+  const server = newCluster({
+    databaseDir, user: 'postgres', password: hash(),
     persistent: true, createPostgresUser:false,
-    postgresFlags: ['-c', 'io_method=sync','-c','listen_addresses=127.0.0.1'],
+    initdbFlags: EPHEMERAL_INITDB_FLAGS,
+    postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],
     onLog() {}, onError(message) { process.stderr.write(message + '\n'); },
   });
   let admin,ownProcess,startAttempted=false,initialiseSettled=false;
   try {
-    try {await server.initialise();} finally {initialiseSettled=true;}
-    startAttempted=true;
-    await server.start();ownProcess=server.process;
+    await startCluster(server,{mark:(name,event)=>{if(name==='initialise'&&event==='end')initialiseSettled=true;else if(name==='start'&&event==='start')startAttempted=true;}});ownProcess=server.process;
     assert.ok(ownProcess?.pid,'The fixture must retain its own PostgreSQL child identity');
     await fs.writeFile(path.join(directory,'OwnProcess.json'),JSON.stringify({run_id:runId,pid:ownProcess.pid,database_dir:databaseDir,port:server.options.port})+'\n',{flag:'wx'});
     admin = server.getPgClient('postgres','127.0.0.1'); await admin.connect();

@@ -1,0 +1,125 @@
+{
+  "contract": "clued.independent-ci.fleet-node-acceptance/1",
+  "version": "2026.11.19-78ad314b",
+  "archive_sha256": "329b9f5044fd410abdb10b79770135d9787904c77daa4e2ebe27f4bca1643796",
+  "commit": "78ad314b6574d855cc6bc2d06d6421ffcd78cabc",
+  "repository": "tdoljyj/cross-memory-system",
+  "ciSourceManifestSha256": "472f41d8e5ffe83814697e63b020bdf835c37a3c2c10e8a8214737a07783bef5",
+  "cluedDecision": "b902744d-6e45-4983-92cf-598b9ff0dff3",
+  "acceptedAt": "2026-11-18T17:36:57Z",
+  "fleetRefs": {
+    "sourceAcceptanceRef": "5c06efc1-6597-49bb-9883-57a7e7d6c344",
+    "hostQualificationRef": "e46ab3f7-539f-4bc3-8f60-5ceec1eef8b9",
+    "ownerAuthorizationRef": "5c06efc1-6597-49bb-9883-57a7e7d6c344",
+    "publisherQualificationRef": "5c06efc1-6597-49bb-9883-57a7e7d6c344",
+    "ownerPackageAcceptanceRef": "5c06efc1-6597-49bb-9883-57a7e7d6c344",
+    "ownerDecisionRef": "b902744d-6e45-4983-92cf-598b9ff0dff3",
+    "installationReceiptRef": "f29af6fb-2e96-42cf-b953-18e8927750f0",
+    "ownerReceiptRef": "f29af6fb-2e96-42cf-b953-18e8927750f0",
+    "formalRoles": {
+      "gitleaks": {
+        "containerCommand": {
+          "args": [
+            "git",
+            "/repo",
+            "--config",
+            "/repo/.gitleaks.toml",
+            "--gitleaks-ignore-path",
+            "/reviewed.ignore",
+            "--redact",
+            "--exit-code",
+            "1"
+          ],
+          "cwd": "/input",
+          "executable": "/usr/bin/gitleaks",
+          "image": "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f",
+          "scanner": "gitleaks"
+        },
+        "hostTools": {
+          "python": {
+            "path": "/usr/bin/python3.12",
+            "sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f"
+          }
+        },
+        "maxOutputBytes": 16777216,
+        "timeoutMs": 1200000
+      },
+      "trivy": {
+        "containerCommand": {
+          "args": [
+            "fs",
+            "--skip-db-update",
+            "--scanners",
+            "vuln",
+            "--severity",
+            "HIGH,CRITICAL",
+            "--ignore-unfixed",
+            "--exit-code",
+            "1",
+            "--cache-dir",
+            "/scratch",
+            "--skip-check-update",
+            "--skip-version-check",
+            "--disable-telemetry",
+            "/repo"
+          ],
+          "cwd": "/input",
+          "executable": "/usr/local/bin/trivy",
+          "image": "ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9",
+          "scanner": "trivy"
+        },
+        "formalTrivy": {
+          "cacheRoot": "/var/lib/clued-independent-ci-trivy-cache",
+          "checksPin": {
+            "contentSha256": "fc6ecb7abdf0d6431a3abf9c7e8f3cef4f1b0b447aa35cf325e79951ca7a6f75",
+            "digest": "sha256:b0e12d009b01dcc8ca2ebbc199b9caf3922491978d21c17b61c1d7f6dc75220b",
+            "majorVersion": 2,
+            "repository": "ghcr.io/aquasecurity/trivy-checks:2"
+          },
+          "profile": "required-trivy-three-scanners/1"
+        },
+        "maxOutputBytes": 16777216,
+        "timeoutMs": 1500000
+      },
+      "contract-placement": {
+        "command": {
+          "args": [
+            "/control/contract-placement-entry.mjs"
+          ],
+          "cwd": ".",
+          "executable": "/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node",
+          "executableSha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12"
+        },
+        "formalContractPlacement": {
+          "esbuildVersion": "0.28.1",
+          "profile": "required-contract-placement/1",
+          "tools": {
+            "esbuildBinary": {
+              "path": "/opt/clued-tools/linux-x64/bin/esbuild",
+              "sha256": "0c6588b092a2c291a72bab90659f3c9e0e25e0fe59c9ac12b4dae4d945e5548c"
+            },
+            "esbuildJs": {
+              "path": "/opt/clued-tools/esbuild/bin/esbuild",
+              "sha256": "fe9a7b65a540d8df1a0f59941d52e7c1260c36fed9a2af3dd966f15381b6eb76"
+            },
+            "git": {
+              "path": "/usr/bin/git",
+              "sha256": "2540879925a6881e3877ff7e3330746ba3027b04edf16a3a12dccd1644c4f32d"
+            },
+            "node": {
+              "path": "/usr/local/bin/node",
+              "sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12"
+            },
+            "python": {
+              "path": "/usr/local/bin/python3.12",
+              "sha256": "837a48d7afd08447fb43e28b282026fadb59368620072e57e01f66d12977e5ce"
+            }
+          },
+          "workflowSha256": "4898299bee3e804a19acfef51d15b582e5a52526a655a290cf09bb56c39de84b"
+        },
+        "maxOutputBytes": 16777216,
+        "timeoutMs": 300000
+      }
+    }
+  }
+}

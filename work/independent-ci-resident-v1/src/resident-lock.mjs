@@ -13,6 +13,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
+import { powershellArgs } from './powershell-argv.mjs';
 
 const POWERSHELL_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 function execFileText(file, args) {
@@ -33,8 +34,8 @@ function execFileText(file, args) {
 // process; the path and the command line are null for a process this token may not open (another account's).
 export function readWin32Process(pid, { run = execFileText } = {}) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return Promise.resolve(null);
-  return run(POWERSHELL_EXE, ['-NoProfile', '-NonInteractive', '-Command',
-    `Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=${pid}' | Select-Object Name,ExecutablePath,CommandLine,@{n='CreationMs';e={[DateTimeOffset]::new($_.CreationDate.ToUniversalTime()).ToUnixTimeMilliseconds()}} | ConvertTo-Json -Compress`])
+  return run(POWERSHELL_EXE, powershellArgs('-Command',
+    `Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=${pid}' | Select-Object Name,ExecutablePath,CommandLine,@{n='CreationMs';e={[DateTimeOffset]::new($_.CreationDate.ToUniversalTime()).ToUnixTimeMilliseconds()}} | ConvertTo-Json -Compress`))
     .then(text => {
       if (text === null) return null;
       if (text.trim() === '') return { name: null, executablePath: null, commandLine: null, creationMs: null };

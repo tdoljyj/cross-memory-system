@@ -2,16 +2,15 @@
 // Synthetic identity keys test deployment-config CAS only; no issuer credential
 // table, credential RPC, stage/activate path or test credential grant is created.
 // Synthetic accounts/envelopes never use a live service.
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { buildCutoverSql, buildPreflightSql, validateCutover, main,
   GOOGLE_CLIENT_ID, OLD_CALLBACK, NEW_CALLBACK } from '../scripts/storage-google-redirect-cutover.mjs';
 
@@ -70,13 +69,6 @@ test('generation is deterministic, read-only by default, and only changes the fi
     /SELECT\s+(?:\*|a\.issuer_hash|i\.legacy_key)/i);
 });
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve, reject) => { listener.once('error', reject); listener.listen(0, '127.0.0.1', resolve); });
-  const port = listener.address().port;
-  await new Promise((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
-  return port;
-}
 function table(source, marker) {
   const begin = source.indexOf(marker); assert.ok(begin >= 0, marker);
   const end = source.indexOf('\n);', begin); assert.ok(end >= 0, marker);
@@ -117,12 +109,12 @@ async function snapshot(client) {
 test('forward/reverse SQL enforce callback drainage, exact CAS, operator and history preservation in PostgreSQL',
   { timeout: 120000 }, async t => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kooyumi-storage-redirect-test-'));
-    const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres',
-      password: crypto.randomBytes(32).toString('hex'), port: await freePort(), persistent: false,
-      initdbFlags: ['--locale=C'], postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError() {} });
+    const server = newCluster({ databaseDir: directory, user: 'postgres',
+      password: crypto.randomBytes(32).toString('hex'), persistent: false,
+      initdbFlags: [...EPHEMERAL_INITDB_FLAGS, '--locale=C'], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError() {} });
     const clients = []; let index = 0;
     try {
-      await server.initialise(); await server.start();
+      await startCluster(server);
       const control = server.getPgClient(); clients.push(control); await control.connect();
       await control.query(`CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN;
         CREATE ROLE service_role NOLOGIN BYPASSRLS; CREATE ROLE authenticator NOLOGIN;

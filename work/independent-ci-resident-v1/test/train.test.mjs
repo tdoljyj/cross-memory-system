@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { trainDue, trainPageLine, trainSummary, WOULD_DO, claimBindingFingerprint } from '../src/train.mjs';
-import { executorFixture, fakeEngine, rawPolicy, triggerBytes } from './helpers.mjs';
+import { executorFixture, fakeEngine, rawPolicy, rulesReply, triggerBytes } from './helpers.mjs';
 import { WOULD_DO as SOURCE_WOULD_DO, TRAIN_FACTS_CONTRACT } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
 
 const MIN = 60_000, NOW = Date.parse('2026-10-23T12:00:00Z');
@@ -150,7 +150,7 @@ test('the status copy of a summary and the PR page line: recent, this head at th
   for (const bad of [null, [], { ...last, at: 'x' }, { ...last, mode: 'on' }, { ...last, wouldDo: 'REVOKE' }]) assert.equal(parseTrainLast(bad), null);
   const pull = { pr: 910, headSha: '2'.repeat(40) };
   const parked = { state: 'pending', description: '已测通，在合并队列第 1 位：等成为队首，约 12:05 再查第 8 段' };
-  assert.match(withTrainLine(parked, last, pull, NOW + MIN).description, /^已测通.*；列车影子（只记录，不执行）：你是合并队列车头。车头六项已绿，等合并。$/);
+  assert.match(withTrainLine(parked, last, pull, NOW + MIN).description, /^已测通.*；列车影子（只记录，不执行）：你是合并队列车头。合并位已绿，等合并。$/);
   assert.equal(withTrainLine(parked, last, pull, NOW + TRAIN_PAGE_MAX_AGE_MS + 1), parked, 'too old');
   assert.equal(withTrainLine(parked, last, { ...pull, headSha: '3'.repeat(40) }, NOW), parked, 'another head');
   assert.equal(withTrainLine(parked, last, { ...pull, pr: 911 }, NOW), parked, 'another PR');
@@ -250,7 +250,9 @@ test('the companion reporter puts the shadow line on the front PR only, after th
   const calls = [];
   const run = async argv => {
     calls.push(argv);
-    if (argv.some(x => x.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv.some(x => x.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
+    if (argv.some(x => x.includes('/check-runs?'))) return { code: 0, stdout: JSON.stringify({ total_count: REQUIRED.length, check_runs: REQUIRED.map(name => ({ name, head_sha: H, app: { id: 5368905 }, status: 'completed', conclusion: 'success' })) }) };
+    if (argv.some(x => x.includes('/statuses?')) && !argv.includes('--jq')) return { code: 0, stdout: '[]' };
     return { code: 0, stdout: '{}' };
   };
   const board = new StatusBoard({ clock: () => NOW, pid: 1 });
@@ -269,7 +271,7 @@ test('the companion reporter puts the shadow line on the front PR only, after th
     const post = calls.find(argv => argv.includes('POST') && argv.some(x => x.endsWith(`/statuses/${pr === 910 ? H : other}`)));
     return post?.find(x => x.startsWith('description='))?.slice('description='.length) ?? null;
   };
-  assert.match(description(910), /列车影子（只记录，不执行）：你是合并队列车头。车头六项已绿，等合并。$/);
+  assert.match(description(910), /列车影子（只记录，不执行）：你是合并队列车头。全部必需检查已绿，等合并。$/);
   assert.ok(description(911) && !description(911).includes('列车影子'), 'another PR gets no line');
 });
 
@@ -279,7 +281,6 @@ test('executor (review of 3c-1, round 2): the clean endings that are not BLOCKED
   const cases = [
     [{ ok: false, code: 'BROKER_REQUEST_EXPIRED', proof, brokerNoLaunch: true }, null],
     [{ ok: false, code: 'BROKER_REQUEST_REFUSED', proof, brokerNoLaunch: true }, null],
-    [{ ok: false, code: 'STAGE_HELPER_PREFLIGHT_REFUSED', proof }, null],
     [{ ok: false, code: 'STAGE_CHILD_TIMEOUT', proof }, null],
     // the child wrote its facts, then ran into the cap: the bound outcome is quiet (round 2, NIT 3)
     [{ ok: false, code: 'PUBLICATION_UNCERTAIN', proof, outcome: facts }, null],

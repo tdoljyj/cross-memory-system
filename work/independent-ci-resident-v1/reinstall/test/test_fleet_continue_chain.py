@@ -369,21 +369,27 @@ class Steps(unittest.TestCase):
 
     def test_a_prior_run_without_its_final_line_is_retried_only_while_one_of_its_processes_is_there(self):
         for companion in (True, False):
-            for processes, fails, code in (([{'pid': 7, 'name': 'bash'}], False, 'LINUX_PHASE_STILL_RUNNING_RETRY'), ([], False, 'LINUX_PHASE_ENDED_WITHOUT_STATUS'), ([], True, 'RUN_PROCESS_QUERY_FAILED')):
+            for live, fails, code in ((True, False, 'LINUX_PHASE_STILL_RUNNING_RETRY'), (False, False, 'LINUX_PHASE_ENDED_WITHOUT_STATUS'), (False, True, 'RUN_PROCESS_QUERY_FAILED')):
                 with self.subTest(companion=companion, code=code):
-                    r, produced, _ = (self.companion_b('{"status":"ROOT_STAGING_VERIFIED"}\n', runProcesses=processes, processQueryFails=fails) if companion else
-                                      self.a_timeout('staging x\n', runProcesses=processes, processQueryFails=fails))
+                    r, produced, s = (self.companion_b('{"status":"ROOT_STAGING_VERIFIED"}\n', live_process=live, processQueryFails=fails) if companion else
+                                      self.a_timeout('staging x\n', live_process=live, processQueryFails=fails))
                     self.assertEqual((r['stopped'], r['done'], r['carried']['directory'], r['linuxRuns']), (code, [], None, []))
+                    state = json.loads(produced[os.path.join('launch', 'continue-report.json')].decode('utf-8'))['state']
+                    if fails:   # the real function's own refusal, not taken for "none"
+                        self.assertEqual((state.get('runProcesses'), state.get('runProcessQuery')), (None, 'RUN_PROCESS_QUERY_FAILED'))
+                    else:
+                        self.assertEqual(base.run_process_pids(produced), [s.live_pid] if live else [])
 
     def test_a_run_with_a_process_is_not_read_even_when_its_last_line_looks_final(self):
         done = 'moved x\n' + json.dumps({'status': 'LINUX_REINSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1', 'evidence': 'E_PATH', 'versionFacts': 'F_PATH'}) + '\n'
         for companion in (True, False):
             with self.subTest(companion=companion):
                 if companion:
-                    r, produced, _ = self.companion_b(done, runProcesses=[{'pid': 7, 'name': 'bash', 'companion': True}])
+                    r, produced, s = self.companion_b(done, live_process=True)
                 else:
-                    r, produced, _ = self.a_timeout('{"status":"PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED"}\n', runProcesses=[{'pid': 7, 'name': 'bash'}])
+                    r, produced, s = self.a_timeout('{"status":"PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED"}\n', live_process=True)
                 self.assertEqual((r['stopped'], r['captures'], r['done']), ('LINUX_PHASE_STILL_RUNNING_RETRY', [], []))   # the process is asked first: nothing captured or read
+                self.assertEqual(base.run_process_pids(produced), [s.live_pid])
                 self.assertNotIn('phaseBStatus', json.loads(produced[os.path.join('launch', 'continue-report.json')].decode('utf-8'))['state'])
         r, _, _ = self.companion_b(done)   # no process any more: read, and on
         self.assertIsNone(r['stopped'])

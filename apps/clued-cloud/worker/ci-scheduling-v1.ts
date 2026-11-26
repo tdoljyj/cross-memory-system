@@ -138,6 +138,12 @@ function publicKey(value: unknown): JsonWebKey {
 export async function ciIdentityFingerprint(key: unknown): Promise<string> {
   return digest(ciCanonicalJson(publicKey(key)));
 }
+export async function verifyCiIdentitySignature(jwk: unknown, fingerprint: string, signature: unknown, bytes: Uint8Array<ArrayBuffer>) {
+  const key = publicKey(jwk);
+  if (await ciIdentityFingerprint(key) !== fingerprint) return false;
+  const imported = await crypto.subtle.importKey('jwk', key, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+  return crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, imported, base64url(signature, 64), bytes);
+}
 export type CiAuthenticatedPrincipal = Readonly<{
   user_id: string; project_id: string; binding_id: string; binding_generation: number;
 }>;
@@ -221,11 +227,8 @@ export async function verifyCiNodeCommand(
       || parsed.binding_id !== actor.binding_id || parsed.binding_generation !== actor.binding_generation) invalid('PRINCIPAL_INVALID');
     if (await digest(canonicalPayload) !== parsed.payload_sha256) invalid('SIGNATURE_INVALID');
     const first = matches(await readTrustedNode(parsed.node_id), parsed, actor, integer(now()));
-    const key = publicKey(first.identity_public_jwk);
-    if (await ciIdentityFingerprint(key) !== parsed.key_fingerprint) invalid('SIGNATURE_INVALID');
-    const imported = await crypto.subtle.importKey('jwk', key, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
-    const verified = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, imported,
-      base64url(parsed.signature, 64), ciCommandSigningBytes(parsed));
+    const verified = await verifyCiIdentitySignature(first.identity_public_jwk, parsed.key_fingerprint,
+      parsed.signature, ciCommandSigningBytes(parsed));
     if (!verified) invalid('SIGNATURE_INVALID');
     // Crypto awaits can cross revocation/expiry. Re-read, never cache request principals.
     const nonceSha256 = await digest(parsed.nonce);

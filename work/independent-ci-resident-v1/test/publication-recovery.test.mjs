@@ -40,10 +40,21 @@ async function world(t, options = {}) {
     async readChecks(head) { ports.push('checks'); await state.onReadChecks?.(); return { complete: true, checks: checks.filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
     async createCheck(body) {
       ports.push('create'); mutations.push('create'); if (state.createFailure) fail('github_transport_unconfirmed');
-      const c = { id: next++, app: { id: 5368905 }, ...structuredClone(body) }; checks.push(c); await state.onCreate?.(c); return structuredClone(c);
+      const c = { id: next++, app: { id: 5368905 }, conclusion: null, ...structuredClone(body) }; checks.push(c); await state.onCreate?.(c); return structuredClone(c);
     },
     async revokeCheck(id, body) { ports.push('revoke'); mutations.push('revoke'); if (state.revokeFailure) fail('github_transport_unconfirmed'); const c = checks.find(v => v.id === id); Object.assign(c, structuredClone(body)); return structuredClone(c); },
   };
+  if (options.verifyFirst) {
+    github.readStagedScan = async (_key, id) => checks.find(check => check.id === id)?.status === 'in_progress' ? 'pending' : 'completed';
+    github.completeStagedScan = async (key, id, verify) => {
+      const record = await rawJournal.read(key);
+      assert.equal(record.details.checkRunId, id);
+      await rawJournal.transition(key, 'created', 'completing', record.details);
+      (await verify())();
+      assert.fail('the unavailable observation should refuse completion');
+    };
+    github.failStagedScan = async (_key, id) => github.revokeCheck(id, { status: 'completed', conclusion: 'failure' });
+  }
   const journal = {
     read: key => { ports.push('journal-read'); return rawJournal.read(key); },
     async begin(...args) { ports.push('journal-begin'); mutations.push('begin'); if (state.journalFailure) fail('journal_write_unconfirmed'); return rawJournal.begin(...args); },
@@ -269,11 +280,21 @@ test('postwrite observation has its own window: time spent between the write and
   assert.deepEqual([final.maxObservationMs, final.maxPostWriteObservationMs], [60000, 60000]);
 });
 
-test('a revoke attempt that cannot be confirmed stays UNCERTAIN and never POSTs the role again', async t => {
+test('legacy publication order: an unconfirmed withdrawal stays UNCERTAIN and never POSTs the role again', async t => {
   const w = await world(t); w.state.onCreate = () => { w.state.fetchDelay = 30001; }; w.state.revokeFailure = true;
   const r = await w.publisher.publish(w.input('trivy'));
-  assert.equal(r.status, 'UNCERTAIN'); assert.equal(w.mutations.filter(x => x === 'create').length, 1);
+  assert.equal(r.status, 'UNCERTAIN'); assert.equal(r.reason, 'revocation_unconfirmed');
+  assert.equal(w.mutations.filter(x => x === 'create').length, 1);
   assert.equal(w.mutations.filter(x => x === 'revoke').length, 1); assert.equal(w.checks.length, 1); assert.equal(attempts(w), 2);
+});
+
+test('failed staged verification with unavailable cleanup ends cleanly and never publishes green', async t => {
+  const w = await world(t, { verifyFirst: true }); w.state.onCreate = () => { w.state.fetchDelay = 30001; }; w.state.revokeFailure = true;
+  const r = await w.publisher.publish(w.input('trivy'));
+  assert.equal(r.status, 'STAGED_SCAN_FAILED'); assert.equal(w.mutations.filter(x => x === 'create').length, 1);
+  assert.equal(w.mutations.filter(x => x === 'revoke').length, 1); assert.equal(w.checks.length, 1); assert.equal(attempts(w), 2);
+  assert.deepEqual([w.checks[0].status, w.checks[0].conclusion], ['in_progress', null]);
+  assert.equal((await w.rawJournal.read(w.key('trivy'))).state, 'revoked');
 });
 
 test('a terminal exhausted role cannot obtain a fresh allowance through another call', async t => {

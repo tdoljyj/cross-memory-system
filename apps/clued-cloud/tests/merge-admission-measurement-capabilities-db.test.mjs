@@ -1,26 +1,19 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, startCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
 import {workerGatewayRpc,assertGatewayCloseoutBoundary} from './worker-gateway-caller-fixture.mjs';
-// Only an already-installed local test library URL may override the literal
-// dependency. It is never a database URL, caller token or production target.
-const {default:EmbeddedPostgres}=process.env.CLUED_TEST_EMBEDDED_POSTGRES_URL
-  ? await import(process.env.CLUED_TEST_EMBEDDED_POSTGRES_URL)
-  : await import('embedded-postgres');
+import { newCluster } from './pg-cluster-fixture.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const uuid=()=>crypto.randomUUID(),hash=()=>crypto.randomBytes(32).toString('hex');
 const sha=s=>crypto.createHash('sha256').update(s).digest('hex');
 const candidateName='20261011050507_merge_admission_measurement_capabilities_v1.sql';
 const helperSignature='clued_private.merge_measurement_capabilities_v1(uuid)';
-async function freePort(){const listener=net.createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));
-  const port=listener.address().port;await new Promise(r=>listener.close(r));return port;}
 async function readChain(){
   const folder=path.join(root,'supabase/migrations');
   return Promise.all((await fs.readdir(folder)).filter(n=>n.endsWith('.sql')).sort().map(async name=>{
@@ -44,8 +37,8 @@ test('measurement capabilities: current-chain publisher atomicity and real gatew
   assert.match(publisher,/execute s;/);assert.match(publisher,/insert into supabase_migrations\.schema_migrations/);
   const tempParent=await fs.realpath(os.tmpdir());
   const directory=await fs.mkdtemp(path.join(tempParent,'clued-r9-capabilities-'));
-  const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:hash(),port:await freePort(),
-    persistent:true,postgresFlags:['-c','io_method=sync'],onLog(){},onError(message){process.stderr.write(message+'\n');}});
+  const server=newCluster({databaseDir:directory,user:'postgres',password:hash(),
+    persistent:true,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(message){process.stderr.write(message+'\n');}});
   const clients=[];let admin,legacy,fixture,legacyBefore,beforeCatalog,beforeLedger;
   const rpc=async(client,token,input)=>{
     try{return await workerGatewayRpc(client,'clued_mcp_audit_receipts',token,input);}
@@ -60,7 +53,7 @@ test('measurement capabilities: current-chain publisher atomicity and real gatew
     return {user,token,binding};
   };
   try{
-    await server.initialise();await server.start();admin=server.getPgClient();clients.push(admin);await admin.connect();
+    await startCluster(server);admin=server.getPgClient();clients.push(admin);await admin.connect();
     await admin.query(`create role anon nologin;create role authenticated nologin;
       create role service_role nologin bypassrls;create role authenticator nologin noinherit;
       create schema auth;create schema extensions;create extension pgcrypto with schema extensions;

@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import { assertGatewayCloseoutBoundary, snapshotAuthorizationCallerBoundary, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
@@ -22,24 +21,16 @@ const scope = (resource_id, actions) => ({ resource_kind: 'scope', resource_id, 
 const context = (resource_id, actions, environment = 'test') => ({ resource_kind: 'context', resource_id, environment, actions });
 const claims = sub => ({ sub, role: 'authenticated', session_id: 'future-consent-db', aal: 'aal1',
   amr: [{ method: 'password', timestamp: Math.floor(Date.now() / 1000) - 30 }] });
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise(resolve => listener.close(resolve));
-  return port;
-}
 
 test('future-only owned consent policies: real full-chain PostgreSQL and concurrent Native boundaries', { timeout: 420000 }, async t => {
   const started = performance.now();
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-future-consent-'));
-  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: proof(),
-    port: await freePort(), persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {},
+  const server = newCluster({ databaseDir: directory, user: 'postgres', password: proof(),
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {},
     onError(message) { process.stderr.write(`${message}\n`); } });
   const clients = [];
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     async function connect(role = null, owner = null) {
       const db = server.getPgClient(); clients.push(db); await db.connect();
       await db.query("set statement_timeout='15s'; set lock_timeout='10s'");

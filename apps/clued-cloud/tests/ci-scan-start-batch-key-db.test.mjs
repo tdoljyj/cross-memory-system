@@ -6,16 +6,15 @@
 // and the adapter's own permission check (scanStartPermission in Native mode) accepts what comes back.
 // Review of the fix: S is not a fact Native can verify, so the distinct tested commits per (head, role) are capped;
 // the grant names S and attempt and the controller compares both; legacy K rows are carried over as S = H, attempt 1.
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
 import {workerGatewayRpc,setWorkerGatewayCaller} from './worker-gateway-caller-fixture.mjs';
 import {makeJobV2} from '../../../work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
@@ -31,20 +30,19 @@ const BODY_TAG='$ci_scan_batch_key_sql_20261108090000$';
 const uuid=()=>crypto.randomUUID();
 const digest=(s='fixture')=>crypto.createHash('sha256').update(s).digest('hex');
 const sha=(s='fixture')=>crypto.createHash('sha1').update(s).digest('hex');
-async function freePort(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 // The wire identity the real port sends (scan-start-v1/registry.mjs) and the scope the admitted-facts fixture names.
 const repository='tdoljyj/cross-memory-system',repoId=1334673495,pr=888,project='00000000-0000-4000-8000-000000000000',scope='project:'+project;
 
 // One isolated cluster. migrate(filter) applies the sorted migrations the filter accepts.
 async function withCluster(prefix,body){
   const parent=await fs.realpath(os.tmpdir()),dir=await fs.mkdtemp(path.join(parent,prefix));
-  const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:digest(uuid()),port:await freePort(),persistent:false,
-    postgresFlags:['-c','io_method=sync'],onLog(){},onError(m){process.stderr.write(String(m)+'\n');}});
+  const server=newCluster({databaseDir:dir,user:'postgres',password:digest(uuid()),persistent:false,
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(m){process.stderr.write(String(m)+'\n');}});
   const clients=[];
   const connect=async(role)=>{const c=server.getPgClient();clients.push(c);await c.connect();if(role)await c.query('set role '+role);return c;};
   const json=async(c,q,args=[])=>(await c.query(q,args)).rows[0].v;
   try{
-    await server.initialise();await server.start();const admin=await connect();
+    await startCluster(server);const admin=await connect();
     await admin.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;
       create schema auth;create schema extensions;create extension pgcrypto with schema extensions;
       create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz);

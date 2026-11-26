@@ -1,0 +1,15 @@
+{
+  "contract": "clued.drill.guest-failure-files/1",
+  "files": [
+    { "root": "ci", "path": "resident\\state\\HALT.json" },
+    { "root": "ci", "path": "resident\\state\\PAUSED.json" },
+    { "root": "ci", "path": "resident\\state\\status.json" },
+    { "root": "ci", "path": "reinstall-progress-*\\*.json" },
+    { "root": "work", "path": "prepare\\launch-*\\progress\\*.json" },
+    { "root": "work", "path": "prepare\\launch-*\\verify.stdout.json" },
+    { "root": "work", "path": "prepare\\launch-*\\companion-headless.stdout.json" },
+    { "root": "ci", "path": "resident\\install\\companion-*.json" },
+    { "root": "users", "path": "clued-companion*\\AppData\\Local\\CluedIndependentCI\\supervisor.json" },
+    { "root": "ci", "path": "wsl\\*\\companion-wsl-import-result.json" }
+  ]
+}

@@ -31,6 +31,12 @@ UPGRADE = 'clued' + '_bnd_' + 'Kept123_-' * 5
 HEARTBEAT = 'clued' + '_hbt_' + 'k' * 43
 
 
+def run_process_pids(produced, launch='launch'):
+    """The pids continue-report.json records as the prior run's processes (Get-FleetRunProcesses' entries, each one process)."""
+    found = json.loads(produced[os.path.join(launch, 'continue-report.json')].decode('utf-8'))['state']['runProcesses']
+    return [x.get('pid') if isinstance(x, dict) else x for x in found]
+
+
 def fingerprint(kind, token):
     domain = {'ci-token': 'clued.independent-ci.ci-binding-pin/1\0', 'heartbeat-token': 'clued.independent-ci.heartbeat-token-pin/1\0'}[kind]
     return hashlib.sha256((domain + token.strip()).encode()).hexdigest()
@@ -401,7 +407,7 @@ $FleetFirstInstall = $null; $FleetFirstInstallDirectory = $null   # a reinstall 
 $c = Get-Content -LiteralPath $Case -Raw -Encoding UTF8 | ConvertFrom-Json
 $errors = $null; $tokens = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($Template, [ref]$tokens, [ref]$errors)
-foreach ($name in @('Sha256Bytes', 'Write-New', 'Write-Json', 'Get-Key', 'Parse-Json', 'Parse-LastLine', 'Get-FileSha', 'Stop-Launch', 'Test-FleetLinuxOutput', 'Get-FleetOutFile', 'Read-FleetFileChecked', 'Get-FleetTokenFingerprint', 'Remove-FleetCarry', 'Step-CarryTokens', 'Tail', 'Test-FleetRun', 'Get-FleetRunReport', 'Step-LinuxRoot', 'Remove-FleetRegistrar', 'Restore-W1Pause', 'Read-FleetOutFile', 'Get-FleetRunOutputDirectory')) {
+foreach ($name in @('Sha256Bytes', 'Write-New', 'Write-Json', 'Get-Key', 'Parse-Json', 'Parse-LastLine', 'Get-FileSha', 'Stop-Launch', 'Test-FleetLinuxOutput', 'Get-FleetOutFile', 'Read-FleetFileChecked', 'Get-FleetTokenFingerprint', 'Remove-FleetCarry', 'Step-CarryTokens', 'Tail', 'Test-FleetRun', 'Get-FleetRunReport', 'Step-LinuxRoot', 'Remove-FleetRegistrar', 'Restore-W1Pause', 'Read-FleetOutFile', 'Get-FleetRunOutputDirectory', 'Get-FleetRunProcesses')) {
   $nodes = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $false))
   if ($nodes.Count -ne 1) { throw ('FUNCTION_MISSING_OR_DUPLICATED:' + $name) }
   . ([scriptblock]::Create($nodes[0].Extent.Text))
@@ -412,6 +418,7 @@ $null = [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Cul
 $Js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
 $Done = New-Object Collections.Generic.List[string]
 $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$OwnerSid = $me   # the companion account (a launcher pin): this test's own, so a process the test starts is the companion's
 $StageSddl = 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;' + $me + ')'
 $Out = Join-Path $Work 'launch'; $Stage = Join-Path $Work 'stage'; foreach ($d in @($Out, $Stage)) { [void][IO.Directory]::CreateDirectory($d) }
 $ResidentRoot = Join-Path $c.ci 'resident'; $CarryParent = $c.ci
@@ -449,11 +456,13 @@ function Get-ContinueUninstallProcesses { @($c.uninstallProcesses) }
 function Test-TerminalEvidence([string]$root) { $script:evidenceRoot = $root; [bool]$c.terminalEvidence }
 function Step-FileLocks { if ($script:failLocks) { $script:failLocks = $false; Stop-Launch 'EXTERNAL_RESIDENT_BINARY_LOCK' $null }; $Done.Add('file-locks'); [ordered]@{ fileCount = 3; external = 0 } }
 # a companion node's registrar and its capture-file (create-only, the announced source and target shapes), this continuation's capture
-# directory (its ACL is the launcher's; a non-elevated test cannot make an Administrators-owned directory), Get-FleetRunProcesses
+# directory (its ACL is the launcher's; a non-elevated test cannot make an Administrators-owned directory). Get-FleetRunProcesses is the
+# template's own (one read-only process query): a run's process is a real one the test starts (live_process); a failed query is
+# Get-CimInstance throwing, so the real function reports it itself.
 $script:failLocks = [bool]$c.failLocksOnce; $script:captures = @(); $script:captureDirs = @()
 function New-FleetRegistrar { [ordered]@{ exe = 'registrar-stand-in'; directory = (Join-Path $Work 'companion-build-stand-in') } }
 function New-FleetCaptureDirectory([string]$runDirectory) { $d = Join-Path $runDirectory ('captured-' + [Guid]::NewGuid().ToString('N')); [void][IO.Directory]::CreateDirectory($d); $script:captureDirs += ,$d; $d }
-function Get-FleetRunProcesses([string]$runDirectory) { if ($c.processQueryFails) { throw 'RUN_PROCESS_QUERY_FAILED' }; @($c.runProcesses) }
+if ($c.processQueryFails) { function Get-CimInstance { throw 'stand-in: the process query fails' } }
 function Invoke-FleetProcess([string]$file, [string]$arguments, [int]$seconds) {
   $p = $arguments -split ' '
   $refuse = { param($code) [ordered]@{ timedOut = $false; exit = 1; stdout = ('{"code":"' + $code + '"}'); stderr = '' } }
@@ -504,15 +513,25 @@ class ContinueStep(unittest.TestCase):
                     'terminalEvidence': True, 'receiptPin': sha(b'{"receipt":1}'), 'uninstallReceiptPin': sha(b'{"uninstall":1}'), 'upgradeFingerprint': fingerprint('ci-token', UPGRADE),
                     'heartbeatFingerprint': fingerprint('heartbeat-token', HEARTBEAT), 'progress': '|'.join(s.progress_names()[0]), 'priorIsThisProcess': False, 'linuxFrom': 'prior-launch', 'lastRun': str(run),
                     'priorPins': {name: sha((s.prior / name).read_bytes()) for name in files},
-                    'resumePrior': str(s.prior), 'from': None, 'residentState': 4, 'startWorks': False, 'finishStops': False, 'verified': False, 'uninstallProcesses': [], 'uninstallPlanPin': None, 'outDirOk': True, 'bStdout': '', 'failLocksOnce': False, 'companion': False, 'runProcesses': [], 'processQueryFails': False, 'refuseCapture': None}
+                    'resumePrior': str(s.prior), 'from': None, 'residentState': 4, 'startWorks': False, 'finishStops': False, 'verified': False, 'uninstallProcesses': [], 'uninstallPlanPin': None, 'outDirOk': True, 'bStdout': '', 'failLocksOnce': False, 'companion': False, 'processQueryFails': False, 'refuseCapture': None}
+            live = case.pop('live_process', False)
             base['priorPins'].update(case.pop('priorPinsOverride', {}))
             base.update(case)
             if change:
                 change(s)
             (s.root / 'driver.ps1').write_text(DRIVER, encoding='utf-8'); (s.root / 'case.json').write_text(json.dumps(base), encoding='utf-8')
             work = s.root / 'run'
-            p = subprocess.run([str(POWERSHELL), '-NoProfile', '-NonInteractive', '-File', str(s.root / 'driver.ps1'), str(LAUNCHER / 'template.ps1'), str(LAUNCHER / 'continue-install.ps1'), str(s.root / 'case.json'), str(work)],
-                               capture_output=True, text=True, encoding='utf-8', timeout=60)
+            holder = None   # live_process: a real process of the prior run, its command line naming the run directory as a Linux step's does
+            try:
+                if live:
+                    holder = subprocess.Popen([str(POWERSHELL), '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 120 # ' + str(run)],
+                                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    s.live_pid = holder.pid
+                p = subprocess.run([str(POWERSHELL), '-NoProfile', '-NonInteractive', '-File', str(s.root / 'driver.ps1'), str(LAUNCHER / 'template.ps1'), str(LAUNCHER / 'continue-install.ps1'), str(s.root / 'case.json'), str(work)],
+                                   capture_output=True, text=True, encoding='utf-8', timeout=60)
+            finally:
+                if holder:   # by its handle: only the process this test started
+                    holder.kill(); holder.wait()
             self.assertEqual(p.returncode, 0, p.stderr)
             produced = {}
             for at, _, names in os.walk(work):
@@ -608,8 +627,9 @@ class ContinueStep(unittest.TestCase):
         self.assertIsNone(r['stopped'])
         self.assertEqual((r['linux']['factsSha256'], r['done']), (sha(json.dumps(FACTS).encode()), ['file-locks', 'tokens-carried', 'continued-before-uninstall']))
         for stdout in ('{"status":"ROOT_STAGING_VERIFIED"}\nmoved a -> b\n', '', None):
-            r, _, _ = self.b_timeout(stdout, runProcesses=[{'pid': 7, 'name': 'bash'}])   # still running: the same command again later
+            r, produced, s = self.b_timeout(stdout, live_process=True)   # still running: the same command again later
             self.assertEqual((r['stopped'], r['done'], r['carried']['directory']), ('LINUX_PHASE_STILL_RUNNING_RETRY', [], None), stdout)
+            self.assertEqual(run_process_pids(produced), [s.live_pid], stdout)
             r, _, _ = self.b_timeout(stdout)   # ended without its final line: it never will have one
             self.assertEqual((r['stopped'], r['done'], r['carried']['directory']), ('LINUX_PHASE_ENDED_WITHOUT_STATUS', [], None), stdout)
         r, produced, _ = self.b_timeout('{"status":"REFUSED","code":"RESIDENT_INSTALL_FAILED_SEE_RECOVERY"}\n')

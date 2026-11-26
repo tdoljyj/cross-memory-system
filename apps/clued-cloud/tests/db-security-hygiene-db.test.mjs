@@ -1,13 +1,14 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
+import { checkDatabaseMaintenance } from './database-io-maintenance-db.case.mjs';
+import { checkWorkerDue } from './worker-due-db.case.mjs';
 
 // Database permission hygiene, P0-4 (migration 20261007120000, Clued Task 9a4d6d2c, Owner Decision
 // eed7154f; docs/maintenance/database-security.md). Two databases on one server: "plain" is what
@@ -63,13 +64,6 @@ const API_ROLES = ['anon', 'authenticated'];
 const hash = () => crypto.randomBytes(32).toString('hex');
 const minus = (list, removed) => list.filter((entry) => !removed.includes(entry));
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 async function sourceFiles(directory, pattern) {
   const files = [];
@@ -138,14 +132,13 @@ test('database permission hygiene: exact privilege changes, Worker RPCs stay cal
   const clients = [];
   const startDatabase = async (label) => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), `clued-db-security-hygiene-${label}-`));
-    const server = new EmbeddedPostgres({
-      databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-      persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    const server = newCluster({
+      databaseDir: directory, user: 'postgres', password: hash(), 
+      persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
       onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
     });
     servers.push({ server, directory });
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const db = server.getPgClient();
     clients.push(db);
     await db.connect();
@@ -363,6 +356,15 @@ test('database permission hygiene: exact privilege changes, Worker RPCs stay cal
       await apply(prod, [MIGRATION]);
       assert.deepEqual(await snapshot(prod), prodAfter);
     });
+
+    // Reuse the local server with an isolated database for the retention and index fixtures.
+    await plain.query('create database io_maintenance');
+    const maintenance = servers[0].server.getPgClient('io_maintenance');
+    clients.push(maintenance);
+    await maintenance.connect();
+    await checkDatabaseMaintenance(t, maintenance);
+    await apply(plain, migrations.filter(name => name > MIGRATION));
+    await checkWorkerDue(t, plain);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     for (const { server, directory } of servers) {

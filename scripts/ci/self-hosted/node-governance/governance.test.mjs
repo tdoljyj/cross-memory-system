@@ -141,6 +141,63 @@ test('the status file is the one every reader takes: the executor and the PR pag
   assert.match(alerts, /ALERT drive:D:red: D: 8 GB free of 2300 GB, below 10 GB: new resident batches wait until 15 GB/);
 });
 
+// The hourly history line (board 265, design D:/w/tmp/FABLE-node-install-batch-20261124.md section 4): the replaced host
+// watchdog's telemetry stopped on 11-08 because the hand-placed script lost it; here it is part of the rendered task.
+function historyRound(t, body, { prelude = [] } = {}) {
+  const r = render(t, 'company-primary');
+  fs.mkdirSync(path.join(r.dir, 'logs'), { recursive: true });
+  const statusFile = path.join(r.dir, 'status.json');
+  const out = run(t, r, ['notify', 'levels', 'drive-round', 'sweep', 'status'], [
+    `$statusFile=${quote(statusFile)}; $probeDrives=@('C','D'); $residentDrive='D'; $vhdx=@(); $staleWorktrees=0; $nextDaily=''; $linuxHold=$null`,
+    "function Get-PSDrive($n){[pscustomobject](@{C=@{Free=300GB;Used=600GB};D=@{Free=8GB;Used=2292GB}})[$n]}",
+    '$driveLevels=@{}; Invoke-DriveRound', ...[].concat(body)], { prelude });
+  const read = (name) => { const f = path.join(r.dir, 'logs', name); return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').trim().split(/\r?\n/) : null; };
+  return { r, out, statusFile, read };
+}
+
+test('history: one round writes a header and one line; its memory is the number the same round put into status.json; a dry run writes its own file', { skip }, (t) => {
+  const h = historyRound(t, 'Write-Status');
+  const lines = h.read('history-x.csv');
+  assert.ok(lines, 'the round wrote logs\\history-<host>.csv');
+  assert.equal(lines.length, 2, lines.join('\n'));
+  assert.equal(lines[0], 'time,memoryFreeGb,drivesFreeGb,linuxRunnersSuspended');
+  const [time, mem, drives, suspended] = lines[1].split(',');
+  assert.ok(!Number.isNaN(Date.parse(time)), time);
+  assert.match(mem, /^\d+(\.\d+)?$/, 'the memory column is a number');
+  const s = JSON.parse(fs.readFileSync(h.statusFile, 'utf8'));
+  assert.equal(Number(mem), s.memoryFreeGb, 'the same reading as the status file, not a second one');
+  assert.equal(drives, 'C=300;D=8');
+  assert.equal(suspended, 'False');
+  const dry = historyRound(t, 'Write-Status', { prelude: ['$DryRun=$true'] });
+  assert.equal(dry.read('history-x.csv'), null, 'a dry run leaves the real history alone');
+  assert.equal(dry.read('history-x.dryrun.csv')?.length, 2);
+});
+
+test('history: a second round within the hour adds nothing; an hour after the last line adds one, with the runner hold', { skip }, (t) => {
+  const h = historyRound(t, ['Write-Status; Write-Status', "'same=' + (@(Get-Content -LiteralPath $historyFile).Count)",
+    '(Get-Item -LiteralPath $historyFile).LastWriteTime=(Get-Date).AddMinutes(-61)',
+    "$linuxHold=[ordered]@{suspended=$true;since='2026-11-18T21:41:00+08:00';detail='memory'}; Write-Status"]);
+  assert.equal(at(h.out.lines, 'same'), '2', 'header and one line after two rounds in the same hour');
+  const lines = h.read('history-x.csv');
+  assert.equal(lines.length, 3, lines.join('\n'));
+  assert.equal(lines[2].split(',')[3], 'True', 'a held runner is recorded as stopped');
+});
+
+test('history is an aid: when it cannot be written the round goes on, status.json is written and the failure is only logged', { skip }, (t) => {
+  const h = historyRound(t, []);
+  const blocker = path.join(h.r.dir, 'logs', 'blocked');
+  fs.mkdirSync(blocker);
+  const old = new Date(Date.now() - 2 * 3_600_000);
+  fs.utimesSync(blocker, old, old);
+  const again = run(t, h.r, ['notify', 'levels', 'drive-round', 'sweep', 'status'], [
+    `$statusFile=${quote(h.statusFile)}; $probeDrives=@('C'); $residentDrive='C'; $vhdx=@(); $staleWorktrees=0; $nextDaily=''; $linuxHold=$null`,
+    "function Get-PSDrive($n){[pscustomobject]@{Free=300GB;Used=600GB}}",
+    `$driveLevels=@{}; Invoke-DriveRound; $historyFile=${quote(blocker)}; Write-Status; 'after=ok'`]);
+  assert.equal(at(again.lines, 'after'), 'ok', 'the round went on (the harness also requires exit 0)');
+  assert.equal(JSON.parse(fs.readFileSync(h.statusFile, 'utf8')).contract, 'clued.node-governance-status/1');
+  assert.match(again.log, /History write failed/);
+});
+
 test('alerts: the same key at most once per its minutes; red every 30 minutes, yellow once a day; recovery said once', { skip }, (t) => {
   const r = render(t, 'home-primary');
   const out = run(t, r, ['notify', 'levels', 'drive-round'], [
@@ -253,11 +310,17 @@ test('a sweep goes to WSL as one bash -c with the script base64-encoded and no d
 // The renderer protects the node's Windows runner root. A fixture under the temp folder is only outside it if the runner
 // root is somewhere else, so the test pins the root instead of inheriting whichever machine it runs on (on clued-ci-home-win-01
 // TEMP is inside the runner root and the sweep correctly refused the fixture).
-function windowsSweepCase(t, runnerRoot) {
+// The protected folder the sweep must refuse is that runner root, a fixture folder that exists with an old file in it: the
+// refusal is only reached for a folder that exists, so a production path (C:\ProgramData\CluedIndependentCI) gave the
+// expected refusal only on a machine that has it, and pointed the delete function at it (task 04f9b91b: on the
+// GitHub-hosted runner it does not exist and the case failed).
+function windowsSweepCase(t) {
+  const runnerRoot = tempDir(t, 'governance-runner-root-');
+  const old = new Date(Date.now() - 40 * 86_400_000);
+  fs.writeFileSync(path.join(runnerRoot, 'protected-old.bin'), 'x'); fs.utimesSync(path.join(runnerRoot, 'protected-old.bin'), old, old);
   const r = render(t, 'home-primary', (d) => { d.hosts.find((h) => h.host_id === 'home-primary').windows_runner.root = runnerRoot; });
   const root = path.join(r.dir, 'cache');
   fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
-  const old = new Date(Date.now() - 40 * 86_400_000);
   for (const f of ['old.bin', 'sub/old2.bin']) { fs.writeFileSync(path.join(root, f), 'x'); fs.utimesSync(path.join(root, f), old, old); }
   fs.writeFileSync(path.join(root, 'new.bin'), 'x');
   const target = path.join(r.dir, 'elsewhere');
@@ -266,16 +329,17 @@ function windowsSweepCase(t, runnerRoot) {
   const dry = run(t, r, ['windows-sweep'], [`$DryRun=$true; $x = Remove-OldFiles ${quote(root)} 30; 'n=' + $x.Files`]);
   assert.equal(at(dry.lines, 'n'), '2');
   assert.ok(fs.existsSync(path.join(root, 'old.bin')));
-  const real = run(t, r, ['windows-sweep'], [`$x = Remove-OldFiles ${quote(root)} 30; 'n=' + $x.Files`, "'p=' + (Remove-OldFiles 'C:\\ProgramData\\CluedIndependentCI' 1).Files"]);
+  const real = run(t, r, ['windows-sweep'], [`$x = Remove-OldFiles ${quote(root)} 30; 'n=' + $x.Files`, `'p=' + (Remove-OldFiles ${quote(runnerRoot)} 1).Files`]);
   assert.equal(at(real.lines, 'n'), '2');
   assert.deepEqual(fs.readdirSync(root).sort(), ['link', 'new.bin', 'sub']);
   assert.ok(fs.existsSync(path.join(target, 'keep.bin')), 'a junction is never entered');
   assert.equal(at(real.lines, 'p'), '0');
-  assert.match(real.log, /refused: a protected folder/);
+  assert.ok(fs.existsSync(path.join(runnerRoot, 'protected-old.bin')), 'nothing inside the protected folder is removed');
+  assert.ok(real.log.includes(`${runnerRoot} refused: a protected folder`), real.log);
 }
 
 test('the Windows sweep removes only old files under its roots, never through a link or inside a protected folder; a dry run removes nothing', { skip }, (t) => {
-  windowsSweepCase(t, 'Z:/no-such-runner-root');
+  windowsSweepCase(t);
 });
 
 test('the Windows sweep gives the same result wherever TEMP is, except that a fixture inside the runner root is refused', { skip }, (t) => {

@@ -113,6 +113,7 @@ export const TRAIN_BATCH_MAX_LIMIT = 4;
 // package and all nodes of one Source run one mode. Before, every package carried the node's installed train unchanged (the generic
 // upgrade's configInputsFor), so the mode a node was first installed with stayed (2026-11-14: turing shadow, desk-w-591 on). Going back
 // (shadow or off) is this value and a new package; the immediate stop is the Owner's PAUSE request, as before.
+// ADR 0018 §8.7: landing 'push' (reopened 2026-11-20); batchMax is left out, so trainBatchMax gives 1 (ADR 0019 §8.3 raises it in its own PR).
 export const FLEET_TRAIN = Object.freeze({ enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 600_000, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS,
   sweep: TRAIN_SWEEP_DEFAULT, landing: 'push' });
 // Local execution and publication stages of each heavy role (the dynamic part of a batch).
@@ -142,10 +143,10 @@ export function validatePolicy(p) {
     'queueDepth', 'maxConcurrent', 'inboxMaxFiles', 'unexecutedCooldownMs', 'stageMarginMs'], 'POLICY_LIMIT_KEYS_INVALID');
   check(int(p.limits.maxBatchesPer24h, 1, 72), 'POLICY_RATE_INVALID'); // executions (10-started)
   check(int(p.limits.maxEvaluationsPer24h, 1, 96), 'POLICY_EVALUATION_RATE_INVALID'); // ledger.mjs#usage evaluations
-  check(int(p.limits.perPrBatchesPer24h, 1, 72), 'POLICY_PR_RATE_INVALID');
+  check(int(p.limits.perPrBatchesPer24h, 1, 72), 'POLICY_PR_RATE_INVALID'); // per PR
   check(int(p.limits.waitingRetriesPer24h, 0, 96), 'POLICY_WAITING_BUDGET_INVALID');
-  check(int(p.limits.reevaluationsPerPrHeadPer24h, 0, 12), 'POLICY_REEVALUATION_CAP_INVALID');
-  check(int(p.limits.releasesPerHeadPer24h, 0, 6), 'POLICY_RELEASE_CAP_INVALID');
+  check(int(p.limits.reevaluationsPerPrHeadPer24h, 0, 12), 'POLICY_REEVALUATION_CAP_INVALID'); // per PR commit
+  check(int(p.limits.releasesPerHeadPer24h, 0, 6), 'POLICY_RELEASE_CAP_INVALID'); // per head
   check(int(p.limits.queueDepth, 1, 100), 'POLICY_QUEUE_DEPTH_INVALID');
   check(p.limits.maxConcurrent === 1, 'POLICY_SERIAL_EXECUTION_REQUIRED');
   check(int(p.limits.inboxMaxFiles, 1, 256), 'POLICY_INBOX_BOUND_INVALID');
@@ -160,7 +161,7 @@ export function validatePolicy(p) {
   check(p.stage8.mode === 'park', 'POLICY_STAGE8_MODE_INVALID');
   exactKeys(p.park, ['maxParked', 'maxParkedOutsideTop2', 'maxMs', 'stage8MaxTries', 'stage8RetriesPer24h'], 'POLICY_PARK_KEYS_INVALID');
   check(int(p.park.maxParked, 1, 8) && int(p.park.maxParkedOutsideTop2, 0, 16) && int(p.park.maxMs, 3_600_000, 86_400_000) && int(p.park.stage8MaxTries, 1, 24)
-    && int(p.park.stage8RetriesPer24h, 0, 200), 'POLICY_PARK_INVALID');
+    && int(p.park.stage8RetriesPer24h, 0, 200), 'POLICY_PARK_INVALID'); // per PR
   if (p.contract === POLICY_CONTRACT_V7) validateTrain(p.train); else validateTrainV8(p.train);
   exactKeys(p.companion, ['userSid', 'heartbeatMaxAgeMs'], 'POLICY_COMPANION_KEYS_INVALID');
   check(SID.test(p.companion.userSid) && p.companion.userSid === node.ownerSid, 'POLICY_COMPANION_SID_INVALID');

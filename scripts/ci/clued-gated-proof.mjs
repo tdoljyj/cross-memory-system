@@ -103,9 +103,11 @@ export function applicableCI({workflows,profiles,changedFiles,commits,diffComple
 
 function qualifyAllRequiredPrimaries(profile,jobs,file,requiredDiffContext) {
   try {
-    if(!isExactAllRequiredPrimariesProfile(profile,file)||!Array.isArray(jobs)||jobs.length!==4)
+    // The primaries of the profile's own generation (its digest is pinned, isExactAllRequiredPrimariesProfile): three
+    // before R1, six since the scans joined the tests.
+    if(!isExactAllRequiredPrimariesProfile(profile,file)||!Array.isArray(jobs)||jobs.length!==1+profile.primary_ids.length)
       return unknown(`${file}: exact all-required Source/jobs missing`);
-    const names=['admission-gate',...REQUIRED_TESTS_SOURCE.primary_ids];
+    const primaries=profile.primary_ids,names=['admission-gate',...primaries];
     if(jobs.some(job=>!job||!names.includes(job.name))||
       names.some(name=>jobs.filter(job=>job.name===name).length!==1))
       return unknown(`${file}: required primary set missing or duplicate`);
@@ -117,8 +119,9 @@ function qualifyAllRequiredPrimaries(profile,jobs,file,requiredDiffContext) {
       new Set(jobs.map(job=>job.id)).size!==jobs.length)
       return unknown(`${file}: required jobs cross native run/attempt identity`);
     if(gate.status!=='completed'||gate.conclusion!=='success')return unknown(`${file}: gate did not complete successfully`);
-    const ids=[],primaryScopes=[];
-    for(const name of REQUIRED_TESTS_SOURCE.primary_ids) {
+    // Every primary is checked: migration-verify's independent not-applicable evidence stands in for its execution only.
+    const ids=[],primaryScopes=[];let notApplicable=false;
+    for(const name of primaries) {
       const job=jobs.find(job=>job.name===name),route=profile.routes.find(route=>route.job_id===name);
       if(job.status==='completed'&&FAILED.has(job.conclusion))return failed(`${file}: required primary ${name} failed`);
       if(job.status!=='completed'||job.conclusion!=='success'||!Array.isArray(job.labels)||
@@ -140,10 +143,8 @@ function qualifyAllRequiredPrimaries(profile,jobs,file,requiredDiffContext) {
             return {...unknown(`${file}: not_applicable_without_independent_diff`),code:'NOT_APPLICABLE_WITHOUT_INDEPENDENT_DIFF'};
           primaryScopes.push({job_id:name,native_job_id:job.id,scope:'not_applicable',
             evidence_scope:evidence.scope,evidence});
-          ids.push(job.id);
-          return {passed:true,state:'qualified',scope:'required_workflow_requirements_satisfied',
-            execution_mode:'all_required_primaries',reason:`${file}: required execution and independent applicability observed`,
-            job_ids:ids,primary_scopes:primaryScopes,scopes:[]};
+          ids.push(job.id);notApplicable=true;
+          continue;
         }
         // Full mode never treats the mutually exclusive no-op as migration
         // execution. It remains Source/FullRole/command-digest bound.
@@ -161,8 +162,11 @@ function qualifyAllRequiredPrimaries(profile,jobs,file,requiredDiffContext) {
       primaryScopes.push({job_id:name,native_job_id:job.id,
         scope:name==='ci-suites'?'declared_selected_command':'actual_full'});
     }
+    if(notApplicable)return {passed:true,state:'qualified',scope:'required_workflow_requirements_satisfied',
+      execution_mode:'all_required_primaries',reason:`${file}: required execution and independent applicability observed`,
+      job_ids:ids,primary_scopes:primaryScopes,scopes:[]};
     return {passed:true,state:'qualified',scope:'workflow_execution',execution_mode:'all_required_primaries',
-      reason:`${file}: all three required primaries executed`,job_ids:ids,primary_scopes:primaryScopes,scopes:[]};
+      reason:`${file}: all required primaries executed`,job_ids:ids,primary_scopes:primaryScopes,scopes:[]};
   }catch{return unknown('all-required primary proof unavailable');}
 }
 

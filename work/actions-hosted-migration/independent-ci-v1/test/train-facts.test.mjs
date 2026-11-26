@@ -66,8 +66,12 @@ test('holders: one read-only POST with the token hash, the scope and the reposit
 });
 
 const openPull = (o = {}) => ({ state: 'open', draft: false, merged: false, mergeable: true, merge_commit_sha: S, head: { sha: H }, base: { ref: 'main', sha: T }, ...o });
+// The current path (route github-merge) with main's rules requiring only the merge slot: green is the merge slot's success on the head.
+const SLOT_ONLY = [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: true,
+  required_status_checks: [{ context: 'kooyumi-merge-slot', integration_id: APP }] } }];
 const facts = (o = {}) => frontPullFacts({ pull: openPull(o.pull), mergeCommit: o.mergeCommit === undefined ? { sha: S, tree: TREE, parents: [T, H] } : o.mergeCommit,
-  compare: o.compare ?? { status: 'ahead', aheadBy: 1, behindBy: 0 }, checks: o.checks ?? [], mainSha: T, appId: APP });
+  compare: o.compare ?? { status: 'ahead', aheadBy: 1, behindBy: 0 }, checks: o.checks ?? [], mainSha: T, appId: APP,
+  rules: o.rules === undefined ? SLOT_ONLY : o.rules, route: o.route ?? 'github-merge' });
 
 test('what the train would do (design §5.2, §5.6)', () => {
   const one = [{ claimId: CLAIM, pr: 910 }];
@@ -92,7 +96,29 @@ test('what the train would do (design §5.2, §5.6)', () => {
   assert.equal(d({ checks: green }), 'FRONT_GREEN_WAIT_MERGE');
   assert.equal(d({ checks: [{ ...green[0], app: { id: 1 } }] }), 'OPEN_FRONT_BATCH', 'only App 5368905 counts');
   assert.equal(d({ checks: [...green, { ...green[0], id: 8, conclusion: 'failure' }] }), 'OPEN_FRONT_BATCH', 'the newest judgement counts');
-  assert.ok(WOULD_DO.length === 9);
+  assert.ok(WOULD_DO.length === 11);
+});
+
+// Fable 11-21 应修 1 (T2): a merge-slot green counts only on the current path. Push lands S itself and park lands nothing: a green left on H
+// by the current path (before the Owner saved C) is never "green, wait for merge" there, and "green with no judged required checks" is no
+// state at all. Before the fix both pure functions said FRONT_GREEN_WAIT_MERGE, a wait GitHub can never end once main needs kooyumi-train-landed.
+test('应修 1: a merge-slot green on H counts only on the current path; push and park never call it green', () => {
+  const one = [{ claimId: CLAIM, pr: 910 }];
+  const green = [{ id: 7, app: { id: APP }, name: 'kooyumi-merge-slot', head_sha: H, status: 'completed', conclusion: 'success', completed_at: '2026-10-23T02:00:00Z' }];
+  const d = front => decideShadow({ onDuty: true, holders: one, front, rules: { strict: true, mergeOnly: false }, mainSha: T });
+  assert.equal(d(facts({ checks: green, route: 'github-merge' })), 'FRONT_GREEN_WAIT_MERGE', 'the current path: GitHub merges a green head');
+  for (const route of ['push', 'park']) {
+    const f = facts({ checks: green, route });
+    assert.equal(f.green, false, `${route}: the leftover merge-slot green is not green`);
+    assert.ok(!('required' in f), `${route}: no required checks judged`);
+    assert.equal(d(f), 'OPEN_FRONT_BATCH', `${route}: the front batch opens as for a head without a green`);
+  }
+  // green with required checks not judged is not a state: decideShadow never waits for a merge on the merge slot alone
+  const unjudged = { ...facts({ checks: green }), required: undefined };
+  assert.notEqual(d(unjudged), 'FRONT_GREEN_WAIT_MERGE');
+  // the rules and the route are always given: a caller that forgets either cannot fall back to "the merge slot alone"
+  assert.throws(() => frontPullFacts({ pull: openPull(), mergeCommit: null, compare: null, checks: green, mainSha: T, appId: APP, route: 'github-merge' }));
+  assert.throws(() => frontPullFacts({ pull: openPull(), mergeCommit: null, compare: null, checks: green, mainSha: T, appId: APP, rules: SLOT_ONLY }));
 });
 
 test('would revoke: ledgered greens neither in main nor the front head; revoked, merged-in and unknown ones stay out', () => {
@@ -143,7 +169,7 @@ test('the shadow run reads only and says what it would do', async t => {
   assert.deepEqual([off.wouldDo, off.onDuty, idle.reads], ['NOT_ON_DUTY', false, []]);
   // unreadable rules are recorded, not fatal; a failing GitHub read is (BLOCKED by runEntry, zero side effects)
   const noRules = await readTrainFacts({ job, github: fakeGithub({ rulesError: true }), native: native({ onDuty: true, holders: [] }), ledger: null, clock: () => 0 });
-  assert.deepEqual([noRules.rules, noRules.rulesReason, noRules.wouldDo, noRules.ledger], [null, 'RULESET_UNREADABLE', 'NO_FRONT', { records: 0, refused: 0 }]);
+  assert.deepEqual([noRules.rules, noRules.rulesReason, noRules.wouldDo, noRules.ledger], [null, 'RULESET_READ_FAILED', 'NO_FRONT', { records: 0, refused: 0 }]);
   const broken = fakeGithub(); broken.readBranchHead = async () => { throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); };
   await assert.rejects(readTrainFacts({ job, github: broken, native: native({ onDuty: true, holders: [] }), ledger: null }), e => e.code === 'github_http_502');
 });
@@ -170,9 +196,27 @@ test('shadow records are create-only and validated; the stage-10 outcome carries
   assert.equal(validateTrainFacts(open({ ...batch, headTree: TREE })).openFrontBatch.headTree, TREE);
   for (const bad of [{ ...batch, headTree: 'x' }, { ...batch, headTree: null }, { ...batch, headTree: TREE, members: [{ pr: 910, headSha: H }, { pr: 911, headSha: OLD }] }])
     assert.throws(() => validateTrainFacts(open(bad)), e => e.code === 'invalid_train_facts');
+  // Fable's review ruling B2: stage 10's own compare T...H says T is in H; only true, and only for a front of one member
+  assert.equal(validateTrainFacts(open({ ...batch, baseInHead: true })).openFrontBatch.baseInHead, true);
+  for (const bad of [{ ...batch, baseInHead: false }, { ...batch, baseInHead: 'true' }, { ...batch, baseInHead: true, members: [{ pr: 910, headSha: H }, { pr: 911, headSha: OLD }] }])
+    assert.throws(() => validateTrainFacts(open(bad)), e => e.code === 'invalid_train_facts');
   assert.equal(validateTrainFacts({ ...f, mode: 'on', decision: 'TRAIN_LANDED_TREE_MISMATCH', requestPause: 'TRAIN_LANDED_TREE_MISMATCH' }).requestPause, 'TRAIN_LANDED_TREE_MISMATCH');
   assert.equal(validateTrainFacts({ ...f, mode: 'revoke-only', decision: 'REVOKE_ONLY_DONE', sweep: { ...f.sweep, revoked: 3 } }).sweep.revoked, 3);
   assert.throws(() => validateTrainFacts({ ...f, wouldDo: 'REVOKE_EVERYTHING' }), e => e.code === 'invalid_train_facts');
+  // R3 lean: the rules may carry appScans (rulesetFacts: the scans this App still publishes, RULE_SCAN_NAMES order, each once)
+  for (const appScans of [[], ['trivy'], ['gitleaks', 'contract-placement'], ['gitleaks', 'trivy', 'contract-placement']])
+    assert.deepEqual(validateTrainFacts({ ...f, rules: { strict: true, mergeOnly: true, appScans } }).rules.appScans, appScans);
+  for (const rules of [{ strict: true, mergeOnly: true, appScans: ['trivy', 'gitleaks'] }, { strict: true, mergeOnly: true, appScans: ['other'] },
+    { strict: true, mergeOnly: true, appScans: ['trivy', 'trivy'] }, { strict: true, mergeOnly: true, appScans: 'trivy' }, { strict: true, mergeOnly: true, extra: 1 }])
+    assert.throws(() => validateTrainFacts({ ...f, rules }), e => e.code === 'invalid_train_facts', JSON.stringify(rules));
+  // Task 04f9b91b (admission p90): the top-level appScans, also next to rules null (the scaffold ruleset alone), same shape
+  for (const appScans of [[], ['trivy'], ['gitleaks', 'trivy', 'contract-placement']]) {
+    assert.deepEqual(validateTrainFacts({ ...f, rules: null, appScans }).appScans, appScans);
+    assert.deepEqual(trainFacts({ mode: 'shadow', at: f.at, onDuty: true, holders: [], mainSha: T, rules: null, rulesReason: 'RULESET_UNREADABLE', appScans, front: null, revoke: [], ledger: null }).appScans, appScans);
+  }
+  assert.equal(Object.hasOwn(trainFacts({ mode: 'shadow', at: f.at, onDuty: true, holders: [], mainSha: T, rules: null, front: null, revoke: [], ledger: null }), 'appScans'), false);
+  for (const appScans of [['trivy', 'gitleaks'], ['other'], ['trivy', 'trivy'], 'trivy', null, {}])
+    assert.throws(() => validateTrainFacts({ ...f, appScans }), e => e.code === 'invalid_train_facts', JSON.stringify(appScans));
   const receipts = path.join(await tempDir(t), 'receipts');
   const plan = { stage: 10, entryRole: 'train-maintenance' };
   const good = await writeOutcome({ receiptsRoot: receipts, nonce: 'a'.repeat(32), plan, jobIds: [job.id], result: { status: 'TRAIN_FACTS', sideEffects: 0, train: f } });

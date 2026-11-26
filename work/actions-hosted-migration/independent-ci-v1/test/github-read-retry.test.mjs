@@ -28,7 +28,7 @@ import { probeRole } from '../src/resident-v2/role-probe-entry.mjs';
 import { outcomeFailureCode, outcomeFacts, TRANSIENT_CODES } from '../src/resident-v2/stage-fact.mjs';
 import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
-import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fixtures.mjs';
+import { HEAD, BASE, tempDir, fixtureRecord, signResult, FAR_FUTURE } from './resident-v2-fixtures.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const iso = ms => new Date(ms).toISOString();
@@ -196,7 +196,7 @@ test('controllerPorts: every GitHub read of the controller is retried; its write
 // ---- 3. publishers: what is left when the retry is used up -----------------------------------------------------------
 const claim = (o = {}) => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000), ...o });
 const jobsFor = (attempt = 1) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt });
-const SLOT_UNTIL = iso(Date.now() + 3600_000);
+const SLOT_UNTIL = iso(FAR_FUTURE);
 const blocked = (reason, diagnostic) => ({ contract: 'clued.independent-ci.full-admission/2', status: 'BLOCKED', admitted: false, reason, ...(diagnostic ? { diagnostic } : {}) });
 // Native unreachable inside the evaluation: what full-admission-v2.mjs reports for a caught transport fault (generation 10).
 const NATIVE_DOWN = Object.freeze({ phase: 'native', transport: true });

@@ -557,6 +557,21 @@ $nodeLevel='green'; $pressureDue=$false; $pressureDrives=@()
 # BEGIN status
 # The one status file (contract clued.node-governance-status/1), rewritten whole every probe, UTF-8 without a byte order
 # mark: the executor (red on its drive holds new batches), the PR page, the compute panel and the Owner read it.
+# Beside it, at most one line an hour into logs\history-<host>.csv: the same round's free memory, each probed drive's
+# free GiB and whether the Linux runners are held; the history the status file does not keep. An aid: a line it cannot
+# write is only logged, never stops the round. The log folder's retention (classes.logs) is the standard's.
+$historyFile=Join-Path $logDir ('history-{0}{1}.csv' -f $hostId,$(if($DryRun){'.dryrun'}else{''}))
+function Write-History($status){
+  try{
+    $exists=Test-Path -LiteralPath $historyFile
+    if($exists -and ((Get-Date)-(Get-Item -LiteralPath $historyFile -Force).LastWriteTime).TotalMinutes -lt 60){return}
+    $drives=(@($status.drives) | ForEach-Object {'{0}={1}' -f $_.drive,[string]$_.freeGb}) -join ';'
+    $held=($null -ne $status.linuxRunners -and [bool]$status.linuxRunners.suspended)
+    $lines=@(); if(-not $exists){$lines+='time,memoryFreeGb,drivesFreeGb,linuxRunnersSuspended'}
+    $lines+=('{0},{1},{2},{3}' -f (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz'),[string]$status.memoryFreeGb,$drives,$held)
+    Add-Content -LiteralPath $historyFile -Value $lines -Encoding ASCII -ErrorAction Stop
+  }catch{Log ("History write failed: {0}" -f $_.Exception.Message)}
+}
 function Write-Status{
   $intakeDrive=$script:residentDrive
   $intake=@($script:driveFacts | Where-Object {$_.drive -eq $intakeDrive})
@@ -574,6 +589,7 @@ function Write-Status{
     [IO.File]::WriteAllText($tmp,($status | ConvertTo-Json -Depth 6),(New-Object Text.UTF8Encoding($false)))
     Move-Item -LiteralPath $tmp -Destination $statusFile -Force -ErrorAction Stop
   }catch{Log ("Status write failed: {0}" -f $_.Exception.Message)}
+  Write-History $status
 }
 # END status
 __BODIES__

@@ -1,0 +1,611 @@
+{
+  "_source": "2026-11-24 北京 21:24–21:26 在 DESK 只读取样（任务 04f9b91b）：runsQueued/runsInProgress = gh run list --status queued|in_progress --limit 50 --json databaseId,name,status,createdAt,event；prs = gh pr list --state open --limit 100 --json number,isDraft,statusCheckRollup 中 #1292、#1298、#885、#880（每个 PR 的 statusCheckRollup 只留几条，字段原样）；shadow = node scripts/ci/shadow-compare.mjs --prs 1292-（heads 只留 1 条）；statusDesk = DESK 本机 C:ProgramDataCluedIndependentCI\residentstatestatus.json（pending 只留 2 行、timing 只留 1 项、去掉 versions.renewal）",
+  "runsQueued": [
+    {
+      "createdAt": "2026-11-24T13:23:19Z",
+      "databaseId": 45402913614,
+      "event": "schedule",
+      "name": "clued-front-main-merge",
+      "status": "queued"
+    },
+    {
+      "createdAt": "2026-11-24T13:22:45Z",
+      "databaseId": 45402813939,
+      "event": "workflow_dispatch",
+      "name": "clued-compute-panel",
+      "status": "queued"
+    },
+    {
+      "createdAt": "2026-11-24T12:57:07Z",
+      "databaseId": 45398478545,
+      "event": "pull_request",
+      "name": "clued-required-tests",
+      "status": "queued"
+    }
+  ],
+  "runsInProgress": [
+    {
+      "createdAt": "2026-11-24T13:16:56Z",
+      "databaseId": 45401803879,
+      "event": "pull_request",
+      "name": "clued-required-tests",
+      "status": "in_progress"
+    },
+    {
+      "createdAt": "2026-11-24T13:16:56Z",
+      "databaseId": 45401803640,
+      "event": "pull_request",
+      "name": "hosted-required",
+      "status": "in_progress"
+    },
+    {
+      "createdAt": "2026-11-24T13:16:56Z",
+      "databaseId": 45401804009,
+      "event": "pull_request",
+      "name": "clued-required-tests-windows",
+      "status": "in_progress"
+    }
+  ],
+  "prs": [
+    {
+      "number": 1292,
+      "isDraft": false,
+      "statusCheckRollup": [
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-11-24T12:35:13Z",
+          "conclusion": "FAILURE",
+          "detailsUrl": "https://github.com/tdoljyj/cross-memory-system/actions/runs/45392138330/job/138438341275",
+          "name": "admission-gate",
+          "startedAt": "2026-11-24T12:21:47Z",
+          "status": "COMPLETED",
+          "workflowName": "Clued G4 Database Gate"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-11-24T12:37:48Z",
+          "conclusion": "FAILURE",
+          "detailsUrl": "https://github.com/tdoljyj/cross-memory-system/actions/runs/45392138185/job/138438338775",
+          "name": "admission-gate",
+          "startedAt": "2026-11-24T12:24:02Z",
+          "status": "COMPLETED",
+          "workflowName": "clued-required-tests"
+        },
+        {
+          "__typename": "StatusContext",
+          "context": "resident-queue/turing (info only)",
+          "startedAt": "2026-11-24T13:06:13Z",
+          "state": "PENDING",
+          "targetUrl": ""
+        }
+      ]
+    },
+    {
+      "number": 1298,
+      "isDraft": false,
+      "statusCheckRollup": [
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-11-24T13:17:20Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/tdoljyj/cross-memory-system/actions/runs/45401803640/job/138472032275",
+          "name": "hosted-migration-verify",
+          "startedAt": "2026-11-24T13:16:58Z",
+          "status": "COMPLETED",
+          "workflowName": "hosted-required"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-11-24T13:23:14Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/tdoljyj/cross-memory-system/actions/runs/45401803640/job/138472032302",
+          "name": "hosted-ci-suites-windows-shard-2",
+          "startedAt": "2026-11-24T13:16:58Z",
+          "status": "COMPLETED",
+          "workflowName": "hosted-required"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "detailsUrl": "https://github.com/tdoljyj/cross-memory-system/actions/runs/45401803879/job/138472033205",
+          "name": "admission-gate",
+          "startedAt": "2026-11-24T13:17:53Z",
+          "status": "IN_PROGRESS",
+          "workflowName": "clued-required-tests"
+        },
+        {
+          "__typename": "StatusContext",
+          "context": "resident-queue/turing (info only)",
+          "startedAt": "2026-11-24T13:23:48Z",
+          "state": "PENDING",
+          "targetUrl": ""
+        }
+      ]
+    },
+    {
+      "number": 885,
+      "isDraft": true,
+      "statusCheckRollup": [
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-20T03:25:50Z",
+          "conclusion": "CANCELLED",
+          "detailsUrl": "https://github.com/tdoljyj/cross-memory-system/actions/runs/39363938833/job/118436283103",
+          "name": "admission-gate",
+          "startedAt": "2026-10-20T03:22:27Z",
+          "status": "COMPLETED",
+          "workflowName": "Clued G4 Database Gate"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-20T03:25:50Z",
+          "conclusion": "CANCELLED",
+          "detailsUrl": "https://github.com/tdoljyj/cross-memory-system/actions/runs/39363938833/job/118437247643",
+          "name": "Verify prior PR tested tree",
+          "startedAt": "2026-10-20T03:25:50Z",
+          "status": "COMPLETED",
+          "workflowName": "Clued G4 Database Gate"
+        }
+      ]
+    },
+    {
+      "number": 880,
+      "isDraft": false,
+      "statusCheckRollup": [
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-17T23:33:57Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/tdoljyj/cross-memory-system/actions/runs/39079224681/job/117532593213",
+          "name": "admission-gate",
+          "startedAt": "2026-10-17T23:33:37Z",
+          "status": "COMPLETED",
+          "workflowName": "Clued connection authorization candidate"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-17T23:34:22Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/tdoljyj/cross-memory-system/actions/runs/39079224642/job/117532593068",
+          "name": "admission-gate",
+          "startedAt": "2026-10-17T23:34:01Z",
+          "status": "COMPLETED",
+          "workflowName": "Clued handover hook qualification / company-linux-01"
+        },
+        {
+          "__typename": "StatusContext",
+          "context": "resident-queue (info only)",
+          "startedAt": "2026-10-23T12:49:50Z",
+          "state": "FAILURE",
+          "targetUrl": ""
+        },
+        {
+          "__typename": "StatusContext",
+          "context": "resident-queue/desk-w-591 (info only)",
+          "startedAt": "2026-11-24T10:02:29Z",
+          "state": "PENDING",
+          "targetUrl": ""
+        },
+        {
+          "__typename": "StatusContext",
+          "context": "resident-queue/turing (info only)",
+          "startedAt": "2026-11-24T13:02:31Z",
+          "state": "PENDING",
+          "targetUrl": ""
+        },
+        {
+          "__typename": "StatusContext",
+          "context": "public-mcp-gate-receipt",
+          "startedAt": "2026-10-17T23:47:36Z",
+          "state": "SUCCESS",
+          "targetUrl": "https://github.com/tdoljyj/cross-memory-system/actions/runs/39080321199"
+        }
+      ]
+    }
+  ],
+  "shadow": {
+    "status": "ok",
+    "repo": "tdoljyj/cross-memory-system",
+    "generatedAt": "2026-11-24T21:26:27+08:00",
+    "ruleset": {
+      "id": 24182890,
+      "readable": true
+    },
+    "pairs": [
+      {
+        "check": "ci-suites",
+        "hosted": "hosted-ci-suites",
+        "hostedApp": 15368
+      },
+      {
+        "check": "clued-cloud-tests",
+        "hosted": "hosted-clued-cloud-tests",
+        "hostedApp": 15368
+      },
+      {
+        "check": "migration-verify",
+        "hosted": "hosted-migration-verify",
+        "hostedApp": 15368
+      },
+      {
+        "check": "ci-suites-windows",
+        "hosted": "hosted-ci-suites-windows",
+        "hostedApp": 15368
+      },
+      {
+        "check": "gitleaks",
+        "hosted": "hosted-gitleaks",
+        "hostedApp": 15368
+      },
+      {
+        "check": "trivy",
+        "hosted": "hosted-trivy",
+        "hostedApp": 15368
+      },
+      {
+        "check": "contract-placement",
+        "hosted": "hosted-contract-placement",
+        "hostedApp": 15368
+      }
+    ],
+    "heads": [
+      {
+        "sha": "20532986818ec5351657fa8fe4dfbf26c8ad07c6",
+        "prs": [
+          1292
+        ],
+        "role": "superseded",
+        "at": "2026-11-24T17:21:55+08:00",
+        "verdict": "跳过",
+        "pairs": [
+          {
+            "check": "ci-suites",
+            "framework": null,
+            "hosted": {
+              "name": "hosted-ci-suites",
+              "app": 15368,
+              "runs": 1,
+              "status": "completed",
+              "conclusion": "success",
+              "completedAt": "2026-11-24T17:30:55+08:00",
+              "title": null
+            },
+            "frameworkReruns": null,
+            "verdict": "跳过",
+            "reason": "框架缺检查，已被取代"
+          },
+          {
+            "check": "clued-cloud-tests",
+            "framework": null,
+            "hosted": {
+              "name": "hosted-clued-cloud-tests",
+              "app": 15368,
+              "runs": 1,
+              "status": "completed",
+              "conclusion": "failure",
+              "completedAt": "2026-11-24T17:29:44+08:00",
+              "title": null
+            },
+            "frameworkReruns": null,
+            "verdict": "跳过",
+            "reason": "框架缺检查，已被取代"
+          },
+          {
+            "check": "migration-verify",
+            "framework": null,
+            "hosted": {
+              "name": "hosted-migration-verify",
+              "app": 15368,
+              "runs": 1,
+              "status": "completed",
+              "conclusion": "success",
+              "completedAt": "2026-11-24T17:22:20+08:00",
+              "title": null
+            },
+            "frameworkReruns": null,
+            "verdict": "跳过",
+            "reason": "框架缺检查，已被取代"
+          },
+          {
+            "check": "ci-suites-windows",
+            "framework": null,
+            "hosted": {
+              "name": "hosted-ci-suites-windows",
+              "app": 15368,
+              "runs": 1,
+              "status": "completed",
+              "conclusion": "success",
+              "completedAt": "2026-11-24T17:30:07+08:00",
+              "title": null
+            },
+            "frameworkReruns": null,
+            "verdict": "跳过",
+            "reason": "框架缺检查，已被取代"
+          },
+          {
+            "check": "gitleaks",
+            "framework": null,
+            "hosted": {
+              "name": "hosted-gitleaks",
+              "app": 15368,
+              "runs": 1,
+              "status": "completed",
+              "conclusion": "success",
+              "completedAt": "2026-11-24T17:22:25+08:00",
+              "title": null
+            },
+            "frameworkReruns": null,
+            "verdict": "跳过",
+            "reason": "框架缺检查，已被取代"
+          },
+          {
+            "check": "trivy",
+            "framework": null,
+            "hosted": {
+              "name": "hosted-trivy",
+              "app": 15368,
+              "runs": 1,
+              "status": "completed",
+              "conclusion": "success",
+              "completedAt": "2026-11-24T17:22:35+08:00",
+              "title": null
+            },
+            "frameworkReruns": null,
+            "verdict": "跳过",
+            "reason": "框架缺检查，已被取代"
+          },
+          {
+            "check": "contract-placement",
+            "framework": null,
+            "hosted": {
+              "name": "hosted-contract-placement",
+              "app": 15368,
+              "runs": 1,
+              "status": "completed",
+              "conclusion": "success",
+              "completedAt": "2026-11-24T17:23:41+08:00",
+              "title": null
+            },
+            "frameworkReruns": null,
+            "verdict": "跳过",
+            "reason": "框架缺检查，已被取代"
+          }
+        ],
+        "mergedPrs": [],
+        "admission": {
+          "pushedAt": "2026-11-24T17:21:55+08:00",
+          "admittedAt": null,
+          "minutes": null,
+          "windowsOverlapSeconds": 5734
+        }
+      }
+    ],
+    "summary": {
+      "counts": {
+        "一致": 3,
+        "不一致": 1,
+        "未知": 0,
+        "在跑": 4,
+        "跳过": 11
+      },
+      "streak": {
+        "heads": 3,
+        "hours": 1.3,
+        "days": 0.1,
+        "from": "2026-11-24T19:18:24+08:00",
+        "to": "2026-11-24T20:38:45+08:00",
+        "mergedPrs": 3,
+        "nonOwnerPushedHeads": 3,
+        "bothRedHeads": 0,
+        "met": false,
+        "unmet": [
+          "连续一致不足 30 个 head",
+          "已合入 PR 不足 10 个",
+          "没有两边同红的 head",
+          "准入 p90 16.4 分钟超过 3 分钟"
+        ],
+        "rule": "连续 30 个 head、七项逐项一致；出自不少于 10 个已合入 PR，含至少 1 个非 Owner 推送的 head、至少 1 个两边同红的 head；准入 p90 ≤3 分钟"
+      },
+      "admission": {
+        "heads": 3,
+        "p90Minutes": 16.4,
+        "unadmitted": 0,
+        "met": false,
+        "overlap": {
+          "heads": 2,
+          "p90Minutes": 16.4,
+          "unadmitted": 0
+        },
+        "nonOverlap": {
+          "heads": 1,
+          "p90Minutes": 4.2,
+          "unadmitted": 0
+        },
+        "over": [
+          {
+            "sha": "51563f6249143f9b0bb308022dfc2cde8496d44a",
+            "prs": [
+              1294
+            ],
+            "minutes": 16.4
+          },
+          {
+            "sha": "dad34532d125fbb79f4bad113185b8950cd5b23e",
+            "prs": [
+              1295
+            ],
+            "minutes": 4.2
+          },
+          {
+            "sha": "17a8431beefb7a91212fb17d27a829b41c6de7f4",
+            "prs": [
+              1297
+            ],
+            "minutes": 7.1
+          }
+        ],
+        "line": "准入 p90 16.4 分钟（3 个 head，判据 ≤3 分钟：未达）；诊断（不进判据）：与 ci-suites-windows 重叠 ≥2 分钟 2 个、p90 16.4 分钟，不重叠 1 个、p90 4.2 分钟；超过 3 分钟 3 个：51563f6（#1294） 16.4，dad3453（#1295） 4.2，17a8431（#1297） 7.1"
+      },
+      "hostedGreenFrameworkRedLast20": 1,
+      "frameworkByTreeHeads": 2,
+      "pendingMergedHeads": 0,
+      "line": "影子对比 2026-11-24T21:26:27+08:00：19 个 head（其中框架侧按树读 2 个 head），一致 3、不一致 1、未知 0、在跑 4、跳过 11；连续一致 3 个 head / 1.3 小时，已合入 PR 3 个、非 Owner 推送 3 个、两边同红 0 个、已合入未出结论 0 个（判据：未达，连续一致不足 30 个 head、已合入 PR 不足 10 个、没有两边同红的 head、准入 p90 16.4 分钟超过 3 分钟）；准入 p90 16.4 分钟（3 个 head，判据 ≤3 分钟：未达）；诊断（不进判据）：与 ci-suites-windows 重叠 ≥2 分钟 2 个、p90 16.4 分钟，不重叠 1 个、p90 4.2 分钟；超过 3 分钟 3 个：51563f6（#1294） 16.4，dad3453（#1295） 4.2，17a8431（#1297） 7.1；不一致：5091906 migration-verify 框架红、托管绿"
+    }
+  },
+  "statusDesk": {
+    "backfill": {
+      "complete": true,
+      "published": 128,
+      "unreadable": 0
+    },
+    "breaker": {
+      "cause": null,
+      "failingPos": null,
+      "level": 0,
+      "nextTrialAt": null,
+      "openedAt": null,
+      "recent": 1,
+      "state": "closed",
+      "streak": 2
+    },
+    "changedAt": "2026-11-24T13:24:17.431Z",
+    "contract": "clued.independent-ci.resident-status/8",
+    "current": null,
+    "executor": {
+      "companion": {
+        "firstBeatAfterServiceStartMs": 104889
+      },
+      "reason": "NODE_STANDBY",
+      "since": "2026-11-24T12:52:59.646Z",
+      "state": "DEFERRED"
+    },
+    "halt": null,
+    "intakePause": null,
+    "limits": {
+      "batches24h": 0,
+      "evaluations24h": 0,
+      "maxBatches": 72,
+      "maxEvaluations": 96,
+      "maxWaitingRetries": 48,
+      "waitingRetries24h": 0
+    },
+    "node": {
+      "mode": "STANDBY",
+      "name": "desk-w-591",
+      "probe": {
+        "at": "2026-11-24T13:24:17.353Z",
+        "failingSince": null,
+        "failures": 0,
+        "result": "not-held"
+      },
+      "source": "4a3edf865f4e"
+    },
+    "notices": [
+      {
+        "at": "2026-11-17T03:02:14.490Z",
+        "code": "UPGRADE_START_FAILED",
+        "headSha": null,
+        "key": "upgrade-rolled-back:3cffb851-d5e9-4a94-add8-97216c468c5a",
+        "kind": "upgrade-rolled-back",
+        "pr": null,
+        "until": null
+      }
+    ],
+    "paused": false,
+    "pending": [
+      {
+        "baseSha": "549789505a6be39bfdcae30fc15343ebc97bb5d6",
+        "claimExpiresAt": null,
+        "deferred": null,
+        "eta": "2026-11-24T13:24:17.429Z",
+        "frontOpenOwed": false,
+        "headSha": "cd06f69ca3c156b3a3de684003e466902548e294",
+        "heldBy": null,
+        "level": 0,
+        "network": false,
+        "nextAt": null,
+        "origin": "queued",
+        "position": 1,
+        "pr": 1240,
+        "queuePosition": null,
+        "since": "2026-11-22T18:03:04.215Z",
+        "state": "QUEUED",
+        "stopKind": null,
+        "watched": false
+      },
+      {
+        "baseSha": "1b2a1f2570ce82b7685ebe3b4c0e1fe5d4c5fcce",
+        "claimExpiresAt": null,
+        "deferred": null,
+        "eta": "2026-11-24T13:46:17.429Z",
+        "frontOpenOwed": false,
+        "headSha": "db1bb431e23d05871241690e27dc3f4b3ccf9640",
+        "heldBy": null,
+        "level": 0,
+        "network": false,
+        "nextAt": null,
+        "origin": "queued",
+        "position": 2,
+        "pr": 1241,
+        "queuePosition": null,
+        "since": "2026-11-22T18:15:08.988Z",
+        "state": "QUEUED",
+        "stopKind": null,
+        "watched": false
+      }
+    ],
+    "pid": 15012,
+    "queue": {
+      "depth": 100,
+      "generation": "5d329b31388a",
+      "hold": null,
+      "live": 61,
+      "parkingFull": false
+    },
+    "recent": [],
+    "timing": {
+      "current": null
+    },
+    "train": {
+      "backgroundAllPending": false,
+      "enabled": "on",
+      "frontReadyMode": "blocked",
+      "fullPending": true,
+      "landing": "push",
+      "last": null,
+      "maintenanceExtraLimit": 56,
+      "maintenanceExtraUsed": 0,
+      "notOnDuty": true,
+      "sweepMode": "audit"
+    },
+    "versions": {
+      "consistent": true,
+      "generation": 15,
+      "linux": {
+        "ciSourceManifestSha256": "4a3edf865f4ec6b32a57f7c977918c269572655fe2aeabade94f08a57f17f31a",
+        "generation": 15,
+        "manifestSha256": "937bf136d2a49b5465156556dcd57c47255235e768a3e86af8bf79c78d51f1ce",
+        "observedAt": "2026-11-24T13:19:31.493Z",
+        "pinsOk": true
+      },
+      "selfcheck": {
+        "containerCode": null,
+        "containers": 0,
+        "failures": [],
+        "observedAt": "2026-11-24T13:17:27.717Z",
+        "result": "PASS",
+        "viewCode": null,
+        "viewOk": true
+      },
+      "upgrade": null,
+      "windows": {
+        "ciSourceManifestSha256": "4a3edf865f4ec6b32a57f7c977918c269572655fe2aeabade94f08a57f17f31a",
+        "packageManifestSha256": "7ef4b2bde09ab999740b6dd7e1a9c8d3721d167eccd59d08697c759cf4b0e826",
+        "policySha256": "188e7bc63c20e30743f0bc8a8d38b4e38fe2fa9df9a5758e11b8cf27de9a256e",
+        "residentManifestSha256": "e055f3c2f3dddc0c987576e91e59d111a54860ede7171e2e9115c63b8d5a1789"
+      }
+    },
+    "writtenAt": "2026-11-24T13:24:36.845Z"
+  }
+}

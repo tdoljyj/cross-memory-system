@@ -26,12 +26,12 @@ export function loadContinuityWorker() {
     stop();
     if ((await readFile(output, "utf8")).includes("WorkerMessageHandler")) throw new Error("the continuity handler bundles pdf.js");
     const { handleContinuityRequest, runProjectionRefreshPipeline,
-      runProjectionRefreshScheduled, runStorageRefreshScheduled, runStorageRecoveryScheduled, runStorageJobQueue,
+      wakeProjectionRefresh, runStorageRefreshScheduled, runStorageRecoveryScheduled, runStorageJobQueue,
       runStorageStagingScheduled, runStorageOnboardScheduled, runStorageUnattemptedReleaseScheduled } = await import(pathToFileURL(output).href);
     return {
       fetch: (request, env, ctx) => handleContinuityRequest(request, env, ctx),
       runProjectionRefreshPipeline,
-      runProjectionRefreshScheduled,
+      wakeProjectionRefresh,
       runStorageRefreshScheduled,
       runStorageRecoveryScheduled,
       runStorageJobQueue,

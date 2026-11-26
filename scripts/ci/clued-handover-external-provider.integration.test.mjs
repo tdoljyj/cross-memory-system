@@ -255,7 +255,7 @@ test('actual disposable seed obeys the Auth v2 owner transaction before opening 
       .runInNewContext({assert,crypto:{randomBytes:size=>Buffer.alloc(size,17)},
         uuid:()=>`60000000-0000-4000-8000-${String(++sequence).padStart(12,'0')}`,
         sha:value=>crypto.createHash('sha256').update(value).digest('hex'),
-        process:{env:{GITHUB_RUN_ID:publisher}}},{timeout:1000});
+        process:{env:{GITHUB_RUN_ID:publisher}}});
   }
   function fixture(failureAt=null){
     const events=[],bindings=[],state={users:0,project:null,task:null,claim:null,tx:false,

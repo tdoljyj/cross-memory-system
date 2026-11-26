@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
 import { setWorkerGatewayCaller, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
@@ -33,20 +32,13 @@ const OTHER_SRC = 'd'.repeat(64);
 const HOLDER = { mode: 'ACTIVE', probe: 'held' };
 const jwk = () => ({ kty: 'EC', crv: 'P-256', x: crypto.randomBytes(32).toString('base64url'), y: crypto.randomBytes(32).toString('base64url') });
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watchdog triggers, selection and handover',
   { timeout: 900000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-merge-train-failover-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: hash(), 
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
@@ -56,8 +48,7 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
     return client;
   };
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = await connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;
@@ -502,8 +493,10 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
         assert.equal(target(await s.tick(), s), 'b', 'only the latest report counts: ' + reason);
       }
       // A heartbeat older than 5 minutes (ADR 0026; it was 20).
+      // steady_since moves with it: it is never after last_heartbeat_at (20261115120000's check).
       await admin.query(`update clued_private.ci_node_liveness_v1 set last_heartbeat_at=last_heartbeat_at-interval '301 seconds',
-        heartbeat_previous_at=heartbeat_previous_at-interval '301 seconds' where node_id=$1`, [s.nodes.b]);
+        heartbeat_previous_at=heartbeat_previous_at-interval '301 seconds',steady_since=steady_since-interval '301 seconds'
+        where node_id=$1`, [s.nodes.b]);
       o = await s.tick();
       assert.equal(target(o, s), 'c');
       // Same Source as X and as every node heard in 24 hours (marked or not):
@@ -521,7 +514,8 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       assert.equal(o.outcome, 'no_target');
       assert.deepEqual(o.candidates.map((c) => c.reasons), [['source_differs'], ['source_differs'], ['source_differs']]);
       await admin.query(`update clued_private.ci_node_liveness_v1 set last_heartbeat_at=last_heartbeat_at-interval '25 hours',
-        heartbeat_previous_at=heartbeat_previous_at-interval '25 hours' where node_id=$1`, [s.nodes.e]);
+        heartbeat_previous_at=heartbeat_previous_at-interval '25 hours',steady_since=steady_since-interval '25 hours'
+        where node_id=$1`, [s.nodes.e]);
       assert.equal(target(await s.tick(), s), 'b');
       // The Owner's order decides.
       await s.members(['a', 'c', 'b', 'd']);
@@ -648,7 +642,8 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       await s.beat('b'); await s.beat('a', down);
       await s.ago(4); await s.beat('b'); await s.beat('a', down);
       await s.ago(0.9);
-      assert.equal((await s.tick()).outcome, 'holder_alive', 'a single run of 4.9 minutes, and UNKNOWN alone, do not trigger');
+      const alone = await s.tick();
+      assert.deepEqual([alone.outcome, alone.trigger], ['holder_alive', undefined], 'a single run of 4.9 minutes, and UNKNOWN alone, do not trigger');
       // One report with the service running and a fresh snapshot restarts the count.
       await s.beat('a', HOLDER);
       await s.ago(0.1);
@@ -669,6 +664,67 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       const o = await s.tick();
       assert.deepEqual([o.outcome, target(o, s), o.trigger], ['handed_over', 'b', 'service_not_running']);
       assert.equal((await s.receipt_(o.receipt_id)).metadata.trigger, 'service_not_running');
+      assert.doesNotMatch((await s.notes()).at(-1).content, /停机|HALT/, 'the Note names the trigger that held');
+      await s.close();
+    });
+
+    // A holder that has only ever reported UNKNOWN has no readable state (Task aeefed92): the HALTED condition is
+    // NULL for it, and before migration 20261122120000 it was handed out at the next tick as 'halted'. UNKNOWN starts
+    // no clock of its own: the two server clocks (silence; service down or snapshot stale) alone decide.
+    const unknownOnly = async (label, over) => {
+      const s = await account(label, ['a', 'b']);
+      await s.members(['a', 'b']);
+      await s.switch(true);
+      const report = { state: 'UNKNOWN', mode: undefined, probe: undefined, service_running: true, snapshot_age_seconds: 5, ...over };
+      await s.beat('b'); await s.beat('a', report);
+      assert.equal((await s.node('a')).readable_state, null, 'only UNKNOWN so far: no readable state');
+      await s.ago(0.1);
+      const o = await s.tick();
+      assert.deepEqual([o.outcome, o.trigger], ['holder_alive', undefined], 'UNKNOWN alone does not trigger: ' + JSON.stringify(o));
+      assert.deepEqual(await s.holders(), ['a']);
+      return { s, report };
+    };
+    const handovers = async (s) => (await admin.query(`select count(*)::int n from public.clued_audit_receipts
+      where user_id=$1 and metadata->>'receipt_kind'='CI_ADMISSION_AUTO_HANDOVER'`, [s.user])).rows[0].n;
+
+    await t.test('UNKNOWN only, service running and snapshot fresh: never handed out (Task aeefed92)', async () => {
+      const { s, report } = await unknownOnly('unknown-alive', {});
+      for (let i = 0; i < 6; i++) { await s.ago(1); await s.beat('a', report); await s.beat('b'); }
+      const o = await s.tick();
+      assert.deepEqual([o.outcome, o.trigger], ['holder_alive', undefined], JSON.stringify(o));
+      assert.equal(await handovers(s), 0, 'no handover receipt');
+      assert.deepEqual(await s.holders(), ['a']);
+      await s.close();
+    });
+
+    await t.test('UNKNOWN only, service not running: handed out after 5 minutes as service_not_running (Task aeefed92)', async () => {
+      const { s, report } = await unknownOnly('unknown-down', { service_running: false });
+      for (let i = 0; i < 4; i++) { await s.ago(1); await s.beat('a', report); await s.beat('b'); }
+      await s.ago(0.8);
+      assert.equal((await s.tick()).outcome, 'holder_alive', '4.9 minutes of a stopped service do not trigger');
+      await s.ago(0.1);
+      const o = await s.tick();
+      assert.deepEqual([o.outcome, target(o, s), o.trigger], ['handed_over', 'b', 'service_not_running']);
+      assert.equal((await s.receipt_(o.receipt_id)).metadata.trigger, 'service_not_running');
+      assert.equal(o.note.status, 'committed', JSON.stringify(o.note));
+      assert.doesNotMatch((await s.notes()).at(-1).content, /停机|HALT/, 'the Note names the trigger that held');
+      assert.deepEqual(await s.holders(), ['b']);
+      await s.close();
+    });
+
+    await t.test('UNKNOWN only, then silent: handed out after 5 minutes as silence (Task aeefed92)', async () => {
+      const { s } = await unknownOnly('unknown-silent', {});
+      await s.ago(2); await s.beat('b');
+      await s.ago(2); await s.beat('b');
+      await s.ago(0.8);
+      assert.equal((await s.tick()).outcome, 'holder_alive', '4.9 minutes of silence do not trigger');
+      await s.ago(0.1);
+      const o = await s.tick();
+      assert.deepEqual([o.outcome, target(o, s), o.trigger], ['handed_over', 'b', 'silence']);
+      assert.equal((await s.receipt_(o.receipt_id)).metadata.trigger, 'silence');
+      assert.equal(o.note.status, 'committed', JSON.stringify(o.note));
+      assert.doesNotMatch((await s.notes()).at(-1).content, /停机|HALT/, 'the Note names the trigger that held');
+      assert.deepEqual(await s.holders(), ['b']);
       await s.close();
     });
 
@@ -761,7 +817,8 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       const s = await account('three', ['a', 'b', 'c']);
       await s.members(['a', 'b', 'c']);
       await s.switch(true);
-      // The Owner hands A to B by hand.
+      // The Owner hands A to B by hand; a manual handover's target must have been heard (20261114120000).
+      await s.beat('b');
       const manual = await s.handover('a', 'b');
       assert.equal((await s.receipt_(manual.receipt_id)).metadata.principal, 'native_account_session');
       await s.ago(5);
@@ -905,6 +962,8 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       assert.deepEqual(status.sweep_watermarks.map((w) => [w.repository, w.binding_id, w.main_sha, w.receipt_id]),
         [['tdoljyj/cross-memory-system', s.ids.a, 'e'.repeat(40), first.receipt_id]]);
       // After a handover the new holder reads the previous holder's watermark, and its own newer one wins.
+      // A manual handover's target must have been heard (20261114120000).
+      await s.beat('b');
       await s.handover('a', 'b');
       await s.ago(5);
       status = await s.door('b', { action: 'ci_nodes_status' });
@@ -1254,6 +1313,8 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
 
     await t.test('one-click handover through the shared core is unchanged', async () => {
       const s = await account('oneclick', ['a', 'b']);
+      // A manual handover's target must have been heard (20261114120000): b now, a for the refused b → a below.
+      await s.beat('b'); await s.beat('a');
       // ADR 0026: the quiet start is the watchdog's alone; a quiet old holder changes nothing here.
       await admin.query("insert into clued_private.ci_duty_answers_v1(binding_id,user_id,at) values($1,$2,clock_timestamp()-interval '1 hour')",
         [s.ids.a, s.user]);

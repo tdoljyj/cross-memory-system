@@ -1,9 +1,8 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, startCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import './merge-admission-measurement-capabilities-db.test.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,31 +13,20 @@ import { workerGatewayRpc, setWorkerGatewayCaller, assertGatewayCloseoutBoundary
 import { validateJournal, emptyReplayState, applyTransaction, queueAt, timestampMicros }
   from '../../../scripts/ci/merge-admission-measurement-history.mjs';
 
-// The override points only to an already-installed pinned test dependency on
-// Windows. It is not a database URL, credential or production connection.
-const { default: EmbeddedPostgres } = process.env.CLUED_TEST_EMBEDDED_POSTGRES_URL
-  ? await import(process.env.CLUED_TEST_EMBEDDED_POSTGRES_URL)
-  : await import('embedded-postgres'); // Literal keeps content-driven DB selection correct.
+import { newCluster } from './pg-cluster-fixture.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise(resolve => listener.close(resolve));
-  return port;
-}
 
 test('measurement history: real PostgreSQL transaction, privacy, immutability and stable page bounds',
   { timeout: 300000 }, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-measurement-history-'));
-  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: hash(),
-    port: await freePort(), persistent: true, postgresFlags: ['-c', 'io_method=sync'], onLog() {},
+  const server = newCluster({ databaseDir: directory, user: 'postgres', password: hash(),
+    persistent: true, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {},
     onError(message) { process.stderr.write(`${message}\n`); } });
   const clients = [];
   try {
-    await server.initialise(); await server.start();
+    await startCluster(server);
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
     const rpc = async (client, name, token, input) => {
       try { return await workerGatewayRpc(client, name, token, input); }

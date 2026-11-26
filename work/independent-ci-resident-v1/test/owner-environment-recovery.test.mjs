@@ -134,7 +134,8 @@ test('closed with no eligible stops and half-open still refuse; a subject change
   const published = f.executedHeads.published.bind(f.executedHeads);
   f.executedHeads.published = async s => {
     const result = await published(s);
-    f.queue.row(s.pr).current.testSha = '5'.repeat(40);
+    // a front commit always carries its front number with S (queue.mjs#commitOk; R3 batch 2 rowSubject reads it)
+    Object.assign(f.queue.row(s.pr).current, { testSha: '5'.repeat(40), frontAttempt: 1 });
     return result;
   };
   const out = await f.exec.releaseBreaker(request(f));

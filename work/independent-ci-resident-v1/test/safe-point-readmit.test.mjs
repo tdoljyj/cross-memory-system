@@ -64,6 +64,7 @@ test('upgrade drain: same head is automatically readmitted once, without a push 
   await finish(f);
   assert.equal(f.exec.queue.row(884).state, 'DONE');
   assert.equal(count(f, 8), before + 1, 'one successful continuation only');
+  assert.equal((await f.ledger.usage(f.clock() - 86_400_000)).startedByPr.get(884), 1, 'the archived flow end spends no PR quota; its completed continuation spends one');
   assert.deepEqual([2, 3, 4, 5, 6, 7].map(n => count(f, n)), scans);
   assert.equal(await f.ledger.halted(), null);
   assert.deepEqual(await f.ledger.pendingAttempts2(), []);
@@ -87,13 +88,15 @@ test('readmission survives restart and a lost queue, and still waits for matchin
   assert.equal(count(f, 8), before + 1);
 });
 
-test('park.maxMs releases the parking place but preserves the same head for one continuation', async t => {
+test('park.maxMs frees the parking place and a PR event wakes the same batch', async t => {
   const f = await fixture(t);
   f.advance(f.exec.policy.park.maxMs + MIN);
   await f.exec.tick();
-  assert.equal((await f.ledger.open()).length, 0);
+  assert.equal((await f.ledger.open()).length, 1);
+  assert.deepEqual(await f.exec.parkedCounts(), { inside: 0, outside: 0 });
   f.ready();
   const before = count(f, 8);
+  await f.drop(triggerBytes({ contract: 'clued.independent-ci.resident-trigger/2', prUpdatedAt: new Date(f.clock()).toISOString() }));
   await finish(f);
   assert.equal(f.exec.queue.row(884).state, 'DONE');
   assert.equal(count(f, 8), before + 1);
@@ -261,6 +264,46 @@ test('#1130 front batch: stage 10 offers H/S once; drain ends it; the identical 
   assert.equal(count(f, 3), 1);
   assert.equal(count(f, 8), 2);
   assert.equal((await f.receipts.latest(['train-front-enqueued'], 10)).length, 1);
+});
+
+// FABLE-r3-batch2-gate R3 (item 1): a front's second batch (frontAttempt 2, offered again by stage 10 for the same H/S) is its own
+// batch: it never takes over the pending flow end of the first batch, and its subject and key carry attempt 2.
+test('R3 front batch 2 of the same H/S: own attempt-2 subject and key, never the pending flow end of front batch 1', async t => {
+  let f, offered = false;
+  const T0 = Date.parse('2026-10-20T12:00:00Z'), S = '5'.repeat(40);
+  const front = { pr: 884, headSha: HEAD, baseSha: BASE, testSha: S, testTree: '6'.repeat(40),
+    claimId: '0a1b2c3d-0000-4000-8000-0000000000aa', since: new Date(T0 - MIN).toISOString(), attempt: 1 };
+  const engine = fakeEngine({ train: mode => {
+    const offer = mode === 'on' && !offered;
+    if (offer) offered = true;
+    return { ok: true, runId: `${'7'.repeat(16)}-${'0'.repeat(12)}`, proof: WINDOWS_CLEAN,
+      outcome: { status: 'TRAIN_FACTS', reason: null, sideEffects: offer ? 1 : 0, mayHavePublished: offer, safeToRerun: false },
+      train: trainFacts({ mode, at: new Date(f.clock()).toISOString(), onDuty: true, holders: [], mainSha: BASE, rules: null,
+        front: null, revoke: [], ledger: null, sweep: { ...NO_SWEEP, kind: 'full-segment', complete: true,
+          fullSweep: { state: 'complete', startedAt: new Date(T0).toISOString(), completedAt: new Date(f.clock()).toISOString(), sinceOn: true, reason: null } },
+        ...(offer ? { decision: 'OPEN_FRONT_BATCH', openFrontBatch: front } : {}) }) };
+  } });
+  const run = engine.runStage, derive = engine.derive;
+  engine.runStage = async (batch, stage, opts) => stage.number === 8 ? (engine.calls.push(['stage', 8]), blocked) : run(batch, stage, opts);
+  engine.derive = async (...args) => ({ ...await derive(...args), ciSourceManifestSha256: f.exec.policy.ciSourceManifestSha256 });
+  f = await executorFixture(t, { engine, now: T0,
+    policy: rawPolicy({ contract: POLICY_CONTRACT_V8, train: { ...TRAIN_DEFAULTS, enabled: 'on', nonFrontRuns: true,
+      maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, sweep: 'gate' } }),
+    companion: fakeCompanion({ pull: n => ({ number: n, state: 'open', headSha: HEAD }) }, () => f.clock()) });
+  f.key = batchKey({ ...subject, testSha: S });
+  await f.exec.tick();
+  f.advance(MIN);
+  await f.exec.tick();
+  await drain(f);
+  assert.equal((await f.ledger.pendingFlowEnds()).length, 1, 'front batch 1 left a pending flow end');
+  const seen = [];
+  f.exec.precheck = async (k, hk, s, opts) => { seen.push({ k, s: { ...s }, flow: opts.flow }); return { defer: 'R3_CAPTURED', perRow: true }; };
+  await f.exec.runRow({ pr: 884, headSha: HEAD, baseSha: BASE, testSha: S, frontAttempt: 2, origin: 'queued' }, { releasesByHead: new Map() });
+  assert.equal(seen.length, 1);
+  assert.deepEqual([seen[0].s.attempt, seen[0].s.testSha, seen[0].flow], [2, S, null], 'attempt 2, its own S, no flow of batch 1');
+  assert.equal(seen[0].k, batchKey({ ...subject, testSha: S, attempt: 2 }));
+  assert.notEqual(seen[0].k, f.key);
+  assert.equal((await f.ledger.pendingFlowEnds()).length, 1, 'the flow end of batch 1 is left for batch 1');
 });
 
 test('legacy upgrade-drain terminal and STOPPED/burned queue row are recovered without editing the PR', async t => {

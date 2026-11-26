@@ -45,7 +45,7 @@ const localBindingConfig = {
   // Wake durable projection jobs after a transient Builder/transport failure.
   // The database owns coalescing, bounded retries, and the STALE fence.
   triggers: {
-    crons: ["* * * * *"],
+    crons: ["*/10 * * * *"],
   },
   images: {
     binding: "IMAGES",

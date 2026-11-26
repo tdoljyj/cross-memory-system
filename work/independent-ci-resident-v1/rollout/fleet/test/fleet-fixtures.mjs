@@ -90,7 +90,9 @@ function rolePolicy(role, letter, fleet, installedCi, { toolchainSha = hex(32), 
 
 // One node: its installed package (generation 1) and its root. `fleet`: the shared record facts (another value: a node outside the fleet).
 // companionAccount: the node runs its companion under its own account (install\companion-account.json, the profile's ownerSid).
-export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAccount = false, heartbeat = false } = {}) {
+// policyContract: the installed policy's contract (default policy.example.json's /7, whose train it keeps; /8 and later carry the fleet's
+// train, policy.mjs FLEET_TRAIN, on: as the nodes in the field do).
+export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAccount = false, heartbeat = false, policyContract = null } = {}) {
   const d = await tempDir(t, `fleetnode${letter}`);
   const profile = profileOf(letter);
   const signer = signerKeys();
@@ -106,6 +108,7 @@ export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAc
   writeRecord(record, assembleRecord(inputs, sourceFiles()));
   const policy = JSON.parse(await fs.readFile(path.join(RES, 'config', 'policy.example.json'), 'utf8'));
   Object.assign(policy, { node: profile, nodeProfileSha256: nodeProfileSha256(profile) });
+  if (policyContract !== null) policy.contract = policyContract;
   policy.companion.userSid = profile.ownerSid; policy.linux.distribution = profile.wslDistribution;
   const companion = JSON.parse(await fs.readFile(path.join(RES, 'config', 'companion.example.json'), 'utf8'));
   Object.assign(companion.companion, { node: profile, nodeProfileSha256: nodeProfileSha256(profile), distribution: profile.wslDistribution });
@@ -162,3 +165,84 @@ export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAc
 }
 
 export const targetOf = (release, over = {}) => ({ id: randomUUID(), receipt_id: randomUUID(), ...release.source, ...over });
+
+// publish.mjs's fake gh (as a Node script or a fixture command; never the real gh or the network). It records its argv
+// and whether a token variable reached it; "release view" answers from what "release create" and "release upload" put into FAKE_GH_STATE
+// (assets of the release being published), or from state.other[<tag>] (the assets of another, earlier release, seeded by the test);
+// "release download --pattern <name> --dir <dir>" writes that asset (its bytes kept as base64) into <dir>.
+// FAKE_GH_FAIL_DOWNLOAD=<asset name>: that one download fails as a dropped connection does (acceptance-draft.log).
+// A download into a --dir that already holds a file of that name fails, as the real gh does without --clobber (review r2).
+// The Release being published exists once it has assets (made by "release create", or seeded by the test): before that "release view",
+// "upload" and "download" of its tag answer "release not found" (exit 1) as the real gh does, and a second "release create" of a Release
+// that exists is refused. FAKE_GH_FAIL_CREATE=1: "release create" fails. "gh api repos/<repo>/commits/<sha>": the commit, unless the
+// state's commitMissing is true (HTTP 404, exit 1), '422' (no commit found for the SHA, HTTP 422, exit 1) or 'fail' (no answer: a
+// dropped connection, exit 1).
+// Both the executable fixture and the in-process command use this implementation.
+export function runFakeGh(args, env, { fs, path, createHash }) {
+  const asset = f => { const b = fs.readFileSync(f), name = f.split(/[\\/]/).pop(); return { name, size: b.length, sha256: createHash('sha256').update(b).digest('hex'), b64: b.toString('base64'), ...(name.endsWith('SHA256SUMS') ? { text: b.toString('utf8') } : {}) }; };
+  const state = env.FAKE_GH_STATE;
+  const log = fs.existsSync(state) ? JSON.parse(fs.readFileSync(state, 'utf8')) : { calls: [], assets: [] };
+  let stdout = '';
+  log.calls.push({ args, tokenSeen: ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'].filter(k => env[k] !== undefined) });
+
+  const assetsOf = tag => (log.other && log.other[tag]) || log.assets;
+  const absent = tag => !(log.other && log.other[tag]) && log.assets.length === 0;
+  const refuse = stderr => {
+    fs.writeFileSync(state, JSON.stringify(log));
+    return { status: 1, stdout: '', stderr };
+  };
+  if (env.FAKE_GH_FAIL === '1') return refuse('HTTP 422: fake failure');
+  const nth = Number(env.FAKE_GH_FAIL_UPLOAD_NTH || 0);
+  if (nth && args[0] === 'release' && args[1] === 'upload' && log.calls.filter(c => c.args[1] === 'upload').length === nth) return refuse('HTTP 502: fake upload failure');
+  if (args[0] === 'release' && args[1] === 'delete-asset') log.assets = log.assets.filter(a => a.name !== args[3]);
+  // "gh workflow run ...": recorded only (the release workflow's fleet-accept mode, PLAN-accept-binding-20261125); the state's workflowFail: gh refuses it
+  if (args[0] === 'workflow' && log.workflowFail) return refuse('HTTP 403: Resource not accessible by integration');
+  if (args[0] === 'workflow' && log.workflowLostReply) return refuse('connection closed before the dispatch response');
+  if (args[0] === 'release' && ['view', 'upload', 'download', 'delete-asset'].includes(args[1]) && absent(args[2])) return refuse('release not found');
+  if (args[0] === 'release' && args[1] === 'create') {
+    if (env.FAKE_GH_FAIL_CREATE === '1') return refuse('HTTP 422: fake create failure');
+    if (!absent(args[2])) return refuse('HTTP 422: Validation Failed (Release.tag_name already_exists)');
+    const files = args.slice(3, args.indexOf('--repo'));
+    log.assets = files.map(asset);
+    stdout = 'https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2];
+  }
+  if (args[0] === 'release' && args[1] === 'upload') log.assets.push(asset(args[3]));
+  // "gh api repos/<repo>/compare/main...<commit>": where the commit stands against main, from the state's compare (default behind: on main);
+  // fail: the call fails; garbled: an answer that is not the API's
+  if (args[0] === 'api' && /^repos\/[^/]+\/[^/]+\/compare\/main\.\.\.[0-9a-f]{40}$/.test(args[1] ?? '')) {
+    const c = log.compare || 'behind';
+    if (c === 'fail') return refuse('HTTP 502: fake compare failure');
+    stdout = c === 'garbled' ? '<html>' : JSON.stringify({ status: c, ahead_by: c === 'ahead' || c === 'diverged' ? 1 : 0 });
+  }
+  if (args[0] === 'api' && /^repos\/[^/]+\/[^/]+\/commits\/[0-9a-f]{40}$/.test(args[1] ?? '')) {
+    if (log.commitMissing === true) return refuse('gh: Not Found (HTTP 404)');
+    if (log.commitMissing === '422') return refuse('gh: No commit found for SHA: ' + args[1].split('/').pop() + ' (HTTP 422)');
+    if (log.commitMissing === 'fail') return refuse('error connecting to api.github.com');
+    stdout = JSON.stringify({ sha: args[1].split('/').pop() });
+  }
+  if (args[0] === 'release' && args[1] === 'view') stdout = JSON.stringify({ url: 'https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2], tagName: args[2], assets: assetsOf(args[2]).map(a => ({ name: a.name, size: a.size })) });
+  if (args[0] === 'release' && args[1] === 'download') {
+    const name = args[args.indexOf('--pattern') + 1], dir = args[args.indexOf('--dir') + 1];
+    if (env.FAKE_GH_FAIL_DOWNLOAD === name) return refuse('net/http: TLS handshake timeout');
+    const a = assetsOf(args[2]).find(x => x.name === name);
+    if (!a) return refuse('no assets match the file pattern');
+    // as gh 2.97.0 does: a file of that name already in --dir is an error unless --clobber or --skip-existing is given
+    if (fs.existsSync(path.join(dir, name)) && !args.includes('--clobber') && !args.includes('--skip-existing')) {
+      return refuse(name + ' already exists (use --clobber to overwrite file or --skip-existing to skip file)');
+    }
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, name), Buffer.from(a.b64, 'base64'));
+  }
+  fs.writeFileSync(state, JSON.stringify(log));
+  return { status: 0, stdout, stderr: '' };
+}
+
+export const FAKE_GH = `import fs from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+const runFakeGh = ${runFakeGh.toString()};
+const result = runFakeGh(process.argv.slice(2), process.env, { fs, path, createHash });
+if (result.stdout) console.log(result.stdout);
+if (result.stderr) console.error(result.stderr);
+process.exitCode = result.status;
+`;

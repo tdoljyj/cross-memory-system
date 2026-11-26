@@ -1,11 +1,11 @@
+import { EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import net from 'node:net';
 import {randomUUID,createHash} from 'node:crypto';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
@@ -19,15 +19,14 @@ const candidate='20261117050000_storage_runtime_authority_v1.sql';
 const migration=await fs.readFile(standalone?path.join(here,candidate):path.join(cloud,'supabase/migrations',candidate),'utf8');
 const helper=migration.split('-- Apply the exact registered profile;')[0];
 const sig='clued_private.storage_runtime_authority_repair_v1(uuid,uuid,text,uuid,bigint,text)';
-async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const n=s.address().port;await new Promise(r=>s.close(r));return n;}
 
 test('runtime reference repair preserves frozen layout and creates independently verifiable qualification',{timeout:300000},async t=>{
  const temp=await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()),'clued-runtime-authority-'));
- const server=new EmbeddedPostgres({databaseDir:temp,user:'postgres',password:sha(id()),port:await port(),persistent:true,
-  postgresFlags:['-c','listen_addresses=127.0.0.1'],onLog(){},onError(){}});
+ const server=newCluster({databaseDir:temp,user:'postgres',password:sha(id()),persistent:true,
+  initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],onLog(){},onError(){}});
  let started=false;const clients=[];
  try{
-  await server.initialise();await server.start();started=true;
+  await startCluster(server);started=true;
   const db=server.getPgClient();clients.push(db);await db.connect();
   await db.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;
    create role authenticator nologin noinherit;create schema auth;create schema extensions;create extension pgcrypto with schema extensions;

@@ -1,0 +1,52 @@
+{
+  "contract": "clued.independent-ci.source-v2-windows-launch-terminal/1",
+  "status": "STOPPED",
+  "code": "SECRET_CHECK_FAILED:VERIFY_SCRIPT_PARSE_ERRORS",
+  "detail": {
+    "runner": {
+      "ok": true,
+      "flags": {
+        "originalBinary": true,
+        "manual": true,
+        "controller": true,
+        "stoppedPid0": true,
+        "sddl": true
+      },
+      "sdshow": "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)",
+      "daclPart": "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)",
+      "pinnedDacl": "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)",
+      "qc": "[SC] QueryServiceConfig SUCCESS\r\n\r\nSERVICE_NAME: actions.runner.tdoljyj-cross-memory-system.clued-ci-clued-drill\r\n        TYPE               : 10  WIN32_OWN_PROCESS \r\n        START_TYPE         : 3   DEMAND_START\r\n        ERROR_CONTROL      : 1   NORMAL\r\n        BINARY_PATH_NAME   : \"C:\\ProgramData\\CluedControl\\runner\\bin\\RunnerService.exe\"\r\n        LOAD_ORDER_GROUP   : \r\n        TAG                : 0\r\n        DISPLAY_NAME       : actions.runner.tdoljyj-cross-memory-system.clued-ci-clued-drill\r\n        DEPENDENCIES       : \r\n        SERVICE_START_NAME : .\\clued-control",
+      "queryex": "SERVICE_NAME: actions.runner.tdoljyj-cross-memory-system.clued-ci-clued-drill \r\n        TYPE               : 10  WIN32_OWN_PROCESS  \r\n        STATE              : 1  STOPPED \r\n        WIN32_EXIT_CODE    : 1077  (0x435)\r\n        SERVICE_EXIT_CODE  : 0  (0x0)\r\n        CHECKPOINT         : 0x0\r\n        WAIT_HINT          : 0x0\r\n        PID                : 0\r\n        FLAGS              :"
+    },
+    "secretsAsVerify": {
+      "appKey": null,
+      "ciToken": null,
+      "codes": [
+        "SECRET_CHECK_FAILED:VERIFY_SCRIPT_PARSE_ERRORS"
+      ]
+    },
+    "codes": [
+      "SECRET_CHECK_FAILED:VERIFY_SCRIPT_PARSE_ERRORS"
+    ]
+  },
+  "completed": [
+    "output",
+    "package",
+    "stage",
+    "first-install-preflight",
+    "tokens-carried"
+  ],
+  "sourceSha": "70e8be9402794a935920f59b00e1af6284965396",
+  "packageHead": "70e8be9402794a935920f59b00e1af6284965396",
+  "carriedTokens": {
+    "directory": "C:\\ProgramData\\CluedIndependentCI\\reinstall-carry-dc156aba6dad4452ae007e1d6920ddac",
+    "tokens": [
+      "upgradeToken"
+    ],
+    "removed": true,
+    "removeError": null,
+    "firstInstallCredentialsRemoved": true
+  },
+  "w1Pause": null,
+  "at": "2026-11-20T19:49:17.0289534+08:00"
+}

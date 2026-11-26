@@ -1,13 +1,12 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -26,13 +25,6 @@ const receiptQuery = `select pg_catalog.jsonb_build_object('receipt_id', r.id, '
 const sessionQuery = `select max(s.started_at) value from public.clued_continuity_sessions s
   where s.binding_id = $1 and s.started_at >= $2`;
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise(resolve => listener.close(resolve));
-  return port;
-}
 
 function nodes(plan) {
   return [plan, ...(plan.Plans ?? []).flatMap(nodes)];
@@ -41,15 +33,14 @@ function nodes(plan) {
 test('Integration status: scaled latest evidence preserves results and uses binding indexes',
   { timeout: 300000 }, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-integration-status-indexes-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: hash(), 
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   let admin;
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     admin = server.getPgClient();
     await admin.connect();
     await admin.query(`create role anon nologin; create role authenticated nologin;

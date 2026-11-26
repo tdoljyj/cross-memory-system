@@ -1,12 +1,11 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceApp = path.resolve(process.env.CLUED_SYNTHETIC_SOURCE_APP ?? app);
 const { allowRawTestBindings } = await import(pathToFileURL(path.join(sourceApp,'tests/raw-binding-grants-fixture.mjs')));
@@ -24,10 +23,6 @@ const scope = 'project:' + PROJECT;
 const successor = '20261010175022_dataset_split_native_grant_currentness_scope_v1.sql';
 const uid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
-async function freePort() {
-  const s = net.createServer(); await new Promise(resolve => s.listen(0, '127.0.0.1', resolve));
-  const port = s.address().port; await new Promise(resolve => s.close(resolve)); return port;
-}
 
 test('Native Owner validates a Project Task with a registered Global intent through real currentness',
   { timeout: 300000 }, async t => {
@@ -39,12 +34,12 @@ test('Native Owner validates a Project Task with a registered Global intent thro
   await fs.writeFile(path.join(dir, 'Ownership.json'), JSON.stringify(ownership), { flag: 'wx' });
   const oldTemp = Object.fromEntries(['TEMP', 'TMP', 'TMPDIR'].map(k => [k, process.env[k]]));
   for (const k of Object.keys(oldTemp)) process.env[k] = dir;
-  const server = new EmbeddedPostgres({ databaseDir: path.join(dir, 'db'), user: 'postgres',
-    password: hash(), port: await freePort(), persistent: true, createPostgresUser: false,
-    postgresFlags: ['-c', 'io_method=sync', '-c', 'listen_addresses=127.0.0.1'], onLog() {}, onError() {} });
+  const server = newCluster({ databaseDir: path.join(dir, 'db'), user: 'postgres',
+    password: hash(), persistent: true, createPostgresUser: false,
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'], onLog() {}, onError() {} });
   let db, proc;
   try {
-    await server.initialise(); await server.start(); proc = server.process;
+    await startCluster(server); proc = server.process;
     assert.ok(proc?.pid); db = server.getPgClient('postgres', '127.0.0.1'); await db.connect();
     await db.query("set statement_timeout='10s'");
     await db.query(`create role anon nologin; create role authenticated nologin;

@@ -1,13 +1,12 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 
 // Information Flow confirmation-token hardening (M0-D follow-up; B09 round 3
 // F01, A03 register L29 and L30) on the full migration chain. The chain up to
@@ -33,13 +32,6 @@ const TOKENIZER = { package: 'js-tiktoken', version: '1.0.21', encoding: 'o200k_
 let keyCounter = 0;
 const key = (label) => `if-th-${label}-${String(++keyCounter).padStart(4, '0')}`;
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 const TEXT = 'Qingshi token hardening fixture confirmed by the owner.';
 const segment = (segmentId) => ({
@@ -66,15 +58,14 @@ const policyDoc = (taskClass) => ({
 test('Information Flow token hardening: F01 burn order, L29 session binding, L30 action filter',
   { timeout: 900000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-if-th-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: hash(), 
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = server.getPgClient();
     clients.push(admin);
     await admin.connect();

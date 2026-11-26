@@ -21,9 +21,8 @@
   install's ACL (heartbeat-token-acl), and heartbeat-binding reports the heartbeat connection id the receipt recorded (no network).
   The App key and the ci-admission token files are checked for existence and security (owner an administrator principal, readable by SYSTEM, Administrators and the pinned controller only, no write for the
   controller); so are the folders that hold them (CluedControl\trusted, CluedIndependentCI\secrets) and every ancestor up to the drive
-  root, by the runtime's own rule (runtime/verify-install-acl.ps1): administrator owners, no other reader of the secret folders, no
-  non-administrator write or replace right on the way. Their content is never read here: the fingerprints were checked at install,
-  and the runtime checks them on every start.
+  root, by the runtime's own rule (runtime/verify-install-acl.ps1): administrator owners and protected ancestors.
+  The self-check reads back the CI token and verifies the current fingerprint. The identity at install time and the current connection are reported separately.
   First HALT of 2026-10-29 (DESIGN.md section 33): the companion's relay and bundle scripts (config\companion.json) lie under the installed
   CI Source, source\<SHA-256 of record\source-manifest.json>\, and exist there; and the CI root C:\ProgramData\CluedIndependentCI carries the
   resident service's one READ_CONTROL entry (0x120080, this folder only), read from the live ACL.
@@ -37,16 +36,13 @@
   Prints one JSON verdict; exit 0 only if every check passes. Elevated for the complete check
   (service DACLs need READ_CONTROL); a non-elevated run reports those as unreadable and exits 2.
 #>
-[CmdletBinding()]
-param([Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedInstallReceiptSha256,
+[CmdletBinding(DefaultParameterSetName='Verify')]
+param([Parameter(Mandatory,ParameterSetName='Verify')][ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedInstallReceiptSha256,
+  [Parameter(Mandatory,ParameterSetName='Functions')][switch]$FunctionsOnly,
   [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectPausedSha256,
   [string]$LinuxVersionFactsFile)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
-$env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory (review M1)
-Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\ScheduledTasks\ScheduledTasks.psd1'
-$Root = 'C:\ProgramData\CluedIndependentCI\resident'
-if (-not ([IO.Path]::GetFullPath($PSCommandPath)).StartsWith((Join-Path $Root 'resident\'), [StringComparison]::OrdinalIgnoreCase)) { throw 'RUN_THE_INSTALLED_COPY' }
 $Sc = 'C:\Windows\System32\sc.exe'
 # This node's runner service and host: the installed record's node profile (record\acceptance.json `node`, admin-only,
 # validated by the install; design section 9 C1). The name is still held to its fixed shape before it reaches sc.exe.
@@ -116,6 +112,36 @@ function ConvertTo-NodeIdentityCanonical($id) {
   return '{' + ($rows -join ',') + '}'
 }
 
+# Uses the same byte fixtures as the Source v2 parser. The install receipt is always verified against the identity at install time.
+function Get-EffectiveCiPrincipal($identity, [byte[]]$bytes) {
+  if ($null -eq $bytes) {
+    return [pscustomobject]@{ bindingId = $identity.ciPrincipalBindingId; tokenPinSha256 = $identity.ciTokenPinSha256; generation = $null; receiptId = $null }
+  }
+  try {
+    if ($bytes.Length -eq 0 -or $bytes.Length -gt 4096) { throw 'size' }
+    $text = (New-Object Text.UTF8Encoding($false, $true)).GetString($bytes)
+    $v = $text | ConvertFrom-Json
+    $keys = @('activatedAt','baseNodeIdentitySha256','bindingGeneration','bindingId','contract','previousSha256','rebindReceiptId','tokenPinSha256')
+    if ($v -isnot [pscustomobject] -or @($v.PSObject.Properties).Count -ne $keys.Length) { throw 'keys' }
+    foreach ($key in $keys) { if (@($v.PSObject.Properties.Name) -cnotcontains $key) { throw 'keys' } }
+    $uuid = '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z'; $hash = '^[0-9a-f]{64}\z'
+    foreach ($key in @('bindingId','rebindReceiptId')) {
+      if ($v.$key -isnot [string] -or $v.$key -cnotmatch $uuid) { throw 'id' }
+    }
+    if ($v.contract -isnot [string] -or -not [string]::Equals($v.contract, 'clued.independent-ci.ci-connection/1', [StringComparison]::Ordinal) -or $v.tokenPinSha256 -isnot [string] -or $v.tokenPinSha256 -cnotmatch $hash -or
+        $v.baseNodeIdentitySha256 -isnot [string] -or -not [string]::Equals($v.baseNodeIdentitySha256, (Sha256Text (ConvertTo-NodeIdentityCanonical $identity)), [StringComparison]::Ordinal) -or $v.activatedAt -isnot [string] -or
+        ($null -ne $v.previousSha256 -and ($v.previousSha256 -isnot [string] -or $v.previousSha256 -cnotmatch $hash)) -or
+        ($v.bindingGeneration -isnot [int] -and $v.bindingGeneration -isnot [long]) -or $v.bindingGeneration -lt 1 -or $v.bindingGeneration -gt 9007199254740991) { throw 'fields' }
+    $format = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'"
+    $at = [DateTime]::ParseExact($v.activatedAt, $format, [Globalization.CultureInfo]::InvariantCulture)
+    if (-not [string]::Equals($at.ToString($format, [Globalization.CultureInfo]::InvariantCulture), $v.activatedAt, [StringComparison]::Ordinal)) { throw 'date' }
+    $ordered = [ordered]@{}
+    foreach ($key in $keys) { $ordered[$key] = $v.$key }
+    if (-not [string]::Equals(($ordered | ConvertTo-Json -Compress), $text, [StringComparison]::Ordinal)) { throw 'canonical' }
+    [pscustomobject]@{ bindingId = $v.bindingId; tokenPinSha256 = $v.tokenPinSha256; generation = $v.bindingGeneration; receiptId = $v.rebindReceiptId }
+  } catch { throw 'CI_CONNECTION_RECORD_REFUSED' }
+}
+
 # ---- Verify-only helpers for the node identity and the two secret files (DESIGN.md section 30) ----
 function Sha256Text([string]$t) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($t)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
 function Get-Field($o, [string]$k) { if (($o -is [pscustomobject]) -and (@($o.PSObject.Properties.Name) -ccontains $k)) { $o.$k } else { $null } }
@@ -179,6 +205,62 @@ function Get-SecretFileState([string]$target, [string]$controllerSid) {
     if (((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return 'link-refused' }
     if (Test-SecretFileSecurity (Get-Acl -LiteralPath $target) $controllerSid) { return 'ok' } else { return 'acl-refused' }
   } catch { return 'unreadable' }
+}
+# Verify the directory chain first; only a leaf file that truly does not exist may use the install identity. The shared read handle forbids replacing the file during the read-back.
+function Read-CiPrivateBytes([string]$file, [string]$controllerSid, [switch]$Optional) {
+  if ((Get-SecretPathState $file $controllerSid) -cne 'ok') { throw 'CI_PRIVATE_PATH_REFUSED' }
+  try { $item = Get-Item -LiteralPath $file -Force -ErrorAction Stop }
+  catch [Management.Automation.ItemNotFoundException] { if ($Optional) { return $null }; throw }
+  if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+      $item.LinkType -eq 'HardLink' -or (Get-SecretFileState $file $controllerSid) -cne 'ok') { throw 'CI_PRIVATE_FILE_REFUSED' }
+  $s = [IO.File]::Open($file, 'Open', 'Read', 'Read')
+  try {
+    if ($s.Length -lt 1 -or $s.Length -gt 4096) { throw 'CI_PRIVATE_FILE_REFUSED' }
+    $b = New-Object byte[] ([int]$s.Length); $at = 0
+    while ($at -lt $b.Length) {
+      $n = $s.Read($b, $at, $b.Length - $at)
+      if ($n -le 0) { throw 'CI_PRIVATE_FILE_REFUSED' }
+      $at += $n
+    }
+    if ($s.ReadByte() -ne -1) { throw 'CI_PRIVATE_FILE_REFUSED' }
+    return ,$b
+  } catch { if ($null -ne (Get-Variable b -ErrorAction SilentlyContinue)) { [Array]::Clear($b, 0, $b.Length) }; throw }
+  finally { $s.Dispose() }
+}
+function Get-CiAdmissionTokenPin([byte[]]$raw) {
+  # Same token prefix, alphabet and domain separator as the control entry. Avoids creating a string for the token that cannot be zeroed.
+  $start = 0; $end = $raw.Length
+  while ($start -lt $end -and $raw[$start] -in @(9,10,11,12,13,32)) { $start++ }
+  while ($end -gt $start -and $raw[$end-1] -in @(9,10,11,12,13,32)) { $end-- }
+  $prefix = [Text.Encoding]::ASCII.GetBytes('clued_bnd_')
+  $size = $end - $start
+  if ($size -lt $prefix.Length + 8 -or $size -gt $prefix.Length + 480) { throw 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' }
+  for ($i = 0; $i -lt $size; $i++) {
+    $c = $raw[$start+$i]
+    if ($i -lt $prefix.Length) { if ($c -ne $prefix[$i]) { throw 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' } }
+    elseif (!(($c -ge 48 -and $c -le 57) -or ($c -ge 65 -and $c -le 90) -or ($c -ge 97 -and $c -le 122) -or $c -in @(45,95))) { throw 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' }
+  }
+  $domain = [Text.Encoding]::ASCII.GetBytes('clued.independent-ci.ci-binding-pin/1' + [char]0)
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    [void]$sha.TransformBlock($domain,0,$domain.Length,$domain,0)
+    $final = $sha.TransformFinalBlock($raw,$start,$size)
+    [Array]::Clear($final,0,$final.Length)
+    return ([BitConverter]::ToString($sha.Hash)).Replace('-','').ToLowerInvariant()
+  } finally { $sha.Dispose() }
+}
+function Test-CurrentCiConnection($identity, [string]$tokenFile, [string]$controllerSid) {
+  try {
+    $file = Join-Path (Split-Path -Parent $tokenFile) 'ci-admission.connection.json'
+    $connection = Read-CiPrivateBytes $file $controllerSid -Optional
+    $current = Get-EffectiveCiPrincipal $identity $connection
+  } catch { return @{ ok = $false; detail = 'CI_CONNECTION_RECORD_REFUSED' } }
+  try {
+    $token = Read-CiPrivateBytes $tokenFile $controllerSid
+    try { $pin = Get-CiAdmissionTokenPin $token } finally { [Array]::Clear($token,0,$token.Length) }
+    if ($pin -cne $current.tokenPinSha256) { throw 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' }
+    return @{ ok = $true; detail = [ordered]@{ bindingId = $current.bindingId; generation = $current.generation; rebindReceiptId = $current.receiptId } }
+  } catch { return @{ ok = $false; detail = 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' } }
 }
 # ---- DESIGN.md section 33 (first HALT of 2026-10-29): two things the install must leave right and nothing else checked ----
 # Virtual service account SID: S-1-5-80 + SHA-1 of the upper-case service name (UTF-16LE); the same function as install-resident.ps1.
@@ -435,7 +517,7 @@ function Invoke-CompanionRelayParentsEnsure([string]$root, [string]$sid, [string
     $tokens = $null; $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseInput($text, [ref]$tokens, [ref]$errors)
     if (@($errors).Count -ne 0) { throw 'RELAY_PARENT_RULE_UNPARSEABLE' }
-    foreach ($name in @('Get-DaclPart', 'Get-ParentAce', 'Get-AceKeys', 'Get-ParentAclState', 'Add-ParentAce', 'Get-RelayParentAclPresence',
+    foreach ($name in @('Get-DaclPart', 'Get-DaclShape', 'Get-ParentAce', 'Get-AceKeys', 'Get-ParentAclState', 'Add-ParentAce', 'Get-RelayParentAclPresence',
         'Assert-CompanionRelayParentPlan', 'Add-CompanionRelayParentAce', 'Get-CompanionRelayParentsPlan')) {
       $found = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))
       if ($found.Count -ne 1) { throw ('RELAY_PARENT_RULE_MISSING:' + $name) }
@@ -457,6 +539,42 @@ function Invoke-CompanionRelayParentsEnsure([string]$root, [string]$sid, [string
     $written
   } $root $sid $installer $installerSha256
 }
+# r13 (Fable ruling 0e418483, option wu): <CiRoot>\state by install-resident.ps1's rule state-parent-acl, here for a node installed or
+# upgraded before that step existed. Same shape as Invoke-CompanionRelayParentsEnsure: the rule is install-resident.ps1's own functions
+# (this generation's copy, its pinned sha256; the bytes read once, hashed, parsed from that read), loaded by exact name into a child scope.
+# -Write (SYSTEM, the upgrade channel's VERIFY): the rule runs (made when missing; the controller's write on state itself made inherit-only;
+# any other writer refused, thrown). Without it: read only. Returns path, action (none|create|converge), before, after, wrote.
+function Invoke-StateParentEnsure([string]$root, [string]$controllerSid, [string]$installer, [string]$installerSha256, [switch]$Write) {
+  & {
+    param([string]$root, [string]$controllerSid, [string]$installer, [string]$installerSha256, [bool]$write)
+    Set-StrictMode -Version 2.0
+    $ErrorActionPreference = 'Stop'
+    if ($controllerSid -cnotmatch '^S-1-5-21-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}-[0-9]{1,10}\z') { throw 'STATE_PARENT_SID_REFUSED' }
+    if ($installerSha256 -cnotmatch '^[0-9a-f]{64}\z') { throw 'STATE_PARENT_RULE_NOT_PINNED' }
+    $bytes = [IO.File]::ReadAllBytes($installer)
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try { $actual = ([BitConverter]::ToString($hasher.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $hasher.Dispose() }
+    if ($actual -cne $installerSha256) { throw 'STATE_PARENT_RULE_HASH_MISMATCH' }
+    $text = (New-Object Text.UTF8Encoding($false, $true)).GetString($bytes)
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($text, [ref]$tokens, [ref]$errors)
+    if (@($errors).Count -ne 0) { throw 'STATE_PARENT_RULE_UNPARSEABLE' }
+    foreach ($name in @('Get-DaclShape', 'Get-StateParentSddl', 'Get-StateParentTarget', 'Get-StateParentState', 'Invoke-StateParentAcl')) {
+      $found = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))
+      if ($found.Count -ne 1) { throw ('STATE_PARENT_RULE_MISSING:' + $name) }
+      . ([scriptblock]::Create($found[0].Extent.Text))
+    }
+    $ciRoot = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($root).TrimEnd('\'))
+    for ($p = $ciRoot; $p; $p = [IO.Path]::GetDirectoryName($p)) {
+      $item = Get-Item -LiteralPath $p -Force
+      if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw ('STATE_PARENT_LINK_OR_NOT_A_DIRECTORY:' + $p) }
+    }
+    $state = Get-StateParentState (Join-Path $ciRoot 'state') $controllerSid
+    if (-not $write) { return [ordered]@{ path = $state.path; action = $state.action; before = $state.before; after = $state.before; wrote = $false } }
+    Invoke-StateParentAcl $state $controllerSid
+  } $root $controllerSid $installer $installerSha256 ([bool]$Write)
+}
 # The verdict (Task 018da927 b). Only a check whose ok is the STRING 'unreadable' asks for an elevated run: with -eq, a
 # boolean on the left converts 'unreadable' to $true, so every passing check counted as unreadable and any failure was
 # reported as RESIDENT_PARTIALLY_VERIFIED_RUN_ELEVATED (exit 2) instead of RESIDENT_VERIFICATION_FAILED (exit 1).
@@ -475,6 +593,14 @@ function Get-VerifyInputFailure([string]$check, [string]$message) {
 }
 # A failed pinned input must still produce a bounded JSON verdict for the frozen upgrade-apply reader.
 # Raw exceptions can contain paths or contents: only fixed check names and fixed failure codes leave this process.
+if ($FunctionsOnly) {
+  if ($MyInvocation.InvocationName -ne '.') { throw 'DOT_SOURCE_REQUIRED' }
+  return
+}
+$Root = 'C:\ProgramData\CluedIndependentCI\resident'
+if (-not ([IO.Path]::GetFullPath($PSCommandPath)).StartsWith((Join-Path $Root 'resident\'), [StringComparison]::OrdinalIgnoreCase)) { throw 'RUN_THE_INSTALLED_COPY' }
+$env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory (review M1)
+Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\ScheduledTasks\ScheduledTasks.psd1'
 $script:VerifyInputCheck = 'install-receipt'
 try {
 $receiptFile = Join-Path $Root 'install\install-receipt.json'
@@ -513,6 +639,12 @@ Record 'content-addressed-acl' $contentAcl.ok $contentAcl.detail
 $identityCheck = try { Test-NodeIdentityReceipt $receipt (Read-ReviewedPublicJson (Join-Path $Root 'record\installation.json') ([string](Get-Field $receipt 'installationSha256')) 4MB) $Accepted $receipt.acceptanceSha256 } catch { [pscustomobject]@{ ok = $false; detail = $_.Exception.Message; identity = $null } }
 Record 'node-identity' $identityCheck.ok $identityCheck.detail
 Record 'node-secrets-receipt' (Test-SecretsReceipt $receipt $identityCheck.identity)
+if ($identityCheck.ok -eq $true) {
+  $checks['node-identity']['installationIdentity'] = [ordered]@{ nodeName = $identityCheck.identity.nodeName
+    bindingId = $identityCheck.identity.ciPrincipalBindingId; nodeIdentitySha256 = (Get-Field $receipt 'nodeIdentitySha256') }
+  $currentCi = Test-CurrentCiConnection $identityCheck.identity $SecretTargets.ciToken $Node.controllerSid
+  Record 'current-ci-connection' $currentCi.ok $currentCi.detail
+}
 foreach ($spec in @(@('app-key-file', 'appKey', 'app-key-directories'), @('ci-admission-token-file', 'ciToken', 'ci-admission-token-directories'))) {
   $state = Get-SecretFileState $SecretTargets[$spec[1]] $Node.controllerSid
   Record $spec[0] $(if ($state -ceq 'ok') { $true } elseif ($state -ceq 'unreadable') { 'unreadable' } else { $false }) $state
@@ -532,7 +664,7 @@ while (-not (Test-Path -LiteralPath $marker -PathType Leaf) -and [DateTime]::Utc
 $markerDetail = if (Test-Path -LiteralPath $marker -PathType Leaf) { try { $m = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json; 'published ' + $m.published + ', unreadable ' + $m.unreadable } catch { 'marker unreadable' } } else { $null }
 Record 'executed-heads-backfilled' (Test-Path -LiteralPath $marker -PathType Leaf) $markerDetail
 
-# Service facts that sc.exe prints in the system language (DESK-W-591, 2026-10-30: `sc qfailure` printed 重新启动, not RESTART) are
+# Service facts that sc.exe prints in the system language (DESK-W-591, 2026-10-30: `sc qfailure` printed the Chinese word for restart, not RESTART) are
 # read from the SCM's own registry values and compared exactly with what install-resident.ps1 sets. sc.exe's field labels and the
 # numbers (START_TYPE, STATE, PID, SERVICE_START_NAME, BINARY_PATH_NAME, Se*Privilege names, SDDL) are not translated.
 $ServicesKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\'
@@ -722,6 +854,90 @@ Record 'companion-task' (@('password', 'interactive') -ccontains $companionTask.
 Record 'companion-task-logon' (-not (Test-CompanionLogonFailure $companionTask.lastTaskResult)) $(if ($null -ne $companionTask.lastTaskResult) { '0x' + ('{0:X8}' -f [int64]$companionTask.lastTaskResult) } else { $null })
 $lockout = Get-LockoutPolicy
 Record 'companion-lockout-margin' $(if ($companionTask.mode -ceq 'password') { Test-LockoutMargin $lockout } else { $true }) $(if ($null -eq $lockout) { 'unreadable' } else { 'threshold=' + $lockout.threshold + ';window=' + $lockout.windowMinutes + ';mode=' + $companionTask.mode })
+# K3 (task 87d330d0, FABLE-drill-companion-k3-20261124 section 2.1): a password-definition task can stay queued under a start constraint
+# outside its XML, its own boot and time triggers included; the SYSTEM start task \Clued\CluedCIResidentCompanionStart starts it ignoring
+# the constraints (companion-headless.ps1 $CompanionStartTaskAction: one fixed PowerShell line calling RunEx($null, 2, 0, $null)) on
+# boot +30 s and every 15 minutes. It is registered by the switch (companion-headless.ps1
+# Register-CompanionStartTask: no argument, idempotent, throws COMPANION_START_TASK_REGISTER_FAILED) and goes with a fall-back; the
+# interactive definition starts on log-on and needs none. A node switched before it existed gets it here: run as SYSTEM (the upgrade
+# channel's VERIFY) a missing or wrong one is registered first and read back (ok, detail ADDED:<what was wrong>); by hand only read.
+# The start task's facts (COM; nothing written): exists $false when not found, readable $false when it cannot be read (not elevated).
+function Read-CompanionStartTaskFacts {
+  $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
+  $task = try { $svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanionStart') } catch {
+    # file or path not found (0x80070002, 0x80070003) anywhere in the chain (a COM error reaches here wrapped): absent; else unreadable
+    for ($e = $_.Exception; $null -ne $e; $e = $e.InnerException) { if (@(0x80070002L, 0x80070003L) -contains ([int64]$e.HResult -band 0xFFFFFFFFL)) { return [ordered]@{ exists = $false; readable = $true } } }
+    return [ordered]@{ exists = $null; readable = $false }
+  }
+  try {
+    $d = $task.Definition
+    $uid = [string]$d.Principal.UserId
+    $sid = try { if ($uid -match '^S-1-') { $uid } else { (New-Object Security.Principal.NTAccount($uid)).Translate([Security.Principal.SecurityIdentifier]).Value } } catch { $null }
+    $sd = [string]$task.GetSecurityDescriptor(4)   # DACL_SECURITY_INFORMATION
+    $i = $sd.IndexOf('D:')
+    [ordered]@{ exists = $true; readable = $true; userSid = $sid; logonType = [int]$d.Principal.LogonType; runLevel = [int]$d.Principal.RunLevel
+      enabled = [bool]$task.Enabled -and [bool]$d.Settings.Enabled
+      triggers = @(foreach ($t in $d.Triggers) { [ordered]@{ type = [int]$t.Type; delay = $(if ([int]$t.Type -eq 8) { [string]$t.Delay } else { '' })
+        interval = [string]$t.Repetition.Interval; duration = [string]$t.Repetition.Duration; enabled = [bool]$t.Enabled } })
+      startWhenAvailable = [bool]$d.Settings.StartWhenAvailable; multipleInstances = [int]$d.Settings.MultipleInstances
+      disallowOnBatteries = [bool]$d.Settings.DisallowStartIfOnBatteries; stopOnBatteries = [bool]$d.Settings.StopIfGoingOnBatteries
+      executionTimeLimit = [string]$d.Settings.ExecutionTimeLimit
+      actions = @(foreach ($a in $d.Actions) { [ordered]@{ type = [int]$a.Type; path = $(if ([int]$a.Type -eq 0) { [string]$a.Path } else { '' }); arguments = $(if ([int]$a.Type -eq 0) { [string]$a.Arguments } else { '' }) } })
+      dacl = $(if ($i -ge 0) { $sd.Substring($i) } else { $sd }) }
+  } catch { [ordered]@{ exists = $null; readable = $false } }
+}
+# Pure: what is wrong with the start task, by name (empty when it is exactly the shape the switch registers).
+function Get-CompanionStartTaskProblems($f) {
+  if (-not $f.readable) { return @('unreadable') }
+  if (-not $f.exists) { return @('absent') }
+  $p = @()
+  if ([string]$f.userSid -cne 'S-1-5-18') { $p += 'principal' }
+  if ($f.logonType -ne 5) { $p += 'logon-type' }   # TASK_LOGON_SERVICE_ACCOUNT
+  if ($f.runLevel -ne 1) { $p += 'run-level' }     # TASK_RUNLEVEL_HIGHEST
+  if (-not $f.enabled) { $p += 'disabled' }
+  $tr = @($f.triggers)
+  $boot = @($tr | Where-Object { $_.type -eq 8 }); $time = @($tr | Where-Object { $_.type -eq 1 })
+  if ($tr.Count -ne 2 -or $boot.Count -ne 1 -or $time.Count -ne 1 -or [string]$boot[0].delay -cne 'PT30S' -or [string]$time[0].interval -cne 'PT15M' -or
+    [string]$time[0].duration -cne '' -or @($tr | Where-Object { -not $_.enabled }).Count) { $p += 'triggers' }
+  if (-not $f.startWhenAvailable) { $p += 'start-when-available' }
+  if ($f.multipleInstances -ne 2) { $p += 'multiple-instances' }   # IgnoreNew: the companion already running drops the kick
+  if ($f.disallowOnBatteries -or $f.stopOnBatteries) { $p += 'batteries' }
+  if ([string]$f.executionTimeLimit -cne 'PT1M') { $p += 'time-limit' }
+  # The action is the one the switch registers, read from its one source (companion-headless.ps1 $CompanionStartTaskAction, dot-sourced
+  # above); never a copy here (review r1 item 2). Not defined: every action is wrong.
+  $want = $null; try { $want = $CompanionStartTaskAction } catch { }
+  $ac = @($f.actions)
+  if ($null -eq $want -or $ac.Count -ne 1 -or $ac[0].type -ne 0 -or [string]$ac[0].path -cne [string]$want.path -or [string]$ac[0].arguments -cne [string]$want.arguments) { $p += 'action' }
+  # The DACL as companion-headless.ps1 Test-CompanionTaskDacl compares the companion task's: protected, the same ACEs in binary form
+  # (the text the Task Scheduler reads back may spell the rights differently).
+  $daclOk = try {
+    $want = [Security.AccessControl.RawSecurityDescriptor]::new('D:P(A;;FA;;;SY)(A;;FA;;;BA)').DiscretionaryAcl
+    $hd = [Security.AccessControl.RawSecurityDescriptor]::new([string]$f.dacl); $have = $hd.DiscretionaryAcl
+    $same = (([int]$hd.ControlFlags -band [int][Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) -and $null -ne $have -and $have.Count -eq $want.Count
+    for ($i = 0; $same -and $i -lt $want.Count; $i++) {
+      $x = [byte[]]::new($want[$i].BinaryLength); $want[$i].GetBinaryForm($x, 0); $y = [byte[]]::new($have[$i].BinaryLength); $have[$i].GetBinaryForm($y, 0)
+      $same = [Convert]::ToBase64String($x) -ceq [Convert]::ToBase64String($y)
+    }
+    $same
+  } catch { $false }
+  if (-not $daclOk) { $p += 'sddl' }
+  $p
+}
+# The check: [ordered]@{ ok; detail }. Only the password definition needs the start task; $asSystem: the upgrade channel's VERIFY.
+function Test-CompanionStartTask([string]$mode, [bool]$asSystem) {
+  if ($mode -cne 'password') { return [ordered]@{ ok = $true; detail = $null } }
+  $problems = @(Get-CompanionStartTaskProblems (Read-CompanionStartTaskFacts))
+  if ($problems.Count -eq 0) { return [ordered]@{ ok = $true; detail = $null } }
+  $was = $problems -join ','
+  if ($was -ceq 'unreadable') { return [ordered]@{ ok = 'unreadable'; detail = 'unreadable' } }
+  if (-not $asSystem) { return [ordered]@{ ok = $false; detail = $was } }
+  try { $null = Register-CompanionStartTask } catch { return [ordered]@{ ok = $false; detail = ('COMPANION_START_TASK_REGISTER_FAILED:' + $was + ':' + $_.Exception.Message) } }
+  $after = @(Get-CompanionStartTaskProblems (Read-CompanionStartTaskFacts))
+  if ($after.Count -eq 0) { return [ordered]@{ ok = $true; detail = ('ADDED:' + $was) } }
+  [ordered]@{ ok = $false; detail = ('STILL:' + ($after -join ',')) }
+}
+$companionStart = Test-CompanionStartTask ([string]$companionTask.mode) ($verifyIdentity.User.Value -ceq 'S-1-5-18')
+Record 'companion-start-task' $companionStart.ok $companionStart.detail
 # The launch file: admin-only, no link, this generation's node, entry and configuration, the Owner's own gh login.
 $launchProblem = try {
   $lf = Join-Path $Root 'config\companion-launch.json'
@@ -792,6 +1008,22 @@ elseif ($null -ne $companionAccountRecord) {
   $parentProblem = Get-CompanionRelayParentsProblem ([string]$Node.ownerSid)
   Record 'companion-relay-parents' ($null -eq $parentProblem -and $relayAdded -isnot [string]) $(if ($relayAdded -is [string]) { $relayAdded } elseif ($parentProblem) { $parentProblem } elseif ($relayAdded) { 'ADDED:' + $relayAdded } else { $null })
 }
+# r13 (Fable ruling 0e418483): <CiRoot>\state passes the generic helper's rule, on every node (not only a companion-account one).
+# SYSTEM (the upgrade channel's VERIFY): install-resident.ps1's own rule runs first (Invoke-StateParentEnsure -Write), then the result is
+# checked. Elevated by hand: read and checked, never written. Not elevated: state is admin-only, so it is not read (recorded as such).
+# The rule's bytes are pinned as the relay parents' are: this generation's install-resident.ps1, by the resident manifest's sha256.
+if ($verifyCanFix) {
+  $stateParent = try {
+    $stateManifest = Join-Path $Root 'config\resident-installed-manifest.json'
+    $stateManifestSha = Sha256File $stateManifest
+    if ($stateManifestSha -cne [string]$receipt.residentManifestSha256 -or (Split-Path -Leaf (Split-Path -Parent $PSScriptRoot)) -cne $stateManifestSha) { throw 'STATE_PARENT_RULE_NOT_THIS_GENERATION' }
+    $statePin = @(@((Get-Content -LiteralPath $stateManifest -Raw | ConvertFrom-Json).files) | Where-Object { [string]$_.path -ceq 'windows/install-resident.ps1' })
+    if ($statePin.Count -ne 1 -or [string]$statePin[0].sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'STATE_PARENT_RULE_NOT_PINNED' }
+    Invoke-StateParentEnsure $Root ([string]$Node.controllerSid) (Join-Path $PSScriptRoot 'install-resident.ps1') ([string]$statePin[0].sha256) -Write:($verifyIdentity.User.Value -ceq 'S-1-5-18')
+  } catch { 'STATE_PARENT_ENSURE_REFUSED:' + $_.Exception.Message }
+  if ($stateParent -is [string]) { Record 'state-parent-acl' $false $stateParent }
+  else { Record 'state-parent-acl' ($stateParent.action -ceq 'none' -or $stateParent.wrote) ('action=' + $stateParent.action + ';wrote=' + ([string]$stateParent.wrote).ToLowerInvariant() + ';sddl=' + $stateParent.after) }
+} else { Record 'state-parent-acl' $true 'NOT_ELEVATED_NOT_READ' }
 Record 'not-halted' (-not (Test-Path -LiteralPath (Join-Path $Root 'state\HALT.json')))
 $pausedFile = Join-Path $Root 'state\PAUSED.json'
 if ($ExpectPausedSha256) { Record 'paused-as-expected' ((Test-Path -LiteralPath $pausedFile -PathType Leaf) -and ((Sha256File $pausedFile) -ceq $ExpectPausedSha256)) }

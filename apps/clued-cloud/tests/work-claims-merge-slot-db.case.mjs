@@ -1,15 +1,14 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
+import { CI_SIGNATURES, PR_LIFECYCLE_REPORT_SIGNATURE, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
 // Work Claims merge slot (migration 20261006120000, Task f89eaf0a, Owner
 // Decisions 0edf7889 and 2ea795e4): the slot merge:<owner>/<name>:<branch> is
@@ -32,26 +31,18 @@ const nowEpoch = () => Math.floor(Date.now() / 1000);
 const fresh = (sub, session = 'sess-owner') =>
   ({ sub, role: 'authenticated', session_id: session, aal: 'aal1', amr: [{ method: 'password', timestamp: nowEpoch() }] });
 
-async function freePort() {
-  const listener = net.createServer();
-  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port;
-  await new Promise((resolve) => listener.close(resolve));
-  return port;
-}
 
 test('work claims: the merge slot is held by one claim, lapses after 45 minutes and is returned on merge or close',
   { timeout: 300000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-work-claims-merge-slot-'));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+  const server = newCluster({
+    databaseDir: directory, user: 'postgres', password: hash(), 
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
   try {
-    await server.initialise();
-    await server.start();
+    await startCluster(server);
     const admin = server.getPgClient();
     clients.push(admin);
     await admin.connect();
@@ -111,7 +102,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       return (await human.query(`select public.${name}($1) v`, [input])).rows[0].v;
     };
     const agent = async (who, name, input) =>
-      CI_SIGNATURES.includes(name + '(text,jsonb)')
+      [...CI_SIGNATURES, PR_LIFECYCLE_REPORT_SIGNATURE].includes(name + '(text,jsonb)')
         ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who],input])).rows[0].v
         : await workerGatewayRpc(workerCaller, name, tokens[who], input);
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
@@ -276,14 +267,13 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       { scope: 'global', pr_ref: 'tdoljyj/cross-memory-system#6', merge_sha: 'd'.repeat(40) }),
     { status: 'ok', adopted: false, reason: 'no_copy_for_pr', pr_ref: 'tdoljyj/cross-memory-system#6', binding_receipt_id: null });
 
-    // --- So does a pull request closed without a merge. ---
+    // 只有让槽这一事实时，同一认领可以继续工作。
     a = committed(await renew('claude', a, { trigger_refs: [SLOT] })).claim;
     assert.ok(a.merge_slot_until, 'the returned slot is free again');
-    const closed = await agent('ci', 'clued_work_merge_slot_return_v1',
+    const returned = await agent('ci', 'clued_work_merge_slot_return_v1',
       { scope: 'global', pr_ref: 'tdoljyj/cross-memory-system#5' });
-    assert.deepEqual([closed.status, closed.returned, closed.merge_slot_returned], ['ok', true, [a.claim_id]]);
-    // Its Task's only PR closed: the claim that served it is released too (20261113151000).
-    assert.deepEqual([(await view(a)).merge_slot_until, (await view(a)).status], [null, 'RELEASED']);
+    assert.deepEqual([returned.status, returned.returned, returned.merge_slot_returned], ['ok', true, [a.claim_id]]);
+    assert.deepEqual([(await view(a)).merge_slot_until, (await view(a)).status], [null, 'ACTIVE']);
     assert.equal((await agent('ci', 'clued_work_merge_slot_return_v1',
       { scope: 'global', pr_ref: 'tdoljyj/cross-memory-system#77' })).returned, false);
     await assert.rejects(() => agent('ci', 'clued_work_merge_slot_return_v1',
@@ -334,6 +324,12 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     assert.deepEqual((await agent('ci', 'clued_work_merge_slot_return_v1',
       { scope: 'global', pr_ref: 'tdoljyj/Cross-Memory-System#9' })).merge_slot_returned, [c1.claim_id]);
     assert.deepEqual((await view(c1)).trigger_refs, ['merge:other/repo:main', 'task:race']);
+    assert.equal((await view(c1)).status, 'ACTIVE');
+    // Giving the slot back ended nothing; GitHub's closure, reported by the resident, ends the binding (20261119140000).
+    const confirmedClose = await agent('ci', 'clued_work_pr_lifecycle_report_v1',
+      { scope: 'global', repository: 'tdoljyj/Cross-Memory-System', prs: [{ pr_number: 9, state: 'closed' }] });
+    assert.deepEqual([confirmedClose.status, confirmedClose.finished, confirmedClose.released], ['ok', 1, [c1.claim_id]]);
+    assert.equal((await view(c1)).status, 'RELEASED');
 
     // --- Merge Admission step 3 (migration 20261009010000): the slot follows CI. ---
     const slotProfile = (await admin.query('select clued_private.work_claim_profile_v1() v')).rows[0].v;
@@ -348,8 +344,6 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       where operation=$2 and object_id=$1 order by created_at,id`, [c.claim_id, operation])).rows.map((row) => row.metadata);
     const setSlot = (c, column, minutes) => admin.query(`update clued_private.work_claims_v1
       set ${column}=clock_timestamp()-make_interval(mins=>$2) where claim_id=$1`, [c.claim_id, minutes]);
-    // That PR was its Task's only one: the copy that served it is released (20261113151000).
-    assert.equal((await view(c1)).status, 'RELEASED');
     let d = await claim('codex', 'D: final round under CI', { trigger_refs: [SLOT] });
     assert.ok(d.merge_slot_until);
     assert.deepEqual(d.merge_slot_ci, { taken_at: d.merge_slot_ci.taken_at, hard_cap_until: null,

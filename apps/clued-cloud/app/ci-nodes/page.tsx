@@ -10,7 +10,7 @@ import "./nodes.css";
 
 type Json = Record<string, unknown>;
 type NodeAction = "approve" | "drain" | "retire" | "revoke";
-type Node = { node_id: string; name: string; state: string; version: number; binding_id: string;
+type Node = { node_id: string; name: string; state: string; version: number; binding_id: string; binding_generation?: number;
   profile_sha256: string; identity_fingerprint: string; encryption_fingerprint: string;
   qualification_status: string; publisher_approved: boolean; scan_signing_approved: boolean; connection_expires_at: string | null;
   eligible_until?: string | null; hardening_observed?: boolean; preference?: string; profile?: Json };
@@ -18,13 +18,14 @@ type Pool = Json & { version: number; mode: "prepared" | "active"; status: "UNCO
 type NodeList = { version: number; sha256: string | null };
 type PhaseMove = { target_phase: number; attestations: string[]; unmet: string[] };
 type Phases = { phase: number; moves: PhaseMove[] };
-type Listing = { nodes: Node[]; pool: Pool; nodeList: NodeList; phases: Phases | null; bindings: { id: string; agent_name: string }[]; observed_at: string };
-type Preview = { kind: "node" | "pool" | "phase"; token: string; digest: string; expires: string; view: Json;
-  nodeId?: string; baseVersion: number; action?: NodeAction; targetPhase?: number };
-type UnknownWrite = { kind: "registration" | "node" | "pool" | "phase" | "preview"; nodeId?: string; baseVersion?: number; action?: NodeAction };
+type Listing = { nodes: Node[]; pool: Pool; nodeList: NodeList; phases: Phases | null; bindings: { id: string; agent_name: string }[]; observed_at: string; reminders: Json[] };
+type Preview = { kind: "node" | "pool" | "phase" | "rebind"; token: string; digest: string; expires: string; view: Json;
+  nodeId?: string; baseVersion: number; action?: NodeAction; targetPhase?: number; newBindingId?: string; bindingGeneration?: number };
+type UnknownWrite = { kind: "registration" | "node" | "pool" | "phase" | "preview" | "rebind"; nodeId?: string; baseVersion?: number; action?: NodeAction; newBindingId?: string; bindingGeneration?: number };
 type RpcName = "clued_ci_nodes_v1" | "clued_ci_node_registration_v1" | "clued_ci_node_confirmation_issue_v1"
   | "clued_ci_node_apply_v1" | "clued_ci_pool_confirmation_issue_v1" | "clued_ci_pool_apply_v1"
-  | "clued_ci_phase_confirmation_issue_v1" | "clued_ci_phase_apply_v1";
+  | "clued_ci_phase_confirmation_issue_v1" | "clued_ci_phase_apply_v1"
+  | "clued_ci_node_binding_rebind_confirmation_issue_v1" | "clued_ci_node_binding_rebind_apply_v1";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHA = /^[0-9a-f]{64}$/i;
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -39,6 +40,8 @@ const METRICS = [
 const MESSAGES: Record<string, string> = {
   direct_human_session_required: "请用你本人的网页登录会话操作。应用连接不能批准节点或修改额度。",
   native_session_required: "请用你本人的网页登录会话操作。",
+  storage_native_session_required: "请用你本人当前有效的网页登录会话操作。",
+  reauthentication_required: "本次操作需要新鲜登录，请重新验证身份后再预览。",
   confirmation_token_session_id_required: "登录会话信息不完整，请重新登录。",
   confirmation_token_expired: "确认已过期，请重新读取状态并生成预览。",
   confirmation_token_reused: "确认已经使用过，请重新读取状态。",
@@ -54,6 +57,13 @@ const MESSAGES: Record<string, string> = {
   CI_NODE_NOT_FOUND: "找不到此节点，请刷新状态。",
   CI_NODE_TRANSITION_INVALID: "节点状态已改变，不能执行这项修改，请刷新状态。",
   CI_NODE_NOT_DRAINED: "节点仍有未结束作业，请完成排空后再退出。",
+  CI_REBIND_OLD_REVOCATION_UNSAFE: "旧连接的撤销原因不允许换绑。主动吊销或原因不明的连接需要另行处理。",
+  CI_REBIND_TARGET_IN_USE: "新连接已用于节点、心跳或专用角色，请选择独立签发的连接。",
+  CI_REBIND_OLD_CONNECTION_SHARED: "旧连接还被其他节点或心跳挂靠使用，请先拆分为各节点独立的连接。",
+  CI_REBIND_DUTY_HANDOVER_REQUIRED: "节点当前持有当班关系，请先在专用连接页面完成移交，再更换连接。",
+  CI_REBIND_BUSY: "连接正在处理其他操作，请稍后重新预览换绑。",
+  CI_REBIND_NOT_DRAINED: "节点仍有租约、发布或待清扫的工作，请先完成排空。",
+  CI_REBIND_ROLE_UNSAFE: "旧连接包含不能随节点迁移的专用角色，请先核对专用连接用途。",
   CI_REGISTRATION_INVALID: "公开登记资料不符合要求，请核对资料后重新提交。",
   CI_PROFILE_INVALID: "节点公开资料不符合当前格式，请使用节点导出的公开资料。",
   CI_PUBLIC_KEY_INVALID: "公开密钥资料不符合要求，请使用节点导出的公开密钥。",
@@ -225,7 +235,8 @@ function parseListing(value: Json): Listing {
   if (!object(list) || !integer(list.version) || !(list.sha256 === null || typeof list.sha256 === "string" && SHA.test(list.sha256))
     || (list.version === 0) !== (list.sha256 === null)) throw new RequestFailure("当前状态尚未完整读取，不能修改。", true);
   return { nodes: nodes as Node[], pool: value.pool as Listing["pool"], nodeList: { version: list.version, sha256: list.sha256 },
-    phases: parsePhases(value.phase_moves), bindings: value.bindings as Listing["bindings"], observed_at: str(value.observed_at) };
+    phases: parsePhases(value.phase_moves), bindings: value.bindings as Listing["bindings"], observed_at: str(value.observed_at),
+    reminders: Array.isArray(value.connection_reminders) ? value.connection_reminders.filter(object) : [] };
 }
 
 function parsePreview(value: Json, target: Omit<Preview, "token" | "digest" | "expires" | "view">): Preview {
@@ -264,6 +275,8 @@ function recovered(write: UnknownWrite, listing: Listing): boolean {
   if (write.kind === "pool" || write.kind === "phase") return listing.pool.version > Number(write.baseVersion);
   const node = listing.nodes.find(item => item.node_id === write.nodeId);
   if (write.kind === "registration") return Boolean(node);
+  if (write.kind === "rebind") return Boolean(node && node.version > Number(write.baseVersion)
+    && node.binding_id === write.newBindingId && node.binding_generation === Number(write.bindingGeneration) + 1);
   const expected: Record<NodeAction, string> = { approve: "active", drain: "draining", retire: "retired", revoke: "revoked" };
   return Boolean(node && node.version > Number(write.baseVersion) && node.state === expected[write.action!]);
 }
@@ -281,6 +294,7 @@ export default function CiNodesPage() {
   const [listing, setListing] = useState<Listing | null>(null);
   const [draft, setDraft] = useState("");
   const [acceptedRef, setAcceptedRef] = useState("");
+  const [rebindTargets, setRebindTargets] = useState<Record<string, string>>({});
   const [limits, setLimits] = useState<Record<string, string>>({});
   const [repositoryId, setRepositoryId] = useState("");
   const [repositoryName, setRepositoryName] = useState("");
@@ -312,7 +326,7 @@ export default function CiNodesPage() {
       current.current = next; setSession(next); setReady(true);
       if (!changed) return;
       ++epoch.current; ++serial.current; busy.current = false;
-      setListing(null); setPreview(null); setUnknown(null); setDraft(""); setAcceptedRef(""); setLimits({});
+      setListing(null); setPreview(null); setUnknown(null); setDraft(""); setAcceptedRef(""); setLimits({}); setRebindTargets({});
       setRepositoryId(""); setRepositoryName(""); setWorking(false); setError(""); setNotice("");
     });
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -414,6 +428,27 @@ export default function CiNodesPage() {
     }), { kind: "pool", baseVersion: listing.pool.version }), { kind: "preview" }, setPreview);
   }
 
+  async function prepareRebind(node: Node) {
+    const newBindingId = rebindTargets[node.node_id] ?? "";
+    if (!UUID.test(newBindingId) || newBindingId === node.binding_id || !integer(node.binding_generation)) {
+      setError("请选择新的独立连接；节点代次缺失时请刷新状态。"); return;
+    }
+    if (!acceptedRef.trim() || sensitiveText(acceptedRef)) { setError("请填写不含密码、令牌或私钥的本次接受记录。"); return; }
+    await mutate(async () => {
+      const choices = {
+        project_id: project, node_id: node.node_id, old_binding_id: node.binding_id, new_binding_id: newBindingId,
+        base_version: node.version, binding_generation: node.binding_generation,
+        accepted_ref: acceptedRef.trim(), idempotency_key: crypto.randomUUID(),
+      };
+      const value = await rpc("clued_ci_node_binding_rebind_confirmation_issue_v1", choices);
+      const confirmed = object(value.confirmation_view) ? value.confirmation_view.choices : undefined;
+      if (!object(confirmed) || !Object.entries(choices).every(([key, expected]) => confirmed[key] === expected))
+        throw new RequestFailure("换绑预览与所选节点不一致，请重新读取状态。", true);
+      return parsePreview(value, { kind: "rebind", nodeId: node.node_id, baseVersion: node.version,
+        newBindingId, bindingGeneration: node.binding_generation });
+    }, { kind: "preview" }, setPreview);
+  }
+
   // Q-B2: the node signature gateway is closed until the Owner opens it for this
   // project; the same two-step pool confirmation closes it again.
   async function prepareGateway(open: boolean) {
@@ -447,18 +482,23 @@ export default function CiNodesPage() {
     await mutate(async () => {
       const result = exact.kind === "node"
         ? await rpc("clued_ci_node_apply_v1", { confirmation_token: exact.token, view_digest: exact.digest })
+        : exact.kind === "rebind" ? await rpc("clued_ci_node_binding_rebind_apply_v1", { confirmation_token: exact.token, view_digest: exact.digest })
         : exact.kind === "phase" ? await rpc("clued_ci_phase_apply_v1", { confirmation_token: exact.token, view_digest: exact.digest })
         : await rpc("clued_ci_pool_apply_v1", { confirmation_token: exact.token, view_digest: exact.digest });
-      const version = exact.kind === "node" ? result.version : validPool(result.pool) ? result.pool.version : undefined;
+      const nodeChange = exact.kind === "node" || exact.kind === "rebind";
+      const version = nodeChange ? result.version : validPool(result.pool) ? result.pool.version : undefined;
       if (result.status !== "committed" || !integer(version) || version <= exact.baseVersion
-        || (exact.kind === "node" ? result.node_id !== exact.nodeId : result.project_id !== project)
+        || (nodeChange ? result.node_id !== exact.nodeId : result.project_id !== project)
+        || (exact.kind === "rebind" && (result.binding_id !== exact.newBindingId || result.binding_generation !== Number(exact.bindingGeneration) + 1))
         || (exact.kind === "phase" && result.to_phase !== exact.targetPhase)) {
         throw new RequestFailure("修改结果尚未确认，请只读核对状态。", true);
       }
       return result;
-    }, { kind: exact.kind, nodeId: exact.nodeId, baseVersion: exact.baseVersion, action: exact.action }, () => {
+    }, { kind: exact.kind, nodeId: exact.nodeId, baseVersion: exact.baseVersion, action: exact.action,
+      newBindingId: exact.newBindingId, bindingGeneration: exact.bindingGeneration }, () => {
       const gateway = object(exact.view.choices) && typeof exact.view.choices.signature_gateway_active === "boolean";
-      setListing(null); setTicks({}); setNotice(exact.kind === "node" ? "修改已保存。登记批准不代表已取得运行资格，请刷新查看最新记录。"
+      setListing(null); setTicks({}); setNotice(exact.kind === "rebind" ? "节点连接已更换。请使用配套本机工具完成同一代次的凭据切换，再重新建立心跳并提交运行资格。服务器确认不代表本机切换完成。"
+        : exact.kind === "node" ? "修改已保存。登记批准不代表已取得运行资格，请刷新查看最新记录。"
         : exact.kind === "phase" ? "调度阶段已变更为 " + exact.targetPhase + "，请刷新查看最新记录。"
         : gateway ? "签名网关设置已保存，请刷新查看最新记录。" : "准备阶段的额度设置已保存，请刷新查看最新记录。");
     });
@@ -468,7 +508,7 @@ export default function CiNodesPage() {
     if (busy.current) return;
     if (!UUID.test(projectInput.trim())) { setError("请填写有效的项目编号。"); return; }
     ++epoch.current; ++serial.current;
-    setListing(null); setPreview(null); setUnknown(null); setDraft(""); setAcceptedRef(""); setLimits({}); setTicks({});
+    setListing(null); setPreview(null); setUnknown(null); setDraft(""); setAcceptedRef(""); setLimits({}); setTicks({}); setRebindTargets({});
     setRepositoryId(""); setRepositoryName(""); setError(""); setNotice("");
     const next = projectInput.trim().toLowerCase();
     activeProject.current = next;
@@ -489,6 +529,9 @@ export default function CiNodesPage() {
       {project && <><button type="button" disabled={working} onClick={() => void load()}>{unknown ? "只读核对状态" : "刷新状态"}</button>
         {unknown && <p role="status">上次请求结果未知。当前只核对记录，不会自动重试修改。</p>}
         {listing && <>
+          {listing.reminders.length > 0 && <section aria-label="连接到期提醒"><h2>连接到期提醒</h2><ul>{listing.reminders.map(item =>
+            <li key={str(item.receipt_id)}>{({ ci: "节点 CI", heartbeat: "心跳", upgrade: "升级" } as Record<string, string>)[str(item.connection_kind)] ?? "连接"}
+              ：{str(item.binding_id)}，有效期至 {localTime(str(item.expires_at))}。请核对当前连接后更换。<Link href="/oauth/connections">查看连接</Link></li>)}</ul></section>}
           <section aria-label="已登记节点"><h2>节点</h2>
             {listing.nodes.length === 0 ? <p>尚未登记节点。</p> : listing.nodes.map(node => <article className="ci-node" key={node.node_id}>
               <h3>{node.name}</h3><p>{STATES[node.state]} · 版本 {node.version}</p>
@@ -508,6 +551,15 @@ export default function CiNodesPage() {
                 {node.state === "draining" && <button type="button" disabled={blocked} onClick={() => void prepareNode(node, "retire")}>退出节点</button>}
                 {node.state !== "revoked" && <button type="button" disabled={blocked} onClick={() => void prepareNode(node, "revoke")}>吊销节点</button>}
               </div>
+              {node.state !== "revoked" && node.state !== "retired" && <details><summary>更换节点连接</summary>
+                <p>请先完成当班移交和排空。保留节点身份与公钥，迁移心跳挂靠及已明确的节点角色；换绑后须完成本机凭据切换、重新心跳和运行资格核验。</p>
+                <label htmlFor={"ci-rebind-" + node.node_id}>新连接</label><select id={"ci-rebind-" + node.node_id} disabled={blocked}
+                  value={rebindTargets[node.node_id] ?? ""} onChange={event => setRebindTargets(previous => ({ ...previous, [node.node_id]: event.target.value }))}>
+                  <option value="">请选择独立签发的新连接</option>{listing.bindings.filter(b => b.id !== node.binding_id).map(b =>
+                    <option key={b.id} value={b.id}>{b.agent_name} · {b.id}</option>)}</select>
+                <button type="button" disabled={blocked || !rebindTargets[node.node_id]} onClick={() => void prepareRebind(node)}>预览更换节点连接</button>
+                <Link href="/bindings">核对专用角色及当班移交</Link>
+              </details>}
             </article>)}
           </section>
           <section aria-label="登记公开资料"><h2>登记新节点</h2><p>粘贴节点导出的公开登记资料。只接受公开密钥，不要填写密码或私钥。</p>
@@ -551,7 +603,7 @@ export default function CiNodesPage() {
         </>}
       </>}
       {preview && <section className="ci-preview" aria-label="确认修改"><h2>确认{preview.kind === "node" ? ACTIONS[preview.action!]
-        : preview.kind === "phase" ? "调度阶段变更为 " + preview.targetPhase : "项目设置修改"}</h2>
+        : preview.kind === "rebind" ? "更换节点连接" : preview.kind === "phase" ? "调度阶段变更为 " + preview.targetPhase : "项目设置修改"}</h2>
         <p>请核对服务器给出的完整修改内容。仅本次预览有效；登记批准仍不启用运行资格。</p>
         <pre>{JSON.stringify(preview.view, null, 2)}</pre><p>有效期至 {localTime(preview.expires)}</p>
         {Date.parse(preview.expires) <= now && <p role="status">确认已过期，请取消后重新读取状态。</p>}

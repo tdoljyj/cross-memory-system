@@ -1,14 +1,13 @@
 // issuer-credentials: this historical test selects a migration chain before step 2b.
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS, startCluster } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
+import { newCluster } from './pg-cluster-fixture.mjs';
 
 // raw-binding-grants: applies only migrations before 20261009050000, where raw Bindings still pass.
 
@@ -17,14 +16,13 @@ const migration='20260908073933_clued_project_list_authorized_scope.sql';
 const key=()=>crypto.randomUUID(), hash=()=>crypto.randomBytes(32).toString('hex');
 const future=()=>new Date(Date.now()+3600000).toISOString();
 const scope=(id,actions=['read'])=>({resource_kind:'scope',resource_id:id,environment:'canonical',actions});
-async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 
 test('project list uses current explicit Canonical project consent in real PostgreSQL',{timeout:180000},async(t)=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'clued-project-list-'));
- const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:hash(),port:await port(),persistent:false,postgresFlags:['-c','io_method=sync'],onLog(){},onError(m){process.stderr.write(m+'\n');}});
+ const server=newCluster({databaseDir:dir,user:'postgres',password:hash(),persistent:false,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(m){process.stderr.write(m+'\n');}});
  const clients=[];let admin;
  try {
-  await server.initialise();await server.start();admin=server.getPgClient();clients.push(admin);await admin.connect();
+  await startCluster(server);admin=server.getPgClient();clients.push(admin);await admin.connect();
   await admin.query("create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;create schema auth;create schema extensions;create extension pgcrypto with schema extensions;create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz);create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;grant usage on schema auth,extensions to anon,authenticated,service_role;grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;");
   const names=(await fs.readdir(path.join(root,'supabase/migrations'))).filter(n=>n.endsWith('.sql')&&(n<'20260826000000'||n.startsWith('20260907123955_')||n.startsWith('20260907131834_')||n.startsWith('20260907172309_')||n.startsWith('2026090717303')||n===migration)).sort();
   assert.ok(names.includes(migration));

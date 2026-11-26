@@ -12,13 +12,6 @@ on:
       - 'apps/clued-cloud/package.json'
       - 'apps/clued-cloud/package-lock.json'
       - 'apps/clued-cloud/.npmrc'
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/clued-cloud-node22-install.yml'
-      - 'apps/clued-cloud/package.json'
-      - 'apps/clued-cloud/package-lock.json'
-      - 'apps/clued-cloud/.npmrc'
 
 permissions:
   contents: read

@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { HOST_KEEPS, VM_KEEPS, acquireNamedLock, admitRun, beginRun, dataRoot, ensureAppDependencies, missingDependencies, killCommand, leaveUmbrella, linuxScript, listRuns, pruneDependencyStores, pruneWorktrees,
   refreshUmbrella, roomForOneMore, sampleResources, sweepRunRefs, withLock, worktree, worktreeLock } from './local-verify.mjs';
+import { importSpecifiers } from '../../apps/clued-cloud/scripts/select-tests.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TOOL = path.join(ROOT, 'scripts', 'ci', 'local-verify.mjs');
@@ -73,13 +74,11 @@ test('room for one more run: the first always starts; then free memory, idle CPU
   assert.deepEqual(kinds(2, { ...plenty, freeMemGb: 27 }, { ramping: 2 }), ['memory'], '27 free, 12 of it about to go: 15 left, 16 needed');
   assert.deepEqual(kinds(2, { ...plenty, freeMemGb: 28 }, { ramping: 2 }), [], '16 left');
   assert.deepEqual(kinds(2, { ...plenty, freeMemGb: 30 }, { ramping: 0 }), []);
-  assert.deepEqual(kinds(4, plenty), ['runs'], 'at most 4 at a time');
+  assert.deepEqual(kinds(4, plenty), [], 'resource admission has no fixed maximum run count');
   // in the distribution (one VM with the CI runners') less memory stays free than on the host
   const twelve = { ...plenty, freeMemGb: 12 };
   assert.equal(roomForOneMore({ running: 1 }, twelve, { keeps: VM_KEEPS }).ok, true);
   assert.equal(roomForOneMore({ running: 1 }, twelve, { keeps: HOST_KEEPS }).ok, false);
-  const limited = roomForOneMore({ running: 2 }, plenty, { maxRuns: 2, keeps: HOST_KEEPS });
-  assert.match(limited.lacks[0].text, /2 runs are running, the limit is 2/);
 });
 
 test('the machine is looked at: idle cores from the CPU times, memory and disk as asked', () => {
@@ -249,25 +248,47 @@ test('a run has a worktree of its own, removed afterwards; a dead run\'s is prun
   assert.equal(git('worktree', 'list').split('\n').length, 2, "git's list has the repository and the shared worktree only");
 });
 
-test('embedded PostgreSQL tests choose a free port and a fresh temporary directory themselves, so runs side by side do not share them', () => {
+// A file starts embedded PostgreSQL when it imports the fixture that alone loads the package
+// (apps/clued-cloud/tests/pg-cluster-fixture.mjs, task 11092b8b), read as the application's own test selection reads
+// imports (scripts/select-tests.mjs then puts the file in the database suite). The port is the fixture's: newCluster
+// refuses one and startCluster picks it at start, so only the data directory is checked here. Naming the class in a
+// string or comment, as a checker's samples do, starts nothing (#1220: ephemeral-postgres-flags-source.test.mjs was
+// taken for a server).
+const FIXTURE = './pg-cluster-fixture.mjs';
+const startsEmbeddedPostgres = (text) => importSpecifiers(text).includes(FIXTURE);
+const sharedServerProblems = (text) => (/mkdtemp/.test(text) ? [] : ['the data directory is made with mkdtemp']);
+
+test('a file that names EmbeddedPostgres only in strings or comments starts no server; one that imports the fixture is checked', () => {
+  const samples = "const sample = `new EmbeddedPostgres({ port: 5432, databaseDir: 'pg' })`;\n// new EmbeddedPostgres({ port: 5432 })\n";
+  assert.equal(startsEmbeddedPostgres(samples), false, 'samples in a string or a comment start nothing');
+  const plain = "import { newCluster } from './pg-cluster-fixture.mjs';\nconst pg = newCluster({ databaseDir: 'pg' });\n";
+  assert.equal(startsEmbeddedPostgres(plain), true);
+  assert.deepEqual(sharedServerProblems(plain), ['the data directory is made with mkdtemp'], 'a real server keeps the directory rule');
+  const loaded = "const { newCluster: make } = await import('./pg-cluster-fixture.mjs');\nconst pg = make({ databaseDir: 'pg' });\n";
+  assert.equal(startsEmbeddedPostgres(loaded), true, 'a dynamic import under another name is a server too');
+  assert.deepEqual(sharedServerProblems(loaded), ['the data directory is made with mkdtemp']);
+  assert.deepEqual(sharedServerProblems("import { newCluster } from './pg-cluster-fixture.mjs';\nconst dir = await mkdtemp(base);\nconst server = newCluster({ databaseDir: dir });\nawait startCluster(server);\n"), []);
+});
+
+test('embedded PostgreSQL tests take their cluster from the fixture and make a fresh temporary directory themselves, so runs side by side do not share them', () => {
   const tests = path.join(ROOT, 'apps', 'clued-cloud', 'tests');
   const files = fs.readdirSync(tests).filter((name) => /\.(mjs|js)$/.test(name)).map((name) => path.join(tests, name));
   let servers = 0;
+  const problems = [];
   for (const file of files) {
     const text = fs.readFileSync(file, 'utf8');
-    if (!text.includes('new EmbeddedPostgres(')) continue;
+    if (!startsEmbeddedPostgres(text)) continue;
     servers += 1;
-    assert.doesNotMatch(text, /new EmbeddedPostgres\([^)]*port:\s*\d/, `${path.basename(file)}: a fixed port`);
-    assert.doesNotMatch(text, /\bport:\s*[1-9]\d{2,4}\b/, `${path.basename(file)}: a fixed port`);
-    assert.match(text, /mkdtemp/, `${path.basename(file)}: the data directory is made with mkdtemp`);
+    problems.push(...sharedServerProblems(text).map((problem) => `${path.basename(file)}: ${problem}`));
   }
+  assert.deepEqual(problems, []);
   assert.ok(servers > 20, `${servers} files start embedded PostgreSQL`);
 });
 
 // ---- three changes at the same time ----
 
 // A repository whose main has a stand-in selection (one suite, "probe") and three changes on top of it.
-function probeRepository(t, { seconds }) {
+function probeRepository(t, { seconds, waitMs = 45_000 }) {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lv-conc-probe-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const repo = path.join(base, 'repo');
@@ -295,7 +316,7 @@ function probeRepository(t, { seconds }) {
     "import fs from 'node:fs';",
     "import path from 'node:path';",
     `const stamps = ${JSON.stringify(stamps)};`,
-    "const verdict = fs.existsSync('fail-this-change') ? 1 : 0;",
+    "const verdict = fs.existsSync('fail-this-change') ? 75 : 0;",
     "const id = fs.existsSync('change.txt') ? fs.readFileSync('change.txt', 'utf8').trim() : 'main';",
     'const start = Date.now();',
     `await new Promise((resolve) => setTimeout(resolve, ${seconds * 1000}));`,
@@ -310,17 +331,36 @@ function probeRepository(t, { seconds }) {
     const dir = path.join(base, `change-${name}`);
     git(repo, 'worktree', 'add', '-q', '-b', `change-${name}`, dir, main);
     fs.writeFileSync(path.join(dir, 'change.txt'), `${name}\n`);
+    // main's selector imports the real one from outside its scripts/ci, which the reading of a candidate's command list
+    // (requiredCommands) cannot follow; the change's own selector lists the same commands by itself.
+    fs.writeFileSync(path.join(dir, 'scripts', 'ci', 'ci-required-selection.mjs'),
+      "export const SUITE_COMMANDS = { probe: [{ cwd: '.', argv: ['node', 'probe.mjs'] }] };\n");
     if (failing) fs.writeFileSync(path.join(dir, 'fail-this-change'), '');
     git(dir, 'add', '--all');
     git(dir, 'commit', '-q', '-m', name);
     changes.push({ name, dir });
   }
-  return { base, repo, main, changes, stamps, env: { ...env, CLUED_LOCAL_VERIFY_RESOURCES: 'off' } };
+  delete env.GITHUB_ACTIONS; // These child invocations exercise local admission.
+  const queue = path.join(base, 'queue');
+  fs.mkdirSync(queue);
+  const loader = path.join(base, 'slots.mjs');
+  const slotModule = pathToFileURL(path.join(ROOT, 'scripts/ci/local-suite-slots.mjs')).href;
+  fs.writeFileSync(loader, `import { registerHooks } from 'node:module';
+    registerHooks({ resolve(specifier, context, next) {
+      if (specifier !== './local-suite-slots.mjs') return next(specifier, context);
+      const source = 'import { withLocalSuiteSlot as acquire } from ' + JSON.stringify(${JSON.stringify(slotModule)}) + ';'
+        + 'export const withLocalSuiteSlot = (id, command) => acquire(id, command, ' + JSON.stringify({
+          directory: ${JSON.stringify(queue)}, waitMs: ${waitMs},
+        }) + ');';
+      return { url: 'data:text/javascript,' + encodeURIComponent(source), shortCircuit: true };
+    }});`);
+  return { base, repo, main, changes, stamps, env: { ...env, CLUED_LOCAL_VERIFY_RESOURCES: 'off',
+    NODE_OPTIONS: `--import=${pathToFileURL(loader).href}` } };
 }
 
-function runTool({ dir, main, env, home, extra = {} }) {
+function runTool({ dir, main, env, home }) {
   const child = spawn(process.execPath, [TOOL, '--committed', '--no-fetch', '--no-yield', '--base', main], { cwd: dir, windowsHide: true,
-    env: { ...env, CLUED_LOCAL_VERIFY_HOME: home, ...extra } });
+    env: { ...env, CLUED_LOCAL_VERIFY_HOME: home } });
   let output = '';
   child.stdout.on('data', (chunk) => { output += chunk; });
   child.stderr.on('data', (chunk) => { output += chunk; });
@@ -332,8 +372,24 @@ function runTool({ dir, main, env, home, extra = {} }) {
 
 const stampsOf = (dir) => fs.readdirSync(dir).map((name) => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')));
 
-test('three different changes verified at the same time finish side by side with the results each has alone', { timeout: 240_000 }, async (t) => {
-  const seconds = 12;
+test('local verification returns 75 when the Windows suite slot wait expires', { skip: process.platform !== 'win32' }, async (t) => {
+  const { base, main, changes, env, stamps } = probeRepository(t, { seconds: 0, waitMs: 0 });
+  const home = path.join(base, 'verify');
+  const result = await runTool({ dir: changes[0].dir, main, env, home });
+  assert.match(result.output, /LOCAL_SUITE_SLOT_TIMEOUT: probe .*suite did not start/);
+  assert.deepEqual(stampsOf(stamps), [], 'the candidate and baseline did not run');
+  assert.equal(result.code, 75, result.output);
+});
+
+test('local verification help documents distinct failure and slot timeout exit codes', () => {
+  const help = spawnSync(process.execPath, [TOOL, '--help'], { encoding: 'utf8', windowsHide: true });
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /\b1\b[^\r\n]*failure/i);
+  assert.match(help.stdout, /\b75\b[^\r\n]*slot timeout/i);
+});
+
+test('three concurrent local verifications preserve verdicts and hold at most two suite slots', { timeout: 240_000 }, async (t) => {
+  const seconds = 7;
   // alone, one after the other, each with a cache of its own
   const solo = probeRepository(t, { seconds: 0 }); // the duration does not change a verdict
   const alone = {};
@@ -350,21 +406,18 @@ test('three different changes verified at the same time finish side by side with
   // together, one cache
   const together = probeRepository(t, { seconds });
   const home = fs.realpathSync(fs.mkdtempSync(path.join(together.base, 'home-')));
-  const outcomes = await Promise.all(together.changes.map(({ dir }) => runTool({ dir, main: together.main, env: together.env, home,
-    extra: { CLUED_LOCAL_VERIFY_MAX_RUNS: '3' } })));
+  const outcomes = await Promise.all(together.changes.map(({ dir }) => runTool({ dir, main: together.main, env: together.env, home })));
   const names = together.changes.map((change) => change.name);
   names.forEach((name, index) => {
     assert.ok(outcomes[index].results, outcomes[index].output);
     assert.deepEqual(outcomes[index].results, alone[name].results, `${name}: the same result as alone`);
     assert.equal(outcomes[index].code, alone[name].code, `${name}: the same exit code as alone`);
   });
-  // the probes of the three changes ran at the same time: every one started before any one ended
-  const ran = stampsOf(together.stamps).filter((stamp) => stamp.id !== 'main');
-  assert.equal(ran.length, 3);
-  const timeline = JSON.stringify(ran.map((stamp) => [stamp.id, stamp.start - Math.min(...ran.map((x) => x.start)), stamp.end - Math.min(...ran.map((x) => x.start))]));
-  const waited = outcomes.map((outcome) => outcome.output.split('\n').filter((line) => /queued|started after|another run/.test(line)).join(' | ')).join(' // ');
-  assert.ok(Math.max(...ran.map((stamp) => stamp.start)) < Math.min(...ran.map((stamp) => stamp.end)), `the three probes overlap in time: ${timeline} ${waited}`);
-  assert.equal(new Set(ran.map((stamp) => stamp.cwd)).size, 3, 'each in a worktree of its own');
+  const ran = stampsOf(together.stamps).sort((a, b) => a.start - b.start);
+  assert.equal(ran.length, 4, 'three candidates and one shared baseline');
+  const peak = Math.max(...ran.map(({ start }) => ran.filter((stamp) => stamp.start <= start && start < stamp.end).length));
+  if (process.platform === 'win32') assert.equal(peak, 2, `at most two suites share the machine: ${JSON.stringify(ran)}`);
+  assert.equal(new Set(ran.map((stamp) => stamp.cwd)).size, 4, 'each in a worktree of its own');
   // main's baseline, which both failing changes need, was computed once, in main's shared worktree
   assert.equal(stampsOf(together.stamps).filter((stamp) => stamp.id === 'main').length, 1);
   // nothing is left: no run, no lock, no worktree of a run, no stale file
@@ -372,20 +425,6 @@ test('three different changes verified at the same time finish side by side with
   assert.deepEqual(fs.readdirSync(path.join(home, 'locks')).filter((name) => name.includes('.lock')), []);
   assert.equal(fs.existsSync(path.join(home, 'run.lock')), false);
   assert.deepEqual(fs.readdirSync(path.join(home, 'worktrees')).filter((name) => /-r\d+-[0-9a-f]{6}$/.test(name)), []);
-});
-
-test('more runs than the limit queue, say their position, and go one after the other', { timeout: 240_000 }, async (t) => {
-  const seconds = 5;
-  const repo = probeRepository(t, { seconds });
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(repo.base, 'home-')));
-  const outcomes = await Promise.all(repo.changes.map(({ dir }) => runTool({ dir, main: repo.main, env: repo.env, home,
-    extra: { CLUED_LOCAL_VERIFY_MAX_RUNS: '1' } })));
-  outcomes.forEach((outcome) => assert.ok(outcome.results, outcome.output));
-  const positions = outcomes.flatMap((outcome) => [...outcome.output.matchAll(/queued, position (\d+) \(1 running\)/g)].map((match) => Number(match[1])));
-  assert.ok(positions.includes(1) && positions.includes(2), `positions seen: ${positions.join(',')}`);
-  const ran = stampsOf(repo.stamps).filter((stamp) => stamp.id !== 'main').sort((a, b) => a.start - b.start);
-  assert.equal(ran.length, 3);
-  ran.slice(1).forEach((stamp, index) => assert.ok(stamp.start >= ran[index].end - 50, 'one at a time'));
 });
 
 // ---- what the independent review asked to be proven ----
@@ -529,8 +568,7 @@ test('the Linux script is valid bash and its lock keeps two runs apart (where fl
 test('the probes of side-by-side runs see a temporary directory of their own', { timeout: 120_000 }, async (t) => {
   const repo = probeRepository(t, { seconds: 3 });
   const home = fs.realpathSync(fs.mkdtempSync(path.join(repo.base, 'home-')));
-  const outcomes = await Promise.all(repo.changes.slice(0, 2).map(({ dir }) => runTool({ dir, main: repo.main, env: repo.env, home,
-    extra: { CLUED_LOCAL_VERIFY_MAX_RUNS: '2' } })));
+  const outcomes = await Promise.all(repo.changes.slice(0, 2).map(({ dir }) => runTool({ dir, main: repo.main, env: repo.env, home })));
   outcomes.forEach((outcome) => assert.ok(outcome.results, outcome.output));
   const temps = stampsOf(repo.stamps).filter((stamp) => stamp.id !== 'main').map((stamp) => stamp.temp);
   assert.equal(new Set(temps).size, 2);

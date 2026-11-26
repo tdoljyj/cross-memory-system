@@ -15,7 +15,8 @@ import { attempt2Decision } from '../src/attempts.mjs';
 import { mayHavePublished } from '../src/executed-heads.mjs';
 import { batchKey, headKey } from '../src/ledger.mjs';
 import { validatePolicy } from '../src/policy.mjs';
-import { BASE, CLEAN_PROOF, HEAD, SOURCE, TEST_NODE, TEST_NODE_SHA, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, rawPolicy, tempRoot, triggerBytes, withTimeout } from './helpers.mjs';
+import { BASE, CLEAN_PROOF, HEAD, SOURCE, TEST_NODE, TEST_NODE_SHA, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
+import { until } from '../../../scripts/ci/test-clock-guard.mjs';
 
 // /proc/buddyinfo fixtures of test_host_tuning.py (memguard's own): 0 blocks of order >= 7 in LOW, thousands in HIGH.
 const LOW_BUDDY = 'Node 0, zone    DMA32   5131   2227    703    424    335    263    210      0      0      0      0\n'
@@ -207,11 +208,11 @@ test('A: an Owner abort asked while the gate sleeps wakes it at once (requestSto
   // Wait for the gate to actually be asleep, not for a count of event-loop turns: before its first sleep the stage does real file I/O.
   // A stage that ends before it sleeps fails here with its own code, not after the timeout (a stage that throws before it sleeps fails here with its own error).
   const ended = running.then(result => ({ ended: result }));
-  const first = await withTimeout(Promise.race([sleeping.then(() => null), ended]), 'the gate to go to sleep');
+  const first = await until(Promise.race([sleeping.then(() => null), ended]), 'the gate to go to sleep');
   assert.equal(first, null, `the stage ended before the gate slept: ${first?.ended?.code}`);
   assert.equal(typeof f.engine.gateWake, 'function', 'the gate sleeps after its first low reading');
   await f.engine.requestStop(f.batch, 2);
-  const r = await withTimeout(running, 'the sleeping gate to wake at once (requestStop), not a poll later', 3000);
+  const r = await until(running, 'the sleeping gate to wake at once (requestStop), not a poll later');
   assert.deepEqual([r.code, slept, f.reads(), f.invoked, f.engine.gateWake], ['OWNER_ABORT_REQUESTED', 1, 1, [], null]);
   // a wake with nobody sleeping is nothing
   const g = await gateEngine(t, [LOW]);
@@ -258,7 +259,7 @@ test('A: at stages 4 and 6 the refusal runs again twice in the batch (DESIGN 54)
     assert.equal(f.engine.calls.filter(c => c[0] === 'stage' && c[1] === stage).length, 3, 'the run and two runs again');
     assert.equal(await f.ledger.halted(), null);
     const s = await f.ledger.state(KEY);
-    assert.deepEqual([s.terminal.facts.stage, s.terminal.facts.retry], [stage, 'new-commit']);
+    assert.deepEqual([s.terminal.facts.stage, s.terminal.facts.retry], [stage, 'continuation']);
     assert.equal(mayHavePublished({}, s).published, true);
     assert.equal(await f.executedHeads.published(subject()), true);
   }
@@ -276,7 +277,7 @@ test('A: the new code is resident-side only: a failure-table row per stage, neve
   const mirrored = new Set([...NOT_ADMITTED_CODES, ...TRANSIENT_CODES, ...CLEAN_FINAL_CODES, ...UNKNOWN_CODES]);
   assert.equal(mirrored.has(LINUX_MEMORY_NOT_READY), false);
   assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(s => failureRow({ code: LINUX_MEMORY_NOT_READY, stage: s }).retry),
-    ['new-commit', 'new-commit', 'attempt2', 'new-commit', 'new-commit', 'new-commit', 'new-commit', 'new-commit', 'new-commit', 'new-commit']);
+    ['same-batch', 'same-batch', 'attempt2', 'same-batch', 'same-batch', 'same-batch', 'same-batch', 'same-batch', 'same-batch', 'same-batch']);
   for (const s of [2, 4, 6]) {
     const d = decideFailure({ code: LINUX_MEMORY_NOT_READY, stage: s, proof: CLEAN_PROOF, started: true });
     assert.deepEqual([d.klass, d.row.class, d.row.disposition, d.release], ['CLEAN', 'environment', 'burn', null]);

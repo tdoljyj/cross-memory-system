@@ -67,7 +67,7 @@ test('main moved under three queued PRs on three old bases: each stops alone (RE
   const now = f.clock();
   const said = describe({ pull: { pr: 1, headSha: H(1), eligible: true }, now,
     status: { writtenAt: now, current: null, pending: [], recent: [{ pr: 1, headSha: H(1), outcome: 'NOT_EXECUTED', code: 'RESIDENT_BASE_MOVED' }] } });
-  assert.deepEqual(said, { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' });
+  assert.deepEqual(said, { state: 'pending', description: 'main 已移动：等待系统更新 PR 的基线' });
 });
 
 test('main moved under three queued PRs with the same old base: one bundle finds it, all three stop with the same code', async t => {
@@ -93,4 +93,25 @@ test('a real environment fault of the bundle still counts: three of them open th
   for (const n of [1, 2, 3]) assert.deepEqual((await f.exec.tick()).failureCode, 'BUNDLE_UNAVAILABLE', `PR ${n}`);
   assert.equal(f.queue.breaker.state, 'open');
   assert.equal((await f.exec.tick()).reason, 'BREAKER_OPEN');
+});
+
+// bc982192 (C3, plan 戊, review L1): each row carries the batch route it was born with (queue.mjs current.batchRoute). A row stamped push
+// that tests its head runs on the merge base of its head and main, which main moving never ends; every other row on the old base (no
+// stamp: main's tip is its base) stops with the subject that found main moved, as on origin/main, whatever the installed landing says.
+test('batch route (L1): a subject answered RESIDENT_BASE_MOVED stops the rows on its base without the stamp; a row stamped push keeps its place', async t => {
+  const moved = { ok: false, code: 'RESIDENT_BASE_MOVED' };
+  const f = await fixture(t, { 1: moved });
+  for (const [n, route] of [[1, null], [2, 'push'], [3, null]]) {
+    f.exec.batchRoute = () => route; // the route this executor stamps a batch born now with (unit-tested in batch-route-stamp.test.mjs)
+    await f.drop(triggerBytes({ pr: n, headSha: H(n) }));
+    await f.exec.intake();
+  }
+  delete f.exec.batchRoute;
+  assert.deepEqual([1, 2, 3].map(n => f.queue.row(n).current.batchRoute ?? null), [null, 'push', null]);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['NOT_EXECUTED', 'RESIDENT_BASE_MOVED']);
+  assert.deepEqual([f.queue.row(1).state, f.queue.row(3).state, f.queue.row(3).reason], ['STOPPED', 'STOPPED', 'RESIDENT_BASE_MOVED']);
+  assert.equal(f.queue.row(2).state, 'QUEUED');
+  assert.equal((await f.exec.tick()).state, 'COMPLETED', 'PR 2 runs next on the same base');
+  assert.deepEqual(f.bundles, [1], 'PR 2 is stamped push and tests its head: no bundle (Task f79929d9)');
 });

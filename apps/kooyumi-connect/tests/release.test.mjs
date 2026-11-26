@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildRelease, sha256 } from '../build-release.mjs';
 import { collectChecks, verifyConnectRelease, PUBLIC_ORIGIN, ORIGIN, LEGACY_ORIGIN } from '../verify-production.mjs';
 import { contractVersionOf } from '../../clued-cloud/scripts/verify-served-agent-contract.mjs';
@@ -154,6 +158,89 @@ test('production observation uses public GET checks only and refuses redirects o
   assert.ok(Object.values(unavailable).every(result => result.status === 0 && result.body === null));
 });
 
+async function runPostflight(t, { convergesAt, invalidContract = false, latencyMs = 0 }) {
+  const value = healthy();
+  const source = await readFile(new URL('../worker.mjs', import.meta.url), 'utf8');
+  const contract = (await readFile(new URL('../../../protocol/agent/agent-contract.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const version = contractVersionOf(contract);
+  value.smoke.body.revision = /\bREV='([^']+)'/.exec(source)[1];
+  value.servedContract.body = contract + serviceTail;
+  value.smoke.body.upstream.official_skill_sha256 = sha256(value.servedContract.body);
+  value.bootstrap.body.lifecycle.contract.version = version;
+  value.bootstrap.body.agent_contract = { version, sha256: sha256(contract) };
+  const responses = {
+    '/connect': value.page.body,
+    '/connect/api/smoke': value.smoke.body,
+    '/.well-known/oauth-protected-resource/mcp': value.resource.body,
+    '/.well-known/oauth-authorization-server': value.issuer.body,
+    '/clued-agent.md': value.servedContract.body,
+    '/v1/continuity/bootstrap': value.bootstrap.body,
+  };
+  // Exercise the actual CLI with deterministic time and no network access.
+  const preload = `
+    const bodies = ${JSON.stringify(responses)};
+    const attempts = [];
+    let elapsed = 0;
+    Date.now = () => ${notBefore} + elapsed;
+    Object.defineProperty(performance, 'now', { value: () => elapsed });
+    globalThis.setTimeout = (done, ms) => { elapsed += ms; queueMicrotask(done); };
+    globalThis.fetch = async (url) => {
+      const route = new URL(url).pathname;
+      const body = structuredClone(bodies[route]);
+      if (route === '/connect/api/smoke') {
+        attempts.push(elapsed);
+        if (elapsed < ${convergesAt ?? 'Infinity'}) body.source_commit = 'b'.repeat(40);
+      }
+      if (route === '/v1/continuity/bootstrap' && ${invalidContract} && elapsed >= ${convergesAt ?? 'Infinity'}) {
+        body.agent_contract.sha256 = 'b'.repeat(64);
+      }
+      if (route === '/v1/continuity/bootstrap') elapsed += ${latencyMs};
+      return typeof body === 'string' ? new Response(body) : Response.json(body);
+    };
+    process.on('exit', () => process.stderr.write(JSON.stringify(attempts) + '\\n'));
+  `;
+  const directory = await mkdtemp(join(tmpdir(), 'connect-postflight-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const evidencePath = join(directory, 'evidence.json');
+  const preloadPath = join(directory, 'fixture.mjs');
+  await writeFile(preloadPath, preload);
+  const run = spawnSync(process.execPath, [
+    '--import', pathToFileURL(preloadPath).href,
+    fileURLToPath(new URL('../verify-production.mjs', import.meta.url)), '--evidence-out', evidencePath,
+  ], { env: { ...process.env, GITHUB_SHA: commit }, encoding: 'utf8', timeout: 10_000 });
+  assert.ifError(run.error);
+  const stderr = run.stderr.trim().split(/\r?\n/);
+  return { status: run.status, attempts: JSON.parse(stderr.pop()), error: stderr.join('\n'), evidencePath };
+}
+
+const attemptsBefore = (deadline, interval = 5_000) =>
+  Array.from({ length: Math.ceil(deadline / interval) }, (_, index) => index * interval);
+
+test('Connect postflight accepts a release that starts serving the expected commit after 60 seconds', async t => {
+  const run = await runPostflight(t, { convergesAt: 60_000 });
+  assert.equal(run.status, 0, run.error);
+  assert.deepEqual(run.attempts, attemptsBefore(65_000));
+  const evidence = JSON.parse(await readFile(run.evidencePath, 'utf8'));
+  assert.equal(evidence.status, 'passed');
+  assert.equal(evidence.source_commit, commit);
+});
+
+test('Connect postflight fails with the commit mismatch when the old commit persists to the deadline', async t => {
+  const run = await runPostflight(t, { latencyMs: 1_000 });
+  assert.equal(run.status, 1);
+  assert.equal(run.error, 'connect_release_blocked:connect_source_commit_mismatch');
+  assert.deepEqual(run.attempts, attemptsBefore(120_000, 6_000));
+  await assert.rejects(readFile(run.evidencePath), { code: 'ENOENT' });
+});
+
+test('Connect postflight fails with the final contract error after the new commit starts serving', async t => {
+  const run = await runPostflight(t, { convergesAt: 60_000, invalidContract: true });
+  assert.equal(run.status, 1);
+  assert.equal(run.error, 'connect_release_blocked:connect_bootstrap_agent_contract_sha256_mismatch');
+  assert.deepEqual(run.attempts, attemptsBefore(120_000));
+  await assert.rejects(readFile(run.evidencePath), { code: 'ENOENT' });
+});
+
 test('Connect joins the existing main production release after its Grant and main/PDF verification', async () => {
   const require = createRequire(new URL('../../clued-cloud/package.json', import.meta.url));
   const { parse } = require('yaml');
@@ -165,9 +252,9 @@ test('Connect joins the existing main production release after its Grant and mai
   assert.equal(job.environment, 'clued-release');
   assert.equal(job.defaults.run['working-directory'], 'apps/clued-cloud');
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
-  const ordered = ['Verify and build Kooyumi Connect release source', 'Block release unless database and Worker heartbeat are ready',
+  const ordered = ['Verify and build Kooyumi Connect release source', 'Verify database prerequisites and record projection state',
     'Consume the Owner Grant for this commit', 'Deploy Clued PDF extractor Worker', 'Deploy Clued production Worker',
-    'Verify exact live commit and currentness transport', 'Verify production serves the repository Agent contract',
+    'Wait until production serves this commit', 'Verify production serves the repository Agent contract',
     'Verify the PDF extractor service binding', 'Deploy Kooyumi Connect Worker', 'Verify Kooyumi Connect production release',
     'Verify projection currentness after deployment'].map(index);
   assert.ok(ordered.every((position, i) => position >= 0 && (i === 0 || position > ordered[i - 1])));
@@ -176,7 +263,7 @@ test('Connect joins the existing main production release after its Grant and mai
   assert.match(build.run, /node --test tests\/oauth-origin\.test\.mjs/);
   assert.match(build.run, /--out-dir "\$RUNNER_TEMP\/kooyumi-connect-build"/);
   for (const name of ['Deploy Kooyumi Connect Worker', 'Verify Kooyumi Connect production release']) {
-    assert.equal(steps[index(name)].if, "${{ inputs.mode == 'deploy' }}");
+    assert.equal(steps[index(name)].if, "${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}");
   }
   const deploy = steps[index('Deploy Kooyumi Connect Worker')];
   assert.match(deploy.run, /wrangler deploy "\$RUNNER_TEMP\/kooyumi-connect-build\/worker\.mjs"/);

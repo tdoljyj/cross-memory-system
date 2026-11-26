@@ -17,13 +17,14 @@ import { outcomeFailureCode } from '../src/resident-v2/stage-fact.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { protectedAuthority, createRecoverableCheckPublisherV2, createPublicationRecoveryAuditWriter, transientFetchError, OBSERVE_RETRY_WAITS_MS, OBSERVE_BUDGET_MS, PUBLICATION_OBSERVE_BUDGET_MS, PUBLICATION_READBACK_RESERVE_MS } from '../runtime/one-shot-v2.mjs';
-import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fixtures.mjs';
+import { HEAD, BASE, tempDir, fixtureRecord, signResult, withFastWallClock } from './resident-v2-fixtures.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const iso = ms => new Date(ms).toISOString();
 const REFS = ['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'];
-const jobsFor = () => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1 });
-const claim = () => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000) });
+// A job and a claim stamped by `now` (the real clock unless a fixture passes its own).
+const jobsFor = (now = Date.now) => batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(now() - 60_000), attempt: 1 });
+const claim = (now = Date.now) => ({ claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(now() + 3600_000) });
 
 const timeout = () => new DOMException('The operation was aborted due to timeout', 'TimeoutError');
 // fetch's network failures as undici gives them: a TypeError whose cause carries the socket or DNS code.
@@ -314,10 +315,12 @@ test('the held record is checked again before every attempt', async () => {
 // The publisher with the real observation port: one transient verify failure costs a wait, never a head, and never a
 // second check; exhausted before the write, nothing is written and the effect key stays free.
 async function publisherWith(t, steps, { recover = false, clock = null, changeGithub = () => {}, readClaim = null, log = () => {}, serverOffset = 0 } = {}) {
-  const now = () => clock ? clock.now : Date.now();
+  // One clock for everything this fixture stamps and the publisher judges: the fake one when given, else the real one
+  // (task ce2e5c1a step 2: the signed result was stamped by the real clock and judged by the fake one, CI run 44895513321).
+  const now = clock ? () => clock.now : Date.now;
   const { signer, docs } = fixtureRecord();
-  const record = validateRecordV2(docs, { now: Date.now() });
-  const job = jobsFor().trivy, c = claim();
+  const record = validateRecordV2(docs, { now: now() });
+  const job = jobsFor(now).trivy, c = claim(now);
   if (serverOffset) c.expiresAt = iso(now() + serverOffset + 60_000);
   const fixtureRoot = await tempDir(t), auditRoot = path.join(fixtureRoot, 'audit');
   await fs.mkdir(auditRoot);
@@ -330,7 +333,7 @@ async function publisherWith(t, steps, { recover = false, clock = null, changeGi
     async readChecks(head) { return { complete: true, checks: checks.filter(x => x.head_sha === head).map(x => structuredClone(x)) }; },
     async createCheck(body) { const x = { id: next++, app: { id: 5368905 }, ...structuredClone(body) }; checks.push(x); return structuredClone(x); },
     async revokeCheck(id, body) { const x = checks.find(y => y.id === id); Object.assign(x, structuredClone(body)); return structuredClone(x); } };
-  const observed = { claimId: c.claimId, fence: c.fence, epoch: c.epoch, expiresAt: c.expiresAt }, slotUntil = iso(Date.now() + 3600_000);
+  const observed = { claimId: c.claimId, fence: c.fence, epoch: c.epoch, expiresAt: c.expiresAt }, slotUntil = iso(now() + 3600_000);
   const nativeAdmission = { fixture: true, async evaluatePr(j, packet, options) {
     const facts = { contract: 'clued.independent-ci.full-admission/2', status: 'ADMITTED', admitted: true, completeAdmission: true, evaluator: 'scripts/ci/clued-work-admission.mjs#evaluate',
       domain: 'fixture', repository: REPO, scope: 'project:x', prRef: `${REPO}#${j.pr}`, headSha: j.headSha, baseSha: j.baseSha, jobId: j.id, role: j.role, attempt: j.attempt,
@@ -358,7 +361,7 @@ async function publisherWith(t, steps, { recover = false, clock = null, changeGi
     accepted, fetchImpl: verify.fetchImpl, nativeToken: 't', sleep: async ms => { if (clock) clock.now += ms; }, timeoutSignal: () => new AbortController().signal },
     readCurrentBatchClaim: readClaim ?? (async () => claimGeneration(c)), live() {}, log, clock: now,
     ...(clock ? { monotonic: now } : {}) }) : createStagedCheckPublisherV2(publisherOptions);
-  const envelope = signResult(job, signer, { finishedAt: Date.now() - 1000, startedAt: Date.now() - 5000, domain: 'fixture' });
+  const envelope = signResult(job, signer, { finishedAt: now() - 1000, startedAt: now() - 5000, domain: 'fixture' });
   const result = await publisher.publish({ job, envelope });
   return { result, checks, waits, calls: verify.calls, journal, key: scanEffectKeyV2(job, record.config.checks.trivy) };
 }
@@ -489,6 +492,20 @@ test('recovery: a genuine 30000ms exhaustion continues only the current publishe
   assert.equal(await r.journal.read(r.key).then(x => x.state), 'settled');
 });
 
+// CI run 44895513321 (clued-company-win-01) had the test above red (0 !== 30000) while it was green here: the fixture signed the
+// result with the real clock and the publisher judged it with the fake one, so a host whose setup took over a second refused the
+// proof before any observation (task ce2e5c1a step 2). Under a wall clock that runs 2 s per read the verdict is the same.
+test('recovery: a genuine 30000ms exhaustion settles the same when the wall clock runs fast (a slow host)', async t => {
+  await withFastWallClock(async () => {
+    const clock = { now: Date.now() }, started = clock.now;
+    const r = await publisherWith(t, (c, now) => [...firstBudgetExhaustion(), () => reply(200, verifyBody(c, now()))], { recover: true, clock });
+    assert.equal(r.result.status, 'SETTLED', JSON.stringify(r.result));
+    assert.equal(clock.now - started, 30000);
+    assert.equal(r.checks.length, 1);
+    assert.equal(r.calls.length, 5);
+  });
+});
+
 test('recovery: two genuine observation rounds remain bounded at 60000ms with no third publisher try', async t => {
   const clock = { now: Date.now() }, started = clock.now, logs = [];
   const r = await publisherWith(t, () => [...firstBudgetExhaustion(), ...firstBudgetExhaustion()],
@@ -547,6 +564,25 @@ test('recovery: refuses a new K or Check without the explicit 2000ms post-write 
   assert.deepEqual([r.result.status, r.result.reason, r.result.safeToRerun], ['BLOCKED', 'publication_window_short_before_write', true], JSON.stringify(r.result));
   assert.equal(r.checks.length, 0);
   assert.equal(await r.journal.read(r.key), null);
+});
+
+// CI run 44925431128 (clued-company-win-01) had the test above red (prReads 0 !== 2, 2242ms) while it was green here: same root
+// as the 30000ms case, the result signed by the real clock and judged by the fake one, so the proof was refused before the
+// boundary read (task ce2e5c1a step 2). Under a wall clock that runs 2 s per read the window verdict is the same.
+test('recovery: the 2000ms post-write reserve refusal is the same when the wall clock runs fast (a slow host)', async t => {
+  await withFastWallClock(async () => {
+    const clock = { now: Date.now() }, started = clock.now;
+    let prReads = 0;
+    const r = await publisherWith(t, (c, now) => [...firstBudgetExhaustion(), () => reply(200, verifyBody(c, now()))],
+      { recover: true, clock, changeGithub: gh => {
+        const read = gh.readPullRequest;
+        gh.readPullRequest = async n => { prReads++; clock.now = started + 60000 - PUBLICATION_READBACK_RESERVE_MS + 1; return read(n); };
+      } });
+    assert.equal(prReads, 2, JSON.stringify(r.result));
+    assert.deepEqual([r.result.status, r.result.reason, r.result.safeToRerun], ['BLOCKED', 'publication_window_short_before_write', true], JSON.stringify(r.result));
+    assert.equal(r.checks.length, 0);
+    assert.equal(await r.journal.read(r.key), null);
+  });
 });
 
 test('recovery: normal protected observations retain their original single 30000ms budget', () => {

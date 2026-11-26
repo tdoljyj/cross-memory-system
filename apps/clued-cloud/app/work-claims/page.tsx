@@ -321,6 +321,10 @@ export default function WorkClaimsPage() {
 // scope), since when and until when, how far, and what it may change. Every
 // field the Agent reported about itself is marked as self-reported.
 function claimRow(claim: Json, now: number, onHandover: (() => void) | null, working: boolean) {
+  const releaseSources: Record<string, string> = {
+    holder: "持有者手动释放", pr_end: "PR 终结自动释放", expiry: "租期到期",
+    hard_deadline: "到达硬期限", takeover: "到期后被接管", copy_adoption: "其他副本已被采用",
+  };
   const pull = pullUrl(claim.bound_pr);
   const link = sessionUrl(claim.holder_session_url);
   const ref = text(claim.holder_session_ref);
@@ -342,6 +346,11 @@ function claimRow(claim: Json, now: number, onHandover: (() => void) | null, wor
       <dt>认领</dt><dd><code>{text(claim.claim_id)}</code> · fence {String(claim.fence)}{claim.lease_key_required === true && " · 已交接过，续租必须带钥匙"}</dd>
       <dt>状态</dt><dd>{claim.execution_handover_pending === true ? "交接处理中" : STATES[state] ?? state}{state === "RELEASED" && text(claim.released_outcome) && "（" + (OUTCOMES[text(claim.released_outcome)] ?? text(claim.released_outcome)) + "）"}
         {!live && text(claim.ended_at) && " · 结束于 " + beijing(claim.ended_at)}</dd>
+      {!live && <>
+        <dt>释放来源</dt><dd>{releaseSources[text(claim.released_by)] ?? (text(claim.released_by) || "未记录（历史认领）")}</dd>
+        <dt>释放证据</dt><dd>{text(claim.released_evidence_ref) ? <code>{text(claim.released_evidence_ref)}</code> : "未记录"}</dd>
+        <dt>释放时间</dt><dd>{text(claim.released_at) ? beijing(claim.released_at) : "未记录"}</dd>
+      </>}
       <dt>领取</dt><dd>{beijing(claim.issued_at)}</dd>
       <dt>到期</dt><dd>{beijing(claim.expires_at)}{live && " · " + remaining(claim.expires_at, now)}</dd>
       <dt>最晚到期</dt><dd>{beijing(claim.hard_deadline_at)}</dd>

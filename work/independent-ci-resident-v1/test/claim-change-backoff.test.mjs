@@ -12,7 +12,9 @@ import { TRIGGER_CONTRACT_V2 } from '../src/trigger.mjs';
 import { REQUEST_CONTRACT, RESPONSE_CONTRACT, validateResponse } from '../src/mailbox.mjs';
 import { parsePull, readPullArgv } from '../src/companion.mjs';
 import { mailboxCompanion } from '../src/service-ports.mjs';
-import { events } from '../src/pr-status.mjs';
+import { describe as prPage, events } from '../src/pr-status.mjs';
+import { StatusBoard, parseStatus } from '../src/status.mjs';
+import { RunQueue } from '../src/queue.mjs';
 import { BASE, SAFE_REFUSAL, SOURCE, CI_SOURCE, rawPolicy, executorFixture, fakeCompanion, fakeEngine, notAdmitted } from './helpers.mjs';
 import { trainFacts } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
 
@@ -28,7 +30,7 @@ const trigger = updatedAt => Buffer.from(JSON.stringify({ contract: TRIGGER_CONT
 const receiptTypes = async f => (await fs.readdir(path.join(f.root, 'state', 'receipts'))).map(n => n.replace(/^\d+-|\.json$/g, ''));
 
 // Stage 1 refuses the claim until the PR names `good`; the claim the PR body names is `body.claim` (read live by the fake companion).
-async function field(t, { good, refusal = CLAIM_REFUSAL, limits = {} }) {
+async function field(t, { good, refusal = CLAIM_REFUSAL, refusalCode = 'CLAIM_NOT_CURRENT', limits = {}, status = undefined }) {
   const body = { claim: OLD_CLAIM, status: 'bound', authorization: null, epoch: 1 };
   const engine = fakeEngine();
   const run = engine.runStage;
@@ -36,7 +38,7 @@ async function field(t, { good, refusal = CLAIM_REFUSAL, limits = {} }) {
   engine.runStage = async (batch, stage, o) => {
     if (stage.number === 1) {
       stage1.push(body.claim);
-      if (body.claim !== good || body.status !== 'bound') { engine.calls.push(['stage', 1]); return notAdmitted('CLAIM_NOT_CURRENT', refusal); }
+      if (body.claim !== good || body.status !== 'bound') { engine.calls.push(['stage', 1]); return notAdmitted(refusalCode, refusal); }
     }
     return run(batch, stage, o);
   };
@@ -44,7 +46,7 @@ async function field(t, { good, refusal = CLAIM_REFUSAL, limits = {} }) {
   const companion = fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: HEAD, claims: [body.claim] }) }, () => clock());
   const policy = rawPolicy(); policy.train.maintenanceEveryMs = MIN;
   Object.assign(policy.limits, limits);
-  const f = await executorFixture(t, { engine, companion, policy, now: Date.parse('2026-11-08T03:05:00Z') });
+  const f = await executorFixture(t, { engine, companion, policy, now: Date.parse('2026-11-08T03:05:00Z'), status });
   clock = f.clock;
   engine.runTrainStage = async mode => {
     engine.calls.push(['stage', 10, mode]);
@@ -292,4 +294,211 @@ test('G4: a protected claim change wakes immediately even when the waiting budge
   assert.equal(r.state, 'COMPLETED');
   assert.deepEqual(stage1, [OLD_CLAIM, NEW_CLAIM]);
   assert.equal(f.queue.row(PR).current.headSha, HEAD);
+});
+
+// Task 0ca0479d (FABLE-authorize-target-branch §2.2, §3 T3): PR #1200 waited two hours on "CLAIM_NOT_CURRENT" while Native had said
+// exactly why (pr_task_binding_head_not_authorized: the head's authorization named the PR's own branch, not main). The code stays one
+// code for scheduling; the stage fact's reasonCodes ride the real chain (executor -> queue row -> status board -> status.json -> the PR
+// page and the notifications) and the page says which one it is and what to do. Without a known reason the text is what it was.
+const NOT_AUTHORIZED_TEXT = '当前提交未授权：认领持有人对这个提交做 authorize_head 后自动继续';
+// The text without a known reason. Task 30643342 (§2 step 4): a claim wait says what wakes it early (an authorization, never an edit;
+// queue.mjs#earlyWakeOf), the whole text still pinned.
+const OLD_WAIT_TEXT = /^等待中（CLAIM_NOT_CURRENT）：约 \d\d:\d\dZ 自动重试；认领持有人授权此提交后，约 10 分钟内自动重试（编辑 PR 不会提前）$/;
+const refusalWith = (reasonCodes, extra = {}) => ({ ...SAFE_REFUSAL, diagnostic: { ...SAFE_REFUSAL.diagnostic, reasonCodes, ...extra } });
+
+test('stage 1 shows the Native refusal and fix before closing the batch and throughout backoff', async t => {
+  let now = () => 0;
+  const board = new StatusBoard({ clock: () => now() });
+  const { f, stage1 } = await field(t, { good: NEW_CLAIM, refusalCode: 'NATIVE_NOT_ADMITTED',
+    refusal: refusalWith(['workflow_missing_admission_gate']), status: board });
+  now = f.clock;
+  const page = () => prPage({ pull: { pr: PR, headSha: HEAD, eligible: true },
+    status: parseStatus(Buffer.from(JSON.stringify(board.snapshot()))), now: now() });
+  const close = f.exec.closeOrThrow.bind(f.exec);
+  let beforeClose;
+  f.exec.closeOrThrow = (...args) => {
+    beforeClose = page();
+    return close(...args);
+  };
+
+  await f.drop(trigger(now() - MIN));
+  const result = await f.exec.tick();
+  assert.deepEqual([result.state, result.failureCode], ['NOT_ADMITTED', 'NATIVE_NOT_ADMITTED']);
+  assert.equal(f.queue.row(PR).state, 'BACKOFF');
+  const refusalText = '未准入（workflow_missing_admission_gate）：补齐工作流准入门后推送修正';
+  assert.deepEqual(beforeClose, { state: 'pending', description: refusalText });
+  const backoff = page();
+  assert.deepEqual(backoff, { state: 'pending', description: `${refusalText}；约 03:15Z 自动重试` });
+  board.update({ recent: [] }); // The bounded recent outcomes may be evicted during backoff.
+  f.advance(MIN);
+  await f.exec.tick();
+  assert.deepEqual(page(), backoff);
+  assert.deepEqual(stage1, [OLD_CLAIM]);
+});
+
+test('stage 1 shows a deterministic Native refusal before archiving the failed batch', async t => {
+  let now = () => 0;
+  const board = new StatusBoard({ clock: () => now() });
+  const { f } = await field(t, { good: NEW_CLAIM, refusalCode: 'NATIVE_NOT_ADMITTED',
+    refusal: { ...refusalWith(['policy_file_invalid']), safeToRerun: false }, status: board });
+  now = f.clock;
+  const page = () => prPage({ pull: { pr: PR, headSha: HEAD, eligible: true },
+    status: parseStatus(Buffer.from(JSON.stringify(board.snapshot()))), now: now() });
+  const burn = f.ledger.burnHead.bind(f.ledger);
+  let beforeBurn;
+  f.ledger.burnHead = (...args) => {
+    beforeBurn = page();
+    return burn(...args);
+  };
+
+  await f.drop(trigger(now() - MIN));
+  const result = await f.exec.tick();
+  assert.deepEqual([result.state, result.failureCode], ['FAILED_CLEAN', 'NATIVE_NOT_ADMITTED']);
+  assert.deepEqual(beforeBurn, { state: 'failure', description: '未准入（policy_file_invalid）：修正准入策略文件后推送修正' });
+  assert.deepEqual(page(), beforeBurn);
+});
+
+test('a same-attempt retry parked at A shows that it is waiting for hosted signals', () => {
+  const now = Date.parse('2026-11-25T03:00:00Z');
+  const board = new StatusBoard({ clock: () => now });
+  const batch = { key: 'a'.repeat(64), pr: PR, headSha: HEAD, baseSha: BASE, attempt: 1 };
+  const page = () => prPage({ pull: { pr: PR, headSha: HEAD, eligible: true },
+    status: parseStatus(Buffer.from(JSON.stringify(board.snapshot()))), now });
+
+  board.setCurrent({ ...batch, stage: 1 });
+  board.outcome({ ...batch, outcome: 'NOT_ADMITTED', code: 'NATIVE_NOT_ADMITTED',
+    klass: 'waiting', retry: 'new-trigger', reasonCodes: ['merge_slot_required'] });
+  assert.deepEqual(page(), { state: 'pending', description: '未准入（merge_slot_required）：等本 PR 排到合并队首后自动重试' });
+
+  board.setCurrent({ ...batch, stage: 0 });
+  board.setPending([{ pr: PR, headSha: HEAD, state: 'RUNNING', reason: 'PARKED_A' }]);
+  board.setCurrent({ ...batch, key: 'b'.repeat(64), pr: PR + 1, headSha: 'b'.repeat(40), stage: 3 });
+  assert.deepEqual(page(), { state: 'pending', description: '运行中：等待托管信号' });
+});
+
+async function boardField(t, refusal) {
+  let now = () => 0;
+  const board = new StatusBoard({ clock: () => now() });
+  const out = await field(t, { good: NEW_CLAIM, refusal, status: board });
+  now = out.f.clock;
+  const read = () => parseStatus(Buffer.from(JSON.stringify(board.snapshot())));
+  const page = (status = read()) => prPage({ pull: { pr: PR, headSha: HEAD, eligible: true }, status, now: out.f.clock() });
+  await out.f.drop(trigger(out.f.clock() - MIN));
+  const r = await out.f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['NOT_ADMITTED', 'CLAIM_NOT_CURRENT']);
+  assert.equal(out.f.queue.row(PR).state, 'WAITING');
+  return { ...out, board, read, page };
+}
+
+test('PR #1200: a head_not_authorized claim refusal says on the PR page and in the notifications that the head is not authorized', async t => {
+  const { f, read, page } = await boardField(t, refusalWith(['pr_task_binding_head_not_authorized'], { nativeReasonCodes: ['head_authorization_required'] }));
+  // Waiting: the PR page.
+  const waiting = page();
+  assert.equal(waiting.state, 'pending');
+  assert.match(waiting.description, /CLAIM_NOT_CURRENT/, 'the code stays');
+  assert.ok(waiting.description.includes(NOT_AUTHORIZED_TEXT), waiting.description);
+  // Waiting longer than an hour: the Owner's notification says it too.
+  const late = events({ status: read(), now: f.clock() + 61 * MIN }).find(e => e.key.startsWith(`wait:${PR}:`));
+  assert.ok(late?.body.includes(NOT_AUTHORIZED_TEXT), late?.body);
+  // Stopped after 24 hours of waiting for the claim: the page and the "stopped" notification name it.
+  f.advance(24 * 60 * MIN);
+  f.queue.row(PR).nextAt = f.clock();
+  await f.exec.tick();
+  assert.deepEqual([f.queue.row(PR).state, f.queue.row(PR).stopKind], ['STOPPED', 'release-cap']);
+  const stopped = page();
+  assert.equal(stopped.state, 'failure');
+  assert.ok(stopped.description.includes(NOT_AUTHORIZED_TEXT), stopped.description);
+  const note = events({ status: read(), now: f.clock() }).find(e => e.key.startsWith(`notice:stopped:${PR}:`));
+  assert.ok(note?.body.includes(NOT_AUTHORIZED_TEXT), note?.body);
+});
+
+for (const [name, reasonCodes, text] of [
+  ['unbound', ['pr_task_binding_unbound'], 'PR 没有绑定到任何任务认领：对这个提交带 pr_ref 授权'],
+  ['no live claim', ['pr_task_binding_no_live_claim'], '认领已过期或被取代：重新认领并授权'],
+  ['claim not current', ['claim_not_current', 'fence_superseded'], '认领已过期或被取代：重新认领并授权'],
+  ['fence superseded', ['fence_superseded'], '认领已过期或被取代：重新认领并授权'],
+  ['handover pending', ['pr_task_binding_handover_pending'], '认领交接中：交接完成后自动继续'],
+  ['bound to another PR', ['claim_bound_to_other_pr'], '认领绑在另一个 PR 上'],
+  ['the first reason of the table wins', ['pr_task_binding_unbound', 'pr_task_binding_head_not_authorized'], NOT_AUTHORIZED_TEXT],
+]) test(`claim refusal (${name}): the PR page names the reason after CLAIM_NOT_CURRENT`, async t => {
+  const { page } = await boardField(t, refusalWith(reasonCodes));
+  const d = page().description;
+  assert.match(d, /CLAIM_NOT_CURRENT/);
+  assert.ok(d.includes(text), d);
+});
+
+test('claim refusal: a back-off and a stopped row name the reason too; the texts stay within the status length', async t => {
+  const { read, page } = await boardField(t, refusalWith(['pr_task_binding_head_not_authorized']));
+  const status = read();
+  assert.ok(page(status).description.length <= 140);
+  const backoff = { ...status, pending: status.pending.map(r => ({ ...r, state: 'BACKOFF' })) };
+  assert.ok(page(backoff).description.includes(NOT_AUTHORIZED_TEXT), page(backoff).description);
+  assert.match(page(backoff).description, /^未准入或未执行（CLAIM_NOT_CURRENT/);
+  const stopped = { ...status, pending: status.pending.map(r => ({ ...r, state: 'STOPPED', stopKind: 'release-cap', nextAt: null })) };
+  assert.ok(page(stopped).description.includes(NOT_AUTHORIZED_TEXT), page(stopped).description);
+  assert.ok(page(stopped).description.length <= 140);
+});
+
+test('claim refusal without a known reason, or with a malformed one, keeps the old text and never throws', async t => {
+  // A reason the table does not name, and none at all: the text is what it was.
+  for (const reasonCodes of [['claim_not_found'], []]) {
+    const { page } = await boardField(t, refusalWith(reasonCodes));
+    assert.match(page().description, OLD_WAIT_TEXT);
+  }
+  const { f, read, page } = await boardField(t, refusalWith(['claim_not_found']));
+  const status = read();
+  // Whatever a row or a notice carries, the page and the notifications fall back to the code alone.
+  for (const bad of ['pr_task_binding_head_not_authorized', 7, null, {}, [null, 3, {}], ['PR_TASK_BINDING_HEAD_NOT_AUTHORIZED'], ['x'.repeat(5000)]]) {
+    const odd = { ...status, pending: status.pending.map(r => ({ ...r, reasonCodes: bad })) };
+    assert.match(page(odd).description, OLD_WAIT_TEXT, JSON.stringify(bad));
+    const stopped = { ...odd, pending: odd.pending.map(r => ({ ...r, state: 'STOPPED', stopKind: 'release-cap', nextAt: null })),
+      notices: [{ key: `stopped:${PR}:${HEAD}:CLAIM_NOT_CURRENT`, kind: 'stopped', pr: PR, headSha: HEAD, code: 'CLAIM_NOT_CURRENT', at: f.clock() }] };
+    assert.equal(page(stopped).description, '24 小时内已多次未准入或未执行（CLAIM_NOT_CURRENT）：请修正后推新提交');
+    assert.equal(events({ status: stopped, now: f.clock() }).find(e => e.key.startsWith('notice:stopped:')).body,
+      `提交 ${HEAD.slice(0, 8)}：24 小时内多次未准入或未执行（CLAIM_NOT_CURRENT）。请修正后推新提交。`);
+  }
+});
+
+// Non-blocking review 2 of task 0ca0479d: the reason codes are a view. Whatever the stage fact carries, and whatever a stored
+// diagnostic looks like once the queue file is read back, the queue file is kept as it is (never renamed unreadable) and the page
+// falls back to the code alone; a row that has moved to a new head shows no reason of the old one.
+test('claim refusal: malformed reason codes from the stage fact and a malformed stored diagnostic never touch the queue file and fall back to the code', async t => {
+  const odd = ['pr_task_binding_unbound', 7, null, {}, 'X'.repeat(5000), 'PR_TASK_BINDING_UNBOUND', ['pr_task_binding_unbound']];
+  const { f, board, page } = await boardField(t, refusalWith(odd, { nativeReasonCodes: 'pr_task_binding_unbound' }));
+  // From the stage fact only the table's own codes are kept on the row.
+  assert.deepEqual(f.queue.row(PR).diagnostic, { headSha: HEAD, reasonCodes: ['pr_task_binding_unbound'] });
+  const dir = path.join(f.root, 'state', 'queue');
+  const status = async () => {
+    const q = await RunQueue.open(dir, f.clock);
+    assert.equal(q.rebuilt, null, 'the queue file was read as it is');
+    assert.deepEqual(await fs.readdir(dir), ['queue.json'], 'no queue.unreadable-* file');
+    board.setPending(q.view(f.clock(), { etaBatchMs: MIN }));
+    return parseStatus(Buffer.from(JSON.stringify(board.snapshot())));
+  };
+  assert.ok(page(await status()).description.includes('PR 没有绑定到任何任务认领'), 'read back through RunQueue.open, parseStatus and the page');
+  // A stored diagnostic of any shape: the file still reads, the page shows the code alone.
+  const file = path.join(dir, 'queue.json');
+  for (const bad of [undefined, null, 'x', 7, [], {}, { headSha: HEAD }, { headSha: HEAD, reasonCodes: 'pr_task_binding_unbound' }, { headSha: HEAD, reasonCodes: [7, null, {}, 'UNKNOWN', 'x'.repeat(100000)] },
+    { headSha: HEAD, reasonCodes: Array.from({ length: 100000 }, (_, i) => `c${i}`) }]) {
+    const stored = JSON.parse(await fs.readFile(file, 'utf8'));
+    if (bad === undefined) delete stored.rows[0].diagnostic; else stored.rows[0].diagnostic = bad;
+    await fs.writeFile(file, JSON.stringify(stored));
+    assert.match(page(await status()).description, OLD_WAIT_TEXT, JSON.stringify(bad)?.slice(0, 80));
+  }
+  // A valid diagnostic of another head (and a row that has moved to a new head) shows no reason of the old one.
+  const stored = JSON.parse(await fs.readFile(file, 'utf8'));
+  stored.rows[0].diagnostic = { headSha: 'f'.repeat(40), reasonCodes: ['pr_task_binding_unbound'] };
+  await fs.writeFile(file, JSON.stringify(stored));
+  assert.match(page(await status()).description, OLD_WAIT_TEXT, 'a diagnostic of another head');
+  stored.rows[0].diagnostic = { headSha: HEAD, reasonCodes: ['pr_task_binding_unbound'] };
+  await fs.writeFile(file, JSON.stringify(stored));
+  assert.ok(page(await status()).description.includes('PR 没有绑定到任何任务认领'));
+  const q = await RunQueue.open(dir, f.clock);
+  const NEW_HEAD = 'a'.repeat(40);
+  assert.equal(q.offer({ repo: 'tdoljyj/cross-memory-system', pr: PR, headSha: NEW_HEAD, baseSha: BASE, prUpdatedAt: null }, f.clock(), { depth: 100, cooldownMs: 10 * MIN }).action, 'superseded');
+  await q.save();
+  const moved = await status();
+  assert.equal(moved.pending.find(r => r.pr === PR).headSha, NEW_HEAD);
+  assert.equal(moved.pending.find(r => r.pr === PR).reasonCodes, undefined, 'no reason of the old head');
+  assert.ok(!page(moved).description.includes('PR 没有绑定'));
 });

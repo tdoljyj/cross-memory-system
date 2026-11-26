@@ -66,6 +66,23 @@ CONCURRENCY_EXEMPTIONS = {
     ),
 }
 
+# Task 2fb32dc7: a literal concurrency group (one not scoped by ${{ github.workflow }}) belongs to one workflow file. Two
+# files sharing one hold each other back: the self-hosted front merge's no-op waited 17 minutes for a Linux node holding
+# the group it shared with the hosted copy, and pushed out every hosted run waiting behind it. The only exemption is an
+# exact row here: the files using the group must equal the row's set, so adding, removing or renaming one fails until
+# the row changes in the same change, and a row cannot outlive its files.
+SHARED_CONCURRENCY_GROUPS = {
+    "clued-merge-executor": {
+        "workflows": ("clued-merge-executor.yml", "clued-merge-reconcile.yml", "clued-merge-slot-ci.yml"),
+        "note": (
+            "Merge queue mutual-exclusion lock. clued-merge-executor and clued-merge-slot-ci are disabled; to be deleted "
+            "per CI/CD framework line 93 (slot-ci) and Q2/G2 (executor), and this row with them."
+        ),
+    },
+}
+WORKFLOW_SCOPED_GROUP = re.compile(r"\$\{\{\s*github\.workflow\s*\}\}")
+WORKFLOW_FILE = re.compile(r"[A-Za-z0-9_.-]+\.ya?ml")
+
 # Owner Decision 9eb313f8: new execution uses self-hosted machines only.
 # Historical explanations above are documentation, never execution permits.
 # These exact existing hosted jobs are migration debt, not a renewable allowlist.
@@ -77,13 +94,13 @@ CONCURRENCY_EXEMPTIONS = {
 LEGACY_HOSTED_DEBT_SOURCE = "062543d943b65be1a88baed653f7999f25649668"
 LEGACY_HOSTED_DEBT = {
     "active-doc-links.yml": {
-        "control_sha256": "093a0a6f554c2d4aa18dbb97e3626fdf0551bc540972255172ad89d6ddef1317",
+        "control_sha256": "7634659bcf105f4af2477f7027cfe851c421457b5ccd425826bb75271ed554fc",
         "jobs": {
             "links-untrusted-hosted": "9243db8b4e05e66f46d25626efc278147b8fcaa78b3e268d4ea72f2f05dbd70d"
         }
     },
     "clued-capture-guard.yml": {
-        "control_sha256": "af42acacfdf4ee20d1a16fa40432278888358df8eede47755464df0fb61cd55c",
+        "control_sha256": "4e84387189a85632fb502f38eb19a881c6b293750bf32ad9e57a0dd69345fc2a",
         "jobs": {
             "untrusted-hosted": "657a38474657ab293f1eacc160473fa97351453690c422d60585fda6ce0d9ed6"
         }
@@ -101,17 +118,27 @@ LEGACY_HOSTED_DEBT = {
         }
     },
     "clued-cloud-node22-install.yml": {
-        "control_sha256": "82824a3fbea39f142556ab30007e927f4e67e16bc3fb337dfd92b264cd232910",
+        "control_sha256": "020729aefbd20d07fb1f9fd469a42e0c08c5fdd76c5673eeadcfc69654a6cc01",
         "jobs": {
             "untrusted-hosted": "f9c084c82de1ab02bcfff451680b9f562385dba67ea4b53bd1b1b3645029a978"
         }
     },
     "clued-cloud-production-release.yml": {
-        "control_sha256": "ba9aebecbf6b9a87fdfb2563ba8f223bfbfe4e44211ca32dac64145c48a53f68",
+        # PR #1121 (Fable 1121 rework): release takes no migrations and gains the rollback_drill input.
+        "control_sha256": "aa22efc988d6a24f59a37a726b7e97384fd2688a6ae68c8f5efd3d33e3d70749",
         "jobs": {
-            # Mandatory backup repair (40dad0c0 / PR #1148): exact existing job only.
-            # Previous registration 354f88e193f04c37b9adcd9a8390041558d6d71da34ebbf3203bba59e00414c0; controls and routing remain frozen.
-            "release": "4630deff3c4cb1d1b4ff143e6c812a5a5ab3b590b98fa1ceca935ae79bf80e09"
+            # PR #1121 after Fable 1121 §6 on top of release door v1 (FABLE-release-identity-autonomous-20261119):
+            # one-approval release without migrations or wrangler config changes, Worker rollback judged by
+            # one final reading, G6 after the rollback step; the grant goes through the database login door.
+            # main job da0654044b1ffd68e72ca867a3a8fe462583c2b9caa0cde7205269f77a829fcc, routing unchanged.
+            # Review after main: the 165-minute job timeout only for deploy and release (others keep 45),
+            # and no rollback before the first deploy step ran.
+            # Task 87d330d0 (FABLE-drill-test-project-sync-20261124 §2.1): two last steps export production's
+            # applied migration list read-only as its own artifact; routing, triggers and permissions unchanged.
+            # B3 (FABLE-prod-db-shrink-v2-20261124 §8, PR #1282): one capacity-gate step before migrate in the
+            # existing job; controls (c9cd44da…) and routing unchanged, no new hosted job, independently reviewed.
+            # Task 87d330d0 piece A: fleet-accept mode (only opens an Owner request, changes nothing in production).
+            "release": "4dbe6f369f95c49f56ba82d36a1c7bb519ae85ad423565d67c72615be15cd787"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {
@@ -192,7 +219,7 @@ LEGACY_HOSTED_DEBT = {
         }
     },
     "design-refs.yml": {
-        "control_sha256": "6327e8203db425c4bf5c2ae87d1c4e58a235307ce616fdc5f4a7db93c0b2b6c8",
+        "control_sha256": "0791693c1c18971f9b2fc536cabce28d8d69fb6654130946648b3c82bdcaab2c",
         "jobs": {
             "design-refs-untrusted-hosted": "5639d9ad5c5f6181caa118e9c55c6f370b55f442447f9e0685976870eb8ac8d2"
         }
@@ -210,43 +237,43 @@ LEGACY_HOSTED_DEBT = {
         }
     },
     "model-program-m0.yml": {
-        "control_sha256": "0eefb33d740f4f61e4c7e31b37d902eccaf2e935aeaec0181bef5778b8c7e6fc",
+        "control_sha256": "db60f42f44c269aeb91702694f3a11ae2e49a92c6c8739e55887028ea842341a",
         "jobs": {
             "validate-untrusted-hosted": "772a3eb010a62b889d18be7da42b7977415ab9f12d7799199e1700384fc711bc"
         }
     },
     "model-program-m1-entry.yml": {
-        "control_sha256": "8b6c80241e609eb13820d40be7ac87cfa1cb92aa375931a13cdf9c1c2acb7022",
+        "control_sha256": "ff9bfc2d5d6f17c24c43df171cbdb2d4f1a670eabffc434ba0e71b02b25baf0d",
         "jobs": {
             "validate-untrusted-hosted": "1e35ba7c3040ca729c2e4612cc9eab04c3bc6027af92dd322a848b6077b48394"
         }
     },
     "model-program-m1-harness.yml": {
-        "control_sha256": "4f13bdff24ca46b990d16d3dfb999c43304204ee02e3c69eda7bbc76cfe65985",
+        "control_sha256": "0048735a8017e345c755fcb18dbb469d4224063c049062bcf473bb4e1ba56bc4",
         "jobs": {
             "validate-untrusted-hosted": "49e277ffb578d1d662a5e240dbb56e22189cee7e4f9c4d9de763dde672d03dc7"
         }
     },
     "model-program-m1-package.yml": {
-        "control_sha256": "5f2f64757a1152a2299659f90f107b0383e6265743b39f89da53617b42b2de93",
+        "control_sha256": "4669434ea23dca2c32c456496dd8cbb33caf7e8402117b217e24b4f14fd9b31b",
         "jobs": {
             "validate-untrusted-hosted": "306e9ad3c4d0f9a5c337c2463af26cdd211ba92f36dc128805bc2317236c7431"
         }
     },
     "model-program-m2-scoped-consumer.yml": {
-        "control_sha256": "cd093d7a7aafc5eeec576fdd2f3b9fa4ff9d50cfbf40c141fc6c79d674c376e4",
+        "control_sha256": "44b1a8e6de7369071ffa95349f2347bd0fe704334664c947dff58169b5f3613c",
         "jobs": {
             "untrusted-linux": "55c967ce7b401611df6e2673dbf78a4ff883d0d377a52c9e1cb9bc6edc1603fd"
         }
     },
     "multitrack-governance-projection.yml": {
-        "control_sha256": "94c0dfc24e1313bd12d9a009d24387bb9fd7301e28e30df263644a8bbad400da",
+        "control_sha256": "d100a704d9d1545c0e1e8c78e46997ed0da992c344efa41c2a3afe1d13626f6a",
         "jobs": {
             "validate-untrusted-hosted": "be5115297f448fc75299797d3d94e1e82786980a37f6cbc218283baf8736a868"
         }
     },
     "node-profile-policy.yml": {
-        "control_sha256": "335ae03fbfc515cfa1502e48342c80804719d9f226a20a2949e8219796baeec1",
+        "control_sha256": "0ca920fd6f73e76ef6b1b17c21e18d12f2ad6ac78b3fb4c629b58944af461808",
         "jobs": {
             "untrusted-hosted": "e6b8787973d2f48fcb4435b55bb136bfd8a627602acc575dcce25d680bd43452"
         }
@@ -313,6 +340,50 @@ OWNER_DECISION_HOSTED_JOBS = {
         "jobs": {
             "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
             "trivy-trusted-self-hosted": "67c881212b4932617134a79cf3e8153de4bf5024b30bbbfa2dd129863b05c9bd"
+        }
+    }
+}
+
+# Owner Decisions 61b65d61 and 494326b5 (FABLE-cicd-framework-v1 §2.3, G7): the
+# hosted scaffold. Until the independent CI blocks merges on its own, the seven
+# required checks run once more on GitHub-hosted runners under hosted- names
+# (hosted-required.yml), which the scaffold ruleset requires. Pinned exactly like
+# the tables above (workflow controls and every job's bytes); every check name a
+# scaffold job can carry starts with "hosted-", so none can stand in for a
+# check of the independent CI. The hosted copy of the front-merge-main workflow
+# (clued-front-main-merge-hosted.yml) belongs to the same scaffold under the same
+# rule: its two jobs carry hosted- names. The required suite checks each summarize a
+# matrix: seven Windows suite shards, four Linux suite shards, four migration shards
+# and two application shards (task 3435f8bf). Windows also reports duration. A matrix job's name is a
+# format() whose literal starts with "hosted-", the one quoted branch job_check_names reads. Temporary: at the switch back (stage S8) the
+# workflows and these entries are deleted in one change; a stale entry fails.
+HOSTED_SCAFFOLD_SOURCE = "61b65d61"
+HOSTED_SCAFFOLD_PREFIX = "hosted-"
+HOSTED_SCAFFOLD_JOBS = {
+    "hosted-required.yml": {
+        "control_sha256": "2f80faac1c7b3870adde2afc404357bd316ff37ceb184ba7c2c580c37fc85ce6",
+        "jobs": {
+            "clued-cloud-tests-shard": "a854461e015da29eca6f1fa86838c0d340ae7fe991a13d3615ab5e584ad189af",
+            "clued-cloud-tests": "d4e5797402f3914d5ca5287ef94290a2c4be171e2f96f92a0184e2c49f890288",
+            "ci-suites-shard": "333a19665423152c8f95950f3dc533d749b7ae5affc6e67a4dfa6dbd8b718148",
+            "ci-suites": "e94c56206ef4f4eeeae64c78be97db8b752ef0322ee0177c694b2495857805c3",
+            "migration-verify-shard": "93216a639f104fa15c74ec39ba9e1dd5e728e23a9ee2acb12c9f0e472074a024",
+            "migration-verify": "24e2cf81f4c3c672961db8fd7b385d57b9d1872e9397ce527f2875da5322386b",
+            "ci-suites-windows-shard": "3a212b51fe984835cd19eb56f2bd28f34aca87bf24b9679a6290f7a9cb0fff49",
+            "ci-suites-windows": "4e9fc891e940350f6dc47bc5c4a86e4e21d6f0b90cab0f74ceef598909dcc92f",
+            "ci-suites-windows-duration": "ddc24fc7fc39b157309edfb48451673cf0862387e3b778aeb9b63b38f07a8efd",
+            "gitleaks": "5f197a5db5c018f27fcde2038da4e9d09e0d9595280d7de4ba25060eb1a347f1",
+            "trivy": "1626d64a8d44f76845c97fcd57d5b57b536f18f953df50aa1a25e81881971094",
+            "contract-placement": "86692591154cc7ce58b9318e5e5ca722f0be8dce26fd03a589e8957af937b98a"
+        }
+    },
+    "clued-front-main-merge-hosted.yml": {
+        # Task 3576b29c: on: workflow_run of hosted-required (completed) as well (was 5f732deb…; PLAN-train-held-deadlock §3.3).
+        "control_sha256": "32f928fb5cfc4a7bd399013d44f8ccc5ea298810f1b8ef76d4b1f2f2fc09e14a",
+        "jobs": {
+            "scaffold-phase": "973b475909436bd551f30f1cfc8d64d06178c340d89f4ceeb98725169edac16c",
+            # Task 2fb32dc7: its own concurrency group clued-front-main-merge-hosted (was fcaa51b2…, the shared group).
+            "merge-main": "71d1b3ec9125e118e5d0aa1f3d3a6a05c6461ffd2e8694a3386886673a34ad2b"
         }
     }
 }
@@ -479,6 +550,43 @@ def scalar(text: str) -> str:
     return value
 
 
+def concurrency_group(value: str) -> str:
+    """The group of a concurrency value (the text after `concurrency:`): its scalar form or the one group key of its
+    mapping. A block scalar, flow, anchor or a second group refuses instead of being guessed."""
+    first, _, rest = value.partition("\n")
+    rest_lines = [line for line in rest.split("\n") if line.strip() and not line.lstrip().startswith("#")]
+    head = scalar(first)
+    if head:
+        if rest_lines or head[0] in "{[|>&*!":
+            raise ValueError("ambiguous concurrency group")
+        return head
+    groups = [scalar(line.split(":", 1)[1]) for line in rest_lines if re.match(r"^\s+group:", line)]
+    if len(groups) != 1 or not groups[0] or groups[0][0] in "{[|>&*!":
+        raise ValueError("ambiguous concurrency group")
+    return groups[0]
+
+
+def shared_group_findings(exemptions: object) -> list[str]:
+    if not isinstance(exemptions, dict):
+        return ["invalid shared concurrency group exemption table"]
+    findings = []
+    names = [group.lower() for group in exemptions if isinstance(group, str)]
+    if len(set(names)) != len(names):
+        findings.append("invalid shared concurrency group exemption: two rows name one group (names are case-insensitive)")
+    for group, entry in exemptions.items():
+        if not isinstance(group, str) or not group.strip() or WORKFLOW_SCOPED_GROUP.search(group):
+            findings.append("invalid shared concurrency group exemption: the group must be a literal name")
+        if (not isinstance(entry, dict) or set(entry) != {"workflows", "note"}
+                or not isinstance(entry["note"], str) or not entry["note"].strip()):
+            findings.append("invalid shared concurrency group exemption: exactly workflows and a note")
+            continue
+        files = entry["workflows"]
+        if (not isinstance(files, (tuple, list)) or len(files) < 2 or len(set(files)) != len(files)
+                or not all(isinstance(file, str) and WORKFLOW_FILE.fullmatch(file) for file in files)):
+            findings.append("invalid shared concurrency group exemption: two or more distinct workflow files")
+    return findings
+
+
 def classify_route(filename: str, job_id: str, fields: dict[str, str]) -> tuple[str, list[str]]:
     value = fields.get("runs-on", "")
     if "uses" in fields or not value.strip():
@@ -574,7 +682,10 @@ def owner_decision_findings(exceptions: object, baseline: dict) -> list[str]:
 
 
 def evaluate_workflows(texts: dict[str, str], baseline: object = None,
-                       owner_hosted: object = None) -> dict[str, object]:
+                       owner_hosted: object = None, scaffold: object = None,
+                       shared_groups: object = None) -> dict[str, object]:
+    scaffold = HOSTED_SCAFFOLD_JOBS if scaffold is None else scaffold
+    shared_groups = SHARED_CONCURRENCY_GROUPS if shared_groups is None else shared_groups
     baseline = LEGACY_HOSTED_DEBT if baseline is None else baseline
     owner_hosted = OWNER_DECISION_HOSTED_JOBS if owner_hosted is None else owner_hosted
     violations: list[dict[str, str]] = []
@@ -591,8 +702,26 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
         reject("<embedded-owner-decision>", error)
     if owner_errors:
         owner_hosted = {}
+    scaffold_errors = [error.replace("Owner-decision hosted", "hosted scaffold")
+                       for error in owner_decision_findings(scaffold, baseline)]
+    for file, entry in (scaffold.items() if isinstance(scaffold, dict) else []):
+        if file in owner_hosted:
+            scaffold_errors.append("a workflow is either Owner-decision hosted or hosted scaffold, never both")
+    for error in scaffold_errors:
+        reject("<embedded-hosted-scaffold>", error)
+    if scaffold_errors:
+        scaffold = {}
+    shared_errors = shared_group_findings(shared_groups)
+    for error in shared_errors:
+        reject("<embedded-shared-concurrency>", error)
+    if shared_errors:
+        shared_groups = {}
+    # GitHub compares concurrency group names case-insensitively: G1 and g1 are one group.
+    exempt_groups = {group.lower(): entry for group, entry in shared_groups.items()}
+    files_by_group: dict[str, set[str]] = {}
     observed = set()
     observed_owner = set()
+    observed_scaffold = set()
     for filename, text in sorted(texts.items()):
         try:
             control, jobs, top = split_workflow(text)
@@ -602,6 +731,7 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
             continue
         entry = baseline.get(filename)
         owner_entry = owner_hosted.get(filename)
+        scaffold_entry = scaffold.get(filename)
         successor = EXACT_SOURCE_CANDIDATE_SUCCESSORS.get(filename)
         if successor and source_hash(text) == successor["workflow_sha256"]:
             if successor["kind"] == "legacy" and entry == successor["predecessor"]:
@@ -610,6 +740,16 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
                 owner_entry = successor["successor"]
         pr_triggered = bool(re.search(r"\bpull_request(?:_target)?\b", top["on"]))
         concurrency = top.get("concurrency", "")
+        values = ([concurrency.split(":", 1)[1]] if concurrency else []) + [
+            fields[job_id]["concurrency"] for job_id in jobs if "concurrency" in fields[job_id]]
+        for value in values:
+            try:
+                group = concurrency_group(value)
+            except ValueError as error:
+                reject(filename, str(error))
+                continue
+            if not WORKFLOW_SCOPED_GROUP.search(group):
+                files_by_group.setdefault(group.lower(), set()).add(filename)
         has_cancel = bool(re.search(r"(?m)^\s+cancel-in-progress\s*:", concurrency))
         routes = []
         for job_id, block in jobs.items():
@@ -638,10 +778,25 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
                     if job_check_names(job_id, fields[job_id]) & REQUIRED_CHECK_NAMES:
                         reject(filename, "Owner-decision hosted executor carries a required check name "
                                "(Owner Decision bc6fdad1)", job_id)
+            scaffold_hash = scaffold_entry["jobs"].get(job_id) if scaffold_entry else None
+            if scaffold_hash:
+                observed_scaffold.add((filename, job_id))
+                if kind != "hosted":
+                    reject(filename, "Owner Decision " + HOSTED_SCAFFOLD_SOURCE +
+                           " hosted scaffold entry must be deleted once its job leaves the literal hosted route", job_id)
+                else:
+                    if source_hash(control) != scaffold_entry["control_sha256"]:
+                        reject(filename, "hosted scaffold workflow controls changed", job_id)
+                    if source_hash(block) != scaffold_hash:
+                        reject(filename, "hosted scaffold job changed", job_id)
+                    names = job_check_names(job_id, fields[job_id])
+                    if not names or any(not name.startswith(HOSTED_SCAFFOLD_PREFIX) for name in names):
+                        reject(filename, "hosted scaffold job must carry a " + HOSTED_SCAFFOLD_PREFIX +
+                               " check name only (Owner Decision " + HOSTED_SCAFFOLD_SOURCE + ")", job_id)
             if kind == "unknown":
                 reject(filename, "unknown, dynamic, reusable or mixed runner route is prohibited", job_id)
             elif kind != "self-hosted":
-                if not legacy_hash and not owner_hash:
+                if not legacy_hash and not owner_hash and not scaffold_hash:
                     reject(filename, "new GitHub-hosted execution is prohibited; use literal self-hosted routing", job_id)
             else:
                 if "trust-internal" not in labels:
@@ -653,7 +808,7 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
                         reject(filename, "PR-triggered self-hosted workflow is missing cancel-in-progress", job_id)
             routes.append({"job": job_id, "kind": kind, "runs_on": fields[job_id].get("runs-on"),
                            "job_sha256": source_hash(block), "legacy_migration_debt": bool(legacy_hash),
-                           "owner_decision_hosted": bool(owner_hash)})
+                           "owner_decision_hosted": bool(owner_hash), "hosted_scaffold": bool(scaffold_hash)})
         records.append({
             "workflow": filename, "jobs": routes, "control_sha256": source_hash(control),
             "runs_on": [row["runs_on"] for row in routes],
@@ -673,6 +828,21 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
         for job_id in entry["jobs"]:
             if (filename, job_id) not in observed_owner:
                 reject(filename, "removed Owner-decision hosted job must be deleted; stale permits are prohibited", job_id)
+    for filename, entry in scaffold.items():
+        for job_id in entry["jobs"]:
+            if (filename, job_id) not in observed_scaffold:
+                reject(filename, "removed hosted scaffold job must be deleted; stale permits are prohibited", job_id)
+    for group, files in sorted(files_by_group.items()):
+        if len(files) > 1 and group not in exempt_groups:
+            for filename in sorted(files):
+                reject(filename, f"literal concurrency group {group!r} is shared by {', '.join(sorted(files))}; "
+                                 "a literal group belongs to one workflow file (task 2fb32dc7)")
+    for group, entry in sorted(exempt_groups.items()):
+        listed, actual = set(entry["workflows"]), files_by_group.get(group, set())
+        if actual != listed:
+            reject("<embedded-shared-concurrency>",
+                   f"shared concurrency group exemption {group!r} lists {', '.join(sorted(listed))} but the workflows "
+                   f"using it are {', '.join(sorted(actual)) or 'none'}; change the row with the files")
     return {"schema": "clued.ci-runner-budget-policy/v3", "status": "FAIL" if violations else "PASS",
             "policy": "self-hosted-only-new-execution; exact legacy debt must shrink on migration; "
                       "exact Owner Decision " + OWNER_DECISION_HOSTED_SOURCE + " hosted executor jobs",
@@ -680,8 +850,11 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
             "legacy_debt_jobs": sum(len(entry["jobs"]) for entry in baseline.values()),
             "owner_decision_hosted_source": OWNER_DECISION_HOSTED_SOURCE,
             "owner_decision_hosted_jobs": sum(len(entry["jobs"]) for entry in owner_hosted.values()),
+            "hosted_scaffold_source": HOSTED_SCAFFOLD_SOURCE,
+            "hosted_scaffold_jobs": sum(len(entry["jobs"]) for entry in scaffold.values()),
             "historical_hosted_only_notes": HOSTED_ONLY_ALLOWLIST,
             "concurrency_exemptions": CONCURRENCY_EXEMPTIONS,
+            "shared_concurrency_groups": shared_groups,
             "workflows": records, "violations": violations}
 
 

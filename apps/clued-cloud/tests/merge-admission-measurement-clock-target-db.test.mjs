@@ -1,22 +1,19 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, startCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import net from 'node:net';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
 import test from 'node:test';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
 import {workerGatewayRpc} from './worker-gateway-caller-fixture.mjs';
 import {integrateClockSourceCandidate} from '../../../scripts/ci/merge-admission-clock-source.mjs';
-const {default:EmbeddedPostgres}=process.env.CLUED_TEST_EMBEDDED_POSTGRES_URL
-  ?await import(process.env.CLUED_TEST_EMBEDDED_POSTGRES_URL):await import('embedded-postgres');
+import { newCluster } from './pg-cluster-fixture.mjs';
 const cloud=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),repo=path.resolve(cloud,'../..');
 const migration='20261011113259_merge_admission_measurement_clock_target_v1.sql';
 const uuid=()=>crypto.randomUUID(),hash=x=>crypto.createHash('sha256').update(x).digest('hex');
-async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 
 test('formal target clock: current full chain, complete atomic publisher install and source boundaries',{timeout:300000},async t=>{
   const base=execFileSync('git',['rev-parse','HEAD'],{cwd:repo,encoding:'utf8'}).trim();
@@ -28,11 +25,11 @@ test('formal target clock: current full chain, complete atomic publisher install
   assert.doesNotMatch(sql,/^begin;|^commit;/m);
   const publisher=await fs.readFile(path.join(repo,'.github/workflows/clued-cloud-production-release.yml'),'utf8');assert.match(publisher,/execute s;/);
   const parent=await fs.realpath(os.tmpdir()),directory=await fs.mkdtemp(path.join(parent,'clued-clock-target-'));
-  const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:crypto.randomBytes(32).toString('hex'),port:await port(),
-    persistent:true,postgresFlags:['-c','io_method=sync'],onLog(){},onError(){}}),clients=[];
+  const server=newCluster({databaseDir:directory,user:'postgres',password:crypto.randomBytes(32).toString('hex'),
+    persistent:true,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(){}}),clients=[];
   let db;
   try{
-    await server.initialise();await server.start();db=server.getPgClient();clients.push(db);await db.connect();
+    await startCluster(server);db=server.getPgClient();clients.push(db);await db.connect();
     await db.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;
       create schema auth;create schema extensions;create extension pgcrypto with schema extensions;
       create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz);

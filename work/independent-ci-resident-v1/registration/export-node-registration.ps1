@@ -5,23 +5,28 @@
 #                           these public facts to export-node-registration.mjs, which writes the /ci-nodes registration document and
 #                           its qualification report. A missing key is KEY_MISSING; nothing is created.
 #   -Mode init-keys         only with -ConfirmCreateKeys: creates the identity key (ECDSA P-256, signing) and the encryption key
-#                           (ECDH P-256, key agreement) as non-exportable machine keys, in the TPM (Microsoft Platform Crypto
-#                           Provider) when one is usable, else in the Microsoft Software Key Storage Provider (-KeyProvider auto,
-#                           with a warning that carries the TPM error); -KeyProvider tpm refuses instead of falling back. Refuses
-#                           (KEY_EXISTS) when either key already exists in either provider. A key whose public coordinates the
-#                           registration RPC would refuse is deleted and created again; any failure deletes the keys this run
-#                           created, so the node is never left with one key. It is a key operation: run it only in an install wave
-#                           the Owner approved.
-#   -SelfTest               creates two EPHEMERAL (never persisted) keys and prints their public JWKs, one signature and the parsed
-#                           list parameters, so the tests can check the blob conversion and the argument handling. Touches no key
-#                           store.
+#                           (ECDH P-256, key agreement) as non-exportable machine keys. -KeyProvider says where the IDENTITY key
+#                           goes: the TPM (Microsoft Platform Crypto Provider) when one is usable, else the Microsoft Software Key
+#                           Storage Provider (auto, with a warning that carries the TPM error); tpm refuses instead of falling back;
+#                           software. The ENCRYPTION key is always made in the software provider: the TPM provider refuses an ECDH
+#                           key with key-agreement usage (NTE_NOT_SUPPORTED 0x80090029, seen on Intel PTT and on a Hyper-V vTPM),
+#                           and only the identity key is required in the TPM (M5 checks it; the renewal signs with it). Both nodes in
+#                           service have this layout since their keys were made (Fable 11-21 "r5 node key"). Refuses (KEY_EXISTS)
+#                           when either key already exists in either provider. A key whose public coordinates the registration RPC
+#                           would refuse is deleted and created again; any failure deletes the keys this run created, so the node is
+#                           never left with one key. It is a key operation: run it only in an install wave the Owner approved.
+#   -SelfTest               creates the two keys the way init-keys does (Get-KeyProviders, New-NodeKey; -KeyProvider as there,
+#                           software when not given) but in the current user's store (no elevation) under names only this run uses
+#                           (Clued-SelfTest-<role>-<guid>), deletes them again before it exits, and prints their public JWKs and
+#                           origins, one signature and the parsed list parameters, so the tests check the real providers, the blob
+#                           conversion and the argument handling. The node's keys and the machine store are never touched.
 #
 # The private keys never leave CNG: the script never asks for a private export (software keys are created with ExportPolicy None;
 # TPM keys cannot be exported at all). Every refusal prints one CODE: detail line and exits 2.
 param(
   [ValidateSet('export', 'init-keys')] [string]$Mode = 'export',
   [switch]$ConfirmCreateKeys,
-  [ValidateSet('auto', 'tpm', 'software')] [string]$KeyProvider = 'auto',
+  [ValidateSet('auto', 'tpm', 'software', IgnoreCase = $false)] [string]$KeyProvider = 'auto',
   [string]$BindingId,
   [string]$Name,
   [int]$SlotCount = 0,
@@ -94,6 +99,30 @@ function Find-MachineKey([string]$KeyName) {
   $null
 }
 
+# The providers a key of $KeyRole may be made in, in order (entries of Get-Providers). The identity key: where $Wanted says (auto: the
+# TPM, then software; tpm; software). The encryption key: the software provider only, whatever $Wanted says (see init-keys above).
+function Get-KeyProviders([string]$KeyRole, [string]$Wanted) {
+  if ($KeyRole -ceq 'encryption') { Get-Providers | Where-Object { $_[1] -ceq 'software' } }
+  else { Get-Providers | Where-Object { $Wanted -ceq 'auto' -or $_[1] -ceq $Wanted } }
+}
+
+# The one place a key is created (init-keys and -SelfTest): $KeyRole's algorithm and usage (identity: ECDSA P-256, signing; encryption:
+# ECDH P-256, key agreement), in the provider of $Entry (an entry of Get-Providers), named $KeyName, with $Options (MachineKey for
+# init-keys, None for the self-test). A software key gets ExportPolicy None; a TPM key is non-exportable by construction, and the platform
+# provider may refuse an export-policy property. An empty name is refused (KEY_NAME_REQUIRED): Windows PowerShell passes $null to a
+# [string] as '', which the software provider persists as a key named '' (not an ephemeral key), so no caller can make one.
+function New-NodeKey([string]$KeyRole, $Entry, [string]$KeyName, [System.Security.Cryptography.CngKeyCreationOptions]$Options) {
+  if ([string]::IsNullOrEmpty($KeyName)) { throw 'KEY_NAME_REQUIRED: New-NodeKey creates named keys only' }
+  $identity = $KeyRole -ceq 'identity'
+  $parameters = New-Object System.Security.Cryptography.CngKeyCreationParameters
+  $parameters.Provider = $Entry[0]
+  $parameters.KeyCreationOptions = $Options
+  if ($Entry[1] -cne 'tpm') { $parameters.ExportPolicy = [System.Security.Cryptography.CngExportPolicies]::None }
+  $parameters.KeyUsage = if ($identity) { [System.Security.Cryptography.CngKeyUsages]::Signing } else { [System.Security.Cryptography.CngKeyUsages]::KeyAgreement }
+  $algorithm = if ($identity) { [System.Security.Cryptography.CngAlgorithm]::ECDsaP256 } else { [System.Security.Cryptography.CngAlgorithm]::ECDiffieHellmanP256 }
+  [System.Security.Cryptography.CngKey]::Create($algorithm, $KeyName, $parameters)
+}
+
 function Test-Elevated {
   $principal = New-Object System.Security.Principal.WindowsPrincipal ([System.Security.Principal.WindowsIdentity]::GetCurrent())
   $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -129,20 +158,40 @@ function Get-FeatureEnabled([string[]]$FeatureNames) {
 }
 
 if ($SelfTest) {
-  # Ephemeral (unnamed) keys: CNG refuses an export policy on them, and they vanish with the process.
-  $signing = [System.Security.Cryptography.CngKey]::Create([System.Security.Cryptography.CngAlgorithm]::ECDsaP256)
-  $agreement = [System.Security.Cryptography.CngKey]::Create([System.Security.Cryptography.CngAlgorithm]::ECDiffieHellmanP256)
-  $message = [Text.Encoding]::UTF8.GetBytes('clued-ci-node-registration self-test')
-  $ecdsa = New-Object System.Security.Cryptography.ECDsaCng $signing
-  $ecdsa.HashAlgorithm = [System.Security.Cryptography.CngAlgorithm]::Sha256
-  [ordered]@{
-    identity_public_jwk = (ConvertFrom-EccPublicBlob ($signing.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic.identity)
-    encryption_public_jwk = (ConvertFrom-EccPublicBlob ($agreement.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic.encryption)
-    message = [Convert]::ToBase64String($message)
-    signature_p1363 = [Convert]::ToBase64String($ecdsa.SignData($message))
-    roles = @($Role); environment_kinds = @($EnvironmentKind); exclusions = @($Exclusion)
-    database_refuses = @('xxghp_yy', 'GHO_', 'plain') | ForEach-Object { -not (Test-Registrable @{ x = $_; y = '' }) }
-  } | ConvertTo-Json -Compress -Depth 4
+  # Keys of the current user under names only this run uses (a null name is no way out: Windows PowerShell passes it as an empty name, a
+  # persisted software key; and the TPM provider refuses .NET's ephemeral-key property, NTE_BAD_FLAGS). Deleted again in finally.
+  $selfProvider = if ($PSBoundParameters.ContainsKey('KeyProvider')) { $KeyProvider } else { 'software' }
+  $selfKeys = @(); $made = @{}; $origins = @{}; $names = @(); $failure = $null; $answer = $null
+  try {
+    foreach ($keyRole in $KeyNames.Keys) {
+      $errors = @()
+      foreach ($entry in @(Get-KeyProviders $keyRole $selfProvider)) {
+        $selfName = 'Clued-SelfTest-' + $keyRole + '-' + [Guid]::NewGuid().ToString('N')
+        try { $key = New-NodeKey $keyRole $entry $selfName ([System.Security.Cryptography.CngKeyCreationOptions]::None) }
+        catch { $errors += "$($entry[1]): $($_.Exception.Message)"; continue }
+        $selfKeys += $key; $names += $selfName; $made[$keyRole] = $key; $origins[$keyRole] = $entry[1]; break
+      }
+      if (-not $made.ContainsKey($keyRole)) { throw "KEY_CREATE_FAILED: $($keyRole): $($errors -join '; ')" }
+    }
+    $message = [Text.Encoding]::UTF8.GetBytes('clued-ci-node-registration self-test')
+    $ecdsa = New-Object System.Security.Cryptography.ECDsaCng $made.identity
+    $ecdsa.HashAlgorithm = [System.Security.Cryptography.CngAlgorithm]::Sha256
+    $answer = [ordered]@{
+      identity_public_jwk = (ConvertFrom-EccPublicBlob ($made.identity.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic.identity)
+      encryption_public_jwk = (ConvertFrom-EccPublicBlob ($made.encryption.Export([System.Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic.encryption)
+      identity_origin = $origins.identity; encryption_origin = $origins.encryption; self_test_key_names = @($names)
+      message = [Convert]::ToBase64String($message)
+      signature_p1363 = [Convert]::ToBase64String($ecdsa.SignData($message))
+      roles = @($Role); environment_kinds = @($EnvironmentKind); exclusions = @($Exclusion)
+      database_refuses = @('xxghp_yy', 'GHO_', 'plain') | ForEach-Object { -not (Test-Registrable @{ x = $_; y = '' }) }
+    } | ConvertTo-Json -Compress -Depth 4
+  } catch { $failure = $_.Exception.Message }
+  finally { foreach ($selfKey in $selfKeys) { try { $selfKey.Delete() } catch { } } }
+  if ($null -ne $failure) {
+    if ($failure -match '^(KEY_CREATE_FAILED|PUBLIC_KEY_INVALID): ') { Fail $Matches[1] ($failure -replace '^[A-Z_]+: ', '') }
+    Fail 'KEY_CREATE_FAILED' $failure
+  }
+  $answer
   exit 0
 }
 
@@ -154,23 +203,14 @@ if ($Mode -eq 'init-keys') {
     $found = Find-MachineKey $KeyNames[$keyRole]
     if ($null -ne $found) { Fail 'KEY_EXISTS' "$($KeyNames[$keyRole]) already exists ($($found.origin)); init-keys never replaces a key" }
   }
-  $providers = @(Get-Providers | Where-Object { $KeyProvider -eq 'auto' -or $_[1] -eq $KeyProvider })
   $createdKeys = @()
   $created = [ordered]@{}
   try {
     foreach ($keyRole in $KeyNames.Keys) {
-      $algorithm = if ($keyRole -eq 'identity') { [System.Security.Cryptography.CngAlgorithm]::ECDsaP256 } else { [System.Security.Cryptography.CngAlgorithm]::ECDiffieHellmanP256 }
-      $usage = if ($keyRole -eq 'identity') { [System.Security.Cryptography.CngKeyUsages]::Signing } else { [System.Security.Cryptography.CngKeyUsages]::KeyAgreement }
       $key = $null; $origin = $null; $jwk = $null; $errors = @()
-      foreach ($entry in $providers) {
+      foreach ($entry in @(Get-KeyProviders $keyRole $KeyProvider)) {
         for ($attempt = 0; $attempt -lt 16 -and $null -eq $jwk; $attempt++) {
-          $parameters = New-Object System.Security.Cryptography.CngKeyCreationParameters
-          $parameters.Provider = $entry[0]
-          $parameters.KeyCreationOptions = [System.Security.Cryptography.CngKeyCreationOptions]::MachineKey
-          # A TPM key is non-exportable by construction; the platform provider may refuse an export-policy property.
-          if ($entry[1] -ne 'tpm') { $parameters.ExportPolicy = [System.Security.Cryptography.CngExportPolicies]::None }
-          $parameters.KeyUsage = $usage
-          try { $key = [System.Security.Cryptography.CngKey]::Create($algorithm, $KeyNames[$keyRole], $parameters) }
+          try { $key = New-NodeKey $keyRole $entry $KeyNames[$keyRole] ([System.Security.Cryptography.CngKeyCreationOptions]::MachineKey) }
           catch {
             # NTE_EXISTS (0x8009000F): the name exists in this provider after all (a concurrent run, or a key Find-MachineKey could
             # not see). Stop rather than create a second key of the same name in the other provider.
