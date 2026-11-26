@@ -66,7 +66,7 @@ const ok = (result) => {
   return result;
 };
 const heartbeatAge = (age) => admin.query(`update clued_private.ci_node_liveness_v1
-  set last_heartbeat_at=clock_timestamp()-$2::interval,heartbeat_previous_at=null
+  set last_heartbeat_at=clock_timestamp()-$2::interval,heartbeat_previous_at=null,steady_since=null
   where node_id=$1 returning last_heartbeat_at`, [nodeId, age]);
 
 before(async () => {
