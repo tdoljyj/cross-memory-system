@@ -113,11 +113,12 @@ export function dutyOf(status, nodeName, now) {
 
 // The v2 port owns the shared reservation and settlement. It calls send once,
 // only after reserving this exact effect. No answer can fall back to a POST.
-export async function dispatchByTrainEffect(port, effect, send) {
-  if (port === undefined) return { sent: true, reply: await send() };
+export async function dispatchByTrainEffect({ trainProtocolVersion = 1, dispatchTrainEffect }, effect, send) {
+  if (trainProtocolVersion === 1) return { sent: true, reply: await send() };
+  if (trainProtocolVersion !== 2 || typeof dispatchTrainEffect !== 'function') return { sent: false };
   let open = true, sent = false, reply;
   try {
-    await port(Object.freeze({ ...effect, subject: Object.freeze(effect.subject) }), async () => {
+    await dispatchTrainEffect(Object.freeze({ ...effect, subject: Object.freeze(effect.subject) }), async () => {
       check(open && !sent, 'TRAIN_AUXILIARY_DISPATCH_ALREADY_USED');
       sent = true;
       reply = await send();
@@ -286,7 +287,7 @@ export class PanelDispatcher {
 
     let dispatch;
     try {
-      dispatch = await dispatchByTrainEffect(this.dispatchTrainEffect,
+      dispatch = await dispatchByTrainEffect(this,
         { repo: this.repo, ref: PANEL_REF, subject: [PANEL_WORKFLOW, latest?.id ?? 0] },
         () => this.run(dispatchArgv(this.ghExe, this.repo), { timeoutMs: DISPATCH_TIMEOUT_MS }));
     } catch { return this.fail(now, 'DISPATCH_FAILED'); }

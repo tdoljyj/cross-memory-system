@@ -10,6 +10,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { HEX64, check, parseBoundedJson, sha256 } from './canonical.mjs';
+import { trainProtocolVersion, validatePolicy } from './policy.mjs';
+import { readBounded } from './store.mjs';
 import { fileURLToPath } from 'node:url';
 import { BUNDLE_PRUNE_EVERY_MS, Companion, UpgradeLane, argv as companionArgv, readPullArgv, validateCompanionConfig } from './companion.mjs';
 import { UpgradeMailbox } from './upgrade-mailbox.mjs';
@@ -309,6 +311,18 @@ export async function acquireCompanionLock(dir, root, { alive = pid => companion
   return lock;
 }
 
+// 伴随进程和服务读取同一份安装策略。读不到可信策略时只暂停派发通道，其他通道照常工作。
+export async function companionTrainDispatchPorts({ root, repo, ciSourceManifestSha256, nodeProfileSha256, dispatchTrainEffect }) {
+  let protocolVersion = null;
+  try {
+    const bytes = await readBounded(path.join(root, 'config', 'policy.json'), 65_536, 'COMPANION_TRAIN_POLICY_REFUSED');
+    const policy = validatePolicy(parseBoundedJson(bytes, 65_536, 'COMPANION_TRAIN_POLICY_REFUSED'));
+    if (policy.repo === repo && policy.ciSourceManifestSha256 === ciSourceManifestSha256 && policy.nodeProfileSha256 === nodeProfileSha256)
+      protocolVersion = trainProtocolVersion(policy.train);
+  } catch { /* no dispatch authority from this installation read */ }
+  return { trainProtocolVersion: protocolVersion, dispatchTrainEffect };
+}
+
 export async function main(args = process.argv.slice(2), { dispatchTrainEffect } = {}) {
   const { values } = parseArgs({ args, options: { root: { type: 'string' }, 'config-sha256': { type: 'string' } } });
   check(typeof values.root === 'string' && path.isAbsolute(values.root) && HEX64.test(values['config-sha256'] ?? ''), 'COMPANION_ARGS_REQUIRED');
@@ -399,10 +413,13 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect }
   // The panel trigger (DESIGN §43, Decision 7eb98011): on unless companion.json says panelDispatch.enabled false; dispatches only while
   // this node's status says ACTIVE. Its own Runner and its own memory file (two lanes never write one file).
   const panelRunner = new Runner({ env: { ...process.env }, jobHost });
+  const trainDispatch = await companionTrainDispatchPorts({
+    root: values.root, repo: raw.repo, ciSourceManifestSha256, nodeProfileSha256: cfg.nodeProfileSha256, dispatchTrainEffect,
+  });
   // Only for the repository the panel workflow is in (panel-dispatch.mjs#PANEL_REPO); tools/build-package.mjs refuses a configuration that names another one.
   const panelDispatch = validatePanelDispatchConfig(raw.panelDispatch).enabled && raw.repo === PANEL_REPO
     ? new PanelDispatcher({ nodeName: cfg.node.nodeName, repo: raw.repo, ghExe: raw.ghExe, clock: Date.now, run: (a, o) => panelRunner.run(a, o), readStatus: () => readStatus(values.root),
-      notify, dispatchTrainEffect,
+      notify, ...trainDispatch,
       state: await PanelDispatchState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-panel-dispatch.json')) })
     : null;
   // Off in existing packages. Enabling belongs to a separately accepted
@@ -413,13 +430,13 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect }
   const mergeIdentity={nodeName:cfg.node.nodeName,repo:raw.repo,pinnedSource:MERGE_RECONCILE_WORKFLOW_SHA256};
   const mergeReconcile=mergeConfig.enabled?new MergeReconciler({...mergeIdentity,ghExe:raw.ghExe,clock:Date.now,
     run:(a,o)=>mergeRunner.run(a,o),readStatus:()=>readStatus(values.root),
-    notify,dispatchTrainEffect,
+    notify,...trainDispatch,
     state:await MergeReconcileState.open(path.join(cfg.node.ownerProfileDirectory,'AppData','Local','CluedIndependentCI','companion-merge-reconcile.json'),mergeIdentity)}):null;
   // DESIGN §80: the train front's main merge, asked for while this node is on duty and stage 10 says FRONT_NEEDS_MAIN_MERGE.
   // Its own Runner and its own memory file (two lanes never write one file).
   const frontMergeRunner = new Runner({ env: { ...process.env }, jobHost });
   const frontMerge = raw.repo === FRONT_MERGE_REPO ? new FrontMergeDispatcher({ nodeName: cfg.node.nodeName, repo: raw.repo, ghExe: raw.ghExe,
-    dispatchTrainEffect, clock: Date.now, run: (a, o) => frontMergeRunner.run(a, o), readStatus: () => readStatus(values.root),
+    ...trainDispatch, clock: Date.now, run: (a, o) => frontMergeRunner.run(a, o), readStatus: () => readStatus(values.root),
     state: await FrontMergeDispatchState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-front-merge.json')) }) : null;
   // Generation 12 (DESIGN §56.5, Decision 207c0cd0 v2): the one repair re-run of the required tests the admission gate allows, clicked
   // with the Owner's gh login when the gate timed out before stage 1's admission. Its own Runner and its own memory file.

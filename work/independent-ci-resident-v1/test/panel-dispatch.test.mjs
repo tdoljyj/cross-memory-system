@@ -7,9 +7,10 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { BACKOFF_MS, DISPATCH_EVERY_MS, DUTY_LOG_KEPT, MAX_PER_HOUR, MIN_GAP_MS, PANEL_REF, PANEL_REPO, PANEL_WORKFLOW, PanelDispatchState, PanelDispatcher, STAGGER_STEPS, STAGGER_STEP_MS,
   STALL_NOTIFY_MS, dispatchArgv, dutyOf, parseRuns, runsArgv, staggerMs, validatePanelDispatchConfig } from '../src/panel-dispatch.mjs';
-import { PANEL_DISPATCH_LANE_EVERY_MS } from '../src/companion-main.mjs';
-import { tempRoot } from './helpers.mjs';
-import { trainEffectKey } from '../../actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs';
+import { PANEL_DISPATCH_LANE_EVERY_MS, companionTrainDispatchPorts } from '../src/companion-main.mjs';
+import { rawPolicy, tempRoot } from './helpers.mjs';
+import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
+import { TRAIN_PROTOCOL_VERSION, trainEffectKey } from '../../actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs';
 
 const MIN = 60_000;
 const T0 = Date.parse('2026-11-04T10:00:00Z');
@@ -154,11 +155,34 @@ test('train v2: two nodes with the same stale run list reserve one wake-up, incl
     await send();
   };
   a.d.dispatchTrainEffect = b.d.dispatchTrainEffect = dispatch;
+  a.d.trainProtocolVersion = b.d.trainProtocolVersion = TRAIN_PROTOCOL_VERSION;
   const results = await Promise.all([a.d.step(), b.d.step()]);
   assert.equal(effects.size, 1);
   assert.equal(g.posts().length, 1);
   assert.equal(results.filter(r => r.skipped === 'SHARED_EFFECT_HELD').length, 1);
   assert.equal(results.filter(r => r.failed === 'DISPATCH_TIMEOUT').length, 1);
+});
+
+test('片 5 审查 1：正式伴随入口缺少共享端口时，两份 ACTIVE 快照都不能发旧 POST', async t => {
+  const countPosts = async protocolVersion => {
+    const g = github({ dispatchMakesRun: false, runs: [{ id: 42, event: 'schedule', at: T0 - 10 * MIN }] });
+    const a = await node(t, g);
+    const b = await node(t, g, { name: 'node-b', status: now => status({ node: { name: 'node-b', mode: 'ACTIVE' } }, now) });
+    for (const { d } of [a, b]) {
+      const root = await tempRoot(t);
+      const base = rawPolicy();
+      const policy = { ...base, contract: POLICY_CONTRACT_V8, train: { ...base.train, ...TRAIN_DEFAULTS, protocolVersion } };
+      await fs.mkdir(path.join(root, 'config'));
+      await fs.writeFile(path.join(root, 'config', 'policy.json'), JSON.stringify(policy));
+      Object.assign(d, await companionTrainDispatchPorts({
+        root, repo: REPO, ciSourceManifestSha256: policy.ciSourceManifestSha256, nodeProfileSha256: policy.nodeProfileSha256,
+      }));
+    }
+    await Promise.all([a.d.step(), b.d.step()]);
+    return g.posts().length;
+  };
+  assert.equal(await countPosts(1), 2, '协议 1 仍走标准派发');
+  assert.equal(await countPosts(TRAIN_PROTOCOL_VERSION), 0, '协议 2 零次旧 POST');
 });
 
 test('a node that is off by minutes: the runs are aged by GitHub\'s own clock', async t => {

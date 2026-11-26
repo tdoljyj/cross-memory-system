@@ -136,7 +136,7 @@ import { POSITIONS, breakerGate, breakerOf, breakerProbe, breakerRecord, breaker
 import { batchBudgetMs } from './policy.mjs';
 import { attempt2Decision, attempt2Subject } from './attempts.mjs';
 import { EXECUTION_RETRY_STAGES, RELAY_TRAIN_FRONT_LOCAL, STAGE2_RETRY_KEEPS_ABANDONED, executionRetryable, noLaunchRetryable, STAGE1_TRANSIENT_RELEASE_CODES } from './classify.mjs';
-import { HEAVY_ROLES, RELAY_STAGE, ROLE_STAGES, trainSettings, trainSweepMode, trainLandingMode } from './policy.mjs';
+import { HEAVY_ROLES, RELAY_STAGE, ROLE_STAGES, trainSettings, trainSweepMode, trainLandingMode, trainProtocolVersion } from './policy.mjs';
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { ALERT_RECEIPT } from './retention.mjs';
 import { NODE_RESOURCE_HOLDER } from './host-capacity.mjs';
@@ -436,6 +436,7 @@ export const DRAIN_MAX_AGE_MS = 60 * 60_000;
 export const INTAKE_PAUSE_UNCONFIRMED_MAX_MS = 30 * 60_000;
 const TRAIN_WORK_HANDED_OFF = 'TRAIN_WORK_HANDED_OFF';
 const TRAIN_HANDOFF_PENDING = 'CI_EFFECT_UNKNOWN';
+const TRAIN_HANDOFF_READ_MS = 5_000;
 const TRAIN_HANDOFF_RECHECK_MS = 15_000;
 const TRAIN_RECEIPT_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 export const INTAKE_REQUEST_TRIES = 3;
@@ -2998,7 +2999,7 @@ export class ResidentExecutor {
     let inside = 0, outside = 0;
     for (const e of all) {
       if (Ledger.waitingAt(e)) { inside += 1; continue; }
-      if (this.sharedTrainHandoff(e.reserved?.subject)) continue;
+      if (this.sharedTrainHandoff()) continue;
       if (this.parkedAsleep(e)) continue;
       const last = ResidentExecutor.lastTry(e);
       const p = Number.isSafeInteger(last?.position) ? last.position : (last?.transient === true ? last.assumedPosition : null);
@@ -3039,21 +3040,24 @@ export class ResidentExecutor {
     this.parkingFull = counts.inside >= this.policy.park.maxParked || (outsideMax > 0 && counts.outside >= outsideMax);
     // A batch that no longer stands (its PR closed, a newer head, this node off duty) was ended by the rule before this (endNotStanding,
     // DESIGN §72), whatever the train gate below says: field defect PR #1035 needs no step of its own here.
-    const handoffs = entries.filter(e => Ledger.parkedAt(e) && this.sharedTrainHandoff(e.reserved?.subject));
-    const handoff = handoffs.find(e => {
+    const handoffs = this.sharedTrainHandoff() ? entries.filter(e => Ledger.parkedAt(e)) : [];
+    const handoffDueAt = e => {
       const { pr } = e.reserved.subject;
       const row = this.queue.row(pr);
-      return row?.running?.key !== e.key || row.parked?.reason !== TRAIN_HANDOFF_PENDING || row.parked.nextAt <= this.clock();
-    });
-    if (handoff && !this.betweenBatchesRunning) {
+      // 从未读回的批先于已安排重试的批。
+      return row?.running?.key === e.key && row.parked?.reason === TRAIN_HANDOFF_PENDING ? row.parked.nextAt : 0;
+    };
+    const handoff = handoffs.sort((a, b) => handoffDueAt(a) - handoffDueAt(b))[0];
+    let waiting = null;
+    if (handoff && handoffDueAt(handoff) <= this.clock() && !this.betweenBatchesRunning) {
       const result = await this.resumeParkedB(handoff);
       if (result.reason !== TRAIN_HANDOFF_PENDING) return { acted: result, waiting: null };
+      waiting = result;
     }
     // Receipt lookup has its own cadence. It uses no stage-8 try or parking slot.
     entries = entries.filter(e => !handoffs.includes(e));
     if (hold) entries = entries.filter(e => this.frontBindKeys.has(e.key) || (this.trainStrictFront(e.reserved?.subject) && !this.trainGate(e.reserved?.subject)));
-    if (entries.length === 0) return { acted: null, waiting: null };
-    let waiting = null;
+    if (entries.length === 0) return { acted: null, waiting };
     for (const e of entries.filter(x => Ledger.waitingAt(x))) {
       const r = await this.resumeWaiting(e);
       if (r?.state !== 'WAITING') return { acted: r, waiting: null };
@@ -3145,20 +3149,31 @@ export class ResidentExecutor {
     return this.afterBatch(subject, origin, outcome);
   }
 
-  // This port is supplied only by the trusted v2 runtime once Native work leases,
-  // first-queue delivery and fenced landing are ready. It reads an existing durable
-  // receipt for the exact subject. It never performs a publication or a landing.
-  sharedTrainHandoff(subject) {
-    return !!subject && !Object.hasOwn(subject, 'testSha') && this.engine.handoffTrainWork !== undefined;
+  sharedTrainHandoff() {
+    return trainProtocolVersion(this.policy.train) !== 1;
   }
 
   async handoffParkedTrainWork(key, subject, batch, entry) {
     const pending = () => ({ state: 'PARKED', key, reason: TRAIN_HANDOFF_PENDING, until: this.clock() + TRAIN_HANDOFF_RECHECK_MS, position: null });
+    // 只读端口核对普通 head 的持久回执。带 S 的批由共享批控制器接续。
+    if (Object.hasOwn(subject, 'testSha') || typeof this.engine.handoffTrainWork !== 'function') return pending();
+    let timer;
     let confirmation;
     try {
       if (!proofComplete(await this.proofFor(batch, {}))) return pending();
-      confirmation = await this.engine.handoffTrainWork({ key, subject });
-    } catch { return pending(); }
+      const deadline = new AbortController();
+      const expired = new Promise(resolve => {
+        timer = setTimeout(() => {
+          resolve(null);
+          deadline.abort();
+        }, TRAIN_HANDOFF_READ_MS);
+      });
+      confirmation = await Promise.race([expired, this.engine.handoffTrainWork({ key, subject, signal: deadline.signal })]);
+    } catch {
+      return pending();
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
     if (confirmation?.protocol_version !== 2 || confirmation.key !== key || !TRAIN_RECEIPT_ID.test(confirmation.receiptId ?? '')) return pending();
 
     const { receiptId } = confirmation;
@@ -3187,7 +3202,7 @@ export class ResidentExecutor {
   }
 
   async stage8Try(key, subject, batch) {
-    if (this.sharedTrainHandoff(subject)) return this.handoffParkedTrainWork(key, subject, batch, await this.ledger.state(key));
+    if (this.sharedTrainHandoff()) return this.handoffParkedTrainWork(key, subject, batch, await this.ledger.state(key));
     // Generation 22: the batch rests at parking point B (the Linux zone is closed, nothing of it runs), where stage 10 may run as it does
     // after a schedule that ran nothing: a front batch whose strict proof would run out first gets it refreshed now (urgent: only the
     // cadence is waived; the daily cap, one run per tick and every gate of trainMaintenance hold), so its first try is not refused.
@@ -3454,10 +3469,12 @@ export class ResidentExecutor {
       let s;
       try { s = await this.ledger.state(key); } catch { continue; }
       if (['RESERVED', 'STARTED', 'INCOMPLETE', 'UNREADABLE'].includes(s.state)) continue;
-      const kind = Ledger.flowEnd(s) ? 'readmit' : s.state === 'TERMINAL' ? (s.outcome === 'COMPLETED' ? 'completed' : 'burned') : 'released';
+      let kind = Ledger.flowEnd(s) ? 'readmit' : s.state === 'TERMINAL' ? (s.outcome === 'COMPLETED' ? 'completed' : 'burned') : 'released';
       // Released (moved to ledger-unexecuted): its own record says whether it was a wait.
       const release = kind === 'released' ? (await this.ledger.unexecutedRecords(key, 0).catch(() => [])).at(-1) ?? null : null;
-      this.queue.settle(row.pr, headSha, { kind, code: s.terminal?.facts?.failureCode ?? null, klass: s.terminal?.facts?.class ?? release?.klass ?? null, reason: release?.reason ?? 'RECONCILED' }, this.clock());
+      if (release?.failureCode === TRAIN_HEAD_LEASE_COMPLETED) kind = 'completed';
+      this.queue.settle(row.pr, headSha, { kind, code: s.terminal?.facts?.failureCode ?? release?.failureCode ?? null,
+        klass: s.terminal?.facts?.class ?? release?.klass ?? null, ciRetryAfter: release?.ciRetryAfter ?? null, reason: release?.reason ?? 'RECONCILED' }, this.clock());
       changed = true;
     }
     if (changed) await this.persistQueue();
@@ -3781,7 +3798,7 @@ export class ResidentExecutor {
       if (this.queue.stopAtCap(c.pr, c.headSha, pre.stop, this.clock(), pre.stopClass ?? null)) this.queue.notice({ key: `stopped:${c.pr}:${c.headSha}:${pre.stop}`, kind: 'stopped', pr: c.pr, headSha: c.headSha, code: pre.stop });
       return { state: 'DEFERRED', key, reason: pre.stop, next: true };
     }
-    if (resumeStage8 && !this.sharedTrainHandoff(subject)) {
+    if (resumeStage8 && !this.sharedTrainHandoff()) {
       const usage = await this.ledger.usage(this.clock() - DAY, { stage8Pr: subject.pr, budgetTimes: true });
       if (usage.stage8Retries >= this.policy.park.stage8RetriesPer24h) return this.deferral({ defer: 'STAGE8_RETRY_BUDGET_EXHAUSTED', perRow: true,
         notice: await this.quotaNotice('STAGE8_RETRY_BUDGET_EXHAUSTED', subject, usage) }, key, c.pr);

@@ -532,7 +532,8 @@ export class Ledger {
       try {
         const { value } = await readJson(path.join(this.unexecuted, name, '90-terminal.json'));
         if (Date.parse(value.at) >= sinceMs) out.push({ at: Date.parse(value.at), reason: UNEXECUTED_REASONS.includes(value.reason) ? value.reason : null, klass: typeof value.facts?.class === 'string' ? value.facts.class : null,
-          ...(value.facts?.class === 'train-work' ? { ciRetryAfter: Date.parse(value.facts.ciRetryAfter ?? '') } : {}) });
+          ...(value.key === key && value.outcome === 'NOT_EXECUTED' && value.facts?.class === 'train-work'
+            ? { ciRetryAfter: Date.parse(value.facts.ciRetryAfter ?? ''), failureCode: typeof value.facts.failureCode === 'string' ? value.facts.failureCode : null } : {}) });
       } catch (error) {
         if (!contentError(error)) throw error;
         out.push({ at: this.clock(), reason: null, klass: null });

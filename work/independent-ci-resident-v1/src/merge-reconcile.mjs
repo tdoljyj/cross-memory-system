@@ -259,7 +259,7 @@ export class MergeReconciler {
     if (sentAt < d.lastTickAt) fail('MERGE_RECONCILE_CLOCK_BACKWARD');
     const requestId = randomUUID();
     const newestRun = runs.reduce((newest, run) => Math.max(newest, run.id), 0);
-    const dispatch = await dispatchByTrainEffect(this.dispatchTrainEffect,
+    const dispatch = await dispatchByTrainEffect(this,
       { repo: this.repo, ref: RECONCILE_REF, subject: [RECONCILE_WORKFLOW, newestRun], requestId },
       async () => {
         d.pending = { requestId, at: sentAt, sourceSha256: this.pinnedSource, phase: 'INTENT' };

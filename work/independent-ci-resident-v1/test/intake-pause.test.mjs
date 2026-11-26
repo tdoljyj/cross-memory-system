@@ -11,9 +11,12 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { INTAKE_PAUSE_UNCONFIRMED_MAX_MS, PAUSE_CONTRACT } from '../src/executor.mjs';
+import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { describe as prPage } from '../src/pr-status.mjs';
 import { batchKey } from '../src/ledger.mjs';
+import { RunQueue } from '../src/queue.mjs';
+import { until } from '../../../scripts/ci/test-clock-guard.mjs';
 import { drainRequest, inspect, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
 import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 import { TRAIN_CONTROL_TIMING, TRAIN_FAILURE, TRAIN_PROTOCOL_VERSION } from '../../actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs';
@@ -44,6 +47,10 @@ const stagesRun = engine => engine.calls.filter(c => c[0] === 'stage').map(c => 
 const receiptTypes = async f => (await fs.readdir(path.join(f.root, 'state', 'receipts'))).map(n => n.replace(/^\d+-|\.json$/g, ''));
 const pick = r => [r.state, r.reason ?? null];
 const json = v => Buffer.from(JSON.stringify(v));
+function trainPolicy(protocolVersion) {
+  const base = rawPolicy();
+  return { ...base, contract: POLICY_CONTRACT_V8, train: { ...base.train, ...TRAIN_DEFAULTS, protocolVersion } };
+}
 // Stage 8 not ready (park.test.mjs): the batch rests at parking point B; then stage 8 succeeds.
 const notReady = code => ({ ok: false, code, proof: WINDOWS_CLEAN, brokerNoLaunch: false,
   outcome: { status: 'BLOCKED', reason: code, sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: { ciRetryAfter: null, mergeQueue: { entered: false, state: null, position: null } }, safeToRerun: false } });
@@ -89,7 +96,7 @@ test('train v2: persistent dual-active and delayed renewal are retired, while Ow
 test('train v2: durable first-queue handoff releases new and recovered ordinary batches without another stage 8', async t => {
   for (const recovered of [false, true]) {
     const engine = stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]);
-    const f = await executorFixture(t, { engine, now: T0 });
+    const f = await executorFixture(t, { engine, now: T0, policy: recovered ? rawPolicy() : trainPolicy(TRAIN_PROTOCOL_VERSION) });
     await f.drop(triggerBytes());
     if (recovered) assert.equal((await f.exec.tick()).state, 'PARKED');
     const requests = [];
@@ -97,7 +104,7 @@ test('train v2: durable first-queue handoff releases new and recovered ordinary 
       requests.push({ key, subject });
       return { protocol_version: TRAIN_PROTOCOL_VERSION, key, receiptId: 'b7abb84e-43e9-438b-ac4f-664f4b217b76' };
     };
-    const running = recovered ? await executorFixture(t, { engine, now: T0 + MIN, root: f.root }) : f;
+    const running = recovered ? await executorFixture(t, { engine, now: T0 + MIN, root: f.root, policy: trainPolicy(TRAIN_PROTOCOL_VERSION) }) : f;
     assert.equal((await running.exec.tick()).state, 'COMPLETED');
     assert.equal(requests.length, 1);
     assert.equal(requests[0].subject.headSha, HEAD);
@@ -119,7 +126,7 @@ test('train v2: missing or wrong handoff keeps the archive, lets another PR run 
     }
     return { protocol_version: TRAIN_PROTOCOL_VERSION, key, receiptId: 'b7abb84e-43e9-438b-ac4f-664f4b217b76' };
   };
-  const f = await executorFixture(t, { engine, now: T0 });
+  const f = await executorFixture(t, { engine, now: T0, policy: trainPolicy(TRAIN_PROTOCOL_VERSION) });
   await f.drop(triggerBytes());
   assert.deepEqual(pick(await f.exec.tick()), ['PARKED', TRAIN_FAILURE.EFFECT_UNKNOWN.resident]);
   assert.equal(f.queue.row(884).state, 'PARKED');
@@ -142,6 +149,103 @@ test('train v2: missing or wrong handoff keeps the archive, lets another PR run 
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
   assert.equal((await f.ledger.state(expected)).outcome, 'COMPLETED');
 });
+
+test('片 5 审查 1：选择协议 2 但缺少交接端口时，恢复旧 B 批不得再跑第 8 段', async t => {
+  const stage8Calls = async protocolVersion => {
+    const engine = stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]);
+    const old = await executorFixture(t, { engine, now: T0 });
+    await old.drop(triggerBytes());
+    assert.equal((await old.exec.tick()).state, 'PARKED');
+    engine.calls.length = 0;
+    const running = await executorFixture(t, { engine, now: T0 + 11 * MIN, root: old.root, policy: trainPolicy(protocolVersion) });
+    await running.exec.tick();
+    return stagesRun(engine).filter(stage => stage === 8).length;
+  };
+  assert.equal(await stage8Calls(1), 1);
+  assert.equal(await stage8Calls(TRAIN_PROTOCOL_VERSION), 0);
+});
+
+for (const recovered of [true, false]) {
+  test(`片 5 审查 4：${recovered ? '旧' : '新'} B 批的读回越过截止信号后释放执行器`, async t => {
+    const engine = stage8Engine(Array.from({ length: 2 }, () => notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')));
+    const policy = trainPolicy(TRAIN_PROTOCOL_VERSION);
+    const old = await executorFixture(t, { engine, now: T0, policy: recovered ? rawPolicy() : policy });
+    await old.drop(triggerBytes());
+    const second = triggerBytes({ pr: 900, headSha: H(4) });
+    if (recovered) {
+      assert.equal((await old.exec.tick()).state, 'PARKED');
+      await old.drop(second);
+      assert.equal((await old.exec.tick()).state, 'PARKED');
+    }
+    engine.calls.length = 0;
+    const f = recovered ? await executorFixture(t, { engine, now: T0 + MIN, root: old.root, policy }) : old;
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let firstRead = null, firstResult = null;
+    const late = Promise.withResolvers();
+    const reply = key => ({ protocol_version: TRAIN_PROTOCOL_VERSION, key, receiptId: 'b7abb84e-43e9-438b-ac4f-664f4b217b76' });
+    engine.handoffTrainWork = async ({ key, subject, signal }) => {
+      if (subject.pr !== 884) return reply(key);
+      firstRead = { key, signal };
+      return late.promise;
+    };
+    const tick = f.exec.tick().then(result => { firstResult = result; return result; });
+    try {
+      await until(() => firstRead, '第一个 PR 开始交接读回');
+      t.mock.timers.tick(TRAIN_CONTROL_TIMING.recheckMs);
+      assert.equal(firstRead.signal?.aborted, true, '截止时取消挂起的读回');
+      await until(() => firstResult, '交接截止后首个 tick 返回待核对');
+      assert.deepEqual(pick(firstResult), ['PARKED', TRAIN_FAILURE.EFFECT_UNKNOWN.resident]);
+      assert.equal(f.queue.row(884).parked?.reason, TRAIN_FAILURE.EFFECT_UNKNOWN.resident);
+      if (recovered) f.advance(TRAIN_CONTROL_TIMING.recheckMs); // 第一个批也已到重试时间，仍应先处理从未读回的批。
+      else await f.drop(second);
+      assert.equal((await f.exec.tick()).state, 'COMPLETED');
+      assert.equal(f.queue.row(900).state, 'DONE');
+      assert.equal(stagesRun(engine).includes(8), false);
+    } finally {
+      late.resolve(reply(batchKey(subject())));
+      await tick;
+    }
+    assert.equal((await f.ledger.state(firstRead.key)).outcome ?? null, null, '超时后的迟到回执不得结清');
+  });
+}
+
+for (const result of ['HEAD_LEASE_HELD', 'HEAD_LEASE_COMPLETED']) {
+  test(`片 5 审查 5：${result} 已归档但队列仍为 RUNNING 时恢复原结算`, async t => {
+    const engine = fakeEngine();
+    const code = TRAIN_FAILURE[result];
+    const held = result === 'HEAD_LEASE_HELD';
+    const retryAt = T0 + TRAIN_CONTROL_TIMING.leaseMs;
+    engine.runStage = async (_batch, request) => {
+      engine.calls.push(['stage', request.number]);
+      return { ok: false, code: code.resident, proof: WINDOWS_CLEAN,
+        outcome: { status: 'BLOCKED', reason: code.native, sideEffects: 0, mayHavePublished: false,
+          scheduling: { ciRetryAfter: held ? iso(retryAt) : null } } };
+    };
+    const first = await executorFixture(t, { engine, now: T0 });
+    const release = first.ledger.releaseUnexecuted.bind(first.ledger);
+    first.ledger.releaseUnexecuted = async (...args) => {
+      const archived = await release(...args);
+      first.exec.persistQueue = async () => {}; // 丢失归档后的队列落盘。
+      return archived;
+    };
+    await first.drop(triggerBytes());
+    const ended = await first.exec.tick();
+    if (held) assert.equal(ended.failureCode, code.resident);
+    else assert.equal(ended.state, 'COMPLETED');
+    const restarted = await executorFixture(t, { engine, now: T0 + 15_000, root: first.root });
+    assert.equal(restarted.queue.row(884).state, 'RUNNING');
+    await restarted.exec.tick();
+    const queueOnDisk = await RunQueue.open(path.join(first.root, 'state', 'queue'), restarted.clock);
+    assert.equal(queueOnDisk.row(884).state, held ? 'BACKOFF' : 'DONE');
+    if (held) assert.equal(queueOnDisk.row(884).nextAt, retryAt);
+    else {
+      assert.equal(restarted.queue.row(884).running, null);
+      restarted.advance(11 * MIN);
+      await restarted.exec.tick();
+    }
+    assert.deepEqual(stagesRun(engine), [1], '没有多跑一遍第 1 段');
+  });
+}
 
 test('train v2: shared head lease held defers to server time and completed settles without budget or role changes', async t => {
   const engine = fakeEngine();
