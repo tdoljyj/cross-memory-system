@@ -61,6 +61,7 @@ const trainAction = {
   readRuleBypass: ['landing_prepare', 'read_rule_bypass'],
   verifyMember: ['landing_prepare', 'verify_member'],
   readRequiredRuns: ['landing_prepare', 'read_required_runs'],
+  bisectBatch: ['batch_bisect', 'bisect_batch'],
   prepareLanding: ['landing_prepare', 'prepare_landing'],
   authorizeLandingSend: ['landing_send', 'authorize_landing_send'],
   reconcileLanding: ['landing_reconcile', 'reconcile_landing'],

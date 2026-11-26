@@ -515,13 +515,29 @@ export function renderSummary(result) {
   return `${lines.join("\n")}\n`;
 }
 
+export function executorEntryAllowed(env, event) {
+  if (env.GITHUB_REF !== 'refs/heads/main' || env.GITHUB_RUN_ATTEMPT !== '1') return false;
+  if (env.GITHUB_EVENT_NAME === 'push') return true;
+  if (env.GITHUB_EVENT_NAME === 'workflow_run') {
+    return event?.action === 'completed' && ['pull_request', 'pull_request_target'].includes(event.workflow_run?.event);
+  }
+  const owner = env.GITHUB_REPOSITORY_OWNER;
+  return env.GITHUB_EVENT_NAME === 'workflow_dispatch' && Boolean(owner)
+    && env.GITHUB_ACTOR === owner && env.GITHUB_TRIGGERING_ACTOR === owner
+    && event?.repository?.owner?.login === owner;
+}
+
 export async function main(env = process.env, fetchImpl = globalThis.fetch) {
-  if(env.GITHUB_EVENT_NAME==='workflow_dispatch'&&env.GITHUB_EVENT_PATH){
-    const event=JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH,'utf8'));
-    if(event.inputs?.measurement_opt_in==='true'){
-      const recorded=await runRecordedHolderOperation({env,fetchImpl,workspace:env.GITHUB_WORKSPACE,input:event.inputs});
-      console.log(JSON.stringify(recorded));return recorded.status==='RECORDED_ORIGINAL_OPERATION'?0:1;
-    }
+  const event = env.GITHUB_EVENT_PATH && env.GITHUB_EVENT_NAME !== 'push'
+    ? JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : null;
+  if (!executorEntryAllowed(env, event)) {
+    console.error('clued-merge-executor: event, actor or run attempt refused');
+    return 1;
+  }
+  if (env.GITHUB_EVENT_NAME === 'workflow_dispatch' && event.inputs?.measurement_opt_in === 'true') {
+    const recorded = await runRecordedHolderOperation({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE, input: event.inputs });
+    console.log(JSON.stringify(recorded));
+    return recorded.status === 'RECORDED_ORIGINAL_OPERATION' ? 0 : 1;
   }
   const result = await runExecutor({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE });
   console.log(JSON.stringify(result, null, 2));

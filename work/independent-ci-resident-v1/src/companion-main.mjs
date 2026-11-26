@@ -30,6 +30,7 @@ import { PANEL_REPO, PanelDispatchState, PanelDispatcher, validatePanelDispatchC
 import {MergeReconcileState,MergeReconciler} from './merge-reconcile.mjs';
 import {MERGE_RECONCILE_REPO,MERGE_RECONCILE_WORKFLOW_SHA256,validateMergeReconcileConfig} from './merge-reconcile-config.mjs';
 import { AdmissionRerunState, AdmissionRerunner, RERUN_LANE_EVERY_MS, ghPort } from './admission-rerun.mjs';
+import { createTrainRecoveryPort } from './train-recovery.mjs';
 import { FRONT_MERGE_LANE_EVERY_MS, FRONT_MERGE_REPO, FrontMergeDispatchState, FrontMergeDispatcher } from './front-merge-dispatch.mjs';
 import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
 import { NotifyQueue, notifyQueueDir, queueNotify } from './notify-queue.mjs';
@@ -441,7 +442,9 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect }
   // Generation 12 (DESIGN §56.5, Decision 207c0cd0 v2): the one repair re-run of the required tests the admission gate allows, clicked
   // with the Owner's gh login when the gate timed out before stage 1's admission. Its own Runner and its own memory file.
   const rerunRunner = new Runner({ env: { ...process.env }, jobHost });
-  const rerunner = new AdmissionRerunner({ gh: ghPort({ ghExe: raw.ghExe, repo: raw.repo, nodeName: cfg.node.nodeName, run: (a, o) => rerunRunner.run(a, o) }),
+  const rerunner = new AdmissionRerunner({ gh: ghPort({ ghExe: raw.ghExe, repo: raw.repo, nodeName: cfg.node.nodeName, run: (a, o) => rerunRunner.run(a, o),
+    trainRecovery: createTrainRecoveryPort({ repository: raw.repo, appId: process.env.CLUED_TRAIN_REPAIR_APP_ID,
+      keyFile: process.env.CLUED_TRAIN_REPAIR_APP_KEY_FILE }) }),
     state: await AdmissionRerunState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-admission-rerun.json')),
     clock: Date.now, readStatus: () => readStatus(values.root), pulls: () => (poller.lastPass ? poller.lastPass.pulls : null),
     notify });

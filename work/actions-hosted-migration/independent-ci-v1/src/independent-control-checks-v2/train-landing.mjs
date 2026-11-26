@@ -310,39 +310,87 @@ function checksDecision(required, checks, commitSha, now) {
   return pending ? TRAIN_LANDING_CHECKS_PENDING : null;
 }
 
-const RETIRED_CONTROL_CHECKS = new Set(['kooyumi-admission-verified', 'kooyumi-merge-slot']);
-const runPlatform = value => value === 'linux' || value === 'windows';
-const requiredKey = (name, appId) => JSON.stringify([name, appId]);
+// A completed Actions check must belong to the shared attempt of this
+// batch. Only the registered, provider-observed job can attest a test red.
+const TRAIN_STAGING_WORKFLOWS = {
+  linux: '.github/workflows/clued-required-tests.yml',
+  windows: '.github/workflows/clued-required-tests-windows.yml',
+};
+const workflowForRun = run => run.checkName.startsWith('hosted-')
+  ? '.github/workflows/hosted-required.yml' : TRAIN_STAGING_WORKFLOWS[run.platform];
+const TRAIN_TERMINAL_STEP = 'Confirm merge train test failure';
+
+export async function exactTrainChecksDecision({ rules, inventory, batch, github, now = Date.now() }) {
+  const wait = { reason: TRAIN_LANDING_CHECKS_PENDING };
+  const lists = Array.isArray(rules) ? rules.filter(r => r.type === 'required_status_checks') : [];
+  if (!lists.length || lists.some(r => !Array.isArray(r.parameters?.required_status_checks)
+    || r.parameters.required_status_checks.some(c => typeof c?.context !== 'string' || !c.context || !positive(c.integration_id))))
+    return { reason: TRAIN_LANDING_RULES_MISSING };
+  const required = [...new Map(lists.flatMap(r => r.parameters.required_status_checks)
+    .filter(c => c.context !== TRAIN_ONLY_CHECK)
+    .map(c => [JSON.stringify([c.context, c.integration_id]), { context: c.context, pin: c.integration_id }])).values()];
+  if (!required.length || batch?.requiredRunRecovery?.length || !SHA.test(batch?.testSha ?? '') || inventory?.complete !== true || !Array.isArray(inventory.checks)
+    || inventory.checks.some(c => !positive(c?.id)) || new Set(inventory.checks.map(c => c.id)).size !== inventory.checks.length)
+    return wait;
+
+  const registered = new Map();
+  if (required.some(c => c.pin === ACTIONS_APP_ID)) {
+    if (!Array.isArray(batch.requiredRuns)) return wait;
+    for (const run of batch.requiredRuns) {
+      if (!plain(run) || TRAIN_REQUIRED_RUN_FIELDS.some(key => !Object.hasOwn(run, key)) || run.testSha !== batch.testSha
+        || run.policyVersion !== batch.policyVersion || !Object.hasOwn(TRAIN_STAGING_WORKFLOWS, run.platform)
+        || typeof run.checkName !== 'string' || !run.checkName || !positive(run.runId) || !positive(run.attempt)
+        || registered.has(run.checkName)) return wait;
+      registered.set(run.checkName, { ...Object.fromEntries(TRAIN_REQUIRED_RUN_FIELDS.map(field => [field, run[field]])),
+        runId: run.runId, attempt: run.attempt });
+    }
+    if (required.some(c => c.pin === ACTIONS_APP_ID && !registered.has(c.context))) return wait;
+  }
+
+  const runs = [...registered.values()].sort((a, b) => Buffer.compare(Buffer.from(a.checkName), Buffer.from(b.checkName)));
+  const observations = new Map();
+  let pending = false;
+  for (const c of required) {
+    const latest = runsOfRequired(inventory.checks, c, batch.testSha).reduce((a, check) => (!a || check.id > a.id ? check : a), null);
+    if (latest?.status !== 'completed') { pending = true; continue; }
+    if (c.pin !== ACTIONS_APP_ID) {
+      pending ||= latest.conclusion !== 'success';
+      continue;
+    }
+    const binding = registered.get(c.context);
+    const workflow = workflowForRun(binding);
+    const key = workflow + ':' + binding.runId + ':' + binding.attempt;
+    if (!observations.has(key)) {
+      const observed = await Promise.resolve().then(() => github.readTrainRun({ ...binding, workflow })).catch(() => null);
+      observations.set(key, observed);
+    }
+    const native = observations.get(key);
+    const jobs = Array.isArray(native?.jobs) ? native.jobs : [];
+    const matches = jobs.filter(job => job.checkRunId === latest.id && job.name === c.context
+      && job.status === 'completed' && job.conclusion === latest.conclusion);
+    if (matches.length !== 1) { pending = true; continue; }
+    if (latest.conclusion === 'success') continue;
+
+    pending = true;
+    const steps = Array.isArray(matches[0].steps) ? matches[0].steps.filter(step => step?.name === TRAIN_TERMINAL_STEP) : [];
+    if (latest.conclusion !== 'failure' || !(now - Date.parse(latest.completed_at) >= CHECK_FAILURE_GRACE_MS)
+      || steps.length !== 1 || steps[0].status !== 'completed' || steps[0].conclusion !== 'success') continue;
+    try {
+      if (await github.sameTrainWorkflow({ workflow, baseSha: batch.baseSha, testSha: batch.testSha }) !== true) continue;
+      const notes = await github.readCheckAnnotations(latest.id);
+      const marker = new RegExp('^[a-z0-9-]+ ' + batch.testSha + '$');
+      if (Array.isArray(notes) && notes.some(note => note?.annotation_level === 'failure'
+        && note.title === 'Merge train test failure' && marker.test(note.message ?? ''))) {
+        return { reason: TRAIN_LANDING_CHECK_FAILED, runs, evidence: { ...binding, appId: c.pin, checkRunId: latest.id } };
+      }
+    } catch { /* a provider read cannot prove a terminal failure */ }
+  }
+  return pending ? wait : { reason: null, runs };
+}
+
 const requiredLists = rules => Array.isArray(rules) ? rules.filter(r => r.type === 'required_status_checks') : [];
 const pinnedList = rule => Array.isArray(rule.parameters?.required_status_checks)
   && rule.parameters.required_status_checks.every(c => typeof c?.context === 'string' && c.context && positive(c.integration_id));
-
-export function exactTrainChecksDecision({ rules, inventory, commitSha, appId, policyVersion, runEvidence, now = Date.now() }) {
-  const lists = requiredLists(rules);
-  if (!lists.length || !lists.every(pinnedList)) return TRAIN_LANDING_RULES_MISSING;
-  const required = new Map(lists.flatMap(r => r.parameters.required_status_checks)
-    .filter(c => c.context !== TRAIN_ONLY_CHECK && !(c.integration_id === appId && RETIRED_CONTROL_CHECKS.has(c.context)))
-    .map(c => [requiredKey(c.context, c.integration_id), { context: c.context, pin: c.integration_id }]));
-  if (!required.size || inventory?.complete !== true || !Array.isArray(inventory.checks)
-    || inventory.checks.some(c => !positive(c?.id)) || new Set(inventory.checks.map(c => c.id)).size !== inventory.checks.length
-    || runEvidence?.complete !== true || !Array.isArray(runEvidence.requirements) || !Array.isArray(runEvidence.runs))
-    return TRAIN_LANDING_CHECKS_PENDING;
-
-  const platforms = new Map(runEvidence.requirements.map(r => [requiredKey(r?.checkName, r?.appId), r?.platform]));
-  if (platforms.size !== runEvidence.requirements.length || platforms.size !== required.size)
-    return TRAIN_LANDING_CHECKS_PENDING;
-  const bound = new Map(runEvidence.runs.map(r => [r?.checkRunId, r]));
-  if (bound.size !== runEvidence.runs.length) return TRAIN_LANDING_CHECKS_PENDING;
-  for (const [key, check] of required) {
-    const platform = platforms.get(key);
-    const newest = runsOfRequired(inventory.checks, check, commitSha).reduce((a, r) => !a || r.id > a.id ? r : a, null);
-    const run = bound.get(newest?.id);
-    if (!runPlatform(platform) || !run || !TRAIN_REQUIRED_RUN_FIELDS.every(f => Object.hasOwn(run, f))
-      || run.testSha !== commitSha || run.checkName !== check.context || run.appId !== check.pin
-      || run.platform !== platform || run.policyVersion !== policyVersion) return TRAIN_LANDING_CHECKS_PENDING;
-  }
-  return checksDecision([...required.values()], inventory.checks, commitSha, now);
-}
 
 export async function trainV2RulesValid({ rules, appId, readBypass }) {
   const lists = requiredLists(rules);

@@ -232,7 +232,8 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
   // E3 (bf57ff10 P2): SHA-fixed GitHub reads are fetched once per entry process (immutableReadCache); all else as before.
   const fetchImpl = immutableReadCache(retryingFetch, { live, onHit: url => timing(url, { method: 'GET', status: 200, ms: 0, cache: true }) });
   const github = createGitHubChecksPort({ repository: record.config.repository, repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId,
-    installationId: FIXED_APP.installationId, includeModeRead: true, privateKeyProvider: async () => appKey, fetchImpl, budgetObserver, budgetObservedAtFetch: true, stagedScanJournal, batchRoute });
+    installationId: FIXED_APP.installationId, includeModeRead: true,
+    includeActionsRead: record.config.mergeTrainProtocolVersion === 2, privateKeyProvider: async () => appKey, fetchImpl, budgetObserver, budgetObservedAtFetch: true, stagedScanJournal, batchRoute });
   const admission = createFullAdmissionPortV2({ protectedConfig: { ...record.config, ciPrincipalBindingId: bindingId, domain: 'production', workspace: sourceRoot, policyText }, fetchImpl, batchRoute,
     modeProvider: () => github.readAdmissionMode(),
     tokenProvider: async () => ({ githubToken: await github.getInstallationToken(), ciAdmissionToken: nativeToken, ciPrincipalBindingId: bindingId, ciPrincipalQualificationRef: record.config.ciPrincipalQualificationRef }),
@@ -241,7 +242,7 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
     CLUED_SUPABASE_PUBLISHABLE_KEY: record.config.publishableKey };
   const commands = new Set(['publication_begin_independent','publication_finish','publication_abort_independent','publication_reconcile','revocations_list',
     'independent_revocation_heads','independent_legacy_drain_finish','scan_start_independent','resolve_pr_claim']);
-  const trainCommands = new Set(['role_probe', 'batch_reserve', 'batch_seal', 'staging_publish',
+  const trainCommands = new Set(['role_probe', 'batch_reserve', 'batch_seal', 'batch_bisect', 'staging_publish',
     'landing_prepare', 'landing_send', 'landing_reconcile', 'landing_invalidate', 'claim_adopt']);
   const native = Object.freeze({ trainProtocolVersion: train?.protocolVersion ?? null, train, async command(input, options = {}) {
     live();

@@ -68,7 +68,7 @@ import { STAGE8_LEASE_MINUTES, extendLeaseIfShort, leaseAfter } from './claim-as
 import { digest } from '../proof.mjs';
 import { freshStamp } from '../clock-skew.mjs';
 import { LANDING_NOT_READY_REASONS, LANDING_FINAL_REASONS, TRAIN_BATCH_CHANGED, TRAIN_BATCH_WITHOUT_PUSH, TRAIN_LANDING_REFUSED, TRAIN_LANDING_UNCONFIRMED,
-  TRAIN_LANDING_RULES_MISSING, readLandingRoute, rehearsalOf, externalChecksDecision, readBatchChain, landMain, landTrainIntent,
+  TRAIN_LANDING_RULES_MISSING, TRAIN_LANDING_CHECK_FAILED, readLandingRoute, rehearsalOf, externalChecksDecision, readBatchChain, landMain, landTrainIntent,
   reconcileTrainIntent, trainMainContains, validTrainMembers, exactTrainChecksDecision, trainV2RulesValid, fixTrainMarker, ABSENT_OID } from './train-landing.mjs';
 import { TRAIN_CHECK_EFFECT_FIELDS, TRAIN_FAILURE, TRAIN_PROTOCOL_VERSION, trainBatchKey, trainEffectKey, trainLandingSlotKey } from '../merge-train-v2-contract.mjs';
 import { makeJobV2, validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, sameClaimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
@@ -798,13 +798,24 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
           check(await trainV2.verifyMember({ batch, member }) === true, TRAIN_BATCH_CHANGED);
         }
         const inventory = await github.readChecks(job.testSha);
-        const runEvidence = await trainV2.readRequiredRuns({ batch });
-        const reason = exactTrainChecksDecision({ rules, inventory, runEvidence,
-          commitSha: job.testSha, appId: APP_ID, policyVersion: batch.policyVersion, now: clock() });
-        if (reason) return blocked(reason);
+        const verdict = await exactTrainChecksDecision({ rules, inventory, batch, github, now: clock() });
+        if (verdict.reason) {
+          if (verdict.reason === TRAIN_LANDING_CHECK_FAILED && batch.members.length > 1) {
+            // Native consumes the exact batch/generation/S once and derives
+            // the prefix. Replaying the read never authorizes a main write.
+            const refs = await landing.readTrainRefs();
+            check(refs.mainSha === batch.baseSha && refs.stagingSha === batch.testSha
+              && refs.generationRefOid === batch.generationRefOid, TRAIN_BATCH_CHANGED);
+            assertLive();
+            await trainV2.bisectBatch({ batch, terminal: verdict.evidence, evidenceDigest: digest(verdict.evidence),
+              requiredRunsSha256: digest(verdict.runs) });
+          }
+          return blocked(verdict.reason);
+        }
 
         assertLive();
-        const evidence = { observedAt, rulesSha256: digest({ rules, bypass }), checkInventorySha256: digest(inventory), runEvidenceSha256: digest(runEvidence) };
+        const evidence = { observedAt, rulesSha256: digest({ rules, bypass }), checkInventorySha256: digest(inventory),
+          requiredRunsSha256: digest(verdict.runs) };
         let prepared = await trainV2.prepareLanding({ batch, evidence });
         intent = prepared?.intent;
         check(matches(intent), TRAIN_FAILURE.LEASE_STALE.resident);

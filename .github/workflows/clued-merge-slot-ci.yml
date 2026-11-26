@@ -18,8 +18,8 @@ name: clued-merge-slot-ci
 # the clued-admission environment's token and App key (deployment branches
 # limited to main). The triggering event is only a signal: the script reads
 # the pull requests, check runs and workflow runs itself and trusts nothing in
-# the event. The job's condition uses the event only to skip runs of push and
-# schedule events, which are never a pull request's head. A pull request
+# the event. Only a fresh PR completion or a fresh Owner dispatch may
+# enter the job that holds write credentials. A pull request
 # cannot change this file for its own run.
 #
 # The workflows below are the CI workflows by name: gitleaks, trivy, the
@@ -68,9 +68,12 @@ jobs:
   report:
     name: clued-merge-slot-ci
     if: >-
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.event == 'pull_request' ||
-      github.event.workflow_run.event == 'pull_request_target'
+      github.ref == 'refs/heads/main' && github.run_attempt == 1 &&
+      ((github.event_name == 'workflow_run' && github.event.action == 'completed' &&
+        (github.event.workflow_run.event == 'pull_request' ||
+         github.event.workflow_run.event == 'pull_request_target')) ||
+       (github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner &&
+        github.triggering_actor == github.repository_owner))
     runs-on: ubuntu-slim
     timeout-minutes: 10
     environment: clued-admission

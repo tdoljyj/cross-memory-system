@@ -19,7 +19,7 @@ import { parseLandingArg, prepareStageDirectory } from '../src/resident-v2/invok
 import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { SCAFFOLD_RULESET, checkRun, mainRules, portRules, s7Green, scaffoldRules } from './s7-rules-fixture.mjs';
 import { multiDutyClock, multiDutyGitHub } from '../../../independent-ci-resident-v1/test/multi-duty-fixture.mjs';
-import { TRAIN_FAILURE, TRAIN_PROTOCOL_VERSION, trainBatchKey, trainEffectKey, trainLandingSlotKey } from '../src/merge-train-v2-contract.mjs';
+import { TRAIN_FAILURE, TRAIN_PROTOCOL_VERSION, TRAIN_REQUIRED_RUN_FIELDS, trainBatchKey, trainEffectKey, trainLandingSlotKey } from '../src/merge-train-v2-contract.mjs';
 import * as maintenance from '../src/independent-control-checks-v2/train-maintenance.mjs';
 import { createFixtureControlPublisherV2, createProductionControlPublisherV2 } from '../src/independent-control-checks-v2/publisher.mjs';
 import { makeJobV2 } from '../src/job-v2.mjs';
@@ -257,9 +257,15 @@ function stage8World({ policyVersion = 'test' } = {}) {
   let runPolicy = policyVersion;
   let inventory = s7Green(S3), qualified = false, sent = 0;
   const verified = [];
+  const providerChecks = inventory.filter(c => c.app.id === 15368);
+  const runIdOf = name => name.startsWith('hosted-') ? 103 : platformOf(name) === 'windows' ? 102 : 101;
+  let platformOverride;
   const trainV2 = {
     protocolVersion: TRAIN_PROTOCOL_VERSION,
-    readBatch: async () => batch,
+    readBatch: async () => ({ ...batch, requiredRuns: providerChecks.map(check => ({
+      testSha: S3, checkName: check.name, platform: platformOverride?.(check.name) ?? platformOf(check.name),
+      policyVersion: runPolicy, runId: runIdOf(check.name), attempt: 1,
+    })) }),
     atomicLandingQualified: async () => qualified,
     readRuleBypass: async ({ rulesetId }) => rulesetId === FF_RS ? [] : [{ actor_id: APP, actor_type: 'Integration', bypass_mode: 'always' }],
     verifyMember: async ({ member }) => { verified.push(member); return true; },
@@ -296,6 +302,13 @@ function stage8World({ policyVersion = 'test' } = {}) {
       base: { sha: T, ref: 'main', repo: { full_name: REPO } } }),
     readCompare: async (baseSha, headSha) => ({ baseSha, headSha, mergeBaseSha: baseSha, status: 'ahead', behindBy: 0 }),
     readChecks: async sha => { assert.equal(sha, S3); return { complete: true, checks: inventory }; },
+    async readTrainRun({ runId, attempt, testSha, workflow }) {
+      assert.equal(testSha, S3);
+      if (attempt !== 1 || workflow !== ({ 101: '.github/workflows/clued-required-tests.yml',
+        102: '.github/workflows/clued-required-tests-windows.yml', 103: '.github/workflows/hosted-required.yml' })[runId]) return null;
+      return { jobs: providerChecks.filter(check => runIdOf(check.name) === runId)
+        .map(check => ({ ...check, checkRunId: check.id })) };
+    },
   };
   const jobs = ['control-admission', 'control-merge-slot'].map(role => makeJobV2({ repo: REPO, pr: members[0].pr, headSha: H1,
     baseSha: T, testSha: S3, role, sourceManifestSha256: batch.sourceSha256, createdAt: batch.expiresAt, attempt: 1 }));
@@ -303,7 +316,7 @@ function stage8World({ policyVersion = 'test' } = {}) {
     clock: w.clock.now, sleep: async ms => w.clock.advance(ms), landing: w.port, trainMode: 'on', trainLanding: { landing: 'push' } }).publishPair(jobs, { waitUntil: Date.parse(batch.expiresAt) });
   return { ...w, batch, trainV2, github, run, jobs, verified, get sent() { return sent; },
     qualify: () => { qualified = true; }, get inventory() { return inventory; },
-    setInventory: value => { inventory = value; }, setRunPolicy: value => { runPolicy = value; },
+    setInventory: value => { inventory = value; }, setPlatform: fn => { platformOverride = fn; }, setRunPolicy: value => { runPolicy = value; },
     retireControlPair: () => { rules = rules.map(r => r.type !== 'required_status_checks' ? r : ({
       ...r, parameters: { ...r.parameters, required_status_checks: r.parameters.required_status_checks.filter(c => !CONTROL_PAIR.has(c.context) && c.context !== 'kooyumi-work-admission') },
     })); } };
@@ -613,8 +626,7 @@ for (const retired of [false, true]) test(`返修 2：控制对已从规则移�
   const w = stage8World();
   w.qualify();
   if (retired) w.retireControlPair();
-  const produced = w.inventory.filter(c => !CONTROL_PAIR.has(c.name)
-    && !(retired && c.name === 'kooyumi-work-admission'));
+  const produced = w.inventory.filter(c => !retired || !CONTROL_PAIR.has(c.name) && c.name !== 'kooyumi-work-admission');
   const withoutOne = [];
   for (const check of produced) {
     w.setInventory(produced.filter(c => c !== check));
@@ -640,11 +652,7 @@ test('返修 3：策略 B 重建同 S 批，策略 A 绿不能消费发送权', 
 test('返修 3：同 SHA、同策略、同检查 ID 的错平台证据仍不能落地', async () => {
   const w = stage8World();
   w.qualify();
-  const readRuns = w.trainV2.readRequiredRuns;
-  w.trainV2.readRequiredRuns = async () => {
-    const evidence = await readRuns();
-    return { ...evidence, runs: evidence.runs.map(run => run.checkName === 'ci-suites-windows' ? { ...run, platform: 'linux' } : run) };
-  };
+  w.setPlatform(name => name === 'ci-suites-windows' ? 'linux' : platformOf(name));
   const result = await w.run();
   assert.deepEqual([result.reason, w.sent, w.remote.totals().mainUpdates], [L.TRAIN_LANDING_CHECKS_PENDING, 0, 0]);
 });
@@ -1171,3 +1179,272 @@ test('landing records: exact batch records (the front first), the landing state 
   const fresh = await TrainSweepStore.open(store.directory);
   await assert.rejects(fresh.readLandingState(), /TRAIN_LANDING_STATE_UNREADABLE/);
 });
+
+test('列车 v2：A 登记运行后 B 只接受精确尝试及终局红', async t => {
+  const w = { intent: { batchId, effectId, slotId, generation: 1, baseSha: T, testSha: S3,
+    generationRefOid: G, landedRefOid: DONE, members, expiresAt: '2026-11-26T09:01:30Z' },
+    clock: multiDutyClock(Date.parse('2026-11-26T09:00:00Z')) };
+  const remote = multiDutyGitHub(w.clock);
+  let main = T, generation = G, allowLand = false;
+  const mainWrites = () => remote.totals().mainUpdates;
+  w.port = {
+    readTrainRefs: async () => ({ mainSha: main, generationRefOid: generation, stagingSha: S3 }),
+    landIntent: async () => {
+      assert.ok(allowLand);
+      return remote.write('land', () => { main = S3; generation = DONE; }, () => ['mainUpdates', S3, 'B']);
+    },
+  };
+  const batch = { ...w.intent, scope, steps: [S1, S2, S3], testTree: sha(60), sourceSha256: 'a'.repeat(64), policyVersion: 'test' };
+  const { rules, rulesets } = s7State();
+  let inventory = s7Green(S3), qualified = false, sent = 0;
+  const verified = [];
+  const byPlatform = name => name.includes('windows') ? 'windows' : 'linux';
+  const providerChecks = structuredClone(inventory.filter(check => check.app.id === 15368));
+  const linux = 800, windows = 801, hosted = 802;
+  const nativeRunId = name => name.startsWith('hosted-') ? hosted : byPlatform(name) === 'windows' ? windows : linux;
+  const register = check => ({
+    testSha: S3, checkName: check.name, platform: byPlatform(check.name), policyVersion: batch.policyVersion,
+    runId: nativeRunId(check.name), attempt: 1,
+  });
+  // A observes the original launches and writes the slice-0 tuples; B can
+  // recover them solely from the shared batch, even inside a fresh publisher.
+  const sharedRuns = providerChecks.map(register);
+  assert.ok(sharedRuns.every(run => TRAIN_REQUIRED_RUN_FIELDS.every(field => Object.hasOwn(run, field))));
+  for (const runId of new Set(sharedRuns.map(run => run.runId))) remote.count('requiredRuns', { testSha: S3, runId }, 'A');
+  let providerProof = false, trustedWorkflow = true, nativeAttempt = 1, bisected = 0;
+  const sharedBisections = new Set();
+  const trainV2 = {
+    protocolVersion: TRAIN_PROTOCOL_VERSION,
+    readBatch: async () => ({ ...structuredClone(batch), requiredRuns: structuredClone(sharedRuns) }),
+    async bisectBatch({ batch: observed, evidenceDigest }) {
+      assert.equal(observed.batchId, batchId);
+      assert.equal(observed.testSha, S3);
+      assert.match(evidenceDigest, /^[a-f0-9]{64}$/);
+      if (!sharedBisections.has(observed.testSha)) {
+        sharedBisections.add(observed.testSha);
+        bisected++;
+      }
+    },
+    atomicLandingQualified: async () => qualified,
+    readRuleBypass: async ({ rulesetId }) => rulesetId === FF_RS ? [] : [{ actor_id: APP, actor_type: 'Integration', bypass_mode: 'always' }],
+    verifyMember: async ({ member }) => { verified.push(member); return true; },
+    prepareLanding: async () => { assert.ok(allowLand); return { state: 'reserved', intent: w.intent }; },
+    async authorizeLandingSend(intent) {
+      assert.deepEqual(intent, w.intent);
+      sent++;
+      batch.landing = { state: 'sent', intent };
+      return true;
+    },
+    async reconcileLanding({ intent, result }) {
+      assert.equal(result.state, 'landed');
+      batch.landing = { state: 'settled', intent, receipt: { receiptId: 'landed-receipt', intent, generationRefOid: DONE } };
+      return { state: 'settled', effectId: intent.effectId };
+    },
+  };
+  const github = {
+    readBranchRules: async branch => ({ complete: true, branch, rules }),
+    readRuleset: async id => rulesets.get(id),
+    readGitCommit: async sha => ({ sha, tree: batch.testTree,
+      parents: new Map([[S1, [T, H1]], [S2, [S1, H2]], [S3, [S2, H3]]]).get(sha) }),
+    readPullRequest: async pr => ({ number: pr, state: 'open', draft: false,
+      head: { sha: members.find(m => m.pr === pr).headSha, repo: { full_name: REPO } },
+      base: { sha: T, ref: 'main', repo: { full_name: REPO } } }),
+    readChecks: async sha => { assert.equal(sha, S3); return { complete: true, checks: inventory }; },
+    async readTrainRun({ runId, attempt, testSha, workflow }) {
+      assert.equal(testSha, S3);
+      assert.equal(workflow, ({
+        [linux]: '.github/workflows/clued-required-tests.yml',
+        [windows]: '.github/workflows/clued-required-tests-windows.yml',
+        [hosted]: '.github/workflows/hosted-required.yml',
+      })[runId]);
+      if (attempt !== nativeAttempt) return null;
+      return { jobs: providerChecks.filter(check => nativeRunId(check.name) === runId)
+        .map(check => ({ ...check, checkRunId: check.id, steps: check.name === 'ci-suites' && providerProof
+          ? [{ name: 'Confirm merge train test failure', status: 'completed', conclusion: 'success' }] : [] })) };
+    },
+    sameTrainWorkflow: async () => trustedWorkflow,
+  };
+  const run = () => createFixtureControlPublisherV2({ github, journal: {}, admission: {}, assertLive() {}, record() {}, trainV2,
+    clock: w.clock.now, landing: w.port, trainMode: 'on', trainLanding: { landing: 'push' } }).publishPair(
+    ['control-admission', 'control-merge-slot'].map(role => makeJobV2({ repo: REPO, pr: members[0].pr, headSha: H1,
+      baseSha: T, testSha: S3, role, sourceManifestSha256: batch.sourceSha256, createdAt: batch.expiresAt, attempt: 1 })),
+    { waitUntil: Date.parse(batch.expiresAt) });
+  assert.equal((await run()).reason, L.TRAIN_LANDING_RULES_MISSING);
+  qualified = true;
+  const full = inventory;
+  const missing = inventory.find(r => r.name === 'ci-suites');
+  inventory = [...full.filter(r => r !== missing),
+    checkRun(1000, missing.name, APP, S3), checkRun(1001, missing.name, missing.app.id, H1)];
+  assert.equal((await run()).reason, L.TRAIN_LANDING_CHECKS_PENDING);
+  assert.equal(sent, 0);
+  assert.deepEqual(verified, members);
+  const failed = { ...missing, conclusion: 'failure', completed_at: '2026-11-26T08:50:00Z' };
+  const ordinary = [{ annotation_level: 'failure', title: 'Merge train test failure', message: `source-v2-node ${S3}` }];
+  github.readCheckAnnotations = async () => ordinary;
+  for (const [name, check] of [
+    ['skipped check', { ...failed, conclusion: 'skipped' }],
+    ['cancelled check', { ...failed, conclusion: 'cancelled' }],
+    ['timed-out check', { ...failed, conclusion: 'timed_out' }],
+    ['failure with a forged job annotation', failed],
+    ['green from a different workflow run', { ...missing, id: 1900 }],
+  ]) await t.test(name, async () => {
+    inventory = [...full.filter(r => r !== missing), check];
+    const providerCheck = providerChecks.find(check => check.id === missing.id);
+    providerCheck.conclusion = check.conclusion;
+    assert.equal((await run()).reason, L.TRAIN_LANDING_CHECKS_PENDING);
+    assert.equal(sent, 0);
+    assert.equal(mainWrites(), 0);
+    assert.equal(bisected, 0);
+    providerCheck.conclusion = 'success';
+  });
+  await t.test('shared registration cannot advance to a new attempt without a receipt', async () => {
+    inventory = full;
+    nativeAttempt = 2;
+    assert.equal((await run()).reason, L.TRAIN_LANDING_CHECKS_PENDING);
+    nativeAttempt = 1;
+  });
+  await t.test('stable red needs a trusted workflow and one shared bisection receipt', async () => {
+    inventory = [...full.filter(r => r !== missing), failed];
+    const providerCheck = providerChecks.find(check => check.id === missing.id);
+    providerCheck.conclusion = 'failure';
+    providerProof = true;
+    trustedWorkflow = false;
+    assert.equal((await run()).reason, L.TRAIN_LANDING_CHECKS_PENDING);
+    assert.equal(bisected, 0);
+    trustedWorkflow = true;
+    assert.equal((await run()).reason, L.TRAIN_LANDING_CHECK_FAILED);
+    assert.equal((await run()).reason, L.TRAIN_LANDING_CHECK_FAILED);
+    assert.equal(bisected, 1);
+    assert.equal(mainWrites(), 0);
+    providerCheck.conclusion = 'success';
+    providerProof = false;
+  });
+  inventory = full;
+  allowLand = true;
+  remote.arm('land', { loseReply: true });
+  assert.equal((await run()).status, 'SETTLED');
+  batch.generation++;
+  generation = CANCEL;
+  assert.equal((await run()).status, 'SETTLED');
+  assert.equal(sent, 1);
+  assert.equal(mainWrites(), 1);
+  assert.equal(remote.totals().requiredRuns, 3);
+});
+
+test('stage file: exact bytes, defaults, refusals; only push may carry a batch; one PR per batch unless the stage file says the chain is installed', async t => {
+  assert.equal(L.stageTrainLandingText({ landing: 'push', batchMax: 3 }), '{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchMax":3}');
+  assert.throws(() => L.stageTrainLandingText({ landing: 'github-merge', batchMax: 2 }), /TRAIN_LANDING_REFUSED/);
+  assert.throws(() => L.stageTrainLandingText({ landing: 'push', batchMax: 5 }), /TRAIN_LANDING_REFUSED/);
+  assert.deepEqual(L.parseStageTrainLanding(null), { landing: 'github-merge', batchMax: 1, batchChain: false, unreadable: false });
+  assert.deepEqual(L.parseStageTrainLanding(Buffer.from(L.stageTrainLandingText({ landing: 'push', batchMax: 4 }))), { landing: 'push', batchMax: 4, batchChain: false, unreadable: false });
+  for (const bad of ['{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchMax":4}\n', '{"landing":"push"}', 'x', '{"contract":"clued.independent-ci.stage-train-landing/1","batchMax":4,"landing":"push"}'])
+    assert.deepEqual(L.parseStageTrainLanding(Buffer.from(bad)), { landing: 'github-merge', batchMax: 1, batchChain: false, unreadable: true }, bad);
+  const dir = await tempDir(t);
+  assert.deepEqual(await L.readStageTrainLandingFact(dir), { landing: 'github-merge', batchMax: 1, batchChain: false, unreadable: false });
+  await fs.writeFile(path.join(dir, L.STAGE_TRAIN_LANDING_FILE), 'broken');
+  assert.equal((await L.readStageTrainLandingFact(dir)).unreadable, true);
+  assert.equal(L.effectiveBatchMax({ landing: 'push', batchMax: 4 }), 1, 'one PR per batch unless the stage file says the chain is installed');
+  assert.equal(L.effectiveBatchMax({ landing: 'push', batchMax: 4, batchChain: false }), 1);
+  assert.equal(L.effectiveBatchMax({ landing: 'push', batchMax: 4, batchChain: true }), 4);
+  assert.equal(L.effectiveBatchMax({ landing: 'push', batchMax: 4, batchChain: true, unreadable: true }), 1);
+  assert.equal(L.effectiveBatchMax({ landing: 'github-merge', batchMax: 1, batchChain: true }), 1);
+  // the invoker: --train-landing <landing>:<n>, written for stages 8 and 10 only
+  assert.deepEqual(parseLandingArg('push:4'), { landing: 'push', batchMax: 4, batchChain: false });
+  assert.equal(parseLandingArg(undefined), null);
+  assert.throws(() => L.landingSettings(parseLandingArg('push:0')), /TRAIN_LANDING_REFUSED/);
+  const root = await tempDir(t), sealed = { files: { 'formal-service-entry.json': Buffer.from('{}'), 'jobs.json': Buffer.from('[]') } };
+  const stageDir = await prepareStageDirectory({ stageRoot: root, nonce: 'a'.repeat(32), sealed, trainLanding: { landing: 'push', batchMax: 2 } });
+  assert.deepEqual(await L.readStageTrainLandingFact(stageDir), { landing: 'push', batchMax: 2, batchChain: false, unreadable: false });
+});
+
+test('ADR 0019 stage file: batchChain (the resident found /4 installed) is written only when true, only in push mode, and is what lets stage 10 batch', async t => {
+  const chain = L.stageTrainLandingText({ landing: 'push', batchMax: 3, batchChain: true });
+  assert.equal(chain, '{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchMax":3,"batchChain":true}');
+  assert.equal(L.stageTrainLandingText({ landing: 'push', batchMax: 3, batchChain: false }), L.stageTrainLandingText({ landing: 'push', batchMax: 3 }), 'no chain: the bytes of before ADR 0019');
+  assert.deepEqual(L.parseStageTrainLanding(Buffer.from(chain)), { landing: 'push', batchMax: 3, batchChain: true, unreadable: false });
+  assert.equal(L.effectiveBatchMax(L.parseStageTrainLanding(Buffer.from(chain))), 3);
+  for (const bad of [{ landing: 'github-merge', batchMax: 1, batchChain: true }, { landing: 'push', batchMax: 3, batchChain: 'yes' }, { landing: 'push', batchMax: 3, batchChain: 1 }])
+    assert.throws(() => L.stageTrainLandingText(bad), /TRAIN_LANDING_REFUSED/, JSON.stringify(bad));
+  for (const bad of ['{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchMax":3,"batchChain":false}',
+    '{"contract":"clued.independent-ci.stage-train-landing/1","landing":"github-merge","batchMax":1,"batchChain":true}',
+    '{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchChain":true,"batchMax":3}']) {
+    const r = L.parseStageTrainLanding(Buffer.from(bad));
+    assert.deepEqual(r, { landing: 'github-merge', batchMax: 1, batchChain: false, unreadable: true }, bad);
+    assert.equal(L.effectiveBatchMax(r), 1, 'a file that cannot be read: one PR per batch');
+  }
+  // the invoker's argument: ':chain' only after push:<n>; github-merge with it is refused before anything is written
+  assert.deepEqual(parseLandingArg('push:3:chain'), { landing: 'push', batchMax: 3, batchChain: true });
+  for (const bad of ['push:3:chain:chain', 'push:3:Chain', 'push:3chain', 'push::chain']) assert.throws(() => L.landingSettings(parseLandingArg(bad)), /TRAIN_LANDING_REFUSED/, bad);
+  assert.throws(() => L.landingSettings(parseLandingArg('github-merge:1:chain')), /TRAIN_LANDING_REFUSED/);
+  const root = await tempDir(t), sealed = { files: { 'formal-service-entry.json': Buffer.from('{}'), 'jobs.json': Buffer.from('[]') } };
+  const stageDir = await prepareStageDirectory({ stageRoot: root, nonce: 'b'.repeat(32), sealed, trainLanding: parseLandingArg('push:3:chain') });
+  assert.equal(await fs.readFile(path.join(stageDir, L.STAGE_TRAIN_LANDING_FILE), 'utf8'), chain);
+  assert.deepEqual(await L.readStageTrainLandingFact(stageDir), { landing: 'push', batchMax: 3, batchChain: true, unreadable: false });
+  // the literals the resident looks for before it ever sends ':chain' (engine-windows.mjs BATCH_CHAIN_SOURCE_MARKERS)
+  const v2 = name => new URL(`../src/resident-v2/${name}`, import.meta.url);
+  assert.ok((await fs.readFile(v2('build-bundle.ps1'), 'utf8')).includes("$ChainContract='clued.independent-ci.resident-batch-descriptor/4'"));
+  assert.ok((await fs.readFile(v2('prepare-workspaces.py'), 'utf8')).includes("DESCRIPTOR_CHAIN_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/4'"));
+  assert.ok((await fs.readFile(v2('invoke-stage.mjs'), 'utf8')).includes("export const TRAIN_LANDING_CHAIN_ARG = 'chain';"));
+});
+
+test('batchChainOk: one member is exactly [T, H]; several walk first parents back to T with each head as a second parent, in order', () => {
+  const one = new Map([[S1, { sha: S1, tree: sha(9), parents: [T, H1] }]]);
+  assert.equal(L.batchChainOk({ commits: one, baseSha: T, heads: [H1], testSha: S1 }), true);
+  assert.equal(L.batchChainOk({ commits: one, baseSha: sha(8), heads: [H1], testSha: S1 }), false);
+  const chain = new Map([[S1, { sha: S1, parents: [T, H1] }], [S2, { sha: S2, parents: [S1, H2] }], [S3, { sha: S3, parents: [S2, H3] }]]);
+  assert.equal(L.batchChainOk({ commits: chain, baseSha: T, heads: [H1, H2, H3], testSha: S3 }), true);
+  assert.equal(L.batchChainOk({ commits: chain, baseSha: T, heads: [H1, H3, H2], testSha: S3 }), false, 'order matters');
+  assert.equal(L.batchChainOk({ commits: chain, baseSha: T, heads: [H2, H3], testSha: S3 }), false, 'a member left out');
+  chain.set(S2, { sha: S2, parents: [S1, H2, sha(10)] });
+  assert.equal(L.batchChainOk({ commits: chain, baseSha: T, heads: [H1, H2, H3], testSha: S3 }), false, 'an octopus is not a chain step');
+});
+
+test('ADR 0019 review 3: readBatchChain with the train\'s own merge results: each step must be exactly the commit that merge returned', async () => {
+  const commits = new Map([[S1, { sha: S1, tree: sha(11), parents: [T, H1] }], [S2, { sha: S2, tree: sha(12), parents: [S1, H2] }], [S3, { sha: S3, tree: sha(13), parents: [S2, H3] }]]);
+  const read = async s => { const c = commits.get(s); if (!c) throw new Error('404'); return structuredClone(c); };
+  const heads = [H1, H2, H3];
+  assert.deepEqual(await L.readBatchChain({ readGitCommit: read, baseSha: T, heads, testSha: S3 }), { ok: true, tree: sha(13) });
+  assert.deepEqual(await L.readBatchChain({ readGitCommit: read, baseSha: T, heads, testSha: S3, steps: [S1, S2, S3] }), { ok: true, tree: sha(13) });
+  // someone moved staging.tmp between two merges: step 1 is another commit of the same shape ([T, H1]) than the one the merge returned
+  const E = sha(20);
+  commits.set(E, { sha: E, tree: sha(21), parents: [T, H1] });
+  commits.set(S2, { sha: S2, tree: sha(12), parents: [E, H2] });
+  assert.equal((await L.readBatchChain({ readGitCommit: read, baseSha: T, heads, testSha: S3 })).ok, true, 'the shape alone cannot tell');
+  assert.deepEqual(await L.readBatchChain({ readGitCommit: read, baseSha: T, heads, testSha: S3, steps: [S1, S2, S3] }), { ok: false, tree: null });
+  assert.equal((await L.readBatchChain({ readGitCommit: read, baseSha: T, heads, testSha: S3, steps: [E, S2] })).ok, false, 'one step per member');
+});
+
+test('externalChecksDecision: the newest run by id of each other-App required check on the commit decides; the train-own checks are not looked at', () => {
+  const rules = [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'gitleaks', integration_id: APP }, { context: 'ci-suites', integration_id: 15368 },
+    { context: 'migration-verify', integration_id: 15368 }] } }];
+  const run = (id, name, conclusion, o = {}) => ({ id, name, head_sha: S1, app: { id: 15368 }, status: 'completed', conclusion, ...o });
+  const d = checks => L.externalChecksDecision({ rules, inventory: { complete: true, checks }, commitSha: S1, appId: APP });
+  assert.equal(d([run(1, 'ci-suites', 'success'), run(2, 'migration-verify', 'success')]), null);
+  assert.equal(d([run(1, 'ci-suites', 'success')]), L.TRAIN_LANDING_CHECKS_PENDING, 'missing');
+  assert.equal(d([run(1, 'ci-suites', 'success'), run(2, 'migration-verify', null, { status: 'in_progress' })]), L.TRAIN_LANDING_CHECKS_PENDING);
+  assert.equal(d([run(1, 'ci-suites', 'success'), run(2, 'migration-verify', 'failure')]), L.TRAIN_LANDING_CHECK_FAILED);
+  assert.equal(d([run(3, 'ci-suites', 'failure'), run(4, 'ci-suites', 'success'), run(2, 'migration-verify', 'success')]), null, 'a newer rerun wins');
+  assert.equal(d([run(5, 'ci-suites', 'failure'), run(4, 'ci-suites', 'success'), run(2, 'migration-verify', 'success')]), L.TRAIN_LANDING_CHECK_FAILED, 'the newest decides');
+  assert.equal(d([run(1, 'ci-suites', 'success', { app: { id: 999 } }), run(2, 'migration-verify', 'success')]), L.TRAIN_LANDING_CHECKS_PENDING, 'another App cannot stand in');
+  assert.equal(d([run(1, 'ci-suites', 'success', { head_sha: H1 }), run(2, 'migration-verify', 'success')]), L.TRAIN_LANDING_CHECKS_PENDING, 'another commit cannot stand in');
+  assert.equal(L.externalChecksDecision({ rules, inventory: { complete: false, checks: [] }, commitSha: S1, appId: APP }), L.TRAIN_LANDING_CHECKS_PENDING);
+});
+
+test('N9: only the newest verdict on S counts; inconclusive checks do not fail the batch', () => {
+  const rules = [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'migration-verify', integration_id: 15368 }] } }];
+  const now = Date.parse('2026-11-18T10:00:00Z');
+  const run = (id, conclusion, completedAt = '2026-11-18T09:00:00Z') => ({
+    id, name: 'migration-verify', head_sha: S1, app: { id: 15368 }, status: 'completed', conclusion, completed_at: completedAt,
+  });
+  const d = checks => L.externalChecksDecision({ rules, inventory: { complete: true, checks }, commitSha: S1, appId: APP, now });
+  for (const conclusion of ['cancelled', 'timed_out', 'stale', 'startup_failure']) {
+    assert.equal(d([run(1, 'success'), run(2, conclusion)]), L.TRAIN_LANDING_CHECKS_PENDING, conclusion);
+    assert.equal(d([run(1, conclusion), run(2, 'success')]), null, conclusion);
+  }
+  assert.equal(d([run(1, 'failure', '2026-11-18T09:55:00.001Z')]), L.TRAIN_LANDING_CHECKS_PENDING);
+  assert.equal(d([run(1, 'failure', '2026-11-18T09:55:00.000Z')]), L.TRAIN_LANDING_CHECK_FAILED);
+});
+
+// Fable 2026-11-20 三态选路 (补：可绕过字段读不到时, the last word): landingRoute reads main's rules (GET /rules/branches/main, each rule
+// with its ruleset) and this App's own bypass of each of those rulesets (GET /rulesets/{id}: current_user_can_bypass). Without
+// kooyumi-train-landed the current path, whatever the bypass state; with it push only when every push condition reads back true.

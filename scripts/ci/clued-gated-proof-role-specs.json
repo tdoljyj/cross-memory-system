@@ -2087,10 +2087,10 @@
     },
     ".github/workflows/clued-required-tests.yml": {
       "sources": {
-        "44b2a88bd74b987f81fa55066046166c4fe87ec2": [
+        "6b499f567889e96e215e763b6865e7dedfb7898d": [
           {
             "job_id": "clued-cloud-tests",
-            "definition_sha256": "c34d55c18fa85fea715c4f972de0e106ef355e1d1487b42c636918eda39888ee",
+            "definition_sha256": "79da0eeea2a690b803106256e95aacef2fff41edb3b060b63f3faca53da6a8c3",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'clued-cloud-tests' || 'clued-cloud-tests-skipped' }}",
               "needs": "admission-gate",
@@ -2171,19 +2171,26 @@
                 },
                 {
                   "name": "Lint, ledger, typecheck, build and unit tests",
+                  "id": "test_verdict",
                   "if": "steps.select.outputs.run_clued_cloud == 'true'",
                   "env": {
+                    "CLUED_TRAIN_TERMINAL_EXIT": "1",
                     "SELECTOR": "${{ steps.select.outputs.selector }}",
                     "CLUED_UNDER_TEST": "1"
                   },
-                  "run": "node \"$SELECTOR\" --run clued-cloud --root candidate"
+                  "run": "status=0\nnode \"$SELECTOR\" --run clued-cloud --root candidate || status=$?\nterminal=false\nif [ \"$status\" -eq 86 ]; then terminal=true; fi\necho \"terminal=$terminal\" >> \"$GITHUB_OUTPUT\"\nexit \"$status\"\n"
+                },
+                {
+                  "name": "Confirm merge train test failure",
+                  "if": "${{ failure() && steps.test_verdict.outputs.terminal == 'true' &&\n    github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' }}",
+                  "run": "echo \"Trusted selector confirmed a terminal test failure\""
                 }
               ]
             }
           },
           {
             "job_id": "ci-suites",
-            "definition_sha256": "714cfad8a014072f83d8f5ec67f1ee66a725eb746cb331339987873bc00a6234",
+            "definition_sha256": "2221e045a856d7222892dd165ba863c3c521427b53b786fd896a887702bf4c6a",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites' || 'ci-suites-skipped' }}",
               "needs": "admission-gate",
@@ -2262,20 +2269,27 @@
                 },
                 {
                   "name": "Run the selected suites",
+                  "id": "test_verdict",
                   "env": {
+                    "CLUED_TRAIN_TERMINAL_EXIT": "1",
                     "SELECTOR": "${{ steps.select.outputs.selector }}",
                     "SUITES": "${{ steps.select.outputs.suites }}",
                     "PYTHONDONTWRITEBYTECODE": "1",
                     "CLUED_UNDER_TEST": "1"
                   },
-                  "run": "failed=\"\"\nfor suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do\n  if node \"$SELECTOR\" --run \"$suite\" --root candidate; then\n    echo \"- \\`$suite\\`: passed\" >> \"$GITHUB_STEP_SUMMARY\"\n  else\n    echo \"- \\`$suite\\`: **failed**\" >> \"$GITHUB_STEP_SUMMARY\"\n    failed=\"$failed $suite\"\n  fi\ndone\nif [ -n \"$failed\" ]; then\n  echo \"::error title=ci-suites::failed:$failed\"\n  exit 1\nfi\n"
+                  "run": "failed=\"\"\nterminal=false\nfor suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do\n  status=0\n  node \"$SELECTOR\" --run \"$suite\" --root candidate || status=$?\n  if [ \"$status\" -eq 86 ]; then terminal=true; fi\n  if [ \"$status\" -eq 0 ]; then\n    echo \"- \\`$suite\\`: passed\" >> \"$GITHUB_STEP_SUMMARY\"\n  else\n    echo \"- \\`$suite\\`: **failed**\" >> \"$GITHUB_STEP_SUMMARY\"\n    failed=\"$failed $suite\"\n  fi\ndone\necho \"terminal=$terminal\" >> \"$GITHUB_OUTPUT\"\nif [ -n \"$failed\" ]; then\n  echo \"::error title=ci-suites::failed:$failed\"\n  exit 1\nfi\n"
+                },
+                {
+                  "name": "Confirm merge train test failure",
+                  "if": "${{ failure() && steps.test_verdict.outputs.terminal == 'true' &&\n    github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' }}",
+                  "run": "echo \"Trusted selector confirmed a terminal test failure\""
                 }
               ]
             }
           },
           {
             "job_id": "migration-verify",
-            "definition_sha256": "ff03a97c7add0aaebc140ff7662dc61bc10f8af6f51296c74fbc520c440c4069",
+            "definition_sha256": "0a1fc6a7d780f11bd5c351599fcacba40bdb0896c7af92ec8d77ba83fe0df6c4",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'migration-verify' || 'migration-verify-skipped' }}",
               "needs": "admission-gate",
@@ -2356,12 +2370,19 @@
                 },
                 {
                   "name": "Verify migrations on the production schema",
+                  "id": "test_verdict",
                   "if": "steps.select.outputs.run_production_schema == 'true'",
                   "env": {
+                    "CLUED_TRAIN_TERMINAL_EXIT": "1",
                     "SELECTOR": "${{ steps.select.outputs.selector }}",
                     "CLUED_UNDER_TEST": "1"
                   },
-                  "run": "status=0\nnode \"$SELECTOR\" --run production-schema --root candidate || status=$?\nif [ -f \"$RUNNER_TEMP/production-schema-report.json\" ]; then\n  node -e 'const r=JSON.parse(require(\"fs\").readFileSync(process.argv[1],\"utf8\"));\n    const lines=[\"### migration-verify: \"+r.status,\"\",...r.errors.map(e=>\"- error: `\"+e+\"`\"),\n      \"- pending migrations: \"+((r.pending||[]).join(\", \")||\"none\"),\n      \"- repository-only columns and functions (tests see them, production does not): \"+((r.repository_only||[]).length)];\n    require(\"fs\").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join(\"\\n\")+\"\\n\");' \"$RUNNER_TEMP/production-schema-report.json\"\nfi\nexit $status\n"
+                  "run": "status=0\nnode \"$SELECTOR\" --run production-schema --root candidate || status=$?\nif [ -f \"$RUNNER_TEMP/production-schema-report.json\" ]; then\n  node -e 'const r=JSON.parse(require(\"fs\").readFileSync(process.argv[1],\"utf8\"));\n    const lines=[\"### migration-verify: \"+r.status,\"\",...r.errors.map(e=>\"- error: `\"+e+\"`\"),\n      \"- pending migrations: \"+((r.pending||[]).join(\", \")||\"none\"),\n      \"- repository-only columns and functions (tests see them, production does not): \"+((r.repository_only||[]).length)];\n    require(\"fs\").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join(\"\\n\")+\"\\n\");' \"$RUNNER_TEMP/production-schema-report.json\"\nfi\nterminal=false\nif [ \"$status\" -eq 86 ]; then terminal=true; fi\necho \"terminal=$terminal\" >> \"$GITHUB_OUTPUT\"\nexit \"$status\"\n"
+                },
+                {
+                  "name": "Confirm merge train test failure",
+                  "if": "${{ failure() && steps.test_verdict.outputs.terminal == 'true' &&\n    github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' }}",
+                  "run": "echo \"Trusted selector confirmed a terminal test failure\""
                 },
                 {
                   "name": "Not affected",
@@ -2688,10 +2709,10 @@
     },
     ".github/workflows/clued-required-tests-windows.yml": {
       "sources": {
-        "c9c9d146e6d434e69660490aa161d3d36264e21d": [
+        "87488dd41a4cdf9f488df45cab6a5bb0712cc5fd": [
           {
             "job_id": "ci-suites-windows",
-            "definition_sha256": "bc032f2225f9efc593770491dca2790a7beccfd81c95e85276e74860cede23bd",
+            "definition_sha256": "33451d0e5e3cc561d4b33ac2530087efe60b3e4f8f2c2db7382ce42d2a46b195",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites-windows' || 'ci-suites-windows-skipped' }}",
               "needs": "admission-gate",
@@ -2751,13 +2772,21 @@
                 },
                 {
                   "name": "Select and run the suites declared for Windows",
+                  "id": "test_verdict",
                   "shell": "powershell",
                   "env": {
+                    "CLUED_TRAIN_TERMINAL_EXIT": "1",
                     "GITHUB_TOKEN": "${{ github.token }}",
                     "PYTHONDONTWRITEBYTECODE": "1",
                     "CLUED_UNDER_TEST": "1"
                   },
-                  "run": "$ErrorActionPreference = 'Stop'\n& node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate\nexit $LASTEXITCODE\n"
+                  "run": "$ErrorActionPreference = 'Stop'\n& node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate\n$status = $LASTEXITCODE\n\"terminal=$($status -eq 86)\".ToLowerInvariant() | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append\nexit $status\n"
+                },
+                {
+                  "name": "Confirm merge train test failure",
+                  "if": "${{ failure() && steps.test_verdict.outputs.terminal == 'true' &&\n    github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' }}",
+                  "shell": "powershell",
+                  "run": "Write-Output \"Trusted selector confirmed a terminal test failure\""
                 }
               ]
             }
