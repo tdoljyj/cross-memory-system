@@ -7,6 +7,8 @@ const READ_REQUEST_GUARD = Symbol.for('clued-read-request-guard');
 const READ_REQUEST_NO_RETRY = Symbol.for('clued-read-request-no-retry');
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
+const TRAIN_WORKFLOWS = new Set(['.github/workflows/clued-required-tests.yml', '.github/workflows/clued-required-tests-windows.yml',
+  '.github/workflows/hosted-required.yml']);
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const sha = /^[a-f0-9]{40}$/;
 const repoPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -63,13 +65,13 @@ function jwt(appId, key, now) {
 // it is never passed to worker processes, manifests, PRs or loggers.
 export function createGitHubChecksPort({ repository, repositoryId, appId, installationId,
   privateKeyProvider, fetchImpl = globalThis.fetch, clock = Date.now, maxPages = 10,
-  forbiddenAppIds = [5365273, 5164952], includeModeRead = false, retryWindowMs = 4_000, sleep = wait, budgetObserver = null, budgetObservedAtFetch = false,
+  forbiddenAppIds = [5365273, 5164952], includeModeRead = false, includeActionsRead = false, retryWindowMs = 4_000, sleep = wait, budgetObserver = null, budgetObservedAtFetch = false,
   stagedScanJournal = null, batchRoute = null } = {}) {
   if (!repoPattern.test(repository ?? '') || ![repositoryId, appId, installationId].every(positive)
     || [5365273, 5164952].includes(appId) || !Array.isArray(forbiddenAppIds)
     || forbiddenAppIds.includes(appId) || typeof privateKeyProvider !== 'function'
     || typeof fetchImpl !== 'function' || !positive(maxPages) || maxPages > 100
-    || typeof includeModeRead !== 'boolean' || typeof clock !== 'function' || typeof sleep !== 'function'
+    || typeof includeModeRead !== 'boolean' || typeof includeActionsRead !== 'boolean' || typeof clock !== 'function' || typeof sleep !== 'function'
     || !Number.isSafeInteger(retryWindowMs) || retryWindowMs < 0 || retryWindowMs > 10_000 || typeof budgetObservedAtFetch !== 'boolean'
     || (budgetObservedAtFetch && budgetObserver === null)
     || (budgetObserver !== null && !['begin', 'observe', 'observeBody', 'seed', 'snapshot'].every(k => typeof budgetObserver?.[k] === 'function'))) fail('invalid_checks_configuration');
@@ -185,6 +187,7 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     const app = await request('https://api.github.com/app', 'GET', appJwt, undefined, { until });
     if (app.id !== appId) fail('unexpected_app_identity');
     const requested = { checks: 'write', contents: 'read', pull_requests: 'read',
+      ...(includeActionsRead ? { actions: 'read' } : {}),
       ...(includeModeRead ? { actions_variables: 'read', environments: 'read' } : {}) };
     // Minting changes no repository state; a token whose reply was lost is never
     // seen or used and expires by itself, so this exchange repeats like a read.
@@ -433,6 +436,36 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: [...packet.paths] };
     },
     async readChecks(headSha) { return inventory(headSha); },
+    async readTrainRun({ runId, attempt, testSha, workflow }) {
+      if (!positive(runId) || !positive(attempt) || !sha.test(testSha) || !TRAIN_WORKFLOWS.has(workflow))
+        fail('invalid_train_run');
+      const route = '/actions/runs/' + runId;
+      const current = await scoped(route);
+      if (current?.id !== runId || current.run_attempt !== attempt || current.head_sha !== testSha
+        || current.event !== 'push' || current.head_branch !== 'clued-train/staging' || current.path !== workflow
+        || current.actor?.login !== 'clued-ci-checks-turing-20261018[bot]') fail('train_run_unconfirmed');
+      const body = await scoped(route + '/attempts/' + attempt + '/jobs?per_page=100');
+      if (!Array.isArray(body?.jobs) || body.total_count !== body.jobs.length || body.jobs.length >= 100)
+        fail('train_jobs_unconfirmed');
+      const checkPrefix = root + '/check-runs/';
+      const jobs = body.jobs.map(job => {
+        const url = job?.check_run_url;
+        const checkRunId = typeof url === 'string' && url.startsWith(checkPrefix) ? Number(url.slice(checkPrefix.length)) : null;
+        if (!positive(checkRunId) || url !== checkPrefix + checkRunId || job.run_id !== runId
+          || (job.run_attempt !== undefined && job.run_attempt !== attempt) || job.head_sha !== testSha || typeof job.name !== 'string') fail('train_job_unconfirmed');
+        return { checkRunId, name: job.name, status: job.status, conclusion: job.conclusion, steps: Array.isArray(job.steps) ? job.steps : [] };
+      });
+      if (new Set(jobs.map(job => job.checkRunId)).size !== jobs.length) fail('train_jobs_unconfirmed');
+      if ((await scoped(route))?.run_attempt !== attempt) fail('train_run_unconfirmed');
+      return { jobs };
+    },
+    async sameTrainWorkflow({ workflow, baseSha, testSha }) {
+      if (!TRAIN_WORKFLOWS.has(workflow) || !sha.test(baseSha) || !sha.test(testSha)) fail('invalid_train_workflow');
+      const read = at => scoped('/contents/' + workflow + '?ref=' + at);
+      const [base, test] = await Promise.all([read(baseSha), read(testSha)]);
+      return base?.path === workflow && test?.path === workflow && base.type === 'file' && test.type === 'file'
+        && sha.test(base.sha ?? '') && test.sha === base.sha;
+    },
     async readCheckAnnotations(checkRunId) {
       if (!positive(checkRunId)) fail('invalid_check_run');
       const annotations = [];

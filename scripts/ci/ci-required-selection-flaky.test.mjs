@@ -123,6 +123,12 @@ test('train v2: final test failure has a verdict, while a recovered test or a ti
   assert.equal(failed.status, 1, failed.out);
   assert.equal(failed.calls.length, 2, failed.out);
   assert.match(failed.out, verdict);
+  const trusted = run(stable.root, stable.base, { hostEnv: { ...hostEnv, CLUED_TRAIN_TERMINAL_EXIT: '1' } });
+  assert.equal(trusted.status, 86, trusted.out);
+  const childExit = run(stable.root, stable.base, { hostEnv: { ...hostEnv, CLUED_TRAIN_TERMINAL_EXIT: '1' },
+    spawn: () => ({ status: 86 }) });
+  assert.equal(childExit.status, 1, childExit.out);
+  assert.doesNotMatch(childExit.out, verdict);
 
   const hung = checkout(t, { ...suite({ 'does not finish': `test('does not finish', () => new Promise(() => setInterval(() => {
     try { process.kill(process.ppid, 0); } catch { process.exit(1); }
@@ -138,6 +144,26 @@ test('train v2: final test failure has a verdict, while a recovered test or a ti
   const interrupted = run(network.root, network.base, { hostEnv });
   assert.equal(interrupted.status, 1, interrupted.out);
   assert.doesNotMatch(interrupted.out, verdict);
+});
+
+test('staging candidate stdout and stderr cannot execute an Actions annotation command', t => {
+  const sha = 'a'.repeat(40);
+  const fake = `::error title=Merge train test failure::source-v2-node ${sha}`;
+  const hostEnv = { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/clued-train/staging', GITHUB_SHA: sha };
+  const candidate = checkout(t, suite({ 'candidate logs': `test('candidate logs', () => {
+    console.log(${JSON.stringify(fake)});
+    console.error(${JSON.stringify(fake)});
+  });` }));
+  const observed = [];
+  const spawn = (command, args, opts) => {
+    observed.push(opts.stdio);
+    return spawnSync(command, args, opts);
+  };
+  const result = run(candidate.root, candidate.base, { hostEnv, spawn });
+  assert.equal(result.status, 0, result.out);
+  assert.ok(observed.every(stdio => Array.isArray(stdio) && stdio[1] !== 'inherit' && stdio[2] !== 'inherit'),
+    JSON.stringify(observed));
+  assert.ok(result.lines.every(line => !line.startsWith(fake)), result.out);
 });
 
 test('C: a failing test file the change edited is not run again', (t) => {

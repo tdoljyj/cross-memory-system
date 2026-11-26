@@ -95,6 +95,7 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
       return { code: rerunCode, stdout: '' };
     }
     assert.equal(method, 'GET');
+    if (route === '/git/ref/heads/clued-train/generation') return { code: 1, stderr: 'Not Found (HTTP 404)' };
     if (route === '/rules/branches/main?per_page=100&page=1') return ok(st.rules);
     if (/^\/commits\/[a-f0-9]{40}\/check-runs\?filter=all&per_page=100&page=1$/.test(route)) return ok({ total_count: st.checks.length, check_runs: st.checks });
     if (route === '/actions/workflows?per_page=100&page=1') return ok({ total_count: workflows.length, workflows });

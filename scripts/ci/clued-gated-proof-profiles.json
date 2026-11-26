@@ -6559,7 +6559,7 @@
               "1f753f3906eb18174bb26eea0ff57db23ab9e06b9e52c70f60e1f1e5f1951a48"
             ],
             "Select and run the suites declared for Windows": [
-              "2c288b8962c064fb85ba2d396e252b0850a751d57422b57b15ab51982313b6b6"
+              "3765f83ef5ecd2de4ae20609bd66a877fcd32164cea1049613cc19ab6b010717"
             ]
           },
           "job_id": "ci-suites-windows",
@@ -6572,7 +6572,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "9051575880163bcd8e5c4625a9d22cfebd5c24dbf80aedeb2892a8b70278f503",
+      "source_sha256": "b58983e7ea6441a56a97420fb99098143b20b995c9c0c4bf19fb657c4d9e95ab",
       "source_yaml_lines": [
 "name: clued-required-tests-windows",
 "",
@@ -6733,8 +6733,10 @@
 "      - name: Configure job temporary storage",
 "        uses: ./trusted/.github/actions/ci-temporary-storage",
 "      - name: Select and run the suites declared for Windows",
+"        id: test_verdict",
 "        shell: powershell",
 "        env:",
+"          CLUED_TRAIN_TERMINAL_EXIT: \"1\"",
 "          GITHUB_TOKEN: ${{ github.token }}",
 "          PYTHONDONTWRITEBYTECODE: \"1\"",
 "          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.",
@@ -6742,10 +6744,18 @@
 "        run: |",
 "          $ErrorActionPreference = 'Stop'",
 "          & node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate",
-"          exit $LASTEXITCODE",
+"          $status = $LASTEXITCODE",
+"          \"terminal=$($status -eq 86)\".ToLowerInvariant() | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append",
+"          exit $status",
+"      - name: Confirm merge train test failure",
+"        if: >-",
+"          ${{ failure() && steps.test_verdict.outputs.terminal == 'true' &&",
+"              github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' }}",
+"        shell: powershell",
+"        run: Write-Output \"Trusted selector confirmed a terminal test failure\"",
 ""
       ],
-      "workflow_blob": "c9c9d146e6d434e69660490aa161d3d36264e21d"
+      "workflow_blob": "87488dd41a4cdf9f488df45cab6a5bb0712cc5fd"
     },
     ".github/workflows/clued-required-tests.yml": {
       "execution_mode": "all_required_primaries",
@@ -6770,7 +6780,7 @@
               "f7430d8896bab674b94c5be5a18a94b4d29f3f9c0296b602599e5893d0718d71"
             ],
             "Lint, ledger, typecheck, build and unit tests": [
-              "e4cba6549ca820ef23089afe03eb55ae3f1726c11535a00cdc8184fb9c2763eb"
+              "d123397b351c71e87527703d50701910a8641036a1a1f112b21edb6b5aeca908"
             ],
             "Resolve push baseline before loading trusted commands": [
               "47330d4048e8c9240d3990da6e057cccf5ab5f9668ee13fe098dde1fbbf619bf"
@@ -6802,7 +6812,7 @@
               "47330d4048e8c9240d3990da6e057cccf5ab5f9668ee13fe098dde1fbbf619bf"
             ],
             "Run the selected suites": [
-              "475750114c5326faa66b30b574e09592613b3b7206332f195a7af6c1befbd32f"
+              "74019154dc53b1241a5ddd3cd3cd1bbfb138828ec5e718eceeaaab83ba568985"
             ],
             "Select suites": [
               "f765f6dcda21600b00eefd6b06bdd0e7a08e84bb2f2298ea4154604e410256b1"
@@ -6837,7 +6847,7 @@
               "5ea62c29ee58d8189b47dea38c8b4c840186ca674ba828945447ee721ca72a6d"
             ],
             "Verify migrations on the production schema": [
-              "2d0f5f55565f125fb61af8e4eb0168f55bb7e3237b99d97704a61330e8fb117d"
+              "5924b69897d0163265b61114a805c21ffe672673403401a880f33a89487be1ae"
             ]
           },
           "job_id": "migration-verify",
@@ -6963,7 +6973,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "d5e8005f966fec200ed8affd3daf8b2821618243fd1d3094dd618120049dda11",
+      "source_sha256": "6110d9cf23a0e6aa55c9f3ad8a0bbfc329f009f018e125b1c258c4d3012d60a3",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "run-name: ${{ github.event_name == 'workflow_dispatch' && (inputs.resident_node && inputs.resident_dispatch_id && format('clued-resident-dispatch/v1 {0} {1}', inputs.resident_node, inputs.resident_dispatch_id) || 'clued-required-tests') || '' }}",
@@ -7176,12 +7186,25 @@
 "          timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=2 --fetch-timeout=30000",
 "          timeout --signal=TERM --kill-after=15s 2m npm rebuild @embedded-postgres/linux-x64",
 "      - name: Lint, ledger, typecheck, build and unit tests",
+"        id: test_verdict",
 "        if: steps.select.outputs.run_clued_cloud == 'true'",
 "        env:",
+"          CLUED_TRAIN_TERMINAL_EXIT: \"1\"",
 "          SELECTOR: ${{ steps.select.outputs.selector }}",
 "          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.",
 "          CLUED_UNDER_TEST: \"1\"",
-"        run: node \"$SELECTOR\" --run clued-cloud --root candidate",
+"        run: |",
+"          status=0",
+"          node \"$SELECTOR\" --run clued-cloud --root candidate || status=$?",
+"          terminal=false",
+"          if [ \"$status\" -eq 86 ]; then terminal=true; fi",
+"          echo \"terminal=$terminal\" >> \"$GITHUB_OUTPUT\"",
+"          exit \"$status\"",
+"      - name: Confirm merge train test failure",
+"        if: >-",
+"          ${{ failure() && steps.test_verdict.outputs.terminal == 'true' &&",
+"              github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' }}",
+"        run: echo \"Trusted selector confirmed a terminal test failure\"",
 "",
 "  ci-suites:",
 "    name: >-",
@@ -7291,7 +7314,9 @@
 "          done",
 "          echo \"CLUED_CI_APP_DEPS=1\" >> \"$GITHUB_ENV\"",
 "      - name: Run the selected suites",
+"        id: test_verdict",
 "        env:",
+"          CLUED_TRAIN_TERMINAL_EXIT: \"1\"",
 "          SELECTOR: ${{ steps.select.outputs.selector }}",
 "          SUITES: ${{ steps.select.outputs.suites }}",
 "          PYTHONDONTWRITEBYTECODE: \"1\"",
@@ -7299,18 +7324,28 @@
 "          CLUED_UNDER_TEST: \"1\"",
 "        run: |",
 "          failed=\"\"",
+"          terminal=false",
 "          for suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do",
-"            if node \"$SELECTOR\" --run \"$suite\" --root candidate; then",
+"            status=0",
+"            node \"$SELECTOR\" --run \"$suite\" --root candidate || status=$?",
+"            if [ \"$status\" -eq 86 ]; then terminal=true; fi",
+"            if [ \"$status\" -eq 0 ]; then",
 "              echo \"- \\`$suite\\`: passed\" >> \"$GITHUB_STEP_SUMMARY\"",
 "            else",
 "              echo \"- \\`$suite\\`: **failed**\" >> \"$GITHUB_STEP_SUMMARY\"",
 "              failed=\"$failed $suite\"",
 "            fi",
 "          done",
+"          echo \"terminal=$terminal\" >> \"$GITHUB_OUTPUT\"",
 "          if [ -n \"$failed\" ]; then",
 "            echo \"::error title=ci-suites::failed:$failed\"",
 "            exit 1",
 "          fi",
+"      - name: Confirm merge train test failure",
+"        if: >-",
+"          ${{ failure() && steps.test_verdict.outputs.terminal == 'true' &&",
+"              github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' }}",
+"        run: echo \"Trusted selector confirmed a terminal test failure\"",
 "",
 "  migration-verify:",
 "    name: >-",
@@ -7414,8 +7449,10 @@
 "          timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=2 --fetch-timeout=30000",
 "          timeout --signal=TERM --kill-after=15s 2m npm rebuild @embedded-postgres/linux-x64",
 "      - name: Verify migrations on the production schema",
+"        id: test_verdict",
 "        if: steps.select.outputs.run_production_schema == 'true'",
 "        env:",
+"          CLUED_TRAIN_TERMINAL_EXIT: \"1\"",
 "          SELECTOR: ${{ steps.select.outputs.selector }}",
 "          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.",
 "          CLUED_UNDER_TEST: \"1\"",
@@ -7429,7 +7466,15 @@
 "                \"- repository-only columns and functions (tests see them, production does not): \"+((r.repository_only||[]).length)];",
 "              require(\"fs\").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join(\"\\n\")+\"\\n\");' \"$RUNNER_TEMP/production-schema-report.json\"",
 "          fi",
-"          exit $status",
+"          terminal=false",
+"          if [ \"$status\" -eq 86 ]; then terminal=true; fi",
+"          echo \"terminal=$terminal\" >> \"$GITHUB_OUTPUT\"",
+"          exit \"$status\"",
+"      - name: Confirm merge train test failure",
+"        if: >-",
+"          ${{ failure() && steps.test_verdict.outputs.terminal == 'true' &&",
+"              github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' }}",
+"        run: echo \"Trusted selector confirmed a terminal test failure\"",
 "      - name: Not affected",
 "        if: steps.select.outputs.run_production_schema != 'true'",
 "        run: echo \"No migration, ledger, snapshot or drift-check file changed; nothing to verify.\" >> \"$GITHUB_STEP_SUMMARY\"",
@@ -7929,7 +7974,7 @@
 "        run: python3 -I -B scripts/ci/check_contract_placement.py --base \"$CI_BASE_SHA\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\"",
 ""
       ],
-      "workflow_blob": "44b2a88bd74b987f81fa55066046166c4fe87ec2"
+      "workflow_blob": "6b499f567889e96e215e763b6865e7dedfb7898d"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [

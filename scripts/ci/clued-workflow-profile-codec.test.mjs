@@ -90,7 +90,7 @@ test('all original sources and complete successors roundtrip without losing byte
   assert.equal(roleDefinitionDigest(original),'9d6b910708b3d447bde534d883d0d6ca27a3a62ee42c9bc422abaa0951487a42');
   delete oldRoles.workflows[REQUIRED_TESTS_SOURCE.file];
   assert.deepEqual(oldRoles.workflows[WINDOWS].sources[WINDOWS_BLOB].map(role=>[role.job_id,role.definition_sha256]),
-    [['ci-suites-windows','bc032f2225f9efc593770491dca2790a7beccfd81c95e85276e74860cede23bd']]);
+    [['ci-suites-windows','33451d0e5e3cc561d4b33ac2530087efe60b3e4f8f2c2db7382ce42d2a46b195']]);
   delete oldRoles.workflows[WINDOWS];
   assert.ok(oldRoles.workflows[G4].sources[G4_BLOB]);
   delete oldRoles.workflows[G4].sources[G4_BLOB];

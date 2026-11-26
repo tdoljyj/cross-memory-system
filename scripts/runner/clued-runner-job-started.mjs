@@ -593,6 +593,9 @@ const STAGING_WORKFLOWS = new Set(['.github/workflows/clued-required-tests.yml',
 const STAGING_ACTOR = 'clued-ci-checks-turing-20261018[bot]';
 const ADMISSION_STATE_VARIABLE = 'CLUED_MERGE_ADMISSION_STATE';
 const TRAIN_REPAIR_ACTOR_VARIABLE = 'CLUED_TRAIN_REPAIR_ACTOR_ID';
+// Protocol 2 activates this protected Git ref before its first staging push.
+// This installed standalone hook reads it with its existing Contents read scope.
+const TRAIN_GENERATION_REF = 'refs/heads/clued-train/generation';
 
 // Use the same environment-over-repository precedence as Native admission.
 // Only complete inventories establish the default normal mode.
@@ -682,15 +685,22 @@ async function stagingAdmission({ env, fetchImpl, readFile, now, sleep, reposito
   const refuse = reason => ({ ...result, allow: false, reason: `staging: ${reason}` });
   const sha = env.GITHUB_SHA ?? '', runId = env.GITHUB_RUN_ID ?? '';
   if (!/^[a-f0-9]{40}$/.test(sha) || !/^[0-9]{1,20}$/.test(runId)) return refuse('invalid S or run id');
-  const token = await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true, modeRead: true });
+  const token = await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true });
+  const generationPath = '/repos/' + repository + '/git/ref/heads/clued-train/generation';
+  const readGeneration = () => github(fetchImpl, token, generationPath, { allowMissing: true });
+  const generation = await readGeneration();
+  if (generation !== null && (generation?.ref !== TRAIN_GENERATION_REF || generation?.object?.type !== 'commit'
+    || !/^[a-f0-9]{40}$/.test(generation?.object?.sha ?? ''))) return refuse('train generation is unreadable');
+  const v2 = generation !== null;
   const run = await github(fetchImpl, token, `/repos/${repository}/actions/runs/${runId}`);
   const attempt = attemptNumber(env.GITHUB_RUN_ATTEMPT ?? '1');
   if (String(run?.id) !== runId || run.event !== 'push' || run.head_sha !== sha || run.head_branch !== 'clued-train/staging'
     || run.path !== workflow || run.actor?.login !== STAGING_ACTOR
     || attempt === null || run.run_attempt !== attempt || !Number.isFinite(Date.parse(run.created_at)))
     return refuse('run does not bind the workflow, App actor, attempt and S');
-  const readConfig = () => stagingAdmissionConfig(fetchImpl, token, repository).catch(() => null);
-  if (attempt > 1) {
+  const modeToken = v2 ? await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true, modeRead: true }) : null;
+  const readConfig = () => stagingAdmissionConfig(fetchImpl, modeToken, repository).catch(() => null);
+  if (v2 && attempt > 1) {
     // The original actor is unchanged by GitHub when another principal reruns.
     // Read the recovery App from the repository, outside the job environment.
     const config = await readConfig();
@@ -757,11 +767,18 @@ async function stagingAdmission({ env, fetchImpl, readFile, now, sleep, reposito
   }
   const currentMain = await github(fetchImpl, token, mainPath);
   if (currentMain?.object?.type !== 'commit' || currentMain.object.sha !== base) return refuse('main moved');
-  const currentConfig = await readConfig();
-  if (!currentConfig) return refuse('live merge admission mode is unreadable');
-  if (currentConfig.frozen) return refuse('merge admission is frozen');
-  if (attempt > 1 && String(run.triggering_actor.id) !== currentConfig.recoveryActorId)
-    return refuse('rerun triggering actor changed during admission');
+  const currentGeneration = await readGeneration();
+  if ((currentGeneration === null) !== !v2 || (v2 && currentGeneration?.object?.sha !== generation.object.sha))
+    return refuse('train generation changed during admission');
+  if (v2) {
+    const stagingRef = await github(fetchImpl, token, '/repos/' + repository + '/git/ref/heads/clued-train/staging');
+    if (stagingRef?.object?.type !== 'commit' || stagingRef.object.sha !== sha) return refuse('staging ref moved');
+    const currentConfig = await readConfig();
+    if (!currentConfig) return refuse('live merge admission mode is unreadable');
+    if (currentConfig.frozen) return refuse('merge admission is frozen');
+    if (attempt > 1 && String(run.triggering_actor.id) !== currentConfig.recoveryActorId)
+      return refuse('rerun triggering actor changed during admission');
+  }
   return { ...result, allow: true, reason: `App 5368905 staging S rooted at ${base}, all ${members.length} PR heads admitted`,
     execution_targets: members.map(member => ({ repository, head_sha: member.head,
       pr_ref: `${repository}#${member.number}`, target_branch: defaultBranch })) };

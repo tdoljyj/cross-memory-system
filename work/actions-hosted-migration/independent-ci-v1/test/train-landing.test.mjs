@@ -15,11 +15,178 @@ import { requiredOnHead } from '../src/independent-control-checks-v2/train-facts
 import { createGitHubChecksPort } from '../src/github.mjs';
 import { parseLandingArg, prepareStageDirectory } from '../src/resident-v2/invoke-stage.mjs';
 import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
-import { SCAFFOLD_RULESET, mainRules, portRules, scaffoldRules } from './s7-rules-fixture.mjs';
+import { SCAFFOLD_RULESET, checkRun, mainRules, portRules, s7Green, scaffoldRules } from './s7-rules-fixture.mjs';
+
+import { multiDutyClock, multiDutyGitHub } from '../../../independent-ci-resident-v1/test/multi-duty-fixture.mjs';
+import { TRAIN_PROTOCOL_VERSION, TRAIN_REQUIRED_RUN_FIELDS, trainBatchKey, trainEffectKey, trainLandingSlotKey } from '../src/merge-train-v2-contract.mjs';
+import { createFixtureControlPublisherV2 } from '../src/independent-control-checks-v2/publisher.mjs';
+import { makeJobV2 } from '../src/job-v2.mjs';
 
 const sha = n => n.toString(16).padStart(40, '0');
 const T = sha(1), H1 = sha(2), H2 = sha(3), H3 = sha(4), S1 = sha(5), S2 = sha(6), S3 = sha(7);
 const APP = 5368905, REPO = 'tdoljyj/cross-memory-system';
+
+const scope = { tenantId: 'tenant', projectId: 'project', repositoryId: 11, targetBranch: 'main' };
+const members = [
+  { pr: 30, headSha: H1, claimId: 'front', fence: 2, epoch: 3 },
+  { pr: 31, headSha: H2, claimId: 'rider', fence: 4, epoch: 5 },
+  { pr: 32, headSha: H3, claimId: 'third', fence: 6, epoch: 7 },
+];
+const G = sha(20), DONE = sha(21), CANCEL = sha(22);
+const batchId = trainBatchKey({ ...scope, baseSha: T, members, sourceSha256: 'a'.repeat(64), policyVersion: 'test' });
+const effectId = trainEffectKey({ ...scope, action: 'landing_send', subject: [batchId, 1, G, T, S3] });
+const slotId = trainLandingSlotKey(scope);
+
+test('列车 v2：第 8 段只消费一次 Native 发送权，重启从共享回执续办', async t => {
+  const w = { intent: { batchId, effectId, slotId, generation: 1, baseSha: T, testSha: S3,
+    generationRefOid: G, landedRefOid: DONE, members, expiresAt: '2026-11-26T09:01:30Z' },
+    clock: multiDutyClock(Date.parse('2026-11-26T09:00:00Z')) };
+  const remote = multiDutyGitHub(w.clock);
+  let main = T, generation = G, allowLand = false;
+  const mainWrites = () => remote.totals().mainUpdates;
+  w.port = {
+    readTrainRefs: async () => ({ mainSha: main, generationRefOid: generation, stagingSha: S3 }),
+    landIntent: async () => {
+      assert.ok(allowLand);
+      return remote.write('land', () => { main = S3; generation = DONE; }, () => ['mainUpdates', S3, 'B']);
+    },
+  };
+  const batch = { ...w.intent, scope, steps: [S1, S2, S3], testTree: sha(60), sourceSha256: 'a'.repeat(64), policyVersion: 'test' };
+  const { rules, rulesets } = s7State();
+  let inventory = s7Green(S3), qualified = false, sent = 0;
+  const verified = [];
+  const byPlatform = name => name.includes('windows') ? 'windows' : 'linux';
+  const providerChecks = structuredClone(inventory.filter(check => check.app.id === 15368));
+  const linux = 800, windows = 801, hosted = 802;
+  const nativeRunId = name => name.startsWith('hosted-') ? hosted : byPlatform(name) === 'windows' ? windows : linux;
+  const register = check => ({
+    testSha: S3, checkName: check.name, platform: byPlatform(check.name), policyVersion: batch.policyVersion,
+    runId: nativeRunId(check.name), attempt: 1,
+  });
+  // A observes the original launches and writes the slice-0 tuples; B can
+  // recover them solely from the shared batch, even inside a fresh publisher.
+  const sharedRuns = providerChecks.map(register);
+  assert.ok(sharedRuns.every(run => TRAIN_REQUIRED_RUN_FIELDS.every(field => Object.hasOwn(run, field))));
+  for (const runId of new Set(sharedRuns.map(run => run.runId))) remote.count('requiredRuns', { testSha: S3, runId }, 'A');
+  let providerProof = false, trustedWorkflow = true, nativeAttempt = 1, bisected = 0;
+  const sharedBisections = new Set();
+  const trainV2 = {
+    protocolVersion: TRAIN_PROTOCOL_VERSION,
+    readBatch: async () => ({ ...structuredClone(batch), requiredRuns: structuredClone(sharedRuns) }),
+    async bisectBatch({ batch: observed, evidenceDigest }) {
+      assert.equal(observed.batchId, batchId);
+      assert.equal(observed.testSha, S3);
+      assert.match(evidenceDigest, /^[a-f0-9]{64}$/);
+      if (!sharedBisections.has(observed.testSha)) {
+        sharedBisections.add(observed.testSha);
+        bisected++;
+      }
+    },
+    atomicLandingQualified: async () => qualified,
+    readRuleBypass: async ({ rulesetId }) => rulesetId === FF_RS ? [] : [{ actor_id: APP, actor_type: 'Integration', bypass_mode: 'always' }],
+    verifyMember: async ({ member }) => { verified.push(member); return true; },
+    prepareLanding: async () => { assert.ok(allowLand); return { state: 'reserved', intent: w.intent }; },
+    async authorizeLandingSend(intent) {
+      assert.deepEqual(intent, w.intent);
+      sent++;
+      batch.landing = { state: 'sent', intent };
+      return true;
+    },
+    async reconcileLanding({ intent, result }) {
+      assert.equal(result.state, 'landed');
+      batch.landing = { state: 'settled', intent, receipt: { receiptId: 'landed-receipt', intent, generationRefOid: DONE } };
+      return { state: 'settled', effectId: intent.effectId };
+    },
+  };
+  const github = {
+    readBranchRules: async branch => ({ complete: true, branch, rules }),
+    readRuleset: async id => rulesets.get(id),
+    readGitCommit: async sha => ({ sha, tree: batch.testTree,
+      parents: new Map([[S1, [T, H1]], [S2, [S1, H2]], [S3, [S2, H3]]]).get(sha) }),
+    readPullRequest: async pr => ({ number: pr, state: 'open', draft: false,
+      head: { sha: members.find(m => m.pr === pr).headSha, repo: { full_name: REPO } },
+      base: { sha: T, ref: 'main', repo: { full_name: REPO } } }),
+    readChecks: async sha => { assert.equal(sha, S3); return { complete: true, checks: inventory }; },
+    async readTrainRun({ runId, attempt, testSha, workflow }) {
+      assert.equal(testSha, S3);
+      assert.equal(workflow, ({
+        [linux]: '.github/workflows/clued-required-tests.yml',
+        [windows]: '.github/workflows/clued-required-tests-windows.yml',
+        [hosted]: '.github/workflows/hosted-required.yml',
+      })[runId]);
+      if (attempt !== nativeAttempt) return null;
+      return { jobs: providerChecks.filter(check => nativeRunId(check.name) === runId)
+        .map(check => ({ ...check, checkRunId: check.id, steps: check.name === 'ci-suites' && providerProof
+          ? [{ name: 'Confirm merge train test failure', status: 'completed', conclusion: 'success' }] : [] })) };
+    },
+    sameTrainWorkflow: async () => trustedWorkflow,
+  };
+  const run = () => createFixtureControlPublisherV2({ github, journal: {}, admission: {}, assertLive() {}, record() {}, trainV2,
+    clock: w.clock.now, landing: w.port, trainMode: 'on', trainLanding: { landing: 'push' } }).publishPair(
+    ['control-admission', 'control-merge-slot'].map(role => makeJobV2({ repo: REPO, pr: members[0].pr, headSha: H1,
+      baseSha: T, testSha: S3, role, sourceManifestSha256: batch.sourceSha256, createdAt: batch.expiresAt, attempt: 1 })),
+    { waitUntil: Date.parse(batch.expiresAt) });
+  assert.equal((await run()).reason, L.TRAIN_LANDING_RULES_MISSING);
+  qualified = true;
+  const full = inventory;
+  const missing = inventory.find(r => r.name === 'ci-suites');
+  inventory = [...full.filter(r => r !== missing),
+    checkRun(1000, missing.name, APP, S3), checkRun(1001, missing.name, missing.app.id, H1)];
+  assert.equal((await run()).reason, L.TRAIN_LANDING_CHECKS_PENDING);
+  assert.equal(sent, 0);
+  assert.deepEqual(verified, members);
+  const failed = { ...missing, conclusion: 'failure', completed_at: '2026-11-26T08:50:00Z' };
+  const ordinary = [{ annotation_level: 'failure', title: 'Merge train test failure', message: `source-v2-node ${S3}` }];
+  github.readCheckAnnotations = async () => ordinary;
+  for (const [name, check] of [
+    ['skipped check', { ...failed, conclusion: 'skipped' }],
+    ['cancelled check', { ...failed, conclusion: 'cancelled' }],
+    ['timed-out check', { ...failed, conclusion: 'timed_out' }],
+    ['failure with a forged job annotation', failed],
+    ['green from a different workflow run', { ...missing, id: 1900 }],
+  ]) await t.test(name, async () => {
+    inventory = [...full.filter(r => r !== missing), check];
+    const providerCheck = providerChecks.find(check => check.id === missing.id);
+    providerCheck.conclusion = check.conclusion;
+    assert.equal((await run()).reason, L.TRAIN_LANDING_CHECKS_PENDING);
+    assert.equal(sent, 0);
+    assert.equal(mainWrites(), 0);
+    assert.equal(bisected, 0);
+    providerCheck.conclusion = 'success';
+  });
+  await t.test('shared registration cannot advance to a new attempt without a receipt', async () => {
+    inventory = full;
+    nativeAttempt = 2;
+    assert.equal((await run()).reason, L.TRAIN_LANDING_CHECKS_PENDING);
+    nativeAttempt = 1;
+  });
+  await t.test('stable red needs a trusted workflow and one shared bisection receipt', async () => {
+    inventory = [...full.filter(r => r !== missing), failed];
+    const providerCheck = providerChecks.find(check => check.id === missing.id);
+    providerCheck.conclusion = 'failure';
+    providerProof = true;
+    trustedWorkflow = false;
+    assert.equal((await run()).reason, L.TRAIN_LANDING_CHECKS_PENDING);
+    assert.equal(bisected, 0);
+    trustedWorkflow = true;
+    assert.equal((await run()).reason, L.TRAIN_LANDING_CHECK_FAILED);
+    assert.equal((await run()).reason, L.TRAIN_LANDING_CHECK_FAILED);
+    assert.equal(bisected, 1);
+    assert.equal(mainWrites(), 0);
+    providerCheck.conclusion = 'success';
+    providerProof = false;
+  });
+  inventory = full;
+  allowLand = true;
+  remote.arm('land', { loseReply: true });
+  assert.equal((await run()).status, 'SETTLED');
+  batch.generation++;
+  generation = CANCEL;
+  assert.equal((await run()).status, 'SETTLED');
+  assert.equal(sent, 1);
+  assert.equal(mainWrites(), 1);
+  assert.equal(remote.totals().requiredRuns, 3);
+});
 
 test('stage file: exact bytes, defaults, refusals; only push may carry a batch; one PR per batch unless the stage file says the chain is installed', async t => {
   assert.equal(L.stageTrainLandingText({ landing: 'push', batchMax: 3 }), '{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchMax":3}');

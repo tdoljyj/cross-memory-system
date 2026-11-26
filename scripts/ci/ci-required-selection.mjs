@@ -1353,8 +1353,8 @@ function runCandidateSuite(id, { root, env = process.env, log = console.log, sha
       log(`::error title=${id}::候选入口自己跑这一套是红的：合入后 main 上就是这个结果（${reason}）`);
     }
     const output = readFileSync(logFile, 'utf8').trimEnd();
-    if (output) log(output);
-    return run.status ?? 1;
+    if (output) log(stagingOutput(output, env));
+    return run.status === TRAIN_TERMINAL_EXIT ? 1 : (run.status ?? 1);
   } finally {
     try {
       rmSync(logFile, { force: true });
@@ -1546,7 +1546,7 @@ function passesAgain(id, { command, argv, failures, report, status, signal, elap
   const clock = clockRun(id, root, env);
   const dir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-again-`));
   let again = null;
-  let result;
+  let result, cleanupError;
   try {
     // What the first run left in its temporary directory is not there for this one.
     const temp = path.join(dir, 'tmp');
@@ -1564,6 +1564,7 @@ function passesAgain(id, { command, argv, failures, report, status, signal, elap
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch (error) {
+      cleanupError = error;
       log(`${id}: could not remove ${dir}: ${error?.message ?? error}`);
     }
   }
@@ -1590,7 +1591,7 @@ function passesAgain(id, { command, argv, failures, report, status, signal, elap
   if (notPassed.length > 0) problems.add(`${notPassed.map(testAt).join('; ')} did not pass`);
   if (problems.size > 0) {
     log(`${id}: run again in full, still failing (整条再跑仍失败): ${[...problems].join('; ')}`);
-    if (clockUses > 0 || (!result.error && !result.signal && terminalTestReport(result.status, again, unexpected))) terminalFailure();
+    if (!cleanupError && !result.error && !result.signal && (clockUses > 0 || terminalTestReport(result.status, again, unexpected))) terminalFailure();
     return false;
   }
   return true;
@@ -1601,13 +1602,48 @@ function terminalTestReport(status, report, failures) {
     && failures.some(event => event.file && event.failure_type === 'testCodeFailure' && !event.missing_dependency && !event.network_failure);
 }
 
-// The landing reader binds this annotation to the exact failed Actions check
-// on S. No annotation means the check supplies no bisection verdict.
-function reportTrainTestFailure(id, env, log) {
-  if (env.GITHUB_ACTIONS === 'true' && env.GITHUB_EVENT_NAME === 'push'
-    && env.GITHUB_REF === 'refs/heads/clued-train/staging' && /^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? '')) {
-    log(`::error title=Merge train test failure::${id} ${env.GITHUB_SHA}`);
+// Only the trusted selector can return this reserved status. Workflow steps
+// use it to record a provider-native confirmation for the exact check job.
+const TRAIN_TERMINAL_EXIT = 86;
+function trainStaging(env) {
+  return env.GITHUB_ACTIONS === 'true' && env.GITHUB_EVENT_NAME === 'push'
+    && env.GITHUB_REF === 'refs/heads/clued-train/staging' && /^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? '');
+}
+
+function stagingOutput(text, env) {
+  return trainStaging(env) ? String(text).replaceAll('::', ': :').replaceAll('##[', '# #[') : text;
+}
+
+function spawnWithStagingOutput(spawn, argv, options, env, log) {
+  // Keep descendants off the Actions streams. An ordinary file also lets
+  // spawnSync return when a descendant still holds its inherited handle.
+  const output = path.join(env.RUNNER_TEMP || os.tmpdir(), 'staging-suite-' + randomUUID() + '.log');
+  const fd = openSync(output, 'wx');
+  let result;
+  try {
+    result = spawn(argv[0], argv.slice(1), { ...options, stdio: ['ignore', fd, fd] });
+    const text = readFileSync(output, 'utf8');
+    if (Array.isArray(options.stdio)) result.stdout = text;
+    else if (text) log(stagingOutput(text, env));
+  } finally {
+    closeSync(fd);
+    try {
+      rmSync(output, { force: true });
+    } catch (error) {
+      // Unconfirmed command cleanup cannot establish a terminal verdict.
+      if (result && !result.error) result.error = error;
+    }
   }
+  return result;
+}
+
+function reportTrainTestFailure(id, env, log) {
+  if (trainStaging(env)) log(`::error title=Merge train test failure::${id} ${env.GITHUB_SHA}`);
+}
+
+function trainFailureStatus(status, terminal, env) {
+  if (terminal && trainStaging(env) && env.CLUED_TRAIN_TERMINAL_EXIT === '1') return TRAIN_TERMINAL_EXIT;
+  return status && status !== TRAIN_TERMINAL_EXIT ? status : 1;
 }
 
 function reportFlaky(id, failures, { env, log }) {
@@ -1653,6 +1689,10 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
   captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : ''),
   rerunMaxElapsedMs = RERUN_MAX_ELAPSED_MS, rerunMinTimeoutMs = RERUN_MIN_TIMEOUT_MS, shard = null, shardSecondsFile = SHARD_SECONDS_PATH,
   commandTimeoutMs = COMMAND_TIMEOUT_MS } = {}) {
+  if (trainStaging(env)) {
+    const launch = spawn;
+    spawn = (command, args, options) => spawnWithStagingOutput(launch, [command, ...args], options, env, log);
+  }
   const host = hostLacks(env);
   if (host.error) {
     log(`::error title=${id}::${host.error}`);
@@ -1758,7 +1798,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
     const elapsed = performance.now() - started;
     if (command.quiet && result.stdout) {
       // The runner budget report is long; print its head on success, all of it on failure.
-      const text = result.stdout.toString();
+      const text = stagingOutput(result.stdout.toString(), env);
       log(result.status === 0 ? `${text.split('\n').slice(0, 4).join('\n')}\n...` : text);
     }
     log('::endgroup::');
@@ -1805,16 +1845,23 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
         if (reportDir) rmSync(reportDir, { recursive: true, force: true });
       } catch { /* a temporary directory left behind */ }
       log(`${id}: ${shown.join(' ')} used the real clock in test code (exit ${result.status ?? result.signal})`);
-      if (!files) reportTrainTestFailure(id, env, log);
-      return result.status || 1;
+      const terminal = !files && !result.error && !result.signal;
+      if (terminal) reportTrainTestFailure(id, env, log);
+      return trainFailureStatus(result.status, terminal, env);
+    }
+    if (result.error && trainStaging(env)) {
+      dropReport();
+      log(id + ': staging command did not finish cleanly: ' + result.error.message);
+      return 1;
     }
     // Every error on the way to running again keeps the failure (FABLE-flaky-no-new-commit-20261122 §2.5).
+    let terminal = false;
     const again = (failures, { report: ran, status, list = [] }) => {
-      if (files) return false;
+      if (files || result.error) return false;
       try {
         return passesAgain(id, { command, argv: plain, failures, report: ran, status, signal: result.signal, elapsed, root, cwd, env,
           spawn, platform, list, log, readReportFile, maxElapsed: rerunMaxElapsedMs, minTimeout: rerunMinTimeoutMs,
-          terminalFailure: () => reportTrainTestFailure(id, env, log) });
+          terminalFailure: () => { terminal = true; } });
       } catch (error) {
         log(`${id}: not run again in full: ${error?.message ?? error}`);
         return false;
@@ -1842,11 +1889,12 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
       for (const problem of verdict.problems) log(`::error title=${id}::${problem}`);
       if (!verdict.ok) {
         log(`${id}: ${verdict.unexpected.length} failure(s) not on the known-failure list${verdict.problems.length ? `; ${verdict.problems.join('; ')}` : ''}`);
-        return status || 1;
+        if (terminal) reportTrainTestFailure(id, env, log);
+        return trainFailureStatus(status, terminal, env);
       }
       continue;
     }
-    if (result.status !== 0) {
+    if (result.status !== 0 || result.error) {
       log(`${id}: ${shown.join(' ')} exited ${result.status ?? result.signal}`);
       if (reportDir) {
         try {
@@ -1861,7 +1909,8 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
           continue;
         }
       }
-      return result.status || 1;
+      if (terminal) reportTrainTestFailure(id, env, log);
+      return trainFailureStatus(result.status, terminal, env);
     }
     dropReport();
   }
@@ -1903,7 +1952,8 @@ try {
 } catch (error) {
   console.log('::error title=' + id + '::' + error.message);
 }
-writeFileSync(out, JSON.stringify({ status, tally }));`;
+writeFileSync(out, JSON.stringify({ status, tally }));
+if (status === 86) process.exitCode = status;`;
 export function runLanePart(id, { root, env = process.env, lane, drainMs = LANE_DRAIN_MS }) {
   const dir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-lane-`));
   const out = path.join(dir, 'result.json');
@@ -1916,6 +1966,7 @@ export function runLanePart(id, { root, env = process.env, lane, drainMs = LANE_
     child.stdout.on('data', (chunk) => chunks.push(chunk));
     child.stderr.on('data', (chunk) => chunks.push(chunk));
     let done = false;
+    let exitCode = null;
     let drain = null;
     const finish = (problem, drained = false) => {
       if (done) return;
@@ -1930,7 +1981,7 @@ export function runLanePart(id, { root, env = process.env, lane, drainMs = LANE_
       try {
         rmSync(dir, { recursive: true, force: true });
       } catch { /* a temporary directory left behind */ }
-      const ok = result && Number.isInteger(result.status);
+      const ok = result && Number.isInteger(result.status) && (result.status !== TRAIN_TERMINAL_EXIT || exitCode === result.status);
       const output = Buffer.concat(chunks).toString('utf8')
         + (drained ? `::notice title=${id}::道 ${lane.index}/${lane.total}：子进程已退出，留下的进程仍占输出管道，${drainMs} 毫秒后收尾，之后的输出未收\n` : '')
         + (ok ? '' : `::error title=${id}::lane ${lane.index}/${lane.total} ended without a result (${problem})\n`);
@@ -1938,6 +1989,7 @@ export function runLanePart(id, { root, env = process.env, lane, drainMs = LANE_
     };
     child.on('error', (error) => finish(error.message));
     child.on('exit', (code, signal) => {
+      exitCode = code;
       drain = setTimeout(() => finish(`exit ${code ?? signal}; its output pipe still open after ${drainMs} ms`, true), drainMs);
     });
     child.on('close', (code, signal) => finish(`exit ${code ?? signal}`));
@@ -1961,6 +2013,7 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
     summary(`- ${hostLacksNote(host.lacks)}\n`);
   }
   const failed = [];
+  let terminal = false;
   const lanes = laneCount({ cores, env, shard, suites });
   let planFor = () => undefined;
   if (suites.length > 0 && (shard || (lanes > 1 && check))) {
@@ -2003,7 +2056,9 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
       }
     }));
     for (const id of suites) {
-      let status = parts.get(id).find((part) => part.status !== 0)?.status ?? 0;
+      const results = parts.get(id);
+      if (results.some(part => part.status === TRAIN_TERMINAL_EXIT)) terminal = true;
+      let status = results.find((part) => part.status !== 0)?.status ?? 0;
       // All the trusted lanes must pass before the candidate entry runs the suite once.
       if (status === 0) {
         try {
@@ -2018,7 +2073,7 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
     }
     log(`${lanes} 道全部结束，墙钟 ${((performance.now() - started) / 1000).toFixed(1)} 秒`);
     if (failed.length > 0) log(`::error title=${hostPlatform()} suites::failed: ${failed.join(' ')}`);
-    return failed.length > 0 ? 1 : 0;
+    return terminal ? TRAIN_TERMINAL_EXIT : failed.length > 0 ? 1 : 0;
   }
   let timedOut = false;
   if (shard) summary(`- shard ${shard.index}/${shard.total}\n`);
@@ -2031,6 +2086,7 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
       // e.g. a candidate selector whose command list cannot be read: this suite fails, the next ones still run
       log(`::error title=${id}::${error.message}`);
     }
+    if (status === TRAIN_TERMINAL_EXIT) terminal = true;
     if (env.GITHUB_ACTIONS !== 'true' && status === LOCAL_TIMEOUT_EXIT) timedOut = true;
     if (shard) {
       // A suite this shard ran no unit of did not pass here: it did not run here (review M2).
@@ -2046,7 +2102,7 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
   }
   if (failed.length > 0) log(`::error title=${hostPlatform()} suites::failed: ${failed.join(' ')}`);
   if (timedOut) return LOCAL_TIMEOUT_EXIT;
-  return failed.length > 0 ? 1 : 0;
+  return terminal ? TRAIN_TERMINAL_EXIT : failed.length > 0 ? 1 : 0;
 }
 
 const ROOT = path.resolve(HERE, '..', '..');

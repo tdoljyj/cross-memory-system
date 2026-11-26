@@ -68,7 +68,9 @@ import { STAGE8_LEASE_MINUTES, extendLeaseIfShort, leaseAfter } from './claim-as
 import { digest } from '../proof.mjs';
 import { freshStamp } from '../clock-skew.mjs';
 import { LANDING_NOT_READY_REASONS, LANDING_FINAL_REASONS, TRAIN_BATCH_CHANGED, TRAIN_BATCH_WITHOUT_PUSH, TRAIN_LANDING_REFUSED, TRAIN_LANDING_UNCONFIRMED,
-  TRAIN_LANDING_RULES_MISSING, readLandingRoute, rehearsalOf, stagingChecksDecision, readBatchChain, landMain } from './train-landing.mjs';
+  TRAIN_LANDING_RULES_MISSING, TRAIN_LANDING_CHECK_FAILED, readLandingRoute, rehearsalOf, externalChecksDecision, readBatchChain, landMain, landTrainIntent,
+  reconcileTrainIntent, trainMainContains, validTrainMembers, exactTrainChecksDecision, trainV2RulesValid } from './train-landing.mjs';
+import { TRAIN_FAILURE, TRAIN_PROTOCOL_VERSION, trainBatchKey, trainEffectKey, trainLandingSlotKey } from '../merge-train-v2-contract.mjs';
 import { makeJobV2, validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, RULESET_UNREADABLE, RULESET_READ_FAILED, readMainRules, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY,
@@ -173,13 +175,14 @@ function sourceBinding(job, packet, facts, authority) {
 // (github.mjs readPullsUpdatedSince). Any of them missing is "not proven", never a green.
 function engine({ github, journal, admission, assertLive, record, authority, batchClaim, greenLedger = null, trainMode = TRAIN_MODE_DEFAULT, trainModeUnreadable = false,
   slotNative = null, sweepStore = null, pullsUpdatedSince = null, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), claimAssist = null,
-  trainLanding = null, landing = null, batchRoute = null }, production) {
+  trainLanding = null, landing = null, batchRoute = null, trainV2 = null }, production) {
   const domain = production ? 'production' : 'fixture';
   // The green ledger is required where a green is written (publishPair), not here: the merge-gate consumer only reads (review M1).
   check(TRAIN_MODES.includes(trainMode) && (greenLedger === null || typeof greenLedger?.append === 'function'), 'CONTROL_PUBLISHER_CONFIGURATION_REFUSED');
   const trainOn = trainMode === 'on';
   // ADR 0018: push lands main itself; the stage file read is trainLanding ({landing, batchMax, unreadable}); push needs the landing port.
-  const push = trainOn && trainLanding?.landing === 'push' && trainLanding.unreadable !== true && typeof landing?.fastForwardMain === 'function';
+  const push = trainOn && trainLanding?.landing === 'push' && trainLanding.unreadable !== true
+    && typeof landing?.[trainV2 === null ? 'fastForwardMain' : 'landIntent'] === 'function';
   const landingUnreadable = trainOn && trainLanding?.unreadable === true;
   const frontRefused = () => ({ status: 'BLOCKED', reason: trainFrontRefusal(trainModeUnreadable), sideEffects: 0, productionAuthorized: false });
   // Phase 2, step 3a: the live branch rules of main and GitHub's test merge of the PR (train-rules.mjs). The tested tree is
@@ -597,6 +600,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     fail('TRAIN_LANDING_RETRIES_EXHAUSTED');
   }
   async function landOne(input, headTrain, lease) {
+    if (trainV2 !== null) return landOneV2(input);
     const blocked = (reason, extra = {}) => ({ status: 'BLOCKED', reason, sideEffects: 0, productionAuthorized: false, ...lease, ...extra });
     let job, members, key;
     try {
@@ -646,8 +650,8 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         } catch { return blocked(TRAIN_BATCH_CHANGED); }
       }
       // Push lands S: its required checks must pass on S itself, even when H has the same tree.
-      const outside = await stagingChecksDecision({ rules: reply.rules, inventory: await github.readChecks(job.testSha),
-        commitSha: job.testSha, appId: APP_ID, now: clock(), readAnnotations: id => github.readCheckAnnotations(id) });
+      const outside = externalChecksDecision({ rules: reply.rules, inventory: await github.readChecks(job.testSha),
+        commitSha: job.testSha, appId: APP_ID, now: clock() });
       if (outside) return blocked(outside);
       mainNow = (await github.readBranchHead('main'))?.sha;
       if (mainNow !== job.baseSha && mainNow !== job.testSha) return blocked('RESIDENT_BASE_MOVED');
@@ -678,6 +682,111 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     }
     await transition(key, 'sent', 'uncertain', { reason: TRAIN_LANDING_UNCONFIRMED, mainSha: r.mainSha ?? null });
     return { status: 'UNCERTAIN', effectKey: key, reason: TRAIN_LANDING_UNCONFIRMED, sideEffects: 1, productionAuthorized: false, ...lease };
+  }
+
+  async function landOneV2(input) {
+    const blocked = reason => ({ status: 'BLOCKED', reason, sideEffects: 0, productionAuthorized: false });
+    let intent, mayHaveSent = false, sideEffects = 0;
+    try {
+      const job = fixedJob(input);
+      check(push && job.role === 'control-merge-slot' && isTrainFrontJobV2(job)
+        && trainV2.protocolVersion === TRAIN_PROTOCOL_VERSION, TRAIN_FAILURE.LEASE_STALE.resident);
+      assertLive();
+      const batch = await trainV2.readBatch({ repository: job.repo, targetBranch: 'main', testSha: job.testSha });
+      check(batch?.baseSha === job.baseSha && batch.testSha === job.testSha && batch.sourceSha256 === job.sourceManifestSha256
+        && validTrainMembers(batch.members) && batch.members[0].pr === job.pr && batch.members[0].headSha === job.headSha, TRAIN_BATCH_CHANGED);
+      const { scope } = batch;
+      check(scope?.targetBranch === 'main' && trainBatchKey({ ...batch, ...scope }) === batch.batchId, TRAIN_BATCH_CHANGED);
+      const slotId = trainLandingSlotKey(scope);
+
+      const matches = candidate => candidate?.batchId === batch.batchId
+        && candidate.baseSha === batch.baseSha && candidate.testSha === batch.testSha && digest(candidate.members) === digest(batch.members)
+        && candidate.slotId === slotId && candidate.effectId === trainEffectKey({ ...scope, action: 'landing_send',
+          subject: [batch.batchId, candidate.generation, candidate.generationRefOid, batch.baseSha, batch.testSha] });
+      const ports = () => ({ intent, port: landing, readRefs: () => landing.readTrainRefs(),
+        contains: (test, main) => trainMainContains(github, test, main), clock });
+      let result;
+      if (['sent', 'unknown', 'settled'].includes(batch.landing?.state)) {
+        intent = batch.landing.intent;
+        check(matches(intent), TRAIN_FAILURE.LEASE_STALE.resident);
+        mayHaveSent = true;
+        result = await reconcileTrainIntent({ ...ports(), receipt: batch.landing.state === 'settled' ? batch.landing.receipt : null });
+      } else {
+        // Cutover authorization includes the isolated-repository App/rules proof.
+        check(await trainV2.atomicLandingQualified({ repository: job.repo, appId: APP_ID }) === true, TRAIN_LANDING_RULES_MISSING);
+        const { rules } = await readMainRules(github, APP_ID);
+        const route = await readLandingRoute({ github, appId: APP_ID, rules });
+        const observedAt = new Date(clock()).toISOString();
+        const bypass = [];
+        check(route.route === 'push' && await trainV2RulesValid({ rules, appId: APP_ID,
+          readBypass: async id => {
+            const actors = await trainV2.readRuleBypass({ repository: job.repo, rulesetId: id });
+            bypass.push({ id, actors });
+            return actors;
+          } }), TRAIN_LANDING_RULES_MISSING);
+        const chain = await readBatchChain({ readGitCommit: sha => github.readGitCommit(sha), baseSha: job.baseSha,
+          heads: batch.members.map(m => m.headSha), testSha: job.testSha, steps: batch.steps });
+        check(Array.isArray(batch.steps) && chain.ok && chain.tree === batch.testTree, TRAIN_BATCH_CHANGED);
+        for (const member of batch.members) {
+          const pull = await github.readPullRequest(member.pr);
+          check(pull?.number === member.pr && pull.state === 'open' && pull.draft === false && pull.head?.sha === member.headSha && pull.head.repo?.full_name === job.repo
+            && pull.base?.ref === 'main' && pull.base.repo?.full_name === job.repo && pull.base.sha === job.baseSha, TRAIN_BATCH_CHANGED);
+          // Native revalidates the exact current claim, queue membership, effective mode,
+          // Source and any Grant. The qualification flag alone carries no write authorization.
+          check(await trainV2.verifyMember({ batch, member }) === true, TRAIN_BATCH_CHANGED);
+        }
+        const inventory = await github.readChecks(job.testSha);
+        const verdict = await exactTrainChecksDecision({ rules, inventory, batch, github, now: clock() });
+        if (verdict.reason) {
+          if (verdict.reason === TRAIN_LANDING_CHECK_FAILED && batch.members.length > 1) {
+            // Native consumes the exact batch/generation/S once and derives
+            // the prefix. Replaying the read never authorizes a main write.
+            const refs = await landing.readTrainRefs();
+            check(refs.mainSha === batch.baseSha && refs.stagingSha === batch.testSha
+              && refs.generationRefOid === batch.generationRefOid, TRAIN_BATCH_CHANGED);
+            assertLive();
+            await trainV2.bisectBatch({ batch, evidenceDigest: digest(verdict.evidence) });
+          }
+          return blocked(verdict.reason);
+        }
+
+        assertLive();
+        const evidence = { observedAt, rulesSha256: digest({ rules, bypass }), checkInventorySha256: digest(inventory),
+          requiredRunsSha256: digest(verdict.runs) };
+        const prepared = await trainV2.prepareLanding({ batch, evidence });
+        intent = prepared?.intent;
+        check(matches(intent), TRAIN_FAILURE.LEASE_STALE.resident);
+        if (prepared.state === 'reserved') {
+          // True is issued only to the caller that durably moved this intent reserved -> sent.
+          // An ambiguous response leaves recovery to the next claimant and never sends GitHub.
+          assertLive();
+          check(intent.generation === batch.generation, TRAIN_FAILURE.LEASE_STALE.resident);
+          mayHaveSent = true;
+          if (await trainV2.authorizeLandingSend(intent, evidence) !== true) return blocked(TRAIN_FAILURE.LEASE_STALE.resident);
+          result = await landTrainIntent({ ...ports(), port: { landIntent: async value => {
+            assertLive();
+            sideEffects++;
+            return landing.landIntent(value);
+          } } });
+        } else {
+          check(['sent', 'unknown', 'settled'].includes(prepared.state), TRAIN_FAILURE.LEASE_STALE.resident);
+          mayHaveSent = true;
+          result = await reconcileTrainIntent(ports());
+        }
+      }
+      const settled = await trainV2.reconcileLanding({ intent, result });
+      if (result.state === 'landed' && settled?.state === 'settled' && settled.effectId === intent.effectId) {
+        return { status: 'SETTLED', effectKey: intent.effectId, sideEffects, productionAuthorized: production,
+          landed: { mainSha: intent.testSha, baseSha: intent.baseSha, members: intent.members.map(({ pr, headSha }) => ({ pr, headSha })) },
+          qualificationIssued: false, nativeTicketIssued: false };
+      }
+      if (result.state === 'revoked' && settled?.state === 'revoked' && settled.effectId === intent.effectId)
+        return blocked(TRAIN_FAILURE.LANDING_REF_MISMATCH.resident);
+      return { status: 'UNCERTAIN', effectKey: intent.effectId, reason: result.reason ?? TRAIN_FAILURE.EFFECT_UNKNOWN.resident, sideEffects, productionAuthorized: false };
+    } catch (error) {
+      if (!mayHaveSent) return blocked(safe(error));
+      return { status: 'UNCERTAIN', effectKey: intent?.effectId, reason: TRAIN_FAILURE.EFFECT_UNKNOWN.resident, sideEffects, productionAuthorized: false };
+    }
   }
   // The v2 consumer (merge gate): a settled journal entry of exactly this job and batch claim generation,
   // a fresh complete admission before and after the GitHub read-back, the same durable producer identity.
@@ -718,6 +827,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     } catch (e) { return { status: 'BLOCKED', reason: safe(e), sideEffects: 0, productionAuthorized: false }; }
     // §41.2 (§38.8 m3): S != H only with the train on; nothing read, nothing written.
     if (trainFrontRefused(jobs[1], trainMode)) return frontRefused();
+    if (trainV2 !== null) return landOne(jobs[1]);
     // ADR 0018: a front job whose stage file train-landing.json exists but cannot be used parks (the landing mode is unknown, not github-merge).
     if (landingUnreadable && isTrainFrontJobV2(jobs[1])) return { status: 'BLOCKED', reason: TRAIN_MODE_UNREADABLE, sideEffects: 0, productionAuthorized: false };
     const head = await waitForQueueHead(jobs[1], waitUntil);

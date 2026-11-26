@@ -8,6 +8,8 @@ import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, HOOK_VERSION, COMPONENT_VER
 import { qualifyNativeRetryCandidate } from "./qualify-native-admission-retry-candidate.mjs";
 import { workflowIsGated } from "../ci/clued-work-admission.mjs";
 import fs from "node:fs";
+import { ghPort } from "../../work/independent-ci-resident-v1/src/admission-rerun.mjs";
+import { createTrainRecoveryPort } from "../../work/independent-ci-resident-v1/src/train-recovery.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -151,6 +153,7 @@ const STAGING_ENV = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/clued-t
   GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests.yml@refs/heads/clued-train/staging' };
 const MAIN = 'd'.repeat(40);
 const MAIN_REF = `${API}/git/ref/heads/main`;
+const GENERATION_REF = API + '/git/ref/heads/clued-train/generation';
 const REPAIR_ACTOR = { id: 54321, login: 'train-repair[bot]', type: 'Bot' };
 const REPO_MODE = `${API}/actions/variables?`;
 const ENVIRONMENT_MODE = `${API}/environments/clued-admission/variables?`;
@@ -168,6 +171,8 @@ const stagingScript = () => ({
   [RUN]: thisRun({ event: 'push', head_sha: SHA, head_branch: 'clued-train/staging',
     path: '.github/workflows/clued-required-tests.yml', actor: { login: STAGING_ENV.GITHUB_ACTOR } }),
   [MAIN_REF]: { body: { object: { type: 'commit', sha: MAIN } } },
+  [GENERATION_REF]: { body: { ref: 'refs/heads/clued-train/generation', object: { type: 'commit', sha: 'e'.repeat(40) } } },
+  [API + '/git/ref/heads/clued-train/staging']: { body: { object: { type: 'commit', sha: SHA } } },
   [REPO_MODE]: repairVariables,
   [ENVIRONMENT_MODE]: modeVariables(),
   [`${API}/git/commits/${SHA}`]: { body: { sha: SHA, parents: [{ sha: MAIN }, { sha: HEAD }] } },
@@ -183,6 +188,13 @@ test('bors staging: workflow or protected changes without member admission must 
   // changed workflows, protected paths and an unreadable diff all fail closed.
   const { result } = await stagingRun({ [NATIVE]: { body: { total_count: 0, check_runs: [] } } });
   assert.equal(result.allow, false);
+});
+
+test('legacy staging attempt 1 keeps member admission when Variables and Environments are unavailable', async () => {
+  const { result, calls } = await stagingRun({ [GENERATION_REF]: { status: 404 }, [REPO_MODE]: { status: 403 }, [ENVIRONMENT_MODE]: { status: 403 } });
+  assert.equal(result.allow, true, result.reason);
+  assert.ok(calls.some(call => call.url.startsWith(NATIVE)));
+  assert.ok(!calls.some(call => call.url.startsWith(REPO_MODE) || call.url.startsWith(ENVIRONMENT_MODE)));
 });
 
 test('train v2: a manual staging rerun cannot borrow the original train actor or a fresh gate', async () => {
@@ -249,6 +261,63 @@ test('train v2: the recovery App can rerun an environment failure within the bud
   assert.match((await launch(2)).result.reason, /does not allow repair/);
   script[RUN].body.run_attempt = 4;
   assert.match((await launch(4)).result.reason, /exceeded its repair budget/);
+});
+
+test('train v2: the real rerun port sends an admitted setup repair from the bot, and the same attempt starts', async () => {
+  const script = stagingScript();
+  const first = script[RUN].body;
+  Object.assign(first, { workflow_id: 100, status: 'completed', conclusion: 'failure' });
+  const generation = { ref: 'refs/heads/clued-train/generation', object: { type: 'commit', sha: 'e'.repeat(40) } };
+  script[`${API}/git/ref/heads/clued-train/generation`] = { body: generation };
+  const accept = actor => {
+    assert.equal(first.run_attempt, 1);
+    Object.assign(first, { run_attempt: 2, run_started_at: RUN_STARTED, triggering_actor: actor });
+    return { outcome: 'sent' };
+  };
+  let posts = 0;
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const recovery = createTrainRecoveryPort({ repository: 'o/r', appId: '98765', keyFile: path.resolve('fixture-key'),
+    now: () => Date.parse(RUN_STARTED), readKey: async () => privateKey,
+    fetchImpl: async (url, options) => {
+      const pathname = new URL(url).pathname;
+      if (pathname === '/app') return Response.json({ id: 98765, slug: 'train-repair' });
+      if (pathname === '/repos/o/r/installation') return Response.json({ id: 1234, app_id: 98765 });
+      if (pathname === '/app/installations/1234/access_tokens') {
+        assert.deepEqual(JSON.parse(options.body), { repositories: ['r'], permissions: { actions: 'write' } });
+        return Response.json({ token: 'test-app-installation', permissions: { actions: 'write' } }, { status: 201 });
+      }
+      assert.equal(options.headers.authorization, 'Bearer test-app-installation');
+      if (pathname === '/users/train-repair%5Bbot%5D') return Response.json(REPAIR_ACTOR);
+      assert.equal(pathname, '/repos/o/r/actions/runs/555/rerun');
+      assert.equal(options.method, 'POST');
+      posts++;
+      accept(REPAIR_ACTOR);
+      return new Response(null, { status: 201 });
+    } });
+  const gh = ghPort({ ghExe: 'C:\\gh.exe', repo: 'o/r', trainRecovery: recovery,
+    run: async (argv) => {
+      assert.equal(argv[3], 'GET', 'the Owner gh session does not perform the v2 write');
+      const route = argv.at(-1);
+      const reply = route.endsWith('/generation') ? generation
+        : route.endsWith('/staging') ? { ref: 'refs/heads/clued-train/staging', object: { sha: SHA } }
+        : route.endsWith('/CLUED_TRAIN_REPAIR_ACTOR_ID') ? { name: 'CLUED_TRAIN_REPAIR_ACTOR_ID', value: String(REPAIR_ACTOR.id) }
+        : route.endsWith('/CLUED_MERGE_ADMISSION_STATE') ? { name: 'CLUED_MERGE_ADMISSION_STATE', value: 'normal' }
+        : first;
+      return { code: 0, stdout: JSON.stringify(reply) };
+    } });
+  script[JOBS(1)] = jobsOf(gateJob({ run_attempt: 1, head_sha: SHA, conclusion: 'failure',
+    steps: [{ name: 'Set up job', conclusion: 'failure' }] }),
+    heavyJob({ run_attempt: 1, head_sha: SHA, status: 'completed', conclusion: 'skipped' }));
+  assert.deepEqual(await gh.rerun(555, { testSha: SHA, attempt: 1 }), { outcome: 'sent' });
+  assert.equal(posts, 1);
+  const attempt = { GITHUB_RUN_ATTEMPT: '2' };
+  const gate = await stagingRun(script, { ...attempt, GITHUB_JOB: 'admission-gate' });
+  assert.equal(gate.result.allow, true, gate.result.reason);
+  script[JOBS(2)] = jobsOf(gateJob({ run_attempt: 2 }));
+  const heavy = await stagingRun(script, { ...attempt, GITHUB_JOB: 'migration-verify' });
+  assert.equal(heavy.result.allow, true, heavy.result.reason);
+  assert.equal((await gh.rerun(555, { testSha: SHA, attempt: 1 })).outcome, 'unsent');
+  assert.equal(posts, 1);
 });
 
 test('bors staging: a name alone, wrong App/PR/head, malformed binding, pending or newer failed admission never suffices', async () => {

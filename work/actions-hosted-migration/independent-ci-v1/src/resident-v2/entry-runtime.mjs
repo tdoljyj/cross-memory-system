@@ -229,7 +229,8 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
   // E3 (bf57ff10 P2): SHA-fixed GitHub reads are fetched once per entry process (immutableReadCache); all else as before.
   const fetchImpl = immutableReadCache(retryingFetch, { live, onHit: url => timing(url, { method: 'GET', status: 200, ms: 0, cache: true }) });
   const github = createGitHubChecksPort({ repository: record.config.repository, repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId,
-    installationId: FIXED_APP.installationId, includeModeRead: true, privateKeyProvider: async () => appKey, fetchImpl, budgetObserver, budgetObservedAtFetch: true, stagedScanJournal, batchRoute });
+    installationId: FIXED_APP.installationId, includeModeRead: true,
+    includeActionsRead: record.config.mergeTrainProtocolVersion === 2, privateKeyProvider: async () => appKey, fetchImpl, budgetObserver, budgetObservedAtFetch: true, stagedScanJournal, batchRoute });
   const admission = createFullAdmissionPortV2({ protectedConfig: { ...record.config, ciPrincipalBindingId: bindingId, domain: 'production', workspace: sourceRoot, policyText }, fetchImpl, batchRoute,
     modeProvider: () => github.readAdmissionMode(),
     tokenProvider: async () => ({ githubToken: await github.getInstallationToken(), ciAdmissionToken: nativeToken, ciPrincipalBindingId: bindingId, ciPrincipalQualificationRef: record.config.ciPrincipalQualificationRef }),
