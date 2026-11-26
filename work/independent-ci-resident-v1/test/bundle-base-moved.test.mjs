@@ -40,7 +40,8 @@ async function fixture(t, per) {
   const bundles = [];
   const comp = { calls: [], async heartbeat() { return { at: f.clock() }; }, async buildBundle(batch) { bundles.push(batch.pr); return per[batch.pr] ?? { ok: true }; },
     async prepareWorkspaces() { return { ok: true }; }, async linuxQuiescence() { return { linuxUnitsInactive: true, containersZero: true }; },
-    async archiveLinux(batch, reason) { return { verified: true, directory: `failed-x-${reason}-111111111111` }; }, async prHead() { return null; } };
+    async archiveLinux(batch, reason) { return { verified: true, directory: `failed-x-${reason}-111111111111` }; },
+    async prHead(pr) { return { number: pr, state: 'open', headSha: f.queue.row(pr).current.headSha }; } };
   const f = await executorFixture(t, { engine, companion: comp });
   f.bundles = bundles;
   return f;

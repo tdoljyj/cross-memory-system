@@ -232,11 +232,13 @@ test('attempt 2: one live read after the precheck closes it when the head moved 
     const base = engine.runStage;
     engine.runStage = async (batch, stage) => (stage.number === 2 && ++n === 1 ? (engine.calls.push(['stage', 2]), { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', proof: WINDOWS_CLEAN }) : base(batch, stage));
     let head = HEAD;
-    const f = await executorFixture(t, { engine, companion: fakeCompanion({ pull: pr => (answer ? { number: pr, state: 'open', headSha: head } : null) }) });
+    let readable = true;
+    const f = await executorFixture(t, { engine, companion: fakeCompanion({ pull: pr => (readable ? { number: pr, state: 'open', headSha: head } : null) }) });
     await f.drop(triggerBytes());
     assert.equal((await f.exec.tick()).state, 'FAILED_CLEAN');
     const before = f.companion.calls.filter(c => c[0] === 'pr-head').length;
     head = H(7);
+    readable = answer;
     f.advance(600_000);
     const second = await f.exec.tick();
     assert.deepEqual([second.state, second.reason], want);
