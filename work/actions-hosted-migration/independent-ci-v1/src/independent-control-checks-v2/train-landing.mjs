@@ -16,7 +16,8 @@
 //   - landMain: the one write to main, with its read-backs.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { sixPinned, readMainRules } from './train-rules.mjs';
+import { sixPinned, readMainRules, rulesetFacts } from './train-rules.mjs';
+import { TRAIN_BATCH_MEMBER_FIELDS, TRAIN_FAILURE, TRAIN_LANDING_INTENT_FIELDS } from '../merge-train-v2-contract.mjs';
 
 export const LANDING_MODES = Object.freeze(['github-merge', 'push']);
 export const LANDING_DEFAULT = 'github-merge';
@@ -35,6 +36,8 @@ export const MAIN_REF = 'heads/main';
 export const STAGING_REF = 'heads/clued-train/staging';
 export const STAGING_TMP_REF = 'heads/clued-train/staging.tmp';
 export const STAGING_TMP_BRANCH = 'clued-train/staging.tmp';
+export const GENERATION_REF = 'heads/clued-train/generation';
+export const ABSENT_OID = '0'.repeat(40);
 // ADR 0018 §8 item 3: a required check pinned to App 5368905 that no code ever publishes, so nobody without the ruleset bypass can merge
 // on the PR page. requiredCheckFailure knows it (absent is neither a failure nor an unknown provider).
 export const TRAIN_ONLY_CHECK = 'kooyumi-train-landed';
@@ -58,6 +61,10 @@ export const MAX_BAD = 200;
 export const MAX_ADOPTED = 100;
 
 const SHA = /^[0-9a-f]{40}$/;
+const HASH = /^[0-9a-f]{64}$/;
+const isOid = value => typeof value === 'string' && SHA.test(value) && value !== ABSENT_OID;
+const isKey = value => typeof value === 'string' && HASH.test(value);
+const positive = value => Number.isSafeInteger(value) && value > 0;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -274,9 +281,13 @@ export const runsOfRequired = (checks, { context, pin }, commitSha) =>
   checks.filter(k => plain(k) && k.name === context && k.head_sha === commitSha && (pin === null || k.app?.id === pin));
 export function externalChecksDecision({ rules, inventory, commitSha, appId, now = Date.now() }) {
   if (!Array.isArray(rules) || inventory?.complete !== true || !Array.isArray(inventory.checks)) return TRAIN_LANDING_CHECKS_PENDING;
+  return checksDecision(externalRequiredChecks({ rules, appId }), inventory.checks, commitSha, now);
+}
+
+function checksDecision(required, checks, commitSha, now) {
   let pending = false;
-  for (const c of externalRequiredChecks({ rules, appId })) {
-    const runs = runsOfRequired(inventory.checks, c, commitSha);
+  for (const c of required) {
+    const runs = runsOfRequired(checks, c, commitSha);
     const newest = runs.reduce((a, k) => (!a || k.id > a.id ? k : a), null);
     if (!newest || newest.status !== 'completed') { pending = true; continue; }
     if (INCONCLUSIVE_CHECKS.has(newest.conclusion)
@@ -287,6 +298,45 @@ export function externalChecksDecision({ rules, inventory, commitSha, appId, now
     if (newest.conclusion !== 'success') return TRAIN_LANDING_CHECK_FAILED;
   }
   return pending ? TRAIN_LANDING_CHECKS_PENDING : null;
+}
+
+export function exactTrainChecksDecision({ rules, inventory, commitSha, now = Date.now() }) {
+  // Validate every live context before selecting runs by its exact App pin.
+  const lists = Array.isArray(rules) ? rules.filter(r => r.type === 'required_status_checks') : [];
+  if (!lists.length || lists.some(r => !Array.isArray(r.parameters?.required_status_checks)
+    || r.parameters.required_status_checks.some(c => typeof c?.context !== 'string' || !c.context || !positive(c.integration_id))))
+    return TRAIN_LANDING_RULES_MISSING;
+  const required = lists.flatMap(r => r.parameters.required_status_checks)
+    .filter(c => c.context !== TRAIN_ONLY_CHECK).map(c => ({ context: c.context, pin: c.integration_id }));
+  if (!required.length || inventory?.complete !== true || !Array.isArray(inventory.checks)
+    || inventory.checks.some(c => !positive(c?.id)) || new Set(inventory.checks.map(c => c.id)).size !== inventory.checks.length)
+    return TRAIN_LANDING_CHECKS_PENDING;
+  return checksDecision(required, inventory.checks, commitSha, now);
+}
+
+export async function trainV2RulesValid({ rules, appId, readBypass }) {
+  if (rulesetFacts(rules, appId).strict !== true) return false;
+  const seals = rules.filter(r => r.type === 'required_status_checks')
+    .flatMap(r => r.parameters.required_status_checks).filter(c => c.context === TRAIN_ONLY_CHECK);
+  if (!seals.length || seals.some(c => c.integration_id !== appId)) return false;
+  const byId = new Map();
+  for (const rule of rules) {
+    if (!positive(rule.rulesetId)) return false;
+    const group = byId.get(rule.rulesetId) ?? [];
+    group.push(rule.type);
+    byId.set(rule.rulesetId, group);
+  }
+  let hasGuard = false;
+  for (const [id, types] of byId) {
+    const actors = await readBypass(id);
+    const guard = types.length === 2 && types.includes('deletion') && types.includes('non_fast_forward');
+    if (!Array.isArray(actors)) return false;
+    if (guard) {
+      if (actors.length !== 0) return false;
+      hasGuard = true;
+    } else if (actors.length !== 1 || actors[0]?.actor_id !== appId || actors[0]?.actor_type !== 'Integration' || actors[0]?.bypass_mode !== 'always') return false;
+  }
+  return hasGuard;
 }
 
 // ---- composing a batch (ADR 0018 §3) ----
@@ -356,4 +406,91 @@ export async function landMain({ port, readMain, baseSha, testSha, clock = Date.
   }
   if (answer?.notSent === true && last === baseSha) return { state: 'refused', mainSha: last, sent: false, status: answer.status ?? null };
   return { state: 'uncertain', mainSha: last, sent: true, status: answer?.status ?? null };
+}
+
+export const validTrainMembers = members => Array.isArray(members) && members.length >= 1 && members.length <= BATCH_MAX_LIMIT
+  && new Set(members.map(m => m?.pr)).size === members.length
+  && members.every(m => plain(m) && TRAIN_BATCH_MEMBER_FIELDS.every(field => Object.hasOwn(m, field))
+    && positive(m.pr) && isOid(m.headSha) && typeof m.claimId === 'string' && m.claimId.length > 0 && positive(m.fence) && positive(m.epoch));
+
+function validTrainIntent(intent) {
+  return plain(intent) && TRAIN_LANDING_INTENT_FIELDS.every(field => Object.hasOwn(intent, field))
+    && [intent.batchId, intent.effectId, intent.slotId].every(isKey) && positive(intent.generation)
+    && [intent.baseSha, intent.testSha, intent.generationRefOid].every(isOid) && intent.baseSha !== intent.testSha
+    && validTrainMembers(intent.members) && typeof intent.expiresAt === 'string' && Number.isFinite(Date.parse(intent.expiresAt));
+}
+
+const validLandingIntent = intent => validTrainIntent(intent) && isOid(intent.landedRefOid) && intent.landedRefOid !== intent.generationRefOid;
+const unknown = (refs = null, cause = TRAIN_FAILURE.EFFECT_UNKNOWN) => ({ state: 'unknown', reason: cause.resident, refs });
+
+async function readTrainRefs(readRefs) {
+  try {
+    const refs = await readRefs();
+    return isOid(refs?.mainSha) && isOid(refs?.generationRefOid) ? refs : null;
+  } catch { return null; }
+}
+
+export async function trainMainContains(github, testSha, mainSha) {
+  if (mainSha === testSha) return true;
+  const result = await github.readCompare(testSha, mainSha);
+  return result?.baseSha === testSha && result?.headSha === mainSha && result?.status === 'ahead'
+    && result.behindBy === 0 && result.mergeBaseSha === testSha;
+}
+
+// The generation marker remains pinned until Native has recorded the outcome. A response, an old T,
+// or main containing S without its completion marker cannot settle an in-flight intent.
+export async function reconcileTrainIntent({ intent, readRefs, contains, receipt = null }) {
+  if (!validLandingIntent(intent)) fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  const refs = await readTrainRefs(readRefs);
+  if (!refs) return unknown();
+  const wasLanded = receipt?.receiptId && receipt.intent?.effectId === intent.effectId
+    && receipt.intent.testSha === intent.testSha && receipt.generationRefOid === intent.landedRefOid;
+  if (refs.generationRefOid === intent.landedRefOid || wasLanded) {
+    try {
+      if (refs.mainSha === intent.testSha || await contains(intent.testSha, refs.mainSha) === true)
+        return { state: 'landed', ...refs, generationRefOid: intent.landedRefOid };
+    } catch { /* retain the intent for read-back */ }
+    return unknown(refs);
+  }
+  if (isOid(intent.invalidatedRefOid) && ![intent.generationRefOid, intent.landedRefOid].includes(intent.invalidatedRefOid)
+    && refs.generationRefOid === intent.invalidatedRefOid) return { state: 'revoked', ...refs };
+  return unknown(refs, refs.generationRefOid === intent.generationRefOid ? TRAIN_FAILURE.EFFECT_UNKNOWN : TRAIN_FAILURE.LANDING_REF_MISMATCH);
+}
+
+export async function landTrainIntent({ intent, port, readRefs, contains, clock = Date.now }) {
+  if (!validLandingIntent(intent)) fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  const first = await reconcileTrainIntent({ intent, readRefs, contains });
+  if (first.state !== 'unknown' || first.refs?.mainSha !== intent.baseSha || first.refs?.generationRefOid !== intent.generationRefOid)
+    return first;
+  if (Date.parse(intent.expiresAt) <= clock()) return unknown(first.refs, TRAIN_FAILURE.LEASE_STALE);
+  try { await port.landIntent(intent); } catch { /* GitHub may already have applied both updates */ }
+  return reconcileTrainIntent({ intent, readRefs, contains });
+}
+
+export async function invalidateTrainIntent({ intent, port, readRefs, contains }) {
+  if (!validLandingIntent(intent) || !isOid(intent.invalidatedRefOid)
+    || [intent.generationRefOid, intent.landedRefOid].includes(intent.invalidatedRefOid)) fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  const first = await reconcileTrainIntent({ intent, readRefs, contains });
+  if (first.state !== 'unknown' || first.refs?.generationRefOid !== intent.generationRefOid) return first;
+  try { await port.invalidateGeneration({ beforeOid: intent.generationRefOid, afterOid: intent.invalidatedRefOid, effectId: intent.effectId }); }
+  catch { /* a competing landing or invalidation may have won */ }
+  return reconcileTrainIntent({ intent, readRefs, contains });
+}
+
+export async function publishTrainStaging({ intent, port, readRefs, send = false, clock = Date.now }) {
+  if (!validTrainIntent(intent) || !isOid(intent.stagedRefOid) || intent.stagedRefOid === intent.generationRefOid
+    || !(intent.stagingBeforeOid === ABSENT_OID || isOid(intent.stagingBeforeOid))) fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  const first = await readTrainRefs(readRefs);
+  if (!first) return unknown();
+  if (first.generationRefOid === intent.stagedRefOid && first.stagingSha === intent.testSha) return { state: 'staged', ...first };
+  if (![intent.generationRefOid, intent.stagedRefOid].includes(first.generationRefOid) || first.mainSha !== intent.baseSha)
+    return { ...unknown(first, TRAIN_FAILURE.LANDING_REF_MISMATCH), state: 'mismatch' };
+  // S on the fixed ref has already triggered the workflows. Read the existing runs after handover.
+  if (first.stagingSha === intent.testSha) return { state: 'staged', ...first };
+  if (!send || first.stagingSha !== intent.stagingBeforeOid || first.generationRefOid !== intent.generationRefOid) return unknown(first);
+  if (Date.parse(intent.expiresAt) <= clock()) return unknown(first, TRAIN_FAILURE.LEASE_STALE);
+  try { await port.stageIntent(intent); } catch { /* read both refs even on a lost response */ }
+  const refs = await readTrainRefs(readRefs);
+  return refs?.stagingSha === intent.testSha && refs.generationRefOid === intent.stagedRefOid
+    ? { state: 'staged', ...refs } : unknown(refs);
 }

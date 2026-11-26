@@ -63,8 +63,11 @@ import { runStrictLane, strictIdentity, strictSettingsDigest, strictReadiness, s
 import { ScanProgress } from './train-scan-progress.mjs';
 import { layerOf, loadPolicy } from '../../../../../scripts/ci/merge-admission-policy.mjs';
 import { resolvePRTaskBinding } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
-import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact, readLandingRoute } from './train-landing.mjs';
+import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact, readLandingRoute,
+  invalidateTrainIntent, publishTrainStaging, reconcileTrainIntent, trainMainContains, validTrainMembers } from './train-landing.mjs';
 import { createLandingPort } from './train-landing-port.mjs';
+import { TRAIN_FAILURE } from '../merge-train-v2-contract.mjs';
+import { digest } from '../proof.mjs';
 import { FIXED_APP } from '../resident-v2/record.mjs';
 import { MAX_REVOKES_PER_RUN, SLOT_CHECK, SWEEP_BUDGET_MS, countedGithub, createSweeper, fullSweepSegment, incrementalSweep, ledgerGreens,
   publicationHeads, revokeGreens } from './train-sweep.mjs';
@@ -1209,6 +1212,88 @@ async function composeBatch({ github, native, landing, max, rows, claimScope, st
     fx.n++; await landing.pointRef(STAGING_REF, testSha);
   } catch { return { refusal: 'FRONT_TEST_MERGE_NOT_READY' }; }
   return { members, testSha, testTree, suspect: picked.suspect, stateSuspect: state.suspect, state };
+}
+
+// Stage 10 v2 receives an ordered, leased batch from Native. A failed merge leaves the batch
+// unsealed so the batch scheduler can decide how to split or retry it.
+export async function composeTrainV2Batch({ batch, github, landing, native, clock = Date.now }) {
+  const { batchId, generation, baseSha, members, expiresAt, testMergeSha } = batch;
+  if (!validTrainMembers(members) || !SHA.test(baseSha ?? '') || !(Date.parse(expiresAt) > clock()))
+    fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  if (await native.authorizeComposition(batch) !== true) fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  const steps = [];
+  if (members.length === 1) {
+    steps.push(testMergeSha);
+  } else {
+    const tmp = await landing.prepareBatchTmp({ batchId, generation, baseSha });
+    // Reuse needs the sealed record or a new composition generation. A temp ref from an
+    // uncertain earlier run may already contain part of the chain.
+    if (!tmp.acknowledged) fail(TRAIN_FAILURE.EFFECT_UNKNOWN.resident);
+    for (const member of members) {
+      if (!(Date.parse(expiresAt) > clock())) fail(TRAIN_FAILURE.LEASE_STALE.resident);
+      const result = await landing.mergeIntoBatchTmp({ batchId, generation, headSha: member.headSha,
+        message: `Merge train batch: #${member.pr} (${member.headSha.slice(0, 12)})` });
+      if (result.status !== 201) fail('FRONT_TEST_MERGE_NOT_READY');
+      steps.push(result.sha);
+    }
+  }
+  const testSha = steps.at(-1);
+  const chain = await readBatchChain({ readGitCommit: sha => github.readGitCommit(sha), baseSha, testSha,
+    heads: members.map(m => m.headSha), steps });
+  if (!chain.ok || !SHA.test(chain.tree ?? '')) fail('FRONT_TEST_MERGE_NOT_READY');
+  return native.sealBatch({ batchId, generation, baseSha, testSha, testTree: chain.tree, members, steps });
+}
+
+// The grant to send a staging effect is consumed in Native. A reply lost after that point
+// leaves the effect in read-back, including on a different node.
+export async function stageTrainV2Batch({ batch, landing, native, clock = Date.now }) {
+  const prepared = await native.prepareStaging(batch);
+  if (!prepared?.intent || !['reserved', 'sent', 'unknown', 'settled'].includes(prepared.state))
+    fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  const { intent } = prepared;
+  if (intent.batchId !== batch.batchId || intent.generation !== batch.generation || intent.baseSha !== batch.baseSha
+    || intent.testSha !== batch.testSha || !validTrainMembers(intent.members) || digest(intent.members) !== digest(batch.members))
+    fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  let send = false;
+  if (prepared.state === 'reserved') send = await native.authorizeStagingSend(intent) === true;
+  const result = await publishTrainStaging({ intent, port: landing, readRefs: () => landing.readTrainRefs(), send, clock });
+  return native.reconcileStaging({ intent, result });
+}
+
+export async function reconcileTrainV2Landing({ work, github, landing, native }) {
+  const { intent } = work;
+  const ports = { intent, port: landing, readRefs: () => landing.readTrainRefs(),
+    contains: (test, main) => trainMainContains(github, test, main) };
+  // Native must authorize the exact invalidation and preserve the previously reserved marker.
+  const result = work.invalidate === true && await native.authorizeLandingInvalidation(intent) === true
+    ? await invalidateTrainIntent(ports) : await reconcileTrainIntent(ports);
+  return native.reconcileLanding({ intent, result });
+}
+
+export async function adoptTrainReceipt({ receipt, native, readRefs, contains, readPull }) {
+  const { intent } = receipt;
+  const adopted = [];
+  if (receipt.generationRefOid !== intent.landedRefOid || !SHA.test(receipt.mainSha ?? '')) return { complete: false, adopted };
+  try {
+    const refs = await readRefs();
+    if (!SHA.test(refs?.mainSha ?? '') || (refs.mainSha !== intent.testSha && await contains(intent.testSha, refs.mainSha) !== true))
+      return { complete: false, adopted };
+  } catch { return { complete: false, adopted }; }
+  if (!validTrainMembers(intent.members)) return { complete: false, adopted };
+  const done = receipt.settledMembers ?? [];
+  for (const member of [...intent.members.slice(1), intent.members[0]]) {
+    if (done.some(m => digest(m) === digest(member))) continue;
+    try {
+      const observedHeadSha = (await readPull(member.pr))?.head?.sha;
+      if (!SHA.test(observedHeadSha ?? '')) return { complete: false, adopted };
+      const result = await native.adoptMember({ receiptId: receipt.receiptId, effectId: intent.effectId,
+        batchId: intent.batchId, generation: intent.generation, testSha: intent.testSha, member, observedHeadSha });
+      if (!result?.member || digest(result.member) !== digest(member) || !['adopted', 'claim_changed'].includes(result.state))
+        return { complete: false, adopted };
+      if (result.state === 'adopted') adopted.push(member.pr);
+    } catch { return { complete: false, adopted }; }
+  }
+  return { complete: true, adopted };
 }
 
 // ADR 0018 §6: every batch of this node whose S main now contains, oldest first, not yet recorded as adopted: each member whose PR is still at
