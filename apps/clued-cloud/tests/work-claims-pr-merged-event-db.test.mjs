@@ -220,10 +220,14 @@ test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t 
       const record = await state(newer.claim.claim_id);
       assert.equal(record.status, 'ACTIVE');
       assert.equal(record.ordinary_lease, true);
-      for (const retained of [r, newer]) {
-        committed(await rpc('holder', 'clued_work_release_v1', { scope: 'global', claim_id: retained.claim.claim_id,
-          fence: retained.claim.fence, lease_key: retained.lease_key, outcome: 'abandoned' }));
-      }
+      const release = retained => rpc('holder', 'clued_work_release_v1', { scope: 'global', claim_id: retained.claim.claim_id,
+        fence: retained.claim.fence, lease_key: retained.lease_key, outcome: 'abandoned' });
+      const held = await release(r);
+      assert.deepEqual([held.status, held.error_code], ['rejected', 'work_claim_release_pr_open']);
+      await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '1 hour',
+        expires_at=clock_timestamp()+interval '1 hour' where claim_id=$1`, [r.claim.claim_id]);
+      committed(await release(r));
+      committed(await release(newer));
     });
 
     await t.test('只有网关可以调用，畸形输入被拒绝，未知 PR 返回零行', async () => {

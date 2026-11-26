@@ -144,10 +144,12 @@ const AUTHORIZATION_DB_TESTS = [
   'task-owner-detail-db', 'work-claims-generated-files-db', 'work-claims-lease-pin-db',
   // The merge queue of a served repository is joined only through the CI door (20261122140000).
   'merge-queue-ci-join-only-db',
+  'merge-queue-resident-db',
   // The drill test project is brought to production's applied list (FABLE-drill-test-project-sync-20261124 §1).
   'drill-test-sync-db',
   // Repository paths are exclusive until delivery: a claim with a live head authorization does not block another (20261124160000).
   'work-claims-delivered-paths-db',
+  'work-claims-release-pr-open-db',
 ].map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
 // What those tests read besides the migrations: their shared test helpers, the worker code some of them bundle, the
 // Resource Center host and policy modules, the context compiler and the vendored Information Flow and DatasetSplit
