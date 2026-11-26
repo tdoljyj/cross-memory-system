@@ -266,14 +266,14 @@ test('candidate future Sources retain exact full-byte profiles and frozen gate h
 });
 
 
-test('G4 consumer cutover uses the exact preregistered full YAML and unchanged independent roles',()=>{
+test('historical G4 consumer cutover retains its exact registered YAML and unchanged independent roles',()=>{
   const file='.github/workflows/clued-g4-database.yml',beforeBlob='a09cfc44e506a9672e5221a7fa6737747ddcb787',afterBlob='d7876890a4df616fddae675c4d66737a70eb7045',
     profiles=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))),
     roles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url))),
     before=registeredWorkflowSource(profiles,file,beforeBlob).profile,after=registeredWorkflowSource(profiles,file,afterBlob).profile,
     accepted=rolesForSource(roles,file,afterBlob),yaml=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url))('yaml');
-  const actual=fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),
-    picked=registeredWorkflowSource(profiles,file,workflowBlob(actual));
+  // Retain the prior cutover as immutable history; check the live successor separately.
+  const actual=after.source_yaml,picked=registeredWorkflowSource(profiles,file,workflowBlob(actual));
   assert.equal(workflowBlob(actual),afterBlob,'PR-B consumes exactly the preregistered successor');
   assert.equal(picked.passed,true);assert.deepEqual(picked.profile,after);
   assert.equal(actual,after.source_yaml,'the consumed YAML is the complete registered byte string');
@@ -357,4 +357,29 @@ test('preregistered complete G4 YAML keeps Owner, proven bot, unknown bot, fork 
  }
  assert.deepEqual(trusted['runs-on'],['self-hosted','Linux','X64','clued','pool-general','trust-internal','cap-docker-linux']);
  assert.equal(hosted['runs-on'],'ubuntu-24.04');
+});
+
+
+test('live G4 consumes the exact independently preregistered bot-routing successor',()=>{
+  const file='.github/workflows/clued-g4-database.yml',afterBlob='9d81933776a2646bdf0ff77f6ee2621cda551ec2',
+    profiles=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))),
+    roles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url))),
+    actual=fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),
+    picked=registeredWorkflowSource(profiles,file,workflowBlob(actual)),
+    after=registeredWorkflowSource(profiles,file,afterBlob).profile,
+    accepted=rolesForSource(roles,file,afterBlob),
+    yaml=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url))('yaml');
+  assert.equal(workflowBlob(actual),afterBlob);
+  assert.equal(picked.passed,true);assert.deepEqual(picked.profile,after);
+  assert.equal(actual,after.source_yaml);
+  assert.equal(after.source_sha256,'989ce56d8c80f1afb6e1dfee8280fd7347cb91398c219b5b65cd36435d75dfde');
+  const definition=yaml.parse(actual);
+  for(const role of accepted) assert.equal(roleDefinitionDigest(definition.jobs[role.job_id]),role.definition_sha256);
+  assert.deepEqual(compileRegisteredWorkflow(actual,{primary_ids:after.primary_ids,accepted_roles:accepted,parseYaml:yaml.parse}),after);
+  const oldMain=structuredClone(profiles);
+  oldMain.workflows[file].accepted_sources=oldMain.workflows[file].accepted_sources.filter(x=>x.workflow_blob!==afterBlob);
+  assert.equal(registeredWorkflowSource(oldMain,file,afterBlob).passed,false,'an unregistered candidate cannot self-admit');
+  for(const source of [oldMain.workflows[file],...oldMain.workflows[file].accepted_sources])
+    assert.equal(registeredWorkflowSource(profiles,file,source.workflow_blob).passed,true);
+  assert.equal(registeredWorkflowSource(profiles,file,workflowBlob(actual+'# changed\n')).passed,false);
 });
