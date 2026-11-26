@@ -313,25 +313,39 @@ function targetTiming(t, label, run) {
 }
 
 test('定向 #1362：选择器改动补跑预算测试的同套引用者', async (t) => {
-  const start = slotFixture(t);
-  const markers = mkdtempSync(path.join(os.tmpdir(), 'clued-reverse-deps-1362-'));
-  t.after(() => rmSync(markers, { recursive: true, force: true }));
-  for (const changed of [false, true]) {
-    const marks = path.join(markers, String(changed));
-    const consumer = (label) => "import { appendFileSync } from 'node:fs'; import './ci-required-selection.mjs';\n" +
-      "appendFileSync(" + JSON.stringify(marks) + ", '" + label + "\\n');\n";
-    const run = start('selector-' + changed, { mode: '--run-files', suite: 'selection', named: [TARGET_BUDGET],
-      extraFiles: { ...TARGET_EXPANSIONS, [TARGET_BUDGET]: consumer('budget'), [TARGET_LOCALS]: consumer('local-verify'),
-        'scripts/ci/local-verify.mjs': '', 'scripts/ci/local-suite-slot-guard.mjs': '' },
-      prepare(root) {
-        fixtureBase(root);
-        if (changed) fixtureWrite(root, TARGET_SELECTOR, 'export const SUITE_COMMANDS = {};\n// revised readReport shape\n');
-      } });
-    assert.deepEqual(await run.done, [0, null], run.output());
-    assert.deepEqual(readFileSync(marks, 'utf8').trim().split('\n').sort(), changed ? ['budget', 'local-verify'] : ['budget']);
-    assert.equal(run.output().includes(TARGET_SELECTOR + ' -> ' + TARGET_LOCALS), changed);
-    targetTiming(t, changed ? '#1362 扩展' : '#1362 仅点名', run);
-  }
+  const { planTargetedFiles } = await import('./check-tests-covered.mjs');
+  const root = mkdtempSync(path.join(os.tmpdir(), 'clued-reverse-deps-1362-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const consumer = "import './ci-required-selection.mjs';\n";
+  const selector = 'export const SUITE_COMMANDS = {};\n';
+  for (const [file, source] of Object.entries({
+    ...TARGET_EXPANSIONS,
+    [TARGET_SELECTOR]: selector,
+    [TARGET_BUDGET]: consumer,
+    [TARGET_LOCALS]: consumer,
+    'scripts/ci/local-verify.mjs': '',
+    'scripts/ci/local-suite-slot-guard.mjs': '',
+  })) fixtureWrite(root, file, source);
+  fixtureBase(root);
+
+  // clued-cloud 也收录这两个测试，显式使用 Linux 规划可在所有宿主上检查相同的套件和文件。
+  const plan = () => planTargetedFiles(root, 'selection', new Set([TARGET_BUDGET]), { platform: 'linux' });
+  const before = plan();
+  assert.deepEqual(before.groups, [{ suite: 'selection', files: [TARGET_BUDGET], reasons: [] }]);
+  assert.deepEqual(before.matches, []);
+
+  fixtureWrite(root, TARGET_SELECTOR, selector + '// revised readReport shape\n');
+  const after = plan();
+  const files = [TARGET_BUDGET, TARGET_LOCALS];
+  assert.deepEqual(after.groups, [
+    { suite: 'clued-cloud', files, reasons: [] },
+    { suite: 'selection', files, reasons: [] },
+  ]);
+  assert.deepEqual(after.matches.map(({ suite, chain }) => [suite, ...chain]), [
+    ['clued-cloud', TARGET_SELECTOR, TARGET_BUDGET],
+    ['clued-cloud', TARGET_SELECTOR, TARGET_LOCALS],
+    ['selection', TARGET_SELECTOR, TARGET_LOCALS],
+  ]);
 });
 
 test('定向跨套件：两跳、环和多条路径只执行每个入口一次，第二组的失败保留', async (t) => {
