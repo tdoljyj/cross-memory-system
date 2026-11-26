@@ -538,3 +538,23 @@ test('unified scheduling 2A: duty holder, equivalence of every routed entry poin
     await t.test('compared: every rewrite x 10 role-row states x 3 Bindings x 8 contexts',()=>{assert.equal(compared,pairs.length*10*3*8);});
   }finally{await f.close();}
 });
+
+test('列车 v2：未签名的 Binding 无法领用或绕过首次入队闸口', { timeout: 120000 }, async t => {
+  const f = await schedulingFixture();
+  t.after(f.close);
+  f.committed(await f.pool());
+  await f.admin.query(`update clued_private.ci_quota_counters_v1
+    set policy=policy||'{"merge_train_v2":{}}'::jsonb where project_id=$1 and row_kind='pool_policy'`, [f.project]);
+  const anon = await f.connect('anon');
+  const { rows: [{ result }] } = await anon.query('select public.clued_work_verify_v1($1,$2) result', [
+    f.token, { action: 'merge_queue_join', scope: 'project:'+f.project, pr_ref: 'fixture/repository-12345#42', head_sha: sha('test head') },
+  ]);
+  assert.equal(result.error_code, 'ci_work_lease_stale');
+  for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+    const { rows: [acl] } = await f.admin.query(`select
+      has_table_privilege($1,'clued_private.ci_train_call_v2','INSERT') context_write,
+      has_table_privilege($1,'clued_private.ci_train_work_v2','UPDATE') lease_write,
+      has_table_privilege($1,'clued_private.ci_train_check_effects_v2','UPDATE') effect_write`, [role]);
+    assert.deepEqual(acl, { context_write: false, lease_write: false, effect_write: false });
+  }
+});

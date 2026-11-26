@@ -169,7 +169,9 @@ const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 
   'apps/clued-cloud/scripts/release-migration-compat.mjs',
   'scripts/ci/clued-independent-publication-identity.mjs', 'scripts/ci/merge-admission-clock-source.mjs',
   'scripts/ci/merge-admission-measurement-history.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs',
-  'work/actions-hosted-migration/independent-ci-v1/src/proof.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/queue.mjs'];
+  'work/actions-hosted-migration/independent-ci-v1/src/proof.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/queue.mjs',
+  'work/actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs',
+  'work/independent-ci-resident-v1/test/multi-duty-fixture.mjs'];
 
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {

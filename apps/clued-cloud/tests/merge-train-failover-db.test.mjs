@@ -9,7 +9,7 @@ import test from 'node:test';
 import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
-import { setWorkerGatewayCaller, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Merge train step 2b (migration 20261031090000, DESIGN.md §41.6a, Task
 // a3701d3d, Decision 199cf3de): automatic ci-admission failover. Heartbeats go
@@ -1346,4 +1346,245 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
     await stopCluster(server);
     await removeTestDirectory(directory);
   }
+});
+
+test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果核对', { timeout: 300000 }, async t => {
+  const { build, stop } = await import('esbuild');
+  const { schedulingFixture, digest, sha } = await import('./ci-scheduling-stage1-fixture.mjs');
+  const { TRAIN_FAILURE, TRAIN_PROBE_FIELDS, trainHeadWorkKey, trainBatchKey, trainEffectKey } =
+    await import('../../../work/actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs');
+  const { multiDutyClock, multiDutyGitHub } = await import('../../../work/independent-ci-resident-v1/test/multi-duty-fixture.mjs');
+  const bundle = await build({ stdin: { contents: "export * from './worker/ci-node-gateway-v1.ts'; export * from './worker/ci-scheduling-v1.ts';",
+    resolveDir: root, loader: 'ts' }, bundle: true, platform: 'neutral', format: 'esm', write: false });
+  stop();
+  const api = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'));
+  const f = await schedulingFixture();
+  t.after(f.close);
+  const github = multiDutyGitHub(multiDutyClock(f.sessionIssuedAt));
+  const { admin, user, project } = f;
+  const one = async (db, sql, args = []) => (await db.query(sql, args)).rows[0];
+  const tokenA = 'fixture-' + hash();
+  const tokenB = 'fixture-' + hash();
+  async function addNode(name, token) {
+    const pair = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const { kty, crv, x, y } = pair.publicKey.export({ format: 'jwk' });
+    const binding = await one(admin, `insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'synthetic',$2,$3,array['context:read'],array['*']) returning id`, [user, name, digest(token)]);
+    const node = f.committed(await f.native('clued_ci_node_registration_v1', {
+      ...f.registration(), name, binding_id: binding.id, identity_public_jwk: { kty, crv, x, y },
+    }));
+    await f.approve(node.node_id);
+    await admin.query(`update clued_private.ci_nodes_v1 set qualification_status='verified',
+      qualification_verified_at=now(),qualification_expires_at=now()+interval '1 hour',
+      eligible_until=now()+interval '1 hour',hardening_observed=true where node_id=$1`, [node.node_id]);
+    await f.live(node.node_id);
+    const db = await f.connect();
+    await setWorkerGatewayCaller(db);
+    return { id: node.node_id, binding: binding.id, token, pair, db };
+  }
+  const a = await addNode('列车节点 A', tokenA);
+  const b = await addNode('列车节点 B', tokenB);
+  f.committed(await f.pool());
+  await f.modelMode();
+  await admin.query(`update clued_private.work_claim_execution_policy_v1
+    set activated_at=clock_timestamp(),qualification_commit=$1 where singleton`, [sha('source')]);
+  await admin.query(`update clued_private.ci_quota_counters_v1 set policy=policy||$2::jsonb
+    where project_id=$1 and row_kind='pool_policy'`, [project, {
+    signature_gateway_active: true,
+    merge_train_v2: { source_manifest_sha256: SRC, source_commit: sha('source'), policy_version: 'fixture-v1', stop_scope: 'none' },
+  }]);
+  const head = sha('merge-train-v2-head');
+  const pr = 1788;
+  const subject = {
+    pr, head_sha: head, claim_id: f.claim.claim_id, claim_fence: Number(f.claim.fence), execution_epoch: Number(f.claim.execution_epoch),
+  };
+  f.committed(await workerGatewayRpc(f.gateway, 'clued_work_renew_v1', f.token, {
+    scope: 'project:' + project, action: 'authorize_head', claim_id: f.claim.claim_id, fence: f.claim.fence,
+    lease_version: f.claim.lease_version, ...(f.claimResult.lease_key ? { lease_key: f.claimResult.lease_key } : {}),
+    repository: 'fixture/repository-12345', head_sha: head, target_branch: 'main', pr_number: pr, idempotency_key: uuid(),
+  }));
+
+  async function signed(node, action, fields = {}, overrides = {}) {
+    const { v: trust } = await one(node.db, 'select public.clued_ci_node_trust_v1($1,$2) v', [digest(node.token), node.id]);
+    const { v: now } = await one(admin, "select floor(extract(epoch from clock_timestamp())*1000)::text v");
+    const payload = { protocol_version: 2, action, repository_id: 12345, target_branch: 'main', source_manifest_sha256: SRC, ...fields };
+    const command = {
+      protocol: 'clued.ci-node-command/1', operation: 'merge_train_v2', ...trust.principal, node_id: node.id,
+      node_version: trust.node.version, key_version: trust.node.key_version, key_fingerprint: trust.node.identity_fingerprint,
+      payload_sha256: digest(api.ciCanonicalJson(payload)), nonce: crypto.randomBytes(32).toString('base64url'),
+      job_id: null, execution_generation: 0, train_generation: 0,
+      issued_at_ms: Number(now), expires_at_ms: Number(now)+60000, ...overrides,
+    };
+    command.signature = crypto.sign('sha256', Buffer.from(api.ciCanonicalJson(command)), {
+      key: node.pair.privateKey, dsaEncoding: 'ieee-p1363',
+    }).toString('base64url');
+    return { command, payload, now: Number(now) };
+  }
+  async function send(node, { command, payload, now }, token = node.token) {
+    const response = await api.handleCiNodeGatewayV1(new Request('https://clued.example.test/v1/ci/node', {
+      method: 'POST', body: JSON.stringify({ command, payload }),
+      headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
+    }), { SUPABASE_URL: 'https://db.example.test', SUPABASE_PUBLISHABLE_KEY: 'pk', CLUED_DB_GATEWAY_TOKEN: 'gw' }, {
+      now: () => now,
+      fetchImpl: async (url, init) => {
+        const input = JSON.parse(init.body);
+        const reply = new URL(url).pathname.endsWith('/clued_ci_node_trust_v1')
+          ? await one(node.db, 'select public.clued_ci_node_trust_v1($1,$2) v', [input.p_token_hash, input.p_node_id])
+          : await one(node.db, 'select public.clued_ci_node_command_v1($1,$2,$3,$4) v',
+            [input.p_token_hash, input.p_command, input.p_payload, input.p_verified]);
+        return Response.json(reply.v);
+      },
+    });
+    return response.json();
+  }
+  const call = async (node, action, fields) => send(node, await signed(node, action, fields));
+  const data = doc => doc.result ?? doc;
+  const lease = result => ({ work_key: result.work_key, generation: result.generation, lease_version: result.lease_version });
+
+  await t.test('两台独立节点均有资格，同连接异机、跨项目和错 Source 均拒绝', async () => {
+    const replies = await Promise.all([call(a, 'role_probe'), call(b, 'role_probe')]);
+    for (const [i, reply] of replies.entries()) {
+      assert.equal(reply.status, 'committed', JSON.stringify(reply));
+      for (const field of TRAIN_PROBE_FIELDS) assert.ok(Object.hasOwn(reply.result, field), field);
+      assert.equal(reply.result.on_duty, true);
+      assert.equal(reply.result.node_id, [a, b][i].id);
+    }
+    const otherMachine = await signed({ ...a, pair: b.pair }, 'role_probe');
+    assert.equal((await send(a, otherMachine)).error_code, 'CI_NODE_SIGNATURE_INVALID');
+    assert.equal((await send(a, await signed(a, 'role_probe'), b.token)).status, 'refused');
+    assert.equal((await send(a, await signed(a, 'role_probe', {}, { project_id: f.project2 }))).status, 'refused');
+    assert.equal((await send(a, await signed(a, 'head_acquire', subject, {
+      user_id: f.other, project_id: f.otherProject,
+    }))).status, 'refused');
+    assert.equal((await one(admin, 'select count(*)::int n from clued_private.ci_train_work_v2')).n, 0);
+    assert.equal(data(await call(a, 'head_acquire', { ...subject, source_manifest_sha256: OTHER_SRC })).error_code, TRAIN_FAILURE.SOURCE_MISMATCH.native);
+  });
+
+  await t.test('同领只有一笔，续期按进展 CAS，心跳无效，旧代次无法复活，未知效果保留', async () => {
+    const results = (await Promise.all([call(a, 'head_acquire', subject), call(b, 'head_acquire', subject)])).map(data);
+    const won = results.findIndex(r => r.status === 'leased');
+    assert.notEqual(won, -1, JSON.stringify(results));
+    const current = results[won];
+    const other = results[1-won];
+    assert.equal(other.error_code, TRAIN_FAILURE.HEAD_LEASE_HELD.native);
+    assert.ok(other.ci_retry_after);
+    const [holder, successor] = won === 0 ? [a, b] : [b, a];
+    const scope = { tenantId: user, projectId: project, repositoryId: 12345, targetBranch: 'main' };
+    assert.equal(current.work_key, trainHeadWorkKey({ ...scope, pr, headSha: head, action: 'verify_head' }));
+    assert.equal(data(await call(holder, 'work_renew', lease(current))).error_code, TRAIN_FAILURE.LEASE_STALE.native);
+    const verified = data(await call(holder, 'verify_head', { ...lease(current), base_sha: sha('base'), changed_paths: ['work/ci-scheduling-fixture/source.mjs'] }));
+    assert.equal(verified.verdict, 'ADMITTED', JSON.stringify(verified));
+    const renewed = (await Promise.all([
+      call(holder, 'work_renew', lease(current)), call(holder, 'work_renew', lease(current)),
+    ])).map(data);
+    const live = renewed.find(r => r.status === 'leased');
+    assert.equal(renewed.filter(r => r.status === 'leased').length, 1, JSON.stringify(renewed));
+    assert.equal(renewed.find(r => r !== live).error_code, TRAIN_FAILURE.LEASE_STALE.native);
+    assert.equal((await one(admin, `select count(*)::int n from clued_private.work_claim_door_usage_v1
+      where user_id=$1 and door='github-ci' and task_id=$2 and unit_key=$3`, [user, f.task, head])).n, 1);
+
+    const check = { appId: 5368905, headSha: head, externalId: 'fixture-check-1788' };
+    const intent = data(await call(holder, 'publication_begin_independent', { ...lease(live), check }));
+    assert.equal(intent.state, 'reserved', JSON.stringify(intent));
+    assert.equal(intent.effect_key, trainEffectKey({ ...scope, action: 'publication_begin_independent', subject: [pr, head, 'work-admission'] }));
+    const sent = data(await call(holder, 'publication_send', { ...lease(live), effect_key: intent.effect_key }));
+    assert.equal(sent.state, 'sent', JSON.stringify(sent));
+    let githubCheck;
+    github.arm('check create', { loseReply: true });
+    await assert.rejects(github.write('check create', () => {
+      githubCheck = { ...intent.check, checkRunId: 12345, state: 'published', must_revoke: false };
+      return githubCheck;
+    }, result => ['checkCreates', result, holder.id]), /丢弃回复/);
+    await f.live(holder.id);
+    await admin.query(`update clued_private.ci_train_work_v2 set expires_at=clock_timestamp()-interval '1 second' where work_key=$1`, [current.work_key]);
+    const takeover = data(await call(successor, 'head_acquire', subject));
+    assert.equal(takeover.generation, current.generation+1, JSON.stringify(takeover));
+    assert.equal(data(await call(holder, 'work_renew', lease(live))).error_code, TRAIN_FAILURE.LEASE_STALE.native);
+    const refused = data(await call(successor, 'publication_begin_independent', { ...lease(takeover), check }));
+    assert.equal(refused.error_code, TRAIN_FAILURE.EFFECT_UNKNOWN.native);
+    const readback = data(await call(successor, 'publication_reconcile', { ...lease(takeover), effect_key: intent.effect_key }));
+    assert.equal(readback.state, 'unknown');
+    assert.equal(readback.check.externalId, check.externalId);
+    assert.equal(data(await call(holder, 'queue_acquire', subject)).error_code, TRAIN_FAILURE.LEASE_STALE.native);
+    const finish = { ...lease(takeover), effect_key: intent.effect_key,
+      observation: githubCheck };
+    const bad = data(await call(successor, 'publication_finish', {
+      ...finish, observation: { ...finish.observation, headSha: sha('different head') },
+    }));
+    assert.equal(bad.error_code, TRAIN_FAILURE.EFFECT_UNKNOWN.native);
+    const settled = data(await call(successor, 'publication_finish', finish));
+    assert.equal(settled.state, 'settled', JSON.stringify(settled));
+    assert.equal(data(await call(successor, 'publication_finish', finish)).receipt_id, settled.receipt_id);
+    assert.equal(data(await call(holder, 'head_acquire', subject)).error_code, TRAIN_FAILURE.HEAD_LEASE_COMPLETED.native);
+    const queuedWork = data(await call(holder, 'queue_acquire', subject));
+    assert.equal(queuedWork.status, 'leased', JSON.stringify(queuedWork));
+    const queue = data(await call(holder, 'merge_queue_join', {
+      ...lease(queuedWork), check_run_id: 12345, inventory_digest: digest('fixture check inventory'),
+    }));
+    assert.equal(queue.joined, true, JSON.stringify(queue));
+    assert.equal(data(await call(successor, 'queue_acquire', subject)).error_code, TRAIN_FAILURE.HEAD_LEASE_COMPLETED.native);
+    assert.equal(github.totals().checkCreates, 1);
+    assert.equal((await one(admin, `select count(*)::int n from public.clued_audit_receipts
+      where user_id=$1 and operation='work_claim_merge_queue_join_by_ci'`, [user])).n, 1);
+
+    const baseSha = sha('base');
+    const members = [{ pr, headSha: head, claimId: f.claim.claim_id, fence: subject.claim_fence, epoch: subject.execution_epoch }];
+    const reservations = (await Promise.all([call(holder, 'batch_reserve', { baseSha, members }),
+      call(successor, 'batch_reserve', { baseSha, members })])).map(data);
+    const ownerIndex = reservations.findIndex(r => r.state === 'forming');
+    assert.notEqual(ownerIndex, -1, JSON.stringify(reservations));
+    const batch = reservations[ownerIndex];
+    const [builder, reader] = ownerIndex === 0 ? [holder, successor] : [successor, holder];
+    assert.equal(batch.batchId, trainBatchKey({ ...scope, baseSha, members, sourceSha256: SRC, policyVersion: 'fixture-v1' }));
+    assert.equal(reservations[1-ownerIndex].batchId, batch.batchId);
+    const handle = { batchId: batch.batchId, generation: batch.generation };
+    const testSha = sha('v2 batch test');
+    const sealed = data(await call(builder, 'batch_seal', { ...handle, testSha, treeSha: sha('tree'),
+      steps: [{ sha: testSha, firstParent: baseSha, secondParent: head }], checksPolicyVersion: 'fixture-v1' }));
+    assert.equal(sealed.state, 'sealed', JSON.stringify(sealed));
+    const generationRefOid = sha('generation ref');
+    const staged = data(await call(builder, 'staging_prepare', { ...handle, generationRefOid }));
+    assert.equal(staged.stagingState, 'reserved', JSON.stringify(staged));
+    assert.equal(data(await call(builder, 'staging_send', handle)).stagingState, 'sent');
+    const stage = data(await call(builder, 'staging_publish', { ...handle, observation: { testSha, generationRefOid,
+      evidence_digest: digest('staging readback') } }));
+    assert.equal(stage.state, 'waiting_checks', JSON.stringify(stage));
+    const resume = data(await call(reader, 'batch_acquire', { batchId: batch.batchId }));
+    assert.equal(resume.testSha, testSha);
+    assert.equal(resume.generation, batch.generation+1);
+    const successorRefOid = sha('landed ref');
+    const landing = data(await call(reader, 'landing_prepare', { batchId: batch.batchId, generation: resume.generation, generationRefOid, successorRefOid,
+      evidence_digest: digest('required checks on S') }));
+    assert.equal(landing.state, 'reserved', JSON.stringify(landing));
+    assert.deepEqual(landing.intent.members, members);
+    assert.equal(data(await call(builder, 'landing_send', { ...handle, effect_key: landing.effect_key })).error_code, TRAIN_FAILURE.LEASE_STALE.native);
+    const landingHandle = { batchId: resume.batchId, generation: resume.generation, effect_key: landing.effect_key };
+    assert.equal(data(await call(reader, 'landing_send', landingHandle)).state, 'sent');
+    let main;
+    github.arm('main update', { loseReply: true });
+    await assert.rejects(github.write('main update', () => {
+      main = { mainSha: testSha, generationRefOid: successorRefOid, containsTestSha: true, evidence_digest: digest('remote readback') };
+      return main;
+    }, result => ['mainUpdates', result, reader.id]), /丢弃回复/);
+    const late = await signed(reader, 'landing_send', landingHandle);
+    await admin.query('update public.clued_agent_bindings set revoked_at=clock_timestamp() where id=$1', [reader.binding]);
+    assert.equal((await send(reader, late)).status, 'refused');
+    await admin.query(`update clued_private.ci_train_batches_v2 set expires_at=clock_timestamp()-interval '1 second'
+      where batch_id=$1`, [batch.batchId]);
+    const recovered = data(await call(builder, 'batch_acquire', { batchId: batch.batchId }));
+    assert.equal(recovered.generation, resume.generation+1);
+    const recoveredHandle = { ...landingHandle, generation: recovered.generation };
+    const unresolved = data(await call(builder, 'landing_reconcile', { ...recoveredHandle, observation: null }));
+    assert.equal(unresolved.state, 'unknown', JSON.stringify(unresolved));
+    assert.equal(data(await call(builder, 'landing_reconcile', { ...recoveredHandle,
+      observation: { ...main, generationRefOid: sha('not the successor ref') } })).error_code, TRAIN_FAILURE.LANDING_REF_MISMATCH.native);
+    assert.equal(data(await call(builder, 'landing_reconcile', { ...recoveredHandle, observation: main })).state, 'settled');
+    const adopt = { ...recoveredHandle, member: members[0], evidence_digest: digest('PR merge readback') };
+    assert.equal(data(await call(builder, 'claim_adopt', { ...adopt, member: { ...members[0], epoch: subject.execution_epoch+1 } })).error_code,
+      TRAIN_FAILURE.LEASE_STALE.native);
+    const adopted = data(await call(builder, 'claim_adopt', adopt));
+    assert.equal(adopted.completed, true, JSON.stringify(adopted));
+    assert.equal(data(await call(builder, 'claim_adopt', adopt)).receipt_id, adopted.receipt_id);
+    assert.equal(github.totals().mainUpdates, 1);
+  });
 });
