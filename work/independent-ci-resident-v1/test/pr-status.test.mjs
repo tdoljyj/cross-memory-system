@@ -37,6 +37,93 @@ const H = n => String(n).repeat(40).slice(0, 40);
 const TRAILER = 'x\nClued-Work-Claim: 842cf499-1519-4ba9-b3be-b9ac3f6e8ee4\n';
 const REQUIRED = ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot'];
 
+test('a stalled active node posts one pending reason per unqueued head and appends the code on the queued front', async t => {
+  const root = await tempRoot(t);
+  const min = 60_000;
+  let now = Date.parse('2026-11-26T01:47:00Z');
+  const since = now - 16 * min;
+  const posts = [];
+  const run = async argv => {
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
+    if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
+    if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
+    if (argv.includes('POST')) posts.push(argv);
+    return { code: 0, stdout: '{}' };
+  };
+  const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'powershell.exe',
+    run, clock: () => now, store: await LocalStore.open(path.join(root, 'queue-stall.json'), () => now), notifications: false });
+  const pull = (pr, headSha) => ({ pr, headSha, eligible: true });
+  const pulls = [pull(1365, H(5)), pull(1366, H(6)), pull(1367, H(7)), pull(1368, H(8))];
+  const snapshot = () => ({
+    writtenAt: now, node: { name: 'node-b', mode: 'ACTIVE' }, executor: { state: 'IDLE', since },
+    backfill: { complete: true }, current: null,
+    pending: [{ ...pulls[0], state: 'QUEUED', position: 1, deferred: 'SAFE_POINT_READMISSION', since: since - 45 * min }],
+    recent: [{ ...pulls[0], at: since }], train: { enabled: 'on', last: { at: since, mode: 'revoke-only', decision: 'NO_FRONT' } },
+  });
+  await reporter.pass({ pulls, status: snapshot() });
+  const forHead = h => posts.filter(a => a.some(x => x.endsWith(`/statuses/${h}`)));
+  assert.equal(forHead(H(6)).length, 1);
+  assert.ok(forHead(H(6))[0].includes(`context=${PR_STATUS_CONTEXT}`));
+  assert.ok(forHead(H(6))[0].includes('state=pending'));
+  assert.match(forHead(H(6))[0].find(a => a.startsWith('description=')), /^description=未入队：.*NO_PROGRESS/);
+  assert.match(forHead(H(5))[0].find(a => a.startsWith('description=')), /安全点.*；NO_PROGRESS/);
+  assert.ok(events({ status: snapshot(), pulls, now }).some(e => e.key === `queue-stall:NO_PROGRESS:${since}`));
+  assert.equal((await reporter.pass({ pulls, status: snapshot() })).posted, 0);
+  now += min;
+  assert.equal((await reporter.pass({ pulls, status: snapshot() })).posted, 0, 'elapsed minutes alone do not rewrite the status');
+});
+
+test('holdText is shared by the PR page, wait notifications and the queue view', async () => {
+  const prStatus = await import('../src/pr-status.mjs');
+  assert.equal(typeof prStatus.holdText, 'function');
+  const { queueReport } = await import('../src/queue-report.mjs');
+  const now = Date.parse('2026-11-26T01:47:00Z');
+  const pull = { pr: 1, headSha: H(1), eligible: true };
+  const baseRow = { ...pull, state: 'QUEUED', position: 1, since: now - 61 * 60_000 };
+  const base = { writtenAt: now, backfill: { complete: true }, recent: [], executor: { state: 'IDLE', since: now } };
+  const cases = [
+    ['SAFE_POINT_READMISSION', '流程在安全点结束，条件恢复后自动接着跑，不用推新提交'],
+    ['DAILY_BATCH_LIMIT', '今日执行批次额度已满，明天继续'],
+    ['DAILY_EVALUATION_LIMIT', '今日评估额度已满'],
+    ['UNEXECUTED_COOLDOWN', '冷却中（10 分钟）'],
+    ['COMPANION_NOT_READY', '等 companion 就绪'],
+    ['PR_DAILY_BATCH_LIMIT', '本 PR 今日批次已满'],
+    ['WAITING_BUDGET_EXHAUSTED', '今日等待重试额度已满，明天继续'],
+    ['REEVALUATION_CAP', '本提交今日重新评估次数已满'],
+    ['BREAKER_OPEN', '执行器熔断中'],
+    ['TRAIN_NON_FRONT_RUNS_OFF', '合并列车只跑车头批次，成为车头后再跑'],
+    ['TRAIN_FRONT_BOUND_HEAD', '合并列车：此提交已为队首认领绑定，车头批次在试合并提交上跑'],
+    ['PR_DRAFT', prStatus.DRAFT_HELD_TEXT],
+    ['INTAKE_PAUSED', '暂停接新中', { intakePause: { until: now + 60_000, holders: [] } }],
+    ['BREAKER_HALF_OPEN', '熔断后的试跑阶段', { breaker: { state: 'half-open' } }],
+    ['PARKING_FULL', '停靠的批次已满', { queue: { parkingFull: true } }],
+    ['VERSION_SKEW', '两端版本不一致，等升级处理完', { queue: { hold: 'VERSION_SKEW' } }],
+    ['TRAIN_TAKEOVER_SWEEP_PENDING', '合并列车接管扫描中', { queue: { hold: 'TRAIN_TAKEOVER_SWEEP_PENDING' } }],
+    ['TRAIN_SOURCE_MISMATCH', '合并列车的 Source 不一致，等 Owner 处理', { queue: { hold: 'TRAIN_SOURCE_MISMATCH' } }],
+    ['TRAIN_SOURCE_UNREADABLE', '合并列车的 Source 读不出，稍后重查', { queue: { hold: 'TRAIN_SOURCE_UNREADABLE' } }],
+    ['OWNER_REVIEW_REQUIRED', '等 Owner 批准受保护改动', {}, 'WAITING'],
+    ['TASK_CI_HEAD_CAP_REACHED', 'Task 的 24 小时 CI 额度已满', {}, 'WAITING'],
+    ['REQUIRED_CHECK_FAILED', '必需检查失败，已停止入队和延长；等待检查重跑', {}, 'PARKED'],
+    ['REQUIRED_CHECKS_UNREADABLE', '暂时无法确认必需检查，等待重新核对', {}, 'PARKED'],
+    ['RULESET_UNREADABLE', '已测通：main 的必需检查没有全部钉在本执行器上', {}, 'PARKED'],
+    ['RULESET_READ_FAILED', '已测通：暂时读不到 main 的规则', {}, 'PARKED'],
+    ['STRICT_OFF_WITHOUT_TRAIN', '已测通：main 的 strict 已关而列车未开，暂不发合并位（已通知 Owner）', {}, 'PARKED'],
+    ['MERGE_METHODS_NOT_MERGE_ONLY', '已测通：strict 已关，但合并方式不只有 merge，暂不发合并位（已通知 Owner）', {}, 'PARKED'],
+    ['TRAIN_TEST_MERGE_NOT_READY', '已测通：等 GitHub 算好试合并', {}, 'PARKED'],
+    ['GREEN_LEDGER_UNAVAILABLE', '已测通：本机绿色台账暂时写不进', {}, 'PARKED'],
+    ['TRAIN_SINGLE_GREEN_NOT_PROVEN', '已测通：等开车头批次（第 10 段）', {}, 'PARKED'],
+    ['TRAIN_MODE_UNREADABLE', '已测通：读不到本机的列车模式', {}, 'PARKED'],
+  ];
+  for (const [code, text, extra, state = 'QUEUED'] of cases) {
+    const row = { ...baseRow, state, deferred: extra && state === 'QUEUED' ? null : code, nextAt: now + 60_000 };
+    const status = { ...base, ...extra, pending: [row] };
+    assert.equal(prStatus.holdText(status, row, now), text, code);
+    assert.equal(queueReport({ status, pulls: [pull], now }).pending[0].holdText, text, code);
+    assert.ok(describe({ status, pull, now }).description.includes(text), code);
+    assert.ok(events({ status, pulls: [pull], now }).find(e => e.key === `wait:1:${H(1)}:${code}`)?.body.includes(text), code);
+  }
+});
+
 test('up to date with main = PR base.sha is the main tip AND compare says behind_by 0; the hint names what to do', () => {
   assert.deepEqual(upToDate({ mainSha: MAIN, baseSha: MAIN, behindBy: 0 }), { eligible: true, hint: null });
   assert.deepEqual(upToDate({ mainSha: MAIN, baseSha: OLD, behindBy: 0 }), { eligible: false, hint: 'push-any-commit' });

@@ -146,18 +146,27 @@ export function parseHeartbeatReply(v) {
 // Bearer the publishable key, body { p_token_hash: sha256 hex of the token, p_input: payload }. 401/403 (binding_not_authorized,
 // authorization_revoked_or_expired): the token is refused. Anything else that is not a 200 (400 work_claim_ci_command_invalid, 404
 // before the migration, a timeout) is a failed beat. The token itself never leaves the process; no body is ever logged.
-export function supabaseHeartbeatTransport({ supabaseUrl, publishableKey, fetchImpl = globalThis.fetch, timeoutMs = HEARTBEAT_TIMEOUT_MS }) {
+export function supabaseCiCommandRequest({ supabaseUrl, publishableKey, fetchImpl = globalThis.fetch, timeoutMs = HEARTBEAT_TIMEOUT_MS }) {
   if (!/^https:\/\/[a-z0-9]+\.supabase\.co$/.test(supabaseUrl ?? '') || !/^sb_publishable_[A-Za-z0-9_-]+$/.test(publishableKey ?? '')) throw new Error('HEARTBEAT_TRANSPORT_CONFIG_INVALID');
   return async ({ payload }, { token }) => {
+    const r = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/${HEARTBEAT_RPC}`, { method: 'POST', signal: AbortSignal.timeout(timeoutMs),
+      headers: { apikey: publishableKey, authorization: `Bearer ${publishableKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ p_token_hash: createHash('sha256').update(token, 'utf8').digest('hex'), p_input: payload }) });
+    const text = await r.text();
+    if (Buffer.byteLength(text) > REPLY_MAX_BYTES) return null;
+    let data = null;
+    try { data = JSON.parse(text); } catch { /* HTTP status is still available for a non-JSON reply */ }
+    return { status: r.status, data };
+  };
+}
+
+export function supabaseHeartbeatTransport(config) {
+  const request = supabaseCiCommandRequest(config);
+  return async (input, credentials) => {
     try {
-      const r = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/${HEARTBEAT_RPC}`, { method: 'POST', signal: AbortSignal.timeout(timeoutMs),
-        headers: { apikey: publishableKey, authorization: `Bearer ${publishableKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ p_token_hash: createHash('sha256').update(token, 'utf8').digest('hex'), p_input: payload }) });
-      const text = await r.text();
-      if (Buffer.byteLength(text) > REPLY_MAX_BYTES) return FAILED;
-      if (r.status === 401 || r.status === 403) return { ...FAILED, tokenRefused: true };
-      if (r.status !== 200) return FAILED;
-      return parseHeartbeatReply(JSON.parse(text));
+      const reply = await request(input, credentials);
+      if (reply?.status === 401 || reply?.status === 403) return { ...FAILED, tokenRefused: true };
+      return reply?.status === 200 ? parseHeartbeatReply(reply.data) : FAILED;
     } catch { return FAILED; }
   };
 }
