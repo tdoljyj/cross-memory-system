@@ -12,9 +12,11 @@
 //     the next batch fail at its own root preflight (DoS), never run something unsafe.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { fileURLToPath } from 'node:url';
-import { BATCH_ID, quiescenceProbeMs, validatePrune } from './mailbox.mjs';
+import { BATCH_ID, PROBE_DELIVERY_MS, PROBE_KINDS, quiescenceProbeMs, validatePrune } from './mailbox.mjs';
 import { HEX64, check, exactKeys, fail } from './canonical.mjs';
+import { JOB_HOST_MIN_TIMEOUT_MS, PR_HEAD_JOB_HOST_GRACE_MS } from './runner.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
 import { powershellArgv } from './powershell-argv.mjs';
 import { TOOL_NOT_RUN, UPGRADE_TIMEOUT_MS, UPGRADE_TOOL_PATH, VERSION_FACTS_REFRESH_MS, responseFromTool, upgradeMailboxRequest, upgradeToolArgs, validateVersionFacts } from './upgrade-mailbox.mjs';
@@ -439,6 +441,7 @@ const json = text => { try { return JSON.parse(text); } catch { return null; } }
 
 // pr-head (phase 2, step 1): the PR's state and head over the Owner's own gh login, read-only, fixed argv.
 export const PR_HEAD_TIMEOUT_MS = 30_000;
+const PROBE_PICKUP_MS = 500;
 // The service's retention requests (DESIGN §35.11): the only ones a stopping service cancels ('service-stopping'), before they start.
 const RETENTION_KINDS = new Set(['archive-usage', 'archive-prune']);
 // DESIGN §44 (Tasks 576231fa, 4d3aaa64, 8e1f07d3, the remainder): a wsl.exe call that ran out of time (25-45 s on a loaded host,
@@ -521,11 +524,13 @@ export class Companion {
   constructor(ports) {
     Object.assign(this, ports);
     this.a = argv(ports.cfg);
-    // Every child of the request in hand that the job host had to end (or could not show ended) is noted for its answer.
-    this.trees = [];
+    this.requestContext = new AsyncLocalStorage();
+    this.probePasses = new Map();
     this.run = async (a, o) => {
-      const r = await ports.run(a, o);
-      if (r?.tree === 'zero' || r?.tree === 'unconfirmed') this.trees.push(r.tree);
+      const context = this.requestContext.getStore();
+      const r = await ports.run(a, context?.probe ? { ...o, mailboxProbe: context.probe, measureHost: true } : o);
+      if (r?.tree === 'zero' || r?.tree === 'unconfirmed') context?.trees.push(r.tree);
+      if (context?.probe) context.hostElapsedMs.push(r?.hostElapsedMs ?? null);
       return r;
     };
   }
@@ -547,7 +552,7 @@ export class Companion {
       r = await this.run(a, o);
       const ended = this.clock();
       if (request) {
-        await this.noteQuiescence(request, 'quiescence-attempt', began, ended, {
+        void this.noteQuiescence(request, 'quiescence-attempt', began, ended, {
           attempt: i + 1, timeoutMs: o.timeoutMs, elapsedMs: ended - began,
           hostElapsedMs: r?.hostElapsedMs ?? null, tree: r?.tree ?? null, timedOut: r?.timedOut === true,
         });
@@ -559,7 +564,8 @@ export class Companion {
         }
         if (r?.timedOut !== true || r.tree !== 'zero' || r.refused || r.code != null) return r;
       } else if (!timedOutGone(r)) return r;
-      await this.noteRetry(op, i + 1, ended - began, r);
+      const logged = this.noteRetry(op, i + 1, ended - began, r);
+      if (!request) await logged;
     }
     return r;
   }
@@ -714,7 +720,7 @@ export class Companion {
       }
       // Verbatim root-tool facts; the companion never synthesises a proof value itself.
       case 'linux-quiescence':
-        if (request.binding && !await this.mailbox.claimProbe(request)) {
+        if (!await this.mailbox.claimProbe(request)) {
           return { ok: false, code: 'QUIESCENCE_PROBE_UNCONFIRMED' };
         }
         if (request.previousRequestId && !await this.mailbox.predecessorAllowsProbe(request)) {
@@ -729,8 +735,15 @@ export class Companion {
       }
       case 'pr-head': {
         if (typeof this.readPull !== 'function') return { ok: false, code: 'PR_HEAD_UNAVAILABLE' };
-        const r = await this.run(this.readPull(request.pr), { timeoutMs: PR_HEAD_TIMEOUT_MS });
-        const pull = r.code === 0 ? parsePull(r.stdout, request.pr) : null;
+        const began = this.clock();
+        const timeoutMs = Math.min(PR_HEAD_TIMEOUT_MS, Date.parse(request.deadline) - began - PROBE_DELIVERY_MS - PR_HEAD_JOB_HOST_GRACE_MS);
+        if (began < Date.parse(request.createdAt) || timeoutMs < JOB_HOST_MIN_TIMEOUT_MS) {
+          return { ok: false, code: 'PR_HEAD_BUDGET_INSUFFICIENT' };
+        }
+        const r = await this.run(this.readPull(request.pr), { timeoutMs });
+        const ended = this.clock();
+        const pull = ended >= began && ended <= Date.parse(request.deadline) && r.code === 0 &&
+          !r.timedOut && !r.refused && r.tree !== 'unconfirmed' ? parsePull(r.stdout, request.pr) : null;
         return pull ? { ok: true, pull } : { ok: false, code: 'PR_HEAD_UNAVAILABLE' };
       }
       default: return { ok: false, code: 'COMPANION_REQUEST_KIND_REFUSED' };
@@ -1015,32 +1028,74 @@ export class Companion {
     }
   }
 
-  // One pass over pending requests, oldest first. A malformed request is answered as refused.
-  async step() {
-    // The companion's own timer beats as well (companion-main.mjs, DESIGN §26); a beat that fails only misses this beat.
-    try { await this.mailbox.beat(); } catch { /* a liveness hint only */ }
-    for (const request of await this.mailbox.pending()) {
-      if (request.refused) continue; // unreadable requests are left for the service's own audit
-      if (request.kind === 'linux-quiescence') {
-        const sent = Date.parse(request.createdAt), start = this.clock();
-        await this.noteQuiescence(request, 'quiescence-start', sent, start, { queueMs: start - sent });
+  async respondTo(request) {
+    const probe = PROBE_KINDS.includes(request.kind) ? request.kind : null;
+    const context = { probe, trees: [], hostElapsedMs: [] };
+    const enqueuedAt = Date.parse(request.createdAt), pickedUpAt = this.clock();
+    const dispatch = probe ? { enqueuedAt, pickedUpAt, handlerStartedAt: null, handlerEndedAt: null,
+      hostElapsedMs: context.hostElapsedMs } : null;
+    if (probe === 'linux-quiescence') {
+      void this.noteQuiescence(request, 'quiescence-start', enqueuedAt, pickedUpAt, { queueMs: pickedUpAt - enqueuedAt });
+    }
+    if (pickedUpAt >= Date.parse(request.deadline)) {
+      const interrupted = probe === 'linux-quiescence' && await this.mailbox.probeClaimed(request);
+      await this.mailbox.respond(request, { ok: false, code: interrupted ? 'QUIESCENCE_PROBE_UNCONFIRMED' : 'COMPANION_REQUEST_EXPIRED' }, dispatch);
+      return;
+    }
+    // 跳过服务已取消且尚未启动的保留任务。运行中的处理器按原生命周期收尾。
+    if (RETENTION_KINDS.has(request.kind) && (await this.mailbox.cancelled(request).catch(() => false))) {
+      await this.mailbox.respond(request, { ok: false, code: 'COMPANION_REQUEST_CANCELLED' });
+      return;
+    }
+    if (dispatch) dispatch.handlerStartedAt = this.clock();
+    let answer;
+    try { answer = await this.requestContext.run(context, () => this.handle(request)); }
+    catch { answer = { ok: false, code: 'COMPANION_HANDLER_UNCONFIRMED' }; }
+    if (dispatch) dispatch.handlerEndedAt = this.clock();
+    await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null, pull: answer.pull ?? null,
+      jobTree: jobTreeOf(context.trees), memory: answer.memory ?? null, prune: answer.prune ?? null }, dispatch);
+  }
+
+  takeProbes(kind, legacy = null) {
+    const active = this.probePasses.get(kind);
+    if (active) return legacy ? active.then(() => this.takeProbes(kind, legacy)) : active;
+    const pass = (async () => {
+      const requests = legacy ? [legacy] : await this.mailbox.pendingProbe(kind);
+      for (const request of requests) {
+        try {
+          if (legacy && await this.mailbox.poll(request)) continue;
+          await this.respondTo(request);
+        } catch { /* 本封缺答，其余请求继续按各自截止时间处理。 */ }
       }
-      if (this.clock() >= Date.parse(request.deadline)) {
-        const interrupted = request.kind === 'linux-quiescence' && request.binding && await this.mailbox.probeClaimed(request);
-        await this.mailbox.respond(request, { ok: false, code: interrupted ? 'QUIESCENCE_PROBE_UNCONFIRMED' : 'COMPANION_REQUEST_EXPIRED' });
-        continue;
+    })().catch(() => {}).finally(() => this.probePasses.delete(kind));
+    this.probePasses.set(kind, pass);
+    return pass;
+  }
+
+  step() {
+    if (!this.primaryPass) this.primaryPass = this.stepMailbox().finally(() => { this.primaryPass = null; });
+    return this.primaryPass;
+  }
+
+  async stepMailbox() {
+    const indexed = typeof this.mailbox.pendingProbe === 'function';
+    const take = () => PROBE_KINDS.map(kind => this.takeProbes(kind));
+    // 主通道的处理器或 Job Host 仍忙时，两个探针照常取件。
+    if (indexed && !this.probeTimer) this.probeTimer = setInterval(take, PROBE_PICKUP_MS).unref();
+    const probes = indexed ? take() : [];
+    try {
+      try { await this.mailbox.beat(); } catch { /* a liveness hint only */ }
+      for (const request of await this.mailbox.pending()) {
+        if (request.refused) continue;
+        if (indexed && PROBE_KINDS.includes(request.kind)) {
+          // 接续旧版服务已发出但没有取件索引的请求。
+          if (!await this.mailbox.probeQueued(request)) await this.takeProbes(request.kind, request);
+        } else {
+          await this.respondTo(request);
+        }
       }
-      // Defect 8f8240ff: a retention request the stopping service gave up (cancel 'service-stopping') is not started; one already running
-      // runs to its end or its limit (its wsl.exe is not killed early).
-      if (RETENTION_KINDS.has(request.kind) && (await this.mailbox.cancelled(request).catch(() => false))) {
-        await this.mailbox.respond(request, { ok: false, code: 'COMPANION_REQUEST_CANCELLED' });
-        continue;
-      }
-      let answer;
-      this.trees = [];
-      try { answer = await this.handle(request); } catch { answer = { ok: false, code: 'COMPANION_HANDLER_UNCONFIRMED' }; }
-      await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null, pull: answer.pull ?? null,
-        jobTree: jobTreeOf(this.trees), memory: answer.memory ?? null, prune: answer.prune ?? null });
+    } finally {
+      await Promise.all(probes);
     }
   }
 }

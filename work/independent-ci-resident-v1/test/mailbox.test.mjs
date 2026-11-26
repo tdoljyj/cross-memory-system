@@ -57,11 +57,11 @@ test('actual parsePull and service adapter preserve the merged/ref-move metadata
 
 test('real step/lane answer a merged PR on first pass instead of looping until expiry',async()=>{
   let now=start,answer=null,calls=0,steps=0,rejections=0;
-  const self={clock:()=>now,trees:[],readPull:()=>['fixture:no-OS'],
+  const self=new Companion({cfg:{},clock:()=>now,readPull:()=>['fixture:no-OS'],
     run:async()=>{calls++;return{code:0,stdout:JSON.stringify({number:984,state:'closed',merged:true,head:pull.headSha,mergeSha})};},
-    handle:Companion.prototype.handle,mailbox:{beat:async()=>{},pending:async()=>answer?[]:[request],
-      respond:async(q,fields)=>{try{answer=validateResponse(response({ok:false,...fields,pull:fields.pull??null},now),q);return answer;}catch(e){rejections++;throw e;}}}};
-  await lane({runner:{busy:false},work:async()=>{steps++;await Companion.prototype.step.call(self);},
+    mailbox:{beat:async()=>{},pending:async()=>answer?[]:[request],
+      respond:async(q,fields)=>{try{answer=validateResponse(response({ok:false,...fields,pull:fields.pull??null},now),q);return answer;}catch(e){rejections++;throw e;}}}});
+  await lane({runner:{busy:false},work:async()=>{steps++;await self.step();},
     sleep:async ms=>{now+=ms;},everyMs:2000,stop:()=>answer!==null||steps>65});
   assert.equal(steps,1);assert.equal(calls,1);assert.equal(rejections,0);
   assert.equal(answer.ok,true);assert.equal(answer.code,null);assert.equal(answer.pull.state,'merged');
@@ -71,8 +71,9 @@ test('real step/lane answer a merged PR on first pass instead of looping until e
 test('real step still refuses expired requests without calling the PR handler',async()=>{
   let calls=0,answer=null;
   const now=Date.parse(request.deadline)+1;
-  await Companion.prototype.step.call({clock:()=>now,mailbox:{beat:async()=>{},pending:async()=>[request],
+  const companion=new Companion({cfg:{},clock:()=>now,mailbox:{beat:async()=>{},pending:async()=>[request],
     respond:async(q,fields)=>{answer=validateResponse(response({ok:false,pull:null,...fields},now),q);}},
-    handle:async()=>{calls++;throw Error('EXPIRED_HANDLER_FORBIDDEN');}});
+    run:async()=>{calls++;throw Error('EXPIRED_HANDLER_FORBIDDEN');}});
+  await companion.step();
   assert.equal(calls,0);assert.equal(answer.ok,false);assert.equal(answer.code,'COMPANION_REQUEST_EXPIRED');
 });
