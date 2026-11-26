@@ -19,6 +19,15 @@ import reporterStream, { failureFingerprint, normalizeFailure } from './ci-test-
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
 
+test('train v2: privileged executor entry only accepts a new main push or an Owner dispatch', () => {
+  const workflow = readFileSync(path.join(ROOT, '.github/workflows/clued-merge-executor.yml'), 'utf8');
+  const job = workflow.slice(workflow.indexOf('  execute:'), workflow.indexOf('    steps:'));
+  assert.match(job, /if: >-\s+github\.ref == 'refs\/heads\/main' && github\.run_attempt == 1/);
+  assert.match(job, /github\.event_name == 'push'/);
+  assert.match(job, /github\.event_name == 'workflow_dispatch' && github\.actor == github\.repository_owner/);
+  assert.match(job, /github\.triggering_actor == github\.repository_owner/);
+});
+
 test('U6 真时钟欠账清单和许可清单分别触发全选', () => {
   for (const file of ['config/test-clock-debt.txt', 'scripts/ci/test-clock-allow.json']) {
     assert.ok(selectSuites('migration-verify', [file]).suites.includes('production-schema'), file);

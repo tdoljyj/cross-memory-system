@@ -427,7 +427,7 @@
     {
       "registration_status": "registered",
       "workflow_path": ".github/workflows/clued-merge-executor.yml",
-      "workflow_blob": "727d4fdce1c8be1565b8f09c715422f9c7a35c88",
+      "workflow_blob": "4501b0d59ea3ebb3402f97d38a3f5e070b875135",
       "job_id": "execute",
       "job_name": "clued-merge-executor",
       "source_paths": [
@@ -447,7 +447,7 @@
         "scripts/ci/clued-merge-executor.mjs": "83a283a143970c79d539cf7b7478380f6f45012d",
         "scripts/ci/merge-admission-source-producer.mjs": "cdaf8896ab5beee43e24fb482a99bfe871e7fac6",
         "scripts/ci/clued-gated-proof-runtime.mjs": "5e3b500594acecc4bc52d6b178f0a20816495c0e",
-        ".github/workflows/clued-merge-executor.yml": "727d4fdce1c8be1565b8f09c715422f9c7a35c88",
+        ".github/workflows/clued-merge-executor.yml": "4501b0d59ea3ebb3402f97d38a3f5e070b875135",
         ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
         ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
         "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
@@ -457,20 +457,6 @@
         "Preserve natural R9 source observations"
       ],
       "previous_source_versions": [
-        {
-          "job_name": "clued-merge-executor",
-          "source_blobs": {
-            "scripts/ci/clued-work-admission.mjs": "7acbdde2ac856ce84b6d57acff63a62792baec4f",
-            "scripts/ci/clued-merge-slot-ci.mjs": "10e5bfe0dd606308c63d057d9552f93a413094b5",
-            "scripts/ci/clued-merge-executor.mjs": "83a283a143970c79d539cf7b7478380f6f45012d",
-            "scripts/ci/merge-admission-source-producer.mjs": "6d6e30baf5543660c0ba53108da92701e5ade5f4",
-            "scripts/ci/clued-gated-proof-runtime.mjs": "5e3b500594acecc4bc52d6b178f0a20816495c0e",
-            ".github/workflows/clued-merge-executor.yml": "727d4fdce1c8be1565b8f09c715422f9c7a35c88",
-            ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
-            ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
-            "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
-          }
-        },
         {
           "job_name": "clued-merge-executor",
           "source_blobs": {
@@ -531,6 +517,20 @@
           "job_name": "clued-merge-executor",
           "source_blobs": {
             "scripts/ci/clued-work-admission.mjs": "b9aee4778146df617412d5273e27da26a38b6a80",
+            "scripts/ci/clued-merge-slot-ci.mjs": "10e5bfe0dd606308c63d057d9552f93a413094b5",
+            "scripts/ci/clued-merge-executor.mjs": "83a283a143970c79d539cf7b7478380f6f45012d",
+            "scripts/ci/merge-admission-source-producer.mjs": "cdaf8896ab5beee43e24fb482a99bfe871e7fac6",
+            "scripts/ci/clued-gated-proof-runtime.mjs": "5e3b500594acecc4bc52d6b178f0a20816495c0e",
+            ".github/workflows/clued-merge-executor.yml": "727d4fdce1c8be1565b8f09c715422f9c7a35c88",
+            ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
+            ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
+            "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
+          }
+        },
+        {
+          "job_name": "clued-merge-executor",
+          "source_blobs": {
+            "scripts/ci/clued-work-admission.mjs": "9d7a3347e5f94894a4e6e1e3deb40efc19b63a91",
             "scripts/ci/clued-merge-slot-ci.mjs": "10e5bfe0dd606308c63d057d9552f93a413094b5",
             "scripts/ci/clued-merge-executor.mjs": "83a283a143970c79d539cf7b7478380f6f45012d",
             "scripts/ci/merge-admission-source-producer.mjs": "cdaf8896ab5beee43e24fb482a99bfe871e7fac6",

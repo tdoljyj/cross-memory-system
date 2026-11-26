@@ -88,6 +88,7 @@ const rulesetsOf = kind => new Map([...(kind === 'push' || kind === 's7'
   : [[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never' }]]),
   ...(kind.startsWith('s7') ? [[SCAFFOLD_RS, { id: SCAFFOLD_RS, currentUserCanBypass: 'always' }]] : [])]);
 const ruleKind = kind => (kind === 's7' ? 'push' : kind === 's7-step1' ? 'today' : kind);
+const testFailure = sha => ({ annotation_level: 'failure', title: 'Merge train test failure', message: `source-v2-node ${sha}` });
 
 // queued false: nobody is in Native's merge queue yet (stage 8 joins it); admitted false: no stage 1 has run on any head yet; appScans: the
 // scans main requires from this App (bc982192 E3: none).
@@ -96,7 +97,7 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   const e = await setup(t, { strict: true, fullDone: false, native: healthy, tick: 1 });
   e.claimFor = sharedClaim ? () => claimOf(prs[0]) : claimOf;
   e.native.bindings = new Map(prs.map(pr => [pr, { claimId: e.claimFor(pr), scope: SCOPE, headAuthorizationId: claimOf(pr) }]));
-  const W = { commits: new Map(), content: new Map(), refs: new Map(), checks: new Map(), pulls: new Map(), nextCheck: 1000, beforeFastForward: null, pushes: [], refused: [] };
+  const W = { commits: new Map(), content: new Map(), refs: new Map(), checks: new Map(), annotations: new Map(), pulls: new Map(), nextCheck: 1000, beforeFastForward: null, pushes: [], refused: [] };
   e.W = W;
   const treeOf = set => h(`tree:${[...set].sort().join(',')}`);
   const commit = (sha, parents, content) => { if (!W.commits.has(sha)) { W.commits.set(sha, { sha, tree: treeOf(content), parents }); W.content.set(sha, new Set(content)); } return sha; };
@@ -116,8 +117,10 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   const actions = sha => {
     for (const name of [...FOUR, ...SCANS.filter(n => !appScans.includes(n)), ...(hosted ? HOSTED : [])]) {
       const id = W.nextCheck++;
+      const fails = bad(W.content.get(sha));
       W.checks.set(id, { id, app: { id: ACTIONS }, name, head_sha: sha, status: 'completed',
-        conclusion: bad(W.content.get(sha)) ? 'failure' : 'success', completed_at: iso(e.now - 5 * 60_000) });
+        conclusion: fails ? 'failure' : 'success', completed_at: iso(e.now - 5 * 60_000) });
+      if (fails) W.annotations.set(id, [testFailure(sha)]);
     }
   };
   for (const pr of prs) {
@@ -166,6 +169,7 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   gh.readGitCommit = async s => { const c = W.commits.get(s); if (!c) throw Object.assign(new Error('github_http_404'), { code: 'github_http_404' }); return structuredClone(c); };
   const listChecks = s => [...W.checks.values(), ...[...gh.world.checks.values()]].filter(c => c.head_sha === s).map(c => structuredClone(c));
   gh.readChecks = async s => ({ complete: true, checks: listChecks(s) });
+  gh.readCheckAnnotations = async id => structuredClone(W.annotations.get(id) ?? []);
   gh.readPullsPage = async ({ state = 'all', sort = 'updated', page = 1, perPage = 100 }) => {
     let list = [...W.pulls.values()].filter(p => state === 'all' || p.state === state);
     list = sort === 'created' ? list.sort((a, b) => a.number - b.number) : list.sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated));
@@ -734,6 +738,7 @@ test('N9 E11: a real failure on S parks within five minutes and becomes a failur
   const { e, b, T } = await opened(t);
   const check = [...e.W.checks.values()].find(c => c.head_sha === b.testSha && c.app.id === ACTIONS);
   Object.assign(check, { conclusion: 'failure', completed_at: iso(e.now + 60_000) });
+  e.W.annotations.set(check.id, [testFailure(b.testSha)]);
   const first = await stage8(t, e, b);
   assert.deepEqual([first.reason, first.sideEffects], ['TRAIN_LANDING_CHECKS_PENDING', 0]);
   e.now += 4 * 60_000;
@@ -767,12 +772,36 @@ test('push, fail closed: green checks on same-tree H cannot replace missing, pen
     for (const [id, c] of e.W.checks) if (c.head_sha === b.testSha && c.app.id === ACTIONS) {
       if (testChecks === 'missing') e.W.checks.delete(id);
       else Object.assign(c, { status: testChecks === 'pending' ? 'in_progress' : 'completed', conclusion: testChecks === 'pending' ? null : 'failure' });
+      if (testChecks === 'failed') e.W.annotations.set(id, [testFailure(b.testSha)]);
     }
     const p = await stage8(t, e, b, { trainLanding: { landing: 'push', batchMax: 1, unreadable: false } });
     assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', testChecks === 'failed' ? 'TRAIN_LANDING_CHECK_FAILED' : 'TRAIN_LANDING_CHECKS_PENDING', 0]);
     untouched(e, T);
     assert.deepEqual(e.W.pushes, []);
   });
+});
+
+test('train v2: unusable required checks on S park the batch without a main write or a bisection', async t => {
+  for (const cause of ['wrong-app', 'head-only', 'skipped', 'cancelled', 'timed_out', 'failure-without-verdict', 'unrecognized-app-check', 'verdict-on-H', 'unreadable']) {
+    await t.test(cause, async t => {
+      const { e, b, T } = await opened(t);
+      const check = [...e.W.checks.values()].find(c => c.head_sha === b.testSha && c.name === 'ci-suites');
+      assert.ok(check);
+      if (cause === 'wrong-app') check.app = { id: 999 };
+      else if (cause === 'head-only') check.head_sha = b.headSha;
+      else if (cause === 'unrecognized-app-check') {
+        e.W.rules.find(r => r.type === 'required_status_checks').parameters.required_status_checks.push({
+          context: 'new-policy-check', integration_id: APP,
+        });
+      } else check.conclusion = ['failure-without-verdict', 'verdict-on-H', 'unreadable'].includes(cause) ? 'failure' : cause;
+      if (cause === 'verdict-on-H') e.W.annotations.set(check.id, [testFailure(b.headSha)]);
+      if (cause === 'unreadable') e.gh.readCheckAnnotations = async () => { throw new Error('check annotations unavailable'); };
+      const result = await stage8(t, e, b);
+      const reason = cause === 'unrecognized-app-check' ? 'REQUIRED_CHECKS_UNREADABLE' : 'TRAIN_LANDING_CHECKS_PENDING';
+      assert.deepEqual([result.reason, result.sideEffects], [reason, 0]);
+      untouched(e, T);
+    });
+  }
 });
 
 test('github-merge: same-tree H keeps its publication path when project CI is missing on S', async t => {
@@ -917,7 +946,7 @@ test('R3 problem A, push: scans pinned back from Actions to this App between lan
 // R3 open item 2 (修复前必红): the three scans pinned to GitHub Actions with push's rules set up. Before the fix push's main ruleset was the
 // one with all six pinned to this App: none, so stage 10 read park and stage 8 TRAIN_LANDING_RULES_MISSING, never landing. Now the main
 // ruleset is found by the same pin rule as stages 8 and 10: stage 10 reads push with no scan required from this App, and stage 8 pushes S
-// once its Actions scans passed on S (external checks); while gitleaks still runs on S it waits, a failed one fails the batch.
+// once its Actions scans passed on S (external checks); a running scan or a failed job with no test verdict parks the batch.
 function scansFromActions(e) {
   e.W.rules = e.W.rules.map(r => (r.type !== 'required_status_checks' ? r : { ...r, parameters: { ...r.parameters,
     required_status_checks: r.parameters.required_status_checks.map(c => (SCANS.includes(c.context) ? { ...c, integration_id: ACTIONS } : c)) } }));
@@ -941,7 +970,7 @@ test('R3 open item 2: scans from GitHub Actions with push rules -> stage 10 read
       assert.equal(e.main(), b.testSha);
       assert.equal(greens(e, b.headSha).length, 0, 'push writes no merge-slot green');
     } else {
-      assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', scan === 'running' ? 'TRAIN_LANDING_CHECKS_PENDING' : 'TRAIN_LANDING_CHECK_FAILED', 0], JSON.stringify(p));
+      assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'TRAIN_LANDING_CHECKS_PENDING', 0], JSON.stringify(p));
       assert.deepEqual(e.W.pushes, []);
       untouched(e, T);
     }
@@ -2664,6 +2693,7 @@ test('S7 (stay green): green hosted-* on same-tree H cannot replace missing, pen
     for (const [id, c] of e.W.checks) if (c.head_sha === b.testSha && HOSTED.includes(c.name)) {
       if (testChecks === 'missing') e.W.checks.delete(id);
       else Object.assign(c, { status: testChecks === 'pending' ? 'in_progress' : 'completed', conclusion: testChecks === 'pending' ? null : 'failure' });
+      if (testChecks === 'failed') e.W.annotations.set(id, [testFailure(b.testSha)]);
     }
     const p = await stage8(t, e, b, { trainLanding: PUSH1 });
     assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', testChecks === 'failed' ? 'TRAIN_LANDING_CHECK_FAILED' : 'TRAIN_LANDING_CHECKS_PENDING', 0]);

@@ -109,6 +109,37 @@ test('B: a test that fails every time stays red; the command runs again once', (
   assert.doesNotMatch(out, /flaky::/);
 });
 
+test('train v2: final test failure has a verdict, while a recovered test or a timeout has none', (t) => {
+  const hostEnv = { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/clued-train/staging', GITHUB_SHA: 'a'.repeat(40) };
+  const verdict = /::error title=Merge train test failure::source-v2-node/;
+  const flaky = checkout(t, suite({ 'flaky on S': [1] }));
+  const recovered = run(flaky.root, flaky.base, { hostEnv });
+  assert.equal(recovered.status, 0, recovered.out);
+  assert.equal(recovered.calls.length, 2, recovered.out);
+  assert.doesNotMatch(recovered.out, verdict);
+
+  const stable = checkout(t, suite({ 'stable on S': true }));
+  const failed = run(stable.root, stable.base, { hostEnv });
+  assert.equal(failed.status, 1, failed.out);
+  assert.equal(failed.calls.length, 2, failed.out);
+  assert.match(failed.out, verdict);
+
+  const hung = checkout(t, { ...suite({ 'does not finish': `test('does not finish', () => new Promise(() => setInterval(() => {
+    try { process.kill(process.ppid, 0); } catch { process.exit(1); }
+  }, 100)));\n` }), 'config/test-clock-debt.txt': `${FLAKY}\n` });
+  const timedOut = run(hung.root, hung.base, { hostEnv, commandTimeoutMs: 1000 });
+  assert.equal(timedOut.status, 1, timedOut.out);
+  assert.equal(timedOut.calls.length, 1, timedOut.out);
+  assert.match(timedOut.out, /被终止/);
+  assert.doesNotMatch(timedOut.out, verdict);
+
+  const network = checkout(t, suite({ 'network failure':
+    "test('network failure', () => { throw Object.assign(new Error('network reset'), { code: 'ECONNRESET' }); });\n" }));
+  const interrupted = run(network.root, network.base, { hostEnv });
+  assert.equal(interrupted.status, 1, interrupted.out);
+  assert.doesNotMatch(interrupted.out, verdict);
+});
+
 test('C: a failing test file the change edited is not run again', (t) => {
   const { root, base, runsOf } = checkout(t, suite({ 'flaky one': [] }), { changed: { [FLAKY]: testFile({ 'flaky one': [1], 'new one': [] }) } });
   const { status, calls, out } = run(root, base);
@@ -290,7 +321,8 @@ test('O: a run again that times out leaves the command red', (t) => {
   }, 100));
 });
 ` }), 'config/test-clock-debt.txt': `${FLAKY}\n` });
-  const { status, calls, out } = run(root, base, { rerunMinTimeoutMs: 0 });
+  // 给测试子进程留出启动时间，再验证它运行后仍未完成的超时。
+  const { status, calls, out } = run(root, base, { rerunMinTimeoutMs: 5_000 });
   assert.equal(status, 1, out);
   assert.equal(calls.length, 2, out);
   assert.equal(runsOf(FLAKY), 2);

@@ -68,7 +68,7 @@ import { STAGE8_LEASE_MINUTES, extendLeaseIfShort, leaseAfter } from './claim-as
 import { digest } from '../proof.mjs';
 import { freshStamp } from '../clock-skew.mjs';
 import { LANDING_NOT_READY_REASONS, LANDING_FINAL_REASONS, TRAIN_BATCH_CHANGED, TRAIN_BATCH_WITHOUT_PUSH, TRAIN_LANDING_REFUSED, TRAIN_LANDING_UNCONFIRMED,
-  TRAIN_LANDING_RULES_MISSING, readLandingRoute, rehearsalOf, externalChecksDecision, readBatchChain, landMain } from './train-landing.mjs';
+  TRAIN_LANDING_RULES_MISSING, readLandingRoute, rehearsalOf, stagingChecksDecision, readBatchChain, landMain } from './train-landing.mjs';
 import { makeJobV2, validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, RULESET_UNREADABLE, RULESET_READ_FAILED, readMainRules, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY,
@@ -646,8 +646,8 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         } catch { return blocked(TRAIN_BATCH_CHANGED); }
       }
       // Push lands S: its required checks must pass on S itself, even when H has the same tree.
-      const outside = externalChecksDecision({ rules: reply.rules, inventory: await github.readChecks(job.testSha),
-        commitSha: job.testSha, appId: APP_ID, now: clock() });
+      const outside = await stagingChecksDecision({ rules: reply.rules, inventory: await github.readChecks(job.testSha),
+        commitSha: job.testSha, appId: APP_ID, now: clock(), readAnnotations: id => github.readCheckAnnotations(id) });
       if (outside) return blocked(outside);
       mainNow = (await github.readBranchHead('main'))?.sha;
       if (mainNow !== job.baseSha && mainNow !== job.testSha) return blocked('RESIDENT_BASE_MOVED');

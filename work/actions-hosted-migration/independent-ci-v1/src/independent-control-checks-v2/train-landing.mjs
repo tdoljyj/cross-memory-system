@@ -253,15 +253,13 @@ export function validRehearsal(r) {
 }
 
 // ---- required checks App 5368905 does not produce, on S (ADR 0018 §2 L2 item 5) ----
-const INCONCLUSIVE_CHECKS = new Set(['cancelled', 'timed_out', 'stale', 'startup_failure']);
 const CHECK_FAILURE_GRACE_MS = 5 * 60_000;
 
 // rules: main's live rules; inventory: { complete, checks } of S itself, even when H has the same tree.
 // Every required context pinned to another App (or to none) must have, as its newest check
 // run by id of the pinned App, a completed success. N9: unusable verdicts park; a fresh failure gives the repair lane time to act.
-// Contexts pinned to appId are the train's own (on H) and are not looked at here.
-// The required checks push waits for on S (also the landing precheck's P1 list, review A/B 11-21): every required context of the live
-// rules not pinned to appId, each { context, pin } (pin: the App whose runs count, null = any App's), in rule order.
+// The train's own checks on H are handled by admission. The precheck also
+// reads this list, in live rule order.
 export function externalRequiredChecks({ rules, appId }) {
   const required = [];
   if (Array.isArray(rules)) for (const r of rules) if (plain(r) && r.type === 'required_status_checks' && Array.isArray(r.parameters?.required_status_checks))
@@ -272,19 +270,47 @@ export function externalRequiredChecks({ rules, appId }) {
 // The runs of one such check on commitSha: its name, that commit, and the pinned App's (any App's when not pinned).
 export const runsOfRequired = (checks, { context, pin }, commitSha) =>
   checks.filter(k => plain(k) && k.name === context && k.head_sha === commitSha && (pin === null || k.app?.id === pin));
+function requiredCheckDecisions({ rules, inventory, commitSha, appId }) {
+  if (!SHA.test(commitSha ?? '') || !Array.isArray(rules) || inventory?.complete !== true || !Array.isArray(inventory.checks)) return null;
+  return externalRequiredChecks({ rules, appId }).map(required => {
+    const runs = runsOfRequired(inventory.checks, required, commitSha);
+    const latest = runs.reduce((a, k) => (!a || k.id > a.id ? k : a), null);
+    return { ...required, latest };
+  });
+}
+
 export function externalChecksDecision({ rules, inventory, commitSha, appId, now = Date.now() }) {
-  if (!Array.isArray(rules) || inventory?.complete !== true || !Array.isArray(inventory.checks)) return TRAIN_LANDING_CHECKS_PENDING;
+  const decisions = requiredCheckDecisions({ rules, inventory, commitSha, appId });
+  if (!decisions) return TRAIN_LANDING_CHECKS_PENDING;
   let pending = false;
-  for (const c of externalRequiredChecks({ rules, appId })) {
-    const runs = runsOfRequired(inventory.checks, c, commitSha);
-    const newest = runs.reduce((a, k) => (!a || k.id > a.id ? k : a), null);
-    if (!newest || newest.status !== 'completed') { pending = true; continue; }
-    if (INCONCLUSIVE_CHECKS.has(newest.conclusion)
-      || (newest.conclusion === 'failure' && now - Date.parse(newest.completed_at) < CHECK_FAILURE_GRACE_MS)) {
-      pending = true;
-      continue;
+  for (const { latest } of decisions) {
+    if (latest?.status === 'completed' && latest.conclusion === 'success') continue;
+    if (latest?.status === 'completed' && latest.conclusion === 'failure'
+      && !(now - Date.parse(latest.completed_at) < CHECK_FAILURE_GRACE_MS)) return TRAIN_LANDING_CHECK_FAILED;
+    pending = true;
+  }
+  return pending ? TRAIN_LANDING_CHECKS_PENDING : null;
+}
+
+// Landing and bisection consume the latest exact-S check of each pinned
+// provider. A failed Actions job alone can also mean setup or network failure.
+export async function stagingChecksDecision({ rules, inventory, commitSha, appId, readAnnotations, now = Date.now() }) {
+  const decisions = requiredCheckDecisions({ rules, inventory, commitSha, appId });
+  if (!decisions?.length || decisions.some(({ pin }) => pin === null)) return TRAIN_LANDING_CHECKS_PENDING;
+  let pending = false;
+  const terminalMessage = new RegExp(`^[a-z0-9-]+ ${commitSha}$`);
+  for (const { pin, latest } of decisions) {
+    if (latest?.status === 'completed' && latest.conclusion === 'success') continue;
+    pending = true;
+    if (pin !== ACTIONS_APP_ID || latest?.status !== 'completed' || latest.conclusion !== 'failure'
+      || !Number.isSafeInteger(latest.id) || latest.id <= 0
+      || !(now - Date.parse(latest.completed_at) >= CHECK_FAILURE_GRACE_MS)) continue;
+    let notes;
+    try { notes = await readAnnotations(latest.id); } catch { continue; }
+    if (Array.isArray(notes) && notes.some(note => note?.annotation_level === 'failure'
+      && note.title === 'Merge train test failure' && terminalMessage.test(note.message ?? ''))) {
+      return TRAIN_LANDING_CHECK_FAILED;
     }
-    if (newest.conclusion !== 'success') return TRAIN_LANDING_CHECK_FAILED;
   }
   return pending ? TRAIN_LANDING_CHECKS_PENDING : null;
 }

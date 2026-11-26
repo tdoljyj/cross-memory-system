@@ -188,7 +188,10 @@ export const SUITES = {
     'reinstall-python': RESIDENT_AND_SOURCE,
     'offline-drill': RESIDENT_AND_SOURCE,
     'source-v2-node': [...RESIDENT_AND_SOURCE, 'apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
-      'apps/clued-cloud/supabase/migrations/*_ci_connection_self_v1.sql', 'apps/clued-cloud/tests/ci-connection-self-db.test.mjs'],
+      'apps/clued-cloud/supabase/migrations/*_ci_connection_self_v1.sql', 'apps/clued-cloud/tests/ci-connection-self-db.test.mjs',
+      'apps/clued-cloud/tests/merge-train-v2-db.fixture.mjs', 'apps/clued-cloud/tests/ci-scheduling-stage1-fixture.mjs',
+      'apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs', 'apps/clued-cloud/tests/cluster-cleanup.mjs',
+      'apps/clued-cloud/tests/pg-cluster-fixture.mjs', 'apps/clued-cloud/tests/raw-binding-grants-fixture.mjs'],
     'source-v2-python': RESIDENT_AND_SOURCE,
     'components': ['scripts/clued_components.py', 'scripts/hooks/**', 'skills/**', 'integrations/**',
       'config/clued-components.json', 'tests/test_clued_components.py', 'tests/test_clued_version_check.py',
@@ -1532,10 +1535,11 @@ function rerunRefusal({ status, signal, report, failures, elapsed, maxElapsed, r
 // Runs the failed command once more, whole; true when that run passes as the command does and passes every test that
 // failed. Logs why not otherwise.
 function passesAgain(id, { command, argv, failures, report, status, signal, elapsed, root, cwd, env, spawn, platform, list, log,
-  readReportFile, maxElapsed, minTimeout }) {
+  readReportFile, maxElapsed, minTimeout, terminalFailure }) {
   const refusal = rerunRefusal({ status, signal, report, failures, elapsed, maxElapsed, root, base: env.CI_BASE_SHA, env });
   if (refusal) {
     log(`${id}: not run again in full: ${refusal}`);
+    if (!signal && terminalTestReport(status, report, failures)) terminalFailure();
     return false;
   }
   const timeout = Math.max(2 * Math.ceil(elapsed), minTimeout);
@@ -1569,8 +1573,10 @@ function passesAgain(id, { command, argv, failures, report, status, signal, elap
   if (clockUses > 0) problems.add(`${clockUses} real-clock use${clockUses === 1 ? '' : 's'} in test code`);
   if (result.error) problems.add(result.error.message);
   if (again.corrupt || !again.summary) problems.add('the test report has no summary of the run');
+  let unexpected = failed;
   if (command.known) {
     const verdict = knownFailureVerdict({ status: result.signal ? 128 : result.status, report: again, known: list });
+    unexpected = verdict.unexpected;
     for (const problem of verdict.problems) problems.add(problem);
     for (const event of verdict.unexpected) problems.add(`${testAt(event)} failed`);
   } else if (result.status !== 0) {
@@ -1584,9 +1590,24 @@ function passesAgain(id, { command, argv, failures, report, status, signal, elap
   if (notPassed.length > 0) problems.add(`${notPassed.map(testAt).join('; ')} did not pass`);
   if (problems.size > 0) {
     log(`${id}: run again in full, still failing (整条再跑仍失败): ${[...problems].join('; ')}`);
+    if (clockUses > 0 || (!result.error && !result.signal && terminalTestReport(result.status, again, unexpected))) terminalFailure();
     return false;
   }
   return true;
+}
+
+function terminalTestReport(status, report, failures) {
+  return status === 1 && report?.summary?.success === false && !report.corrupt
+    && failures.some(event => event.file && event.failure_type === 'testCodeFailure' && !event.missing_dependency && !event.network_failure);
+}
+
+// The landing reader binds this annotation to the exact failed Actions check
+// on S. No annotation means the check supplies no bisection verdict.
+function reportTrainTestFailure(id, env, log) {
+  if (env.GITHUB_ACTIONS === 'true' && env.GITHUB_EVENT_NAME === 'push'
+    && env.GITHUB_REF === 'refs/heads/clued-train/staging' && /^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? '')) {
+    log(`::error title=Merge train test failure::${id} ${env.GITHUB_SHA}`);
+  }
 }
 
 function reportFlaky(id, failures, { env, log }) {
@@ -1784,6 +1805,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
         if (reportDir) rmSync(reportDir, { recursive: true, force: true });
       } catch { /* a temporary directory left behind */ }
       log(`${id}: ${shown.join(' ')} used the real clock in test code (exit ${result.status ?? result.signal})`);
+      if (!files) reportTrainTestFailure(id, env, log);
       return result.status || 1;
     }
     // Every error on the way to running again keeps the failure (FABLE-flaky-no-new-commit-20261122 §2.5).
@@ -1791,7 +1813,8 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
       if (files) return false;
       try {
         return passesAgain(id, { command, argv: plain, failures, report: ran, status, signal: result.signal, elapsed, root, cwd, env,
-          spawn, platform, list, log, readReportFile, maxElapsed: rerunMaxElapsedMs, minTimeout: rerunMinTimeoutMs });
+          spawn, platform, list, log, readReportFile, maxElapsed: rerunMaxElapsedMs, minTimeout: rerunMinTimeoutMs,
+          terminalFailure: () => reportTrainTestFailure(id, env, log) });
       } catch (error) {
         log(`${id}: not run again in full: ${error?.message ?? error}`);
         return false;

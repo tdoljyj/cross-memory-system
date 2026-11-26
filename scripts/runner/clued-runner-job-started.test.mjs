@@ -151,6 +151,12 @@ const STAGING_ENV = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/clued-t
   GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests.yml@refs/heads/clued-train/staging' };
 const MAIN = 'd'.repeat(40);
 const MAIN_REF = `${API}/git/ref/heads/main`;
+const REPAIR_ACTOR = { id: 54321, login: 'train-repair[bot]', type: 'Bot' };
+const REPO_MODE = `${API}/actions/variables?`;
+const ENVIRONMENT_MODE = `${API}/environments/clued-admission/variables?`;
+const modeVariables = value => ({ body: { total_count: value === undefined ? 0 : 1,
+  variables: value === undefined ? [] : [{ name: 'CLUED_MERGE_ADMISSION_STATE', value }] } });
+const repairVariables = { body: { total_count: 1, variables: [{ name: 'CLUED_TRAIN_REPAIR_ACTOR_ID', value: String(REPAIR_ACTOR.id) }] } };
 const MEMBER = { number: 9, state: 'open', draft: false, created_at: RUN_CREATED,
   base: { ref: 'main', repo: { full_name: 'o/r' } }, head: { sha: HEAD, repo: { full_name: 'o/r' } } };
 const memberRunsUrl = head => `${API}/actions/workflows/clued-required-tests.yml/runs?head_sha=${head}&event=pull_request`;
@@ -162,6 +168,8 @@ const stagingScript = () => ({
   [RUN]: thisRun({ event: 'push', head_sha: SHA, head_branch: 'clued-train/staging',
     path: '.github/workflows/clued-required-tests.yml', actor: { login: STAGING_ENV.GITHUB_ACTOR } }),
   [MAIN_REF]: { body: { object: { type: 'commit', sha: MAIN } } },
+  [REPO_MODE]: repairVariables,
+  [ENVIRONMENT_MODE]: modeVariables(),
   [`${API}/git/commits/${SHA}`]: { body: { sha: SHA, parents: [{ sha: MAIN }, { sha: HEAD }] } },
   [`${API}/commits/${HEAD}/pulls`]: { body: [MEMBER] },
   [`${API}/pulls/9`]: { body: MEMBER },
@@ -177,11 +185,37 @@ test('bors staging: workflow or protected changes without member admission must 
   assert.equal(result.allow, false);
 });
 
+test('train v2: a manual staging rerun cannot borrow the original train actor or a fresh gate', async () => {
+  const script = stagingScript();
+  Object.assign(script[RUN].body, { run_attempt: 2, run_started_at: RUN_STARTED,
+    triggering_actor: { id: 67890, login: 'agent', type: 'User' } });
+  script[JOBS(2)] = jobsOf(gateJob({ run_attempt: 2 }));
+  const { result, calls } = await stagingRun(script, { GITHUB_RUN_ATTEMPT: '2',
+    CLUED_TRAIN_REPAIR_ACTOR_ID: '67890', GITHUB_JOB: 'migration-verify' });
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /triggering actor/);
+  assert.ok(!calls.some(call => call.url.startsWith(NATIVE)));
+});
+
+test('train v2: frozen admission prevents staging even with a green member check', async () => {
+  for (const script of [{ [REPO_MODE]: modeVariables('frozen') },
+    { [REPO_MODE]: modeVariables('normal'), [ENVIRONMENT_MODE]: modeVariables('frozen') },
+    { [ENVIRONMENT_MODE]: modeVariables('unknown') }]) {
+    const { result } = await stagingRun(script);
+    assert.equal(result.allow, false);
+    assert.match(result.reason, /frozen/);
+  }
+  const { result } = await stagingRun({ [ENVIRONMENT_MODE]: { body: { total_count: 2, variables: [] } } });
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /mode is unreadable/);
+});
+
 test('bors staging: admitted current member heads in a chain rooted at live main may run, including reruns', async () => {
   for (const attempt of [1, 2]) {
     const script = stagingScript();
     script[RUN].body.run_attempt = attempt;
     script[RUN].body.run_started_at = RUN_STARTED;
+    script[RUN].body.triggering_actor = REPAIR_ACTOR;
     script[JOBS(attempt)] = jobsOf(gateJob({ run_attempt: attempt }));
     const { result, calls } = await stagingRun(script, { GITHUB_RUN_ATTEMPT: String(attempt), GITHUB_JOB: 'migration-verify' });
     assert.equal(result.allow, true, result.reason);
@@ -192,11 +226,29 @@ test('bors staging: admitted current member heads in a chain rooted at live main
 
 test('bors staging: a heavy job cannot use an admission gate carried over from an earlier attempt', async () => {
   const script = stagingScript();
-  Object.assign(script[RUN].body, { run_attempt: 2, run_started_at: RUN_STARTED });
+  Object.assign(script[RUN].body, { run_attempt: 2, run_started_at: RUN_STARTED,
+    triggering_actor: REPAIR_ACTOR });
   script[JOBS(2)] = jobsOf(gateJob({ run_attempt: 2, started_at: RUN_CREATED }));
   const { result } = await stagingRun(script, { GITHUB_RUN_ATTEMPT: '2', GITHUB_JOB: 'migration-verify' });
   assert.equal(result.allow, false, result.reason);
   assert.match(result.reason, /was not re-run/);
+});
+
+test('train v2: the recovery App can rerun an environment failure within the budget', async () => {
+  const script = stagingScript();
+  Object.assign(script[RUN].body, { run_attempt: 2, triggering_actor: REPAIR_ACTOR });
+  const gate = gateJob({ run_attempt: 1, head_sha: SHA, conclusion: 'failure',
+    steps: [{ name: 'Set up job', conclusion: 'failure' }] });
+  const heavy = heavyJob({ run_attempt: 1, head_sha: SHA, status: 'completed', conclusion: 'skipped' });
+  script[JOBS(1)] = jobsOf(gate, heavy);
+  const launch = attempt => stagingRun(script, { GITHUB_RUN_ATTEMPT: String(attempt), GITHUB_JOB: 'admission-gate' });
+  assert.equal((await launch(2)).result.allow, true);
+  Object.assign(gate, { conclusion: 'success', steps: [] });
+  Object.assign(heavy, { conclusion: 'failure', steps: [{ name: 'Run tests', conclusion: 'failure' }] });
+  script[`${API}/actions/jobs/${heavy.id}/logs`] = { text: 'not ok 1 stable test' };
+  assert.match((await launch(2)).result.reason, /does not allow repair/);
+  script[RUN].body.run_attempt = 4;
+  assert.match((await launch(4)).result.reason, /exceeded its repair budget/);
 });
 
 test('bors staging: a name alone, wrong App/PR/head, malformed binding, pending or newer failed admission never suffices', async () => {

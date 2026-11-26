@@ -460,7 +460,7 @@ export function appJwt(appId, privateKeyPem, nowSeconds) {
   return `${header}.${payload}.${base64url(signer.sign(privateKeyPem))}`;
 }
 
-async function readToken({ env, fetchImpl, readFile, now, repository, checksRead = false }) {
+async function readToken({ env, fetchImpl, readFile, now, repository, checksRead = false, modeRead = false }) {
   const appId = (env.CLUED_RUNNER_HOOK_APP_ID ?? "").trim();
   const keyFile = (env.CLUED_RUNNER_HOOK_APP_KEY_FILE ?? "").trim();
   if (appId || keyFile) {
@@ -476,7 +476,7 @@ async function readToken({ env, fetchImpl, readFile, now, repository, checksRead
     if (!installation || !/^[0-9]{1,20}$/.test(String(installation.id))) throw new Error(`App ${appId} has no installation on ${repository}.`);
     const minted = await github(fetchImpl, jwt, `/app/installations/${installation.id}/access_tokens`, { method: "POST", expect: 201, retryRead: true,
       body: { repositories: [repository.split("/")[1]], permissions: { actions: "read", contents: "read", pull_requests: "read",
-        ...(checksRead ? { checks: "read" } : {}) } } });
+        ...(checksRead ? { checks: "read" } : {}), ...(modeRead ? { actions_variables: "read", environments: "read" } : {}) } } });
     if (!minted || typeof minted.token !== "string" || !minted.token) throw new Error(`App ${appId} returned no installation token.`);
     return minted.token;
   }
@@ -590,6 +590,39 @@ async function residentStatusSaying(fetchImpl, token, repository, headSha) {
 // one (D6 N1). Each reads its own member PR runs below.
 const STAGING_WORKFLOWS = new Set(['.github/workflows/clued-required-tests.yml',
   '.github/workflows/clued-required-tests-windows.yml']);
+const STAGING_ACTOR = 'clued-ci-checks-turing-20261018[bot]';
+const ADMISSION_STATE_VARIABLE = 'CLUED_MERGE_ADMISSION_STATE';
+const TRAIN_REPAIR_ACTOR_VARIABLE = 'CLUED_TRAIN_REPAIR_ACTOR_ID';
+
+// Use the same environment-over-repository precedence as Native admission.
+// Only complete inventories establish the default normal mode.
+async function stagingAdmissionConfig(fetchImpl, token, repository) {
+  async function readScope(scope) {
+    const perPage = 30;
+    const variables = new Map();
+    let total;
+    for (let page = 1; page <= Math.ceil(500 / perPage); page += 1) {
+      const body = await github(fetchImpl, token, `/repos/${repository}/${scope}?per_page=${perPage}&page=${page}`);
+      if (!Number.isSafeInteger(body?.total_count) || body.total_count < 0 || body.total_count > 500
+        || (total !== undefined && total !== body.total_count)
+        || !Array.isArray(body.variables) || body.variables.length > perPage) break;
+      total = body.total_count;
+      for (const variable of body.variables) {
+        if (typeof variable?.name !== 'string' || typeof variable.value !== 'string' || variables.has(variable.name))
+          throw new Error('admission configuration inventory is invalid');
+        variables.set(variable.name, variable.value);
+      }
+      if (variables.size === total) return variables;
+      if (variables.size > total || body.variables.length < perPage) break;
+    }
+    throw new Error('admission mode inventory is incomplete');
+  }
+  const [repoVars, environmentVars] = await Promise.all([
+    readScope('actions/variables'), readScope('environments/clued-admission/variables'),
+  ]);
+  const mode = (environmentVars.get(ADMISSION_STATE_VARIABLE) ?? repoVars.get(ADMISSION_STATE_VARIABLE) ?? '').trim() || 'normal';
+  return { frozen: !['normal', 'efficiency'].includes(mode), recoveryActorId: repoVars.get(TRAIN_REPAIR_ACTOR_VARIABLE) };
+}
 
 // The train's member chain (ADR 0019 §3), one copy for every reader: from S
 // along first parents, each step a merge of exactly two distinct parents whose
@@ -649,13 +682,32 @@ async function stagingAdmission({ env, fetchImpl, readFile, now, sleep, reposito
   const refuse = reason => ({ ...result, allow: false, reason: `staging: ${reason}` });
   const sha = env.GITHUB_SHA ?? '', runId = env.GITHUB_RUN_ID ?? '';
   if (!/^[a-f0-9]{40}$/.test(sha) || !/^[0-9]{1,20}$/.test(runId)) return refuse('invalid S or run id');
-  const token = await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true });
+  const token = await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true, modeRead: true });
   const run = await github(fetchImpl, token, `/repos/${repository}/actions/runs/${runId}`);
   const attempt = attemptNumber(env.GITHUB_RUN_ATTEMPT ?? '1');
-  if (run?.event !== 'push' || run.head_sha !== sha || run.head_branch !== 'clued-train/staging'
-    || run.path !== workflow || run.actor?.login !== env.GITHUB_ACTOR
+  if (String(run?.id) !== runId || run.event !== 'push' || run.head_sha !== sha || run.head_branch !== 'clued-train/staging'
+    || run.path !== workflow || run.actor?.login !== STAGING_ACTOR
     || attempt === null || run.run_attempt !== attempt || !Number.isFinite(Date.parse(run.created_at)))
     return refuse('run does not bind the workflow, App actor, attempt and S');
+  const readConfig = () => stagingAdmissionConfig(fetchImpl, token, repository).catch(() => null);
+  if (attempt > 1) {
+    // The original actor is unchanged by GitHub when another principal reruns.
+    // Read the recovery App from the repository, outside the job environment.
+    const config = await readConfig();
+    if (!config) return refuse('live merge admission mode is unreadable');
+    if (config.frozen) return refuse('merge admission is frozen');
+    const actor = run.triggering_actor;
+    if (!Number.isSafeInteger(actor?.id) || actor.id <= 0 || String(actor.id) !== config.recoveryActorId
+      || actor.type !== 'Bot' || !/^[a-z0-9-]+\[bot\]$/.test(actor.login ?? '') || actor.login === STAGING_ACTOR)
+      return refuse('rerun triggering actor is not the configured recovery App');
+    if (attempt > REPAIR_ATTEMPTS_MAX) return refuse('the staging run exceeded its repair budget');
+    if (env.GITHUB_JOB === GATE_JOB) {
+      const history = await requiredTestsRepairHistory({ repository, runId, head: sha, attempt, workflowId: run.workflow_id,
+        read: route => github(fetchImpl, token, route),
+        readLog: route => github(fetchImpl, token, route, { asText: true }) });
+      if (!history.allowed) return refuse(history.reason);
+    }
+  }
   if (attempt > 1 && env.GITHUB_JOB !== GATE_JOB) {
     const attemptStarted = Date.parse(run.run_started_at);
     if (!Number.isFinite(attemptStarted)) return refuse("the run has no run_started_at; re-run refused");
@@ -705,6 +757,11 @@ async function stagingAdmission({ env, fetchImpl, readFile, now, sleep, reposito
   }
   const currentMain = await github(fetchImpl, token, mainPath);
   if (currentMain?.object?.type !== 'commit' || currentMain.object.sha !== base) return refuse('main moved');
+  const currentConfig = await readConfig();
+  if (!currentConfig) return refuse('live merge admission mode is unreadable');
+  if (currentConfig.frozen) return refuse('merge admission is frozen');
+  if (attempt > 1 && String(run.triggering_actor.id) !== currentConfig.recoveryActorId)
+    return refuse('rerun triggering actor changed during admission');
   return { ...result, allow: true, reason: `App 5368905 staging S rooted at ${base}, all ${members.length} PR heads admitted`,
     execution_targets: members.map(member => ({ repository, head_sha: member.head,
       pr_ref: `${repository}#${member.number}`, target_branch: defaultBranch })) };
@@ -966,7 +1023,7 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
   const event = result.event;
   if (event === 'push' && result.ref === 'refs/heads/clued-train/staging' &&
     STAGING_WORKFLOWS.has(workflow) &&
-    env.GITHUB_ACTOR === 'clued-ci-checks-turing-20261018[bot]') {
+    env.GITHUB_ACTOR === STAGING_ACTOR) {
     return stagingAdmission({ env, fetchImpl, readFile, now, sleep, repository, defaultBranch, workflow, result });
   }
   const requiredDispatch = event === 'workflow_dispatch' && workflow === '.github/workflows/clued-required-tests.yml';

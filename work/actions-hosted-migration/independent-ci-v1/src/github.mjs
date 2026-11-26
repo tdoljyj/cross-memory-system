@@ -433,6 +433,17 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: [...packet.paths] };
     },
     async readChecks(headSha) { return inventory(headSha); },
+    async readCheckAnnotations(checkRunId) {
+      if (!positive(checkRunId)) fail('invalid_check_run');
+      const annotations = [];
+      for (let page = 1; page <= maxPages; page++) {
+        const list = await scoped(`/check-runs/${checkRunId}/annotations?per_page=100&page=${page}`);
+        if (!Array.isArray(list) || list.length > 100) fail('invalid_check_annotations');
+        annotations.push(...list);
+        if (list.length < 100) return annotations;
+      }
+      fail('check_annotations_page_limit');
+    },
     // This App's runs on the head, every run of every name (filter=all, app_id): the cross-node "already published"
     // read-back (resident primary/standby design v0.4 §6.2; published-on-github-v2.mjs). Complete, or refused.
     async readAppChecks(headSha) { return inventory(headSha, null, null, true); },

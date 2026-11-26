@@ -63,6 +63,10 @@ Switching the required checks to other sources (the disaster procedure in [docs/
 
 ## Identity and provenance
 
+- 合并列车 v2 启用前，在 GitHub 分开 Owner、Agent、列车发布 App 与环境故障恢复 App 的主体。Agent 仅通过受保护规则约束的分支和 PR 交付变更。Agent 可用的身份不得拥有 Actions 写入、Checks 写入、规则集或仓库变量管理权限、列车 App 旁路，或可执行合并的凭据。Owner 与 Agent 共用登录、安装令牌或浏览器会话时，主体隔离验收失败。
+- 暂存工作流首次运行绑定 App 5368905、固定暂存 ref、确切合成提交 S 和两份必需工作流之一。自动恢复沿用同一 run ID 与现有预算。runner 通过 GitHub API 读取本次触发者，并与仓库变量 `CLUED_TRAIN_REPAIR_ACTOR_ID` 指定的独立恢复 App 的 GitHub Actor ID 比对。每次恢复必须重跑门禁，所有成员仍须持有精确 head 的 Native 准入。runner 的只读 App 还需能够完整读取仓库和 `clued-admission` 环境的准入状态。状态冻结、无法读回或恢复主体未配置均按对应门禁拒绝。
+- 推送落地逐项核对活规则的检查名和 App，以及确切 S 上的最新结果。`kooyumi-train-landed` 保持无人发布，由 GitHub 挡住页面合并。缺项、错 App、跳过、运行中或不明失败均停车。只有完成作业内复验判断后，由可信选择器写入并绑定到 S 上失败检查的测试结论，才可触发前缀二分。其他失败沿现有环境诊断和预算处理。
+- 生产启用验收以实际受限 Actor 分别尝试工作流复跑、修改准入变量、修改规则集、发布检查和页面合并，保留拒绝读回。测试夹具中的同名 Actor 和本地工作流校验只证明代码门禁，生产权限以 GitHub 实际授予为准。
 - Connector-created commits use the authenticated GitHub actor supplied by the platform. Do not fabricate an `AI@machine` Git author when the connector cannot set it.
 - The PR body or handoff records the base SHA, scope, relevant validation and any conflict/reconciliation that occurred.
 - A connector commit proves only that the authenticated repository actor performed the write. It does not itself prove product, production or Canonical authority.
