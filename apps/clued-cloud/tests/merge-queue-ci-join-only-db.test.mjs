@@ -130,8 +130,16 @@ test('merge queue: a served repository is joined only through the CI door', { ti
     const adopt = (ci, repo, n) => call(ci, 'clued_work_claim_adopt_v1', { scope: 'global', pr_ref: `${repo}#${n}`, merge_sha: 'f'.repeat(40) });
     const release = r => call(r.who, 'clued_work_release_v1', { scope: 'global', claim_id: r.claim.claim_id, fence: r.claim.fence,
       lease_key: r.lease_key, outcome: 'completed', evidence_ref: 'fixture:' + uuid() });
+    const releaseHeld = async r => {
+      const result = await release(r);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'work_claim_release_pr_open']);
+      await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '1 hour',
+        expires_at=clock_timestamp()+interval '1 hour' where claim_id=$1`, [r.claim.claim_id]);
+      return release(r);
+    };
     // A Binding holds at most ten live claims: each case gives its own back (a claim already over answers rejected, which is fine here).
     const finish = async (...rs) => { for (const r of rs) await release(r); };
+    const finishHeld = async (...rs) => { for (const r of rs) committed(await releaseHeld(r)); };
     const queue = async (user, repo) => (await admin.query('select clued_private.work_claim_merge_queue_current_v1($1,$2) v', [user, ref(repo)])).rows[0].v;
     const entry = (q, r) => q.entries.find(e => e.claim_id === r.claim.claim_id);
     const marks = async r => (await admin.query('select merge_ref from clued_private.work_claim_ci_merge_refs_v1 where claim_id=$1', [r.claim.claim_id])).rows.map(x => x.merge_ref);
@@ -146,15 +154,15 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       assert.equal(w.merge_queued_at, null, `${label}: merge_queued_at`);
     };
     // A repository the resident serves: it has admitted a pull request head of it before (target main).
-    const serve = async (holder, ci, repo) => {
+    const serve = async (holder, ci, repo, releaseSeed = releaseHeld) => {
       const s = await claim(holder);
       await admitted(ci, s, repo, 900, '90'.repeat(20));
-      committed(await release(s));
+      committed(await releaseSeed(s));
     };
 
     // --- T8, before the migration: the queue it finds. ---
     const R8 = 'fixture/join-only-migrate', R8OPEN = 'fixture/join-only-migrate-open';
-    await serve('oldholder', 'oldci', R8);
+    await serve('oldholder', 'oldci', R8, release);
     const a8 = await claim('oldholder', { trigger_refs: [ref(R8)] });            // #1227: took the head itself, no PR, no admission
     const b8 = await claim('oldholder');                                         // admitted, joined by its own renewal: no CI mark
     await admitted('oldci', b8, R8, 81, '81'.repeat(20));
@@ -268,7 +276,7 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       // The CI can put it in once its own head is admitted.
       await admitted('ci', y, repo, 3, '13'.repeat(20)); await joined('ci', repo, 3, '13'.repeat(20));
       assert.equal((await queue(users.served, repo)).head?.claim_id, y.claim.claim_id);
-      await finish(y);
+      await finishHeld(y);
     });
 
     await t.test('T4 renewal: adding the ref, or bringing it back after leaving, does not join', async () => {
@@ -291,7 +299,7 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       await renew(m, { trigger_refs: [ref(repo).replace('fixture', 'Fixture')] });
       assert.equal((await queue(users.served, repo)).head, null);
       assert.equal((await row(m)).merge_queued_at, null);
-      await finish(n, m);
+      await finishHeld(n, m);
     });
 
     await t.test('T5 leaving still works: the holder leaves, cannot come back alone, and the CI joins it again', async () => {
@@ -314,7 +322,7 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       const again = await joined('ci', repo, 6, '06'.repeat(20));
       assert.deepEqual(again.merge_queue.map(x => x.state), ['head'], 'the CI door joins it again');
       assert.deepEqual(await marks(p), [ref(repo)]);
-      await finish(p);
+      await finishHeld(p);
     });
 
     await t.test('T6 the queue\'s own rejoins still work for a claim the CI joined (turn_short, hard cap, the door\'s rejoin)', async () => {
@@ -371,7 +379,7 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       assert.equal(q.head?.claim_id, r6.claim.claim_id, 'the renewal joined again: ' + JSON.stringify(q));
       assert.ok((await row(r6)).merge_queued_at >= at, 'at the back: a new join time');
       assert.deepEqual(await marks(r6), [ref(repo)], 'the mark stays');
-      await finish(q6, k6, i6, r6);
+      await finishHeld(q6, k6, i6, r6);
     });
 
     await t.test('T7 not served: an account without a resident, a repository it never admitted, another branch stay open', async () => {
@@ -433,7 +441,7 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       const left = await receipts('work_claim_merge_queue_unadmitted_leave', a);
       assert.deepEqual(left.map(x => [x.metadata.receipt_kind, x.metadata.merge_ref, x.binding_id, 'migration' in x.metadata]),
         [['WORK_CLAIM_MERGE_QUEUE_UNADMITTED_REMOVED', ref(repo), ids.gapci, false]], 'one receipt, by the resident, not the migration');
-      await finish(a, b);
+      await finish(a); await finishHeld(b);
     });
 
     await t.test('N3 a claim that joined itself and was admitted afterwards is joined by the door, with the mark', async () => {
@@ -448,7 +456,7 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       assert.ok((await row(a)).merge_queued_at >= at, 'the join time is the one of this call');
       await renew(a);
       assert.equal((await queue(users.gap, repo)).head?.claim_id, a.claim.claim_id, 'still head after its own renewal');
-      await finish(a);
+      await finishHeld(a);
     });
 
     await t.test('N1 handover gap: with the old resident row revoked and the new one not started, nobody joins a served queue', async () => {
@@ -485,7 +493,7 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       const q = await queue(users.gap, repo);
       assert.equal(q.head?.claim_id, b.claim.claim_id, 'B is head at once: ' + JSON.stringify(q));
       assert.equal(entry(q, a), undefined);
-      await finish(a, later, b);
+      await finish(a, later); await finishHeld(b);
     });
 
     // The Owner revokes every resident row and marks a new one later: with no row the account is open (binding_role_admits_v1).
@@ -515,7 +523,7 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       assert.deepEqual([j.joined, j.reason], [false, 'head_not_admitted'], JSON.stringify(j));
       await assertOut(users.gap, repo, zero.a6, 'A after a refused join');
       assert.equal((await receipts('work_claim_merge_queue_unadmitted_leave', zero.a6)).length, 1);
-      await finish(u, zero.a6);
+      await finishHeld(u); await finish(zero.a6);
     });
 
     await t.test('N4 a resident marked again after none: the entry that joined in between leaves at the next join of the CI', async () => {
@@ -525,7 +533,7 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       assert.equal(q.head?.claim_id, b.claim.claim_id, 'B is head at once: ' + JSON.stringify(q));
       await assertOut(users.gap, repo, zero.a4, 'A');
       assert.deepEqual((await receipts('work_claim_merge_queue_unadmitted_leave', zero.a4)).map(x => [x.metadata.merge_ref, x.binding_id]), [[ref(repo), ids.gapci]]);
-      await finish(b, zero.a4);
+      await finishHeld(b); await finish(zero.a4);
     });
 
     await t.test('N5 the sweep leaves a claim the CI joined as it was', async () => {
@@ -536,7 +544,7 @@ test('merge queue: a served repository is joined only through the CI door', { ti
         zero.c5before.w.trigger_refs, zero.c5before.w.lease_version], 'C keeps its join time, slot and refs');
       assert.deepEqual(await marks(zero.c5), zero.c5before.marks);
       assert.equal((await queue(users.gap, repo)).head?.claim_id, zero.c5.claim.claim_id, 'C is still head');
-      await finish(d, zero.a5, zero.c5);
+      await finishHeld(d); await finish(zero.a5); await finishHeld(zero.c5);
     });
 
     // --- Design 3.4: two behaviours left as they are; these record them and judge nothing. ---
@@ -554,7 +562,7 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       assert.equal((await adopt('ci', repo, 13)).status, 'ok');
       q = await queue(users.served, repo);
       assert.equal(q.head?.claim_id, m.claim.claim_id, 'and becomes head: ' + JSON.stringify(q));
-      await finish(m, w);
+      await finishHeld(m); await finish(w);
     });
 
     await t.test('as it is (3.4): a claim moved to another Binding (a new execution epoch) keeps its queue place', async () => {

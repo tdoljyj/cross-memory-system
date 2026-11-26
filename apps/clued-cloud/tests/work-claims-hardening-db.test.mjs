@@ -155,6 +155,13 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     };
     const release = (token, c) => call(token, 'clued_work_release_v1', {
       scope: 'global', claim_id: c.claim_id, fence: c.fence, outcome: 'abandoned' });
+    const releaseHeld = async (token, c) => {
+      const result = await release(token, c);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'work_claim_release_pr_open']);
+      await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '1 hour',
+        expires_at=clock_timestamp()+interval '1 hour' where claim_id=$1`, [c.claim_id]);
+      return release(token, c);
+    };
     const verify = (input, client = anon) => rpc(client, tokens.verifier, 'clued_work_verify_v1', { scope: 'global', ...input });
     // A PR verify of a bound PR: the holder authorizes the exact head naming
     // the PR, the CI Binding observes it, then verifies the exact head and base.
@@ -291,7 +298,8 @@ test('work claims hardening: glob/glob overlap and pull request binding',
       assert.deepEqual(await prStatus(c), ['unknown']);
       u1.push(c);
     }
-    hand.push(...u1, await handClaim('u1', 'u1-3'));
+    const stillServing = u1.slice(1); // #911 is released by the reconciled PR end below.
+    hand.push(await handClaim('u1', 'u1-3'));
     // Three claims of d1, each Task's PR seen open by the CI ('active'):
     // delivered the same way.
     for (let i = 0; i < 3; i += 1) {
@@ -303,7 +311,7 @@ test('work claims hardening: glob/glob overlap and pull request binding',
         target_branch: 'main', scope: undefined });
       assert.equal(seen.binding_status, 'bound', JSON.stringify(seen));
       assert.deepEqual(await prStatus(c), ['active']);
-      hand.push(c);
+      stillServing.push(c);
     }
     hand.push(await handClaim('d1', 'd1-3'));
     // 3. A claim no authorize_head tied to a PR is in hand: u1 fills its
@@ -325,11 +333,11 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     assert.deepEqual([reconciled.status, reconciled.finished, reconciled.released], ['ok', 1, [u1[0].claim_id]],
       JSON.stringify(reconciled));
     assert.deepEqual(await prStatus(u1[0]), ['closed']);
-    hand.splice(hand.indexOf(u1[0]), 1);
     hand.push(await handClaim('u1', 'u1-again', u1[0].task_id));
     over = await refusedOver('u1', 'u1-over-2');
     assert.deepEqual([over.limit, over.active, over.delivered, over.active_binding], ['max_active_per_session', 3, 2, 9]);
     assert.equal(await liveOnB(), 9);
+    for (const c of stillServing) committed(await releaseHeld(tokens.B, c));
     for (const c of hand) committed(await release(tokens.B, c));
 
     // 6. A lease-key transfer counts the receiving session the same way (the
@@ -353,14 +361,15 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     const intoKeyed = await transfer('k1-0');
     assert.deepEqual([intoKeyed.moved.status, intoKeyed.moved.transferred, intoKeyed.moved.claim?.holder_session_ref],
       ['committed', true, 'k1'], JSON.stringify(intoKeyed.moved));
-    keyed.push(intoKeyed.moved.claim, await handClaim('k1', 'k1-3'), await handClaim('k1', 'k1-4'));
+    const keyedInHand = [intoKeyed.moved.claim, await handClaim('k1', 'k1-3'), await handClaim('k1', 'k1-4')];
     // Three in hand: the next transfer is refused, with the numbers a claim refusal gives.
     const keyFull = await transfer('k1-1');
     assert.equal(keyFull.moved.error_code, 'work_claim_budget_exhausted', JSON.stringify(keyFull.moved));
     assert.deepEqual([keyFull.moved.limit, keyFull.moved.active, keyFull.moved.delivered, keyFull.moved.active_binding],
       ['max_active_per_session', 3, 3, 6]);
     committed(await release(tokens.A, keyFull.source));
-    for (const c of keyed) committed(await release(tokens.B, c));
+    for (const c of keyed) committed(await releaseHeld(tokens.B, c));
+    for (const c of keyedInHand) committed(await release(tokens.B, c));
 
     // --- MINOR fixes (migration 20261002072000, Task 27b4f5e8). ---
     // Trigger refs: case-insensitive, and a short SHA matches its full SHA.
@@ -457,8 +466,8 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     assert.deepEqual([v.verdict, v.admitted_heads, v.task_ci_heads_24h], ['ADMITTED', 21, 21]);
     await assert.rejects(() => verify({ claim_id: headClaim.claim_id, pr_ref: 'o/r#77', head_sha: 'not-a-sha', base_sha: base }),
       /work_claim_pr_binding_input_invalid/);
-    committed(await release(tokens.A, headClaim));
-    committed(await release(tokens.A, headTwo));
+    committed(await releaseHeld(tokens.A, headClaim));
+    committed(await releaseHeld(tokens.A, headTwo));
 
     // --- Accepting a handover uses the same session cap, counted the same
     // way (Task e642d087): through the real prepare/offer/accept doors, the
@@ -504,7 +513,7 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     const intoUnknown = await handOver('h2', 'h2');
     assert.equal(intoUnknown.status, 'committed', JSON.stringify(intoUnknown));
     assert.equal(intoUnknown.claim.holder_session_ref, 'h2');
-    for (const c of h2) committed(await release(tokens.B, c));
+    for (const c of h2) committed(await releaseHeld(tokens.B, c));
     // h3: three claims in hand refuse a handover into that session.
     for (let i = 0; i < 3; i += 1) await handClaim('h3', `h3-${i}`);
     const intoHands = await handOver('h3', 'h3');
