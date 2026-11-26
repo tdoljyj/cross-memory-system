@@ -144,10 +144,12 @@ const AUTHORIZATION_DB_TESTS = [
   'task-owner-detail-db', 'work-claims-generated-files-db', 'work-claims-lease-pin-db',
   // The merge queue of a served repository is joined only through the CI door (20261122140000).
   'merge-queue-ci-join-only-db',
+  'merge-queue-resident-db',
   // The drill test project is brought to production's applied list (FABLE-drill-test-project-sync-20261124 §1).
   'drill-test-sync-db',
   // Repository paths are exclusive until delivery: a claim with a live head authorization does not block another (20261124160000).
   'work-claims-delivered-paths-db',
+  'work-claims-release-pr-open-db',
 ].map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
 // What those tests read besides the migrations: their shared test helpers, the worker code some of them bundle, the
 // Resource Center host and policy modules, the context compiler and the vendored Information Flow and DatasetSplit
@@ -489,11 +491,11 @@ export function selectSuites(check, files, platform = null) {
 // Task cb5017b6: the selection of the trusted table, then the suites the candidate at root adds to the check (candidateSuites),
 // each selected whole whatever changed: a pull request that adds a suite runs it. A candidate table that cannot be read
 // keeps the trusted selection and is returned as the error, which fails the check.
-export function selectWithCandidate(check, files, platform, root, { trusted } = {}) {
+export function selectWithCandidate(check, files, platform, root, { trusted, env, withPlatforms } = {}) {
   const selection = selectSuites(check, files, platform);
   let added = [];
   try {
-    added = candidateSuites(check, root, { platform, ...(trusted ? { trusted } : {}) });
+    added = candidateSuites(check, root, { platform, env, withPlatforms, ...(trusted ? { trusted } : {}) });
   } catch (error) {
     return { selection, error };
   }
@@ -1085,7 +1087,7 @@ export function* requiredCommands(id, root, { baseline = SUITE_COMMANDS[id], tru
 // own platform table (all platforms when it names none), with its application dependency. Empty when the checkout's
 // selector is this file or the checkout has no scripts/ci.
 const SUITE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
-export function candidateSuites(check, root, { platform = null, trusted = fileURLToPath(import.meta.url), env = process.env } = {}) {
+export function candidateSuites(check, root, { platform = null, trusted = fileURLToPath(import.meta.url), env = process.env, withPlatforms = false } = {}) {
   const what = `the suites the candidate adds to ${check}`;
   const candidate = candidateSelectorOf(root, trusted, what);
   if (!candidate) return [];
@@ -1103,7 +1105,7 @@ export function candidateSuites(check, root, { platform = null, trusted = fileUR
         || !existsSync(path.join(root, app, 'package-lock.json')))) {
       throw new Error(`invalid candidate application dependency for ${id}: ${JSON.stringify(app)} (apps/<name> with a package-lock.json)`);
     }
-    if (platform === null || on.includes(platform)) added.push({ id, app });
+    if (platform === null || on.includes(platform)) added.push({ id, app, ...(withPlatforms ? { platforms: on } : {}) });
   }
   return added;
 }
@@ -1274,7 +1276,8 @@ export function runPrepush(root, { env = process.env, spawn = spawnSync, log = c
   return 1;
 }
 
-export async function runSuite(id, { root, env = process.env, log = console.log, captureKnown = false, keep = false, files = null, shard = null } = {}) {
+export async function runSuite(id, { root, env = process.env, log = console.log, captureKnown = false, keep = false, files = null, shard = null,
+  targetedTiming = false } = {}) {
   // A suite this file does not have may be one the candidate adds (requiredCommands reads it); not in this file's own checkout.
   if (!Object.hasOwn(SUITE_COMMANDS, id) && (files || captureKnown || !candidateSelectorOf(root, fileURLToPath(import.meta.url), id))) {
     throw new Error(`unknown suite: ${id}`);
@@ -1311,10 +1314,72 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
     linkSuiteDependencies(id, root, { env, log });
   }
   const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+  const queuedAt = performance.now();
+  // The slot guard copies the environment when it starts, after acquiring the slot.
+  const workerEnv = targetedTiming ? { ...env, get CLUED_CI_TARGETED_WAIT_MS() {
+    return String(Math.round(performance.now() - queuedAt));
+  } } : env;
   return withLocalSuiteSlot(id, {
-    root, env, timeoutExit: LOCAL_TIMEOUT_EXIT,
+    root, env: workerEnv, timeoutExit: LOCAL_TIMEOUT_EXIT,
     work: { selectorUrl: import.meta.url, captureKnown, keep, files },
   });
+}
+
+async function runTargetedFiles(id, { root, env, files, log = console.log }) {
+  let named, plan;
+  try {
+    ({ named } = planFiles(id, { root, files, env }));
+  } catch (error) {
+    log('run-files ' + id + ': ' + error.message);
+    for (const line of await whereFilesRun(error.unmatched, root)) log(line);
+    return 2;
+  }
+  const started = performance.now();
+  try {
+    const { planTargetedFiles } = await import('./check-tests-covered.mjs');
+    plan = planTargetedFiles(root, id, named, { env });
+  } catch (error) {
+    log('run-files ' + id + '：覆盖未确定，退出 2：' + error.message);
+    return 2;
+  }
+  const additions = new Set(plan.matches.map(({ file }) => file).filter((file) => !named.has(file))).size;
+  log('run-files 基准：HEAD ' + plan.head + '，origin/main ' + plan.main + '，共同祖先 ' + plan.base + '；以工作树字节为准');
+  log('run-files 建图 ' + plan.graphMs + ' ms，规划及校验 ' + Math.round(performance.now() - started) +
+    ' ms，显式 ' + named.size + '，新增文件 ' + additions + '，新增套件/文件组合 ' + plan.matches.length);
+  for (const { suite, local, chain } of plan.matches) {
+    log('  ' + suite + (local ? '：' : '（待该平台 CI）：') + chain.join(' -> '));
+  }
+  for (const group of plan.deferred) {
+    for (const reason of group.reasons) log('  ' + group.suite + '（待该平台 CI 整套）：' + reason);
+  }
+  const failures = [];
+  for (const group of plan.groups) {
+    const whole = group.reasons.length > 0;
+    for (const reason of group.reasons) log('  ' + group.suite + ' 整套兜底：' + reason);
+    const options = { root, env: { ...env, CI_BASE_SHA: plan.base }, log, files: whole ? null : group.files, targetedTiming: true };
+    let status;
+    try {
+      status = Object.hasOwn(SUITE_COMMANDS, group.suite)
+        ? await runSuite(group.suite, options) : await runSuiteWithCandidate(group.suite, options);
+    } catch (error) {
+      status = 2;
+      log('run-files ' + group.suite + ' 未执行完：' + error.message);
+    }
+    log('run-files 组 ' + group.suite + '：' + (whole ? '整套' : group.files.length + ' 个文件') + '，退出 ' + status);
+    if (status !== 0) failures.push({ suite: group.suite, status });
+  }
+  if (failures.length) log('run-files 失败或未完成：' + failures.map(({ suite, status }) => suite + '=' + status).join('，'));
+  let status = failures.some((failure) => failure.status === LOCAL_TIMEOUT_EXIT) ? LOCAL_TIMEOUT_EXIT
+    : failures.some((failure) => failure.status === 2) ? 2 : failures[0]?.status ?? 0;
+  try {
+    plan.verify();
+  } catch (error) {
+    log('run-files：输入已变，请重算（' + (String(error.stderr ?? '').trim() || error.message) + '）');
+    if (status !== LOCAL_TIMEOUT_EXIT) status = 2;
+  }
+  log('run-files ' + id + ': ' + named.size + ' 个点名文件，新增 ' + additions + '，待其他平台套件 ' + plan.deferred.length +
+    '，退出 ' + status + ' —— 定向结果，不是套件结论');
+  return status;
 }
 
 const CANDIDATE_PASS = 'CLUED_CI_CANDIDATE_PASS';
@@ -1626,7 +1691,20 @@ function clockRun(id, root, env) {
 }
 
 // The CI process or the already guarded worker executes the suite here.
-export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCommand, log = console.log, platform = process.platform,
+export function executeSuite(id, options) {
+  const { env = process.env, log = console.log } = options;
+  const wait = env.CLUED_CI_TARGETED_WAIT_MS;
+  if (!/^\d+$/.test(wait ?? '')) return executeSuiteCommands(id, options);
+  const start = performance.now();
+  log('run-files ' + id + ' 等槽 ' + wait + ' ms');
+  try {
+    return executeSuiteCommands(id, options);
+  } finally {
+    log('run-files ' + id + ' 执行 ' + Math.round(performance.now() - start) + ' ms');
+  }
+}
+
+function executeSuiteCommands(id, { root, env = process.env, spawn = spawnSuiteCommand, log = console.log, platform = process.platform,
   captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : ''),
   rerunMaxElapsedMs = RERUN_MAX_ELAPSED_MS, rerunMinTimeoutMs = RERUN_MIN_TIMEOUT_MS, shard = null, shardSecondsFile = SHARD_SECONDS_PATH,
   commandTimeoutMs = COMMAND_TIMEOUT_MS } = {}) {
@@ -2161,7 +2239,8 @@ async function main(argv, env = process.env) {
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(USAGE);
     console.log(`Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
-    console.log('--run-files runs only the named test files (repository paths) with the suite command CI runs, takes a local slot, and is refused under GITHUB_ACTIONS (exit 2): its result is not a suite verdict.');
+    console.log('--run-files 执行点名测试，并按与本地 origin/main 的共同祖先计算影响范围，涵盖分支提交、暂存、未暂存和未忽略的新文件。');
+    console.log('各组轮流使用本机套件槽。基准或覆盖范围无法确定时退出 2，GitHub Actions 也拒绝此入口。输出为定向结果。');
     return 0;
   }
   const secondsIndex = argv.indexOf('--write-shard-seconds');
@@ -2236,9 +2315,7 @@ async function main(argv, env = process.env) {
       console.error(`run-files: needs a known suite and at least one test file\n${USAGE}`);
       return 2;
     }
-    const status = await runSuite(id, { root, env, files: named });
-    if (status !== 2) console.log(`run-files ${id}: ${named.length} 个文件，退出 ${status} —— 定向结果，不是套件结论`);
-    return status;
+    return runTargetedFiles(id, { root, env, files: named });
   }
   const writeIndex = argv.indexOf('--write-known');
   if (writeIndex >= 0) {

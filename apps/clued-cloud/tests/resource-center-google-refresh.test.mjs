@@ -48,6 +48,7 @@ async function fixture(changes = {}) {
         return Response.json({ access_token: "fixture-new-access-token", token_type: "Bearer", expires_in: 3600, ...(changes.tokens ?? {}) });
       }
       assert.equal(init.headers.authorization, "Bearer fixture-new-access-token");
+      if (changes.metadataError) throw new Error('synthetic-upstream-body-token-must-not-leak');
       if (String(url).includes("/about?")) return Response.json({ user: { me: true, permissionId: "fixture-user", ...(changes.user ?? {}) } });
       return Response.json({ id: "fixture-root", mimeType: "application/vnd.google-apps.folder", trashed: false, parents: ["fixture-parent"],
         isAppAuthorized: true, capabilities: { canAddChildren: true }, ...(changes.root ?? {}) });
@@ -111,6 +112,23 @@ test("explicit provider rejection and temporary failure use distinct bounded set
   for (const error of ["invalid_grant", "invalid_client", "server_error", "temporarily_unavailable"]) {
     const f = await fixture({ providerError: error }); assert.deepEqual(await f.run(), { status: "unavailable" });
     assert.equal(f.requests.at(-1).reason, error.startsWith("invalid") ? "provider_rejected" : "provider_unavailable"); assert.equal(f.calls.length, 1);
+  }
+});
+test('definite refresh failures retain fixed stage codes without upstream text or credentials',async()=>{
+  for(const [changes,code] of [
+    [{providerError:'invalid_grant'},'token_invalid_grant'],[{providerError:'invalid_client'},'token_invalid_client'],
+    [{providerError:'server_error'},'token_server_error'],[{providerError:'temporarily_unavailable'},'token_temporarily_unavailable'],
+    [{tokens:{expires_in:'3600'}},'token_response_invalid'],[{tokens:{scope:'changed'}},'scope_changed'],
+    [{user:{permissionId:'other'}},'drive_identity_mismatch'],[{metadataError:true},'drive_identity_fetch'],
+    [{root:{trashed:true}},'root_identity_changed'],[{root:{capabilities:{canAddChildren:false}}},'root_access_changed'],
+    [{root:{parents:['other']}},'root_parent_changed'],[{delay:120000},'refresh_deadline'],
+    [{previous:{refresh_token:'short'}},'credential_validation'],
+  ]){
+    const f=await fixture(changes);assert.equal((await f.run()).status,'unavailable');
+    const failure=f.requests.at(-1);assert.equal(failure.action,'fail');assert.equal(failure.failure_code,code);
+    assert.deepEqual(Object.keys(failure).sort(),['action','attempt_id','connection_id','failure_code','reason']);
+    assert.doesNotMatch(JSON.stringify(failure),/fixture-|synthetic-upstream|access_token|refresh_token|https:/);
+    assert.equal(f.calls.filter(call=>call.url.endsWith('/token')).length,changes.previous?0:1);
   }
 });
 test("scope, provider identity, parent, app grant, clock deadline and expiry changes fail closed", async () => {

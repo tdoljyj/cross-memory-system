@@ -87,11 +87,34 @@ export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershe
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// 记录本进程的定时器晚醒区间。区间可以与排队或宿主并行，不能直接从宿主耗时中扣除。
+// 只保留覆盖一组请求的样本。新进程启动前的时段没有观测值。
+export function startLoopDelay({ clock = () => Math.round(performance.timeOrigin + performance.now()), everyMs = 100, schedule = setInterval, cancel = clearInterval } = {}) {
+  const started = clock(), intervals = [];
+  let due = started + everyMs;
+  const timer = schedule(() => {
+    const now = clock();
+    if (now > due) intervals.push([due, now]);
+    due = now + everyMs;
+    while (intervals.length && intervals[0][1] < now - 331_000) intervals.shift();
+  }, everyMs);
+  timer.unref?.();
+  return {
+    between(from, to) {
+      if (from < started || to < from) return null;
+      const overlap = (a, b) => Math.max(0, Math.min(b, to) - Math.max(a, from));
+      // I/O 回调可能先于同一拍的定时器回调被派发。
+      return intervals.reduce((ms, [a, b]) => ms + overlap(a, b), overlap(due, clock()));
+    },
+    stop: () => cancel(timer),
+  };
+}
+
 // One lane of the companion: its own Runner, its own loop. The companion's actions (the mailbox: bundles, workspaces,
 // Linux archives and quiescence proofs, the relay pump), the poller and the advisory work (PR page status, notifications,
 // retention) run in lanes of their own (independent review of the quota redesign phase 1, M1; f79929d9 for the poller). A child
 // keeps only its own lane busy, and a slow GitHub can never make a mailbox request expire: the service's proofs (for example
-// the 2-minute linux-quiescence) are answered while the advisory lane waits. A child that outlives its limit is ended by the job host with its whole job
+// linux-quiescence) are answered while the advisory lane waits. A child that outlives its limit is ended by the job host with its whole job
 // (DESIGN §24), so the lane is busy again only while a job host itself has not ended.
 export async function lane({ runner, work, sleep: wait = sleep, everyMs = 2_000, stop = () => false }) {
   while (!stop()) {
@@ -441,6 +464,8 @@ export async function main(args = process.argv.slice(2)) {
     backstop: () => companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o),
       store, notify, observeRules: rules => poller.noteBranchRules(rules) }),
     reporter });
+  const loopDelay = startLoopDelay();
+  companion.loopDelay = loopDelay.between;
   const beating = startHeartbeat(mailbox);
   const lockAlive = setInterval(() => { instanceLock.touch().catch(() => {}); }, COMPANION_LOCK_TOUCH_MS);
   // Review MINOR 6: the companion's own gh login is checked again every few minutes, not only at start: a hosts.yml that lost its token
@@ -466,6 +491,7 @@ export async function main(args = process.argv.slice(2)) {
     ]);
   } finally {
     clearInterval(beating);
+    loopDelay.stop();
     clearInterval(lockAlive);
     clearInterval(ghRecheck);
   }

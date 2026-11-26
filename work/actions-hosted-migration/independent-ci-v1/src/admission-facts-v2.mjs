@@ -37,6 +37,8 @@ const ISSUER_TRANSIENT_ADMISSIONS = new Set(['full_admission_observation_expired
 export const verdict = value => ['ADMITTED', 'REJECTED', 'ERROR', 'PR_NOT_OPEN', 'NOT_APPLICABLE'].includes(value) ? value : 'UNKNOWN';
 export const ownerKind = value => ['granted', 'pending', 'transient', 'rpc_unavailable', 'refused'].includes(value) ? value : 'UNKNOWN';
 export const reasonCodes = values => [...new Set((Array.isArray(values) ? values.slice(0, 64) : []).map(value => {
+  // Native's mechanical proof precheck uses this code for a missing CI admission role.
+  if (value === 'ci_binding_required') return 'admission_binding_required';
   if (REASON_SET.has(value)) return value;
   return typeof value === 'string' ? Object.entries(REASON_PREFIXES).find(([prefix]) => value.startsWith(prefix))?.[1] ?? 'unknown_reason' : 'unknown_reason';
 }))].sort();

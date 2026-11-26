@@ -78,6 +78,13 @@ test('a merged PR ends its claim merge-slot turn; the claim joins again at the b
       action: 'resolve_pr_claim', pr_ref: `${repo}#${n}`, head_sha: head, base_sha: 'b'.repeat(40), target_branch: 'main' });
     const release = r => call('holder', 'clued_work_release_v1', { scope: r.claim.context_key, claim_id: r.claim.claim_id,
       fence: r.claim.fence, lease_key: r.lease_key, outcome: 'completed', evidence_ref: 'fixture:' + uuid() });
+    const releaseHeld = async r => {
+      const result = await release(r);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'work_claim_release_pr_open']);
+      await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '1 hour',
+        expires_at=clock_timestamp()+interval '1 hour' where claim_id=$1`, [r.claim.claim_id]);
+      return release(r);
+    };
     // The holder authorizes a PR head; qualified CI binds it (stage 1) and, for `admit`, admits it.
     const bound = async (r, n, head) => {
       committed(await authorize(r, head, n));
@@ -140,7 +147,7 @@ test('a merged PR ends its claim merge-slot turn; the claim joins again at the b
       assert.equal(turn.head.claim_id, a.claim.claim_id, JSON.stringify(turn));
       assert.ok(Date.parse(turn.head.since) >= mergedAt.getTime(), 'the turn starts after the merge');
       assert.ok(Date.parse(turn.head.until) - Date.now() > 40 * 60_000, 'a whole renewal window, far past the old turn end');
-      committed(await release(a));
+      committed(await releaseHeld(a));
     });
 
     await t.test('a claim alone is head again at once with a whole turn; a closed PR leaves the turn as it was', async () => {
@@ -158,7 +165,7 @@ test('a merged PR ends its claim merge-slot turn; the claim joins again at the b
       assert.equal(q.head.claim_id, a.claim.claim_id, JSON.stringify(q));
       assert.ok(Date.parse(q.head.since) >= mergedAt.getTime(), 'a new turn from the merge: ' + JSON.stringify(q.head));
       assert.ok(Date.parse(q.head.until) - Date.now() > 40 * 60_000, 'time for the next front batch');
-      committed(await release(a));
+      committed(await releaseHeld(a));
     });
     await t.test('a turn that lapsed at the hard cap joins again on the next keepalive; an idle lapse stays out', async () => {
       repo = 'fixture/merge-turn-cap';
@@ -184,7 +191,7 @@ test('a merged PR ends its claim merge-slot turn; the claim joins again at the b
       assert.equal((await keepalive([41])).status, 'ok');
       assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts where operation='work_claim_merge_queue_rejoin' and object_id=$1", [a.claim.claim_id])).rows[0].n,
         1, 'a head is not joined again');
-      committed(await release(a));
+      committed(await releaseHeld(a));
 
       // Idle: the renewal clock ran out before the cap; no keepalive brings it back.
       repo = 'fixture/merge-turn-idle';
@@ -195,7 +202,7 @@ test('a merged PR ends its claim merge-slot turn; the claim joins again at the b
       assert.equal(entry(await queue(), c).state, 'lapsed');
       assert.equal((await keepalive([43])).status, 'ok');
       assert.equal(entry(await queue(), c).state, 'lapsed', 'an idle lapse is not revived');
-      committed(await release(c));
+      committed(await releaseHeld(c));
     });
     await t.test('a head whose PR cannot land yields to a waiting claim; alone or not head, nothing moves', async () => {
       repo = 'fixture/merge-turn-yield';
@@ -215,7 +222,7 @@ test('a merged PR ends its claim merge-slot turn; the claim joins again at the b
       assert.deepEqual((await admin.query('select trigger_refs from clued_private.work_claims_v1 where claim_id=$1', [a.claim.claim_id])).rows[0].trigger_refs, refs);
       const why = (await admin.query("select metadata from public.clued_audit_receipts where operation='work_claim_merge_queue_rejoin' and object_id=$1", [a.claim.claim_id])).rows;
       assert.deepEqual(why.map(r => [r.metadata.why, r.metadata.pr, r.metadata.head_sha]), [['cannot_land', `${repo}#51`, headA]]);
-      committed(await release(a)); committed(await release(b));
+      committed(await releaseHeld(a)); committed(await releaseHeld(b));
     });
 
     await t.test('the keepalive and the CI door carry their calls after every migration', async () => {

@@ -54,6 +54,7 @@ import { HEX40, HEX64, REPO, ResidentError, check, digest, fail, isoNow } from '
 import { ensureDir, exists, nonce, readJson, renameToNew, writeNew } from './store.mjs';
 import { CLAIM_REASONS } from './queue.mjs';
 import { failureRow } from './classify.mjs';
+import { BATCH_ID, validateQuiescenceBinding } from './mailbox.mjs';
 
 export const BATCH_KEY_CONTRACT = 'clued.independent-ci.resident-batch-key/1';
 export const HEAD_KEY_CONTRACT = 'clued.independent-ci.resident-head-key/1';
@@ -462,6 +463,20 @@ export class Ledger {
     // Before any dispatch: consumption survives a later NOT_ADMITTED release moving the new reservation out of ledger/,
     // or quarantine. In the preceding crash gap the reservation itself still consumes it and recovery owns the scene.
     if (flow) await writeNew(path.join(this.flowEnds, flow.flowFrom, '97-flow-consumed.json'), { key, at: isoNow(this.clock) });
+  }
+
+  // 保留阶段 1 已拒收的现场。恢复进程只按未收尾的批次处理，不能从头再发一组取证。
+  async markStage1Proof(key, binding, batchId) {
+    await writeNew(path.join(this.dir(key), '09-stage1-proof.json'), { binding, batchId, at: isoNow(this.clock) });
+  }
+
+  async stage1Proof(key) {
+    const file = path.join(this.dir(key), '09-stage1-proof.json');
+    if (!await exists(file)) return null;
+    const { value } = await readJson(file, 1024);
+    const binding = validateQuiescenceBinding(value?.binding);
+    check(binding.key === key && BATCH_ID.test(value.batchId) && value.batchId.startsWith(key.slice(0, 16) + '-'), 'STAGE1_PROOF_BINDING_REFUSED');
+    return value;
   }
 
   // Written right after stage 1 admitted and before any Linux or scanner effect. The head record is

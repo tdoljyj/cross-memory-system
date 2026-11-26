@@ -123,6 +123,13 @@ test('work claims: GitHub CI heads metered per Task in a sliding 24-hour window'
     };
     const release = (who, c) => agent(who, 'clued_work_release_v1',
       { scope: 'global', claim_id: c.claim_id, fence: c.fence, outcome: 'completed' });
+    const releaseHeld = async (who, c) => {
+      const result = await release(who, c);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'work_claim_release_pr_open']);
+      await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '1 hour',
+        expires_at=clock_timestamp()+interval '1 hour' where claim_id=$1`, [c.claim_id]);
+      return release(who, c);
+    };
     const observe = async (pr, head) => {
       const seen = await agent('ci', 'clued_work_verify_v1', { action: 'resolve_pr_claim', pr_ref: pr, head_sha: head,
         base_sha: base, target_branch: 'main' });
@@ -185,7 +192,7 @@ test('work claims: GitHub CI heads metered per Task in a sliding 24-hour window'
     assert.deepEqual([v.verdict, v.task_ci_heads_24h], ['ADMITTED', 40]);
 
     // --- Another claim of the same Task does not buy more CI. ---
-    committed(await release('claude', first));
+    committed(await releaseHeld('claude', first));
     const second = committed(await claim(task, 'claude', 'session-b')).claim;
     v = await verify(second, 'o/r#2', sha(42));
     assert.deepEqual([v.verdict, v.reasons, v.admitted_heads], ['REJECTED', ['task_ci_head_cap_reached'], 0]);
@@ -201,7 +208,7 @@ test('work claims: GitHub CI heads metered per Task in a sliding 24-hour window'
     assert.deepEqual([v.verdict, v.task_ci_heads_24h], ['ADMITTED', 40]);
     v = await verify(second, 'o/r#2', sha(43));
     assert.deepEqual([v.verdict, v.reasons], ['REJECTED', ['task_ci_head_cap_reached']]);
-    committed(await release('claude', second));
+    committed(await releaseHeld('claude', second));
 
     // --- Other Tasks have their own meter; a failing verify takes nothing. ---
     const other = await createTask('ci meter other');
@@ -210,7 +217,7 @@ test('work claims: GitHub CI heads metered per Task in a sliding 24-hour window'
     assert.deepEqual([v.verdict, v.reasons, v.task_ci_heads_24h], ['REJECTED', ['paths_outside_write_set'], 0]);
     v = await verify(otherClaim, 'o/r#3', sha(1));
     assert.deepEqual([v.verdict, v.task_ci_heads_24h], ['ADMITTED', 1]);
-    committed(await release('codex', otherClaim));
+    committed(await releaseHeld('codex', otherClaim));
 
     // --- Race copies share their Task's meter. ---
     const raceTask = await createTask('ci meter race');

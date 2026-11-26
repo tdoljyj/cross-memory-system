@@ -144,7 +144,7 @@ import { stageHeadScans } from './head-scans.mjs';
 import { HEAD_MOVED, PR_CLOSED, PR_DRAFT, PR_DRAFT_HELD, prCandidate } from './pr-candidate.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
-import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
+import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, PULL_STATES, QUIESCENCE_TOTAL_MS, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
@@ -364,6 +364,7 @@ export const CLAIM_OBSERVATION_FRESH_MS = 30_000;
 export const CLAIM_OBSERVATION_SKEW_MS = 30_000;
 // What one batch usually takes (design v0.5 §1: 17.5 to 24 minutes): only the status board's estimate.
 export const ETA_BATCH_MS = 22 * 60_000;
+const QUEUE_PR_CHECK_INTERVAL_MS = 10 * 60_000;
 // Queue rows looked at in one tick (an ignored or deferred row does not end the tick; this bounds the work).
 export const ROWS_PER_TICK = 16;
 // Endings after which the batch head may no longer be the PR's head (falsification, queue.mjs#restore): stage 1 saw the
@@ -501,6 +502,7 @@ export class ResidentExecutor {
     this.nodeStatus ??= null; // optional disk/memory guard port (nodeResourceRefresh)
     this.ownerReadFailures = new Map();
     this.intakeRequestFailures = new Map();
+    this.queuePrCheckedAt = new WeakMap();
     this.deferralReceipts = new Set(); // `${reason}:${day}` of the global deferrals already receipted (deferral())
     this.roleProbe = new RoleProbe();
     this.roleProbeNotices = [];
@@ -1081,11 +1083,21 @@ export class ResidentExecutor {
     if (open.length > 0) await this.haltWith(haltCode, { keys: open.map(e => e.key) });
     for (const entry of open) {
       let closed = false;
-      const failureCode = codeFor(entry);
+      let failureCode = codeFor(entry);
       if (entry.state !== 'UNREADABLE') {
         try {
+          const pending = await this.ledger.stage1Proof(entry.key);
+          let facts = {};
+          if (pending) {
+            const { binding, batchId } = pending;
+            check(entry.state === 'RESERVED' && binding.headSha === entry.reserved?.subject?.headSha, 'STAGE1_PROOF_BINDING_REFUSED');
+            failureCode = binding.failureCode;
+            const row = failureRow({ code: failureCode, stage: 1, reason: binding.reason });
+            facts = { batchId, stage: 1, basis: 'cleanup-proof-incomplete', reason: binding.reason,
+              class: row?.class, retry: row?.retry, breaker: row?.breaker };
+          }
           await this.ledger.burnHead(entry.key, { failureCode });
-          await this.ledger.terminal(entry.key, 'FAILED_UNKNOWN', { failureCode, state: entry.state });
+          await this.ledger.terminal(entry.key, 'FAILED_UNKNOWN', { failureCode, state: entry.state, ...facts });
           closed = true;
         } catch (error) {
           // Only a content problem (the terminal record exists but cannot be read, or cannot be
@@ -1119,6 +1131,7 @@ export class ResidentExecutor {
     let row = null, closed = null;
     try {
       if (!['RESERVED', 'STARTED'].includes(entry.state) || !subject || entry.parked || entry.abort || entry.selfAbort || (entry.planIntent && !entry.plan)) return;
+      if (await this.ledger.stage1Proof(key)) return;
       if (entry.plan && (!Array.isArray(entry.plan.relayed) || entry.plan.relayed.length > 0)) return;
       if (await this.executedHeads.published(subject) && !(entry.plan && await this.executedHeads.onlyRelayRecordOf(subject, key, RELAY_STAGE))) return;
       if (await this.ledger.halted() || await this.driftCode()) return;
@@ -2085,7 +2098,8 @@ export class ResidentExecutor {
     // DESIGN §72: the rule first, with this tick's triggers: a resting batch that no longer stands ends before anything tries it.
     const ended = await this.endNotStanding();
     if (ended) return ended;
-    await this.requeueFlowEnds();
+    const flows = await this.requeueFlowEnds();
+    const prCheck = this.betweenBatchesRunning ? null : await this.reconcileQueuedPr(flows);
     // Field 2026-11-13 (PR #1085): the stage-10 run a lifted pause owes (trainResumeOwed, defect b0426896) comes before any batch work,
     // so the schedule and the front's yield after stage 1 (§62.6) read the train as it is now, never the revoke-only run under the pause;
     // otherwise the queue head's ordinary batch scanned H and the front batch scanned the same tree again on S.
@@ -2104,11 +2118,12 @@ export class ResidentExecutor {
     const { acted, waiting } = await this.resumeParked({ hold: this.trainTakeoverPending() });
     if (acted) return acted;
     // Nothing else to do: the tick rests in the hosted wait (the status keeps showing it).
-    const r = await this.schedule();
+    const r = await this.schedule(prCheck);
     this.scheduleHold = r?.state === 'DEFERRED' && SCHEDULE_HOLDS.includes(r.reason) ? r.reason : null;
     // A batch resting at parking point A stays the tick's result (and the status's current batch) while only the intake
     // pause holds the new ones (independent review of C6, minor 3).
-    const result = waiting && (r.state === 'IDLE' || [...TRAIN_HELD_REASONS, ...Object.values(NODE_DEFERRALS), ...TRAIN_SCHEDULE_DEFERRALS].includes(r.reason)) ? waiting : r;
+    const result = waiting && (r.state === 'IDLE' || [...TRAIN_HELD_REASONS, ...Object.values(NODE_DEFERRALS), ...TRAIN_SCHEDULE_DEFERRALS].includes(r.reason))
+      ? waiting : r.state === 'IDLE' ? prCheck?.closed ?? r : r;
     if (this.betweenBatchesRunning) return waiting ?? r;
     // Stage 10 only after a schedule that ran nothing (a batch resting at a parking point runs nothing either). The role probe
     // also while a batch rests at A, when it may be run at a parking point (probeAtParking, DESIGN §29.2 item 5).
@@ -3393,16 +3408,42 @@ export class ResidentExecutor {
   }
 
   async requeueFlowEnds() {
-    for (const flow of await this.ledger.pendingFlowEnds()) {
+    const flows = await this.ledger.pendingFlowEnds();
+    for (const flow of flows) {
       this.queue.readmit(flow.reserved.subject, this.clock(), { depth: this.policy.limits.queueDepth, cooldownMs: this.policy.limits.unexecutedCooldownMs });
     }
     await this.persistQueue();
+    return flows;
+  }
+
+  // Close one live, idle queue row even if a later gate holds scheduling. A read (including no answer) spends this row's turn.
+  async reconcileQueuedPr(flows) {
+    const due = this.clock() - QUEUE_PR_CHECK_INTERVAL_MS;
+    let row = null, oldest = Infinity;
+    for (const candidate of this.queue.live()) {
+      if (!candidate.current || candidate.running) continue;
+      const checkedAt = this.queuePrCheckedAt.get(candidate) ?? -Infinity;
+      if (checkedAt > due || checkedAt > oldest || (checkedAt === oldest && row && candidate.order >= row.order)) continue;
+      row = candidate;
+      oldest = checkedAt;
+    }
+    if (!row) return null;
+    const current = row.current;
+    const subject = this.rowSubject(row.pr, current);
+    const live = await this.readQueuedPr(row.pr);
+    const observation = { pr: row.pr, current, live, at: this.queuePrCheckedAt.get(row), closed: null };
+    const verdict = prCandidate(live, subject);
+    if (verdict?.basis === PR_CLOSED) {
+      try { observation.closed = await this.closeQueuedPr(subject, batchKey(subject), verdict.live, flows, current); }
+      catch { /* A failed flow retirement leaves the row for another tick. */ }
+    }
+    return observation;
   }
 
   // One scheduling pass (design v0.5 §4.3; v0.6 §7 minor 4): a due attempt 2 first, then the queue's due waits and
   // poked rows, then first come, first served. A row that is only deferred for itself, or ignored, never blocks the
   // rows behind it; a global deferral (the daily limits, the companion, the breaker) ends the pass.
-  async schedule() {
+  async schedule(prCheck = null) {
     // Defect 8f8240ff (review MAJOR 1): held first, before anything here asks the companion (recheckClaims' pr-head): its one mailbox
     // lane may be busy with the step's Linux prune, and each such request would wait for its own deadline.
     if (this.betweenBatchesRunning) { await this.persistQueue(); return { state: 'DEFERRED', reason: BETWEEN_BATCHES_RUNNING }; }
@@ -3494,7 +3535,7 @@ export class ResidentExecutor {
     for (const item of list.slice(0, ROWS_PER_TICK)) {
       // A full evaluation budget stops only what it bounds: the due waits behind it still run (independent review m1).
       if (evaluationsFull && item.row?.origin !== 'waiting-retry') continue;
-      const r = item.attempt2 ? await this.runAttempt2(item.attempt2, u) : await this.runRow(item.row, u);
+      const r = item.attempt2 ? await this.runAttempt2(item.attempt2, u) : await this.runRow(item.row, u, prCheck);
       if (r.state === 'DEFERRED' && r.reason === 'DAILY_EVALUATION_LIMIT') { evaluationsFull = r; continue; }
       if (r.next === true) { last ??= r; continue; }
       await this.persistQueue();
@@ -3636,11 +3677,12 @@ export class ResidentExecutor {
   }
 
   // One queue row: its current commit as its subject (rowSubject).
-  async runRow(c, usage) {
+  async runRow(c, usage, prCheck = null) {
     // bc982192: the row's batch route stamp on top (not part of the batch key; ledger.mjs#batchKey).
     const subject = { ...this.rowSubject(c.pr, c), ...(c.batchRoute === 'push' ? { batchRoute: 'push' } : {}) };
     // A flow end of this commit goes on as it was; a front's only with the same front number (attempt), never another one's.
-    const flow = (await this.ledger.pendingFlowEnds()).find(s => {
+    const flows = await this.ledger.pendingFlowEnds();
+    const flow = flows.find(s => {
       const old = s.reserved.subject;
       return old.repo === subject.repo && old.pr === subject.pr && old.headSha === subject.headSha && old.baseSha === subject.baseSha
         && old.testSha === subject.testSha && (!Object.hasOwn(subject, 'testSha') || old.attempt === subject.attempt);
@@ -3689,13 +3731,13 @@ export class ResidentExecutor {
     // (falsified): on 2026-11-03 merged PR 984 stayed first in the queue and breaker trials ran merged heads again
     // (rule 41ab823a). No answer is never a fact: the row runs as before. A draft is held (pr-candidate.mjs): the row, and a flow
     // continuation with it, waits for the PR's next trigger (field 2026-11-23, #1253).
-    const live = await this.livePull(c.pr);
+    const current = this.queue.row(c.pr)?.current;
+    // A read of this exact row earlier in the tick is sufficient. Earlier ticks never supply the pre-reservation read.
+    const checkedThisTick = prCheck?.pr === c.pr && prCheck.current === current && this.clock() - prCheck.at < QUEUE_PR_CHECK_INTERVAL_MS;
+    const live = checkedThisTick ? prCheck.live : await this.readQueuedPr(c.pr);
     const verdict = prCandidate(live, subject);
     if (verdict?.basis === PR_CLOSED) {
-      if (flow) await this.ledger.retireFlow(flow, 'pr-closed');
-      if (this.queue.closePr(c.pr, this.clock())) await this.receipt('queue-pr-closed', { pr: c.pr, state: live.state, before: 'reserve' });
-      this.reportOutcome(subject, 'IGNORED', { code: 'PR_CLOSED', key });
-      return { state: 'IGNORED', key, reason: 'PR_CLOSED', next: true };
+      return (await this.closeQueuedPr(subject, key, verdict.live, flows, current)) ?? { state: 'IDLE', next: true };
     }
     if (verdict?.basis === PR_DRAFT) return this.holdDraft(subject, key, 'reserve');
     if (flow && (!verdict || verdict.basis === HEAD_MOVED)) {
@@ -3736,8 +3778,33 @@ export class ResidentExecutor {
     return this.driveReserved(key, subject, this.clock(), c.origin, { liveRead: verdict !== null });
   }
 
-  // A live read showed the PR as a draft (pr-candidate.mjs, basis pr-draft): its queue row is held (queue.mjs#hold), so neither the row
-  // nor its attempt-2 intent nor its flow continuation is scheduled or read again until the PR's next trigger. Nothing is closed or retired.
+  async readQueuedPr(pr) {
+    const row = this.queue.row(pr);
+    const pull = await this.livePull(pr);
+    if (row) this.queuePrCheckedAt.set(row, this.clock());
+    if (pull?.number !== pr || !PULL_STATES.includes(pull.state)) return null;
+    // Keep the pre-reservation interpretation of an open PR. Closing a row requires a complete terminal reply.
+    return pull.state === 'open' || (typeof pull.headSha === 'string' && HEX40.test(pull.headSha)) ? pull : null;
+  }
+
+  // A closed PR has no continuation under any head, front attempt or CI Source. Retire every matching predecessor before saving DONE.
+  async closeQueuedPr(subject, key, live, flows, current) {
+    const row = this.queue.row(subject.pr);
+    if (!row || row.running || row.current !== current || !LIVE_STATES.includes(row.state)) return null;
+    for (const flow of flows) {
+      const old = flow.reserved.subject;
+      if (old.repo === subject.repo && old.pr === subject.pr) await this.ledger.retireFlow(flow, 'pr-closed');
+    }
+    if (!this.queue.closePr(subject.pr, this.clock())) return null;
+    await this.persistQueue();
+    this.reportQueue();
+    try { await this.receipt('queue-pr-closed', { pr: subject.pr, state: live.state, before: 'reserve' }); } catch { /* the queue row shows it */ }
+    this.reportOutcome(subject, 'IGNORED', { code: 'PR_CLOSED', key });
+    return { state: 'IGNORED', key, reason: 'PR_CLOSED', next: true };
+  }
+
+  // A live read showed the PR as a draft (pr-candidate.mjs, basis pr-draft): its queue row, attempt-2 intent and flow continuation are
+  // held from scheduling until the PR's next trigger. Terminal reconciliation can still close a held row.
   async holdDraft(subject, key, before) {
     if (this.queue.hold(subject.pr, subject.headSha, this.clock())) {
       await this.persistQueue();
@@ -4417,16 +4484,72 @@ export class ResidentExecutor {
   // The cleanup proof is always gathered fresh at failure time from both hosts (Windows from the
   // engine: SCM readback, the stage's own process-tree fact, no child still running; Linux from the
   // root tool's own output). It is never defaulted.
-  async proofFor(batch, stageProof) {
-    const windows = await this.engine.windowsQuiescence(batch);
-    const linux = await this.companion.linuxQuiescence(batch);
+  async windowsProof(batch, stageProof, remaining) {
+    const windows = await this.engine.windowsQuiescence(batch, remaining);
     return {
       // A stage proof field that is present must be true; an absent one (no stage ran) adds nothing.
       windowsTreeZero: windows.windowsTreeZero === true && (!('windowsTreeZero' in stageProof) || stageProof.windowsTreeZero === true),
       serviceOriginalStopped: windows.serviceOriginalStopped === true && (!('serviceOriginalStopped' in stageProof) || stageProof.serviceOriginalStopped === true),
-      linuxUnitsInactive: linux.linuxUnitsInactive === true,
-      containersZero: linux.containersZero === true,
     };
+  }
+
+  async proofFor(batch, stageProof) {
+    const windows = await this.windowsProof(batch, stageProof);
+    const linux = await this.companion.linuxQuiescence(batch);
+    return { ...windows, linuxUnitsInactive: linux.linuxUnitsInactive === true, containersZero: linux.containersZero === true };
+  }
+
+  async stage1Reserved(batch, binding, marked) {
+    const { key, headSha } = binding;
+    if (marked) {
+      const mark = await this.ledger.stage1Proof(key);
+      if (!mark || mark.batchId !== batch?.batchId || mark.binding.headSha !== headSha ||
+          mark.binding.failureCode !== binding.failureCode || mark.binding.reason !== binding.reason) return false;
+    }
+    const s = await this.ledger.state(key);
+    return batch?.key === key && this.current?.key === key && this.current.headSha === headSha &&
+      s.state === 'RESERVED' && !s.started && !s.abort && !s.selfAbort && !s.planIntent && !s.plan && !s.parked &&
+      s.reserved?.key === key && s.reserved.subject?.headSha === headSha && batchKey(s.reserved.subject) === key &&
+      !(await this.ledger.halted());
+  }
+
+  async failureProof(key, batch, failure, started) {
+    const o = failure.outcome;
+    const isOldHead = (failure.code === 'PROTECTED_CHANGE_NOT_UP_TO_DATE' && o?.reason === 'full_admission_rejected') ||
+      (failure.code === 'STAGE_CHILD_REFUSED' && o?.reason === 'pr_subject_changed');
+    if (started || !isOldHead || failure.stageNumber !== 1 || failure.phase !== 'stage' ||
+        o.status !== 'BLOCKED' || o.sideEffects !== 0 || o.mayHavePublished !== false || !this.companion.quiescenceRead) {
+      return this.proofFor(batch, failure.proof);
+    }
+    const row = failureRow({ code: failure.code, stage: 1, phase: 'stage', reason: o.reason, diagnostic: o.diagnostic });
+    if (row?.disposition !== 'burn' || row.class !== 'deterministic-pr' || row.retry !== 'new-commit' || row.breaker !== 'neutral') {
+      return this.proofFor(batch, failure.proof);
+    }
+    const binding = { key, headSha: this.current?.headSha, failureCode: failure.code, reason: o.reason };
+    const stillReserved = (marked = false) => this.stage1Reserved(batch, binding, marked);
+    const missing = { windowsTreeZero: false, serviceOriginalStopped: false, linuxUnitsInactive: false, containersZero: false };
+    if (!await stillReserved()) return missing;
+    await this.ledger.markStage1Proof(key, binding, batch.batchId);
+    const start = this.clock(), until = start + QUIESCENCE_TOTAL_MS;
+    const monoEnd = performance.now() + QUIESCENCE_TOTAL_MS;
+    const remaining = () => Math.min(until - this.clock(), monoEnd - performance.now());
+    const stageLinux = ['linuxUnitsInactive', 'containersZero'].every(k => !(k in failure.proof) || failure.proof[k] === true);
+    let previousRequestId;
+    for (let round = 1; round <= 2; round++) {
+      if (remaining() <= 0) return missing;
+      const windows = await this.windowsProof(batch, failure.proof, remaining);
+      const now = this.clock();
+      if (now < start || now >= until || !await stillReserved(true)) return missing;
+      const linux = await this.companion.quiescenceRead(batch, { binding, previousRequestId,
+        until: Math.min(until, this.clock() + Math.floor(monoEnd - performance.now())) });
+      if (!await stillReserved(true) || this.clock() < now || this.clock() > until || performance.now() > monoEnd) return missing;
+      const proof = { stage1Binding: binding, ...windows, linuxUnitsInactive: stageLinux && linux.proof.linuxUnitsInactive === true,
+        containersZero: stageLinux && linux.proof.containersZero === true };
+      if (round === 2 || !windows.windowsTreeZero || !windows.serviceOriginalStopped || !stageLinux ||
+          !linux.retryable || !UUID_RE.test(linux.requestId ?? '')) return proof;
+      previousRequestId = linux.requestId;
+    }
+    return missing;
   }
 
   // The failure table's facts a terminal or unexecuted record keeps (codes only, no free text).
@@ -4480,7 +4603,7 @@ export class ResidentExecutor {
         return { state: 'NOT_EXECUTED', key, failureCode: failure.code,
           settle: { kind: 'released', reason: 'BUNDLE_UNAVAILABLE', code: failure.code, klass: 'environment', breaker: 'counts', breakerState, pos, network } };
       }
-      const proof = await this.proofFor(batch, failure.proof);
+      const proof = await this.failureProof(key, batch, failure, started);
       // Defect a8910e41 (DESIGN §62.4): the take-over binding run's own end after stage 1 is released, never burned, once the Windows
       // side is proven quiet (as every stage-1 release): its head may run again when this duty is over (frontBound holds it within the
       // duty). Without that proof it goes the table's way below (burned when clean, else UNKNOWN), as before.
@@ -4549,6 +4672,9 @@ export class ResidentExecutor {
         const windows = await this.engine.archiveFailure(batch, reason);
         const linux = await this.companion.archiveLinux(batch, reason);
         archiveCheck(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED', windows);
+        if (proof.stage1Binding && !await this.stage1Reserved(batch, proof.stage1Binding, true)) {
+          return this.unknown(key, failure.code, 'cleanup-proof-incomplete', batch, { stage: 1, ...facts });
+        }
         await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: failure.code, basis, stage: failure.stageNumber, batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory, ...facts });
         await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: failure.code, class: facts.class });
         const subject = (await this.ledger.state(key)).reserved?.subject;

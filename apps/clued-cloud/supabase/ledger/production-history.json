@@ -1,9 +1,9 @@
 {
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
-  "exported_at": "2026-11-17T04:54:48.420Z",
-  "history_through": "20261116151052",
-  "row_count": 326,
+  "exported_at": "2026-11-17T12:04:53.736636Z",
+  "history_through": "20261117113032",
+  "row_count": 329,
   "rows": [
     {
       "version": "20260823154017",
@@ -2611,6 +2611,30 @@
       "statements_md5": "eaf36c8a0140628c3a520895623ad5f8",
       "statements_length": 8791,
       "source": "migrations/20261116090000_work_claim_main_merge_authorization_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261117095716",
+      "name": "storage_runtime_authority_v1",
+      "statements_md5": "f590cff14d2592f7d0ebfd14d705b877",
+      "statements_length": 7687,
+      "source": "migrations/20261117050000_storage_runtime_authority_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261117095723",
+      "name": "work_claim_empty_edit_v1",
+      "statements_md5": "2166e9d6276be9499c76637a88bb8c2b",
+      "statements_length": 2587,
+      "source": "migrations/20261117070000_work_claim_empty_edit_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261117113032",
+      "name": "imprint_bulk_preview_scope_cache_v1",
+      "statements_md5": "19b04ef765a697e6dedeadfc3f202921",
+      "statements_length": 12332,
+      "source": "migrations/20261117060000_imprint_bulk_preview_scope_cache_v1.sql",
       "transform": "identical"
     }
   ],
