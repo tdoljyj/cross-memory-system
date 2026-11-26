@@ -54,7 +54,6 @@ import { validateTrainRun } from '../resident-v2/train-run.mjs';
 import { GreenLedger } from './green-ledger.mjs';
 import { closeGreenLedgerGroups } from './green-ledger-closed.mjs';
 import { APP_ID } from './publisher.mjs';
-import { createMergeSlotNative } from './merge-slot-native.mjs';
 import { RULESET_UNREADABLE, RULESET_READ_FAILED, REQUIRED_CHECKS_UNREADABLE, appScansPinned, readMainRules, requiredCheckFailure } from './train-rules.mjs';
 import { decideShadow, frontPullFacts, requiredFailureExcused, requiredYieldReason, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
@@ -63,8 +62,12 @@ import { runStrictLane, strictIdentity, strictSettingsDigest, strictReadiness, s
 import { ScanProgress } from './train-scan-progress.mjs';
 import { layerOf, loadPolicy } from '../../../../../scripts/ci/merge-admission-policy.mjs';
 import { resolvePRTaskBinding } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
-import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact, readLandingRoute } from './train-landing.mjs';
+import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact, readLandingRoute,
+  invalidateTrainIntent, publishTrainStaging, reconcileTrainIntent, trainMainContains, validTrainMembers, fixTrainMarker, ABSENT_OID } from './train-landing.mjs';
 import { createLandingPort } from './train-landing-port.mjs';
+import { TRAIN_FAILURE, TRAIN_PROTOCOL_VERSION, trainBatchKey, trainEffectKey, trainLandingSlotKey } from '../merge-train-v2-contract.mjs';
+import { trainPortsV2 } from './train-mode.mjs';
+import { digest } from '../proof.mjs';
 import { FIXED_APP } from '../resident-v2/record.mjs';
 import { MAX_REVOKES_PER_RUN, SLOT_CHECK, SWEEP_BUDGET_MS, countedGithub, createSweeper, fullSweepSegment, incrementalSweep, ledgerGreens,
   publicationHeads, revokeGreens } from './train-sweep.mjs';
@@ -120,11 +123,95 @@ export async function runTrain(ports) {
   const fx = { n: 0 };
   const startedAt = (ports.clock ?? Date.now)();
   try {
+    if (ports.trainV2 != null) return await runSharedTrain(ports, fx, startedAt);
     const result = await runTrainCounted({ ...ports, startedAt }, fx);
     const claimBindings = ports.observeBindings === true ? await observePRClaimBindings(ports, startedAt) : null;
     return claimBindings === null ? result : { ...result, facts: validateTrainFacts({ ...result.facts, claimBindings }) };
   }
   catch (e) { if (fx.n > 0) throw Object.assign(e instanceof Error ? e : new Error(String(e)), { sideEffects: fx.n }); throw e; }
+}
+
+async function runSharedTrain({ job, github, landing, trainLanding, trainV2: native, clock = Date.now, assertLive = () => {} }, fx, startedAt) {
+  const facts = (onDuty, decision, actions = NO_ACTIONS) => ({ facts: trainFacts({ mode: job.mode, at: isoOf(startedAt),
+    onDuty, decision, actions, holders: [], mainSha: null, rules: null, front: null, revoke: [], ledger: null }), sideEffects: fx.n });
+  if (native.protocolVersion !== TRAIN_PROTOCOL_VERSION) return facts(false, 'TRAIN_SOURCE_UNREADABLE');
+  if (job.mode !== 'on' || job.sweep === 'gate' || trainLanding?.landing !== 'push' || trainLanding.unreadable || !landing)
+    return facts(false, 'NOT_ON_DUTY');
+
+  const work = await native.readMaintenance({ runId: job.runId });
+  if (work?.kind === 'idle') return facts(true, 'NO_FRONT');
+  const { batch } = work ?? {};
+  if (!validTrainMembers(batch?.members) || batch.scope?.repositoryId !== native.repositoryId || batch.scope?.targetBranch !== 'main'
+    || batch.sourceSha256 !== job.sourceManifestSha256 || trainBatchKey({ ...batch.scope, baseSha: batch.baseSha, members: batch.members,
+      sourceSha256: batch.sourceSha256, policyVersion: batch.policyVersion }) !== batch.batchId)
+    fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  const counted = { ...landing };
+  for (const method of ['createGenerationMarker', 'activateGeneration', 'invalidateGeneration', 'prepareBatchTmp', 'mergeIntoBatchTmp', 'stageIntent']) {
+    counted[method] = async value => { assertLive(); fx.n++; return landing[method](value); };
+  }
+  const ports = { batch, github, landing: counted, native, clock };
+  switch (work.kind) {
+    case 'activate':
+      if (await native.atomicLandingQualified({ repository: job.repo, appId: APP_ID }) !== true) fail(TRAIN_FAILURE.LEASE_STALE.resident);
+      await activateTrainGeneration({ ...ports, prepared: work.activation });
+      break;
+    case 'compose':
+      await composeTrainV2Batch(ports);
+      break;
+    case 'stage':
+      await stageTrainV2Batch(ports);
+      break;
+    case 'reconcile':
+      if (!matchesLandingBatch(work.intent, batch)) fail(TRAIN_FAILURE.LEASE_STALE.resident);
+      await reconcileTrainV2Landing({ ...ports, work });
+      break;
+    case 'adopt': {
+      const { receipt } = work;
+      if (!receipt?.receiptId || !matchesLandingBatch(receipt.intent, batch)) fail(TRAIN_FAILURE.LEASE_STALE.resident);
+      const result = await adoptTrainReceipt({ receipt, native: { adoptMember: async member => {
+        assertLive();
+        fx.n++;
+        return native.adoptMember(member);
+      } }, readRefs: () => landing.readTrainRefs(), contains: (test, main) => trainMainContains(github, test, main),
+      readPull: pr => github.readPullRequest(pr) });
+      return facts(true, result.complete ? 'FRONT_ADOPTED' : 'TRAIN_FRONT_NOT_PROVEN',
+        { ...NO_ACTIONS, adopted: result.complete });
+    }
+    default: fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  }
+  return facts(true, 'TRAIN_FRONT_BATCH_RUNNING');
+}
+
+function matchesLandingBatch(intent, batch) {
+  return intent?.batchId === batch.batchId && intent.baseSha === batch.baseSha && intent.testSha === batch.testSha
+    && digest(intent.members) === digest(batch.members) && intent.slotId === trainLandingSlotKey(batch.scope)
+    && intent.effectId === trainEffectKey({ ...batch.scope, action: 'landing_send',
+      subject: [batch.batchId, intent.generation, intent.generationRefOid, batch.baseSha, batch.testSha] });
+}
+
+async function activateTrainGeneration({ batch, prepared, landing, native, clock }) {
+  const { intent } = prepared ?? {};
+  if (intent?.batchId !== batch.batchId || intent.generation !== batch.generation || intent.baseSha !== batch.baseSha
+    || !['reserved', 'sent', 'unknown', 'settled'].includes(prepared.state)
+    || !SHA.test(intent.generationRefOid ?? '')
+    || intent.effectId !== trainEffectKey({ ...batch.scope, action: 'batch_reserve',
+      subject: [batch.batchId, batch.generation, intent.generationRefOid, batch.baseSha] }))
+    fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  const fixed = await fixTrainMarker({ prepared, port: landing, fix: native.fixActivationMarker, transition: 'activate',
+    field: 'activatedRefOid', clock });
+  const marker = fixed.intent.activatedRefOid;
+  if (!SHA.test(marker ?? '') || marker === ABSENT_OID || marker === intent.generationRefOid) fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  const read = () => landing.readTrainRefs().catch(() => null);
+  const matched = refs => refs?.mainSha === batch.baseSha && refs.generationRefOid === marker;
+  let refs = await read();
+  if (!matched(refs) && refs?.mainSha === batch.baseSha && refs.generationRefOid === intent.generationRefOid
+    && fixed.state === 'reserved' && Date.parse(intent.expiresAt) > clock()
+    && await native.authorizeGenerationActivation(fixed.intent) === true) {
+    try { await landing.activateGeneration({ beforeOid: intent.generationRefOid, afterOid: marker, effectId: intent.effectId }); }
+    catch { /* a lost reply still requires read-back */ }
+    refs = await read();
+  }
+  return native.reconcileGenerationActivation({ intent: fixed.intent, result: { state: matched(refs) ? 'activated' : 'unknown', refs } });
 }
 
 // This bounded observation is data for rechecking waiting rows, never admission.
@@ -1211,6 +1298,120 @@ async function composeBatch({ github, native, landing, max, rows, claimScope, st
   return { members, testSha, testTree, suspect: picked.suspect, stateSuspect: state.suspect, state };
 }
 
+// Stage 10 v2 receives an ordered, leased batch from Native. A failed merge leaves the batch
+// unsealed so the batch scheduler can decide how to split or retry it.
+export async function composeTrainV2Batch({ batch, github, landing, native, clock = Date.now }) {
+  const { batchId, generation, baseSha, members, expiresAt } = batch;
+  if (!validTrainMembers(members) || !SHA.test(baseSha ?? '') || !(Date.parse(expiresAt) > clock()))
+    fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  if (await native.authorizeComposition(batch) !== true) fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  const steps = [];
+  if (members.length === 1) {
+    const [member] = members;
+    const pull = await github.readPullRequest(member.pr);
+    if (pull?.number !== member.pr || pull.state !== 'open' || pull.draft !== false
+      || pull.head?.sha !== member.headSha || pull.base?.sha !== baseSha || pull.base.ref !== 'main'
+      || !pull.base.repo?.full_name || pull.head.repo?.full_name !== pull.base.repo.full_name
+      || !SHA.test(pull.merge_commit_sha ?? '')) fail('FRONT_TEST_MERGE_NOT_READY');
+    steps.push(pull.merge_commit_sha);
+  } else {
+    const tmp = await landing.prepareBatchTmp({ batchId, generation, baseSha });
+    // Reuse needs the sealed record or a new composition generation. A temp ref from an
+    // uncertain earlier run may already contain part of the chain.
+    if (!tmp.acknowledged) fail(TRAIN_FAILURE.EFFECT_UNKNOWN.resident);
+    for (const member of members) {
+      if (!(Date.parse(expiresAt) > clock())) fail(TRAIN_FAILURE.LEASE_STALE.resident);
+      const result = await landing.mergeIntoBatchTmp({ batchId, generation, headSha: member.headSha,
+        message: `Merge train batch: #${member.pr} (${member.headSha.slice(0, 12)})` });
+      if (result.status !== 201) fail('FRONT_TEST_MERGE_NOT_READY');
+      steps.push(result.sha);
+    }
+  }
+  const testSha = steps.at(-1);
+  const chain = await readBatchChain({ readGitCommit: sha => github.readGitCommit(sha), baseSha, testSha,
+    heads: members.map(m => m.headSha), steps });
+  if (!chain.ok || !SHA.test(chain.tree ?? '')) fail('FRONT_TEST_MERGE_NOT_READY');
+  return native.sealBatch({ batchId, generation, baseSha, testSha, testTree: chain.tree, members, steps });
+}
+
+// The grant to send a staging effect is consumed in Native. A reply lost after that point
+// leaves the effect in read-back, including on a different node.
+export async function stageTrainV2Batch({ batch, landing, native, clock = Date.now }) {
+  const matches = intent => intent?.batchId === batch.batchId && intent.generation === batch.generation && intent.baseSha === batch.baseSha
+    && intent.testSha === batch.testSha && validTrainMembers(intent.members) && digest(intent.members) === digest(batch.members)
+    && intent.slotId === trainLandingSlotKey(batch.scope)
+    && intent.effectId === trainEffectKey({ ...batch.scope, action: 'staging_publish',
+      subject: [batch.batchId, batch.generation, intent.generationRefOid, batch.baseSha, batch.testSha] });
+  let prepared = await native.prepareStaging(batch);
+  if (!matches(prepared?.intent) || !['reserved', 'sent', 'unknown', 'settled'].includes(prepared.state))
+    fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  prepared = await fixTrainMarker({ prepared, port: landing, fix: native.fixStagingMarker, transition: 'stage',
+    field: 'stagedRefOid', clock });
+  const { intent } = prepared;
+  if (!matches(intent)) fail(TRAIN_FAILURE.LEASE_STALE.resident);
+  const readRefs = () => landing.readTrainRefs();
+  // Observe before burning the send grant. Seeing the same S under a different
+  // marker is not evidence for this effect and cannot cause another push.
+  let result = await publishTrainStaging({ intent, port: landing, readRefs, clock });
+  if (prepared.state === 'reserved' && result.state === 'unknown' && result.refs?.stagingSha !== intent.testSha
+    && result.refs?.stagingSha === intent.stagingBeforeOid && result.refs?.generationRefOid === intent.generationRefOid
+    && Date.parse(intent.expiresAt) > clock() && await native.authorizeStagingSend(intent) === true)
+    result = await publishTrainStaging({ intent, port: landing, readRefs, send: true, clock });
+  if (result.state === 'staged') {
+    let observed;
+    try { observed = await native.readStagingRuns({ batch, intent }); } catch { /* leave the effect available for read-back */ }
+    const runs = observed?.runs;
+    const validRuns = Array.isArray(runs) && runs.length === 2 && new Set(runs.map(r => r?.platform)).size === 2
+      && new Set(runs.map(r => r?.runId)).size === 2 && runs.every(r => Number.isSafeInteger(r?.runId) && r.runId > 0
+        && ['linux', 'windows'].includes(r.platform) && r.testSha === intent.testSha && r.policyVersion === batch.policyVersion);
+    const sorted = rows => [...rows].sort((a, b) => a.runId - b.runId).map(r => [r.runId, r.testSha, r.platform, r.policyVersion]);
+    const boundRuns = validRuns && (prepared.runs == null || (Array.isArray(prepared.runs)
+      && prepared.runs.every(r => r && typeof r === 'object') && digest(sorted(prepared.runs)) === digest(sorted(runs))));
+    const settledRefs = boundRuns && observed.complete === true
+      ? await publishTrainStaging({ intent, port: landing, readRefs, clock }) : null;
+    result = settledRefs?.state === 'staged' ? { ...settledRefs, runs: sorted(runs).map(([runId, testSha, platform, policyVersion]) =>
+      ({ runId, testSha, platform, policyVersion })) } : { state: 'unknown', reason: TRAIN_FAILURE.EFFECT_UNKNOWN.resident, refs: result };
+  }
+  const persisted = await native.reconcileStaging({ intent, result });
+  return result.state === 'staged' ? persisted : result;
+}
+
+export async function reconcileTrainV2Landing({ work, github, landing, native }) {
+  const { intent } = work;
+  const ports = { intent, port: landing, readRefs: () => landing.readTrainRefs(),
+    contains: (test, main) => trainMainContains(github, test, main) };
+  // Native must authorize the exact invalidation and preserve the previously reserved marker.
+  const result = !work.receipt && work.invalidate === true && await native.authorizeLandingInvalidation(intent) === true
+    ? await invalidateTrainIntent(ports) : await reconcileTrainIntent({ ...ports, receipt: work.receipt });
+  return native.reconcileLanding({ intent, result });
+}
+
+export async function adoptTrainReceipt({ receipt, native, readRefs, contains, readPull }) {
+  const { intent } = receipt;
+  const adopted = [];
+  if (receipt.generationRefOid !== intent.landedRefOid || !SHA.test(receipt.mainSha ?? '')) return { complete: false, adopted };
+  try {
+    const refs = await readRefs();
+    if (!SHA.test(refs?.mainSha ?? '') || (refs.mainSha !== intent.testSha && await contains(intent.testSha, refs.mainSha) !== true))
+      return { complete: false, adopted };
+  } catch { return { complete: false, adopted }; }
+  if (!validTrainMembers(intent.members)) return { complete: false, adopted };
+  const done = receipt.settledMembers ?? [];
+  for (const member of [...intent.members.slice(1), intent.members[0]]) {
+    if (done.some(m => digest(m) === digest(member))) continue;
+    try {
+      const observedHeadSha = (await readPull(member.pr))?.head?.sha;
+      if (!SHA.test(observedHeadSha ?? '')) return { complete: false, adopted };
+      const result = await native.adoptMember({ receiptId: receipt.receiptId, effectId: intent.effectId,
+        batchId: intent.batchId, generation: intent.generation, testSha: intent.testSha, member, observedHeadSha });
+      if (!result?.member || digest(result.member) !== digest(member) || !['adopted', 'claim_changed'].includes(result.state))
+        return { complete: false, adopted };
+      if (result.state === 'adopted') adopted.push(member.pr);
+    } catch { return { complete: false, adopted }; }
+  }
+  return { complete: true, adopted };
+}
+
 // ADR 0018 §6: every batch of this node whose S main now contains, oldest first, not yet recorded as adopted: each member whose PR is still at
 // the batch's head (merged, or open while GitHub has not marked it yet) is adopted with S, riders first and the front last. A batch is
 // recorded as adopted once each member was answered (adopted, or moved on to another head); the bisection learns from it once.
@@ -1335,19 +1536,24 @@ export async function settleTrain({ run, live, append, retain = async () => {} }
   return { status: TRAIN_FACTS_STATUS, sideEffects: out.sideEffects, train: out.facts };
 }
 
-export async function main(argv = process.argv.slice(2), output = process.stdout) {
+export async function main(argv = process.argv.slice(2), output = process.stdout, { protectedTrainTransport } = {}) {
   return runEntry({ argv, entryRole: 'train-maintenance', moduleUrl: import.meta.url, output, successStatuses: [TRAIN_FACTS_STATUS], body: async ({ inputs, held, live, sourceRoot }) => {
     const started = Date.now();
     const job = validateTrainRun(inputs.jobs[0]);
     const { appKey, nativeToken, bindingId } = await controllerPrincipal(inputs.record);
     const log = observationLog(STATE_V2.trainShadow, job.id);
-    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot, live, log });
-    const slotNative = createMergeSlotNative({ config: inputs.record.config, fetchImpl: ports.fetchImpl, nativeToken });
-    const native = Object.freeze({ ...slotNative, resolvePRBinding: (expected, options) => resolvePRTaskBinding({ ...expected,
+    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot,
+      live, log, protectedTrainTransport, trainControl: true });
+    const train = await trainPortsV2({ trainMode: job.mode, record: inputs.record, fetchImpl: ports.fetchImpl, nativeToken,
+      github: ports.github, nativeCommand: ports.native.command, repositoryId: FIXED_APP.repositoryId,
+      sourceManifestSha256: job.sourceManifestSha256, queueReturn: true });
+    const native = Object.freeze({ ...train.slotNative, resolvePRBinding: (expected, options) => resolvePRTaskBinding({ ...expected,
       scope: inputs.record.config.scope, repository: inputs.record.config.repository, command: input => ports.native.command(input, options) }) });
     let ledger = null, sweepStore = null;
-    try { ledger = await GreenLedger.open(STATE_V2.greenLedger); } catch { /* listed as nothing; the facts say so */ }
-    try { sweepStore = await TrainSweepStore.open(STATE_V2.trainSweep); } catch { /* no sweep state: the sweep is incomplete */ }
+    if (!train.trainV2) {
+      try { ledger = await GreenLedger.open(STATE_V2.greenLedger); } catch { /* listed as nothing; the facts say so */ }
+      try { sweepStore = train.sweepStore ?? await TrainSweepStore.open(STATE_V2.trainSweep); } catch { /* no sweep state */ }
+    }
     const publications = publicationHeads({ command: input => ports.native.command(input), scope: inputs.record.config.scope, repository: inputs.record.config.repository });
     // §41.4: the front's layer by the held merge-admission policy; a policy that does not load judges every path protected.
     const loaded = loadPolicy(held.policyText);
@@ -1358,7 +1564,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
       repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId, installationId: FIXED_APP.installationId, privateKeyProvider: async () => appKey, fetchImpl: ports.fetchImpl }) : null;
     return settleTrain({
       run: () => runTrain({ job, github: ports.github, native, ledger, sweepStore, publications, layerOfPaths, claimScope: inputs.record.config.scope,
-        observeBindings: true, landing, trainLanding }),
+        observeBindings: true, landing, trainLanding, trainV2: train.trainV2, assertLive: live }),
       live,
       append: async facts => (await TrainShadowStore.open(STATE_V2.trainShadow)).append(job.runId, facts),
       // DESIGN §41.7: the state areas' retention and the outcome month segments, at most once a day, after the facts are

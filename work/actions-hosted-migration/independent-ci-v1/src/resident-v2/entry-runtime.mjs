@@ -213,7 +213,7 @@ export function immutableReadCache(fetchImpl, { live = () => {}, onHit = () => {
 }
 // batchRoute (stages 1 and 8 only, bc982192): the batch's route stamp read from the stage directory (batch-route.mjs); null for every other
 // stage and whenever the stage has none, which keeps both ports exactly as on origin/main.
-export function controllerPorts({ record, appKey, nativeToken, bindingId, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {}, stagedScanJournal = null, batchRoute = null, protectedTrainTransport }) {
+export function controllerPorts({ record, appKey, nativeToken, bindingId, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {}, stagedScanJournal = null, batchRoute = null, protectedTrainTransport, trainControl = false }) {
   const train = protectedTrainPort(record, protectedTrainTransport, live);
   const budgetObserver = guardedGitHubBudgetObserver(createGitHubBudgetObserver());
   // One timing line per network attempt and per cache hit (URL pattern, status, milliseconds), for later re-measurement.
@@ -241,14 +241,36 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
     CLUED_SUPABASE_PUBLISHABLE_KEY: record.config.publishableKey };
   const commands = new Set(['publication_begin_independent','publication_finish','publication_abort_independent','publication_reconcile','revocations_list',
     'independent_revocation_heads','independent_legacy_drain_finish','scan_start_independent','resolve_pr_claim']);
+  const trainCommands = new Set(['role_probe', 'batch_reserve', 'batch_seal', 'staging_publish',
+    'landing_prepare', 'landing_send', 'landing_reconcile', 'landing_invalidate', 'claim_adopt']);
   const native = Object.freeze({ trainProtocolVersion: train?.protocolVersion ?? null, train, async command(input, options = {}) {
-    live(); check(commands.has(input?.action) && input.scope === record.config.scope, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+    live();
+    const authorizedTrainCommand = trainControl && trainCommands.has(input?.action) && input.repository === record.config.repository
+      && input.repository_id === FIXED_APP.repositoryId && input.target_branch === 'main'
+      && input.source_manifest_sha256 === record.config.sourceManifestSha256;
+    check((commands.has(input?.action) || authorizedTrainCommand) && input.scope === record.config.scope, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+    if (authorizedTrainCommand) {
+      if (train !== undefined) {
+        check(typeof train.command === 'function', 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+        if (input.action === 'role_probe') {
+          const reply = await train.command({ ...input, protocol_version: TRAIN_PROTOCOL_VERSION });
+          check(reply?.status === 'ok' && reply.protocol_version === TRAIN_PROTOCOL_VERSION
+            && reply.node_id === train.nodeId && reply.binding_generation === train.bindingGeneration, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+          return reply;
+        }
+        check(input.node_id === train.nodeId && input.binding_generation === train.bindingGeneration, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+        return train.command(input);
+      }
+      // The compatibility RPC may attest protocol 1 for the legacy path.
+      check(input.action === 'role_probe', 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+    }
     if (input.action === 'resolve_pr_claim') check(typeof input.pr_ref === 'string'
       && input.pr_ref.startsWith(`${record.config.repository}#`)
       && /^[1-9][0-9]*$/.test(input.pr_ref.slice(record.config.repository.length + 1)), 'NATIVE_PUBLICATION_SCOPE_REFUSED');
     const commandFetch = options.signal ? (url, opts) => fetchImpl(url, { ...opts, signal: options.signal }) : fetchImpl;
     const reply = await cluedRpc(commandFetch, env, sourceRoot, 'clued_work_verify_v1', input);
     check(reply.status === 200 && reply.body && typeof reply.body === 'object', 'NATIVE_PUBLICATION_UNAVAILABLE');
+    check(!authorizedTrainCommand || reply.body.protocol_version === 1, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
     return reply.body;
   }, async current(identity,mode,admissionCommand) {
     live();if(mode?.scope!==record.config.scope||identity.job.repo!==record.config.repository
