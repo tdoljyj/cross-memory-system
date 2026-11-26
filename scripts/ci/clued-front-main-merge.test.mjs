@@ -16,7 +16,9 @@ import { NON_PR_CONTROL_FILES, NON_PR_CONTROL_SOURCE_PATH, classifyNonPrControlW
 import { recognizeCatalogueWorkflow } from './clued-source-only-workflow.mjs';
 import { parseWorkflowProfiles, roleDefinitionDigest, workflowBlob } from './clued-workflow-profile.mjs';
 import { TARGETS } from './clued-tree-reuse.mjs';
-import { describe as describePrStatus } from '../../work/independent-ci-resident-v1/src/pr-status.mjs';
+import { describe as describePrStatus, withCapacityLine, withRerunLine, withWatchdogLine } from '../../work/independent-ci-resident-v1/src/pr-status.mjs';
+import { dualText } from '../../work/independent-ci-resident-v1/src/node-duty.mjs';
+import { withTrainLine } from '../../work/independent-ci-resident-v1/src/train.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const RPC_URL = `${resolvePublicSupabaseConfig({}, ROOT).url}/rest/v1/rpc/clued_work_verify_v1`;
@@ -453,12 +455,17 @@ function train() {
       const head = w.heads.get(compare[2]);
       return reply({ behind_by: head?.contains === compare[1] ? 0 : head?.behind ?? 3, ahead_by: 1 });
     }
-    const of = /^\/repos\/o\/r\/commits\/([0-9a-f]{40})(\/check-runs|\/status)?(?:\?|$)/.exec(route), h = of && w.heads.get(of[1]);
+    const of = /^\/repos\/o\/r\/commits\/([0-9a-f]{40})(\/check-runs|\/status(?:es)?)?(?:\?|$)/.exec(route), h = of && w.heads.get(of[1]);
     if (method === 'GET' && of && !h) return reply({ message: 'Not Found' }, 404);
     if (method === 'GET' && of?.[2] === '/check-runs') return reply({ total_count: h.checks.length, check_runs: h.checks });
     // Lists come 100 a page with the count of all of them, as GitHub answers.
     const paged = list => list.slice((Number(/[?&]page=([0-9]+)/.exec(route)?.[1] ?? 1) - 1) * 100).slice(0, 100);
-    if (method === 'GET' && of?.[2] === '/status') return reply({ state: 'pending', total_count: h.statuses.length, statuses: paged(h.statuses) });
+    if (method === 'GET' && of?.[2] === '/statuses') return reply(paged(h.statuses));
+    if (method === 'GET' && of?.[2] === '/status') {
+      const latest = new Map();
+      for (const { creator, ...status } of h.statuses) if (!latest.has(status.context)) latest.set(status.context, status);
+      return reply({ state: 'pending', total_count: latest.size, statuses: paged([...latest.values()]) });
+    }
     if (method === 'GET' && of) return reply({ sha: h.sha, parents: h.parents.map(s => ({ sha: s })), committer: { login: h.parents.length === 2 ? 'web-flow' : 'holder' },
       commit: { committer: { date: iso(h.at) }, verification: { verified: h.parents.length === 2 } } });
     const runs = /^\/repos\/o\/r\/actions\/runs\?.*head_sha=([0-9a-f]{40})/.exec(route);
@@ -1902,6 +1909,223 @@ test('U6: named once; the resident rewriting “落后 main 13” 10 minutes lat
   Object.assign(status, { description: residentSays(13), updated_at: iso(w.now) });
   const r = await w.run({}, SCAFFOLD);
   assert.equal(r.result, 'none', JSON.stringify(r)); assert.equal(namings(w).length, 1, 'once per head');
+});
+
+const REFUSED_PR = 1151, NEXT_PR = 1374;
+const REFUSED_CONTEXT = 'resident-queue/turing (info only)';
+const REFUSED_TEXT = '当班：未准入或未执行（PATHS_OUTSIDE_WRITE_SET）：约 21:23Z 自动重试（第 1 次），修正后编辑 PR 可提前';
+const EXHAUSTED_TEXT = '24 小时内已多次未准入或未执行（PATHS_OUTSIDE_WRITE_SET）：请修正后推新提交';
+const residentStatusAt = at => ({ creator: { login: 'o' }, created_at: iso(at), updated_at: iso(at) });
+
+function sceneRefused(status = {}) {
+  const w = train();
+  w.required = SCAFFOLD_R6;
+  const refused = sha(0x1151), next = sha(0x1374), at = w.now - 20 * MIN;
+  w.open(REFUSED_PR, { head: refused, contains: T, at, auto: '2026-11-21T00:00:00Z', parents: [BASE, T] });
+  w.check(refused, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID, { started_at: iso(at) });
+  w.heads.get(refused).statuses.push({ context: REFUSED_CONTEXT, state: 'pending', description: REFUSED_TEXT, ...residentStatusAt(w.now - MIN), ...status });
+  w.open(NEXT_PR, { head: next, auto: '2026-11-21T01:00:00Z' });
+  hostedGreen(w)(next);
+  return w;
+}
+
+test('#1151: a front waiting after admission refused its write set yields to the next healthy PR', async () => {
+  const w = sceneRefused();
+  const refused = w.headOf(REFUSED_PR), next = w.headOf(NEXT_PR);
+  const r = await w.run({}, SCAFFOLD);
+
+  assert.deepEqual({ result: r.result, pr: r.pr, updated: w.brought() },
+    { result: 'merged', pr: NEXT_PR, updated: [NEXT_PR] }, statesOf(r));
+  assert.deepEqual(w.calls.filter(c => c.method === 'PUT'), [
+    { method: 'PUT', route: `/repos/o/r/pulls/${NEXT_PR}/update-branch`, body: { expected_head_sha: next } },
+  ]);
+  assert.equal(w.headOf(REFUSED_PR), refused);
+});
+
+test('refusal refreshes do not count as activity, and the diagnostic names the reason once per head', async () => {
+  const w = sceneRefused();
+  const head = w.headOf(REFUSED_PR), { statuses } = w.heads.get(head);
+  assert.equal((await w.run({}, SCAFFOLD)).pr, NEXT_PR);
+  assert.equal(namings(w).length, 0, 'the existing quiet period still applies');
+  for (const time of ['21:33Z', '21:43Z']) {
+    w.now += 10 * MIN;
+    statuses.unshift({ ...statuses[0], description: REFUSED_TEXT.replace('21:23Z', time), ...residentStatusAt(w.now) });
+    const r = await w.run({}, SCAFFOLD);
+    assert.match(r.train.members.find(m => m.pr === REFUSED_PR).state, /准入拒绝待修.*PATHS_OUTSIDE_WRITE_SET/);
+    assert.deepEqual(w.brought(), [NEXT_PR]);
+    assert.deepEqual(namings(w).map(c => c.pr), [REFUSED_PR]);
+    assert.match(namings(w)[0].body, new RegExp(`- ${INDEPENDENT_ADMISSION_CHECK}: missing\n`));
+    assert.match(namings(w)[0].body, /PATHS_OUTSIDE_WRITE_SET/);
+    assert.ok(namings(w)[0].body.includes(head));
+  }
+});
+
+test('the resident’s exhausted retry result also yields, before and after main moves', async () => {
+  const w = sceneRefused({ state: 'failure', description: EXHAUSTED_TEXT, ...residentStatusAt(NOW - 60 * MIN) });
+  const head = w.headOf(REFUSED_PR);
+  w.heads.get(head).statuses.unshift({ context: 'resident-queue/backup (info only)', ...dualText('turing'), ...residentStatusAt(NOW - 31 * MIN) });
+  let r = await w.run({}, SCAFFOLD);
+  assert.equal(r.pr, NEXT_PR, statesOf(r));
+  assert.match(r.train.members.find(m => m.pr === REFUSED_PR).state, /准入拒绝待修.*PATHS_OUTSIDE_WRITE_SET/);
+  w.merged(NEXT_PR);
+  r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', statesOf(r));
+  assert.match(r.train.members[0].state, /准入拒绝待修.*PATHS_OUTSIDE_WRITE_SET/);
+  assert.deepEqual(w.brought(), [NEXT_PR]);
+  assert.equal(w.headOf(REFUSED_PR), head);
+});
+
+for (const [label, status] of [
+  ['backoff', { description: REFUSED_TEXT.replace('修正后编辑 PR 可提前', '当前其实正在运行，请等本批结束') }],
+  ['exhausted retry', { state: 'failure', description: `${EXHAUSTED_TEXT}；当前其实正在运行，请等本批结束` }],
+]) {
+  test(`an unknown suffix on ${label} does not make the front yield`, async () => {
+    const w = sceneRefused(status), head = w.headOf(REFUSED_PR);
+    // A young head would still be the front even without pending activity.
+    w.heads.get(head).at = w.prs.get(REFUSED_PR).updatedAt = w.now - 2 * MIN;
+    const r = await w.run({}, SCAFFOLD);
+    assert.equal(r.result, 'none', statesOf(r));
+    assert.equal(r.train.members[0].state, 'front');
+    assert.deepEqual(w.brought(), []);
+  });
+}
+
+for (const [label, override] of [
+  ['missing creation time', () => ({ created_at: undefined })],
+  ['backoff older than the duty window', w => ({ created_at: iso(w.now - 31 * MIN) })],
+  ['another publisher', () => ({ creator: { login: 'someone-else' } })],
+]) {
+  test(`a refusal with ${label} does not make the front yield`, async () => {
+    const w = sceneRefused();
+    Object.assign(w.heads.get(w.headOf(REFUSED_PR)).statuses[0], override(w));
+    const r = await w.run({}, SCAFFOLD);
+    assert.equal(r.result, 'none', statesOf(r));
+    assert.equal(r.train.members[0].state, 'front');
+    assert.deepEqual(w.brought(), []);
+  });
+}
+
+test('a live dual-active error from another node blocks a newer refusal', async () => {
+  const w = sceneRefused();
+  w.heads.get(w.headOf(REFUSED_PR)).statuses.push({ context: 'resident-queue/backup (info only)',
+    ...dualText('turing'), ...residentStatusAt(w.now - 2 * MIN) });
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', statesOf(r));
+  assert.equal(r.train.members[0].state, 'front');
+  assert.deepEqual(w.brought(), []);
+});
+
+test('the published waiting and backoff texts can carry known resident decorations', async () => {
+  for (const state of ['WAITING', 'BACKOFF']) {
+    const w = sceneRefused(), headSha = w.headOf(REFUSED_PR);
+    const pull = { pr: REFUSED_PR, headSha, eligible: true };
+    const status = { writtenAt: w.now, recent: [], backfill: { complete: true }, pending: [{ ...pull, state,
+      deferred: 'PATHS_OUTSIDE_WRITE_SET', level: 2, nextAt: w.now - MIN }] };
+    const base = describePrStatus({ pull, status, now: w.now });
+    const decorated = state === 'WAITING' ? withTrainLine(base, { mode: 'shadow', wouldDo: 'FRONT_CHECKS_WAIT', at: w.now, front: pull }, pull, w.now)
+      : withRerunLine(base, true);
+    const duty = { ...decorated, description: `当班：${decorated.description}` };
+    const want = state === 'WAITING' ? duty : withWatchdogLine(withCapacityLine(duty, '节点资源红线（暂停接新批）'), true);
+    Object.assign(w.heads.get(headSha).statuses[0], want);
+    const r = await w.run({}, SCAFFOLD);
+    assert.equal(r.pr, NEXT_PR, `${want.description}: ${statesOf(r)}`);
+    assert.deepEqual(w.brought(), [NEXT_PR]);
+  }
+});
+
+test('a missing refusal in the GitHub history read leaves the train in place', async () => {
+  const w = sceneRefused(), fetch = w.fetchImpl;
+  w.fetchImpl = (url, init) => String(url).includes(`/commits/${w.headOf(REFUSED_PR)}/statuses?`)
+    ? Promise.resolve({ ok: true, status: 200, json: async () => [] }) : fetch(url, init);
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'skipped');
+  assert.match(r.reason, /statuses and status history.*disagree/);
+  assert.deepEqual(w.brought(), []);
+});
+
+test('a behind-main hint cannot erase the same head’s refusal when main moves', async () => {
+  const w = sceneRefused();
+  const head = w.headOf(REFUSED_PR), { statuses } = w.heads.get(head);
+  w.head(BASE); // The first parent is readable, so it cannot mask a second update.
+  assert.equal((await w.run({}, SCAFFOLD)).pr, NEXT_PR);
+  w.merged(NEXT_PR);
+  w.now += MIN;
+  statuses.unshift({ context: REFUSED_CONTEXT, state: 'pending', description: residentSays(3), ...residentStatusAt(w.now) });
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', statesOf(r));
+  assert.match(r.train.members[0].state, /准入拒绝待修.*PATHS_OUTSIDE_WRITE_SET/);
+  assert.deepEqual(w.brought(), [NEXT_PR]);
+  assert.equal(w.headOf(REFUSED_PR), head);
+  assert.deepEqual(w.calls.filter(c => c.method === 'PUT').map(c => c.route), [`/repos/o/r/pulls/${NEXT_PR}/update-branch`]);
+
+  w.now += MIN;
+  statuses.unshift({ context: REFUSED_CONTEXT, state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布', ...residentStatusAt(w.now) });
+  assert.equal((await w.run({}, SCAFFOLD)).pr, REFUSED_PR, 'a newer result clears the old refusal');
+});
+
+test('new queued or running evidence takes precedence over the refusal', async () => {
+  for (const resume of [
+    (w, head) => w.heads.get(head).statuses.unshift({ context: REFUSED_CONTEXT, state: 'pending',
+      description: '当班：运行中：第 8 段（准入）', updated_at: iso(w.now) }),
+    (w, head) => w.check(head, HOSTED[0], null, GITHUB_ACTIONS_APP_ID),
+    (w, head) => w.heads.get(head).runs.push({ id: 1, status: 'queued' }),
+  ]) {
+    const w = sceneRefused();
+    resume(w, w.headOf(REFUSED_PR));
+    const r = await w.run({}, SCAFFOLD);
+    assert.equal(r.result, 'none', statesOf(r));
+    assert.equal(r.train.members[0].state, 'front');
+    assert.deepEqual(w.brought(), []);
+    assert.deepEqual(namings(w), []);
+  }
+});
+
+test('unrecognized or off-duty pending text retains the conservative front behavior', async () => {
+  for (const status of [
+    { context: 'resident-standby/turing (info only)' },
+    { context: 'resident-queue/turing' },
+    { description: REFUSED_TEXT.replace('当班：', '') },
+    { description: REFUSED_TEXT.replace('当班：', '已交班：') },
+    { description: '当班：排队中：暂缓（PATHS_OUTSIDE_WRITE_SET）' },
+    { description: REFUSED_TEXT.replace('PATHS_OUTSIDE_WRITE_SET', 'UNKNOWN_ADMISSION_CODE') },
+  ]) {
+    const w = sceneRefused(status);
+    const r = await w.run({}, SCAFFOLD);
+    assert.equal(r.result, 'none', JSON.stringify(status));
+    assert.equal(r.train.members[0].state, 'front');
+    assert.deepEqual(w.brought(), []);
+  }
+});
+
+test('newer resident completion supersedes rejection evidence without supplying the missing pinned admission', async () => {
+  for (const context of [REFUSED_CONTEXT, 'resident-queue/backup (info only)']) {
+    const w = sceneRefused();
+    const head = w.headOf(REFUSED_PR), { statuses } = w.heads.get(head);
+    statuses.unshift({ context, state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布', ...residentStatusAt(w.now) });
+    w.check(head, INDEPENDENT_ADMISSION_CHECK, 'success', ADMISSION_APP_ID);
+    hostedGreen(w)(head);
+    const r = await w.run({}, SCAFFOLD);
+    assert.equal(r.pr, NEXT_PR, statesOf(r));
+    assert.equal(r.train.members[0].state, 'idle');
+  }
+});
+
+test('the pinned admission pass and the required red checks take precedence over an older refusal', async () => {
+  for (const conclusion of ['success', 'failure']) {
+    const w = sceneRefused();
+    const head = w.headOf(REFUSED_PR);
+    hostedGreen(w)(head);
+    w.check(head, INDEPENDENT_ADMISSION_CHECK, conclusion, INDEPENDENT_ADMISSION_APP_ID);
+    const r = await w.run({}, SCAFFOLD);
+    if (conclusion === 'success') {
+      assert.equal(r.result, 'none', statesOf(r));
+      assert.equal(r.train.members[0].state, 'front');
+      assert.deepEqual(w.brought(), []);
+    } else {
+      assert.equal(r.pr, NEXT_PR, statesOf(r));
+      assert.equal(r.train.members[0].state, `red (${INDEPENDENT_ADMISSION_CHECK})`);
+    }
+  }
 });
 
 test('U7: the comment refused (403) changes nothing the run decided; the summary says not posted', async () => {
