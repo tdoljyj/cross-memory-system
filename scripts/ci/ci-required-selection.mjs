@@ -1409,10 +1409,9 @@ const isNodeTest = (argv) => argv[0] === 'node' && argv.includes('--test');
 // One limit at the entry (FABLE-flaky-four-replan-20261124 §2; PLAN-ci-p90-next-20261125 补充裁定, task 3435f8bf): a test or
 // command that hangs fails with its name, not at the job's limit (90 minutes for hosted and node Windows jobs, 30 for
 // migration-verify) with none. executeSuite starts the first run of every command (node --test, the run-tests wrapper, any
-// other) with COMMAND_TIMEOUT_MS and ends it with SIGKILL: Windows ends a process outright anyway, and on POSIX a SIGTERM would
-// let Node cancel gracefully and end what had begun, so the two would differ. The command line stays as it is. Node times
-// each test (--test-timeout) but never a test file (its FileTest has no timeout), so the limit is the whole command's and,
-// for a node --test command with the trusted reporter, the entry then names each file and test that began and did not end:
+// other) with COMMAND_TIMEOUT_MS and ends it with SIGKILL. A resident-node list runs as one command per file, each with
+// its own limit. Node times each test (--test-timeout) but never a test file (its FileTest has no timeout). For a node
+// --test command with the trusted reporter, the entry names each file and test that began and did not end:
 // the reporter writes Node's test:dequeue and test:complete, which reach it as they happen (not in report order), and the
 // parent sends both for each file itself, so a file that hangs is named even when its process sent nothing
 // (unfinishedTests). 25 minutes: 1.5 times the longest step of a passing job (987 s), above the one command of the 11-23
@@ -1442,11 +1441,187 @@ function withReporter(argv, out) {
     `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`, `--test-reporter-destination=${out}`, ...argv.slice(index + 1)];
 }
 
+function logUnfinishedTests(id, raw, root, log) {
+  const open = unfinishedTests(raw, root);
+  for (const entry of open.slice(0, UNFINISHED_SHOWN)) log(`::error title=${id} 开始了没结束::${entry.file ?? '<run>'} :: ${entry.name}`);
+  if (open.length > UNFINISHED_SHOWN) log(`${id}: 另有 ${open.length - UNFINISHED_SHOWN} 条开始了没结束`);
+}
+
 const ORDERED_NODE_TESTS = '--ordered-node-tests';
+const RESIDENT_FILE_POOL = '--resident-file-pool';
+const LISTED_TEST_SWITCH = /^--test-(?:concurrency|skip-pattern)=/;
+
+// Split execution only after expansion, candidate comparison and shard assignment. Keep the effective Node file concurrency.
+function residentFilePool(id, argv) {
+  if (id !== 'resident-node' || argv[0] !== 'node' || argv[1] !== '--test') return null;
+  const args = argv.slice(2);
+  const files = args.filter((arg) => !arg.startsWith('-'));
+  if (files.length === 0 || new Set(files.map(posixPath)).size !== files.length
+      || !files.every((file) => file.endsWith('.test.mjs') && !/[*?\[\]{}]/.test(file))
+      || !args.every((arg) => !arg.startsWith('-') || LISTED_TEST_SWITCH.test(arg))) return null;
+  const limit = args.findLast((arg) => arg.startsWith('--test-concurrency='))?.split('=')[1];
+  if (limit !== undefined && (!Number.isSafeInteger(Number(limit)) || Number(limit) < 1)) return null;
+  return { files, concurrency: Number(limit) || Math.max(1, os.availableParallelism() - 1) };
+}
+
+// Keep the POSIX children in the calling suite's group so its local slot can still drain them. At a file deadline, target
+// only its descendants. Windows taskkill takes the root PID and walks its tree without requiring elevation.
+function killFileTree(pid) {
+  if (process.platform === 'win32') {
+    const result = spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'],
+      { stdio: 'ignore', windowsHide: true, timeout: 10_000, killSignal: 'SIGKILL' });
+    if (result.status !== 0) throw result.error ?? new Error(`taskkill exited ${result.status ?? result.signal}`);
+    return;
+  }
+  const signal = (target, name) => {
+    try { process.kill(target, name); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+  };
+  signal(pid, 'SIGSTOP');
+  const stopped = new Set([pid]);
+  try {
+    let previous;
+    do {
+      previous = stopped.size;
+      const result = spawnSync('ps', ['-A', '-o', 'pid=', '-o', 'ppid='],
+        { encoding: 'utf8', timeout: 10_000, killSignal: 'SIGKILL' });
+      if (result.status !== 0) throw result.error ?? new Error(`ps exited ${result.status ?? result.signal}`);
+      for (const [, child, parent] of result.stdout.matchAll(/^[ \t]*(\d+)[ \t]+(\d+)[ \t]*$/gm)) {
+        const target = Number(child);
+        if (!stopped.has(Number(parent)) || stopped.has(target)) continue;
+        signal(target, 'SIGSTOP');
+        stopped.add(target);
+      }
+    } while (stopped.size > previous); // A descendant could have forked before we stopped it.
+  } finally {
+    for (const member of [...stopped].reverse()) signal(member, 'SIGKILL');
+  }
+}
+
+function runResidentFile(command, args, { dir, index, timeout }) {
+  const fd = openSync(path.join(dir, `${index}.log`), 'wx');
+  let child;
+  try {
+    child = spawnAsync(command, args, { stdio: ['ignore', fd, fd], windowsHide: true });
+  } finally {
+    closeSync(fd);
+  }
+  return new Promise((resolve) => {
+    let timer;
+    let error;
+    const finish = (status, signal) => {
+      clearTimeout(timer);
+      resolve({ status, signal, error });
+    };
+    child.once('error', (cause) => {
+      error = { code: cause.code, message: cause.message };
+      finish(null, null);
+    });
+    child.once('exit', finish);
+    child.once('spawn', () => {
+      timer = setTimeout(() => {
+        error = { code: 'ETIMEDOUT', message: `timed out after ${limitText(timeout)}` };
+        try {
+          killFileTree(child.pid);
+        } catch (cause) {
+          error.cleanup = cause.message;
+          child.kill('SIGKILL');
+        }
+      }, timeout);
+    });
+  });
+}
+
+// One worker per logical command preserves the synchronous suite entry (including the local slot guard). A slot starts a
+// fresh command as soon as its previous file exits. Regular files prevent a descendant from holding our output pipe open.
+async function runResidentPool(input) {
+  const { command, options, files, concurrency, timeout } = JSON.parse(readFileSync(input, 'utf8'));
+  const dir = path.dirname(input);
+  const results = new Array(files.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(files.length, concurrency) }, async () => {
+    while (next < files.length) {
+      const index = next++;
+      const file = files[index];
+      const args = options.map((arg) => arg === '--test-reporter-destination={file-report}'
+        ? `--test-reporter-destination=${path.join(dir, `${index}.jsonl`)}` : arg);
+      try {
+        results[index] = { file, ...await runResidentFile(command, [...args, file], { dir, index, timeout }) };
+      } catch (error) {
+        results[index] = { file, status: null, error: { code: error.code, message: error.message } };
+      }
+    }
+  }));
+  writeFileSync(path.join(dir, 'results.json'), JSON.stringify(results));
+  return 0;
+}
+
+function writeResidentReport(destination, reports) {
+  const events = reports.flatMap(({ events }) => events.filter(({ type }) => type !== 'summary' && type !== 'metronome'));
+  if (reports.every(({ summary, corrupt }) => summary && !corrupt)) {
+    events.push({ type: 'summary', success: reports.every(({ summary }) => summary.success) });
+  }
+  const medians = reports.map(({ metronome }) => metronome?.median_ms).filter(Number.isFinite).sort((a, b) => a - b);
+  if (medians.length > 0) {
+    const middle = (medians.length - 1) / 2;
+    events.push({ type: 'metronome', n: medians.length, median_ms: (medians[Math.floor(middle)] + medians[Math.ceil(middle)]) / 2 });
+  }
+  writeFileSync(destination, events.map((event) => `${JSON.stringify(event)}\n`).join(''));
+}
+
+function spawnResidentPool(command, args, options, { files, concurrency, root, commandCwd, log, temp }) {
+  const { cwd, env, timeout } = options;
+  const prefix = '--test-reporter-destination=';
+  const destination = args.find((arg) => arg.startsWith(prefix) && arg !== `${prefix}stdout`)?.slice(prefix.length);
+  const flags = args.slice(1).filter((arg) => arg.startsWith('-'));
+  const dir = mkdtempSync(path.join(temp, 'resident-files-'));
+  const input = path.join(dir, 'input.json');
+  const read = (file) => existsSync(file) ? readFileSync(file, 'utf8') : '';
+  try {
+    writeFileSync(input, JSON.stringify({ command, files, concurrency, timeout, options: ['--test',
+      ...flags.map((arg) => destination && arg === `${prefix}${destination}` ? `${prefix}{file-report}` : arg)] }));
+    log(`resident-node: ${files.length} 个文件，并发 ${Math.min(concurrency, files.length)}，每文件限额 ${limitText(timeout)}`);
+    const pool = spawnSync(process.execPath, [fileURLToPath(import.meta.url), RESIDENT_FILE_POOL, input],
+      { cwd, env, stdio: 'inherit', windowsHide: true });
+    if (pool.status !== 0) throw pool.error ?? new Error(`file pool exited ${pool.status ?? pool.signal}`);
+    const results = JSON.parse(readFileSync(path.join(dir, 'results.json'), 'utf8'));
+    if (results.length !== files.length || results.some((result, index) => result.file !== files[index])) {
+      throw new Error('file pool did not return a result for each allocated file');
+    }
+    const reports = [];
+    for (const [index, result] of results.entries()) {
+      const { file, error } = result;
+      log(`::group::resident-node: (${commandCwd}) ${command} --test ${flags.filter((arg) => !arg.startsWith('--test-reporter')).concat(file).join(' ')}`);
+      const output = read(path.join(dir, `${index}.log`));
+      if (output) log(output.trimEnd());
+      log('::endgroup::');
+      const raw = destination ? read(path.join(dir, `${index}.jsonl`)) : '';
+      if (destination) reports.push(readReport(raw));
+      if (error?.code === 'ETIMEDOUT') {
+        log(`::error::resident-node: ${file} 超过 ${limitText(timeout)}被终止`);
+        if (error.cleanup) log(`::error::resident-node: ${file} 进程树清理失败：${error.cleanup}`);
+        logUnfinishedTests('resident-node', raw, root, log);
+      } else if (error) {
+        log(`::error::resident-node: ${file} did not start (limit ${limitText(timeout)}): ${error.message}`);
+      } else if (result.status !== 0 && result.status !== 1) {
+        log(`::error::resident-node: ${file} exited ${result.status ?? result.signal}`);
+      }
+    }
+    if (destination) writeResidentReport(destination, reports);
+    // A timeout, start error, signal or crash can never be represented as a normal assertion failure eligible for retry.
+    const interrupted = results.find(({ error, status }) => error || ![0, 1].includes(status));
+    if (interrupted) return { ...interrupted, filePoolReported: true };
+    return { status: results.some(({ status }) => status === 1) ? 1 : 0 };
+  } catch (error) {
+    return { status: null, error };
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* diagnostics left behind */ }
+  }
+}
 
 // Node's CLI sorts even explicit operands as glob results. The same Node test runner accepts an ordered file list
 // through run({ files }); use that path for trusted {tests:} commands with the switches these commands use.
-function spawnSuiteCommand(command, args, { orderedTests, ...options }) {
+function spawnSuiteCommand(command, args, { orderedTests, filePool, ...options }) {
+  if (filePool) return spawnResidentPool(command, args, options, filePool);
   if (orderedTests && command === 'node' && args[0] === '--test' && operandsAfter(args, 0).length > 1
       && args.slice(1).every((arg) => !arg.startsWith('-') || /^--test-(?:concurrency|skip-pattern|reporter|reporter-destination)=/.test(arg))) {
     return spawnSync(command, [fileURLToPath(import.meta.url), ORDERED_NODE_TESTS, ...args.slice(1)], options);
@@ -1531,7 +1706,7 @@ function rerunRefusal({ status, signal, report, failures, elapsed, maxElapsed, r
 
 // Runs the failed command once more, whole; true when that run passes as the command does and passes every test that
 // failed. Logs why not otherwise.
-function passesAgain(id, { command, argv, failures, report, status, signal, elapsed, root, cwd, env, spawn, platform, list, log,
+function passesAgain(id, { command, argv, failures, report, status, signal, elapsed, root, cwd, env, spawn, platform, list, log, filePool,
   readReportFile, maxElapsed, minTimeout }) {
   const refusal = rerunRefusal({ status, signal, report, failures, elapsed, maxElapsed, root, base: env.CI_BASE_SHA, env });
   if (refusal) {
@@ -1548,11 +1723,11 @@ function passesAgain(id, { command, argv, failures, report, status, signal, elap
     const temp = path.join(dir, 'tmp');
     mkdirSync(temp);
     const kept = Object.entries(testEnv(env)).filter(([name]) => !/^(TEMP|TMP|TMPDIR)$/i.test(name));
-    log(`::group::${id}: run again in full (timeout ${Math.ceil(timeout / 1000)} s): (${command.cwd}) ${argv.join(' ')}`);
+    log(`${filePool ? '' : '::group::'}${id}: run again in full (timeout ${Math.ceil(timeout / 1000)} s): (${command.cwd}) ${argv.join(' ')}`);
     const run = resolveCommand(withReporter(argv, path.join(dir, 'failures.jsonl')), { platform });
     result = spawn(run[0], run.slice(1), { cwd, env: { ...Object.fromEntries(kept), TEMP: temp, TMP: temp, TMPDIR: temp, ...clock.env },
-      stdio: 'inherit', timeout, orderedTests: ordersTestFiles(command) });
-    log('::endgroup::');
+      stdio: 'inherit', timeout, orderedTests: ordersTestFiles(command), filePool });
+    if (!filePool) log('::endgroup::');
     again = readReport(readReportFile(path.join(dir, 'failures.jsonl')), root);
   } finally {
     logFileSeconds(id, again, command, argv, log);
@@ -1708,6 +1883,8 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
     const switches = given[0] === 'node' && given[1] === '--test'
       ? [...skipSwitches, ...(given.some((arg) => arg.startsWith('--test-concurrency')) ? [] : laneSwitches)] : [];
     const plain = switches.length > 0 ? [given[0], given[1], ...switches, ...given.slice(2)] : given;
+    const pool = !files && residentFilePool(id, plain);
+    const filePool = pool ? { ...pool, root, commandCwd: command.cwd, log, temp: env.RUNNER_TEMP || os.tmpdir() } : null;
     let argv = plain;
     let reportDir = null;
     // A known-failure command reports to the trusted reporter for its verdict; any other node --test command of the trusted
@@ -1727,12 +1904,13 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
       } catch { /* a temporary directory left behind */ }
     };
     const shown = command.known ? argv : plain;
-    log(`::group::${id}: (${command.cwd}) ${shown.join(' ')}`);
+    const grouped = !filePool || spawn !== spawnSuiteCommand;
+    if (grouped) log(`::group::${id}: (${command.cwd}) ${shown.join(' ')}`);
     const run = resolveCommand(argv, { platform });
     const clock = clockRun(id, root, env);
     const started = performance.now();
     const result = spawn(run[0], run.slice(1), { cwd, env: { ...testEnv(env), ...clock.env }, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit',
-      orderedTests: ordersTestFiles(command),
+      orderedTests: ordersTestFiles(command), filePool,
       timeout: commandTimeoutMs, killSignal: 'SIGKILL' });
     const elapsed = performance.now() - started;
     if (command.quiet && result.stdout) {
@@ -1740,7 +1918,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
       const text = result.stdout.toString();
       log(result.status === 0 ? `${text.split('\n').slice(0, 4).join('\n')}\n...` : text);
     }
-    log('::endgroup::');
+    if (grouped) log('::endgroup::');
     // Timing is diagnostic, including a partial report from a command that timed out.
     let ran = null;
     if (reportDir) {
@@ -1753,17 +1931,19 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
       log(`${id}: whole-seconds ${JSON.stringify({ [wholeShardKey(step)]: Math.round(elapsed / 100) / 10 })}`);
     }
     // At the limit (COMMAND_TIMEOUT_MS) the command fails, a known-failure command too (no verdict), with what never ended.
+    if (result.error && result.filePoolReported) {
+      clock.refused(log);
+      dropReport();
+      return 1;
+    }
     if (result.error?.code === 'ETIMEDOUT') {
       log(`::error::${id}: ${shown.join(' ')} 超过 ${limitText(commandTimeoutMs)}被终止`);
       if (reportDir) {
-        let open = [];
         try {
-          open = unfinishedTests(readReportFile(path.join(reportDir, 'failures.jsonl')), root);
+          logUnfinishedTests(id, readReportFile(path.join(reportDir, 'failures.jsonl')), root, log);
         } catch (error) {
           log(`${id}: the test report cannot be read (${error?.message ?? error})`);
         }
-        for (const entry of open.slice(0, UNFINISHED_SHOWN)) log(`::error title=${id} 开始了没结束::${entry.file ?? '<run>'} :: ${entry.name}`);
-        if (open.length > UNFINISHED_SHOWN) log(`${id}: 另有 ${open.length - UNFINISHED_SHOWN} 条开始了没结束`);
         try {
           rmSync(reportDir, { recursive: true, force: true });
         } catch { /* a temporary directory left behind */ }
@@ -1791,7 +1971,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
       if (files) return false;
       try {
         return passesAgain(id, { command, argv: plain, failures, report: ran, status, signal: result.signal, elapsed, root, cwd, env,
-          spawn, platform, list, log, readReportFile, maxElapsed: rerunMaxElapsedMs, minTimeout: rerunMinTimeoutMs });
+          spawn, platform, list, log, filePool, readReportFile, maxElapsed: rerunMaxElapsedMs, minTimeout: rerunMinTimeoutMs });
       } catch (error) {
         log(`${id}: not run again in full: ${error?.message ?? error}`);
         return false;
@@ -2315,5 +2495,9 @@ export function runEntry(run) {
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   const args = process.argv.slice(2);
-  runEntry(() => args[0] === ORDERED_NODE_TESTS ? runOrderedNodeTests(args.slice(1)) : main(args));
+  runEntry(() => {
+    if (args[0] === ORDERED_NODE_TESTS) return runOrderedNodeTests(args.slice(1));
+    if (args[0] === RESIDENT_FILE_POOL) return runResidentPool(args[1]);
+    return main(args);
+  });
 }

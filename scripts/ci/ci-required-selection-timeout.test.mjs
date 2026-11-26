@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -46,16 +47,16 @@ const suiteEnv = (root) => {
 // run leaves behind cannot keep the guard waiting on a pipe.
 const GUARD = `const [url, json] = process.argv.slice(1);
 const { executeSuite } = await import(url);
-const { suite, root, commandTimeoutMs } = JSON.parse(json);
-process.exitCode = executeSuite(suite, { root, commandTimeoutMs });`;
-function guarded(root, suite, limit) {
+const { suite, root, commandTimeoutMs, shard } = JSON.parse(json);
+process.exitCode = executeSuite(suite, { root, commandTimeoutMs, shard });`;
+function guarded(root, suite, limit, shard = null, base) {
   const out = path.join(root, 'tmp', 'suite.log');
   const fd = openSync(out, 'w');
   let result;
   try {
     result = spawnSync(process.execPath, ['--input-type=module', '-e', GUARD, SELECTION,
-      JSON.stringify({ suite, root, commandTimeoutMs: limit })],
-    { cwd: root, env: suiteEnv(root), stdio: ['ignore', fd, fd], windowsHide: true });
+      JSON.stringify({ suite, root, commandTimeoutMs: limit, shard })],
+    { cwd: root, env: { ...suiteEnv(root), ...(base ? { CI_BASE_SHA: base } : {}) }, stdio: ['ignore', fd, fd], windowsHide: true });
   } finally {
     closeSync(fd);
   }
@@ -97,6 +98,88 @@ test('3: a command other than node --test that never exits fails at its limit, w
   const { status, text } = guarded(root, 'offline-drill', COMMAND_MS);
   assert.equal(status, 1, text);
   assert.match(text, /::error::offline-drill: node drill\/offline-drill\.mjs 超过 .*被终止/);
+});
+
+const ONE_LANE = { index: 1, total: 1, lane: true, concurrency: 1 };
+const residentFixture = (t, testFiles, support = {}) => fixture(t, Object.fromEntries(
+  Object.entries({ ...testFiles, ...support }).map(([file, content]) => [`${RESIDENT}/${file}`, content])));
+const quick = (name) => `import test from 'node:test';\ntest('${name}', () => {});\n`;
+
+test('resident-node: a single slot finishes healthy files whose total time exceeds one command limit', (t) => {
+  const files = ['test/a.test.mjs', 'test/b.test.mjs', 'rollout/test/c.test.mjs', 'rollout/test/d.test.mjs'];
+  const root = residentFixture(t, Object.fromEntries(files.map((file) => [file,
+    `import { wait } from '${file.startsWith('rollout') ? '../' : ''}../hold.mjs';\nawait wait();\n${quick(file)}`])), {
+    // This is work done by the fixture, not a wait or a timeout in the test's orchestration.
+    'hold.mjs': 'export const wait = () => new Promise((resolve) => setTimeout(resolve, 900));\n',
+  });
+  const { status, text } = guarded(root, 'resident-node', 2500, ONE_LANE);
+  assert.equal(status, 0, text);
+  for (const file of files) assert.match(text, new RegExp(`✔ ${file.replaceAll('.', '\\.')}`));
+});
+
+test('resident-node: a stuck file times out by name, drains its descendants and never qualifies for a retry', async (t) => {
+  const root = residentFixture(t, {
+    'rollout/test/a-done.test.mjs': quick('file already completed'),
+    'test/z-stuck.test.mjs': `import { spawn } from 'node:child_process';
+import test from 'node:test';
+test('never settles', async () => {
+  spawn(process.execPath, ['descendant.mjs'], { stdio: 'ignore' });
+  await new Promise(() => {});
+});`,
+  }, {
+    'descendant.mjs': `import net from 'node:net';
+import { writeFileSync } from 'node:fs';
+const server = net.createServer();
+server.listen(0, '127.0.0.1', () => writeFileSync('descendant.port', String(server.address().port)));
+setTimeout(() => process.exit(3), ${HANG_MS});`,
+  });
+  const { status, text } = guarded(root, 'resident-node', COMMAND_MS, ONE_LANE);
+  assert.equal(status, 1, text);
+  assert.match(text, /::error::resident-node: .*z-stuck\.test\.mjs 超过 1\.5 秒被终止/);
+  assert.match(text, /✔ file already completed/);
+  assert.doesNotMatch(text, /(?:超过 .*被终止|开始了没结束).*a-done|a-done[^\n]*超过|again in full/);
+  const port = Number(readFileSync(path.join(root, RESIDENT, 'descendant.port'), 'utf8'));
+  await assert.rejects(new Promise((resolve, reject) => {
+    const socket = net.connect({ port, host: '127.0.0.1' });
+    socket.once('error', reject);
+    socket.once('connect', () => { socket.destroy(); resolve(); });
+  }), { code: 'ECONNREFUSED' });
+});
+
+test('resident-node: a normal assertion failure still fails the suite', (t) => {
+  const root = residentFixture(t, {
+    'test/a.test.mjs': quick('healthy file'),
+    'rollout/test/b.test.mjs': "import test from 'node:test';\ntest('ordinary failure', () => { throw Error('fixture red'); });",
+  });
+  const { status, text } = guarded(root, 'resident-node', TEST_MS, ONE_LANE);
+  assert.equal(status, 1, text);
+  assert.match(text, /fixture red/);
+  assert.doesNotMatch(text, /超过 .*被终止/);
+});
+
+test('resident-node: an eligible retry runs the entire allocated list', (t) => {
+  const root = residentFixture(t, {
+    'test/a.test.mjs': `import test from 'node:test';
+import { existsSync, writeFileSync } from 'node:fs';
+test('flaky fixture', () => {
+  if (existsSync('ran-once')) return;
+  writeFileSync('ran-once', '');
+  throw Error('fixture fails once');
+});`,
+    'rollout/test/b.test.mjs': quick('healthy fixture runs again'),
+  });
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: root, env: suiteEnv(root), encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    return result.stdout.trim();
+  };
+  git('init', '-q');
+  git('add', RESIDENT);
+  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture baseline');
+  const { status, text } = guarded(root, 'resident-node', TEST_MS, ONE_LANE, git('rev-parse', 'HEAD'));
+  assert.equal(status, 0, text);
+  assert.match(text, /flaky::.*flaky fixture/);
+  assert.equal(text.split('✔ healthy fixture runs again').length - 1, 2, text);
 });
 
 // The argv each command is started with, nothing started.

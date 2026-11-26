@@ -58,6 +58,51 @@ const LINUX_SELECT = () => workflowCall('.github/workflows/clued-required-tests.
 const WINDOWS_RUN = () => workflowCall('.github/workflows/clued-required-tests-windows.yml',
   /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs (--run-selected ci-suites[^\n]*)\n/);
 
+test('resident-node gives each allocated file its own command through both workflow entry points', (t) => {
+  const trusted = checkout(t, "SUITES['ci-suites'] = { 'resident-node': SUITES['ci-suites']['resident-node'] };");
+  const cwd = selection.SUITE_COMMANDS['resident-node'][0].cwd;
+  const files = ['test/a.test.mjs', 'test/b.test.mjs', 'rollout/test/c.test.mjs', 'rollout/test/d.test.mjs'];
+  const candidate = checkout(t, '', Object.fromEntries(files.map((file) => [`${cwd}/${file}`, passing(file)])),
+    path.join(trusted.root, 'candidate'));
+  const checkPass = (run) => {
+    const output = outputOf(run);
+    assert.equal(run.status, 0, output);
+    const commands = groupLines(run.stdout).map((line) => line.match(/\S+\.test\.mjs(?= |$)/g));
+    assert.deepEqual(commands.toSorted(), files.map((file) => [file]).toSorted(), 'one test file per bounded command');
+    for (const file of files) assert.equal(output.split(`${file} executed`).length - 1, 1, output);
+  };
+  const env = { CI_SELECTED_LANES: '1', RUNNER_TEMP: candidate.root };
+  // Main push uses the same selector on both sides. Make the fixture's two entries byte-identical as well.
+  copyFileSync(trusted.selector, candidate.selector);
+  checkPass(cli(trusted.selector, WINDOWS_RUN(), env, trusted.root));
+  checkPass(cli(trusted.selector, ['--run', 'resident-node', '--root', 'candidate'], env, trusted.root));
+});
+
+test('resident-node keeps lane and explicit shard coverage through the trusted and candidate passes', (t) => {
+  const restrict = `SUITES['ci-suites'] = { 'resident-node': SUITES['ci-suites']['resident-node'] };
+os.availableParallelism = () => 8;`;
+  const trusted = checkout(t, restrict);
+  const cwd = selection.SUITE_COMMANDS['resident-node'][0].cwd;
+  const files = ['test/a.test.mjs', 'test/b-new.test.mjs', 'rollout/test/c.test.mjs', 'rollout/test/d.test.mjs'];
+  const candidate = checkout(t, `${restrict}\n// Run the separate candidate pass.`,
+    Object.fromEntries(files.map((file) => [`${cwd}/${file}`, passing(file)])), path.join(trusted.root, 'candidate'));
+  const verify = (run) => {
+    assert.equal(run.status, 0, outputOf(run));
+    const [baseline, changed] = run.stdout.split('可信入口已通过，开始用候选入口再跑一遍');
+    assert.ok(changed, run.stdout);
+    const completed = (text) => [...text.matchAll(/^(\S+\.test\.mjs) executed\r?$/gm)].map(([, file]) => file).sort();
+    assert.deepEqual(completed(changed), completed(baseline));
+    return completed(baseline);
+  };
+  const args = WINDOWS_RUN();
+  const env = { CI_SELECTED_LANES: '2', RUNNER_TEMP: candidate.root };
+  const lanes = cli(trusted.selector, args, env, trusted.root);
+  assert.match(lanes.stdout, /resident-node: 道 2\/2 开始/);
+  assert.deepEqual(verify(lanes), files.toSorted());
+  const shards = ['1/2', '2/2'].flatMap((part) => verify(cli(trusted.selector, [...args, '--shard', part], env, trusted.root)));
+  assert.deepEqual(shards.sort(), files.toSorted());
+});
+
 test('a suite the pull request adds runs whole in ci-suites-windows; the Linux select step does not read it yet (PR L)', (t) => {
   const trusted = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs');
   // A job's workspace: the candidate at candidate/, the selector called with the workflow's own arguments from there.
