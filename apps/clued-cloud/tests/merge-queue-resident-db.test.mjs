@@ -66,7 +66,8 @@ const ok = (result) => {
   return result;
 };
 const heartbeatAge = (age) => admin.query(`update clued_private.ci_node_liveness_v1
-  set last_heartbeat_at=clock_timestamp()-$2::interval where node_id=$1 returning last_heartbeat_at`, [nodeId, age]);
+  set last_heartbeat_at=clock_timestamp()-$2::interval,heartbeat_previous_at=null
+  where node_id=$1 returning last_heartbeat_at`, [nodeId, age]);
 
 before(async () => {
   directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-merge-queue-resident-'));
@@ -150,6 +151,8 @@ test('心跳连接上报队列视图后，Owner 的页面 RPC 读到同一份', 
   const { nodes } = ok(await read());
   assert.equal(nodes[0].name, view.node.name);
   assert.equal(nodes[0].holder, true);
+  assert.equal(nodes[0].last_heartbeat_at, null);
+  assert.equal(nodes[0].silent, false);
   assert.ok(nodes[0].view_reported_at);
   assert.deepEqual(nodes[0].view, view);
 });
@@ -188,12 +191,14 @@ test('坏视图被拒，心跳仍推进且旧视图完整保留', async () => {
   ok(await beat());
   const { rows: [oldHeartbeat] } = await heartbeatAge('1 minute');
   const oldView = (await read()).nodes[0];
+  const wideText = '𠮷'.repeat(200);
   for (const invalid of [
-    { ...view, alerts: ['字'.repeat(11000)] },
+    { ...view, pending: Array(30).fill({ ...view.pending[0], holdText: wideText }), alerts: Array(10).fill(wideText) },
     { ...view, contract: 'clued.merge-queue-node-view/2' },
     { ...view, node_id: uuid() },
     { ...view, node: { ...view.node, secret: 'unexpected' } },
     { ...view, pending: Array(31).fill(view.pending[0]) },
+    { ...view, unqueued: [null] },
     { ...view, alerts: ['字'.repeat(201)] },
     { ...view, alerts: { text: '非数组' } },
   ]) {
@@ -202,6 +207,8 @@ test('坏视图被拒，心跳仍推进且旧视图完整保留', async () => {
   }
   const forbidden = await command({ action: 'ci_nodes_status' });
   assert.equal(forbidden.error_code, 'heartbeat_connection_only');
+  const extraField = await command({ action: 'ci_queue_report', view, node_id: uuid() });
+  assert.equal(extraField.error_code, 'ci_queue_report_invalid');
   ok(await beat());
   const [node] = (await read()).nodes;
   assert.ok(new Date(node.last_heartbeat_at) > oldHeartbeat.last_heartbeat_at);
@@ -228,10 +235,10 @@ test('只有 Owner 本人会话能读本账号节点，底表保持私有', asyn
   await assert.rejects(() => read(user, { client_id: 'oauth-client' }), /direct_human_session_required/);
   assert.deepEqual(ok(await read(other)).nodes, []);
   const { rows } = await admin.query(`select r.role,
-    has_function_privilege(r.role,'public.clued_merge_queue_resident_v1(jsonb)','execute') execute,
+    has_function_privilege(r.role,'public.clued_merge_queue_resident_v1(jsonb)','execute') allowed,
     has_table_privilege(r.role,'clued_private.ci_node_queue_view_v1','select,insert,update,delete') table_access
     from unnest(array['anon','authenticated','service_role','clued_worker_gateway']) r(role)`);
-  assert.deepEqual(rows.map((row) => [row.role, row.execute, row.table_access]), [
+  assert.deepEqual(rows.map((row) => [row.role, row.allowed, row.table_access]), [
     ['anon', false, false], ['authenticated', true, false], ['service_role', false, false], ['clued_worker_gateway', false, false],
   ]);
 });
