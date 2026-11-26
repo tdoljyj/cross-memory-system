@@ -334,9 +334,10 @@ test('§41.6a: while the heartbeat shows the failover watchdog stale, the PR pag
   const root = await tempRoot(t);
   let now = Date.parse('2026-10-22T09:00:00Z'), tick = now - WATCHDOG_STALE_MS - 1;
   const notes = [], calls = [];
+  const nextTurn = () => new Promise(resolve => setImmediate(resolve));
   const hb = new CompanionHeartbeat({ nodeName: 'node-b', clock: () => now, readToken: async () => 'clued_hb_x', readStatus: async () => null, serviceRunning: async () => true,
     transport: async () => ({ ok: true, tokenRefused: false, autoHandover: null, watchdogTickAt: tick }), notify: async (k, title) => { notes.push(title); },
-    memory: { get: async () => 0, set: async () => {} }, handover: {} });
+    memory: { get: async () => { await nextTurn(); return 0; }, set: async () => {} }, handover: {} });
   const run = async argv => { calls.push(argv); return argv.some(a => a.includes('/rules/branches/main')) ? rulesReply(REQUIRED) : { code: 0, stdout: '{}' }; };
   const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 's.json'), () => now), notifications: false });
@@ -348,6 +349,8 @@ test('§41.6a: while the heartbeat shows the failover watchdog stale, the PR pag
   await reporter.pass({ pulls, status });
   assert.ok(!described()[0].includes(WATCHDOG_STALE_TEXT));
   await hb.step();
+  // 心跳返回时，后台通知可能仍在读取存储。
+  for (let turns = 0; turns < 5 && notes.length === 0; turns++) await nextTurn();
   assert.deepEqual([hb.watchdogStale, notes], [true, ['自动接班看门狗未运行']]);
   await reporter.pass({ pulls, status });
   assert.ok(described()[1].endsWith(`；${WATCHDOG_STALE_TEXT}`), described()[1]);
