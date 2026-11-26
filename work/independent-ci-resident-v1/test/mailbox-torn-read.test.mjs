@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { Mailbox } from '../src/mailbox.mjs';
+import { Mailbox, QUIESCENCE_REQUEST_MS } from '../src/mailbox.mjs';
 import { COMPANION_CONFIG_CONTRACT, Companion, validateCompanionConfig } from '../src/companion.mjs';
 import { TEST_NODE, TEST_NODE_SHA, tempRoot } from './helpers.mjs';
 
@@ -96,7 +96,7 @@ test('companion: a request polled between its create and its last byte is left o
   const clock = () => now;
   const box = await Mailbox.open(await tempRoot(t), clock);
   let sent;
-  const bytes = await twinBytes(t, clock, async twin => { sent = await twin.send('linux-quiescence', { batchId: BATCH }, 60_000); return path.join(twin.requests, `${sent.requestId}.json`); });
+  const bytes = await twinBytes(t, clock, async twin => { sent = await twin.send('linux-quiescence', { batchId: BATCH }, QUIESCENCE_REQUEST_MS); return path.join(twin.requests, `${sent.requestId}.json`); });
   const cfg = validateCompanionConfig({
     contract: COMPANION_CONFIG_CONTRACT,
     node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA,
@@ -123,6 +123,7 @@ test('companion: a request polled between its create and its last byte is left o
   await w.finish();
   assert.deepEqual(await box.pending(), [sent]);
   await c.step();
+  assert.equal(runs.length, 1);
   assert.deepEqual((await box.poll(sent)).proof, { linuxUnitsInactive: true, containersZero: true });
 });
 

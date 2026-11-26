@@ -482,9 +482,14 @@ export class WindowsEngine {
     return this.queueWatchKnown;
   }
 
-  async scReadback() {
-    const qc = parseScQc((await this.run([this.paths.scExe, 'qc', this.node.runnerService], { timeoutMs: 15_000 })).stdout);
-    const q = parseScQueryex((await this.run([this.paths.scExe, 'queryex', this.node.runnerService], { timeoutMs: 15_000 })).stdout);
+  async scReadback(remaining = () => Infinity) {
+    const read = async verb => {
+      const timeoutMs = Math.min(15_000, Math.floor(remaining()));
+      if (timeoutMs <= 0) return '';
+      return (await this.run([this.paths.scExe, verb, this.node.runnerService], { timeoutMs })).stdout;
+    };
+    const qc = parseScQc(await read('qc'));
+    const q = parseScQueryex(await read('queryex'));
     return originalStopped(qc, q, this.node);
   }
 
@@ -819,8 +824,8 @@ export class WindowsEngine {
 
   // Windows quiescence: SCM shows the original binary, Manual, STOPPED, pid 0 under clued-control,
   // and this service has no child process still running (the runner never kills; busy = unknown).
-  async windowsQuiescence() {
-    const scOk = await this.scReadback();
+  async windowsQuiescence(_batch, remaining) {
+    const scOk = await this.scReadback(remaining);
     const idle = this.busy() === false;
     return { windowsTreeZero: idle, serviceOriginalStopped: scOk };
   }

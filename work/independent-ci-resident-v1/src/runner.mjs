@@ -43,7 +43,11 @@ export function parseJobHostReport(stderrTail, nonce) {
   if (!m || m[1] !== nonce) return null;
   let v;
   try { v = JSON.parse(m[2]); } catch { return null; }
-  if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).sort().join('|') !== [...REPORT_KEYS].sort().join('|')) return null;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const measured = Object.hasOwn(v, 'hostElapsedMs');
+  if (measured && (!Number.isSafeInteger(v.hostElapsedMs) || v.hostElapsedMs < 0)) return null;
+  const keys = measured ? [...REPORT_KEYS, 'hostElapsedMs'] : [...REPORT_KEYS];
+  if (Object.keys(v).sort().join('|') !== keys.sort().join('|')) return null;
   if (v.contract !== JOB_HOST_REPORT_CONTRACT || typeof v.started !== 'boolean' || typeof v.timedOut !== 'boolean' || typeof v.treeZero !== 'boolean') return null;
   if (!(v.failure === null || (typeof v.failure === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(v.failure)))) return null;
   if (!['childPid', 'exitCode', 'leftover', 'activeProcesses', 'totalProcesses'].every(k => count(v[k]))) return null;
@@ -65,12 +69,12 @@ export class Runner {
 
   get busy() { return this.outstanding.size > 0; }
 
-  run(argv, { timeoutMs }) {
+  run(argv, { timeoutMs, measureHost = false }) {
     if (!Array.isArray(argv) || argv.length === 0 || !argv.every(a => typeof a === 'string' && !a.includes('\0'))) {
       return Promise.resolve({ code: null, stdout: '', stderr: '', refused: 'RUNNER_ARGV_REFUSED' });
     }
     if (this.busy) return Promise.resolve({ code: null, stdout: '', stderr: '', refused: 'RUNNER_BUSY_WITH_UNFINISHED_CHILD' });
-    if (this.jobHost !== null) return this.hosted(argv, timeoutMs);
+    if (this.jobHost !== null) return this.hosted(argv, timeoutMs, measureHost);
     return new Promise(resolve => {
       const child = this.spawnImpl(argv[0], argv.slice(1), { shell: false, windowsHide: true, env: this.env, stdio: ['ignore', 'pipe', 'pipe'] });
       this.outstanding.add(child);
@@ -92,13 +96,14 @@ export class Runner {
   // One child under the job host. The answer adds `tree` when the child did not simply end on its own: 'zero' = the host
   // terminated its job and saw no process of it left; 'unconfirmed' = it could not show that (the job still closed with
   // the host). The runner is busy exactly while the host runs.
-  hosted(argv, timeoutMs) {
+  hosted(argv, timeoutMs, measureHost) {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < JOB_HOST_MIN_TIMEOUT_MS || timeoutMs > JOB_HOST_MAX_TIMEOUT_MS) {
       return Promise.resolve({ code: null, stdout: '', stderr: '', refused: 'RUNNER_TIMEOUT_REFUSED' });
     }
     const nonce = this.nonce();
     return new Promise(resolve => {
-      const child = this.spawnImpl(this.jobHost, [nonce, String(timeoutMs), ...argv], { shell: false, windowsHide: true, env: this.env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const env = measureHost ? { ...this.env, CLUED_QUIESCENCE_TIMING: '1' } : this.env;
+      const child = this.spawnImpl(this.jobHost, [nonce, String(timeoutMs), ...argv], { shell: false, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
       this.outstanding.add(child);
       let stdout = '';
       let stderr = '';
@@ -110,7 +115,13 @@ export class Runner {
       };
       child.stdout?.setEncoding('utf8').on('data', c => take('out', c));
       child.stderr?.setEncoding('utf8').on('data', c => take('err', c));
-      const settle = v => { if (!settled) { settled = true; resolve(v); } };
+      let hostElapsedMs;
+      const settle = v => {
+        if (!settled) {
+          settled = true;
+          resolve(hostElapsedMs === undefined ? v : { ...v, hostElapsedMs });
+        }
+      };
       // The host outstayed its own limit and drain: end the host (only it; its job goes with it) and stay busy until it is gone.
       const guard = setTimeout(() => {
         settle({ code: null, stdout, stderr, timedOut: true, tree: 'unconfirmed' });
@@ -126,6 +137,7 @@ export class Runner {
         this.outstanding.delete(child);
         clearTimeout(guard);
         const report = parseJobHostReport(tail, nonce);
+        if (measureHost) hostElapsedMs = report?.hostElapsedMs;
         const err = withoutReport(stderr, nonce);
         // No report: whether a child ran is unknown (its job closed with the host). A report without a started child: none
         // ran, unless the host created one it then could not show ended (never resumed, but not seen gone either).

@@ -193,7 +193,7 @@ test('the heartbeat timer: a beat at once and every 10 s apart from the lanes; a
   // the companion's own step() beat is wrapped as well: a mailbox that cannot beat still answers
   const box2 = await Mailbox.open(await tempRoot(t), () => T0);
   box2.beat = async () => { throw new Error('disk full'); };
-  const q = await box2.send('linux-quiescence', { batchId: BATCH }, 60_000);
+  const q = await box2.send('linux-quiescence', { batchId: BATCH }, 210_000);
   const c = new Companion({ cfg, mailbox: box2, run: async () => ({ code: 0, stdout: JSON.stringify({ linuxUnitsInactive: true, containersZero: true, pendingJobsQuiet: true }) }), fileExists: async () => false, sleep: async () => {}, clock: () => T0 });
   await c.step();
   assert.equal((await box2.poll(q)).ok, true);

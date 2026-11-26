@@ -144,7 +144,7 @@ import { stageHeadScans } from './head-scans.mjs';
 import { HEAD_MOVED, PR_CLOSED, PR_DRAFT, PR_DRAFT_HELD, prCandidate } from './pr-candidate.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
-import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, PULL_STATES, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
+import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, PULL_STATES, QUIESCENCE_TOTAL_MS, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
@@ -1083,11 +1083,21 @@ export class ResidentExecutor {
     if (open.length > 0) await this.haltWith(haltCode, { keys: open.map(e => e.key) });
     for (const entry of open) {
       let closed = false;
-      const failureCode = codeFor(entry);
+      let failureCode = codeFor(entry);
       if (entry.state !== 'UNREADABLE') {
         try {
+          const pending = await this.ledger.stage1Proof(entry.key);
+          let facts = {};
+          if (pending) {
+            const { binding, batchId } = pending;
+            check(entry.state === 'RESERVED' && binding.headSha === entry.reserved?.subject?.headSha, 'STAGE1_PROOF_BINDING_REFUSED');
+            failureCode = binding.failureCode;
+            const row = failureRow({ code: failureCode, stage: 1, reason: binding.reason });
+            facts = { batchId, stage: 1, basis: 'cleanup-proof-incomplete', reason: binding.reason,
+              class: row?.class, retry: row?.retry, breaker: row?.breaker };
+          }
           await this.ledger.burnHead(entry.key, { failureCode });
-          await this.ledger.terminal(entry.key, 'FAILED_UNKNOWN', { failureCode, state: entry.state });
+          await this.ledger.terminal(entry.key, 'FAILED_UNKNOWN', { failureCode, state: entry.state, ...facts });
           closed = true;
         } catch (error) {
           // Only a content problem (the terminal record exists but cannot be read, or cannot be
@@ -1121,6 +1131,7 @@ export class ResidentExecutor {
     let row = null, closed = null;
     try {
       if (!['RESERVED', 'STARTED'].includes(entry.state) || !subject || entry.parked || entry.abort || entry.selfAbort || (entry.planIntent && !entry.plan)) return;
+      if (await this.ledger.stage1Proof(key)) return;
       if (entry.plan && (!Array.isArray(entry.plan.relayed) || entry.plan.relayed.length > 0)) return;
       if (await this.executedHeads.published(subject) && !(entry.plan && await this.executedHeads.onlyRelayRecordOf(subject, key, RELAY_STAGE))) return;
       if (await this.ledger.halted() || await this.driftCode()) return;
@@ -4473,16 +4484,72 @@ export class ResidentExecutor {
   // The cleanup proof is always gathered fresh at failure time from both hosts (Windows from the
   // engine: SCM readback, the stage's own process-tree fact, no child still running; Linux from the
   // root tool's own output). It is never defaulted.
-  async proofFor(batch, stageProof) {
-    const windows = await this.engine.windowsQuiescence(batch);
-    const linux = await this.companion.linuxQuiescence(batch);
+  async windowsProof(batch, stageProof, remaining) {
+    const windows = await this.engine.windowsQuiescence(batch, remaining);
     return {
       // A stage proof field that is present must be true; an absent one (no stage ran) adds nothing.
       windowsTreeZero: windows.windowsTreeZero === true && (!('windowsTreeZero' in stageProof) || stageProof.windowsTreeZero === true),
       serviceOriginalStopped: windows.serviceOriginalStopped === true && (!('serviceOriginalStopped' in stageProof) || stageProof.serviceOriginalStopped === true),
-      linuxUnitsInactive: linux.linuxUnitsInactive === true,
-      containersZero: linux.containersZero === true,
     };
+  }
+
+  async proofFor(batch, stageProof) {
+    const windows = await this.windowsProof(batch, stageProof);
+    const linux = await this.companion.linuxQuiescence(batch);
+    return { ...windows, linuxUnitsInactive: linux.linuxUnitsInactive === true, containersZero: linux.containersZero === true };
+  }
+
+  async stage1Reserved(batch, binding, marked) {
+    const { key, headSha } = binding;
+    if (marked) {
+      const mark = await this.ledger.stage1Proof(key);
+      if (!mark || mark.batchId !== batch?.batchId || mark.binding.headSha !== headSha ||
+          mark.binding.failureCode !== binding.failureCode || mark.binding.reason !== binding.reason) return false;
+    }
+    const s = await this.ledger.state(key);
+    return batch?.key === key && this.current?.key === key && this.current.headSha === headSha &&
+      s.state === 'RESERVED' && !s.started && !s.abort && !s.selfAbort && !s.planIntent && !s.plan && !s.parked &&
+      s.reserved?.key === key && s.reserved.subject?.headSha === headSha && batchKey(s.reserved.subject) === key &&
+      !(await this.ledger.halted());
+  }
+
+  async failureProof(key, batch, failure, started) {
+    const o = failure.outcome;
+    const isOldHead = (failure.code === 'PROTECTED_CHANGE_NOT_UP_TO_DATE' && o?.reason === 'full_admission_rejected') ||
+      (failure.code === 'STAGE_CHILD_REFUSED' && o?.reason === 'pr_subject_changed');
+    if (started || !isOldHead || failure.stageNumber !== 1 || failure.phase !== 'stage' ||
+        o.status !== 'BLOCKED' || o.sideEffects !== 0 || o.mayHavePublished !== false || !this.companion.quiescenceRead) {
+      return this.proofFor(batch, failure.proof);
+    }
+    const row = failureRow({ code: failure.code, stage: 1, phase: 'stage', reason: o.reason, diagnostic: o.diagnostic });
+    if (row?.disposition !== 'burn' || row.class !== 'deterministic-pr' || row.retry !== 'new-commit' || row.breaker !== 'neutral') {
+      return this.proofFor(batch, failure.proof);
+    }
+    const binding = { key, headSha: this.current?.headSha, failureCode: failure.code, reason: o.reason };
+    const stillReserved = (marked = false) => this.stage1Reserved(batch, binding, marked);
+    const missing = { windowsTreeZero: false, serviceOriginalStopped: false, linuxUnitsInactive: false, containersZero: false };
+    if (!await stillReserved()) return missing;
+    await this.ledger.markStage1Proof(key, binding, batch.batchId);
+    const start = this.clock(), until = start + QUIESCENCE_TOTAL_MS;
+    const monoEnd = performance.now() + QUIESCENCE_TOTAL_MS;
+    const remaining = () => Math.min(until - this.clock(), monoEnd - performance.now());
+    const stageLinux = ['linuxUnitsInactive', 'containersZero'].every(k => !(k in failure.proof) || failure.proof[k] === true);
+    let previousRequestId;
+    for (let round = 1; round <= 2; round++) {
+      if (remaining() <= 0) return missing;
+      const windows = await this.windowsProof(batch, failure.proof, remaining);
+      const now = this.clock();
+      if (now < start || now >= until || !await stillReserved(true)) return missing;
+      const linux = await this.companion.quiescenceRead(batch, { binding, previousRequestId,
+        until: Math.min(until, this.clock() + Math.floor(monoEnd - performance.now())) });
+      if (!await stillReserved(true) || this.clock() < now || this.clock() > until || performance.now() > monoEnd) return missing;
+      const proof = { stage1Binding: binding, ...windows, linuxUnitsInactive: stageLinux && linux.proof.linuxUnitsInactive === true,
+        containersZero: stageLinux && linux.proof.containersZero === true };
+      if (round === 2 || !windows.windowsTreeZero || !windows.serviceOriginalStopped || !stageLinux ||
+          !linux.retryable || !UUID_RE.test(linux.requestId ?? '')) return proof;
+      previousRequestId = linux.requestId;
+    }
+    return missing;
   }
 
   // The failure table's facts a terminal or unexecuted record keeps (codes only, no free text).
@@ -4536,7 +4603,7 @@ export class ResidentExecutor {
         return { state: 'NOT_EXECUTED', key, failureCode: failure.code,
           settle: { kind: 'released', reason: 'BUNDLE_UNAVAILABLE', code: failure.code, klass: 'environment', breaker: 'counts', breakerState, pos, network } };
       }
-      const proof = await this.proofFor(batch, failure.proof);
+      const proof = await this.failureProof(key, batch, failure, started);
       // Defect a8910e41 (DESIGN §62.4): the take-over binding run's own end after stage 1 is released, never burned, once the Windows
       // side is proven quiet (as every stage-1 release): its head may run again when this duty is over (frontBound holds it within the
       // duty). Without that proof it goes the table's way below (burned when clean, else UNKNOWN), as before.
@@ -4605,6 +4672,9 @@ export class ResidentExecutor {
         const windows = await this.engine.archiveFailure(batch, reason);
         const linux = await this.companion.archiveLinux(batch, reason);
         archiveCheck(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED', windows);
+        if (proof.stage1Binding && !await this.stage1Reserved(batch, proof.stage1Binding, true)) {
+          return this.unknown(key, failure.code, 'cleanup-proof-incomplete', batch, { stage: 1, ...facts });
+        }
         await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: failure.code, basis, stage: failure.stageNumber, batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory, ...facts });
         await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: failure.code, class: facts.class });
         const subject = (await this.ledger.state(key)).reserved?.subject;

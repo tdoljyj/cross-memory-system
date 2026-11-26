@@ -13,7 +13,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BATCH_ID, validatePrune } from './mailbox.mjs';
+import { BATCH_ID, quiescenceProbeMs, validatePrune } from './mailbox.mjs';
 import { HEX64, check, exactKeys, fail } from './canonical.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
 import { powershellArgv } from './powershell-argv.mjs';
@@ -532,15 +532,42 @@ export class Companion {
 
   // A read-only probe: asked again (READ_RETRIES times) while it only ran out of time. An answer of any kind, a refusal, a launch
   // failure or an unconfirmed tree ends it at once; the last result is returned.
-  async runRead(a, o, op = 'read') {
+  async runRead(a, o, op = 'read', request = null) {
     let r;
-    for (let i = 0; i <= READ_RETRIES; i += 1) {
+    const retries = request?.previousRequestId ? 0 : READ_RETRIES;
+    let last = request ? Date.parse(request.createdAt) : 0;
+    for (let i = 0; i <= retries; i += 1) {
       const began = this.clock();
+      if (request) {
+        if (began < last) return { quiescenceCode: 'QUIESCENCE_CLOCK_REFUSED' };
+        const timeoutMs = quiescenceProbeMs(Date.parse(request.deadline), began);
+        if (!timeoutMs) return { quiescenceCode: 'QUIESCENCE_BUDGET_INSUFFICIENT' };
+        o = { timeoutMs, measureHost: true };
+      }
       r = await this.run(a, o);
-      if (!timedOutGone(r)) return r;
-      await this.noteRetry(op, i + 1, this.clock() - began, r);
+      const ended = this.clock();
+      if (request) {
+        await this.noteQuiescence(request, 'quiescence-attempt', began, ended, {
+          attempt: i + 1, timeoutMs: o.timeoutMs, elapsedMs: ended - began,
+          hostElapsedMs: r?.hostElapsedMs ?? null, tree: r?.tree ?? null, timedOut: r?.timedOut === true,
+        });
+        last = this.clock();
+        if (ended < began || last < ended) return { quiescenceCode: 'QUIESCENCE_CLOCK_REFUSED' };
+        if (last > Date.parse(request.deadline)) {
+          const drained = r?.timedOut === true && r.tree === 'zero' && !r.refused && r.code == null;
+          return { ...r, quiescenceCode: drained ? 'QUIESCENCE_TIMEOUT_EXPIRED' : 'QUIESCENCE_RESULT_EXPIRED' };
+        }
+        if (r?.timedOut !== true || r.tree !== 'zero' || r.refused || r.code != null) return r;
+      } else if (!timedOutGone(r)) return r;
+      await this.noteRetry(op, i + 1, ended - began, r);
     }
     return r;
+  }
+
+  async noteQuiescence(request, kind, from, to, fields) {
+    try {
+      await this.log?.({ kind, requestId: request.requestId, from, to, loopDelayMs: this.loopDelay?.(from, to) ?? null, ...fields });
+    } catch { /* 计时不参与静止判定 */ }
   }
 
   // The local log only; it never decides anything and a failing log changes nothing.
@@ -552,15 +579,21 @@ export class Companion {
     try { const entry = bundleRefusalLogEntry({ at: this.clock(), op, runner }); if (entry) await this.log?.(entry); } catch { /* the log never decides */ }
   }
 
-  async quiescence(batchId) {
-    const r = await this.runRead(this.a.linuxTool('quiescence', batchId), { timeoutMs: 30_000 }, 'quiescence');
+  async quiescence(batchId, request = null) {
+    const r = await this.runRead(this.a.linuxTool('quiescence', batchId), { timeoutMs: 30_000 }, 'quiescence', request);
     const observed = r?.code === 0 && (r.timedOut === undefined || r.timedOut === false)
       && (r.refused === undefined || r.refused === null) && (r.tree === undefined || r.tree === 'zero')
       && (r.stderr === undefined || r.stderr === '');
     const v = observed ? json(r.stdout) : null;
-    const confirmed = plainObject(v) && Object.keys(v).sort().join('|') === 'containersZero|linuxUnitsInactive|pendingJobsQuiet'
-      && ['linuxUnitsInactive', 'containersZero', 'pendingJobsQuiet'].every(k => typeof v[k] === 'boolean') && v.pendingJobsQuiet;
-    return { linuxUnitsInactive: confirmed && v.linuxUnitsInactive, containersZero: confirmed && v.containersZero };
+    const valid = plainObject(v) && Object.keys(v).sort().join('|') === 'containersZero|linuxUnitsInactive|pendingJobsQuiet'
+      && ['linuxUnitsInactive', 'containersZero', 'pendingJobsQuiet'].every(k => typeof v[k] === 'boolean');
+    const confirmed = valid && v.pendingJobsQuiet;
+    const proof = { linuxUnitsInactive: confirmed && v.linuxUnitsInactive, containersZero: confirmed && v.containersZero };
+    if (!request) return proof;
+    if (r?.quiescenceCode) return { ok: false, code: r.quiescenceCode, proof: valid ? proof : null };
+    if (valid) return { ok: true, proof };
+    const drained = r?.timedOut === true && r.tree === 'zero' && !r.refused && r.code == null;
+    return { ok: false, code: drained ? 'QUIESCENCE_TIMEOUT' : 'QUIESCENCE_PROBE_UNCONFIRMED' };
   }
 
   // The bundle retention (pruneBundles), with the bundles directory of the ports (bundleDir; none: nothing). Never decides anything.
@@ -680,7 +713,14 @@ export class Companion {
         return r.code === 0 && prune.refused === null && prune.stopped === null ? { ok: true, prune, usage } : { ok: false, code: prune.refused ?? prune.stopped?.code ?? 'LINUX_ARCHIVE_PRUNE_UNCONFIRMED', prune, usage };
       }
       // Verbatim root-tool facts; the companion never synthesises a proof value itself.
-      case 'linux-quiescence': return { ok: true, proof: await this.quiescence(request.batchId) };
+      case 'linux-quiescence':
+        if (request.binding && !await this.mailbox.claimProbe(request)) {
+          return { ok: false, code: 'QUIESCENCE_PROBE_UNCONFIRMED' };
+        }
+        if (request.previousRequestId && !await this.mailbox.predecessorAllowsProbe(request)) {
+          return { ok: false, code: 'QUIESCENCE_PREDECESSOR_UNCONFIRMED' };
+        }
+        return this.quiescence(request.batchId, request);
       // DESIGN §32: the facts only (ring order, free blocks of at least that order); the service applies its threshold.
       case 'memory-ready': {
         const r = await this.run(this.a.memoryFacts(), { timeoutMs: RELAY_CHECK_TIMEOUT_MS });
@@ -981,7 +1021,15 @@ export class Companion {
     try { await this.mailbox.beat(); } catch { /* a liveness hint only */ }
     for (const request of await this.mailbox.pending()) {
       if (request.refused) continue; // unreadable requests are left for the service's own audit
-      if (this.clock() >= Date.parse(request.deadline)) { await this.mailbox.respond(request, { ok: false, code: 'COMPANION_REQUEST_EXPIRED' }); continue; }
+      if (request.kind === 'linux-quiescence') {
+        const sent = Date.parse(request.createdAt), start = this.clock();
+        await this.noteQuiescence(request, 'quiescence-start', sent, start, { queueMs: start - sent });
+      }
+      if (this.clock() >= Date.parse(request.deadline)) {
+        const interrupted = request.kind === 'linux-quiescence' && request.binding && await this.mailbox.probeClaimed(request);
+        await this.mailbox.respond(request, { ok: false, code: interrupted ? 'QUIESCENCE_PROBE_UNCONFIRMED' : 'COMPANION_REQUEST_EXPIRED' });
+        continue;
+      }
       // Defect 8f8240ff: a retention request the stopping service gave up (cancel 'service-stopping') is not started; one already running
       // runs to its end or its limit (its wsl.exe is not killed early).
       if (RETENTION_KINDS.has(request.kind) && (await this.mailbox.cancelled(request).catch(() => false))) {
