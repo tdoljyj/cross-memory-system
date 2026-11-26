@@ -113,6 +113,13 @@ test('work claims: Owner-enabled races, copy slots, write-back adoption and copy
     };
     const release = (who, c) => agent(who, 'clued_work_release_v1',
       { scope: 'global', claim_id: c.claim_id, fence: c.fence, outcome: 'completed' });
+    const releaseHeld = async (who, c) => {
+      const result = await release(who, c);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'work_claim_release_pr_open']);
+      await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '1 hour',
+        expires_at=clock_timestamp()+interval '1 hour' where claim_id=$1`, [c.claim_id]);
+      return release(who, c);
+    };
     // A PR verify (20261108161615): the holder authorizes the exact head
     // naming its PR, the CI Binding observes the PR, then verifies the exact
     // head and base. reverify repeats the last verify of a claim's PR head.
@@ -257,7 +264,7 @@ test('work claims: Owner-enabled races, copy slots, write-back adoption and copy
     // The winner is still admitted; after adoption the Task is exclusive again.
     assert.equal((await reverify(c2.claim, 'o/n#12')).verdict, 'ADMITTED');
     assert.equal((await claim(task, 'claude', 'session-f')).error_code, 'work_claim_conflict');
-    committed(await release('codex', c2.claim));
+    committed(await releaseHeld('codex', c2.claim));
     const after = committed(await claim(task, 'claude', 'session-f'));
     assert.equal(after.claim.copy_index, null);
     assert.equal(after.claim_mode, undefined);

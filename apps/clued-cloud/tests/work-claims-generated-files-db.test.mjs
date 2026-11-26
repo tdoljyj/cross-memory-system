@@ -92,10 +92,18 @@ test('mechanical files do not serialize independent source claims or widen sourc
     const claim = (token, task, write_set, extra = {}) => call(token, 'clued_work_claim_v1', {
       scope, task_id: task, write_set, holder_session_ref: uuid(), holder_label: 'Mechanical fixture',
       idempotency_key: uuid(), ...extra });
+    const releaseRequest = (token, r, context = scope) => call(token, 'clued_work_release_v1', {
+      scope: context, claim_id: r.claim.claim_id, fence: r.claim.fence,
+      lease_key: r.lease_key, outcome: 'abandoned' });
     const release = async (token, r, context = scope) => {
-      if (r.status === 'committed') committed(await call(token, 'clued_work_release_v1', {
-        scope: context, claim_id: r.claim.claim_id, fence: r.claim.fence,
-        lease_key: r.lease_key, outcome: 'abandoned' }));
+      if (r.status === 'committed') committed(await releaseRequest(token, r, context));
+    };
+    const releaseHeld = async (token, r) => {
+      const result = await releaseRequest(token, r);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'work_claim_release_pr_open']);
+      await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '1 hour',
+        expires_at=clock_timestamp()+interval '1 hour' where claim_id=$1`, [r.claim.claim_id]);
+      committed(await releaseRequest(token, r));
     };
     const verify = (claimId, changed_paths, context = scope, extra = {}) => call(tokens.verifier, 'clued_work_verify_v1', {
       scope: context, claim_id: claimId, changed_paths, ...extra });
@@ -246,7 +254,7 @@ test('mechanical files do not serialize independent source claims or widen sourc
           [tokens.verifier, JSON.stringify({ scope, claim_id: a.claim.claim_id, changed_paths: artifacts, pr_ref: 'other/repo#1' })])).rows[0].value;
         assert.equal(otherRepository.verdict, 'REJECTED');
         assert.ok(otherRepository.reasons.includes('paths_outside_write_set'), 'a qualified project does not exempt a different target repository');
-      } finally { await release(tokens.A, a); }
+      } finally { await releaseHeld(tokens.A, a); }
       assert.equal((await verify(a.claim.claim_id, artifacts, scope, proven)).verdict, 'REJECTED', 'released claim stays rejected');
       const covered = committed(await claim(tokens.A, await createTask('explicit runtime coverage'), ['config/clued-components.json']));
       try { assert.equal((await verify(covered.claim.claim_id, ['config/clued-components.json'])).verdict, 'ADMITTED', 'unproven edits may instead use normal full write-set coverage'); }

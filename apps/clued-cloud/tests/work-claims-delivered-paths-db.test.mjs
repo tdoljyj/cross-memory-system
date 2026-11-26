@@ -86,8 +86,16 @@ test('repository paths of a claim with a live head authorization do not block an
       action: 'resolve_pr_claim', pr_ref: `${repo}#${pr}`, head_sha: sha, base_sha: base, target_branch: 'main' });
     const verify = (r, pr, sha, changed_paths) => call('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: r.claim.claim_id,
       pr_ref: `${repo}#${pr}`, head_sha: sha, base_sha: base, target_branch: 'main', changed_paths });
-    const release = async (who, r) => committed(await call(who, 'clued_work_release_v1', { scope: 'global', claim_id: r.claim.claim_id,
-      fence: r.claim.fence, lease_key: r.lease_key, outcome: 'abandoned' }));
+    const releaseRequest = (who, r) => call(who, 'clued_work_release_v1', { scope: 'global', claim_id: r.claim.claim_id,
+      fence: r.claim.fence, lease_key: r.lease_key, outcome: 'abandoned' });
+    const release = async (who, r) => committed(await releaseRequest(who, r));
+    const releaseHeld = async (who, r) => {
+      const result = await releaseRequest(who, r);
+      assert.deepEqual([result.status, result.error_code], ['rejected', 'work_claim_release_pr_open']);
+      await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '1 hour',
+        expires_at=clock_timestamp()+interval '1 hour' where claim_id=$1`, [r.claim.claim_id]);
+      return release(who, r);
+    };
     const writeSet = async r => (await admin.query('select write_set from clued_private.work_claims_v1 where claim_id=$1', [r.claim.claim_id])).rows[0].write_set;
     // A delivered claim: write set claimed, then one head of PR n authorized by its holder.
     const delivered = async (who, write_set, pr, extra) => {
@@ -121,7 +129,7 @@ test('repository paths of a claim with a live head authorization do not block an
       assert.equal((await verify(a1, 101, second, ['d1/hot.mjs', 'd1/a.mjs'])).verdict, 'ADMITTED');
       assert.deepEqual(await writeSet(a1), ['d1/a.mjs', 'd1/hot.mjs']);
       assert.deepEqual(await writeSet(b1), ['d1/b.mjs', 'd1/hot.mjs']);
-      await release('A', a1); await release('B', b1);
+      await releaseHeld('A', a1); await releaseHeld('B', b1);
     });
 
     await t.test('3: control. A has no authorization: B still conflicts on the same file', async () => {
@@ -140,7 +148,7 @@ test('repository paths of a claim with a live head authorization do not block an
       const sameTrigger = conflict(await claim('B', ['d4/hot.mjs'], { trigger_refs: [ref] }), a);
       // Before the migration the conflict was the same and paths also named d4/hot.mjs.
       assert.deepEqual([sameTrigger.same_task, sameTrigger.paths, sameTrigger.trigger_refs], [false, [], [ref]]);
-      await release('A', a);
+      await releaseHeld('A', a);
     });
 
     await t.test('5: control. A is delivered and widens onto a path C holds undelivered: still a conflict', async () => {
@@ -149,7 +157,7 @@ test('repository paths of a claim with a live head authorization do not block an
       const overlap = conflict(await widen('A', a, ['d5/a.mjs', 'd5/x.mjs']), c);
       assert.deepEqual(overlap.paths, ['d5/x.mjs']);
       assert.deepEqual(await writeSet(a), ['d5/a.mjs']);
-      await release('A', a); await release('C', c);
+      await releaseHeld('A', a); await release('C', c);
     });
 
     await t.test('6: control. Every authorization of A revoked: the same file conflicts again', async () => {
@@ -166,7 +174,7 @@ test('repository paths of a claim with a live head authorization do not block an
       } finally {
         await admin.query('alter table clued_private.work_claims_v1 enable trigger work_claim_execution_epoch_v1');
       }
-      await release('A', a);
+      await releaseHeld('A', a);
     });
 
     await t.test('7: control. A is delivered: its storage and record resources still conflict', async () => {
@@ -174,14 +182,14 @@ test('repository paths of a claim with a live head authorization do not block an
       assert.deepEqual(conflict(await claim('B', ['storage:c7/docs/a.md']), a).paths, ['storage:c7/docs/**', 'storage:c7/docs/a.md']);
       // Before the migration the conflict was the same and paths also named d7/hot.mjs.
       assert.deepEqual(conflict(await claim('B', ['record:r7', 'd7/hot.mjs']), a).paths, ['record:r7']);
-      await release('A', a);
+      await releaseHeld('A', a);
     });
 
     await t.test('8: a delivered repo: resource is a repository path too, bare or typed on the other side', async () => {
       const a = await delivered('A', ['repo:fixture/delivered-paths/d8/**'], 108);
       await release('B', committed(await claim('B', ['d8/hot.mjs'])));
       await release('C', committed(await claim('C', ['repo:fixture/delivered-paths/d8/hot.mjs'])));
-      await release('A', a);
+      await releaseHeld('A', a);
     });
   } finally {
     for (const c of clients.reverse()) await c.end().catch(() => {});
