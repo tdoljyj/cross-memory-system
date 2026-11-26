@@ -331,8 +331,8 @@ test('列车 v2：第 8 段只消费一次 Native 发送权，重启从共享回
   assert.equal(w.remote.totals().mainUpdates, 1);
 });
 
-function productionTrainPorts(w, command) {
-  return trainPortsV2({ trainMode: 'on', record: { config: { scope: 'project:fixture', repository: REPO } },
+function productionTrainPorts(w, command, record = { config: { scope: 'project:fixture', repository: REPO } }) {
+  return trainPortsV2({ trainMode: 'on', record,
     github: w.github, nativeCommand: command, sourceManifestSha256: w.batch.sourceSha256, repositoryId: scope.repositoryId,
     openStore: async () => null, queueReturn: true });
 }
@@ -341,8 +341,8 @@ test('片 2、4 接线：第 8、10 段通过同一受保护传输探测和请�
   const w = stage8World();
   const nodeId = '00000000-0000-4000-8000-000000000001';
   const bindingGeneration = 2;
-  const transportScope = { ...scope, contextKey: 'global', tenantId: '00000000-0000-4000-8000-000000000002',
-    projectId: '00000000-0000-4000-8000-000000000003' };
+  const projectId = '00000000-0000-4000-8000-000000000003';
+  const transportScope = { ...scope, projectId, contextKey: 'project:' + projectId, tenantId: '00000000-0000-4000-8000-000000000002' };
   const record = { config: { scope: transportScope.contextKey, repository: REPO, repositoryId: scope.repositoryId,
     sourceManifestSha256: w.batch.sourceSha256, mergeTrainProtocolVersion: TRAIN_PROTOCOL_VERSION } };
   const calls = [];
@@ -356,14 +356,14 @@ test('片 2、4 接线：第 8、10 段通过同一受保护传输探测和请�
   const network = [];
   const options = { record, live() {}, trainControl: true, baseFetch: async url => { network.push(url); throw new Error('意外网络请求'); } };
   const { native } = controllerPorts({ ...options, protectedTrainTransport });
-  const { trainV2 } = await productionTrainPorts(w, async input => native.command({ ...input, scope: record.config.scope }));
+  const { trainV2 } = await productionTrainPorts(w, native.command, record);
   assert.equal(await trainV2.readBatch({ testSha: S3 }), 'read_batch');
   assert.equal(await trainV2.readMaintenance({ runId: 'fixture' }), 'read_maintenance');
   assert.deepEqual(calls.map(input => [input.action, input.protocol_version, input.source_manifest_sha256]),
     ['role_probe', 'landing_prepare', 'batch_reserve'].map(action => [action, TRAIN_PROTOCOL_VERSION, w.batch.sourceSha256]));
   assert.ok(calls.slice(1).every(input => input.node_id === nodeId && input.binding_generation === bindingGeneration));
   const { native: missing } = controllerPorts(options);
-  const blocked = await productionTrainPorts(w, input => missing.command({ ...input, scope: record.config.scope }));
+  const blocked = await productionTrainPorts(w, missing.command, record);
   assert.equal(blocked.trainV2.protocolVersion, null);
   assert.deepEqual(network, []);
 });
