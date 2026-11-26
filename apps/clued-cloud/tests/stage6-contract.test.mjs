@@ -114,6 +114,9 @@ test("current-state answers are sourced from BeamingFace on every injected surfa
   assert.match(contract, /While you wait, do nothing for the merge/);
   assert.match(contract, /Read `merge_queue` for your place; you need not renew to keep it\./);
   assert.doesNotMatch(contract, /Renew about once an hour/);
+  assert.match(contract, /\| `work_claim_release_pr_open` \(release\) \|/);
+  assert.match(contract, /an open pull request of the Task that this claim served \(authorized with that pull request or admitted for it\), `clued_work_release` is refused with `work_claim_release_pr_open` and lists the open pull requests/);
+  assert.match(contract, /`covered: false` means the current claim has authorized neither that pull request nor the head last authorized or admitted for it\. `served: true` means this claim authorized with that pull request or was admitted for it/);
   assert.match(contract, /a renewal that keeps the ref joins again at the back/);
   assert.match(contract, /Merge dependent pull requests one at a time/);
   // Owner Decision 2ea795e4: the slot lapses on its own clock and a required App check enforces it.
