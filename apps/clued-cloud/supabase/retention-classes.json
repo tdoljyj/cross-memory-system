@@ -156,6 +156,10 @@
       "class": "state",
       "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
     },
+    "clued_private.ci_node_queue_view_v1": {
+      "class": "state",
+      "reason": "节点当前队列视图：每个节点至多一行，重复上报原地更新，节点删除时级联删除，行数随节点数有界"
+    },
     "clued_private.ci_nodes_v1": {
       "class": "state",
       "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
