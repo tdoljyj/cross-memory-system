@@ -340,6 +340,23 @@ test('定向跨套件：两跳、环和多条路径只执行每个入口一次�
   assert.match(run.output(), /SECOND_SUITE_FAILURE/);
 });
 
+test('定向缺边：候选独有套件的 npm run 命令实际执行', { skip: process.platform !== 'win32' }, async (t) => {
+  const run = slotFixture(t)('candidate-npm', { mode: '--run-files', body: '', extraFiles: {
+    ...TARGET_EXPANSIONS,
+    [TARGET_SELECTOR]: "export const SUITES = { 'ci-suites': { 'fixture-candidate-npm': ['fixtures/**'] } };\n" +
+      "export const SUITE_COMMANDS = { 'fixture-candidate-npm': [{ cwd: '.', argv: ['npm', 'run', 'verify-fixture'] }] };",
+    '.npmrc': 'cache=${TEMP}/npm-cache\n',
+    'package.json': JSON.stringify({ scripts: { 'verify-fixture': 'node verify-fixture.cjs' } }),
+    'verify-fixture.cjs': "if (require('./fixtures/unknown.json').updated) console.log('CANDIDATE_NPM_EXECUTED');\n",
+    'fixtures/unknown.json': '{}',
+  }, prepare(root) {
+    fixtureBase(root);
+    fixtureWrite(root, 'fixtures/unknown.json', '{"updated":true}');
+  } });
+  assert.deepEqual(await run.done, [0, null], run.output());
+  assert.match(run.output(), /^CANDIDATE_NPM_EXECUTED$/m);
+});
+
 test('定向规划边界', async (t) => {
   const { planTargetedFiles } = await import('./check-tests-covered.mjs');
   const fleetJson = TARGET_FLEET + '/fixtures/clued-decision-mutate-3bc571a6.json';
@@ -349,6 +366,12 @@ test('定向规划边界', async (t) => {
   const powershell = TARGET_RESIDENT + '/test/fleet-node-powershell.test.mjs';
   const registry = 'scripts/ci/merge-admission-r9-source.json';
   const reregister = 'scripts/ci/merge-admission-r9-reregister.mjs';
+  const governance = 'scripts/ci/self-hosted/node-governance/governance.test.mjs';
+  const capacity = TARGET_RESIDENT + '/src/host-capacity.mjs';
+  const resourceGate = TARGET_RESIDENT + '/test/node-resource-gate.test.mjs';
+  const pythonReader = TARGET_RESIDENT + '/test/test_linux_tool.py';
+  const standard = 'config/node-governance-standard.json';
+  const unknownResource = 'scripts/ci/fixtures/retrigger-counter/other.json';
   const cases = [
     {
       name: 'JSON 导入、new URL、固定目录读和 PowerShell 补边',
@@ -450,6 +473,62 @@ test('定向规划边界', async (t) => {
         const result = plan();
         assert.ok(result.groups.find(({ suite }) => suite === 'cron-budget').files.includes(TARGET_CRON));
         assert.match(result.groups.find(({ suite }) => suite === 'retrigger-counter').reasons.join(' '), /动态加载/);
+      },
+    },
+    {
+      name: '跨目录动态导入有静态引用者时仍补齐登记边和读取者套件',
+      files: {
+        [governance]: `await import(pathToFileURL(path.join(ROOT, '${capacity}')).href);`,
+        [resourceGate]: "import '../src/host-capacity.mjs';",
+        [TARGET_CRON]: 'const moduleUrl = getModuleUrl(); await import(moduleUrl);',
+        [capacity]: 'export const capacity = 1;\n',
+      },
+      mutate(root) { fixtureWrite(root, capacity, 'export const capacity = 2;\n'); },
+      check(root, plan) {
+        const { matches, groups } = plan();
+        assert.deepEqual({
+          governance: matches.find(({ file }) => file === governance)?.chain,
+          staticReader: matches.find(({ file }) => file === resourceGate)?.chain,
+          opaque: groups.find(({ suite }) => suite === 'cron-budget')?.reasons.some((reason) => reason.includes('动态加载')),
+        }, { governance: [capacity, governance], staticReader: [capacity, resourceGate], opaque: true });
+      },
+    },
+    {
+      name: '资源静态边只覆盖所属套件，拼接读取补边且保留其他套件兜底',
+      files: {
+        [standard]: '{}', [unknownResource]: '{}',
+        [resourceGate]: `new URL('../../../${standard}', import.meta.url);`,
+        [governance]: "fs.readFileSync(path.join(ROOT, 'config', 'node-governance-standard.json'));",
+        [pythonReader]: 'STANDARD = (ROOT / "config" / "node-governance-standard.json").read_text()\n',
+        [TARGET_CRON]: `new URL('../../${unknownResource}', import.meta.url);`,
+        [TARGET_RETRIGGER]: "readFileSync(path.join(ROOT, 'scripts', 'ci', 'fixtures', 'retrigger-counter', NAME));",
+      },
+      mutate(root) {
+        for (const file of [standard, unknownResource]) fixtureWrite(root, file, '{"updated":true}');
+      },
+      check(root, plan) {
+        const { matches, groups } = plan();
+        const chain = (reader) => matches.find(({ file }) => file === reader)?.chain;
+        assert.deepEqual([chain(resourceGate), chain(governance), chain(pythonReader)],
+          [[standard, resourceGate], [standard, governance], [standard, pythonReader]]);
+        assert.match(groups.find(({ suite }) => suite === 'retrigger-counter').reasons.join(' '), /other\.json.*缺少/);
+        assert.deepEqual(groups.find(({ suite }) => suite === 'resident-node').reasons.filter((reason) => reason.includes(standard)), []);
+      },
+    },
+    {
+      name: '反引号 require 和静态导入都找到省略扩展名的 CommonJS 文件',
+      files: {
+        [TARGET_CRON]: "import '../../fixtures/reader.cjs';",
+        [TARGET_LOCALS]: "import '../../fixtures/shared.js';",
+        'fixtures/reader.cjs': 'require(`./shared`);',
+        'fixtures/shared.js': 'module.exports = 1;\n',
+      },
+      mutate(root) { fixtureWrite(root, 'fixtures/shared.js', 'module.exports = 2;\n'); },
+      check(root, plan) {
+        const { matches } = plan();
+        assert.deepEqual(matches.find(({ file }) => file === TARGET_CRON)?.chain,
+          ['fixtures/shared.js', 'fixtures/reader.cjs', TARGET_CRON]);
+        assert.deepEqual(matches.find(({ file }) => file === TARGET_LOCALS)?.chain, ['fixtures/shared.js', TARGET_LOCALS]);
       },
     },
     {

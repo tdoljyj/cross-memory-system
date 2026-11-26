@@ -29,8 +29,8 @@ import { readFileSync, realpathSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CI_SCRIPT_TEST_DIRS, SUITE_COMMANDS, SUITES, candidateSuites, commandArgv, expandArgv, filterCommand, globToRegExp, hostPlatform,
-  knownKey, requiredCommands, selectSuites, suitePlatforms, unitTestFiles } from './ci-required-selection.mjs';
+import { CI_SCRIPT_TEST_DIRS, SUITE_COMMANDS, SUITES, commandArgv, expandArgv, filterCommand, globToRegExp, hostPlatform,
+  knownKey, requiredCommands, selectSuites, selectWithCandidate, suitePlatforms, unitTestFiles } from './ci-required-selection.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_ROOT = path.resolve(HERE, '../..');
@@ -164,6 +164,7 @@ const inside = (file) => file !== '' && file !== '..' && !file.startsWith('../')
   !path.posix.isAbsolute(file) && !/^[a-z]:/i.test(file);
 const slash = (file) => file.split(path.sep).join('/');
 const GRAPH_SOURCE = /\.(?:mjs|js|cjs|mts|cts|jsx|ts|tsx)$/;
+const SCRIPT_SOURCE = /\.(?:py|ps1|sh)$/i;
 
 function worktreeReader(root) {
   const cache = new Map();
@@ -312,12 +313,13 @@ function dependencySyntax(file, source) {
     if (/^(['"])(?:\\.|(?!\1)[^\\])*\1\s*[,)]/.test(argument) || /^(?:['"]|\x60)(?:node:|https?:)/.test(argument)) return [];
     const template = /^\x60(\.{1,2}\/[^\x60$]+)\x60\s*[,)]/.exec(argument);
     if (template) {
-      references.push({ spec: template[1], style: 'import' });
+      references.push({ spec: template[1], style: call[0].startsWith('require') ? 'require' : 'import' });
       return [];
     }
-    const fixedRoot = /^pathToFileURL\s*\(\s*path\.(?:join|resolve)\s*\(\s*(?:root|tree)\s*,\s*(['"])([^'"]+)\1\s*\)\s*\)(?:\.href)?\s*\)/.exec(argument);
-    if (fixedRoot) {
-      references.push({ spec: fixedRoot[2], style: 'root-resource' });
+    const fixedRoot = /^pathToFileURL\s*\(\s*path\.(?:join|resolve)\s*\(\s*(root|tree|ROOT)\s*,\s*(['"])([^'"]+)\2\s*\)\s*\)(?:\.href)?\s*\)/.exec(argument);
+    // In the governance test ROOT is resolved from the checkout, so its capacity import is exact.
+    if (fixedRoot && (fixedRoot[1] !== 'ROOT' || file === GOVERNANCE_TEST)) {
+      references.push({ spec: fixedRoot[3], style: 'root-resource' });
       return [];
     }
     const concatenated = /^(\w+)\s*\+\s*(['"])([^'"]+)\2\s*\)/.exec(argument);
@@ -333,15 +335,16 @@ function dependencySyntax(file, source) {
     // local-verify's trusted Git export. RUNTIME_READERS holds their exact edge.
     if ((file === 'scripts/ci/local-suite-slot-guard.mjs' && /^work\.selectorUrl\s*\)/.test(argument)) ||
         (file === 'scripts/ci/local-verify.mjs' && /^selectorUrl\s*\)/.test(argument))) return [];
-    // A relative prefix can bound the affected source directory. For a bare
-    // variable, the owning reader's directory bounds the local inference.
+    // A relative prefix can bound the affected source directory. An opaque
+    // argument could resolve to a module anywhere in the checkout.
     const prefix = /^(?:['"]|\x60)(\.{1,2}\/[^'"$\x60]*)/.exec(argument)?.[1];
-    return [prefix === undefined || prefix === './' ? './' : prefix.endsWith('/') ? prefix : path.posix.dirname(prefix) + '/'];
+    return [prefix === undefined ? null : prefix.endsWith('/') ? prefix : path.posix.dirname(prefix) + '/'];
   });
   return { references, opaque: [...new Set(opaque)], resourceScopes: [...new Set(resourceScopes)] };
 }
 
 const RESIDENT = 'work/independent-ci-resident-v1';
+const GOVERNANCE_TEST = 'scripts/ci/self-hosted/node-governance/governance.test.mjs';
 const FLEET = RESIDENT + '/rollout/fleet';
 const FLEET_CHILDREN = new RegExp('^' + FLEET + '/test/[^/]+\\.test\\.mjs$');
 const FLEET_WRAPPERS = [1, 2, 3].map((part) => RESIDENT + '/test/fleet-node-children-' + part + '.test.mjs');
@@ -350,6 +353,7 @@ const R9_READER = 'scripts/ci/merge-admission-r9-reregister.mjs';
 // Runtime paths produced by path composition, directory enumeration or
 // a subprocess call. Each edge points from an input to its actual reader.
 const RUNTIME_READERS = new Map([
+  ['config/node-governance-standard.json', [GOVERNANCE_TEST, RESIDENT + '/test/test_linux_tool.py']],
   [FLEET + '/test/fixtures/clued-decision-mutate-3bc571a6.json', [FLEET + '/test/publish-fixtures.mjs']],
   [R9_REGISTRY, [R9_READER]],
   ['scripts/ci/clued-gated-proof-profiles.json', [R9_READER]],
@@ -401,8 +405,14 @@ function reverseClosure(seeds, readers) {
 
 function targetedEntries(root, state, env, work) {
   const platforms = new Map(Object.keys(SUITE_COMMANDS).map((suite) => [suite, suitePlatforms(suite)]));
+  const addedSuites = new Set();
   for (const check of Object.keys(SUITES)) {
-    for (const { id, platforms: on } of candidateSuites(check, root, { env, withPlatforms: true })) platforms.set(id, on);
+    const { selection, error } = selectWithCandidate(check, state.seeds, null, root, { env, withPlatforms: true });
+    if (error) throw error;
+    for (const { id, platforms: on } of selection.added ?? []) {
+      platforms.set(id, on);
+      addedSuites.add(id);
+    }
   }
   const commands = Object.fromEntries([...platforms.keys()].map((suite) =>
     [suite, [...requiredCommands(suite, root, { env, base: state.base })]]));
@@ -444,7 +454,7 @@ function targetedEntries(root, state, env, work) {
       }
     },
   });
-  return { entries, platforms };
+  return { entries, platforms, addedSuites };
 }
 
 function dependencyGraph(state, old, work, entries) {
@@ -511,7 +521,7 @@ function dependencyGraph(state, old, work, entries) {
       if (syntax.opaque.length > 0 || syntax.resourceScopes.length > 0) {
         const scopes = opaque.get(file) ?? new Map();
         for (const [spec, resource] of [...syntax.opaque.map((spec) => [spec, false]), ...syntax.resourceScopes.map((spec) => [spec, true])]) {
-          const scope = resolve(file, spec);
+          const scope = spec === null ? '.' : resolve(file, spec);
           if (scope === '..' || scope.startsWith('../')) continue;
           const prefix = scope === '.' ? '' : scope.replace(/\/$/, '') + '/';
           scopes.set(prefix, resource || scopes.get(prefix) === true);
@@ -563,7 +573,7 @@ export function planTargetedFiles(root, suite, named, { env = process.env, platf
   const graphStart = performance.now();
   if (state.seeds.length) {
     const old = oldGraphInputs(root, state);
-    const { entries, platforms } = targetedEntries(root, graphState, env, work);
+    const { entries, platforms, addedSuites } = targetedEntries(root, graphState, env, work);
     const { readers, opaque } = dependencyGraph(graphState, old, work, entries);
     const affected = reverseClosure(state.seeds, readers);
     const fallback = (id, reason, on = platforms.get(id)) => {
@@ -603,10 +613,27 @@ export function planTargetedFiles(root, suite, named, { env = process.env, platf
     }
     for (const file of state.seeds) {
       if (/\.ps1$/i.test(file)) fallback('powershell-count', file + ' 命中 PowerShell 全仓扫描');
-      if (readers.has(file) || entries.has(file) || pureDocs(file)) continue;
-      const ids = new Set(Object.keys(SUITES).flatMap((check) => selectSuites(check, [file]).suites));
-      if (!ids.size) throw new Error('覆盖未确定：' + file + ' 找不到引用边或适用套件');
+      if (pureDocs(file)) continue;
+      const known = readers.has(file) || entries.has(file);
+      const resource = !GRAPH_SOURCE.test(file) && !SCRIPT_SOURCE.test(file);
+      const ids = new Set(addedSuites);
+      // A resource edge covers the suites reachable through that edge. Other
+      // suites selected for this resource can still read it through composed paths.
+      if (!known || resource) {
+        for (const check of Object.keys(SUITES)) {
+          for (const id of selectSuites(check, [file]).suites) ids.add(id);
+        }
+      }
+      if (!known && !ids.size) throw new Error('覆盖未确定：' + file + ' 找不到引用边或适用套件');
+      if (!ids.size) continue;
+      for (const reader of reverseClosure([file], readers).parent.keys()) {
+        for (const command of entries.get(reader) ?? []) ids.delete(command.suite);
+      }
       for (const id of ids) {
+        if (addedSuites.has(id)) {
+          fallback(id, file + ' 缺少可静态定位的引用边，候选独有套件按 CI 选择整套执行');
+          continue;
+        }
         const onlyGlobal = Object.values(SUITES).some((check) => check[id]?.includes('**'));
         fallback(id, file + ' 缺少可静态定位的引用边，按 ' + (onlyGlobal ? '全仓 **' : 'SUITES / SELECT_ALL') + ' 规则兜底');
       }

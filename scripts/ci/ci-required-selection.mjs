@@ -489,11 +489,11 @@ export function selectSuites(check, files, platform = null) {
 // Task cb5017b6: the selection of the trusted table, then the suites the candidate at root adds to the check (candidateSuites),
 // each selected whole whatever changed: a pull request that adds a suite runs it. A candidate table that cannot be read
 // keeps the trusted selection and is returned as the error, which fails the check.
-export function selectWithCandidate(check, files, platform, root, { trusted } = {}) {
+export function selectWithCandidate(check, files, platform, root, { trusted, env, withPlatforms } = {}) {
   const selection = selectSuites(check, files, platform);
   let added = [];
   try {
-    added = candidateSuites(check, root, { platform, ...(trusted ? { trusted } : {}) });
+    added = candidateSuites(check, root, { platform, env, withPlatforms, ...(trusted ? { trusted } : {}) });
   } catch (error) {
     return { selection, error };
   }
