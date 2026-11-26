@@ -5,7 +5,8 @@
 // process; the entry's own limit ends a run that never returns (a test may not give a child a time limit of its own).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -46,16 +47,17 @@ const suiteEnv = (root) => {
 // run leaves behind cannot keep the guard waiting on a pipe.
 const GUARD = `const [url, json] = process.argv.slice(1);
 const { executeSuite } = await import(url);
-const { suite, root, commandTimeoutMs } = JSON.parse(json);
-process.exitCode = executeSuite(suite, { root, commandTimeoutMs });`;
-function guarded(root, suite, limit) {
+const { suite, root, commandTimeoutMs, shard, rerunMinTimeoutMs } = JSON.parse(json);
+process.exitCode = executeSuite(suite, { root, commandTimeoutMs, shard, rerunMinTimeoutMs,
+  ...(rerunMinTimeoutMs ? { rerunMaxElapsedMs: rerunMinTimeoutMs / 2 } : {}) });`;
+function guarded(root, suite, limit, shard = null, base, rerunMinTimeoutMs) {
   const out = path.join(root, 'tmp', 'suite.log');
   const fd = openSync(out, 'w');
   let result;
   try {
     result = spawnSync(process.execPath, ['--input-type=module', '-e', GUARD, SELECTION,
-      JSON.stringify({ suite, root, commandTimeoutMs: limit })],
-    { cwd: root, env: suiteEnv(root), stdio: ['ignore', fd, fd], windowsHide: true });
+      JSON.stringify({ suite, root, commandTimeoutMs: limit, shard, rerunMinTimeoutMs })],
+    { cwd: root, env: { ...suiteEnv(root), ...(base ? { CI_BASE_SHA: base } : {}) }, stdio: ['ignore', fd, fd], windowsHide: true });
   } finally {
     closeSync(fd);
   }
@@ -97,6 +99,193 @@ test('3: a command other than node --test that never exits fails at its limit, w
   const { status, text } = guarded(root, 'offline-drill', COMMAND_MS);
   assert.equal(status, 1, text);
   assert.match(text, /::error::offline-drill: node drill\/offline-drill\.mjs 超过 .*被终止/);
+});
+
+const ONE_LANE = { index: 1, total: 1, lane: true, concurrency: 1 };
+const residentFixture = (t, testFiles, support = {}) => fixture(t, Object.fromEntries(
+  Object.entries({ ...testFiles, ...support }).map(([file, content]) => [`${RESIDENT}/${file}`, content])));
+const quick = (name) => `import test from 'node:test';\ntest('${name}', () => {});\n`;
+
+test('resident-node: a single slot finishes healthy files whose total time exceeds one command limit', (t) => {
+  const files = ['test/a.test.mjs', 'test/b.test.mjs', 'rollout/test/c.test.mjs', 'rollout/test/d.test.mjs'];
+  const root = residentFixture(t, Object.fromEntries(files.map((file) => [file,
+    `import { wait } from '${file.startsWith('rollout') ? '../' : ''}../hold.mjs';\nawait wait();\n${quick(file)}`])), {
+    // This is work done by the fixture, not a wait or a timeout in the test's orchestration.
+    'hold.mjs': 'export const wait = () => new Promise((resolve) => setTimeout(resolve, 900));\n',
+  });
+  const { status, text } = guarded(root, 'resident-node', 2500, ONE_LANE);
+  assert.equal(status, 0, text);
+  for (const file of files) assert.match(text, new RegExp(`✔ ${file.replaceAll('.', '\\.')}`));
+});
+
+test('resident-node: a stuck file times out by name, drains its descendants and never qualifies for a retry', async (t) => {
+  const connect = (port, stop = false) => new Promise((resolve, reject) => {
+    const socket = net.connect({ port, host: '127.0.0.1' });
+    socket.once('error', reject);
+    socket.once('connect', () => {
+      if (stop) socket.end('stop');
+      else socket.destroy();
+      resolve();
+    });
+  });
+  const root = residentFixture(t, {
+    'rollout/test/a-done.test.mjs': quick('file already completed'),
+    'test/z-stuck.test.mjs': `import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
+import test from 'node:test';
+import { quitEventually } from '../fixture-time.mjs';
+test('never settles', async () => {
+  const middle = spawnSync(process.execPath, ['middle.mjs'], { stdio: 'ignore' });
+  assert.equal(middle.status, 0);
+  const port = Number(readFileSync('descendant.port', 'utf8'));
+  await new Promise((resolve, reject) => {
+    const socket = net.connect({ port, host: '127.0.0.1' });
+    socket.once('error', reject);
+    socket.once('connect', () => { socket.destroy(); resolve(); });
+  });
+  writeFileSync('middle-exited-and-listening', '');
+  quitEventually();
+  await new Promise(() => {});
+});`,
+  }, {
+    'fixture-time.mjs': 'export const quitEventually = () => setTimeout(() => process.exit(3), 20_000);',
+    'middle.mjs': `import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+const portFile = process.argv[2] ?? 'descendant.port';
+const child = spawn(process.execPath, ['listener.mjs', portFile], {
+  detached: process.platform === 'win32', stdio: 'ignore',
+});
+child.unref();
+const expire = setTimeout(() => process.exit(3), 5000);
+const poll = setInterval(() => {
+  if (!existsSync(portFile)) return;
+  clearInterval(poll);
+  clearTimeout(expire);
+}, 10);`,
+    'listener.mjs': `import net from 'node:net';
+import { writeFileSync } from 'node:fs';
+const server = net.createServer((socket) => {
+  if (process.argv[2] === 'control.port') socket.once('data', () => { clearTimeout(expire); server.close(); });
+});
+server.listen(0, '127.0.0.1', () => writeFileSync(process.argv[2], String(server.address().port)));
+const expire = setTimeout(() => server.close(), 20_000);`,
+  });
+  const cwd = path.join(root, RESIDENT);
+  const decoy = path.join(cwd, 'control.port');
+  const ready = spawnSync(process.execPath, ['middle.mjs', 'control.port'], { cwd, env: suiteEnv(root), windowsHide: true });
+  assert.equal(ready.status, 0, String(ready.stderr));
+  const controlPort = Number(readFileSync(decoy, 'utf8'));
+  await connect(controlPort);
+  try {
+    const { status, text } = guarded(root, 'resident-node', 5000, ONE_LANE);
+    assert.equal(status, 1, text);
+    assert.match(text, /::error::resident-node: .*z-stuck\.test\.mjs 超过 5 秒被终止/);
+    assert.match(text, /✔ file already completed/);
+    assert.ok(existsSync(path.join(cwd, 'middle-exited-and-listening')), 'middle exited and grandchild accepted a connection before timeout');
+    assert.doesNotMatch(text, /(?:超过 .*被终止|开始了没结束).*a-done|a-done[^\n]*超过|again in full/);
+    await connect(controlPort);
+    const port = Number(readFileSync(path.join(cwd, 'descendant.port'), 'utf8'));
+    await assert.rejects(connect(port), { code: 'ECONNREFUSED' });
+  } finally {
+    await connect(controlPort, true);
+  }
+});
+
+test('resident-node: a normal assertion failure still fails the suite', (t) => {
+  const root = residentFixture(t, {
+    'test/a.test.mjs': quick('healthy file'),
+    'rollout/test/b.test.mjs': "import test from 'node:test';\ntest('ordinary failure', () => { throw Error('fixture red'); });",
+  });
+  const { status, text } = guarded(root, 'resident-node', TEST_MS, ONE_LANE);
+  assert.equal(status, 1, text);
+  assert.match(text, /fixture red/);
+  assert.doesNotMatch(text, /超过 .*被终止/);
+});
+
+test('resident-node: a reused PID in a stale process snapshot is never signalled', (t) => {
+  const root = fixture(t, {
+    'probe.mjs': `import { EventEmitter } from 'node:events';
+import { createRequire, registerHooks, syncBuiltinESMExports } from 'node:module';
+const selector = process.argv[2];
+const require = createRequire(import.meta.url);
+const childProcess = require('node:child_process');
+const child = new EventEmitter();
+child.pid = 300;
+child.stdin = new EventEmitter();
+child.stdin.write = () => {};
+child.stdin.end = () => queueMicrotask(() => child.emit('close', null, 'SIGKILL'));
+const sentToReusedPid = [];
+// Exercise the POSIX pool on either host without issuing real signals. PID 301 from the old
+// PPID snapshot has already been reused by a member of another group when the probe returns.
+Object.defineProperty(process, 'platform', { value: 'linux' });
+process.kill = (pid, signal) => {
+  if (pid === 301 && signal !== 0) sentToReusedPid.push(signal);
+  if (pid === 300 && signal === 'SIGKILL') child.emit('exit', null, signal);
+  return true;
+};
+childProcess.spawn = () => {
+  queueMicrotask(() => child.emit('spawn'));
+  return child;
+};
+childProcess.spawnSync = (_command, args) => ({ status: 0,
+  stdout: args.includes('ppid=') ? '301 300\\n' : '300 Z\\n301 S\\n' });
+syncBuiltinESMExports();
+registerHooks({ load(url, context, nextLoad) {
+  const result = nextLoad(url, context);
+  if (url !== selector) return result;
+  return { ...result, source: Buffer.from(result.source).toString() + '\\nexport { runResidentPool };' };
+} });
+const { runResidentPool } = await import(selector);
+await runResidentPool('input.json');
+console.log(JSON.stringify(sentToReusedPid));`,
+    'input.json': JSON.stringify({ command: 'node', options: [], files: ['mock.test.mjs'], concurrency: 1, timeout: 30 }),
+  });
+  const run = spawnSync(process.execPath, ['probe.mjs', SELECTION], { cwd: root, env: suiteEnv(root), encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(JSON.parse(run.stdout), [], 'a reused PID outside the file group received a signal');
+});
+
+for (const slow of [false, true]) test(`resident-node: ${slow ? 'an eligible retry has a whole-run deadline' : 'an eligible retry runs the entire allocated list'}`, (t) => {
+  const work = (relative) => slow ? `import os from 'node:os';
+import path from 'node:path';
+import { work } from '${relative}/fixture-time.mjs';
+if (path.basename(path.dirname(os.tmpdir())).startsWith('resident-node-again-')) {
+  console.log('retry started', import.meta.filename);
+  await work();
+}
+` : '';
+  const root = residentFixture(t, {
+    'test/a.test.mjs': `${work('..')}import test from 'node:test';
+import { existsSync, writeFileSync } from 'node:fs';
+test('flaky fixture', () => {
+  if (existsSync('ran-once')) return;
+  writeFileSync('ran-once', '');
+  throw Error('fixture fails once');
+});`,
+    'rollout/test/b.test.mjs': work('../..') + quick('healthy fixture runs again'),
+    ...(slow ? { 'test/c.test.mjs': work('..') + quick('third healthy fixture') } : {}),
+  }, { 'fixture-time.mjs': 'export const work = () => new Promise((resolve) => setTimeout(resolve, 5100));' });
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: root, env: suiteEnv(root), encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    return result.stdout.trim();
+  };
+  git('init', '-q');
+  git('add', RESIDENT);
+  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture baseline');
+  const { status, text } = guarded(root, 'resident-node', TEST_MS, ONE_LANE, git('rev-parse', 'HEAD'), slow ? 12_000 : undefined);
+  if (slow) {
+    assert.match(text, /run again in full \(timeout 12 s\)/);
+    assert.equal(status, 1, text);
+    assert.match(text, /整遍复验超过 12 秒/);
+    assert.doesNotMatch(text, /flaky::|\(flaky\): the command passes/);
+    return;
+  }
+  assert.equal(status, 0, text);
+  assert.match(text, /flaky::.*flaky fixture/);
+  assert.equal(text.split('✔ healthy fixture runs again').length - 1, 2, text);
 });
 
 // The argv each command is started with, nothing started.
