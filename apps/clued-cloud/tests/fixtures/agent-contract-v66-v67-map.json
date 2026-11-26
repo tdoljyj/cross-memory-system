@@ -1,0 +1,29 @@
+{
+  "schema": "clued.agent-contract-release-pr-open-successor/1",
+  "source_version": 66,
+  "target_version": 67,
+  "source_document_normalized_sha256": "0612398ac6b1a7911cdfce2e7d8183bd7b41e930a9ad28011d16649183f82fdf",
+  "target_document_normalized_sha256": "5ad2f6a557d48c778887ff096d2b249042d8545ecd20d293bd18c8862565e2ba",
+  "edits": [
+    {
+      "id": "version",
+      "before": "Contract version: 66",
+      "after": "Contract version: 67"
+    },
+    {
+      "id": "refusal-row",
+      "before": "| `work_claim_still_active` (takeover) | The claim's lease has not expired | Leave it to its holder; report to the Owner if you think it is stuck |",
+      "after": "| `work_claim_still_active` (takeover) | The claim's lease has not expired | Leave it to its holder; report to the Owner if you think it is stuck |\n| `work_claim_release_pr_open` (release) | The Task has no other live active claim, this claim's hard deadline is at least two hours away, and there is an open pull request of the Task that this claim served (authorized with that pull request or admitted for it) | Read `open_prs` and keep the claim while a pull request with `served: true` is open. Close a pull request if you are dropping it ([Appendix A.5](#appendix-a5)) |"
+    },
+    {
+      "id": "release-refused",
+      "before": "`draining` while an action you already started cannot be cancelled.",
+      "after": "`draining` while an action you already started cannot be cancelled. Each outcome can be refused with `work_claim_release_pr_open` while there is an open pull request of the Task that this claim served (authorized with that pull request or admitted for it), subject to the exceptions in [Appendix A.5](#appendix-a5)."
+    },
+    {
+      "id": "open-prs",
+      "before": "the new claim continues the old one and takes no token ([Appendix A.8](#appendix-a8)).",
+      "after": "the new claim continues the old one and takes no token ([Appendix A.8](#appendix-a8)).\n\n  While there is an open pull request of the Task that this claim served (authorized with that pull request or admitted for it), `clued_work_release` is refused with `work_claim_release_pr_open` and lists the open pull requests, unless another active claim of the Task is live or less than two hours remain before `hard_deadline_at`.\n\n  Each claim view, including the one returned by `authorize_head`, lists all the Task's open pull requests (`active` or `unknown`) in `open_prs`, with `pr_ref`, `status`, `covered` and `served`. `covered: false` means the current claim has authorized neither that pull request nor the head last authorized or admitted for it. `served: true` means this claim authorized with that pull request or was admitted for it."
+    }
+  ]
+}
