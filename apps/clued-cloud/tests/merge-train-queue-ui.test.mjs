@@ -173,7 +173,7 @@ const minutesAgo = minutes => new Date(NOW - minutes * 60_000).toISOString();
 const headSha = 'abcdef1234567890'.repeat(2) + 'abcdef12';
 const pull = pr => ({ pr, headSha });
 const pending = (pr, position, holdText = '等待准入') => ({
-  ...pull(pr), state: 'QUEUED', position, since: minutesAgo(16), deferred: false, nextAt: null, holdText,
+  ...pull(pr), state: 'QUEUED', position, since: minutesAgo(16), deferred: null, nextAt: null, holdText,
 });
 const nodeView = overrides => ({
   contract: 'clued.merge-queue-node-view/1',
@@ -249,6 +249,19 @@ test('server-reported silence raises a red alert and excludes the node from duty
   await resolveResident(f, resident(residentNode({ silent: true, last_heartbeat_at: minutesAgo(1) })));
   assert.deepEqual(alerts(f), ['节点 DESK 已 1 分钟没有心跳', '现在没有当班节点']);
   assert.ok(!f.text().includes('运转正常'));
+});
+
+test('a partial queue view preserves another node’s silence alert and the ordering switch', async t => {
+  const f = fixture(PAGE); t.after(() => f.unmount());
+  await open(f);
+  await assert.doesNotReject(() => resolveResident(f, resident(
+    residentNode({ name: 'A', view: {
+      contract: 'clued.merge-queue-node-view/1', node: { upgrade: { phase: '排空' } }, train: null, executor: null,
+    } }),
+    residentNode({ name: 'B', holder: false, silent: true, view: null }),
+  )));
+  assert.ok(alerts(f).some(message => /节点 B .*没有心跳/.test(message)));
+  assert.equal(f.button('改为按任务优先级').props.disabled, false);
 });
 
 test('before the first queue view, healthy heartbeat facts are still shown', async t => {

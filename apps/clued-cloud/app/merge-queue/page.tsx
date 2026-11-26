@@ -138,22 +138,29 @@ function parseResidentQueue(value: Json): ResidentQueue {
       throw new RequestFailure("服务返回了无法识别的节点状态。");
     const name = node.name ?? node.node_name;
     const view = node.view;
-    if (typeof name !== "string" || (view !== null && (!object(view) || view.contract !== "clued.merge-queue-node-view/1"
-      || !object(view.node) || !object(view.executor) || !object(view.train)
-      || !Array.isArray(view.pending) || !Array.isArray(view.unqueued) || !Array.isArray(view.alerts))))
+    if (typeof name !== "string")
       throw new RequestFailure("服务返回了无法识别的节点状态。");
+    const normalizedView = object(view) && view.contract === "clued.merge-queue-node-view/1" ? {
+      ...view,
+      node: object(view.node) ? view.node : {},
+      executor: object(view.executor) ? view.executor : {},
+      train: object(view.train) ? view.train : {},
+      pending: Array.isArray(view.pending) ? view.pending : [],
+      unqueued: Array.isArray(view.unqueued) ? view.unqueued : [],
+      alerts: Array.isArray(view.alerts) ? view.alerts : [],
+    } as NodeView : null;
     return {
       name, holder: node.holder, silent: node.silent, heartbeatAt: timestamp(node.last_heartbeat_at),
       reportedMode: typeof node.reported_mode === "string" ? node.reported_mode : null,
       reportedState: typeof node.reported_state === "string" ? node.reported_state : null,
-      viewReportedAt: timestamp(node.view_reported_at), view: view as NodeView | null,
+      viewReportedAt: timestamp(node.view_reported_at), view: normalizedView,
     };
   });
   return { observedAt, nodes };
 }
 
 function stageLabel(batch: Batch) {
-  return batch.stage === null ? "段位未知" : "第 " + batch.stage + " 段";
+  return batch.stage == null ? "段位未知" : "第 " + batch.stage + " 段";
 }
 
 const pullLabel = (pull: Pull) => "PR #" + pull.pr + (pull.headSha ? "（提交 " + pull.headSha.slice(0, 8) + "）" : "");
@@ -181,7 +188,7 @@ function renderNodeDetails(node: ResidentNode, now: number) {
     {selfcheck && " · 自检" + (SELFCHECK[selfcheck.result] ?? "未知") + "（" + timeLabel(timestamp(selfcheck.observedAt), now) + "）"}
     {" · "}{heartbeat}
     {executor && " · 执行器 " + (EXECUTOR_STATE[executor] ?? executor)}
-    {upgrade && UPGRADING.has(upgrade.state.toUpperCase()) &&
+    {upgrade && typeof upgrade.state === "string" && UPGRADING.has(upgrade.state.toUpperCase()) &&
       " · 升级中：" + (upgrade.phase ?? "等待阶段读数") + "（自 " + timeLabel(timestamp(upgrade.since), now) + "）"}
   </li>;
 }
