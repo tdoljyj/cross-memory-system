@@ -2,15 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ResidentExecutor, SUPERSEDED_AT_SAFE_POINT } from '../src/executor.mjs';
+import { BETWEEN_BATCHES_RUNNING, ResidentExecutor, SUPERSEDED_AT_SAFE_POINT } from '../src/executor.mjs';
 import { Ledger, batchKey } from '../src/ledger.mjs';
 import { RunQueue } from '../src/queue.mjs';
 import { intakePauseRequest, intakeResumeRequest } from '../src/intake-pause.mjs';
+import { upgradeResumeRequest } from '../src/upgrade-mailbox.mjs';
 import { describe } from '../src/pr-status.mjs';
 import { batchJobsV2, batchRefV2 } from '../../actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
 import { NO_SWEEP, trainFacts } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
-import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
-import { executorFixture, fakeEngine, fakeCompanion, holdAtA, notAdmitted, rawPolicy, triggerBytes, HEAD, BASE, SOURCE, WINDOWS_CLEAN } from './helpers.mjs';
+import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS, validatePolicy } from '../src/policy.mjs';
+import { executorFixture, fakeEngine, fakeCompanion, holdAtA, notAdmitted, rawPolicy, triggerBytes, withTimeout, HEAD, BASE, SOURCE, WINDOWS_CLEAN } from './helpers.mjs';
 
 const MIN = 60_000;
 const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1 };
@@ -86,6 +87,161 @@ test('readmission survives restart and a lost queue, and still waits for matchin
   await finish(f);
   assert.equal(f.exec.queue.row(884).state, 'DONE');
   assert.equal(count(f, 8), before + 1);
+});
+
+test('升级排空期间合入的队首 PR 在恢复首个安全 tick 收终，列车恢复后准入下一 PR', async t => {
+  const f = await fixture(t);
+  await drain(f);
+  assert.equal((await f.ledger.pendingFlowEnds()).length, 1);
+  await f.ledger.pause({ reason: 'upgrade', requestSha256: 'a'.repeat(64) });
+
+  const nextPr = 885, nextHead = '4'.repeat(40), claimId = '0a1b2c3d-0000-4000-8000-0000000000aa';
+  const entered = Promise.withResolvers(), finishRevoke = Promise.withResolvers();
+  const modes = [];
+  let merged = false, slotTakenAt = null;
+  const companion = fakeCompanion({ pull: pr => ({ number: pr, state: pr === subject.pr && merged ? 'merged' : 'open',
+    headSha: pr === nextPr ? nextHead : HEAD }) }, f.clock);
+  const run = f.engine.runStage;
+  f.engine.runStage = async (batch, stage, opts) => {
+    const result = await run(batch, stage, opts);
+    // 第 1 段沿用夹具的授权成功答复，只有第 8 段返回入列事实后，第 10 段才读到槽位。
+    if (stage.number === 8 && result.outcome?.scheduling?.mergeQueue?.entered) slotTakenAt = new Date(f.clock()).toISOString();
+    return result;
+  };
+  f.engine.runTrainStage = async mode => {
+    modes.push(mode);
+    if (mode === 'revoke-only') {
+      entered.resolve();
+      await finishRevoke.promise;
+    }
+    const at = new Date(f.clock()).toISOString();
+    const holder = slotTakenAt && { pr: nextPr, claimId, takenAt: slotTakenAt,
+      mergeSlotUntil: new Date(Date.parse(slotTakenAt) + 45 * MIN).toISOString(), ciState: 'running' };
+    const front = holder ? { state: 'open', baseRef: 'main', headSha: nextHead, draft: false, mergeable: true, headContainsMain: true, green: false } : null;
+    return { ok: true, runId: `${'7'.repeat(16)}-${'0'.repeat(12)}`, proof: WINDOWS_CLEAN,
+      outcome: { status: 'TRAIN_FACTS', reason: null, sideEffects: 0, mayHavePublished: false, safeToRerun: false },
+      train: trainFacts({ mode, at, onDuty: true, holders: holder ? [holder] : [], mainSha: BASE, rules: null, front, revoke: [],
+        ledger: null, decision: mode === 'revoke-only' ? 'REVOKE_ONLY_DONE' : null,
+        sweep: { ...NO_SWEEP, kind: 'full-segment', complete: true,
+          fullSweep: { state: 'complete', startedAt: at, completedAt: at, sinceOn: mode === 'on', reason: null } } }) };
+  };
+  const policy = validatePolicy(rawPolicy({ contract: POLICY_CONTRACT_V8, train: { ...TRAIN_DEFAULTS, enabled: 'on', nonFrontRuns: true,
+    maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, sweep: 'audit' } }));
+  const queue = await RunQueue.open(f.queue.dir, f.clock);
+  f.exec = new ResidentExecutor({ ...f.ports, queue, policy, companion });
+  f.exec.versions = async () => ({ view: { consistent: true, upgrade: { state: 'IDLE' } } });
+  const receipts = async type => (await f.receipts.latest([type], 20)).map(r => r.value.body);
+  const before = [count(f, 1), count(f, 8)];
+  const pausedTick = f.exec.tick();
+  try {
+    await withTimeout(entered.promise, 'revoke-only stage 10');
+    assert.deepEqual(companion.calls, [], '硬暂停期间不会核对待续跑行');
+    merged = true;
+    await f.drop(triggerBytes({ pr: nextPr, headSha: nextHead }));
+    assert.equal((await f.exec.tick()).reason, 'EXECUTOR_TICK_BUSY', '第 10 段在途，不能并行核对');
+    assert.deepEqual(companion.calls, []);
+  } finally {
+    finishRevoke.resolve();
+    assert.equal((await pausedTick).state, 'PAUSED');
+  }
+  assert.deepEqual(modes, ['revoke-only']);
+  assert.equal((await receipts('train-run')).at(-1).wouldDo, 'NO_FRONT');
+
+  f.advance(MIN);
+  const paused = await f.ledger.paused();
+  await f.drop(JSON.stringify(upgradeResumeRequest({ pausedSha256: paused.sha256, opId: claimId, generation: 3 }, f.clock)), 'owner');
+  assert.equal((await f.exec.tick({ betweenBatchesRunning: true })).reason, BETWEEN_BATCHES_RUNNING);
+  assert.equal(await f.ledger.paused(), null);
+  assert.deepEqual(companion.calls, [], '批间维护在途时不占 companion 通道');
+  assert.equal(queue.view(f.clock(), { etaBatchMs: MIN }).find(r => r.pr === subject.pr).position, 1);
+
+  f.advance(MIN);
+  const held = await f.exec.tick();
+  assert.deepEqual([held.state, held.reason], ['DEFERRED', 'INTAKE_PAUSED']);
+  assert.deepEqual([queue.row(subject.pr).state, queue.row(subject.pr).reason], ['DONE', 'PR_CLOSED'], '首个安全 tick 已收终，即使接单 hold 仍在');
+  assert.equal(queue.view(f.clock(), { etaBatchMs: MIN }).find(r => r.pr === subject.pr).position, null);
+  assert.deepEqual(await f.ledger.pendingFlowEnds(), []);
+  assert.deepEqual(companion.calls, [['pr-head', subject.pr]]);
+  assert.deepEqual((await receipts('batch-reserved')).map(r => r.subject.pr), [subject.pr]);
+  assert.deepEqual([count(f, 1), count(f, 8)], before);
+  assert.equal(queue.row(nextPr).state, 'QUEUED');
+  assert.deepEqual((await receipts('queue-pr-closed')).map(r => [r.pr, r.state]), [[subject.pr, 'merged']]);
+
+  f.advance(MIN);
+  await f.drop(JSON.stringify(intakeResumeRequest({ holder: 'resident-upgrade', reason: 'upgraded' }, f.clock)), 'requests');
+  await f.exec.tick();
+  assert.deepEqual(modes, ['revoke-only', 'on'], '解除最后一个 hold 的首轮立即恢复 on');
+  assert.deepEqual((await receipts('train-run-intent')).map(r => r.runMode), ['revoke-only', 'on']);
+  f.advance(MIN);
+  await f.exec.tick();
+  const reservations = await receipts('batch-reserved');
+  assert.deepEqual(reservations.map(r => r.subject.pr), [subject.pr, nextPr]);
+  assert.ok((await receipts('stage-terminal')).some(r => r.key === reservations[1].key && r.stage === 1 && r.ok));
+  f.advance(MIN);
+  await f.exec.tick();
+  assert.deepEqual([f.exec.trainLast.front?.pr, f.exec.trainLast.front?.headSha], [nextPr, nextHead], '常规 CI 入列后，下一次 on 读到 B 为车头');
+  const persisted = await RunQueue.open(queue.dir, f.clock);
+  assert.equal(persisted.view(f.clock(), { etaBatchMs: MIN }).find(r => r.pr === subject.pr).position, null);
+  assert.deepEqual(await f.ledger.pendingFlowEnds(), []);
+});
+
+test('接单 hold 后的普通队列也收终，每 tick 核一行，同一行十分钟内不重读', async t => {
+  const readPrs = [];
+  let readSecond = pr => ({ number: pr, state: 'open', headSha: HEAD });
+  let draftClosed = false;
+  const f = await executorFixture(t, { companion: fakeCompanion({ pull: pr => {
+    readPrs.push(pr);
+    if (pr === 885) return readSecond(pr);
+    if (pr === 887) return { number: pr, state: draftClosed ? 'closed' : 'open', draft: !draftClosed, headSha: '4'.repeat(40) };
+    return { number: pr, state: 'merged', headSha: HEAD };
+  } }) });
+  await f.drop(JSON.stringify(intakePauseRequest({ holder: 'resident-upgrade', reason: 'upgrade' }, f.clock)), 'requests');
+  for (const pr of [884, 885]) await f.drop(triggerBytes({ pr }));
+
+  await f.exec.tick();
+  assert.deepEqual(readPrs, [884], '同一个 tick 只核第一行');
+  assert.equal(f.queue.row(885).state, 'QUEUED');
+  f.advance(MIN);
+  await f.exec.tick();
+  assert.deepEqual(readPrs, [884, 885]);
+  assert.deepEqual([f.queue.row(884).state, f.queue.row(884).reason], ['DONE', 'PR_CLOSED']);
+  assert.equal(f.queue.row(885).state, 'QUEUED');
+
+  readSecond = () => ({ number: 884, state: 'closed', headSha: HEAD });
+  f.advance(10 * MIN - 1);
+  await f.exec.tick();
+  assert.deepEqual(readPrs, [884, 885], '第二行距离上次核对不足十分钟');
+  f.advance(1);
+  await f.exec.tick();
+  assert.deepEqual(readPrs, [884, 885, 885]);
+  assert.equal(f.queue.row(885).state, 'QUEUED', '其他 PR 的关闭答复不能影响本行');
+  readSecond = pr => ({ number: pr, state: 'unknown', headSha: HEAD });
+  f.advance(10 * MIN);
+  assert.equal((await f.exec.tick()).reason, 'INTAKE_PAUSED');
+  assert.equal(f.queue.row(885).state, 'QUEUED', '未确认的状态不能收终');
+  readSecond = () => { throw new Error('pr-head timed out'); };
+  f.advance(10 * MIN);
+  assert.equal((await f.exec.tick()).reason, 'INTAKE_PAUSED', '读取失败后仍经过正常排程关');
+  assert.equal(f.queue.row(885).state, 'QUEUED');
+  readSecond = pr => ({ number: pr, state: 'closed', headSha: HEAD });
+  f.advance(10 * MIN);
+  await f.exec.tick();
+  assert.deepEqual([f.queue.row(885).state, f.queue.row(885).reason], ['DONE', 'PR_CLOSED']);
+
+  await f.drop(JSON.stringify(intakeResumeRequest({ holder: 'resident-upgrade', reason: 'upgraded' }, f.clock)), 'requests');
+  await f.drop(triggerBytes({ pr: 886 }));
+  await f.drop(triggerBytes({ pr: 887, headSha: '4'.repeat(40) }));
+  await f.exec.tick();
+  assert.deepEqual(readPrs.slice(-2), [886, 887], '提前核对收终 886，正常排程在预留前读取 887');
+  assert.ok(f.queue.held(887), '草稿由原有排程路径 hold');
+  draftClosed = true;
+  f.advance(10 * MIN - 1);
+  await f.exec.tick();
+  assert.equal(readPrs.filter(pr => pr === 887).length, 1, '预留前的读取也计入十分钟间隔');
+  f.advance(1);
+  await f.exec.tick();
+  const draft = f.queue.view(f.clock(), { etaBatchMs: MIN }).find(r => r.pr === 887);
+  assert.deepEqual([draft.state, draft.reason, draft.position], ['DONE', 'PR_CLOSED', null]);
 });
 
 test('park.maxMs frees the parking place and a PR event wakes the same batch', async t => {
