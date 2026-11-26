@@ -22,6 +22,7 @@
 // /2 is no longer produced or accepted (the resident and the Source change together).
 import { createHash } from 'node:crypto';
 import { digest } from '../proof.mjs';
+import { TRAIN_CONTROL_TIMING, TRAIN_PROTOCOL_VERSION } from '../merge-train-v2-contract.mjs';
 
 export const TRAIN_RUN_CONTRACT = 'clued.independent-ci.train-run/4';
 export const TRAIN_RUN_KEY_CONTRACT = 'clued.independent-ci.train-run-key/1';
@@ -53,6 +54,12 @@ const within = (v, [lo, hi]) => Number.isSafeInteger(v) && v >= lo && v <= hi;
 const isoMs = v => typeof v === 'string' && ISO_MS.test(v) && !v.startsWith('0000') && Number.isFinite(Date.parse(v)) && new Date(Date.parse(v)).toISOString() === v;
 const frontOutcome = j => Number.isSafeInteger(j.frontPr) && j.frontPr > 0 && SHA.test(j.frontHeadSha ?? '') && SHA.test(j.frontTestSha ?? '')
   && [1, 2].includes(j.frontAttempt) && typeof j.frontCode === 'string' && CODE.test(j.frontCode) && typeof j.frontFailed === 'boolean';
+
+// 受保护入口给常驻端的调度提示。下轮执行仍须重新签名领用。
+export function sharedTrainSchedule(now, pending) {
+  const delay = pending ? TRAIN_CONTROL_TIMING.recheckMs : 4 * TRAIN_CONTROL_TIMING.recheckMs;
+  return { protocolVersion: TRAIN_PROTOCOL_VERSION, retryAt: pending === null ? null : new Date(now + delay).toISOString() };
+}
 
 // A run key from a seed, for tests and fixtures. The resident draws its own random key and run id (engine-windows.mjs
 // #runTrainStage); the derivation checks only their shape: the id is the key's first 16 hex digits and a nonce.

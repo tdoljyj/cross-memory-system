@@ -2107,7 +2107,8 @@ export class ResidentExecutor {
     // FABLE-ci-10min §3.2 P1b (field 2026-11-19 06:39, #1171): a due stage-10 run also goes first while a front is bound; otherwise a trigger
     // of another PR in the same tick reserved its ordinary batch first and held stage 10 for 14-24 minutes.
     // FABLE-keep-train-replan §3.4: so does the run a head's admission asked for while the train was idle (trainAdmitOwed).
-    if (!this.betweenBatchesRunning && (this.trainResumeOwed() || this.trainAdmitOwed || await this.trainFrontOpenOwed() || this.trainFrontWaits())) {
+    const sharedDue = this.trainLast?.sharedWork && (this.trainUrgent || Date.parse(this.trainLast.sharedWork.retryAt) <= this.clock());
+    if (!this.betweenBatchesRunning && (sharedDue || this.trainResumeOwed() || this.trainAdmitOwed || await this.trainFrontOpenOwed() || this.trainFrontWaits())) {
       const owed = await this.trainMaintenance({ routineOnly: true });
       if (owed) return owed;
     }
@@ -2411,7 +2412,8 @@ export class ResidentExecutor {
           wouldDo: null, frontPr: null, mainSha: null, wouldRevokeCount: null });
       } catch { /* see above */ }
     }
-    this.trainRuns = rows.filter(e => e.type === 'train-run-intent').map(e => Date.parse(e.value.at)).filter(Number.isFinite);
+    this.trainRuns = rows.filter(e => e.type === 'train-run-intent' && e.value.body?.sharedWork !== true)
+      .map(e => Date.parse(e.value.at)).filter(Number.isFinite);
     const intents = rows.filter(e => e.type === 'train-run-intent');
     this.trainExtraRuns = intents.filter(e => e.value.body?.idleProgressExtra === true).map(e => Date.parse(e.value.at)).filter(Number.isFinite);
     this.trainProgressConsumed = intents.findLast(e => e.value.body?.idleProgressExtra === true)?.value.body.progressKey ?? null;
@@ -2629,9 +2631,11 @@ export class ResidentExecutor {
     const urgent = train.enabled === 'on' && this.trainUrgent === true;
     const recheck = train.enabled === 'on' && this.trainLast?.mode === 'on'
       && (TRAIN_RECHECK_DECISIONS.includes(this.trainLast.decision) || this.trainFrontRecheck?.due === true);
-    if (this.trainRuns.length >= train.maintenanceMaxPerDay) this.queue.notice(boundedNotice({ code: 'TRAIN_DAILY_LIMIT', used: this.trainRuns.length,
+    const sharedWork = !paused && this.trainLast?.sharedWork?.protocolVersion === 2 && this.trainLast.onDuty === true;
+    if (!sharedWork && this.trainRuns.length >= train.maintenanceMaxPerDay) this.queue.notice(boundedNotice({ code: 'TRAIN_DAILY_LIMIT', used: this.trainRuns.length,
       limit: train.maintenanceMaxPerDay, now, resetsAt: this.trainRuns.length ? Math.min(...this.trainRuns) + DAY : null, recovery: null }));
-    const routineDue = trainDue({ train: cadence, now, runs: this.trainRuns, busy: false, urgent, recheck });
+    const sharedRetryAt = !paused ? Date.parse(this.trainLast?.sharedWork?.retryAt) : null;
+    const routineDue = trainDue({ train: cadence, now, runs: this.trainRuns, busy: false, urgent, recheck, sharedRetryAt, sharedWork });
     let idleProgressExtra = false;
     // DESIGN §65: in strict-permanent mode a full round is a background audit, never hurried, unless a rewritten main waits for it.
     if (!routineDue && !paused && !routineOnly && train.enabled === 'on' && this.trainProgressReady === true && (this.trainSweepGates() || this.trainSweep?.fullAllPending === 'TRAIN_MAIN_REWRITTEN')) {
@@ -2667,9 +2671,10 @@ export class ResidentExecutor {
     const progress = this.trainLast?.sweep?.progress;
     const progressKey = idleProgressExtra ? `${progress.roundId}:${progress.token}` : null;
     const intent = await this.receipt('train-run-intent', acting ? { mode: train.enabled, runMode: mode, input,
+      ...(sharedWork && mode === 'on' ? { sharedWork: true } : {}),
       ...(idleProgressExtra ? { idleProgressExtra: true, progressKey } : {}) } : { mode: train.enabled });
     this.trainMaintenanceTick = this.tickSeq;
-    this.trainRuns.push(now);
+    if (!sharedWork || mode !== 'on') this.trainRuns.push(now);
     if (idleProgressExtra) { this.trainExtraRuns.push(now); this.trainProgressConsumed = progressKey; }
     this.trainUrgent = false;
     this.trainAdmitOwed = false;
@@ -3131,7 +3136,22 @@ export class ResidentExecutor {
     return named && !this.trainStrictFront(subject, { at: this.clock() + FRONT_PROOF_MARGIN_MS });
   }
 
+  async completeParkedBatch(key, subject, batch, record, tries) {
+    const relayed = record.plan.relayed.map(role => role.role), local = record.parked.local ?? [];
+    await this.ledger.terminal(key, 'COMPLETED', { batchId: batch.batchId, closed: record.parked.closed ?? null, relayed, local, tries });
+    await this.receipt('batch-terminal', { key, outcome: 'COMPLETED' });
+    this.reportOutcome(subject, 'COMPLETED', { key });
+    return { state: 'COMPLETED', key, relayed, local, tries,
+      settle: { kind: 'completed', code: null, klass: null, breaker: 'neutral', pos: POSITIONS.END, linux: false } };
+  }
+
   async stage8Try(key, subject, batch) {
+    if (!Object.hasOwn(subject, 'testSha') && this.trainLast?.sharedWork?.protocolVersion === 2
+      && this.trainLast.onDuty === true && this.trainEligible()) {
+      const parked = await this.ledger.state(key);
+      this.trainUrgent = true;
+      return this.completeParkedBatch(key, subject, batch, parked, 0);
+    }
     // Generation 22: the batch rests at parking point B (the Linux zone is closed, nothing of it runs), where stage 10 may run as it does
     // after a schedule that ran nothing: a front batch whose strict proof would run out first gets it refreshed now (urgent: only the
     // cadence is waived; the daily cap, one run per tick and every gate of trainMaintenance hold), so its first try is not refused.
@@ -3161,15 +3181,10 @@ export class ResidentExecutor {
     await this.receipt('stage-terminal', { key, stage: 8, ok: control.ok === true, failureCode: control.ok ? null : validCode(control.code), factsSha256: control.factsSha256 ?? null, outcome: outcomeSummary(control), try: n });
     const relayed = s.plan?.relayed?.length ?? 0;
     if (control.ok === true) {
-      await this.ledger.terminal(key, 'COMPLETED', { batchId: batch.batchId, closed: s.parked.closed ?? null, relayed: s.plan.relayed.map(r => r.role), local: s.parked.local ?? [], tries: n });
-      await this.receipt('batch-terminal', { key, outcome: 'COMPLETED' });
-      this.reportOutcome(subject, 'COMPLETED', { key });
       // ADR 0018 §6: in push mode a front batch that completed stage 8 has landed main; stage 10 adopts its members right away
       // (urgent, under the daily cap like every urgent run) instead of at the next routine run.
       if (subject?.testSha && subject.testSha !== subject.headSha && trainLandingMode(this.policy.train) === 'push' && this.policy.train.enabled === 'on') this.trainUrgent = true;
-      // Only stage 8 ran in this step: a Windows-only ending for the breaker (the parking itself told it about the rest).
-      return { state: 'COMPLETED', key, relayed: s.plan.relayed.map(r => r.role), local: s.parked.local ?? [], tries: n,
-        settle: { kind: 'completed', code: null, klass: null, breaker: 'neutral', pos: POSITIONS.END, linux: false } };
+      return this.completeParkedBatch(key, subject, batch, s, n);
     }
     const o = control.outcome;
     const zero = !!o && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false
@@ -3328,6 +3343,7 @@ export class ResidentExecutor {
       done.push({ name: entry.name, disposition: r.action === 'seen' ? 'ignored' : 'processed',
         receipt: ['trigger-queued', { pr: t.pr, headSha: t.headSha, baseSha: t.baseSha, action: r.action, seq: r.seq ?? null, bytesSha256 }] });
     }
+    if (this.trainLast?.sharedWork && nudges.some(nudge => !nudge.seen)) this.trainUrgent = true;
     await this.nudgeParked(nudges, now);
     if (this.queue.rebuilt && !this.queueRebuiltReported) {
       await this.receipt('queue-rebuilt', { keptAs: this.queue.rebuilt.keptAs, generation: this.queue.generation });

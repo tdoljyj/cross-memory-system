@@ -18,7 +18,8 @@ import path from 'node:path';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { setup, jobOf, iso, REPO, NOW, SOURCE } from './train-strict-fixtures.mjs';
 import { tempDir, admittedFacts } from './resident-v2-fixtures.mjs';
-import { batchJobsV2, claimGeneration } from '../src/job-v2.mjs';
+import { admissionExternalIdV2, batchJobsV2, claimGeneration, makeJobV2 } from '../src/job-v2.mjs';
+import { trainBatchKey, trainEffectKey, trainHeadWorkKey } from '../src/merge-train-v2-contract.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
 import { digest } from '../src/proof.mjs';
 import { createFixtureControlPublisherV2 } from '../src/independent-control-checks-v2/publisher.mjs';
@@ -36,7 +37,7 @@ import { createFullAdmissionPortV2 } from '../src/full-admission-v2.mjs';
 import { mergeSlotState } from '../../../../scripts/ci/clued-work-admission.mjs';
 import { Poller, MAIN_REF_ROUTE, PULLS_ROUTE } from '../../../independent-ci-resident-v1/src/poller.mjs';
 import { WindowsEngine, DESCRIPTOR_CHAIN_CONTRACT, DESCRIPTOR_CONTRACT } from '../../../independent-ci-resident-v1/src/engine-windows.mjs';
-import { chainOfFront, openFrontBatchOf } from '../../../independent-ci-resident-v1/src/train.mjs';
+import { chainOfFront, openFrontBatchOf, trainDue } from '../../../independent-ci-resident-v1/src/train.mjs';
 import { AdmissionRerunner, AdmissionRerunState, decide, HEAD_RECHECK_MS } from '../../../independent-ci-resident-v1/src/admission-rerun.mjs';
 import { parseStatus, pollerLandingOf, readStatus, StatusBoard, StatusFile } from '../../../independent-ci-resident-v1/src/status.mjs';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../../../independent-ci-resident-v1/src/policy.mjs';
@@ -277,7 +278,184 @@ async function stage10(e, outcome = null) {
     ...(outcome ? { frontPr: outcome.pr, frontHeadSha: outcome.headSha, frontTestSha: outcome.testSha, frontAttempt: outcome.attempt, frontCode: outcome.code,
       ...(Object.hasOwn(outcome, 'frontFailed') ? { frontFailed: outcome.frontFailed } : {}) } : {}) });
   return runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
-    claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN4 });
+    claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN4,
+    trainV2: e.trainV2, admission: e.sharedAdmission });
+}
+
+test('片 3：按 Native 队序立即封存落后 main 的三个已授权成员', async t => {
+  const e = await sharedTrain(t);
+  await stage10(e);
+  assert.deepEqual(e.shared.batch?.members.map(m => m.pr), [920, 922, 921], '本轮即取 Native 队序，入队者无需另开 auto-merge');
+  assert.equal(e.shared.batch.state, 'waiting_checks');
+  assert.equal(e.shared.batch.baseSha, e.main());
+  assert.equal(e.shared.staged.length, 1);
+  assert.equal(e.W.refs.has('heads/clued-train/staging.tmp'), false);
+});
+
+test('片 3：组合红由另一台继续同一前缀，基础设施失败不拆批', async t => {
+  const e = await sharedTrain(t);
+  await stage10(e);
+  const parent = e.shared.batch;
+  assert.ok([920, 922].every(pr => !e.shared.bad(e.W.content.get(e.head(pr)))), '组成红树的两个 H 各自为绿');
+  assert.equal(e.shared.bad(e.W.content.get(parent.testSha)), true);
+  e.shared.outcome = 'pending';
+  await stage10(e);
+  assert.deepEqual(e.shared.splits, [], '未裁决的运行不得拆批');
+  e.shared.outcome = 'failed';
+  e.shared.effects.arm('batch_bisect', { loseReply: true });
+  await stage10(e);
+  assert.deepEqual(e.shared.splits.map(b => b?.members.map(m => m.pr)), [[920, 922]], '共享账本记录红批的精确前缀');
+  const prefix = e.shared.batch;
+  assert.equal(prefix.parentBatchId, parent.batchId);
+  e.shared.outcome = 'pending';
+  e.trainV2 = e.shared.controller('B');
+  await stage10(e);
+  assert.equal(e.shared.batch.generation, 1, '等待原持有代次到期');
+  await stage10(e);
+  assert.equal(e.shared.batch.batchId, prefix.batchId);
+  assert.equal(e.shared.batch.generation, 2);
+  assert.equal(e.shared.batch.state, 'waiting_checks');
+  assert.deepEqual(e.failed, [], '多人组合失败不应消耗单员失败预算');
+});
+
+test('片 3：首次入队按精确发布回执评估，等待后同一待办立即进入单员批', async t => {
+  const e = await sharedTrain(t, { appScans: [] });
+  const pr = 920, headSha = e.head(pr), baseSha = e.W.pulls.get(pr).base;
+  const claim = { claimId: claimOf(pr), fence: 3, epoch: 1 };
+  const job = makeJobV2({ repo: REPO, pr, headSha, baseSha, testSha: headSha, role: 'work-admission',
+    sourceManifestSha256: SOURCE, createdAt: iso(NOW), attempt: 2 });
+  const checkName = 'kooyumi-work-admission', workKey = trainHeadWorkKey({ ...e.trainV2.scope, pr, headSha, action: 'merge_queue_join' });
+  const effectKey = trainEffectKey({ ...e.trainV2.scope, action: 'publication_begin_independent', subject: [pr, headSha, APP, checkName] });
+  const publication = [...e.W.checks.values()].find(check => check.head_sha === headSha && check.name === checkName);
+  publication.external_id = admissionExternalIdV2('independent-ci:native-work-admission', job, claim);
+  const scan = [...e.W.checks.values()].find(check => check.head_sha === headSha && check.name === 'gitleaks');
+  scan.status = 'in_progress'; scan.conclusion = null;
+  e.sharedAdmission = { fixture: true, async evaluatePr(job, packet) {
+    return admittedFacts(job, { ...claim, expiresAt: iso(e.now + 3_600_000) }, packet,
+      { domain: 'fixture', batchClaim: claim, observedAt: e.now, slotUntil: e.now + 600_000 });
+  } };
+  const send = e.trainV2.command;
+  let joined = false, generation = 0;
+  const decisions = [];
+  e.trainV2.command = async input => {
+    if (input.action === 'work_pending') {
+      const pending = await send(input);
+      return joined ? { ...pending, queue: pending.queue.slice(0, 1) } : { ...pending, queue: [], more_work: true,
+        work: [{ action: 'merge_queue_join', work_key: workKey, pr, head_sha: headSha,
+          claim_id: claim.claimId, claim_fence: claim.fence, execution_epoch: claim.epoch }] };
+    }
+    if (input.action === 'queue_acquire') {
+      assert.equal(input.head_sha, headSha);
+      return { status: 'leased', work_key: workKey, generation: ++generation, lease_version: 1, expires_at: iso(e.now + 90_000),
+        base_sha: baseSha, effect_key: effectKey, entered: false,
+        check: { appId: APP, headSha, externalId: publication.external_id, checkRunId: publication.id } };
+    }
+    if (input.action === 'merge_queue_join') {
+      assert.equal(input.generation, generation);
+      assert.equal(input.check_run_id, publication.id);
+      decisions.push(input.disposition);
+      joined = input.disposition === 'join';
+      return { status: 'ok' };
+    }
+    if (input.action === 'work_release') return { status: 'released' };
+    return send(input);
+  };
+  const waiting = await stage10(e);
+  assert.deepEqual(decisions, ['wait']);
+  const retryAt = Date.parse(trainSummary(waiting.facts).sharedWork.retryAt);
+  assert.equal(retryAt - e.now, 15_000);
+  const cadence = { train: { enabled: 'on', maintenanceMaxPerDay: 1, maintenanceEveryMs: 600_000 },
+    runs: [e.now], sharedRetryAt: retryAt, sharedWork: true };
+  assert.equal(trainDue({ ...cadence, now: retryAt - 1 }), false);
+  assert.equal(trainDue({ ...cadence, now: retryAt }), true);
+  assert.equal(trainDue({ ...cadence, now: retryAt, busy: true }), false);
+  assert.equal(e.shared.batch, null);
+  scan.status = 'completed'; scan.conclusion = 'success';
+  await stage10(e);
+  assert.deepEqual(decisions, ['wait', 'join']);
+  assert.deepEqual(e.shared.batch?.members.map(member => member.pr), [pr]);
+  assert.equal(e.shared.batch.state, 'waiting_checks');
+});
+
+test('片 3：成员关闭、换 H 或发生真实合并冲突时不封存受影响的合成树', async t => {
+  for (const scenario of ['closed', 'new-head', 'conflict']) await t.test(scenario, async t => {
+    const e = await sharedTrain(t);
+    if (scenario === 'closed') e.W.pulls.get(922).state = 'closed';
+    if (scenario === 'new-head') {
+      const next = h('replacement');
+      e.W.commits.set(next, { sha: next, tree: h('tree:replacement'), parents: [e.head(922)] });
+      e.W.content.set(next, new Set(['922', 'replacement']));
+      e.W.pushHead(922, next);
+    }
+    if (scenario === 'conflict') e.shared.conflict = e.head(922);
+    await stage10(e);
+    assert.equal(e.shared.rejected[0]?.member.pr, 922, '精确失效成员应让出位置');
+    assert.equal(e.shared.staged.length, 0, '受影响的链没有暂存效果');
+    assert.deepEqual(e.failed, []);
+  });
+});
+
+async function sharedTrain(t, { appScans = SCANS } = {}) {
+  const bad = set => set.has('920') && set.has('922');
+  const e = await world(t, { prs: [920, 921, 922], behind: 2, bad, appScans });
+  e.W.pulls.get(922).autoMerge = false;
+  const members = [920, 922, 921].map(pr => ({ pr, headSha: e.head(pr), claimId: claimOf(pr), fence: 3, epoch: 1 }));
+  const s = e.shared = { batch: null, owner: null, staged: [], splits: [], rejected: [], outcome: 'pending', bad,
+    effects: multiDutyGitHub({ now: e.clock }) };
+  const scope = { tenantId: claimOf(20), projectId: claimOf(21), repositoryId: 1, targetBranch: 'main' };
+  const batchId = (baseSha, members) => trainBatchKey({ ...scope, baseSha, members, sourceSha256: SOURCE, policyVersion: 'test-policy' });
+  const make = (baseSha, members, parentBatchId = null) => ({ batchId: batchId(baseSha, members), baseSha, members, parentBatchId,
+    generation: 1, expiresAt: iso(e.now + 90_000), state: 'forming' });
+  const refs = new Map();
+  Object.assign(e.port, {
+    async prepareBatchTmp({ batchId, generation, baseSha }) {
+      refs.set(`${batchId}:${generation}`, baseSha);
+      return { acknowledged: true };
+    },
+    async mergeIntoBatchTmp({ batchId, generation, headSha }) {
+      if (headSha === s.conflict) return { status: 409, sha: null };
+      const key = `${batchId}:${generation}`, sha = e.W.merge(refs.get(key), headSha, key);
+      refs.set(key, sha);
+      return { status: 201, sha };
+    },
+  });
+  s.controller = node => ({ protocolVersion: 2, scope,
+    async command({ action, ...p }) {
+      switch (action) {
+        case 'work_pending': return { status: 'ok', policy_version: 'test-policy', batch_max: 3,
+          work: s.batch && (!s.owner || Date.parse(s.batch.expiresAt) <= e.now)
+            ? [{ action: 'batch_acquire', batchId: s.batch.batchId, state: s.batch.state,
+            member_count: s.batch.members.length }] : [], active_batch: s.batch !== null, queue: members.map((member, i) => ({ ...member, position: i + 1, sequence: i })) };
+        case 'batch_reserve': s.owner = node; s.batch = make(p.baseSha, p.members); return s.batch;
+        case 'batch_acquire': s.owner = node; s.batch = { ...s.batch, generation: s.batch.generation + 1, expiresAt: iso(e.now + 90_000) }; return s.batch;
+        case 'batch_seal': s.batch = { ...s.batch, state: 'sealed', testSha: p.testSha, treeSha: p.treeSha, steps: p.steps, checksPolicyVersion: p.checksPolicyVersion }; return s.batch;
+        case 'batch_release':
+          if (p.batchId === s.batch?.batchId && p.generation === s.batch.generation && node === s.owner) s.owner = null;
+          return s.batch;
+        case 'batch_cleanup':
+          if (p.blockedMember) s.rejected.push({ member: p.blockedMember, reason: p.reason });
+          s.owner = null; s.batch = null; return { state: 'invalidated' };
+        case 'batch_bisect': return s.effects.write('batch_bisect', () => {
+          s.batch = make(s.batch.baseSha, s.batch.members.slice(0, Math.ceil(s.batch.members.length / 2)), s.batch.batchId);
+          s.splits.push(s.batch);
+          return s.batch;
+        });
+        default: assert.fail(`意外动作 ${action}`);
+      }
+    },
+    verifyMember: async () => ({ ready: true, protectedLayer: false }),
+    async returnMember(input) { s.rejected.push(input); },
+    async stageBatch(batch) {
+      s.staged.push(batch.testSha);
+      s.effects.count('stagingUpdates', batch.testSha, node);
+      s.batch = { ...batch, state: 'waiting_checks', stagingState: 'settled' };
+      return s.batch;
+    },
+    async inspectBatch(batch) { return { state: s.outcome, testSha: batch.testSha, policyVersion: batch.checksPolicyVersion,
+      evidenceDigest: digest(['required failure', batch.testSha]) }; },
+  });
+  e.trainV2 = s.controller('A');
+  return e;
 }
 // scans: the front batch's stages 2-7 passed and published its own scans on H (gh.frontScans); false for a batch that ran none.
 // batchRoute: what stage 8 read from its batch-route.json (bc982192); claimAssist: Native's claim assist (a claim joins the queue).

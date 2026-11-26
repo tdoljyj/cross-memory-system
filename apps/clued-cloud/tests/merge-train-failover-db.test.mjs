@@ -1516,8 +1516,26 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
     assert.equal(settled.state, 'settled', JSON.stringify(settled));
     assert.equal(data(await call(successor, 'publication_finish', finish)).receipt_id, settled.receipt_id);
     assert.equal(data(await call(holder, 'head_acquire', subject)).error_code, TRAIN_FAILURE.HEAD_LEASE_COMPLETED.native);
-    const queuedWork = data(await call(holder, 'queue_acquire', subject));
+    const awaiting = data(await call(holder, 'work_pending', {}));
+    assert.equal(awaiting.more_work, true, JSON.stringify(awaiting));
+    assert.deepEqual(awaiting.queue, []);
+    assert.equal(awaiting.work.find(work => work.action === 'merge_queue_join')?.head_sha, head);
+    let queuedWork = data(await call(holder, 'queue_acquire', subject));
     assert.equal(queuedWork.status, 'leased', JSON.stringify(queuedWork));
+    assert.equal(queuedWork.effect_key, intent.effect_key);
+    assert.deepEqual(queuedWork.check, { appId: check.appId, headSha: head, externalId: check.externalId, checkRunId: 12345 });
+    assert.equal(queuedWork.entered, false);
+    const wait = data(await call(holder, 'merge_queue_join', {
+      ...lease(queuedWork), check_run_id: 12345, inventory_digest: digest('required check pending'),
+      disposition: 'wait', reason: 'REQUIRED_CHECKS_PENDING',
+    }));
+    assert.equal(wait.disposition, 'wait');
+    const delayed = data(await call(successor, 'work_pending', {}));
+    assert.equal(delayed.more_work, true);
+    assert.equal(delayed.work.some(work => work.action === 'merge_queue_join'), false);
+    await admin.query(`update clued_private.ci_train_work_v2 set expires_at=clock_timestamp()-interval '1 second'
+      where work_key=$1`, [queuedWork.work_key]);
+    queuedWork = data(await call(holder, 'queue_acquire', subject));
     const queue = data(await call(holder, 'merge_queue_join', {
       ...lease(queuedWork), check_run_id: 12345, inventory_digest: digest('fixture check inventory'),
     }));
@@ -1529,6 +1547,8 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
 
     const baseSha = sha('base');
     const members = [{ pr, headSha: head, claimId: f.claim.claim_id, fence: subject.claim_fence, epoch: subject.execution_epoch }];
+    const ready = data(await call(successor, 'work_pending', {}));
+    assert.deepEqual(ready.queue, [{ ...members[0], position: 1, sequence: pr, solo: false }]);
     const reservations = (await Promise.all([call(holder, 'batch_reserve', { baseSha, members }),
       call(successor, 'batch_reserve', { baseSha, members })])).map(data);
     const ownerIndex = reservations.findIndex(r => r.state === 'forming');

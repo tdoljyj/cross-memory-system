@@ -50,10 +50,13 @@ import { pathToFileURL } from 'node:url';
 import { runEntry, controllerPrincipal, controllerPorts, observationLog } from '../resident-v2/entry-runtime.mjs';
 import { STAGE_MARGIN_MS, STATE_V2, TRAIN_STAGE_V2 } from '../resident-v2/layout.mjs';
 import { stateRetention } from '../resident-v2/state-retention.mjs';
-import { validateTrainRun } from '../resident-v2/train-run.mjs';
+import { sharedTrainSchedule, validateTrainRun } from '../resident-v2/train-run.mjs';
+import { TRAIN_PROTOCOL_VERSION, trainBatchKey, trainHeadWorkKey } from '../merge-train-v2-contract.mjs';
+import { admissionExternalIdV2, claimGeneration, makeJobV2, MAX_ATTEMPT_V2 } from '../job-v2.mjs';
+import { digest } from '../proof.mjs';
 import { GreenLedger } from './green-ledger.mjs';
 import { closeGreenLedgerGroups } from './green-ledger-closed.mjs';
-import { APP_ID } from './publisher.mjs';
+import { APP_ID, evaluateFirstTrainQueue, factsValid } from './publisher.mjs';
 import { createMergeSlotNative } from './merge-slot-native.mjs';
 import { RULESET_UNREADABLE, RULESET_READ_FAILED, REQUIRED_CHECKS_UNREADABLE, appScansPinned, readMainRules, requiredCheckFailure } from './train-rules.mjs';
 import { decideShadow, frontPullFacts, requiredFailureExcused, requiredYieldReason, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
@@ -63,7 +66,7 @@ import { runStrictLane, strictIdentity, strictSettingsDigest, strictReadiness, s
 import { ScanProgress } from './train-scan-progress.mjs';
 import { layerOf, loadPolicy } from '../../../../../scripts/ci/merge-admission-policy.mjs';
 import { resolvePRTaskBinding } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
-import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact, readLandingRoute } from './train-landing.mjs';
+import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact, readLandingRoute, sharedTrainMembers } from './train-landing.mjs';
 import { createLandingPort } from './train-landing-port.mjs';
 import { FIXED_APP } from '../resident-v2/record.mjs';
 import { MAX_REVOKES_PER_RUN, SLOT_CHECK, SWEEP_BUDGET_MS, countedGithub, createSweeper, fullSweepSegment, incrementalSweep, ledgerGreens,
@@ -120,11 +123,320 @@ export async function runTrain(ports) {
   const fx = { n: 0 };
   const startedAt = (ports.clock ?? Date.now)();
   try {
+    if (ports.trainV2 !== undefined) return await runSharedTrain({ ...ports, startedAt }, fx);
     const result = await runTrainCounted({ ...ports, startedAt }, fx);
     const claimBindings = ports.observeBindings === true ? await observePRClaimBindings(ports, startedAt) : null;
     return claimBindings === null ? result : { ...result, facts: validateTrainFacts({ ...result.facts, claimBindings }) };
   }
   catch (e) { if (fx.n > 0) throw Object.assign(e instanceof Error ? e : new Error(String(e)), { sideEffects: fx.n }); throw e; }
+}
+
+const HASH = /^[0-9a-f]{64}$/;
+const batchHandle = ({ batchId, generation }) => ({ batchId, generation });
+const queueSubject = ({ pr, headSha, claimId, fence, epoch }) =>
+  ({ pr, head_sha: headSha, claim_id: claimId, claim_fence: fence, execution_epoch: epoch });
+const workHandle = ({ work_key, generation, lease_version }) => ({ work_key, generation, lease_version });
+
+async function runSharedTrain({ job, trainV2: train, github, native, landing, trainLanding, admission, live = () => {},
+  clock = Date.now, startedAt }, fx) {
+  validateTrainRun(job);
+  const scope = train?.scope;
+  let onDuty = false, mainSha = null, rules = null, route = null, appScans = null;
+  const facts = (decision, recheck = true) => ({
+    facts: validateTrainFacts({ ...trainFacts({ mode: job.mode, at: isoOf(startedAt), onDuty, holders: [],
+      mainSha, rules, appScans, landing: route, front: null, revoke: [], ledger: null, ...(job.mode !== 'shadow' ? { decision } : {}) }),
+      sharedWork: sharedTrainSchedule(clock(), recheck) }),
+    sideEffects: fx.n,
+  });
+  if (job.mode !== 'on') return facts('NOT_ON_DUTY', null);
+  if (train?.protocolVersion !== TRAIN_PROTOCOL_VERSION || typeof train.command !== 'function'
+    || !(Number.isSafeInteger(scope?.repositoryId) && scope.repositoryId > 0) || scope.targetBranch !== 'main')
+    return facts('TRAIN_SOURCE_UNREADABLE');
+  if (job.sweep === 'gate' || trainLanding?.landing !== 'push' || trainLanding.unreadable === true)
+    return facts('TRAIN_SOURCE_UNREADABLE', null);
+
+  const command = async (action, payload = {}) => {
+    live();
+    if (action !== 'work_pending' && action !== 'batch_read') fx.n++;
+    const reply = await train.command({ protocol_version: TRAIN_PROTOCOL_VERSION, action, repository_id: scope.repositoryId,
+      target_branch: scope.targetBranch, source_manifest_sha256: job.sourceManifestSha256, ...payload });
+    return reply?.result ?? reply;
+  };
+  const idle = () => facts('NO_FRONT', false);
+  const waiting = () => facts('TRAIN_FRONT_BATCH_RUNNING');
+  const pendingWork = async () => {
+    const pending = await command('work_pending');
+    if (pending?.status !== 'ok' || !Array.isArray(pending.work) || pending.work.length > 32
+      || !Array.isArray(pending.queue) || pending.queue.length > RIDER_MAX_READS
+      || typeof pending.active_batch !== 'boolean' || ![1, 2, 3].includes(pending.batch_max)
+      || typeof pending.policy_version !== 'string' || !pending.policy_version)
+      fail('TRAIN_SOURCE_UNREADABLE');
+    return pending;
+  };
+  try {
+    let pending = await pendingWork();
+    onDuty = true;
+    const read = await readMainRules(github, APP_ID);
+    const checks = read.rules.filter(rule => rule.type === 'required_status_checks');
+    if (!checks.length || !checks.every(rule => typeof rule.parameters?.strict_required_status_checks_policy === 'boolean'))
+      return facts('TRAIN_SOURCE_UNREADABLE');
+    rules = { strict: checks.some(rule => rule.parameters.strict_required_status_checks_policy), mergeOnly: false };
+    if (!rules.strict) return facts('TRAIN_STRICT_OFF');
+    appScans = appScansPinned(read.rules, APP_ID);
+    route = await (train.readRoute ?? readLandingRoute)({ github, appId: APP_ID, rules: read.rules });
+    if (route?.route !== 'push') return facts('TRAIN_SOURCE_UNREADABLE');
+    if (!pending.active_batch && pending.work.length === 0 && pending.queue.length === 0)
+      return pending.more_work === true ? waiting() : idle();
+    mainSha = (await github.readBranchHead('main')).sha;
+    if (!SHA.test(mainSha ?? '')) { mainSha = null; return facts('TRAIN_SOURCE_UNREADABLE'); }
+
+    const max = Math.min(effectiveBatchMax(trainLanding), pending.batch_max);
+    const policyVersion = pending.policy_version;
+    const batchKey = (baseSha, members) => trainBatchKey({ ...scope, baseSha, members,
+      sourceSha256: job.sourceManifestSha256, policyVersion });
+    const reconcile = pending.work.find(item => item.reconcile === true && item.action !== 'batch_acquire');
+    if (reconcile && typeof train.resumeHead === 'function') { fx.n++; await train.resumeHead(reconcile); return waiting(); }
+    const dueBatch = pending.work.find(item => item.action === 'batch_acquire');
+    const receiveMax = trainLanding.batchChain === true ? 4 : 1;
+    if (dueBatch && HASH.test(dueBatch.batchId ?? '') && Number.isSafeInteger(dueBatch.member_count)
+      && dueBatch.member_count > 0 && dueBatch.member_count <= receiveMax) {
+      const batch = await command('batch_acquire', { batchId: dueBatch.batchId });
+      if (batch?.batchId === dueBatch.batchId && batch?.generation > 0) {
+        const progressed = await processSharedBatch({ batch, batchKey, mainSha, train, github, job, landing, command,
+          policyVersion: pending.policy_version, clock, live, fx });
+        if (progressed) return waiting();
+      }
+    }
+    const firstQueue = pending.work.find(item => item.action === 'merge_queue_join');
+    if (firstQueue) {
+      await evaluateSharedQueue({ item: firstQueue, job, github, admission, train, command, live, clock });
+      if (pending.active_batch) return waiting();
+      pending = await pendingWork();
+      if (pending.policy_version !== policyVersion || pending.batch_max < max) return waiting();
+    }
+    if (pending.active_batch || !pending.queue.length)
+      return pending.active_batch || pending.work.length || pending.more_work === true ? waiting() : idle();
+    if (typeof train.stageBatch !== 'function' || typeof train.inspectBatch !== 'function') return facts('TRAIN_SOURCE_UNREADABLE');
+    const ordered = [...pending.queue].sort((a, b) => a.position - b.position || a.sequence - b.sequence);
+    if (ordered[0]?.position !== 1 || !ordered.every(row => Number.isSafeInteger(row.position) && row.position > 0
+      && Number.isSafeInteger(row.sequence) && row.sequence >= 0)) return waiting();
+    const ready = [];
+    for (const row of ordered.slice(0, max)) {
+      const [member] = sharedTrainMembers([row]) ?? [];
+      if (!member || ready.some(m => m.pr === member.pr || m.headSha === member.headSha)) break;
+      if (row.solo === true && ready.length) break;
+      const observation = await observeSharedMember({ member, job, github, train, baseSha: mainSha });
+      if (observation.reason) {
+        if (typeof train.returnMember === 'function') { fx.n++; await train.returnMember({ member, baseSha: mainSha, reason: observation.reason }); }
+        return waiting();
+      }
+      if (!observation.ready) break;
+      ready.push(member);
+      if (row.solo === true || observation.protectedLayer === true) break;
+    }
+    if (!ready.length || (await github.readBranchHead('main')).sha !== mainSha) return waiting();
+    const batch = await command('batch_reserve', { baseSha: mainSha, members: ready });
+    if (batch?.batchId === batchKey(mainSha, ready) && batch?.state === 'forming')
+      await processSharedBatch({ batch, batchKey, mainSha, train, github, job, landing, command, policyVersion: pending.policy_version, clock, live, fx });
+    return waiting();
+  } catch {
+    // 每次写入都绑定稳定的 Native 对象。回复丢失后，下轮先签名读回。
+    return facts('TRAIN_SOURCE_UNREADABLE');
+  }
+}
+
+function sharedTrainRuntime({ transport, batchEffects, admission, github, job, live }) {
+  if (transport == null) return transport;
+  const command = payload => transport.command({ ...payload, scope: transport.scope.contextKey, repository: job.repo });
+  const write = async (action, payload) => {
+    live();
+    const reply = await command({ action, protocol_version: TRAIN_PROTOCOL_VERSION,
+      repository_id: transport.scope.repositoryId, target_branch: transport.scope.targetBranch,
+      source_manifest_sha256: job.sourceManifestSha256, ...payload });
+    return reply?.result ?? reply;
+  };
+  return {
+    ...batchEffects, protocolVersion: transport.protocolVersion, scope: transport.scope, command,
+    async verifyMember({ member, pull, baseSha }) {
+      if (typeof batchEffects?.verifyMember === 'function') return batchEffects.verifyMember({ member, pull, baseSha });
+      const candidate = makeJobV2({ repo: job.repo, pr: member.pr, headSha: member.headSha,
+        baseSha: pull.base.sha, testSha: member.headSha, role: 'work-admission',
+        sourceManifestSha256: job.sourceManifestSha256, createdAt: isoOf(Date.now()), attempt: 1 });
+      const packet = await github.readChangedPaths(candidate);
+      const claim = claimGeneration(member);
+      const reply = await admission.evaluatePr(candidate, packet, { batchClaim: claim });
+      let facts;
+      try { facts = factsValid(candidate, packet, reply, 'production', Date.now(), claim); }
+      catch (error) {
+        return ['full_admission_rejected', 'full_admission_claim_changed', 'full_admission_subject_changed'].includes(error?.code)
+          ? { reason: 'PR_NOT_OPEN_OR_CHANGED' } : { ready: false };
+      }
+      if (facts.mode.state === 'frozen') return { ready: false };
+      if (facts.mode.layer === 'protected') {
+        if (!facts.ownerReview?.grantId) return { reason: 'OWNER_REVIEW_REQUIRED' };
+        if (baseSha !== member.headSha) {
+          const comparison = await github.readCompare(baseSha, member.headSha);
+          if (comparison?.status !== 'ahead' || comparison.behindBy !== 0) return { reason: 'FRONT_NEEDS_MAIN_MERGE' };
+        }
+      }
+      return { ready: true, protectedLayer: facts.mode.layer === 'protected' };
+    },
+    async returnMember({ member, baseSha, reason }) {
+      const grant = await write('queue_action_acquire', { ...queueSubject(member), purpose: 'merge_slot_return' });
+      if (grant?.status !== 'leased' || !HASH.test(grant.work_key ?? '')) return;
+      const lease = workHandle(grant);
+      try { await write('merge_slot_return', { ...lease, evidence_digest: digest({ member, baseSha, reason }) }); }
+      finally { await write('work_release', lease); }
+    },
+  };
+}
+
+async function observeSharedMember({ member, job, github, train, baseSha }) {
+  const pull = await github.readPullRequest(member.pr);
+  if (pull?.number !== member.pr) return { ready: false };
+  if (pull.state === 'closed' || pull.state === 'open' && SHA.test(pull.head?.sha ?? '') && pull.head.sha !== member.headSha)
+    return { reason: 'PR_NOT_OPEN_OR_CHANGED' };
+  if (!eligibleBindingPull(pull, job.repo) || pull.base?.repo?.full_name !== job.repo || pull.merged !== false) return { ready: false };
+  if (pull.mergeable === false) return { reason: 'FRONT_NEEDS_MAIN_MERGE' };
+  const decision = await train.verifyMember?.({ member, pull, baseSha });
+  return decision?.ready === true ? { ready: true, protectedLayer: decision.protectedLayer, testMergeSha: pull.merge_commit_sha }
+    : { ready: false, reason: decision?.reason };
+}
+
+async function processSharedBatch({ batch, batchKey, mainSha, train, github, job, landing, command, policyVersion, clock, live, fx }) {
+  const members = sharedTrainMembers(batch.members);
+  const alive = () => { live(); return Date.parse(batch.expiresAt) > clock(); };
+  if (!members || !SHA.test(batch.baseSha ?? '') || !Number.isSafeInteger(batch.generation) || batch.generation < 1
+    || batch.batchId !== batchKey(batch.baseSha, members) || !alive()) return false;
+  const handle = batchHandle(batch);
+  const cleanup = (reason, member) => command('batch_cleanup', { ...handle, reason, observedBaseSha: mainSha,
+    ...(member ? { blockedMember: member } : {}) });
+  try {
+    if (batch.state !== 'forming') {
+      const chain = await readBatchChain({ readGitCommit: sha => github.readGitCommit(sha), baseSha: batch.baseSha,
+        heads: members.map(m => m.headSha), testSha: batch.testSha, steps: batch.steps?.map(step => step.sha) ?? [] });
+      if (!chain.ok || chain.tree !== batch.treeSha || batch.checksPolicyVersion !== policyVersion || !alive()) return false;
+    }
+    // 即使基线或成员 head 已变，仍先核对在途写和落地回执。
+    if (batch.state === 'landed' || batch.landingState || ['sent', 'unknown'].includes(batch.stagingState)) {
+      if (typeof train.reconcileBatch === 'function') { fx.n++; await train.reconcileBatch(batch); }
+      return true;
+    }
+    if (batch.baseSha !== mainSha) { await cleanup('RESIDENT_BASE_MOVED'); return true; }
+    let testMergeSha;
+    for (const member of members) {
+      const observation = await observeSharedMember({ member, job, github, train, baseSha: mainSha });
+      if (observation.reason) {
+        await cleanup(observation.reason, member);
+        return true;
+      }
+      if (!observation.ready) return false;
+      testMergeSha = observation.testMergeSha;
+    }
+    if (!alive()) return false;
+    if (batch.state === 'waiting_checks') {
+      if (batch.stagingState !== 'settled' || typeof train.inspectBatch !== 'function') return false;
+      fx.n++;
+      const result = await train.inspectBatch(batch);
+      if (result?.state !== 'failed' || result.testSha !== batch.testSha || result.policyVersion !== policyVersion || !HASH.test(result.evidenceDigest ?? '')
+        || (await github.readBranchHead('main')).sha !== batch.baseSha || !alive()) return result?.state === 'landed';
+      if (members.length > 1) {
+        const prefix = await command('batch_bisect', { ...handle, testSha: batch.testSha, evidence_digest: result.evidenceDigest });
+        const expected = members.slice(0, Math.ceil(members.length / 2));
+        if (prefix?.state === 'forming' && prefix.parentBatchId === batch.batchId
+          && prefix.batchId === batchKey(batch.baseSha, expected) && digest(prefix.members) === digest(expected))
+          await processSharedBatch({ batch: prefix, batchKey, mainSha, train, github, job, landing, command, policyVersion, clock, live, fx });
+      } else {
+        await command('batch_cleanup', { ...handle, reason: 'TRAIN_LANDING_CHECK_FAILED', observedBaseSha: mainSha,
+          testSha: batch.testSha, evidence_digest: result.evidenceDigest, hard_cap_minutes: job.slotHardCapMinutes });
+      }
+      return true;
+    }
+    let sealed = batch;
+    if (batch.state === 'forming') {
+      const built = await formSharedChain({ batch, members, testMergeSha, github, landing, alive, fx });
+      if (built?.conflict) {
+        await cleanup('FRONT_NEEDS_MAIN_MERGE', built.conflict);
+        return true;
+      }
+      if (!built || !alive() || (await github.readBranchHead('main')).sha !== mainSha) return false;
+      for (const member of members) {
+        const observed = await github.readPullRequest(member.pr);
+        if (!eligibleBindingPull(observed, job.repo) || observed.number !== member.pr || observed.head.sha !== member.headSha) return false;
+      }
+      if (!alive()) return false;
+      sealed = await command('batch_seal', { ...handle, ...built, checksPolicyVersion: policyVersion });
+      if (sealed?.batchId !== batch.batchId || sealed.generation !== batch.generation || sealed.testSha !== built.testSha
+        || sealed.treeSha !== built.treeSha || digest(sealed.steps) !== digest(built.steps)
+        || digest(sealed.members) !== digest(members) || sealed.checksPolicyVersion !== policyVersion) return false;
+    }
+    if (sealed.state === 'sealed' && typeof train.stageBatch === 'function'
+      && (await github.readBranchHead('main')).sha === mainSha && alive()) {
+      fx.n++;
+      await train.stageBatch(sealed);
+    }
+    return true;
+  } finally {
+    // 等检查时归还控制槽。二分结清后，Native 会拒绝父批的旧代次。
+    if (alive()) await command('batch_release', handle);
+  }
+}
+
+async function formSharedChain({ batch, members, testMergeSha, github, landing, alive, fx }) {
+  const shas = [];
+  if (members.length === 1) {
+    if (!SHA.test(testMergeSha ?? '')) return null;
+    shas.push(testMergeSha);
+  } else {
+    if (typeof landing?.prepareBatchTmp !== 'function' || typeof landing.mergeIntoBatchTmp !== 'function') return null;
+    fx.n++;
+    const temporary = await landing.prepareBatchTmp({ ...batchHandle(batch), baseSha: batch.baseSha });
+    if (temporary?.acknowledged !== true) return null;
+    for (const member of members) {
+      if (!alive()) return null;
+      fx.n++;
+      const merged = await landing.mergeIntoBatchTmp({ ...batchHandle(batch), headSha: member.headSha,
+        message: `Merge train batch: #${member.pr} (${member.headSha.slice(0, 12)})` });
+      if (merged?.status === 409) return { conflict: member };
+      if (merged?.status !== 201 || !SHA.test(merged.sha ?? '')) return null;
+      shas.push(merged.sha);
+    }
+  }
+  const testSha = shas.at(-1);
+  const chain = await readBatchChain({ readGitCommit: sha => github.readGitCommit(sha), baseSha: batch.baseSha,
+    heads: members.map(m => m.headSha), testSha, steps: shas });
+  if (!chain.ok || !SHA.test(chain.tree ?? '')) return null;
+  const steps = shas.map((sha, i) => ({ sha, firstParent: i === 0 ? batch.baseSha : shas[i - 1], secondParent: members[i].headSha }));
+  return { testSha, treeSha: chain.tree, steps };
+}
+
+async function evaluateSharedQueue({ item, job, github, admission, train, command, live, clock }) {
+  const [member] = sharedTrainMembers([{ pr: item.pr, headSha: item.head_sha, claimId: item.claim_id,
+    fence: item.claim_fence, epoch: item.execution_epoch }]) ?? [];
+  if (!member || typeof admission?.evaluatePr !== 'function') return;
+  const expected = trainHeadWorkKey({ ...train.scope, pr: member.pr, headSha: member.headSha, action: 'merge_queue_join' });
+  if (item.work_key !== expected) return;
+  const grant = await command('queue_acquire', queueSubject(member));
+  if (grant?.status !== 'leased' || grant.work_key !== expected || !HASH.test(grant.effect_key ?? '')
+    || !Number.isSafeInteger(grant.generation) || grant.generation < 1 || !Number.isSafeInteger(grant.lease_version)
+    || grant.lease_version < 1 || grant.check?.headSha !== member.headSha || !(Date.parse(grant.expires_at) > clock())) return;
+  const lease = workHandle(grant);
+  try {
+    if (!SHA.test(grant.base_sha ?? '')) return;
+    const claim = claimGeneration(member);
+    const candidates = Array.from({ length: MAX_ATTEMPT_V2 }, (_, i) => makeJobV2({ repo: job.repo, pr: member.pr,
+      headSha: member.headSha, baseSha: grant.base_sha, testSha: member.headSha, role: 'work-admission',
+      sourceManifestSha256: job.sourceManifestSha256, createdAt: isoOf(clock()), attempt: i + 1 }));
+    const queueJob = candidates.find(candidate => admissionExternalIdV2('independent-ci:native-work-admission', candidate, claim) === grant.check.externalId);
+    if (!queueJob) return;
+    await evaluateFirstTrainQueue({ work: { workKey: expected, leaseGeneration: grant.generation,
+      effectKey: grant.effect_key, check: grant.check, claim, entered: grant.entered }, job: queueJob, github, admission,
+      assertLive: live, now: clock, slotNative: { settleFirstQueue: ({ disposition, observationSha256, check, reason }) =>
+        command('merge_queue_join', { ...lease, inventory_digest: observationSha256 ?? digest({ disposition, reason, member }),
+          check_run_id: check.checkRunId, disposition, reason }) } });
+  } finally {
+    await command('work_release', lease);
+  }
 }
 
 // This bounded observation is data for rechecking waiting rows, never admission.
@@ -1335,19 +1647,24 @@ export async function settleTrain({ run, live, append, retain = async () => {} }
   return { status: TRAIN_FACTS_STATUS, sideEffects: out.sideEffects, train: out.facts };
 }
 
-export async function main(argv = process.argv.slice(2), output = process.stdout) {
+export async function main(argv = process.argv.slice(2), output = process.stdout, { protectedTrainTransport, trainBatchEffects } = {}) {
   return runEntry({ argv, entryRole: 'train-maintenance', moduleUrl: import.meta.url, output, successStatuses: [TRAIN_FACTS_STATUS], body: async ({ inputs, held, live, sourceRoot }) => {
     const started = Date.now();
     const job = validateTrainRun(inputs.jobs[0]);
     const { appKey, nativeToken, bindingId } = await controllerPrincipal(inputs.record);
     const log = observationLog(STATE_V2.trainShadow, job.id);
-    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot, live, log });
+    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot, live, log,
+      protectedTrainTransport });
+    const protocol = inputs.record.config.mergeTrainProtocolVersion;
+    const transport = ports.native.train ?? (protocol === undefined || protocol === 1 ? undefined : null);
     const slotNative = createMergeSlotNative({ config: inputs.record.config, fetchImpl: ports.fetchImpl, nativeToken });
     const native = Object.freeze({ ...slotNative, resolvePRBinding: (expected, options) => resolvePRTaskBinding({ ...expected,
       scope: inputs.record.config.scope, repository: inputs.record.config.repository, command: input => ports.native.command(input, options) }) });
     let ledger = null, sweepStore = null;
-    try { ledger = await GreenLedger.open(STATE_V2.greenLedger); } catch { /* listed as nothing; the facts say so */ }
-    try { sweepStore = await TrainSweepStore.open(STATE_V2.trainSweep); } catch { /* no sweep state: the sweep is incomplete */ }
+    if (transport === undefined) {
+      try { ledger = await GreenLedger.open(STATE_V2.greenLedger); } catch { /* listed as nothing; the facts say so */ }
+      try { sweepStore = await TrainSweepStore.open(STATE_V2.trainSweep); } catch { /* no sweep state: the sweep is incomplete */ }
+    }
     const publications = publicationHeads({ command: input => ports.native.command(input), scope: inputs.record.config.scope, repository: inputs.record.config.repository });
     // §41.4: the front's layer by the held merge-admission policy; a policy that does not load judges every path protected.
     const loaded = loadPolicy(held.policyText);
@@ -1356,9 +1673,12 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const trainLanding = await readStageTrainLandingFact(inputs.dir);
     const landing = trainLanding.landing === 'push' && !trainLanding.unreadable ? createLandingPort({ repository: inputs.record.config.repository,
       repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId, installationId: FIXED_APP.installationId, privateKeyProvider: async () => appKey, fetchImpl: ports.fetchImpl }) : null;
+    const batchEffects = transport && trainBatchEffects?.({ github: ports.github, landing, transport, job, live });
+    const trainV2 = sharedTrainRuntime({ transport, batchEffects, admission: ports.admission,
+      github: ports.github, job, live });
     return settleTrain({
       run: () => runTrain({ job, github: ports.github, native, ledger, sweepStore, publications, layerOfPaths, claimScope: inputs.record.config.scope,
-        observeBindings: true, landing, trainLanding }),
+        observeBindings: true, landing, trainLanding, trainV2, admission: batchEffects?.firstQueueAdmission ?? ports.admission, live }),
       live,
       append: async facts => (await TrainShadowStore.open(STATE_V2.trainShadow)).append(job.runId, facts),
       // DESIGN §41.7: the state areas' retention and the outcome month segments, at most once a day, after the facts are

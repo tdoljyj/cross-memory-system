@@ -17,6 +17,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sixPinned, readMainRules } from './train-rules.mjs';
+import { TRAIN_BATCH_MEMBER_FIELDS } from '../merge-train-v2-contract.mjs';
 
 export const LANDING_MODES = Object.freeze(['github-merge', 'push']);
 export const LANDING_DEFAULT = 'github-merge';
@@ -136,6 +137,15 @@ export async function readBatchChain({ readGitCommit, baseSha, heads, testSha, s
   const stepsOk = steps === null || (Array.isArray(steps) && steps.length === heads.length && steps.every((s, i) => s === walked[i]));
   const ok = stepsOk && batchChainOk({ commits, baseSha, heads, testSha });
   return { ok, tree: ok ? commits.get(testSha).tree : null };
+}
+
+export function sharedTrainMembers(rows) {
+  if (!Array.isArray(rows) || rows.length < 1 || rows.length > BATCH_MAX_LIMIT) return null;
+  const members = rows.map(row => row && Object.fromEntries(TRAIN_BATCH_MEMBER_FIELDS.map(key => [key, row[key]])));
+  if (!members.every(m => m && [m.pr, m.fence, m.epoch].every(n => Number.isSafeInteger(n) && n > 0)
+    && SHA.test(m.headSha ?? '') && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(m.claimId ?? ''))
+    || new Set(members.map(m => m.pr)).size !== members.length || new Set(members.map(m => m.headSha)).size !== members.length) return null;
+  return members;
 }
 
 // ---- which way a batch lands: main's live rules and this App's own bypass of each ruleset (ADR 0018 §2 L2 item 7; Fable 2026-11-20
