@@ -8,6 +8,7 @@
 // offered here with the same config and token. Holders require the Native Task/PR
 // projection; an older API is unknown, never authority from its old scalar column.
 import { digest } from '../proof.mjs';
+import { TRAIN_PROBE_FIELDS, TRAIN_PROTOCOL_VERSION } from '../merge-train-v2-contract.mjs';
 import { createMergeTrainNativeWriter } from '../../../../../scripts/ci/clued-merge-train-native.mjs';
 
 export const HOLDERS_RPC = 'clued_work_merge_slot_holders_v1';
@@ -30,11 +31,25 @@ export function parseRoleProbe(status, body, repository, watchPr = null) {
   if ((status === 401 || status === 403) && plain(body) && body.code === '42501' && ['binding_not_authorized', 'authorization_revoked_or_expired'].includes(body.message))
     return { result: 'uncertain', code: 'ROLE_PROBE_CONNECTION_UNAUTHORIZED' };
   if (plain(body) && body.reason === NOT_ON_DUTY && (!Array.isArray(body.holders) || body.holders.length !== 0)) return { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' };
+  if (plain(body) && Object.hasOwn(body, 'protocol_version')) return { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' };
   let parsed;
   try { parsed = parseHolders(status, body, repository); } catch { return { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' }; }
   if (!parsed.onDuty) return { result: 'not-held', code: 'ROLE_PROBE_NOT_HELD' };
   const watched = Number.isSafeInteger(watchPr) && watchPr > 0 && parsed.holders.length === 1 && parsed.holders[0].pr === watchPr;
   return { result: 'held', code: watched ? 'ROLE_PROBE_HELD_WATCHED_HEAD' : 'ROLE_PROBE_HELD' };
+}
+
+export function parseTrainRoleProbe(body, { nodeId, bindingGeneration, sourceSha256 } = {}) {
+  if (!plain(body) || body.status !== 'ok' || !TRAIN_PROBE_FIELDS.every(key => Object.hasOwn(body, key))
+    || body.protocol_version !== TRAIN_PROTOCOL_VERSION || typeof body.on_duty !== 'boolean'
+    || !UUID.test(nodeId ?? '') || body.node_id !== nodeId
+    || !Number.isSafeInteger(bindingGeneration) || bindingGeneration < 1 || body.binding_generation !== bindingGeneration
+    || !/^[a-f0-9]{64}$/.test(sourceSha256 ?? '') || body.source_manifest_sha256 !== sourceSha256
+    || !['none', 'node', 'fleet'].includes(body.stop_scope))
+    return { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' };
+  return body.on_duty && body.stop_scope === 'none'
+    ? { result: 'held', code: 'ROLE_PROBE_HELD' }
+    : { result: 'not-held', code: 'ROLE_PROBE_NOT_HELD' };
 }
 
 // C2 consumes at most 64 KiB; neither an arbitrary upstream error nor a holder list is logged.
@@ -85,7 +100,7 @@ export function parseHolders(status, body, repository) {
 
 // The port. config: the installed record's {supabaseUrl, publishableKey, scope, repository}. Source A's port is built on
 // first use, so the role probe and holders never depend on it.
-export function createMergeSlotNative({ config, fetchImpl, nativeToken }) {
+export function createMergeSlotNative({ config, fetchImpl, nativeToken, train }) {
   let writer = null;
   const write = () => writer ??= createMergeTrainNativeWriter({ supabaseUrl: config.supabaseUrl, publishableKey: config.publishableKey, scope: config.scope,
     repository: config.repository, fetchImpl, nativeToken });
@@ -117,6 +132,15 @@ export function createMergeSlotNative({ config, fetchImpl, nativeToken }) {
       return { onDuty: true, yielded: body.yielded };
     },
     async roleProbe({ watchPr = null } = {}) {
+      if (train !== undefined) {
+        try {
+          if (train.protocolVersion !== TRAIN_PROTOCOL_VERSION) fail('ROLE_PROBE_UNCERTAIN');
+          const reply = await train.command({ action: 'role_probe', protocol_version: TRAIN_PROTOCOL_VERSION, scope: config.scope,
+            repository: config.repository, source_manifest_sha256: config.sourceManifestSha256 });
+          return parseTrainRoleProbe(reply, { nodeId: train.nodeId, bindingGeneration: train.bindingGeneration,
+            sourceSha256: config.sourceManifestSha256 });
+        } catch { return { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' }; }
+      }
       let response, body;
       try {
         response = await fetchImpl(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/${HOLDERS_RPC}`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
@@ -125,6 +149,21 @@ export function createMergeSlotNative({ config, fetchImpl, nativeToken }) {
         body = await roleProbeBody(response);
       } catch { return { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' }; }
       return parseRoleProbe(response.status, body, config.repository, watchPr);
+    },
+    async settleFirstQueue({ workKey, leaseGeneration, effectKey, claim, pr, check, disposition, reason, observationSha256 }) {
+      if (train?.protocolVersion !== TRAIN_PROTOCOL_VERSION || train.scope?.targetBranch !== 'main'
+        || !Number.isSafeInteger(pr) || pr < 1 || !/^[a-f0-9]{40}$/.test(check?.headSha ?? '')
+        || ![workKey, effectKey].every(v => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v))
+        || !Number.isSafeInteger(leaseGeneration) || leaseGeneration < 1
+        || !['join', 'wait', 'return', 'discard'].includes(disposition)) fail('ci_train_queue_work_unconfirmed');
+      const reply = await train.command({ action: 'merge_queue_join', protocol_version: TRAIN_PROTOCOL_VERSION,
+        scope: config.scope, repository: config.repository, pr_ref: config.repository + '#' + pr, target_branch: 'main',
+        head_sha: check.headSha, work_key: workKey, lease_generation: leaseGeneration, effect_key: effectKey,
+        claim_id: claim.claimId, fence: claim.fence, execution_epoch: claim.epoch, effect: check, disposition, reason,
+        observation_sha256: observationSha256 });
+      if (reply?.protocol_version !== TRAIN_PROTOCOL_VERSION || reply.work_key !== workKey || reply.effect_key !== effectKey
+        || reply.status !== 'committed' || reply.disposition !== disposition || !UUID.test(reply.receipt_id ?? '')) fail('ci_train_queue_work_unconfirmed');
+      return reply;
     },
     async holders() {
       let response, body;

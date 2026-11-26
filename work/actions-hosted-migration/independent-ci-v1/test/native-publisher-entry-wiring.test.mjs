@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { publicationControllerGithub, controllerPorts } from '../src/resident-v2/entry-runtime.mjs';
 import { makeIndependentPublicationIdentity } from '../../../../scripts/ci/clued-independent-publication-identity.mjs';
+import { independentAdmissionCheck } from '../../../../scripts/ci/clued-work-admission.mjs';
 import { batchJobsV2, claimGeneration, subjectOfV2 } from '../src/job-v2.mjs';
 import { digest, canonical } from '../src/proof.mjs';
 import { ENTRY_V2 } from '../src/resident-v2/layout.mjs';
@@ -14,6 +15,11 @@ import { createFixtureControlPublisherV2 } from '../src/independent-control-chec
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { fixtureRecord, tempDir, subject, admittedFacts, signResult } from './resident-v2-fixtures.mjs';
+import { multiDutyClock, multiDutyGitHub } from '../../../independent-ci-resident-v1/test/multi-duty-fixture.mjs';
+import { TRAIN_FAILURE, TRAIN_CONTROL_TIMING, TRAIN_PROTOCOL_VERSION } from '../src/merge-train-v2-contract.mjs';
+import { outcomeFailureCode } from '../src/resident-v2/stage-fact.mjs';
+import { createMergeSlotNative } from '../src/independent-control-checks-v2/merge-slot-native.mjs';
+import { probeRole } from '../src/resident-v2/role-probe-entry.mjs';
 
 function entryFacade({ports,jobs,journal,record,nonce}) {
  const [stage,entryRole]=jobs.length===2 ? [8,'control-checks']
@@ -83,9 +89,250 @@ async function fixture(t, active = true) {
   }};
   const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
   const { docs, signer } = fixtureRecord(), record = validateRecordV2(docs, { now: time });
-  const wrap = selected => entryFacade({ ports: { github: rawGithub, native }, jobs: selected, journal, nonce: 'a'.repeat(32), record });
-  return { jobs, claim, checks, calls, trace, journal, admission, wrap, record, signer, setCurrent: value => { current = value; } };
+  const wrap = (selected, overrides = {}) => entryFacade({ ports: { github: rawGithub, native }, jobs: selected, journal, nonce: 'a'.repeat(32), record, ...overrides });
+  return { jobs, claim, checks, calls, trace, journal, admission, wrap, record, signer, rawGithub, native, time, setCurrent: value => { current = value; } };
 }
+
+async function trainFixture(t, { staged = false, mustRevoke = false, omitTicket = false } = {}) {
+  const f = await fixture(t, !staged), job = f.jobs['work-admission'];
+  const clock = multiDutyClock(f.time), remote = multiDutyGitHub(clock);
+  const projectId = '00000000-0000-4000-8000-000000000000';
+  const scope = { tenantId: randomUUID(), projectId, contextKey: 'project:' + projectId, repositoryId: 1234, targetBranch: 'main' };
+  const nodes = [randomUUID(), randomUUID()];
+  let holder = null, generation = 0, expires = 0, effect = null, pendingQueue = null;
+  let pausedBeforePost = false, loseFinishedReply = false, loseRevokedReply = false;
+  let chargedHead = null, admissionBlocked = false;
+  const admission = { ...f.admission, async evaluatePr(job, packet, options) {
+    assert.equal(admissionBlocked, false, '旧认领失效后，撤回不得依赖重新准入');
+    const facts = await f.admission.evaluatePr(job, packet, options);
+    if (chargedHead !== job.headSha) {
+      chargedHead = job.headSha;
+      remote.count('headCharges', job.headSha);
+    }
+    return facts;
+  } };
+  const reply = body => ({ protocol_version: TRAIN_PROTOCOL_VERSION, ...body });
+  const error = code => reply({ status: 'rejected', error_code: code });
+  const snapshot = () => structuredClone(effect);
+  const train = n => ({ scope, protocolVersion: TRAIN_PROTOCOL_VERSION, async command(input) {
+    assert.equal(input.protocol_version, TRAIN_PROTOCOL_VERSION);
+    if (input.action === 'verify_head') {
+      assert.equal(input.head_sha, job.headSha);
+      if (effect?.state === 'settled' || effect?.revocation_receipt_id)
+        return { ...error(TRAIN_FAILURE.HEAD_LEASE_COMPLETED.native), work_key: input.work_key };
+      if (clock.now() < expires && holder !== n) return { ...error(TRAIN_FAILURE.HEAD_LEASE_HELD.native),
+        work_key: input.work_key, ci_retry_after: new Date(expires).toISOString() };
+      if (clock.now() >= expires) { holder = n; generation++; expires = clock.now() + TRAIN_CONTROL_TIMING.leaseMs; }
+      return reply({ status: 'ok', work_key: input.work_key, lease_generation: generation,
+        resume_required: ['sent', 'unknown', 'revoked'].includes(effect?.state) });
+    }
+    assert.equal(n, holder);
+    assert.equal(input.lease_generation, generation);
+    assert.ok(clock.now() < expires);
+    assert.equal(input.scope, scope.contextKey);
+    if (input.action === 'publication_reconcile' && input.phase === 'read') {
+      assert.equal(input.effect_key, effect.effect_key);
+      return reply({ status: 'ok', ...snapshot(), lease_generation: generation });
+    }
+    if (input.action === 'publication_begin_independent') {
+      if (omitTicket) return reply({ status: 'ok' });
+      const firstSend = input.phase === 'send' && effect?.state === 'reserved' && input.publication_id === effect.publication_id;
+      if (firstSend && pausedBeforePost) throw new Error('夹具在发送栅栏前切断 A');
+      if (input.phase === 'reserve' && (!effect || effect.state === 'reserved' && effect.generation !== generation)) {
+        const publication_id = randomUUID();
+        effect = { state: 'reserved', effect_key: input.effect_key, generation, publication_id, receipt_id: randomUUID(),
+          independent_identity: input.independent_identity, effect: { ...input.effect, checkRunId: null } };
+      }
+      if (firstSend) effect.state = 'sent';
+      return reply({ status: 'ok', ...snapshot(), lease_generation: generation, send_authorized: firstSend });
+    }
+    assert.equal(input.effect_key, effect.effect_key);
+    assert.equal(input.publication_id, effect.publication_id);
+    if (input.action === 'publication_finish') {
+      const check = f.checks.find(c => c.id === input.effect.checkRunId);
+      assert.equal(check?.external_id, effect.effect.externalId);
+      effect.effect.checkRunId = check.id;
+      effect.state = mustRevoke ? 'revoked' : 'settled';
+      if (!mustRevoke) pendingQueue = { workKey: digest('first-queue:' + effect.effect_key), leaseGeneration: 1,
+        effectKey: effect.effect_key, check: effect.effect, claim: claimGeneration(f.claim) };
+      if (loseFinishedReply || loseRevokedReply) throw new Error('夹具丢弃已提交的 finish 回复');
+      return reply({ status: 'committed', publication_id: effect.publication_id, receipt_id: randomUUID(), must_revoke: mustRevoke,
+        publication_status: mustRevoke ? 'revoked' : 'published', first_queue_pending: !mustRevoke, effect_key: effect.effect_key, effect: effect.effect });
+    }
+    assert.equal(input.action, 'publication_reconcile');
+    assert.equal(f.checks.find(c => c.id === input.effect.checkRunId)?.conclusion, 'failure');
+    if (effect.revocation_receipt_id === undefined) effect.revocation_receipt_id = randomUUID();
+    return reply({ status: 'committed', receipt_id: effect.revocation_receipt_id, publication_id: effect.publication_id,
+      effect_key: effect.effect_key, effect: effect.effect, must_revoke: true });
+  } });
+  async function publisher(index, qualified = true) {
+    const journal = await EffectJournal.open(path.join(await tempDir(t), 'node-effects'));
+    let claim = null;
+    const github = { ...f.rawGithub,
+      createCheck: body => remote.write('post', () => f.rawGithub.createCheck(body), c => ['checkCreates', c.id, nodes[index]]),
+      revokeCheck: (id, body) => remote.write('revoke', () => f.rawGithub.revokeCheck(id, body), c => ['checkRevocations', c.id, nodes[index]]),
+    };
+    const trainNative = train(nodes[index]);
+    const port = qualified ? f.wrap([job], { ports: { github, native: { ...f.native, train: trainNative } }, journal,
+      nonce: String(index + 1).repeat(32) }) : github;
+    const engine = createFixtureWorkAdmissionPublisherV2({ github: port, journal, admission,
+      ...(qualified ? {} : { trainProtocolVersion: TRAIN_PROTOCOL_VERSION }), assertLive() {}, record() {}, authority: {}, batchClaims: {
+        async read() { return claim; }, async record(j, c) { claim = claimGeneration(c); },
+      } });
+    return () => engine.publish(job);
+  }
+  return { ...f, job, clock, remote, publisher, admission, scope, pendingQueue: () => pendingQueue, snapshot,
+    cutBeforePost: value => { pausedBeforePost = value; }, loseFinish: value => { loseFinishedReply = value; },
+    loseRevokedFinish: value => { loseRevokedReply = value; }, blockAdmission: () => { admissionBlocked = true; } };
+}
+
+test('片2：首次发布在 POST 前丢节点，接手和 held 不重复计量', async t => {
+  const f = await trainFixture(t), a = await f.publisher(0), b = await f.publisher(1);
+  f.cutBeforePost(true);
+  assert.notEqual((await a()).status, 'SETTLED');
+  assert.equal(f.remote.totals().checkCreates, 0);
+  const before = f.trace.filter(event => event === 'evaluate').length;
+  const held = await b();
+  assert.equal(held.reason, TRAIN_FAILURE.HEAD_LEASE_HELD.native);
+  assert.equal(outcomeFailureCode({ ...held, mayHavePublished: false }, 1), TRAIN_FAILURE.HEAD_LEASE_HELD.resident);
+  assert.equal(held.scheduling.ciRetryAfter, new Date(f.clock.now() + TRAIN_CONTROL_TIMING.leaseMs).toISOString());
+  assert.equal(f.trace.filter(event => event === 'evaluate').length, before);
+  f.clock.advance(TRAIN_CONTROL_TIMING.leaseMs); f.cutBeforePost(false);
+  assert.equal((await b()).status, 'SETTLED');
+  const completed = await a();
+  assert.equal(completed.reason, TRAIN_FAILURE.HEAD_LEASE_COMPLETED.native);
+  assert.equal(outcomeFailureCode({ ...completed, mayHavePublished: false }, 1), TRAIN_FAILURE.HEAD_LEASE_COMPLETED.resident);
+  assert.equal(f.trace.filter(event => event === 'evaluate').length, before + 1);
+  assert.equal(f.remote.totals().headCharges, 1);
+  assert.equal(f.remote.totals().checkCreates, 1);
+  assert.ok(f.pendingQueue());
+});
+
+test('片2：GitHub 已创建但未 finish 时，独立节点核对原效果和原票据', async t => {
+  const f = await trainFixture(t), a = await f.publisher(0), b = await f.publisher(1);
+  f.remote.arm('post', { loseReply: true });
+  assert.notEqual((await a()).status, 'SETTLED');
+  assert.equal(f.checks[0]?.conclusion, 'success');
+  const original = f.snapshot().publication_id;
+  f.clock.advance(TRAIN_CONTROL_TIMING.leaseMs);
+  assert.equal((await b()).status, 'SETTLED');
+  assert.equal(f.snapshot().publication_id, original);
+  assert.equal(f.remote.requests().filter(r => r.operation === 'post').length, 1);
+  assert.equal(f.pendingQueue()?.check.checkRunId, f.checks[0].id);
+});
+
+test('片2：must_revoke 后丢回复，下一节点只撤回并结清原检查', async t => {
+  const f = await trainFixture(t, { mustRevoke: true }), a = await f.publisher(0), b = await f.publisher(1);
+  f.loseRevokedFinish(true);
+  assert.notEqual((await a()).status, 'SETTLED');
+  assert.equal(f.snapshot().state, 'revoked');
+  assert.equal(f.checks[0].conclusion, 'success');
+  f.clock.advance(TRAIN_CONTROL_TIMING.leaseMs); f.loseRevokedFinish(false); f.blockAdmission();
+  assert.equal((await b()).status, 'REVOKED');
+  assert.equal((await a()).reason, TRAIN_FAILURE.HEAD_LEASE_COMPLETED.native);
+  assert.equal(f.checks[0].conclusion, 'failure');
+  assert.equal(f.pendingQueue(), null);
+  assert.equal(f.remote.requests().filter(r => r.operation === 'post').length, 1);
+  assert.equal(f.remote.totals().checkRevocations, 1);
+});
+
+test('片2：协议 2 的普通准入缺受保护票据时，GitHub 零写入', async t => {
+  const f = await trainFixture(t, { staged: true, omitTicket: true });
+  assert.equal((await (await f.publisher(0, false))()).status, 'BLOCKED');
+  assert.equal((await (await f.publisher(0))()).status, 'UNCERTAIN');
+  assert.equal(f.remote.totals().checkCreates, 0);
+  assert.equal(f.pendingQueue(), null);
+});
+
+test('片2：从未入队的 PR 等待固定 App 检查，乱序通知只生效一次', async t => {
+  const { evaluateFirstTrainQueue } = await import('../src/independent-control-checks-v2/publisher.mjs');
+  const f = await trainFixture(t), a = await f.publisher(0);
+  assert.equal((await a()).status, 'SETTLED');
+  const gate = await independentAdmissionCheck(async () => Response.json({ check_runs: f.checks }),
+    { GITHUB_TOKEN: 'test-only' }, f.job.repo, f.job.headSha, f.job.pr);
+  assert.equal(gate.admitted, true);
+  const work = f.pendingQueue();
+  let entered = false;
+  const slotNative = createMergeSlotNative({ config: f.record.config, train: { scope: f.scope, protocolVersion: TRAIN_PROTOCOL_VERSION,
+    async command(decision) {
+      assert.equal(decision.action, 'merge_queue_join');
+      assert.equal(decision.work_key, work.workKey);
+      assert.equal(decision.effect_key, work.effectKey);
+      assert.equal(decision.pr_ref, f.job.repo + '#' + f.job.pr);
+      assert.equal(decision.head_sha, f.job.headSha);
+      assert.equal(decision.claim_id, f.claim.claimId);
+      if (decision.disposition === 'join' && !entered) {
+        assert.match(decision.observation_sha256, /^[a-f0-9]{64}$/);
+        entered = true;
+        f.remote.count('queueJoins', work.effectKey);
+      }
+      return { status: 'committed', protocol_version: TRAIN_PROTOCOL_VERSION, work_key: work.workKey,
+        effect_key: work.effectKey, disposition: decision.disposition, receipt_id: randomUUID() };
+    } } });
+  const evaluate = () => evaluateFirstTrainQueue({ work, job: f.job, github: f.rawGithub, admission: f.admission,
+    slotNative, now: () => f.time, assertLive() {} });
+  assert.equal((await evaluate()).disposition, 'wait');
+  for (const [idx, name] of ['gitleaks', 'trivy', 'contract-placement'].entries()) {
+    f.checks.push({ id: 200 + idx, app: { id: 5368905 }, name, head_sha: f.job.headSha, status: 'completed', conclusion: 'success' });
+  }
+  f.remote.emit('earlier', work); f.remote.emit('later', work);
+  await f.remote.deliver('later', evaluate); await f.remote.deliver('earlier', evaluate);
+  work.entered = true;
+  f.checks.push({ id: 300, app: { id: 5368905 }, name: 'gitleaks', head_sha: f.job.headSha, status: 'completed', conclusion: 'failure' });
+  assert.equal((await evaluate()).disposition, 'return');
+  const readPullRequest = f.rawGithub.readPullRequest;
+  f.rawGithub.readPullRequest = async pr => {
+    const pull = await readPullRequest(pr);
+    return { ...pull, head: { ...pull.head, sha: 'f'.repeat(40) } };
+  };
+  assert.equal((await evaluate()).disposition, 'discard');
+  assert.equal(f.remote.totals().queueJoins, 1);
+  assert.equal(f.remote.totals().checkCreates, 1);
+});
+
+test('片2：成功 finish 丢回复后，其他节点只看到 completed，队列待办仍在', async t => {
+  const f = await trainFixture(t), a = await f.publisher(0), b = await f.publisher(1);
+  f.loseFinish(true);
+  assert.equal((await a()).status, 'UNCERTAIN');
+  assert.ok(f.pendingQueue());
+  f.clock.advance(TRAIN_CONTROL_TIMING.leaseMs);
+  assert.equal((await b()).reason, TRAIN_FAILURE.HEAD_LEASE_COMPLETED.native);
+  assert.equal(f.remote.totals().checkCreates, 1);
+  assert.equal(f.remote.totals().headCharges, 1);
+});
+
+test('片2：已发送效果读不到原检查时，接手保持待核对', async t => {
+  const f = await trainFixture(t), a = await f.publisher(0), b = await f.publisher(1);
+  f.remote.arm('post', { loseReply: true });
+  await a();
+  f.checks[0].external_id += '-different';
+  f.clock.advance(TRAIN_CONTROL_TIMING.leaseMs);
+  const result = await b();
+  assert.equal(result.status, 'UNCERTAIN');
+  assert.equal(outcomeFailureCode(result, 1), TRAIN_FAILURE.EFFECT_UNKNOWN.resident);
+  assert.equal(f.remote.requests().filter(r => r.operation === 'post').length, 1);
+  assert.equal(f.pendingQueue(), null);
+});
+
+test('片2：资格探测绑定节点、代次与 Source，watchPr 只用于唤醒', async t => {
+  const f = await fixture(t), nodeId = randomUUID(), sourceSha256 = f.jobs['work-admission'].sourceManifestSha256;
+  const record = { config: { ...f.record.config, sourceManifestSha256: sourceSha256 } };
+  let reply = { status: 'ok', protocol_version: TRAIN_PROTOCOL_VERSION, on_duty: true, node_id: nodeId,
+    binding_generation: 4, source_manifest_sha256: sourceSha256, stop_scope: 'none' };
+  const train = { protocolVersion: TRAIN_PROTOCOL_VERSION, nodeId, bindingGeneration: 4, async command(input) {
+    assert.equal(input.action, 'role_probe');
+    assert.equal(Object.hasOwn(input, 'watchPr'), false);
+    return reply;
+  } };
+  const run = () => probeRole({ record, train, watchPr: 888, live() {} });
+  assert.equal((await run()).reason, 'ROLE_PROBE_HELD');
+  reply = { ...reply, binding_generation: 5 };
+  assert.equal((await run()).reason, 'ROLE_PROBE_UNCERTAIN');
+  reply = { ...reply, binding_generation: 4, source_manifest_sha256: 'f'.repeat(64) };
+  assert.equal((await run()).reason, 'ROLE_PROBE_UNCERTAIN');
+  reply = { ...reply, source_manifest_sha256: sourceSha256, stop_scope: 'fleet' };
+  assert.equal((await run()).reason, 'ROLE_PROBE_NOT_HELD');
+});
 
 test('the actual entry adapter wires work admission to the original Native ticket and re-verifies without another POST', async t => {
   const f = await fixture(t), job = f.jobs['work-admission']; let batchClaim = null;

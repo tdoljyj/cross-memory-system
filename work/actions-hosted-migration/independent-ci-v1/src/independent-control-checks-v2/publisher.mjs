@@ -69,12 +69,14 @@ import { digest } from '../proof.mjs';
 import { freshStamp } from '../clock-skew.mjs';
 import { LANDING_NOT_READY_REASONS, LANDING_FINAL_REASONS, TRAIN_BATCH_CHANGED, TRAIN_BATCH_WITHOUT_PUSH, TRAIN_LANDING_REFUSED, TRAIN_LANDING_UNCONFIRMED,
   TRAIN_LANDING_RULES_MISSING, readLandingRoute, rehearsalOf, externalChecksDecision, readBatchChain, landMain } from './train-landing.mjs';
-import { makeJobV2, validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
+import { makeJobV2, validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, sameClaimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, RULESET_UNREADABLE, RULESET_READ_FAILED, readMainRules, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY,
   TRAIN_TEST_MERGE_TREE_DIFFERS, TRAIN_FRONT_JOB_WITHOUT_TRAIN, TRAIN_SINGLE_GREEN_NOT_PROVEN, TRAIN_TEST_COMMIT_GONE, TRAIN_MODE_UNREADABLE, trainFrontRefused, trainFrontRefusal,
   trainHeadDecision, strictFrontHeadDecision, rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested,
-  requiredCheckFailure, REQUIRED_CHECK_FAILED, REQUIRED_CHECKS_UNREADABLE, REQUIRED_CHECK_NAMES, projectedHolderForJob, appScansNotDone } from './train-rules.mjs';
+  requiredCheckFailure, REQUIRED_CHECK_FAILED, REQUIRED_CHECKS_UNREADABLE, REQUIRED_CHECK_NAMES, TRAIN_ONLY_CHECK, projectedHolderForJob, appScansNotDone } from './train-rules.mjs';
+import { requiredOnHead } from './train-facts.mjs';
+import { TRAIN_CHECK_EFFECT_FIELDS } from '../merge-train-v2-contract.mjs';
 import { GREEN_LEDGER_UNAVAILABLE } from './green-ledger.mjs';
 import { ROLE_ALREADY_ON_GITHUB, publishedNames, ofJobIds } from '../published-on-github-v2.mjs';
 import { withdrawalTitle, withdrawalNote } from '../withdrawal-text.mjs';
@@ -150,6 +152,66 @@ export function factsValid(job, packet, facts, domain, now, batchClaim, { requir
   check(typeof facts.modeProofRef === 'string' && facts.modeProofRef.length > 0 && HASH.test(facts.evaluationSha256 ?? ''), 'FRESH_NATIVE_OBSERVATION_REQUIRED');
   if (requireQueueHead) check(queueHeadReady(job, facts, now), 'LIVE_ACTUAL_MERGE_SLOT_REQUIRED');
   return facts;
+}
+
+// 事件唤醒和定向补查共用已领用的 Native 首次入队待办，队位始终以 Native 为准。
+export async function evaluateFirstTrainQueue({ work, job, github, admission, slotNative, assertLive, now = Date.now }) {
+  validateJobV2(job);
+  const effect = work?.check, claim = work?.claim;
+  check(job.repo === REPO && job.role === 'work-admission' && job.testSha === job.headSha
+    && HASH.test(work?.effectKey ?? '') && TRAIN_CHECK_EFFECT_FIELDS.every(k => Object.hasOwn(effect ?? {}, k))
+    && effect.headSha === job.headSha && effect.appId === APP_ID
+    && Number.isSafeInteger(effect.checkRunId) && effect.checkRunId > 0 && typeof claim?.claimId === 'string'
+    && Number.isSafeInteger(claim.fence) && claim.fence > 0 && Number.isSafeInteger(claim.epoch) && claim.epoch > 0, 'ci_train_queue_work_unconfirmed');
+  check(effect.externalId === admissionExternalIdV2('independent-ci:native-work-admission', job, claim), 'ci_train_queue_work_unconfirmed');
+  const commit = (disposition, reason, facts = null) => {
+    assertLive();
+    return slotNative.settleFirstQueue({ workKey: work.workKey, leaseGeneration: work.leaseGeneration, effectKey: work.effectKey,
+      claim, pr: job.pr, check: effect, disposition, reason, observationSha256: facts?.observationSha256 ?? null });
+  };
+  const giveBack = (reason, facts) => commit(work.entered === true ? 'return' : 'wait', reason, facts);
+  const readPull = () => github.readPullRequest(job.pr);
+  const stale = pull => pull?.number === job.pr && (pull.state === 'closed'
+    || (pull.state === 'open' && SHA.test(pull.head?.sha ?? '') && pull.head.sha !== job.headSha));
+  const open = pull => pull?.number === job.pr && pull.state === 'open' && pull.merged === false && pull.draft !== true
+    && pull.head?.sha === job.headSha && pull.head?.repo?.full_name === job.repo
+    && pull.base?.ref === 'main' && pull.base?.repo?.full_name === job.repo;
+  assertLive();
+  let pull, facts, failures, ready, published;
+  try { pull = await readPull(); } catch { return commit('wait', 'GITHUB_TRANSIENT_UNAVAILABLE'); }
+  if (stale(pull)) return commit('discard', 'PR_NOT_OPEN_OR_CHANGED');
+  if (!open(pull)) return giveBack('PR_NOT_OPEN_OR_CHANGED');
+  try {
+    const packet = await github.readChangedPaths(job);
+    const observed = await admission.evaluatePr(job, packet, { batchClaim: claim });
+    facts = factsValid(job, packet, observed, admission.fixture === true ? 'fixture' : 'production', now(), claim);
+    check(facts.observationOnly !== true && sameClaimGeneration(facts.observedClaim, claim), 'ACTUAL_COMPLETE_NATIVE_ADMISSION_REQUIRED');
+    const { rules, facts: ruleFacts } = await readMainRules(github, APP_ID);
+    const inventory = await github.readChecks(job.headSha);
+    failures = requiredCheckFailure(rules, inventory, job.headSha, APP_ID);
+    const queueOnly = new Set([...Object.values(CONTROL_CHECKS_V2).map(c => c.name), TRAIN_ONLY_CHECK]);
+    const preQueueRules = rules.filter(r => r.type === 'required_status_checks').map(r => ({ ...r, parameters: {
+      ...r.parameters, required_status_checks: r.parameters.required_status_checks.filter(c =>
+        c.integration_id !== APP_ID || !queueOnly.has(c.context)),
+    } }));
+    ready = ruleFacts().strict && requiredOnHead({ rules: preQueueRules, checks: inventory.checks, headSha: job.headSha, appId: APP_ID })?.missing.length === 0;
+    const matches = inventory.checks.filter(c => c.app.id === APP_ID && c.name === REQUIRED_CHECK_NAMES[0]);
+    published = matches.length === 1 && matches[0].id === effect.checkRunId && matches[0].external_id === effect.externalId
+      && matches[0].status === 'completed' && matches[0].conclusion === 'success';
+    pull = await readPull();
+  } catch (error) {
+    if (['full_admission_claim_changed', 'full_admission_subject_changed'].includes(error?.code))
+      return commit('discard', error.code);
+    if (error?.code === 'full_admission_rejected') return giveBack(error.code);
+    return commit('wait', safe(error));
+  }
+  if (stale(pull)) return commit('discard', 'PR_NOT_OPEN_OR_CHANGED');
+  if (!open(pull) || !fresh(facts, now())) return commit('wait', 'PR_NOT_OPEN_OR_CHANGED');
+  if (facts.mode.state === 'frozen' || (facts.mode.layer === 'protected' && !facts.ownerReview?.grantId))
+    return giveBack('OWNER_REVIEW_REQUIRED', facts);
+  if (failures.length) return giveBack(REQUIRED_CHECK_FAILED, facts);
+  if (!published || !ready) return commit('wait', 'REQUIRED_CHECKS_PENDING', facts);
+  return commit('join', null, facts);
 }
 // §41.8: the slot by state, ref and tip (with mergeQueueHead beside it), never its until or the claim lease.
 function binding(job, packet, facts, authority) {

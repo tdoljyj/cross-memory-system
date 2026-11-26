@@ -52,7 +52,7 @@
 // never withdrawn: the green did what it was for (the same rule as stage 8's merged-as-tested). Anything else (closed without a
 // merge, merged at another head or on another first parent, squashed, a read that fails, a green that cannot be confirmed) is
 // withdrawn as before. The resident then ends the batch at its next safe point, where the live read shows the PR closed.
-import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
+import { prepareNativePublication, nativePublicationNoPostProof, isNativePublicationPort, trainHeadProtocolOf } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../proof.mjs';
 import { freshStamp } from '../clock-skew.mjs';
@@ -62,6 +62,7 @@ import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admissi
 import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, headScansOf, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
 import { scanStartSubjectLine } from '../scan-start-v1/subject.mjs';
 import { withdrawalTitle, withdrawalNote, verificationUnavailable, admissionVerificationRetryable } from '../withdrawal-text.mjs';
+import { TRAIN_FAILURE, TRAIN_PROTOCOL_VERSION } from '../merge-train-v2-contract.mjs';
 
 // Generation 10: the back-off between the bounded re-reads of the verification after the write (reverified below): 100 s of waiting at
 // most, on top of the per-request read retry (read-retry.mjs) inside each verification. No wait starts later than VERIFY_WAIT_WINDOW_MS
@@ -137,7 +138,7 @@ function binding(job, packet, facts, authority) {
 // Train on only: slotNative (merge-slot-native.mjs: holders, touch) and sweepStore (train-sweep-store.mjs: latestProof).
 // trainModeUnreadable: train-mode.json was there but unusable (train-mode.mjs#readStageTrainModeFact): a front job parks.
 function engine({ github, journal, admission, assertLive, record, authority, batchClaims, trainMode = TRAIN_MODE_DEFAULT, trainModeUnreadable = false, slotNative = null, sweepStore = null, scanStartRegistrySha256 = null,
-  clock = Date.now, sleep = wait, verifyRereadDelaysMs = VERIFY_REREAD_DELAYS_MS, deadlineAt = () => null }, production) {
+  trainProtocolVersion = trainHeadProtocolOf(github), clock = Date.now, sleep = wait, verifyRereadDelaysMs = VERIFY_REREAD_DELAYS_MS, deadlineAt = () => null }, production) {
   const domain = production ? 'production' : 'fixture';
   check(TRAIN_MODES.includes(trainMode), 'WORK_ADMISSION_PUBLISHER_CONFIGURATION_REFUSED');
   check(!production || (typeof batchClaims?.rewrite === 'function' && typeof batchClaims?.withPublication === 'function'), 'WORK_ADMISSION_PUBLISHER_CONFIGURATION_REFUSED');
@@ -278,6 +279,47 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       return { status: 'UNCERTAIN', effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: false, reason: 'NEGATIVE_COMPENSATION_UNCONFIRMED' };
     }
   }
+  function payloadFor(job, facts, externalId, nativeTicket) {
+    const summary = nativeTicket
+      ? 'This observation is not scanner execution or qualification. The protected publisher attaches its Native Receipt.'
+      : 'This is not a scanner execution, Native publication ticket, Receipt or qualification.';
+    return { name: CHECK_NAME, head_sha: job.headSha, status: 'completed', conclusion: 'success', external_id: externalId,
+      output: { title: 'Work claim and complete Native admission verified',
+        summary: `Independent Native control check for ${REPO}#${job.pr} (attempt ${job.attempt}); observation sha256 ${facts.observationSha256}. ${summary}`
+          + (production || scanStartRegistrySha256 !== null ? '\n' + scanStartSubjectLine(job, facts, scanStartRegistrySha256, clock()) : '') } };
+  }
+
+  async function publishTrainHead(input) {
+    let scheduling = null, publicationReached = false;
+    const blocked = (reason, extra = {}) => ({ status: 'BLOCKED', reason, sideEffects: 0, productionAuthorized: false, scheduling, ...extra });
+    try {
+      const job = fixedJob(input);
+      check(trainProtocolVersion === TRAIN_PROTOCOL_VERSION && isNativePublicationPort(github)
+        && typeof github.acquireTrainHead === 'function' && typeof github.publishTrainHead === 'function', 'ci_train_protocol_unconfirmed');
+      assertLive();
+      const acquired = await github.acquireTrainHead();
+      if (acquired.reason) {
+        if (acquired.ciRetryAfter) scheduling = { ciRetryAfter: acquired.ciRetryAfter, mergeQueue: null, claimExpiresAt: null };
+        return blocked(acquired.reason);
+      }
+      const publication = { handle: acquired.handle };
+      if (!acquired.resumeRequired) {
+        const claimed = await batchClaims.read(job);
+        const before = bound(job, await evaluate(job, claimed, facts => { scheduling = facts; }));
+        if (!claimed) await batchClaims.record(job, before.facts.observedClaim, before.facts.observedAt);
+        check(fresh(before.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_BEFORE_WRITE');
+        Object.assign(publication, { facts: before.facts, packet: before.packet, payload: payloadFor(job, before.facts, null, true) });
+      }
+      assertLive();
+      publicationReached = true;
+      const result = await github.publishTrainHead(publication);
+      return { ...result, productionAuthorized: production && result.status === 'SETTLED', scheduling };
+    } catch (error) {
+      if (publicationReached) return { status: 'UNCERTAIN', reason: TRAIN_FAILURE.EFFECT_UNKNOWN.native, sideEffects: 0, productionAuthorized: false };
+      return blocked(safe(error), { admissionDiagnostic: diagnosticOf(error) });
+    }
+  }
+
   async function publishOnce(input) {
     let job, key = null, externalId = null, previous = null, before, claimed = null, scheduling = null, headScans = [];
     // Rule 41ab823a (resident DESIGN §75): a front batch's admission also reports which scans H already carries (published-on-github-v2.mjs#headScansOf),
@@ -386,9 +428,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       if (intent.existing) return { status: 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects, productionAuthorized: false };
       await journal.transition(key, 'intent', 'authorized', { nativeObservationSha256: before.facts.observationSha256 }); phase = 'authorized';
       assertLive(); check(fresh(before.facts, clock()), 'NATIVE_OBSERVATION_EXPIRED_BEFORE_WRITE');
-      const payload = { name: CHECK_NAME, head_sha: job.headSha, status: 'completed', conclusion: 'success', external_id: externalId,
-        output: { title: 'Work claim and complete Native admission verified', summary: `Independent Native control check for ${REPO}#${job.pr} (attempt ${job.attempt}); observation sha256 ${before.facts.observationSha256}. ${before.facts.publicationRequired ? 'This observation is not scanner execution or qualification. The protected publisher attaches its Native Receipt.' : 'This is not a scanner execution, Native publication ticket, Receipt or qualification.'}`
-          + (production || scanStartRegistrySha256 !== null ? '\n' + scanStartSubjectLine(job, before.facts, scanStartRegistrySha256, clock()) : '') } };
+      const payload = payloadFor(job, before.facts, externalId, before.facts.publicationRequired);
       const nativeHandle = await prepareNativePublication(github, { facts: before.facts, packet: before.packet, payload });
       await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.facts.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
       const posted = await github.createCheck(payload, nativeHandle);
@@ -435,6 +475,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     try { front = isTrainFrontJobV2(fixedJob(input)); } catch { /* publishOnce refuses it */ }
     if (front && trainFrontRefused(input, trainMode))
       return { status: 'BLOCKED', reason: trainFrontRefusal(trainModeUnreadable), sideEffects: 0, productionAuthorized: false, safeToRerun: false, scheduling: null };
+    if (!front && trainProtocolVersion !== null) return publishTrainHead(input);
     const result = await publishOnce(input);
     return front && trainMode === 'on' && result.status === 'SETTLED' ? { ...result, trainTouch: await touchRunning(input) } : result;
   } });

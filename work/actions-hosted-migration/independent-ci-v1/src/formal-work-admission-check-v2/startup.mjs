@@ -10,6 +10,8 @@ import { createProductionWorkAdmissionPublisherV2 } from './publisher.mjs';
 import { readStageTrainModeFact, trainPortsV2 } from '../independent-control-checks-v2/train-mode.mjs';
 import { readStageBatchRoute } from '../independent-control-checks-v2/batch-route.mjs';
 import { createClaimAssistNative, stage1WithLease, stage1FrontRequeue } from '../independent-control-checks-v2/claim-assist-native.mjs';
+import { trainHeadProtocolOf } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
+import { isTrainFrontJobV2 } from '../job-v2.mjs';
 
 export async function main(argv = process.argv.slice(2), output = process.stdout) {
   return runEntry({ argv, entryRole: 'work-admission', moduleUrl: import.meta.url, output, body: async ({ args, inputs, held, live, sourceRoot }) => {
@@ -36,6 +38,8 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
       trainMode, trainModeUnreadable, slotNative, sweepStore, scanStartRegistrySha256: ports.scanStartRegistrySha256,
       // Generation 10: the held record's end (runEntry sets it), so a re-read wait never leaves the withdrawal without time.
       deadlineAt: () => live.deadlineAt ?? null }).publish(job);
+    // 协议 2 结清时登记共享首次入队待办。曾经在车头的 PR 也由同一入口评估。
+    if (trainHeadProtocolOf(github) !== null && !isTrainFrontJobV2(job)) return result;
     // Generation 12 (resident DESIGN 56.4): an admitted batch whose claim's lease is shorter than STAGE1_LEASE_MINUTES gets it extended
     // with the CI identity (claim-assist-native.mjs#stage1WithLease). Not part of the publication: only the reported lease end changes,
     // to what Native answered; never throws.
