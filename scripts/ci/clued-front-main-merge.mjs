@@ -113,6 +113,17 @@ const WITHDRAWN = 'Independent CI check withdrawn', STOPPED = '已停止';
 // moves: read as under way or as activity, a head behind main that the train will not bring was never named (PLAN-unadmitted-silent
 // -20261125 §1.2 缺陷乙). Any other text, of the resident or anyone, is under way as before: unknown, it waits.
 const residentHeld = status => String(status?.context ?? '').startsWith(RESIDENT_STATUS_CONTEXT_PREFIX) && heldPartOf(status?.description) !== null;
+const residentInfo = status => /^resident-queue\/[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])? \(info only\)$/.test(status?.context ?? '');
+const REFUSED_STATE = '准入拒绝待修（PATHS_OUTSIDE_WRITE_SET）';
+// pr-status.mjs writes the retry text under a duty prefix and the exhausted result without it (node-duty.mjs).
+function residentRefused(status) {
+  if (!residentInfo(status)) return false;
+  if (status.state === 'pending') {
+    return /^当班：(?:未准入或未执行|等待中)（PATHS_OUTSIDE_WRITE_SET）：(?:约 \d{2}:\d{2}Z? |当前批次结束后|即将)自动重试(?:（第 \d+ 次）|[，；])/u.test(status.description);
+  }
+  return status.state === 'failure'
+    && /^24 小时内已多次未准入或未执行（PATHS_OUTSIDE_WRITE_SET）：请修正后推新提交/u.test(status.description);
+}
 const TRAIN_QUERY = 'query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){defaultBranchRef{name} '
   + 'pullRequests(states:OPEN,first:100,after:$after){pageInfo{hasNextPage endCursor} '
   + 'nodes{number isDraft baseRefName headRefOid mergeable updatedAt autoMergeRequest{enabledAt} headRepository{nameWithOwner}}}}}';
@@ -170,8 +181,12 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
   const green = required.every(isGreen);
   const hosted = required.filter(({ context, integration_id }) => context.startsWith(HOSTED_CHECK_PREFIX) && integration_id === GITHUB_ACTIONS_APP_ID);
   const scaffoldReady = env.CLUED_FRONT_MERGE_PHASE === SCAFFOLD_PHASE && hosted.length > 0 && hosted.every(isGreen) && failed.length === 0;
+  // GitHub lists newest statuses first. A newer resident report can supersede a refusal even across a handover.
+  const latest = [...contexts.values()];
+  const activity = latest.filter(status => !residentHeld(status) && !residentRefused(status));
   const unfinished = runs.filter(run => run.status !== 'completed').length
-    + statuses.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED) && !residentHeld(status)).length;
+    + activity.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED)).length;
+  const refused = !green && !unfinished && !admitters.some(isGreen) && residentRefused(latest.find(residentInfo));
   const by = (name, app) => succeeded(runs, name, app);
   // What each required check that is not green last did, as wait-pr's exit 5 lists it: a job GitHub skipped keeps its unexpanded
   // name ("... && 'ci-suites' || 'ci-suites-skipped'"), so the required name never appears: that is "job-skipped".
@@ -182,11 +197,15 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
       : state ? `status ${state}` : job ? `job-${job.conclusion ?? job.status}` : 'missing';
     return { context: check.context, last };
   });
-  const times = [...runs.map(run => run.completed_at ?? run.started_at), ...statuses.filter(status => !residentHeld(status)).map(status => status.updated_at ?? status.created_at)]
+  const times = [...runs.map(run => run.completed_at ?? run.started_at), ...activity.map(status => status.updated_at ?? status.created_at)]
     .map(t => Date.parse(t ?? '')).filter(Number.isFinite);
-  return { failed, green, scaffoldReady, unfinished, missing, lastActivity: times.length ? Math.max(...times) : 0, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID),
+  return { failed, green, scaffoldReady, unfinished, refused, missing, lastActivity: times.length ? Math.max(...times) : 0, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID),
     admitted: admitters.every(({ context, integration_id }) => by(context, integration_id)) };
 }
+
+const headWorkflows = ({ env, fetchImpl, repository, head }) =>
+  listedInFull(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${head}`, 'workflow_runs', `the workflow runs of ${head}`);
+const workflowsActive = runs => runs.some(run => run.status !== 'completed');
 
 // The rules in force on a branch (every enabled ruleset), 100 a page, read to the end or not at all.
 async function branchRules({ env, fetchImpl, repository, branch }) {
@@ -276,6 +295,7 @@ function behindVerdict(member, records, admitters) {
   const red = `red (${records.failed.join(', ')})`;
   if (member.mergeable === 'CONFLICTING') return { state: 'conflict', candidate: false };
   if (admissionRed(records, admitters)) return { state: red, candidate: false };
+  if (records.refused) return { state: REFUSED_STATE, candidate: false };
   if (broughtNotPassed(records, admitters)) {
     const why = `${[...(records.failed.length ? [red] : []), ...(records.admitted ? [] : ['not admitted'])].join(', ')} on a head the App brought`;
     if (records.inARow === undefined) return { state: why, candidate: false };
@@ -325,9 +345,10 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   let front = null;
   for (const member of train.filter(member => member.behind === 0)) {
     const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
-    const running = await listedInFull(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${member.head}`, 'workflow_runs', `the workflow runs of ${member.head}`);
+    const running = workflowsActive(await headWorkflows({ env, fetchImpl, repository, head: member.head }));
     if (records.failed.length) { member.state = `red (${records.failed.join(', ')})`; continue; }
-    const active = records.green || records.unfinished > 0 || running.some(run => run.status !== 'completed');
+    if (records.refused && !running) { member.state = REFUSED_STATE; continue; }
+    const active = records.green || records.unfinished > 0 || running;
     const idle = !active && now() - await appearedAt({ env, fetchImpl, repository, member }) >= IDLE_AFTER_MS;
     member.state = idle ? 'idle' : 'front';
     if (!idle) front ??= member;
@@ -337,6 +358,7 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   const eligible = !front ? train : env.CLUED_FRONT_MERGE_PHASE === SCAFFOLD_PHASE ? train.slice(0, train.indexOf(front)) : [];
   for (const member of eligible.filter(member => member.behind > 0)) {
     const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
+    if (records.refused && workflowsActive(await headWorkflows({ env, fetchImpl, repository, head: member.head }))) records.refused = false;
     const unread = await readInARow({ env, fetchImpl, repository, member, records, admitters });
     const verdict = behindVerdict(member, records, admitters);
     member.state = unread ? `${verdict.state}; 连带次数未读到 (${unread}): not brought again this run` : verdict.state;
@@ -355,7 +377,7 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
 // records.inARow of a head behind main the App brought that has not passed (nothing for any other head); the reason when GitHub
 // cannot be read (records.inARow left unset: that head is not brought this run, the rest goes on), else null.
 async function readInARow({ env, fetchImpl, repository, member, records, admitters }) {
-  if (member.mergeable === 'CONFLICTING' || records.inARow !== undefined || !broughtNotPassed(records, admitters)) return null;
+  if (member.mergeable === 'CONFLICTING' || records.refused || records.inARow !== undefined || !broughtNotPassed(records, admitters)) return null;
   try {
     records.inARow = await broughtInARow({ env, fetchImpl, repository, head: member.head });
     return null;
@@ -386,10 +408,11 @@ export const COMMENT_PERMISSIONS = Object.freeze({ pull_requests: 'write' });
 export const STALLED_AFTER_MS = 30 * 60_000;
 export const STALLED_MARK = 'clued-front-main-merge: stalled';
 export const stalledMark = head => `<!-- ${STALLED_MARK} ${head} -->`;
-export const stalledComment = (head, missing) => `${stalledMark(head)}\n`
+export const stalledComment = (head, missing, refused = false) => `${stalledMark(head)}\n`
   + `head \`${head}\` 的必需检查没齐，且 ${STALLED_AFTER_MS / 60_000} 分钟没有排队或在跑的运行：没有东西会让它合入。\n\n`
   + missing.map(({ context, last }) => `- ${context}: ${last}\n`).join('')
-  + '\n要一个新 head；原因在流水线就登记一条缺陷。车头机器人每个 head 只点名一次。';
+  + (refused ? `\n${REFUSED_STATE}。请修正认领写集，并按常驻状态提示复验。` : '\n要一个新 head；原因在流水线就登记一条缺陷。')
+  + '车头机器人每个 head 只点名一次。';
 
 // Whether a comment on the pull request already names this head; read to the end, 100 a page.
 async function commentsName({ env, fetchImpl, repository, pr, head }) {
@@ -416,8 +439,8 @@ export async function nameStalled({ env, fetchImpl, chosen, skip = new Set(), no
       // this run (whether the train brings it again is not known) and the run says so.
       const unread = member.behind > 0 ? await readInARow({ env, fetchImpl, repository, member, records, admitters: chosen.admitters }) : null;
       if (member.behind > 0 && behindVerdict(member, records, chosen.admitters).candidate) continue;
-      const runs = await listedInFull(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${member.head}`, 'workflow_runs', `the workflow runs of ${member.head}`);
-      if (runs.some(run => run.status !== 'completed')) continue;
+      const runs = await headWorkflows({ env, fetchImpl, repository, head: member.head });
+      if (workflowsActive(runs)) continue;
       const ran = runs.map(run => Date.parse(run.updated_at ?? '')).filter(Number.isFinite);
       const quiet = Math.max(await appearedAt({ env, fetchImpl, repository, member }), records.lastActivity, ...ran);
       if (now() - quiet < STALLED_AFTER_MS) continue;
@@ -426,7 +449,8 @@ export async function nameStalled({ env, fetchImpl, chosen, skip = new Set(), no
       if (await commentsName({ env, fetchImpl, repository, pr: member.pr, head: member.head })) continue;
       if (!token && !refused) ({ token, reason: refused } = await frontMergeToken({ env, fetchImpl, now, only: COMMENT_PERMISSIONS }));
       if (!token) { named.push({ pr: member.pr, head: member.head, missing, comment: `not posted (${refused})` }); continue; }
-      const posted = await appRequest(fetchImpl, env, 'POST', `/repos/${repository}/issues/${member.pr}/comments`, token, { body: stalledComment(member.head, missing) });
+      const posted = await appRequest(fetchImpl, env, 'POST', `/repos/${repository}/issues/${member.pr}/comments`, token,
+        { body: stalledComment(member.head, missing, records.refused) });
       named.push({ pr: member.pr, head: member.head, missing, comment: posted.status === 201 ? 'posted' : `not posted (HTTP ${posted.status})` });
     } catch (error) {
       named.push({ pr: member.pr, head: member.head, missing, comment: `not named (${error instanceof Error ? error.message : String(error)})` });

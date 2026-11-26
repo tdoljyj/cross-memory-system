@@ -1904,6 +1904,132 @@ test('U6: named once; the resident rewriting “落后 main 13” 10 minutes lat
   assert.equal(r.result, 'none', JSON.stringify(r)); assert.equal(namings(w).length, 1, 'once per head');
 });
 
+const REFUSED_PR = 1151, NEXT_PR = 1374;
+const REFUSED_CONTEXT = 'resident-queue/turing (info only)';
+const REFUSED_TEXT = '当班：未准入或未执行（PATHS_OUTSIDE_WRITE_SET）：约 21:23 自动重试（第 1 次），修正后编辑 PR 可提前';
+
+function sceneRefused(status = {}) {
+  const w = train();
+  w.required = SCAFFOLD_R6;
+  const refused = sha(0x1151), next = sha(0x1374), at = w.now - 20 * MIN;
+  w.open(REFUSED_PR, { head: refused, contains: T, at, auto: '2026-11-21T00:00:00Z', parents: [BASE, T] });
+  w.check(refused, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID, { started_at: iso(at) });
+  w.heads.get(refused).statuses.push({ context: REFUSED_CONTEXT, state: 'pending', description: REFUSED_TEXT, updated_at: iso(w.now - MIN), ...status });
+  w.open(NEXT_PR, { head: next, auto: '2026-11-21T01:00:00Z' });
+  hostedGreen(w)(next);
+  return w;
+}
+
+test('#1151: a front waiting after admission refused its write set yields to the next healthy PR', async () => {
+  const w = sceneRefused();
+  const refused = w.headOf(REFUSED_PR), next = w.headOf(NEXT_PR);
+  const r = await w.run({}, SCAFFOLD);
+
+  assert.deepEqual({ result: r.result, pr: r.pr, updated: w.brought() },
+    { result: 'merged', pr: NEXT_PR, updated: [NEXT_PR] }, statesOf(r));
+  assert.deepEqual(w.calls.filter(c => c.method === 'PUT'), [
+    { method: 'PUT', route: `/repos/o/r/pulls/${NEXT_PR}/update-branch`, body: { expected_head_sha: next } },
+  ]);
+  assert.equal(w.headOf(REFUSED_PR), refused);
+});
+
+test('refusal refreshes do not count as activity, and the diagnostic names the reason once per head', async () => {
+  const w = sceneRefused();
+  const head = w.headOf(REFUSED_PR), { statuses } = w.heads.get(head);
+  assert.equal((await w.run({}, SCAFFOLD)).pr, NEXT_PR);
+  assert.equal(namings(w).length, 0, 'the existing quiet period still applies');
+  for (const time of ['21:33Z', '21:43Z']) {
+    w.now += 10 * MIN;
+    statuses.unshift({ ...statuses[0], description: REFUSED_TEXT.replace('21:23', time), updated_at: iso(w.now) });
+    const r = await w.run({}, SCAFFOLD);
+    assert.match(r.train.members.find(m => m.pr === REFUSED_PR).state, /准入拒绝待修.*PATHS_OUTSIDE_WRITE_SET/);
+    assert.deepEqual(w.brought(), [NEXT_PR]);
+    assert.deepEqual(namings(w).map(c => c.pr), [REFUSED_PR]);
+    assert.match(namings(w)[0].body, new RegExp(`- ${INDEPENDENT_ADMISSION_CHECK}: missing\n`));
+    assert.match(namings(w)[0].body, /PATHS_OUTSIDE_WRITE_SET/);
+    assert.ok(namings(w)[0].body.includes(head));
+  }
+});
+
+test('the resident’s exhausted retry result also yields, before and after main moves', async () => {
+  const w = sceneRefused({ state: 'failure', description: '24 小时内已多次未准入或未执行（PATHS_OUTSIDE_WRITE_SET）：请修正后推新提交' });
+  const head = w.headOf(REFUSED_PR);
+  let r = await w.run({}, SCAFFOLD);
+  assert.equal(r.pr, NEXT_PR, statesOf(r));
+  assert.match(r.train.members.find(m => m.pr === REFUSED_PR).state, /准入拒绝待修.*PATHS_OUTSIDE_WRITE_SET/);
+  w.merged(NEXT_PR);
+  r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', statesOf(r));
+  assert.match(r.train.members[0].state, /准入拒绝待修.*PATHS_OUTSIDE_WRITE_SET/);
+  assert.deepEqual(w.brought(), [NEXT_PR]);
+  assert.equal(w.headOf(REFUSED_PR), head);
+});
+
+test('new queued or running evidence takes precedence over the refusal', async () => {
+  for (const resume of [
+    (w, head) => w.heads.get(head).statuses.unshift({ context: REFUSED_CONTEXT, state: 'pending',
+      description: '当班：运行中：第 8 段（准入）', updated_at: iso(w.now) }),
+    (w, head) => w.check(head, HOSTED[0], null, GITHUB_ACTIONS_APP_ID),
+    (w, head) => w.heads.get(head).runs.push({ id: 1, status: 'queued' }),
+  ]) {
+    const w = sceneRefused();
+    resume(w, w.headOf(REFUSED_PR));
+    const r = await w.run({}, SCAFFOLD);
+    assert.equal(r.result, 'none', statesOf(r));
+    assert.equal(r.train.members[0].state, 'front');
+    assert.deepEqual(w.brought(), []);
+    assert.deepEqual(namings(w), []);
+  }
+});
+
+test('unrecognized or off-duty pending text retains the conservative front behavior', async () => {
+  for (const status of [
+    { context: 'resident-standby/turing (info only)' },
+    { context: 'resident-queue/turing' },
+    { description: REFUSED_TEXT.replace('当班：', '') },
+    { description: REFUSED_TEXT.replace('当班：', '已交班：') },
+    { description: '当班：排队中：暂缓（PATHS_OUTSIDE_WRITE_SET）' },
+    { description: REFUSED_TEXT.replace('PATHS_OUTSIDE_WRITE_SET', 'UNKNOWN_ADMISSION_CODE') },
+  ]) {
+    const w = sceneRefused(status);
+    const r = await w.run({}, SCAFFOLD);
+    assert.equal(r.result, 'none', JSON.stringify(status));
+    assert.equal(r.train.members[0].state, 'front');
+    assert.deepEqual(w.brought(), []);
+  }
+});
+
+test('newer resident completion supersedes rejection evidence without supplying the missing pinned admission', async () => {
+  for (const context of [REFUSED_CONTEXT, 'resident-queue/backup (info only)']) {
+    const w = sceneRefused();
+    const head = w.headOf(REFUSED_PR), { statuses } = w.heads.get(head);
+    statuses.unshift({ context, state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布', updated_at: iso(w.now) });
+    w.check(head, INDEPENDENT_ADMISSION_CHECK, 'success', ADMISSION_APP_ID);
+    hostedGreen(w)(head);
+    const r = await w.run({}, SCAFFOLD);
+    assert.equal(r.pr, NEXT_PR, statesOf(r));
+    assert.equal(r.train.members[0].state, 'idle');
+  }
+});
+
+test('the pinned admission pass and the required red checks take precedence over an older refusal', async () => {
+  for (const conclusion of ['success', 'failure']) {
+    const w = sceneRefused();
+    const head = w.headOf(REFUSED_PR);
+    hostedGreen(w)(head);
+    w.check(head, INDEPENDENT_ADMISSION_CHECK, conclusion, INDEPENDENT_ADMISSION_APP_ID);
+    const r = await w.run({}, SCAFFOLD);
+    if (conclusion === 'success') {
+      assert.equal(r.result, 'none', statesOf(r));
+      assert.equal(r.train.members[0].state, 'front');
+      assert.deepEqual(w.brought(), []);
+    } else {
+      assert.equal(r.pr, NEXT_PR, statesOf(r));
+      assert.equal(r.train.members[0].state, `red (${INDEPENDENT_ADMISSION_CHECK})`);
+    }
+  }
+});
+
 test('U7: the comment refused (403) changes nothing the run decided; the summary says not posted', async () => {
   const w = sceneSilent();
   silentHead(w, SILENT_B, { auto: '2026-11-24T01:00:00Z' });
