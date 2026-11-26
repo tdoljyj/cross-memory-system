@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { Mailbox } from '../src/mailbox.mjs';
+import { Mailbox, QUIESCENCE_REQUEST_MS } from '../src/mailbox.mjs';
 import { Inbox, INBOX_UNFINISHED_GRACE_MS } from '../src/inbox.mjs';
 import { TEMP_FILE, TEMP_PREFIX, sweepTemp, writeNewAtomic } from '../src/store.mjs';
 import { parseTrigger } from '../src/trigger.mjs';
@@ -137,6 +137,27 @@ test('at no moment of send, respond or cancel does a mailbox directory hold an e
   target = { kind: 'cancel', request: other };
   await box.cancel(other, 'owner-abort');
   assert.equal(published, true);
+});
+
+test('两个办理者争用同一探针时只发布一份完整的开工标记', async t => {
+  const root = await tempRoot(t);
+  const first = await Mailbox.open(root, () => T0);
+  const second = await Mailbox.open(root, () => T0 + 1);
+  const req = await first.send('linux-quiescence', { batchId: BATCH }, QUIESCENCE_REQUEST_MS);
+  await steps(t, stage => assertNoPartialFile(first.responses, stage));
+  // 第一个办理者已经查过目标不存在，在它发布前让第二个完成抢占。
+  const link = fs.link;
+  const race = t.mock.method(fs, 'link', async (from, to) => {
+    race.mock.restore();
+    assert.equal(await second.claimProbe(req), true);
+    return link(from, to);
+  });
+  assert.equal(await first.claimProbe(req), false);
+  const name = req.requestId + '.probe.json';
+  assert.deepEqual(await fs.readdir(first.responses), [name]);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(first.responses, name), 'utf8')), {
+    requestId: req.requestId, at: T0 + 1,
+  });
 });
 
 test('create-only holds for the answer, the request and the cancel: the first stands, a second write is refused or a no-op', async t => {
@@ -304,7 +325,7 @@ test('no mailbox or companion write is create-then-write any more, except the tw
   // mailbox.mjs: one writeNew (the pump mark), every other mailbox file through writeNewAtomic
   assert.equal([...mailbox.matchAll(/\bwriteNew\(/g)].length, 1);
   assert.match(mailbox, /async claimPump[\s\S]{0,900}await writeNew\(/);
-  assert.equal([...mailbox.matchAll(/\bwriteNewAtomic\(/g)].length, 4); // send, cancel, respond, writeTiming
+  assert.equal([...mailbox.matchAll(/\bwriteNewAtomic\(/g)].length, 7); // 请求、撤销、应答、计时，以及静止证明的开工、发布、收件记录
   const main = await read('companion-main.mjs');
   assert.doesNotMatch(main, /flag:\s*'wx'/);
   assert.equal([...main.matchAll(/Inbox\.drop\(/g)].length, 2);

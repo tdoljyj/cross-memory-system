@@ -326,7 +326,7 @@ export class Mailbox {
 
   async claimProbe(request) {
     try {
-      await writeNew(this.probeMark(request), { requestId: request.requestId, at: this.clock() });
+      await writeNewAtomic(this.probeMark(request), { requestId: request.requestId, at: this.clock() }, { exclusiveClaim: true });
       return true;
     } catch (error) {
       if (error.code === 'CREATE_ONLY_TARGET_EXISTS') return false;

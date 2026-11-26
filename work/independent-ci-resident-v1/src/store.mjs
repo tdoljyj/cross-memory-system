@@ -40,11 +40,11 @@ export async function writeNew(file, value) {
 // (inbox.mjs, DESIGN §31.3).
 export const TEMP_PREFIX = '.tmp-';
 export const TEMP_FILE = /^\.tmp-[0-9a-f]{12}-/;
-// A rename can fail for a moment on Windows while a scanner or indexer holds the new file open.
-const RENAME_TRANSIENT = new Set(['EPERM', 'EBUSY', 'EACCES']);
-const RENAME_RETRY_MS = Object.freeze([20, 50, 100, 250, 500]);
+// Windows 上扫描器或索引器短暂占用临时文件时，发布可以重试。
+const PUBLISH_TRANSIENT = new Set(['EPERM', 'EBUSY', 'EACCES']);
+const PUBLISH_RETRY_MS = Object.freeze([20, 50, 100, 250, 500]);
 
-export async function writeNewAtomic(file, value, { sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+export async function writeNewAtomic(file, value, { exclusiveClaim = false, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
   const bytes = Buffer.from(canonicalJson(value) + '\n', 'utf8');
   if (await exists(file)) fail('CREATE_ONLY_TARGET_EXISTS', path.basename(file));
   const temporary = path.join(path.dirname(file), `${TEMP_PREFIX}${nonce()}-${path.basename(file)}`);
@@ -56,13 +56,18 @@ export async function writeNewAtomic(file, value, { sleep = ms => new Promise(re
     } finally {
       await handle.close();
     }
+    // 探针开工只看标记是否存在。硬链接把完整文件一次发布，两个办理者同时抢占时也只有一个能成功。
+    // 需要 readBounded 读正文的文件仍用改名发布，避免读方短暂看到双链接。
+    const publish = exclusiveClaim ? fs.link : fs.rename;
     if (await exists(file)) fail('CREATE_ONLY_TARGET_EXISTS', path.basename(file));
     for (let attempt = 0; ; attempt += 1) {
-      try { await fs.rename(temporary, file); break; } catch (error) {
-        if (!RENAME_TRANSIENT.has(error?.code) || attempt >= RENAME_RETRY_MS.length) throw error;
-        await sleep(RENAME_RETRY_MS[attempt]);
+      try { await publish(temporary, file); break; } catch (error) {
+        if (exclusiveClaim && error.code === 'EEXIST') fail('CREATE_ONLY_TARGET_EXISTS', path.basename(file));
+        if (!PUBLISH_TRANSIENT.has(error?.code) || attempt >= PUBLISH_RETRY_MS.length) throw error;
+        await sleep(PUBLISH_RETRY_MS[attempt]);
       }
     }
+    if (exclusiveClaim) await fs.unlink(temporary).catch(() => {}); // 标记已发布，残留的临时名由 sweepTemp 清理。
   } catch (error) {
     await fs.unlink(temporary).catch(() => {}); // a failed write leaves no temporary file behind
     throw error;
