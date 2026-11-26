@@ -304,6 +304,12 @@ test('常驻包按顺序追加外部条目，变更来源即选中节点套件�
   await assert.rejects(build('pkg-duplicate'), { code: 'PACKAGE_RESIDENT_DUPLICATE' });
 });
 
+test('升级器副本与第 19、20 代节点已安装的冻结通道一致', async () => {
+  const { manifestSha256 } = await upgraderCopy();
+  // 改这个值等于改冻结通道，节点只能重装，必须走规划。
+  assert.equal(manifestSha256, '5e3589e46e647836053bc6cbbba270d3495204393edf7c46159dfe3c173669c7');
+});
+
 test('the upgrader copy follows relative imports only inside src/ and upgrader/src/', async t => {
   const base = await tempRoot(t);
   await fs.mkdir(path.join(base, 'upgrader', 'src'), { recursive: true }); await fs.mkdir(path.join(base, 'src')); await fs.mkdir(path.join(base, 'windows'));
