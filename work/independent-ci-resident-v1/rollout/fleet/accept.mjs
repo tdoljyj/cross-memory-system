@@ -68,9 +68,11 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { DEFAULT_ROOT } from './install.mjs';
+import { packageGenerationOf } from '../../src/selfcheck.mjs';
 import { acceptResourceOf, readFleet } from './accept-door.mjs';
-import { OPEN_COMMAND_MS, READ_ACCEPTANCE_AGAIN, SEAL_INPUT_ERRORS, SEAL_UNREADABLE, WAIT_MAX_MINUTES, readRequest, seal } from './publish.mjs';
+import { DEFAULT_ROOT } from './install.mjs';
+import { PREVIOUS_INTERFACE_TIMEOUT_MS } from './previous-interface-check.mjs';
+import { OPEN_COMMAND_MS, STAGED_PREFLIGHT_GENERATION, READ_ACCEPTANCE_AGAIN, SEAL_INPUT_ERRORS, SEAL_UNREADABLE, WAIT_MAX_MINUTES, readRequest, seal } from './publish.mjs';
 import { Refused } from './ports.mjs';
 import { tagOf } from './universal.mjs';
 import { OP_MOVING, main as upgradeMain } from './upgrade.mjs';
@@ -388,9 +390,10 @@ async function runRollout(ctx, packageDir) {
 // open: one seal (wait 0); its answer as it is, the workflow not opening the request as NOT_OPENED (drill-vm.ps1 reads this shape)
 async function open(ctx) {
   const out = (status, fields) => ({ contract: ROLLOUT_CONTRACT, command: 'open', status, confirmUrl: null, expiresAt: null, code: null, ...fields });
+  const replayBudget = packageGenerationOf(ctx.request.version) >= STAGED_PREFLIGHT_GENERATION ? PREVIOUS_INTERFACE_TIMEOUT_MS : 0;
   let s;
   try { s = await ctx.seal({ request: ctx.requestFile, drillReceipt: ctx.drillReceipt, repo: ctx.request.repository, wait: 0,
-    deadline: ctx.lifeEnd, openOnly: true }); } catch (e) {
+    deadline: ctx.lifeEnd + replayBudget, openOnly: true }); } catch (e) {
     return out('ROLLOUT_REFUSED', sealFailure(e));
   }
   if (s?.status === SEAL_NOT_OPENED) {

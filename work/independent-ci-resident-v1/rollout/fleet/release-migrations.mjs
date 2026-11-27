@@ -8,8 +8,8 @@ const manifest = 'work/independent-ci-resident-v1/rollout/fleet/release-migratio
 const sqlDir = 'apps/clued-cloud/supabase/migrations';
 const version = /^[0-9]{14}$/;
 const sha256 = value => createHash('sha256').update(value).digest('hex');
-const procedure = (name, result, conditions = 'true') => `exists (select 1 from pg_proc p
-    where p.oid = to_regprocedure('clued_private.${name}') and p.prokind = 'f' and not p.proretset
+const procedure = (name, result, conditions = 'true', returnsSet = false) => `exists (select 1 from pg_proc p
+    where p.oid = to_regprocedure('clued_private.${name}') and p.prokind = 'f' and p.proretset = ${returnsSet}
       and p.prorettype = '${result}'::regtype and (${conditions})
       and not exists (select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner)))
         where grantee = 0 and privilege_type = 'EXECUTE')
@@ -54,7 +54,8 @@ const probes = {
       and ${bodyContains("k not in ('action','resources','run_id','run_attempt','delivery')")}
       and ${bodyContains(acceptanceGuard)}`)}`,
   pendingDelivery: `${procedure('fleet_node_target_v1(uuid,uuid)', 'jsonb', `p.provolatile = 's'
-      and ${bodyContains("n.revoked_at is null and " + pendingStates)}
+      and (${bodyContains("n.revoked_at is null and " + pendingStates)}
+        or ${bodyContains("from clued_private.fleet_delivery_recipient_rows_v1(p_owner) n")})
       and ${bodyContains("'acceptance_sha256',a.acceptance_sha256")}`)}
     and exists (select 1 from pg_proc p
       where p.oid = to_regprocedure('public.clued_ci_connection_renew_v1(jsonb)')
@@ -62,6 +63,16 @@ const probes = {
         and ${bodyContains("'fleet_target',clued_private.fleet_node_target_v1(u,n.node_id)")})`,
   deliveryRecipients: procedure('fleet_delivery_registry_v1(jsonb)', 'jsonb', `p.provolatile = 's' and ${callerCanExecute}
     and ${bodyContains('jsonb_build_array(identity.user_id,identity.anchor_binding_id,c,recipients)')}`),
+  deliveryPeerRecipients: `${procedure('fleet_delivery_recipient_rows_v1(uuid)', 'record', `p.provolatile = 's' and not p.prosecdef
+      and not exists (select 1 from pg_proc caller
+        where caller.oid in (to_regprocedure('clued_private.fleet_delivery_registry_v1(jsonb)'),
+          to_regprocedure('clued_private.fleet_node_target_v1(uuid,uuid)'))
+          and not has_function_privilege(caller.proowner, p.oid, 'EXECUTE'))`, true)}
+    and ${procedure('fleet_delivery_registry_v1(jsonb)', 'jsonb', `p.provolatile = 's' and ${callerCanExecute}
+      and ${bodyContains('from clued_private.fleet_delivery_recipient_rows_v1(identity.user_id) n')}`)}
+    and ${procedure('fleet_node_target_v1(uuid,uuid)', 'jsonb', `p.provolatile = 's'
+      and ${bodyContains("from clued_private.fleet_delivery_recipient_rows_v1(p_owner) n")}
+      and ${bodyContains("n.registration->'recipientExclusion'='null'::jsonb")}`)}`,
   previousInterfaceGate: `${relation('fleet_accepted_v1', { previous_interface_evidence: 'jsonb' })}
     and (case when to_regtype('clued_private.fleet_accepted_v1') is not null then
       ${procedure('fleet_require_previous_interface_v1(jsonb,clued_private.fleet_accepted_v1)', 'jsonb',
@@ -130,7 +141,7 @@ export function readbackSql(requirements) {
   const quote = values => values.map(value => `'${value}'`).join(',');
   const names = quote(requirements.map(row => row.name));
   const versions = quote(requirements.map(row => row.version));
-  const interfaces = Object.entries(probes).map(([key, probe]) => `'${key}', (${probe})`).join(',\n');
+  const interfaces = requirements.map(({ probe }) => `'${probe}', (${probes[probe]})`).join(',\n');
   return `begin isolation level repeatable read read only;
 select jsonb_build_object('base', ${procedure('release_door_v1(jsonb)', 'jsonb', `p.prosecdef and ${callerCanExecute}`)}
     and ${procedure('fleet_accept_door_v1(jsonb)', 'jsonb', `p.prosecdef and ${callerCanExecute}`)},

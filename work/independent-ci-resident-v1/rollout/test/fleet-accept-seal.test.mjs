@@ -260,19 +260,48 @@ test('开单后 main 前进，重启沿原 Grant、Receipt 和请求摘要续封
   assert.deepEqual((await w.calls()).slice(before).filter(c => c.args.slice(0, 2).join(' ') === 'release create'), []);
 });
 
-test('上一封存包接口在候选数据库上失败时拒绝封存', async t => {
+test('上一包接口回放失败时，确认链接尚未开启', async t => {
+  const { w, run, links } = await publishWorld(t);
+  await assert.rejects(run({ previousInterfaces: async () => ({ status: 'FAIL' }) }),
+    { code: 'FLEET_PREVIOUS_INTERFACES_REFUSED' });
+  assert.deepEqual(await w.opens(), []);
+  assert.deepEqual(links, []);
+});
+
+test('封存续跑复核开单所用的前包证据摘要，拒绝漂移', async t => {
   const { w, run, approve, confirms } = await publishWorld(t);
-  const opened = await run();
+  let replays = 0, acceptanceSha256 = '7'.repeat(64);
+  const previousInterfaceSubject = async () => ({ commit: '9'.repeat(40), acceptanceSha256 });
+  const previousInterfaces = async ({ commit, previous }) => {
+    replays++;
+    return { status: 'PASS', commit, previousCommit: previous.commit, files: ['prior.test.mjs'] };
+  };
+  const args = { previousInterfaceSubject, previousInterfaces };
+  const opened = await run(args);
   assert.equal(opened.status, 'FLEET_ACCEPTANCE_WAITING_OWNER');
+  assert.match(opened.previousInterfacesSha256, /^[a-f0-9]{64}$/);
   approve();
   const index = await fs.readFile(w.index);
   const uploads = (await uploadsOf(w)).length;
-  await assert.rejects(run({ previousInterfaces: async subject => {
-    assert.equal(subject.commit, w.source.commit);
-    return { status: 'FAIL', commit: subject.commit };
-  } }), { code: 'FLEET_PREVIOUS_INTERFACES_REFUSED' });
+  const durable = path.join(w.out, '.fleet-node-g000027.candidate');
+  const evidence = path.join(durable, `previous-interfaces-${opened.requestSha256}-${opened.previousInterfacesSha256}.json`);
+  const bytes = await fs.readFile(evidence);
+  await fs.appendFile(evidence, ' ');
+  await assert.rejects(run(args), { code: 'FLEET_PREVIOUS_INTERFACES_REFUSED' });
+  const replaced = evidence.replace(opened.previousInterfacesSha256, sha(await fs.readFile(evidence)));
+  await fs.rename(evidence, replaced);
+  await assert.rejects(run(args), { code: 'FLEET_PREVIOUS_INTERFACES_REFUSED' });
+  await fs.rename(replaced, evidence);
+  await fs.writeFile(evidence, bytes);
+  acceptanceSha256 = '8'.repeat(64);
+  await assert.rejects(run(args), { code: 'FLEET_PREVIOUS_INTERFACES_REFUSED' });
   assert.deepEqual(confirms, []);
   await sealedNothing(w, index, uploads);
+  acceptanceSha256 = '7'.repeat(64);
+  const sealed = await run(args);
+  assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
+  assert.equal(sealed.previousInterfacesSha256, opened.previousInterfacesSha256);
+  assert.equal(replays, 1);
 });
 
 test('已受理的开单运行终局失败且门为 none，才按准确运行编号重试', async t => {

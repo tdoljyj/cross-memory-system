@@ -205,7 +205,8 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
         return await seal({ request: release.prepared.request, ghCommand: release.ghCommand, index: release.index,
           now: sqlNow, openOnly, deadline: pollNow + 1_200_000,
           deps: { readStatus: resource => readStatus(release, resource), generationTags: release.generationTags,
-            previousInterfaces: async ({ commit }) => ({ status: 'PASS', commit }),
+            previousInterfaceSubject: async () => ({ commit: '9'.repeat(40), acceptanceSha256: '7'.repeat(64) }),
+            previousInterfaces: async ({ commit, previous }) => ({ status: 'PASS', commit, previousCommit: previous.commit, files: ['prior.test.mjs'] }),
             fleetWorkflow: (...args) => workflow(release, ...args), clock: pollClock,
             sleep: async ms => { if (openError) throw openError; pollNow += ms; } } });
       } catch (error) { throw openError ?? error; }
@@ -251,6 +252,7 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
       assert.equal(snapshot.interfaces.pendingDelivery, true);
       assert.equal(snapshot.interfaces.deliveryRecipients, true);
       assert.equal(snapshot.interfaces.previousInterfaceGate, true);
+      assert.equal(snapshot.interfaces.deliveryPeerRecipients, true);
       assert.deepEqual(missingMigrations(plan, snapshot), []);
     });
     await t.test('发布端拒绝被替换的请求、tar、kit 和 Source', async () => {
@@ -425,6 +427,26 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
       assert.equal(checked.kitSha256, w.prepared.firstInstallKitSha256);
       if (process.platform === 'win32' && node === primary) await checkWindowsBoundary(t, w, acceptance, checked, sqlNow);
     }
+    await t.test('静默的 pending 同伴只在正式收件范围内阻塞当班', async () => {
+      const { delivery: { candidate } } = await w.input('open');
+      const recipient = async () => {
+        const snapshot = await dbValue(admin, 'select clued_private.fleet_delivery_registry_v1($1) v', [candidate]);
+        return snapshot.nodes.find(row => row.id === standby);
+      };
+      await heartbeat(standby, '21 minutes');
+      assert.deepEqual((await targetOf(primary)).other_sources, [null]);
+      await admin.query(`insert into clued_private.native_confirmation_tokens
+        (user_id,action,subject_key,subject_version,native_choices,confirmation_view,view_digest,token_hash,auth_time,expires_at)
+        select user_id,'ci_node_binding_rebind',node_id::text,version,'{}','{}',$2,$3,now(),now()+interval '10 minutes'
+        from clued_private.ci_nodes_v1 where node_id=$1`, [standby, sha('silent peer view'), sha('silent peer token')]);
+      assert.deepEqual((await targetOf(primary)).other_sources, [], '排除待重绑同伴');
+      assert.equal((await recipient()).recipientExclusion, 'FLEET_RECIPIENT_REBIND_PENDING');
+      await admin.query("delete from clued_private.native_confirmation_tokens where user_id=$1 and action='ci_node_binding_rebind'", [owner]);
+      assert.deepEqual((await targetOf(primary)).other_sources, [null], '复归同一收件集后保留现场健康检查');
+      await admin.query('update public.clued_agent_bindings set revoked_at=now() where id=$1', [id(12)]);
+      assert.deepEqual((await targetOf(primary)).other_sources, [], '排除 Binding 失效的同伴');
+      assert.equal((await recipient()).recipientExclusion, 'FLEET_RECIPIENT_BINDING_NOT_LIVE');
+    });
   } finally { await db.close(); }
 });
 

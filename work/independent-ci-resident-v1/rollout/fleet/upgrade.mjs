@@ -144,9 +144,15 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
 
   // 2. safe to run again: an operation the upgrader still owns, or both sides already this package
   let op = null;
-  try { op = jsonOf(await fs.readFile(at('upgrade', 'status.json')))?.op ?? null; } catch { op = null; }
+  let statusAt = null;
+  try {
+    const status = jsonOf(await fs.readFile(at('upgrade', 'status.json')));
+    op = status?.op ?? null;
+    statusAt = status?.writtenAt ?? null;
+  } catch { /* installed status is optional */ }
+  if (op?.state === 'ROLLBACK_FAILED') return route('NODE_UPGRADE_WITHOUT_TRUSTED_TERMINAL');
   if (OP_MOVING.includes(op?.state)) {
-    return { ...base, status: 'FLEET_NODE_UPGRADE_IN_PROGRESS', op: { opId: op.opId ?? null, state: op.state, phase: op.phase ?? null, code: op.code ?? null, confirmUrl: op.grant?.confirmUrl ?? null } };
+    return { ...base, status: 'FLEET_NODE_UPGRADE_IN_PROGRESS', statusAt, op: { opId: op.opId ?? null, state: op.state, phase: op.phase ?? null, code: op.code ?? null, confirmUrl: op.grant?.confirmUrl ?? null } };
   }
   const currentBytes = await readOrNull(at('upgrade', 'current.json'));
   need(currentBytes !== null, 'NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH', 'no upgrade\\current.json: a first install follows reinstall/README.md section 8c');
@@ -181,7 +187,15 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   }
 
   // 3. the node, as a reinstall reads it; an upgrade also needs its two sides to be one Source
-  const node = await readNode({ root, now });
+  let node;
+  try {
+    node = await readNode({ root, now });
+  } catch (error) {
+    if (error instanceof SyntaxError || error?.code === 'ENOENT' || /^(NODE_|LINUX_VERSION_FACTS_)/.test(error?.code ?? '')) {
+      return route('NODE_INSTALLED_GENERATION_UNCONFIRMED');
+    }
+    throw error;
+  }
   need(acceptance.repository === node.inst.repository, 'FLEET_ACCEPTANCE_NOT_THIS_REPOSITORY', { accepted: acceptance.repository, installed: node.inst.repository });
   if (node.facts.ciSourceManifestSha256 !== node.current.ciSourceManifestSha256 || node.facts.generation !== node.current.linux?.generation) {
     return route('NODE_SIDES_NOT_ONE_PACKAGE', { ...base, detail: { windows: node.current.ciSourceManifestSha256, linux: node.facts.ciSourceManifestSha256 } });

@@ -469,3 +469,17 @@ test('无法解析旧代指针时可交给同包重装且升级入口不写入',
   assert.equal(q.calls.length, 0);
   assert.equal(await fs.readFile(current, 'utf8'), '{malformed');
 });
+
+test('WSL 半装和 Windows 回滚失败都转交给清洁重装且零投递', async t => {
+  const w = await getWorld(), n = await nodeSite(t, 'a', w.fleet);
+  const factsFile = path.join(n.root, 'upgrade', 'mailbox', 'responses', 'version-facts.json');
+  const facts = await readJson(factsFile);
+  await fs.writeFile(factsFile, JSON.stringify({ ...facts, staged: { generation: facts.generation + 1 } }));
+  const q = requester();
+  const half = await upgrade(w, n, { request: q.request });
+  assert.deepEqual([half.status, half.code], ['FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'NODE_INSTALLED_GENERATION_UNCONFIRMED']);
+  await fs.writeFile(path.join(n.root, 'upgrade', 'status.json'), JSON.stringify({ op: { state: 'ROLLBACK_FAILED' } }));
+  const switched = await upgrade(w, n, { request: q.request });
+  assert.deepEqual([switched.status, switched.code], ['FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'NODE_UPGRADE_WITHOUT_TRUSTED_TERMINAL']);
+  assert.equal(q.calls.length, 0);
+});
