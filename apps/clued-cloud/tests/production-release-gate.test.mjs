@@ -554,6 +554,9 @@ test('fleet-accept only checks the published request and opens the Owner request
   for (const mode of RELEASE_MODES) {
     assert.equal(groupOf(mode), mode === 'fleet-accept' ? 'clued-cloud-fleet-accept' : 'clued-cloud-production-release', mode);
   }
+  const fleetRun = mode => evaluateExpression(group, { inputs: { mode, fleet_release_run: 'operation' }, failed: false, outcomes: {} });
+  assert.equal(fleetRun('preflight'), 'clued-cloud-fleet-migration-read');
+  assert.equal(fleetRun('migrate'), 'clued-cloud-production-release');
 });
 
 test('the fleet-accept script lets only a checked request of this repository on main reach the door', async () => {
@@ -838,6 +841,7 @@ function evaluateExpression(source, context) {
     if (token === 'failure()') return context.failed;
     if (token === 'success()') return !context.failed;
     if (token === 'always()') return true;
+    if (token === 'cancelled()') return Boolean(context.cancelled);
     if (token.startsWith('inputs.')) return context.inputs[token.slice(7)] ?? '';
     const outcome = /^steps\.([\w-]+)\.outcome$/.exec(token);
     if (outcome) return context.outcomes[outcome[1]] ?? '';
@@ -891,6 +895,42 @@ function simulateRelease(inputs, failAt = null) {
   }
   return { mode: context.inputs.mode, ran: ran.map((step) => step.name), steps: ran, conclusion: context.failed ? 'failure' : 'success' };
 }
+
+test('舰队迁移在数据库凭据前核同 SHA，备份失败和准入失败都不会执行迁移', () => {
+  const admission = 'Admit the exact fleet release commit';
+  const read = 'Read the fleet migration prerequisites';
+  const verify = 'Verify the missing fleet migration list';
+  const backup = 'Create and verify encrypted pre-migration backup';
+  const requireBackup = 'Require verified backup before migration';
+  const recheck = 'Recheck the fleet release commit before applying migrations';
+  const apply = 'Apply the named migrations';
+  const readback = 'Read back fleet migrations and interfaces';
+  const fleet = { fleet_release_run: 'operation', expected_release_sha: 'a'.repeat(40) };
+  const readonly = simulateRelease({ ...fleet, mode: 'preflight' });
+  const databaseCredential = step => /secrets\.CLUED_\w*DATABASE_URL/.test(step.text);
+  assert.deepEqual(readonly.steps.filter(databaseCredential).map(step => step.name), [read]);
+  assert.deepEqual(readonly.steps.filter(step => /secrets\./.test(step.text)).map(step => step.name), [admission, read]);
+  assert.ok(readonly.ran.indexOf(admission) < readonly.ran.indexOf(read));
+  assert.ok(!readonly.ran.includes('Preserve release evidence'));
+  const mode = { ...fleet, mode: 'migrate', migrations: '20261127120000_fleet_delivery_seal_v1.sql' };
+  const admitted = simulateRelease(mode);
+  assert.ok(admitted.ran.indexOf(admission) < admitted.steps.findIndex(databaseCredential));
+  for (const name of [admission, recheck]) {
+    const step = admitted.steps.find(step => step.name === name);
+    assert.match(step.text, /CLUED_FLEET_RULES_READ_TOKEN: \$\{\{ secrets\.CLUED_FLEET_RULES_READ_TOKEN \}\}/);
+    assert.ok(!databaseCredential(step));
+  }
+  assert.deepEqual(admitted.ran.filter(name => [admission, verify, backup, requireBackup, recheck, apply, readback].includes(name)),
+    [admission, verify, backup, requireBackup, recheck, apply, readback]);
+  for (const failure of [admission, verify, backup, requireBackup, recheck]) {
+    const refused = simulateRelease(mode, failure);
+    assert.ok(!refused.ran.includes(apply), failure);
+    assert.ok(!refused.ran.includes(readback), failure);
+  }
+  const partial = simulateRelease(mode, apply);
+  assert.equal(partial.conclusion, 'failure');
+  assert.ok(partial.ran.includes(readback));
+});
 
 const RELEASE_ORDER = [
   'Check production database credential', 'Verify projection and MTPE behavior', 'Build exact Worker source',

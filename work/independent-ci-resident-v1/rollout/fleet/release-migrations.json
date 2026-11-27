@@ -1,0 +1,17 @@
+[
+  {
+    "file": "20261126174100_merge_train_control_v2.sql",
+    "requires": [],
+    "probe": "train"
+  },
+  {
+    "file": "20261126175000_ci_train_landing_receipts_v2.sql",
+    "requires": ["20261126174100_merge_train_control_v2.sql"],
+    "probe": "landing"
+  },
+  {
+    "file": "20261127120000_fleet_delivery_seal_v1.sql",
+    "requires": [],
+    "probe": "delivery"
+  }
+]

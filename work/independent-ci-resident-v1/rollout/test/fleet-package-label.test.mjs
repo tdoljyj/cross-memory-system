@@ -74,7 +74,9 @@ test('正式发布入口只接收提交，构建一次，并用已占号的 tag 
   const w = await prepWorld(t, { released: false, spawnGh: false });
   const tags = tagStore();
   let builds = 0;
-  const ghCommand = args => runFakeGh(args, { FAKE_GH_STATE: w.state }, { fs: fsSync, path, createHash });
+  const ghCommand = args => args[1]?.includes('/compare/main...')
+    ? { status: 0, stdout: JSON.stringify({ status: 'identical' }) }
+    : runFakeGh(args, { FAKE_GH_STATE: w.state }, { fs: fsSync, path, createHash });
   const buildUniversal = async ({ commit, version, out }) => {
     builds++;
     assert.equal(version, source.version);
@@ -96,7 +98,9 @@ test('正式发布入口只接收提交，构建一次，并用已占号的 tag 
   };
   const dir = path.join(w.d, 'generated');
   const args = ['prepare', '--commit', source.commit, '--dir', dir, '--out', w.out, '--image', w.image, '--index', w.index];
-  const deps = { ...w.deps, generationTags: tags, buildUniversal };
+  const deps = { ...w.deps, generationTags: tags, buildUniversal, release: {
+    admit: async () => {}, requirements: async () => [], read: async () => ({ snapshot: { base: true, applied: [], interfaces: {} } }),
+  } };
   const entry = { prepareCommit: options => publish.prepareCommit({ ...options, ghCommand, deps }) };
   await assert.rejects(publish.main([...args, '--version', source.version], entry), { code: 'USAGE' });
   const prepared = await publish.main(args, entry);
