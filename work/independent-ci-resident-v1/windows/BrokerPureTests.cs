@@ -109,17 +109,21 @@ public static class BrokerPureTests
                 return 0;
             }
             File.WriteAllBytes(taken,new byte[]{1});
-            string code=null,status=null;
+            Dictionary<string,object> answer;
             try {
-                var v=Renewal.Object(File.ReadAllText(Path.Combine(root,"broker","renew-ci.json")));
-                var probe=new Renewal.Connection { OnDuty=(bool)v["onDuty"], FleetTarget=v["fleetTarget"] as Dictionary<string,object> };
+                var initial=Path.Combine(root,"broker","renew-ci.json");
+                var latest=Path.Combine(root,"broker","renew-ci-recheck.fixture.json");
+                int reads=0;
+                Func<Renewal.Connection> probe=()=> {
+                    var v=Renewal.Object(File.ReadAllText(reads++>0 && File.Exists(latest) ? latest : initial));
+                    return new Renewal.Connection { OnDuty=(bool)v["onDuty"], FleetTarget=v["fleetTarget"] as Dictionary<string,object> };
+                };
                 var now=DateTime.Parse(args[5]).ToUniversalTime().AddMilliseconds(1);
-                var answer=FleetPull.Submit(root,args[2],args[3],()=>probe,payload,()=>now,(run,script)=>
+                answer=FleetPull.Submit(root,args[2],args[3],probe,payload,()=>now,(run,script)=>
                     FleetPull.Assemble(root,run,args.Length==7?args[6]:script,args[4],null,scratch));
-                code=Renewal.Str(answer,"code"); status=Renewal.Str(answer,"status");
-            } catch (BrokerRefusal e) { code=e.Code; }
-            catch (Exception e) { Console.Error.WriteLine(e); code="FLEET_BROKER_UNCONFIRMED"; }
-            Console.WriteLine(Renewal.Json(FleetPull.Answer(root,args[2],grant,code,status)));
+            } catch (BrokerRefusal e) { answer=FleetPull.Answer(root,args[2],grant,e.Code,null); }
+            catch (Exception e) { Console.Error.WriteLine(e); answer=FleetPull.Answer(root,args[2],grant,"FLEET_BROKER_UNCONFIRMED",null); }
+            Console.WriteLine(Renewal.Json(answer));
             return 0;
         }
         string dir = Path.Combine(Path.GetTempPath(), "clued-broker-pure-" + Guid.NewGuid().ToString("N"));

@@ -229,6 +229,10 @@ export async function serviceLoop({ exec, lock, sleep, once = false, stopRequest
       await acknowledgeStop();
       return 0;
     }
+    if (await selfPull?.holdingIdle?.()) {
+      await sleep(1_000);
+      continue;
+    }
     let result;
     try {
       result = await exec.tick({ betweenBatchesRunning: between !== null });
@@ -243,6 +247,7 @@ export async function serviceLoop({ exec, lock, sleep, once = false, stopRequest
       const quiet = result.state === 'IDLE' || (result.state === 'DEFERRED' && result.reason === NODE_DEFERRALS.STANDBY);
       const idle = quiet && result.immediate !== true ? await upgradeIdle().catch(() => null) : null;
       selfPull.tick(idle);
+      await selfPull.confirmIdle?.(idle);
     }
     // Between batches only (a tick runs at most one batch step): archive retention, the 50 GB and the C: reminders, at most hourly
     // (DESIGN §7.3, §35). Without a companion heartbeat nothing is asked of the companion, so this never waits for its timeout.
