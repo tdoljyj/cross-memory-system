@@ -560,34 +560,57 @@ test('fleet-accept only checks the published request and opens the Owner request
   assert.equal(fleetRun('migrate'), 'clued-cloud-production-release');
 });
 
-test('直接派发确认只有同次兼容回放成功才进入发布环境', () => {
-  const [, replay, release] = productionWorkflow.split(/\n  (?:fleet-interface-check|release):\n/);
-  assert.match(replay, /inputs\.mode == 'fleet-accept' && inputs\.fleet_operation == 'confirm'/);
-  assert.match(replay, /^    runs-on: windows-2025$/m);
-  assert.match(replay, /uses: actions\/setup-node@[a-f0-9]{40}[^\n]*\n\s+with:\n\s+node-version: 24\.19\.0\b/);
-  assert.match(replay, /uses: actions\/setup-python@[a-f0-9]{40}[^\n]*\n\s+with:\n\s+python-version: "3\.12"/);
-  assert.match(replay, /evidence: \$\{\{ steps\.replay\.outputs\.evidence \}\}/);
-  assert.match(replay, /node scripts\/ci\/clued-fleet-accept\.mjs previous-interfaces/);
-  assert.doesNotMatch(replay, /secrets\.|environment:|persist-credentials: true/);
-  assert.match(release, /needs: fleet-interface-check/);
-  assert.match(release, /environment: clued-release/);
+test('直接派发确认在同一 Linux 发布作业内先回放，再读取凭据和封存', () => {
+  const jobs = [...productionWorkflow.split('\njobs:\n')[1].matchAll(/^ {2}([\w-]+):$/gm)].map(match => match[1]);
+  assert.deepEqual(jobs, ['release']);
+  assert.doesNotMatch(productionReleaseJob, /^    needs:/m);
+  assert.match(productionReleaseJob, /^    runs-on: ubuntu-24\.04$/m);
+  const checkout = releaseSteps.find(step => step.text.startsWith('uses: actions/checkout@'));
+  assert.match(checkout.text, /^ {10}fetch-depth: 0$/m);
+  assert.match(checkout.text, /^ {10}persist-credentials: false$/m);
+  const replay = releaseSteps.find(step => step.id === 'replay');
+  const python = releaseSteps.find(step => step.text.includes('uses: actions/setup-python@'));
+  const install = releaseSteps.find(step => step.name === 'Install isolated replay dependencies');
+  const credentials = /\bsecrets\s*(?:\.|\[)|github\.token/;
+  const firstCredential = releaseSteps.findIndex(step => credentials.test(step.text));
+  let previous = releaseSteps.indexOf(checkout);
+  for (const step of [python, install, replay]) {
+    assert.equal(step?.condition, "inputs.mode == 'fleet-accept' && inputs.fleet_operation == 'confirm'");
+    assert.doesNotMatch(step.text, credentials);
+    const at = releaseSteps.indexOf(step);
+    assert.ok(at > previous && at < firstCredential, step.name);
+    previous = at;
+  }
+  assert.match(replay.text, /^ {8}timeout-minutes: 15$/m);
+  assert.match(replay.text, /node scripts\/ci\/clued-fleet-accept\.mjs previous-interfaces/);
+  assert.match(replay.text, /NODE_OPTIONS: ''/);
+  const confirm = { mode: 'fleet-accept', fleet_operation: 'confirm' };
+  const successful = simulateRelease(confirm);
+  assert.ok(successful.ran.includes(FLEET_OPEN_STEP));
+  const total = successful.steps.reduce((sum, step) => {
+    const minutes = Number(/^ {8}timeout-minutes: (\d+)$/m.exec(step.text)?.[1]);
+    assert.ok(minutes > 0, `${step.name} has no timeout-minutes`);
+    return sum + minutes;
+  }, 0);
+  assert.ok(jobTimeoutMinutes('fleet-accept', 'confirm') >= total);
+  for (const step of [python, install, replay]) {
+    const failed = simulateRelease(confirm, step.name);
+    assert.equal(failed.conclusion, 'failure');
+    assert.ok(!failed.steps.some(step => credentials.test(step.text)));
+    for (const operation of ['open', 'project']) {
+      assert.ok(!simulateRelease({ ...confirm, fleet_operation: operation }).ran.includes(step.name));
+    }
+  }
   assert.equal(productionWorkflow.match(/clued-fleet-accept\.mjs delivery/g)?.length, 1);
-  assert.match(release, /clued-fleet-accept\.mjs delivery/);
-  const jobIf = job => job.match(/(?:^|\n)    if: >-\n((?:      [^\n]+\n)+)/)[1];
-  const context = (result, operation = 'confirm', evidence = '{}') => ({
-    github: { ref: 'refs/heads/main', actor: 'owner', triggering_actor: 'owner', repository_owner: 'owner' },
-    inputs: { mode: 'fleet-accept', fleet_operation: operation },
-    needs: { 'fleet-interface-check': { result, outputs: { evidence } } },
-  });
-  const run = (result, operation, evidence) => evaluateExpression(jobIf(release), context(result, operation, evidence));
-  assert.equal(evaluateExpression(jobIf(replay), context('')), true);
-  for (const outcome of ['skipped', 'failure', 'cancelled', '']) assert.equal(run(outcome), false);
-  assert.equal(run('success', 'confirm', ''), false);
-  assert.equal(run('success'), true);
-  assert.equal(run('skipped', 'open'), true);
-  assert.equal(run('skipped', 'project'), true);
-  assert.match(release, /FLEET_INTERFACE_RESULT: \$\{\{ needs\.fleet-interface-check\.outputs\.evidence \}\}/);
+  const seal = releaseSteps.find(step => step.name === FLEET_OPEN_STEP);
+  assert.match(seal.text, /FLEET_INTERFACE_RESULT: \$\{\{ steps\.replay\.outputs\.evidence \}\}/);
   assert.doesNotMatch(productionWorkflow, /FLEET_INTERFACE_PROOF_KEY/);
+});
+
+test('舰队交付 DB 回放文件不注册会被跳过的平台和本地资产用例', async () => {
+  const source = await readFile(new URL('./fleet-delivery-release-db.test.mjs', import.meta.url), 'utf8');
+  const skips = [...source.matchAll(/\bskip\s*:\s*([^\n}]+)|\btest\.skip\s*\(/g)].map(match => match[0].trim());
+  assert.deepEqual(skips, [], '上一代接口回放要求测试报告的 skipped 为 0');
 });
 
 test('直接确认只封存候选、上一封存包和迁移摘要均与同次回放相符的结果', async t => {
@@ -982,11 +1005,11 @@ const evaluateCondition = (source, context) => Boolean(evaluateExpression(source
 // The release job's timeout-minutes for one dispatch mode, a literal or an
 // expression over the inputs (GitHub allows `inputs` there).
 const RELEASE_MODES = ['preflight', 'backup', 'source-capture', 'deploy', 'migrate', 'release', 'fleet-accept'];
-function jobTimeoutMinutes(mode) {
+function jobTimeoutMinutes(mode, fleet_operation = '') {
   const source = /\n {4}timeout-minutes: (.+)\n/.exec(productionReleaseJob)?.[1];
   assert.ok(source, 'the release job has no timeout-minutes');
   const expression = /^\$\{\{ (.+) \}\}$/.exec(source)?.[1];
-  const minutes = Number(expression ? evaluateExpression(expression, { inputs: { mode }, failed: false, outcomes: {} }) : source);
+  const minutes = Number(expression ? evaluateExpression(expression, { inputs: { mode, fleet_operation }, failed: false, outcomes: {} }) : source);
   assert.ok(Number.isInteger(minutes) && minutes > 0, `${mode}: ${source}`);
   return minutes;
 }

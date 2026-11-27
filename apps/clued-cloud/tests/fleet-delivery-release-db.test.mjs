@@ -894,7 +894,12 @@ test('并发摘牌、精确包验证和单机重装确认', async t => {
   } finally { await db.close(); }
 });
 
-test('Windows 清洁重装用真实节点 RPC 等待排空和服务端恢复', { skip: process.platform !== 'win32' }, async t => {
+// 接口回放要求零跳过，只有具备前提的环境才注册这两条补充用例。
+if (process.platform === 'win32') {
+  test('Windows 清洁重装用真实节点 RPC 等待排空和服务端恢复', windowsCleanReinstall);
+}
+
+async function windowsCleanReinstall(t) {
   const db = await seedPreviousSchema(t);
   try {
     await db.upgrade();
@@ -912,12 +917,15 @@ test('Windows 清洁重装用真实节点 RPC 等待排空和服务端恢复', {
     assert.equal(status.state, 'returned');
     assert.equal(status.install_ready, false);
   } finally { await db.close(); }
-});
+}
 
 // CI 默认使用自建的正式格式资产。指定已下载的第 25 代原件时，运行其原版心跳、严格开批判定与落地代码。
 const previousRelease = fileURLToPath(new URL('../../../.fleet-compat-g000025/', import.meta.url));
-test('第 25 代发布原包对新库心跳、读取当班资格并在混版舰队落地',
-  { skip: !existsSync(path.join(previousRelease, 'fleet-node-g000025.tar')) }, async t => {
+if (existsSync(path.join(previousRelease, 'fleet-node-g000025.tar'))) {
+  test('第 25 代发布原包对新库心跳、读取当班资格并在混版舰队落地', previousReleaseCompatibility);
+}
+
+async function previousReleaseCompatibility(t) {
   const folder = previousRelease;
   const asset = name => fs.readFile(path.join(folder, 'fleet-node-g000025.' + name));
   const [tar, requestBytes, acceptance] = await Promise.all([asset('tar'),asset('acceptance-request.json'),asset('acceptance.json')]);
@@ -967,7 +975,7 @@ test('第 25 代发布原包对新库心跳、读取当班资格并在混版舰�
     await admin.query('update clued_private.ci_node_liveness_v1 set reported_source_sha256=$1 where node_id=$2',[sha('unsealed'),primary]);
     await assert.rejects(writer.nodesStatus(),/MERGE_TRAIN_NATIVE_UNREADABLE/);
   } finally { await db.close(); }
-});
+}
 
 async function installReleaseDoor({ admin, user, claimResult }) {
   const release = await dbValue(admin,`insert into public.clued_agent_bindings

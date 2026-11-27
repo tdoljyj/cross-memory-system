@@ -287,6 +287,9 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
         })
         for filename, successor in policy.EXACT_SOURCE_CANDIDATE_SUCCESSORS.items():
             text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
+            if filename == "clued-cloud-production-release.yml":
+                _, jobs, _ = policy.split_workflow(text)
+                self.assertEqual(set(jobs), {"release"})
             debt = ({filename: policy.LEGACY_HOSTED_DEBT[filename]} if successor["kind"] == "legacy" else {})
             owner = ({filename: policy.OWNER_DECISION_HOSTED_JOBS[filename]} if successor["kind"] == "owner" else {})
             self.assert_pass(policy.evaluate_workflows({filename: text}, debt, owner, {}, {}))

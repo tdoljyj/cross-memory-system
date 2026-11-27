@@ -6,7 +6,7 @@ const sha = /^[0-9a-f]{40}$/;
 const digest = /^[0-9a-f]{64}$/;
 
 // The protected workflow receives this output only from its own successful
-// replay job. Bind it to the independently checked inputs before sealing.
+// replay step. Bind it to the independently checked inputs before sealing.
 export async function verifyInterfaceEvidence(env, { candidate, acceptanceSha256 }, readPrevious) {
   const missing = 'FLEET_DELIVERY_PREVIOUS_INTERFACE_EVIDENCE_REQUIRED';
   const mismatch = 'FLEET_DELIVERY_PREVIOUS_INTERFACE_EVIDENCE_MISMATCH';

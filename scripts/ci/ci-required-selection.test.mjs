@@ -1311,6 +1311,9 @@ test('a migration selects the production-schema check; ordinary documentation se
     ['production-schema']);
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/tests/work-claims-pr-end-release-db.test.mjs']).suites,
     ['production-schema']);
+  const replay = 'apps/clued-cloud/tests/production-schema/fleet-previous-interfaces-db.test.mjs';
+  assert.deepEqual(selectSuites('migration-verify', [replay], 'linux').suites, ['production-schema']);
+  assert.deepEqual(selectSuites('migration-verify', [replay], 'win32').suites, []);
   for (const file of ['ci-connection-self-db.test.mjs', 'fixtures/ci-connection-self-v1.json',
     'merge-train-rollout-db.test.mjs', 'merge-train-handover-db.test.mjs', 'merge-train-landing-db.test.mjs']) {
     assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/tests/' + file]).suites, ['production-schema']);
@@ -1320,6 +1323,7 @@ test('a migration selects the production-schema check; ordinary documentation se
   t.mock.method(os, 'availableParallelism', () => 16);
   assert.deepEqual(expandArgv(scanStart.argv, { cwd: scanStart.cwd }), ['node', '--test', '--test-concurrency=4',
     'tests/ci-scan-start-native-db.test.mjs', 'tests/ci-scan-start-batch-key-db.test.mjs', 'tests/fleet-delivery-release-db.test.mjs',
+    'tests/production-schema/fleet-previous-interfaces-db.test.mjs',
     'tests/ci-node-binding-rebind-db.test.mjs',
     'tests/ci-connection-self-db.test.mjs', 'tests/binding-role-single-reader-db.test.mjs',
     'tests/integration-runtime-derivation-db.test.mjs', 'tests/db-security-hygiene-db.test.mjs',

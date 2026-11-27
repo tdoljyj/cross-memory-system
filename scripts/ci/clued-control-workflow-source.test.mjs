@@ -165,6 +165,14 @@ test('fixed retirement snapshot authenticates historical objects while the indep
   assert.equal(current.executionAuthority,false);assert.equal(current.hostQualification,'separate_required');
 });
 
+test('the fleet confirmation release workflow matches its exact registered Source blob',()=>{
+  const file='.github/workflows/clued-cloud-production-release.yml';
+  const publisher=JSON.parse(fs.readFileSync(new URL('scripts/ci/clued-production-publisher-sources.json',root),'utf8'));
+  const registered=publisher.workflows[file].sources.find(source=>source.source_kind==='fleet_replay_successor');
+  assert.equal(registered.workflow_blob,'ded440e635e678030ab8a1dae024983092143c17');
+  assert.equal(workflowBlob(fs.readFileSync(new URL(file,root))),registered.workflow_blob);
+});
+
 
 test('retirement removes only the retired live consumer while preserving the fifteen old Source records',()=>{
   const r=load(),f=RETIRED_CONSUMER_OBSERVER_SOURCE.file,rows=r.workflows[f].sources;

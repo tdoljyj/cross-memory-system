@@ -17,10 +17,7 @@ export const PUBLISHER_PROBE_LABELS=Object.freeze(['self-hosted','Windows','X64'
 export const PUBLISHER_PROBE_CONDITION=`needs.admission-gate.outputs.admitted == 'true' && (${PUBLISHER_OWNER_CONDITION} && inputs.mode == 'host-principal-probe')`;
 export const PUBLISHER_QUALIFY_CONDITION=`needs.admission-gate.outputs.admitted == 'true' && (${PUBLISHER_OWNER_CONDITION} && (inputs.mode == 'success' || inputs.mode == 'failure' || inputs.mode == 'cancel'))`;
 const FLEET_REPLAY_KIND='fleet_replay_successor';
-const FLEET_CONFIRM="inputs.mode == 'fleet-accept' && inputs.fleet_operation == 'confirm'";
-const FLEET_REPLAY_CONDITION=`${PUBLISHER_OWNER_CONDITION} && ${FLEET_CONFIRM}`;
-const FLEET_RELEASE_CONDITION=`!cancelled() && ${PUBLISHER_OWNER_CONDITION} && (inputs.mode != 'fleet-accept' || inputs.fleet_operation != 'confirm' || (needs.fleet-interface-check.result == 'success' && needs.fleet-interface-check.outputs.evidence != ''))`;
-const FLEET_RELEASE_TIMEOUT="${{ (inputs.mode == 'deploy' || inputs.mode == 'release') && 165 || inputs.mode == 'fleet-accept' && 10 || 45 }}";
+const FLEET_RELEASE_TIMEOUT="${{ (inputs.mode == 'deploy' || inputs.mode == 'release') && 165 || (inputs.mode == 'fleet-accept' && inputs.fleet_operation == 'confirm') && 50 || inputs.mode == 'fleet-accept' && 10 || 45 }}";
 const hash=text=>createHash('sha256').update(text).digest('hex');
 const sha=/^[a-f0-9]{40}$/,digest=/^[a-f0-9]{64}$/;
 const plain=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
@@ -39,7 +36,7 @@ export function compilePublisherSource(file,text,{parseYaml,accepted_roles,sourc
     Buffer.from(text,'utf8').toString('utf8')!==text||typeof parseYaml!=='function'||
     /\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/.test(text))bad('file/source/parser');
   const legacy=source_kind==='legacy_predecessor',fleet=source_kind===FLEET_REPLAY_KIND;
-  const primary_ids=fleet?['fleet-interface-check',...descriptor.primary_ids]:descriptor.primary_ids;
+  const primary_ids=descriptor.primary_ids;
   operation??=legacy?'predecessor':descriptor.purpose==='production_publisher'?'modify_workflow':'install_workflow';
   if(legacy?operation!=='predecessor':!['modify_workflow','install_workflow'].includes(operation)||
     descriptor.purpose==='production_publisher'&&operation!=='modify_workflow')bad('exact Source operation');
@@ -61,21 +58,18 @@ export function compilePublisherSource(file,text,{parseYaml,accepted_roles,sourc
     bad('qualification must have no environment or Secrets');
   const commands={};
   for(const id of primary_ids) {
-    const job=value.jobs[id],probe=id==='host-principal-probe',replay=id==='fleet-interface-check';
+    const job=value.jobs[id],probe=id==='host-principal-probe';
     if(!plain(job)||job.uses!==undefined||job.strategy!==undefined||!Array.isArray(job.steps)||!job.steps.length||
       job.permissions!==undefined&&(!keys(job.permissions,['contents'])||job.permissions.contents!=='read'))bad('primary job');
     if(fleet) {
-      if(replay ? job['runs-on']!=='windows-2025'||job['timeout-minutes']!==22|| job.environment!==undefined||
-        job.needs!==undefined||condition(job.if)!==FLEET_REPLAY_CONDITION||
-        !same(job.outputs,{evidence:'${{ steps.replay.outputs.evidence }}'})||/\bsecrets\s*(?:\.|\[)/i.test(JSON.stringify(job))
-        : job['runs-on']!=='ubuntu-24.04'||job['timeout-minutes']!==FLEET_RELEASE_TIMEOUT||
-          job.needs!=='fleet-interface-check'||condition(job.if)!==FLEET_RELEASE_CONDITION)bad('exact fleet replay and release jobs');
+      if(job['runs-on']!=='ubuntu-24.04'||job['timeout-minutes']!==FLEET_RELEASE_TIMEOUT||
+        job.needs!==undefined||condition(job.if)!==PUBLISHER_OWNER_CONDITION)bad('exact fleet release job');
     } else if(!Number.isInteger(job['timeout-minutes'])||job['timeout-minutes']<1||
       job['timeout-minutes']>(production?45:probe?5:12))bad('primary job timeout');
     if(!legacy&&!fleet&&(!same(job['runs-on'],probe?PUBLISHER_PROBE_LABELS:PUBLISHER_LABELS)||job.needs!=='admission-gate'||
       condition(job.if)!==(production?PUBLISHER_JOB_CONDITION:probe?PUBLISHER_PROBE_CONDITION:PUBLISHER_QUALIFY_CONDITION)))
       bad('exact one-shot route/gate/main/Owner/mode condition');
-    if(production&&!replay&&job.environment!=='clued-release')bad('production environment');
+    if(production&&job.environment!=='clued-release')bad('production environment');
     const digests={};
     for(const step of job.steps) {
       if(!plain(step)||step.uses!==undefined&&step.run!==undefined)bad('step form');

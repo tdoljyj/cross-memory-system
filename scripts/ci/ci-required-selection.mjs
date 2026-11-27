@@ -99,7 +99,7 @@ const GENERATED_OUTPUTS = [...new Set([...PINNED_REGISTRY_PATHS, ...generatedFil
 // §13.2 P2 (c) (the nightly 2,000,000 is clued-integration-runtime-nightly.yml); the database security hygiene,
 // which stops its own embedded PostgreSQL servers and so runs without --test-force-exit.
 const MIGRATION_DB_TESTS = ['apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs', 'apps/clued-cloud/tests/ci-scan-start-batch-key-db.test.mjs',
-  'apps/clued-cloud/tests/fleet-delivery-release-db.test.mjs',
+  'apps/clued-cloud/tests/fleet-delivery-release-db.test.mjs', 'apps/clued-cloud/tests/production-schema/fleet-previous-interfaces-db.test.mjs',
   'apps/clued-cloud/tests/ci-node-binding-rebind-db.test.mjs', 'apps/clued-cloud/tests/ci-connection-self-db.test.mjs',
   'apps/clued-cloud/tests/binding-role-single-reader-db.test.mjs', 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs',
   'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs',
@@ -254,6 +254,7 @@ export const SUITES = {
       'apps/clued-cloud/scripts/drill-test-sync.mjs', 'apps/clued-cloud/scripts/generated/drill-pg.mjs', 'apps/clued-cloud/scripts/release-migration-compat.mjs',
       // The release door flow test runs the release workflow steps and the grant script (FABLE-release-identity-autonomous §3.1).
       '.github/workflows/clued-cloud-production-release.yml', 'scripts/ci/clued-release-door.mjs',
+      'work/independent-ci-resident-v1/rollout/fleet/previous-interface-check.mjs',
       'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...MIGRATION_DB_TESTS, ...AUTHORIZATION_DB_TESTS, ...MIGRATION_DB_TEST_INPUTS, 'apps/clued-cloud/package.json',
       'apps/clued-cloud/package-lock.json',
       // The real database command (Task 4432ee9b): its script and test, the database start it reuses, the local migration
