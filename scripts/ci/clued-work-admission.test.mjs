@@ -427,7 +427,7 @@ test("admission accepts the exact controls preregistered on main even if absent 
         policyText, policySha256: sha256Hex(policyText), evaluatorSha256: sha256Hex(fs.readFileSync(new URL("./clued-work-admission.mjs", import.meta.url), "utf8")),
         ciPrincipalBindingId, ciPrincipalQualificationRef, supabaseUrl, publishableKey: "sb_publishable_fixture" },
       clock: () => now,
-      tokenProvider: async () => ({ githubToken: "fixture-token", ciAdmissionToken: "fixture-admission-token", ciPrincipalBindingId, ciPrincipalQualificationRef }),
+      tokenProvider: async () => ({ githubToken: "fixture-token", ciAdmissionToken: "clued_bnd_aaaaaaaa", ciPrincipalBindingId, ciPrincipalQualificationRef }),
       modeProvider: async () => ({ complete: true, repository: CONTROL_REPO, variable: "CLUED_MERGE_ADMISSION_STATE",
         source: "github-repository-variables", exists: false, observedAt, proofRef: "fixture-mode" }),
       recorderProvider: async () => ({ kind: "independent-controller", domain: "fixture", observedAt,
