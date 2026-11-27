@@ -100,8 +100,19 @@ test('37a-compatible final input bridge refuses missing Native identity/checkout
   assert.ok(admissionEnvelopeInput({finalEvent:f}).missing.includes('ENTRY_NOT_IN_PER_PR_GRAMMAR'));
 });
 test('five original workflow blocks preserve exact accepted successors and added same-job artifacts',()=>{
-  const trainControls = new Set(['clued-merge-executor.yml', 'clued-merge-slot-ci.yml']);
-  const workflowAt = (commit, name) => execFileSync('git', ['show', `${commit}:.github/workflows/${name}`], { cwd: repo, encoding: 'utf8' });
+  // For Task 788c2598 compare the exact protocol-1 blocks with the
+  // historical witness. Selection tests exercise both live conditions.
+  const trainCutover = {
+    'clued-merge-executor.yml': [
+      ["    # A new main push is automatic. Only the Owner can start a fresh manual\n    # run. Reruns inherit the original actor and must not reacquire write authority.\n    if: >-\n      vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION != '2' ||\n      (github.ref == 'refs/heads/main' && github.run_attempt == 1 &&\n      (github.event_name == 'push' ||\n       (github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner &&\n        github.triggering_actor == github.repository_owner)))\n", ""],
+      ["          CLUED_MERGE_TRAIN_PROTOCOL_VERSION: ${{ vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION }}\n", ""],
+    ],
+    'clued-merge-slot-ci.yml': [
+      ["    if: >-\n      (vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION != '2' &&\n       (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request' ||\n        github.event.workflow_run.event == 'pull_request_target')) ||\n      (vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION == '2' &&\n      github.ref == 'refs/heads/main' && github.run_attempt == 1 &&\n      ((github.event_name == 'workflow_run' && github.event.action == 'completed' &&\n        (github.event.workflow_run.event == 'pull_request' ||\n         github.event.workflow_run.event == 'pull_request_target')) ||\n       (github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner &&\n        github.triggering_actor == github.repository_owner)))\n", "    if: >-\n      github.event_name != 'workflow_run' ||\n      github.event.workflow_run.event == 'pull_request' ||\n      github.event.workflow_run.event == 'pull_request_target'\n"],
+      ["          CLUED_MERGE_TRAIN_PROTOCOL_VERSION: ${{ vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION }}\n", ""],
+      ["# the event. Only a fresh PR completion or a fresh Owner dispatch may\n# enter the job that holds write credentials. A pull request\n", "# the event. The job's condition uses the event only to skip runs of push and\n# schedule events, which are never a pull request's head. A pull request\n"],
+    ],
+  };
   // Exact accepted trigger additions verified from the immutable 59522b source.
   // Keep the original baseline for every other byte; CI needs no newer Git
   // history object, and no arbitrary future choice or hook is normalized away.
@@ -118,18 +129,12 @@ test('five original workflow blocks preserve exact accepted successors and added
       '      - Clued disposable cancellation fixture']}],
   };
   for(const name of ['clued-work-admission.yml','clued-work-admission-reverify.yml','clued-work-admission-dispatch.yml','clued-merge-executor.yml','clued-merge-slot-ci.yml']){
-    const old = workflowAt(ORIGINAL_WORKFLOW_BASE, name);
-    const next = fs.readFileSync(path.join(stage, '.github/workflows', name), 'utf8').replace(/\r\n/g, '\n');
-    let ordinary = next;
-    if (trainControls.has(name)) {
-      const predecessor = workflowAt('816b2ed9b2f78ba8439d64d348054e05f027cee8', name);
-      const successor = workflowAt('e8390c2e643c5478ea9d34a784e558e5a995b2e9', name);
-      assert.ok(next === predecessor || next === successor, name + ': exact control Source');
-      ordinary = predecessor;
+    const old=execFileSync('git',['show',ORIGINAL_WORKFLOW_BASE+':.github/workflows/'+name],{cwd:repo,encoding:'utf8'}),next=fs.readFileSync(path.join(stage,'.github/workflows',name),'utf8').replace(/\r\n/g,'\n');
+    let ordinary=name==='clued-merge-executor.yml'?next.replace(/  workflow_dispatch:\n    inputs:[\s\S]*?\npermissions:/,'  workflow_dispatch:\n\npermissions:').replace(/        if: \$\{\{ !inputs.measurement_opt_in \}\}\n/,''):next;
+    for (const [current, previous] of trainCutover[name] ?? []) {
+      assert.equal(ordinary.split(current).length - 1, 1, name + ': exact train cutover block');
+      ordinary = ordinary.replace(current, previous);
     }
-    if (name === 'clued-merge-executor.yml') ordinary = ordinary
-      .replace(/  workflow_dispatch:\n    inputs:[\s\S]*?\npermissions:/, '  workflow_dispatch:\n\npermissions:')
-      .replace(/        if: \$\{\{ !inputs.measurement_opt_in \}\}\n/, '');
     // The reviewed display-name migration changes no trigger, permission,
     // environment, job ID or executable. Normalize only these exact lines
     // when comparing with the immutable pre-migration workflow witness.
