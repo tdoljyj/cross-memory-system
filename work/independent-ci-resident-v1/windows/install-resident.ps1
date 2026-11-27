@@ -1469,6 +1469,8 @@ Step 'service-hosts' {
 # 3a. M5: the companion's supervisor and task registrar, from the installed resident copy (ADR 0022 section 4.2, 4.4).
 Step 'companion-supervisor' {
   $w = Join-Path $Root ('resident\' + $plan.residentManifestSha256 + '\windows')
+  Write-NewSecret (Join-Path $Root 'bin\companion-supervisor.lock') ([byte[]]@(0)) (Get-SecretFileSddl $OwnerSid)
+  $script:receipt['companionSupervisorSourceSha256'] = Sha256File (Join-Path $w 'CompanionSupervisor.cs')
   $hashes = Invoke-CompanionSupervisorCompile $Csc 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\' (Join-Path $Root 'bin') (Join-Path $w 'CompanionSupervisor.cs') (Join-Path $w 'CompanionTaskRegistrar.cs')
   foreach ($k in @($hashes.Keys)) { $script:receipt[$k] = $hashes[$k] }
 }

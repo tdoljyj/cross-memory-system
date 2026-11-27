@@ -36,7 +36,10 @@ import { parseBudget } from './budget-alert.mjs';
 // compared in its §41.6 Source check (train.mjs#trainNodesView), for the fleet-lag alert and the landing precheck (rollout/landing-precheck.mjs).
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const runStatusHost = promisify(execFile);
+import { CODE, HEX40, HEX64, sha256, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
 import { writableUnderTest } from './production-root-guard.mjs';
 import { nonce, readBounded } from './store.mjs';
 import { reasonCodeList } from './queue.mjs';
@@ -45,8 +48,9 @@ import { parseRevokeHead, parseTrainLast, parseTrainNodes, parseTrainSweep } fro
 import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
 import { StageTimings, parseTiming } from './stage-timing.mjs';
 import { renewalStatus, parseRenewalStatus, RESPONSE_WAITING } from './connection-renewal.mjs';
-import { installedPackageView, parseInstalledPackage, parseSelfcheckView, readSelfcheck, selfcheckNotice, selfcheckView, withPackageSelfcheck } from './selfcheck.mjs';
-import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE,
+import { acceptanceFromTarget, byTarget, names as fleetNames } from './fleet-self-pull.mjs';
+import { installedPackageView, packageGenerationOf, parseInstalledPackage, parseSelfcheckView, readSelfcheck, selfcheckNotice, selfcheckView, withPackageSelfcheck } from './selfcheck.mjs';
+import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE, VERSION_FACTS_MAX_AGE_MS, VERSION_FACTS_FUTURE_MS,
   consistent as versionsConsistent } from './upgrade-mailbox.mjs';
 
 // Contract /8 (optimisation plan P1, Clued bf57ff10): a new top-level key `timing` (stage-timing.mjs): the newest finished batch's segment
@@ -82,7 +86,7 @@ export const NOTICE_KINDS = Object.freeze(['budget', 'new-trigger', 'stopped', '
   // Generation 12 (DESIGN §56.3): the claim of a running or parked batch is about to end (or has ended); its holder must renew.
   'lease-short',
   // M5 (ADR 0022 §4.5): no companion heartbeat 10 minutes after the service started (the notifier shows it at log-on).
-  'companion-absent']);
+  'companion-absent', 'status-stale']);
 // Generation 12 (DESIGN §56.3): how long the claim's lease must still run. A running batch needs what an average batch has left
 // (LEASE_BATCH_ESTIMATE_MS from its start, an estimate only) and LEASE_MARGIN_MS for stage 8 and the merge; a batch parked at B
 // needs LEASE_MARGIN_MS. Only a reminder: the admission of every stage checks the lease itself, and a renewal never voids a batch
@@ -234,14 +238,33 @@ export class StatusBoard {
 
 // Whole-file replacement: a reader sees the previous snapshot or the next one, never a mix.
 export class StatusFile {
-  constructor(file) { this.file = file; }
+  constructor(file, { windowsHost = null, wait = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+    this.windowsHost = windowsHost;
+    this.file = file;
+    this.wait = wait;
+  }
   async write(snapshot) {
     const bytes = Buffer.from(canonicalJson(snapshot) + '\n', 'utf8');
     check(bytes.length <= STATUS_MAX_BYTES, 'STATUS_TOO_LARGE');
-    const tmp = `${this.file}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, bytes);
-    await fs.rename(tmp, this.file);
-    return bytes.length;
+    const suffix = nonce(), tmp = `${this.file}.${suffix}.tmp`;
+    try {
+      await fs.writeFile(tmp, bytes, { flag: 'wx' });
+      for (let attempt = 1; ; attempt++) {
+        try { await fs.rename(tmp, this.file); return bytes.length; }
+        catch (error) {
+          error.attempts = attempt;
+          // Windows maps a sharing violation on replace to EPERM or EBUSY.
+          if (process.platform !== 'win32' || !['EPERM', 'EBUSY'].includes(error.code)) throw error;
+          if (attempt >= 5) {
+            if (!this.windowsHost) throw error;
+            try { await runStatusHost(this.windowsHost, ['--replace-status', suffix], { windowsHide: true }); }
+            catch (native) { error.nativeCode = typeof native.code === 'number' ? native.code : null; throw error; }
+            return bytes.length;
+          }
+          await this.wait(25 * 2 ** (attempt - 1));
+        }
+      }
+    } finally { await fs.unlink(tmp).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
   }
 }
 
@@ -249,14 +272,30 @@ export class StatusFile {
 // never an exception out of the timer. flush() writes now (start, stop, a state change the caller wants out early).
 // Generation 10 (DESIGN 53.5): a flush asked while a write is under way is not dropped: the running write writes the snapshot once more
 // when it is done (the board may have changed in between), so an early flush never waits for the next 15 seconds.
-export function startStatusTimer({ board, file, intervalMs = STATUS_REFRESH_MS, schedule = globalThis.setInterval, cancel = globalThis.clearInterval }) {
-  let busy = false, again = false;
+export function startStatusTimer({ board, file, report = () => {}, intervalMs = STATUS_REFRESH_MS, schedule = globalThis.setInterval, cancel = globalThis.clearInterval }) {
+  let busy = false, again = false, stale = false, lastSuccess = null;
   const flush = async () => {
     if (busy) { again = true; return false; }
     busy = true;
     try {
       let ok = true;
-      do { again = false; try { await file.write(board.snapshot()); } catch { ok = false; } } while (again);
+      do {
+        again = false;
+        const snapshot = board.snapshot(), start = Date.now();
+        let event;
+        try {
+          await file.write(snapshot);
+          lastSuccess = snapshot.writtenAt;
+          if (stale) event = { code: 'STATUS_WRITE_RECOVERED', lastSuccess };
+          stale = false;
+        } catch (error) {
+          ok = false;
+          if (!stale) event = { code: 'STATUS_WRITE_STALE', error: codeOrNull(error.code), attempts: error.attempts ?? 1,
+            elapsedMs: Date.now() - start, ...(error.nativeCode != null ? { nativeCode: error.nativeCode } : {}), lastSuccess };
+          stale = true;
+        }
+        if (event) { try { await report(event); } catch { /* the next timer tick still runs */ } }
+      } while (again);
       return ok;
     } finally { busy = false; }
   };
@@ -430,6 +469,67 @@ async function readInstalledPackageEvidence(root) {
   }
 }
 
+// A journal and staged package belong to the upgrader. Never follow the operator's packageDirectory.
+async function upgradePackageEvidence(root, { current, status }, policy, now) {
+  const fail = { marker: null };
+  if (!UUID.test(current.opId) || !HEX64.test(current.packageManifestSha256)) return fail;
+  const statusAt = Date.parse(status?.writtenAt);
+  if (!Number.isFinite(statusAt) || now - statusAt > VERSION_FACTS_MAX_AGE_MS || statusAt - now > VERSION_FACTS_FUTURE_MS
+    || !Object.hasOwn(status, 'op') || !Array.isArray(status.recent) || status.current?.generation !== current.generation
+    || status.current?.packageManifestSha256 !== current.packageManifestSha256) return fail;
+  const dir = path.join(root, 'upgrade', 'ops', current.opId);
+  const bytesOf = async (file, limit) => {
+    const { size } = await fs.lstat(file);
+    check(size > 0 && size <= limit, 'UPGRADE_LABEL_REFUSED');
+    return readBounded(file, size, 'UPGRADE_LABEL_REFUSED');
+  };
+  const read = async (file, limit) => JSON.parse(await bytesOf(file, limit));
+  try {
+    const [plan, terminal, manifestBytes, receiptBytes] = await Promise.all([
+      read(path.join(dir, '010-accept.plan.json'), 4 * 1024 * 1024), read(path.join(dir, '900-terminal.json'), VERSION_FILE_MAX_BYTES),
+      bytesOf(path.join(root, 'upgrade', 'staged', current.packageManifestSha256, 'package-manifest.json'), 16 * 1024 * 1024),
+      bytesOf(path.join(root, 'install', 'install-receipt.json'), 1024 * 1024)]);
+    if (sha256(manifestBytes) !== current.packageManifestSha256 || sha256(receiptBytes) !== current.installReceiptSha256) return fail;
+    const accepted = policy.ownerAcceptance, target = plan.target, manifest = JSON.parse(manifestBytes), receipt = JSON.parse(receiptBytes);
+    const policyEntries = manifest.files?.filter(f => f.path === 'config/policy.json');
+    if (policyEntries?.length !== 1 || policyEntries[0].target !== 'config\\policy.json' || policyEntries[0].sha256 !== current.policySha256) return fail;
+    const success = ['SUCCEEDED', 'SUCCEEDED_STILL_PAUSED'];
+    if (plan.contract !== 'clued.independent-ci.resident-upgrade-plan/1' || plan.opId !== current.opId
+      || plan.toGeneration !== current.generation || plan.fromGeneration + 1 !== plan.toGeneration
+      || plan.packageManifestSha256 !== current.packageManifestSha256 || plan.acceptanceDecisionRef !== accepted?.decisionRef
+      || terminal.contract !== 'clued.independent-ci.resident-upgrade-journal/1' || terminal.opId !== current.opId
+      || terminal.seq !== 900 || terminal.kind !== 'terminal' || terminal.step !== 'terminal' || terminal.code !== null
+      || terminal.generation !== current.generation || !success.includes(terminal.outcome)
+      || (status.op && (status.op.opId !== current.opId || status.op.state !== terminal.outcome))
+      || status.recent?.some(r => r.opId === current.opId && r.outcome !== terminal.outcome)
+      || receipt.contract !== 'clued.independent-ci.resident-install-receipt/6' || receipt.writtenBy !== 'CluedCIUpgrader' || receipt.generation !== current.generation
+      || receipt.upgrade?.opId !== current.opId || receipt.upgrade.decisionRef !== plan.acceptanceDecisionRef
+      || !UUID.test(terminal.grantId ?? '') || receipt.upgrade.grantId !== terminal.grantId || receipt.packageManifestSha256 !== current.packageManifestSha256
+      || manifest.contract !== 'clued.independent-ci.resident-package/4' || manifest.acceptance?.decisionRef !== plan.acceptanceDecisionRef
+      || [manifest, target, receipt].some(r => r.residentManifestSha256 !== current.residentManifestSha256 || r.ciSourceManifestSha256 !== current.ciSourceManifestSha256)
+      || target.policySha256 !== current.policySha256 || receipt.policySha256 !== current.policySha256
+      || target.linux?.manifestSha256 !== current.linux?.manifestSha256 || manifest.linux?.manifestSha256 !== target.linux.manifestSha256) return fail;
+
+    let identity = accepted.installedPackage;
+    if (!identity) {
+      // Older packages: only the broker's accepted decision + receipt can select the downloaded request bytes.
+      const fleet = (await readJsonLenient(path.join(root, 'broker', 'renew-ci.json')))?.fleetTarget;
+      if (!fleet || fleet.grant_id !== accepted.decisionRef || fleet.receipt_id !== accepted.installReceiptRef) return null;
+      const generation = packageGenerationOf(fleet.version);
+      if (!generation || !HEX64.test(fleet.request_sha256) || fleet.repository !== policy.repo) return fail;
+      const bundle = byTarget(root, fleet), names = fleetNames(fleet);
+      const request = await readBounded(path.join(bundle, names.request), 256 * 1024, 'UPGRADE_LABEL_REFUSED');
+      const sealed = acceptanceFromTarget(fleet, request);
+      if (canonicalJson(await read(path.join(bundle, names.acceptance), 256 * 1024)) !== canonicalJson(sealed)) return fail;
+      identity = { packageGeneration: generation, version: sealed.version, releaseTag: names.tag, commit: sealed.commit,
+        ciSourceManifestSha256: sealed.ciSourceManifestSha256, archiveSha256: sealed.archive_sha256 };
+    }
+    if (!parseInstalledPackage(identity) || target.linux.sourceCommit !== identity.commit || manifest.linux.sourceV2?.commit !== identity.commit) return fail;
+    return { marker: { installedPackage: identity, packageManifestSha256: current.packageManifestSha256,
+      installReceiptSha256: current.installReceiptSha256 } };
+  } catch (error) { return error.code === 'ENOENT' ? null : fail; }
+}
+
 function currentPackageView(evidence, { current, facts, agreed, policy, policySha256 }) {
   if (evidence === null) return installedPackageView('unmarked');
   const { marker } = evidence;
@@ -484,7 +584,15 @@ export function versionsView({ current, facts, status, selfcheck = null, package
 // The executor's port (service-main.mjs): { view, notices } of one root, read now. The engine's gate before the first Linux stage
 // uses the view only.
 export async function readVersionState({ root, policy, policySha256 = null, clock = Date.now }) {
-  const [inputs, packageEvidence] = await Promise.all([readVersionInputs(root), readInstalledPackageEvidence(root)]);
+  const inputs = await readVersionInputs(root);
+  let packageEvidence;
+  if (inputs.current?.opId != null) {
+    packageEvidence = await upgradePackageEvidence(root, inputs, policy, clock());
+    const after = await readJsonLenient(path.join(root, 'upgrade', 'current.json'));
+    if (canonicalJson(after) !== canonicalJson(inputs.current)) packageEvidence = { marker: null };
+  } else {
+    packageEvidence = await readInstalledPackageEvidence(root);
+  }
   const view = versionsView({ ...inputs, packageEvidence }, { policy, policySha256, now: clock() });
   // The status projection can still be read if the optional text copy cannot be refreshed.
   await writePackageVersion(root, view.installedPackage).catch(() => {});
@@ -534,8 +642,13 @@ export function versionNotices(view, upgradeStatus = null) {
 
 // One bounded read (the writer may rename a new snapshot in at any moment: a read that loses that race fails and the
 // next pass reads again).
-export async function readStatus(root) {
-  return parseStatus(await readBounded(path.join(root, 'state', STATUS_FILE), STATUS_MAX_BYTES, 'STATUS_REFUSED'));
+export async function readStatus(root, clock = Date.now) {
+  const snapshot = parseStatus(await readBounded(path.join(root, 'state', STATUS_FILE), STATUS_MAX_BYTES, 'STATUS_REFUSED'));
+  if (clock() - snapshot.writtenAt > STATUS_STALE_MS) {
+    snapshot.notices.push({ kind: 'status-stale', key: 'status-stale', code: 'STATUS_SNAPSHOT_STALE',
+      at: snapshot.writtenAt, until: null, pr: null, headSha: null });
+  }
+  return snapshot;
 }
 
 // bc982192 (C3, plan 戊): the landing mode the companion's poller proposes by (poller.mjs#landingMode): 'push' only when the status board

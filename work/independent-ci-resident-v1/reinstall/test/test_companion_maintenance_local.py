@@ -13,6 +13,7 @@ BASE = Path(__file__).resolve().parents[2]
 PS = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
 DRIVER = r'''
 param([string]$Helper,[string]$Root,[string]$Paused)
+[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $ErrorActionPreference='Stop';Set-StrictMode -Version 2
 . $Helper
 # Only transports beyond the fixture root are replaced. The actual local

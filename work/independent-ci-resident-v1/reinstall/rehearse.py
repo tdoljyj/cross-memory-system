@@ -228,6 +228,8 @@ class Host:
         return os.path.exists(p)
 
     def read_json(self, p):
+        if p == self.path('state', 'status.json'):
+            return json.loads(rconfig.read_status_bytes(p).decode('utf-8-sig'))
         return read_json(p)
 
     def read_facts(self, p):
@@ -355,7 +357,8 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
                 or locks.get('secretsEnumerated') is not False or locks.get('directoryHandlesCovered') is not False
                 or not isinstance(locks.get('external'), list) or not isinstance(locks.get('lockers'), list)
                 or any(not isinstance(row, dict) or type(row.get('pid')) is not int or row['pid'] < 1
-                       or type(row.get('startedFileTime')) is not int or row['startedFileTime'] < 1
+                       or type(row.get('startedFileTime')) is not int or row['startedFileTime'] < 0
+                       or (row['startedFileTime'] == 0 and row.get('expected') is not False)
                        or type(row.get('expected')) is not bool for row in locks['lockers'])
                 or locks['external'] != [row for row in locks['lockers'] if row['expected'] is False]):
             find('RESIDENT_FILE_LOCK_OBSERVATION_INVALID')
@@ -426,17 +429,27 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
     v = last_json(out)
     denied = v is None and bool(re.search(r'Access is denied|UnauthorizedAccess', err))
     v = v if isinstance(v, dict) else {}
-    failed = sorted(k for k, c in (v.get('checks') or {}).items() if isinstance(c, dict) and c.get('ok') is not True and c.get('ok') != 'unreadable')
+    checks_v = v.get('checks') if isinstance(v.get('checks'), dict) else {}
+    failed = sorted(k for k, c in checks_v.items() if not isinstance(c, dict) or (c.get('ok') is not True and c.get('ok') != 'unreadable'))
     # Since verify's bounded JSON verdict (Get-VerifyInputFailure), an admin-only input it cannot open non-elevated (DESK,
     # 2026-11-08: broker\token.json) no longer ends without JSON: it ends as RESIDENT_VERIFICATION_FAILED with the one check
     # verify-inputs = VERIFY_INPUT_UNREADABLE. That alone is the same "not runnable unelevated"; any other failed check, or
     # another code (a changed receipt, profile or config), is still a finding. The launcher runs this verify elevated.
-    checks_v = v.get('checks') or {}
     if (not denied and failed == ['verify-inputs'] and v.get('status') == 'RESIDENT_VERIFICATION_FAILED'
             and isinstance(checks_v.get('verify-inputs'), dict) and checks_v['verify-inputs'].get('detail') == 'VERIFY_INPUT_UNREADABLE'):
         denied = True
-    checks['verify'] = {'script': vscript, 'exit': code, 'status': v.get('status'), 'failed': failed, 'notRunnableUnelevated': denied, 'stderr': err[-300:]}
-    verify_finding = not denied and (v.get('status') not in VERIFY_OK or failed)   # decided below, once the two sides are known
+    # Generation 23's reviewed script collapses permission and content errors into these exact pairs.
+    # Only its elevated replay can distinguish them. The newer script separates access and content.
+    verify_sha = host.sha(vscript)
+    if installed_linux_in_phase_a and file_locks_in_launcher and code == 1 and v.get('status') == 'RESIDENT_VERIFICATION_FAILED' and failed:
+        allowed = {'current-ci-connection': {'CI_CONNECTION_ACCESS_DENIED'}, 'verify-inputs': {'VERIFY_INPUT_ACCESS_DENIED'}}
+        if verify_sha == '22b7be93c18db02f17294e15b34fd5dcb57a32a52ae4ee59eeec7e9040d7e4d1':
+            allowed = {'current-ci-connection': {'CI_CONNECTION_RECORD_REFUSED', 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED'},
+                       'verify-inputs': {'VERIFY_INPUT_UNREADABLE'}}
+        denied = all(isinstance(row, dict) and (row.get('ok') is True or row.get('ok') == 'unreadable' or
+                     (row.get('ok') is False and row.get('detail') in allowed.get(name, set()))) for name, row in checks_v.items())
+    checks['verify'] = {'script': vscript, 'sha256': verify_sha, 'exit': code, 'status': v.get('status'), 'failed': failed, 'notRunnableUnelevated': denied, 'stderr': err[-300:]}
+    verify_finding = not denied and (not checks_v or v.get('status') not in VERIFY_OK or failed)   # decided below, once the two sides are known
 
     # status: the fields the template (Test-OldRootQuiet) and prep.py read, and the upgrade state contracts
     st = host.read_json(host.path('state', 'status.json'))

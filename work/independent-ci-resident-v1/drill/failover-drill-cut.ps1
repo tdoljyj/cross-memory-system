@@ -141,7 +141,12 @@ function ConvertTo-DrillUtc($Value) {
 # 本机 status.json 核一次：输出不满足的原因（调用方用 @() 收，空＝可以断）。读不到或不是 JSON 也算不满足；
 # 要核的键缺一个就记“缺 <键>”，writtenAt 距此刻超过 120 秒或解析不了记“status.json 不新鲜”（S4）。
 function Get-DrillLocalProblems([string]$File) {
-  try { $s = Get-Content -LiteralPath $File -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return @("status.json 读不到：$($_.Exception.Message)") }
+  try { $stream = [IO.File]::Open($File, 'Open', 'Read', ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    try {
+      if ($stream.Length -gt 262144) { throw 'STATUS_SIZE_REFUSED' }
+      $reader = New-Object IO.BinaryReader($stream)
+      $s = [Text.Encoding]::UTF8.GetString($reader.ReadBytes([int]$stream.Length)).TrimStart([char]0xfeff) | ConvertFrom-Json
+    } finally { $stream.Dispose() } } catch { return @("status.json 读不到：$($_.Exception.Message)") }
   $out = New-Object System.Collections.ArrayList
   $node = Get-DrillProp $s 'node'; $executor = Get-DrillProp $s 'executor'
   # 键路径 → 它所在的对象；父键缺了只记父键

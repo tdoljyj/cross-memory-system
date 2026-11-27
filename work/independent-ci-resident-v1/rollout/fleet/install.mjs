@@ -649,6 +649,9 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   const rr = pyJson(rh);
   need(rh.status === 0 && rr?.status === 'REHEARSAL_PASS' && typeof rr.report === 'string', 'REHEARSAL_FAILED', { findings: rr?.findings ?? null, report: rr?.report ?? null, stderr: rr ? undefined : rh.stderr });
 
+  const reviewedVerify = jsonOf(await fs.readFile(rr.report)).checks?.verify?.sha256;
+  need(HEX64.test(reviewedVerify ?? '') && reviewedVerify === sha(await fs.readFile(path.join(root, 'resident', node.current.residentManifestSha256, 'windows', 'verify-resident.ps1'))), 'INSTALLED_VERIFY_NOT_AS_REVIEWED');
+
   // the package's prep.py, --in-dir/--out-dir form: A.sh, B.sh, B-resume.sh in <work>\linux\
   const suffix = `f${new Date(now).toISOString().replace(/[-:]/g, '').slice(0, 15).toLowerCase()}`;
   const p = python(path.join(R, 'reinstall', 'linux', 'prep.py'), [configFile, universal.commit, ciSourceManifestSha256, acceptance.fleetRefs.sourceAcceptanceRef, packageDir, suffix,
@@ -671,6 +674,11 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
     packageDir, packageManifestSha256: first.packageManifestSha256, ciSourceManifestSha256, linuxManifestSha256, companionAccount,
     linux: { distribution: node.distribution, inDir: linuxIn, wslInDir: wslPath(linuxIn), outDir: linuxOut, scripts, timeoutSeconds: { ...LINUX_TIMEOUT_SECONDS } },
     expectedLinux: { generation: 1, ciSourceManifestSha256, manifestSha256: linuxManifestSha256, packageManifestSha256: first.packageManifestSha256 },
+    expectedInstalledWindows: { receiptSha256: node.current.installReceiptSha256, residentManifestSha256: node.current.residentManifestSha256,
+      verifySha256: reviewedVerify,
+      sidesDiffer: node.expectedInstalledLinux.generation !== node.current.linux?.generation
+        || node.expectedInstalledLinux.manifestSha256 !== node.current.linux?.manifestSha256
+        || node.expectedInstalledLinux.ciSourceManifestSha256 !== node.current.linux?.ciSourceManifestSha256 },
     expectedInstalledLinux: { ...node.expectedInstalledLinux }, secrets, reasons, w1Paused: null, launcher: null };
   const planFile = path.join(work, 'install-plan.json');
   await writePlan(planFile, plan);

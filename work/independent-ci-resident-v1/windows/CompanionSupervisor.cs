@@ -226,6 +226,18 @@ public static class CluedCompanionSupervisor {
     root = SupervisorCore.FixedRoot;
     string refusal = TokenRefusal();
     if (refusal != null) { Record(null, refusal, null); return 3; }
+    FileStream lease;
+    try { lease = OpenChecked(root, Path.Combine(root, @"bin\companion-supervisor.lock"), true); }
+    catch (SupervisorRefusal e) {
+      // The owning supervisor alone publishes supervisor.json.
+      if (e.Code == "SUPERVISOR_ALREADY_RUNNING") return 4;
+      Record(null, e.Code, null); return 3;
+    }
+    catch (Exception) { Record(null, "SUPERVISOR_LOCK_REFUSED", null); return 3; }
+    using (lease) { return Supervise(root); }
+  }
+
+  static int Supervise(string root) {
     IntPtr job = NewKillOnCloseJob();
     if (job == IntPtr.Zero) { Record(null, "SUPERVISOR_JOB_FAILED", null); return 3; }
     int lastGeneration = 0, consecutive = 0;
@@ -329,14 +341,18 @@ public static class CluedCompanionSupervisor {
     if (why != null) throw new SupervisorRefusal(why);
   }
   // One file under the root: every directory on the way checked, opened without following a reparse point, FILE_SHARE_READ only.
-  static FileStream OpenChecked(string root, string file) {
+  static FileStream OpenChecked(string root, string file, bool exclusive = false) {
     foreach (string dir in SupervisorCore.ChainOf(root, file)) AssertRealDirectory(dir);
-    SafeFileHandle h = CreateFileW(file, GENERIC_READ, FILE_SHARE_READ, IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
-    if (h.IsInvalid) throw new SupervisorRefusal("LAUNCH_FILE_UNOPENED");
+    SafeFileHandle h = CreateFileW(file, GENERIC_READ, exclusive ? 0u : FILE_SHARE_READ, IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
+    if (h.IsInvalid) {
+      int error = Marshal.GetLastWin32Error();
+      h.Dispose();
+      throw new SupervisorRefusal(exclusive && error == 32 ? "SUPERVISOR_ALREADY_RUNNING" : "LAUNCH_FILE_UNOPENED");
+    }
     BY_HANDLE_FILE_INFORMATION info;
     if (!GetFileInformationByHandle(h, out info) || (info.Attributes & (ATTR_REPARSE | ATTR_DIRECTORY)) != 0) { h.Dispose(); throw new SupervisorRefusal("LAUNCH_FILE_REPARSE_POINT"); }
     FileStream s = new FileStream(h, FileAccess.Read);
-    try { AssertAcl(File.GetAccessControl(file, AccessControlSections.Owner | AccessControlSections.Access)); } catch { s.Dispose(); throw; }
+    try { AssertAcl(s.GetAccessControl()); } catch { s.Dispose(); throw; }
     return s;
   }
   static string Sha256(FileStream s) {

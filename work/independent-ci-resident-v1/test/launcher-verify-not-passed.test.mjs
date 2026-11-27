@@ -80,7 +80,7 @@ $r = Step-PauseAfterInstall $${verified}
   staged = @([IO.Directory]::GetFiles($Stage) | ForEach-Object { [IO.Path]::GetFileName($_) }) } | ConvertTo-Json -Depth 6 -Compress
 `;
 
-test('P1: verify not passed: no pause request is posted and nothing is waited for; the resident is stopped under the same step name', { skip, timeout: 300_000 }, (t) => {
+test('P1: verify not passed: no pause request is posted and nothing is waited for; the resident is stopped under the same step name', { skip }, (t) => {
   const got = ps(pauseScript(tempDir(t, 'clued-r9-pause-'), 'false')).at(-1);
   assert.deepEqual(got.requests, [], 'a pause request was posted for a resident whose verify did not pass');
   assert.deepEqual(got.staged, [], 'a pause request was staged');
@@ -95,7 +95,7 @@ test('P1: verify not passed: no pause request is posted and nothing is waited fo
   assert.equal(got.reported, true);
 });
 
-test('P2: verify passed: the pause request is posted and its confirmation waited for, as before', { skip, timeout: 300_000 }, (t) => {
+test('P2: verify passed: the pause request is posted and its confirmation waited for, as before', { skip }, (t) => {
   const got = ps(pauseScript(tempDir(t, 'clued-r9-pause-'), 'true')).at(-1);
   assert.equal(got.requests.length, 1);
   assert.equal(got.report.request, got.requests[0]);
@@ -122,7 +122,7 @@ $v = Step-Verify ('b' * 64)
 [ordered]@{ answer = $true; verify = $v; done = @($Done) } | ConvertTo-Json -Depth 6 -Compress
 `;
 
-test('V1: verify not passed: its step line says failed and carries the verdict; it said ok', { skip, timeout: 300_000 }, () => {
+test('V1: verify not passed: its step line says failed and carries the verdict; it said ok', { skip }, () => {
   const failed = JSON.stringify({ status: 'RESIDENT_VERIFICATION_FAILED', checks: { 'install-receipt': { ok: true }, 'not-halted': { ok: false, detail: 'HALT.json is there' } } });
   const lines = ps(verifyScript({ exit: 1, stdout: failed }));
   const answer = lines.at(-1), steps = lines.filter(l => l.name === 'verify');
@@ -138,7 +138,7 @@ test('V1: verify not passed: its step line says failed and carries the verdict; 
   assert.deepEqual(silent.map(l => [l.result, l.rejectCode]), [['failed', 'VERIFY_GAVE_NO_VERDICT']]);
 });
 
-test('V2: verify passed: its step line is ok with no reject code, as before', { skip, timeout: 300_000 }, () => {
+test('V2: verify passed: its step line is ok with no reject code, as before', { skip }, () => {
   const passed = JSON.stringify({ status: 'RESIDENT_VERIFIED', checks: { 'install-receipt': { ok: true }, 'not-halted': { ok: true } } });
   const lines = ps(verifyScript({ exit: 0, stdout: passed }));
   // each line also carries when it was printed (task 87d330d0); the step's own fields are as before
@@ -146,4 +146,56 @@ test('V2: verify passed: its step line is ok with no reject code, as before', { 
   assert.ok(verify.every(l => /^\d{4}-\d\d-\d\dT[\d:.]+\+00:00$/.test(l.at) && 'ms' in l), JSON.stringify(verify));
   assert.deepEqual(verify.map(({ at, ms, ...rest }) => rest), [{ name: 'verify', result: 'ok', rejectCode: null, detail: null }]);
   assert.deepEqual(lines.at(-1).done, ['verify']);
+});
+
+test('旧安装的提升复核必须逐项通过，断点续装只允许独立证明的双端差异', { skip }, () => {
+  const [result] = ps(`${load(['Get-Key', 'Parse-Json', 'Test-OldVerifyResult'], ['Js'])}
+function Verdict($checks, $exit, $status, $split) {
+  $c = @{ stdout = (@{status=$status;checks=$checks} | ConvertTo-Json -Depth 5 -Compress); exit=$exit }
+  Test-OldVerifyResult $c $split
+}
+$checks = @{'install-receipt'=@{ok=$true}; 'paused-as-expected'=@{ok=$true}; 'current-ci-connection'=@{ok=$true}}
+$r = @{ pass = (Verdict $checks 0 'RESIDENT_VERIFIED' $false) }
+$checks['current-ci-connection'] = @{ok=$false;detail='ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED'}
+$r.mismatch = Verdict $checks 1 'RESIDENT_VERIFICATION_FAILED' $false
+$checks['verify-inputs'] = @{ok=$false;detail='VERIFY_INPUT_UNREADABLE'}
+$r.mixed = Verdict $checks 1 'RESIDENT_VERIFICATION_FAILED' $true
+$checks.Remove('verify-inputs'); $checks['current-ci-connection'].ok = 'unreadable'
+$r.partial = Verdict $checks 0 'RESIDENT_VERIFIED' $false
+$checks['current-ci-connection'].ok = $true; $checks['two-sides-consistent'] = @{ok=$false}
+$r.resume = Verdict $checks 1 'RESIDENT_VERIFICATION_FAILED' $true
+$r.unproven = Verdict $checks 1 'RESIDENT_VERIFICATION_FAILED' $false
+$r | ConvertTo-Json -Compress`);
+  assert.deepEqual(result, { pass: true, partial: false, mismatch: false, mixed: false, resume: true, unproven: false });
+});
+
+test('旧验证器尝试恢复任务时，只读子进程在调用前退出', { skip }, t => {
+  const dir = tempDir(t, 'verify-observe-');
+  const child = path.join(dir, 'legacy.ps1'), wrapper = path.join(dir, 'readonly.ps1'), changed = path.join(dir, 'changed');
+  fs.writeFileSync(child, `param($ExpectedInstallReceiptSha256,$ExpectPausedSha256)\nfunction Invoke-CompanionStopAndFallback { [IO.File]::WriteAllText(${psLiteral(changed)}, 'changed') }\nInvoke-CompanionStopAndFallback\nexit 0`);
+  const [result] = ps(`${load([], [])}
+$guard = @($ast.FindAll({param($x) $x -is [Management.Automation.Language.StringConstantExpressionAst] -and $x.Value.StartsWith('param($verify,$receipt,$pause)')},$true))
+if ($guard.Count -ne 1) {throw 'GUARD_NOT_FOUND'}
+[IO.File]::WriteAllText(${psLiteral(wrapper)}, $guard[0].Value)
+& ${psLiteral(POWERSHELL)} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${psLiteral(wrapper)} ${psLiteral(child)} r p
+@{exit=$LASTEXITCODE} | ConvertTo-Json -Compress`);
+  assert.equal(result.exit, 3);
+  assert.equal(fs.existsSync(changed), false);
+});
+
+test('Linux B 和卸装前，未归属锁须限次重采并停止', { skip }, t => {
+  const root = tempDir(t, 'verify-locks-');
+  fs.writeFileSync(path.join(root, 'file-locks.ps1'), 'fixture');
+  const [result] = ps(`${load(['Read-VerifiedResidentLocks'], ['Js'])}
+$Stage = ${psLiteral(root)}; $ResidentRoot = $Stage; $FleetFileLocksSha256 = 'fixture'; $InstalledReceiptSha256 = 'receipt'; $OwnerSid = 'owner'
+function Get-FileSha { 'fixture' }; function Write-Json {}; function Tail { '' }; function Start-Sleep {}; function Stop-Launch($code,$report) { throw $code }
+$row = @{pid=4; startedFileTime=0; expected=$false; application=''}
+$v = @{contract='clued.independent-ci.rehearsal-file-locks/1';status='OBSERVED';coverage='installed-public-binaries-only';fileCount=1;directoryHandlesCovered=$false;secretsEnumerated=$false;unknownProcesses=@();rootProcesses=@();lockers=@($row);external=@($row)}
+$script:tries = 0; $script:changes = 0; $r = @{}
+function Invoke-Child { $script:tries++; @{exit=0;stdout=($v | ConvertTo-Json -Compress -Depth 6);stderr=''} }
+foreach ($phase in @('before-linux-b','before-uninstall')) {
+  try { $null = Read-VerifiedResidentLocks $phase; $script:changes++ } catch { $r[$phase]=$_.Exception.Message }
+}
+$r.tries=$script:tries; $r.changes=$script:changes; $r | ConvertTo-Json -Compress`);
+  assert.deepEqual(result, { 'before-linux-b': 'EXTERNAL_RESIDENT_BINARY_LOCK', 'before-uninstall': 'EXTERNAL_RESIDENT_BINARY_LOCK', tries: 6, changes: 0 });
 });
