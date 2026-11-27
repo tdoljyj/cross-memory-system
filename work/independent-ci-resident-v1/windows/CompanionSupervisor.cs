@@ -13,8 +13,9 @@
 //   3. starts node with a whitelisted environment (no NODE_*, GIT_*, GH_* or PSModulePath of the task's environment; PATH set to the
 //      system directories and the launch file's directories; GH_CONFIG_DIR and HOME set to the companion's own gh login), in a job
 //      object of its own (KILL_ON_JOB_CLOSE), without a window;
-//   4. restarts it after 5, 10, 20, 40 s and then every 60 s, never giving up; a run of 10 minutes clears the back-off, and a new
-//      generation in the launch file starts at once (the upgrade channel ends the child and waits up to 90 s for the new one).
+//   4. restarts it after 5, 10, 20, 40 s and then every 60 s while the installation is present; a run of 10 minutes clears the
+//      back-off, and a new generation in the launch file starts at once (the upgrade channel ends the child and waits up to 90 s
+//      for the new one). Removing the launch file retires the supervisor and closes its job before releasing the instance lock.
 // supervisor.json in the Owner's %LOCALAPPDATA%\CluedIndependentCI is for people only (at most 50 exits); nothing decides on it.
 // Only system DLLs are loaded (SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)).
 using System;
@@ -218,6 +219,8 @@ public static class CluedCompanionSupervisor {
 
   const uint GENERIC_READ = 0x80000000, FILE_SHARE_READ = 1, OPEN_EXISTING = 3, FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000, FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
   const uint ATTR_DIRECTORY = 0x10, ATTR_REPARSE = 0x400, INVALID_ATTRIBUTES = 0xFFFFFFFF;
+  const int ERROR_FILE_NOT_FOUND = 2, ERROR_PATH_NOT_FOUND = 3;
+  const uint WAIT_OBJECT_0 = 0, WAIT_TIMEOUT = 258, LAUNCH_CHECK_MS = 5000;
 
   public static int Main(string[] args) {
     try { SetDefaultDllDirectories(0x800); } catch { }
@@ -234,20 +237,24 @@ public static class CluedCompanionSupervisor {
       Record(null, e.Code, null); return 3;
     }
     catch (Exception) { Record(null, "SUPERVISOR_LOCK_REFUSED", null); return 3; }
-    using (lease) { return Supervise(root); }
+    using (lease) {
+      IntPtr job = NewKillOnCloseJob();
+      if (job == IntPtr.Zero) { Record(null, "SUPERVISOR_JOB_FAILED", null); return 3; }
+      try { return Supervise(root, job); }
+      finally { CloseHandle(job); }
+    }
   }
 
-  static int Supervise(string root) {
-    IntPtr job = NewKillOnCloseJob();
-    if (job == IntPtr.Zero) { Record(null, "SUPERVISOR_JOB_FAILED", null); return 3; }
+  static int Supervise(string root, IntPtr job) {
+    string launchPath = Path.Combine(root, @"config\companion-launch.json");
     int lastGeneration = 0, consecutive = 0;
     bool waitServed = true;
     List<Dictionary<string, object>> exits = new List<Dictionary<string, object>>();
-    for (;;) {
+    while (!LaunchRemoved(launchPath)) {
       LaunchSpec spec = null;
       List<FileStream> held = new List<FileStream>();
       try {
-        spec = OpenLaunch(root, held);
+        spec = OpenLaunch(root, launchPath, held);
       } catch (SupervisorRefusal r) {
         foreach (FileStream f in held) f.Dispose();
         consecutive += 1;
@@ -274,20 +281,24 @@ public static class CluedCompanionSupervisor {
       waitServed = false;
       lastGeneration = spec.Generation;
       DateTime started = DateTime.UtcNow;
-      uint exitCode;
+      uint? exitCode;
       string startFailure = null;
-      try { exitCode = RunChild(job, spec, root, held); }
+      try { exitCode = RunChild(job, spec, root, launchPath, held); }
       catch (SupervisorRefusal r) { startFailure = r.Code; exitCode = 0xFFFFFFFF; }
+      catch (Win32Exception) { Record(exits, "CHILD_WAIT_FAILED", spec.Generation); return 3; }
       finally { foreach (FileStream f in held) f.Dispose(); }
+      if (!exitCode.HasValue) break;
       double ran = (DateTime.UtcNow - started).TotalSeconds;
       consecutive = SupervisorCore.NextConsecutive(consecutive, ran);
       Dictionary<string, object> e = new Dictionary<string, object>();
-      e["at"] = DateTime.UtcNow.ToString("o"); e["exitCode"] = (long)exitCode; e["ranSeconds"] = (long)ran; e["generation"] = spec.Generation;
+      e["at"] = DateTime.UtcNow.ToString("o"); e["exitCode"] = (long)exitCode.Value; e["ranSeconds"] = (long)ran; e["generation"] = spec.Generation;
       if (startFailure != null) e["failure"] = startFailure;
       exits = SupervisorCore.AppendExit(exits, e);
       Record(exits, null, spec.Generation);
       // The next round reads the launch file again: a new generation starts at once (DelayBeforeStart), the same one after the back-off.
     }
+    Record(exits, "SUPERVISOR_LAUNCH_REMOVED", lastGeneration == 0 ? (int?)null : lastGeneration);
+    return 0;
   }
 
   // ---- token ----
@@ -359,8 +370,14 @@ public static class CluedCompanionSupervisor {
     s.Position = 0;
     using (SHA256 h = SHA256.Create()) return BitConverter.ToString(h.ComputeHash(s)).Replace("-", "").ToLowerInvariant();
   }
-  static LaunchSpec OpenLaunch(string root, List<FileStream> held) {
-    string launchPath = root + @"\config\companion-launch.json";
+  // The installer publishes this file before running the task. Upgrades replace it atomically.
+  // Only absence retires the supervisor; access, ACL and validation failures keep the existing retry behavior.
+  static bool LaunchRemoved(string launchPath) {
+    if (GetFileAttributesW(launchPath) != INVALID_ATTRIBUTES) return false;
+    int error = Marshal.GetLastWin32Error();
+    return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+  }
+  static LaunchSpec OpenLaunch(string root, string launchPath, List<FileStream> held) {
     string json;
     using (FileStream l = OpenChecked(root, launchPath)) {
       if (l.Length < 2 || l.Length > 8192) throw new SupervisorRefusal("LAUNCH_FILE_SIZE");
@@ -390,7 +407,7 @@ public static class CluedCompanionSupervisor {
     } finally { Marshal.FreeHGlobal(info); }
     return job;
   }
-  static uint RunChild(IntPtr job, LaunchSpec spec, string root, List<FileStream> held) {
+  static uint? RunChild(IntPtr job, LaunchSpec spec, string root, string launchPath, List<FileStream> held) {
     string env = SupervisorCore.EnvironmentBlock(SupervisorCore.ChildEnvironment(Environment.GetEnvironmentVariables(), spec));
     STARTUPINFO si = new STARTUPINFO(); si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
     PROCESS_INFORMATION pi;
@@ -404,7 +421,11 @@ public static class CluedCompanionSupervisor {
       // modules it imports are read by node later; what keeps them as hashed is the admin-only directory ACL checked above.)
       foreach (FileStream f in held) f.Dispose();
       held.Clear();
-      WaitForSingleObject(pi.process, 0xFFFFFFFF);
+      uint wait;
+      while ((wait = WaitForSingleObject(pi.process, LAUNCH_CHECK_MS)) == WAIT_TIMEOUT) {
+        if (LaunchRemoved(launchPath)) return null;
+      }
+      if (wait != WAIT_OBJECT_0) throw new Win32Exception(Marshal.GetLastWin32Error());
       uint code;
       return GetExitCodeProcess(pi.process, out code) ? code : 0xFFFFFFFF;
     } finally { CloseHandle(pi.thread); CloseHandle(pi.process); }
