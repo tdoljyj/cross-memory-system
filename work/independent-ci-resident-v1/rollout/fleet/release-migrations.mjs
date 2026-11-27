@@ -93,6 +93,7 @@ const probes = {
       and ${bodyContains("source_commit=candidate->>'commit'")}`)}
     and ${procedure('fleet_maintenance_request_v1(uuid,uuid,jsonb)', 'jsonb', "p.provolatile = 'v'")}
     and ${procedure('fleet_reinstall_window_tick_v1(uuid,uuid,timestamptz)', 'void', "p.provolatile = 'v'")}`,
+  sealedRuleOnArrival: "to_regprocedure('clued_private.fleet_sealed_rule_active_v1(uuid,uuid)') is not null",
 };
 
 export function releaseRequirements(commit, read = file => execFileSync('git', ['show', `${commit}:${file}`], {
