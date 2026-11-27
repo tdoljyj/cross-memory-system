@@ -35,10 +35,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { acceptanceBytes, acceptanceOf } from '../../work/independent-ci-resident-v1/src/fleet-acceptance.mjs';
 import { deliveryBound, deliverySubject, fleetDeliveryPreflight } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-preflight.mjs';
-import { deliveryProjectionReaders, deliveryRequirements } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-reader.mjs';
-import { deliveryWorkflowPacket } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-workflow.mjs';
-import { readArchive, readKit, sourceHashOf, validateAcceptance } from '../../work/independent-ci-resident-v1/rollout/fleet/install.mjs';
-import { DRILL_RESERVED, readRequest } from '../../work/independent-ci-resident-v1/rollout/fleet/publish.mjs';
+import { deliveryProjectionReaders, deliveryRequirements, verifyDeliveryTree } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-reader.mjs';
+import { deliveryWorkflowPacket, STAGED_PAYLOAD_MAX_LENGTH, STAGED_REQUEST_MAX_BYTES } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-workflow.mjs';
+import { sourceHashOf, validateAcceptance } from '../../work/independent-ci-resident-v1/rollout/fleet/install.mjs';
+import { checkDeliveryKit, DRILL_RESERVED, namesDrillReserved, readRequest } from '../../work/independent-ci-resident-v1/rollout/fleet/publish.mjs';
+import { sourceRefsDigest } from '../../work/independent-ci-resident-v1/src/fleet-delivery-evidence.mjs';
+
+export { checkDeliveryKit };
 
 export const DOOR_FUNCTION = "clued_private.fleet_accept_door_v1(jsonb)";
 export const ACTION = "fleet.accept";
@@ -137,6 +140,7 @@ const gitIsAncestor = (commit) => {
 
 export async function buildInput(env, { fetchImpl = fetch, isAncestor = gitIsAncestor, isPinned } = {}) {
   const run = runInputs(env);
+  if (env.FLEET_OPERATION === 'project' && env.FLEET_DELIVERY_KEY?.includes('.')) return stagedInput(env, run, isAncestor);
   const requestBytes = await download(assetUrl(run.repository, run.version, requestAssetName(run.version)), fetchImpl);
   const sumsBytes = await download(assetUrl(run.repository, run.version, "SHA256SUMS"), fetchImpl);
   const { resource, commit } = checkRequest(run, requestBytes, sumsBytes);
@@ -152,12 +156,24 @@ const ID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const gated = version => Number(FLEET_GENERATION.exec(version)?.[1]) >= 25;
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
-export function checkDeliveryKit(kit, candidate) {
-  if (hash(kit) !== candidate.kitSha256) refuse('FLEET_DELIVERY_KIT_REFUSED');
-  const { record: { repository, scope } } = readKit(kit);
-  // The kit carries the CI registration scope. The candidate carries the fleet delivery scope.
-  const validScope = scope === 'global' || (scope.startsWith('project:') && ID.test(scope.slice('project:'.length)));
-  if (repository !== candidate.repository || !validScope) refuse('FLEET_DELIVERY_KIT_REFUSED');
+function stagedInput(env, run, isAncestor) {
+  const match = /^([A-Za-z0-9_-]{59})\.([A-Za-z0-9_-]+)$/.exec(env.FLEET_DELIVERY_KEY ?? '');
+  if (!gated(run.version) || !match || match[2].length > STAGED_PAYLOAD_MAX_LENGTH || env.FLEET_ACCEPTANCE_SHA256) refuse('FLEET_DELIVERY_INPUT_REFUSED');
+  const [, transportKey, packed] = match;
+  const { request: encoded, requirements } = JSON.parse(Buffer.from(packed, 'base64url'));
+  if (typeof encoded !== 'string' || !/^[A-Za-z0-9_-]+$/.test(encoded)) refuse('FLEET_DELIVERY_INPUT_REFUSED');
+  const bytes = Buffer.from(encoded, 'base64url');
+  if (bytes.length > STAGED_REQUEST_MAX_BYTES) refuse('FLEET_DELIVERY_INPUT_REFUSED');
+  if (hash(bytes) !== run.requestSha256) refuse('FLEET_ACCEPT_REQUEST_SHA256_MISMATCH');
+  const request = readRequest(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
+  if (request.version !== run.version || request.repository !== run.repository || request.commit !== env.GITHUB_SHA ||
+      !isAncestor(request.commit) || namesDrillReserved(request)) refuse('FLEET_DELIVERY_SUBJECT_CHANGED');
+  validateAcceptance(acceptanceOf(request, DRILL_RESERVED));
+  const hashes = ['supervisorSourceSha256', 'linuxToolSha256', 'upgraderSha256'];
+  if (typeof requirements?.standardReinstall !== 'boolean' || Object.keys(requirements).length !== 5 ||
+      hashes.some(key => !(requirements[key] === null || HEX64.test(requirements[key] ?? ''))) ||
+      requirements.sourceRefsSha256 !== sourceRefsDigest(request.fleetRefs)) refuse('FLEET_DELIVERY_INPUT_REFUSED');
+  return { delivery: { operation: 'preflight', candidate: deliverySubject(request, run.requestSha256), requirements, transportKey } };
 }
 
 function pinnedGeneration({ version, commit, archive_sha256 }) {
@@ -173,20 +189,7 @@ function pinnedGeneration({ version, commit, archive_sha256 }) {
 }
 
 async function verifyDeliverySource(archive, request, candidate) {
-  const { entries } = readArchive(archive, candidate.archiveSha256, request);
-  const tree = execFileSync('git', ['ls-tree', '-r', '-z', candidate.commit],
-    { encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
-  const blobs = new Map();
-  for (const row of tree.split('\0')) {
-    const m = /^100(?:644|755) blob ([0-9a-f]{40})\t(.+)$/s.exec(row);
-    if (m) blobs.set(m[2], m[1]);
-  }
-  // Source assembly imports code. Only exact bytes held by the checked commit
-  // on main may run in the release job, even before the credential step.
-  for (const entry of entries.filter(entry => entry.path.startsWith('tree/'))) {
-    const blob = crypto.createHash('sha1').update(`blob ${entry.data.length}\0`).update(entry.data).digest('hex');
-    if (blobs.get(entry.path.slice(5)) !== blob) refuse('FLEET_DELIVERY_RELEASE_TREE_CHANGED');
-  }
+  verifyDeliveryTree(archive, request);
   const temp = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'fleet-qualified-'));
   try {
     const artifactPath = path.join(temp, 'candidate.tar');
@@ -240,6 +243,7 @@ export async function qualifyDelivery(input, database, clock = Date.now) {
     const first = await read();
     return { first, last: await read() };
   }
+  if (!['preflight', 'open', 'confirm'].includes(operation)) refuse('FLEET_DELIVERY_INPUT_REFUSED');
   let last;
   const readFleetRegistry = async candidate => {
     last = await read();
@@ -247,6 +251,13 @@ export async function qualifyDelivery(input, database, clock = Date.now) {
   };
   const { readNodeEvidence } = deliveryProjectionReaders({ requirements, clock });
   const result = await fleetDeliveryPreflight({ candidate, requirements, readFleetRegistry, readNodeEvidence, clock });
+  if (operation === 'preflight') {
+    // 暂存端只需判定结果和绑定证据摘要。
+    const { status, reason, observedAt, registrySha256 } = result;
+    if (reason) return { status, reason };
+    if (!HEX64.test(last?.snapshotToken ?? '')) refuse('FLEET_DELIVERY_PREFLIGHT_REFUSED');
+    return { status, observedAt, registrySha256 };
+  }
   if (!['PASS', 'TRANSITION_PASS'].includes(result.status) || !HEX64.test(last?.snapshotToken ?? '')) {
     refuse('FLEET_DELIVERY_PREFLIGHT_REFUSED', result.reason ?? result.status);
   }
