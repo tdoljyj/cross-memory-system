@@ -787,6 +787,43 @@ class CompanionNode(unittest.TestCase):
         r = rehearse.rehearse(fx.cfg, COMMIT, fx.pkg, FakeHost(fx, file_locks={'external': [locker]}), file_locks_in_launcher=True, skip_roles=True)
         self.assertIn('EXTERNAL_RESIDENT_BINARY_LOCK', [f['code'] for f in r['findings']]); self.assertNotIn('fileLocksFinding', r['checks'])
 
+    def test_restart_manager_probe_failure_is_deferred_only_with_companion_and_launcher(self):
+        probe = rehearse.Host()
+        with mock.patch.object(probe, 'powershell', return_value=(1, '', 'RM_GET_LIST:6')):
+            for host, launcher, deferred in ((CompanionHost(self.fx), True, True),
+                                             (CompanionHost(self.fx), False, False),
+                                             (FakeHost(self.fx), True, False)):
+                with self.subTest(host=type(host).__name__, launcher=launcher):
+                    host.file_locks = probe.file_locks
+                    report = self.run_with(host, file_locks_in_launcher=launcher)
+                    if deferred:
+                        self.assertEqual(report['findings'], [])
+                        self.assertEqual(report['status'], 'REHEARSAL_PASS')
+                        self.assertEqual(report['checks']['fileLocksFinding'], {
+                            'deferredTo': 'launch-elevated-file-locks', 'reason': 'RESTART_MANAGER_PROBE_FAILED:1',
+                            'nativeReason': 'RM_GET_LIST:6'})
+                        self.assertNotIn('fileLocks', report['checks'])
+                    else:
+                        self.assertIn({'code': 'RESIDENT_FILE_LOCK_OBSERVATION_UNAVAILABLE',
+                                       'reason': 'RESTART_MANAGER_PROBE_FAILED:1'}, report['findings'])
+                        self.assertNotIn('fileLocksFinding', report['checks'])
+            with tempfile.TemporaryDirectory() as d:
+                template = os.path.join(d, 'template.ps1')
+                with open(os.path.join(RE, 'launcher', 'template.ps1'), encoding='utf-8') as src, open(template, 'w', encoding='utf-8') as dst:
+                    dst.write(src.read().replace('$fileLocks = Step-FileLocks', '$fileLocks = $null'))
+                host = CompanionHost(self.fx)
+                host.file_locks = probe.file_locks
+                report = self.run_with(host, file_locks_in_launcher=True, template_path=template)
+                self.assertEqual(codes(report), ['LAUNCHER_HAS_NO_ELEVATED_FILE_LOCK_STEP'])
+
+    def test_non_restart_manager_probe_failure_is_not_deferred(self):
+        probe, host = rehearse.Host(), CompanionHost(self.fx)
+        host.file_locks = probe.file_locks
+        with mock.patch.object(probe, 'powershell', return_value=(1, '', 'PUBLIC_BINARY_DIRECTORY_REPARSE')):
+            report = self.run_with(host, file_locks_in_launcher=True)
+        self.assertEqual(codes(report), ['RESIDENT_FILE_LOCK_OBSERVATION_UNAVAILABLE'])
+        self.assertNotIn('fileLocksFinding', report['checks'])
+
     def test_a_node_without_companion_records_is_unchanged(self):
         host = FakeHost(self.fx)
         host.windows_python = lambda argv: self.fail('a node without a companion account derives in its WSL')

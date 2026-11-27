@@ -216,6 +216,12 @@ def version_facts(raw):
     return f
 
 
+class RestartManagerProbeFailed(ValueError):
+    def __init__(self, exit_code, native_reason):
+        super().__init__('RESTART_MANAGER_PROBE_FAILED:' + str(exit_code))
+        self.native_reason = native_reason
+
+
 class Host:
     """What the rehearsal reads or runs on the node. Tests replace it; every method is read-only."""
     def __init__(self, root=ROOT):
@@ -260,8 +266,11 @@ class Host:
         return subprocess.run([SC, 'query', name], capture_output=True).returncode != 1060
 
     def file_locks(self):
-        code, out, _ = self.powershell(os.path.join(HERE, 'tools', 'file-locks.ps1'), ['-Root', self.root])
+        code, out, err = self.powershell(os.path.join(HERE, 'tools', 'file-locks.ps1'), ['-Root', self.root])
         if code != 0:
+            reason = err.strip()
+            if re.fullmatch(r'RM_(?:START|REGISTER|GET_LIST):[0-9]{1,10}', reason):
+                raise RestartManagerProbeFailed(code, reason)
             raise ValueError('RESTART_MANAGER_PROBE_FAILED:' + str(code))
         return last_json(out)
 
@@ -348,6 +357,11 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
 
     # This covers installed public binary files, not directories or protected
     # secrets. A later rename still has its own exact completion evidence.
+    def defer_file_locks(**detail):
+        if 'function Step-FileLocks' not in template or '$fileLocks = Step-FileLocks' not in template:
+            find('LAUNCHER_HAS_NO_ELEVATED_FILE_LOCK_STEP')
+        checks['fileLocksFinding'] = {**DEFERRED_FILE_LOCKS, **detail}
+
     try:
         locks = host.file_locks()
         checks['fileLocks'] = locks
@@ -366,16 +380,18 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
             # The launcher of the generic node package observes the locks again, elevated, where the account's processes can be told
             # apart, and stops before anything changes on any external one. Only then, and only on a companion node (where this
             # non-elevated observation cannot tell them apart), is the finding left to it; what was seen here is kept in the report.
-            if 'function Step-FileLocks' not in template or '$fileLocks = Step-FileLocks' not in template:
-                find('LAUNCHER_HAS_NO_ELEVATED_FILE_LOCK_STEP')
-            checks['fileLocksFinding'] = dict(DEFERRED_FILE_LOCKS, processes=locks['external'])
+            defer_file_locks(processes=locks['external'])
         elif locks['external']:
             # On a companion node the account's processes stay external non-elevated: neither their token (owner SID) nor the
             # account's task is readable to the Owner (README section 5), and a name or path is no identity.
             find('EXTERNAL_RESIDENT_BINARY_LOCK', processes=locks['external'],
                  **({'companionProcessIdentity': 'UNREADABLE_NON_ELEVATED'} if companion else {}))
     except Exception as error:
-        find('RESIDENT_FILE_LOCK_OBSERVATION_UNAVAILABLE', reason=str(error)[:400])
+        reason = str(error)[:400]
+        if companion and file_locks_in_launcher and isinstance(error, RestartManagerProbeFailed):
+            defer_file_locks(reason=reason, nativeReason=error.native_reason)
+        else:
+            find('RESIDENT_FILE_LOCK_OBSERVATION_UNAVAILABLE', reason=reason)
 
     # uninstall: the INSTALLED tool's real dry run against what the launcher template accepts
     receipt = host.read_json(host.path('install', 'install-receipt.json'))
