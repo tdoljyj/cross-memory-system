@@ -188,6 +188,7 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
         return await seal({ request: release.prepared.request, ghCommand: release.ghCommand, index: release.index,
           now: sqlNow, openOnly, deadline: pollNow + 1_200_000,
           deps: { readStatus: resource => readStatus(release, resource), generationTags: release.generationTags,
+            previousInterfaces: async ({ commit }) => ({ status: 'PASS', commit }),
             fleetWorkflow: (...args) => workflow(release, ...args), clock: pollClock,
             sleep: async ms => { if (openError) throw openError; pollNow += ms; } } });
       } catch (error) { throw openError ?? error; }

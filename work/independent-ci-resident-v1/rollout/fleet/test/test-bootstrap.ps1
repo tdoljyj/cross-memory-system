@@ -26,6 +26,108 @@ Case 'first-install:one-UAC' {
   Yes ($bootstrap -match "Invoke-Elevated 'install'" -and $bootstrap -notmatch "Invoke-Elevated 'host'") 'first-install:host-and-launcher-use-one-elevation'
   Yes ($functions['Invoke-Stage'] -match "(?s)FIRST_INSTALL_HOST_READY.*Invoke-FirstInstallLauncher") 'first-install:launcher-starts-only-after-host-ready'
 }
+Case 'lifecycle:OS facts instead of the prior install receipt' {
+  $bootstrap = $functions['Invoke-Bootstrap']
+  Yes ($bootstrap -notmatch '\$ReceiptFile' -and $bootstrap -match 'Get-FleetLifecycleMode') 'lifecycle:single-entry-without-receipt-gate'
+  Yes ($bootstrap -match 'upgrade\.mjs' -and $bootstrap -match 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL') 'lifecycle:upgrade-and-same-package-reinstall'
+  Yes ($bootstrap -match "'Retire'" -and $bootstrap -match "'Rollback'") 'lifecycle:explicit-actions'
+}
+Case 'lifecycle:protected destructive stage' {
+  $stage = $functions['Invoke-Stage']
+  Yes ($stage -match 'Invoke-FleetLifecycle' -and $stage -match 'ExpectedOperatorSid') 'lifecycle:one-protected-operation'
+  $module = Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1'
+  if (-not [IO.File]::Exists($module)) { throw 'lifecycle module missing' }
+  . $module
+  $empty = @{ complete = $true; residue = @() }
+  $dirty = @{ complete = $true; residue = @('directory:resident') }
+  Yes ((Get-FleetLifecycleMode 'Install' $empty $null) -ceq 'Fresh') 'lifecycle:truly-empty'
+  Yes ((Get-FleetLifecycleMode 'Install' $dirty $null) -ceq 'InspectUpgrade') 'lifecycle:residual-machine'
+  Yes ((Get-FleetLifecycleMode 'Install' $empty @{ mode = 'Reinstall' }) -ceq 'Resume') 'lifecycle:resume-before-empty'
+  Yes ((Get-FleetLifecycleMode 'Rollback' $dirty $null) -ceq 'Rollback') 'lifecycle:only-explicit-rollback'
+  Yes ((Get-FleetLifecycleMode 'Retire' $dirty $null) -ceq 'Retire') 'lifecycle:only-explicit-retirement'
+  $block = Invoke-FleetMaintenance -Phase 'preview' -Context @{}
+  Yes ($block.code -ceq 'FLEET_MAINTENANCE_INTERFACE_UNAVAILABLE') 'lifecycle:service-unavailable-before-delete'
+}
+Case 'lifecycle:durable cleanup and install readback' {
+  . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
+  $directory = Join-Path $env:TEMP ('clued-lifecycle-test-' + [Guid]::NewGuid().ToString('N'))
+  [void][IO.Directory]::CreateDirectory($directory)
+  $file = Join-Path $directory 'operation.json'
+  $context = @{ machine = 'FIXTURE'; operatorSid = 'S-1-5-21-1-2-3-1001'; archiveSha256 = 'a' * 64; acceptanceSha256 = 'b' * 64; action = 'Install' }
+  $machine = @{ cleanup = $false; install = $false; verify = $false; return = $false; revoked = $false; operations = @(); phases = @() }
+  function Invoke-FleetMaintenance([string]$Phase, $Context) {
+    $machine.phases += $Phase
+    if ($Phase -ceq 'before-return' -and $machine.revoked) { return @{ ok = $false; code = 'FLEET_TARGET_REVOKED' } }
+    if ($Phase -ceq 'before-return') { $machine['return'] = $true }
+    @{ ok = $true; sealed = $true; archiveSha256 = $Context.archiveSha256; acceptanceSha256 = $Context.acceptanceSha256
+      operationId = $Context.operationId; ownerUac = $true; drained = $true; hasDuty = $false }
+  }
+  $observe = { param($step, $context) if ($machine[$step]) { 'complete' } else { 'pending' } }
+  $apply = {
+    param($step, $context)
+    $machine.operations += $step
+    $machine[$step] = $true
+    if ($step -ceq 'cleanup') { throw 'TEST_AFTER_DELETE' }
+    if ($step -ceq 'install') { throw 'TEST_AFTER_WINDOWS_SWITCH' }
+  }
+  try {
+    Throws { Invoke-FleetLifecycle $context 'Reinstall' $file $observe $apply } 'TEST_AFTER_DELETE' 'lifecycle:interruption-after-delete'
+    $saved = Read-FleetProgress $file $context
+    Yes ($saved.step -ceq 'cleanup') 'lifecycle:cleanup-intent-persisted'
+    Throws { Invoke-FleetLifecycle $context 'Resume' $file $observe $apply } 'TEST_AFTER_WINDOWS_SWITCH' 'lifecycle:interruption-after-switch'
+    $machine.revoked = $true
+    Throws { Invoke-FleetLifecycle $context 'Resume' $file $observe $apply } 'FLEET_TARGET_REVOKED' 'lifecycle:revocation-before-standby'
+    Yes (($machine.operations -join ',') -ceq 'cleanup,install,verify' -and -not $machine['return']) 'lifecycle:no-repeat-cleanup-or-install'
+    $machine.revoked = $false
+    $done = Invoke-FleetLifecycle $context 'Resume' $file $observe $apply
+    $last = Read-FleetProgress $file $context
+    Yes ($done.status -ceq 'FLEET_LIFECYCLE_COMPLETE' -and $last.operationId -ceq $saved.operationId -and $last.step -ceq 'complete') 'lifecycle:same-operation-finishes'
+    $other = $context.Clone(); $other.archiveSha256 = 'c' * 64
+    Throws { Read-FleetProgress $file $other } 'FLEET_PROGRESS_DIFFERS:archiveSha256' 'lifecycle:another-package-refused'
+    foreach ($action in @('Retire','Rollback')) {
+      [IO.File]::Delete($file)
+      $context.action = $action
+      $machine.operations = @()
+      Throws { Invoke-FleetLifecycle $context $action $file $observe $apply } 'FLEET_MAINTENANCE_NOT_SAFE_TO_REMOVE' ('lifecycle:' + $action + ':authorization-required')
+      Yes ($machine.operations.Count -eq 0) ('lifecycle:' + $action + ':no-cleanup-before-authorization')
+    }
+  } finally {
+    foreach ($name in @('operation.json','operation.json.pending')) { [IO.File]::Delete((Join-Path $directory $name)) }
+    [IO.Directory]::Delete($directory)
+  }
+}
+Case 'lifecycle:paths and native credential carriers' {
+  . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
+  $directory = Join-Path $env:TEMP ('clued-lifecycle-paths-' + [Guid]::NewGuid().ToString('N'))
+  $FleetResources.ciRoot = Join-Path $directory 'product'
+  $FleetResources.controlRoot = Join-Path $directory 'control'
+  $FleetResources.journalRoot = $directory
+  $carry = Join-Path $directory 'carry'
+  $paths = @('resident\upgrade\current.json','resident\state\ledger\old.json','resident-uninstalled-fixture\old',
+    'wsl\CluedResident-Linux\fixture','secrets\ci-admission.token','secrets\ci-admission.connection.json','another-product\fixture') + @($FleetResources.stagedTokens.Keys)
+  try {
+    [void][IO.Directory]::CreateDirectory($carry)
+    foreach ($relative in $paths) {
+      $file = Join-Path $FleetResources.ciRoot $relative
+      [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($file))
+      [IO.File]::WriteAllText($file, 'offline-fixture')
+    }
+    # The pointer and ledger are arbitrary bytes and the receipt is absent.
+    # The exact token filenames alone are moved, and a second call is safe.
+    Move-FleetConnectionCarriers $carry
+    Move-FleetConnectionCarriers $carry
+    Remove-FleetProductPaths
+    Yes (@(Get-FleetProductPaths).Count -eq 0) 'lifecycle:malformed-old-product-paths-removed'
+    foreach ($name in $FleetResources.stagedTokens.Values) {
+      Yes ([IO.File]::Exists((Join-Path $carry $name))) ('lifecycle:carrier-preserved:' + $name)
+    }
+    foreach ($name in @($FleetResources.admissionAssets + @('another-product\fixture'))) {
+      Yes ([IO.File]::Exists((Join-Path $FleetResources.ciRoot $name))) ('lifecycle:unrelated-or-connection-left-in-place:' + $name)
+    }
+  } finally {
+    if ([IO.Directory]::Exists($directory)) { [IO.Directory]::Delete($directory, $true) }
+  }
+}
 foreach ($name in @('Get-Key', 'Read-Sha256Sums', 'Get-ReleaseVersion', 'Get-RequiredAssets', 'Test-AssetSet', 'Test-PrereqManifest', 'Get-LastJsonLine', 'Get-ElevatedArguments', 'Test-UacDeclined',
     'Test-SafePath', 'Test-SafeArgument', 'Get-ExtractState', 'Get-StageFailure', 'Test-StageOperator',
     'Sha256File', 'Invoke-StageChild', 'Clear-CredentialDirectory', 'Test-FirstInstallCheck', 'Copy-ToWork', 'Test-UnderDirectory', 'Get-LauncherVerdict',
@@ -263,7 +365,8 @@ try {
   }
   Case 'h1:the-stages-never-merge-stderr-into-the-verdict' {
     Yes ($stageBody -notmatch '2>&1') 'h1:no-2>&1-in-Invoke-Stage'
-    Yes (([regex]::Matches($stageBody, 'Invoke-StageChild \$PowerShellExe')).Count -eq 2) 'h1:host-and-launcher-through-Invoke-StageChild'
+    Yes ($stageBody -match 'Invoke-StageChild \$PowerShellExe' -and $functions['Invoke-FirstInstallLauncher'] -match 'Invoke-StageChild \$PowerShellExe' -and
+      $functions['Invoke-FirstInstallLauncher'] -notmatch '2>&1') 'h1:host-and-launcher-through-Invoke-StageChild'
   }
   # what the pattern H1 replaced does on this host (recorded for the report, not a check): `& powershell -File <child> 2>&1` under Stop
   $old = $null
@@ -352,7 +455,7 @@ try {
     # the launcher prints its terminal with ConvertTo-Json: the switch's status is read from it
     $printed = "x`r`n" + ((& $term 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' 'COMPANION_HEADLESS_FAILED') | ConvertTo-Json -Depth 6)
     Yes ((Get-LauncherVerdict $true (Get-LastJsonLine $printed)).status -ceq 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE') 'm4:read-from-the-printed-terminal'
-    Yes ($main -match 'Get-LauncherVerdict \$firstInstall') 'm4:the-bootstrap-uses-it'
+    Yes ($main -match 'Get-LauncherVerdict \$true \$h\.last') 'm4:the-bootstrap-uses-it'
   }
 
   # M6: a node with a resident (the reinstall) fetches and needs pinned only what its path runs: node, python, git; never the rootfs,
@@ -366,7 +469,7 @@ try {
     $m = New-Pinned; $m['debs'][0]['sha256'] = $null; foreach ($i in @($m['items'])) { if ($i['name'] -ceq 'wsl') { $i['sha256'] = $null } }
     Yes ((Test-PrereqManifest $m (Get-NeededPrereqs $false) $false).Count -eq 0) 'm6:reinstall-ignores-first-install-pins'
     Yes ((Test-PrereqManifest $m) -ccontains 'PREREQ_NOT_PINNED:wsl') 'm6:first-install-still-refuses'
-    Yes ($main -match 'Get-NeededPrereqs \$firstInstall' -and $main -match 'if \(\$firstInstall\) \{[^\r\n]*debs') 'm6:the-bootstrap-fetches-by-need'
+    Yes ($main -match '(?s)Get-NeededPrereqs \$false.*FLEET_NODE_UPGRADE_REQUESTED.*return.*Get-NeededPrereqs \$true.*\$debDir') 'm6:the-bootstrap-fetches-by-need'
   }
 
   # The one JSON writer (Fable ruling 11-19 renew-key section 4.4a; the same defect as first-install-host.ps1, drill 3bc571a6 A1): under

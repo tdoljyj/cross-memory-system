@@ -260,6 +260,21 @@ test('开单后 main 前进，重启沿原 Grant、Receipt 和请求摘要续封
   assert.deepEqual((await w.calls()).slice(before).filter(c => c.args.slice(0, 2).join(' ') === 'release create'), []);
 });
 
+test('上一封存包接口在候选数据库上失败时拒绝封存', async t => {
+  const { w, run, approve, confirms } = await publishWorld(t);
+  const opened = await run();
+  assert.equal(opened.status, 'FLEET_ACCEPTANCE_WAITING_OWNER');
+  approve();
+  const index = await fs.readFile(w.index);
+  const uploads = (await uploadsOf(w)).length;
+  await assert.rejects(run({ previousInterfaces: async subject => {
+    assert.equal(subject.commit, w.source.commit);
+    return { status: 'FAIL', commit: subject.commit };
+  } }), { code: 'FLEET_PREVIOUS_INTERFACES_REFUSED' });
+  assert.deepEqual(confirms, []);
+  await sealedNothing(w, index, uploads);
+});
+
 test('已受理的开单运行终局失败且门为 none，才按准确运行编号重试', async t => {
   const { w, run } = await publishWorld(t);
   w.door.openTo = 'none';

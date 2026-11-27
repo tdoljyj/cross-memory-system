@@ -105,6 +105,7 @@ import { deliveryProjectionReaders, verifyDeliveryTree } from './delivery-reader
 import { deliveryWorkflowClient } from './delivery-workflow.mjs';
 import { RESIDENT } from './facts.mjs';
 import { DEFAULT_ROOT, readArchive, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
+import { previousInterfaceCheck } from './previous-interface-check.mjs';
 import { fleetReleaseWorkflow, reconcileFleetRelease } from './release-migration-workflow.mjs';
 import { readTar } from './tar.mjs';
 import { previousTransportVersion, TRANSPORT, transportAssetNames } from './fetch.mjs';
@@ -633,9 +634,9 @@ export async function attachFirstInstallKit({ version, kit, images = [], repo = 
         // what is there is kept only when it is these bytes (review: never by its size); a kit that is not this one is never replaced or completed
         const there = await fs.readFile(downloadAsset(ghCommand, repo, tag, name, path.join(stage, 'there')));
         if (there.equals(u.bytes)) continue;
-        check(!stagedSums && name !== path.basename(kit), 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT', name);
-        const del = gh(ghCommand, ['release', 'delete-asset', tag, name, '--repo', repo, '--yes']);   // an image or sums file of an upload that stopped
-        check(del.status === 0, 'PUBLISH_GH_RELEASE_DELETE_ASSET_FAILED', { asset: name, stderr: del.stderr });
+        // A resume can fill missing assets and keep identical ones. Published
+        // bytes remain available for the current release and its predecessors.
+        fail('PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT', name);
       }
       const up = gh(ghCommand, ['release', 'upload', tag, u.file, '--repo', repo]);
       check(up.status === 0, 'PUBLISH_GH_RELEASE_UPLOAD_FAILED', { asset: path.basename(u.file), stderr: up.stderr });
@@ -672,7 +673,7 @@ async function previousImage({ ghCommand, repo, index, version, id, stage }) {
   return file;
 }
 
-async function sealedTemplate({ ghCommand, repo, index, version, stage, deps }) {
+async function previousSeal({ ghCommand, repo, index, version, stage, deps }) {
   const { lines } = await readIndex(index);
   const prior = lines.filter(isRow).map(cells)
     .filter(([value, , , , acceptedAt, grant]) => {
@@ -695,6 +696,12 @@ async function sealedTemplate({ ghCommand, repo, index, version, stage, deps }) 
   const published = await fs.readFile(downloadAsset(ghCommand, repo, tag, `${tag}.acceptance.json`, stage));
   check(published.equals(acceptance) && (packageGenerationOf(request.version) < 25 || sha(acceptance) === answer.sealedAcceptanceSha256),
     'PREPARE_SEALED_TEMPLATE_REFUSED');
+  return { tag, request, requestSha256, acceptanceSha256: sha(acceptance), commit: request.commit, version: request.version };
+}
+
+async function sealedTemplate(options) {
+  const { ghCommand, repo, stage, deps } = options;
+  const { tag, request, requestSha256 } = await previousSeal(options);
   const candidate = deliverySubject(request, requestSha256);
   const kitBytes = await fs.readFile(downloadAsset(ghCommand, repo, tag, `${tag}.first-install-kit.json`, stage));
   checkDeliveryKit(kitBytes, candidate, deps.readKit);
@@ -1442,6 +1449,22 @@ export async function seal(options) {
       check(currentRequest?.equals(requestBytes) && (await boundedRead(sealEnd)(request)).equals(requestBytes),
         'FLEET_DELIVERY_PREFLIGHT_REFUSED', { phase: 'before-attach', reason: 'FLEET_CANDIDATE_REQUEST_CHANGED', candidate });
       if (stagedRelease) await verifyReleaseDelivery(sealEnd);
+    }
+    if (stagedRelease && !alreadySealed) {
+      const checkPrevious = deps.previousInterfaces ?? (async subject => {
+        const inputs = { ghCommand: boundedGh(sealEnd), repo, index, version: r.version, stage, deps };
+        const previous = await previousSeal(inputs);
+        const evidence = await previousInterfaceCheck({ ...subject, previous, timeoutMs: remaining(sealEnd) });
+        // The predecessor may have changed while PostgreSQL was running.
+        const back = await previousSeal({ ...inputs, stage: path.join(stage, 'previous-readback') });
+        check(evidence.previousCommit === back.commit && previous.acceptanceSha256 === back.acceptanceSha256,
+          'FLEET_PREVIOUS_INTERFACES_REFUSED');
+        return evidence;
+      });
+      let evidence;
+      try { evidence = await checkPrevious({ commit: r.commit, repository: repo, version: r.version }); }
+      catch (error) { fail('FLEET_PREVIOUS_INTERFACES_REFUSED', { reason: error?.code ?? error?.name ?? 'ERROR' }); }
+      check(evidence?.status === 'PASS' && evidence.commit === r.commit, 'FLEET_PREVIOUS_INTERFACES_REFUSED');
     }
     const staged = path.join(stage, 'up', `${tag}.acceptance.json`);
     remaining(sealEnd);

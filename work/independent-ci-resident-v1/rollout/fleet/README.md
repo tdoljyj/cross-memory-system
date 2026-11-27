@@ -3,7 +3,7 @@
 节点只有两条路，用的是**同一个通用包、同一份接受文件**：
 
 1. **通用升级**（第 0 节）：已装节点原地升级，零 UAC，失败自动回滚。默认走这条。
-2. **通用重装与首装**（第 1–8 节）：已装节点答 `FLEET_NODE_UPGRADE_NEEDS_REINSTALL` 时、以及新节点（没有安装回执）时走。**唯一入口是 `fleet-node-<v>.bootstrap.ps1 -From <目录>`**（第 5 节），重装与首装是同一条命令。
+2. **Windows 节点入口**（第 5 节）：`fleet-node-<v>.bootstrap.ps1 -From <目录>` 盘点本机，继续已知步骤、使用现有升级通道，或准备首装。维护接口未接通时，重装、退役与回滚在清理前停住。
 
 只构建一个通用包。包里没有任何节点值（无 record 引用、节点档案选择、SID、路径），节点身份全部在节点上从本机记录读。接口细节见 `BATCH1-INTERFACES.md`，升级的设计见 [ADR 0030](../../docs/adr/0030-fleet-generic-upgrade.md)。
 
@@ -270,14 +270,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File <目录>\fleet-node-<v>.boot
 bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象）：
 
 1. 核资产集合与每个哈希（两份 sums 文件；多一个、少一个、哈希不符都拒绝）。
-2. 前置清单：这次要用的前置必须已钉住（sha256 与字节数），否则 `PREREQ_NOT_PINNED`，什么都不取。**已装节点（重装）只用 node、python、git**；首装用全部七项与 .deb。每个文件先找 `<目录>` 里哈希相符的，没有再下载，都核 sha256 与大小。
+2. 先核并获取已钉住的 node、python、git。进入安装路径时才下载其余前置与 `.deb`，逐个核 SHA-256 与字节数。
 3. 用 Windows 自带的 `tar.exe` 解出 `tree/`。`tar.exe` 写不了非 ASCII 文件名，所以构建器不许包里有这样的路径（第 2 节）；`prepare` 再逐文件核自己的字节，不信任解包工具。
-4. 有 `C:\ProgramData\CluedIndependentCI\resident\install\install-receipt.json`：非提权运行包内 `install.mjs prepare`（下面），再请求 1 次 UAC 运行它生成的启动器。没有回执：首装，见 5.1。
-5. 结局只有一行 JSON：`BOOTSTRAP_DONE`（核验通过、已暂停；首装还要求 companion 切换通过），否则写明停在哪一步、为什么。
+4. 有产品资源时先走现有升级通道。已到位、升级在途或已投递直接返回。旧装明确无法升级时以同包进入重装分流。只有完整盘点确认空机，才进入首装。提权阶段以同一把机器锁读回与本机、操作人和包摘要绑定的进度。
+5. 维护接口未接通时，重装、显式 `-Action Retire` 和 `-Action Rollback` 返回 `FLEET_MAINTENANCE_INTERFACE_UNAVAILABLE`。旧版保持运行。首装的 `BOOTSTRAP_DONE` 要求运行核验和 companion 切换成功。
 
 `install.mjs prepare` 是 bootstrap 内部的一步，不是 Owner 的命令，不要绕过 bootstrap 手工运行它。**注意**：在协调者钉住 `prereq-manifest.json` 的 node、python、git 之前，bootstrap 对重装和首装都答 `PREREQ_NOT_PINNED`。
 
-### prepare 做什么（bootstrap 内部）
+### 旧重装工具的内部合同（历史）
 
 `prepare` 的命令行在每台节点上完全相同，没有任何节点参数：根目录固定为 `C:\ProgramData\CluedIndependentCI\resident`，令牌、已装包、配置都不从命令行给；`--artifact-sha` 是 bootstrap 第 1 步核过的值。
 
@@ -287,9 +287,9 @@ bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象�
 
 `<work>` 下产出（只许新建）：`package\`、`linux-in\`、`linux\A.sh`、`B.sh`、`B-resume.sh`、`launcher.ps1`、`install-plan.json`。Linux 脚本的输出目录是 `install-plan.json` 里 `linux.outDir` 指定的新目录 `C:\ProgramData\CluedIndependentCI\reinstall-linux-out-<32hex>`，由提权启动器在 Linux A 之前新建并设权限；`prepare` 不建它，也不改任何 ACL。结束时打印一行 JSON：`{status, node, version, workDir, installPlan, launcher:{path, sha256}, runCommand}`。
 
-**重装时 Owner 只做一件事：bootstrap 请求时点 1 次 UAC**（它复制 `prepare` 写的启动器到只给管理员的目录、核 sha256，再以 `-RunApprovedInstall` 运行）。一次 UAC 内的顺序：W1 暂停（已由 `prepare` 完成，启动器只核 `w1Paused`） -> 暂存 -> Linux A -> Linux B（失败时 B-resume 一次）-> 核 B 的输出（evidence 恰一行 `sha256:` 等于包的 `ciSourceManifestSha256` 且 `exit: 0`；facts 第 1 代、`staged` 为 null、Source 与 Linux manifest 等于包、`pinsOk` 为 true，即 `install-plan.json` 的 `expectedLinux`）-> 卸载 -> 安装 -> verify -> rearm。有 companion 账户的节点，Linux root 步骤由 registrar 的 `root-run` 在 companion 账户的发行版里执行；没有的节点（`companionAccount=false`）由提权 Owner 直接 `wsl.exe -d <发行版> -u root` 运行，其余相同。
+旧工具生成的 W1 暂停和启动器证据用于解释历史操作。现行入口的重装分流要经过 `package-lifecycle.ps1` 维护准入与本机清理。
 
-### 5.1 首装：同一条命令，没有回执的节点
+### 5.1 首装：同一条命令，盘点确认空机
 
 同一个入口 `fleet-node-<v>.bootstrap.ps1 -From <目录>`。先非提权检查接受文件、tar、kit、角色镜像和控制器 Node 摘要。一次 UAC 内，原操作人持本机安装锁，把已钉住的资产及工具复制到管理员专用目录并复核，再依次完成主机准备、`install.mjs prepare --from` 和启动器。主机准备将本次首装事实写到 `C:\ProgramData\CluedIndependentCI\first-install\facts.json`。
 
@@ -300,33 +300,25 @@ bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象�
 - 启动器：首装预检（无残留、令牌目录只有 SYSTEM/Administrators）→ 从 `first-install\credentials\` 带令牌并核指纹 → Windows 侧完整预检（runner 等待、两处秘密文件、安装器的两次 dry run 与 ACL 迁移计划；不过即停，Linux 未动）→ Linux A/B（由提权 Owner `wsl -u root`，发行版此时在 operator 名下的导入位置）→ 安装 → verify → companion → rearm → 现有的 M5-b 切换（`rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory`，把发行版 move 到 companion 名下）。没有 W1、没有卸载。首装的结论按这个顺序判（`Get-LauncherVerdict`）：先看角色，first-train 等待没有确认角色（终态 `role` 不是 `held` 或 `not-held`）时 bootstrap 答 `BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED`，码 `FIRST_INSTALL_ROLE_UNAUTHORIZED`（服务端拒了本节点的 CI 令牌）或 `FIRST_INSTALL_ROLE_UNCONFIRMED`（其余），换账户没过也是这个结论；角色确认之后再看切换，没有通过（`companionHeadless` 不是 `COMPANION_HEADLESS_QUALIFIED`）时答 `BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE`。两种都不答 `BOOTSTRAP_DONE`；切换的状态在每种结论的 `companionSwitch` 里都保留。
 - 同一提权阶段负责清理 `first-install\credentials\` 的首装暂存令牌。它在主机准备前清理上次暂存，结束时再次读回清理结果。
 - 主机准备先写 `facts.json`（整份或没有），再放 App 私钥与 ci-admission 令牌：中途断掉只会留下有 facts、缺秘密的状态，下次运行按 facts 记录的指纹只问缺的那些（facts 记录了心跳令牌就必须再给），`-Reset` 能清掉；不会留下没有 facts、无法归属的秘密。
-- 中途停止：Linux A 之前停下，什么都没动，重跑同一条命令（P1 会再问令牌）。A 完成之后停下（B 中断、失败或 Windows 侧未完成），重跑同一条命令：Linux A 找到本提交的暂存（同一个包、自 A 起未变、新输入目录与暂存逐字节一致）即不再暂存，B 从停下处接着做；不一致按名拒绝。已安装（有回执）之后停下的，按重装处理，要用更新的包：同一个包会被 `NEW_SOURCE_IS_THE_INSTALLED_ONE` 拒绝。
+- 主机准备阶段中断可重跑同一条命令。启动器启动后，入口先读管理员工作区的终态。结果不明时返回 `FLEET_INSTALL_RESULT_UNCONFIRMED`，保留该操作的进度。
 
-## 6. 顺序与列车窗口（先待命，后当班）
+## 6. 本机维护窗口
 
-1. 要换当班的，先在两台还是同一 Source 时移交（`/bindings`）。
-2. 发布、Owner 接受完成后，先在待命节点上做第 5 节。
-3. 核验它：`verify` 通过、版本事实与 `install-plan.json` 的 `expectedLinux` 一致，`ciSourceManifestSha256` 等于包里的值。
-4. 再在当班节点上做第 5 节（重装期间 CI 停）。不移交给刚装好的节点：它的 Source 与当班节点不同，服务端拒绝（迁移 `20261114120000`）。
-
-列车只比较 `ciSourceManifestSha256`；两台装不同提交的包会出现 `TRAIN_SOURCE_MISMATCH`。所以两台装同一个提交的同一个包，DESK 核验通过后立刻接着装 TURING，缩短两台 Source 不同的窗口。
+重装、退役和回滚只处理目标机器。目标先摘牌并排空，以现场读回确认无当班后再清理。安装后复读封存状态，向服务端恢复待命。维护窗口由服务端提供，本分支的占位在清理前返回 `FLEET_MAINTENANCE_INTERFACE_UNAVAILABLE`。
 
 ## 7. 凭据在哪里
 
 - 发布机只用 `gh` 自己的登录（`gh auth login` 存在 gh 自己的凭据库）。`publish.mjs` 调 gh 时去掉环境里的 `GH_TOKEN`、`GITHUB_TOKEN`、`GH_ENTERPRISE_TOKEN`、`GITHUB_ENTERPRISE_TOKEN`，不读、不写、不打印任何令牌。
 - 节点取包同样用节点上 gh 自己的登录；包与接受文件里没有任何凭据，只有哈希与引用。
-- 令牌不写进命令行、环境变量、日志、索引文件或接受文件。节点的升级令牌与心跳令牌从现装节点带入：`prepare` 只读回执里的目标路径、指纹和 bindingId（`install-plan.json` 的 `secrets`，`source: installed`），从不打开令牌；启动器在 UAC 内、卸载之前把它们复制到只给 SYSTEM 与 Administrators 的 `C:\ProgramData\CluedIndependentCI\reinstall-carry-<32hex>\`，按指纹核对后交给安装器。这个目录用完一律删除，未删掉的由下次运行清扫。
+- 节点凭据留在 Windows 原生界面及受保护的文件载体中。生命周期清单列出要原位保留的连接和需要同卷转移的升级、心跳载体。实际清理和恢复须等到本机原生调用链接通。
 
 ## 8. 失败时怎么办
 
-- 生产节点失败一次就停手：不重试、不改参数硬再跑。先在一次性环境复现，核实根因，做最小修复，再一次性上生产。
-- bootstrap 每次运行用新的工作目录（`C:\ProgramData\CluedBootstrap\<32hex>`），`prepare` 的输出只许新建。W1 之后才失败（例如 `generate.py`）时，旧常驻保持暂停；重跑同一条 bootstrap 命令（同一版本或更新的包）时 W1 直接认领留下的重装暂停，不需要先解除。
-- 启动器是一次性的：同一个文件再跑只会得到 `EXISTING_EXECUTION_PRESERVED`。重装的启动器停下之后（DESIGN §73）：
-  - A 开始之前停下：节点没动，W1 暂停已自动解除；重跑同一条 bootstrap 命令。
-  - A 之后停下（Linux 已是新包、Windows 还是旧装，节点保持暂停）：`python -I <tree>\work\independent-ci-resident-v1\reinstall\launcher\generate.py --fleet-continue <那次的 launcher.ps1> --out <新 launcher.ps1>`，再提权运行输出里的 `elevatedCommand`。暂停若已被解除，这条命令会重新请求。此时对同一个包重跑 bootstrap 会得到 `LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH`。首装的启动器不走这条（`PRIOR_LAUNCHER_IS_A_FIRST_INSTALL_NOT_CONTINUED`），见 5.1 的中途停止。
-  - 那个包本身续不下去、已经换了新包：直接用新包的 bootstrap，两侧各从现状装到新包。
+- 重跑同一条 bootstrap 命令时，安装锁保护同机器、操作人、动作和包摘要对应的进度。首装主机准备可继续。启动器的终态无法确认时，入口保留进度并停止。
+- 历史重装启动器的 W1 暂停和专用续作命令见 DESIGN §73，供历史操作核对。
 - `RUNNER_SERVICE_NOT_AS_REVIEWED`：当班节点在暂停下仍会为自己的维护临时交换运行器，预检会等它换回（最多 600 秒）；到时仍不对才停。
 - `publish.mjs` 在 gh 失败时不动索引；`prepare` 建 Release 中途断了，原样重跑同一条 `prepare`：它认出已建的那部分，只补缺的资产和索引行，不重复创建同一 tag。
 - `seal` 对已用另一个 Decision 接受的版本拒绝；接受文件写错要由协调者与 Owner 重新决定，不覆盖。`prepare` 或 `seal` 中途断了，原样重跑同一条命令。
+- 第 27 代起，发布命令在封存前取上一封存提交的接口断言，用候选提交的迁移在隔离 PostgreSQL 中回放。缺前包证明、缺本地测试依赖或接口用例失败时停止封存。续传只补缺失资产，任何已发布字节不同就停。
 - B 在 Source 切换之后失败：模板自动用 B-resume 续跑一次；仍失败则停手，交协调者。
 - 节点装完 `verify` 不过：不继续装另一台。

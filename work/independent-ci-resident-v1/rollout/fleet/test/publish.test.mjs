@@ -162,6 +162,17 @@ test('attach-first-install-kit refuses a kit and images that do not name each ot
   assert.equal((await w.calls()).length, n, 'refused before gh');
 });
 
+test('repairing a partial kit upload preserves every published asset when bytes differ', async t => {
+  const w = await kitWorld(t);
+  await w.attach();
+  const original = await w.assets();
+  const count = (await releaseWrites(w)).length;
+  await fs.writeFile(w.image, 'different bytes');
+  await assert.rejects(w.attach({ resume: true }), { code: 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT' });
+  assert.deepEqual(await w.assets(), original);
+  assert.equal((await releaseWrites(w)).length, count);
+});
+
 test('main: only prepare and seal, with their own options; release, the steps and the old entry have no command', async () => {
   for (const gone of [['attach-acceptance', '--version', '1', '--acceptance', 'a'], ['attach-first-install-kit', '--version', '1', '--kit', 'k'],
     ['acceptance-draft', '--version', '1', '--dir', 'x', '--base', 'b', '--out', 'o']]) await assert.rejects(main(gone), { code: 'USAGE' }, gone[0]);
@@ -330,7 +341,7 @@ test('prepare again after a stop: the node would give other kit bytes, the Relea
 });
 
 // review suggestion 1: what a resumed upload keeps is compared by content, not by size
-test('prepare again after a stop: an image or sums file of the same size but other bytes on the Release is replaced, not kept', async t => {
+test('prepare after a stop refuses same-size changed image or sums without replacing published files', async t => {
   const w = await prepWorld(t);
   process.env.FAKE_GH_FAIL_UPLOAD_NTH = '3';   // the kit and the image go up, the sums file does not
   t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_NTH; });
@@ -339,17 +350,21 @@ test('prepare again after a stop: an image or sums file of the same size but oth
   const local = await fs.readFile(w.image);
   const other = Buffer.from(local); other[0] ^= 1;
   await w.setState(st => { const a = st.assets.find(x => x.name === `role-image-${IMAGE}.tar.gz`); a.b64 = other.toString('base64'); a.sha256 = sha(other); });
-  await w.prep();
+  await assert.rejects(w.prep(), { code: 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT' });
   const img = (await w.assets()).filter(x => x.name === `role-image-${IMAGE}.tar.gz`);
-  assert.deepEqual(img.map(x => x.sha256), [sha(local)], 'the image on the Release is the one the kit names');
+  assert.deepEqual(img.map(x => x.sha256), [sha(other)]);
+  await noRequest(w);
+  await w.setState(st => { const a = st.assets.find(x => x.name === `role-image-${IMAGE}.tar.gz`); a.b64 = local.toString('base64'); a.sha256 = sha(local); });
+  await w.prep();
   // the sums file: one line changed, the same size
   const sumsName = `${TAG}.first-install.SHA256SUMS`;
   const good = (await w.assets()).find(x => x.name === sumsName).text;
   const bad = good.replace(sha(local), sha(other));
   assert.equal(bad.length, good.length);
   await w.setState(st => { const a = st.assets.find(x => x.name === sumsName); a.b64 = b64Of(bad); a.text = bad; a.sha256 = sha(Buffer.from(bad)); });
-  await w.prep();
-  assert.deepEqual((await w.assets()).filter(x => x.name === sumsName).map(x => x.text), [good]);
+  await assert.rejects(w.prep(), { code: 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT' });
+  assert.deepEqual((await w.assets()).filter(x => x.name === sumsName).map(x => x.text), [bad]);
+  assert.equal((await w.calls()).some(c => c.args[1] === 'delete-asset'), false);
 });
 
 // review suggestion 1: a transfer error stays a transfer error (acceptance-draft.log), it is not reported as a missing image
