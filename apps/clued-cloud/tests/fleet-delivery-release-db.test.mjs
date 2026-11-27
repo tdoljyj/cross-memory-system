@@ -1305,10 +1305,9 @@ test('舰队故障交班与安装恢复', async t => {
       await admin.query("update clued_private.binding_roles_v1 set effective_at=clock_timestamp() where user_id=$1 and role='ci-admission' and revoked_at is null", [owner]);
       assert.equal(await holder(), id(11));
     });
-    for (const [name, ready, waiting, waitingState] of [
-      ['双节点重装满两小时，仅回归的备班接班', standby, primary, 'delisted'],
-      ['双节点重装期内，名单内备班进入待修，仅回归的原当班接班', primary, standby, 'repair'],
-    ]) await scenario(name, async () => {
+    await scenario('双节点重装满两小时，仅回归的备班接班', async () => {
+      const ready = standby;
+      const waiting = primary;
       await beat(primary, 'ACTIVE');
       await request(standby, 'delist');
       await request(primary, 'delist');
@@ -1321,19 +1320,15 @@ test('舰队故障交班与安装恢复', async t => {
       const resumeReceipts = () => admin.query(`select metadata->>'node_id' as node from public.clued_audit_receipts
         where user_id=$1 and operation='fleet_reinstall_train_resumed'`, [owner]);
       assert.deepEqual((await resumeReceipts()).rows, [], '窗口期内只有一台就绪时应继续等待');
-      if (waitingState === 'delisted') {
-        await admin.query("update clued_private.fleet_maintenance_v1 set reinstall_pause_until=reinstall_pause_until-interval '2 hours 1 second' where node_id=$1", [primary]);
-      } else {
-        await admin.query("update clued_private.fleet_maintenance_v1 set state='repair',owner_repair_required=true,operation_id=$2 where node_id=$1", [waiting, id(712)]);
-      }
+      await admin.query("update clued_private.fleet_maintenance_v1 set reinstall_pause_until=reinstall_pause_until-interval '2 hours 1 second' where node_id=$1", [primary]);
       await upkeep();
       await upkeep();
       await admin.query("update clued_private.binding_roles_v1 set effective_at=clock_timestamp() where user_id=$1 and role='ci-admission' and revoked_at is null", [owner]);
-      assert.equal(await holder(), ready === primary ? id(11) : id(12));
+      assert.equal(await holder(), id(12));
       assert.deepEqual((await resumeReceipts()).rows, [{ node: ready }]);
-      assert.equal((await request(waiting, 'status')).state, waitingState);
+      assert.equal((await request(waiting, 'status')).state, 'delisted');
       assert.equal(await sql(`select count(*)::int v from public.clued_audit_receipts
-        where user_id=$1 and metadata->>'receipt_kind'='FLEET_REINSTALL_WINDOW_EXPIRED'`, [owner]), waitingState === 'delisted' ? 1 : 0);
+        where user_id=$1 and metadata->>'receipt_kind'='FLEET_REINSTALL_WINDOW_EXPIRED'`, [owner]), 1);
     });
     await t.test('DESK 与 TURING 同时重装，排空后有界暂停，两台备班挂牌后自动恢复当班', reinstallTogether);
   } finally { await db.close(); }

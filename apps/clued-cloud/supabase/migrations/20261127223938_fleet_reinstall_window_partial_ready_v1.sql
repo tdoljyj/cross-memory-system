@@ -13,7 +13,7 @@ begin
     r:=clued_private.ci_failover_alert_v1(u,'FLEET_REINSTALL_WINDOW_EXPIRED',w.operation_id::text,
       jsonb_build_object('grant_id',w.grant_id,'deadline',w.reinstall_pause_until,'recovery','verify_reinstalled_nodes_as_standby_then_restore_duty'));
     if r is not null then perform clued_private.ci_failover_note_v1(u,r,'FLEET_REINSTALL_WINDOW_EXPIRED','双节点重装窗口已到期',
-      '已通过安装和备班健康验证的节点可接班。请核对仍在维护的节点。'); end if;
+      '已有节点通过验证即自动接班。无合格节点时列车仍停接新工作，请核对仍在维护的节点。'); end if;
     update clued_private.fleet_maintenance_v1 set reinstall_pause_alerted_at=t where node_id=w.node_id;
   end if;
   if w.grant_id is distinct from g then return; end if;
@@ -37,14 +37,9 @@ begin
       and clued_private.fleet_source_reason_v1(u,c.node_id,'handover') is null
       and clued_private.fleet_selfcheck_v1(u,c.node_id,m.verify_started_at);
   if ready_nodes is null then return; end if;
-  -- 窗口内等全员回归。待修有自己的操作号，按窗口记录的节点与绑定代次识别。
+  -- 窗口内等全员回归。
   if cardinality(ready_nodes) <> jsonb_array_length(peers)
-    and (t >= w.reinstall_pause_until) is not true
-    and not exists (
-      select 1 from jsonb_to_recordset(peers) as expected(node_id uuid,binding_generation bigint)
-      join clued_private.fleet_maintenance_v1 m using(node_id,binding_generation)
-      where m.user_id=u and m.grant_id=g and m.state='repair'
-    ) then return; end if;
+    and (t >= w.reinstall_pause_until) is not true then return; end if;
   for n in select c.* from unnest(ready_nodes) with ordinality as x(node_id,ord)
     join clued_private.ci_nodes_v1 c using(node_id) order by x.ord loop
     begin

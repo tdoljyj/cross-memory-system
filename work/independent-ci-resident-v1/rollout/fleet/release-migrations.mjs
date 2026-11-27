@@ -95,8 +95,7 @@ const probes = {
     and ${procedure('fleet_reinstall_window_tick_v1(uuid,uuid,timestamptz)', 'void', "p.provolatile = 'v'")}`,
   reinstallWindowPartialReady: procedure('fleet_reinstall_window_tick_v1(uuid,uuid,timestamptz)', 'void', `p.provolatile = 'v'
     and ${bodyContains('if cardinality(ready_nodes) <> jsonb_array_length(peers)')}
-    and ${bodyContains('and (t >= w.reinstall_pause_until) is not true')}
-    and ${bodyContains("where m.user_id=u and m.grant_id=g and m.state='repair'")}`),
+    and ${bodyContains('and (t >= w.reinstall_pause_until) is not true')}`),
 };
 
 export function releaseRequirements(commit, read = file => execFileSync('git', ['show', `${commit}:${file}`], {
