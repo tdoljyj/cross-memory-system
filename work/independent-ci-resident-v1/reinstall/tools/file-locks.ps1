@@ -135,6 +135,17 @@ function New-ProcessSnapshot($process) {
       startedFileTime = $started; precisionTicks = $precision; executablePath = $image }
   } catch { return $null } # Missing creation identity never exempts a locker.
 }
+function Get-ProcessSample([string]$residentRoot) {
+  $rows = @{}
+  foreach ($process in @(Get-CimInstance -ClassName Win32_Process)) {
+    $snapshot = New-ProcessSnapshot $process
+    $image = [string]$process.ExecutablePath
+    if ($null -ne $snapshot) { $image = $snapshot.executablePath }
+    $rows[[uint32]$process.ProcessId] = @{ process = $process; snapshot = $snapshot
+      underRoot = $image.StartsWith($residentRoot + '\', [StringComparison]::OrdinalIgnoreCase) }
+  }
+  return $rows
+}
 function Test-ServiceAnchorPair($before, $after, $snapshot) {
   # SCM is the authority for these exact service PIDs. A WMI image path is not
   # required; creation identity (native or explicitly microsecond CIM) and
@@ -211,7 +222,11 @@ function Test-InstalledSupervisor($snapshot, $process, [string]$image, [string]$
   $exe = [regex]::Escape($image); $arg = [regex]::Escape($residentRoot)
   $pattern = '^(?:"' + $exe + '"|' + $exe + ')\s+(?:"' + $arg + '"|' + $arg + ')\z'
   if ([string]$process.CommandLine -notmatch $pattern) { return $false }
-  $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop
+  try { $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop }
+  catch {
+    if (Get-CimInstance -ClassName Win32_Process -Filter ("ProcessId=" + $snapshot.pid) -ErrorAction Stop) { throw }
+    return $false
+  }
   return $owner.ReturnValue -eq 0 -and $owner.Sid -ceq $sid -and (Test-CurrentProcessSnapshot $snapshot)
 }
 if ($LibraryOnly) { return }
@@ -220,6 +235,7 @@ $ancestors = @('C:\ProgramData', 'C:\ProgramData\CluedIndependentCI', $Root)
 foreach ($directory in $ancestors) {
   if (-not [IO.Directory]::Exists($directory) -or (([IO.File]::GetAttributes($directory) -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw 'RESIDENT_PARENT_NOT_PLAIN' }
 }
+$processes = New-Object 'Collections.Generic.Dictionary[uint32,object]'
 $files = New-Object 'Collections.Generic.List[string]'
 # Never enumerate the protected secrets, trusted, journal, work or archive directories.
 foreach ($relative in @('bin', 'runtime', 'broker\bin', 'upgrader\runtime')) {
@@ -236,7 +252,6 @@ foreach ($relative in @('bin', 'runtime', 'broker\bin', 'upgrader\runtime')) {
   }
 }
 if ($files.Count -eq 0) { throw 'INSTALLED_PUBLIC_BINARIES_NOT_FOUND' }
-$processes = New-Object 'Collections.Generic.Dictionary[uint32,object]'
 $supervisors = @{}
 $unknownProcesses = @()
 $supervisorImage = Join-Path $Root 'bin\CluedCompanionSupervisor.exe'
@@ -250,23 +265,38 @@ if ($ExpectedInstallReceiptSha256) {
       $receipt.companionSupervisorSha256 -cnotmatch '^[0-9a-f]{64}$' -or
       (Get-FileHash -LiteralPath $supervisorImage -Algorithm SHA256).Hash -ine $receipt.companionSupervisorSha256) { throw 'SUPERVISOR_IMAGE_NOT_AS_INSTALLED' }
 }
-foreach ($process in @(Get-CimInstance -ClassName Win32_Process)) {
-  $snapshot = New-ProcessSnapshot $process
+$processRows = Get-ProcessSample $Root
+$servicesBefore = @(Get-CimInstance -ClassName Win32_Service | Where-Object { @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader') -ccontains $_.Name })
+$taskSnapshotBefore = Get-CompanionTaskSnapshot
+$taskBefore = @($taskSnapshotBefore.instances)
+$observed = @([CluedRehearsalLocks.Query]::Files($files.ToArray()))
+foreach ($after in (Get-ProcessSample $Root).Values) {
+  $pidValue = [uint32]$after.process.ProcessId
+  $before = $processRows[$pidValue]
+  if ($null -eq $before) { $processRows[$pidValue] = $after; continue }
+  $first = $before.snapshot; $second = $after.snapshot
+  if ($before.process.CreationDate -ne $after.process.CreationDate -or
+      ($null -ne $first -and $null -ne $second -and $first.precisionTicks -eq 1 -and $second.precisionTicks -eq 1 -and
+       $first.startedFileTime -ne $second.startedFileTime)) {
+    # Neither generation of a reused PID may anchor a locker or its descendants.
+    $processRows.Remove($pidValue)
+    if ($before.underRoot -or $after.underRoot) { $unknownProcesses += [int]$pidValue }
+  }
+}
+$servicesAfter = @(Get-CimInstance -ClassName Win32_Service | Where-Object { @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader') -ccontains $_.Name })
+$taskSnapshotAfter = Get-CompanionTaskSnapshot
+$taskAfter = @($taskSnapshotAfter.instances)
+foreach ($row in $processRows.Values) {
+  $process = $row.process
+  $snapshot = $row.snapshot
   if ($null -ne $snapshot) {
     $processes[$snapshot.pid] = $snapshot
     if ($ExpectedInstallReceiptSha256 -and $snapshot.executablePath -ieq $supervisorImage) {
       if (Test-InstalledSupervisor $snapshot $process $supervisorImage $CompanionSid $Root) { $supervisors[$snapshot.pid] = $snapshot }
       else { $unknownProcesses += [int]$snapshot.pid }
     }
-  } elseif (([string]$process.ExecutablePath).StartsWith($Root + '\', [StringComparison]::OrdinalIgnoreCase)) { $unknownProcesses += [int]$process.ProcessId }
+  } elseif ($row.underRoot) { $unknownProcesses += [int]$process.ProcessId }
 }
-$servicesBefore = @(Get-CimInstance -ClassName Win32_Service | Where-Object { @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader') -ccontains $_.Name })
-$taskSnapshotBefore = Get-CompanionTaskSnapshot
-$taskBefore = @($taskSnapshotBefore.instances)
-$observed = @([CluedRehearsalLocks.Query]::Files($files.ToArray()))
-$servicesAfter = @(Get-CimInstance -ClassName Win32_Service | Where-Object { @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader') -ccontains $_.Name })
-$taskSnapshotAfter = Get-CompanionTaskSnapshot
-$taskAfter = @($taskSnapshotAfter.instances)
 $expected = New-Object 'Collections.Generic.Dictionary[uint32,long]'
 $precisions = New-Object 'Collections.Generic.Dictionary[uint32,int]'
 foreach ($service in $servicesBefore) {
@@ -319,7 +349,10 @@ $rootProcesses = @(foreach ($s in $processes.Values) {
     } else { $unknownProcesses += [int]$s.pid }
   }
 })
-[ordered]@{ contract = 'clued.independent-ci.rehearsal-file-locks/1'; status = 'OBSERVED'; rootProcesses = $rootProcesses; unknownProcesses = @($unknownProcesses); coverage = 'installed-public-binaries-only'
+[ordered]@{ contract = 'clued.independent-ci.rehearsal-file-locks/1'; status = 'OBSERVED'; rootProcesses = $rootProcesses
+  unknownProcesses = @($unknownProcesses | Sort-Object -Unique | Where-Object {
+    Get-CimInstance -ClassName Win32_Process -Filter ("ProcessId=" + $_) -ErrorAction Stop
+  }); coverage = 'installed-public-binaries-only'
   directoryHandlesCovered = $false; secretsEnumerated = $false; fileCount = $files.Count; lockers = $lockers; external = $external
   companionTaskObservation = [ordered]@{ before = $taskSnapshotBefore.status; after = $taskSnapshotAfter.status
     beforeCode = $taskSnapshotBefore.code; afterCode = $taskSnapshotAfter.code; unverifiedTaskLockersRemainExternal = $true } } | ConvertTo-Json -Depth 5 -Compress
