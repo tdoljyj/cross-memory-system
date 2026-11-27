@@ -707,6 +707,7 @@ test('the drill receipt keeps each executor state first observed during the arme
 });
 
 test('the boot watchdog still runs checkpoint cleanup after its parent job is terminated', opts, () => {
+  const exitTimeoutMs = 30_000;
   const root = fs.mkdtempSync(path.join(tmp, 'boot-watchdog-'));
   const fixture = path.join(root, 'boot-fixture.ps1');
   const host = path.join(root, 'host.ps1');
@@ -733,7 +734,8 @@ test('the boot watchdog still runs checkpoint cleanup after its parent job is te
     $watchdog = Start-DrillBootWatchdog ${q(root)} '${vmId}' ([DateTimeOffset]::UtcNow.AddSeconds(30))
     [IO.File]::WriteAllText("$($watchdog.signal).starting", '')
     [IO.File]::WriteAllText(${q(ready)}, '')
-    Start-Sleep -Seconds 30
+    # Keep the fixture alive past the exit budget so only job termination can satisfy the wait.
+    Start-Sleep -Seconds 60
   `);
   const result = ps(`
     ${drillTestJob}
@@ -750,15 +752,21 @@ test('the boot watchdog still runs checkpoint cleanup after its parent job is te
       }
       if (-not [DrillTestJob]::CloseHandle($job)) { throw [ComponentModel.Win32Exception]::new() }
       $job = [IntPtr]::Zero
-      $terminated = $worker.WaitForExit(3000)
+      $clock.Restart()
+      $terminated = $false
+      while (-not $terminated -and ($remainingMs = ${exitTimeoutMs} - $clock.ElapsedMilliseconds) -gt 0) {
+        $terminated = $worker.WaitForExit([int][Math]::Min(100, $remainingMs))
+      }
+      $exitWaitMs = $clock.ElapsedMilliseconds
       $clock.Restart()
       while (-not (Test-Path -LiteralPath ${q(cleanup)}) -and $clock.Elapsed.TotalSeconds -lt 5) { Start-Sleep -Milliseconds 20 }
-      @{ terminated = $terminated; cleanup = (Test-Path -LiteralPath ${q(cleanup)}) }
+      @{ terminated = $terminated; exitWaitMs = $exitWaitMs; cleanup = (Test-Path -LiteralPath ${q(cleanup)}) }
     } finally {
       if ($job -ne [IntPtr]::Zero) { [void][DrillTestJob]::CloseHandle($job) }
       if ($worker) { $worker.Dispose() }
     }`);
-  assert.deepEqual(result, { terminated: true, cleanup: true });
+  assert.equal(result.terminated, true, `parent process did not exit within ${exitTimeoutMs} ms (waited ${result.exitWaitMs} ms)`);
+  assert.equal(result.cleanup, true, 'watchdog did not finish checkpoint cleanup');
   assert.equal(fs.readFileSync(cleanup, 'utf8'), 'True');
 });
 
