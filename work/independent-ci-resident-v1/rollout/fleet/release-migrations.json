@@ -38,5 +38,10 @@
     "file": "20261127210000_fleet_sealed_source_rule_v1.sql",
     "requires": ["20261126174100_merge_train_control_v2.sql", "20261126175000_ci_train_landing_receipts_v2.sql", "20261127120210_fleet_delivery_peer_recipients_v1.sql", "20261127123000_fleet_previous_interface_gate_v1.sql"],
     "probe": "sealedSourceRule"
+  },
+  {
+    "file": "20261128080000_fleet_sealed_rule_takes_effect_on_arrival_v1.sql",
+    "requires": ["20261127210000_fleet_sealed_source_rule_v1.sql"],
+    "probe": "sealedRuleOnArrival"
   }
 ]

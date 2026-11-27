@@ -154,7 +154,7 @@ export default function OwnerGrantsPage() {
         onToggle={(enabled, baseVersion) => void setAutoEnabled(enabled, baseVersion)} />
       {packages.filter(pkg => pkg.classification === "current").map(pkg => <section key={String(pkg.grant_id)}>
         <h2>当前封存包 {String(pkg.version)}</h2>
-        <p>{pkg.after_revoke_version ? "撤销后将使用 " + String(pkg.after_revoke_version) + "。" : "撤销后将没有可用封存包。"}</p>
+        <p>{String(pkg.after_revoke_version ?? "撤销结果暂时无法预演。")}</p>
         <button type="button" disabled={working} onClick={() => void revoke(String(pkg.grant_id), String(pkg.acceptance_sha256))}>撤销此封存包</button>
       </section>)}
       {requests.length > 0 && <section aria-label="等待确认"><h2>等待你确认</h2>

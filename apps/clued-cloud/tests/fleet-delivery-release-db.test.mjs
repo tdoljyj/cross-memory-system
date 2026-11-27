@@ -643,8 +643,8 @@ test('封存前同源兜底，封存后正常交班只给当前包，旧包能�
     const current = await seedSealedPackage(db, 26, currentSource);
     await admin.query('begin');
     try {
-      await admin.query('update clued_private.ci_node_liveness_v1 set reported_source_sha256=$1 where user_id=$2',
-        [sha('out of set on both nodes'), owner]);
+      await admin.query('update clued_private.ci_node_liveness_v1 set reported_source_sha256=$1 where node_id=$2',
+        [sha('out of set on holder'), primary]);
       assert.equal((await dbValue(admin,'select clued_private.fleet_execution_view_v1($1,$2) v',[owner,id(11)])).nodes,null);
       await admin.query('update clued_private.ci_node_liveness_v1 set reported_source_sha256=null where node_id=$1',[primary]);
       assert.equal((await dbValue(admin,'select clued_private.fleet_execution_view_v1($1,$2) v',[owner,id(11)])).holder_package.refusal,
@@ -784,7 +784,7 @@ test('封存前同源兜底，封存后正常交班只给当前包，旧包能�
     const revoke = () => dbValue(db.human, 'select public.clued_owner_grant_revoke_v1($1) v',
       [{ grant_id: current.grantId, acceptance_sha256: current.acceptanceSha256 }]);
     const grants = await dbValue(db.human,'select public.clued_owner_grants_list_v1($1) v',[{}]);
-    assert.equal(grants.sealed_packages.find(pkg => pkg.classification==='current').after_revoke_version,'g000025');
+    assert.match(grants.sealed_packages.find(pkg => pkg.classification==='current').after_revoke_version,/没有可确认的当班节点/);
     const rollback = await revoke();
     assert.equal(rollback.current_package.version,'g000025');
     assert.deepEqual((await revoke()).current_package,rollback.current_package);
@@ -801,7 +801,8 @@ test('封存前同源兜底，封存后正常交班只给当前包，旧包能�
     assert.equal(prior.version,'g000025');
     await dbValue(db.human,'select public.clued_owner_grant_revoke_v1($1) v',
       [{grant_id: prior.grant_id, acceptance_sha256: prior.acceptance_sha256}]);
-    assert.equal((await classification(primary)).classification,'revoked');
+    assert.equal((await classification(primary)).classification,'legacy');
+    assert.equal((await classification(primary)).revoked,true);
     assert.equal(await dbValue(admin,'select clued_private.fleet_node_target_v1($1,$2) v',[owner,primary]),null);
 
   } finally { await db.close(); }
@@ -985,6 +986,158 @@ async function installReleaseDoor({ admin, user, claimResult }) {
     values($1,$2,'release-door',now(),$3)`,[user,release,claimResult.receipt_id]);
   await admin.query('select clued_private.release_door_install_v1($1)',[repo]);
 }
+
+async function arrivalFleet(t) {
+  const d = await sharedTrainFixture(t);
+  const { admin, user } = d.db;
+  const holder = await d.addNode('g23-holder', { legacy: true });
+  const standby = await d.addNode('g23-standby');
+  const subject = d.head();
+  await d.authorize(subject);
+  await d.enableV2();
+  await installReleaseDoor(d.db);
+  async function report(node, source, generation, mode) {
+    const at = (await dbValue(admin, 'select clock_timestamp() v')).toISOString();
+    const reply = await d.legacy(node, { action: 'ci_node_heartbeat', state: 'NORMAL', mode,
+      probe: mode === 'ACTIVE' ? 'held' : 'not-held', service_running: true, snapshot_age_seconds: 0,
+      ci_source_manifest_sha256: source, fleet_delivery: testDelivery(node.id, source, generation, at),
+      fleet_runtime: { idle: true, selfcheckAt: at } });
+    assert.equal(reply.status, 'ok', JSON.stringify(reply));
+  }
+  await report(holder, d.source, 23, 'ACTIVE');
+  await report(standby, d.source, 23, 'STANDBY');
+  const source27 = sha('arrival-g27');
+  async function sealPair(currentSource = source27) {
+    const previous = await seedSealedPackage(d.db, 25, sha('uninstalled-g25'));
+    const current = await seedSealedPackage(d.db, 27, currentSource, { commit: d.sha('source') });
+    return { previous, current };
+  }
+  const revoke = pkg => d.db.native('clued_owner_grant_revoke_v1', {
+    grant_id: pkg.grantId, acceptance_sha256: pkg.acceptanceSha256 });
+  const preview = async () => (await d.db.native('clued_owner_grants_list_v1', {})).sealed_packages
+    .find(pkg => pkg.classification === 'current').after_revoke_version;
+  async function markFailover() {
+    await admin.query(`insert into clued_private.ci_failover_members_v1 values
+      ($1,$2,1,now()-interval '1 hour',$4),($1,$3,2,now()-interval '1 hour',$4)`,
+    [user, holder.binding, standby.binding, d.db.claimResult.receipt_id]);
+    await admin.query(`insert into clued_private.ci_failover_settings_v1 values
+      ($1,true,now()-interval '1 hour',1,now(),$2)`, [user, d.db.claimResult.receipt_id]);
+  }
+  const tick = () => dbValue(admin, 'select clued_private.ci_admission_failover_owner_v1($1) v', [user]);
+  const pkg = node => dbValue(admin, 'select clued_private.fleet_node_package_v1($1,$2) v', [user,node.id]);
+  async function reserveStandby(current) {
+    await admin.query(`insert into clued_private.fleet_maintenance_v1
+      (node_id,user_id,binding_generation,operation_id,grant_id,state,method,successor)
+      select node_id,user_id,binding_generation,$2,$3,'reserve','handover',$4 from clued_private.ci_nodes_v1 where node_id=$1`,
+    [standby.id, d.uuid(), current.grantId, holder.id]);
+  }
+  return { d, holder, standby, subject, source27, report, sealPair, revoke, preview, markFailover, reserveStandby, tick, pkg };
+}
+
+test('到位规则 1：无人安装封存包，两台同源仍可签名开批、准备和发送落地', async t => {
+  const { d, holder, standby, subject, sealPair, report } = await arrivalFleet(t);
+  await sealPair();
+  const staged = await d.joinAndStage(holder, subject);
+  const lease = await d.command(holder, 'batch_acquire', { batchId: staged.batchId });
+  await landReadyBatch(d, holder, lease, staged);
+  await report(standby, sha('different unsealed Source'), 24, 'STANDBY');
+  const refused = await d.command(holder, 'batch_reserve', { baseSha: staged.baseSha, members: staged.members });
+  assert.equal(refused.error_code, 'ci_source_mismatch');
+});
+
+test('到位规则 2：无人安装封存包，备班可摘牌重装', async t => {
+  const { d, standby, sealPair } = await arrivalFleet(t);
+  const { current } = await sealPair();
+  const reply = await d.legacy(standby, { scope: 'global', action: 'fleet_maintenance', command: 'delist',
+    node_id: standby.id, binding_generation: 1, method: 'reinstall', operation_id: d.uuid(), grant_id: current.grantId });
+  assert.equal(reply.state, 'delisted', JSON.stringify(reply));
+});
+
+test('到位规则 3：首台回归时旧批作废，同一队首在交班后重排', async t => {
+  const { d, holder, standby, subject, source27, report, sealPair, markFailover, tick, pkg } = await arrivalFleet(t);
+  const staged = await d.joinAndStage(holder, subject);
+  const lease = await d.command(holder, 'batch_acquire', { batchId: staged.batchId });
+  const handle = { batchId: staged.batchId, generation: lease.generation };
+  const prepared = await d.command(holder, 'landing_prepare', { ...handle, generationRefOid: staged.generationRefOid,
+    successorRefOid: d.sha('unused landing'), evidence_digest: d.digest(JSON.stringify(staged.runs)),
+    requiredRunsSha256: lease.requiredRunsSha256 });
+  assert.equal(prepared.state, 'reserved', JSON.stringify(prepared));
+  await sealPair();
+  await markFailover();
+  await report(standby, source27, 27, 'STANDBY');
+  assert.equal((await pkg(holder)).classification, 'outside');
+  assert.equal((await d.command(holder, 'landing_send', { ...handle, effect_key: prepared.effect_key })).error_code, 'ci_source_mismatch');
+  const { admin } = d.db;
+  await admin.query('begin');
+  try {
+    await admin.query(`update clued_private.ci_node_liveness_v1 set last_heartbeat_at=last_heartbeat_at-interval '2 days',
+      heartbeat_previous_at=heartbeat_previous_at-interval '2 days',steady_since=steady_since-interval '2 days',
+      readable_at=readable_at-interval '2 days' where node_id=$1`, [standby.id]);
+    assert.equal((await pkg(holder)).classification, 'outside', '备班心跳变旧不会切回同源模式');
+  } finally { await admin.query('rollback'); }
+  await admin.query('begin');
+  try {
+    await admin.query("update clued_private.ci_train_landing_v2 set state='unknown' where effect_key=$1", [prepared.effect_key]);
+    assert.equal((await tick()).outcome, 'holder_alive', '可能已发送的落地要先读回');
+    assert.equal(await dbValue(admin,'select state v from clued_private.ci_train_batches_v2 where batch_id=$1', [staged.batchId]), 'waiting_checks');
+  } finally { await admin.query('rollback'); }
+  const result = await tick();
+  assert.equal(result.outcome, 'fleet_promoted', JSON.stringify(result));
+  assert.equal((await pkg(holder)).maintenance, 'reserve');
+  assert.deepEqual(await d.one(admin, `select b.state batch,l.state landing from clued_private.ci_train_batches_v2 b
+    join clued_private.ci_train_landing_v2 l using(batch_id) where l.effect_key=$1`, [prepared.effect_key]),
+  { batch: 'invalidated', landing: 'revoked' });
+  await admin.query('update clued_private.binding_roles_v1 set effective_at=granted_at where binding_id=$1 and revoked_at is null', [standby.binding]);
+  await report(standby, source27, 27, 'ACTIVE');
+  const queue = await dbValue(admin, 'select clued_private.work_claim_merge_queue_current_v1($1,$2) v',
+    [d.db.user, 'merge:' + repo + ':main']);
+  assert.ok(queue.entries.some(entry => entry.claim_id === subject.claim_id && entry.state === 'head'));
+  assert.equal(await dbValue(admin, `select count(*)::int v from public.clued_audit_receipts where user_id=$1
+    and operation='work_claim_merge_queue_rejoin' and object_id=$2 and metadata->>'batch_id'=$3`,
+  [d.db.user, subject.claim_id, staged.batchId]), 1);
+  assert.equal(await dbValue(admin, 'select node_id v from clued_private.ci_duty_holder_v1($1,$2)',
+    [d.db.user, d.db.project]), standby.id);
+});
+
+test('到位规则 4：全部封存包已撤销，全员仍在同一撤销包上可开批', async t => {
+  const { d, holder, standby, subject, report, sealPair, revoke } = await arrivalFleet(t);
+  const { current, previous } = await sealPair(d.source);
+  await report(holder, d.source, 27, 'ACTIVE');
+  await report(standby, d.source, 27, 'STANDBY');
+  assert.equal((await revoke(current)).status, 'committed');
+  assert.equal((await revoke(previous)).status, 'committed');
+  assert.ok((await d.joinAndStage(holder, subject)).batchId);
+});
+
+test('到位规则 5：撤销在跑的当班包，后备取回当班并可开批', async t => {
+  const { d, holder, standby, subject, source27, report, sealPair, revoke, markFailover, reserveStandby, tick, pkg } = await arrivalFleet(t);
+  const { current } = await sealPair();
+  await markFailover();
+  await report(holder, source27, 27, 'ACTIVE');
+  await reserveStandby(current);
+  assert.equal((await revoke(current)).status, 'committed');
+  await tick();
+  const { admin, user } = d.db;
+  await admin.query('update clued_private.binding_roles_v1 set effective_at=granted_at where binding_id=$1 and revoked_at is null', [standby.binding]);
+  assert.equal(await dbValue(admin, 'select binding_id v from clued_private.ci_duty_holder_v1($1,$2)', [user,d.db.project]), standby.binding);
+  assert.equal((await pkg(standby)).maintenance, 'available');
+  await report(standby, d.source, 23, 'ACTIVE');
+  assert.ok((await d.joinAndStage(standby, subject)).batchId);
+});
+
+test('到位规则 6：撤销预演按节点已装的包，全员在本包时提示出修复包', async t => {
+  const { d, holder, standby, source27, report, sealPair, preview, markFailover, reserveStandby } = await arrivalFleet(t);
+  const { current } = await sealPair();
+  await markFailover();
+  await report(holder, source27, 27, 'ACTIVE');
+  await reserveStandby(current);
+  const result = await preview();
+  assert.match(result, /g23-standby/);
+  assert.match(result, /g000023/);
+  assert.doesNotMatch(result, /g000025/);
+  await report(standby, source27, 27, 'STANDBY');
+  assert.match(await preview(), /全部.*此包.*列车继续.*新包修复/);
+});
 
 test('共享列车签名开批和落地由真实当班授权，检查完成后后备仍可救场，主线读回才摘牌', async t => {
   const d = await sharedTrainFixture(t);
