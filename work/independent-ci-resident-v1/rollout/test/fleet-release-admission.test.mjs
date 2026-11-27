@@ -13,6 +13,7 @@ const files = [
   '20261126175000_ci_train_landing_receipts_v2.sql',
   '20261127120000_fleet_delivery_seal_v1.sql',
   '20261127120100_fleet_pending_delivery_v1.sql',
+  '20261127120200_fleet_delivery_recipients_v1.sql',
 ];
 const workflowPath = '.github/workflows/clued-cloud-production-release.yml';
 const root = new URL('../../../../', import.meta.url);
@@ -153,7 +154,7 @@ test('迁移有缺项且备份失败时，正式 prepare 必须零生产写入�
   const release = {
     admit: async () => {},
     requirements: async () => planOf(w.source.commit),
-    read: async () => ({ snapshot: { base: true, applied: [], interfaces: { train: false, landing: false, delivery: false, pendingDelivery: false } } }),
+    read: async () => ({ snapshot: { base: true, applied: [], interfaces: { train: false, landing: false, delivery: false, pendingDelivery: false, deliveryRecipients: false } } }),
     migrate: async missing => {
       effects.push(missing);
       throw Object.assign(new Error('备份失败'), { code: 'FLEET_MIGRATION_RUN_FAILED' });
@@ -261,5 +262,5 @@ test('账本中的后项已应用而前项缺失时拒绝续跑', () => {
   assert.deepEqual(plan.map(row => row.file), files);
   const row = plan[1];
   assert.throws(() => missingMigrations(plan, { base: true, applied: [{ name: row.name, version: row.version, digest: row.digest }],
-    interfaces: { train: false, landing: true, delivery: false, pendingDelivery: false } }), { code: 'FLEET_MIGRATION_DEPENDENCY_MISMATCH' });
+    interfaces: { train: false, landing: true, delivery: false, pendingDelivery: false, deliveryRecipients: false } }), { code: 'FLEET_MIGRATION_DEPENDENCY_MISMATCH' });
 });

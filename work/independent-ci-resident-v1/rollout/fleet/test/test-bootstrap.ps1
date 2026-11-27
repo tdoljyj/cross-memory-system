@@ -21,10 +21,16 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [
 Yes ($errors.Count -eq 0) 'parse:bootstrap.ps1'
 $functions = @{}
 foreach ($f in $ast.FindAll({ param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { $functions[$f.Name] = $f.Extent.Text }
+Case 'first-install:one-UAC' {
+  $bootstrap = $functions['Invoke-Bootstrap']
+  Yes ($bootstrap -match "Invoke-Elevated 'install'" -and $bootstrap -notmatch "Invoke-Elevated 'host'") 'first-install:host-and-launcher-use-one-elevation'
+  Yes ($functions['Invoke-Stage'] -match "(?s)FIRST_INSTALL_HOST_READY.*Invoke-FirstInstallLauncher") 'first-install:launcher-starts-only-after-host-ready'
+}
 foreach ($name in @('Get-Key', 'Read-Sha256Sums', 'Get-ReleaseVersion', 'Get-RequiredAssets', 'Test-AssetSet', 'Test-PrereqManifest', 'Get-LastJsonLine', 'Get-ElevatedArguments', 'Test-UacDeclined',
-    'Test-SafePath', 'Test-SafeArgument', 'Get-ExtractState', 'Get-StageFailure', 'Test-StageOperator', 'Test-CredentialsToClear',
-    'Sha256File', 'Invoke-StageChild', 'Test-ParentAlive', 'Clear-CredentialDirectory', 'Test-FirstInstallCheck', 'Copy-ToWork', 'Test-UnderDirectory', 'Get-LauncherVerdict',
-    'Get-NeededPrereqs', 'Expand-Cached', 'ConvertTo-PlainData', 'ConvertTo-JsonLine', 'Out-Result', 'Out-Step', 'Add-ResultLine', 'Get-StageVerdict', 'Read-StageResult')) {
+    'Test-SafePath', 'Test-SafeArgument', 'Get-ExtractState', 'Get-StageFailure', 'Test-StageOperator',
+    'Sha256File', 'Invoke-StageChild', 'Clear-CredentialDirectory', 'Test-FirstInstallCheck', 'Copy-ToWork', 'Test-UnderDirectory', 'Get-LauncherVerdict',
+    'Get-NeededPrereqs', 'Expand-Cached', 'ConvertTo-PlainData', 'ConvertTo-JsonLine', 'Out-Result', 'Out-Step', 'Add-ResultLine', 'Get-StageVerdict', 'Read-StageResult',
+    'Invoke-FirstInstallLauncher')) {
   Yes ($functions.ContainsKey($name)) ('present:' + $name); if ($functions.ContainsKey($name)) { . ([scriptblock]::Create($functions[$name])) }
 }
 # the constants the functions read, from the script itself
@@ -138,8 +144,8 @@ Yes ($null -eq (Get-LastJsonLine "{`"status`":`"A`"}`nnot json")) 'last-json:not
 Yes ($null -eq (Get-LastJsonLine '')) 'last-json:empty'
 # M3: an elevated run is -File with its arguments one by one, each inside the whitelist: no value ever becomes code
 $self = 'C:\ProgramData\CluedBootstrap\abc\fleet-node-1.bootstrap.ps1'
-$ea = Get-ElevatedArguments $self @('-Stage', 'host', '-Tar', 'C:\x\fleet-node-1.tar', '-ArchiveSha256', ('a' * 64), '-ExpectedOperatorSid', 'S-1-5-21-1-2-3-1000')
-Yes ((@($ea) -join ' ') -ceq ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + $self + ' -Stage host -Tar C:\x\fleet-node-1.tar -ArchiveSha256 ' + ('a' * 64) + ' -ExpectedOperatorSid S-1-5-21-1-2-3-1000')) 'elevated:file-and-arguments'
+$ea = Get-ElevatedArguments $self @('-Stage', 'install', '-Tar', 'C:\x\fleet-node-1.tar', '-ArchiveSha256', ('a' * 64), '-ExpectedOperatorSid', 'S-1-5-21-1-2-3-1000')
+Yes ((@($ea) -join ' ') -ceq ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + $self + ' -Stage install -Tar C:\x\fleet-node-1.tar -ArchiveSha256 ' + ('a' * 64) + ' -ExpectedOperatorSid S-1-5-21-1-2-3-1000')) 'elevated:file-and-arguments'
 foreach ($bad in @("C:\x';calc;'", 'C:\a b\x.tar', 'C:\x\..\y', '\\server\share\x', 'C:\x\', '$(calc)', 'C:\x"y', '-Stage host')) {
   Throws { Get-ElevatedArguments $self @('-Tar', $bad) } 'BOOTSTRAP_ELEVATED_ARGUMENT_REFUSED:*' ('elevated:refused ' + $bad)
 }
@@ -149,7 +155,7 @@ Yes ((Test-SafeArgument ('a' * 64)) -and (Test-SafeArgument 'S-1-5-21-1-2-3-1000
 Yes ($text -notmatch 'EncodedCommand' -and $text -notmatch '\[scriptblock\]::Create\(') 'elevated:no-code-built-from-values'
 # M2: the accepted inputs are checked non-elevated (install.mjs first-install-check) before the first UAC; P1 gets their pins from it
 $main = $text.Substring($text.IndexOf('function Invoke-Bootstrap'))
-Yes ($main.IndexOf('first-install-check') -gt 0 -and $main.IndexOf('first-install-check') -lt $main.IndexOf("Invoke-Elevated 'host'")) 'm2:check-before-uac-1'
+Yes ($main.IndexOf('first-install-check') -gt 0 -and $main.IndexOf('first-install-check') -lt $main.IndexOf("Invoke-Elevated 'install'")) 'm2:check-before-uac-1'
 foreach ($p in @("'-KitSha256', [string]`$chk['kitSha256']", "'-ToolchainNodeSha256', [string]`$chk['toolchainNodeSha256']", "'-RegistrarSha256', [string]`$chk['registrarSha256']", "'-ExpectedOperatorSid', `$operator")) { Yes ($main.Contains($p)) ('m2/m4:host-argument ' + $p) }
 Yes ($text -notmatch 'CompanionTaskRegistrar\.cs') 'l2:registrar-pin-not-computed-here'
 # M4: the elevated stage refuses another account than the one that started the bootstrap
@@ -202,12 +208,8 @@ Yes ($sf['status'] -ceq 'BOOTSTRAP_STAGE_FAILED' -and $sf['stage'] -ceq 'host' -
 $stageBody = $text.Substring($text.IndexOf('function Invoke-Stage '))
 $stageBody = $stageBody.Substring(0, $stageBody.IndexOf("`nfunction "))
 Yes ($stageBody -match 'finally' -and $stageBody -match 'Get-StageFailure' -and $stageBody -match 'Remove-Item -LiteralPath \$stageDir') 'l4:stage-cleans-its-copies'
-# L3: the token directory is cleared on every end except a host preparation that left it for the launcher
-Yes ((Test-CredentialsToClear 'host' 'FIRST_INSTALL_HOST_READY') -eq $false) 'l3:host-ready-keeps-them-for-the-launcher'
-foreach ($st in @('FIRST_INSTALL_HOST_REFUSED', 'BOOTSTRAP_STAGE_FAILED', $null, 'RESTART_THEN_RUN_THE_SAME_COMMAND')) { Yes ((Test-CredentialsToClear 'host' $st) -eq $true) ('l3:host-end-clears ' + $st) }
-foreach ($st in @('R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', 'STOPPED', $null)) { Yes ((Test-CredentialsToClear 'launcher' $st) -eq $true) ('l3:launcher-end-clears ' + $st) }
-Yes ((Test-CredentialsToClear 'cleanup' $null) -eq $true) 'l3:cleanup'
-Yes ($main -match "Invoke-Elevated 'cleanup'") 'l3:a-failed-prepare-or-declined-launcher-clears-them'
+Yes ($stageBody -match '(?s)finally.+if \(\$clearCredentials\).+Clear-CredentialDirectory' -and
+  $main -notmatch "Invoke-Elevated 'cleanup'") 'l3:single-stage-clears-credential-staging'
 Yes (Test-UacDeclined (New-Object InvalidOperationException('x', (New-Object ComponentModel.Win32Exception(1223))))) 'uac:declined'
 Yes (-not (Test-UacDeclined (New-Object ComponentModel.Win32Exception(2)))) 'uac:other-error'
 
@@ -269,19 +271,6 @@ try {
   catch { $old = 'threw ' + $_.Exception.GetType().FullName + ': ' + $_.Exception.Message }
   $evidence['oldPatternLauncherStop'] = $old
 
-  # H2: the host stage keeps the token directory for the launcher only while the bootstrap that started it still waits for it; it
-  # sweeps one an earlier run left before P1 runs.
-  Case 'h2:ready-but-the-bootstrap-gone-clears' {
-    Yes ((Test-CredentialsToClear 'host' 'FIRST_INSTALL_HOST_READY' $false) -eq $true) 'h2:parent-gone-clears'
-    Yes ((Test-CredentialsToClear 'host' 'FIRST_INSTALL_HOST_READY' $true) -eq $false) 'h2:parent-waiting-keeps'
-    Yes ((Test-CredentialsToClear 'host' 'FIRST_INSTALL_HOST_REFUSED' $true) -eq $true) 'h2:refused-clears'
-  }
-  Case 'h2:the-parent-is-known-by-pid-and-start-time' {
-    $me = Get-Process -Id $PID
-    Yes (Test-ParentAlive $PID $me.StartTime.ToUniversalTime().Ticks) 'h2:alive'
-    Yes (-not (Test-ParentAlive $PID ($me.StartTime.ToUniversalTime().Ticks + 1))) 'h2:pid-reused-is-not-the-parent'
-    Yes (-not (Test-ParentAlive 0 0)) 'h2:no-parent'
-  }
   Case 'h2:a-left-directory-is-swept' {
     $cd = Join-Path $tmp 'credentials'; [void][IO.Directory]::CreateDirectory($cd); [IO.File]::WriteAllText((Join-Path $cd 'resident-upgrade.token'), 'x')
     $c = Clear-CredentialDirectory $cd
@@ -289,11 +278,38 @@ try {
     $c = Clear-CredentialDirectory $cd
     Yes ($c.existed -eq $false -and $c.cleared -eq $true) 'h2:nothing-there'
   }
-  Case 'h2:the-host-stage-sweeps-first-and-knows-its-parent' {
-    $hostPart = $stageBody.Substring($stageBody.IndexOf("if (`$Stage -ceq 'host')"))
-    Yes ($hostPart.IndexOf('Clear-CredentialDirectory') -gt 0 -and $hostPart.IndexOf('Clear-CredentialDirectory') -lt $hostPart.IndexOf('Invoke-StageChild')) 'h2:sweep-before-p1'
-    Yes ($stageBody -match 'Test-ParentAlive \$ParentProcessId \$ParentStartTicks') 'h2:stage-checks-the-parent'
-    Yes ($main.Contains("'-ParentProcessId'") -and $main.Contains("'-ParentStartTicks'")) 'h2:bootstrap-names-itself'
+  Case 'first-install:protected-inputs-verified-before-preparing-host' {
+    Yes ($stageBody.IndexOf('Get-ProtectedInstallInputs') -gt 0 -and
+      $stageBody.IndexOf('Get-ProtectedInstallInputs') -lt $stageBody.IndexOf('Clear-CredentialDirectory') -and
+      $stageBody.IndexOf('Clear-CredentialDirectory') -lt $stageBody.IndexOf('$p1Args')) 'first-install:precheck-then-staging-cleanup-then-host'
+  }
+  Case 'first-install:protected-stage-runs-only-the-verified-launcher' {
+    $stage = Join-Path $tmp 'first-install-stage'
+    $fixtureLauncher = Join-Path (Join-Path $stage 'prepare') 'launcher.ps1'
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $fixtureLauncher))
+    [IO.File]::WriteAllText($fixtureLauncher, '# fixture only')
+    $ArchiveSha256 = $h1
+    $inputFiles = @{ node = 'fixture-node'; acceptance = (Join-Path $stage 'acceptance.json'); assets = $stage; environment = @{} }
+    $calls = New-Object Collections.Generic.List[string]
+    $mode = 'refuse'
+    function Invoke-StageChild([string]$exe, [string[]]$arguments) {
+      $calls.Add($exe)
+      if ($exe -ceq 'fixture-node') {
+        Yes ($arguments -ccontains '--from' -and $arguments -ccontains $inputFiles.acceptance) 'first-install:prepare-only-protected-inputs'
+        if ($mode -ceq 'refuse') { return @{ exit = 1; last = @{ status = 'FLEET_NODE_INSTALL_REFUSED' } } }
+        $digest = if ($mode -ceq 'bad-hash') { '0' * 64 } else { Sha256File $fixtureLauncher }
+        return @{ exit = 0; last = @{ status = 'FLEET_NODE_FIRST_INSTALL_PREPARED'; launcher = @{ path = $fixtureLauncher; sha256 = $digest } } }
+      }
+      Yes ($arguments -ccontains $fixtureLauncher -and $arguments -ccontains '-RunApprovedInstall') 'first-install:executes-verified-stage-launcher'
+      return @{ exit = 0; last = @{ status = 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' } }
+    }
+    $run = { Invoke-FirstInstallLauncher $stage (Join-Path $stage 'a.tar') (Join-Path $stage 'install.mjs') $inputFiles $null }
+    Yes ((& $run).status -ceq 'FLEET_NODE_INSTALL_REFUSED' -and $calls.Count -eq 1) 'first-install:prepare-refused-stops-before-launcher'
+    $calls.Clear(); $mode = 'bad-hash'
+    Throws $run 'LAUNCHER_CHANGED' 'first-install:refuses-altered-launcher'
+    Yes ($calls.Count -eq 1) 'first-install:altered-launcher-never-runs'
+    $calls.Clear(); $mode = 'valid'
+    Yes ((& $run).status -ceq 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' -and $calls.Count -eq 2) 'first-install:same-stage-prepare-and-launch'
   }
 
   # M2: the toolchain's node.exe is the fleet's controller runtime before the first UAC (the check P1 can no longer undo)
@@ -306,7 +322,7 @@ try {
     Yes ((Test-FirstInstallCheck $good $h1 $null $h3) -ccontains 'KIT_NOT_THE_LISTED') 'm2:no-kit'
     $bad = [ordered]@{}; foreach ($k in @($good.Keys)) { $bad[$k] = $good[$k] }; $bad['registrarSha256'] = 'x'
     Yes ((Test-FirstInstallCheck $bad $h1 $h2 $h3) -ccontains 'PIN_SHAPE:registrarSha256') 'm2:pin-shape'
-    $hostAt = $main.IndexOf("Invoke-Elevated 'host'")
+    $hostAt = $main.IndexOf("Invoke-Elevated 'install'")
     Yes ($main.IndexOf('Test-FirstInstallCheck') -gt 0 -and $main.IndexOf('Test-FirstInstallCheck') -lt $hostAt -and $main.IndexOf('Sha256File $nodeExe[0]') -lt $hostAt -and $main.IndexOf('Sha256File $nodeExe[0]') -gt 0) 'm2:checked-before-uac-1'
   }
 

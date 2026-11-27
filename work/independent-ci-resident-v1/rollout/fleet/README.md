@@ -132,7 +132,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 ## 1. 总览与顺序
 
 ```
-发布机   publish prepare（分配代号、构建一次、建 Release、取 kit、备镜像、写接受请求） -> 候选演练（drill/，PASS 才往下） -> publish seal（开接受请求，等 Owner 批准，封存接受文件并补全索引）
+发布机   publish prepare（分配代号、构建一次、建 Release、取 kit、备镜像、写接受请求） -> publish seal（开接受请求，等 Owner 批准，封存接受文件并补全索引）
 节点     该版资产放进一个目录 -> fleet-node-<v>.bootstrap.ps1 -From <目录>（非提权；它取前置、解包、prepare，在要提权处自己请求 UAC）
 ```
 
@@ -172,12 +172,12 @@ node R/rollout/fleet/universal.mjs build --repo <git 目录> --commit <40 位 he
 node R/rollout/fleet/publish.mjs prepare --commit <main 的 40 位 SHA> --dir <构建输出目录> --out <目录> [--image <role-image-<id>.tar.gz> ...] [--repo tdoljyj/cross-memory-system] [--index <索引文件>]
 ```
 
-构建之后、Owner 接受之前，在**装着更早版本、Linux 与 Windows 同一包的本机已装节点**上运行（非提权，对节点只读），且**在本机升到该版之前**。不要 Decision、回执或时间，也不读任何手写的字段文件。能在本地做的检查（构建输出、节点入口、kit、Source、镜像）都在往 GitHub 或索引写任何东西之前做完；任何一步不过就不写接受请求，前 4 步不过则 Release 与索引都不动。它依次做：
+构建之后、Owner 接受之前，在发布机运行。暂存候选与已发布请求提供原样续跑的字节。构建输出、节点入口、kit、Source、镜像和收件登记核对通过后，才占号及写 Release。
 
 1. Release 上已有该版接受文件：拒绝（`PREPARE_VERSION_ALREADY_ACCEPTED`），不再挂 kit、不再写请求，Release 缺 kit 也一样；索引行还空着，说明上次 `seal` 在写索引之前断了，用原参数重跑 `seal` 补上。索引行有值而 Release 上没有接受文件：拒绝，不猜。索引有该版的行而没有 Release：当场拒绝（`PREPARE_INDEX_ROW_WITHOUT_RELEASE`），不取 kit、不取镜像。
-2. 首装 kit：**Release 上已有该版 kit 就用 Release 上那一份**（下载），不再去节点取。kit 的 `template.versionFacts` 带 `observedAt`，每次从节点取都是不同的字节；挂上之后，Release 上那一份就是唯一事实。Release 上还没有，才从本机取。两种来源都按新节点的读法核（`readKit`），并核模板 Source 不等于本包 Source：相等即拒绝，说明本机已经升到这一版，须在升级之前执行。
-3. 接受请求的 `fleetRefs`：从本机已装记录只读带入，来源与 `install.mjs fleet-refs` 相同：`sourceAcceptanceRef`、`hostQualificationRef`、`formalRoles` 三项进 Source；`ownerAuthorizationRef`、`publisherQualificationRef`、`ownerPackageAcceptanceRef` 三项不进 Source，每次接受都沿用（来源见 `BATCH1-INTERFACES.md` 第 6 节）。Source 先从构建输出的 tar 算出（Decision、回执与时间不进 Source，算时用演练保留值占位），第 6 步再用同一核对从 Release 的 tar 重算比对。
-4. 备齐 kit 列的每个本地角色镜像：用 `--image` 给；没给就用索引里上一版 Release 的同 id `role-image-<id>.tar.gz`，并按该版 `first-install.SHA256SUMS` 核哈希。缺一个即拒绝；下载失败按下载失败报，不当作缺镜像。
+2. 首装 kit：新候选以索引中最新的合格前版 Release 为模板。回读精确请求、Owner Grant、Receipt 和接受文件，核对 kit 的已接受摘要，再用 `readKit` 解析。已暂存的候选沿用原字节。
+3. 接受请求沿用该发布的 `fleetRefs`，用当前候选 tar 重算 Source，封存时再用 Release 的 tar 重算。待定、在役及排空节点按登记和有效 Binding 确认收件资格，空登记允许制包。
+4. 备齐 kit 列的本地角色镜像。上一 Release 的接受请求钉住镜像摘要时可以按摘要取用，也可用 `--image` 提供镜像。
 5. 建 Release 与索引行（`ensureRelease`，第 3 节）：
    - 没有 Release、索引也没有该版的行：核对并占用正式 tag，再建 Release、核资产、追加索引行。
    - 没有 Release，索引却已有该版的行：拒绝（`PREPARE_INDEX_ROW_WITHOUT_RELEASE`），不猜（第 1 步已拒，这里按当时的索引与 Release 再核一次）。
@@ -188,7 +188,7 @@ node R/rollout/fleet/publish.mjs prepare --commit <main 的 40 位 SHA> --dir <�
 
 ### 4.2 候选演练（接受之前）
 
-Owner 接受的，应当是已经在干净机器上装通过的东西：候选演练（`drill/`，见 `drill/FIRST-INSTALL-KIT.md`）用接受请求和该版的 kit、镜像组装自己的来宾目录。演练给来宾用的接受文件由接受请求加**演练保留值**生成（`publish.mjs` 的 `DRILL_RESERVED` 与 `acceptanceOf`，仓库里只此一处）。`seal` 与挂接受文件的步骤见到保留值即拒绝（`namesDrillReserved`），所以这份文件上不了 Release，真实节点拿不到。演练结束立刻 `-Finalize`（只回读 A9），回执定稿。`seal --drill-receipt` 只收 `candidate` 为 `true`、结论是 `PASS_A_FULL` 或 `PASS_A_PER_NODE_STEPS_REMAIN`（`DRILL_PASS_CONCLUSIONS`）的回执（A8 只验同一个包对已装节点两条入口都不动它：升级答“已到位”、prepare 以 `NEW_SOURCE_IS_THE_INSTALLED_ONE` 拒绝；旧包到新包的重装不在首装演练内，A8 的 detail 如实写着），`PASS_A_PENDING_PRODUCTION_READBACK` 等一律拒绝。顺序是**演练 → `-Finalize` → `seal`（开请求，把请求与终稿回执摆给 Owner）→ Owner 在确认页批准 → `seal` 封存**，接受之后不开机、不再回读。演练失败不找 Owner：修、出新候选、重跑。首装演练不是原地升级的门，只走升级路径的紧急包可以不带演练回执。
+正式发布使用规定的候选测试与发布准入结果。`seal --drill-receipt` 可附历史候选的合格演练回执，核对的是同一候选的 tar、Source 和 kit 摘要。使用演练保留值生成的接受文件不能成为正式 Release 资产。
 
 ### 4.3 接受：seal 开请求、Owner 在确认页批准、seal 封存
 
@@ -291,14 +291,14 @@ bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象�
 
 ### 5.1 首装：同一条命令，没有回执的节点
 
-同一个入口 `fleet-node-<v>.bootstrap.ps1 -From <目录>`。它先非提权运行 `install.mjs first-install-check`（接受文件、tar 与 kit 的哈希、角色镜像，并核 toolchain 的 `node.exe` 就是 kit 记录的控制器运行时：不符即 `CONTROLLER_NODE_NOT_THE_FLEETS`，在任何 UAC 之前），再提权跑一次主机准备（UAC 1，`windows/first-install-host.ps1`：账户、runner、发行版、凭据，写 `C:\ProgramData\CluedIndependentCI\first-install\facts.json`；它读的 tar 与前置清单是 bootstrap 复制到本地工作目录的副本，提权令牌看不到 Owner 映射的盘符），再非提权跑 `install.mjs prepare ... --from <目录>`，最后提权跑它给的启动器（UAC 2）。
+同一个入口 `fleet-node-<v>.bootstrap.ps1 -From <目录>`。先非提权检查接受文件、tar、kit、角色镜像和控制器 Node 摘要。一次 UAC 内，原操作人持本机安装锁，把已钉住的资产及工具复制到管理员专用目录并复核，再依次完成主机准备、`install.mjs prepare --from` 和启动器。主机准备将本次首装事实写到 `C:\ProgramData\CluedIndependentCI\first-install\facts.json`。
 
 - `prepare` 的判据只有一个：有没有 `install\install-receipt.json`。没有时：本机不得有任何常驻残留（三个服务、resident 根；有就 `FIRST_INSTALL_RESIDUE_PRESENT` 并列出，不猜、不覆盖）；节点值只从 `facts.json`（`clued.independent-ci.first-install-facts/1`，名字全由机器名推导，规则写在 `readFirstInstallFacts`）和该版的首装 kit 读。CI 根对 operator 不可列目录（主机准备设的 DACL），`prepare` 看不到 `resident-uninstalled-*`：输出的 `residueUnchecked` 写明这一项没查，不当作没有（主机准备与启动器在提权下查）。
-- 首装 kit：`fleet-node-<v>.first-install-kit.json`，由 `publish.mjs prepare` 在接受前从装着更早版本的本机已装节点取得并上传，挂上之后只认 Release 上那一份（第 4 节；没有单独的取 kit、挂 kit 步骤）；内容是模板 roles-v3 与 version facts、模板 Source 清单与公钥、全队共用的 record 值、模板 policy/companion 配置、角色镜像。其 sha256 由 Owner 随版接受（接受文件的 `firstInstallKitSha256`）：没有它的接受文件，`seal` 不挂、`prepare` 与升级不读（`FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT`）；Release 上缺 kit 资产、`first-install.SHA256SUMS` 里的哈希与接受文件不等、或缺 kit 列的任一镜像，`seal` 同样拒绝。本机已装的旧版记录不受影响。
+- 首装 kit：`fleet-node-<v>.first-install-kit.json`，由 `publish.mjs prepare` 从前版已接受 Release 读回并验证，再随候选上传（第 4 节；没有单独的取 kit、挂 kit 步骤）；内容是模板 roles-v3 与 version facts、模板 Source 清单与公钥、全队共用的 record 值、模板 policy/companion 配置、角色镜像。其 sha256 由 Owner 随版接受（接受文件的 `firstInstallKitSha256`）：没有它的接受文件，`seal` 不挂、`prepare` 与升级不读（`FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT`）；Release 上缺 kit 资产、`first-install.SHA256SUMS` 里的哈希与接受文件不等、或缺 kit 列的任一镜像，`seal` 同样拒绝。本机已装的旧版记录不受影响。
 - 本地构建的角色镜像（contract-placement 的 `sha256:<id>`）随版发布为 `role-image-<id>.tar.gz`（全队一次导出），B 载入后由 docker 按 id 核内容；新节点不再要任何节点为它导出东西。
 - 其后与重装同一路径：建包两次、`linux-in\`、包内 `reinstall/linux/first-install.py` 的 `--in-dir/--out-dir` 形态（`A.sh` 首装检查与派生、`B.sh` 签名与安装、`B-resume.sh` 即 `B.sh`）、`install-plan.json`（`firstInstall`，无 W1，`secrets.source = first-install`）、`generate.py --fleet-plan`。结束输出 `FLEET_NODE_FIRST_INSTALL_PREPARED`。
 - 启动器：首装预检（无残留、令牌目录只有 SYSTEM/Administrators）→ 从 `first-install\credentials\` 带令牌并核指纹 → Windows 侧完整预检（runner 等待、两处秘密文件、安装器的两次 dry run 与 ACL 迁移计划；不过即停，Linux 未动）→ Linux A/B（由提权 Owner `wsl -u root`，发行版此时在 operator 名下的导入位置）→ 安装 → verify → companion → rearm → 现有的 M5-b 切换（`rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory`，把发行版 move 到 companion 名下）。没有 W1、没有卸载。首装的结论按这个顺序判（`Get-LauncherVerdict`）：先看角色，first-train 等待没有确认角色（终态 `role` 不是 `held` 或 `not-held`）时 bootstrap 答 `BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED`，码 `FIRST_INSTALL_ROLE_UNAUTHORIZED`（服务端拒了本节点的 CI 令牌）或 `FIRST_INSTALL_ROLE_UNCONFIRMED`（其余），换账户没过也是这个结论；角色确认之后再看切换，没有通过（`companionHeadless` 不是 `COMPANION_HEADLESS_QUALIFIED`）时答 `BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE`。两种都不答 `BOOTSTRAP_DONE`；切换的状态在每种结论的 `companionSwitch` 里都保留。
-- 令牌目录（`first-install\credentials\`）不留过本次运行：主机准备开始前先删掉以前运行留下的；主机准备只在 bootstrap 仍在等它时（进程号与启动时间）为启动器保留，bootstrap 已放弃等待或窗口已关就删；启动器在任何结局都删除（停止、异常、完成）；`prepare` 失败或启动器 UAC 被拒时 bootstrap 再请求一次 UAC 清掉。
+- 同一提权阶段负责清理 `first-install\credentials\` 的首装暂存令牌。它在主机准备前清理上次暂存，结束时再次读回清理结果。
 - 主机准备先写 `facts.json`（整份或没有），再放 App 私钥与 ci-admission 令牌：中途断掉只会留下有 facts、缺秘密的状态，下次运行按 facts 记录的指纹只问缺的那些（facts 记录了心跳令牌就必须再给），`-Reset` 能清掉；不会留下没有 facts、无法归属的秘密。
 - 中途停止：Linux A 之前停下，什么都没动，重跑同一条命令（P1 会再问令牌）。A 完成之后停下（B 中断、失败或 Windows 侧未完成），重跑同一条命令：Linux A 找到本提交的暂存（同一个包、自 A 起未变、新输入目录与暂存逐字节一致）即不再暂存，B 从停下处接着做；不一致按名拒绝。已安装（有回执）之后停下的，按重装处理，要用更新的包：同一个包会被 `NEW_SOURCE_IS_THE_INSTALLED_ONE` 拒绝。
 

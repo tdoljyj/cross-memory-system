@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { buildInput } from '../../../../../scripts/ci/clued-fleet-accept.mjs';
-import { firstInstallKitOf } from '../install.mjs';
+import { firstInstallKitOf, installedFleetMaterial } from '../install.mjs';
 import { DEFAULT_REPO, prepare } from '../publish.mjs';
 import { writeTar } from '../tar.mjs';
 import { buildUniversal } from '../universal.mjs';
@@ -63,7 +63,7 @@ export async function releaseAssets(t, now, version = 'g000025', sourceFixture =
   const kit = await firstInstallKitOf({ root: template.root, now });
   assert.equal(kit.record.scope, scope);
   const prepared = await prepare({ version, dir: path.dirname(build.tar), out, images, index, root: template.root, ghCommand, now,
-    deps: { generationTags, kitOf: options => firstInstallKitOf({ ...options, now }) } });
+    deps: { generationTags, kitOf: options => firstInstallKitOf({ ...options, now }), fleetMaterial: installedFleetMaterial } });
   assert.equal(prepared.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
   const assets = () => JSON.parse(fsSync.readFileSync(state, 'utf8')).assets;
   const asset = name => {

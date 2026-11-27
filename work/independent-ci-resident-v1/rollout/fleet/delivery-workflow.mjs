@@ -52,13 +52,13 @@ export function deliveryWorkflowClient({ runGh, sleep }) {
       if (r.status !== 0) throw new Error('FLEET_DELIVERY_WORKFLOW_UNAVAILABLE');
       return r.stdout;
     };
-    // 暂存预检走现有 project 输入，只传回包公钥、待发布请求和交付条件。
+    // 暂存登记核对使用现有 project 输入，只传回包公钥和待发布请求。
     const key = publicBytes(publicKey);
     let deliveryInput = key;
     if (operation === 'preflight') {
-      const { requestBytes, requirements } = details;
+      const { requestBytes } = details;
       if (requestBytes.length > STAGED_REQUEST_MAX_BYTES) throw new Error('FLEET_DELIVERY_STAGED_INPUT_TOO_LARGE');
-      const payload = Buffer.from(JSON.stringify({ request: requestBytes.toString('base64url'), requirements })).toString('base64url');
+      const payload = Buffer.from(JSON.stringify({ request: requestBytes.toString('base64url') })).toString('base64url');
       if (payload.length > STAGED_PAYLOAD_MAX_LENGTH) throw new Error('FLEET_DELIVERY_STAGED_INPUT_TOO_LARGE');
       deliveryInput = `${key}.${payload}`;
     }

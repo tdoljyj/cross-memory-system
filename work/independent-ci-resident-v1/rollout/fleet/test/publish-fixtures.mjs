@@ -7,7 +7,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepare, readBuild, seal, stageNodeEntry } from '../publish.mjs';
-import { reinstallEntries } from '../delivery-reader.mjs';
 import { writeTar } from '../tar.mjs';
 import { TREE_FILES, UNIVERSAL_CONTRACT } from '../universal.mjs';
 import { FAKE_GH, runFakeGh } from './fleet-fixtures.mjs';
@@ -26,7 +25,7 @@ function makeBuild(version = VERSION) {
   const entries = [{ path: `${FLEET}bootstrap.ps1`, data: BOOTSTRAP }, { path: `${FLEET}prereq-manifest.json`, data: PREREQ }];
   const numbered = version !== VERSION;
   if (numbered) {
-    for (const path of new Set([...TREE_FILES.map(name => `tree/${name}`), ...reinstallEntries])) {
+    for (const path of TREE_FILES.map(name => `tree/${name}`)) {
       if (!entries.some(entry => entry.path === path)) entries.push({ path, data: Buffer.from('pinned fixture\n') });
     }
   }

@@ -35,11 +35,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { acceptanceBytes, acceptanceOf } from '../../work/independent-ci-resident-v1/src/fleet-acceptance.mjs';
 import { deliveryBound, deliverySubject, fleetDeliveryPreflight } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-preflight.mjs';
-import { deliveryProjectionReaders, deliveryRequirements, verifyDeliveryTree } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-reader.mjs';
+import { verifyDeliveryTree } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-reader.mjs';
 import { deliveryWorkflowPacket, STAGED_PAYLOAD_MAX_LENGTH, STAGED_REQUEST_MAX_BYTES } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-workflow.mjs';
 import { sourceHashOf, validateAcceptance } from '../../work/independent-ci-resident-v1/rollout/fleet/install.mjs';
 import { checkDeliveryAssets, checkDeliveryKit, deliveryAssetManifestName, DRILL_RESERVED, namesDrillReserved, readRequest } from '../../work/independent-ci-resident-v1/rollout/fleet/publish.mjs';
-import { sourceRefsDigest } from '../../work/independent-ci-resident-v1/src/fleet-delivery-evidence.mjs';
 
 export { checkDeliveryKit };
 
@@ -162,7 +161,7 @@ function stagedInput(env, run, isAncestor) {
   const match = /^([A-Za-z0-9_-]{59})\.([A-Za-z0-9_-]+)$/.exec(env.FLEET_DELIVERY_KEY ?? '');
   if (!gated(run.version) || !match || match[2].length > STAGED_PAYLOAD_MAX_LENGTH || env.FLEET_ACCEPTANCE_SHA256) refuse('FLEET_DELIVERY_INPUT_REFUSED');
   const [, transportKey, packed] = match;
-  const { request: encoded, requirements } = JSON.parse(Buffer.from(packed, 'base64url'));
+  const { request: encoded } = JSON.parse(Buffer.from(packed, 'base64url'));
   if (typeof encoded !== 'string' || !/^[A-Za-z0-9_-]+$/.test(encoded)) refuse('FLEET_DELIVERY_INPUT_REFUSED');
   const bytes = Buffer.from(encoded, 'base64url');
   if (bytes.length > STAGED_REQUEST_MAX_BYTES) refuse('FLEET_DELIVERY_INPUT_REFUSED');
@@ -171,11 +170,7 @@ function stagedInput(env, run, isAncestor) {
   if (request.version !== run.version || request.repository !== run.repository || request.commit !== env.GITHUB_SHA ||
       !isAncestor(request.commit) || namesDrillReserved(request)) refuse('FLEET_DELIVERY_SUBJECT_CHANGED');
   validateAcceptance(acceptanceOf(request, DRILL_RESERVED));
-  const hashes = ['supervisorSourceSha256', 'linuxToolSha256', 'upgraderSha256'];
-  if (typeof requirements?.standardReinstall !== 'boolean' || Object.keys(requirements).length !== 5 ||
-      hashes.some(key => !(requirements[key] === null || HEX64.test(requirements[key] ?? ''))) ||
-      requirements.sourceRefsSha256 !== sourceRefsDigest(request.fleetRefs)) refuse('FLEET_DELIVERY_INPUT_REFUSED');
-  return { delivery: { operation: 'preflight', candidate: deliverySubject(request, run.requestSha256), requirements, transportKey } };
+  return { delivery: { operation: 'preflight', candidate: deliverySubject(request, run.requestSha256), transportKey } };
 }
 
 function pinnedGeneration({ version, commit, archive_sha256 }) {
@@ -230,10 +225,9 @@ async function deliveryInput(env, request, run, sumsBytes, fetchImpl, isPinned =
     } });
   }
   await verifyDeliverySource(archive, request, candidate);
-  const requirements = deliveryRequirements(archive, request);
   checkDeliveryKit(kit, candidate);
 
-  if (operation === 'open') return { operation, candidate, requirements };
+  if (operation === 'open') return { operation, candidate };
   const bytes = await download(asset(tag + '.acceptance.json'), fetchImpl);
   const accepted = JSON.parse(bytes);
   const grantId = accepted.cluedDecision, receiptId = accepted.fleetRefs?.ownerReceiptRef;
@@ -242,13 +236,13 @@ async function deliveryInput(env, request, run, sumsBytes, fetchImpl, isPinned =
     refuse('FLEET_DELIVERY_ACCEPTANCE_ASSET_REFUSED');
   }
   validateAcceptance(accepted, Date.now());
-  return { operation, candidate, requirements, transportKey, grantId, receiptId,
+  return { operation, candidate, transportKey, grantId, receiptId,
     acceptanceSha256: expected, acceptedAt: accepted.acceptedAt };
 }
 
 export async function qualifyDelivery(input, database, clock = Date.now) {
   const { delivery, ...door } = input;
-  const { operation, candidate, requirements } = delivery;
+  const { operation, candidate } = delivery;
   const read = () => database('project', candidate);
   if (operation === 'project') {
     // The two queries each return a complete, single-statement snapshot.
@@ -261,8 +255,7 @@ export async function qualifyDelivery(input, database, clock = Date.now) {
     last = await read();
     return deliveryBound(last?.candidate, candidate) ? last : null;
   };
-  const { readNodeEvidence } = deliveryProjectionReaders({ requirements, clock });
-  const result = await fleetDeliveryPreflight({ candidate, requirements, readFleetRegistry, readNodeEvidence, clock });
+  const result = await fleetDeliveryPreflight({ candidate, readFleetRegistry, clock });
   if (operation === 'preflight') {
     // 暂存端只需判定结果和绑定证据摘要。
     const { status, reason, observedAt, registrySha256 } = result;
@@ -270,7 +263,7 @@ export async function qualifyDelivery(input, database, clock = Date.now) {
     if (!HEX64.test(last?.snapshotToken ?? '')) refuse('FLEET_DELIVERY_PREFLIGHT_REFUSED');
     return { status, observedAt, registrySha256 };
   }
-  if (!['PASS', 'TRANSITION_PASS'].includes(result.status) || !HEX64.test(last?.snapshotToken ?? '')) {
+  if (result.status !== 'PASS' || !HEX64.test(last?.snapshotToken ?? '')) {
     refuse('FLEET_DELIVERY_PREFLIGHT_REFUSED', result.reason ?? result.status);
   }
   const snapshotToken = last.snapshotToken;

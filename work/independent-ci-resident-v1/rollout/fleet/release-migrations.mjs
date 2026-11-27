@@ -60,6 +60,8 @@ const probes = {
       where p.oid = to_regprocedure('public.clued_ci_connection_renew_v1(jsonb)')
         and ${bodyContains("case when k='ci' and " + pendingStates)}
         and ${bodyContains("'fleet_target',clued_private.fleet_node_target_v1(u,n.node_id)")})`,
+  deliveryRecipients: procedure('fleet_delivery_registry_v1(jsonb)', 'jsonb', `p.provolatile = 's' and ${callerCanExecute}
+    and ${bodyContains('jsonb_build_array(identity.user_id,identity.anchor_binding_id,c,recipients)')}`),
 };
 
 export function releaseRequirements(commit, read = file => execFileSync('git', ['show', `${commit}:${file}`], {

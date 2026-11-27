@@ -55,7 +55,6 @@ import { DEFAULT_ROOT, FLEET_REF_KEYS, FORMAL_ROLES, OWN_MODULES, configInputsFo
 import { Refused, TOOL_PATH, rolesDerived } from './ports.mjs';
 import { pyCanonical, pyDumps } from './pyjson.mjs';
 import { DEFAULT_REPO, fetchPackage } from './fetch.mjs';
-import { deliverySubject, reinstallDeliveryProved } from './delivery-preflight.mjs';
 import { packageGenerationOf } from '../../src/selfcheck.mjs';
 import { sourceRefsOf } from '../../src/fleet-delivery-evidence.mjs';
 import { extractTar } from './tar.mjs';
@@ -118,7 +117,7 @@ export function defaultRequest({ script, packageDir, packageManifestSha256, deci
 }
 
 export async function upgradeNode({ artifactPath, artifactSha256, acceptance, root = DEFAULT_ROOT, workDir, now = Date.now(), node: nodeBin = process.execPath,
-  request = defaultRequest, checkReinstall, noRequest = false, allowActiveUpgrade = false, selfDir = HERE, hostname = defaultHostname,
+  request = defaultRequest, noRequest = false, allowActiveUpgrade = false, selfDir = HERE, hostname = defaultHostname,
   wslConfigPath = defaultWslConfigPath(), deadline }) {
   timeLeft(deadline);
   validateAcceptance(acceptance, now);
@@ -141,6 +140,7 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   };
   const base = { contract: UPGRADE_CONTRACT, version: universal.version, commit: universal.commit, ciSourceManifestSha256: accepted, statusFile: at('upgrade', 'status.json'),
     wslCapacity: wslCapacityNotApplied(byPath, { hostname: host, reason: 'NOT_REQUESTED' }) };
+  const route = (code, result = base) => ({ ...result, status: 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL', code, reinstall: REINSTALL_HINT });
 
   // 2. safe to run again: an operation the upgrader still owns, or both sides already this package
   let op = null;
@@ -150,27 +150,16 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   }
   const currentBytes = await readOrNull(at('upgrade', 'current.json'));
   need(currentBytes !== null, 'NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH', 'no upgrade\\current.json: a first install follows reinstall/README.md section 8c');
-  const cur = jsonOf(currentBytes);
+  const cur = parsed(currentBytes.toString('utf8'));
+  if (!cur || !HEX64.test(cur.installReceiptSha256 ?? '')) return route('NODE_CURRENT_POINTER_INVALID');
   const receiptBytes = await readOrNull(at('install', 'install-receipt.json'));
   const supervisorSource = byPath.get('tree/' + RESIDENT + '/windows/CompanionSupervisor.cs');
   need(supervisorSource, 'FLEET_ARCHIVE_REFUSED', 'no companion supervisor source');
   const supervisor = await readOrNull(at('bin', 'CluedCompanionSupervisor.exe'));
-  const candidate = deliverySubject(acceptance, sha(Buffer.from(pyCanonical(acceptance))));
   const receiptMatches = receiptBytes && sha(receiptBytes) === cur.installReceiptSha256;
-  const receipt = receiptMatches ? jsonOf(receiptBytes) : null;
-  const installed = { node: receipt?.node?.nodeName ?? receipt?.nodeIdentity?.nodeName, generation: cur.generation, receiptSha256: cur.installReceiptSha256 };
-  const delivery = async () => {
-    if (!receiptMatches || !checkReinstall) return 'UNKNOWN';
-    try {
-      return reinstallDeliveryProved(await checkReinstall(candidate, installed, { timeoutMs: timeLeft(deadline) }), candidate, installed, now) ? 'PASS' : 'UNKNOWN';
-    } catch { return 'UNKNOWN'; }
-  };
-  const route = async (code, result) => {
-    const reinstallStatus = await delivery();
-    return { ...result, status: 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL',
-      code, reinstallStatus, ...(reinstallStatus === 'PASS' ? { reinstall: REINSTALL_HINT } : {}) };
-  };
   if (!receiptMatches) return route('NODE_RECEIPT_NOT_THE_CURRENT_GENERATION', base);
+  const receipt = parsed(receiptBytes.toString('utf8'));
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return route('NODE_INSTALL_RECEIPT_INVALID');
   const exePin = receipt.companionSupervisorSha256;
   if (exePin !== undefined && (!HEX64.test(exePin) || !supervisor || exePin !== sha(supervisor))) {
     return route('COMPANION_SUPERVISOR_EXE_CHANGED', base);
@@ -182,13 +171,12 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   base.capabilities = { companionSupervisor, complete: companionSupervisor === 'SATISFIED' };
   if (!base.capabilities.complete) {
     if (packageGenerationOf(acceptance.version) >= 25) return route('COMPANION_SUPERVISOR_NEEDS_REINSTALL', base);
-    if (await delivery() === 'PASS') return { ...base, status: 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL',
-      code: 'COMPANION_SUPERVISOR_NEEDS_REINSTALL', reinstallStatus: 'PASS', reinstall: REINSTALL_HINT };
   }
   let liveFacts = null;
   try { liveFacts = jsonOf(await fs.readFile(at('upgrade', 'mailbox', 'responses', 'version-facts.json'))); } catch { liveFacts = null; }
   if (cur.ciSourceManifestSha256 === accepted && cur.residentManifestSha256 === universal.facts.residentManifestSha256
     && cur.linux?.ciSourceManifestSha256 === accepted && liveFacts?.ciSourceManifestSha256 === accepted && liveFacts.staged === null) {
+    if (!base.capabilities.complete) return route('COMPANION_SUPERVISOR_NEEDS_REINSTALL');
     return { ...base, status: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', generation: cur.generation, packageManifestSha256: cur.packageManifestSha256, wslCapacity: applyWslCapacity() };
   }
 
@@ -312,7 +300,7 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
 }
 
 export const OK_STATUSES = Object.freeze(['FLEET_NODE_UPGRADE_REQUESTED', 'FLEET_NODE_UPGRADE_IN_PROGRESS', 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', 'FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED']);
-const REINSTALL_HINT = 'This node cannot take this package in place. Its way is the reinstall: install.mjs prepare with the same --artifact, --artifact-sha and --acceptance (rollout/fleet/README.md).';
+const REINSTALL_HINT = 'This package requires a reinstall. Keep the same sealed package and use its bootstrap entry (rollout/fleet/README.md).';
 
 // `upgrade fetch`: fetch (resumable, hash-checked), unpack, then the unpacked package's own upgrade.mjs does the upgrade. `deps` is for
 // tests only: fetch options (the fake API, no waiting), the root, and a stand-in for the child process.

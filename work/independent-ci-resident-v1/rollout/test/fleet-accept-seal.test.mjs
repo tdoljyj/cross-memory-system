@@ -15,7 +15,7 @@ import { requirementsDigest } from '../fleet/release-migrations.mjs';
 import { GRANT, GRANT_RECEIPT, REPO, TAG, fakeTime, prepWorld, resourceOf, sealedNothing, sha, timed, uploadsOf, world } from '../fleet/test/publish-fixtures.mjs';
 
 const legacyNode = (id, name, mode, observedAt) => ({ id, name, state: 'active', mode,
-  registrationVersion: 4, bindingGeneration: 2, identityFingerprint: 'c'.repeat(64), bindingLive: true,
+  registrationVersion: 4, bindingGeneration: 2, identityFingerprint: 'c'.repeat(64), bindingLive: true, rebindPending: false,
   reportedSourceSha256: 'd'.repeat(64), heartbeatAt: observedAt, heartbeatSequence: 81,
   reportedState: 'NORMAL', serviceRunning: true, onDuty: mode === 'ACTIVE', evidence: null });
 
@@ -73,7 +73,7 @@ function gen27Tags(w) {
 function fleetProjection(candidate, at, fault) {
   const nodes = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'].map((id, i) => {
     const row = legacyNode(id, i === 0 ? 'DESK' : 'TURING', i === 0 ? 'ACTIVE' : 'STANDBY', at);
-    return { ...row, state: 'pending', generation: 26, evidence: fault === 'missing' && i === 1 ? null : {
+    return { ...row, state: 'pending', generation: 26, bindingLive: fault !== 'revoked' || i === 0, evidence: i === 1 ? null : {
       schemaVersion: 1, nodeId: row.id, registrationVersion: row.registrationVersion, bindingGeneration: row.bindingGeneration,
       currentHeartbeat: true, packageGeneration: 26, installGeneration: 5, brokerObservedAt: at, linuxObservedAt: at, observedAt: at,
       brokerEvidenceSha256: '1'.repeat(64), linuxFactsSha256: '2'.repeat(64), installReceiptSha256: '3'.repeat(64),
@@ -160,6 +160,42 @@ async function publishWorld(t, overrides = {}) {
   ], { ...deps, ...extra });
   return { w, time, phases, confirms, links, approve, deps, run, advanceMain: () => { mainStatus = 'behind'; } };
 }
+
+test('发布机没有已装节点时，从已封存 Release 复用精确 kit 和 Source 引用', async t => {
+  const prior = await prepWorld(t, { version: 'g000025', released: false, spawnGh: false });
+  await prior.prep();
+  const time = fakeTime('2026-11-27T01:00:00Z');
+  Object.assign(prior.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: new Date(time.now).toISOString() });
+  const fleetWorkflow = async (operation, candidate, details) => {
+    if (operation === 'project') {
+      const view = { ...fleetProjection(candidate, new Date(time.now).toISOString()), nodes: [] };
+      return { first: view, last: view };
+    }
+    assert.equal(operation, 'confirm');
+    prior.door.sealedDigest = details.acceptanceSha256;
+    return { status: 'sealed', ...details };
+  };
+  const old = await timed(prior, time, { deps: { ...prior.deps, clock: time.clock, sleep: time.sleep, fleetWorkflow } });
+  assert.equal(old.status, 'FLEET_ACCEPTANCE_SEALED');
+  const { w, deps } = await publishWorld(t);
+  const priorIndex = (await fs.readFile(prior.index, 'utf8')).split(/\r?\n/).find(line => line.startsWith('| g000025 |'));
+  assert.ok(priorIndex);
+  await fs.appendFile(w.index, priorIndex + '\n');
+  const { kitOf, fleetMaterial, ...candidateDeps } = deps;
+  const ghCommand = args => args[0] === 'release' && args[2] === prior.source.release_tag ? prior.gh(args) : deps.ghCommand(args);
+  const run = () => w.prep({ root: path.join(w.d, 'no-resident'), ghCommand, now: time.now,
+    deps: { ...candidateDeps, readStatus: prior.deps.readStatus } });
+  prior.door.sealedDigest = '0'.repeat(64);
+  await assert.rejects(run(), { code: 'PREPARE_SEALED_TEMPLATE_REFUSED' });
+  assert.deepEqual(await w.assets(), []);
+  prior.door.sealedDigest = old.acceptanceSha256;
+  const result = await run();
+  const request = JSON.parse(await fs.readFile(result.request, 'utf8'));
+  const priorRequest = JSON.parse(await fs.readFile(prior.requestFile, 'utf8'));
+  assert.equal(result.templateVersion, 'g000025');
+  assert.equal(request.firstInstallKitSha256, priorRequest.firstInstallKitSha256);
+  assert.deepEqual(request.fleetRefs, priorRequest.fleetRefs);
+});
 
 test('正式 publish 和旧 prepare 在新建目录、候选通过本地校验后才接入一次迁移对账', async t => {
   for (const command of ['publish', 'prepare']) await t.test(command, async t => {
@@ -312,8 +348,8 @@ test('展示确认链接后的镜像、节点入口漂移在发布端和受信�
   });
 });
 
-test('出包前拒绝过期投影、缺失节点交付路径及被替换的暂存资产，零正式写入', async t => {
-  for (const fault of ['stale', 'missing', 'changed']) await t.test(fault, async t => {
+test('出包前拒绝过期登记、无效收件绑定及被替换的暂存资产，零正式写入', async t => {
+  for (const fault of ['stale', 'revoked', 'changed']) await t.test(fault, async t => {
     const w = await prepWorld(t, { version: 'g000027', released: false, spawnGh: false });
     const time = fakeTime('2026-11-27T01:00:00Z');
     const before = await fs.readFile(w.index);
@@ -343,7 +379,7 @@ test('出包前拒绝过期投影、缺失节点交付路径及被替换的暂�
     assert.deepEqual(await w.assets(), []);
     await assert.rejects(fs.access(w.requestFile), { code: 'ENOENT' });
     assert.equal(result.code, fault === 'changed' ? 'PREPARE_STAGED_ASSET_CHANGED' : 'FLEET_DELIVERY_PREFLIGHT_REFUSED');
-    if (fault !== 'changed') assert.equal(result.detail.reason, fault === 'stale' ? 'FLEET_REGISTRY_INCOMPLETE' : 'FLEET_NODE_HAS_NO_COMPLETE_PATH');
+    if (fault !== 'changed') assert.equal(result.detail.reason, fault === 'stale' ? 'FLEET_REGISTRY_INCOMPLETE' : 'FLEET_RECIPIENT_BINDING_UNCONFIRMED');
   });
 });
 
@@ -364,7 +400,7 @@ test('一次发布自动开单和续封，响应丢失沿用原 Grant 和接受�
       }
       const at = new Date(time.now).toISOString();
       if (operation === 'project') {
-        const view = fleetProjection(candidate, at, drift && w.door.status === 'accepted' ? 'missing' : null);
+        const view = fleetProjection(candidate, at, drift && w.door.status === 'accepted' ? 'revoked' : null);
         return { first: view, last: view };
       }
       assert.equal(operation, 'confirm');
@@ -575,7 +611,7 @@ test('第 27 代统一发布的运输附件经回读验证，部分上传后续�
   assert.equal((await w.opens()).length, 1);
 });
 
-test('第 26 代为两台无证据的待定节点开链接和封存，复查失败后沿用原 Grant', async t => {
+test('两台待定节点在心跳中断、代次混合时使用同一 Grant 封存', async t => {
   const w = await prepWorld(t, { version: 'g000026', released: false, spawnGh: false });
   const listTags = w.deps.generationTags.list;
   w.deps.generationTags.list = async () => [...await listTags(), 'fleet-node-g000025'];
@@ -604,7 +640,7 @@ test('第 26 代为两台无证据的待定节点开链接和封存，复查失�
     assert.equal(operation, 'project');
     assert.deepEqual([candidate.version, candidate.commit, candidate.archiveSha256, candidate.sourceSha256, candidate.requestSha256, candidate.kitSha256],
       [request.version, request.commit, request.archive_sha256, request.ciSourceManifestSha256, sha(await fs.readFile(w.requestFile)), request.firstInstallKitSha256]);
-    const nodes = [first, { ...second, serviceRunning: ++readCount !== 2 }];
+    const nodes = [{ ...first, generation: ++readCount === 1 ? null : 26 }, { ...second, serviceRunning: false }];
     const projection = { candidate, repository: candidate.repository, scope: candidate.scope, complete: true, observedAt: at, nodes };
     return { first: projection, last: { ...projection, nodes: nodes.map(n => ({ ...n, heartbeatSequence: n.heartbeatSequence + 1 })) } };
   };
@@ -621,26 +657,14 @@ test('第 26 代为两台无证据的待定节点开链接和封存，复查失�
   assert.equal((await w.opens()).length, 1);
   Object.assign(w.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: at,
     nodes: [first, second].map(n => ({ name: n.name, source_sha256: request.ciSourceManifestSha256, paused: false })) });
-  const before = await fs.readFile(w.index), uploaded = (await uploadsOf(w)).length;
+  const uploaded = (await uploadsOf(w)).length;
   const work = path.join(w.d, 'work');
-  const blocked = await accept('run', '--work', work);
-  assert.equal(blocked.code, 'FLEET_DELIVERY_PREFLIGHT_REFUSED', JSON.stringify(blocked));
-  assert.deepEqual(upgrades, []);
-  assert.deepEqual(confirmations, []);
-  await sealedNothing(w, before, uploaded);
-  const sealed = await publishModule.main(['seal', '--request', w.requestFile, '--index', w.index], deps);
-  assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
-  assert.equal(sealed.deliveryPreflight.beforeAttach.status, 'TRANSITION_PASS');
-  for (const node of sealed.deliveryPreflight.beforeAttach.nodes) {
-    assert.deepEqual([node.upgrade.evidenceSha256, node.reinstall.evidenceSha256], [null, null]);
-    assert.ok(node.transition.recheckAtInstall.includes('ciConnection'));
-  }
-  assert.equal(sealed.grantId, GRANT);
   assert.equal((await accept('run', '--work', work)).status, 'ROLLOUT_DONE');
   assert.equal((await w.opens()).length, 1);
   assert.equal((await uploadsOf(w)).length, uploaded + 1);
   assert.equal(confirmations.length, 1);
-  assert.equal(readCount, 3);
+  assert.equal(readCount, 2);
+
 });
 
 // PLAN-accept-align-open-20261125 1.2 (red before: a rejected request was opened again, one gh workflow run, and answered WAITING_OWNER)
@@ -995,140 +1019,54 @@ test('登记缺口在开接受门之前阻断，零派发', async t => {
   await sealedNothing(w, before, n);
 });
 
-test('批准后节点证据失效时阻断挂接受文件', async t => {
+test('批准后登记快照不完整时阻断挂接受文件', async t => {
   const w = await prepWorld(t);
   await w.prep();
   Object.assign(w.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: '2026-11-25T01:00:00Z' });
   const time = fakeTime('2026-11-25T01:00:01Z');
   const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
   let reads = 0;
-  const row = { id: '22222222-2222-4222-8222-222222222222', name: 'TURING', state: 'active', generation: 24, version: 6 };
+  const row = legacyNode('22222222-2222-4222-8222-222222222222', 'TURING', 'STANDBY', new Date(time.now).toISOString());
   const readFleetRegistry = async candidate => ({ complete: ++reads < 3, repository: candidate.repository,
     scope: candidate.scope, observedAt: new Date(time.now).toISOString(), nodes: [row] });
-  const readNodeEvidence = async candidate => ({ candidate, nodeId: row.id, node: row.name, generation: row.generation,
-    registrationVersion: row.version, observedAt: new Date(time.now).toISOString(), receiptSha256: 'a'.repeat(64), evidenceSha256: 'b'.repeat(64),
-    checks: Object.fromEntries(['currentPointer', 'installReceipt', 'linuxFacts', 'ciConnection', 'host', 'roleAndPause', 'operations',
-      'sourceAgreement', 'frozenChannel', 'acceptanceRefs', 'supervisor'].map(key => [key, true])) });
-  await assert.rejects(timed(w, time, { deps: { ...w.deps, readFleetRegistry, readNodeEvidence, clock: time.clock, sleep: time.sleep } }),
+  await assert.rejects(timed(w, time, { deps: { ...w.deps, readFleetRegistry, clock: time.clock, sleep: time.sleep } }),
     { code: 'FLEET_DELIVERY_PREFLIGHT_REFUSED' });
   assert.equal(reads, 3);
   await sealedNothing(w, before, n);
 });
-test('封存前对在役与排空节点各核两路，只有共同能力足够才挂接受文件', async t => {
-  const w = await prepWorld(t);
-  await w.prep();
-  Object.assign(w.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: '2026-11-25T01:00:00Z' });
-  const time = fakeTime('2026-11-25T01:00:01Z');
-  const registered = [
-    { id: '11111111-1111-4111-8111-111111111111', name: 'DESK', state: 'active', generation: 23, version: 4 },
-    { id: '22222222-2222-4222-8222-222222222222', name: 'TURING', state: 'draining', generation: 24, version: 6 },
-  ];
-  const observedAt = '2026-11-25T01:00:00Z';
-  const readFleetRegistry = async candidate => ({ repository: candidate.repository, scope: candidate.scope, complete: true,
-    observedAt, nodes: [...registered, registered[0]] });
-  let processClearance = false;
-  const readNodeEvidence = async (candidate, row) => ({
-    candidate, nodeId: row.id, node: row.name, generation: row.generation, registrationVersion: row.version, observedAt,
-    receiptSha256: 'a'.repeat(64), evidenceSha256: 'b'.repeat(64),
-    checks: { currentPointer: true, installReceipt: true, linuxFacts: true, ciConnection: true, host: true, roleAndPause: true, operations: true,
-      sourceAgreement: true, frozenChannel: true, acceptanceRefs: true, supervisor: row.state === 'active',
-      launcher: true, acl: true, connectionCarry: true, processClearance: row.state === 'draining' && processClearance, continuation: true },
-  });
-  const options = { deps: { ...w.deps, clock: time.clock, sleep: time.sleep, readFleetRegistry, readNodeEvidence } };
-  await assert.rejects(timed(w, time, options), error => {
-    assert.equal(error.code, 'FLEET_DELIVERY_PREFLIGHT_REFUSED');
-    assert.equal(error.detail.phase, 'before-open');
-    assert.deepEqual(error.detail.nodes.map(n => [n.node, n.upgrade.status, n.reinstall.status]),
-      [['DESK', 'PASS', 'FAIL'], ['TURING', 'FAIL', 'FAIL']]);
-    return true;
-  });
-  assert.equal(w.door.reads.length, 0);
-  processClearance = true;
-  const result = await timed(w, time, options);
-  assert.equal(result.status, 'FLEET_ACCEPTANCE_SEALED');
-  assert.deepEqual(result.deliveryPreflight.beforeAttach.nodes.map(n => [n.node, n.upgrade.status, n.reinstall.status]),
-    [['DESK', 'PASS', 'FAIL'], ['TURING', 'FAIL', 'PASS']]);
-  assert.equal(result.deliveryPreflight.beforeAttach.nodes[1].reinstall.drill, undefined);
-});
-
-test('重装演练失败只作为附带信息，重装检查齐备仍通过', async () => {
-  const { fleetDeliveryPreflight } = await import('../fleet/delivery-preflight.mjs');
-  const observedAt = '2026-11-25T01:00:00Z';
-  const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000026' };
-  const row = { id: '22222222-2222-4222-8222-222222222222', name: 'TURING', state: 'active', generation: 24, version: 6 };
-  const drill = { status: 'FAIL', candidate, receiptSha256: 'c'.repeat(64) };
-  const result = await fleetDeliveryPreflight({ candidate, clock: () => Date.parse(observedAt),
-    readFleetRegistry: async () => ({ ...candidate, complete: true, observedAt, nodes: [row] }),
-    readNodeEvidence: async () => ({ candidate, nodeId: row.id, node: row.name, generation: row.generation,
-      registrationVersion: row.version, observedAt, receiptSha256: 'a'.repeat(64), evidenceSha256: 'b'.repeat(64), drill,
-      checks: { currentPointer: true, installReceipt: true, linuxFacts: true, ciConnection: true, host: true,
-        roleAndPause: true, operations: true, launcher: true, acl: true, connectionCarry: true, processClearance: true, continuation: true } }),
-  });
-  assert.equal(result.status, 'PASS');
-  assert.deepEqual(result.nodes[0].reinstall.drill, { status: drill.status, receiptSha256: drill.receiptSha256 });
-});
-
-test('完整标记下的空登记集仍阻断，不签发交付 PASS', async () => {
+test('完整的空登记集可以封存，退役和撤销节点不收件', async () => {
   const { fleetDeliveryPreflight } = await import('../fleet/delivery-preflight.mjs');
   const observedAt = '2026-11-25T01:00:00Z';
   const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000025' };
-  const result = await fleetDeliveryPreflight({ candidate, clock: () => Date.parse(observedAt),
-    readFleetRegistry: async () => ({ repository: candidate.repository, scope: candidate.scope, complete: true, observedAt, nodes: [] }) });
-  assert.equal(result.reason, 'FLEET_REGISTRY_EMPTY');
+  const check = nodes => fleetDeliveryPreflight({ candidate, clock: () => Date.parse(observedAt),
+    readFleetRegistry: async () => ({ ...candidate, complete: true, observedAt, nodes }) });
+  for (const nodes of [[], [{ id: '22222222-2222-4222-8222-222222222222', name: 'LEFT', state: 'retired' },
+    { id: '33333333-3333-4333-8333-333333333333', name: 'REVOKED', state: 'revoked' }]]) {
+    const result = await check(nodes);
+    assert.equal(result.status, 'PASS');
+    assert.deepEqual(result.nodes, []);
+  }
 });
 
-test('第 25 代两台 pending 节点的心跳和证据齐备时通过过渡预检', async () => {
-  const { fleetDeliveryPreflight } = await import('../fleet/delivery-preflight.mjs');
-  const at = '2026-11-25T01:00:00Z';
-  const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000025' };
-  const nodes = [legacyNode('11111111-1111-4111-8111-111111111111', 'DESK', 'ACTIVE', at),
-    legacyNode('22222222-2222-4222-8222-222222222222', 'TURING', 'STANDBY', at)].map(row => ({
-    ...row, state: 'pending', evidence: { nodeId: row.id, observedAt: at, bindingGeneration: row.bindingGeneration,
-      registrationVersion: row.registrationVersion, windowsSourceSha256: row.reportedSourceSha256,
-      linuxSourceSha256: row.reportedSourceSha256, linuxReady: true, processClearance: true,
-      currentHeartbeat: true, operations: true, connectionCarry: true, acl: true },
-  }));
-  const result = await fleetDeliveryPreflight({ candidate, requirements: { standardReinstall: true }, clock: () => Date.parse(at),
-    readFleetRegistry: async () => ({ ...candidate, complete: true, observedAt: at, nodes }),
-  });
-  assert.equal(result.status, 'TRANSITION_PASS', result.reason);
-  assert.deepEqual(result.nodes.map(node => [node.node, node.transition.status]), [['DESK', 'PASS'], ['TURING', 'PASS']]);
-});
-
-test('第 26 代逐台核对绑定、退休记录、登记范围和重装实据', async () => {
+test('登记范围、收件绑定、重复身份和登记并发改变继续阻断发布', async () => {
   const { fleetDeliveryPreflight } = await import('../fleet/delivery-preflight.mjs');
   const at = '2026-11-25T01:00:00Z';
   const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000026' };
-  const row = { ...legacyNode('22222222-2222-4222-8222-222222222222', 'TURING', 'ACTIVE', at), generation: 25, version: 4 };
-  const retired = { id: '44444444-4444-4444-8444-444444444444', name: 'LEFT', state: 'retired' };
-  const check = async (edit, rows = [row, retired], endRows = rows, repository = candidate.repository) => {
+  const row = legacyNode('22222222-2222-4222-8222-222222222222', 'TURING', 'ACTIVE', at);
+  const check = async (nodes, end = nodes, repository = candidate.repository) => {
     let reads = 0;
     return fleetDeliveryPreflight({ candidate, clock: () => Date.parse(at),
-      readFleetRegistry: async () => ({ repository, scope: 'global', complete: true, observedAt: at, nodes: reads++ === 0 ? rows : endRows }),
-      readNodeEvidence: async () => ({ candidate, nodeId: row.id, node: row.name, generation: row.generation, registrationVersion: row.version,
-        bindingGeneration: row.bindingGeneration, observedAt: at, receiptSha256: 'a'.repeat(64), evidenceSha256: 'b'.repeat(64),
-        checks: { currentPointer: true, installReceipt: true, linuxFacts: true, ciConnection: true, host: true,
-          roleAndPause: true, operations: true, supervisor: false, launcher: true, acl: true,
-          connectionCarry: true, processClearance: true, continuation: true }, ...edit }),
-    });
+      readFleetRegistry: async () => ({ ...candidate, repository, complete: true, observedAt: at, nodes: reads++ === 0 ? nodes : end }) });
   };
-  const exact = await check({});
-  assert.equal(exact.status, 'PASS');
-  assert.deepEqual(exact.nodes.map(node => [node.node, node.upgrade.status, node.reinstall.status]), [['TURING', 'FAIL', 'PASS']]);
-  assert.equal((await check({ bindingGeneration: 1 })).reason, 'FLEET_NODE_HAS_NO_COMPLETE_PATH');
-  for (const field of ['connectionCarry', 'acl']) {
-    const checks = { currentPointer: true, installReceipt: true, linuxFacts: true, ciConnection: true, host: true,
-      roleAndPause: true, operations: true, supervisor: false, launcher: true, acl: true,
-      connectionCarry: true, processClearance: true, continuation: true };
-    delete checks[field];
-    assert.equal((await check({ checks })).reason, 'FLEET_NODE_HAS_NO_COMPLETE_PATH');
+  for (const change of [{ bindingLive: false }, { bindingGeneration: null }, { rebindPending: true }]) {
+    assert.equal((await check([{ ...row, ...change }])).reason, 'FLEET_RECIPIENT_BINDING_UNCONFIRMED');
   }
-  assert.equal((await check({}, [row], [{ ...row, bindingGeneration: 3 }])).reason, 'FLEET_REGISTRY_CHANGED');
-  assert.equal((await check({}, [row], [row], 'another/repo')).reason, 'FLEET_REGISTRY_INCOMPLETE');
-  assert.equal((await check({ observedAt: '2026-11-25T00:44:59Z' })).reason, 'FLEET_NODE_HAS_NO_COMPLETE_PATH');
+  assert.equal((await check([row, { ...row, bindingGeneration: 3 }])).reason, 'FLEET_REGISTRY_INCOMPLETE');
+  assert.equal((await check([row], [{ ...row, bindingGeneration: 3 }])).reason, 'FLEET_REGISTRY_CHANGED');
+  assert.equal((await check([row], [row], 'another/repo')).reason, 'FLEET_REGISTRY_INCOMPLETE');
 });
 
-test('登记投影已有一台节点报告已装代与新鲜证据时，另一台仍须证明完整路径', async () => {
+test('发布收件资格与节点的已装代次和运行证据无关', async () => {
   const { fleetDeliveryPreflight } = await import('../fleet/delivery-preflight.mjs');
   const { deliveryProjectionReaders } = await import('../fleet/delivery-reader.mjs');
   const at = '2026-11-27T11:12:00Z';
@@ -1149,11 +1087,11 @@ test('登记投影已有一台节点报告已装代与新鲜证据时，另一�
     return fleetDeliveryPreflight({ candidate, requirements, clock, ...readers });
   };
   const mixed = await check([withEvidence(first), second]);
-  assert.equal(mixed.reason, 'FLEET_NODE_HAS_NO_COMPLETE_PATH');
-  assert.deepEqual(mixed.nodes.map(node => node.reinstall.status), ['PASS', 'UNKNOWN']);
+  assert.equal(mixed.status, 'PASS');
+  assert.deepEqual(mixed.nodes.map(node => node.id), [first.id, second.id]);
   const ready = await check([withEvidence(first), withEvidence(second)]);
   assert.equal(ready.status, 'PASS');
-  assert.ok(ready.nodes.every(node => node.reinstall.status === 'PASS' && node.transition === undefined));
+  assert.equal(ready.registrySha256, mixed.registrySha256);
 });
 
 test('直派发布工作流使用同一预检，登记读取通过后才进入开单 SQL', async () => {
@@ -1165,19 +1103,19 @@ test('直派发布工作流使用同一预检，登记读取通过后才进入�
   const snapshotToken = 'a'.repeat(64);
   const input = { action: 'fleet.accept', delivery: { operation: 'open', candidate, requirements: { standardReinstall: true } } };
   const calls = [];
-  let unhealthy = true;
+  let bindingLive = false;
   const database = async (operation, subject) => {
     calls.push(operation);
     if (operation === 'open') {
       assert.deepEqual(subject.delivery, { candidate, snapshotToken });
       return { status: 'pending' };
     }
-    const registered = [nodes[0], { ...nodes[1], reportedState: unhealthy ? 'HALTED' : 'NORMAL' }];
+    const registered = [nodes[0], { ...nodes[1], bindingLive, reportedState: 'HALTED' }];
     return { candidate, repository: candidate.repository, scope: candidate.scope, observedAt: at, complete: true, snapshotToken, nodes: registered };
   };
   await assert.rejects(qualifyDelivery(input, database, () => Date.parse(at)), /FLEET_DELIVERY_PREFLIGHT_REFUSED/);
   assert.deepEqual(calls, ['project', 'project']);
-  unhealthy = false;
+  bindingLive = true;
   assert.deepEqual(await qualifyDelivery(input, database, () => Date.parse(at)), { status: 'pending' });
   assert.deepEqual(calls.slice(2), ['project', 'project', 'open']);
 });

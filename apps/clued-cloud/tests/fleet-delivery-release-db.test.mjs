@@ -141,7 +141,6 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
     const pollClock = () => pollNow;
     const w = await releaseAssets(t, sqlNow);
     const { tag, acceptanceName } = w;
-    const regular = await releaseAssets(t, sqlNow, 'g000026', w.sourceRepo);
     await heartbeat(primary);
     await heartbeat(standby);
     const operations = { project: 'fleet_delivery_registry_v1', open: 'fleet_accept_door_v1', confirm: 'fleet_delivery_seal_v1' };
@@ -232,6 +231,7 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
       }
       const snapshot = (await admin.query(readbackSql(plan)))[1].rows[0].jsonb_build_object;
       assert.equal(snapshot.interfaces.pendingDelivery, true);
+      assert.equal(snapshot.interfaces.deliveryRecipients, true);
       assert.deepEqual(missingMigrations(plan, snapshot), []);
     });
     await t.test('发布端拒绝被替换的请求、tar、kit 和 Source', async () => {
@@ -263,20 +263,26 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
           encode(extensions.digest(evidence::text,'sha256'),'hex'), evidence from report
         where clued_private.fleet_delivery_evidence_ok_v1(evidence)`,
       [node, sha(`evidence for ${node}`), linuxSource, linuxConsistent, acl]);
-    await t.test('过期心跳、混合 Windows/Linux Source、投影读取中漂移均阻断开单', async () => {
+    await t.test('登记 CAS 忽略过期心跳和混合 Source，拒绝并发登记变化', async () => {
+      const input = await w.input('open');
+      const candidate = input.delivery.candidate;
+      const snapshot = () => dbValue(admin, 'select clued_private.fleet_delivery_registry_v1($1) v', [candidate]);
+      const before = await snapshot();
       await heartbeat(standby, '16 minutes');
-      await refuseBeforeOpen('FLEET_TRANSITION_NODE_NOT_READY');
-      await heartbeat(standby);
-
       assert.equal((await recordEvidence(standby, sha('other Linux Source'), false, true)).rowCount, 1);
-      await refuseBeforeOpen('FLEET_TRANSITION_NODE_NOT_READY');
-      await admin.query('delete from clued_private.fleet_node_delivery_evidence_v1 where node_id=$1', [standby]);
+      const after = await snapshot();
+      assert.equal(before.snapshotToken, after.snapshotToken);
+      assert.ok(after.nodes.every(node => !Object.hasOwn(node, 'heartbeatAt') && !Object.hasOwn(node, 'evidence')));
+      await dbValue(admin, 'select clued_private.fleet_delivery_require_snapshot_v1($1,$2) v', [candidate, before.snapshotToken]);
+      await heartbeat(standby);
 
       afterProject = async () => {
         afterProject = undefined;
         await admin.query('update clued_private.ci_nodes_v1 set version=version+1 where node_id=$1', [standby]);
       };
       await refuseBeforeOpen('FLEET_REGISTRY_CHANGED');
+      await assert.rejects(dbValue(admin, 'select clued_private.fleet_delivery_require_snapshot_v1($1,$2) v', [candidate, before.snapshotToken]),
+        /fleet_delivery_registry_changed/);
     });
     await t.test('SQL 投影显示待重绑，过渡代拒单且无副作用', async () => {
       await admin.query(`insert into clued_private.native_confirmation_tokens
@@ -288,49 +294,17 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
         assert.equal(projection.nodes.find(row => row.id === standby).rebindPending, true);
       };
       try {
-        await refuseBeforeOpen('FLEET_TRANSITION_NODE_NOT_READY', { verify: nodes => {
-          assert.deepEqual(nodes.find(node => node.id === standby).transition, { status: 'FAIL', reasons: ['NODE_REBIND_IN_FLIGHT'] });
-          assert.equal(nodes.find(node => node.id === primary).transition.status, 'PASS');
-        } });
+        await refuseBeforeOpen('FLEET_RECIPIENT_BINDING_UNCONFIRMED');
       } finally {
         await admin.query("delete from clued_private.native_confirmation_tokens where user_id=$1 and action='ci_node_binding_rebind'", [owner]);
-      }
-    });
-    await t.test('第 26 代只要一台登记节点缺完整路径便拒单且无副作用', async () => {
-      await admin.query("update clued_private.ci_nodes_v1 set state='active' where node_id=$1", [primary]);
-      await admin.query("update clued_private.ci_nodes_v1 set state='draining' where node_id=$1", [standby]);
-      await heartbeat(primary);
-      await heartbeat(standby);
-      assert.equal((await recordEvidence(primary, installedSource, true, true)).rowCount, 1);
-      assert.equal((await recordEvidence(standby, installedSource, true, false)).rowCount, 1);
-      afterProject = projection => {
-        afterProject = undefined;
-        assert.equal(projection.candidate.version, 'g000026');
-        assert.equal(projection.scope, 'global');
-        assert.deepEqual(projection.nodes.map(row => [row.id, row.state, row.bindingLive, row.onDuty, row.mode]), [
-          [primary, 'active', true, true, 'ACTIVE'], [standby, 'draining', true, false, 'STANDBY'],
-          [retired, 'retired', true, false, null], [revoked, 'revoked', false, false, null],
-        ]);
-        assert.deepEqual(projection.nodes.slice(0, 2).map(row => [row.evidence.currentHeartbeat, row.evidence.acl]),
-          [[true, true], [true, false]]);
-      };
-      try {
-        await refuseBeforeOpen('FLEET_NODE_HAS_NO_COMPLETE_PATH', { release: regular, verify: nodes => {
-          assert.deepEqual(nodes.map(node => [node.id, node.upgrade.status, node.reinstall.status]),
-            [[primary, 'UNKNOWN', 'PASS'], [standby, 'UNKNOWN', 'FAIL']]);
-          assert.deepEqual(nodes[1].reinstall.reasons, ['acl']);
-        } });
-      } finally {
-        await admin.query('delete from clued_private.fleet_node_delivery_evidence_v1');
-        await admin.query("update clued_private.ci_nodes_v1 set state='pending' where node_id in ($1,$2)", [primary, standby]);
       }
     });
     afterProject = async projection => {
       afterProject = undefined;
       assert.equal(projection.scope, 'global');
-      assert.deepEqual(projection.nodes.map(row => [row.id, row.state, row.onDuty, row.mode]), [
-        [primary, 'pending', true, 'ACTIVE'], [standby, 'pending', false, 'STANDBY'],
-        [retired, 'retired', false, null], [revoked, 'revoked', false, null],
+      assert.deepEqual(projection.nodes.map(row => [row.id, row.state, row.bindingLive]), [
+        [primary, 'pending', true], [standby, 'pending', true],
+        [retired, 'retired', true], [revoked, 'revoked', false],
       ]);
     };
     assert.equal(await dbValue(admin, 'select project_id v from clued_private.ci_nodes_v1 where node_id=$1', [standby]), otherProject);
@@ -352,14 +326,10 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
     assert.equal(observationOf(observation(primary, unsealed), repo, sqlNow), null);
 
     await heartbeat(standby, '16 minutes');
-    await assert.rejects(publish(false), error => error.code === 'FLEET_DELIVERY_PREFLIGHT_REFUSED' && error.detail.phase === 'before-attach');
-    assert.deepEqual(trace(), ['owner:approved', 'sql:project', 'sql:project']);
-    assert.ok(!w.assets().some(a => a.name === acceptanceName));
-    await heartbeat(standby);
-
     loseSealResponse = true;
     await assert.rejects(publish(false), { code: 'FLEET_DELIVERY_SEAL_NOT_CONFIRMED' });
-    assert.deepEqual(trace(), ['sql:project', 'sql:project', 'upload:acceptance', 'read:acceptance', 'sql:project', 'sql:project', 'sql:confirm']);
+    assert.deepEqual(trace(), ['owner:approved', 'sql:project', 'sql:project', 'upload:acceptance', 'read:acceptance',
+      'sql:project', 'sql:project', 'sql:confirm']);
     const sealed = await publish(false);
     assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
     assert.deepEqual(trace(), [], '回读同一封存后不重复开单、上传或封存');

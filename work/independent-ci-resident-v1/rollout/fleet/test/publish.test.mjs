@@ -260,7 +260,7 @@ test('prepare: no Decision, receipt or time goes in; the request the Owner revie
   const w = await prepWorld(t);
   const r = await w.prep();
   assert.equal(r.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
-  assert.equal(r.kitFrom, 'node');
+  assert.equal(r.kitFrom, 'fixture');
   const request = JSON.parse(await fs.readFile(w.requestFile, 'utf8'));
   assert.deepEqual(Object.keys(request), ['contract', 'version', 'archive_sha256', 'commit', 'repository', 'ciSourceManifestSha256', 'firstInstallKitSha256', 'fleetRefs']);
   assert.deepEqual(request.fleetRefs, { ...w.carried, formalRoles: w.formalRoles });

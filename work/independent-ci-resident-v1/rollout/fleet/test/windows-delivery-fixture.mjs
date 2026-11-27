@@ -64,7 +64,7 @@ $localTar = Copy-ToWork (Join-Path $AssetsDir $tar) $Scratch $sums[$tar]
 $localKit = Copy-ToWork (Join-Path $AssetsDir $kit) $Scratch $first[$kit]
 $localPrereq = Copy-ToWork (Join-Path $AssetsDir $prereq) $Scratch $sums[$prereq]
 $operatorSid = 'S-1-5-21-1-2-3-1001'
-$hostArgs = Get-ElevatedArguments $boot @('-Stage', 'host', '-Tar', $localTar, '-ArchiveSha256', $sums[$tar],
+$hostArgs = Get-ElevatedArguments $boot @('-Stage', 'install', '-Tar', $localTar, '-ArchiveSha256', $sums[$tar],
   '-PrereqManifest', $localPrereq, '-PrereqManifestSha256', $sums[$prereq], '-Kit', $localKit,
   '-KitSha256', $first[$kit], '-ToolchainNodeSha256', $check['toolchainNodeSha256'],
   '-RegistrarSha256', $check['registrarSha256'], '-ExpectedOperatorSid', $operatorSid)

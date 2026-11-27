@@ -57,8 +57,8 @@ test('the acceptance has two commands in the README, prepare before the Owner an
   assert.ok(!/install\.mjs first-install-kit/.test(readme), 'the manual take-the-kit step is gone from the README');
   assert.ok(!/^node [^\n]*first-install-kit/m.test(readme), 'no command line of the README runs a kit step by hand');
   assert.ok(!/^node [^\n]*install\.mjs source-hash/m.test(readme), 'the Source is prepare\'s, nobody fills it in by hand');
-  // the flow: candidate -> drill -> the Owner's one acceptance -> seal; no release step before prepare (FABLE-drill-release-step-20261121.md)
-  assert.match(readme, /publish prepare（分配代号、构建一次[^\n]*-> 候选演练[^\n]*-> publish seal（开接受请求，等 Owner 批准/);
+  // The regular flow is candidate -> one Owner acceptance -> seal.
+  assert.match(readme, /publish prepare（分配代号、构建一次[^\n]*-> publish seal（开接受请求，等 Owner 批准/);
   assert.ok(!/^node [^\n]*publish\.mjs release /m.test(readme), 'the release command is gone from the README');
   assert.match(readme, /候选 commit 必须已在远端/);
 });
@@ -75,8 +75,6 @@ test('the acceptance in the README: seal asks the acceptance door (one fleet.acc
   assert.match(readme, /mode=fleet-accept/);
   assert.match(readme, /clued_fleet_accept_status_v1/);
   assert.ok(!/op_id|CLUED_SUPABASE_URL/.test(readme), 'no op id, no Supabase address in the environment');
-  assert.match(readme, /PASS_A_FULL/);
-  assert.match(readme, /PASS_A_PER_NODE_STEPS_REMAIN/);
   assert.ok(!/可直接交给 `install\.mjs first-install-check --from` 和 `bootstrap\.ps1 -From`/.test(readme), 'prepare\'s --out is not the delivery directory');
   assert.match(readme, /交付目录/);
   // the three references every acceptance carries: where they come from is written once
