@@ -426,6 +426,18 @@ function Out-LauncherVerdict($v, $extra) {
   foreach ($k in @($extra.Keys)) { $r[$k] = $extra[$k] }
   Out-Result $v.status 'launcher' $r
 }
+
+function Out-InstallStageResult($stage, $verdict) {
+  if ($verdict.status -ceq 'HOST_PREPARATION_NOT_DONE') {
+    Out-Step 'host' 'failed' $verdict.code $stage.last
+    Out-Result $verdict.status 'host' ([ordered]@{ code = $verdict.code; message = $verdict.message; last = $stage.last; exit = $stage.exit; output = $stage.output;
+      evidenceDirectory = (Get-Key $verdict 'evidenceDirectory'); evidenceError = (Get-Key $verdict 'evidenceError'); stagingDirectory = (Get-Key $verdict 'stagingDirectory') })
+    return
+  }
+  Out-LauncherVerdict $verdict ([ordered]@{ firstInstall = $true; launcher = (Get-Key $stage.last 'status'); companionSwitch = $verdict.companionSwitch; next = $verdict.next;
+    exit = $stage.exit; output = $stage.output; evidenceDirectory = (Get-Key $verdict 'evidenceDirectory'); evidenceError = (Get-Key $verdict 'evidenceError');
+    stagingDirectory = (Get-Key $verdict 'stagingDirectory') })
+}
 function Stop-Bootstrap([string]$step, [string]$code, $detail) { Out-Step $step 'failed' $code $null; Out-Result 'BOOTSTRAP_REFUSED' $step ([ordered]@{ code = $code; detail = $detail }); exit 1 }
 # One elevated stage of this same file (-File, arguments one by one). Returns its exit, its last JSON object and the output file;
 # declined: { declined = $true } (the caller decides what follows).
@@ -766,7 +778,7 @@ function Invoke-Stage {
       Assert-FleetLocalPath $journalRoot
       if ($null -ne (Get-FleetPathItem $journalRoot)) {
         Assert-FleetJournalRoot $journalRoot
-        $progress = Read-FleetProgress $progressFile $context -ArchiveStaleFresh
+        $progress = Read-FleetProgress $progressFile $context -ArchiveStaleFresh -RetargetReinstall
         if ($null -eq $progress) {
           if ([IO.Directory]::Exists($journalRoot) -and @(Get-ChildItem -LiteralPath $journalRoot -Force -ErrorAction Stop).Count -eq 0) {
             [IO.Directory]::Delete($journalRoot)
@@ -808,18 +820,41 @@ function Invoke-Stage {
       }
       $mode = Get-FleetLifecycleMode $Action $facts $progress
       if ($mode -ceq 'InspectUpgrade') { $mode = 'Reinstall' }
-      if ($null -eq $progress -and $mode -ceq 'Reinstall' -and -not $PreviewReceipt) { throw 'FLEET_REINSTALL_REQUIRES_PREVIEW' }
+      if ($null -eq $progress -and $mode -ceq 'Reinstall' -and $LifecycleMode -cne 'Reinstall' -and -not $PreviewReceipt) {
+        throw 'FLEET_REINSTALL_REQUIRES_PREVIEW'
+      }
       if ($mode -ceq 'Probe') { throw 'FLEET_LOCAL_INVENTORY_INCOMPLETE' }
       if ($Reset -and $mode -cne 'Fresh' -and -not ($null -ne $progress -and $progress.mode -ceq 'Fresh' -and $progress.step -ceq 'install')) {
         throw 'RESET_ONLY_WITHOUT_A_RESIDENT'
       }
       if ($mode -cnotin @('Fresh') -and ($null -eq $progress -or $progress.mode -cne 'Fresh')) {
         Assert-FleetJournalRoot $FleetResources.journalRoot
-        if ($PreviewReceipt) {
-          if ($PreviewReceipt -cnotmatch '^[A-Za-z0-9._-]{1,200}$') { throw 'FLEET_MAINTENANCE_PREVIEW_REFUSED' }
-          $context.previewReceipt = $PreviewReceipt
-          $context.zeroNodeConsent = $ZeroNodeConsent.IsPresent
+        if ($Action -cne 'Install') { throw 'FLEET_MAINTENANCE_ACTION_REFUSED' }
+        $kitCopy = Join-Path $protected.assets ([IO.Path]::GetFileName($Kit))
+        $kitRecord = Get-Key (Read-FleetConnectionJson $kitCopy) 'record'
+        $fingerprintTool = Join-Path $residentTree 'tools\secret-fingerprint.mjs'
+        $carriedSite = $null
+        if ($progress) {
+          $priorCarry = Get-FleetCarryDirectory $progress
+          if ($null -ne (Get-FleetPathItem $priorCarry)) {
+            Assert-FleetJournalRoot $priorCarry
+            $carriedSite = Get-Key (Read-FleetConnectionJson (Join-Path $priorCarry 'metadata.json')) 'rpcSite'
+          }
         }
+        $context.nodeConnection = Connect-FleetMaintenance $kitRecord $carriedSite $protected.node $fingerprintTool
+        $context.bindingId = $context.nodeConnection.bindingId
+        $context.bindingGeneration = $context.nodeConnection.generation
+        $preview = Invoke-FleetMaintenance -Phase 'preview' -Context $context
+        if (-not $preview.ok) { throw $preview.code }
+        if ($PreviewReceipt -and $PreviewReceipt -cne $preview.previewReceipt) { throw 'FLEET_MAINTENANCE_PREVIEW_REFUSED' }
+        if ($preview.healthyPeers -eq 0 -and (-not $PreviewReceipt -or -not $ZeroNodeConsent)) {
+          # After a partial cleanup the low-privilege Broker projection can
+          # be absent. Return this read-only result for a new, informed UAC.
+          $verdict = @{ status = 'FLEET_LIFECYCLE_PREVIEW_REQUIRED'; preview = $preview }
+          return
+        }
+        $context.previewReceipt = $preview.previewReceipt
+        $context.zeroNodeConsent = $ZeroNodeConsent.IsPresent -and $PreviewReceipt -ceq $preview.previewReceipt
         $connectionFile = Join-Path $stageDir 'preserved-connection.json'
         $context.preflightCleanup = {
           param($ctx)
@@ -829,7 +864,7 @@ function Invoke-Stage {
         }
         $context.checkConnection = {
           param($ctx, $carry)
-          $connection = $ctx.maintenance['connection']
+          $connection = Get-FleetPreservedConnection $ctx $carry $protected.node $fingerprintTool
           if ($null -eq $connection -or (Get-Key (Get-Key $connection 'nodeRecord') 'ciPrincipalBindingId') -cne $ctx.bindingId) {
             throw 'FLEET_PRESERVED_BINDING_REFUSED'
           }
@@ -854,6 +889,8 @@ function Invoke-Stage {
           if ($run.exit -ne 0 -or (Get-Key $answer 'status') -cne 'PRESERVED_CONNECTION_CARRIERS_VERIFIED') {
             throw ('FLEET_PRESERVED_CONNECTION_CHECK_FAILED:' + (Get-Key $answer 'code'))
           }
+          $connection.rpcSite = @{ scope=$ctx.nodeConnection.scope; supabaseUrl=$ctx.nodeConnection.supabaseUrl; publishableKey=$ctx.nodeConnection.publishableKey }
+          Write-FleetJournalJson (Join-Path $carry 'metadata.json') $connection
         }
         $context.observeInstall = {
           param($ctx)
@@ -1032,6 +1069,7 @@ function Invoke-Bootstrap {
   . $lifecycle
   $hostInputs = $null
   $reselected = $false
+  $protectedPreview = $null
   while ($true) {
     $facts = Get-FleetInventory
     $mode = Get-FleetLifecycleMode $Action $facts $null
@@ -1042,7 +1080,11 @@ function Invoke-Bootstrap {
       $u = Invoke-NonElevated $nodeExe[0] @($upgrade, '--artifact', $tar, '--artifact-sha', $archiveSha, '--acceptance', $acceptance,
         '--work', (Join-Path $script:Work 'upgrade')) $childEnv
       $upgradeStatus = [string](Get-Key $u.last 'status')
-      $abandonedUpgrade = $upgradeStatus -ceq 'FLEET_NODE_UPGRADE_IN_PROGRESS' -and -not (Test-FleetUpgradeInProgress $u.last)
+      $abandonedUpgrade = $false
+      if ($upgradeStatus -ceq 'FLEET_NODE_UPGRADE_IN_PROGRESS') {
+        try { $abandonedUpgrade = -not (Test-FleetUpgradeInProgress $u.last) }
+        catch { Stop-Bootstrap 'upgrade' 'FLEET_UPGRADER_HEARTBEAT_UNKNOWN' $null }
+      }
       if ($u.exit -eq 0 -and -not $abandonedUpgrade -and $upgradeStatus -cin @('FLEET_NODE_ALREADY_AT_THIS_PACKAGE','FLEET_NODE_UPGRADE_IN_PROGRESS','FLEET_NODE_UPGRADE_REQUESTED')) {
         Out-Step 'upgrade' 'ok' $null $upgradeStatus
         Out-Result $upgradeStatus 'upgrade' $u.last
@@ -1095,27 +1137,27 @@ function Invoke-Bootstrap {
     if ($Reset) { $switches += '-Reset' }
     if ($mode -cin @('Probe','Reinstall','Retire','Rollback') -and -not $Reset) {
       $context = New-FleetContext $acceptLocal $archiveSha $operator $Action
-      $preview = Invoke-FleetMaintenance -Phase 'preview' -Context $context
+      $preview = if ($protectedPreview) { $protectedPreview } else { Invoke-FleetMaintenance -Phase 'preview' -Context $context }
       if ($preview.ok -eq $true) {
         Assert-FleetPreview $preview $context
         $hostArgs += @('-PreviewReceipt', $preview.previewReceipt)
         if ($preview.healthyPeers -eq 0) {
-          $warning = 'No node will run CI during this operation. Estimated downtime: {0} minutes.' -f $preview.estimatedMinutes
-          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-          if ((New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-            Add-Type -AssemblyName System.Windows.Forms
-            $answer = [Windows.Forms.MessageBox]::Show($warning, 'Clued CI maintenance', 'YesNo', 'Warning', 'Button2')
-            if ($answer -ne [Windows.Forms.DialogResult]::Yes) { Stop-Bootstrap 'host' 'FLEET_ZERO_NODE_CONSENT_DECLINED' $null }
-          } else { Write-Host ($warning + ' Continue at the Windows UAC prompt to consent.') }
+          Write-Host 'CI will be unavailable until the new installation passes service verification. Continue at the Windows UAC prompt to consent.'
           $switches += '-ZeroNodeConsent'
         }
-      } elseif ($mode -cne 'Probe') {
+      } elseif ($mode -cne 'Probe' -and -not ($mode -ceq 'Reinstall' -and $preview.code -ceq 'FLEET_MAINTENANCE_PREVIEW_UNKNOWN')) {
         Stop-Bootstrap 'host' $preview.code $null
       }
     }
     $h = Invoke-Elevated 'install' $hostArgs ($HostLimitSeconds + $LauncherLimitSeconds + 5400) $switches
     if ($h.declined) { Stop-Bootstrap 'host' 'UAC_DECLINED' 'nothing elevated ran; run the same command again to continue' }
     $st = [string](Get-Key $h.last 'status')
+    if ($st -ceq 'FLEET_LIFECYCLE_PREVIEW_REQUIRED') {
+      if ($protectedPreview) { Stop-Bootstrap 'host' 'FLEET_MAINTENANCE_PREVIEW_REFUSED' $null }
+      $protectedPreview = Get-Key $h.last 'preview'
+      if (-not $protectedPreview) { Stop-Bootstrap 'host' 'FLEET_MAINTENANCE_PREVIEW_REFUSED' $null }
+      continue
+    }
     if ($st -ceq 'FLEET_LIFECYCLE_RESELECT') {
       if ($reselected) { Stop-Bootstrap 'host' 'FLEET_LIFECYCLE_RESELECT_REPEATED' $h.last }
       $reselected = $true
@@ -1129,15 +1171,7 @@ function Invoke-Bootstrap {
     }
     if ($st -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { Out-Step 'host' 'failed' 'RESTART_THEN_RUN_THE_SAME_COMMAND' $null; Out-Result 'RESTART_THEN_RUN_THE_SAME_COMMAND' 'host' ([ordered]@{ detail = $h.last }); exit 3 }
     $v = Get-InstallStageVerdict $h.last
-    if ($v.status -ceq 'HOST_PREPARATION_NOT_DONE') {
-      Out-Step 'host' 'failed' $v.code $h.last
-      Out-Result $v.status 'host' ([ordered]@{ code = $v.code; message = $v.message; last = $h.last; exit = $h.exit; output = $h.output;
-        evidenceDirectory = (Get-Key $v 'evidenceDirectory'); evidenceError = (Get-Key $v 'evidenceError'); stagingDirectory = (Get-Key $v 'stagingDirectory') })
-      exit 1
-    }
-    Out-LauncherVerdict $v ([ordered]@{ firstInstall = $true; launcher = $st; companionSwitch = $v.companionSwitch; next = $v.next;
-      exit = $h.exit; output = $h.output; evidenceDirectory = (Get-Key $v 'evidenceDirectory'); evidenceError = (Get-Key $v 'evidenceError');
-      stagingDirectory = (Get-Key $v 'stagingDirectory') })
+    Out-InstallStageResult $h $v
     if ($v.status -cne 'BOOTSTRAP_DONE') { exit 1 }
     return
   }

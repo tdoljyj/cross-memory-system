@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { once } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createInterface } from 'node:readline';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readTar, extractTar } from '../../../work/independent-ci-resident-v1/rollout/fleet/tar.mjs';
@@ -31,6 +34,109 @@ const otherProject = id(7), revoked = id(8);
 const scope = `project:${project}`;
 const installedSource = sha('installed fleet Source');
 const dbValue = async (client, sql, params) => (await client.query(sql, params)).rows[0].v;
+
+async function reinstallThroughMaintenanceRpc(t, db, { node, tokenHash, grant }) {
+  const self = await dbValue(db.anon, 'select public.clued_ci_connection_self_v1($1,$2) v', [tokenHash, { scope: 'global' }]);
+  assert.equal(self.node.node_id, node);
+  const work = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-installer-rpc-'));
+  t.after(() => removeTestDirectory(work));
+  const ps = fileURLToPath(new URL('../../../work/independent-ci-resident-v1/rollout/fleet/', import.meta.url));
+  const quote = value => "'" + value.replaceAll("'", "''") + "'";
+  const program = String.raw`
+    $ErrorActionPreference='Stop'
+    Add-Type -AssemblyName System.Web.Extensions
+    . ${quote(path.join(ps, 'bootstrap.ps1'))}
+    . ${quote(path.join(ps, 'package-lifecycle.ps1'))}
+    $ctx = @{ repository='fixture/repo'; machine='FIXTURE'; operatorSid='S-1-5-21-1-2-3-1001'; action='Install';
+      archiveSha256='a'*64; acceptanceSha256='b'*64; sourceSha256='c'*64; ownerUac=$true; zeroNodeConsent=$true;
+      grantId=${quote(grant)}; nodeConnection=@{scope='global';nodeId=${quote(node)};bindingId=${quote(self.binding_id)};generation=${self.node.binding_generation}} }
+    $rpc = (Get-Command Invoke-FleetMaintenance -CommandType Function).ScriptBlock
+    $send = {
+      param($inputData)
+      [Console]::WriteLine(($inputData | ConvertTo-Json -Compress))
+      $line = [Console]::ReadLine()
+      if (-not $line) { throw 'FLEET_TEST_BRIDGE_CLOSED' }
+      (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject($line)
+    }
+    $script:bridgeNow = [DateTimeOffset]::Parse('2026-11-27T00:00:00Z')
+    function Invoke-FleetMaintenance($Phase, $Context) {
+      & $rpc $Phase $Context -Send $send -Now { $script:bridgeNow } -Wait { $script:bridgeNow = $script:bridgeNow.AddMinutes(5) }
+    }
+    $preview = Invoke-FleetMaintenance 'preview' $ctx
+    Assert-FleetPreview $preview $ctx
+    if ($preview.healthyPeers -ne 0) { throw 'FLEET_TEST_EXPECTED_SOLE_NODE' }
+    $ctx.previewReceipt = $preview.previewReceipt
+    $observed = @{}
+    $look = { param($step,$v)
+      if ($step -ceq 'return' -and $v.maintenance['restored']) { return 'complete' }
+      if ($step -ceq 'verify' -and $observed['install']) { return 'complete' }
+      if ($observed[$step]) { 'complete' } else { 'pending' }
+    }
+    $apply = { param($step,$v)
+      [Console]::WriteLine((@{effect=$step} | ConvertTo-Json -Compress))
+      $observed[$step] = $true
+      if ($step -ceq 'install') { $v.installed = @{sourceSha256=$v.sourceSha256} }
+    }
+    $done = Invoke-FleetLifecycle $ctx 'Reinstall' ${quote(path.join(work, 'operation.json'))} $look $apply
+    [Console]::WriteLine(($done | ConvertTo-Json -Compress))
+  `;
+  const child = spawn('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(program, 'utf16le').toString('base64')],
+    { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const closed = once(child, 'close');
+  let error = '';
+  child.stderr.setEncoding('utf8').on('data', chunk => { error += chunk; });
+  child.stdin.on('error', () => {});
+  const events = [];
+  let verifyStarted = false;
+  let sawWait = false;
+  let ready = false;
+  let finished;
+  try {
+    for await (const line of createInterface({ input: child.stdout })) {
+      const input = JSON.parse(line);
+      if (input.status === 'FLEET_LIFECYCLE_COMPLETE') { finished = input; break; }
+      if (input.effect) {
+        assert.equal(ready, true, '清理与安装前必须真实读回 install_ready');
+        events.push(input.effect);
+        continue;
+      }
+      if (input.command === 'delist') assert.equal(input.sole_node_agreed, true);
+      const reply = await dbValue(db.anon, 'select public.clued_work_verify_v1($1,$2) v', [tokenHash, input]);
+      events.push(input.command);
+      if (input.command === 'status' && reply.state === 'delisted' && !verifyStarted) {
+        if (!reply.install_ready) {
+          sawWait = true;
+          await db.admin.query("update clued_private.fleet_landing_v1 set settled_at=clock_timestamp() where node_id=$1 and settled_at is null", [node]);
+        }
+        ready = reply.install_ready;
+      }
+      if (input.command === 'verify_started') {
+        assert.deepEqual(events.filter(event => event === 'cleanup' || event === 'install'), ['cleanup', 'install']);
+        verifyStarted = true;
+        await db.admin.query("update clued_private.fleet_maintenance_v1 set verify_started_at=verify_started_at-interval '1 second' where node_id=$1", [node]);
+        const at = (await dbValue(db.admin, 'select clock_timestamp() v')).toISOString();
+        await dbValue(db.anon, 'select public.clued_work_verify_v1($1,$2) v', [tokenHash, {
+          action: 'ci_node_heartbeat', scope: 'global', state: 'NORMAL', mode: 'STANDBY', probe: 'not-held', service_running: true,
+          ci_source_manifest_sha256: installedSource, snapshot_age_seconds: 0, fleet_runtime: { idle: true, selfcheckAt: at },
+          fleet_delivery: { ...testDelivery(node, installedSource, 26, at), installReceiptSha256: sha('new Windows receipt') },
+        }]);
+        await db.admin.query('select clued_private.fleet_maintenance_tick_v1($1)', [owner]);
+      }
+      child.stdin.write(JSON.stringify(reply) + '\n');
+    }
+    child.stdin.end();
+    const [code] = await closed;
+    assert.equal(code, 0, error);
+    assert.equal(finished?.status, 'FLEET_LIFECYCLE_COMPLETE');
+    assert.equal(sawWait, true);
+    assert.equal(verifyStarted, true);
+  } finally {
+    child.stdin.end();
+    if (child.exitCode === null) child.kill();
+    await closed;
+  }
+}
 
 async function seedPreviousSchema(t) {
   const directory = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'fleet-db-'));
@@ -653,6 +759,26 @@ test('并发摘牌、精确包验证和单机重装确认', async t => {
     await admin.query("delete from clued_private.ci_node_liveness_v1 where node_id=$1", [nodes[winner]]);
     const single = await call(other,loser,'delist',{method:'reinstall',operation_id:id(606),sole_node_agreed:true,grant_id:sameSource});
     assert.equal(single.state,'delisted');
+  } finally { await db.close(); }
+});
+
+test('Windows 清洁重装用真实节点 RPC 等待排空和服务端恢复', { skip: process.platform !== 'win32' }, async t => {
+  const db = await seedPreviousSchema(t);
+  try {
+    await db.upgrade();
+    const { admin } = db;
+    const pkg = await seedSealedPackage(db, 26, installedSource);
+    await admin.query('delete from clued_private.ci_node_liveness_v1 where node_id=$1', [standby]);
+    await admin.query(`insert into clued_private.fleet_landing_v1(user_id,node_id,effect_key,grant_id,binding_generation,base_sha,test_sha,started_at)
+      values($1,$2,$3,$4,1,$5,$6,clock_timestamp())`,
+    [owner, primary, sha('installer drain'), pkg.grantId, 'a'.repeat(40), 'b'.repeat(40)]);
+    const tokenHash = sha('fixture-primary');
+    await reinstallThroughMaintenanceRpc(t, db, { node: primary, tokenHash, grant: pkg.grantId });
+    const status = await dbValue(db.anon, 'select public.clued_work_verify_v1($1,$2) v', [tokenHash, {
+      action: 'fleet_maintenance', command: 'status', scope: 'global', node_id: primary, binding_generation: 1,
+    }]);
+    assert.equal(status.state, 'returned');
+    assert.equal(status.install_ready, false);
   } finally { await db.close(); }
 });
 

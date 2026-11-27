@@ -46,7 +46,7 @@ Case 'lifecycle:protected destructive stage' {
   Yes ((Get-FleetLifecycleMode 'Rollback' $dirty $null) -ceq 'Rollback') 'lifecycle:only-explicit-rollback'
   Yes ((Get-FleetLifecycleMode 'Retire' $dirty $null) -ceq 'Retire') 'lifecycle:only-explicit-retirement'
   $block = Invoke-FleetMaintenance -Phase 'preview' -Context @{}
-  Yes ($block.code -ceq 'FLEET_MAINTENANCE_INTERFACE_UNAVAILABLE') 'lifecycle:service-unavailable-before-delete'
+  Yes ($block.code -ceq 'FLEET_MAINTENANCE_ACTION_REFUSED') 'lifecycle:service-unavailable-before-delete'
 }
 Case 'lifecycle:durable cleanup and install readback' {
   . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
@@ -120,7 +120,10 @@ Case 'lifecycle:paths and native credential carriers' {
     # The pointer and ledger are arbitrary bytes and the receipt is absent.
     # Only the exact per-resident token filenames are carried across removal.
     $null = Save-FleetConnectionCarriers $ctx
+    $renewed = Join-Path $FleetResources.ciRoot 'resident\secrets\resident-upgrade.token'
+    [IO.File]::WriteAllText($renewed, 'rotated-offline-fixture')
     $null = Save-FleetConnectionCarriers $ctx
+    Yes ([IO.File]::ReadAllText((Join-Path $carry 'resident-upgrade.token')) -ceq 'rotated-offline-fixture') 'lifecycle:current-token-replaces-old-carry'
     Remove-FleetProductPaths
     Yes (@(Get-FleetProductPaths).Count -eq 0) 'lifecycle:malformed-old-product-paths-removed'
     foreach ($name in $FleetResources.stagedTokens.Values) {
@@ -132,6 +135,49 @@ Case 'lifecycle:paths and native credential carriers' {
   } finally {
     if ([IO.Directory]::Exists($directory)) { [IO.Directory]::Delete($directory, $true) }
   }
+}
+Case 'lifecycle:retry cannot use a previously drained result to delete' {
+  . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
+  $ctx = @{ archiveSha256='a'*64; acceptanceSha256='b'*64; sourceSha256='c'*64; operationId='d'*32
+    mode='Reinstall'; retryingInstall=$true; install={ throw 'FIXTURE_INSTALL_REACHED' }; effects=[Collections.Generic.List[string]]::new() }
+  function Invoke-FleetMaintenance {
+    @{ok=$true; sealed=$true; archiveSha256=$ctx.archiveSha256; acceptanceSha256=$ctx.acceptanceSha256
+      operationId=$ctx.operationId; ownerUac=$true; drained=$true; hasDuty=$false}
+  }
+  function Get-FleetStepState { if ($ctx.effects.Count) { 'complete' } else { 'pending' } }
+  function Invoke-FleetCleanup { $ctx.effects.Add('delete') }
+  Throws { Invoke-FleetStep 'install' $ctx } 'FLEET_MAINTENANCE_STALE_DRAIN' 'lifecycle:old-removal-receipt-refused-at-cleanup'
+  Yes ($ctx.effects.Count -eq 0) 'lifecycle:replayed-drain-cannot-delete'
+}
+Case 'lifecycle:another package cannot use an earlier preview' {
+  . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
+  $file = Join-Path $env:TEMP ('fleet-other-package-' + [Guid]::NewGuid().ToString('N') + '.json')
+  $a = @{machine='FIXTURE';operatorSid='S-1-5-21-1-2-3-1001';action='Install';archiveSha256='a'*64;acceptanceSha256='b'*64}
+  try {
+    $progress = New-FleetProgress $a 'Reinstall'; $progress.step = 'install'
+    Write-FleetProgress $file $progress
+    $packageB = $a.Clone(); $packageB.archiveSha256 = 'c'*64; $packageB.acceptanceSha256='d'*64; $packageB.grantId='73f65562-5419-4ca8-bff0-8783ebb1b0d2'
+    Throws { Invoke-FleetLifecycle $packageB 'Resume' $file { 'pending' } { throw 'FIXTURE_EFFECT_REACHED' } } 'FLEET_REINSTALL_REQUIRES_PREVIEW' 'lifecycle:new-package-requires-preview-instead-of-digest-deadlock'
+  } finally { [IO.File]::Delete($file); [IO.File]::Delete($file + '.pending') }
+}
+Case 'lifecycle:upgrader operation heartbeat belongs to the live service child' {
+  . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
+  . ([scriptblock]::Create($functions['Get-Key']))
+  $at = [DateTimeOffset]::UtcNow.AddMinutes(-11)
+  $service = @{Name='CluedCIUpgrader';State='Running';ProcessId=42}
+  $pulse = @{at=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();token='fixture'}
+  function Get-FleetServices { $service }
+  function Read-FleetConnectionJson([string]$file) {
+    if ([IO.Path]::GetFileName($file) -ceq 'holder.json') { return @{pid=84;token='fixture'} }
+    $pulse
+  }
+  function Get-CimInstance { @{ProcessId=84;ParentProcessId=42;CreationDate=$at.UtcDateTime.AddMinutes(-1)} }
+  $answer = @{statusAt=$at.ToString('o');upgraderPid=84;op=@{opId='93f65562-5419-4ca8-bff0-8783ebb1b0d2'}}
+  Yes (Test-FleetUpgradeInProgress $answer) 'lifecycle:long-live-upgrader-is-not-abandoned'
+  $pulse.at = $at.ToUnixTimeMilliseconds()
+  Throws { Test-FleetUpgradeInProgress $answer } 'FLEET_UPGRADER_HEARTBEAT_UNKNOWN' 'lifecycle:stale-heartbeat-with-live-service-is-unknown'
+  $service.State = 'Stopped'; $service.ProcessId = 0
+  Yes (-not (Test-FleetUpgradeInProgress $answer)) 'lifecycle:stopped-upgrader-can-be-abandoned'
 }
 Case 'lifecycle:Windows registration identifies WSL ownership before cleanup' {
   . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
@@ -183,58 +229,72 @@ Case 'lifecycle:cleanup readback excludes preserved connection carriers' {
 }
 Case 'lifecycle:clean reinstall chain through native boundaries' {
   . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
+  . ([scriptblock]::Create($functions['Get-Key']))
   . (Join-Path $here 'test-clean-reinstall.ps1')
 }
-Case 'lifecycle:maintenance adapter clock and consent' {
+Case 'lifecycle:maintenance RPC status, consent and replay' {
   . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
+  . ([scriptblock]::Create($functions['Get-Key']))
+  $node = @{scope='global';nodeId='03f65562-5419-4ca8-bff0-8783ebb1b0d2';bindingId='83f65562-5419-4ca8-bff0-8783ebb1b0d2';generation=3}
   $ctx = @{ repository='fixture/repo'; machine='FIXTURE'; action='Install'; archiveSha256='a'*64
-    acceptanceSha256='b'*64; sourceSha256='c'*64; operationId='d'*32; zeroNodeConsent=$false }
+    acceptanceSha256='b'*64; sourceSha256='c'*64; operationId='d'*32; zeroNodeConsent=$false; ownerUac=$true
+    nodeConnection=$node; grantId='73f65562-5419-4ca8-bff0-8783ebb1b0d2'; installed=@{status='verified'} }
   $start = [DateTimeOffset]::Parse('2026-11-27T00:00:00Z')
-  $wireFixture = @{ mode='missing'; clock=$start; polls=0 }
-  $clock = { $wireFixture.clock }
-  $wait = { $wireFixture.clock = $wireFixture.clock.AddMinutes(15) }
+  $wire = @{mode='missing';clock=$start;writes=0;commands=@()}
+  $clock = { $wire.clock }
+  $wait = { $wire.clock = $wire.clock.AddMinutes(15) }
   $send = {
     param($request)
-    $wireFixture.polls++
-    if ($wireFixture.mode -ceq 'missing') { return @{ok=$false;code='FLEET_MAINTENANCE_INTERFACE_UNAVAILABLE'} }
-    $r = @{ok=$true; archiveSha256=$request.archiveSha256; acceptanceSha256=$request.acceptanceSha256
-      sourceSha256=$request.sourceSha256; sealed=$true; nonce=$request.nonce; operationId=$request.operationId
-      bindingId='83f65562-5419-4ca8-bff0-8783ebb1b0d2'; bindingGeneration=3}
-    switch ($wireFixture.mode) {
-      'preview' { $r.healthyPeers = 0; $r.estimatedMinutes = 30; $r.previewReceipt = 'fixture-preview' }
-      'zero' { $r.state = 'removed'; $r.noNewWork = $true; $r.zeroNodes = $true; $r.zeroNodeConsentAccepted = $true }
-      'draining' { $r.state = 'draining' }
-      'verify' { $r.state = 'verifying'; $r.verificationStartedAt = $start.ToString('o') }
-      'restored' { $r.state = 'restored'; $r.role = 'STANDBY'; $r.restored = $true; $r.connectionUsable = $true; $r.freshHeartbeat = $true; $r.healthy = $true }
-      'wrong-nonce' { $r.nonce = 'another-request' }
+    $wire.commands += $request.command
+    if ($wire.mode -ceq 'missing') { throw 'FLEET_MAINTENANCE_REQUEST_FAILED' }
+    if ($request.command -cne 'status') {
+      $wire.writes++
+      Yes ($request.operation_id -ceq ([Guid]$ctx.operationId).ToString('D') -and $request.grant_id -ceq $ctx.grantId) 'lifecycle:write-binds-grant-operation'
+      if ($request.command -ceq 'delist') {
+        Yes ($request.method -ceq 'reinstall' -and $request['sole_node_agreed'] -eq $true) 'lifecycle:sole-consent-on-reinstall-only'
+      }
+    }
+    $r = @{status='ok'; state='delisted'; has_other_healthy=$false; install_ready=$true; node_id=$node.nodeId
+      grant_id=$ctx.grantId; binding_generation=$node.generation; operation_id=([Guid]$ctx.operationId).ToString('D')
+      receipt_id='63f65562-5419-4ca8-bff0-8783ebb1b0d2'; drain_confirmed_at=$wire.clock.ToString('o')}
+    switch ($wire.mode) {
+      'draining' { $r.install_ready = $false }
+      'stale' { $r.drain_confirmed_at = $wire.clock.AddMinutes(-10).ToString('o') }
+      'verify' { $r.install_ready = $false; $r.verify_started_at = $start.ToString('o') }
+      'returned' { $r.install_ready = $false; $r.state = 'returned' }
+      'wrong-node' { $r.node_id = $r.receipt_id }
     }
     $r
   }
   $answer = Invoke-FleetMaintenance 'preview' $ctx -Send $send -Wait $wait -Now $clock
-  Yes ($answer.code -ceq 'FLEET_MAINTENANCE_INTERFACE_UNAVAILABLE') 'lifecycle:missing-interface-fails-closed'
-  $wireFixture.mode = 'preview'
+  Yes ($answer.code -ceq 'FLEET_MAINTENANCE_REQUEST_FAILED') 'lifecycle:missing-interface-fails-closed'
+  $wire.mode = 'ready'
   $answer = Invoke-FleetMaintenance 'preview' $ctx -Send $send -Wait $wait -Now $clock
   Assert-FleetPreview $answer $ctx
-  Yes ($answer.healthyPeers -eq 0) 'lifecycle:authorized-zero-node-preview'
-  $wireFixture.mode = 'zero'
+  Yes ($answer.healthyPeers -eq 0 -and $wire.writes -eq 0) 'lifecycle:authorized-zero-node-preview'
   $answer = Invoke-FleetMaintenance 'before-remove' $ctx -Send $send -Wait $wait -Now $clock
-  Yes ($answer.code -ceq 'FLEET_MAINTENANCE_NOT_SAFE_TO_REMOVE') 'lifecycle:zero-node-refused-without-consent'
+  Yes ($answer.code -ceq 'FLEET_MAINTENANCE_NEEDS_SOLE_NODE_CONSENT' -and $wire.writes -eq 0) 'lifecycle:zero-node-refused-without-consent'
   $ctx.zeroNodeConsent = $true
+  $wire.commands = @()
   $answer = Invoke-FleetMaintenance 'before-remove' $ctx -Send $send -Wait $wait -Now $clock
-  Yes ($answer.ok -and $answer.state -ceq 'removed') 'lifecycle:zero-node-explicit-consent-accepted'
-  $wireFixture.mode = 'draining'; $wireFixture.polls = 0
+  Yes ($answer.ok -and ($wire.commands -join ',') -ceq 'status,delist,status') 'lifecycle:delist-readback-after-write'
+  $wire.mode = 'draining'
   $answer = Invoke-FleetMaintenance 'before-remove' $ctx -Send $send -Wait $wait -Now $clock
-  Yes ($answer.code -ceq 'FLEET_MAINTENANCE_DRAIN_TIMEOUT' -and $wireFixture.polls -eq 4) 'lifecycle:drain-wait-bounded'
-  $wireFixture.mode = 'verify'; $wireFixture.clock = $start.AddMinutes(30); $wireFixture.polls = 0
+  Yes ($answer.code -ceq 'FLEET_MAINTENANCE_DRAIN_TIMEOUT') 'lifecycle:drain-wait-bounded'
+  $wire.mode = 'stale'; $ctx.requireFreshDrain = $true
+  $answer = Invoke-FleetMaintenance 'before-remove' $ctx -Send $send -Wait $wait -Now $clock
+  Yes ($answer.code -ceq 'FLEET_MAINTENANCE_STALE_DRAIN') 'lifecycle:old-delisted-ready-is-refused'
+  $wire.mode = 'verify'; $wire.clock = $start.AddMinutes(30)
   $answer = Invoke-FleetMaintenance 'before-return' $ctx -Send $send -Wait $wait -Now $clock
-  Yes ($answer.code -ceq 'FLEET_MAINTENANCE_VERIFY_TIMEOUT' -and $wireFixture.polls -eq 2) 'lifecycle:post-start-deadline-stays-anchored'
-  $wireFixture.mode = 'restored'
+  Yes ($answer.code -ceq 'FLEET_MAINTENANCE_VERIFY_TIMEOUT' -and $wire.clock -eq $start.AddMinutes(45)) 'lifecycle:post-start-deadline-stays-anchored'
+  $wire.mode = 'returned'
   $answer = Invoke-FleetMaintenance 'before-return' $ctx -Send $send -Wait $wait -Now $clock
-  Yes ($answer.ok -and $answer.role -ceq 'STANDBY') 'lifecycle:late-new-heartbeat-restores-standby'
-  $wireFixture.mode = 'wrong-nonce'
+  Yes ($answer.ok) 'lifecycle:server-returns-node-after-verification'
+  $wire.mode = 'wrong-node'
   $answer = Invoke-FleetMaintenance 'before-return' $ctx -Send $send -Wait $wait -Now $clock
-  Yes ($answer.code -ceq 'FLEET_MAINTENANCE_SUBJECT_REFUSED') 'lifecycle:other-reply-refused'
+  Yes ($answer.code -ceq 'FLEET_MAINTENANCE_SUBJECT_REFUSED') 'lifecycle:other-node-reply-refused'
 }
+
 foreach ($name in @('Get-Key', 'Read-Sha256Sums', 'Get-ReleaseVersion', 'Get-RequiredAssets', 'Test-AssetSet', 'Test-PrereqManifest', 'Get-LastJsonLine', 'Get-ElevatedArguments', 'Test-UacDeclined',
     'Test-SafePath', 'Test-SafeArgument', 'Get-ExtractState', 'Get-StageFailure', 'Test-StageOperator',
     'Sha256File', 'Invoke-StageChild', 'Clear-CredentialDirectory', 'Test-FirstInstallCheck', 'Copy-ToWork', 'Test-UnderDirectory', 'Get-LauncherVerdict',
@@ -322,7 +382,7 @@ Case 'lifecycle:reselect routes back through the non-elevated entry' {
   $route = [scriptblock]::Create($body.Substring($start, $body.LastIndexOf('}') - $start))
   function Invoke-ReselectFixture([bool]$reappears) {
     $fixture = @{ inventory = 0; elevated = 0; upgrades = 0 }
-    $Action = 'Install'; $Reset = $false; $hostInputs = @('-Tar', 'fixture.tar'); $reselected = $false
+    $Action = 'Install'; $Reset = $false; $hostInputs = @('-Tar', 'fixture.tar'); $reselected = $false; $protectedPreview = $null
     $acceptLocal = $acceptance = 'fixture.json'; $archiveSha = 'a' * 64; $operator = 'fixture-operator'
     $install = Join-Path $env:TEMP 'fixture\install.mjs'
     $tar = 'fixture.tar'; $nodeExe = @('fixture-node'); $childEnv = @{}
