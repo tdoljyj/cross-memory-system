@@ -19,6 +19,7 @@ const DEFAULT_ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const refuse=m=>{throw new Error(`control Source pins: ${m}`);};
 const git=(root,args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:4*1024*1024,stdio:['ignore','pipe','pipe']});
 const lf=s=>s.replace(/\r\n/g,'\n');
+const sha256=text=>createHash('sha256').update(text).digest('hex');
 const blob=s=>{const b=Buffer.from(lf(s));return createHash('sha1').update(`blob ${b.length}\0`).update(b).digest('hex');};
 function readPlain(root,name){
   const full=path.join(root,name);
@@ -79,6 +80,22 @@ function initialEntry(registry,file){
   return rows[0];
 }
 function projectedRegistry(value,file,names){const result=structuredClone(value),entry=initialEntry(result,file);entry.implementation_blobs=projectedDescriptor({implementation_blobs:entry.implementation_blobs},names).implementation_blobs;return result;}
+// Task 788c2598 authorizes one exact append. Bind both compiler shapes and
+// the complete appended Source/FullRole independently of the candidate code.
+function withoutRegisteredTrainV2Slot(registry,previousShape,nextShape){
+  if(sha256(previousShape)!=='b2f9a544b42587519c8124147cb16c7b94baf8dc59ef79aa90aa7b992678556c'||
+    sha256(nextShape)!=='91a98c81b3a577acd4a0b9eb21509cc5ef1ae343645d94d25d61db13b3f4a950')
+    refuse('Source implementation changed beyond its version marker');
+  const file='.github/workflows/clued-merge-slot-ci.yml', workflowBlob='73215475c1b1a7098b9aee18fb00bbe05c65bc48';
+  const projected=structuredClone(registry);
+  const appended=projected.workflows?.[file]?.sources?.pop();
+  const roles=projected.roles?.[file];
+  if(appended?.workflow_blob!==workflowBlob||
+    sha256(JSON.stringify([appended,roles?.[workflowBlob]]))!=='bff8dcb515c0f9cf9a474833df6f05eae765b5a2e2625fd366052f9a95c43f75')
+    refuse('frozen catalogue/Role/workflow/authority changed outside the registered train v2 append');
+  delete roles[workflowBlob];
+  return projected;
+}
 function ensureVersionManifest(manifest,file,text){
   // A marker file is relative to its component root (e.g. root scripts/ci, file clued-source-only-workflow.mjs).
   const rows=manifest.components?.filter(c=>typeof c.version_marker?.file==='string'&&path.posix.join(c.root??'.',c.version_marker.file)===file);
@@ -99,8 +116,9 @@ export async function planControlSourcePins(root=DEFAULT_ROOT,{base}={}){
   const d=descriptor(source),registry=JSON.parse(registered);
   if(!isDeepStrictEqual(projectedDescriptor(d.value,mechanical),projectedDescriptor(old.value,mechanical)))refuse('frozen descriptor changed beyond mechanical pins');
   const moduleShape=(text,part)=>withoutVersion(text.slice(0,part.a)+'<registered-descriptor>'+text.slice(part.b));
-  if(moduleShape(source,d)!==moduleShape(before,old))refuse('Source implementation changed beyond its version marker');
-  if(!isDeepStrictEqual(projectedRegistry(registry,d.value.file,mechanical),projectedRegistry(beforeRegistry,old.value.file,mechanical)))refuse('frozen catalogue/Role/workflow/authority changed');
+  const previousShape=moduleShape(before,old),nextShape=moduleShape(source,d);
+  const catalogue=previousShape===nextShape?registry:withoutRegisteredTrainV2Slot(registry,previousShape,nextShape);
+  if(!isDeepStrictEqual(projectedRegistry(catalogue,d.value.file,mechanical),projectedRegistry(beforeRegistry,old.value.file,mechanical)))refuse('frozen catalogue/Role/workflow/authority changed');
   const entry=initialEntry(registry,d.value.file);
   if(!isDeepStrictEqual(entry.implementation_blobs,d.value.implementation_blobs))refuse('descriptor/catalogue pins disagree');
   const manifest=JSON.parse(readPlain(root,'config/clued-components.json'));
@@ -135,7 +153,8 @@ export async function planControlSourcePins(root=DEFAULT_ROOT,{base}={}){
   const profileImport="'./clued-workflow-profile.mjs'";
   if(source.split(profileImport).length!==2)refuse('one known profile import required');
   const profileUrl='data:text/javascript;base64,'+Buffer.from(profile).toString('base64');
-  const verified=source.replace(profileImport,JSON.stringify(profileUrl));
+  const trustedCompiler=before.slice(0,old.a)+source.slice(d.a,d.b)+before.slice(old.b);
+  const verified=trustedCompiler.replace(profileImport,JSON.stringify(profileUrl));
   const mod=await import('data:text/javascript;base64,'+Buffer.from(verified).toString('base64'));
   const roles=registry.roles?.[d.value.file]?.[entry.workflow_blob];
   const compiled=mod.compileControlWorkflowSource(d.value.file,entry.source_yaml,{parseYaml:()=>entry.workflow_definition,accepted_roles:roles,source_kind:'merge_reconcile_initial'});

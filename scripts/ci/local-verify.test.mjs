@@ -880,7 +880,14 @@ test('--affected selects exactly what the ci-suites job selects, from the select
     ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry', 'selection']);
   assert.equal(forCheck(picked, 'ci-suites').reason, 'selected by changed paths');
   assert.deepEqual(picked.selections.map((entry) => entry.check), ['ci-suites', 'clued-cloud-tests', 'migration-verify']);
-  assert.deepEqual(picked.suites, [...forCheck(picked, 'ci-suites').suites, 'clued-cloud'], "the application's tests run for every change; no schema file changed");
+  assert.deepEqual(forCheck(picked, 'clued-cloud-tests').suites, ['clued-cloud']);
+  const dbInputs = ['scripts/ci/clued-independent-publication-port.mjs', 'work/independent-ci-resident-v1/src/executor.mjs'];
+  for (const file of dbInputs) {
+    assert.ok(PR_1015_FILES.includes(file));
+    assert.deepEqual(forCheck(selectAffected(selection, [file]), 'migration-verify').suites, ['production-schema'], file);
+  }
+  assert.deepEqual(forCheck(picked, 'migration-verify').suites, selection.selectSuites('migration-verify', PR_1015_FILES).suites);
+  assert.deepEqual(picked.suites, [...forCheck(picked, 'ci-suites').suites, 'clued-cloud', 'production-schema']);
   // the line CI logs for the check, then why each suite is in
   assert.equal(picked.lines[0],
     'ci-suites: selected by changed paths; suites: resident-node, resident-python, reinstall-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries, mechanical-outputs, ci-deps-entry, selection');

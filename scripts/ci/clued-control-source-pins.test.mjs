@@ -10,6 +10,7 @@ import {planControlSourcePins,checkControlSourcePins,writeControlSourcePins,CONT
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const BASE='93940d4f6c06179e319c81173269d48cdc8e6420';
 const OPTIONS={base:BASE};
+const PUBLICATION_PORT='scripts/ci/clued-independent-publication-port.mjs';
 const baseText=name=>execFileSync('git',['show',`${BASE}:${name}`],{cwd:ROOT}).toString('utf8');
 const baseBlobs=(()=>{const t=baseText(CONTROL_SOURCE_MODULE),e='export const MERGE_RECONCILE_CONTROL_SOURCE=freeze(',a=t.indexOf(e)+e.length;return JSON.parse(t.slice(a,t.indexOf('\n});',a)+2)).implementation_blobs;})();
 const CONTROL_SOURCE_MECHANICAL_FILES=controlSourceMechanicalFiles(JSON.parse(baseText('config/clued-mechanical-files.json')),baseBlobs);
@@ -36,6 +37,12 @@ async function refusesWithoutWrites(root,match){const before=pair(root);await as
 
 test('actual version materialisation is reported, deterministically generated and idempotent without changing historical pins',async t=>{
   const root=fixture(t),before=JSON.parse(read(root,CONTROL_SOURCE_REGISTRY));
+  // The real v2 publication port changes behavior, so its historical pin
+  // cannot move. Exercise its mechanical path with a marker-only fixture.
+  const actual=await planControlSourcePins(root,OPTIONS);
+  assert.deepEqual(actual.changes.map(c=>c.file),CONTROL_SOURCE_MECHANICAL_FILES.filter(name=>name!==PUBLICATION_PORT));
+  const marker=/^export const COMPONENT_VERSION[^\r\n]+/m;
+  edit(root,PUBLICATION_PORT,current=>baseText(PUBLICATION_PORT).replace(marker,current.match(marker)[0]));
   const planned=await planControlSourcePins(root,OPTIONS);
   assert.deepEqual(planned.changes.map(c=>c.file),CONTROL_SOURCE_MECHANICAL_FILES);
   assert.equal((await checkControlSourcePins(root,OPTIONS)).status,'stale');
@@ -73,6 +80,12 @@ test('the checkout passes with its own commit as the trusted base',async()=>{
   const result=await checkControlSourcePins(ROOT,{base:head});
   assert.equal(result.status,clean?'ok':result.status,JSON.stringify(result.details));
   if(clean)assert.deepEqual(result.details,[]);
+});
+test('the reviewed train v2 Source append passes from its pre-registration base',async()=>{
+  const base='0dc2ceab86b9a17b46fd32882de86e8fada219d1';
+  const result=await checkControlSourcePins(ROOT,{base});
+  assert.equal(result.status,'ok',JSON.stringify(result.details));
+  assert.deepEqual(result.details,[]);
 });
 test('duplicate version markers and manifest mismatches refuse without any registry write',async t=>{
   const root=fixture(t);edit(root,CONTROL_SOURCE_MECHANICAL_FILES[0],x=>x+"\nexport const COMPONENT_VERSION = '9.9.9';\n");await refusesWithoutWrites(root,/one component version marker/);

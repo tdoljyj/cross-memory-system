@@ -206,7 +206,7 @@ test('historical slot notification successor binds exact accepted Git bytes and 
   const r=controlRegistry(),file=SLOT_COMPLETION_OBSERVER_SOURCE.file,rows=r.workflows[file].sources,
     previous=rows.find(s=>s.source_kind==='legacy_predecessor'),observer=rows.find(s=>s.source_kind==='completion_observer_successor'),
     old=rows.find(s=>s.source_kind==='controller_successor'),text=observer.source_yaml;
-  assert.equal(rows.length,4);assert.equal(observer.workflow_blob,SLOT_COMPLETION_OBSERVER_SOURCE.workflow_blob);
+  assert.equal(rows.length,5);assert.equal(observer.workflow_blob,SLOT_COMPLETION_OBSERVER_SOURCE.workflow_blob);
   assert.equal(observer.source_yaml,text);assert.equal(observer.operation,'extend_completion_observer');
   assert.deepEqual(observer.workflow_definition.jobs,previous.workflow_definition.jobs,'all commands, permissions, env, route and steps remain unchanged');
   assert.deepEqual(r.roles[file][observer.workflow_blob],r.roles[file][previous.workflow_blob],'the complete job Role is identical');

@@ -3,7 +3,7 @@
 import {createHash} from 'node:crypto';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.25';
+export const COMPONENT_VERSION='1.0.26';
 export const CONTROL_WORKFLOW_SOURCE_PATH='scripts/ci/clued-control-workflow-sources.json';
 export const CONTROL_WORKFLOW_SOURCE_SCHEMA='clued.control-workflow-sources/1';
 export const CONTROL_WORKFLOW_SOURCE_COMMIT='080ff04a8109ee74c53f16b79123fd55430cb7be';
@@ -894,10 +894,11 @@ export function compileControlWorkflowSource(file,text,{parseYaml,accepted_roles
   const descriptor=Object.hasOwn(CONTROL_WORKFLOW_FILES,file)?CONTROL_WORKFLOW_FILES[file]:null;
   if(!descriptor||typeof text!=='string'||!text||Buffer.byteLength(text)>131072||typeof parseYaml!=='function'||
       /\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/.test(text))bad('identity/source/parser');
-  if(!['legacy_predecessor','controller_successor','completion_observer_successor','dispatcher_choice_successor','retired_consumer_observer_successor','merge_reconcile_initial'].includes(source_kind)||
+  if(!['legacy_predecessor','controller_successor','completion_observer_successor','dispatcher_choice_successor','retired_consumer_observer_successor','train_v2_slot_successor','merge_reconcile_initial'].includes(source_kind)||
     source_kind==='completion_observer_successor'&&file!==SLOT_COMPLETION_OBSERVER_SOURCE.file||
     source_kind==='dispatcher_choice_successor'&&file!==DISPATCHER_CHOICE_SOURCE.file||
     source_kind==='retired_consumer_observer_successor'&&file!==RETIRED_CONSUMER_OBSERVER_SOURCE.file||
+    source_kind==='train_v2_slot_successor'&&file!==TRAIN_V2_SLOT_SOURCE.file||
     source_kind==='merge_reconcile_initial'&&file!==MERGE_RECONCILE_CONTROL_SOURCE.file)bad('source kind');
   const value=parseYaml(text);
   if(descriptor.family==='trusted_main_secret_reconcile_controller')return compileInitialReconcileController(file,text,value,{accepted_roles,source_kind,predecessor});
@@ -997,6 +998,23 @@ function compileMainSecretController(file,text,value,{parseYaml,accepted_roles,s
   if(source_kind==='legacy_predecessor'){
     if(workflowBlob(text)!==descriptor.predecessor_blob||hash(text)!==descriptor.predecessor_sha256||
       roleDefinitionDigest(value)!==descriptor.predecessor_definition_sha256)bad('exact main-secret predecessor');
+  }else if(source_kind==='train_v2_slot_successor'){
+    const pin=TRAIN_V2_SLOT_SOURCE,old=RETIRED_CONSUMER_OBSERVER_SOURCE;
+    if(workflowBlob(text)!==pin.workflow_blob||hash(text)!==pin.source_sha256||
+      roleDefinitionDigest(value)!==pin.workflow_definition_sha256||!same(role_digests,pin.role_digests))
+      bad('exact train v2 slot Source/FullRole required');
+    if(predecessor?.source_kind!=='retired_consumer_observer_successor'||predecessor.workflow_blob!==old.workflow_blob||
+      workflowBlob(predecessor.source_yaml)!==old.workflow_blob||hash(predecessor.source_yaml)!==old.source_sha256||
+      roleDefinitionDigest(predecessor.workflow_definition)!==old.workflow_definition_sha256||
+      !same(predecessor.role_digests,old.role_digests))bad('exact retirement predecessor required');
+    const before=predecessor.workflow_definition,after=structuredClone(value);
+    after.jobs.report.if=before.jobs.report.if;
+    const executor=after.jobs.report.steps.find(step=>step.run==='node scripts/ci/clued-merge-executor.mjs');
+    if(executor?.env?.CLUED_MERGE_TRAIN_PROTOCOL_VERSION!=='${{ vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION }}')
+      bad('train protocol must reach the executor');
+    delete executor.env.CLUED_MERGE_TRAIN_PROTOCOL_VERSION;
+    if(!same(before,after))bad('only the train v2 entry condition and executor protocol may change');
+    predecessor_blob=old.workflow_blob;
   }else{
     if(!predecessor||predecessor.source_kind!=='legacy_predecessor')bad('exact main-secret predecessor required');
     const old=compileControlWorkflowSource(file,predecessor.source_yaml,{parseYaml:()=>predecessor.workflow_definition,
@@ -1048,12 +1066,13 @@ function compileMainSecretController(file,text,value,{parseYaml,accepted_roles,s
     }commands[id]=names;
   }
   return {registration_status:'registered',family:descriptor.family,source_kind,
-    operation:source_kind==='legacy_predecessor'?'predecessor':source_kind==='completion_observer_successor'?'extend_completion_observer':source_kind==='retired_consumer_observer_successor'?'retire_completed_consumer_signal':source_kind==='dispatcher_choice_successor'?'extend_dispatcher_choice':'migrate_hosted_controller',workflow_blob:workflowBlob(text),
+    operation:source_kind==='legacy_predecessor'?'predecessor':source_kind==='completion_observer_successor'?'extend_completion_observer':source_kind==='retired_consumer_observer_successor'?'retire_completed_consumer_signal':source_kind==='train_v2_slot_successor'?'guard_train_v2_slot_entry':source_kind==='dispatcher_choice_successor'?'extend_dispatcher_choice':'migrate_hosted_controller',workflow_blob:workflowBlob(text),
     source_sha256:hash(text),source_yaml:text,workflow_definition:value,predecessor_blob,
     primary_ids:[...descriptor.migrating_jobs].sort(),role_digests,command_digests:commands,
     implementation_blobs:{...(source_kind==='legacy_predecessor'?descriptor.predecessor_implementation_blobs:
       source_kind==='completion_observer_successor'?SLOT_COMPLETION_OBSERVER_SOURCE.implementation_blobs:
       source_kind==='retired_consumer_observer_successor'?RETIRED_CONSUMER_OBSERVER_SOURCE.implementation_blobs:
+      source_kind==='train_v2_slot_successor'?TRAIN_V2_SLOT_SOURCE.implementation_blobs:
       source_kind==='dispatcher_choice_successor'?DISPATCHER_CHOICE_SOURCE.implementation_blobs:descriptor.implementation_blobs)},authority_boundary:{...mainSecretBoundary}};
 }
 
@@ -1069,7 +1088,7 @@ export function registeredControlWorkflowSource(registry,file,text,{repository='
         !same(Object.keys(registry.workflows).sort(),Object.keys(registry.roles).sort()))return unknown('control catalogue identity');
     const descriptor=CONTROL_WORKFLOW_FILES[file],root=registry.workflows[file],roles=registry.roles[file];
     if(!descriptor||!keys(root,['registration_status','sources'])||root.registration_status!=='registered'||
-        !Array.isArray(root.sources)||root.sources.length<1||root.sources.length>(file===RETIRED_CONSUMER_OBSERVER_SOURCE.file?4:3)||!plain(roles)||typeof text!=='string'||
+        !Array.isArray(root.sources)||root.sources.length<1||root.sources.length>(file===TRAIN_V2_SLOT_SOURCE.file?5:3)||!plain(roles)||typeof text!=='string'||
         root.sources.some(source=>!plain(source)||!sha.test(source.workflow_blob??''))||
         new Set(root.sources.map(source=>source.workflow_blob)).size!==root.sources.length||
         !same(Object.keys(roles).sort(),root.sources.map(source=>source.workflow_blob).sort()))return unknown('control catalogue bounds');
@@ -1090,9 +1109,11 @@ export function registeredControlWorkflowSource(registry,file,text,{repository='
       parseYaml:()=>predecessor.workflow_definition,accepted_roles:roles[predecessor.workflow_blob],source_kind:'legacy_predecessor',
     });
     if(!same(predecessor,compiledPredecessor))return unknown('control predecessor integrity');
+    const retired=root.sources.find(source=>source.source_kind==='retired_consumer_observer_successor');
     for(const source of root.sources){
       const compiled=source.source_kind==='legacy_predecessor'?compiledPredecessor:compileControlWorkflowSource(file,source.source_yaml,{
-        parseYaml:()=>source.workflow_definition,accepted_roles:roles[source.workflow_blob],source_kind:source.source_kind,predecessor,
+        parseYaml:()=>source.workflow_definition,accepted_roles:roles[source.workflow_blob],source_kind:source.source_kind,
+        predecessor:source.source_kind==='train_v2_slot_successor'?retired:predecessor,
       });
       if(!same(source,compiled))return unknown('compiled control Source/Role differs');
     }
@@ -1127,7 +1148,9 @@ export function registeredControlWorkflowTransition(registry,file,headText,baseT
     file===SLOT_COMPLETION_OBSERVER_SOURCE.file&&head.profile.source_kind==='completion_observer_successor'||
     file===DISPATCHER_CHOICE_SOURCE.file&&head.profile.source_kind==='dispatcher_choice_successor')&&
     base.profile.source_kind==='legacy_predecessor'&&head.profile.predecessor_blob===base.profile.workflow_blob;
-  if(!retirement&&!legacy)return unknown('registered controller predecessor/successor absent');
+  const trainV2=head.profile.source_kind==='train_v2_slot_successor'&&
+    base.profile.source_kind==='retired_consumer_observer_successor'&&head.profile.predecessor_blob===base.profile.workflow_blob;
+  if(!retirement&&!legacy&&!trainV2)return unknown('registered controller predecessor/successor absent');
   return {...head,scope:'registered_control_transition_source_only'};
 }
 
@@ -1172,4 +1195,17 @@ export const RETIRED_CONSUMER_OBSERVER_SOURCE=freeze({
     "scripts/runner/clued-runner-job-started.mjs": "263c9f53b42c66c385fdb808345170ead9462ccf",
     "scripts/runner/qualify-standard-runner-actor.mjs": "794861b9acf7659ef2bb946f2c1dff7ef33fbd10"
   }
+});
+
+export const TRAIN_V2_SLOT_SOURCE=freeze({
+  file:RETIRED_CONSUMER_OBSERVER_SOURCE.file,
+  workflow_blob:'73215475c1b1a7098b9aee18fb00bbe05c65bc48',
+  source_sha256:'9bd7d356f834736141f3978d1059775b946eaedc680cd814349f348d38f58376',
+  workflow_definition_sha256:'8f6ca0aa1b994d495d598fdcf3c2388f6e7ca183b6e3db53cd329fb81820d55e',
+  role_digests:{report:'673021e36bcd06373b778f812ff808dbcf62295c25dd3e314bc78961496bf2ea'},
+  implementation_blobs:{
+    ...RETIRED_CONSUMER_OBSERVER_SOURCE.implementation_blobs,
+    'scripts/ci/clued-merge-executor.mjs':'4dfa8f4e07676c71ed969c56b111213efd380506',
+    'scripts/ci/clued-independent-publication-port.mjs':'8142daac262152d5c70fe7c2d19f122a3ae3c80e',
+  },
 });
