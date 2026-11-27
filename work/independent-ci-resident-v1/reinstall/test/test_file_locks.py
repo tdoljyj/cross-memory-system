@@ -243,12 +243,13 @@ if ([regex]::Matches($cs, $imports).Count -ne 4) { throw 'RM_IMPORTS_NOT_FOUND' 
 $stubs = @'
     public static uint Sessions, Closed, Registered;
     public static bool PersistentFailure;
-    public static int FirstCapacity, GrownCapacity;
+    public static int FirstCapacity, GrownCapacity, CallDuration;
     static uint RmStartSession(out uint handle, uint flags, StringBuilder key) { handle = ++Sessions; return 0; }
     static uint RmRegisterResources(uint handle, uint count, string[] paths, uint apps, Identity[] processes, uint services, string[] names) {
       Registered += count; return 0;
     }
     static uint RmGetList(uint handle, out uint needed, ref uint count, Info[] list, ref uint reasons) {
+      RetryClock.Now += CallDuration;
       needed = 181;
       if (PersistentFailure) return 6;
       if (handle == 1 && count < needed) { FirstCapacity = (int)count; return 234; }
@@ -262,6 +263,20 @@ $stubs = @'
 '@
 $match = [regex]::Match($cs, $imports)
 $cs = ([regex]::Replace($cs, $imports, '')).Insert($match.Index, $stubs)
+$cs = $cs.Replace('using System.Diagnostics;', 'using Stopwatch = CluedRehearsalLocks.RetryClock;')
+$cs = $cs.Replace('using System.Threading;', 'using Thread = CluedRehearsalLocks.RetryClock;')
+$cs += @'
+
+namespace CluedRehearsalLocks {
+  public sealed class RetryClock {
+    public static long Now;
+    readonly long started = Now;
+    public long ElapsedMilliseconds { get { return Now - started; } }
+    public static RetryClock StartNew() { return new RetryClock(); }
+    public static void Sleep(int ms) { Now += ms; }
+  }
+}
+'@
 Add-Type -TypeDefinition $cs
 $items = @([CluedRehearsalLocks.Query]::Files(@('fixture.exe')))
 if ($items.Count -ne 1 -or $items[0].Process.Pid -ne 123 -or
@@ -269,12 +284,18 @@ if ($items.Count -ne 1 -or $items[0].Process.Pid -ne 123 -or
     [CluedRehearsalLocks.Query]::Sessions -ne 2 -or [CluedRehearsalLocks.Query]::Closed -ne 2 -or
     [CluedRehearsalLocks.Query]::Registered -ne 2) { throw 'RM_RETRY_DID_NOT_RECOVER_COMPLETE_LIST' }
 [CluedRehearsalLocks.Query]::PersistentFailure = $true
-try { $null = [CluedRehearsalLocks.Query]::Files(@('fixture.exe')); throw 'RM_ERROR_RETURNED_AS_LIST' }
-catch {
-  $cause = $_.Exception.InnerException
-  if ($cause -isnot [ComponentModel.Win32Exception] -or $cause.NativeErrorCode -ne 6) { throw }
+function Assert-PersistentFailure($expectedSessions) {
+  try { $null = [CluedRehearsalLocks.Query]::Files(@('fixture.exe')); throw 'RM_ERROR_RETURNED_AS_LIST' }
+  catch {
+    $cause = $_.Exception.InnerException
+    if ($cause -isnot [ComponentModel.Win32Exception] -or $cause.NativeErrorCode -ne 6) { throw }
+  }
+  if ([CluedRehearsalLocks.Query]::Sessions -ne $expectedSessions -or
+      [CluedRehearsalLocks.Query]::Closed -ne $expectedSessions) { throw 'RM_RETRY_NOT_BOUNDED' }
 }
-if ([CluedRehearsalLocks.Query]::Sessions -ne 8 -or [CluedRehearsalLocks.Query]::Closed -ne 8) { throw 'RM_RETRY_NOT_BOUNDED' }
+Assert-PersistentFailure 8
+[CluedRehearsalLocks.Query]::CallDuration = 12000
+Assert-PersistentFailure 9
 '''
 
 
@@ -341,7 +362,7 @@ class FileLocks(unittest.TestCase):
             script.write_text(RM_RETRY_PROBE, encoding='ascii')
             result = subprocess.run([str(PS), '-NoProfile', '-NonInteractive', '-File', str(script),
                                      str(ROOT / 'tools/file-locks.ps1')], capture_output=True,
-                                    text=True, encoding='utf-8', timeout=30)
+                                    text=True, encoding='utf-8')
             self.assertEqual(result.returncode, 0, result.stderr)
 
     def classify_window(self, scenario):
