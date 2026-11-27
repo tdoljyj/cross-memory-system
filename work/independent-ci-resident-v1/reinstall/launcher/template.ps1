@@ -95,6 +95,7 @@ $CarryParent = 'C:\ProgramData\CluedIndependentCI'   # the carried tokens' direc
 $CarriedTokens = [ordered]@{ directory = $null; tokens = @(); removed = $null; removeError = $null }
 # The generic node package: armed while a stop would leave the node exactly as the W1 pause found it (see Restore-W1Pause).
 $W1Restore = [ordered]@{ armed = $false; result = $null }   # the generic node package: the carried-over token copies (never their content)
+$CompanionTaskRestore = [ordered]@{ disabled = [Collections.Generic.List[object]]::new(); restart = $false; uninstallStarted = $false }
 $ChildEnv = [ordered]@{
   SystemRoot = 'C:\Windows'; windir = 'C:\Windows'; SystemDrive = 'C:'; ComSpec = 'C:\Windows\System32\cmd.exe'
   PATH = 'C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0'
@@ -199,6 +200,7 @@ function Invoke-Child([string]$name, [string]$file, [string[]]$argList) {
   $psi.EnvironmentVariables.Clear()
   foreach ($k in $ChildEnv.Keys) { $psi.EnvironmentVariables[$k] = $ChildEnv[$k] }
   $p = [Diagnostics.Process]::Start($psi)
+  if ($name -ceq 'uninstall') { $CompanionTaskRestore.uninstallStarted = $true }
   $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
   $p.WaitForExit()
   $r = [pscustomobject]@{ exit = $p.ExitCode; stdout = $o.Result; stderr = $e.Result }
@@ -942,10 +944,46 @@ function Test-ExecutorAlive {
   $holderPid = Get-Key (Parse-Json ([IO.File]::ReadAllText($h))) 'pid'
   [ordered]@{ alive = [bool](Get-Process -Id $holderPid -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -eq 'node' }); pid = $holderPid }
 }
-# The companion task is stopped and started only through these two (one place, replaceable in offline tests).
-function Stop-CompanionTask {
-  Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\ScheduledTasks\ScheduledTasks.psd1'
-  Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction Stop
+function Test-CompanionTaskActive($task) {
+  $task.GetInstances(0).Count -ne 0 -or [int]$task.State -in @(2, 4)   # queued or running
+}
+function Stop-CompanionTask($task) {
+  if (Test-CompanionTaskActive $task) {
+    try { $task.Stop(0) } catch { if (Test-CompanionTaskActive $task) { throw } }
+  }
+  if (-not (Wait-Until { -not (Test-CompanionTaskActive $task) } 30)) { throw ('COMPANION_TASK_STILL_ACTIVE:' + $task.Name) }
+}
+function Disable-CompanionTaskTriggers {
+  $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
+  $folder = $svc.GetFolder('\Clued')
+  # Stop the launchers first. In particular, an in-flight fallback can re-register the main task.
+  foreach ($name in @('CluedCIResidentCompanionStart', 'CluedCIResidentCompanionFallback', 'CluedCIResidentCompanion')) {
+    $main = $name -ceq 'CluedCIResidentCompanion'
+    try { $task = $folder.GetTask($name) }
+    catch {
+      if (-not $main -and ($_.Exception.GetBaseException().HResult -band 0xffff) -in @(2, 3)) { continue }
+      throw
+    }
+    if ($task.Enabled) {
+      if ($main) { $CompanionTaskRestore.restart = Test-CompanionTaskActive $task }
+      $CompanionTaskRestore.disabled.Add($task)
+      $task.Enabled = $false
+      if ($task.Enabled) { throw ('COMPANION_TASK_DISABLE_UNCONFIRMED:' + $name) }
+    }
+    if ($main) { return $task }
+    Stop-CompanionTask $task
+  }
+}
+function Restore-CompanionTaskTriggers {
+  if ($CompanionTaskRestore.uninstallStarted) { return }
+  for ($i = $CompanionTaskRestore.disabled.Count - 1; $i -ge 0; $i--) {
+    $task = $CompanionTaskRestore.disabled[$i]
+    try {
+      $task.Enabled = $true
+      if (-not $task.Enabled) { throw 'TASK_ENABLE_UNCONFIRMED' }
+      if ($CompanionTaskRestore.restart -and $task.Name -ceq 'CluedCIResidentCompanion' -and -not (Test-CompanionTaskActive $task)) { Start-CompanionTask }
+    } catch { Write-Warning ('COMPANION_TASK_RESTORE_FAILED [' + $task.Name + '] ' + $_.Exception.Message) }
+  }
 }
 # K3 (task 87d330d0): a plain start (the ScheduledTasks cmdlet, a COM Run) of a task whose principal is not a service account can stay queued under a
 # start constraint outside the task's XML (a node with no user session); RunEx with TASK_RUN_IGNORE_CONSTRAINTS (2), no session, no user
@@ -1459,8 +1497,12 @@ function Step-Quiesce {
   $report['brokerStop'] = (& $Sc stop CluedCISwapBroker | Out-String).Trim()
   $report['brokerStopped'] = Wait-Until { (Get-ScState 'CluedCISwapBroker').state -eq 1 } 120
   if (-not $report['brokerStopped']) { $report['after'] = [ordered]@{ services = @((Get-ScState 'CluedCIResident'), (Get-ScState 'CluedCISwapBroker')) }; Write-Json 'quiesce-report.json' $report; Stop-Launch 'QUIESCE_NOT_CONFIRMED' $report }
+  try { $task = Disable-CompanionTaskTriggers }
+  catch { $report['companionTaskStop'] = $_.Exception.Message; Write-Json 'quiesce-report.json' $report; Stop-Launch 'QUIESCE_NOT_CONFIRMED' $report }
+  # The disabled main task's running instance can still anchor legacy process identity in the final snapshot.
   $locks = if ($FleetPlanSha256) { Read-VerifiedResidentLocks 'before-task-stop' }
-  $report['companionTaskStop'] = try { Stop-CompanionTask; 'stopped' } catch { $_.Exception.Message }
+  try { Stop-CompanionTask $task; $report['companionTaskStop'] = 'stopped' }
+  catch { $report['companionTaskStop'] = $_.Exception.Message; Write-Json 'quiesce-report.json' $report; Stop-Launch 'QUIESCE_NOT_CONFIRMED' $report }
   if ($FleetPlanSha256) {
     foreach ($row in $locks['rootProcesses']) {
       $proc = Get-Process -Id $row.pid -ErrorAction SilentlyContinue
@@ -2506,6 +2548,7 @@ try {
   Get-Content -LiteralPath (Join-Path $Out 'terminal.json') -Raw -Encoding UTF8   # Write-Json's UTF-8 without BOM (5.1 reads ANSI otherwise)
   throw
 } finally {
+  Restore-CompanionTaskTriggers
   # Whatever happened above (success, a stop, any exception): no copy of a token outlives this run, and what became of the directory is
   # on record even when the terminal was written before this point.
   Remove-FleetCarry

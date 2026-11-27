@@ -149,6 +149,15 @@ if not FLEET_PLAN:   # the generic node package: this file's own tree is the unp
 LINUX_EVIDENCE = opt('--linux-evidence')
 TOKEN_FILE = CFG['upgradeTokenFile']   # path only: its content is never opened here
 REHEARSAL = opt('--rehearsal')
+rehearsal_doc = None
+if REHEARSAL:
+    with open(REHEARSAL, encoding='utf-8') as f:
+        rehearsal_doc = json.load(f)
+    if FINAL and not FLEET_PLAN and rehearsal_doc:
+        _file_locks = (rehearsal_doc.get('checks') or {}).get('fileLocksFinding')
+        if isinstance(_file_locks, dict) and 'deferredTo' in _file_locks:
+            print(json.dumps({'status': 'REFUSED', 'codes': ['REHEARSAL_FILE_LOCKS_DEFERRED_TO_FLEET_LAUNCHER']}, indent=1))
+            sys.exit(3)
 FACTS = opt('--linux-version-facts')   # r5c
 ADOPTED_PKG = os.path.abspath(opt('--linux-adopted-package')) if opt('--linux-adopted-package') else None   # record-only reinstall
 R4 = CFG['workDir']
@@ -158,7 +167,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '534a1e710d8414a9682212a3eabf6d001ad903f6093ebb1d81c785b6e12c0a50'
+TEMPLATE_SHA = '384d5ddf3c0bf2a53fcfcd64d7975ee1a4a4bf32a2bcc571da60fd3b8492849a'
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -631,7 +640,6 @@ if any(re.match(r'^(d{8}|e{8})-', str(acceptance.get(k, ''))) for k in ('sourceA
     refusals.append('PLACEHOLDER_OWNER_REFS_DRAFT_ONLY')
 # README section 5: no FINAL without a PASS rehearsal of exactly this package and configuration. Its 24-hour bound (review 1-8) is checked
 # by prep.py, before the node changes; here, after W1 and Linux B, a node half reinstalled could never rehearse again (review 2).
-rehearsal_doc = json.load(open(REHEARSAL, encoding='utf-8')) if REHEARSAL else None
 # (the generic node package: the rehearsal is the node preparation's own gate, before it writes the plan this was generated from)
 if not FLEET_PLAN and not _ledger_evidence.rehearsal_matches(rehearsal_doc, pkg_sha, COMMIT, CFG['_sha256'], adopted_pkg_sha if adopted_proven else None):
     refusals.append('FINAL_NEEDS_A_PASSING_REHEARSAL_OF_THIS_PACKAGE')

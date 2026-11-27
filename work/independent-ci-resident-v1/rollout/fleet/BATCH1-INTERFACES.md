@@ -119,7 +119,7 @@ record 各文件：`source-manifest.json` 全体逐字节相同；`installation.
 ## 7. 第一轮合并后的裁定（协调者，2026-11-12）
 
 1. **prep.py 用块 2 的格式。** `install.mjs prepare` 在 `<work>\inputs\reinstall-config.json` 合成一份 `clued.independent-ci.reinstall-config/1`（全部值来自本机记录，第 6 节与块 1 的对应表），然后：
-   - 先跑包内 `reinstall/rehearse.py <config> --commit <c> --package <work\package> --file-locks-in-launcher`（rehearsal 需要的 `workDir\rehearsal\src-<c8>.git` 由 install.mjs 从包内 bundle 建好，不 fetch）；结论必须是 `REHEARSAL_PASS`，否则 prepare 失败并打印 findings；
+   - 先跑包内 `reinstall/rehearse.py <config> --commit <c> --package <work\package> --file-locks-in-launcher --fleet`（rehearsal 需要的 `workDir\rehearsal\src-<c8>.git` 由 install.mjs 从包内 bundle 建好，不 fetch）；结论必须是 `REHEARSAL_PASS`，否则 prepare 失败并打印 findings；
    - 再按块 2 的格式调 `prep.py <config> <rehearsal 报告> --in-dir <work\linux-in> --out-dir <work\linux-out>`，脚本写到 `<work>\linux\`；
    - 再调 `generate.py --fleet-plan <install-plan.json> --out <work\launcher.ps1>`。
    块 1 的 `--fleet-plan/--installed-*/--node-linux` 形式作废。

@@ -11,8 +11,10 @@ if (-not ('CluedRehearsalLocks.Query' -as [type])) {
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 namespace CluedRehearsalLocks {
   [StructLayout(LayoutKind.Sequential)] public struct Identity { public uint Pid; public System.Runtime.InteropServices.ComTypes.FILETIME Started; }
   [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] public struct Info {
@@ -55,10 +57,28 @@ namespace CluedRehearsalLocks {
     [DllImport("rstrtmgr.dll")] static extern uint RmGetList(uint handle, out uint needed, ref uint count, [In, Out] Info[] list, ref uint reasons);
     [DllImport("rstrtmgr.dll")] static extern uint RmEndSession(uint handle);
     public static long Start(Info value) { return ((long)(uint)value.Process.Started.dwHighDateTime << 32) | (uint)value.Process.Started.dwLowDateTime; }
+    const uint InvalidHandle = 6, MoreData = 234;
+    const int MaxLockers = 10000, MaxSessions = 6, RetryBudgetMs = 12000;
     public static Info[] Files(string[] files) {
       if (files == null || files.Length > 200000) throw new ArgumentException("RESOURCE_LIST_INVALID");
       if (files.Length == 0) return new Info[0];
-      uint handle; uint code = RmStartSession(out handle, 0, new StringBuilder(33));
+      // A nonempty buffer can get the list in one call, without a count/list race.
+      // Keep the increased capacity on a fresh session if the previous one failed.
+      int capacity = 32;
+      uint code = MoreData;
+      Stopwatch budget = Stopwatch.StartNew();
+      for (int session = 0; session < MaxSessions; session++) {
+        Info[] list = ReadSession(files, ref capacity, out code, budget);
+        if (list != null) return list;
+        if ((code != InvalidHandle && code != MoreData) || session + 1 == MaxSessions || budget.ElapsedMilliseconds + 250 >= RetryBudgetMs) break;
+        Thread.Sleep(250);
+        if (budget.ElapsedMilliseconds >= RetryBudgetMs) break;
+      }
+      throw new Win32Exception((int)code, "RM_GET_LIST:" + code);
+    }
+    static Info[] ReadSession(string[] files, ref int capacity, out uint code, Stopwatch budget) {
+      uint handle;
+      code = RmStartSession(out handle, 0, new StringBuilder(33));
       if (code != 0) throw new Win32Exception((int)code, "RM_START:" + code);
       try {
         for (int offset = 0; offset < files.Length; offset += 512) {
@@ -66,16 +86,24 @@ namespace CluedRehearsalLocks {
           code = RmRegisterResources(handle, (uint)length, batch, 0, null, 0, null);
           if (code != 0) throw new Win32Exception((int)code, "RM_REGISTER:" + code);
         }
-        uint needed = 0, count = 0, reasons = 0;
-        code = RmGetList(handle, out needed, ref count, null, ref reasons);
-        for (int attempt = 0; code == 234 && attempt < 3; attempt++) {
-          if (needed > 10000) throw new InvalidOperationException("LOCKER_LIST_TOO_LARGE");
-          Info[] list = new Info[needed]; count = needed;
+        for (int attempt = 0; attempt < 4; attempt++) {
+          uint needed, count = (uint)capacity, reasons = 0;
+          Info[] list = new Info[capacity];
           code = RmGetList(handle, out needed, ref count, list, ref reasons);
-          if (code == 0) { Array.Resize(ref list, checked((int)count)); return list; }
+          if (code == 0) {
+            if (count > capacity) throw new InvalidOperationException("LOCKER_LIST_COUNT_INVALID");
+            Array.Resize(ref list, (int)count);
+            return list;
+          }
+          if (code != MoreData) break;
+          if (needed > MaxLockers) throw new InvalidOperationException("LOCKER_LIST_TOO_LARGE");
+          // More processes can enter between calls. Grow even if RM repeats the same size.
+          int next = Math.Min(MaxLockers, Math.Max(capacity * 2, (int)needed + 32));
+          if (next == capacity) break;
+          capacity = next;
+          if (budget.ElapsedMilliseconds >= RetryBudgetMs) break;
         }
-        if (code != 0) throw new Win32Exception((int)code, "RM_GET_LIST:" + code);
-        return new Info[0];
+        return null; // No complete list; the caller retries or throws with the native code.
       } finally { RmEndSession(handle); }
     }
   }
@@ -269,7 +297,16 @@ $processRows = Get-ProcessSample $Root
 $servicesBefore = @(Get-CimInstance -ClassName Win32_Service | Where-Object { @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader') -ccontains $_.Name })
 $taskSnapshotBefore = Get-CompanionTaskSnapshot
 $taskBefore = @($taskSnapshotBefore.instances)
-$observed = @([CluedRehearsalLocks.Query]::Files($files.ToArray()))
+try { $observed = @([CluedRehearsalLocks.Query]::Files($files.ToArray())) }
+catch {
+  $cause = $_.Exception.InnerException
+  if ($cause -is [ComponentModel.Win32Exception] -and $cause.Message -cmatch '^RM_(?:START|REGISTER|GET_LIST):[0-9]{1,10}$') {
+    # Stable stderr for the rehearsal. Other errors (e.g. reparse or receipt checks) are not RM failures.
+    [Console]::Error.WriteLine($cause.Message)
+    exit 1
+  }
+  throw
+}
 foreach ($after in (Get-ProcessSample $Root).Values) {
   $pidValue = [uint32]$after.process.ProcessId
   $before = $processRows[$pidValue]

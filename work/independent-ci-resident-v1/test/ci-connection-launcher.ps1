@@ -7,7 +7,7 @@ if ($errors.Count) { throw $errors[0] }
 $pins = [regex]::Match($source, '(?s)#region pins\s+(.+?)#endregion pins').Groups[1].Value
 . ([scriptblock]::Create($pins))
 foreach ($name in @('Test-PreparedW1','Assert-CiInstallBaseline','Restore-W1Pause','Get-FileSha','Sha256Bytes','Get-Key','Parse-Json',
-    'Wait-Until','Stop-Launch','Write-Json','Write-New','Invoke-Child','Step-SweepCarry','Step-Output')) {
+    'Wait-Until','Stop-Launch','Write-Json','Write-New','Invoke-Child','Step-SweepCarry','Step-Output','Restore-CompanionTaskTriggers')) {
   $fn = $ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name}, $true)
   if ($fn) { . ([scriptblock]::Create($fn.Extent.Text)) }
 }
@@ -50,6 +50,7 @@ if ($Scene -eq 'changed-door') { [IO.File]::AppendAllText($door,"`n#changed") }
 $PS = Join-Path $PSHOME 'powershell.exe'
 $ChildEnv = @{ SystemRoot=$env:SystemRoot; PSModulePath=(Join-Path $PSHOME 'Modules'); TEMP=''; TMP='' }
 $W1Restore = @{armed=$false;result=$null}; $Done = New-Object 'Collections.Generic.List[string]'
+$CompanionTaskRestore = [ordered]@{ disabled = [Collections.Generic.List[object]]::new(); restart = $false; uninstallStarted = $false }
 $CarriedTokens = @{}; $calls = New-Object Collections.ArrayList
 $Progress = @{}
 function Step-Identity {}

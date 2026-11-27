@@ -124,6 +124,13 @@ if (Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier' -E
   try { Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier' -ErrorAction Stop } catch { }
   Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier' -Confirm:$false
 }
+# The uninstall has removed the task definitions. Retire any remaining supervisors of this installation.
+# The marker inherits config's DACL and is archived with the old root.
+$retireAcl = [Security.AccessControl.FileSecurity]::new()
+$retireAcl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
+$retire = Join-Path $Root 'config\companion-supervisor-retired'
+[IO.FileStream]::new($retire, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write,
+  [IO.FileShare]::None, 4096, [IO.FileOptions]::None, $retireAcl).Dispose()
 # The companion runs as conhost --headless -> node (install-resident.ps1 Get-CompanionAction); ending or
 # unregistering its task ends conhost, not node. With both services stopped only the companion can still run
 # the installed node copy, so every such process is stopped before the resident directory is renamed. The companion's
