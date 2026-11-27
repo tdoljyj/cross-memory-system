@@ -738,11 +738,11 @@ class CompanionNode(unittest.TestCase):
 
     def test_zero_creation_time_is_deferred_but_never_an_expected_locker(self):
         locker = {'pid': 4, 'application': '', 'startedFileTime': 0, 'expected': False}
-        r = self.run_with(CompanionHost(self.fx, file_locks={'external': [locker]}), file_locks_in_launcher=True)
+        r = self.run_with(CompanionHost(self.fx, file_locks={'external': [locker]}), file_locks_in_launcher=True, installed_linux_in_phase_a=True)
         self.assertEqual(r['findings'], [])
         self.assertEqual(r['checks']['fileLocksFinding']['processes'], [locker])
         locker['expected'] = True
-        r = self.run_with(CompanionHost(self.fx, file_locks={'lockers': [locker]}), file_locks_in_launcher=True)
+        r = self.run_with(CompanionHost(self.fx, file_locks={'lockers': [locker]}), file_locks_in_launcher=True, installed_linux_in_phase_a=True)
         self.assertIn('RESIDENT_FILE_LOCK_OBSERVATION_INVALID', codes(r))
 
     def test_two_protected_failures_are_bound_to_review_of_the_old_verify(self):
@@ -766,26 +766,88 @@ class CompanionNode(unittest.TestCase):
         r = self.run_with(CompanionHost(self.fx, file_locks={'external': [locker]}))
         self.assertEqual(r['findings'], [{'code': 'EXTERNAL_RESIDENT_BINARY_LOCK', 'processes': [locker], 'companionProcessIdentity': 'UNREADABLE_NON_ELEVATED'}])
 
+    def test_cli_refuses_the_launcher_switch_without_fleet_before_reading_configuration(self):
+        host = CompanionHost(self.fx)
+        with mock.patch.object(rehearse.rconfig, 'load', return_value=self.fx.cfg) as load, mock.patch.object(rehearse, 'Host', return_value=host):
+            with self.assertRaisesRegex(AssertionError, '--file-locks-in-launcher requires --fleet'):
+                rehearse.main(['not-read.json', '--commit', COMMIT, '--package', self.fx.pkg, '--file-locks-in-launcher'])
+            load.assert_not_called()
+
+    def test_direct_rehearsal_does_not_defer_either_lock_finding_without_fleet(self):
+        locker = {'pid': 4321, 'application': 'CluedCompanionSupervisor', 'startedFileTime': 1, 'expected': False}
+        external = CompanionHost(self.fx, file_locks={'external': [locker]})
+        unavailable = CompanionHost(self.fx)
+        unavailable.file_locks = mock.Mock(side_effect=rehearse.RestartManagerProbeFailed(1, 'RM_GET_LIST:6'))
+        for host, code in ((external, 'EXTERNAL_RESIDENT_BINARY_LOCK'), (unavailable, 'RESIDENT_FILE_LOCK_OBSERVATION_UNAVAILABLE')):
+            with self.subTest(code=code):
+                report = self.run_with(host, file_locks_in_launcher=True)
+                self.assertEqual(report['status'], 'REHEARSAL_FAILED')
+                self.assertEqual(codes(report), [code])
+                self.assertNotIn('fileLocksFinding', report['checks'])
+
     def test_the_package_launcher_takes_over_the_lock_finding_on_a_companion_node_only(self):
         locker = {'pid': 4321, 'application': 'CluedCompanionSupervisor', 'startedFileTime': 1, 'expected': False}
-        r = self.run_with(CompanionHost(self.fx, file_locks={'external': [locker]}), file_locks_in_launcher=True)
+        host = CompanionHost(self.fx, file_locks={'external': [locker]})
+        args = ['config.json', '--commit', COMMIT, '--package', self.fx.pkg, '--fleet', '--file-locks-in-launcher', '--report-dir', self.fx.dir]
+        with mock.patch.object(rehearse.rconfig, 'load', return_value=self.fx.cfg), mock.patch.object(rehearse, 'Host', return_value=host):
+            with mock.patch('builtins.print') as print_report:
+                self.assertEqual(rehearse.main(args), 0)
+        with open(json.loads(print_report.call_args.args[0])['report'], encoding='utf-8') as f:
+            r = json.load(f)
         self.assertEqual((r['status'], r['findings']), ('REHEARSAL_PASS', []))
         self.assertEqual(r['checks']['fileLocksFinding'], {'deferredTo': 'launch-elevated-file-locks', 'reason': 'COMPANION_PROCESS_IDENTITY_UNREADABLE_NON_ELEVATED', 'processes': [locker]})
         self.assertEqual(r['checks']['fileLocks']['external'], [locker])   # what was seen stays in the report
         # an observation that is not valid is never left to the launcher
-        bad = self.run_with(CompanionHost(self.fx, file_locks={'status': 'UNREADABLE'}), file_locks_in_launcher=True)
+        bad = self.run_with(CompanionHost(self.fx, file_locks={'status': 'UNREADABLE'}), file_locks_in_launcher=True, installed_linux_in_phase_a=True)
         self.assertIn('RESIDENT_FILE_LOCK_OBSERVATION_INVALID', [f['code'] for f in bad['findings']])
         # a launcher template without the elevated step cannot take the finding over
         with tempfile.TemporaryDirectory(prefix='rt') as d:
             old = os.path.join(d, 'template.ps1')
             with open(os.path.join(RE, 'launcher', 'template.ps1'), encoding='utf-8') as f, open(old, 'w', encoding='utf-8') as g:
                 g.write(f.read().replace('$fileLocks = Step-FileLocks', '$fileLocks = $null'))
-            r = self.run_with(CompanionHost(self.fx, file_locks={'external': [locker]}), file_locks_in_launcher=True, template_path=old)
+            r = self.run_with(CompanionHost(self.fx, file_locks={'external': [locker]}), file_locks_in_launcher=True, installed_linux_in_phase_a=True, template_path=old)
             self.assertEqual([f['code'] for f in r['findings']], ['LAUNCHER_HAS_NO_ELEVATED_FILE_LOCK_STEP'])
         # a node without a companion account can tell its lockers apart non-elevated: the finding stays
         fx = Fixture(); self.addCleanup(fx.close)
-        r = rehearse.rehearse(fx.cfg, COMMIT, fx.pkg, FakeHost(fx, file_locks={'external': [locker]}), file_locks_in_launcher=True, skip_roles=True)
+        r = rehearse.rehearse(fx.cfg, COMMIT, fx.pkg, FakeHost(fx, file_locks={'external': [locker]}), file_locks_in_launcher=True, installed_linux_in_phase_a=True, skip_roles=True)
         self.assertIn('EXTERNAL_RESIDENT_BINARY_LOCK', [f['code'] for f in r['findings']]); self.assertNotIn('fileLocksFinding', r['checks'])
+
+    def test_restart_manager_probe_failure_is_deferred_only_with_companion_and_launcher(self):
+        probe = rehearse.Host()
+        with mock.patch.object(probe, 'powershell', return_value=(1, '', 'RM_GET_LIST:6')):
+            for host, launcher, deferred in ((CompanionHost(self.fx), True, True),
+                                             (CompanionHost(self.fx), False, False),
+                                             (FakeHost(self.fx), True, False)):
+                with self.subTest(host=type(host).__name__, launcher=launcher):
+                    host.file_locks = probe.file_locks
+                    report = self.run_with(host, file_locks_in_launcher=launcher, installed_linux_in_phase_a=True)
+                    if deferred:
+                        self.assertEqual(report['findings'], [])
+                        self.assertEqual(report['status'], 'REHEARSAL_PASS')
+                        self.assertEqual(report['checks']['fileLocksFinding'], {
+                            'deferredTo': 'launch-elevated-file-locks', 'reason': 'RESTART_MANAGER_PROBE_FAILED:1',
+                            'nativeReason': 'RM_GET_LIST:6'})
+                        self.assertNotIn('fileLocks', report['checks'])
+                    else:
+                        self.assertIn({'code': 'RESIDENT_FILE_LOCK_OBSERVATION_UNAVAILABLE',
+                                       'reason': 'RESTART_MANAGER_PROBE_FAILED:1'}, report['findings'])
+                        self.assertNotIn('fileLocksFinding', report['checks'])
+            with tempfile.TemporaryDirectory() as d:
+                template = os.path.join(d, 'template.ps1')
+                with open(os.path.join(RE, 'launcher', 'template.ps1'), encoding='utf-8') as src, open(template, 'w', encoding='utf-8') as dst:
+                    dst.write(src.read().replace('$fileLocks = Step-FileLocks', '$fileLocks = $null'))
+                host = CompanionHost(self.fx)
+                host.file_locks = probe.file_locks
+                report = self.run_with(host, file_locks_in_launcher=True, installed_linux_in_phase_a=True, template_path=template)
+                self.assertEqual(codes(report), ['LAUNCHER_HAS_NO_ELEVATED_FILE_LOCK_STEP'])
+
+    def test_non_restart_manager_probe_failure_is_not_deferred(self):
+        probe, host = rehearse.Host(), CompanionHost(self.fx)
+        host.file_locks = probe.file_locks
+        with mock.patch.object(probe, 'powershell', return_value=(1, '', 'PUBLIC_BINARY_DIRECTORY_REPARSE')):
+            report = self.run_with(host, file_locks_in_launcher=True, installed_linux_in_phase_a=True)
+        self.assertEqual(codes(report), ['RESIDENT_FILE_LOCK_OBSERVATION_UNAVAILABLE'])
+        self.assertNotIn('fileLocksFinding', report['checks'])
 
     def test_a_node_without_companion_records_is_unchanged(self):
         host = FakeHost(self.fx)

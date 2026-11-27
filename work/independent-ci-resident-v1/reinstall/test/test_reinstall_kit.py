@@ -363,6 +363,35 @@ class Prep(unittest.TestCase):
             self.assertIn('HOST_REF=' + OLD_REF, text)
             self.assertIn('case "$NEW_REF $RECEIPT_REF $HOST_REF"', text)
 
+    def deferred_lock_report(self):
+        argv, _, _ = self.final_inputs(OLD_REF)
+        report = rj(argv[-1])
+        report['checks'] = {'fileLocksFinding': {'deferredTo': 'launch-elevated-file-locks', 'reason': 'RESTART_MANAGER_PROBE_FAILED:1'}}
+        with open(argv[-1], 'w', encoding='utf-8') as f:
+            json.dump(report, f)
+        return argv
+
+    def test_manual_linux_prep_refuses_passing_rehearsal_with_deferred_locks(self):
+        argv = self.deferred_lock_report()
+        for suffix in ('final-t', 'draft-t'):
+            with self.subTest(suffix=suffix):
+                argv[5] = suffix
+                p = run_prep(argv)
+                self.assertIn('REHEARSAL_FILE_LOCKS_DEFERRED_TO_FLEET_LAUNCHER', p.stderr)
+                self.assertNotEqual(p.returncode, 0)
+
+    def test_manual_final_launcher_refuses_passing_rehearsal_with_deferred_locks(self):
+        argv = self.deferred_lock_report()
+        config, commit, package, report = argv[0], argv[1], argv[4], argv[-1]
+        generator = os.path.join(RE, 'launcher', 'generate.py')
+        p = subprocess.run(fixture_paths.run_tool([generator, config, '--final', '--commit', commit, '--package', package,
+                                                  '--package-sha', sha(rd(package, 'package-manifest.json')), '--rehearsal', report]),
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 3, p.stderr)
+        verdict = json.loads(p.stdout)
+        self.assertEqual(verdict['status'], 'REFUSED')
+        self.assertEqual(verdict['codes'], ['REHEARSAL_FILE_LOCKS_DEFERRED_TO_FLEET_LAUNCHER'])
+
     def test_phase_a_manifest_rejects_a_bundle_changed_after_staging(self):
         bash = os.environ.get('CLUED_TEST_BASH') or shutil.which('bash')
         if not bash or (os.name == 'nt' and 'git' not in bash.lower()):
