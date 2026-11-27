@@ -262,7 +262,9 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
         assert.ok(change.includes(piece), 'binding_role_change_check_v1 keeps ' + piece);
       }
       assert.equal(change.split('binding_role_exclusive').length - 1, 2);
-      const handoverCheck = await body('clued_private.binding_role_handover_check_v1(clued_agent_bindings,clued_agent_bindings)');
+      const normal = await body('clued_private.binding_role_handover_check_v1(clued_agent_bindings,clued_agent_bindings)');
+      assert.match(normal, /fleet_handover_check_v1\(p_from,p_to,'handover'\)/);
+      const handoverCheck = await body('clued_private.fleet_handover_check_v1(clued_agent_bindings,clued_agent_bindings,text)');
       for (const piece of ["r.role in ('ci-admission','resident-upgrade')", 'binding_role_handover_target_holds_role',
         'binding_role_resident_held_v1', 'binding_role_parking_protected', 'binding_role_heartbeat_connection']) {
         assert.ok(handoverCheck.includes(piece), 'binding_role_handover_check_v1 keeps ' + piece);
@@ -279,9 +281,9 @@ test('ci-admission automatic failover (§41.6a): heartbeat, Owner settings, watc
       // The watchdog adds no direct reader of the role table; only the shared core writes it.
       const readers = (await admin.query(`select p.oid::regprocedure::text sig from pg_proc p where p.prosrc like '%binding_roles_v1%'
         and (p.proname like '%failover%' or p.proname like '%handover%' or p.proname='ci_node_heartbeat_v1') order by 1`)).rows.map((r) => r.sig);
-      assert.deepEqual(readers, ['clued_private.binding_role_handover_check_v1(clued_agent_bindings,clued_agent_bindings)',
-        'clued_private.binding_role_handover_core_v1(uuid,uuid,uuid,text,jsonb)',
-        'clued_private.binding_role_handover_view_v1(clued_agent_bindings,clued_agent_bindings)']);
+      assert.deepEqual(readers, ['clued_private.binding_role_handover_core_v1(uuid,uuid,uuid,text,jsonb)',
+        'clued_private.binding_role_handover_view_v1(clued_agent_bindings,clued_agent_bindings)',
+        'clued_private.fleet_handover_check_v1(clued_agent_bindings,clued_agent_bindings,text)']);
       // The pg_cron job, guarded like the storage sweep (no pg_cron in this fixture).
       const migration = await fs.readFile(path.join(root, 'supabase/migrations', MIGRATION), 'utf8');
       assert.match(migration, /else\s+raise warning 'ci_admission_failover_scheduler_absent/);

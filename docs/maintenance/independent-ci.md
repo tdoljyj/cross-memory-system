@@ -219,7 +219,7 @@ node scripts/ci/local-verify.mjs --affected
 
 ### 升级顺序（不停 CI）
 
-两个节点跑同一个 Owner 接受的 Source，只有节点档案不同。
+正式封存后，逐台轮换期间当班可运行当前包或未撤销的上一包。接班、保留后备和清理许可见[常驻节点运维手册 §5.1](../../work/independent-ci-resident-v1/docs/runbook.md#51-当班包不合格或无法核实)。
 
 1. Owner 接受新 Source：一个 Decision，点名同一个 Source 提交和两个节点各自的包哈希。
 2. **先升级待命节点**：UAC + Linux root 步骤；`verify-resident` 只读核对。

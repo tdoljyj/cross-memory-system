@@ -446,7 +446,7 @@ async function readJsonLenient(file) {
 
 function fleetPullView(v) {
   if (!plain(v) || !UUID.test(v.grantId ?? '') || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,88}$/.test(v.targetVersion ?? '')
-    || !['DOWNLOADING', 'WAITING_FOR_PEERS', 'PREPARING', 'PREPARE_FAILED', 'REQUESTED', 'REFUSED', 'NEEDS_REINSTALL', 'ROLLED_BACK', 'CURRENT'].includes(v.phase)) return null;
+    || !['DOWNLOADING', 'WAITING_FOR_PEERS', 'WAITING_FOR_HANDOVER', 'RESERVE', 'REPAIR', 'PREPARING', 'PREPARE_FAILED', 'REQUESTED', 'REFUSED', 'NEEDS_REINSTALL', 'ROLLED_BACK', 'CURRENT'].includes(v.phase)) return null;
   const view = { grantId: v.grantId, targetVersion: v.targetVersion, phase: v.phase, code: codeOrNull(v.code) };
   const r = v.reinstall;
   if (v.phase === 'NEEDS_REINSTALL' && packageGenerationOf(v.targetVersion) >= 25 && plain(r)

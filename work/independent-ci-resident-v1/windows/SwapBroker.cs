@@ -353,13 +353,16 @@ public sealed class SwapBroker : ServiceBase
     readonly Renewal.StandbyConfirmation standbyConfirmation = new Renewal.StandbyConfirmation();
     volatile string renewalRequestId;
     volatile string fleetPullRequestId;
-    Renewal.Connection ProbeFleet(BrokerConfig config) {
+    Renewal.Connection ProbeFleet(BrokerConfig config, string operation = null, string grant = null) {
         Renewal.Require(Interlocked.CompareExchange(ref renewalBusy,1,0)==0,"RENEW_BUSY");
         try {
             using (var key = RenewalKey.Open()) {
                 var store = new RenewalFiles(root,"ci",config.Node.ControllerSid);
                 var gateway = RenewalGateway.Open(root,config,"ci",key);
-                return gateway.Probe(Renewal.Digest(Renewal.Token(store.Read("token"))));
+                string hash = Renewal.Digest(Renewal.Token(store.Read("token")));
+                var live = gateway.Probe(hash);
+                if (operation != null) gateway.DelistForUpgrade(hash,live,operation,grant);
+                return live;
             }
         } finally { Interlocked.Exchange(ref renewalBusy,0); }
     }
@@ -374,7 +377,8 @@ public sealed class SwapBroker : ServiceBase
                     var config = LoadConfig();
                     answer = FleetPull.Submit(root,id,config.Node.NodeName,() => ProbeFleet(config),request,
                         () => DateTime.UtcNow,(run,script) => FleetPull.Assemble(root,run,script,
-                            Path.Combine(root,"runtime","node.exe"),stopped),stopped);
+                            Path.Combine(root,"runtime","node.exe"),stopped),stopped,
+                        (operation,targetGrant) => ProbeFleet(config,operation,targetGrant));
                 } catch (BrokerRefusal error) { answer = FleetPull.Answer(root,id,grant,error.Code,null); }
                 catch (Exception) { answer = FleetPull.Answer(root,id,grant,"FLEET_BROKER_UNCONFIRMED",null); }
                 try {
@@ -608,10 +612,10 @@ internal static class FleetPull {
     }
     static string Taken(string root, string grant) { return Path.Combine(root,"broker","responses","fleet-"+grant+".taken"); }
     internal static Dictionary<string,object> Answer(string root, string id, string grant, string code, string status,
-        Dictionary<string,object> target = null) {
+        Dictionary<string,object> target = null, bool? delivered = null) {
         return new Dictionary<string,object> {{"requestId",id},{"grantId",grant},{"ok",code==null},{"code",code},{"status",status},
             {"targetFingerprint",target},
-            {"delivered",File.Exists(Taken(root,grant))}};
+            {"delivered",delivered ?? (File.Exists(Taken(root,"request-"+id)) || File.Exists(Taken(root,grant)))}};
     }
     internal static Dictionary<string,object> Interrupted(string root, string id, byte[] bytes, string code) {
         var request = Parse(bytes);
@@ -700,6 +704,17 @@ internal static class FleetPull {
             }
         } finally { if (job!=IntPtr.Zero) CloseHandle(job); }
     }
+    static void CheckSealedTarget(Renewal.Connection live) {
+        var target=live.FleetTarget;
+        object data, others;
+        Renewal.Require(target!=null && target.TryGetValue("holder_package",out data) &&
+            target.TryGetValue("has_other_healthy",out others) && others is bool,"FLEET_MAINTENANCE_UNAVAILABLE");
+        var info=target["holder_package"] as Dictionary<string,object>;
+        string state=Renewal.Str(info,"maintenance");
+        Renewal.Require(state=="available" || state=="delisted","FLEET_MAINTENANCE_BLOCKED");
+        Renewal.Require(!live.OnDuty || Equals(target["has_other_healthy"],false) || state=="delisted" ||
+            Renewal.Str(info,"classification")=="current","FLEET_WAITING_FOR_HANDOVER");
+    }
     static void CheckPeers(string root, Dictionary<string,object> target) {
         string version = Renewal.Str(target,"version"), requestSha = Renewal.Str(target,"request_sha256");
         Renewal.Require(Version.IsMatch(version ?? "") && NodeProfileV2.Hash(requestSha),"FLEET_TARGET_CHANGED");
@@ -745,15 +760,19 @@ internal static class FleetPull {
     }
     internal static Dictionary<string,object> Submit(string root, string id, string node, Func<Renewal.Connection> probe,
         Dictionary<string,object> request, Func<DateTime> clock, Func<string,string,Dictionary<string,object>> assemble,
-        WaitHandle stopped = null) {
+        WaitHandle stopped = null, Func<string,string,Renewal.Connection> delist = null) {
         string decision = Renewal.Str(request,"grantId");
         Renewal.Require(Renewal.Id(id) && Renewal.Id(decision) && NodeName.IsMatch(node),"FLEET_BROKER_REQUEST_REFUSED");
         var mark = Taken(root,decision);
-        Renewal.Require(!File.Exists(mark),"FLEET_TARGET_ALREADY_REQUESTED");
         var observed = probe();
         var target = observed.FleetTarget;
         Renewal.Require(Renewal.Str(target,"grant_id")==decision,"FLEET_TARGET_CHANGED");
-        if (observed.OnDuty) CheckPeers(root,target);
+        bool sealedFleet = target.ContainsKey("holder_package");
+        if (sealedFleet) CheckSealedTarget(observed);
+        if (!sealedFleet) {
+            Renewal.Require(!File.Exists(mark),"FLEET_TARGET_ALREADY_REQUESTED");
+            if (observed.OnDuty) CheckPeers(root,target);
+        }
 
         var currentFile = Path.Combine(root,"upgrade","current.json");
         var current = ReadJson(currentFile,65536,null);
@@ -791,21 +810,38 @@ internal static class FleetPull {
             Renewal.Require(value==Renewal.Str(target,field),"FLEET_TARGET_CHANGED");
             fingerprint.Add(field,value);
         }
+        if (sealedFleet) CheckSealedTarget(latest);
         if (latest.OnDuty) {
             Renewal.Require(observed.OnDuty,"FLEET_ROLE_CHANGED");
-            CheckPeers(root,latest.FleetTarget);
+            if (!sealedFleet) CheckPeers(root,latest.FleetTarget);
         }
         DateTime idleDeadline = DateTime.MaxValue;
         using (var idle = status==Prepared && latest.OnDuty ? ConfirmIdle(root,id,fingerprint,clock,stopped,out idleDeadline) : null) {
             current = ReadJson(currentFile,65536,null);
             Renewal.Require(Renewal.Number(current,"generation")==generation && Renewal.Str(current,"residentManifestSha256")==residentSha,
                 "FLEET_GENERATION_CHANGED");
-            if (status!=Prepared) return Answer(root,id,decision,code,status,fingerprint);
+            if (status!=Prepared) return Answer(root,id,decision,code,status,fingerprint,sealedFleet ? (bool?)false : null);
+            if (sealedFleet) {
+                Renewal.Require(delist!=null,"FLEET_MAINTENANCE_UNAVAILABLE");
+                var isolated=delist(id,decision);
+                Renewal.Require(Renewal.Str(isolated.FleetTarget,"grant_id")==decision &&
+                    Equals(isolated.FleetTarget["install_ready"],true),"FLEET_MAINTENANCE_DRAINING");
+                string operation=Renewal.Str(isolated.FleetTarget,"operation_id");
+                Renewal.Require(Renewal.Id(operation),"FLEET_MAINTENANCE_DRAINING");
+                // 回滚可能重新选中曾经安装过的 Grant。相同维护操作仍只能投递一次。
+                mark=Taken(root,"operation-"+operation);
+                Renewal.Require(!File.Exists(mark),"FLEET_TARGET_ALREADY_REQUESTED");
+            }
             Renewal.Require(Renewal.Number(answer,"fromGeneration")==generation,"FLEET_GENERATION_CHANGED");
             var now = clock();
             Renewal.Require(now<idleDeadline,"FLEET_WAITING_FOR_IDLE");
             using (var claim = new FileStream(mark,FileMode.CreateNew,FileAccess.Write,FileShare.None,1,FileOptions.WriteThrough)) {
                 claim.WriteByte(1); claim.Flush(true);
+            }
+            if (sealedFleet) {
+                using (var sent=new FileStream(Taken(root,"request-"+id),FileMode.CreateNew,FileAccess.Write,FileShare.None,1,FileOptions.WriteThrough)) {
+                    sent.WriteByte(1); sent.Flush(true);
+                }
             }
             var requestBytes=Encoding.UTF8.GetBytes(Renewal.Json(new { contract=RequestContract, requestId=id, node=node,
                 packageManifestSha256=sha, packageDirectory=package, acceptanceDecisionRef=decision, drainMaxMinutes=120,
@@ -1504,6 +1540,22 @@ internal sealed class RenewalGateway
         }
         return result;
     }
+    internal void DelistForUpgrade(string hash,Renewal.Connection live,string operation,string grant) {
+        var target=live.FleetTarget;
+        Renewal.Require(Renewal.Str(target,"grant_id")==grant && target.ContainsKey("holder_package"),"FLEET_TARGET_CHANGED");
+        if (!Equals(target["install_ready"],true)) {
+            var info=target["holder_package"] as Dictionary<string,object>;
+            bool draining=Renewal.Str(info,"maintenance")=="delisted";
+            Renewal.Require(draining || !live.OnDuty || Equals(target["has_other_healthy"],false),"FLEET_WAITING_FOR_HANDOVER");
+            var answer=post(rpc+"/rest/v1/rpc/clued_work_verify_v1",publicKey,Renewal.Json(new {
+                p_token_hash=hash,p_input=new {action="fleet_maintenance",command=draining?"status":"delist",scope=scope,node_id=live.Node,
+                    binding_generation=live.Generation,grant_id=grant,operation_id=operation,method="in_place"}
+            }));
+            Renewal.Require(Renewal.Str(answer,"status")=="ok" && Renewal.Str(answer,"grant_id")==grant &&
+                answer.ContainsKey("install_ready") && Equals(answer["install_ready"],true),"FLEET_MAINTENANCE_DRAINING");
+            live.FleetTarget=Probe(hash).FleetTarget;
+        }
+    }
     void ReadProbeFields(Dictionary<string,object> reply,Renewal.Connection connection) {
         connection.WindowOpens=Renewal.Expires(Renewal.Str(reply,"renewal_window_opens_at"));
         object duty;
@@ -1511,7 +1563,7 @@ internal sealed class RenewalGateway
             duty is bool && (Context.Kind=="ci" || !(bool)duty),"RENEW_CONNECTION_MISMATCH");
         connection.OnDuty=(bool)reply["on_duty"];
         object target;
-        if (Context.Kind=="ci" && reply.TryGetValue("fleet_target",out target)) connection.FleetTarget=target as Dictionary<string,object>;
+        if (Context.Kind=="ci" && (reply.TryGetValue("fleet_update",out target) || reply.TryGetValue("fleet_target",out target))) connection.FleetTarget=target as Dictionary<string,object>;
     }
     static Renewal.Connection Parse(Dictionary<string,object> reply,string node) {
         Renewal.Require(Renewal.Id(node) && Renewal.Str(reply,"node_id")==node && Renewal.Id(Renewal.Str(reply,"binding_id")) &&

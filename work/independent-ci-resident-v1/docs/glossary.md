@@ -114,7 +114,7 @@
 | **心跳** | companion 每 1 分钟用本节点专用的"只能发心跳"令牌上报自身状态，供服务端看门狗判断失联（5 分钟没有心跳算失联，ADR 0026）。 | `companion-heartbeat.mjs` |
 | **自动接班** | 服务端看门狗在当班节点失联、或连续 HALT 满 5 分钟时，把 ci-admission 交给一个健康的、Source 一致的备用节点（Decision `199cf3de`；HALT 一条见迁移 `20261116100000`）。PAUSE 不会触发自动接班。 | [ADR 0013](adr/0013-multi-node-failover.md) |
 | **双活停机** | PR 页面上看到别的节点也在当班时，本节点写持有者为 `dual-active` 的暂停接新。 | `node-duty.mjs` |
-| **源码不一致** | 24 小时内发过心跳的节点里，有节点跑的 `ciSourceManifestSha256` 不同。第 10 段报 `TRAIN_SOURCE_MISMATCH`，所有新批次推迟，2 分钟后重核。 | `train.mjs#TRAIN_RECHECK_MS` |
+| **源码不一致** | `TRAIN_SOURCE_MISMATCH`。封存模式下，当班运行包超出服务端可用集合。无封存记录时仍比较近期节点 Source。列车推迟新批，两分钟后重核。 | `train.mjs#TRAIN_RECHECK_MS` |
 | **版本不一致（version skew）** | 本节点 Windows 和 Linux 两侧装的代或 Source 不同。执行器加持有者为 `version-skew` 的暂停接新，第一个 Linux 段也会拒绝。 | `status.mjs#versions` |
 
 ## 安装与升级

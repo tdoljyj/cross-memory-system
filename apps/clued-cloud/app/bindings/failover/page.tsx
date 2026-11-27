@@ -55,6 +55,8 @@ const REASONS: Record<string, string> = {
   state_unknown: "报不出状态",
   service_not_running: "服务没在运行或状态太旧",
   source_unknown: "没有报 Source",
+  ci_admission_target_in_maintenance: "节点正在维护或保留作故障后备",
+  ci_admission_target_source_not_accepted: "节点的包不符合本次接班条件",
   source_differs_from_holder: "Source 与当前持有者不同",
   source_differs: "Source 与其他常驻节点不同",
   cooldown: "6 小时内刚交出过 CI 准入",
@@ -68,6 +70,8 @@ const ALERTS: Record<string, string> = {
   handover_refused: "交接时服务端核对没通过，没有交接",
   watchdog_error: "看门狗这次运行出错",
 };
+const PACKAGES: Record<string, string> = { current: "当前包", previous: "上一可用包", revoked: "已撤销", outside: "可用集合外", unknown: "未确认", legacy: "尚无封存记录" };
+const MAINTENANCE: Record<string, string> = { available: "可工作", reserve: "故障后备", delisted: "已摘牌", repair: "摘牌待修" };
 const MODES: Record<string, string> = { ACTIVE: "当班", STANDBY: "备用", UNCERTAIN: "不确定" };
 const STATES: Record<string, string> = { NORMAL: "正常", HALTED: "已停机", PAUSED: "已暂停", INTAKE_PAUSED: "暂停接新", UNKNOWN: "报不出状态" };
 class RequestFailure extends Error {}
@@ -303,6 +307,8 @@ export default function ResidentFailoverPage() {
               <dt>连接</dt><dd>{label(entry)}{entry.rank ? "，次序 " + String(entry.rank) : "，没有自动接班资格"}</dd>
               {!node ? <><dt>节点</dt><dd>这个连接还没有登记节点，发不了心跳。</dd></> : <>
                 <dt>节点</dt><dd>{String(node.name ?? "")}</dd>
+                {object(node.package) && <><dt>运行包</dt><dd>{PACKAGES[String(node.package.classification)] ?? "未确认"}
+                  {"，" + (MAINTENANCE[String(node.package.maintenance)] ?? "维护状态未知")}</dd></>}
                 <dt>最近心跳</dt><dd>{clock(node.last_heartbeat_at)}{node.heartbeat_via_link === true
                   ? "（来自挂靠的心跳连接 " + String(node.heartbeat_from_agent_name ?? node.heartbeat_from_binding_id ?? "") + "）" : ""}</dd>
                 <dt>自报</dt><dd>{(MODES[String(node.mode)] ?? "模式未知") + "，" + (STATES[String(node.state)] ?? "状态未知")

@@ -523,3 +523,16 @@ test('no hand-written Decision has a way in: --decision-record, a missing --work
   assert.equal(s.seals.length, 0);
   assert.equal(s.upgrades.length, 0);
 });
+
+test('封存时仅按服务端逐机包身份确认收敛，等待期间保留旧安装', async () => {
+  const s = scene('sealed-managed', { door: 'accepted', onDuty: true });
+  const seal = s.deps.seal;
+  s.deps.seal = async args => ({ ...await seal(args), acceptanceSha256: 'a'.repeat(64) });
+  const rows = ['fixture-a', 'fixture-b'].map(node => ({ node, ciSourceManifestSha256: NEW, paused: false, atSealedTarget: true }));
+  s.deps.readFleet = async () => rows;
+  rows[0].atSealedTarget = false;
+  assert.equal((await s.run()).status, 'ROLLOUT_WAITING_OTHER_NODES');
+  assert.equal(s.upgrades.length, 0);
+  rows[0].atSealedTarget = true;
+  assert.equal((await s.run()).status, 'ROLLOUT_DONE');
+});

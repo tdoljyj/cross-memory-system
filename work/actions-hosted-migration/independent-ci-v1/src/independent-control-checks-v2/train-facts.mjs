@@ -270,7 +270,7 @@ export function wouldRevoke({ entries, inMain, frontHeadSha }) {
 
 // revoke: the would-revoke (shadow) or revocation targets (on, revoke-only) of this run; decision defaults to wouldDo.
 export function trainFacts({ mode, at, onDuty, holders, mainSha, rules, rulesReason = null, appScans = null, front, revoke, ledger, decision = null, openFrontBatch = null,
-  sweep = NO_SWEEP, actions = NO_ACTIONS, requestPause = null, nodes = null, nodesDropped = 0, frontBind = null, landing = null }) {
+  sweep = NO_SWEEP, actions = NO_ACTIONS, requestPause = null, nodes = null, nodesDropped = 0, holderPackage, frontBind = null, landing = null }) {
   const holder = holders?.[0] ?? null;
   const wouldDo = decideShadow({ onDuty, holders, holder, front, rules, mainSha });
   const facts = {
@@ -300,7 +300,8 @@ export function trainFacts({ mode, at, onDuty, holders, mainSha, rules, rulesRea
     decision: decision ?? wouldDo, openFrontBatch, sweep, actions, requestPause,
     // ci_nodes_status (§41.6): one entry per listed connection; node null (no live node), fields null (never heard).
     nodes: Array.isArray(nodes) ? nodes.slice(0, 64).map(n => ({ node: n.node ?? null, sourceManifestSha256: n.sourceManifestSha256 ?? null, state: n.state ?? null,
-      lastHeartbeatAt: n.lastHeartbeatAt ?? null })) : null,
+      lastHeartbeatAt: n.lastHeartbeatAt ?? null, ...(n.package ? { package: n.package } : {}) })) : null,
+    ...(holderPackage !== undefined ? { holderPackage } : {}),
     nodesDropped: Number.isSafeInteger(nodesDropped) && nodesDropped >= 0 ? nodesDropped : 0,
     ...(frontBind ? { frontBind: { pr: frontBind.pr, headSha: frontBind.headSha, claimId: frontBind.claimId } } : {}),
     // resident ADR 0018 (push mode, on only): what was adopted from landed batches, the members GitHub has not marked merged yet, the
