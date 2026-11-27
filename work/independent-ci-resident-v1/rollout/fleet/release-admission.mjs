@@ -1,4 +1,6 @@
-// The approved hosted-scaffold baseline. A ruleset edit alone cannot shrink it.
+import { isDeepStrictEqual } from 'node:util';
+
+// The approved hosted-scaffold baseline. A ruleset edit alone cannot change it.
 export const RELEASE_REPOSITORY = 'tdoljyj/cross-memory-system';
 export const RELEASE_OWNER = 'tdoljyj';
 const scaffold = 27843120;
@@ -7,12 +9,60 @@ const required = new Map([
     .map(name => [`hosted-${name}`, 15368]),
   ['kooyumi-work-admission', 5368905],
 ]);
+const pullRequestPolicy = {
+  allowed_merge_methods: ['merge'],
+  dismiss_stale_reviews_on_push: false,
+  require_code_owner_review: false,
+  require_extra_approval_for_unattributed_changes: true,
+  require_last_push_approval: false,
+  required_approving_review_count: 0,
+  required_review_thread_resolution: false,
+  required_reviewers: [],
+};
+const statusPolicy = {
+  strict_required_status_checks_policy: true,
+  do_not_enforce_on_create: false,
+  required_status_checks: [...required].map(([context, integration_id]) => ({ context, integration_id }))
+    .sort((a, b) => a.context.localeCompare(b.context)),
+};
+const baseline = new Map([
+  ['deletion', null],
+  ['non_fast_forward', null],
+  ['pull_request', pullRequestPolicy],
+  ['required_status_checks', statusPolicy],
+]);
 
 export function insist(condition, code, detail) {
   if (!condition) throw Object.assign(new Error(code), { code, detail });
 }
 
-export async function admitFleetRelease({ api, repository, commit }) {
+async function verifyRules(rulesApi, base, repository) {
+  const applicable = await rulesApi(`${base}/rules/branches/main?per_page=100`);
+  const details = await rulesApi(`${base}/rulesets/${scaffold}`);
+  insist(Array.isArray(applicable) && Array.isArray(details?.rules) && Array.isArray(details?.bypass_actors),
+    'FLEET_RELEASE_RULES_UNREADABLE');
+  insist(details.id === scaffold && details.source_type === 'Repository' && details.source === repository &&
+    details.enforcement === 'active' && details.target === 'branch' && details.bypass_actors.length === 0 &&
+    isDeepStrictEqual(details.conditions, { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }) &&
+    applicable.every(rule => rule?.ruleset_id === scaffold && rule.ruleset_source_type === 'Repository' && rule.ruleset_source === repository),
+    'FLEET_RELEASE_RULES_CHANGED');
+  for (const rules of [applicable, details.rules]) {
+    insist(rules.length === baseline.size && new Set(rules.map(rule => rule?.type)).size === baseline.size,
+      'FLEET_RELEASE_RULES_CHANGED');
+    for (const rule of rules) {
+      let parameters = rule?.parameters ?? null;
+      if (rule?.type === 'required_status_checks' && Array.isArray(parameters?.required_status_checks)) {
+        const entries = parameters.required_status_checks;
+        insist(entries.every(entry => typeof entry?.context === 'string' && Number.isSafeInteger(entry.integration_id) && entry.integration_id > 0),
+          'FLEET_RELEASE_CHECK_NOT_PINNED');
+        parameters = { ...parameters, required_status_checks: [...entries].sort((a, b) => a.context.localeCompare(b.context)) };
+      }
+      insist(isDeepStrictEqual(parameters, baseline.get(rule?.type)), 'FLEET_RELEASE_RULES_CHANGED', rule?.type);
+    }
+  }
+}
+
+export async function admitFleetRelease({ api, rulesApi = api, repository, commit }) {
   insist(repository === RELEASE_REPOSITORY && /^[0-9a-f]{40}$/.test(commit), 'FLEET_RELEASE_SUBJECT_REFUSED');
   const base = `repos/${repository}`;
   const readMain = async () => {
@@ -21,27 +71,8 @@ export async function admitFleetRelease({ api, repository, commit }) {
       'FLEET_RELEASE_MAIN_CHANGED', { expected: commit, actual: ref?.object?.sha });
   };
   await readMain();
-  const rules = await api(`${base}/rules/branches/main?per_page=100`);
-  insist(Array.isArray(rules) && rules.length < 100 && rules.every(rule => typeof rule?.type === 'string'), 'FLEET_RELEASE_RULES_UNREADABLE');
-  const pinnedRules = rules.filter(rule => rule.ruleset_id === scaffold);
-  insist(['pull_request', 'deletion', 'non_fast_forward'].every(type => pinnedRules.some(rule => rule.type === type)), 'FLEET_RELEASE_RULES_CHANGED');
-  const checks = new Map();
-  const pinnedChecks = new Map();
-  const strict = rules.filter(rule => rule.type === 'required_status_checks');
-  insist(strict.some(rule => rule.ruleset_id === scaffold && rule.parameters?.strict_required_status_checks_policy === true),
-    'FLEET_RELEASE_RULES_CHANGED');
-  for (const rule of strict) {
-    const entries = rule.parameters?.required_status_checks;
-    insist(Array.isArray(entries) && entries.length > 0, 'FLEET_RELEASE_RULES_UNREADABLE');
-    for (const entry of entries) {
-      const { context, integration_id: id } = entry ?? {};
-      insist(typeof context === 'string' && context.length > 0 && Number.isSafeInteger(id) && id > 0, 'FLEET_RELEASE_CHECK_NOT_PINNED');
-      const key = `${id}/${context}`;
-      checks.set(key, null);
-      if (rule.ruleset_id === scaffold && rule.parameters.strict_required_status_checks_policy === true) pinnedChecks.set(context, id);
-    }
-  }
-  for (const [name, app] of required) insist(pinnedChecks.get(name) === app, 'FLEET_RELEASE_RULES_CHANGED', { name, app });
+  await verifyRules(rulesApi, base, repository);
+  const checks = new Map([...required].map(([name, app]) => [`${app}/${name}`, null]));
 
   // Read every page. A newer queued, skipped or failed check supersedes an older green.
   const seen = new Set();
@@ -72,12 +103,18 @@ if (import.meta.main) {
     insist(env.GITHUB_EVENT_NAME === 'workflow_dispatch' && env.GITHUB_REF === 'refs/heads/main' && env.GITHUB_SHA === commit &&
       env.GITHUB_ACTOR === RELEASE_OWNER && env.GITHUB_TRIGGERING_ACTOR === RELEASE_OWNER && env.GITHUB_RUN_ATTEMPT === '1' && env.GH_TOKEN,
       'FLEET_RELEASE_WORKFLOW_SUBJECT_REFUSED');
-    await admitFleetRelease({ repository: env.GITHUB_REPOSITORY, commit, api: async endpoint => {
-      const answer = await fetch(`https://api.github.com/${endpoint}`, { headers: { Authorization: `Bearer ${env.GH_TOKEN}` },
-        redirect: 'error', signal: AbortSignal.timeout(15_000) });
-      insist(answer.ok, 'FLEET_RELEASE_GITHUB_UNREADABLE', answer.status);
+    insist(env.CLUED_FLEET_RULES_READ_TOKEN, 'FLEET_RELEASE_RULES_UNREADABLE');
+    const read = (token, code) => async endpoint => {
+      const answer = await fetch(`https://api.github.com/${endpoint}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2026-03-10' },
+        redirect: 'error', signal: AbortSignal.timeout(15_000),
+      });
+      insist(answer.ok, code, answer.status);
       return answer.json();
-    } });
+    };
+    await admitFleetRelease({ repository: env.GITHUB_REPOSITORY, commit,
+      api: read(env.GH_TOKEN, 'FLEET_RELEASE_GITHUB_UNREADABLE'),
+      rulesApi: read(env.CLUED_FLEET_RULES_READ_TOKEN, 'FLEET_RELEASE_RULES_UNREADABLE') });
   }).catch(error => {
     console.error(error.code ?? 'FLEET_RELEASE_ADMISSION_UNREADABLE', JSON.stringify(error.detail ?? null));
     process.exitCode = 1;

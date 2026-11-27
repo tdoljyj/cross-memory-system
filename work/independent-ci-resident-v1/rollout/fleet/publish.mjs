@@ -154,7 +154,7 @@ export async function allocatePackageGeneration(tags) {
 const claimOf = s => ({ contract: CLAIM_CONTRACT, version: s.version, release_tag: s.release_tag, commit: s.commit, archive_sha256: s.archive_sha256 });
 const sameClaim = (a, b) => a && Object.keys(a).length === Object.keys(b).length && Object.entries(b).every(([key, value]) => a[key] === value);
 
-export async function reservePackageGeneration(tags, source) {
+export async function reservePackageGeneration(tags, source, verifyMain) {
   const claim = claimOf(source);
   const generation = packageGenerationOf(claim.version);
   check(generation > BASELINE_GENERATION && claim.release_tag === tagOf(claim.version) && HEX40.test(claim.commit ?? '')
@@ -164,7 +164,9 @@ export async function reservePackageGeneration(tags, source) {
     check(sameClaim(await tags.read(claim.release_tag), claim), 'PUBLISH_GENERATION_CONFLICT', claim.release_tag);
     return { already: true };
   }
-  check(claim.version === next && await tags.create(claim), 'PUBLISH_GENERATION_CONFLICT', claim.release_tag);
+  check(claim.version === next, 'PUBLISH_GENERATION_CONFLICT', claim.release_tag);
+  verifyMain?.();
+  check(await tags.create(claim), 'PUBLISH_GENERATION_CONFLICT', claim.release_tag);
   check(sameClaim(await tags.read(claim.release_tag), claim), 'PUBLISH_GENERATION_READBACK_REFUSED', claim.release_tag);
   return { already: false };
 }
@@ -319,7 +321,7 @@ function checkCommitOnRemote(ghCommand, repo, commit) {
 
 // prepare's step 4 (see the head of this file): the Release and the index row of this build, made or completed, never guessed. `assets`: the
 // five, in the order they are published (tar, release.json, the staged SHA256SUMS, the two node-entry files).
-async function ensureRelease({ ghCommand, repo, index, s, assets, stage }) {
+async function ensureRelease({ ghCommand, repo, index, s, assets, stage, verifyMain }) {
   const tag = s.release_tag, tarName = `${tag}.tar`, relName = `${tag}.release.json`;
   const idx = await readIndex(index);
   const at = findRow(idx.lines, s.version);
@@ -327,7 +329,7 @@ async function ensureRelease({ ghCommand, repo, index, s, assets, stage }) {
   if (v === null) {
     check(at < 0, 'PREPARE_INDEX_ROW_WITHOUT_RELEASE', { version: s.version, note: 'the index names this version, GitHub has no Release of it: not this command\'s to guess' });
     checkCommitOnRemote(ghCommand, repo, s.commit);
-    return publishAssets({ ghCommand, repo, index, idx, s, assets });
+    return publishAssets({ ghCommand, repo, index, idx, s, assets, verifyMain });
   }
   // a Release of this version is there: this build's (complete or not), or another build's, refused before anything goes up. Every asset it
   // holds is held to this build byte for byte (the same size is not the same build: a tar is 512-byte aligned); the tar is downloaded to
@@ -367,6 +369,7 @@ async function ensureRelease({ ghCommand, repo, index, s, assets, stage }) {
     }
   }
   const missing = assets.filter(a => !sizes.has(a.name));
+  verifyMain?.();
   for (const a of missing) {
     const up = gh(ghCommand, ['release', 'upload', tag, a.file, '--repo', repo]);
     check(up.status === 0, 'PUBLISH_GH_RELEASE_UPLOAD_FAILED', { asset: a.name, stderr: up.stderr });
@@ -378,7 +381,7 @@ async function ensureRelease({ ghCommand, repo, index, s, assets, stage }) {
   return { status: 'FLEET_RELEASE_PUBLISHED', tag, url: back.url, archiveSha256: s.archive_sha256, commit: s.commit, indexLine: line, uploaded: missing.map(a => a.name) };
 }
 
-async function publishAssets({ ghCommand, repo, index, idx, s, assets }) {
+async function publishAssets({ ghCommand, repo, index, idx, s, assets, verifyMain }) {
   for (const a of assets) await fs.access(a.file);
   const notes = [`Universal node package ${s.version} (commit ${s.commit}).`, `archive_sha256 ${s.archive_sha256}`,
     `resident_manifest_sha256 ${s.resident_manifest_sha256}`,
@@ -387,6 +390,7 @@ async function publishAssets({ ghCommand, repo, index, idx, s, assets }) {
   const generation = packageGenerationOf(s.version);
   const label = generation === null ? s.release_tag : `第 ${generation} 代通用节点包 · ${s.built_at.slice(0, 10)}-${s.commit.slice(0, 8)}`;
   const target = generation === null ? ['--target', s.commit] : ['--verify-tag'];
+  verifyMain?.();
   const created = gh(ghCommand, ['release', 'create', s.release_tag, ...assets.map(a => a.file), '--repo', repo, ...target, '--title', label, '--notes', notes]);
   check(created.status === 0, 'PUBLISH_GH_RELEASE_CREATE_FAILED', created.stderr);
   const v = viewRelease(ghCommand, repo, s.release_tag);
@@ -743,11 +747,12 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     lap(3);
     // 4. The formal entry reconciles production for the staged commit before any tag, Release or index write.
     const migrationAdmission = await beforePublish?.();
+    const verifyMain = beforePublish && (() => checkCommitOnMain(ghCommand, repo, s.commit, { exact: true }));
     if (numbered) {
-      checkCommitOnMain(ghCommand, repo, s.commit);
-      await reservePackageGeneration(deps.generationTags ?? githubGenerationTags(ghCommand, repo), s);
+      if (!verifyMain) checkCommitOnMain(ghCommand, repo, s.commit);
+      await reservePackageGeneration(deps.generationTags ?? githubGenerationTags(ghCommand, repo), s, verifyMain);
     }
-    await ensureRelease({ ghCommand, repo, index, s, assets: releaseAssets, stage });
+    await ensureRelease({ ghCommand, repo, index, s, assets: releaseAssets, stage, verifyMain });
     lap(4);
     // 5. the directory, the kit and the images in it, what the Release lacks uploaded, the whole request held to the Release (the same check
     //    as seal's); 6. only then the request
@@ -792,12 +797,13 @@ async function drillCellOf(file, a, readFile) {
 // branch candidates may be built, released, prepared and drilled to probe; seal is where they stop. Asked of GitHub, not of a local clone that
 // may not have fetched: compare main...<commit> is "identical" or "behind" exactly when the commit is main's or one of its ancestors. An
 // answer that cannot be read refuses as well.
-function checkCommitOnMain(ghCommand, repo, commit) {
+function checkCommitOnMain(ghCommand, repo, commit, { exact = false } = {}) {
   const r = gh(ghCommand, ['api', `repos/${repo}/compare/main...${commit}`]);
   let status = null;
   try { status = r.status === 0 ? JSON.parse(r.stdout).status : null; } catch { status = null; }
   check(typeof status === 'string' && ['identical', 'behind', 'ahead', 'diverged'].includes(status), 'SEAL_MAIN_UNREADABLE', { commit, exit: r.status, stderr: r.stderr });
-  check(status === 'identical' || status === 'behind', 'SEAL_COMMIT_NOT_ON_MAIN', { commit, status });
+  if (exact) check(status === 'identical', 'FLEET_RELEASE_MAIN_CHANGED', { commit, status });
+  else check(status === 'identical' || status === 'behind', 'SEAL_COMMIT_NOT_ON_MAIN', { commit, status });
 }
 
 // The acceptance request on the Release (prepare's step 6, seal's last check before the door): its bytes there, or null when it has none.
@@ -1103,7 +1109,7 @@ export const exitCodeOf = r => (['FLEET_ACCEPTANCE_REJECTED', 'FLEET_ACCEPTANCE_
 export async function prepareCommit({ commit, dir, out, repo = DEFAULT_REPO, ghCommand = ['gh'], deps = {}, ...options }) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
   check(HEX40.test(commit ?? ''), 'COMMIT_MUST_BE_40_LOWERCASE_HEX');
-  checkCommitOnMain(ghCommand, repo, commit);
+  checkCommitOnMain(ghCommand, repo, commit, { exact: true });
   const generationTags = deps.generationTags ?? githubGenerationTags(ghCommand, repo);
   const existing = await fs.stat(dir).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
   if (!existing) {
@@ -1123,7 +1129,7 @@ export async function prepareCommit({ commit, dir, out, repo = DEFAULT_REPO, ghC
   const s = release.source;
   check(s.commit === commit && packageGenerationOf(s.version) > BASELINE_GENERATION, 'PREPARE_BUILD_NOT_THIS_COMMIT', s.commit);
   const beforePublish = () => reconcileFleetRelease(deps.release ?? fleetReleaseWorkflow({
-    repository: repo, commit, directory: dir, runGh: (args, timeout) => gh(ghCommand, args, timeout),
+    repository: repo, commit, runGh: (args, timeout) => gh(ghCommand, args, timeout),
   }));
   return prepare({ ...options, version: s.version, dir, out, repo, ghCommand, deps: { ...deps, generationTags } }, beforePublish);
 }

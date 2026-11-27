@@ -8,15 +8,50 @@ const manifest = 'work/independent-ci-resident-v1/rollout/fleet/release-migratio
 const sqlDir = 'apps/clued-cloud/supabase/migrations';
 const version = /^[0-9]{14}$/;
 const sha256 = value => createHash('sha256').update(value).digest('hex');
-const procedure = name => `to_regprocedure('${name}') is not null`;
-const relation = name => `to_regclass('${name}') is not null`;
+const procedure = (name, result, conditions = 'true') => `exists (select 1 from pg_proc p
+    where p.oid = to_regprocedure('clued_private.${name}') and p.prokind = 'f' and not p.proretset
+      and p.prorettype = '${result}'::regtype and (${conditions})
+      and not exists (select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner)))
+        where grantee = 0 and privilege_type = 'EXECUTE')
+      and not exists (select 1 from pg_roles r
+        where r.rolname in ('anon', 'authenticated', 'service_role', 'clued_worker_gateway')
+          and has_function_privilege(r.oid, p.oid, 'EXECUTE')))`;
+const relation = (name, columns) => `exists (select 1 from pg_class c
+    where c.oid = to_regclass('clued_private.${name}') and c.relkind = 'r'
+      and not exists (select 1 from (values ${Object.entries(columns).map(([column, type]) => `('${column}', '${type}'::regtype)`).join(',')})
+        expected(name, type) where not exists (select 1 from pg_attribute a
+          where a.attrelid = c.oid and a.attname = expected.name and a.atttypid = expected.type and not a.attisdropped)))`;
+const acceptanceGuard = `if clued_private.fleet_package_generation_v1(v_parts[2])>=25 then
+    if p_input->'delivery'->'candidate'->>'repository' is distinct from v_parts[1]
+        or p_input->'delivery'->'candidate'->>'version' is distinct from v_parts[2]
+        or p_input->'delivery'->'candidate'->>'archiveSha256' is distinct from v_parts[3]
+        or p_input->'delivery'->'candidate'->>'requestSha256' is distinct from v_parts[4] then
+      raise exception 'fleet_delivery_subject_invalid' using errcode='22023'; end if;
+    perform clued_private.fleet_delivery_require_snapshot_v1(p_input->'delivery'->'candidate',p_input->'delivery'->>'snapshotToken');
+  end if;
+  v_req:=clued_private.owner_grant_door_request_v1(v_anchor,'fleet.accept',array[v_resource]);`;
+// The release door's owner is the migration login by contract. Inspect its
+// privileges through the attestation connection without loading its credential.
+const callerCanExecute = `exists (select 1 from pg_proc door join pg_roles r on r.oid = door.proowner
+    where door.oid = to_regprocedure('clued_private.release_door_v1(jsonb)') and r.rolcanlogin
+      and has_schema_privilege(r.oid, p.pronamespace, 'USAGE') and has_function_privilege(r.oid, p.oid, 'EXECUTE'))`;
+const bodyContains = code => `strpos(p.prosrc, $probe$${code}$probe$) > 0`;
 const probes = {
-  train: `${relation('clued_private.ci_train_batches_v2')} and ${procedure('clued_private.ci_train_command_v2(clued_private.ci_nodes_v1,text,jsonb)')}`,
-  landing: `${relation('clued_private.ci_train_landing_receipts_v2')} and ${relation('clued_private.ci_train_member_receipts_v2')}
-    and ${procedure('clued_private.ci_train_record_landing_v2(public.clued_agent_bindings,text,text,jsonb,jsonb)')}`,
-  delivery: `${procedure('clued_private.fleet_delivery_registry_v1(jsonb)')} and ${procedure('clued_private.fleet_delivery_seal_v1(jsonb)')}
-    and (select count(*) = 2 from pg_attribute where attrelid = to_regclass('clued_private.fleet_accepted_v1')
-      and attname in ('sealed_at', 'acceptance_sha256') and not attisdropped)`,
+  train: `${relation('ci_train_batches_v2', { batch_id: 'text', state: 'text', test_sha: 'text', tree_sha: 'text', receipt_id: 'uuid' })}
+    and ${procedure('ci_train_command_v2(clued_private.ci_nodes_v1,text,jsonb)', 'jsonb')}`,
+  landing: `${relation('ci_train_landing_receipts_v2', { receipt_id: 'uuid', repository: 'text', effect_id: 'text', intent: 'jsonb', result: 'jsonb' })}
+    and ${relation('ci_train_member_receipts_v2', { receipt_id: 'uuid', landing_receipt_id: 'uuid', pr_number: 'bigint', result: 'jsonb' })}
+    and ${procedure('ci_train_record_landing_v2(public.clued_agent_bindings,text,text,jsonb,jsonb)', 'uuid')}`,
+  delivery: `${relation('fleet_accepted_v1', { sealed_at: 'timestamptz', acceptance_sha256: 'text', grant_id: 'uuid', receipt_id: 'uuid',
+    accepted_at: 'timestamptz', version: 'text', repository: 'text', archive_sha256: 'text', request_sha256: 'text' })}
+    and ${procedure('fleet_delivery_registry_v1(jsonb)', 'jsonb', `p.provolatile = 's' and ${callerCanExecute}`)}
+    and ${procedure('fleet_delivery_seal_v1(jsonb)', 'jsonb', callerCanExecute)}
+    and ${procedure('fleet_delivery_require_snapshot_v1(jsonb,text)', 'void', `p.provolatile = 's'
+      and ${bodyContains('declare fresh jsonb:=clued_private.fleet_delivery_registry_v1(c);')}
+      and ${bodyContains("if token is null or token is distinct from fresh->>'snapshotToken' then")}`)}
+    and ${procedure('fleet_accept_door_v1(jsonb)', 'jsonb', `p.prosecdef
+      and ${bodyContains("k not in ('action','resources','run_id','run_attempt','delivery')")}
+      and ${bodyContains(acceptanceGuard)}`)}`,
 };
 
 export function releaseRequirements(commit, read = file => execFileSync('git', ['show', `${commit}:${file}`], {
@@ -75,8 +110,8 @@ export function readbackSql(requirements) {
   const versions = quote(requirements.map(row => row.version));
   const interfaces = Object.entries(probes).map(([key, probe]) => `'${key}', (${probe})`).join(',\n');
   return `begin isolation level repeatable read read only;
-select jsonb_build_object('base', ${procedure('clued_private.release_door_v1(jsonb)')}
-    and ${procedure('clued_private.fleet_accept_door_v1(jsonb)')},
+select jsonb_build_object('base', ${procedure('release_door_v1(jsonb)', 'jsonb', `p.prosecdef and ${callerCanExecute}`)}
+    and ${procedure('fleet_accept_door_v1(jsonb)', 'jsonb', `p.prosecdef and ${callerCanExecute}`)},
   'applied', coalesce((select jsonb_agg(jsonb_build_object('version', version, 'name', name,
     'digest', encode(sha256(convert_to(array_to_string(statements, ''), 'UTF8')), 'hex')) order by version)
     from supabase_migrations.schema_migrations where name in (${names}) or version in (${versions})), '[]'::jsonb),

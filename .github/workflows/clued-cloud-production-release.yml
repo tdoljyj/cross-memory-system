@@ -206,6 +206,7 @@ jobs:
         timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
+          CLUED_FLEET_RULES_READ_TOKEN: ${{ secrets.CLUED_FLEET_RULES_READ_TOKEN }}
           EXPECTED_RELEASE_SHA: ${{ inputs.expected_release_sha }}
         run: node ../../work/independent-ci-resident-v1/rollout/fleet/release-admission.mjs
       - name: Read the fleet migration prerequisites
@@ -388,6 +389,7 @@ jobs:
         timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
+          CLUED_FLEET_RULES_READ_TOKEN: ${{ secrets.CLUED_FLEET_RULES_READ_TOKEN }}
           EXPECTED_RELEASE_SHA: ${{ inputs.expected_release_sha }}
         run: node ../../work/independent-ci-resident-v1/rollout/fleet/release-admission.mjs
       # OwnerCredential §6.1: each named file from this commit is applied in its

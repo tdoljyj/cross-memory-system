@@ -425,11 +425,11 @@ EXACT_SOURCE_CANDIDATE_SUCCESSORS = {'gitleaks.yml': {'kind': 'owner',
  # The optional read-only fleet preflight skips builds, cache and both uploads.
  'clued-cloud-production-release.yml': {'kind': 'legacy',
                                        'predecessor_commit': 'fa9fb4552f52b104b75295c7d8c3f27f5f28183a',
-                                       'workflow_sha256': '9c7af41c42c522364457dc44af9127fb29348d7063cf6723f4518bbd44b0e344',
+                                       'workflow_sha256': '77c11301962d6a6372fad6664e116dac1b411f2eb0f579b5da7c2deb87d65c95',
                                        'predecessor': {'control_sha256': '5fe5907c67e557a5ffdae9ffc7b3da3b724e015ae11b5945a1cb5564d932e58f',
                                                        'jobs': {'release': 'a595f8ca810d915fd2921a6ba43d277f51da0e65b9def36679c0dea3ca120626'}},
                                        'successor': {'control_sha256': '88a1449203b74f0dc64517fbef507434e4d037bae485a95e4bde82905cb40193',
-                                                     'jobs': {'release': '290d2daea54825b122df4c796c53d02f5cf5582b22aa7bdbc3ffa6def01d88e8'}}}}
+                                                     'jobs': {'release': '19f39da1e9dc61255daabe357ce9614067a753d2d414c75702782964b13247b7'}}}}
 
 # The preceding clued-merge-slot-ci.yml pin recorded the home-linux-01 retirement
 # (Owner Decision 2907d858). That change removed the one "Clued handover hook

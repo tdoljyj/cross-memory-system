@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { ensureDir, readJson, writeNew } from '../../src/store.mjs';
 import { admitFleetRelease, insist, RELEASE_OWNER } from './release-admission.mjs';
 import { missingMigrations, releaseRequirements, requirementsDigest, SNAPSHOT_LABEL } from './release-migrations.mjs';
 
@@ -28,12 +30,12 @@ export async function reconcileFleetRelease(release) {
   return { requirementsSha256: requirementsDigest(requirements), readRunId: first.runId, migrationRunId, dispatched: missing };
 }
 
-export function fleetReleaseWorkflow({ repository, commit, directory, runGh, pause = sleep, keyOf = randomUUID, requirements = releaseRequirements }) {
+export function fleetReleaseWorkflow({ repository, commit, runGh, pause = sleep, keyOf = randomUUID,
+  requirements = releaseRequirements, publisherStateDirectory = path.join(homedir(), '.clued-fleet-publisher', 'migration-attempts') }) {
   const base = `repos/${repository}/actions`;
   const dispatchPath = `${base}/workflows/${workflow}/dispatches`;
-  const prefix = `.fleet-migration-${commit}-`;
   const subject = { repository, commit };
-  let nextSlot;
+  let attempt;
   const call = (args, code = 'FLEET_RELEASE_GITHUB_UNREADABLE') => {
     let result;
     try { result = runGh(args, 30_000); } catch { insist(false, code); }
@@ -79,25 +81,48 @@ export function fleetReleaseWorkflow({ repository, commit, directory, runGh, pau
     return { runId: result.runId, snapshot: result.snapshot };
   };
 
-  // Persist before the single POST. A lost response or process exit is reconciled
-  // by the same run name before an invocation using this build directory can send again.
-  const priorAttempt = async () => {
-    const slots = (await fs.readdir(directory)).filter(name => name.startsWith(prefix)).map(name => {
-      const match = /^([1-9][0-9]*)\.json$/.exec(name.slice(prefix.length));
-      insist(match && validId(Number(match[1])), 'FLEET_MIGRATION_JOURNAL_REFUSED');
-      return Number(match[1]);
+  const code = 'FLEET_MIGRATION_JOURNAL_REFUSED';
+  const persist = async (file, value) => {
+    try { await writeNew(file, value); } catch (error) { insist(false, code, error.code); }
+  };
+  const readRecord = async file => {
+    try { return (await readJson(file)).value; }
+    catch (error) {
+      if (error.code === 'ENOENT') return null;
+      insist(false, code, error.code);
+    }
+  };
+  const readPriorAttempt = async plan => {
+    const digest = requirementsDigest(plan);
+    const directory = path.join(publisherStateDirectory, ...repository.split('/'), commit, digest);
+    await ensureDir(directory);
+    const slots = (await fs.readdir(directory)).flatMap(name => {
+      const match = /^([1-9][0-9]*)\.json$/.exec(name);
+      return match ? [Number(match[1])] : [];
     }).sort((a, b) => a - b);
     insist(slots.every((slot, index) => slot === index + 1), 'FLEET_MIGRATION_JOURNAL_REFUSED');
-    nextSlot = slots.length + 1;
-    if (!slots.length) return;
-    const marker = JSON.parse(await fs.readFile(path.join(directory, `${prefix}${slots.at(-1)}.json`), 'utf8'));
-    insist(runKey.test(marker?.key) && marker.commit === commit && marker.repository === repository, 'FLEET_MIGRATION_JOURNAL_REFUSED');
-    const list = api(`${base}/workflows/${workflow}/runs?branch=main&head_sha=${commit}&event=workflow_dispatch&per_page=100`);
-    const matches = list?.workflow_runs?.filter(run => run.display_title === runTitle('migrate', marker.key));
-    insist(matches?.length === 1 && validId(matches[0].id), 'FLEET_MIGRATION_RUN_UNRESOLVED', { key: marker.key });
-    const [run] = matches;
-    bound(run, run.id, 'migrate', marker.key);
-    insist(run.status === 'completed' && typeof run.conclusion === 'string', 'FLEET_MIGRATION_RUN_UNRESOLVED', { id: run.id, key: marker.key });
+    const last = slots.length;
+    if (last) {
+      const marker = await readRecord(path.join(directory, `${last}.json`));
+      insist(runKey.test(marker?.key) && marker.commit === commit && marker.repository === repository &&
+        marker.requirementsSha256 === digest && Array.isArray(marker.missing) && marker.missing.length > 0 &&
+        plan.filter(row => marker.missing.includes(row.file)).map(row => row.file).join(',') === marker.missing.join(','), code);
+      const recorded = await readRecord(path.join(directory, `${last}.run.json`));
+      let id;
+      if (recorded) {
+        insist(recorded.key === marker.key && validId(recorded.id), code);
+        id = recorded.id;
+      } else {
+        const list = api(`${base}/workflows/${workflow}/runs?branch=main&head_sha=${commit}&event=workflow_dispatch&per_page=100`);
+        const matches = list?.workflow_runs?.filter(run => run.display_title === runTitle('migrate', marker.key));
+        insist(matches?.length === 1 && validId(matches[0].id), 'FLEET_MIGRATION_RUN_UNRESOLVED', { key: marker.key });
+        id = matches[0].id;
+      }
+      const run = await wait(id, 'migrate', marker.key);
+      insist(typeof run.conclusion === 'string' && run.conclusion.length > 0,
+        'FLEET_MIGRATION_RUN_UNRESOLVED', { id, key: marker.key });
+    }
+    return { directory, slot: last + 1, digest };
   };
 
   return {
@@ -105,17 +130,20 @@ export function fleetReleaseWorkflow({ repository, commit, directory, runGh, pau
     requirements: () => requirements(commit),
     read: async plan => {
       insist(api('user')?.login === RELEASE_OWNER, 'FLEET_RELEASE_PUBLISHER_REFUSED');
-      await priorAttempt();
+      attempt = await readPriorAttempt(plan);
       const key = keyOf();
       return readResult('preflight', dispatch('preflight', key), key, plan);
     },
     migrate: async (missing, plan) => {
       const key = keyOf();
-      insist(validId(nextSlot) && runKey.test(key), 'FLEET_MIGRATION_JOURNAL_REFUSED');
-      try {
-        await fs.writeFile(path.join(directory, `${prefix}${nextSlot}.json`), JSON.stringify({ ...subject, key, missing }), { flag: 'wx' });
-      } catch { insist(false, 'FLEET_MIGRATION_JOURNAL_REFUSED'); }
-      return readResult('migrate', dispatch('migrate', key, missing), key, plan);
+      insist(attempt?.digest === requirementsDigest(plan) && runKey.test(key), code);
+      const { directory, slot, digest } = attempt;
+      // The create-only, flushed marker is shared by every build on this publisher.
+      // If the POST reply is lost, later calls can only rediscover this run by name.
+      await persist(path.join(directory, `${slot}.json`), { ...subject, requirementsSha256: digest, key, missing });
+      const id = dispatch('migrate', key, missing);
+      await persist(path.join(directory, `${slot}.run.json`), { key, id });
+      return readResult('migrate', id, key, plan);
     },
   };
 }

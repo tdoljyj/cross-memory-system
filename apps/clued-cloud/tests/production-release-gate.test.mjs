@@ -907,12 +907,19 @@ test('舰队迁移在数据库凭据前核同 SHA，备份失败和准入失败�
   const readback = 'Read back fleet migrations and interfaces';
   const fleet = { fleet_release_run: 'operation', expected_release_sha: 'a'.repeat(40) };
   const readonly = simulateRelease({ ...fleet, mode: 'preflight' });
-  assert.deepEqual(readonly.steps.filter(step => /secrets\./.test(step.text)).map(step => step.name), [read]);
+  const databaseCredential = step => /secrets\.CLUED_\w*DATABASE_URL/.test(step.text);
+  assert.deepEqual(readonly.steps.filter(databaseCredential).map(step => step.name), [read]);
+  assert.deepEqual(readonly.steps.filter(step => /secrets\./.test(step.text)).map(step => step.name), [admission, read]);
   assert.ok(readonly.ran.indexOf(admission) < readonly.ran.indexOf(read));
   assert.ok(!readonly.ran.includes('Preserve release evidence'));
   const mode = { ...fleet, mode: 'migrate', migrations: '20261127120000_fleet_delivery_seal_v1.sql' };
   const admitted = simulateRelease(mode);
-  assert.ok(admitted.ran.indexOf(admission) < admitted.steps.findIndex(step => /secrets\./.test(step.text)));
+  assert.ok(admitted.ran.indexOf(admission) < admitted.steps.findIndex(databaseCredential));
+  for (const name of [admission, recheck]) {
+    const step = admitted.steps.find(step => step.name === name);
+    assert.match(step.text, /CLUED_FLEET_RULES_READ_TOKEN: \$\{\{ secrets\.CLUED_FLEET_RULES_READ_TOKEN \}\}/);
+    assert.ok(!databaseCredential(step));
+  }
   assert.deepEqual(admitted.ran.filter(name => [admission, verify, backup, requireBackup, recheck, apply, readback].includes(name)),
     [admission, verify, backup, requireBackup, recheck, apply, readback]);
   for (const failure of [admission, verify, backup, requireBackup, recheck]) {
