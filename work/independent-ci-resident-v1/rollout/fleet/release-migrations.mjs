@@ -84,7 +84,13 @@ const probes = {
       and ${bodyContains("raise exception 'fleet_previous_interface_predecessor_changed'")}`)} else false end)
     and ${procedure('fleet_delivery_seal_v1(jsonb)', 'jsonb', `${callerCanExecute}
       and ${bodyContains('proof:=clued_private.fleet_require_previous_interface_v1(p_input,a);')}
-      and ${bodyContains('acceptance_sha256=d,previous_interface_evidence=proof')}`)}`,
+      and ${bodyContains('previous_interface_evidence=proof')}`)}`,
+  sealedSourceRule: `${relation('fleet_accepted_v1', { source_sha256: 'text', source_commit: 'text' })}
+    and ${relation('fleet_maintenance_v1', { operation_id: 'uuid', binding_generation: 'bigint' })}
+    and ${procedure('fleet_delivery_seal_v1(jsonb)', 'jsonb', `${callerCanExecute}
+      and ${bodyContains("clued_private.fleet_backfill_previous_v1(a,p_input->>'previousRequest')")}
+      and ${bodyContains("source_commit=candidate->>'commit'")}`)}
+    and ${procedure('fleet_maintenance_request_v1(uuid,uuid,jsonb)', 'jsonb', "p.provolatile = 'v'")}`,
 };
 
 export function releaseRequirements(commit, read = file => execFileSync('git', ['show', `${commit}:${file}`], {

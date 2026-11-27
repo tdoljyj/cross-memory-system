@@ -42,8 +42,29 @@ function openPacket(log, privateKey, requestSha256) {
   return JSON.parse(Buffer.concat([cipher.update(bytes.subarray(28)), cipher.final()]).toString('utf8'));
 }
 
+export function deliveryWorkflowRun(runGh, repository, runId, candidateCommit) {
+  if (!/^[1-9][0-9]*$/.test(runId)) throw new Error('FLEET_DELIVERY_WORKFLOW_RUN_UNKNOWN');
+  const run = ['run', 'view', runId, '--repo', repository, '--attempt', '1'];
+  const read = args => {
+    const result = runGh([...run, ...args]);
+    if (result.status !== 0) throw new Error('FLEET_DELIVERY_WORKFLOW_UNAVAILABLE');
+    return result.stdout;
+  };
+  return {
+    status: () => {
+      const state = JSON.parse(read(['--json', 'status,conclusion,attempt,event,headBranch,headSha']));
+      if (state.attempt !== 1 || state.event !== 'workflow_dispatch' || state.headBranch !== 'main') {
+        throw new Error('FLEET_DELIVERY_WORKFLOW_RUN_UNKNOWN');
+      }
+      if (candidateCommit && state.headSha !== candidateCommit) throw new Error('FLEET_DELIVERY_SUBJECT_CHANGED');
+      return state;
+    },
+    log: () => read(['--log']),
+  };
+}
+
 export function deliveryWorkflowClient({ runGh, sleep }) {
-  return async (operation, candidate, details, { signal }) => {
+  return async (operation, candidate, details, { signal, onDispatch }) => {
     const { repository, version, requestSha256 } = candidate;
     const { publicKey, privateKey } = generateKeyPairSync('x25519');
     const call = args => {
@@ -69,14 +90,16 @@ export function deliveryWorkflowClient({ runGh, sleep }) {
       ...(operation === 'confirm' ? ['-f', 'fleet_acceptance_sha256=' + details.acceptanceSha256] : [])]);
     const match = dispatched.match(/https:\/\/github\.com\/([^/]+\/[^/]+)\/actions\/runs\/([1-9][0-9]*)\s*$/);
     if (match?.[1] !== repository) throw new Error('FLEET_DELIVERY_WORKFLOW_RUN_UNKNOWN');
-    const run = ['run', 'view', match[2], '--repo', repository, '--attempt', '1'];
+    await onDispatch?.(match[2]);
+    const run = deliveryWorkflowRun(args => {
+      signal.throwIfAborted();
+      return runGh(args);
+    }, repository, match[2], operation === 'preflight' ? candidate.commit : undefined);
     for (;;) {
-      const state = JSON.parse(call([...run, '--json', 'status,conclusion,attempt,event,headBranch,headSha']));
-      if (state.attempt !== 1 || state.event !== 'workflow_dispatch' || state.headBranch !== 'main') throw new Error('FLEET_DELIVERY_WORKFLOW_RUN_UNKNOWN');
-      if (operation === 'preflight' && state.headSha !== candidate.commit) throw new Error('FLEET_DELIVERY_SUBJECT_CHANGED');
+      const state = run.status();
       if (state.status === 'completed') {
         if (state.conclusion !== 'success') throw Object.assign(new Error('FLEET_DELIVERY_WORKFLOW_REFUSED'), { workflowCompleted: true });
-        const value = openPacket(call([...run, '--log']), privateKey, requestSha256);
+        const value = openPacket(run.log(), privateKey, requestSha256);
         if (value.operation !== operation || !deliveryBound(value.candidate, candidate)) throw new Error('FLEET_DELIVERY_SUBJECT_CHANGED');
         return value.result;
       }

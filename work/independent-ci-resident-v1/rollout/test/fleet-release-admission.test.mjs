@@ -16,6 +16,7 @@ const files = [
   '20261127120200_fleet_delivery_recipients_v1.sql',
   '20261127120210_fleet_delivery_peer_recipients_v1.sql',
   '20261127123000_fleet_previous_interface_gate_v1.sql',
+  '20261127210000_fleet_sealed_source_rule_v1.sql',
 ];
 const workflowPath = '.github/workflows/clued-cloud-production-release.yml';
 const root = new URL('../../../../', import.meta.url);

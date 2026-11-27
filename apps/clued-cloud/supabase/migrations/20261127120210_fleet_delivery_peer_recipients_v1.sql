@@ -33,6 +33,7 @@ returns jsonb language plpgsql stable set search_path='' as $$
 declare identity clued_private.release_identity_v1%rowtype;
   now_at timestamptz:=statement_timestamp();
   recipients jsonb;
+  result jsonb;
 begin
   select * into identity from clued_private.release_identity_v1;
   if not found or not exists(select 1 from public.clued_agent_bindings b
@@ -50,9 +51,10 @@ begin
   select coalesce(jsonb_agg(n.registration order by n.node_id),'[]'::jsonb)
     into recipients from clued_private.fleet_delivery_recipient_rows_v1(identity.user_id) n;
 
-  return jsonb_build_object('repository',identity.repository,'scope','global','candidate',c,
+  result:=jsonb_build_object('repository',identity.repository,'scope','global','candidate',c,
     'observedAt',now_at,'complete',true,'nodes',recipients,
     'snapshotToken',encode(extensions.digest(jsonb_build_array(identity.user_id,identity.anchor_binding_id,c,recipients)::text,'sha256'),'hex'));
+  return result;
 end $$;
 
 do $patch$

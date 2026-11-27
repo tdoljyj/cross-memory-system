@@ -102,7 +102,7 @@ import os from 'node:os';
 import { acceptResourceOf, OPEN_RUN_ID, openRequest, openRunFailed, readAnswer, statusReader } from './accept-door.mjs';
 import { deliveryBound, deliverySubject, fleetDeliveryPreflight } from './delivery-preflight.mjs';
 import { deliveryProjectionReaders, verifyDeliveryTree } from './delivery-reader.mjs';
-import { deliveryWorkflowClient } from './delivery-workflow.mjs';
+import { deliveryWorkflowClient, deliveryWorkflowRun } from './delivery-workflow.mjs';
 import { RESIDENT } from './facts.mjs';
 import { DEFAULT_ROOT, readArchive, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
 import { previousInterfaceCheck, PREVIOUS_INTERFACE_TIMEOUT_MS } from './previous-interface-check.mjs';
@@ -791,9 +791,12 @@ async function beginDispatch(file, clock) {
     return { at, fresh: true };
   } catch (error) {
     if (error.code !== 'EEXIST') throw error;
-    const prior = Number(await fs.readFile(file, 'utf8'));
+    const marker = JSON.parse(await fs.readFile(file, 'utf8'));
+    const prior = typeof marker === 'number' ? marker : marker?.at;
     check(Number.isSafeInteger(prior) && prior > 0 && prior <= at, 'FLEET_DISPATCH_STATE_UNREADABLE');
-    return { at: prior, fresh: false };
+    const runId = marker?.runId;
+    check(runId === undefined || typeof runId === 'string' && OPEN_RUN_ID.test(runId), 'FLEET_DISPATCH_STATE_UNREADABLE');
+    return { at: prior, fresh: false, runId };
   }
 }
 
@@ -1163,6 +1166,8 @@ export const WAIT_STEPS_MS = Object.freeze([30_000, 60_000, 120_000]);
 export const WAIT_MAX_MINUTES = 1440;
 export const OPEN_WAIT_MS = 15 * 60_000;
 export const OPEN_COMMAND_MS = 20 * 60_000;
+export const CONFIRM_WAIT_MS = 45 * 60_000;
+const CONFIRM_READBACK_MS = 30_000;
 // Leave one minute inside the parent deadline for sealing, output and cleanup.
 const OPEN_RESERVE_MS = 60_000;
 const OPEN_OUTPUT_MS = 5_000;
@@ -1225,7 +1230,7 @@ export async function seal(options) {
   const stagedRelease = packageGenerationOf(r.version) >= STAGED_PREFLIGHT_GENERATION;
   if (stagedRelease && boundedOpen && deadline === undefined) end += PREVIOUS_INTERFACE_TIMEOUT_MS;
   const preflightEnd = boundedOpen ? end - OPEN_WAIT_MS - OPEN_RESERVE_MS : end;
-  const sealEnd = boundedOpen ? end - OPEN_OUTPUT_MS : end;
+  let sealEnd = boundedOpen ? end - OPEN_OUTPUT_MS : end;
   check(expectedRequestSha256 === undefined || sha(requestBytes) === expectedRequestSha256, 'SEAL_REQUEST_NOT_ON_RELEASE');
   const tag = tagOf(r.version);
   check(path.basename(request) === `${tag}.acceptance-request.json`, 'REQUEST_FILE_NAME_REFUSED', path.basename(request));
@@ -1503,6 +1508,10 @@ export async function seal(options) {
     check(!guarded || answer.sealedAcceptanceSha256 == null || answer.sealedAcceptanceSha256 === acceptanceSha256,
       'FLEET_DELIVERY_SEAL_NOT_CONFIRMED', 'the acceptance door sealed different bytes');
     const alreadySealed = guarded && answer.sealedAcceptanceSha256 === acceptanceSha256;
+    if (stagedRelease && !alreadySealed && deadline === undefined) {
+      // Pre-attachment validation, a queued replay and seal, and final readback have separate budgets.
+      sealEnd = Math.max(sealEnd, clock() + OPEN_WAIT_MS + CONFIRM_WAIT_MS + CONFIRM_READBACK_MS + OPEN_OUTPUT_MS);
+    }
     const deliveryBeforeAttach = alreadySealed ? null : await checkDelivery('before-attach', sealEnd);
     if (deliveryBeforeAttach) {
       const currentRequest = await requestOnRelease({ ghCommand: boundedGh(sealEnd), repo, tag, stage });
@@ -1517,25 +1526,41 @@ export async function seal(options) {
     await fs.writeFile(staged, bytes, { flag: 'wx' });
     const confirmUploaded = guarded && !alreadySealed ? async () => {
       const details = { grantId: answer.grantId, receiptId: answer.receiptId, acceptanceSha256 };
-      let confirmed;
-      const confirmEnd = Math.min(sealEnd, clock() + OPEN_WAIT_MS);
+      const confirmEnd = Math.min(sealEnd - CONFIRM_READBACK_MS, clock() + CONFIRM_WAIT_MS);
       const marker = stagedRelease ? path.join(durable, `confirm-${acceptanceSha256}`) : null;
       const dispatch = await beginDispatch(marker, clock);
-      check(dispatch.fresh, 'FLEET_DELIVERY_SEAL_NOT_CONFIRMED', { ...details, reason: 'FLEET_CONFIRM_DISPATCH_UNRESOLVED' });
-      try { confirmed = await workflow(confirmEnd)('confirm', candidate, details, { signal: AbortSignal.timeout(remaining(confirmEnd)) }); }
-      catch (error) {
-        if (!stagedRelease) fail('FLEET_DELIVERY_SEAL_NOT_CONFIRMED', { ...details, reason: error?.message });
-        // An unreadable reply may follow a committed seal. Read the exact
-        // request before any further dispatch or index update.
-        const back = await readStatus(resource, { timeoutMs: remaining(sealEnd) }).then(value => readAnswer(value, { resource, requestSha256 }), () => null);
-        if (marker && error.workflowCompleted && back?.kind === 'accepted' && back.sealedAcceptanceSha256 == null) await fs.unlink(marker);
-        check(back?.kind === 'accepted' && back.grantId === details.grantId && back.receiptId === details.receiptId &&
-          back.acceptedAt === answer.acceptedAt && back.sealedAcceptanceSha256 === acceptanceSha256,
-          'FLEET_DELIVERY_SEAL_NOT_CONFIRMED', { ...details, reason: error?.message });
-        return;
+      let runId = dispatch.runId, terminalFailure = false, reason = 'FLEET_CONFIRM_DISPATCH_UNRESOLVED';
+      if (dispatch.fresh) {
+        try {
+          const confirmed = await workflow(confirmEnd)('confirm', candidate, details, {
+            signal: AbortSignal.timeout(remaining(confirmEnd)),
+            onDispatch: async id => {
+              runId = id;
+              if (marker) await writeAtomic(marker, JSON.stringify({ at: dispatch.at, runId }));
+            },
+          });
+          check(confirmed?.status === 'sealed' && Object.entries(details).every(([key, value]) => confirmed[key] === value),
+            'FLEET_DELIVERY_SEAL_NOT_CONFIRMED', details);
+          return;
+        } catch (error) {
+          terminalFailure = error.workflowCompleted === true;
+          reason = error?.code ?? error?.message;
+        }
+      } else if (runId !== undefined) {
+        try {
+          const state = deliveryWorkflowRun(boundedGh(confirmEnd), repo, runId).status();
+          terminalFailure = state.status === 'completed' && Boolean(state.conclusion) && state.conclusion !== 'success';
+        } catch (error) { reason = error?.code ?? error?.message; }
       }
-      check(confirmed?.status === 'sealed' && Object.entries(details).every(([key, value]) => confirmed[key] === value),
-        'FLEET_DELIVERY_SEAL_NOT_CONFIRMED', details);
+      if (!stagedRelease) fail('FLEET_DELIVERY_SEAL_NOT_CONFIRMED', { ...details, reason });
+      // An unreadable reply can follow a committed seal. Reconcile the exact request before any index update or redispatch.
+      const back = await Promise.resolve().then(() => readStatus(resource, { timeoutMs: remaining(sealEnd) }))
+        .then(value => readAnswer(value, { resource, requestSha256 })).catch(() => null);
+      const sameGrant = back?.kind === 'accepted' && back.grantId === details.grantId && back.receiptId === details.receiptId &&
+        back.acceptedAt === answer.acceptedAt;
+      if (sameGrant && terminalFailure && back.sealedAcceptanceSha256 == null) await fs.unlink(marker);
+      check(sameGrant && back.sealedAcceptanceSha256 === acceptanceSha256,
+        'FLEET_DELIVERY_SEAL_NOT_CONFIRMED', { ...details, reason, ...(runId ? { runId } : {}) });
     } : null;
     const attached = await attachAcceptance({ version: r.version, acceptance: staged, repo, index, drill,
       confirmUploaded: stagedRelease ? confirmUploaded : null,
