@@ -655,7 +655,7 @@
     {
       "id": "script.control-workflow-source",
       "kind": "script",
-      "version": "1.0.25",
+      "version": "1.0.26",
       "description": "Exact historical control Source families and bounded completion observer successor; no route, secret or execution grant.",
       "root": ".",
       "files": [

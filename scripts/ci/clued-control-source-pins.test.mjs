@@ -74,6 +74,30 @@ test('the checkout passes with its own commit as the trusted base',async()=>{
   assert.equal(result.status,clean?'ok':result.status,JSON.stringify(result.details));
   if(clean)assert.deepEqual(result.details,[]);
 });
+test('the two exact train v2 Source appends pass from the pre-registration base',async()=>{
+  const base='c28b21dc0f02dff5b3fb4f2c83e2545ac06bb98e';
+  const result=await checkControlSourcePins(ROOT,{base});
+  assert.equal(result.status,'ok',JSON.stringify(result.details));
+});
+test('tampering with either train v2 Source or FullRole is refused before mechanical writes',async t=>{
+  const root=fixture(t),base='c28b21dc0f02dff5b3fb4f2c83e2545ac06bb98e';
+  fs.copyFileSync(path.join(ROOT,CONTROL_SOURCE_MODULE),path.join(root,CONTROL_SOURCE_MODULE));
+  const catalogue=read(ROOT,CONTROL_SOURCE_REGISTRY);
+  for(const name of ['clued-merge-slot-ci','clued-merge-executor']){
+    const file='.github/workflows/'+name+'.yml';
+    for(const tamper of [
+      (entry)=>{entry.authority_boundary.execution_authority=true;},
+      (_entry,roles)=>{roles[0].definition.if='always()';},
+    ]){
+      const data=JSON.parse(catalogue),entry=data.workflows[file].sources.at(-1);
+      tamper(entry,data.roles[file][entry.workflow_blob]);
+      fs.writeFileSync(path.join(root,CONTROL_SOURCE_REGISTRY),JSON.stringify(data,null,2)+'\n');
+      const before=pair(root);
+      await assert.rejects(writeControlSourcePins(root,{base}),/outside the registered train v2 appends/);
+      assert.deepEqual(pair(root),before);
+    }
+  }
+});
 test('duplicate version markers and manifest mismatches refuse without any registry write',async t=>{
   const root=fixture(t);edit(root,CONTROL_SOURCE_MECHANICAL_FILES[0],x=>x+"\nexport const COMPONENT_VERSION = '9.9.9';\n");await refusesWithoutWrites(root,/one component version marker/);
 });
