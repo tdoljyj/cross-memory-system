@@ -1220,18 +1220,18 @@ test('a candidate receipt: A5 in the guest only, -Finalize judges A9 alone; an a
   assert.equal(finalize('acc-a5-finalize-same', accepted).output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
 });
 
-// The two PASS conclusions a receipt can end in are the set seal takes (publish.mjs exports it; one definition there): held equal here so
-// neither side can rename one alone (FABLE-drill-r13-a8-m5 1.3: A8 has no skip, so no third value).
-test('the PASS conclusions of drill-vm.ps1 are exactly publish.mjs DRILL_PASS_CONCLUSIONS, the set seal takes', () => {
+// An optional historical receipt still uses the same PASS conclusions in the drill and in seal.
+test('seal uses the drill PASS conclusions for optional receipts and records an undrilled seal without one', async t => {
   const text = fs.readFileSync(script, 'utf8');
   const fn = text.slice(text.indexOf('function Get-DrillConclusion'), text.indexOf('\n}', text.indexOf('function Get-DrillConclusion')));
   const mine = [...new Set([...fn.matchAll(/'(PASS_[A-Z_]+)'/g)].map(m => m[1]))].sort();
   assert.deepEqual(mine, ['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN']);
   assert.deepEqual([...DRILL_PASS_CONCLUSIONS].sort(), mine);
-  // the operator's guide to seal names the same set (Codex review of 58136df61, low 5)
-  const guide = fs.readFileSync(fileURLToPath(new URL('../rollout/fleet/README.md', import.meta.url)), 'utf8');
-  const sealLine = guide.split('\n').find(l => l.includes('seal --drill-receipt'));
-  for (const c of DRILL_PASS_CONCLUSIONS) assert.ok(sealLine.includes(c), c);
+  const w = await sealWorld(t);
+  const sealed = await w.sealIt();
+  assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
+  assert.equal(sealed.drill, '首装未演练');
+  assert.match(fs.readFileSync(w.index, 'utf8'), /\| 首装未演练 \|/);
 });
 test('the credential plan: every required name given, every optional name decided, the heartbeat token withheld with its reason', opts, () => {
   const plan = planOf(PACKAGE_CREDENTIALS);
