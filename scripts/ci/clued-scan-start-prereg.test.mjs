@@ -151,7 +151,7 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
   // The separately frozen compound candidate is additive to this earlier
   // scan-start generation. Verify its exact identity before comparing the
   // unchanged predecessor catalogue; disk /3 is decoded above, never repinned.
-  assert.equal(profileBefore.workflows[REQUIRED_TESTS_SOURCE.file].accepted_sources[0].workflow_blob, REQUIRED_TESTS_SOURCE.workflow_blob);
+  assert.equal(profileBefore.workflows[REQUIRED_TESTS_SOURCE.file].workflow_blob, REQUIRED_TESTS_SOURCE.workflow_blob);
   assert.deepEqual(rolesBefore.workflows[REQUIRED_TESTS_SOURCE.file].sources[REQUIRED_TESTS_SOURCE.workflow_blob]
     .map(role => [role.job_id, role.definition_sha256]), REQUIRED_TESTS_SOURCE.primary_ids
     .map(id => [id, REQUIRED_TESTS_SOURCE.role_sha256[id]]));
@@ -161,9 +161,9 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
   // The current Source exports the trusted base from the local candidate object store (Task 04f9b91b).
   const WINDOWS = '.github/workflows/clued-required-tests-windows.yml';
   const WINDOWS_BLOB = workflowBlob(fs.readFileSync(new URL(WINDOWS, ROOT), 'utf8'));
-  assert.equal(registeredWorkflowSource(profileBefore, WINDOWS, WINDOWS_BLOB).passed, true);
+  assert.equal(profileBefore.workflows[WINDOWS].workflow_blob, WINDOWS_BLOB);
   assert.deepEqual(rolesBefore.workflows[WINDOWS].sources[WINDOWS_BLOB].map(role => [role.job_id, role.definition_sha256]),
-    [['ci-suites-windows', roleDefinitionDigest(parseYaml(fs.readFileSync(new URL(WINDOWS, ROOT), 'utf8')).jobs['ci-suites-windows'])]]);
+    [['ci-suites-windows', '33451d0e5e3cc561d4b33ac2530087efe60b3e4f8f2c2db7382ce42d2a46b195']]);
   delete profileBefore.workflows[WINDOWS];
   delete rolesBefore.workflows[WINDOWS];
   // #988: the Node 22 install managed-cache Source is registered after this generation; strip it like the other later successors.

@@ -361,20 +361,24 @@ HOSTED_SCAFFOLD_SOURCE = "61b65d61"
 HOSTED_SCAFFOLD_PREFIX = "hosted-"
 HOSTED_SCAFFOLD_JOBS = {
     "hosted-required.yml": {
-        "control_sha256": "2f80faac1c7b3870adde2afc404357bd316ff37ceb184ba7c2c580c37fc85ce6",
+        # Task 788c2598：说明协议 v2 的 staging push 跳过托管作业（was 2f80faac…）。
+        "control_sha256": "6aef517687464cb885a6eb1a49fdecf22e9bc542bea60a93d815e47a24919d86",
         "jobs": {
-            "clued-cloud-tests-shard": "a854461e015da29eca6f1fa86838c0d340ae7fe991a13d3615ab5e584ad189af",
-            "clued-cloud-tests": "d4e5797402f3914d5ca5287ef94290a2c4be171e2f96f92a0184e2c49f890288",
-            "ci-suites-shard": "333a19665423152c8f95950f3dc533d749b7ae5affc6e67a4dfa6dbd8b718148",
-            "ci-suites": "e94c56206ef4f4eeeae64c78be97db8b752ef0322ee0177c694b2495857805c3",
-            "migration-verify-shard": "93216a639f104fa15c74ec39ba9e1dd5e728e23a9ee2acb12c9f0e472074a024",
-            "migration-verify": "24e2cf81f4c3c672961db8fd7b385d57b9d1872e9397ce527f2875da5322386b",
-            "ci-suites-windows-shard": "3a212b51fe984835cd19eb56f2bd28f34aca87bf24b9679a6290f7a9cb0fff49",
-            "ci-suites-windows": "4e9fc891e940350f6dc47bc5c4a86e4e21d6f0b90cab0f74ceef598909dcc92f",
-            "ci-suites-windows-duration": "ddc24fc7fc39b157309edfb48451673cf0862387e3b778aeb9b63b38f07a8efd",
-            "gitleaks": "5f197a5db5c018f27fcde2038da4e9d09e0d9595280d7de4ba25060eb1a347f1",
-            "trivy": "1626d64a8d44f76845c97fcd57d5b57b536f18f953df50aa1a25e81881971094",
-            "contract-placement": "86692591154cc7ce58b9318e5e5ca722f0be8dce26fd03a589e8957af937b98a"
+            # Task 788c2598：12 个作业都在协议 v2 的 staging push 上跳过（was a854461e…, d4e57974…,
+            # 333a1966…, e94c5620…, 93216a63…, 24e2cf81…, 3a212b51…, 4e9fc891…, ddc24fc7…,
+            # 5f197a5d…, 1626d64a…, 86692591…，按下列顺序）。
+            "clued-cloud-tests-shard": "0c680d8c8edf95545105f323f29c7b06e17dd826c79b5b5acdec2dfdc7fe3c3b",
+            "clued-cloud-tests": "3433a114f199e01f5090c8451590800bfa787fba8f7ce9058023a5da4c1f189c",
+            "ci-suites-shard": "9ff902d7744f0fdca55773813fe9231496704c2c688617ca94941b0de453a603",
+            "ci-suites": "d399983081dfaae15c60fb914459b36527232bdf05afe446bd86ee28d913d55a",
+            "migration-verify-shard": "d64f0ca4e276880dc3ccfb5f0f045c98ad7bf7d1fabde65dc64b40c45d9fda96",
+            "migration-verify": "904c4acb48620fc80956c1d6b12af3da6e3affd75ddef7678cfa95d9d2ad848a",
+            "ci-suites-windows-shard": "75ebbe40b2d3a0c5a3fa2a1a72b49a3928abe320726e135d39db4584b61411f6",
+            "ci-suites-windows": "631d2d443a0c9720a84e33338a2a02c08bf73cb6542a0ecdca7843b566e33c1f",
+            "ci-suites-windows-duration": "d0581774f88dedf3c980a10377fdaccf1ab8ec39a5d1fa0a72a9250c08c3a2e1",
+            "gitleaks": "4aec37f332fbbd15309c91abf88dcf4b96d84105d3e694724865f38cda5912c9",
+            "trivy": "f62038d822d80a59d8a4f12aca7abd3882e494ecc2adbe248228e02062bf5c9d",
+            "contract-placement": "e1bed7f2f549b4ba1c9bf8a425f9510bac4303cbbf3c6d577b44078ada69f1c1"
         }
     },
     "clued-front-main-merge-hosted.yml": {
@@ -401,66 +405,22 @@ EXACT_SOURCE_CANDIDATE_SUCCESSORS = {'gitleaks.yml': {'kind': 'owner',
                   'successor': {'control_sha256': 'f5b93595feb30ef1f9bf436fce82a08e07e0559ea706bc6af60f26c01483f301',
                                 'jobs': {'admission-gate': '52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2',
                                          'gitleaks-trusted-self-hosted': 'ae8cea670f38536ff6f5ef5b5be17cd990b49702a0e18f00fae36b9d3598285a'}}},
- 'clued-merge-slot-ci.yml': {'kind': 'legacy',
-                             'source_commit': 'c8c146b4067a32a0ed3a1a6be04dda52a59dd4db',
-                             'workflow_sha256': 'f8ae06eb8a2e1cbe6b0ff91514067f7c216f6551fdf8cf3a8c24e0715a53abfa',
-                             'predecessor': {'control_sha256': '500da29fb3c1fbe9df2be795e84f92908249a8ee057bef709e17e5aa7c5e341f',
-                                             'jobs': {'report': '13d032eddeef15d56c9b98d7e74cc09325e6b40fbbe190820bd9aa86a2f41089'}},
-                             'successor': {'control_sha256': '9c7974ece331a8d86524ab75301f86159ffd6d01cbc2684d24417d2a92ac94ed',
-                                           'jobs': {'report': '13d032eddeef15d56c9b98d7e74cc09325e6b40fbbe190820bd9aa86a2f41089'}}}}
-
-# The clued-merge-slot-ci.yml successor above is the home-linux-01 retirement
-# Source (Owner Decision 2907d858): it differs from the previous successor
-# (workflow 670c8e3b..., control efbfbb17...) only by removing the one
-# "Clued handover hook qualification / home-linux-01" workflow_run signal. The
-# report job hash, hosted route, permissions and every other trigger stay frozen,
-# and the original debt row above is untouched. No new hosted debt is added.
-
-# Task 788c2598: preserve the exact pre-cutover budget and preregister the
-# reviewed v2 counterparts as complete workflow identities.
-TRAIN_V2_BUDGET_SUCCESSORS = {'clued-merge-executor.yml': {'kind': 'legacy',
-                              'source_commit': 'e8390c2e643c5478ea9d34a784e558e5a995b2e9',
+ # Task 788c2598：协议 v2 的 execute 只接收 main 首次 push 或 Owner 首次手动派发（was 585a0c85… / ac99c44e…）。
+ 'clued-merge-executor.yml': {'kind': 'legacy',
+                              'source_commit': '54ceda3566e7c0634c29d5ae8fd486184e953780',
                               'workflow_sha256': '2e5b98789514fd58e3697e1b47e574d45f454dad984555fee4c5884e28f99759',
                               'predecessor': {'control_sha256': 'ef6ffaeae06adbf1447fe0a74ec7e1673fc23086cdeee48cc8190a3bc9c23448',
                                               'jobs': {'execute': 'ac99c44e211fb38f6843ea3d1fa345721843dcb34cfecfd1d3c3a709ba0988d8'}},
                               'successor': {'control_sha256': 'ef6ffaeae06adbf1447fe0a74ec7e1673fc23086cdeee48cc8190a3bc9c23448',
                                             'jobs': {'execute': '11892263ce6cea80b2f0a276e8b1c90d912668ed7a221056bd3cdb980c55216b'}}},
+ # Task 788c2598：协议 v2 的 report 只接收 main 首次 PR 完成事件或 Owner 首次手动派发（was f8ae06eb… / 9c7974ec… / 13d032ed…）。
  'clued-merge-slot-ci.yml': {'kind': 'legacy',
-                             'source_commit': 'e8390c2e643c5478ea9d34a784e558e5a995b2e9',
+                             'source_commit': '54ceda3566e7c0634c29d5ae8fd486184e953780',
                              'workflow_sha256': '9bd7d356f834736141f3978d1059775b946eaedc680cd814349f348d38f58376',
                              'predecessor': {'control_sha256': '500da29fb3c1fbe9df2be795e84f92908249a8ee057bef709e17e5aa7c5e341f',
                                              'jobs': {'report': '13d032eddeef15d56c9b98d7e74cc09325e6b40fbbe190820bd9aa86a2f41089'}},
                              'successor': {'control_sha256': '6002ab6e9058f16a2a216be0f10076e2f0c740e8817478d7454f322ae9345a0c',
-                                           'jobs': {'report': '4c829014acf6eb4d0e7f829d37e630036e07869cc68f2122f7ce58191e60f0ca'}}},
- 'hosted-required.yml': {'kind': 'scaffold',
-                         'source_commit': 'e8390c2e643c5478ea9d34a784e558e5a995b2e9',
-                         'workflow_sha256': '8232a00466562ab261cf99964fab26013b1fe4c0ae9b0f1fc190aa7571917fca',
-                         'predecessor': {'control_sha256': '2f80faac1c7b3870adde2afc404357bd316ff37ceb184ba7c2c580c37fc85ce6',
-                                         'jobs': {'clued-cloud-tests-shard': 'a854461e015da29eca6f1fa86838c0d340ae7fe991a13d3615ab5e584ad189af',
-                                                  'clued-cloud-tests': 'd4e5797402f3914d5ca5287ef94290a2c4be171e2f96f92a0184e2c49f890288',
-                                                  'ci-suites-shard': '333a19665423152c8f95950f3dc533d749b7ae5affc6e67a4dfa6dbd8b718148',
-                                                  'ci-suites': 'e94c56206ef4f4eeeae64c78be97db8b752ef0322ee0177c694b2495857805c3',
-                                                  'migration-verify-shard': '93216a639f104fa15c74ec39ba9e1dd5e728e23a9ee2acb12c9f0e472074a024',
-                                                  'migration-verify': '24e2cf81f4c3c672961db8fd7b385d57b9d1872e9397ce527f2875da5322386b',
-                                                  'ci-suites-windows-shard': '3a212b51fe984835cd19eb56f2bd28f34aca87bf24b9679a6290f7a9cb0fff49',
-                                                  'ci-suites-windows': '4e9fc891e940350f6dc47bc5c4a86e4e21d6f0b90cab0f74ceef598909dcc92f',
-                                                  'ci-suites-windows-duration': 'ddc24fc7fc39b157309edfb48451673cf0862387e3b778aeb9b63b38f07a8efd',
-                                                  'gitleaks': '5f197a5db5c018f27fcde2038da4e9d09e0d9595280d7de4ba25060eb1a347f1',
-                                                  'trivy': '1626d64a8d44f76845c97fcd57d5b57b536f18f953df50aa1a25e81881971094',
-                                                  'contract-placement': '86692591154cc7ce58b9318e5e5ca722f0be8dce26fd03a589e8957af937b98a'}},
-                         'successor': {'control_sha256': '6aef517687464cb885a6eb1a49fdecf22e9bc542bea60a93d815e47a24919d86',
-                                       'jobs': {'clued-cloud-tests-shard': '0c680d8c8edf95545105f323f29c7b06e17dd826c79b5b5acdec2dfdc7fe3c3b',
-                                                'clued-cloud-tests': '3433a114f199e01f5090c8451590800bfa787fba8f7ce9058023a5da4c1f189c',
-                                                'ci-suites-shard': '9ff902d7744f0fdca55773813fe9231496704c2c688617ca94941b0de453a603',
-                                                'ci-suites': 'd399983081dfaae15c60fb914459b36527232bdf05afe446bd86ee28d913d55a',
-                                                'migration-verify-shard': 'd64f0ca4e276880dc3ccfb5f0f045c98ad7bf7d1fabde65dc64b40c45d9fda96',
-                                                'migration-verify': '904c4acb48620fc80956c1d6b12af3da6e3affd75ddef7678cfa95d9d2ad848a',
-                                                'ci-suites-windows-shard': '75ebbe40b2d3a0c5a3fa2a1a72b49a3928abe320726e135d39db4584b61411f6',
-                                                'ci-suites-windows': '631d2d443a0c9720a84e33338a2a02c08bf73cb6542a0ecdca7843b566e33c1f',
-                                                'ci-suites-windows-duration': 'd0581774f88dedf3c980a10377fdaccf1ab8ec39a5d1fa0a72a9250c08c3a2e1',
-                                                'gitleaks': '4aec37f332fbbd15309c91abf88dcf4b96d84105d3e694724865f38cda5912c9',
-                                                'trivy': 'f62038d822d80a59d8a4f12aca7abd3882e494ecc2adbe248228e02062bf5c9d',
-                                                'contract-placement': 'e1bed7f2f549b4ba1c9bf8a425f9510bac4303cbbf3c6d577b44078ada69f1c1'}}}}
+                                           'jobs': {'report': '4c829014acf6eb4d0e7f829d37e630036e07869cc68f2122f7ce58191e60f0ca'}}}}
 
 # The preceding clued-merge-slot-ci.yml pin recorded the home-linux-01 retirement
 # (Owner Decision 2907d858). That change removed the one "Clued handover hook
@@ -783,16 +743,12 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
         entry = baseline.get(filename)
         owner_entry = owner_hosted.get(filename)
         scaffold_entry = scaffold.get(filename)
-        for catalogue in (EXACT_SOURCE_CANDIDATE_SUCCESSORS, TRAIN_V2_BUDGET_SUCCESSORS):
-            successor = catalogue.get(filename)
-            if successor is None or source_hash(text) != successor["workflow_sha256"]:
-                continue
+        successor = EXACT_SOURCE_CANDIDATE_SUCCESSORS.get(filename)
+        if successor and source_hash(text) == successor["workflow_sha256"]:
             if successor["kind"] == "legacy" and entry == successor["predecessor"]:
                 entry = successor["successor"]
             elif successor["kind"] == "owner" and owner_entry == successor["predecessor"]:
                 owner_entry = successor["successor"]
-            elif successor["kind"] == "scaffold" and scaffold_entry == successor["predecessor"]:
-                scaffold_entry = successor["successor"]
         pr_triggered = bool(re.search(r"\bpull_request(?:_target)?\b", top["on"]))
         concurrency = top.get("concurrency", "")
         values = ([concurrency.split(":", 1)[1]] if concurrency else []) + [

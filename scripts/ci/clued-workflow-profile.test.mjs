@@ -52,17 +52,6 @@ const SOURCE='name: fake-fixture\non: fixture\njobs: fixture\n';
 const definition={on:{pull_request:null},jobs:{main:{'runs-on':'ubuntu-latest',steps:[{name:'Actual tests',run:'node --test'}]}}};
 const fixtureRoles=parsed=>[{job_id:'main',definition_sha256:roleDefinitionDigest(parsed.jobs.main)}];
 const compile=(source=SOURCE,parsed=definition)=>compileRegisteredWorkflow(source,{primary_ids:['main'],parseYaml:()=>parsed,accepted_roles:fixtureRoles(parsed)});
-test('第 25 代节点能识别 main 现行 Linux 和 Windows 工作流的精确 Source 与 Role', () => {
-  const main = retiredCatalogue('816b2ed9b2f78ba8439d64d348054e05f027cee8');
-  const registry = parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json', import.meta.url)));
-  const specs = JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json', import.meta.url)));
-  for (const file of [REQUIRED_TESTS_SOURCE.file, '.github/workflows/clued-required-tests-windows.yml']) {
-    const blob = main.registry.workflows[file].workflow_blob;
-    assert.equal(registeredWorkflowSource(registry, file, blob).passed, true, file);
-    const identities = roles => roles.map(({job_id, definition_sha256}) => ({job_id, definition_sha256}));
-    assert.deepEqual(identities(rolesForSource(specs, file, blob)), identities(rolesForSource(main.specs, file, blob)));
-  }
-});
 test('registration binds full bytes, explicit primary roles and every command occurrence',()=>{
   const parsed=structuredClone(definition);parsed.jobs.main.steps.push({name:'Actual tests',run:'node other-tests.mjs'});
   const p=compile(SOURCE,parsed);assert.equal(p.routes[0].required_steps['Actual tests'],2);
@@ -102,32 +91,29 @@ test('only the exact required-tests Source and its six complete independent role
   }
   assert.equal(compile().execution_mode,undefined,'old alternative compiler behavior is unchanged');
 });
-test('both exact required-tests Sources compile with their own FullRoles and the checkout selects by blob', () => {
-  const require = createRequire(new URL('../../apps/clued-cloud/package.json', import.meta.url));
-  const { parse: parseYaml } = require('yaml');
-  const registry = parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json', import.meta.url)));
-  const specs = JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json', import.meta.url)));
-  for (const file of [REQUIRED_TESTS_SOURCE.file, '.github/workflows/clued-required-tests-windows.yml']) {
-    const { accepted_sources, ...root } = registry.workflows[file];
-    const candidates = [root, ...accepted_sources];
-    assert.equal(candidates.length, 2);
-    assert.deepEqual(Object.keys(specs.workflows[file].sources).sort(), candidates.map(entry => entry.workflow_blob).sort());
-    const checkedOut = fs.readFileSync(new URL('../../' + file, import.meta.url), 'utf8');
-    assert.equal(registeredWorkflowSource(registry, file, workflowBlob(checkedOut)).profile.source_yaml, checkedOut);
-    for (const entry of candidates) {
-      const text = entry.source_yaml;
-      const roles = rolesForSource(specs, file, workflowBlob(text));
-      const definition = parseYaml(text);
-      assert.deepEqual(roles, entry.primary_ids.map(job_id => ({
-        job_id, definition_sha256: roleDefinitionDigest(definition.jobs[job_id]), definition: definition.jobs[job_id],
-      })));
-      assert.deepEqual(compileRegisteredWorkflow(text, { primary_ids: entry.primary_ids, parseYaml, accepted_roles: roles }), entry);
-      assert.equal(registeredWorkflowSource(registry, file, workflowBlob(text + '# changed\n')).passed, false);
-      const other = candidates.find(candidate => candidate !== entry);
-      assert.throws(() => compileRegisteredWorkflow(text, { primary_ids: entry.primary_ids, parseYaml,
-        accepted_roles: rolesForSource(specs, file, other.workflow_blob) }));
-    }
-  }
+// G3 changed the bytes of clued-required-tests.yml (lost-run workflow_dispatch). The compound pin, the root registry
+// entry and the three independent roles must all name the committed bytes; the compound mode admits exactly one Source,
+// so replaced bytes are not kept as accepted_sources (the compiler would no longer compile them in compound mode).
+test('the compound pin, its registered entry and its three roles are the committed required-tests bytes',()=>{
+  const require=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url)),yaml=require('yaml');
+  const file=REQUIRED_TESTS_SOURCE.file,ids=[...REQUIRED_TESTS_SOURCE.primary_ids];
+  const raw=fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8'),value=yaml.parse(raw);
+  const blob=workflowBlob(raw),sha=createHash('sha256').update(raw).digest('hex');
+  const registry=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+  const specs=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
+  const {accepted_sources,...entry}=registry.workflows[file];
+  const actual={workflow_blob:blob,source_sha256:sha,workflow_definition_sha256:roleDefinitionDigest(value),
+    profile_sha256:roleDefinitionDigest({...entry,workflow_blob:blob,source_sha256:sha,source_yaml:raw}),
+    role_sha256:Object.fromEntries(ids.map(id=>[id,roleDefinitionDigest(value.jobs[id])]))};
+  const pinned={workflow_blob:REQUIRED_TESTS_SOURCE.workflow_blob,source_sha256:REQUIRED_TESTS_SOURCE.source_sha256,
+    workflow_definition_sha256:REQUIRED_TESTS_SOURCE.workflow_definition_sha256,profile_sha256:REQUIRED_TESTS_SOURCE.profile_sha256,
+    role_sha256:{...REQUIRED_TESTS_SOURCE.role_sha256}};
+  assert.deepEqual(pinned,actual,'REQUIRED_TESTS_SOURCE must pin the committed bytes: '+JSON.stringify(actual));
+  assert.equal(accepted_sources,undefined,'the compound mode registers exactly one Source');
+  assert.deepEqual(Object.keys(specs.workflows[file].sources),[blob],`${file}: roles are keyed by the committed blob only`);
+  const roles=rolesForSource(specs,file,blob);
+  assert.deepEqual(roles,ids.map(job_id=>({job_id,definition_sha256:actual.role_sha256[job_id],definition:value.jobs[job_id]})));
+  assert.deepEqual(compileRegisteredWorkflow(raw,{primary_ids:ids,parseYaml:yaml.parse,accepted_roles:roles}),entry);
 });
 // Retired generations remain Git objects at their exact commits.
 // Each must decode and compile only as its own exact bytes and roles, never as a second current Source.
@@ -169,7 +155,7 @@ test('the earlier exact compound Source still decodes from its catalogue and com
     assert.equal(isExactAllRequiredPrimariesProfile(old,'.github/workflows/borrowed.yml'),false);
   }
   const current=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))).workflows[file];
-  assert.equal(current.accepted_sources[0].workflow_blob,REQUIRED_TESTS_SOURCE.workflow_blob,'the live catalogue preregisters the cutover bytes');
+  assert.equal(current.workflow_blob,REQUIRED_TESTS_SOURCE.workflow_blob,'the live catalogue registers the current bytes');
 });
 test('unregistered, altered, revoked, ambiguous or partial candidate sources stay unknown',()=>{
   const p=compile(),file='.github/workflows/fixture.yml';

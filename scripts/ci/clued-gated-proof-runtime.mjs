@@ -197,7 +197,6 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
         repository,head,prNumber,trustedSources:Object.fromEntries(DOC_SOURCES.map(file=>[file,snapshot.files[file]]))})).passed===true,
       qualifyRequiredApplicability:async({repository,prNumber,head,base,runId,runAttempt,requestKey})=>
         readRequiredApplicability({read:sourceRead,readLog,repository,prNumber,head,base,runId,runAttempt,requestKey,
-          workflowBlob:sources.get(runId)?.workflow_blob??null,
           trustedGateBlob:snapshot.files['scripts/ci/clued-work-admission.mjs']}),
       revalidateSources:async({runs})=>{
         if(!await snapshotCurrent())return false;

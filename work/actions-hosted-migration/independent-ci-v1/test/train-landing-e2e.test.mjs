@@ -35,9 +35,6 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import { createFullAdmissionPortV2 } from '../src/full-admission-v2.mjs';
 import { mergeSlotState } from '../../../../scripts/ci/clued-work-admission.mjs';
-import { parseWorkflowProfiles } from '../../../../scripts/ci/clued-workflow-profile.mjs';
-import { createCatalogueSourceReader } from '../../../../scripts/ci/clued-source-only-workflow.mjs';
-import { execFileSync } from 'node:child_process';
 import { Poller, MAIN_REF_ROUTE, PULLS_ROUTE } from '../../../independent-ci-resident-v1/src/poller.mjs';
 import { WindowsEngine, DESCRIPTOR_CHAIN_CONTRACT, DESCRIPTOR_CONTRACT } from '../../../independent-ci-resident-v1/src/engine-windows.mjs';
 import { chainOfFront, openFrontBatchOf, trainDue } from '../../../independent-ci-resident-v1/src/train.mjs';
@@ -576,18 +573,7 @@ test('push: three queued PRs -> one batch -> main fast-forwarded to the tested S
   assert.equal([...e.gh.world.checks.values()].filter(c => c.name === 'kooyumi-merge-slot').length, 0, 'push writes no merge-slot green');
 });
 
-test('协议 1 使用旧主线工作流，在没有终局标记时确认失败并二分', async t => {
-  const repo = new URL('../../../../', import.meta.url);
-  const registry = parseWorkflowProfiles(await fs.readFile(new URL('scripts/ci/clued-gated-proof-profiles.json', repo)));
-  const roleSpecs = JSON.parse(await fs.readFile(new URL('scripts/ci/clued-gated-proof-role-specs.json', repo), 'utf8'));
-  const identify = createCatalogueSourceReader({ registry, roleSpecs });
-  for (const name of ['clued-required-tests', 'clued-required-tests-windows']) {
-    const file = `.github/workflows/${name}.yml`;
-    const bytes = execFileSync('git', ['show', `816b2ed9b2f78ba8439d64d348054e05f027cee8:${file}`], { cwd: repo });
-    assert.doesNotMatch(bytes.toString('utf8'), /CLUED_TRAIN_TERMINAL_EXIT|Confirm merge train test failure|CLUED_MERGE_TRAIN_PROTOCOL_VERSION/);
-    const blob = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
-    assert.equal(identify({ file, blob }).source_identified, true, file);
-  }
+test('push: the middle PR breaks the combination -> bisection -> the other two land, the middle one is reported failed', async t => {
   // 911 is fine alone (its own CI is green) but fails together with 910: a semantic conflict only the batch's S shows.
   const e = await world(t, { prs: [910, 911, 912], bad: set => set.has('910') && set.has('911') });
   const log = await drive(t, e, { until: () => e.queue.length === 0, steps: 30 });

@@ -429,7 +429,7 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
     }),
   }),
 ]);
-export const requiredTestsPin=blob=>[REQUIRED_TESTS_SOURCE,...REQUIRED_TESTS_PREVIOUS_SOURCES].find(pin=>pin.workflow_blob===blob)??null;
+const requiredTestsPin=blob=>[REQUIRED_TESTS_SOURCE,...REQUIRED_TESTS_PREVIOUS_SOURCES].find(pin=>pin.workflow_blob===blob)??null;
 // The historical Windows Source used closed only to cancel; its ordinary profile remains readable.
 const WINDOWS_CANCEL_SOURCE=Object.freeze({
   workflow_blob:'85fe5d6f8c84b00fe268b3ed0ec2970c203c83f6',

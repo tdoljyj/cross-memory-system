@@ -24,9 +24,7 @@ function jobs(source) {
 }
 
 const BASE_ENV = /^\s+(BASE|CI_BASE_SHA):\s*(.+)$/gm;
-const V2_STAGING_GATE = " && (github.event_name != 'push' || vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION != '2')";
-
-const STAGING_GATE = text.includes(V2_STAGING_GATE) ? V2_STAGING_GATE : '';
+const STAGING_GATE = " && (github.event_name != 'push' || vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION != '2')";
 
 test('协议 2 只停用 hosted 暂存作业，PR 和协议 1 保留各作业原条件', () => {
   assert.match(text, /pull_request:\n    types: \[opened, synchronize, reopened, closed\]\n    branches: \[main\]/);

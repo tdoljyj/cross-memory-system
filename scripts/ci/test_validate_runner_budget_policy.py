@@ -5,7 +5,6 @@ import copy
 import importlib.util
 import io
 import json
-import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -284,11 +283,10 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
         self.assertEqual(policy.OWNER_DECISION_HOSTED_JOBS["gitleaks.yml"]["jobs"]["gitleaks-trusted-self-hosted"],
                          "b8dac89af1f63b0528c7b2209e071e4f88919f82fb33562591eaf6b50c0186ea")
         self.assertEqual(set(policy.EXACT_SOURCE_CANDIDATE_SUCCESSORS), {
-            "gitleaks.yml", "clued-merge-slot-ci.yml",
+            "gitleaks.yml", "clued-merge-executor.yml", "clued-merge-slot-ci.yml",
         })
         for filename, successor in policy.EXACT_SOURCE_CANDIDATE_SUCCESSORS.items():
-            text = subprocess.check_output(["git", "show",
-                                            f"816b2ed9b2f78ba8439d64d348054e05f027cee8:.github/workflows/{filename}"]).decode("utf-8")
+            text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
             debt = ({filename: policy.LEGACY_HOSTED_DEBT[filename]} if successor["kind"] == "legacy" else {})
             owner = ({filename: policy.OWNER_DECISION_HOSTED_JOBS[filename]} if successor["kind"] == "owner" else {})
             self.assert_pass(policy.evaluate_workflows({filename: text}, debt, owner, {}, {}))
@@ -303,20 +301,6 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
             target = altered_debt if debt else altered_owner
             target[filename]["control_sha256"] = "a" * 64
             self.assertEqual(policy.evaluate_workflows({filename: text}, altered_debt, altered_owner, {}, {})["status"], "FAIL")
-
-    def test_train_cutover_accepts_only_the_registered_budget_successors(self):
-        self.assertEqual(set(policy.TRAIN_V2_BUDGET_SUCCESSORS), {
-            "clued-merge-executor.yml", "clued-merge-slot-ci.yml", "hosted-required.yml",
-        })
-        for filename, row in policy.TRAIN_V2_BUDGET_SUCCESSORS.items():
-            with self.subTest(workflow=filename):
-                debt = {filename: policy.LEGACY_HOSTED_DEBT[filename]} if row["kind"] == "legacy" else {}
-                scaffold = {filename: policy.HOSTED_SCAFFOLD_JOBS[filename]} if row["kind"] == "scaffold" else {}
-                text = subprocess.check_output(["git", "show", f"{row['source_commit']}:.github/workflows/{filename}"]).decode("utf-8")
-                self.assertEqual(policy.source_hash(text), row["workflow_sha256"])
-                self.assert_pass(policy.evaluate_workflows({filename: text}, debt, {}, scaffold, {}))
-                self.assertEqual(policy.evaluate_workflows({filename: "# changed\n" + text}, debt, {}, scaffold, {})["status"], "FAIL")
-
     def test_hosted_executors_never_carry_a_required_check_name(self):
         # Owner Decision bc6fdad1: a same-name hosted check run counts as the
         # required check even though the ruleset pins App 5368905.

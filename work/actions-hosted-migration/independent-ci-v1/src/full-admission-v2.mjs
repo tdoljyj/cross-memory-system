@@ -245,7 +245,6 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         } };
         phase = 'evaluate'; const outcome = await evaluateImpl({ env, event: { pull_request: pr }, eventName: 'pull_request', fetchImpl: timedFetch,
           workspace: config.workspace, bindingScope: config.scope, withSummary: false, readPolicyFile: () => config.policyText,
-          readMainControlRegistry: true,
           observation_recorder: recorder, observation_entry: 'independent_pr' });
         if (staleLease) return blocked(TRAIN_FAILURE.LEASE_STALE.native);
         phase = 'post_evaluate'; tell(outcome, native); const finished = clock(), prRef = `${REPO}#${job.pr}`;
