@@ -106,8 +106,14 @@ DRAFT_REFS = bool(PLACEHOLDER.match(REF) or PLACEHOLDER.match(HOST_REF) or PLACE
 assert not (DRAFT_REFS and not DRAFT), 'FINAL_SCRIPTS_NEED_THE_REAL_OWNER_REFS'
 # README section 5: final scripts only after a PASS rehearsal of exactly this package, commit and configuration (10th argument), at
 # most 24 hours old (review 1-8). Draft scripts refuse to run at all (DRAFT=1 below, review 1-2), whatever their refs.
+_r = {}
+if len(ARGV) > 9 and (not DRAFT or not FLEET):
+    with open(ARGV[9], encoding='utf-8') as f:
+        _r = json.load(f)
+    if not FLEET:
+        _file_locks = (_r.get('checks') or {}).get('fileLocksFinding')
+        assert not (isinstance(_file_locks, dict) and 'deferredTo' in _file_locks), 'REHEARSAL_FILE_LOCKS_DEFERRED_TO_FLEET_LAUNCHER'
 if not DRAFT:
-    _r = json.load(open(ARGV[9], encoding='utf-8')) if len(ARGV) > 9 else {}
     try:
         _age = datetime.datetime.now(datetime.timezone.utc) - datetime.datetime.strptime(_r.get('observedAt', ''), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
     except ValueError:

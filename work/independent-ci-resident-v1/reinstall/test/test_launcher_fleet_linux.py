@@ -733,7 +733,7 @@ $FleetFirstInstall = $null; $FleetFirstInstallDirectory = $null   # a reinstall 
 $c = Get-Content -LiteralPath $Case -Raw -Encoding UTF8 | ConvertFrom-Json
 $errors = $null; $tokens = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($Template, [ref]$tokens, [ref]$errors)
-foreach ($name in @('Sha256Bytes', 'Write-New', 'Write-Json', 'Stop-Launch', 'Restore-W1Pause', 'Get-FleetTokenFingerprint', 'Remove-FleetCarry', 'Step-CarryTokens', 'Step-SweepCarry')) {
+foreach ($name in @('Sha256Bytes', 'Write-New', 'Write-Json', 'Stop-Launch', 'Restore-W1Pause', 'Get-FleetTokenFingerprint', 'Remove-FleetCarry', 'Step-CarryTokens', 'Step-SweepCarry', 'Restore-CompanionTaskTriggers')) {
   $nodes = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $false))
   if ($nodes.Count -ne 1) { throw ('FUNCTION_MISSING_OR_DUPLICATED:' + $name) }
   . ([scriptblock]::Create($nodes[0].Extent.Text))
@@ -754,6 +754,7 @@ $UpgradeTokenTarget = $c.upgradeTarget; $HeartbeatTokenTarget = $c.heartbeatTarg
 $FleetUpgradeTokenFingerprint = $c.upgradeFingerprint; $FleetHeartbeatTokenFingerprint = $c.heartbeatFingerprint
 if (@($c.PSObject.Properties.Name) -contains 'firstInstallDirectory' -and $c.firstInstallDirectory) { $FleetFirstInstall = $true; $FleetFirstInstallDirectory = $c.firstInstallDirectory }   # a first install's pins
 $W1Restore = [ordered]@{ armed = $false; result = $null }; $FleetOutDir = $(if ($c.ownOut) { Join-Path $CarryParent $c.ownOut } else { $null })
+$CompanionTaskRestore = [ordered]@{ disabled = [Collections.Generic.List[object]]::new(); restart = $false; uninstallStarted = $false }
 $thrown = $null; $sweep = $null; $during = $null
 if ($c.mode -ceq 'sweep') {
   foreach ($d in $c.leftovers) {
