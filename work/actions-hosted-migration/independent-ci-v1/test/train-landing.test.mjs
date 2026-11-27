@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { createRequire, registerHooks } from 'node:module';
+import { registerHooks } from 'node:module';
 import { generateKeyPairSync } from 'node:crypto';
 import { tempDir } from './resident-v2-fixtures.mjs';
 import * as L from '../src/independent-control-checks-v2/train-landing.mjs';
@@ -767,18 +767,7 @@ for (const scenario of ['old-marker', 'wrong-effect', 'wrong-run']) test(`返修
     [scenario === 'wrong-effect' ? TRAIN_FAILURE.LEASE_STALE.resident : 'unknown', 0, 0]);
 });
 
-const dbFixture = new URL('../../../../apps/clued-cloud/tests/merge-train-v2-db.fixture.mjs', import.meta.url);
-let dbAvailable = true;
-try { createRequire(dbFixture).resolve('embedded-postgres'); }
-catch (error) {
-  if (error.code !== 'MODULE_NOT_FOUND') throw error;
-  dbAvailable = false;
-}
-test('返修 6：隔离 PostgreSQL 中 H2 有效授权早于迟到的 H1 准入，H1 收尾保留 H2',
-  { skip: !dbAvailable && '应用未安装嵌入式 PostgreSQL。生产模式迁移套件也注册此用例。' }, async t => {
-    const { verifyInFlightAdoptPreservesNewHead } = await import(dbFixture);
-    await verifyInFlightAdoptPreservesNewHead(t);
-  });
+// PostgreSQL 的认领结清竞态由迁移套件中的 work-claims-pr-end-release-db.test.mjs 覆盖。
 
 test('stage file: exact bytes, defaults, refusals; only push may carry a batch; one PR per batch unless the stage file says the chain is installed', async t => {
   assert.equal(L.stageTrainLandingText({ landing: 'push', batchMax: 3 }), '{"contract":"clued.independent-ci.stage-train-landing/1","landing":"push","batchMax":3}');
