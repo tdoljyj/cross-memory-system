@@ -150,11 +150,31 @@ test('missing or mutated trusted Source/FullRole/closure/authority cannot classi
   for(const edit of edits){const r=load(),raw=sourceOf(r).source_yaml;edit(r);assert.equal(transition(r,raw).passed,false);}
 });
 
-const headFetch=raw=>async url=>{
-  const actual=new URL(url);
-  if(actual.origin!=='https://api.github.com'||actual.pathname!==`/repos/${REPO}/contents/${FILE}`||actual.searchParams.get('ref')!==HEAD)
-    throw Error('unexpected API read: only the exact new workflow at the PR head is supplied');
-  return new Response(JSON.stringify({content:Buffer.from(raw).toString('base64')}),{status:200});
+const headFetch=(raw,registry=load())=>{
+  const bytes=Buffer.from(JSON.stringify(registry)),blob=workflowBlob(bytes);
+  const [tree,scripts,ci]=['1','2','3'].map(c=>c.repeat(40));
+  const directory=(sha,path,child)=>({sha,truncated:false,tree:[{path,type:'tree',mode:'040000',sha:child}]});
+  const routes={
+    '/git/ref/heads/main':{ref:'refs/heads/main',object:{type:'commit',sha:BASE}},
+    [`/git/commits/${BASE}`]:{sha:BASE,tree:{sha:tree}},
+    [`/git/trees/${tree}`]:directory(tree,'scripts',scripts),
+    [`/git/trees/${scripts}`]:directory(scripts,'ci',ci),
+    [`/git/trees/${ci}`]:{sha:ci,truncated:false,tree:[{
+      path:'clued-control-workflow-sources.json',type:'blob',mode:'100644',sha:blob,size:bytes.length,
+    }]},
+    [`/git/blobs/${blob}`]:{sha:blob,size:bytes.length,encoding:'base64',content:bytes.toString('base64')},
+  };
+  return async url=>{
+    const actual=new URL(url);
+    const prefix=`/repos/${REPO}`;
+    assert.equal(actual.origin,'https://api.github.com');
+    assert.ok(actual.pathname.startsWith(prefix+'/'));
+    const route=actual.pathname.slice(prefix.length);
+    if(Object.hasOwn(routes,route))return Response.json(routes[route]);
+    assert.equal(route,`/contents/${FILE}`);
+    assert.equal(actual.searchParams.get('ref'),HEAD);
+    return Response.json({content:Buffer.from(raw).toString('base64')});
+  };
 };
 
 test('actual workflowFindings admits the exact registered added pair while retaining normal Owner gates',async()=>{
@@ -164,14 +184,9 @@ test('actual workflowFindings admits the exact registered added pair while retai
   assert.deepEqual(result.gate,[]);assert.ok(result.owner.length>0,'privileged environment still needs ordinary Owner review');
 });
 
-test('actual workflowFindings refuses an old trusted catalogue rather than trusting PR data',async t=>{
+test('actual workflowFindings refuses an old trusted catalogue rather than trusting PR data',async()=>{
   const r=load(),raw=sourceOf(r).source_yaml;delete r.workflows[FILE];delete r.roles[FILE];
-  const original=fs.readFileSync;
-  t.mock.method(fs,'readFileSync',function(file,...args){
-    if(file instanceof URL&&file.href===catalogueUrl.href)return Buffer.from(JSON.stringify(r));
-    return original.call(this,file,...args);
-  });
-  const result=await workflowFindings(headFetch(raw),{GITHUB_WORKSPACE:'candidate-catalogue',REGISTERED_CONTROL_ADDITION:'true'},REPO,[change],HEAD,BASE);
+  const result=await workflowFindings(headFetch(raw,r),{GITHUB_WORKSPACE:'candidate-catalogue',REGISTERED_CONTROL_ADDITION:'true'},REPO,[change],HEAD,BASE);
   assert.ok(result.gate.includes(`workflow_gate:${FILE}:control_Source_not_registered`));
   assert.ok(result.gate.includes(`workflow_gate:${FILE}:admission_gate_missing`));
 });
