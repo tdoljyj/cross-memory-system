@@ -120,7 +120,11 @@ public static class BrokerPureTests
                 };
                 var now=DateTime.Parse(args[5]).ToUniversalTime().AddMilliseconds(1);
                 answer=FleetPull.Submit(root,args[2],args[3],probe,payload,()=>now,(run,script)=>
-                    FleetPull.Assemble(root,run,args.Length==7?args[6]:script,args[4],null,scratch));
+                    FleetPull.Assemble(root,run,args.Length==7?args[6]:script,args[4],null,scratch), null, (operation,targetGrant) => {
+                        var receipt=Renewal.Object(File.ReadAllText(Path.Combine(root,"broker","delist.fixture.json")));
+                        Yes(Renewal.Str(receipt,"grant_id")==targetGrant,"摘牌回执绑定目标包");
+                        return new Renewal.Connection { OnDuty=false, FleetTarget=receipt };
+                    });
             } catch (BrokerRefusal e) { answer=FleetPull.Answer(root,args[2],grant,e.Code,null); }
             catch (Exception e) { Console.Error.WriteLine(e); answer=FleetPull.Answer(root,args[2],grant,"FLEET_BROKER_UNCONFIRMED",null); }
             Console.WriteLine(Renewal.Json(answer));

@@ -520,20 +520,21 @@ const nodeEntry = n => (plain(n) && (n.node === null || (typeof n.node === 'stri
   && (n.sourceManifestSha256 === null || HEX64.test(n.sourceManifestSha256 ?? ''))
   && (n.state === null || (typeof n.state === 'string' && n.state.length <= 40))
   && (n.lastHeartbeatAt === null || (typeof n.lastHeartbeatAt === 'string' && n.lastHeartbeatAt.length <= 40 && Number.isFinite(Date.parse(n.lastHeartbeatAt))))
-  ? Object.freeze({ node: n.node, sourceManifestSha256: n.sourceManifestSha256, state: n.state, lastHeartbeatAt: n.lastHeartbeatAt }) : null);
-function nodesOf(list, dropped, at, sourceManifestSha256) {
+  ? Object.freeze({ node: n.node, sourceManifestSha256: n.sourceManifestSha256, state: n.state, lastHeartbeatAt: n.lastHeartbeatAt,
+       ...(plain(n.package) ? { package: n.package } : {}) }) : null);
+function nodesOf(list, dropped, at, sourceManifestSha256, holderPackage) {
   if (!Array.isArray(list) || !isoOrNull(at) || !HEX64.test(sourceManifestSha256 ?? '')) return null;
   const nodes = list.slice(0, TRAIN_NODES_MAX).map(nodeEntry);
   if (nodes.includes(null)) return null;
-  return Object.freeze({ at, sourceManifestSha256, nodes: Object.freeze(nodes), dropped: (count(dropped) ?? 0) + Math.max(0, list.length - TRAIN_NODES_MAX) });
+  return Object.freeze({ at, sourceManifestSha256, ...(holderPackage !== undefined ? { holderPackage } : {}), nodes: Object.freeze(nodes), dropped: (count(dropped) ?? 0) + Math.max(0, list.length - TRAIN_NODES_MAX) });
 }
 // From stage 10's facts (any shape: null unless an on-mode facts /2 with a nodes list).
 export function trainNodesView(f, sourceManifestSha256) {
   if (!plain(f) || f.contract !== TRAIN_FACTS_CONTRACT_V2 || f.mode !== 'on') return null;
-  return nodesOf(f.nodes, f.nodesDropped, f.at, sourceManifestSha256);
+  return nodesOf(f.nodes, f.nodesDropped, f.at, sourceManifestSha256, f.holderPackage);
 }
 // The status reader's copy of train.nodes, or null.
-export function parseTrainNodes(v) { return plain(v) ? nodesOf(v.nodes, v.dropped, v.at, v.sourceManifestSha256) : null; }
+export function parseTrainNodes(v) { return plain(v) ? nodesOf(v.nodes, v.dropped, v.at, v.sourceManifestSha256, v.holderPackage) : null; }
 
 // Moved from rollout/precheck.mjs (task 0b1516c0: the upgrade precheck compares no Source across nodes any more); read by the landing
 // precheck (rollout/landing-precheck.mjs). Stage 10's §41.6 Source check (train-maintenance.mjs SOURCE_HEARTBEAT_WINDOW_MS): every node
@@ -553,6 +554,12 @@ export function fleetSourceCheck({ view, target, selfNames = [], now, onDuty = f
   const row = n => ({ node: n.node, sourceManifestSha256: n.sourceManifestSha256, lastHeartbeatAt: n.lastHeartbeatAt });
   if (!view) return { ...base, status: 'UNVERIFIED', reason: 'NODES_VIEW_ABSENT' };
   if (!(Math.abs(now - Date.parse(view.at)) <= FLEET_VIEW_FRESH_MS)) return { ...base, status: 'UNVERIFIED', reason: 'NODES_VIEW_STALE' };
+  if (Object.hasOwn(view, 'holderPackage')) {
+    if (!onDuty || view.sourceManifestSha256 !== target) return { ...base, status: 'UNVERIFIED', reason: 'HOLDER_NOT_VERIFIED' };
+    const holder = view.holderPackage;
+    if (!holder?.source || !Object.hasOwn(holder, 'refusal') || holder.refusal === 'ci_admission_target_source_unknown') return { ...base, status: 'UNVERIFIED', reason: 'HOLDER_SOURCE_UNKNOWN' };
+    return { ...base, status: holder.source === target && holder.refusal === null ? 'PASS' : 'MISMATCH', holder };
+  }
   const names = new Set(selfNames.filter(s => typeof s === 'string' && s.length > 0).map(s => s.toLowerCase()));
   const isSelf = n => typeof n.node === 'string' && names.has(n.node.toLowerCase());
   if (!view.nodes.some(isSelf)) return { ...base, status: 'UNVERIFIED', reason: 'SELF_NOT_IN_NODES_VIEW', nodes: view.nodes.map(row) };

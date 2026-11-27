@@ -145,7 +145,8 @@ async function fleetOf(ctx, self, deadline) {
     if (!ok) return null;
     const names = f.map(n => n.node);
     if (new Set(names).size !== names.length || !names.includes(self)) return null;
-    return f.map(n => ({ node: n.node, ciSourceManifestSha256: n.ciSourceManifestSha256, paused: n.paused }));
+    return f.map(n => ({ node: n.node, ciSourceManifestSha256: n.ciSourceManifestSha256, paused: n.paused,
+      ...(typeof n.atSealedTarget === 'boolean' ? { atSealedTarget: n.atSealedTarget } : {}) }));
   } catch { return null; }
 }
 const notThere = (fleet, accepted) => fleet.filter(n => n.ciSourceManifestSha256 !== accepted || n.paused);
@@ -355,6 +356,15 @@ export async function run(ctx) {
 async function runRollout(ctx, packageDir) {
   const acc = await accept(ctx, packageDir);
   if (acc.stop) return acc.stop;
+  if (HEX64.test(acc.sealed.acceptanceSha256 ?? '')) {
+    const fleet = await fleetOf(ctx, await selfOf(ctx), ctx.lifeEnd);
+    if (!fleet || fleet.some(n => typeof n.atSealedTarget !== 'boolean'))
+      return answer(ctx, 'ROLLOUT_WAITING_OTHER_NODES', { code: 'ROLLOUT_FLEET_UNREADABLE', next: rerun(ctx) });
+    const pending = fleet.filter(n => !n.atSealedTarget || n.paused);
+    if (pending.length) return answer(ctx, 'ROLLOUT_WAITING_OTHER_NODES', {
+      pending, next: '等待服务端完成交班和摘牌。可原地升级的节点由 Broker 自取，其余节点等 Owner 确认重装。' });
+    return answer(ctx, 'ROLLOUT_DONE', { acceptance: acc.sealed.acceptance, nodes: fleet.map(n => n.node), next: null });
+  }
   const here = await upgradeHere(ctx, acc.sealed.packageDir);
   if (here.stop) return here.stop;
   // 3. the fleet

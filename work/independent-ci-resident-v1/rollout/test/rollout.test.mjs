@@ -215,3 +215,12 @@ test('observe: reads the three files, read-only; missing and malformed files are
   o = await observe(root, clock);
   assert.deepEqual([o.generation, o.unreadable], [null, ['upgrade/current.json']]);
 });
+
+test('封存模式等待服务端交接和后备释放', () => {
+  const p = plan(['a', 'b']);
+  const current = { ...obs(p, 'b', { atTarget: true }), sealedFleet: { fresh: true, classification: 'current', maintenance: 'available' } };
+  for (const maintenance of ['available', 'reserve', 'delisted', 'repair']) {
+    const old = { ...obs(p, 'a', { mode: 'ACTIVE' }), sealedFleet: { fresh: true, classification: 'previous', maintenance } };
+    assert.equal(nextStep(p, [old, current], NOW).code, 'ROLLOUT_SEALED_ROTATION');
+  }
+});

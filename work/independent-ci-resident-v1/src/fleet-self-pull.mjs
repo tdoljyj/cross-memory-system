@@ -214,6 +214,11 @@ export function residentSelfPull({ root, repository, clock = Date.now,
     }
     if (!view) return;
     const { fleetTarget: target, onDuty } = view;
+    const maintenance = target.holder_package?.maintenance;
+    if (maintenance === 'reserve' || maintenance === 'repair') {
+      await show(target, maintenance === 'reserve' ? 'RESERVE' : 'REPAIR');
+      return;
+    }
     const upgrade = await read(at('upgrade', 'status.json'));
     const op = upgrade?.op;
     if (last?.grantId === target.grant_id && last.requestId) {
@@ -262,7 +267,14 @@ export function residentSelfPull({ root, repository, clock = Date.now,
     const requestBytes = await readBounded(path.join(bundle, names(target).request), SMALL, 'FLEET_REQUEST_REFUSED');
     const acceptance = acceptanceFromTarget(target, requestBytes);
     const source = acceptance.ciSourceManifestSha256;
-    if (onDuty && !target.other_sources.every(peer => peer === source)) {
+    if (Object.hasOwn(target, 'holder_package')) {
+      const info = target.holder_package;
+      if (!info || !['available', 'delisted'].includes(info.maintenance)) return;
+      if (onDuty && target.has_other_healthy && info.maintenance === 'available' && info.classification !== 'current') {
+        await show(target, 'WAITING_FOR_HANDOVER');
+        return;
+      }
+    } else if (onDuty && !target.other_sources.every(peer => peer === source)) {
       await show(target, 'WAITING_FOR_PEERS');
       return;
     }

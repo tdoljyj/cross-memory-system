@@ -59,7 +59,7 @@ import { RULESET_UNREADABLE, RULESET_READ_FAILED, REQUIRED_CHECKS_UNREADABLE, ap
 import { decideShadow, frontPullFacts, requiredFailureExcused, requiredYieldReason, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore } from './train-sweep-store.mjs';
-import { runStrictLane, strictIdentity, strictSettingsDigest, strictReadiness, strictFrontReadiness, strictFrontSourceHealthy, sweepProgress, recordFollows } from './train-strict.mjs';
+import { runStrictLane, strictIdentity, strictSettingsDigest, strictReadiness, strictFrontReadiness, strictFrontSourceHealthy, sealedHolderStop, sweepProgress, recordFollows } from './train-strict.mjs';
 import { ScanProgress } from './train-scan-progress.mjs';
 import { layerOf, loadPolicy } from '../../../../../scripts/ci/merge-admission-policy.mjs';
 import { resolvePRTaskBinding } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
@@ -232,9 +232,11 @@ async function runSharedTrain({ job, trainV2: train, github, native, landing, tr
   validateTrainRun(job);
   const scope = train?.scope;
   let onDuty = false, mainSha = null, rules = null, route = null, appScans = null, openFrontBatch = null;
+  let holderPackage, fleetNodes = null, nodesDropped = 0, sourceStop = null;
   const facts = (decision, recheck = true) => ({
     facts: validateTrainFacts({ ...trainFacts({ mode: job.mode, at: isoOf(startedAt), onDuty, holders: [],
       mainSha, rules, appScans, landing: route, front: null, revoke: [], ledger: null, openFrontBatch,
+      nodes: fleetNodes, holderPackage, nodesDropped,
       ...(job.mode !== 'shadow' ? { decision } : {}) }),
       sharedWork: sharedTrainSchedule(clock(), recheck) }),
     sideEffects: fx.n,
@@ -248,6 +250,7 @@ async function runSharedTrain({ job, trainV2: train, github, native, landing, tr
 
   const command = async (action, payload = {}) => {
     live();
+    if (sourceStop && ['batch_reserve', 'landing_prepare', 'landing_send'].includes(action)) fail(sourceStop);
     if (action !== 'work_pending' && action !== 'batch_read') fx.n++;
     const reply = await train.command({ protocol_version: TRAIN_PROTOCOL_VERSION, action, repository_id: scope.repositoryId,
       target_branch: scope.targetBranch, source_manifest_sha256: job.sourceManifestSha256, ...payload });
@@ -262,11 +265,23 @@ async function runSharedTrain({ job, trainV2: train, github, native, landing, tr
       || typeof pending.active_batch !== 'boolean' || ![1, 2, 3].includes(pending.batch_max)
       || typeof pending.policy_version !== 'string' || !pending.policy_version)
       fail('TRAIN_SOURCE_UNREADABLE');
+    if (Object.hasOwn(pending, 'holder_package')) {
+      holderPackage = pending.holder_package;
+      if (!Array.isArray(pending.fleet_nodes)) fail('TRAIN_SOURCE_UNREADABLE');
+      fleetNodes = pending.fleet_nodes.slice(0, 64).map(row => ({
+        node: row.node?.name ?? row.agent_name ?? null, state: row.node?.state ?? null,
+        sourceManifestSha256: row.node?.ci_source_manifest_sha256 ?? null, lastHeartbeatAt: row.node?.last_heartbeat_at ?? null,
+        ...(row.node?.package ? { package: row.node.package } : {}),
+      }));
+      nodesDropped = pending.fleet_nodes.length - fleetNodes.length;
+      sourceStop = sealedHolderStop(holderPackage, job.sourceManifestSha256);
+    }
     return pending;
   };
   try {
     let pending = await pendingWork();
-    onDuty = true;
+    onDuty = holderPackage?.refusal !== 'admission_binding_required';
+    if (sourceStop && !pending.active_batch && !pending.work.some(w => w.reconcile === true)) return facts(sourceStop);
     const read = await readMainRules(github, APP_ID);
     const checks = read.rules.filter(rule => rule.type === 'required_status_checks');
     if (!checks.length || !checks.every(rule => typeof rule.parameters?.strict_required_status_checks_policy === 'boolean'))
@@ -311,6 +326,7 @@ async function runSharedTrain({ job, trainV2: train, github, native, landing, tr
       pending = await pendingWork();
       if (pending.policy_version !== policyVersion || pending.batch_max < max) return waiting();
     }
+    if (holderPackage?.drainNewBatch === true) return waiting();
     if (pending.active_batch || !pending.queue.length)
       return pending.active_batch || pending.work.length || pending.more_work === true ? waiting() : idle();
     if (typeof train.stageBatch !== 'function' || typeof train.inspectBatch !== 'function') return facts('TRAIN_SOURCE_UNREADABLE');
@@ -632,8 +648,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   let budgetReadFailed = false;
   let duty = await native.holders();
   let frontSourceHealthy = false;
-  let nodes = null, nodesDropped = 0;
-  const facts = o => ({ facts: trainFacts({ mode: job.mode, at, nodes, nodesDropped, actions, ...o }), sideEffects: fx.n });
+  let nodes = null, nodesDropped = 0, holderPackage;
+  const facts = o => ({ facts: trainFacts({ mode: job.mode, at, nodes, nodesDropped, holderPackage, actions, ...o }), sideEffects: fx.n });
 
   if (!duty.onDuty) {
     if (!acting) return facts({ onDuty: false, holders: [], mainSha: null, rules: null, front: null, revoke: [], ledger: null });
@@ -658,9 +674,13 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     if (status.deployed !== false) {
       if (!Array.isArray(status.nodes)) return stop('TRAIN_SOURCE_UNREADABLE');
       nodes = status.nodes.map(e => ({ node: e.node?.name ?? e.agentName ?? null, sourceManifestSha256: e.node?.sourceManifestSha256 ?? null, state: e.node?.state ?? null,
-        lastHeartbeatAt: e.node?.lastHeartbeatAt ?? null }));
+        lastHeartbeatAt: e.node?.lastHeartbeatAt ?? null, ...(e.node?.package ? { package: e.node.package } : {}) }));
       nodesDropped = Number.isSafeInteger(status.dropped) ? status.dropped : 0;
-      if (nodes.some(n => n.sourceManifestSha256 !== null && n.sourceManifestSha256 !== job.sourceManifestSha256 && n.lastHeartbeatAt !== null
+      if (Object.hasOwn(status, 'holderPackage')) {
+        holderPackage = status.holderPackage;
+        const reason = sealedHolderStop(holderPackage, job.sourceManifestSha256);
+        if (reason) return stop(reason);
+      } else if (nodes.some(n => n.sourceManifestSha256 !== null && n.sourceManifestSha256 !== job.sourceManifestSha256 && n.lastHeartbeatAt !== null
         && started - Date.parse(n.lastHeartbeatAt) <= SOURCE_HEARTBEAT_WINDOW_MS)) return stop('TRAIN_SOURCE_MISMATCH');
     }
   }
@@ -1187,6 +1207,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (actions.adopted) decision = 'FRONT_ADOPTED';
   else if (actions.returned) decision = missingYield ? 'FRONT_CHECKS_MISSING_YIELDED' : 'FRONT_RETURNED';
   else if (actions.failedReported) decision = 'FRONT_FAILED_REPORTED';
+  else if (wouldDo === 'OPEN_FRONT_BATCH' && holderPackage?.drainNewBatch === true) decision = 'TRAIN_FRONT_BATCH_RUNNING';
   else if (wouldDo === 'OPEN_FRONT_BATCH' && permanent && !strictFrontReady && !strictReady) decision = 'TRAIN_FRONT_NOT_PROVEN';
   else if (wouldDo === 'OPEN_FRONT_BATCH') {
     const o = await openFront({ job, github, native, claimScope, until: until.read, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, compare: frontCompare,

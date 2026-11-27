@@ -92,6 +92,7 @@ export function fleetLagReader({ root, readStatus, github, clock = Date.now, rea
     let status = null;
     try { status = await readStatus(); } catch { /* unreadable fleet remains unknown and gets its advisory */ }
     const fleet = status?.train?.nodes;
+    if (fleet && Object.hasOwn(fleet, 'holderPackage')) return { changes: [], fleet };
     const result = await github();
     // Committer time can predate the merge. First seeing the exact commit reachable from main is an upper bound
     // on its merge time: wait a full 12h from that bound, persisted across restart, never alert early for an old head.

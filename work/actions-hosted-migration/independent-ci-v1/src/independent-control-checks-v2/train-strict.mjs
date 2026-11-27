@@ -95,7 +95,15 @@ export function validStrictFrontReadiness(value) {
   return validStrictReadiness({ ...r, contract: STRICT_READINESS_CONTRACT,
     proofRef: typeof r.proofRef === 'string' ? r.proofRef.replace(/^strict-front-proof-/, 'strict-proof-') : r.proofRef });
 }
+// 服务端按封存账本识别包，本机只核对回包是否属于正在执行的 Source。
+export function sealedHolderStop(holder, localSource) {
+  if (!holder || !Object.hasOwn(holder, 'refusal') || !HEX.test(holder.source ?? '') || holder.refusal === 'ci_admission_target_source_unknown')
+    return 'TRAIN_SOURCE_UNREADABLE';
+  return holder.source === localSource && holder.refusal === null ? null : 'TRAIN_SOURCE_MISMATCH';
+}
 export function strictFrontSourceHealthy(status, sourceManifestSha256, now) {
+  if (status?.deployed === true && status.onDuty === true && Object.hasOwn(status, 'holderPackage'))
+    return sealedHolderStop(status.holderPackage, sourceManifestSha256) === null;
   if (status?.deployed !== true || status.onDuty !== true || !Array.isArray(status.nodes)
     || !Number.isSafeInteger(status.dropped) || status.dropped !== 0) return false;
   let current = false;

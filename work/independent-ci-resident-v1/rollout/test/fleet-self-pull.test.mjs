@@ -777,3 +777,28 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
     } finally { for (const [name, bytes] of saved) olderContent.assets.set(name, bytes); }
   });
 });
+
+test('封存轮换时旧当班等待、后备不投递，Broker 得到服务端摘牌回执后只升一次', { skip: process.platform !== 'win32' }, async t => {
+  const fleet = fleetFacts();
+  const { repo, commit } = await fixtureRepo(t);
+  const release27 = await release(t, fleet, repo, commit, 'g000027');
+  const target = uploadAcceptance(release27);
+  const node = await nodeSite(t, 'q', fleet, { now });
+  const broker = await brokerFixture(t);
+  const lane = await fixtureLanes({ node, release: release27, broker });
+  const sealed = maintenance => ({ ...target, holder_package: { classification:'previous', maintenance },
+    has_other_healthy:true, install_ready:maintenance === 'delisted', operation_id:randomUUID() });
+  await lane.probe(sealed('available'),{active:true,otherSources:[null]});
+  await drive(lane,3);
+  assert.equal((await lane.state()).phase,'WAITING_FOR_HANDOVER');
+  await lane.probe(sealed('reserve'));
+  await drive(lane,2);
+  assert.equal((await lane.state()).phase,'RESERVE');
+  assert.equal(lane.submitted.length,0);
+  const receipt = sealed('delisted');
+  await fs.writeFile(path.join(node.root,'broker','delist.fixture.json'),json(receipt));
+  await lane.probe(receipt);
+  await drive(lane,8);
+  assert.equal(lane.posted.length,1,JSON.stringify(lane.answers));
+  assert.equal((await current(node)).generation,2);
+});
