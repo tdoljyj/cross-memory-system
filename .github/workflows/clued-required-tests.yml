@@ -209,25 +209,12 @@ jobs:
           timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline --fetch-retries=2 --fetch-timeout=30000
           timeout --signal=TERM --kill-after=15s 2m npm rebuild @embedded-postgres/linux-x64
       - name: Lint, ledger, typecheck, build and unit tests
-        id: test_verdict
         if: steps.select.outputs.run_clued_cloud == 'true'
         env:
-          CLUED_TRAIN_TERMINAL_EXIT: "1"
           SELECTOR: ${{ steps.select.outputs.selector }}
           # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
           CLUED_UNDER_TEST: "1"
-        run: |
-          status=0
-          node "$SELECTOR" --run clued-cloud --root candidate || status=$?
-          terminal=false
-          if [ "$status" -eq 86 ]; then terminal=true; fi
-          echo "terminal=$terminal" >> "$GITHUB_OUTPUT"
-          exit "$status"
-      - name: Confirm merge train test failure
-        if: >-
-          ${{ failure() && steps.test_verdict.outputs.terminal == 'true' &&
-              github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' }}
-        run: echo "Trusted selector confirmed a terminal test failure"
+        run: node "$SELECTOR" --run clued-cloud --root candidate
 
   ci-suites:
     name: >-
@@ -337,9 +324,7 @@ jobs:
           done
           echo "CLUED_CI_APP_DEPS=1" >> "$GITHUB_ENV"
       - name: Run the selected suites
-        id: test_verdict
         env:
-          CLUED_TRAIN_TERMINAL_EXIT: "1"
           SELECTOR: ${{ steps.select.outputs.selector }}
           SUITES: ${{ steps.select.outputs.suites }}
           PYTHONDONTWRITEBYTECODE: "1"
@@ -347,28 +332,18 @@ jobs:
           CLUED_UNDER_TEST: "1"
         run: |
           failed=""
-          terminal=false
           for suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do
-            status=0
-            node "$SELECTOR" --run "$suite" --root candidate || status=$?
-            if [ "$status" -eq 86 ]; then terminal=true; fi
-            if [ "$status" -eq 0 ]; then
+            if node "$SELECTOR" --run "$suite" --root candidate; then
               echo "- \`$suite\`: passed" >> "$GITHUB_STEP_SUMMARY"
             else
               echo "- \`$suite\`: **failed**" >> "$GITHUB_STEP_SUMMARY"
               failed="$failed $suite"
             fi
           done
-          echo "terminal=$terminal" >> "$GITHUB_OUTPUT"
           if [ -n "$failed" ]; then
             echo "::error title=ci-suites::failed:$failed"
             exit 1
           fi
-      - name: Confirm merge train test failure
-        if: >-
-          ${{ failure() && steps.test_verdict.outputs.terminal == 'true' &&
-              github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' }}
-        run: echo "Trusted selector confirmed a terminal test failure"
 
   migration-verify:
     name: >-
@@ -472,10 +447,8 @@ jobs:
           timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline --fetch-retries=2 --fetch-timeout=30000
           timeout --signal=TERM --kill-after=15s 2m npm rebuild @embedded-postgres/linux-x64
       - name: Verify migrations on the production schema
-        id: test_verdict
         if: steps.select.outputs.run_production_schema == 'true'
         env:
-          CLUED_TRAIN_TERMINAL_EXIT: "1"
           SELECTOR: ${{ steps.select.outputs.selector }}
           # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
           CLUED_UNDER_TEST: "1"
@@ -489,15 +462,7 @@ jobs:
                 "- repository-only columns and functions (tests see them, production does not): "+((r.repository_only||[]).length)];
               require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n")+"\n");' "$RUNNER_TEMP/production-schema-report.json"
           fi
-          terminal=false
-          if [ "$status" -eq 86 ]; then terminal=true; fi
-          echo "terminal=$terminal" >> "$GITHUB_OUTPUT"
-          exit "$status"
-      - name: Confirm merge train test failure
-        if: >-
-          ${{ failure() && steps.test_verdict.outputs.terminal == 'true' &&
-              github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' }}
-        run: echo "Trusted selector confirmed a terminal test failure"
+          exit $status
       - name: Not affected
         if: steps.select.outputs.run_production_schema != 'true'
         run: echo "No migration, ledger, snapshot or drift-check file changed; nothing to verify." >> "$GITHUB_STEP_SUMMARY"

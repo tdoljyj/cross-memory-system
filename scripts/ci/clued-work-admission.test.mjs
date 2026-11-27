@@ -10,6 +10,65 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as admissionModule from './clued-work-admission.mjs';
 
+test('常驻准入只从固定 main 提交读取控制 Source 登记，复查时拒绝已移动的 main', async () => {
+  const repository = 'tdoljyj/cross-memory-system';
+  const file = '.github/workflows/clued-merge-slot-ci.yml';
+  const registry = JSON.parse(fs.readFileSync(new URL('./clued-control-workflow-sources.json', import.meta.url), 'utf8'));
+  const head = registry.workflows[file].sources.find(row => row.source_kind === 'train_v2_slot_successor');
+  const base = registry.workflows[file].sources.find(row => row.workflow_blob === head.predecessor_blob);
+  const [main, next, root, scripts, ci] = ['1', '2', '3', '4', '5'].map(c => c.repeat(40));
+  const prefix = `/repos/${repository}`;
+  const route = `/contents/${file}`;
+  let tip = main;
+  let damage = null;
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    const req = new URL(url);
+    assert.equal(req.origin, 'https://api.github.com');
+    assert.ok(req.pathname.startsWith(prefix + '/'));
+    const path = req.pathname.slice(prefix.length);
+    seen.push(path);
+    if (path === route) return Response.json({ content: Buffer.from(req.searchParams.get('ref') === HEAD ? head.source_yaml : base.source_yaml).toString('base64') });
+    assert.equal(init.redirect, 'error');
+    if (path === '/git/ref/heads/main') return Response.json({ ref: 'refs/heads/main', object: { type: 'commit', sha: tip } });
+    if (path === `/git/commits/${main}`) return Response.json({ sha: main, tree: { sha: root } });
+    const source = structuredClone(registry);
+    if (damage === 'missing-source') {
+      source.workflows[file].sources = source.workflows[file].sources.filter(row => row.workflow_blob !== head.workflow_blob);
+      delete source.roles[file][head.workflow_blob];
+    }
+    if (damage === 'wrong-role') source.roles[file][head.workflow_blob][0].definition_sha256 = 'a'.repeat(64);
+    const raw = JSON.stringify(source);
+    const oid = workflowBlob(raw);
+    const tree = (sha, entry) => Response.json({ sha, truncated: false, tree: entry ? [entry] : [] });
+    if (path === `/git/trees/${root}`) return tree(root, { path: 'scripts', type: 'tree', mode: '040000', sha: scripts });
+    if (path === `/git/trees/${scripts}`) return tree(scripts, { path: 'ci', type: 'tree', mode: '040000', sha: ci });
+    if (path === `/git/trees/${ci}`) return tree(ci, damage === 'missing-blob' ? null :
+      { path: 'clued-control-workflow-sources.json', type: 'blob', mode: '100644', sha: oid });
+    assert.equal(path, `/git/blobs/${oid}`);
+    return Response.json({ sha: oid, size: Buffer.byteLength(raw), encoding: 'base64',
+      content: Buffer.from(damage === 'wrong-blob' ? raw.replace('registered', 'unverified') : raw).toString('base64') });
+  };
+  const env = { GITHUB_TOKEN: 'fixture' };
+  const evaluate = controlRegistry => admissionModule.workflowFindings(fetchImpl, env, repository,
+    [{ filename: file, status: 'modified' }], HEAD, BASE, { controlRegistry });
+  const reader = () => admissionModule.mainControlRegistryReader(fetchImpl, env, repository);
+  const first = reader();
+  assert.deepEqual((await evaluate(first)).gate, []);
+  assert.deepEqual((await evaluate(first)).gate, []);
+  assert.equal(seen.filter(p => p.startsWith('/git/blobs/')).length, 1);
+  assert.equal(await first.matches(main), true);
+  assert.equal(await first.matches(next), false);
+  assert.equal(await first.current(main), true);
+  tip = next;
+  assert.equal(await first.current(main), false);
+  tip = main;
+  for (damage of ['missing-blob', 'wrong-blob', 'missing-source', 'wrong-role']) {
+    const result = await evaluate(reader());
+    assert.ok(result.gate.includes(`workflow_gate:${file}:control_Source_not_registered`), damage);
+  }
+});
+
 test('train v2 carries only a main merge attested on the exact head and rooted at the exact main parent', async () => {
   const repository = 'tdoljyj/cross-memory-system';
   const [head, from, main, tip] = ['1', '2', '3', '4'].map(c => c.repeat(40));

@@ -3,7 +3,7 @@
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {performance} from 'node:perf_hooks';
-import {REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
+import {REQUIRED_TESTS_SOURCE,requiredTestsPin} from './clued-workflow-profile.mjs';
 
 export const COMPONENT_VERSION='1.0.16';
 const tokens=new WeakMap(),SHA=/^[a-f0-9]{40}$/,REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -89,9 +89,11 @@ export async function readRequiredApplicability(options) {
     // that import this module. Its base bytes are checked against the local ones below, so the selection is the reviewed one.
     const {SELECT_ALL,SUITES,selectSuites}=await import('./ci-required-selection.mjs');
     const policySha=digest({migration:SUITES['migration-verify'],select_all:SELECT_ALL});
-    const allowed=new Set(['read','readLog','repository','prNumber','head','base','runId','runAttempt','requestKey','trustedGateBlob','signal']);
+    const allowed=new Set(['read','readLog','repository','prNumber','head','base','runId','runAttempt','requestKey','trustedGateBlob','signal','workflowBlob']);
     if(!options||typeof options!=='object'||Object.keys(options).some(k=>!allowed.has(k)))return null;
-    const {read,readLog,requestKey,signal,...subject}=options;
+    const {read,readLog,requestKey,signal,workflowBlob=REQUIRED_TESTS_SOURCE.workflow_blob,...subject}=options;
+    const workflow=requiredTestsPin(workflowBlob);
+    if(!workflow)return null;
     if(typeof read!=='function'||typeof readLog!=='function'||!requestKey||typeof requestKey!=='object'||
       !REPO.test(subject.repository??'')||!positive(subject.prNumber)||!SHA.test(subject.head??'')||
       !SHA.test(subject.base??'')||!positive(subject.runId)||!positive(subject.runAttempt)||
@@ -133,7 +135,7 @@ export async function readRequiredApplicability(options) {
     if(!changedPaths.length||Buffer.byteLength(JSON.stringify(changedPaths))>131072||
       selectSuites('migration-verify',changedPaths,'linux').suites.length>0)return null;
     const body=await get(runRoute+'/attempts/'+subject.runAttempt+'/jobs?per_page=100&page=1');
-    const requiredNames=['admission-gate',...REQUIRED_TESTS_SOURCE.primary_ids],count=requiredNames.length;
+    const requiredNames=['admission-gate',...workflow.primary_ids],count=requiredNames.length;
     if(body?.total_count!==count||!Array.isArray(body.jobs)||body.jobs.length!==count||
       body.jobs.some(j=>!positive(j?.id)||j.run_id!==subject.runId||j.run_attempt!==subject.runAttempt||
         !requiredNames.includes(j.name)||j.status!=='completed'||j.conclusion!=='success')||
@@ -151,7 +153,7 @@ export async function readRequiredApplicability(options) {
     const evidence={contract:'clued.required-primary-applicability/1',scope:'migration-verify:not_applicable',
       authority:'none',source_authority:false,execution_authority:false,repository:subject.repository,pr_number:subject.prNumber,
       head_sha:subject.head,base_sha:subject.base,merge_base_sha:mergeBase,run_id:subject.runId,run_attempt:subject.runAttempt,
-      workflow_blob:REQUIRED_TESTS_SOURCE.workflow_blob,workflow_source_sha256:REQUIRED_TESTS_SOURCE.source_sha256,
+      workflow_blob:workflow.workflow_blob,workflow_source_sha256:workflow.source_sha256,
       selector_path:REQUIRED_SELECTOR_SOURCE.path,selector_blob:REQUIRED_SELECTOR_SOURCE.blob,selector_sha256:REQUIRED_SELECTOR_SOURCE.sha256,
       selector_policy_sha256:policySha,gate_job_id:gate.id,gate_script_blob:subject.trustedGateBlob,gate_script_sha256:hash(gateScript),
       gate_log_sha256:logSha,changed_paths:changedPaths,changed_file_count:descriptor.changed_files,commit_count:commits.length,

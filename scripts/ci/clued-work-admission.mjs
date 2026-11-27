@@ -814,6 +814,67 @@ function trustedControlProfiles() {
   }catch{return null;}
 }
 
+const CONTROL_REGISTRY_REPO = 'tdoljyj/cross-memory-system';
+const CONTROL_REGISTRY_PATH = 'scripts/ci/clued-control-workflow-sources.json';
+const gitObjectId = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
+
+async function controlRegistryMain(read) {
+  const ref = await read('/git/ref/heads/main');
+  if (ref?.ref !== 'refs/heads/main' || ref.object?.type !== 'commit' || !gitObjectId(ref.object.sha))
+    throw new Error('control_registry_main_unconfirmed');
+  return ref.object.sha;
+}
+
+export function mainControlRegistryReader(fetchImpl, env, repository) {
+  const read = route => {
+    if (repository !== CONTROL_REGISTRY_REPO || !env.GITHUB_TOKEN ||
+        (env.GITHUB_API_URL ?? 'https://api.github.com').replace(/\/$/, '') !== 'https://api.github.com')
+      throw new Error('control_registry_repository_unconfirmed');
+    return githubJson((url, init) => fetchImpl(url, { ...init, redirect: 'error' }), env, `/repos/${repository}${route}`);
+  };
+  let snapshot;
+  return {
+    snapshot: () => snapshot ??= (async () => {
+      const tip = await controlRegistryMain(read);
+      const commit = await read(`/git/commits/${tip}`);
+      if (commit?.sha !== tip || !gitObjectId(commit.tree?.sha)) throw new Error('control_registry_commit_unconfirmed');
+      let oid = commit.tree.sha;
+      const parts = CONTROL_REGISTRY_PATH.split('/');
+      for (const [i, part] of parts.entries()) {
+        const tree = await read(`/git/trees/${oid}`);
+        const rows = Array.isArray(tree?.tree) ? tree.tree.filter(entry => entry?.path === part) : [];
+        const row = rows[0], file = i === parts.length - 1;
+        if (tree?.sha !== oid || tree.truncated !== false || rows.length !== 1 || !gitObjectId(row.sha) ||
+            row.type !== (file ? 'blob' : 'tree') || row.mode !== (file ? '100644' : '040000'))
+          throw new Error('control_registry_tree_unconfirmed');
+        oid = row.sha;
+      }
+      const blob = await read(`/git/blobs/${oid}`);
+      if (blob?.sha !== oid || blob.encoding !== 'base64' || !Number.isSafeInteger(blob.size) ||
+          blob.size < 1 || blob.size > 524288 || typeof blob.content !== 'string' || blob.content.length > 710000)
+        throw new Error('control_registry_blob_unconfirmed');
+      const encoded = blob.content.replace(/[\r\n]/g, '');
+      const bytes = Buffer.from(encoded, 'base64');
+      const source = bytes.toString('utf8');
+      if (bytes.length !== blob.size || bytes.toString('base64') !== encoded ||
+          !Buffer.from(source, 'utf8').equals(bytes) || workflowBlob(source) !== oid)
+        throw new Error('control_registry_blob_unconfirmed');
+      const catalogue = JSON.parse(source);
+      if (catalogue?.schema !== 'clued.control-workflow-sources/1' || catalogue.repository !== repository ||
+          catalogue.default_branch !== 'main') throw new Error('control_registry_schema_unconfirmed');
+      return { tip, catalogue };
+    })(),
+    async matches(tip) {
+      return !snapshot || await snapshot.then(({ tip: observed }) => observed === tip, () => false);
+    },
+    async current(tip) {
+      if (!snapshot) return true;
+      try { return (await snapshot).tip === tip && tip === await controlRegistryMain(read); }
+      catch { return false; }
+    },
+  };
+}
+
 function trustedPublisherProfiles() {
   // The fixed adjacent default-branch catalogue is not a PR proof registry.
   // A caller workspace, environment variable or PR file cannot select it.
@@ -1510,7 +1571,7 @@ export function workflowBasePath(file) {
 
 // Workflow findings of a pull request: `gate` are refused outright (the gate
 // guard above), `owner` need an Owner Grant on the head commit (ownerReviewFindings).
-export async function workflowFindings(fetchImpl, env, repository, files, headSha, baseSha) {
+export async function workflowFindings(fetchImpl, env, repository, files, headSha, baseSha, { controlRegistry } = {}) {
   const gate = [];
   const owner = [];
   for (const file of files) {
@@ -1530,7 +1591,13 @@ export async function workflowFindings(fetchImpl, env, repository, files, headSh
       (file.status==='added'||basePath===file.filename)?actorSourceTransition(file.filename,head):null;
     if(actorKnown&&!actorSource?.passed)gate.push(`workflow_gate:${file.filename}:actor_Source_FullRoles_not_registered`);
     const controlKnown=Object.hasOwn(CONTROL_WORKFLOW_FILES,file.filename)||Object.hasOwn(CONTROL_WORKFLOW_FILES,file.previous_filename??'');
-    const controlSource=controlKnown?registeredControlWorkflowTransition(trustedControlProfiles(),file.filename,head,base,{repository,change:file}):null;
+    let controlSource = null;
+    if (controlKnown) {
+      let catalogue;
+      try { catalogue = controlRegistry ? (await controlRegistry.snapshot()).catalogue : trustedControlProfiles(); }
+      catch { gate.push(`workflow_gate:${file.filename}:control_registry_main_unconfirmed`); }
+      controlSource = registeredControlWorkflowTransition(catalogue, file.filename, head, base, { repository, change: file });
+    }
     if(controlKnown&&!controlSource.passed)gate.push(`workflow_gate:${file.filename}:control_Source_not_registered`);
     const registeredPublisherTransition = file.filename === PRODUCTION_PUBLISHER_WORKFLOW &&
       registeredPublisherGatedSuccessor(file, head, base, trustedPublisherProfiles());
@@ -2162,7 +2229,7 @@ function modeOutcome(mode) {
 // the self-tests pass a fixed table so that they never depend on the
 // repository's copy (review MAJOR-1).
 async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withSummary, bindingScope,
-  readPolicyFile = fs.readFileSync, observation_recorder, evaluation_id, observation_entry = "required" }) {
+  readPolicyFile = fs.readFileSync, observation_recorder, evaluation_id, observation_entry = "required", readMainControlRegistry = false }) {
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const outcome = emptyOutcome(eventName);
   outcome.admission_mode = modeOutcome(mode);
@@ -2197,10 +2264,13 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
   const changed = await changedPathsOfPullRequest(fetchImpl, env, repository, pr.number);
   outcome.changed_paths = changed.paths;
   const truncated = Number.isInteger(pr.changed_files) && changed.file_count < pr.changed_files;
-  const workflowResult = await workflowFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha);
+  const controlRegistry = readMainControlRegistry ? mainControlRegistryReader(fetchImpl, env, repository) : null;
+  const workflowResult = await workflowFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha, { controlRegistry });
   const gateFindingsOfPr = [...workflowResult.gate, ...await policyFileFindings(fetchImpl, env, repository, changed.files, pr.head.sha)];
-  if (gateFindingsOfPr.length) outcome.workflow_gate_findings = gateFindingsOfPr;
   const tipCompare = await baseTipCompare(fetchImpl, env, repository, pr);
+  if (controlRegistry && !gateFindingsOfPr.length && !await controlRegistry.matches(tipCompare.tip))
+    gateFindingsOfPr.push('workflow_gate:control_registry_main_changed');
+  if (gateFindingsOfPr.length) outcome.workflow_gate_findings = gateFindingsOfPr;
   const allPaths = [...new Set([...changed.paths, ...tipCompare.paths])].sort();
   const protectedPaths = effectiveProtectedPaths(mode.policy);
   const ownerFindings = protectedPathFindings(allPaths, protectedPaths);
@@ -2393,6 +2463,11 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
     const now = await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${pr.number}`);
     if (!now || !now.head || now.head.sha !== pr.head.sha) {
       throw new Error(`the pull request's head moved from ${pr.head.sha} to ${now && now.head ? now.head.sha : "(unknown)"} during admission; the next run judges the new head`);
+    }
+    if (controlRegistry && !await controlRegistry.current(tipCompare.tip)) {
+      outcome.verdict = 'REJECTED';
+      outcome.reasons.push('workflow_gate:control_registry_main_changed');
+      outcome.workflow_gate_findings = ['workflow_gate:control_registry_main_changed'];
     }
   }
   // Owner Decision 2ea795e4: a head that contains the base branch's tip can

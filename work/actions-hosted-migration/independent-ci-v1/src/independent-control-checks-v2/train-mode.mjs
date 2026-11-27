@@ -113,8 +113,11 @@ async function sharedTrainPort({ command, config, repositoryId, sourceManifestSh
 export async function trainPortsV2({ trainMode, record, fetchImpl, nativeToken, github, sweepDir = STATE_V2.trainSweep, openStore = null, queueReturn = false,
   nativeCommand, repositoryId, sourceManifestSha256 }) {
   const version = record?.config.mergeTrainProtocolVersion;
-  if (nativeCommand && version !== undefined && version !== 1) {
-    return { trainV2: await sharedTrainPort({ command: nativeCommand, config: record.config, repositoryId, sourceManifestSha256 }) };
+  if (version !== undefined && version !== 1) {
+    const trainV2 = version === TRAIN_PROTOCOL_VERSION && typeof nativeCommand === 'function'
+      ? await sharedTrainPort({ command: nativeCommand, config: record.config, repositoryId, sourceManifestSha256 })
+      : blockedProtocol;
+    return { trainV2 };
   }
   // Stage 8 must return failed queued PRs in every mode. This port is lazy:
   // constructing it neither reads train state nor makes a Native request.

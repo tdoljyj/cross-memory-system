@@ -7,6 +7,8 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { generateKeyPairSync } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { parseWorkflowProfiles, registeredWorkflowSource, workflowBlob } from '../../../../scripts/ci/clued-workflow-profile.mjs';
 import { tempDir } from './resident-v2-fixtures.mjs';
 import * as L from '../src/independent-control-checks-v2/train-landing.mjs';
 import { createLandingPort, LANDING_PERMISSIONS } from '../src/independent-control-checks-v2/train-landing-port.mjs';
@@ -349,6 +351,13 @@ function productionTrainPorts(w, command, record = { config: { scope: 'project:f
     github: w.github, nativeCommand: command, sourceManifestSha256: w.batch.sourceSha256, repositoryId: scope.repositoryId,
     openStore: async () => null, queueReturn: true });
 }
+
+test('已切到协议 2 的记录缺少受保护端口时安全暂停', async () => {
+  const ports = await productionTrainPorts(stage8World(), undefined);
+  assert.equal(ports.trainV2?.protocolVersion, null);
+  assert.equal(ports.slotNative, undefined);
+  assert.equal(ports.sweepStore, undefined);
+});
 
 test('片 2、4 接线：第 8、10 段通过同一受保护传输探测和请求批次', async () => {
   const w = stage8World();
@@ -1241,6 +1250,14 @@ test('landing records: exact batch records (the front first), the landing state 
 });
 
 test('列车 v2：A 登记运行后 B 只接受精确尝试及终局红', async t => {
+  const repository = new URL('../../../../', import.meta.url);
+  const registry = parseWorkflowProfiles(await fs.readFile(new URL('scripts/ci/clued-gated-proof-profiles.json', repository)));
+  for (const file of Object.values(L.TRAIN_STAGING_WORKFLOWS)) {
+    const source = execFileSync('git', ['show', `e8390c2e643c5478ea9d34a784e558e5a995b2e9:${file}`], { cwd: repository, encoding: 'utf8' });
+    assert.match(source, /CLUED_TRAIN_TERMINAL_EXIT: "1"/);
+    assert.match(source, /name: Confirm merge train test failure/);
+    assert.equal(registeredWorkflowSource(registry, file, workflowBlob(source)).profile.source_yaml, source);
+  }
   const w = { intent: { batchId, effectId, slotId, generation: 1, baseSha: T, testSha: S3,
     generationRefOid: G, landedRefOid: DONE, members, expiresAt: '2026-11-26T09:01:30Z' },
     clock: multiDutyClock(Date.parse('2026-11-26T09:00:00Z')) };

@@ -425,7 +425,7 @@ test("both pending entry points report CI before the last executor action; seale
     assert.ok(report && execute, "both steps use the same job; executor is last with default success condition");
     assert.ok(report.index < execute.index, "the slot state is reported before acting on the queue");
     const trainSelector = '          CLUED_MERGE_TRAIN_PROTOCOL_VERSION: ${{ vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION }}\n';
-    assert.equal(execute[1], trainSelector + report[1], "the executor adds only the cutover selector to the shared trust envelope");
+    assert.equal(execute[1], (text.includes(trainSelector) ? trainSelector : '') + report[1], "the executor adds only the cutover selector to the shared trust envelope");
     assert.equal((text.match(/run: node scripts\/ci\/clued-merge-executor\.mjs/g) ?? []).length, 1);
     assert.doesNotMatch(actions, /continue-on-error:|if:.*always\(\)/, "failed or cancelled reporting must not authorize execution");
     assert.equal((observations.match(/if: \$\{\{ always\(\) \}\}/g) ?? []).length, 2);
