@@ -4,7 +4,7 @@ import { packageGenerationOf } from '../../src/selfcheck.mjs';
 const hex = /^[0-9a-f]{64}$/;
 const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const maxAge = 15 * 60_000;
-const eligible = new Set(['active', 'draining']);
+const eligible = new Set(['pending', 'active', 'draining']);
 const inactive = new Set(['retired', 'revoked']);
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fresh = (at, now) => typeof at === 'string' && Date.parse(at) <= now && now - Date.parse(at) <= maxAge;
@@ -47,7 +47,7 @@ function registryRows(doc, candidate, now) {
       !fresh(doc.observedAt, now) || !Array.isArray(doc.nodes)) return null;
   const rows = new Map(), names = new Set();
   for (const row of doc.nodes) {
-    if (!uuid.test(row?.id ?? '') || typeof row.name !== 'string' || !row.name || ![...eligible, ...inactive, 'pending'].includes(row.state)) return null;
+    if (!uuid.test(row?.id ?? '') || typeof row.name !== 'string' || !row.name || !(eligible.has(row.state) || inactive.has(row.state))) return null;
     if (rows.has(row.id)) {
       if (digest(rows.get(row.id)) !== digest(row)) return null;
       continue;
@@ -110,8 +110,6 @@ export async function fleetDeliveryPreflight({ candidate, requirements, readFlee
   const first = firstRead.rows;
   const rows = first.filter(row => !inactive.has(row.state));
   if (rows.length === 0) return refused('FLEET_REGISTRY_EMPTY');
-  if (rows.some(row => row.state === 'pending')) return refused('FLEET_NODE_REGISTRATION_PENDING',
-    rows.filter(row => row.state === 'pending').map(row => ({ id: row.id, node: row.name, state: row.state })), 'FAIL');
   const transition = packageGenerationOf(candidate.version) === 25;
   if (transition && (rows.length !== 2 || requirements?.standardReinstall !== true)) return refused('FLEET_TRANSITION_SUBJECT_INCOMPLETE');
   const nodes = await Promise.all(rows.map(async row => {
