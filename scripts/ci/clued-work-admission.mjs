@@ -2015,6 +2015,9 @@ export async function mainMergeSource(fetchImpl, env, repository, prNumber, head
   if (attested.main !== tip) {
     const onMain = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${attested.main}...${tip}`);
     if (onMain?.status !== "ahead" && onMain?.status !== "identical") return null;
+    if (proof && (onMain.status !== 'ahead' || onMain.base_commit?.sha !== attested.main
+      || onMain.merge_base_commit?.sha !== attested.main || onMain.behind_by !== 0
+      || !Number.isSafeInteger(onMain.ahead_by) || onMain.ahead_by < 1)) return null;
     compare = onMain.status;
   }
   const { checkRunId, ...source } = attested;

@@ -257,6 +257,27 @@ export async function probe(d, node) {
   return result;
 }
 
+rolloutTest('片 7：主线合入派生头须使用原 H 已完成的句柄和有效代次', async t => {
+  const d = await drill(t);
+  const node = await d.addNode('carry-original-head');
+  const subject = d.head();
+  await d.authorize(subject);
+  await d.enableV2();
+  const { effect, check } = await d.openCheck(node, subject);
+  await d.finishCheck(node, effect, await d.postCheck(node, check));
+  const held = await d.command(node, 'carry_head_read', { work_key: effect.work_key });
+  assert.deepEqual([held.status, held.work_key, held.pr, held.head_sha], ['ok', effect.work_key, subject.pr, subject.head_sha]);
+  const refreshedHead = d.sha('main merged into original H');
+  const input = { ...leaseOf(held), new_head_sha: refreshedHead, main_sha: d.sha('parent from main'), evidence_digest: d.digest('comparison proof') };
+  const stale = await d.command(node, 'carry_main_merge', { ...input, lease_version: input.lease_version + 1 });
+  assert.equal(stale.error_code, TRAIN_FAILURE.LEASE_STALE.native, JSON.stringify(stale));
+  const carried = await d.command(node, 'carry_main_merge', input);
+  assert.deepEqual([carried.status, carried.head_sha], ['committed', refreshedHead], JSON.stringify(carried));
+  const next = await d.command(node, 'head_acquire', { ...subject, head_sha: refreshedHead });
+  assert.equal(next.status, 'leased', JSON.stringify(next));
+  assert.notEqual(next.work_key, held.work_key);
+});
+
 export async function requiredRunDecision(d, staged, completed) {
   assert.equal(typeof landing.exactTrainChecksDecision, 'function', '片 4、6 未集成 S 上的精确检查判定');
   const requirements = staged.runs.map(({ checkName, appId, platform }) => ({ checkName, appId, platform }));
