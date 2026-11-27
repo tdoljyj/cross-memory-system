@@ -1226,7 +1226,10 @@ export async function seal(options) {
       const read = boundedRead(limit);
       const local = await readOrNull(path.join(durable, 'candidate.SHA256SUMS'));
       const localRequest = await readOrNull(path.join(durable, path.basename(request)));
-      check(local && localRequest?.equals(requestBytes) && sha(local) === r.deliveryAssetsSha256,
+      const transportNames = new Set(['gzip', 'delta'].flatMap(kind => Object.values(transportAssetNames(r.version, kind))));
+      const localDelivery = local?.toString('utf8').split('\n')
+        .filter(line => !transportNames.has(line.slice(line.indexOf('  ') + 2))).join('\n');
+      check(localDelivery && localRequest?.equals(requestBytes) && sha(localDelivery) === r.deliveryAssetsSha256,
         'FLEET_DELIVERY_ASSET_MANIFEST_REFUSED');
       const assetFile = name => downloadAsset(boundedGh(limit), repo, tag, name, path.join(stage, 'verify-assets'));
       const manifest = await read(assetFile(deliveryAssetManifestName(r.version)));

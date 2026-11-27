@@ -350,7 +350,7 @@ test('出包前拒绝过期投影、缺失节点交付路径及被替换的暂�
 test('一次发布自动开单和续封，响应丢失沿用原 Grant 和接受摘要，批准后漂移阻断目标', async t => {
   for (const scenario of ['reply', 'restart', 'open-unknown', 'drift']) await t.test(scenario, async t => {
     const w = await prepWorld(t, { version: 'g000027', released: false, spawnGh: false });
-    await fs.writeFile(w.state, JSON.stringify({ calls: [], assets: [], workflowLostReply: true }));
+    await fs.writeFile(w.state, JSON.stringify({ calls: [], assets: [], compare: 'identical', workflowLostReply: true }));
     const time = fakeTime('2026-11-27T01:00:00Z');
     w.door.status = 'none';
     if (scenario === 'open-unknown') w.door.openTo = 'none';
