@@ -23,6 +23,7 @@ const postBaselineMigrationSources = Object.fromEntries(await Promise.all(
     `../supabase/migrations/${name}`, import.meta.url), 'utf8')])));
 const productionWorkflow = await readFile(new URL(
   '../../../.github/workflows/clued-cloud-production-release.yml', import.meta.url), 'utf8');
+const productionReleaseJob = productionWorkflow.split('\n  release:\n')[1];
 const now = new Date('2026-09-23T05:12:49Z');
 const OWNER = 'a'.repeat(64), OTHER = 'b'.repeat(64);
 
@@ -546,7 +547,7 @@ test('fleet-accept only checks the published request and opens the Owner request
   }
   // Outside the inputs block and the two env lines of each of the two steps that
   // take them, the workflow never expands the two inputs.
-  assert.equal(productionWorkflow.match(/\$\{\{ inputs\.fleet_(version|request_sha256) \}\}/g).length, 4);
+  assert.equal(productionWorkflow.match(/\$\{\{ inputs\.fleet_(version|request_sha256) \}\}/g).length, 6);
   // Its own concurrency group: it neither waits for a release nor holds one up.
   const group = /\nconcurrency:\n  group: \$\{\{ (.+) \}\}\n/.exec(productionWorkflow)?.[1];
   assert.ok(group, 'the concurrency group is an expression');
@@ -557,6 +558,68 @@ test('fleet-accept only checks the published request and opens the Owner request
   const fleetRun = mode => evaluateExpression(group, { inputs: { mode, fleet_release_run: 'operation' }, failed: false, outcomes: {} });
   assert.equal(fleetRun('preflight'), 'clued-cloud-fleet-migration-read');
   assert.equal(fleetRun('migrate'), 'clued-cloud-production-release');
+});
+
+test('直接派发确认只有同次兼容回放成功才进入发布环境', () => {
+  const [, replay, release] = productionWorkflow.split(/\n  (?:fleet-interface-check|release):\n/);
+  assert.match(replay, /inputs\.mode == 'fleet-accept' && inputs\.fleet_operation == 'confirm'/);
+  assert.match(replay, /runs-on: \[self-hosted, Windows,/);
+  assert.match(replay, /evidence: \$\{\{ steps\.replay\.outputs\.evidence \}\}/);
+  assert.match(replay, /node scripts\/ci\/clued-fleet-accept\.mjs previous-interfaces/);
+  assert.doesNotMatch(replay, /secrets\.|environment:|persist-credentials: true/);
+  assert.match(release, /needs: fleet-interface-check/);
+  const expression = release.match(/\((inputs\.mode != 'fleet-accept'[^\n]+)\)\n/)[1];
+  const run = (result, operation = 'confirm') => evaluateExpression(expression, {
+    inputs: { mode: 'fleet-accept', fleet_operation: operation }, needs: { 'fleet-interface-check': result },
+  });
+  for (const outcome of ['skipped', 'failure', 'cancelled', '']) assert.equal(run(outcome), false);
+  assert.equal(run('success'), true);
+  assert.equal(run('skipped', 'open'), true);
+  assert.equal(run('skipped', 'project'), true);
+  assert.match(release, /FLEET_INTERFACE_RESULT: \$\{\{ needs\.fleet-interface-check\.outputs\.evidence \}\}/);
+  assert.match(release, /CLUED_FLEET_INTERFACE_PROOF_KEY: \$\{\{ inputs\.fleet_operation == 'confirm' && secrets\.CLUED_FLEET_INTERFACE_PROOF_KEY/);
+});
+
+test('确认回放选已封存的上一包，只签名同次运行与同一迁移树的通过结果', async () => {
+  const { replayPreviousInterfaces, main, REQUEST_CONTRACT } = await import('../../../scripts/ci/clued-fleet-accept.mjs');
+  const { sealInterfaceEvidence } = await import('../../../scripts/ci/clued-fleet-interface-evidence.mjs');
+  const { REQUEST_FLEET_REFS } = await import('../../../work/independent-ci-resident-v1/src/fleet-acceptance.mjs');
+  const repository = 'acme/widgets';
+  const grantId = '11111111-2222-4333-8444-555555555555', receiptId = '11111111-2222-4333-8444-555555555556';
+  const request = (version, char) => JSON.stringify({ repository, version, commit: char.repeat(40), contract: REQUEST_CONTRACT,
+    archive_sha256: char.repeat(64), ciSourceManifestSha256: '1'.repeat(64), firstInstallKitSha256: '2'.repeat(64),
+    fleetRefs: Object.fromEntries(REQUEST_FLEET_REFS.map(key => [key, key === 'formalRoles' ? {} : grantId])),
+    ...(version === 'g000027' ? { deliveryAssetsSha256: '3'.repeat(64) } : {}) });
+  const assets = new Map([['g000025', request('g000025', 'a')], ['g000026', request('g000026', 'b')], ['g000027', request('g000027', 'c')]]);
+  const env = { GITHUB_REPOSITORY: repository, GITHUB_SHA: 'f'.repeat(40), GITHUB_RUN_ID: '4', GITHUB_RUN_ATTEMPT: '1',
+    FLEET_VERSION: 'g000027', FLEET_REQUEST_SHA256: createHash('sha256').update(assets.get('g000027')).digest('hex') };
+  const migrationsSha256 = '4'.repeat(64), acceptanceSha256 = '5'.repeat(64);
+  const replayed = [];
+  const deps = { listVersions: () => [...assets.keys()], isAncestor: () => true, isPinned: () => true,
+    fetchImpl: async url => new Response(assets.get(url.split('/').at(-2).slice('fleet-node-'.length))),
+    readStatus: async resource => ({ resources: [resource], request_sha256: resource.split('/').at(-1), status: 'accepted',
+      grant_id: grantId, receipt_id: receiptId, accepted_at: now.toISOString(),
+      ...(resource.includes('/g000025/') ? { sealed_acceptance_sha256: acceptanceSha256 } : {}) }),
+    replay: async ({ commit, previous }) => {
+      replayed.push(previous.version);
+      return { status: 'PASS', commit, previousCommit: previous.commit, migrationsSha256 };
+    }, clock: () => now.getTime() };
+  const result = await replayPreviousInterfaces(env, deps);
+  assert.deepEqual(replayed, ['g000025']);
+  assert.equal(result.candidate.commit, 'c'.repeat(40));
+  assert.equal(result.previous.commit, 'a'.repeat(40));
+  await assert.rejects(replayPreviousInterfaces(env, { ...deps, replay: async () => ({ status: 'FAIL' }) }), /INTERFACE_RUN_REFUSED/);
+
+  const delivery = { operation: 'confirm', candidate: result.candidate, acceptanceSha256 };
+  const proofEnv = value => ({ ...env, CLUED_FLEET_INTERFACE_PROOF_KEY: '9'.repeat(64), FLEET_INTERFACE_RESULT: JSON.stringify(value) });
+  assert.equal(sealInterfaceEvidence(proofEnv(result), delivery, () => migrationsSha256).migrationsSha256, migrationsSha256);
+  for (const change of [{ runId: '5' }, { migrationsSha256: '6'.repeat(64) }, { candidate: { ...result.candidate, commit: 'd'.repeat(40) } }]) {
+    assert.throws(() => sealInterfaceEvidence(proofEnv({ ...result, ...change }), delivery, () => migrationsSha256), /EVIDENCE_MISMATCH/);
+  }
+  const errors = [];
+  assert.equal(await main(['delivery'], env, { stdin: JSON.stringify({ delivery }), write: assert.fail, error: message => errors.push(message) },
+    { database: () => assert.fail('无证据时不得访问数据库') }), 1);
+  assert.match(errors.join(''), /EVIDENCE_REQUIRED/);
 });
 
 test('the fleet-accept script lets only a checked request of this repository on main reach the door', async () => {
@@ -822,7 +885,7 @@ test('the release gate evaluates the committed migration ledger against producti
 // inputs, the earlier failure and the outcomes of steps with an id. It runs
 // the real workflow file, so the order, the grant steps and the rollback
 // below are the ones production runs.
-const releaseSteps = productionWorkflow.split(/\n      - /).slice(1).map((text) => ({
+const releaseSteps = productionReleaseJob.split(/\n      - /).slice(1).map((text) => ({
   text,
   name: /(?:^|\n {8})name: (.+)\n/.exec(text)?.[1] ?? text.split('\n')[0],
   id: /(?:^|\n {8})id: (\S+)\n/.exec(text)?.[1] ?? null,
@@ -843,6 +906,8 @@ function evaluateExpression(source, context) {
     if (token === 'always()') return true;
     if (token === 'cancelled()') return Boolean(context.cancelled);
     if (token.startsWith('inputs.')) return context.inputs[token.slice(7)] ?? '';
+    const need = /^needs\.([\w-]+)\.result$/.exec(token);
+    if (need) return context.needs[need[1]];
     const outcome = /^steps\.([\w-]+)\.outcome$/.exec(token);
     if (outcome) return context.outcomes[outcome[1]] ?? '';
     throw new Error(`unsupported operand ${token} in ${source}`);
@@ -871,7 +936,7 @@ const evaluateCondition = (source, context) => Boolean(evaluateExpression(source
 // expression over the inputs (GitHub allows `inputs` there).
 const RELEASE_MODES = ['preflight', 'backup', 'source-capture', 'deploy', 'migrate', 'release', 'fleet-accept'];
 function jobTimeoutMinutes(mode) {
-  const source = /\n {4}timeout-minutes: (.+)\n/.exec(productionWorkflow)?.[1];
+  const source = /\n {4}timeout-minutes: (.+)\n/.exec(productionReleaseJob)?.[1];
   assert.ok(source, 'the release job has no timeout-minutes');
   const expression = /^\$\{\{ (.+) \}\}$/.exec(source)?.[1];
   const minutes = Number(expression ? evaluateExpression(expression, { inputs: { mode }, failed: false, outcomes: {} }) : source);

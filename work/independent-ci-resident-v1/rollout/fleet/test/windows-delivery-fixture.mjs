@@ -152,7 +152,7 @@ foreach ($local in @($localTar, $localKit, $localPrereq)) {
   const plan = JSON.parse(planBytes);
   assert.deepEqual([plan.contract, plan.node, plan.commit, plan.archive_sha256, plan.ciSourceManifestSha256],
     [PLAN_CONTRACT, installed.profile.nodeName, acceptance.commit, acceptance.archive_sha256, acceptance.ciSourceManifestSha256]);
-  assert.equal(plan.installedPackage.packageGeneration, 25);
+  assert.equal(plan.installedPackage.packageGeneration, Number(w.version.slice(1)));
   assert.equal(plan.w1Paused, null);
   assert.equal(plan.launcher, null);
   assert.equal(launcherCheck.installPlanSha256, sha(planBytes));

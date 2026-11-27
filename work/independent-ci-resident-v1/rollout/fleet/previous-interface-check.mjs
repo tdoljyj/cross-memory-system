@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +12,20 @@ const app = 'apps/clued-cloud';
 const migrations = `${app}/supabase/migrations`;
 const tests = ['owner-grants-fleet-accept-door-db', 'fleet-delivery-release-db'].map(name => `${app}/tests/${name}.test.mjs`);
 const sha = /^[0-9a-f]{40}$/;
+
+// 同时散列路径、模式与实际 blob 字节，Windows 和 Linux 对同一提交得出同一摘要。
+export function migrationTreeDigest(commit, root = checkout) {
+  if (!sha.test(commit)) throw new Error('FLEET_PREVIOUS_TEST_SUBJECT_REFUSED');
+  const raw = execFileSync('git', ['ls-tree', '-rz', commit, '--', migrations], { cwd: root, maxBuffer: 4 << 20 });
+  if (!raw.length) throw new Error('FLEET_PREVIOUS_MIGRATIONS_MISSING');
+  const objects = raw.toString('utf8').slice(0, -1).split('\0').map(record => {
+    const match = /^\d{6} blob ([0-9a-f]{40})\t/.exec(record);
+    if (!match) throw new Error('FLEET_PREVIOUS_MIGRATIONS_INVALID');
+    return match[1];
+  });
+  const blobs = execFileSync('git', ['cat-file', '--batch'], { cwd: root, input: objects.join('\n') + '\n', maxBuffer: 64 << 20 });
+  return createHash('sha256').update(raw).update(blobs).digest('hex');
+}
 
 // Run the prior commit's assertions and helpers unchanged, against an isolated
 // PostgreSQL initialized with the candidate commit's committed migrations.
@@ -53,7 +68,7 @@ export async function previousInterfaceCheck({ commit, previous, timeoutMs, root
     if (!/^ℹ pass [1-9][0-9]*$/m.test(stdout) || !/^ℹ skipped 0$/m.test(stdout) || /^ℹ (?:skipped|cancelled) [1-9]/m.test(stdout)) {
       throw new Error('FLEET_PREVIOUS_TESTS_NOT_EXECUTED');
     }
-    return { status: 'PASS', commit, previousCommit: previous.commit, files };
+    return { status: 'PASS', commit, previousCommit: previous.commit, migrationsSha256: migrationTreeDigest(commit, root), files };
   } finally {
     await fs.rm(stage, { recursive: true, force: true, maxRetries: 3 });
   }
