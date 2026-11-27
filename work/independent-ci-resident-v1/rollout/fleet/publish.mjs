@@ -1,6 +1,7 @@
 // Archive one universal node package on a GitHub Release (Decision b5d041d2 v2) and keep the 资料中心 index.
 //
-//   node rollout/fleet/publish.mjs prepare --commit <main SHA> --dir <build out> --out <dir> [--image <role-image-<id>.tar.gz> ...] [--repo <owner/name>] [--index <index file>]
+//   node rollout/fleet/publish.mjs prepare --commit <main SHA> --dir <build out> --out <dir> [--image <role-image-<id>.tar.gz> ...]
+//        [--transport-base <previous-generation tar>] [--repo <owner/name>] [--index <index file>]
 //   node rollout/fleet/publish.mjs seal --request <fleet-node-<v>.acceptance-request.json> [--drill-receipt <receipt.json>] [--wait <minutes>]
 //        [--repo <owner/name>] [--index <index file>]
 //
@@ -111,6 +112,8 @@ import { deliveryWorkflowClient } from './delivery-workflow.mjs';
 import { RESIDENT } from './facts.mjs';
 import { DEFAULT_ROOT, firstInstallKitOf, installedFleetMaterial, readArchive, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
 import { readTar } from './tar.mjs';
+import { previousTransportVersion, TRANSPORT } from './fetch.mjs';
+import { stageTransport } from './transport-assets.mjs';
 import { buildUniversal, RELEASE_CONTRACT, VERSION, tagOf } from './universal.mjs';
 import { packageGenerationOf } from '../../src/selfcheck.mjs';
 import { ACCEPTANCE_CONTRACT, REQUEST_CONTRACT, REQUEST_FLEET_REFS, acceptanceOf, acceptanceBytes } from '../../src/fleet-acceptance.mjs';
@@ -316,8 +319,8 @@ function checkCommitOnRemote(ghCommand, repo, commit) {
   check(got === commit, 'PREPARE_COMMIT_LOOKUP_FAILED', { commit, exit: r.status, stderr: r.stderr, note: 'GitHub did not say whether the commit is there: run the same prepare again' });
 }
 
-// prepare's step 4 (see the head of this file): the Release and the index row of this build, made or completed, never guessed. `assets`: the
-// five, in the order they are published (tar, release.json, the staged SHA256SUMS, the two node-entry files).
+// prepare's step 4 (see the head of this file): the Release and the index row of this build, made or completed, never guessed.
+// The five formal assets come first. Optional transport payloads precede their own descriptors.
 async function ensureRelease({ ghCommand, repo, index, s, assets, stage }) {
   const tag = s.release_tag, tarName = `${tag}.tar`, relName = `${tag}.release.json`;
   const idx = await readIndex(index);
@@ -510,6 +513,23 @@ function downloadAsset(ghCommand, repo, tag, name, stage) {
   return path.join(dir, name);
 }
 const sumsOf = text => new Map(text.split('\n').filter(Boolean).map(l => { const i = l.indexOf('  '); return [l.slice(i + 2), l.slice(0, i)]; }));
+
+async function readTransportBase({ file, version, tags, ghCommand, repo, stage }) {
+  const previous = previousTransportVersion(version);
+  const tag = previous && tagOf(previous);
+  check(tag && path.basename(file) === `${tag}.tar`, 'PUBLISH_TRANSPORT_BASE_VERSION_REFUSED');
+  const pin = await tags.read(tag);
+  check(pin?.contract === CLAIM_CONTRACT && pin.release_tag === tag && pin.version === previous
+    && HEX64.test(pin.archive_sha256 ?? '') && HEX40.test(pin.commit ?? ''), 'PUBLISH_TRANSPORT_BASE_TAG_REFUSED', tag);
+  const accepted = JSON.parse(await fs.readFile(downloadAsset(ghCommand, repo, tag, `${tag}.acceptance.json`, stage), 'utf8'));
+  check(accepted?.contract === ACCEPTANCE_CONTRACT && accepted.repository === repo && accepted.version === previous
+    && accepted.commit === pin.commit && accepted.archive_sha256 === pin.archive_sha256, 'PUBLISH_TRANSPORT_BASE_ACCEPTANCE_REFUSED', tag);
+  const stat = await fs.stat(file);
+  check(stat.isFile() && stat.size > 0 && stat.size <= TRANSPORT.archiveMax, 'PUBLISH_TRANSPORT_BASE_SIZE_REFUSED', tag);
+  const bytes = await fs.readFile(file);
+  check(bytes.length === stat.size && sha(bytes) === pin.archive_sha256, 'PUBLISH_TRANSPORT_BASE_SHA_MISMATCH', tag);
+  return { version: previous, bytes, sha256: pin.archive_sha256 };
+}
 const localImagesOf = k => {
   const local = Array.isArray(k?.images?.local) ? k.images.local : null;
   check(k?.contract === KIT_CONTRACT && local && local.every(i => HEX64.test(i?.id ?? '') && i.asset === `role-image-${i.id}.tar.gz`), 'FIRST_INSTALL_KIT_IMAGES_REFUSED');
@@ -670,7 +690,7 @@ async function writeAtomic(file, bytes) {
 
 // The first half of an acceptance (see the head of this file). `deps` is for tests only (the kit and the record material of a fixture node, a
 // stand-in for the archive's source-hash); the command line cannot reach it.
-export async function prepare({ version, dir, out, images = [], repo = DEFAULT_REPO, index = DEFAULT_INDEX, root = DEFAULT_ROOT, ghCommand = ['gh'],
+export async function prepare({ version, dir, out, images = [], transportBase = null, repo = DEFAULT_REPO, index = DEFAULT_INDEX, root = DEFAULT_ROOT, ghCommand = ['gh'],
   now = Date.now(), deps = {} }) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
   check(VERSION.test(version ?? ''), 'PUBLISH_VERSION_REFUSED');
@@ -703,6 +723,12 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     check(!onRelease.has(`${tag}.acceptance.json`), 'PREPARE_VERSION_ALREADY_ACCEPTED',
       { version, note: 'the Release holds its acceptance; if the index row is empty, run the same seal again to complete it' });
     check(c === null || (c[4] === '' && c[5] === ''), 'PUBLISH_ACCEPTANCE_INDEX_WITHOUT_ASSET', { version, acceptedAt: c?.[4], decision: c?.[5] });
+    const generationTags = deps.generationTags ?? githubGenerationTags(ghCommand, repo);
+    const previous = transportBase && await readTransportBase({ file: transportBase, version, tags: generationTags, ghCommand, repo, stage });
+    if (numbered) {
+      releaseAssets.push(...await stageTransport({ repository: repo, version, archiveSha256: s.archive_sha256,
+        archive: build.tarBytes, previous, stage: entryStage }));
+    }
     // 1. the kit: the Release's once it has one (the one fact from then on), else this node's; held to what a new node will read
     const kitFromRelease = onRelease.has(kitName);
     const kitBytes = kitFromRelease ? await fs.readFile(downloadAsset(ghCommand, repo, tag, kitName, stage))
@@ -743,7 +769,7 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     // 4. all checks passed: the Release and the index row of this build, made or completed (only the tag fleet-node-<v> and this row)
     if (numbered) {
       checkCommitOnMain(ghCommand, repo, s.commit);
-      await reservePackageGeneration(deps.generationTags ?? githubGenerationTags(ghCommand, repo), s);
+      await reservePackageGeneration(generationTags, s);
     }
     await ensureRelease({ ghCommand, repo, index, s, assets: releaseAssets, stage });
     lap(4);
@@ -1129,6 +1155,7 @@ export async function main(argv, deps = {}) {
   try {
     parsed = parseArgs({ args: rest, allowPositionals: true, options: { dir: { type: 'string' }, repo: { type: 'string' }, index: { type: 'string' },
       commit: { type: 'string' }, image: { type: 'string', multiple: true }, out: { type: 'string' }, request: { type: 'string' },
+      'transport-base': { type: 'string' },
       'drill-receipt': { type: 'string' }, wait: { type: 'string' } } });
   } catch { fail('USAGE'); }   // an option no command has (the old entry's --base, --kit, --acceptance; seal's old --decision, --receipt, --accepted-at
   //                              and --decision-record: the acceptance is the Owner's fleet.accept Grant, PLAN-accept-auto-seal-20261125 2.2)
@@ -1137,8 +1164,10 @@ export async function main(argv, deps = {}) {
   check(positionals.length === 0, 'USAGE');
   const only = (...allowed) => check(Object.keys(values).every(k => allowed.includes(k)), 'USAGE');
   if (sub === 'prepare') {
-    only('commit', 'dir', 'out', 'image', 'repo', 'index'); check(values.commit && values.dir && values.out, 'USAGE');
-    return (deps.prepareCommit ?? prepareCommit)({ commit: values.commit, dir: path.resolve(values.dir), out: path.resolve(values.out), images: values.image ?? [], repo: values.repo, index: values.index });
+    only('commit', 'dir', 'out', 'image', 'repo', 'index', 'transport-base'); check(values.commit && values.dir && values.out, 'USAGE');
+    const transport = values['transport-base'] ? { transportBase: path.resolve(values['transport-base']) } : {};
+    return (deps.prepareCommit ?? prepareCommit)({ commit: values.commit, dir: path.resolve(values.dir), out: path.resolve(values.out),
+      images: values.image ?? [], repo: values.repo, index: values.index, ...transport });
   }
   if (sub === 'seal') {
     only('request', 'drill-receipt', 'wait', 'repo', 'index');

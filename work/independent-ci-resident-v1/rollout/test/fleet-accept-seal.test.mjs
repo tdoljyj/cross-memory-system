@@ -6,14 +6,60 @@ import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 import { planFiles } from '../../../../scripts/ci/ci-required-selection.mjs';
 import * as publishModule from '../fleet/publish.mjs';
-import { GRANT, GRANT_RECEIPT, TAG, fakeTime, prepWorld, resourceOf, sealedNothing, sha, timed, uploadsOf } from '../fleet/test/publish-fixtures.mjs';
+import { transportAssetNames } from '../fleet/fetch.mjs';
+import { GRANT, GRANT_RECEIPT, REPO, TAG, fakeTime, prepWorld, resourceOf, sealedNothing, sha, timed, uploadsOf, world } from '../fleet/test/publish-fixtures.mjs';
 
 const legacyNode = (id, name, mode, observedAt) => ({ id, name, state: 'active', mode,
   registrationVersion: 4, bindingGeneration: 2, identityFingerprint: 'c'.repeat(64), bindingLive: true,
   reportedSourceSha256: 'd'.repeat(64), heartbeatAt: observedAt, heartbeatSequence: 81,
   reportedState: 'NORMAL', serviceRunning: true, onDuty: mode === 'ACTIVE', evidence: null });
+
+test('prepare 发布可复验的运输资产，续跑保持正式 tar、清单和请求字节', async t => {
+  const old = await world(t, 'g000024');
+  const w = await prepWorld(t, { version: 'g000025', released: false, spawnGh: false });
+  const oldTag = old.source.release_tag;
+  const name = `${oldTag}.acceptance.json`;
+  const accepted = Buffer.from(JSON.stringify({ contract: publishModule.ACCEPTANCE_CONTRACT, repository: REPO,
+    version: old.source.version, commit: old.source.commit, archive_sha256: old.source.archive_sha256 }));
+  await fs.writeFile(w.state, JSON.stringify({ calls: [], assets: [], other: {
+    [oldTag]: [{ name, size: accepted.length, b64: accepted.toString('base64') }]
+  } }));
+  const tags = w.deps.generationTags;
+  const deps = { ...w.deps, generationTags: { ...tags, read: tag => tag === oldTag ? {
+    contract: 'clued.independent-ci.fleet-package-generation/1', version: old.source.version, release_tag: oldTag,
+    commit: old.source.commit, archive_sha256: old.source.archive_sha256
+  } : tags.read(tag) } };
+  const transportBase = path.join(old.build, `${oldTag}.tar`);
+  const bad = Buffer.from(old.tar);
+  bad[0] ^= 1;
+  await fs.writeFile(transportBase, bad);
+  await assert.rejects(w.prep({ deps, transportBase }), { code: 'PUBLISH_TRANSPORT_BASE_SHA_MISMATCH' });
+  assert.deepEqual(await w.assets(), []);
+  await fs.writeFile(transportBase, old.tar);
+  await w.prep({ deps, transportBase });
+  const assets = new Map((await w.assets()).map(asset => [asset.name, Buffer.from(asset.b64, 'base64')]));
+  const version = w.source.version, tarName = `${w.source.release_tag}.tar`;
+  assert.deepEqual(assets.get(tarName), w.tar);
+  assert.match(assets.get('SHA256SUMS').toString(), new RegExp(`${w.source.archive_sha256}  ${tarName}\\n`));
+  assert.doesNotMatch(assets.get('SHA256SUMS').toString(), /transport-|\.delta\.gz|\.tar\.gz/);
+  for (const kind of ['gzip', 'delta']) {
+    const { meta, payload } = transportAssetNames(version, kind);
+    const descriptor = JSON.parse(assets.get(meta));
+    assert.deepEqual([descriptor.version, descriptor.repository, descriptor.archive_sha256, descriptor.archive_bytes, descriptor.sha256],
+      [version, REPO, w.source.archive_sha256, w.tar.length, sha(assets.get(payload))]);
+    if (kind === 'gzip') assert.deepEqual(gunzipSync(assets.get(payload)), w.tar);
+    else assert.deepEqual(descriptor.base, { version: old.source.version, bytes: old.tar.length, sha256: old.source.archive_sha256 });
+  }
+  const request = await fs.readFile(w.requestFile);
+  assert.equal(JSON.parse(request).archive_sha256, w.source.archive_sha256);
+  const uploads = await uploadsOf(w);
+  await w.prep({ deps, transportBase });
+  assert.deepEqual(await uploadsOf(w), uploads);
+  assert.deepEqual(await fs.readFile(w.requestFile), request);
+});
 
 test('第 25 代 seal、open 和 run 共用生产读者，复查失败后沿用原 Grant', async t => {
   const w = await prepWorld(t, { version: 'g000025', released: false, spawnGh: false });
