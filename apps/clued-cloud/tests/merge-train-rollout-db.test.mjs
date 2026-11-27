@@ -16,6 +16,8 @@ import {
 } from '../../../work/actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs';
 import { TRAIN_STAGING_WORKFLOWS } from '../../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs';
 import { removeTestDirectory } from './cluster-cleanup.mjs';
+import { schedulingFixture, digest, sha, uuid, limits } from './ci-scheduling-stage1-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 import { multiDutyClock, multiDutyGitHub } from '../../../work/independent-ci-resident-v1/test/multi-duty-fixture.mjs';
 import { openTrainTransport } from '../../../work/actions-hosted-migration/independent-ci-v1/src/resident-v2/train-transport.mjs';
 
@@ -43,8 +45,6 @@ export async function drill(t) {
     } finally { stop(); }
   })();
   const api = await gatewayModule;
-  const { schedulingFixture, digest, sha, uuid, limits } = await import(new URL('tests/ci-scheduling-stage1-fixture.mjs', cloud));
-  const { setWorkerGatewayCaller, workerGatewayRpc } = await import(new URL('tests/worker-gateway-caller-fixture.mjs', cloud));
   const primaryToken = randomBytes(32).toString('hex');
   // raw-binding-grants: schedulingFixture calls allowRawTestBindings(admin) after applying the migrations.
   const db = await schedulingFixture({ tokenHash: digest(primaryToken) });
