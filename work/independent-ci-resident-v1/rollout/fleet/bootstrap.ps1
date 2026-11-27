@@ -501,6 +501,7 @@ function Receive-Prereq($item, [string]$partial, [long]$offset, [Diagnostics.Sto
       # The server ignored Range, or this is the first GET. Discard the old fragment before writing the full response.
       [IO.File]::Delete($partial)
       $offset = 0
+      if ($length -lt 0) { $length = $expected }
       $mode = [IO.FileMode]::CreateNew
     } elseif ($status -eq 206) {
       if ($offset -eq 0 -or $response.Headers['Content-Range'] -cne "bytes ${offset}-$($expected - 1)/$expected" -or
@@ -527,7 +528,7 @@ function Receive-Prereq($item, [string]$partial, [long]$offset, [Diagnostics.Sto
         if ($received -gt $expected) { return @{ state = 'length'; bytes = $received } }
         $file.Write($buffer, 0, $count)
       }
-      if ($length -ge 0 -and $received -lt ($offset + $length)) { return @{ state = 'retry'; reason = 'short_body' } }
+      if ($received -lt ($offset + $length)) { return @{ state = 'retry'; reason = 'short_body' } }
       return @{ state = 'complete' }
     } finally { $file.Dispose() }
   } finally {
@@ -540,16 +541,14 @@ function Receive-Prereq($item, [string]$partial, [long]$offset, [Diagnostics.Sto
 function Get-Prereq($item, [string]$dest, [scriptblock]$waitBeforeRetry = { param($milliseconds) Start-Sleep -Milliseconds $milliseconds }) {
   $target = Join-Path $dest $item['fileName']
   $local = Join-Path $script:From $item['fileName']
-  $partial = $null
+  $partial = $target + '.part'
   try {
+    [IO.File]::Delete($partial)
     if ([IO.File]::Exists($local) -and (Sha256File $local) -ceq $item['sha256']) {
-      [IO.File]::Copy($local, $target, $false)
-      $candidate = $target
-      $len = (Get-Item -LiteralPath $target).Length
+      [IO.File]::Copy($local, $partial, $false)
+      $len = (Get-Item -LiteralPath $partial).Length
     } else {
       [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-      $partial = $target + '.part'
-      [IO.File]::Delete($partial)
       $clock = [Diagnostics.Stopwatch]::StartNew()
       $limitMs = 30 * 60 * 1000
       $maxAttempts = 5
@@ -571,15 +570,14 @@ function Get-Prereq($item, [string]$dest, [scriptblock]$waitBeforeRetry = { para
         $code = if ($download.state -eq 'refused') { 'PREREQ_DOWNLOAD_REFUSED' } else { 'PREREQ_DOWNLOAD_RETRY_EXHAUSTED' }
         Stop-Bootstrap 'prereq' $code ([ordered]@{ name = $item['fileName']; attempts = $attempts; reason = $download.reason })
       }
-      $candidate = $partial
       $len = if ($download.state -eq 'length') { $download.bytes } else { (Get-Item -LiteralPath $partial).Length }
     }
-    if ($len -ne [long]$item['bytes'] -or (Sha256File $candidate) -cne $item['sha256']) {
+    if ($len -ne [long]$item['bytes'] -or (Sha256File $partial) -cne $item['sha256']) {
       Stop-Bootstrap 'prereq' 'PREREQ_HASH_MISMATCH' ([ordered]@{ name = $item['fileName']; bytes = $len })
     }
-    if ($partial) { [IO.File]::Move($partial, $target) }
+    [IO.File]::Move($partial, $target)
   } finally {
-    if ($partial) { [IO.File]::Delete($partial) }
+    [IO.File]::Delete($partial)
   }
   $target
 }

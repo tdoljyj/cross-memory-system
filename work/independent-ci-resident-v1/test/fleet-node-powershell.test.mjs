@@ -180,7 +180,7 @@ function psLines(command) {
 // Dot-source the real prerequisite step without entering install, and substitute a loopback download server.
 const prereqBody = 'pinned prerequisite bytes';
 const prereqHash = createHash('sha256').update(prereqBody).digest('hex');
-async function downloadPrereq(serve, { sha256 = prereqHash, bytes = prereqBody.length } = {}) {
+async function downloadPrereq(serve, { sha256 = prereqHash, bytes = prereqBody.length, local = false } = {}) {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'bootstrap-prereq-'));
   const dest = path.join(work, 'dest');
   const waitLog = path.join(work, 'retry-waits.txt');
@@ -191,6 +191,7 @@ async function downloadPrereq(serve, { sha256 = prereqHash, bytes = prereqBody.l
   });
   try {
     fs.mkdirSync(dest);
+    if (local) fs.writeFileSync(path.join(work, 'fixture.zip'), prereqBody);
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const boot = path.join(RES, 'rollout', 'fleet', 'bootstrap.ps1');
@@ -245,6 +246,23 @@ test('bootstrap prerequisite resumes after two interrupted responses and verifie
   assert.deepEqual(r.files, ['fixture.zip']);
 });
 
+test('bootstrap prerequisite resumes after a short close-delimited response without Content-Length', { skip }, async () => {
+  const r = await downloadPrereq((attempt, _range, res) => {
+    if (attempt === 1) {
+      res.useChunkedEncodingByDefault = false;
+      res.writeHead(200, { Connection: 'close' });
+      res.end(prereqBody.slice(0, 4));
+    } else {
+      sendPrereq(res, 4);
+    }
+  });
+  assert.equal(r.status, 0, r.out);
+  assert.deepEqual(r.ranges, [null, 'bytes=4-'], r.out);
+  assert.deepEqual(r.waits, [1000], r.out);
+  assert.deepEqual(JSON.parse(r.stdout), { sha256: prereqHash, bytes: prereqBody.length }, r.out);
+  assert.deepEqual(r.files, ['fixture.zip']);
+});
+
 test('bootstrap prerequisite reports exhausted retries with the file name and attempt count', { skip }, async () => {
   const r = await downloadPrereq((_attempt, _range, res) => res.writeHead(503).end());
   assert.equal(r.status, 1, r.out);
@@ -291,6 +309,24 @@ test('bootstrap prerequisite publishes a download only if both pins match', { sk
     assert.deepEqual(r.ranges, [null]);
     assert.deepEqual(r.files, []);
   }
+});
+
+test('bootstrap prerequisite publishes a local copy only if both pins match', { skip }, async () => {
+  const serve = (_attempt, _range, res) => res.writeHead(500).end();
+  const valid = await downloadPrereq(serve, { local: true });
+  assert.equal(valid.status, 0, valid.out);
+  assert.deepEqual(valid.ranges, []);
+  assert.deepEqual(JSON.parse(valid.stdout), { sha256: prereqHash, bytes: prereqBody.length }, valid.out);
+  assert.deepEqual(valid.files, ['fixture.zip']);
+
+  const invalid = await downloadPrereq(serve, { local: true, bytes: prereqBody.length + 1 });
+  assert.equal(invalid.status, 1, invalid.out);
+  assert.equal(invalid.stderr, '', invalid.out);
+  const verdict = JSON.parse(invalid.stdout.trim().split(/\r?\n/).at(-1));
+  assert.deepEqual([verdict.status, verdict.code, verdict.detail.name, verdict.detail.bytes],
+    ['BOOTSTRAP_REFUSED', 'PREREQ_HASH_MISMATCH', 'fixture.zip', prereqBody.length]);
+  assert.deepEqual(invalid.ranges, []);
+  assert.deepEqual(invalid.files, []);
 });
 
 test('bootstrap.ps1 and the launcher print their step lines in the host preparation\'s shape', { skip, timeout: 900_000 }, () => {
