@@ -134,7 +134,7 @@ test('yielding: waits while the resident runs, says why, keeps the run alive, go
   c = clock();
   assert.equal(yieldToResident('x', { ...c, busy: () => 'PR #1', log: () => {}, timeoutMs: 45_000 }), 45_000);
   lines = [];
-  assert.equal(yieldToResident('x', { busy: () => 'PR #1', log: (l) => lines.push(l), wait: () => assert.fail('no wait'), timeoutMs: 0 }), 0);
+  assert.equal(yieldToResident('x', { ...clock(), busy: () => 'PR #1', log: (l) => lines.push(l), wait: () => assert.fail('no wait'), timeoutMs: 0 }), 0);
   assert.equal(lines.length, 1);
 });
 

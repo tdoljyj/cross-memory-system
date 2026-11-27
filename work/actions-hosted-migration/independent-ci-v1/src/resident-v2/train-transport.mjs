@@ -27,7 +27,7 @@ export function validTrainInstall(record) {
 async function signTrainCommand(text) {
   const script = fileURLToPath(new URL('./sign-train-command.ps1', import.meta.url));
   const { stdout } = await promisify(execFile)('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-File', script, '-CommandBase64', Buffer.from(text).toString('base64')],
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-CommandBase64', Buffer.from(text).toString('base64')],
     { windowsHide: true, timeout: 5000, maxBuffer: 1024 });
   return stdout.trim();
 }
