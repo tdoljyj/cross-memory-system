@@ -31,6 +31,7 @@ import { TRANSIENT_CODES } from '../../../work/independent-ci-resident-v1/src/cl
 
 const repo = DEFAULT_REPO;
 const sealMigration = '20261127120000_fleet_delivery_seal_v1.sql';
+const sourceRuleMigration = '20261127210000_fleet_sealed_source_rule_v1.sql';
 const migrations = new URL('../supabase/migrations/', import.meta.url);
 const owner = id(1), project = id(2), primary = id(3), standby = id(4), retired = id(5);
 const otherProject = id(7), revoked = id(8);
@@ -38,7 +39,7 @@ const scope = `project:${project}`;
 const installedSource = sha('installed fleet Source');
 const dbValue = async (client, sql, params) => (await client.query(sql, params)).rows[0].v;
 
-async function reinstallThroughMaintenanceRpc(t, db, { node, tokenHash, grant }) {
+async function reinstallThroughMaintenanceRpc(t, db, { node, tokenHash, grant, phase }) {
   const self = await dbValue(db.anon, 'select public.clued_ci_connection_self_v1($1,$2) v', [tokenHash, { scope: 'global' }]);
   assert.equal(self.node.node_id, node);
   const work = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-installer-rpc-'));
@@ -51,7 +52,8 @@ async function reinstallThroughMaintenanceRpc(t, db, { node, tokenHash, grant })
     . ${quote(path.join(ps, 'bootstrap.ps1'))}
     . ${quote(path.join(ps, 'package-lifecycle.ps1'))}
     $ctx = @{ repository='fixture/repo'; machine='FIXTURE'; operatorSid='S-1-5-21-1-2-3-1001'; action='Install';
-      archiveSha256='a'*64; acceptanceSha256='b'*64; sourceSha256='c'*64; ownerUac=$true; zeroNodeConsent=$true;
+      archiveSha256='a'*64; acceptanceSha256='b'*64; sourceSha256='c'*64;
+      ownerUac=$${phase?.uac === false ? 'false' : 'true'}; zeroNodeConsent=$${phase?.consent === false ? 'false' : 'true'};
       grantId=${quote(grant)}; nodeConnection=@{scope='global';nodeId=${quote(node)};bindingId=${quote(self.binding_id)};generation=${self.node.binding_generation}} }
     $rpc = (Get-Command Invoke-FleetMaintenance -CommandType Function).ScriptBlock
     $send = {
@@ -67,8 +69,14 @@ async function reinstallThroughMaintenanceRpc(t, db, { node, tokenHash, grant })
     }
     $preview = Invoke-FleetMaintenance 'preview' $ctx
     Assert-FleetPreview $preview $ctx
-    if ($preview.healthyPeers -ne 0) { throw 'FLEET_TEST_EXPECTED_SOLE_NODE' }
+    if ($preview.healthyPeers -ne ${phase?.peers ?? 0}) { throw 'FLEET_TEST_HEALTHY_PEER_COUNT' }
     $ctx.previewReceipt = $preview.previewReceipt
+    ${phase ? `
+    $ctx.operationId = ${quote(phase.operation)}
+    $gate = Invoke-FleetMaintenance 'before-remove' $ctx
+    [Console]::WriteLine((@{fixtureResult=$gate} | ConvertTo-Json -Compress))
+    exit
+    ` : ''}
     $observed = @{}
     $look = { param($step,$v)
       if ($step -ceq 'return' -and $v.maintenance['restored']) { return 'complete' }
@@ -98,6 +106,13 @@ async function reinstallThroughMaintenanceRpc(t, db, { node, tokenHash, grant })
   try {
     for await (const line of createInterface({ input: child.stdout })) {
       const input = JSON.parse(line);
+      if (phase) {
+        if (input.fixtureResult) { finished = input.fixtureResult; break; }
+        if (input.command === 'delist') assert.equal(input.sole_node_agreed, phase.peers === 0 ? true : undefined);
+        const reply = await phase.rpc(input);
+        child.stdin.write(JSON.stringify(reply) + '\n');
+        continue;
+      }
       if (input.status === 'FLEET_LIFECYCLE_COMPLETE') { finished = input; break; }
       if (input.effect) {
         assert.equal(ready, true, '清理与安装前必须真实读回 install_ready');
@@ -131,6 +146,10 @@ async function reinstallThroughMaintenanceRpc(t, db, { node, tokenHash, grant })
     child.stdin.end();
     const [code] = await closed;
     assert.equal(code, 0, error);
+    if (phase) {
+      assert.ok(finished, '安装器未给出本次维护准入结果');
+      return finished;
+    }
     assert.equal(finished?.status, 'FLEET_LIFECYCLE_COMPLETE');
     assert.equal(sawWait, true);
     assert.equal(verifyStarted, true);
@@ -267,6 +286,11 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
         migrationsSha256, acceptanceSha256, checkedAt: sqlNow, workflowCommit: 'a'.repeat(40), runId: '1234', ...overrides },
     });
     const targetOf = node => dbValue(admin, 'select clued_private.fleet_node_target_v1($1,$2) v', [owner, node]);
+    const assertCandidateNotTargeted = async () => {
+      const target = await targetOf(primary);
+      if (previous) assert.equal(target.acceptance_sha256, previous.acceptanceSha256);
+      else assert.deepEqual(target, { status: 'pending_seal' });
+    };
     const dbErrors = [];
     let afterProject, loseSealResponse = false, openError;
     const database = async (release, op, input) => {
@@ -285,7 +309,7 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
       assert.deepEqual(input.delivery.candidate, subject);
       if (op === 'confirm') {
         assert.equal(sha(w.asset(acceptanceName)), details.acceptanceSha256);
-        assert.deepEqual(await targetOf(primary), { status: 'pending_seal' }, '仅上传接受文件不能发布节点目标');
+        await assertCandidateNotTargeted();
       }
       const result = await qualifyDelivery(input, (op, arg) => database(release, op, arg), sqlClock,
         { interfaceEvidence: op === 'confirm' ? evidenceFor(input.delivery) : undefined });
@@ -359,6 +383,7 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
       assert.equal(snapshot.interfaces.deliveryRecipients, true);
       assert.equal(snapshot.interfaces.previousInterfaceGate, true);
       assert.equal(snapshot.interfaces.deliveryPeerRecipients, true);
+      assert.equal(snapshot.interfaces.sealedSourceRule, true);
       assert.deepEqual(missingMigrations(plan, snapshot), []);
     });
     await t.test('发布端拒绝被替换的请求、tar、kit 和 Source', async () => {
@@ -488,7 +513,9 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
       delivery: { operation: 'open', candidate: prior } }, directDatabase, sqlClock);
     await approve(priorRequest.request_id);
     previous = { ...prior, acceptanceSha256: sha('prior seal') };
-    await admin.query("update clued_private.fleet_accepted_v1 set sealed_at=now(),acceptance_sha256=$1 where version='g000025'", [previous.acceptanceSha256]);
+    await admin.query(`update clued_private.fleet_accepted_v1
+      set sealed_at=now(),acceptance_sha256=$1,source_commit=$2,source_sha256=$3 where version='g000025'`,
+    [previous.acceptanceSha256, prior.commit, prior.sourceSha256]);
     await t.test('数据库拒绝候选、迁移或最新上一封存包不符的证据', async () => {
       const otherCandidate = evidenceFor({ ...input.delivery, candidate: { ...input.delivery.candidate, commit: 'c'.repeat(40) } });
       const correct = evidenceFor(input.delivery);
@@ -497,7 +524,7 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
         [{ ...correct, migrationsSha256: sha('other migrations') }, /evidence_mismatch/],
         [otherPredecessor, /predecessor_changed/]]) {
         await assert.rejects(qualifyDelivery(input, directDatabase, sqlClock, { interfaceEvidence: evidence }), error);
-        assert.deepEqual(await targetOf(primary), { status: 'pending_seal' });
+        await assertCandidateNotTargeted();
       }
     });
 
@@ -564,9 +591,16 @@ function testDelivery(node, source, generation, at) {
     upgraderSha256: null, linuxToolSha256: null, supervisorSourceSha256: null, sourceRefsSha256: null };
 }
 
+async function fixtureInterfaceEvidence(admin, { candidate, acceptanceSha256 }, previous) {
+  const migrationsSha256 = sha('fixture migration tree');
+  return { migrationsSha256, previousInterfaceEvidence: { contract: 'clued.fleet-previous-interface.v1', status: 'PASS',
+    candidate, previous, acceptanceSha256, migrationsSha256, workflowCommit: 'a'.repeat(40), runId: '1234',
+    checkedAt: (await dbValue(admin, 'select clock_timestamp() v')).getTime() } };
+}
+
 async function seedSealedPackage({ admin, human }, generation, sourceSha256, identity = {}, confirm) {
   const version = 'g' + String(generation).padStart(6, '0');
-  const candidate = { version, repository: repo, scope: 'global', commit: 'a'.repeat(40),
+  const candidate = { version, repository: repo, scope: 'global', commit: sha('commit ' + version).slice(0, 40),
     sourceSha256, archiveSha256: sha(version), requestSha256: sha('request' + version), kitSha256: sha('kit'), ...identity };
   const resource = ['fleet-node:' + repo, version, candidate.archiveSha256, candidate.requestSha256].join('/');
   const registry = () => dbValue(admin, 'select clued_private.fleet_delivery_registry_v1($1) v', [candidate]);
@@ -581,7 +615,18 @@ async function seedSealedPackage({ admin, human }, generation, sourceSha256, ide
       acceptedAt: new Date(Math.floor(Date.parse(record.accepted_at) / 1000) * 1000).toISOString(),
       snapshotToken: (await registry()).snapshotToken };
   const sealInput = fields => dbValue(admin, 'select clued_private.fleet_delivery_seal_v1($1) v', [fields]);
-  return confirm ? confirm(input, registry, sealInput) : sealInput(input);
+  if (confirm) return confirm(input, registry, sealInput);
+  if (!await dbValue(admin,`select to_regprocedure(
+    'clued_private.fleet_require_previous_interface_v1(jsonb,clued_private.fleet_accepted_v1)') is not null v`)) return sealInput(input);
+  const previous = await dbValue(admin, `select (select jsonb_build_object('repository',repository,'version',version,
+    'commit',source_commit,'archiveSha256',archive_sha256,'requestSha256',request_sha256,'acceptanceSha256',acceptance_sha256)
+    from clued_private.fleet_accepted_v1 where repository=$1 and sealed_at is not null order by version desc limit 1) v`, [repo]);
+  if (previous) return sealInput({ ...input, ...await fixtureInterfaceEvidence(admin, input, previous) });
+  // The first seal is historical. It predates the requirement to replay a predecessor.
+  const sealedAt = await dbValue(admin, `update clued_private.fleet_accepted_v1 set sealed_at=clock_timestamp(),
+    acceptance_sha256=$2,source_sha256=$3,source_commit=$4 where grant_id=$1 returning sealed_at v`,
+  [input.grantId, input.acceptanceSha256, sourceSha256, candidate.commit]);
+  return { status: 'sealed', grantId: input.grantId, receiptId: input.receiptId, acceptanceSha256: input.acceptanceSha256, sealedAt };
 }
 
 test('封存前同源兜底，封存后正常交班只给当前包，旧包能故障接班', async t => {
@@ -942,7 +987,7 @@ test('共享列车签名开批和落地由真实当班授权，检查完成后�
   await d.authorize(subject);
   await d.enableV2();
   await installReleaseDoor(d.db);
-  await seedSealedPackage(d.db,25,sha('reserve package'),{commit:d.sha('source')});
+  await seedSealedPackage(d.db,25,sha('reserve package'));
   const pack = await seedSealedPackage(d.db,26,d.source,{commit:d.sha('source')});
   await admin.query(`update clued_private.ci_node_liveness_v1 set reported_source_sha256=case when node_id=$1 then $2 else $3 end
     where user_id=$4`,[holder.id,d.source,sha('reserve package'),user]);
@@ -977,7 +1022,10 @@ test('历史封存迁移与第 26 代列车', async t => {
   const oldRequest = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-acceptance-request/1',
     repository: repo, version, archive_sha256: sha(version), ciSourceManifestSha256: d.source, commit: d.sha('source') }));
   const old = await seedSealedPackage(d.db, 26, d.source, { commit: d.sha('source'), requestSha256: sha(oldRequest) });
-  await admin.query(await fs.readFile(new URL('20261127210000_fleet_sealed_source_rule_v1.sql', migrations), 'utf8'));
+  for (const name of ['20261127120200_fleet_delivery_recipients_v1.sql', '20261127120210_fleet_delivery_peer_recipients_v1.sql',
+    '20261127123000_fleet_previous_interface_gate_v1.sql', sourceRuleMigration]) {
+    await admin.query(await fs.readFile(new URL(name, migrations), 'utf8'));
+  }
   assert.equal(await dbValue(admin,'select source_sha256 v from clued_private.fleet_accepted_v1 where grant_id=$1',[old.grantId]), null);
   await admin.query(`update clued_private.ci_node_liveness_v1 set reported_source_sha256=$1,
     reported_mode=case when node_id=$2 then 'ACTIVE' else 'STANDBY' end where user_id=$3`, [d.source, holder.id, user]);
@@ -991,8 +1039,11 @@ test('历史封存迁移与第 26 代列车', async t => {
   });
   await t.test('1b 同一次正式封存为上一包补证，第 26 代继续落地', async () => {
     let reads = 0, confirms = 0;
-    await seedSealedPackage(d.db, 27, sha('g27'), {}, (input, registry, sealInput) =>
-      qualifyDelivery({ delivery: { ...input, operation: 'confirm', requirements: { standardReinstall: true } } },
+    await seedSealedPackage(d.db, 27, sha('g27'), {}, async (input, registry, sealInput) => {
+      const previous = { repository: repo, version, commit: d.sha('source'), archiveSha256: sha(version),
+        requestSha256: sha(oldRequest), acceptanceSha256: old.acceptanceSha256 };
+      const interfaceEvidence = await fixtureInterfaceEvidence(admin, input, previous);
+      return qualifyDelivery({ delivery: { ...input, operation: 'confirm' } },
         async (op, fields) => {
           if (op === 'project') return registry();
           assert.equal(op, 'confirm');
@@ -1000,11 +1051,12 @@ test('历史封存迁移与第 26 代列车', async t => {
           await assert.rejects(sealInput({ ...fields, previousRequest: Buffer.from('{}').toString('base64') }), /fleet_previous_seal/);
           assert.equal(await dbValue(admin,'select sealed_at v from clued_private.fleet_accepted_v1 where grant_id=$1',[input.grantId]), null);
           return sealInput(fields);
-        }, Date.now, { fetchImpl: async url => {
+        }, Date.now, { interfaceEvidence, fetchImpl: async url => {
           assert.equal(new URL(url).pathname, '/' + repo + '/releases/download/fleet-node-g000026/fleet-node-g000026.acceptance-request.json');
           reads++;
           return new Response(oldRequest);
-        } }));
+        } });
+    });
     assert.deepEqual([reads, confirms], [1, 1]);
     const status = await d.legacy(holder, { action: 'ci_nodes_status' });
     assert.equal(status.holder_package?.classification, 'previous');
@@ -1132,6 +1184,89 @@ test('舰队故障交班与安装恢复', async t => {
     await scenario('3 有健康同伴时当班必须先交班', async () => {
       await assert.rejects(request(primary, 'delist'), /fleet_maintenance_handover_first/);
     });
+    // 两台以各自 Binding 调用真实维护 RPC。Windows 用安装器实际门控代码和模拟 UAC 会话。
+    const reinstallTogether = async () => {
+      await beat(primary, 'ACTIVE');
+      await beat(standby, 'STANDBY');
+      const standbyClient = await db.connect('anon');
+      const nodeRpc = (node, payload) => dbValue(node === primary ? db.anon : standbyClient, 'select public.clued_work_verify_v1($1,$2) v',
+        [sha(node === primary ? 'fixture-primary' : 'fixture-standby'), { scope: 'global', ...payload }]);
+      const operationFor = node => node === primary ? id(741) : id(742);
+      const maintain = (node, command, fields) => nodeRpc(node, { action: 'fleet_maintenance', command, node_id: node,
+        binding_generation: 1, grant_id: pkg.grantId, operation_id: operationFor(node), ...fields });
+      const installerGate = (node, peers, uac, consent, afterDelist) => reinstallThroughMaintenanceRpc(t, db, {
+        node, tokenHash: sha(node === primary ? 'fixture-primary' : 'fixture-standby'), grant: pkg.grantId,
+        phase: { operation: operationFor(node), peers, uac, consent, rpc: async request => {
+          const reply = await nodeRpc(node, request);
+          if (request.command === 'delist') await afterDelist?.(reply);
+          return reply;
+        } },
+      });
+      const landing = { action: 'fleet_landing', repository: repo, effect_key: sha('DESK finishes its issued landing'),
+        grant_id: pkg.grantId, source: installedSource, base_sha: 'a'.repeat(40), test_sha: 'b'.repeat(40) };
+      assert.equal((await nodeRpc(primary, { ...landing, command: 'begin', main_sha: landing.base_sha })).authorized, true);
+      const previews = await Promise.all([primary, standby].map(node => maintain(node, 'status')));
+      assert.deepEqual(previews.map(result => result.has_other_healthy), [true, true]);
+      if (process.platform === 'win32') {
+        assert.equal((await installerGate(standby, 1, true, false)).drained, true);
+      } else {
+        assert.equal((await maintain(standby, 'delist', { method: 'reinstall' })).install_ready, true);
+      }
+      assert.equal((await maintain(primary, 'status')).has_other_healthy, false);
+      await assert.rejects(maintain(primary, 'delist', { method: 'reinstall' }), /fleet_maintenance_last_node/);
+      const finishDrain = async second => {
+        assert.equal(second.install_ready, false);
+        assert.equal(await holder(), id(11), '已发出的工作尚未收口时保留旧当班身份');
+        await assert.rejects(nodeRpc(primary, { ...landing, effect_key: sha('no new work'), command: 'begin', main_sha: landing.base_sha }),
+          /fleet_landing_holder_changed/);
+        assert.equal((await nodeRpc(primary, { ...landing, command: 'settle', main_sha: landing.test_sha })).settled, true);
+        await assert.rejects(sql('select clued_private.ci_admission_target_require_v1($1,$2) v', [owner, id(12)]), /in_maintenance/);
+      };
+      if (process.platform === 'win32') {
+        assert.equal((await installerGate(primary, 0, false, true)).code, 'FLEET_MAINTENANCE_UAC_REQUIRED');
+        assert.equal((await installerGate(primary, 0, true, false)).code, 'FLEET_MAINTENANCE_NEEDS_SOLE_NODE_CONSENT');
+        assert.equal((await installerGate(primary, 0, true, true, finishDrain)).drained, true);
+      } else {
+        await finishDrain(await maintain(primary, 'delist', { method: 'reinstall', sole_node_agreed: true }));
+      }
+      assert.equal((await maintain(primary, 'status')).install_ready, true);
+      const receipts = kind => admin.query(`select id,object_id,metadata from public.clued_audit_receipts
+        where user_id=$1 and operation=$2`, [owner, kind]).then(result => result.rows);
+      const pause = await receipts('fleet_reinstall_train_paused');
+      assert.equal(pause.length, 1);
+      assert.equal(pause[0].object_id, primary);
+      assert.equal(pause[0].metadata.reason, 'no_healthy_handover_target');
+      const remaining = Date.parse(pause[0].metadata.deadline) - Date.parse(await now());
+      assert.ok(remaining > 0 && remaining <= 2 * 60 * 60_000);
+      assert.equal(await holder(), null);
+
+      for (const [node, label] of [[standby, 'TURING'], [primary, 'DESK']]) {
+        await maintain(node, 'verify_started');
+        await admin.query("update clued_private.fleet_maintenance_v1 set verify_started_at=clock_timestamp()-interval '1 second' where node_id=$1", [node]);
+        await beat(node, 'STANDBY', [], label + ' new install');
+        await upkeep();
+        assert.equal((await maintain(node, 'status')).state, 'returned');
+        if (node === standby) {
+          assert.equal(await holder(), null, '只一台装好仍在双节点维护窗口');
+          assert.deepEqual(await receipts('fleet_reinstall_train_resumed'), []);
+          await admin.query("update clued_private.fleet_maintenance_v1 set reinstall_pause_until=clock_timestamp()-interval '1 second' where node_id=$1", [primary]);
+          await upkeep();
+          await upkeep();
+          assert.equal(await dbValue(admin,`select count(*)::int v from public.clued_audit_receipts
+            where user_id=$1 and metadata->>'receipt_kind'='FLEET_REINSTALL_WINDOW_EXPIRED'`, [owner]), 1);
+          assert.equal(await holder(), null, '逾期仍等验证，不能自动放行');
+        }
+      }
+      await upkeep();
+      const resumed = await receipts('fleet_reinstall_train_resumed');
+      assert.equal(resumed.length, 1);
+      assert.equal(resumed[0].metadata.pause_receipt_id, pause[0].id);
+      const roles = await admin.query(`select binding_id from clued_private.binding_roles_v1
+        where user_id=$1 and role='ci-admission' and revoked_at is null`, [owner]);
+      assert.equal(roles.rows.length, 1, '恢复后只有一个待生效的当班角色');
+      await admin.query("update clued_private.binding_roles_v1 set effective_at=clock_timestamp() where user_id=$1 and role='ci-admission' and revoked_at is null", [owner]);
+      assert.equal(await holder(), roles.rows[0].binding_id);
+    };
     await scenario('5 已开始验证的操作重试摘牌必须重新排空', async () => {
       const first = await request(standby, 'delist');
       assert.equal(first.install_ready, true);
@@ -1168,5 +1303,6 @@ test('舰队故障交班与安装恢复', async t => {
       await admin.query("update clued_private.binding_roles_v1 set effective_at=clock_timestamp() where user_id=$1 and role='ci-admission' and revoked_at is null", [owner]);
       assert.equal(await holder(), id(11));
     });
+    await t.test('DESK 与 TURING 同时重装，排空后有界暂停，两台备班挂牌后自动恢复当班', reinstallTogether);
   } finally { await db.close(); }
 });

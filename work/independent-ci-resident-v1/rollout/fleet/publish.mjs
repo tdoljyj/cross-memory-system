@@ -102,7 +102,7 @@ import os from 'node:os';
 import { acceptResourceOf, OPEN_RUN_ID, openRequest, openRunFailed, readAnswer, statusReader } from './accept-door.mjs';
 import { deliveryBound, deliverySubject, fleetDeliveryPreflight } from './delivery-preflight.mjs';
 import { deliveryProjectionReaders, verifyDeliveryTree } from './delivery-reader.mjs';
-import { deliveryWorkflowClient, deliveryWorkflowRun } from './delivery-workflow.mjs';
+import { deliveryWorkflowClient } from './delivery-workflow.mjs';
 import { RESIDENT } from './facts.mjs';
 import { DEFAULT_ROOT, readArchive, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
 import { previousInterfaceCheck, PREVIOUS_INTERFACE_TIMEOUT_MS } from './previous-interface-check.mjs';
@@ -791,7 +791,9 @@ async function beginDispatch(file, clock) {
     return { at, fresh: true };
   } catch (error) {
     if (error.code !== 'EEXIST') throw error;
-    const marker = JSON.parse(await fs.readFile(file, 'utf8'));
+    let marker;
+    try { marker = JSON.parse(await fs.readFile(file, 'utf8')); }
+    catch { fail('FLEET_DISPATCH_STATE_UNREADABLE', file); }
     const prior = typeof marker === 'number' ? marker : marker?.at;
     check(Number.isSafeInteger(prior) && prior > 0 && prior <= at, 'FLEET_DISPATCH_STATE_UNREADABLE');
     const runId = marker?.runId;
@@ -1543,13 +1545,14 @@ export async function seal(options) {
             'FLEET_DELIVERY_SEAL_NOT_CONFIRMED', details);
           return;
         } catch (error) {
-          terminalFailure = error.workflowCompleted === true;
+          terminalFailure = runId === undefined && error.workflowCompleted === true;
           reason = error?.code ?? error?.message;
         }
-      } else if (runId !== undefined) {
+      }
+      if (runId !== undefined) {
         try {
-          const state = deliveryWorkflowRun(boundedGh(confirmEnd), repo, runId).status();
-          terminalFailure = state.status === 'completed' && Boolean(state.conclusion) && state.conclusion !== 'success';
+          const runCheckEnd = Math.min(sealEnd - 10_000, clock() + 10_000);
+          terminalFailure = openRunFailed({ runGh: boundedGh(runCheckEnd), repository: repo, runId });
         } catch (error) { reason = error?.code ?? error?.message; }
       }
       if (!stagedRelease) fail('FLEET_DELIVERY_SEAL_NOT_CONFIRMED', { ...details, reason });

@@ -337,6 +337,49 @@ test('已受理的开单运行终局失败且门为 none，才按准确运行编
   assert.ok(runReads.length > 0 && runReads.every(id => id === 801));
 });
 
+test('确认超时后只读回精确运行和封存，已知终局失败才允许再次派发', async t => {
+  const { w, run, approve, time, deps } = await publishWorld(t);
+  const opened = await run();
+  assert.equal(opened.status, 'FLEET_ACCEPTANCE_WAITING_OWNER');
+  approve();
+  const repository = fixtureKit().record.repository;
+  const runsRead = [];
+  let dispatches = 0, conclusion = null;
+  const ghCommand = args => {
+    if (args[0] !== 'api' || !args[1].includes('/actions/runs/')) return deps.ghCommand(args);
+    const id = args[1].split('/').at(-1);
+    runsRead.push(id);
+    return { status: 0, stdout: JSON.stringify({ id: Number(id), path: '.github/workflows/clued-cloud-production-release.yml',
+      repository: { full_name: repository }, head_repository: { full_name: repository }, head_branch: 'main',
+      event: 'workflow_dispatch', run_attempt: 1, status: conclusion ? 'completed' : 'in_progress', conclusion }) };
+  };
+  const fleetWorkflow = async (operation, candidate, details, options) => {
+    if (operation !== 'confirm') return deps.fleetWorkflow(operation, candidate, details);
+    dispatches++;
+    await options.onDispatch(String(901 + dispatches - 1));
+    if (dispatches === 1) {
+      await time.sleep(publishModule.CONFIRM_WAIT_MS);
+      throw new Error('确认等待超时');
+    }
+    await time.sleep(34 * 60_000);
+    return deps.fleetWorkflow(operation, candidate, details);
+  };
+  const options = { ghCommand, fleetWorkflow };
+  const unresolved = { code: 'FLEET_DELIVERY_SEAL_NOT_CONFIRMED' };
+  await assert.rejects(run(options), error => error.code === unresolved.code && error.detail.runId === '901');
+  await assert.rejects(run(options), unresolved);
+  assert.equal(dispatches, 1);
+  assert.ok(!(await fs.readFile(w.index, 'utf8')).includes(GRANT));
+  conclusion = 'failure';
+  await assert.rejects(run(options), unresolved);
+  assert.equal(dispatches, 1);
+  assert.deepEqual(runsRead, ['901', '901', '901']);
+  const sealed = await run(options);
+  assert.equal(dispatches, 2);
+  assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
+  assert.equal(sealed.acceptanceSha256, w.door.sealedDigest);
+});
+
 test('展示确认链接后的镜像、节点入口漂移在发布端和受信确认入口均阻止封存', async t => {
   for (const boundary of ['publisher', 'confirm']) await t.test(boundary, async t => {
     const { w, time, run, approve, confirms, links, deps } = await publishWorld(t);

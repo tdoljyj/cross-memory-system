@@ -42,7 +42,7 @@ function openPacket(log, privateKey, requestSha256) {
   return JSON.parse(Buffer.concat([cipher.update(bytes.subarray(28)), cipher.final()]).toString('utf8'));
 }
 
-export function deliveryWorkflowRun(runGh, repository, runId, candidateCommit) {
+function deliveryWorkflowRun(runGh, repository, runId, candidateCommit) {
   if (!/^[1-9][0-9]*$/.test(runId)) throw new Error('FLEET_DELIVERY_WORKFLOW_RUN_UNKNOWN');
   const run = ['run', 'view', runId, '--repo', repository, '--attempt', '1'];
   const read = args => {

@@ -1028,7 +1028,7 @@ test('舰队迁移在数据库凭据前核同 SHA，备份失败和准入失败�
   assert.ok(admitted.ran.indexOf(admission) < admitted.steps.findIndex(databaseCredential));
   for (const name of [admission, recheck]) {
     const step = admitted.steps.find(step => step.name === name);
-    assert.match(step.text, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
+    assert.match(step.text, /GH_TOKEN: \$\{\{ github\.token \}\}/);
     assert.ok(!databaseCredential(step));
   }
   assert.deepEqual(admitted.ran.filter(name => [admission, verify, backup, requireBackup, recheck, apply, readback].includes(name)),

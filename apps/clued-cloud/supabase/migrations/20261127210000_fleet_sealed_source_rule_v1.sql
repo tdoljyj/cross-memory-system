@@ -26,6 +26,11 @@ create table clued_private.fleet_maintenance_v1 (
   receipt_id uuid references public.clued_audit_receipts,
   alerted_at timestamptz,
   verify_alerted_at timestamptz,
+  reinstall_peers jsonb,
+  reinstall_pause_until timestamptz,
+  reinstall_pause_receipt_id uuid references public.clued_audit_receipts,
+  reinstall_resume_receipt_id uuid references public.clued_audit_receipts,
+  reinstall_pause_alerted_at timestamptz,
   owner_repair_required boolean not null default false
 );
 alter table clued_private.fleet_maintenance_v1 enable row level security;
@@ -347,12 +352,33 @@ language sql stable set search_path='' as $$
           and d.at>statement_timestamp()-make_interval(secs=>clued_private.ci_failover_quiet_seconds_v1())))
 $$;
 
+-- The last holder stops taking new work as soon as it delists. Keep its signed
+-- in-flight work reconcilable until the existing drain and quiet checks pass.
+create function clued_private.fleet_reinstall_pause_v1(u uuid,node uuid,target uuid) returns void
+language plpgsql volatile set search_path='' as $$
+declare m clued_private.fleet_maintenance_v1; n clued_private.ci_nodes_v1; r uuid;
+begin
+  select * into m from clued_private.fleet_maintenance_v1 x where x.user_id=u and x.node_id=node
+    and x.grant_id=target and x.reinstall_peers is not null and x.reinstall_pause_receipt_id is null;
+  if not found or not clued_private.fleet_install_ready_v1(u,node,target) then return; end if;
+  select * into strict n from clued_private.ci_nodes_v1 where node_id=node and user_id=u;
+  r:=clued_private.ci_receipt_v1(u,n.project_id,'fleet_reinstall_train_paused',node::text,
+    jsonb_build_object('operation_id',m.operation_id,'grant_id',target,'reason','no_healthy_handover_target',
+      'deadline',m.reinstall_pause_until,'recovery','verify_reinstalled_nodes_as_standby_then_restore_duty','peers',m.reinstall_peers));
+  perform clued_private.ci_train_release_v1(u,n.project_id,node,l.generation)
+    from clued_private.ci_train_lease_v1 l where l.user_id=u and l.project_id=n.project_id
+    and l.holder_node_id=node and l.state in ('active','sweep_required');
+  update clued_private.binding_roles_v1 set revoked_at=clock_timestamp(),revoked_receipt_id=r
+    where user_id=u and binding_id=n.binding_id and role='ci-admission' and purpose in ('resident-node','unspecified') and revoked_at is null;
+  update clued_private.fleet_maintenance_v1 set reinstall_pause_receipt_id=r where node_id=node;
+end $$;
+
 -- status、delist、verify_started 都绑定登记代次；install_ready 才允许停写本机。
 create function clued_private.fleet_maintenance_request_v1(u uuid,caller uuid,input jsonb)
 returns jsonb language plpgsql volatile set search_path='' as $$
 declare n clued_private.ci_nodes_v1; m clued_private.fleet_maintenance_v1; op uuid; target uuid;
   action text:=input->>'action'; method text:=input->>'method'; others boolean; info jsonb; r uuid;
-  repeat_drain boolean; ready boolean;
+  repeat_drain boolean; ready boolean; peers jsonb;
 begin
   if jsonb_typeof(input) is distinct from 'object'
     or input-array['action','scope','node_id','binding_generation','grant_id','operation_id','method','sole_node_agreed']<>'{}'::jsonb then
@@ -438,6 +464,14 @@ begin
             and e.evidence->>'upgraderSha256' is not null and e.evidence->>'linuxToolSha256' is not null
             and e.evidence @> '{"acl":true,"operations":true,"connectionCarry":true,"processClearance":true}') then
           raise exception 'fleet_in_place_capability_unverified' using errcode='55000'; end if;
+        if not others and method='reinstall' and exists(select 1 from clued_private.ci_duty_holder_v1(u,n.project_id) h
+          where h.binding_id=n.binding_id) then
+          select jsonb_agg(jsonb_build_object('node_id',x.node_id,'operation_id',x.operation_id,
+            'binding_generation',x.binding_generation) order by x.node_id) into peers
+            from clued_private.fleet_maintenance_v1 x join clued_private.ci_nodes_v1 peer using(node_id,user_id,binding_generation)
+            where x.user_id=u and x.node_id<>n.node_id and x.grant_id=target and x.state='delisted'
+              and x.method='reinstall' and peer.revoked_at is null and peer.state not in ('revoked','retired');
+        end if;
         r:=clued_private.ci_receipt_v1(u,n.project_id,'fleet_delist',n.node_id::text,input-'sole_node_agreed');
         insert into clued_private.fleet_maintenance_v1(node_id,user_id,binding_generation,operation_id,grant_id,state,method,receipt_id,delist_receipt_id)
           values(n.node_id,u,n.binding_generation,op,target,'delisted',method,r,r)
@@ -445,13 +479,20 @@ begin
             state='delisted',method=excluded.method,started_at=clock_timestamp(),verify_started_at=null,successor=null,
             alerted_at=null,verify_alerted_at=null,receipt_id=r,delist_receipt_id=r,verify_receipt_id=null,restore_train_generation=null;
         update clued_private.fleet_maintenance_v1 set initial_receipt=(select evidence->>'installReceiptSha256'
-          from clued_private.fleet_node_delivery_evidence_v1 where node_id=n.node_id) where node_id=n.node_id;
-        perform clued_private.ci_train_release_v1(u,n.project_id,n.node_id,l.generation)
-          from clued_private.ci_train_lease_v1 l where l.user_id=u and l.project_id=n.project_id
-          and l.holder_node_id=n.node_id and l.state in ('active','sweep_required');
-        -- 当班摘牌后原授职结束，恢复时必须重新授职。已签发的准入仍须经过安静期。
-        update clued_private.binding_roles_v1 set revoked_at=clock_timestamp(),revoked_receipt_id=r
-          where user_id=u and binding_id=n.binding_id and role='ci-admission' and purpose in ('resident-node','unspecified') and revoked_at is null;
+          from clued_private.fleet_node_delivery_evidence_v1 where node_id=n.node_id),
+          reinstall_peers=case when repeat_drain then m.reinstall_peers else peers end,
+          reinstall_pause_until=case when repeat_drain then m.reinstall_pause_until
+            when peers is not null then clock_timestamp()+interval '2 hours' end,
+          reinstall_pause_receipt_id=case when repeat_drain then m.reinstall_pause_receipt_id end,
+          reinstall_resume_receipt_id=null,reinstall_pause_alerted_at=case when repeat_drain then m.reinstall_pause_alerted_at end
+          where node_id=n.node_id;
+        if peers is null and (not repeat_drain or m.reinstall_peers is null) then
+          perform clued_private.ci_train_release_v1(u,n.project_id,n.node_id,l.generation)
+            from clued_private.ci_train_lease_v1 l where l.user_id=u and l.project_id=n.project_id
+            and l.holder_node_id=n.node_id and l.state in ('active','sweep_required');
+          update clued_private.binding_roles_v1 set revoked_at=clock_timestamp(),revoked_receipt_id=r
+            where user_id=u and binding_id=n.binding_id and role='ci-admission' and purpose in ('resident-node','unspecified') and revoked_at is null;
+        end if;
       end if;
     else
       if m.operation_id is distinct from op or m.state not in ('delisted','returned') or m.grant_id<>target then raise exception 'fleet_maintenance_operation_conflict'; end if;
@@ -464,6 +505,7 @@ begin
     if action='delist' then r:=m.delist_receipt_id;
     elsif action='verify_started' then r:=m.verify_receipt_id; end if;
   end if;
+  perform clued_private.fleet_reinstall_pause_v1(u,n.node_id,target);
   ready:=clued_private.fleet_install_ready_v1(u,n.node_id,target);
   return jsonb_build_object('status','ok','node_id',n.node_id,'binding_generation',n.binding_generation,'has_other_healthy',others,
     'state',coalesce(m.state,'available'),'operation_id',m.operation_id,'receipt_id',coalesce(r,m.receipt_id),'grant_id',target,
@@ -510,7 +552,9 @@ $r$  if u is not null and p_binding is not null then
     if exists(select 1 from clued_private.fleet_seals_v1(u)) then
       perform pg_advisory_xact_lock_shared(hashtextextended('clued-binding-role:'||u||':ci-admission',0));
     end if;
-    if exists(select 1 from clued_private.fleet_maintenance_v1 m join clued_private.ci_nodes_v1 n using(node_id,user_id)
+    if exists(select 1 from clued_private.fleet_maintenance_v1 w where w.user_id=u
+      and w.reinstall_pause_receipt_id is not null and w.reinstall_resume_receipt_id is null)
+      or exists(select 1 from clued_private.fleet_maintenance_v1 m join clued_private.ci_nodes_v1 n using(node_id,user_id)
       where m.user_id=u and n.binding_id=p_binding and n.revoked_at is null and n.binding_generation=m.binding_generation
         and m.state<>'returned') then return false; end if;$r$);
 
@@ -614,16 +658,98 @@ create table clued_private.fleet_mixed_v1 (
 alter table clued_private.fleet_mixed_v1 enable row level security;
 revoke all on clued_private.fleet_mixed_v1 from public,anon,authenticated,service_role,clued_worker_gateway;
 
+create function clued_private.fleet_restore_resident_duty_v1(u uuid,node uuid,op uuid,g uuid,t timestamptz) returns uuid
+language plpgsql volatile set search_path='' as $$
+declare b public.clued_agent_bindings; pr uuid; r uuid; activation timestamptz;
+begin
+  select binding.* into b from public.clued_agent_bindings binding join clued_private.ci_nodes_v1 n
+    on n.user_id=binding.user_id and n.binding_id=binding.id
+    where n.node_id=node and n.user_id=u and n.state in ('active','pending','draining')
+      and n.revoked_at is null and clued_private.binding_live_v1(binding) and 'context:read'=any(binding.scopes)
+      and not exists(select 1 from clued_private.binding_roles_v1 x where x.user_id=u
+        and x.role='ci-admission' and x.revoked_at is null
+        and (x.binding_id=binding.id or x.purpose in ('resident-node','unspecified'))) for update of binding;
+  if not found then return null; end if;
+  select project_id into pr from clued_private.ci_nodes_v1 where node_id=node;
+  perform clued_private.binding_role_change_check_v1(b,'ci-admission',true,'"resident-node"');
+  activation:=clued_private.binding_role_start_v1('ci-admission','resident-node',t);
+  r:=clued_private.ci_receipt_v1(u,pr,'fleet_sole_duty_restored',node::text,jsonb_build_object('binding_id',b.id,'operation_id',op,
+    'grant_id',g,'effective_at',activation,'principal','server_watchdog'));
+  insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id,effective_at,purpose)
+    values(u,b.id,'ci-admission',t,r,activation,'resident-node');
+  return r;
+end $$;
+
+create function clued_private.fleet_reinstall_window_tick_v1(u uuid,g uuid,t timestamptz) returns void
+language plpgsql volatile set search_path='' as $$
+declare w clued_private.fleet_maintenance_v1; n clued_private.ci_nodes_v1; ready_nodes uuid[]; peers jsonb; r uuid; pr uuid;
+begin
+  select * into w from clued_private.fleet_maintenance_v1 m where m.user_id=u
+    and m.reinstall_peers is not null and m.reinstall_resume_receipt_id is null
+    order by m.started_at,m.node_id limit 1;
+  if not found then return; end if;
+  select project_id into pr from clued_private.ci_nodes_v1 where node_id=w.node_id;
+  if t>=w.reinstall_pause_until and w.reinstall_pause_alerted_at is null then
+    r:=clued_private.ci_failover_alert_v1(u,'FLEET_REINSTALL_WINDOW_EXPIRED',w.operation_id::text,
+      jsonb_build_object('grant_id',w.grant_id,'deadline',w.reinstall_pause_until,'recovery','verify_reinstalled_nodes_as_standby_then_restore_duty'));
+    if r is not null then perform clued_private.ci_failover_note_v1(u,r,'FLEET_REINSTALL_WINDOW_EXPIRED','双节点重装窗口已到期',
+      '列车仍停接新工作。请核对同一封存包的两台节点的安装回执、备班状态和健康自检。'); end if;
+    update clued_private.fleet_maintenance_v1 set reinstall_pause_alerted_at=t where node_id=w.node_id;
+  end if;
+  if w.grant_id is distinct from g then return; end if;
+  if w.reinstall_pause_receipt_id is null then
+    perform clued_private.fleet_reinstall_pause_v1(u,w.node_id,g);
+    return;
+  end if;
+  if exists(select 1 from clued_private.fleet_accepted_v1 where grant_id=g and promotion_paused_at is not null) then return; end if;
+  peers:=w.reinstall_peers||jsonb_build_array(jsonb_build_object('node_id',w.node_id,'operation_id',w.operation_id,
+    'binding_generation',w.binding_generation));
+  select array_agg(c.node_id order by member.rank nulls last,c.node_id) into ready_nodes
+    from jsonb_to_recordset(peers) as expected(node_id uuid,operation_id uuid,binding_generation bigint)
+    join clued_private.fleet_maintenance_v1 m using(node_id,operation_id,binding_generation)
+    join clued_private.ci_nodes_v1 c using(node_id,user_id,binding_generation)
+    join public.clued_agent_bindings b on b.id=c.binding_id and b.user_id=c.user_id
+    join clued_private.ci_node_liveness_v1 l on l.node_id=c.node_id and l.user_id=c.user_id
+    left join clued_private.ci_failover_members_v1 member on member.user_id=u and member.binding_id=c.binding_id
+    where m.user_id=u and m.grant_id=g and m.state='returned' and m.verify_started_at is not null
+      and c.revoked_at is null and c.state in ('active','pending','draining') and clued_private.binding_live_v1(b)
+      and l.reported_mode='STANDBY' and l.reported_probe='not-held'
+      and clued_private.fleet_source_reason_v1(u,c.node_id,'handover') is null
+      and clued_private.fleet_selfcheck_v1(u,c.node_id,m.verify_started_at);
+  if cardinality(ready_nodes) is distinct from jsonb_array_length(peers) then return; end if;
+  for n in select c.* from unnest(ready_nodes) with ordinality as x(node_id,ord)
+    join clued_private.ci_nodes_v1 c using(node_id) order by x.ord loop
+    begin
+      if clued_private.ci_duty_phase_v1(u,n.project_id)>=4 then
+        r:=(clued_private.ci_train_acquire_v1(u,n.project_id,n.node_id)->>'receipt_id')::uuid;
+      else
+        r:=clued_private.fleet_restore_resident_duty_v1(u,n.node_id,w.operation_id,g,t);
+      end if;
+    exception when insufficient_privilege or object_not_in_prerequisite_state or invalid_parameter_value then
+      continue;
+    end;
+    if r is not null then
+      r:=clued_private.ci_receipt_v1(u,pr,'fleet_reinstall_train_resumed',w.node_id::text,
+        jsonb_build_object('operation_id',w.operation_id,'grant_id',g,'pause_receipt_id',w.reinstall_pause_receipt_id,
+          'duty_receipt_id',r,'node_id',n.node_id));
+      update clued_private.fleet_maintenance_v1 set reinstall_resume_receipt_id=r where node_id=w.node_id;
+      return;
+    end if;
+  end loop;
+end $$;
+
 create function clued_private.fleet_maintenance_tick_v1(u uuid) returns void
 language plpgsql volatile set search_path='' as $$
 declare m clued_private.fleet_maintenance_v1; h uuid; g uuid; r uuid; t timestamptz; -- 告警按授权与维护操作去重。
-  b public.clued_agent_bindings; activation timestamptz;
-  train_pending boolean:=exists(select 1 from clued_private.fleet_maintenance_v1 x where x.user_id=u and x.restore_train_generation is not null);
+  train_pending boolean; reinstall_pending boolean;
   pr uuid;
 begin
   -- 领取租约与摘牌使用相同的加锁顺序；刚恢复的节点在下次看门狗检查时才申请。
-  if train_pending then perform clued_private.work_claim_lock(u); end if;
+  perform clued_private.work_claim_lock(u);
   perform clued_private.fleet_role_lock_v1(u);
+  train_pending:=exists(select 1 from clued_private.fleet_maintenance_v1 x where x.user_id=u and x.restore_train_generation is not null);
+  reinstall_pending:=exists(select 1 from clued_private.fleet_maintenance_v1 x where x.user_id=u
+    and x.reinstall_peers is not null and x.reinstall_resume_receipt_id is null);
   t:=clock_timestamp();
   select n.node_id into h from clued_private.ci_duty_holder_v1(u) d join clued_private.ci_nodes_v1 n
     on n.user_id=u and n.binding_id=d.binding_id and n.revoked_at is null and n.state not in ('revoked','retired');
@@ -670,32 +796,16 @@ begin
         and l.reported_mode='STANDBY' and l.reported_probe='not-held') then
       select project_id into pr from clued_private.ci_nodes_v1 where node_id=m.node_id;
       update clued_private.fleet_maintenance_v1 set state='returned',
-        restore_train_generation=case when m.method in ('in_place','reinstall') and not clued_private.fleet_other_healthy_v1(u,m.node_id)
+        restore_train_generation=case when not reinstall_pending and m.method in ('in_place','reinstall') and not clued_private.fleet_other_healthy_v1(u,m.node_id)
           and clued_private.ci_duty_phase_v1(u,pr)>=4
           then coalesce((select l.generation from clued_private.ci_train_lease_v1 l where l.user_id=u and l.project_id=pr),0) end,
         receipt_id=clued_private.ci_receipt_v1(u,pr,'fleet_maintenance_returned',m.node_id::text,
         jsonb_build_object('operation_id',m.operation_id,'grant_id',g)) where node_id=m.node_id;
       -- 只在本次安装通过验证时授职。已有授职（含尚未生效的交班）优先，阶段四沿用列车租约。
-      if m.method in ('in_place','reinstall') and clued_private.ci_duty_account_phase_v1(u)<4
+      if not reinstall_pending and m.method in ('in_place','reinstall') and clued_private.ci_duty_account_phase_v1(u)<4
         and not clued_private.fleet_other_healthy_v1(u,m.node_id)
-        and not exists(select 1 from clued_private.binding_roles_v1 x where x.user_id=u and x.role='ci-admission'
-          and x.purpose in ('resident-node','unspecified') and x.revoked_at is null)
         and exists(select 1 from clued_private.fleet_accepted_v1 a where a.grant_id=g and a.promotion_paused_at is null) then
-        select binding.* into b from public.clued_agent_bindings binding join clued_private.ci_nodes_v1 n
-          on n.user_id=binding.user_id and n.binding_id=binding.id
-          where n.node_id=m.node_id and n.user_id=u and n.binding_generation=m.binding_generation
-            and n.state in ('active','pending','draining') and clued_private.binding_live_v1(binding)
-            and 'context:read'=any(binding.scopes)
-            and not exists(select 1 from clued_private.binding_roles_v1 x where x.binding_id=binding.id
-              and x.role='ci-admission' and x.revoked_at is null) for update of binding;
-        if found then
-          perform clued_private.binding_role_change_check_v1(b,'ci-admission',true,'"resident-node"');
-          activation:=clued_private.binding_role_start_v1('ci-admission','resident-node',t);
-          r:=clued_private.ci_receipt_v1(u,pr,'fleet_sole_duty_restored',m.node_id::text,jsonb_build_object('binding_id',b.id,'operation_id',m.operation_id,
-              'grant_id',g,'effective_at',activation,'principal','server_watchdog'));
-          insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id,effective_at,purpose)
-            values(u,b.id,'ci-admission',t,r,activation,'resident-node');
-        end if;
+        perform clued_private.fleet_restore_resident_duty_v1(u,m.node_id,m.operation_id,g,t);
       end if;
     end if;
     if m.state in ('delisted','repair') and m.verify_alerted_at is null and t-m.verify_started_at>=interval '45 minutes'
@@ -713,6 +823,7 @@ begin
       update clued_private.fleet_maintenance_v1 set alerted_at=t where node_id=m.node_id;
     end if;
   end loop;
+  if reinstall_pending then perform clued_private.fleet_reinstall_window_tick_v1(u,g,t); end if;
   if g is not null and exists(select 1 from clued_private.ci_nodes_v1 n join clued_private.ci_node_liveness_v1 l using(node_id,user_id)
     cross join lateral (select clued_private.fleet_node_package_v1(u,n.node_id) info) v
     where n.user_id=u and n.revoked_at is null and n.state not in ('retired','revoked')
@@ -752,15 +863,16 @@ $a$when v_halted then 'halted' end;$a$,
 $r$when v_halted then 'halted' else (
       select f->>'code' from clued_private.fleet_node_delivery_evidence_v1 e
       join clued_private.ci_nodes_v1 n using(user_id,node_id)
-      join clued_private.binding_roles_v1 role using(user_id,binding_id)
+      cross join lateral jsonb_array_elements(clued_private.binding_role_holders_v1(p_owner,'ci-admission','{}'::uuid[])) role
       cross join lateral jsonb_array_elements(e.runtime->'failures') f
       where e.user_id=p_owner and e.node_id=xn.node_id and n.binding_id=v_holder
         and e.binding_generation=n.binding_generation and e.registration_version=n.version
         and e.heartbeat_sequence=xn.heartbeat_sequence and e.observed_at=xn.last_heartbeat_at
         and xn.reported_mode='ACTIVE' and xn.reported_state='NORMAL'
         and clued_private.fleet_node_package_v1(p_owner,n.node_id)->>'classification' in ('current','previous')
-        and role.role='ci-admission' and role.revoked_at is null and clued_private.fleet_node_fault_v1(f->>'code')
-        and clued_private.fleet_time_v1(f->>'at') between greatest(role.effective_at,v_now-interval '5 minutes') and e.observed_at
+        and role->>'binding_id'=v_holder::text and role->>'purpose' in ('resident-node','unspecified')
+        and clued_private.fleet_node_fault_v1(f->>'code')
+        and clued_private.fleet_time_v1(f->>'at') between greatest((role->>'effective_at')::timestamptz,v_now-interval '5 minutes') and e.observed_at
       order by clued_private.fleet_time_v1(f->>'at') desc,f->>'code' limit 1) end;$r$);
 
 select clued_private.fleet_patch_v1('clued_private.ci_admission_failover_owner_v1(uuid)',
@@ -968,7 +1080,7 @@ $r$  if op='work_pending' then
 -- 旧列车的发送意图和读回绑定到同一持锁节点、包、代次及主线提交。
 create function clued_private.fleet_landing_command_v1(b public.clued_agent_bindings,input jsonb)
 returns jsonb language plpgsql volatile set search_path='' as $$
-declare l clued_private.fleet_landing_v1; n clued_private.ci_nodes_v1; g uuid;
+declare l clued_private.fleet_landing_v1; n clued_private.ci_nodes_v1; g uuid; refusal text;
 begin
   if input-array['scope','action','command','effect_key','grant_id','source','repository','base_sha','test_sha','main_sha']<>'{}'::jsonb
     or coalesce(input->>'command','') not in ('begin','settle') or coalesce(input->>'effect_key','') !~ '^[0-9a-f]{64}$'
@@ -978,10 +1090,12 @@ begin
   select * into strict n from clued_private.ci_nodes_v1 where binding_id=b.id and user_id=b.user_id and revoked_at is null
     and state not in ('retired','revoked');
   g:=(clued_private.fleet_node_package_v1(b.user_id,n.node_id)->>'grantId')::uuid;
-  if clued_private.fleet_holder_reason_v1(b.user_id,n.node_id) is not null or g::text is distinct from input->>'grant_id' or not exists(
+  refusal:=clued_private.fleet_holder_reason_v1(b.user_id,n.node_id);
+  if g::text is distinct from input->>'grant_id' or not exists(
     select 1 from clued_private.fleet_accepted_v1 a where a.grant_id=g and a.repository=input->>'repository' and a.source_sha256=input->>'source')
     then raise exception 'fleet_landing_holder_changed' using errcode='40001'; end if;
   if input->>'command'='begin' then
+    if refusal is not null then raise exception 'fleet_landing_holder_changed' using errcode='40001'; end if;
     if input->>'main_sha' is distinct from input->>'base_sha' then raise exception 'fleet_landing_main_changed'; end if;
     insert into clued_private.fleet_landing_v1(user_id,effect_key,node_id,grant_id,binding_generation,base_sha,test_sha)
       values(b.user_id,input->>'effect_key',n.node_id,g,n.binding_generation,input->>'base_sha',input->>'test_sha')
@@ -992,6 +1106,11 @@ begin
   if not found or (l.node_id,l.grant_id,l.binding_generation) is distinct from (n.node_id,g,n.binding_generation)
     or l.base_sha is distinct from input->>'base_sha' or l.test_sha is distinct from input->>'test_sha'
     or l.test_sha is distinct from input->>'main_sha' then raise exception 'fleet_landing_readback_refused'; end if;
+  if refusal is not null and not exists(select 1 from clued_private.fleet_maintenance_v1 m
+    where m.user_id=b.user_id and m.node_id=n.node_id and m.binding_generation=n.binding_generation and m.grant_id=g
+      and m.state='delisted' and m.reinstall_peers is not null and m.verify_started_at is null and l.started_at<=m.started_at) then
+    raise exception 'fleet_landing_holder_changed' using errcode='40001';
+  end if;
   if l.settled_at is null then
     update clued_private.fleet_landing_v1 set settled_at=clock_timestamp() where user_id=l.user_id and effect_key=l.effect_key;
     perform clued_private.fleet_release_reserve_v1(b.user_id,n.node_id,g,l.started_at);
@@ -1007,7 +1126,8 @@ begin
     and proname in ('fleet_seals_v1','fleet_source_reason_v1','fleet_node_package_v1','fleet_role_lock_v1','fleet_target_require_v1',
     'fleet_handover_check_v1','fleet_other_healthy_v1','fleet_node_busy_v1','fleet_selfcheck_v1','fleet_maintenance_request_v1',
     'fleet_maintenance_rebind_v1','fleet_install_ready_v1','fleet_idle_v1','fleet_time_v1','fleet_promotion_target_v1','fleet_promote_v1','fleet_node_fault_v1','fleet_fail_holder_v1','fleet_release_reserve_v1',
-    'fleet_landing_command_v1','fleet_maintenance_tick_v1','fleet_holder_reason_v1','fleet_execution_view_v1','fleet_probe_targets_v1',
+    'fleet_landing_command_v1','fleet_maintenance_tick_v1','fleet_reinstall_pause_v1','fleet_reinstall_window_tick_v1',
+    'fleet_restore_resident_duty_v1','fleet_holder_reason_v1','fleet_execution_view_v1','fleet_probe_targets_v1',
     'fleet_previous_seal_v1','fleet_backfill_previous_v1') loop
     execute format('revoke all on function %s from public,anon,authenticated,service_role,clued_worker_gateway',sig);
   end loop;

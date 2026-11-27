@@ -422,7 +422,7 @@ EXACT_SOURCE_CANDIDATE_SUCCESSORS = {'gitleaks.yml': {'kind': 'owner',
                              'successor': {'control_sha256': '6002ab6e9058f16a2a216be0f10076e2f0c740e8817478d7454f322ae9345a0c',
                                             'jobs': {'report': '4c829014acf6eb4d0e7f829d37e630036e07869cc68f2122f7ce58191e60f0ca'}}},
  # Task 788c2598：从 d7da5f592 的发布作业 19f39da1… 接续。兼容回放走自托管，
- # 既有托管作业只接受本次成功回放的输出，沿用原路由、触发、权限和时限。
+ # 既有托管作业沿用原路由、触发和时限。确认只接受本次回放，发布准入用内置令牌只读 PR。
  'clued-cloud-production-release.yml': {'kind': 'legacy',
                                        'predecessor_commit': 'd7da5f5926f8720d1c2675c7224f417a1da359c2',
                                        'workflow_sha256': 'e2d31737d4bc4668197f50e9ee1bfd733f274943393e75a13e319d8e08c59129',
