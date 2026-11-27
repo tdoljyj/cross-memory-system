@@ -1,13 +1,32 @@
 // Candidate capabilities come from the exact archive already verified by seal.
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { RESIDENT } from './facts.mjs';
 import { TOOL_PATH } from './ports.mjs';
 import { readTar } from './tar.mjs';
 import { deliveryBound } from './delivery-preflight.mjs';
+import { readArchive } from './install.mjs';
 import { fleetEvidencePayload, freshDeliveryTime, sourceRefsDigest } from '../../src/fleet-delivery-evidence.mjs';
 
 const hex = /^[0-9a-f]{64}$/;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+
+// Source assembly imports code. Compare the archive's tree to the checked
+// commit before allowing the publisher or the release job to assemble it.
+export function verifyDeliveryTree(archive, request, cwd) {
+  const { entries } = readArchive(archive, request.archive_sha256, request);
+  const tree = execFileSync('git', ['ls-tree', '-r', '-z', request.commit],
+    { cwd, encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
+  const blobs = new Map();
+  for (const row of tree.split('\0')) {
+    const match = /^100(?:644|755) blob ([0-9a-f]{40})\t(.+)$/s.exec(row);
+    if (match) blobs.set(match[2], match[1]);
+  }
+  for (const entry of entries.filter(entry => entry.path.startsWith('tree/'))) {
+    const blob = createHash('sha1').update(`blob ${entry.data.length}\0`).update(entry.data).digest('hex');
+    if (blobs.get(entry.path.slice(5)) !== blob) throw new Error('FLEET_DELIVERY_RELEASE_TREE_CHANGED');
+  }
+}
 export const reinstallEntries = [
   'rollout/fleet/bootstrap.ps1', 'rollout/fleet/install.mjs', 'reinstall/launcher/generate.py',
   'reinstall/launcher/template.ps1', 'reinstall/launcher/continue.py', 'reinstall/launcher/continue-install.ps1',
