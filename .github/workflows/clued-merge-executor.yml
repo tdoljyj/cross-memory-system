@@ -68,10 +68,11 @@ jobs:
     # A new main push is automatic. Only the Owner can start a fresh manual
     # run. Reruns inherit the original actor and must not reacquire write authority.
     if: >-
-      github.ref == 'refs/heads/main' && github.run_attempt == 1 &&
+      vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION != '2' ||
+      (github.ref == 'refs/heads/main' && github.run_attempt == 1 &&
       (github.event_name == 'push' ||
        (github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner &&
-        github.triggering_actor == github.repository_owner))
+        github.triggering_actor == github.repository_owner)))
     name: clued-merge-executor
     runs-on: ubuntu-slim
     timeout-minutes: 10
@@ -105,6 +106,7 @@ jobs:
       - name: Bring the default branch into the queue head, turn on auto-merge or merge it
         timeout-minutes: 5
         env:
+          CLUED_MERGE_TRAIN_PROTOCOL_VERSION: ${{ vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION }}
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
           CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
           CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}

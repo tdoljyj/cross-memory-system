@@ -475,8 +475,12 @@ export function parseTrainLast(l) {
     wouldRevokeCount: Number.isSafeInteger(l.wouldRevokeCount) && l.wouldRevokeCount >= 0 ? l.wouldRevokeCount : 0 };
   if (!v2) return Object.freeze(base);
   const landing = landingOf(l.landing);
+  const sharedWork = l.mode === 'on' && l.sharedWork?.protocolVersion === 2
+    && (l.sharedWork.retryAt === null || isoOrNull(l.sharedWork.retryAt) !== null)
+    ? Object.freeze({ protocolVersion: 2, retryAt: l.sharedWork.retryAt }) : null;
   return Object.freeze({ ...base, decision: DECISIONS.includes(l.decision) ? l.decision : null, sweep: sweepOf(l.sweep),
-    requestPause: REQUEST_PAUSE_CODES.includes(l.requestPause) ? l.requestPause : null, ...(landing ? { landing } : {}) });
+    requestPause: REQUEST_PAUSE_CODES.includes(l.requestPause) ? l.requestPause : null, ...(landing ? { landing } : {}),
+    ...(sharedWork ? { sharedWork } : {}) });
 }
 
 // The status snapshot's `train.sweep` (DESIGN §41.7): when this node last completed a full sweep, whether that was after it

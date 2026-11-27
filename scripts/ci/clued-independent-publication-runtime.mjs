@@ -231,7 +231,7 @@ export function createIndependentPublicationRuntime({ native, github, journal, a
 }
 
 // 协议 2 的发送权由 Native 账本记录，其他节点据此区分预留票据和已发送的请求。
-export function createTrainHeadPublicationRuntime({ train, github, assertCurrent }) {
+export function createTrainHeadPublicationRuntime({ train, github, assertCurrent, readMainMergeProof }) {
   const command = async (action, fields) => {
     const reply = await train.command({ ...fields, action, protocol_version: TRAIN_PROTOCOL_VERSION });
     if (reply?.protocol_version !== TRAIN_PROTOCOL_VERSION) fail('ci_train_protocol_unconfirmed');
@@ -243,15 +243,33 @@ export function createTrainHeadPublicationRuntime({ train, github, assertCurrent
   const stale = (reply, fields) => sameLease(reply, fields) && reply.status === 'rejected'
     && reply.error_code === TRAIN_FAILURE.LEASE_STALE.native;
 
+  async function carry(job, proof) {
+    if (proof?.pr !== job.pr || proof.headSha !== job.headSha || !/^[a-f0-9]{40}$/.test(proof.from ?? '')
+      || !/^[a-f0-9]{40}$/.test(proof.main ?? '') || !/^[a-f0-9]{40}$/.test(proof.tip ?? '')
+      || !id(proof.checkRunId) || !['ahead', 'identical'].includes(proof.compare)
+      || (proof.compare === 'identical') !== (proof.main === proof.tip)
+      || proof.parents?.length !== 2 || proof.parents[0] !== proof.from || proof.parents[1] !== proof.main) return false;
+    const boundary = { scope: train.scope.contextKey, repository: job.repo, target_branch: train.scope.targetBranch,
+      source_manifest_sha256: job.sourceManifestSha256 };
+    const work_key = trainHeadWorkKey({ ...train.scope, pr: job.pr, headSha: proof.from, action: 'verify_head' });
+    const before = await command('carry_head_read', { ...boundary, work_key });
+    if (before.status !== 'ok' || before.work_key !== work_key || before.head_sha !== proof.from
+      || before.pr !== job.pr || !id(before.generation) || !id(before.lease_version)) return false;
+    const reply = await command('carry_main_merge', { ...boundary, work_key, generation: before.generation,
+      lease_version: before.lease_version, new_head_sha: job.headSha, main_sha: proof.main,
+      evidence_digest: digest({ ...proof, repository: job.repo, target_branch: boundary.target_branch }) });
+    return reply.status === 'committed' && reply.head_sha === job.headSha && UUID.test(reply.authorization_id ?? '');
+  }
+
   // 完整准入和发布前只读复验共用这次领用的命令端口。换代后，旧调用仍携带旧代次。
   function admissionCommand(fields) {
     return async input => {
       const action = input.action ?? 'verify_head';
-      if (!['verify_head', 'resolve_pr_claim', 'carry_main_merge'].includes(action)
+      if (!['verify_head', 'resolve_pr_claim'].includes(action)
         || (input.scope !== undefined && input.scope !== fields.scope)
         || (input.pr_ref !== undefined && input.pr_ref !== fields.pr_ref)
         || (input.target_branch !== undefined && input.target_branch !== fields.target_branch)
-        || (action !== 'carry_main_merge' && input.head_sha !== undefined && input.head_sha !== fields.head_sha))
+        || (input.head_sha !== undefined && input.head_sha !== fields.head_sha))
         fail('ci_train_head_work_unconfirmed');
       const reply = await command(action, { ...fields,
         ...(action === 'verify_head' ? {
@@ -259,8 +277,7 @@ export function createTrainHeadPublicationRuntime({ train, github, assertCurrent
           ...(input.mechanical_paths_proven === undefined ? {} : { mechanical_paths_proven: input.mechanical_paths_proven }),
           ...(input.mechanical_policy === undefined ? {} : { mechanical_policy: input.mechanical_policy }),
           ...(input.admission_mode === undefined ? {} : { admission_mode: input.admission_mode }),
-        } : action === 'resolve_pr_claim' ? { read_only: input.read_only === true }
-          : { from_head_sha: input.from_head_sha, head_sha: input.head_sha, main_sha: input.main_sha }),
+        } : { read_only: input.read_only === true }),
         base_sha: input.base_sha ?? fields.base_sha,
       });
       if (!sameLease(reply, fields)) fail('ci_train_head_work_unconfirmed');
@@ -274,10 +291,14 @@ export function createTrainHeadPublicationRuntime({ train, github, assertCurrent
     const binding = { work_key: workKey, scope: train.scope.contextKey, repository: job.repo, pr_ref: job.repo + '#' + job.pr,
       head_sha: job.headSha, base_sha: job.baseSha, target_branch: train.scope.targetBranch,
       source_manifest_sha256: job.sourceManifestSha256, controller_id: controllerId };
-    const reply = await command('verify_head', binding);
+    let reply = await command('verify_head', binding);
+    if (reply.status === 'rejected' && ['head_not_authorized', TRAIN_FAILURE.LEASE_STALE.native].includes(reply.error_code)
+      && typeof readMainMergeProof === 'function' && await carry(job, await readMainMergeProof(job))) {
+      reply = await command('verify_head', binding);
+    }
     if (reply.work_key !== workKey) fail('ci_train_head_work_unconfirmed');
     const code = reply.status === 'rejected' ? reply.error_code : null;
-    if ([TRAIN_FAILURE.HEAD_LEASE_COMPLETED.native, TRAIN_FAILURE.LEASE_STALE.native].includes(code)) return { reason: code };
+    if (['head_not_authorized', TRAIN_FAILURE.HEAD_LEASE_COMPLETED.native, TRAIN_FAILURE.LEASE_STALE.native].includes(code)) return { reason: code };
     if (code === TRAIN_FAILURE.HEAD_LEASE_HELD.native) {
       const ciRetryAfter = reply[TRAIN_HEAD_RETRY_FIELDS.native];
       if (typeof ciRetryAfter !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(ciRetryAfter)

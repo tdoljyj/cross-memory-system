@@ -78,6 +78,17 @@ function duty({ statuses = {}, checks = {}, memory = freshMemory(), login = OWNE
 const pull = (n, o = {}) => ({ pr: n, headSha: H(n), eligible: true, ...o });
 const known = (mode, probe = { at: NOW - MIN, result: mode === 'ACTIVE' ? 'held' : 'not-held', failures: 0 }) => ({ name: 'node-b', mode, probe });
 const reads = calls => calls.filter(a => a[4]?.includes('/statuses')).length;
+const v2 = { train: { last: { sharedWork: { protocolVersion: 2 }, onDuty: true } } };
+
+test('协议 1 在相同的对端当班证据下仍建立双活暂停', async () => {
+  const t = duty({ statuses: { [H(1)]: [gh('node-a', '当班：运行中', NOW - MIN)] } });
+  t.memory.mode = 'ACTIVE';
+  const status = fresh({ node: known('ACTIVE'), pending: [{ pr: 1, headSha: H(1), state: 'QUEUED' }] });
+  const result = await t.d.prepare({ status, pulls: [pull(1)], now: NOW });
+  assert.equal(result.lock?.reason, 'dual-active');
+  assert.equal(reads(t.calls), 1);
+  assert.equal(t.requests[0]?.holder, 'dual-active');
+});
 
 test('train v2: for an hour two healthy nodes can refresh the same PR without taking an intake hold', async () => {
   const shared = { [H(1)]: [] };
@@ -91,7 +102,7 @@ test('train v2: for an hour two healthy nodes can refresh the same PR without ta
     const now = clock.now();
     shared[H(1)] = names.map(name => gh(name, '双活停机：另一节点也在当班', now));
     for (const [index, t] of [a, b].entries()) {
-      const status = fresh({ writtenAt: now, node: { ...known('ACTIVE', { at: now, result: 'held' }), name: names[index] },
+      const status = fresh({ ...v2, writtenAt: now, node: { ...known('ACTIVE', { at: now, result: 'held' }), name: names[index] },
         pending: [{ pr: 1, headSha: H(1), state: 'QUEUED' }] });
       await t.d.prepare({ status, pulls: [pull(1)], now });
       const want = t.d.want(pull(1), status, now, { state: 'pending', description: '排队第 1 位' });
@@ -123,7 +134,7 @@ test('Task 9cac75be A2, A3: each standby has its own reminder context; no node n
   assert.notEqual(standbyContext('node-b'), LEGACY_STANDBY_CONTEXT);
   const t = duty();
   t.d.fallbackName = null;
-  assert.throws(() => t.d.prepare({ status: fresh(), now: NOW }), /NODE_NAME_REQUIRED/);
+  await assert.rejects(t.d.prepare({ status: fresh(), now: NOW }), /NODE_NAME_REQUIRED/);
   assert.equal(t.calls.length, 0);
 });
 
@@ -138,17 +149,17 @@ test('STANDBY hands over its own recent duty, and a restart ends both stale duty
     [H(6)]: { context: own, kind: 'result', at: iso(NOW - MIN), dutyAt: null },
   };
   const standby = duty();
-  await standby.d.prepare({ status: fresh({ node: known('STANDBY') }), pulls: [], now: NOW, posted });
+  await standby.d.prepare({ status: fresh({ ...v2, node: known('STANDBY') }), pulls: [], now: NOW, posted });
   const out = await standby.d.extra({ posted, described: new Set(), pulls: [], now: NOW });
   assert.deepEqual(out.map(o => [o.headSha, o.want.kind]), [[H(1), 'handed'], [H(3), 'handed']]);
   // review M3: a result written after the node's 当班 stays readable after the word (NIT 2: never washed out)
   assert.deepEqual([out[1].want.state, out[1].want.description], ['failure', '已交班：失败（A_B）：此提交不再运行，请推新提交']);
   // review m5: owed until written, also when the window has passed by then
-  assert.deepEqual(Object.keys((await (async () => { standby.advance(60 * MIN); await standby.d.prepare({ status: fresh({ node: known('STANDBY') }), pulls: [], now: standby.now(), posted }); return standby.memory.handover; })())).length, 2);
+  assert.equal(Object.keys((await (async () => { standby.advance(60 * MIN); await standby.d.prepare({ status: fresh({ ...v2, node: known('STANDBY') }), pulls: [], now: standby.now(), posted }); return standby.memory.handover; })())).length, 2);
   assert.equal(standby.d.want(pull(1), fresh({ node: known('STANDBY'), current: { pr: 1, headSha: H(1) } }), NOW, { state: 'pending', description: 'x' }), null, 'a STANDBY writes no queue text');
   // a restarted companion (ACTIVE): the duty texts not described again in its first pass become 停摆（NODE_RESTARTED）, once
   const restarted = duty();
-  await restarted.d.prepare({ status: fresh(), pulls: [], now: NOW });
+  await restarted.d.prepare({ status: fresh(v2), pulls: [], now: NOW });
   const open = [pull(1), pull(2), pull(4)];
   const first = await restarted.d.extra({ posted, described: new Set(), pulls: open, now: NOW });
   assert.deepEqual(first.map(o => [o.headSha, o.want.description]), [[H(1), '停摆（NODE_RESTARTED）：本节点重启，等执行器恢复'], [H(2), '已清理旧双活暂停状态']], 'open heads only (review m4)');
@@ -177,7 +188,7 @@ test('ADR 0028: a STANDBY reminds of nothing; a reminder written before ends onc
   }
   assert.equal(STANDBY_DONE_TEXT.state, 'success');
   const old = validMemory({ standby: { [H(5)]: { pr: 1027, at: iso(NOW - MIN) } }, reminded: { x: iso(NOW) }, seen: { y: iso(NOW) }, toasts: {} }, NOW);
-  assert.deepEqual(Object.keys(old).sort(), ['handover', 'mode', 'standby']);
+  assert.deepEqual(Object.keys(old).sort(), ['handover', 'lock', 'mode', 'probeAt', 'standby']);
   pruneMemory(old, NOW + 86_400_000);
   assert.deepEqual(old.standby, {});
 });

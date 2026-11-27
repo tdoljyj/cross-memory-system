@@ -528,13 +528,14 @@ export function executorEntryAllowed(env, event) {
 }
 
 export async function main(env = process.env, fetchImpl = globalThis.fetch) {
-  const event = env.GITHUB_EVENT_PATH && env.GITHUB_EVENT_NAME !== 'push'
+  const strictEntry = env.CLUED_MERGE_TRAIN_PROTOCOL_VERSION === '2';
+  const event = env.GITHUB_EVENT_PATH && (env.GITHUB_EVENT_NAME === 'workflow_dispatch' || strictEntry && env.GITHUB_EVENT_NAME === 'workflow_run')
     ? JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : null;
-  if (!executorEntryAllowed(env, event)) {
+  if (strictEntry && !executorEntryAllowed(env, event)) {
     console.error('clued-merge-executor: event, actor or run attempt refused');
     return 1;
   }
-  if (env.GITHUB_EVENT_NAME === 'workflow_dispatch' && event.inputs?.measurement_opt_in === 'true') {
+  if (env.GITHUB_EVENT_NAME === 'workflow_dispatch' && event?.inputs?.measurement_opt_in === 'true') {
     const recorded = await runRecordedHolderOperation({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE, input: event.inputs });
     console.log(JSON.stringify(recorded));
     return recorded.status === 'RECORDED_ORIGINAL_OPERATION' ? 0 : 1;

@@ -76,9 +76,10 @@ test('train v2: persistent dual-active and delayed renewal are retired, while Ow
   }
   await b.ledger.halt('RECOVERY_UNCONFIRMED', {});
   // Service restarts with two independent journals from the previous package.
-  const restartedA = await executorFixture(t, { engine, now: T0 + MIN, root: a.root });
-  const restartedB = await executorFixture(t, { now: T0 + MIN, root: b.root });
+  const restartedA = await executorFixture(t, { engine, now: T0 + MIN, root: a.root, policy: trainPolicy(TRAIN_PROTOCOL_VERSION) });
+  const restartedB = await executorFixture(t, { now: T0 + MIN, root: b.root, policy: trainPolicy(TRAIN_PROTOCOL_VERSION) });
   for (const f of [restartedA, restartedB]) {
+    f.exec.trainLast = { onDuty: true, sharedWork: { protocolVersion: TRAIN_PROTOCOL_VERSION, retryAt: null } };
     await f.drop(json(intakePauseRequest({ holder: 'dual-active', reason: 'late legacy renewal' }, f.clock)), 'requests');
     await f.exec.tick();
     const state = await readIntakePause(f.ledger.root, f.clock);
@@ -86,8 +87,8 @@ test('train v2: persistent dual-active and delayed renewal are retired, while Ow
     assert.ok((await receiptTypes(f)).includes('intake-pause-ended'));
   }
   assert.equal((await restartedB.ledger.halted()).value.code, 'RECOVERY_UNCONFIRMED');
-  restartedA.advance(10 * MIN);
-  assert.equal((await restartedA.exec.tick()).state, 'COMPLETED');
+  const legacy = await executorFixture(t, { engine, now: T0 + 11 * MIN, root: restartedA.root, policy: rawPolicy() });
+  assert.equal((await legacy.exec.tick()).state, 'COMPLETED');
   assert.deepEqual(stagesRun(engine), [1, 2, 3, 4, 5, 6, 7, 8, 8]);
   assert.equal((await restartedA.ledger.state(batchKey(subject()))).outcome, 'COMPLETED');
   assert.equal((await readIntakePause(restartedA.ledger.root, restartedA.clock)).view.holders[0].holder, 'owner');
@@ -649,7 +650,7 @@ test('the command line: --minutes takes 1 to 120 whole minutes; the request goes
   assert.deepEqual([v.contract, v.holder, v.minutes], [INTAKE_PAUSE_CONTRACT, 'owner', 45]);
   for (const m of ['1.5', '121', '0', 'x']) assert.deepEqual(await run('request-intake-pause', '--root', root, '--reason', 'r', '--minutes', m), { code: 1, out: { status: 'REFUSED', code: 'INTAKE_REQUEST_REFUSED' } }, m);
   assert.equal((await run('request-intake-resume', '--root', root, '--reason', 'done', '--holder', 'owner')).out.status, 'INTAKE_RESUME_REQUESTED');
-  for (const command of ['request-intake-pause', 'request-intake-resume'])
-    assert.deepEqual(await run(command, '--root', root, '--reason', 'legacy', '--holder', 'dual-active'), { code: 1, out: { status: 'REFUSED', code: 'INTAKE_HOLDER_RETIRED' } });
-  assert.equal((await fs.readdir(path.join(root, 'requests'))).length, 2);
+  assert.equal((await run('request-intake-resume', '--root', root, '--reason', 'legacy', '--holder', 'dual-active')).out.status,
+    'INTAKE_RESUME_REQUESTED');
+  assert.equal((await fs.readdir(path.join(root, 'requests'))).length, 3);
 });

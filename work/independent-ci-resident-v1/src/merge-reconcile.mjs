@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { check, exactKeys, parseBoundedJson, UUID, HEX64 } from './canonical.mjs';
-import { NODE_NAME, operationalIntakePause } from './node-duty.mjs';
+import { NODE_NAME, operationalIntakePause, usesSharedDuty } from './node-duty.mjs';
 import { dispatchByTrainEffect } from './panel-dispatch.mjs';
 import { parseIncluded } from './poller.mjs';
 
@@ -57,7 +57,7 @@ export function reconcileDutyOf(status, nodeName, now) {
   if (status.node?.name !== nodeName) return 'NODE_NAME_MISMATCH';
   if (status.node?.mode !== 'ACTIVE') return 'NOT_ACTIVE';
   if (status.paused !== false || status.halt !== null) return 'PAUSED_OR_HALTED';
-  if (operationalIntakePause(status.intakePause) !== null) return 'INTAKE_HELD';
+  if (operationalIntakePause(status.intakePause, usesSharedDuty(status)) !== null) return 'INTAKE_HELD';
   if (status.versions?.consistent !== true || status.versions.upgrade !== null) return 'VERSION_OR_UPGRADE_HOLD';
   if ((status.draining !== undefined && status.draining !== false) || (status.drain !== undefined && status.drain !== null)
       || /DRAIN|UPGRADE/i.test(`${status.executor?.state ?? ''} ${status.executor?.reason ?? ''}`)) return 'DRAIN_HOLD';

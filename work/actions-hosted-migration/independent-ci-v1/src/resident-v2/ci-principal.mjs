@@ -49,5 +49,5 @@ export async function readCiCredential(record, { tokenFile, protect = assertProt
   const nativeToken = (await tokenReader(tokenFile, options)).trim();
   if (!/^clued_bnd_[A-Za-z0-9_-]{8,480}$/.test(nativeToken)
     || digest('clued.independent-ci.ci-binding-pin/1\0' + nativeToken) !== principal.tokenPinSha256) refuse('ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED');
-  return { bindingId: principal.bindingId, nativeToken };
+  return { bindingId: principal.bindingId, nativeToken, bindingGeneration: principal.generation };
 }

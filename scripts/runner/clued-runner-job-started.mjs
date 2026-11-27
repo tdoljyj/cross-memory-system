@@ -688,13 +688,15 @@ async function stagingAdmission({ env, fetchImpl, readFile, now, sleep, reposito
   const token = await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true });
   const generationPath = '/repos/' + repository + '/git/ref/heads/clued-train/generation';
   const readGeneration = () => github(fetchImpl, token, generationPath, { allowMissing: true });
-  const generation = await readGeneration();
-  if (generation !== null && (generation?.ref !== TRAIN_GENERATION_REF || generation?.object?.type !== 'commit'
+  // Only the installed hook config selects protocol 2. A leftover ref cannot
+  // change the protocol of an installation running the compatibility route.
+  const v2 = env.CLUED_MERGE_TRAIN_PROTOCOL_VERSION === '2';
+  const generation = v2 ? await readGeneration() : null;
+  if (v2 && (generation?.ref !== TRAIN_GENERATION_REF || generation?.object?.type !== 'commit'
     || !/^[a-f0-9]{40}$/.test(generation?.object?.sha ?? ''))) return refuse('train generation is unreadable');
-  const v2 = generation !== null;
   const run = await github(fetchImpl, token, `/repos/${repository}/actions/runs/${runId}`);
   const attempt = attemptNumber(env.GITHUB_RUN_ATTEMPT ?? '1');
-  if (String(run?.id) !== runId || run.event !== 'push' || run.head_sha !== sha || run.head_branch !== 'clued-train/staging'
+  if ((v2 && String(run?.id) !== runId) || run?.event !== 'push' || run.head_sha !== sha || run.head_branch !== 'clued-train/staging'
     || run.path !== workflow || run.actor?.login !== STAGING_ACTOR
     || attempt === null || run.run_attempt !== attempt || !Number.isFinite(Date.parse(run.created_at)))
     return refuse('run does not bind the workflow, App actor, attempt and S');
@@ -767,10 +769,9 @@ async function stagingAdmission({ env, fetchImpl, readFile, now, sleep, reposito
   }
   const currentMain = await github(fetchImpl, token, mainPath);
   if (currentMain?.object?.type !== 'commit' || currentMain.object.sha !== base) return refuse('main moved');
-  const currentGeneration = await readGeneration();
-  if ((currentGeneration === null) !== !v2 || (v2 && currentGeneration?.object?.sha !== generation.object.sha))
-    return refuse('train generation changed during admission');
   if (v2) {
+    const currentGeneration = await readGeneration();
+    if (currentGeneration?.object?.sha !== generation.object.sha) return refuse('train generation changed during admission');
     const stagingRef = await github(fetchImpl, token, '/repos/' + repository + '/git/ref/heads/clued-train/staging');
     if (stagingRef?.object?.type !== 'commit' || stagingRef.object.sha !== sha) return refuse('staging ref moved');
     const currentConfig = await readConfig();

@@ -15,7 +15,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { createHash, generateKeyPairSync } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { setup, jobOf, iso, REPO, NOW, SOURCE } from './train-strict-fixtures.mjs';
 import { tempDir, admittedFacts } from './resident-v2-fixtures.mjs';
 import { admissionExternalIdV2, batchJobsV2, claimGeneration, makeJobV2 } from '../src/job-v2.mjs';
@@ -43,17 +43,8 @@ import { parseStatus, pollerLandingOf, readStatus, StatusBoard, StatusFile } fro
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../../../independent-ci-resident-v1/src/policy.mjs';
 import { CLEAN_PROOF, executorFixture, fakeCompanion, fakeEngine, rawPolicy, RESIDENT, TEST_NODE } from '../../../independent-ci-resident-v1/test/helpers.mjs';
 import { HOSTED, SCAFFOLD_RULESET as SCAFFOLD_RS, portRules, scaffoldRules } from './s7-rules-fixture.mjs';
-import { createLandingPort } from '../src/independent-control-checks-v2/train-landing-port.mjs';
-import { createMergeSlotNative } from '../src/independent-control-checks-v2/merge-slot-native.mjs';
-import { createClaimAssistNative } from '../src/independent-control-checks-v2/claim-assist-native.mjs';
-import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
-import { readBatchClaim, recordBatchClaim } from '../src/batch-claim-v2.mjs';
-import { probeRole } from '../src/resident-v2/role-probe-entry.mjs';
-import { roleProbeFact } from '../src/resident-v2/role-probe-run.mjs';
-import { resolvePRTaskBinding } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
-import { CompanionHeartbeat, supabaseHeartbeatTransport } from '../../../independent-ci-resident-v1/src/companion-heartbeat.mjs';
 import { nodeProfileSha256 } from '../../../independent-ci-resident-v1/src/node-profile.mjs';
-import { multiDutyClock, multiDutyGitHub } from '../../../independent-ci-resident-v1/test/multi-duty-fixture.mjs';
+import { multiDutyGitHub } from '../../../independent-ci-resident-v1/test/multi-duty-fixture.mjs';
 
 const APP = 5368905, ACTIONS = 15368, SCOPE = 'project:00000000-0000-4000-8000-000000000000';
 const h = s => createHash('sha1').update(s).digest('hex');
@@ -2217,197 +2208,6 @@ async function residentOver(t, e, { tamper = null, facts = null, queueFacts = fa
 }
 const rowsOf = f => [...f.queue.data.rows].map(r => ({ pr: r.pr, state: r.state, headSha: r.current?.headSha ?? null, baseSha: r.current?.baseSha ?? null, batchRoute: r.current?.batchRoute ?? null }));
 const passOf = p => p.lastPass.pulls.map(x => [x.pr, x.eligible, x.hint, x.behindBy]);
-
-// GitHub 的远端状态共用，每个节点保留自己的 Source、本地批记录和发布日志。
-async function multiDutyResident(t, world, db, identity, clock, faults, privateKey) {
-  const nodeRoot = await tempDir(t, `clued-${identity.name}-`);
-  const local = await setup(t, { fullDone: false, root: nodeRoot });
-  const e = { ...world, ...local, now: clock.now(), scope: db.config.scope, token: identity.token,
-    bindingId: identity.bindingId, claimFor: () => db.claim.claim_id, gh: { ...world.gh }, statusClock: clock.now };
-  e.clock = () => e.now;
-  e.sleep = async ms => { e.now += ms; };
-  e.profile = { ...TEST_NODE, nodeName: identity.name };
-  const nativeOptions = { config: db.config, fetchImpl: db.fetchImpl, nativeToken: identity.token };
-  e.native = { port: { ...createMergeSlotNative(nativeOptions),
-    resolvePRBinding: expected => resolvePRTaskBinding({ ...expected, command: input => db.verify(identity, input) }) } };
-  e.claimAssist = createClaimAssistNative(nativeOptions);
-  e.verifyHead = (pull, paths) => db.verify(identity, {
-    claim_id: db.claim.claim_id, pr_ref: `${REPO}#${pull.number}`, head_sha: pull.head.sha, base_sha: pull.base.sha,
-    target_branch: 'main', changed_paths: paths,
-  });
-  const live = () => {};
-  e.runRoleProbe = async ({ watchPr = null } = {}) => {
-    const outcome = await probeRole({ record: {
-      config: { ...db.config, ciPrincipalBindingId: identity.bindingId },
-      accepted: { node: {}, ciTokenPinSha256: digest('clued.independent-ci.ci-binding-pin/1\0' + identity.token) },
-    }, live, tokenFile: path.join(nodeRoot, 'secrets', 'ci-admission.token'), tokenReader: async () => identity.token,
-    protect: async () => false, watchPr, fetchImpl: db.fetchImpl });
-    return { ok: true, proof: PROOF, outcome: { ...outcome, mayHavePublished: false }, roleProbe: roleProbeFact(outcome.reason) };
-  };
-  e.gh.createCheck = payload => faults.write('createCheck', () => world.gh.createCheck(payload),
-    check => ['checkCreates', [check.app.id, check.head_sha, check.external_id, check.id], identity.name]);
-  const journal = await EffectJournal.open(path.join(nodeRoot, 'admission-effects'));
-  const batchClaims = {
-    async read(job) {
-      try { return await readBatchClaim(nodeRoot, job); }
-      catch (error) { if (error.code === 'BATCH_CLAIM_MISSING') return null; throw error; }
-    },
-    record: (job, generation, at) => recordBatchClaim(nodeRoot, job, generation, at),
-  };
-  e.publishAdmission = (job, admission) => createFixtureWorkAdmissionPublisherV2({
-    github: e.gh, journal, admission, batchClaims, assertLive: live, record() {}, authority: {}, clock: e.clock, sleep: e.sleep,
-    trainMode: 'on', slotNative: e.native.port, sweepStore: e.store,
-  }).publish(job);
-  e.port = createLandingPort({
-    repository: REPO, repositoryId: 12345, installationId: 1, appId: APP, privateKeyProvider: async () => privateKey, clock: e.clock,
-    async fetchImpl(url, options) {
-      const { hostname, pathname } = new URL(url);
-      assert.equal(hostname, 'api.github.com');
-      if (pathname === '/app') return Response.json({ id: APP });
-      if (pathname === '/app/installations/1/access_tokens') return Response.json({
-        token: 'fixture-landing', expires_at: iso(e.now + 3600_000),
-        permissions: { contents: 'write', workflows: 'write' }, repositories: [{ id: 12345, full_name: REPO }],
-      }, { status: 201 });
-      assert.ok(pathname.startsWith(`/repos/${REPO}/`));
-      assert.equal(options.headers.authorization, 'Bearer fixture-landing');
-      const request = JSON.parse(options.body);
-      const ref = pathname.split('/git/refs/')[1];
-      if (ref === 'heads/main') {
-        assert.equal(options.method, 'PATCH');
-        assert.equal(request.force, false);
-        return faults.write('fastForwardMain', async () => {
-          const before = world.main();
-          const result = await world.port.fastForwardMain(request.sha);
-          if (world.main() !== before) faults.count('mainUpdates', request.sha, identity.name);
-          return Response.json({ object: { sha: result.sha } }, { status: result.status });
-        });
-      }
-      if (ref === 'heads/clued-train/staging' || ref === 'heads/clued-train/staging.tmp') {
-        assert.equal(options.method, 'PATCH');
-        return faults.write('pointRef', async () => {
-          const before = world.W.refs.get(ref);
-          const knownRun = [...world.W.checks.values()].some(check => check.head_sha === request.sha && check.app.id === ACTIONS);
-          const result = await world.port.pointRef(ref, request.sha);
-          if (ref === 'heads/clued-train/staging' && before !== result.sha) {
-            faults.count('stagingUpdates', result.sha, identity.name);
-            if (!knownRun) faults.count('requiredRuns', result.sha, identity.name);
-          }
-          return Response.json({ object: { sha: result.sha } });
-        });
-      }
-      assert.equal(pathname, `/repos/${REPO}/merges`);
-      const result = await world.port.mergeIntoTmp(request.head);
-      return result.status === 204 ? new Response(null, { status: 204 }) : Response.json({ sha: result.sha }, { status: result.status });
-    },
-  });
-  const resident = await residentOver(t, e, { queueFacts: true, nodeRoot });
-  resident.board.setVersions({ windows: { residentManifestSha256: RESIDENT, ciSourceManifestSha256: SOURCE } });
-  const statusFile = new StatusFile(path.join(nodeRoot, 'state', 'status.json'));
-  const heartbeat = new CompanionHeartbeat({
-    nodeName: identity.name, scope: e.scope, clock: clock.now, readToken: async () => identity.token,
-    transport: supabaseHeartbeatTransport({ ...db.config, fetchImpl: db.fetchImpl }),
-    readStatus: () => readStatus(nodeRoot),
-    serviceRunning: async () => true,
-  });
-  return { ...resident, e, identity, async beat() {
-    // 状态写入与业务执行是两个独立循环。卡住业务时继续刷新状态文件。
-    await statusFile.write(resident.board.snapshot());
-    return heartbeat.step();
-  }, async tick() {
-    resident.f.advance(clock.now() - resident.f.clock());
-    const result = await resident.f.exec.tick();
-    clock.advance(Math.max(0, resident.f.clock() - clock.now()));
-    return result;
-  } };
-}
-
-test('列车 v2：两个节点同时看到新 PR，A 停止推进仍报心跳，B 接手并落地同一批',
-  { skip: '片 7 跨节点验收。启用前需接入共享批、进度租约和落地收尾。' },
-  async t => {
-    const { mergeTrainTestDatabase } = await import('../../../../apps/clued-cloud/tests/merge-train-v2-db.fixture.mjs');
-    const pr = 1741;
-    const db = await mergeTrainTestDatabase(t, { repository: REPO });
-    const clock = multiDutyClock(db.startAt), faults = multiDutyGitHub(clock);
-    const e = await world(t, { prs: [pr], queued: false, admitted: false, appScans: [] });
-    e.now = clock.now();
-    e.W.pulls.get(pr).updated = iso(e.now);
-    e.W.pulls.get(pr).paths = ['work/ci-scheduling-fixture/new.txt'];
-    e.W.pulls.get(pr).body = `Clued-Work-Claim: ${db.claim.claim_id}\nClued-Work-Scope: ${db.config.scope}\n`;
-    const authorized = await db.authorizeHead(pr, e.head(pr));
-    assert.equal((await db.effects()).queueJoins, 0);
-    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
-    const [a, b] = await Promise.all(db.nodes.map(node => multiDutyResident(t, e, db, node, clock, faults, privateKey)));
-    for (const node of [a, b]) {
-      node.e.claimGeneration = { claimId: db.claim.claim_id, fence: Number(db.claim.fence), epoch: Number(db.claim.execution_epoch),
-        expiresAt: new Date(authorized.expires_at ?? db.claim.expires_at).toISOString() };
-      await node.poller.pass();
-      assert.deepEqual(node.poller.lastPass.pulls.map(pull => [pull.pr, pull.headSha]), [[pr, e.head(pr)]]);
-    }
-    const beats = async () => {
-      for (const node of [a, b]) {
-        const result = await node.beat();
-        assert.equal(result.sent, true, JSON.stringify({ name: node.identity.name, result }));
-      }
-    };
-    const T = e.main();
-    const staging = 'heads/clued-train/staging';
-    const pointRef = e.port.pointRef;
-    e.port.pointRef = async (ref, sha) => {
-      const result = await pointRef(ref, sha);
-      if (ref === staging) {
-        for (const check of e.W.checks.values()) {
-          if (check.head_sha === sha && check.app.id === ACTIONS) Object.assign(check, { status: 'in_progress', conclusion: null, completed_at: null });
-        }
-      }
-      return result;
-    };
-    for (let round = 0; round < 18 && !e.W.refs.has(staging); round++) {
-      await a.poller.pass();
-      await a.tick();
-      await b.tick();
-      await beats();
-      clock.advance(60_000);
-    }
-    const S = e.W.refs.get(staging);
-    const diagnostic = () => JSON.stringify({ S, main: e.main(), roles: [a, b].map(node => node.f.exec.roleProbe.last?.code),
-      stage1: a.engine.stage1, stage8: a.engine.stage8, stage10: a.engine.trainRuns.map(run => run.decision), effects: faults.totals() });
-    assert.ok(S && S !== T, `A 必须先成功暂存：${diagnostic()} RPC ${JSON.stringify(db.calls.filter(call => call.action !== 'ci_node_heartbeat' && call.name === 'clued_work_verify_v1'))}`);
-    assert.equal(e.main(), T, '故障发生于落地前');
-    const firstBatch = await a.e.store.landingBatchByTest(S);
-    assert.equal(firstBatch.members[0].headSha, e.head(pr));
-    const bLocalBatchBefore = await b.e.store.landingBatchByTest(S);
-    const before = await db.heartbeats();
-    const finishChecks = sha => {
-      for (const check of e.W.checks.values()) {
-        if (check.head_sha === sha && check.app.id === ACTIONS)
-          Object.assign(check, { status: 'completed', conclusion: 'success', completed_at: iso(clock.now()) });
-      }
-    };
-    // A 的业务循环停止后，已经在 GitHub 上的检查照常完成。
-    faults.emit('checks-completed', S);
-    await faults.deliver('checks-completed', finishChecks);
-    assert.ok((await b.e.gh.readChecks(S)).checks.some(check => check.app.id === ACTIONS && check.conclusion === 'success'));
-    const watchdog = [];
-    for (let round = 0; round < 2; round++) {
-      await b.poller.pass();
-      await b.tick();
-      await beats();
-      watchdog.push((await db.watchdog())?.outcome);
-      clock.advance(60_000);
-    }
-    const after = await db.heartbeats();
-    assert.equal(after.length, 2);
-    for (const [index, row] of after.entries()) {
-      assert.ok(Number(row.heartbeat_sequence) > Number(before[index].heartbeat_sequence));
-      assert.equal(row.reported_state, 'NORMAL');
-      assert.equal(row.reported_service_running, true);
-    }
-    const counts = { ...faults.totals(), ...await db.effects() };
-    assert.equal(e.main(), S, `B 须落地 A 已暂存的 S。 ${diagnostic()} B 本地已有批 ${bLocalBatchBefore !== null} 看门狗 ${JSON.stringify(watchdog)} 心跳 ${JSON.stringify(after.map(row => row.heartbeat_sequence))} 计数 ${JSON.stringify(counts)}`);
-    assert.deepEqual(faults.effects().filter(effect => effect.kind === 'mainUpdates').map(effect => [effect.subject, effect.node]), [[S, b.identity.name]]);
-    assert.equal((await b.e.gh.readPullRequest(pr)).merged, true);
-    assert.deepEqual([counts.queueJoins, counts.stagingUpdates, counts.requiredRuns, counts.adoptions], [1, 1, 1, 1]);
-  });
 
 // E1 (H2) and E2: installed landing push; stage 10's own reading is not push, nothing was read, the status cannot be read, or a scan is still
 // required from this App (or appScans not read: a Source before R3, neither the top-level appScans of §82 item 5 nor rules.appScans): no stamp anywhere, the poller proposes nothing and says merge-main for

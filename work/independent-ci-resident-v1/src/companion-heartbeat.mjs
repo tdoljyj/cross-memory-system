@@ -32,7 +32,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { NODE_NAME, operationalIntakePause } from './node-duty.mjs';
+import { NODE_NAME, operationalIntakePause, usesSharedDuty } from './node-duty.mjs';
 import { parseIncluded } from './poller.mjs';
 
 // The CI command door (clued_work_verify_v1 -> work_claim_ci_command_v1) and its heartbeat action.
@@ -88,7 +88,7 @@ export function heartbeatPayload({ nodeName, scope, status, statusError = false,
   const readable = fresh && running;
   let state = 'UNKNOWN', halt = null, intakeUntil = null;
   if (readable) {
-    const intakePause = operationalIntakePause(status.intakePause);
+    const intakePause = operationalIntakePause(status.intakePause, usesSharedDuty(status));
     if (status.halt) {
       state = 'HALTED';
       halt = { code: CODE.test(status.halt.code ?? '') ? status.halt.code : 'HALTED', at: iso(status.halt.at),

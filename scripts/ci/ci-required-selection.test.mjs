@@ -31,7 +31,11 @@ test('列车 v2 的未签名写拒绝和单目标未结批约束由正式数据�
 test('train v2: privileged executor entry only accepts a new main push or an Owner dispatch', () => {
   const workflow = readFileSync(path.join(ROOT, '.github/workflows/clued-merge-executor.yml'), 'utf8');
   const job = workflow.slice(workflow.indexOf('  execute:'), workflow.indexOf('    steps:'));
-  assert.match(job, /if: >-\s+github\.ref == 'refs\/heads\/main' && github\.run_attempt == 1/);
+  const expression = job.match(/    if: >-\r?\n((?:      .+\r?\n)+)/)[1];
+  const allowed = Function('github', 'vars', 'return (' + expression + ')');
+  const retried = { event_name: 'push', ref: 'refs/heads/main', run_attempt: 2 };
+  assert.equal(allowed(retried, {}), true, '协议 1 的作业入口沿用原判断');
+  assert.equal(allowed(retried, { CLUED_MERGE_TRAIN_PROTOCOL_VERSION: '2' }), false);
   assert.match(job, /github\.event_name == 'push'/);
   assert.match(job, /github\.event_name == 'workflow_dispatch' && github\.actor == github\.repository_owner/);
   assert.match(job, /github\.triggering_actor == github\.repository_owner/);
@@ -40,7 +44,7 @@ test('train v2: privileged executor entry only accepts a new main push or an Own
 test('train v2: slot workflow admits only a fresh PR completion or fresh Owner dispatch', () => {
   const workflow = readFileSync(path.join(ROOT, '.github/workflows/clued-merge-slot-ci.yml'), 'utf8');
   const expression = workflow.match(/    if: >-\r?\n((?:      .*\r?\n)+)/)[1];
-  const allowed = github => Function('github', 'return (' + expression + ')')(github);
+  const allowed = Function('github', 'vars', 'return (' + expression + ')');
   const base = { ref: 'refs/heads/main', run_attempt: 1, repository_owner: 'owner', actor: 'owner', triggering_actor: 'owner',
     event: { action: 'completed', workflow_run: { event: 'pull_request', run_attempt: 1 } } };
   const dispatch = { ...base, event_name: 'workflow_dispatch' };
@@ -56,7 +60,8 @@ test('train v2: slot workflow admits only a fresh PR completion or fresh Owner d
     [{ ...completion, event: { action: 'completed', workflow_run: { event: 'pull_request_target', run_attempt: 2 } } }, true],
   ];
   for (const [github, expected] of scenarios) {
-    assert.equal(Boolean(allowed(github)), expected, JSON.stringify(github));
+    assert.equal(Boolean(allowed(github, { CLUED_MERGE_TRAIN_PROTOCOL_VERSION: '2' })), expected, JSON.stringify(github));
+    assert.equal(Boolean(allowed(github, {})), true, '原 PR 完成与 dispatch 路径在协议 1 保持准入');
     assert.equal(executorEntryAllowed({
       GITHUB_REF: github.ref, GITHUB_RUN_ATTEMPT: String(github.run_attempt), GITHUB_REPOSITORY_OWNER: github.repository_owner,
       GITHUB_ACTOR: github.actor, GITHUB_TRIGGERING_ACTOR: github.triggering_actor, GITHUB_EVENT_NAME: github.event_name,
@@ -1042,13 +1047,15 @@ test('every Node suite runs when any file its tests reach through imports change
     'admission-self-tests': SUITE_COMMANDS['admission-self-tests'][0].argv.filter((arg) => arg.endsWith('.mjs'))
       .map((file) => path.join(ROOT, file)),
   };
+  const missing = [];
   for (const [id, files] of Object.entries(entries)) {
     const reached = closure(files);
     assert.ok(reached.length > files.length, id);
     for (const file of reached) {
-      assert.ok(selectSuites('ci-suites', [file]).suites.includes(id), `${id} reaches ${file}, which does not select it`);
+      if (!selectSuites('ci-suites', [file]).suites.includes(id)) missing.push(`${id} reaches ${file}, which does not select it`);
     }
   }
+  assert.deepEqual(missing, []);
   // The examples the round-2 review found.
   assert.ok(selectSuites('ci-suites', ['scripts/runner/clued-runner-job-started.mjs']).suites.includes('resident-node'));
   assert.ok(selectSuites('ci-suites', ['work/actions-hosted-migration/independent-ci-v1/src/proof.mjs']).suites.includes('admission-self-tests'));

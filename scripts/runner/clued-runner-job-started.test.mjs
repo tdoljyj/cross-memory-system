@@ -149,6 +149,7 @@ const nativeScript = (...checks) => ({
 // S = merge(T, H). Admission belongs to the current member PR/head, never S
 // itself or an arbitrary success with the same display name.
 const STAGING_ENV = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/clued-train/staging',
+  CLUED_MERGE_TRAIN_PROTOCOL_VERSION: '2',
   GITHUB_ACTOR: 'clued-ci-checks-turing-20261018[bot]',
   GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests.yml@refs/heads/clued-train/staging' };
 const MAIN = 'd'.repeat(40);
@@ -191,10 +192,11 @@ test('bors staging: workflow or protected changes without member admission must 
 });
 
 test('legacy staging attempt 1 keeps member admission when Variables and Environments are unavailable', async () => {
-  const { result, calls } = await stagingRun({ [GENERATION_REF]: { status: 404 }, [REPO_MODE]: { status: 403 }, [ENVIRONMENT_MODE]: { status: 403 } });
+  const { result, calls } = await stagingRun({ [GENERATION_REF]: { status: 503 }, [REPO_MODE]: { status: 403 }, [ENVIRONMENT_MODE]: { status: 403 } },
+    { CLUED_MERGE_TRAIN_PROTOCOL_VERSION: undefined });
   assert.equal(result.allow, true, result.reason);
   assert.ok(calls.some(call => call.url.startsWith(NATIVE)));
-  assert.ok(!calls.some(call => call.url.startsWith(REPO_MODE) || call.url.startsWith(ENVIRONMENT_MODE)));
+  assert.ok(!calls.some(call => call.url === GENERATION_REF || call.url.startsWith(REPO_MODE) || call.url.startsWith(ENVIRONMENT_MODE)));
 });
 
 test('train v2: a manual staging rerun cannot borrow the original train actor or a fresh gate', async () => {

@@ -27,6 +27,7 @@ import { createHash } from 'node:crypto';
 import { canonical } from '../proof.mjs';
 import { REPO } from './layout.mjs';
 import { revocationQualification } from './revocation-run.mjs';
+import { validTrainInstall } from './train-transport.mjs';
 
 export const RECORD_INPUTS_CONTRACT = 'clued.independent-ci.resident-record-inputs/2';
 export const RECORD_MANIFEST_CONTRACT = 'clued.independent-ci.resident-record/2';
@@ -106,11 +107,14 @@ function validateRoles(roles) {
   return roles;
 }
 
+
 export function validateRecordInputs(v, now = Date.now()) {
   noSecrets(v);
   check(exact(v, ['contract', 'repository', 'sourceCommit', 'scope', 'node', 'controllerAccount', 'appId', 'installationId', 'repositoryId', 'appKeyId',
     'ciPrincipalBindingId', 'ciPrincipalRoleRef', 'ciTokenPinSha256', 'appPublicKeySha256Base64', 'supabaseUrl', 'publishableKey', 'controllerNodeSha256',
-    'references', 'owner', 'formalRoles', 'signers', ...(Object.hasOwn(v,'revocationMaintenanceQualification')?['revocationMaintenanceQualification']:[])]), 'EXACT_RECORD_INPUT_FIELDS_REQUIRED');
+    'references', 'owner', 'formalRoles', 'signers', ...['mergeTrainProtocolVersion', 'mergeTrainNode'].filter(k => Object.hasOwn(v, k)),
+    ...(Object.hasOwn(v,'revocationMaintenanceQualification')?['revocationMaintenanceQualification']:[])]), 'EXACT_RECORD_INPUT_FIELDS_REQUIRED');
+  check(validTrainInstall(v), 'MERGE_TRAIN_INSTALL_REFUSED');
   check(v.contract === RECORD_INPUTS_CONTRACT && v.repository === REPO && SHA.test(v.sourceCommit)
     && (v.scope === 'global' || /^project:[a-f0-9-]{36}$/.test(v.scope)), 'ACTUAL_REPOSITORY_SOURCE_SCOPE_REQUIRED');
   validateNodeProfile(v.node);
@@ -152,7 +156,8 @@ export function assembleRecord(inputs, sourceFiles) {
     ciPrincipalBindingId: inputs.ciPrincipalBindingId, ciPrincipalQualificationRef: inputs.references.ciPrincipalQualificationRef, ciPrincipalRoleRef: inputs.ciPrincipalRoleRef,
     ciTokenPinSha256: inputs.ciTokenPinSha256, supabaseUrl: inputs.supabaseUrl, publishableKey: inputs.publishableKey,
     evaluatorSha256: pin('scripts/ci/clued-work-admission.mjs'), policySha256: pin('config/merge-admission-policy.json'),
-    controllerNodeSha256: inputs.controllerNodeSha256, acceptanceSha256: null, sourceManifestSha256: hash(manifestText), checks: CHECKS_V2 };
+    controllerNodeSha256: inputs.controllerNodeSha256, acceptanceSha256: null, sourceManifestSha256: hash(manifestText), checks: CHECKS_V2,
+    ...Object.fromEntries(['mergeTrainProtocolVersion', 'mergeTrainNode'].filter(k => Object.hasOwn(inputs, k)).map(k => [k, inputs[k]])) };
   const signersText = canonical(inputs.signers);
   const accepted = { contract: ACCEPTANCE_CONTRACT_V2, domain: 'production', accepted: true, repository: inputs.repository, hostname: inputs.node.hostname,
     node: inputs.node, platform: 'win32', arch: 'x64', controllerAccount: inputs.controllerAccount, workerCannotReadController: true, ...inputs.references,

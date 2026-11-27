@@ -412,7 +412,7 @@ async function runStage8Startup(t, w, command) {
   globalThis.trainStartupFixture = {
     runEntry: ({ body }) => body({ args: {}, inputs: { record, jobs: w.jobs, dir }, held: {}, live() {}, sourceRoot: dir }),
     controllerPrincipal: async () => ({ nativeToken: 'fixture', bindingId: 'fixture' }),
-    controllerPorts: () => ({ github, native: { command }, admission: {} }),
+    controllerPorts: () => ({ github, native: { train: { protocolVersion: 2 }, command }, admission: {} }),
     publicationControllerGithub: () => github,
     observationLog: () => () => {}, authorityOf: () => ({}),
     readBatchClaim: async () => null,

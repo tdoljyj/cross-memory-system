@@ -42,7 +42,6 @@ import { validatePolicy } from '../src/policy.mjs';
 import { intakePauseRequest, intakeResumeRequest, readIntakePause } from '../src/intake-pause.mjs';
 import { probeRequest, revokeHeadRequest } from '../src/resident-requests.mjs';
 import { refuseUnderTest } from '../src/production-root-guard.mjs';
-import { RETIRED_DUAL_ACTIVE_HOLDER } from '../src/node-duty.mjs';
 
 const SID = /^S-1-5-21-\d+-\d+-\d+-\d+$/;
 // The review mark Source v2 stage 10 reads (state-retention.mjs TRAIN_REVIEW_*; a test keeps the two equal).
@@ -217,13 +216,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
       const file = await writeOwnerRequest(path.join(values.root, 'owner'), breakerReleaseRequest({ reason: values.reason, by: values.by }));
       console.log(JSON.stringify({ status: 'BREAKER_RELEASE_REQUESTED_SERVICE_WILL_VERIFY', file }));
     } else if (positionals[0] === 'request-intake-pause') {
-      check(values.holder !== RETIRED_DUAL_ACTIVE_HOLDER, 'INTAKE_HOLDER_RETIRED');
       check(values.minutes === undefined || /^[0-9]{1,3}$/.test(values.minutes), 'INTAKE_REQUEST_REFUSED');
       const file = await writeOwnerRequest(path.join(values.root, 'requests'), intakePauseRequest({ holder: values.holder ?? 'owner',
         minutes: values.minutes === undefined ? undefined : Number(values.minutes), reason: values.reason }));
       console.log(JSON.stringify({ status: 'INTAKE_PAUSE_REQUESTED_SERVICE_WILL_HOLD_NEW_BATCHES', file }));
     } else if (positionals[0] === 'request-intake-resume') {
-      check(values.holder !== RETIRED_DUAL_ACTIVE_HOLDER, 'INTAKE_HOLDER_RETIRED');
       const file = await writeOwnerRequest(path.join(values.root, 'requests'), intakeResumeRequest({ holder: values.holder ?? 'owner', reason: values.reason }));
       console.log(JSON.stringify({ status: 'INTAKE_RESUME_REQUESTED', file }));
     } else if (positionals[0] === 'request-probe' || positionals[0] === 'request-revoke-head') {

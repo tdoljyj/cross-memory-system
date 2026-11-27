@@ -12,20 +12,31 @@ import { readStageBatchRoute } from '../independent-control-checks-v2/batch-rout
 import { createClaimAssistNative, stage1WithLease, stage1FrontRequeue } from '../independent-control-checks-v2/claim-assist-native.mjs';
 import { trainHeadProtocolOf } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { isTrainFrontJobV2 } from '../job-v2.mjs';
+import { createSharedTrainPorts } from '../independent-control-checks-v2/train-shared-ports.mjs';
 
 export async function main(argv = process.argv.slice(2), output = process.stdout,
   { run = runEntry, readPrincipal = controllerPrincipal, effectsRoot = STATE_V2.effectsWorkAdmission, protectedTrainTransport, fetchImpl } = {}) {
-  return run({ argv, entryRole: 'work-admission', moduleUrl: import.meta.url, output, body: async ({ args, inputs, held, live, sourceRoot }) => {
+  return run({ argv, entryRole: 'work-admission', moduleUrl: import.meta.url, output, protectedTrainTransport,
+    body: async ({ args, inputs, held, live, sourceRoot, protectedTrainTransport: transport = protectedTrainTransport }) => {
     const job = inputs.jobs[0];
-    const train = protectedTrainPort(inputs.record, protectedTrainTransport, live);
+    const train = protectedTrainPort(inputs.record, transport, live);
     if (train !== undefined && typeof train.command !== 'function')
       return { status: 'BLOCKED', reason: 'ci_train_protocol_unconfirmed', sideEffects: 0 };
+    if (train && isTrainFrontJobV2(job)) {
+      // The native batch owns the already-issued H admission and the S runs.
+      // Stage 8 independently acquires it and verifies live rules before landing.
+      const { trainMode, unreadable } = await readStageTrainModeFact(inputs.dir);
+      const shared = createSharedTrainPorts({ transport: train, config: inputs.record.config });
+      if (trainMode === 'on' && !unreadable && await shared.confirmFront(job))
+        return { status: 'SETTLED', sideEffects: 0 };
+      return { status: 'BLOCKED', reason: 'TRAIN_LANDING_CHECKS_PENDING', sideEffects: 0 };
+    }
     const { appKey, nativeToken, bindingId } = await readPrincipal(inputs.record);
     const log = observationLog(effectsRoot, job.id);
     // bc982192: the batch's own route stamp from this stage directory (batch-route.mjs; none: main's tip is the batch base).
     const batchRoute = await readStageBatchRoute(inputs.dir);
     const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot,
-      live, log, batchRoute, baseFetch: fetchImpl, protectedTrainTransport });
+      live, log, batchRoute, baseFetch: fetchImpl, protectedTrainTransport: transport });
     const { admission } = ports;
     const journal = await EffectJournal.open(effectsRoot);
     const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record, plan: inputs.plan });

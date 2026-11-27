@@ -33,8 +33,8 @@ export async function probeRole({ record, live, tokenFile = path.join(WIN_ROOT, 
   return { status: 'BLOCKED', reason: fact.code, sideEffects: 0 };
 }
 export const main = (argv = process.argv.slice(2), output = process.stdout, { run = runEntry, protectedTrainTransport, fetchImpl } = {}) =>
-  run({ argv, entryRole: 'role-probe', moduleUrl: import.meta.url, successStatuses: ['BLOCKED'], output,
-    body: ({ inputs, live }) => probeRole({ record: inputs.record, live, fetchImpl,
-      train: protectedTrainPort(inputs.record, protectedTrainTransport, live),
+  run({ argv, entryRole: 'role-probe', moduleUrl: import.meta.url, successStatuses: ['BLOCKED'], output, protectedTrainTransport,
+    body: ({ inputs, live, protectedTrainTransport: transport = protectedTrainTransport }) => probeRole({ record: inputs.record, live, fetchImpl,
+      train: protectedTrainPort(inputs.record, transport, live),
       watchPr: inputs.jobs?.[0]?.contract === ROLE_PROBE_RUN_CONTRACT_WATCH ? inputs.jobs[0].watchPr : null }) });
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) process.exitCode = await main();

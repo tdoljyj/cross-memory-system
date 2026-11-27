@@ -37,7 +37,7 @@ export function independentControllerId({ invocationNonce, jobId, nodeId }) {
   return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;
 }
 export function createIndependentPublicationPort({ job, controllerId, github, native, journal, assertCurrent,
-  observeStopped, registerController, clock = Date.now }) {
+  observeStopped, registerController, readMainMergeProof, clock = Date.now }) {
   if (typeof assertCurrent !== 'function') fail('independent_current_observer_required');
   const handles = new WeakMap(), modes = new Map();
   const inventory = async head => {
@@ -80,7 +80,7 @@ export function createIndependentPublicationPort({ job, controllerId, github, na
     const train = native.train;
     facade.trainHeadProtocol = native.trainProtocolVersion;
     const leases = new WeakMap();
-    const shared = createTrainHeadPublicationRuntime({ train, github: nativeGithub,
+    const shared = createTrainHeadPublicationRuntime({ train, github: nativeGithub, readMainMergeProof,
       assertCurrent: (identity, admissionCommand) => assertCurrent(clone(identity), clone(modes.get(identity.effect_key)), admissionCommand) });
     facade.acquireTrainHead = async () => {
       if (facade.trainHeadProtocol !== TRAIN_PROTOCOL_VERSION || typeof train?.command !== 'function'

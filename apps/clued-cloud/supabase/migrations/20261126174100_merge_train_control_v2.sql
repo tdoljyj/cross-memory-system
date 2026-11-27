@@ -217,8 +217,11 @@ create table clued_private.ci_train_landing_v2 (
   unique (batch_id,generation),
   unique (landing_slot_key,successor_ref_oid)
 );
+-- A reservation discarded before send never consumed the remote marker.
+-- Once a send was possible, even a reconciled invalidation keeps the marker unique.
 create unique index ci_train_landing_v2_generation_ref
-  on clued_private.ci_train_landing_v2(landing_slot_key,(intent->>'generationRefOid'));
+  on clued_private.ci_train_landing_v2(landing_slot_key,(intent->>'generationRefOid'))
+  where state<>'revoked' or observation is not null;
 create unique index ci_train_landing_v2_unresolved on clued_private.ci_train_landing_v2(landing_slot_key)
   where state in ('reserved','sent','unknown');
 alter table clued_private.ci_train_batches_v2 enable row level security;
@@ -449,6 +452,7 @@ create function clued_private.ci_train_batch_view_v2(batch clued_private.ci_trai
 language sql stable set search_path='' as $$
   select jsonb_build_object('batchId',batch.batch_id,'generation',batch.generation,'baseSha',batch.base_sha,
     'testSha',batch.test_sha,'treeSha',batch.tree_sha,'members',batch.members,'steps',batch.steps,
+    'sourceSha256',batch.source_manifest_sha256,'policyVersion',batch.policy_version,
     'checksPolicyVersion',batch.checks_policy_version,'parentBatchId',batch.parent_batch_id,'state',batch.state,
     'adoptionReceipts',batch.adoption_receipts,'bisection',batch.bisection-'input',
     'requiredRuns',clued_private.ci_train_required_runs_view_v2(batch),
@@ -621,7 +625,7 @@ begin
   end;
   if keys is null then raise exception 'CI_OPERATION_NOT_SERVED' using errcode='42501'; end if;
   perform clued_private.ci_input_v1(payload,fields||keys
-    ||case when op='staging_prepare' then array['successorRefOid'] else array[]::text[] end
+    ||case when op='staging_prepare' then array['successorRefOid','stagingBeforeOid'] else array[]::text[] end
     ||case when op='required_run_recovery_observe' then array['jobs'] else array[]::text[] end
     ||case when op='batch_cleanup' then array['reason','observedBaseSha','blockedMember','testSha','evidence_digest','hard_cap_minutes',
       'requiredRunsSha256','terminal']
@@ -698,6 +702,14 @@ begin
         staging_state=case when batch.staging_state='sent' then 'unknown' else batch.staging_state end
         where batch_id=k returning * into batch;
       update clued_private.ci_train_landing_v2 set state='unknown' where batch_id=k and state='sent';
+      -- A reserved intent has no send receipt. Once the batch generation advances it cannot be sent.
+      for landing in select * from clued_private.ci_train_landing_v2
+        where batch_id=k and state='reserved' and generation<batch.generation for update
+      loop
+        r:=clued_private.ci_receipt_v1(n.user_id,n.project_id,'ci_train_landing_reservation_revoke',landing.effect_key,
+          jsonb_build_object('generation',landing.generation,'successor_generation',batch.generation));
+        update clued_private.ci_train_landing_v2 set state='revoked',receipt_id=r where effect_key=landing.effect_key;
+      end loop;
     end if;
   elsif op='batch_release' then
     update clued_private.ci_train_batches_v2 set expires_at=t,
@@ -803,10 +815,12 @@ begin
       if batch.staging_state in ('sent','unknown','settled') then return clued_private.ci_train_reject_v2('ci_effect_unknown'); end if;
       if coalesce(payload->>'generationRefOid','') !~ '^[0-9a-f]{40}$'
         or payload ? 'successorRefOid' and coalesce(payload->>'successorRefOid','') !~ '^[0-9a-f]{40}$'
+        or payload ? 'stagingBeforeOid' and coalesce(payload->>'stagingBeforeOid','') !~ '^[0-9a-f]{40}$'
         then raise exception 'CI_COMMAND_INVALID' using errcode='22023'; end if;
       subject:=jsonb_build_object('batchId',k,'generation',batch.generation,'baseSha',batch.base_sha,'testSha',batch.test_sha,
         'generationRefOid',payload->>'generationRefOid','members',batch.members,'expiresAt',least(batch.expires_at,expiry));
       if payload ? 'successorRefOid' then subject:=subject||jsonb_build_object('successorRefOid',payload->'successorRefOid'); end if;
+      if payload ? 'stagingBeforeOid' then subject:=subject||jsonb_build_object('stagingBeforeOid',payload->'stagingBeforeOid'); end if;
       r:=clued_private.ci_receipt_v1(n.user_id,n.project_id,'ci_train_staging_prepare',k,subject);
       update clued_private.ci_train_batches_v2 set staging_state='reserved',staging_intent=subject,receipt_id=r
         where batch_id=k returning * into batch;
@@ -857,8 +871,8 @@ begin
         subject||jsonb_build_object('successorRefOid',payload->>'successorRefOid'));
       insert into clued_private.ci_train_landing_v2(effect_key,landing_slot_key,batch_id,generation,state,intent,
         successor_ref_oid,evidence_digest,receipt_id)
-      values(clued_private.ci_train_key_v2(jsonb_build_array('effect',n.user_id,n.project_id,repo_id,dest,'landing_prepare',
-        jsonb_build_array(k,batch.base_sha,batch.test_sha,payload->>'generationRefOid'))),slot,k,batch.generation,'reserved',subject,
+      values(clued_private.ci_train_key_v2(jsonb_build_array('effect',n.user_id,n.project_id,repo_id,dest,'landing_send',
+        jsonb_build_array(k,batch.generation,payload->>'generationRefOid',batch.base_sha,batch.test_sha))),slot,k,batch.generation,'reserved',subject,
         payload->>'successorRefOid',payload->>'evidence_digest',r) returning * into landing;
     elsif landing.effect_key is null or landing.effect_key is distinct from payload->>'effect_key' then
       return clued_private.ci_train_reject_v2('ci_effect_unknown');
@@ -1112,6 +1126,8 @@ begin
     when 'queue_action_acquire' then array['pr','head_sha','claim_id','claim_fence','execution_epoch','purpose']
     when 'verify_head' then lease_keys||array['base_sha','changed_paths']
     when 'resolve_pr_claim' then lease_keys||array['base_sha']
+    when 'carry_head_read' then array['work_key']
+    when 'head_admission_read' then array['work_key','base_sha','changed_paths']
     when 'carry_main_merge' then lease_keys||array['new_head_sha','main_sha','evidence_digest']
     when 'owner_grant_admission' then lease_keys
     when 'work_renew' then lease_keys
@@ -1199,8 +1215,9 @@ begin
       when op='resolve_pr_claim' and not (payload ? 'work_key') then array['pr','head_sha','base_sha']
       else action_keys end,32768);
   if op='role_probe' then
-    return jsonb_build_object('protocol_version',2,'on_duty',stop='none','node_id',n.node_id,
+    return jsonb_build_object('status','ok','protocol_version',2,'on_duty',stop='none','node_id',n.node_id,
       'binding_generation',n.binding_generation,'source_manifest_sha256',source,
+      'atomic_landing_qualification_ref',cfg->>'atomic_landing_qualification_ref',
       'stop_scope',case when stop in ('none','node') then stop else 'fleet' end);
   end if;
   if op='publisher_current' then
@@ -1243,6 +1260,10 @@ begin
         and q.action='merge_queue_join' and q.state<>'completed'),
       'active_batch',exists(select 1 from clued_private.ci_train_batches_v2 d where d.user_id=n.user_id
         and d.project_id=n.project_id and d.repository_id=repo_id and d.target_branch=branch
+        and d.state not in ('completed','invalidated')),
+      'active_batch_id',(select d.batch_id from clued_private.ci_train_batches_v2 d where d.user_id=n.user_id
+        and d.project_id=n.project_id and d.repository_id=repo_id and d.target_branch=branch
+        and d.source_manifest_sha256=source and d.policy_version=cfg->>'policy_version'
         and d.state not in ('completed','invalidated')),
       'queue',coalesce((
         select jsonb_agg(member order by rank,pr) from (
@@ -1376,6 +1397,26 @@ begin
     return clued_private.ci_train_work_view_v2(w);
   end if;
 
+  if op in ('carry_head_read','head_admission_read') then
+    select * into w from clued_private.ci_train_work_v2 q where q.work_key=payload->>'work_key'
+      and q.user_id=n.user_id and q.project_id=n.project_id and q.repository_id=repo_id and q.target_branch=branch
+      and q.source_manifest_sha256=source and q.policy_version=cfg->>'policy_version'
+      and q.action='verify_head' and q.state='completed';
+    if w.work_key is null or clued_private.ci_train_head_claim_v2(w,repo) is null then
+      return clued_private.ci_train_reject_v2('source_head_not_authorized'); end if;
+    if op='head_admission_read' then
+      if w.admission is null or coalesce(payload->>'base_sha','') !~ '^[0-9a-f]{40}$'
+        or payload->'changed_paths' is distinct from w.admission->'changed_paths'
+        then return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
+      target:=w.admission||jsonb_build_object('base_sha',payload->'base_sha','read_only',true);
+      insert into clued_private.ci_train_call_v2 values (pg_current_xact_id(),n.user_id,n.binding_id,n.project_id,'verify_head');
+      verification:=public.clued_work_verify_v1(proof,target);
+      delete from clued_private.ci_train_call_v2 where transaction_id=pg_current_xact_id();
+      return verification;
+    end if;
+    return jsonb_build_object('status','ok','work_key',w.work_key,'generation',w.generation,'lease_version',w.lease_version,
+      'pr',w.pr,'head_sha',w.head_sha);
+  end if;
   if coalesce(payload->>'work_key','') !~ '^[0-9a-f]{64}$'
     or exists(select 1 from unnest(array['generation','lease_version']) f
       where jsonb_typeof(payload->f) is distinct from 'number' or payload->>f !~ '^[1-9][0-9]{0,14}$')
@@ -1384,11 +1425,12 @@ begin
   select * into w from clued_private.ci_train_work_v2 q where q.work_key=k
     and q.user_id=n.user_id and q.project_id=n.project_id and q.repository_id=repo_id and q.target_branch=branch for update;
   if w.work_key is null or w.generation<>(payload->>'generation')::bigint
-    or w.lease_version<>(payload->>'lease_version')::bigint or w.node_id<>n.node_id
-    or w.binding_id<>n.binding_id or w.binding_generation<>n.binding_generation or w.key_version<>n.key_version
+    or w.lease_version<>(payload->>'lease_version')::bigint
+    or (not (op='carry_main_merge' and w.state='completed') and (
+      w.node_id<>n.node_id or w.binding_id<>n.binding_id or w.binding_generation<>n.binding_generation or w.key_version<>n.key_version
+      or (w.controller_id is not null and op not in ('work_release','work_renew')
+        and payload->'controller_id' is distinct from to_jsonb(w.controller_id))))
     or w.source_manifest_sha256<>source or w.policy_version<>cfg->>'policy_version'
-    or (w.controller_id is not null and op not in ('work_release','work_renew')
-      and payload->'controller_id' is distinct from to_jsonb(w.controller_id))
     then return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
   -- A settled receipt can be read after completion, but conveys no send authority.
   if w.state='completed' and op in ('publication_finish','publication_reconcile') then
@@ -1404,7 +1446,8 @@ begin
   if op='merge_queue_join' and w.queue_settlement->'input'=payload then
     return w.queue_settlement->'result';
   end if;
-  if w.state<>'leased' or w.expires_at<=t then return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
+  if not (op='carry_main_merge' and w.state='completed') and (w.state<>'leased' or w.expires_at<=t) then
+    return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
   if payload ? 'claim_id' and payload->'claim_id' is distinct from to_jsonb(w.claim_id) then
     return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
   expires:=clued_private.ci_train_head_claim_v2(w,repo);
@@ -1943,6 +1986,13 @@ select clued_private.ci_train_patch_v2('clued_private.work_claim_independent_beg
   $r$  if clued_private.ci_train_route_v2(b.user_id,scope) then
     return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;
   select * into policy from clued_private.work_claim_independent_consumer_v1 where singleton;$r$);
+
+select clued_private.ci_train_patch_v2('clued_private.work_claim_carry_main_merge_v1(text,jsonb)',
+  $a$  b:=clued_private.resolve_binding(p_token_hash,'context:read',wanted);$a$,
+  $r$  b:=clued_private.resolve_binding(p_token_hash,'context:read',wanted);
+  if clued_private.ci_train_route_v2(b.user_id,wanted)
+    and not clued_private.ci_train_call_is_v2(b.user_id,b.id,array['carry_main_merge']) then
+    return clued_private.ci_train_reject_v2('ci_work_lease_stale'); end if;$r$);
 
 select clued_private.ci_train_patch_v2('clued_private.work_claim_ci_queue_join_v1(public.clued_agent_bindings,jsonb)',
   $a$  if not clued_private.merge_slot_admits_v1(b) then$a$,

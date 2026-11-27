@@ -422,8 +422,10 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
       const settings = await readRetentionSettings(path.join(values.root, 'owner', SETTINGS_FILE));
       return settings.ok ? pruneArchivedGenerations({ root: values.root, settings: settings.settings }) : { code: settings.code };
     } });
+  const requestsDir = path.join(values.root, 'requests');
   const reporter = new PrStatusReporter({ repo: raw.repo, ghExe: raw.ghExe, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), clock: Date.now, store,
-    prStatus: statusCfg.prStatus, notifications: statusCfg.notifications, node: cfg.node.nodeName, notify });
+    prStatus: statusCfg.prStatus, notifications: statusCfg.notifications, node: cfg.node.nodeName,
+    writeRequest: v => Inbox.drop(requestsDir, v), notify });
   // The upgrade mailbox lane (DESIGN §34): upgrade\mailbox\ is opened once it exists (an install before the channel has none; the
   // lane then tries again each pass and the companion runs as before). The companion never creates it.
   const upgradeLane = new UpgradeLane({ cfg, run: (a, o) => upgradeRunner.run(a, o), clock: Date.now,
@@ -450,6 +452,7 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
   };
   // §41.6a: while the heartbeat's answer shows the failover watchdog stale, the PR page status says so too.
   reporter.watchdogStale = () => heartbeat?.watchdogStale === true;
+  reporter.autoHandoverSince = () => heartbeat?.autoHandoverSince ?? null;
   // Node governance v1: while the node status names a red line (new batches held, or the Linux runners held back), the PR page says so too
   // (the companion writes that status itself: no channel to the service is involved).
   // The resident's own disk/memory hold (holder node-resource in the intake pause) says the same line without a governance status.
