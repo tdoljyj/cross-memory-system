@@ -48,16 +48,17 @@ function Test-FleetUpgradeInProgress($answer) {
   $heartbeat = Read-FleetConnectionJson (Join-Path $lock 'alive.json')
   $pidNumber = Get-Key $holder 'pid'
   $beatAt = Get-Key $heartbeat 'at'
-  $age = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - $beatAt
+  $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  # The frozen upgrader touches the lock between ticks. The pulse ties the
+  # holder to a point in the lifetime of the current service child.
   if ($active.Count -eq 1 -and $active[0].ProcessId -gt 0 -and $pidNumber -gt 0 -and
       (Get-Key $holder 'token') -and $holder['token'] -ceq (Get-Key $heartbeat 'token') -and
-      $beatAt -is [long] -and $age -ge 0 -and $age -le 120000) {
+      $beatAt -is [long] -and $beatAt -le $now) {
     $child = Get-CimInstance Win32_Process -Filter ('ProcessId=' + [int]$pidNumber) -ErrorAction Stop
-    if ($child -and $child.ParentProcessId -eq $active[0].ProcessId -and $child.CreationDate -is [DateTime] -and
+    if ($child -and $child.ProcessId -eq $pidNumber -and $child.ParentProcessId -eq $active[0].ProcessId -and $child.CreationDate -is [DateTime] -and
         ([DateTimeOffset]$child.CreationDate).ToUnixTimeMilliseconds() -le $beatAt) { return $true }
   }
-  # A frozen older upgrader only touches the lock between ticks. An active
-  # SCM service with a stale or unreadable heartbeat can still hold a writer.
+  # An active SCM service without this proof can still hold a writer.
   throw 'FLEET_UPGRADER_HEARTBEAT_UNKNOWN'
 }
 
@@ -135,9 +136,30 @@ function Remove-FleetWindowsRegistrations {
   if (@(Get-FleetTasks).Count -or @(Get-FleetServices).Count -or @(Get-FleetFirewallRules).Count) { throw 'FLEET_WINDOWS_REGISTRATION_STILL_PRESENT' }
 }
 
+function Invoke-NativeChild([string]$exe, [string[]]$arguments, [int]$seconds = 3600, [Text.Encoding]$encoding = (New-Object Text.UTF8Encoding($false)), [bool]$shareConsole = $false, [byte[]]$stdin = $null) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $exe; $psi.Arguments = (($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = ($null -ne $stdin); $psi.CreateNoWindow = (-not $shareConsole)
+  $psi.StandardOutputEncoding = $encoding; $psi.StandardErrorEncoding = $encoding
+  # Windows PowerShell 5.1 (.NET Framework) opens a redirected stdin as a StreamWriter in Console.InputEncoding and writes that
+  # encoding's preamble at once: on a UTF-8 console (code page 65001) the child reads a BOM before $stdin (run 44705707829). While the
+  # child starts, Console's cached input encoding (what its getter returns) is a UTF-8 without one; .NET Core has no such field and
+  # writes no preamble. Our bytes go to the base stream, so the writer's encoding is otherwise unused.
+  $cie = if ($psi.RedirectStandardInput) { [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static') } else { $null }
+  $was = if ($null -ne $cie) { $cie.GetValue($null) } else { $null }
+  if ($null -ne $cie) { $cie.SetValue($null, (New-Object Text.UTF8Encoding($false))) }
+  try { $p = [Diagnostics.Process]::Start($psi) } finally { if ($null -ne $cie) { $cie.SetValue($null, $was) } }
+  $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+  if ($null -ne $stdin) { try { $p.StandardInput.BaseStream.Write($stdin, 0, $stdin.Length); $p.StandardInput.BaseStream.Flush() } finally { $p.StandardInput.Close() } }   # a secret: never a command line
+  if (-not $p.WaitForExit($seconds * 1000)) { return [ordered]@{ exit = $null; stdout = ''; stderr = ''; timedOut = $true } }
+  $p.WaitForExit()   # the asynchronous reads end with the child
+  $tail = { param($t) $t = ([string]$t) -replace "`0", ''; if ($t.Length -gt 1500) { $t.Substring($t.Length - 1500) } else { $t } }
+  [ordered]@{ exit = $p.ExitCode; stdout = ([string]$o.Result -replace "`0", ''); stderr = (& $tail $e.Result); timedOut = $false }
+}
+
 function Remove-FleetServiceRegistration([string]$name) {
-  $null = & 'C:\Windows\System32\sc.exe' delete $name 2>&1
-  if ($LASTEXITCODE -notin @(0,1060,1072)) { throw 'FLEET_SERVICE_DELETE_FAILED' }
+  $child = Invoke-NativeChild 'C:\Windows\System32\sc.exe' @('delete', $name) 120
+  if ($child.exit -notin @(0,1060,1072)) { throw 'FLEET_SERVICE_DELETE_FAILED' }
 }
 
 function Get-FleetLifecycleMode([string]$action, $facts, $progress) {
@@ -201,11 +223,10 @@ function Get-FleetCarrierFingerprint([string]$node, [string]$tool, [string]$kind
   $psi.CreateNoWindow = $true
   $psi.EnvironmentVariables.Clear()
   $psi.EnvironmentVariables['SystemRoot'] = 'C:\Windows'
-  $encoding = [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static')
-  $oldEncoding = if ($encoding) { $encoding.GetValue($null) }
-  if ($encoding) { $encoding.SetValue($null, [Text.UTF8Encoding]::new($false)) }
-  try { $process = [Diagnostics.Process]::Start($psi) }
-  finally { if ($encoding) { $encoding.SetValue($null, $oldEncoding) } }
+  $cie = if ($psi.RedirectStandardInput) { [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static') } else { $null }
+  $was = if ($null -ne $cie) { $cie.GetValue($null) } else { $null }
+  if ($null -ne $cie) { $cie.SetValue($null, (New-Object Text.UTF8Encoding($false))) }
+  try { $process = [Diagnostics.Process]::Start($psi) } finally { if ($null -ne $cie) { $cie.SetValue($null, $was) } }
   try {
     $output = $process.StandardOutput.ReadToEndAsync()
     $null = $process.StandardError.ReadToEndAsync()
@@ -463,8 +484,8 @@ function Get-FleetWslRegistryRows([string]$sid) {
     if ($null -eq (Get-FleetPathItem $hive)) { throw 'FLEET_WSL_OWNER_HIVE_UNAVAILABLE' }
     $mount = 'CluedFleet-' + [Guid]::NewGuid().ToString('N')
     $reg = 'C:\Windows\System32\reg.exe'
-    $null = & $reg load ('HKU\' + $mount) $hive 2>&1
-    if ($LASTEXITCODE -ne 0) { throw 'FLEET_WSL_OWNER_HIVE_UNAVAILABLE' }
+    $child = Invoke-NativeChild $reg @('load', ('HKU\' + $mount), $hive) 120
+    if ($child.exit -ne 0) { throw 'FLEET_WSL_OWNER_HIVE_UNAVAILABLE' }
     $owner = [Microsoft.Win32.Registry]::Users.OpenSubKey($mount)
   }
   try {
@@ -482,8 +503,8 @@ function Get-FleetWslRegistryRows([string]$sid) {
   } finally {
     if ($null -ne $owner) { $owner.Dispose() }
     if ($mount) {
-      $null = & $reg unload ('HKU\' + $mount) 2>&1
-      if ($LASTEXITCODE -ne 0) { throw 'FLEET_WSL_OWNER_HIVE_NOT_UNLOADED' }
+      $child = Invoke-NativeChild $reg @('unload', ('HKU\' + $mount)) 120
+      if ($child.exit -ne 0) { throw 'FLEET_WSL_OWNER_HIVE_NOT_UNLOADED' }
     }
   }
 }
@@ -600,7 +621,7 @@ try {
   $command = $command.Replace('__SID__', $row.ownerSid).Replace('__NAME__', $row.name).Replace('__ID__', $row.id).Replace('__BASE__', $base).Replace('__NATIVE__', $native)
   $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
   $powershell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-  $arguments = '-NoProfile -NonInteractive -EncodedCommand ' + $encoded
+  $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded
   $current = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
   if ($current -ceq $row.ownerSid) {
     $p = Start-Process -FilePath $powershell -ArgumentList $arguments -WindowStyle Hidden -PassThru
@@ -659,7 +680,7 @@ function Wait-FleetWslScratchTask($task) {
 function Clear-FleetWslScratchTasks([string]$operationId) {
   foreach ($task in @(Get-FleetWslScratchTasks $operationId)) {
     if (@($task.Actions).Count -ne 1 -or $task.Actions[0].Execute -ine 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -or
-        $task.Actions[0].Arguments -cnotmatch '^-NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/]+=*$' -or
+        $task.Actions[0].Arguments -cnotmatch '^-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand [A-Za-z0-9+/]+=*$' -or
         $task.Principal.LogonType -ne 'S4U') { throw 'FLEET_WSL_TASK_REFUSED' }
     Wait-FleetWslScratchTask $task
     Unregister-ScheduledTask -InputObject $task -Confirm:$false -ErrorAction Stop

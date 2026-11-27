@@ -64,7 +64,7 @@ for (const [mode, first] of [['original','Step-WindowsPreflightBeforeLinux'], ['
   });
 }
 
-test('首次安装、重装和直接安装在修改机器之前拒绝已有的当前连接', { skip: process.platform !== 'win32' }, t => {
+test('首次安装、旧重装启动器和直接安装在修改机器之前拒绝已有的当前连接', windows, t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-install-refusal-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const driver = path.join(dir, 'scratch.ps1');
@@ -90,10 +90,35 @@ test('首次安装、重装和直接安装在修改机器之前拒绝已有的�
     fs.writeFileSync(file, '{}');
     assert.equal(check(), 'CI_CONNECTION_REINSTALL_BASELINE_REQUIRED', script);
     fs.unlinkSync(file);
-    const call = text.match(/^ *Assert-CiInstallBaseline [^\r\n]+/m);
+    const call = script.includes('first-install-host')
+      ? text.match(/^ *if \(-not \$CheckPreservedConnection\) \{ Assert-CiInstallBaseline \$CiRoot \}$/m)
+      : text.match(/^ *Assert-CiInstallBaseline [^\r\n]+/m);
     assert.ok(call, script);
     const firstEffect = script.includes('first-install-host') ? '  $observed = Get-ObservedResidue'
       : script.includes('template') ? '\nStep-HostHygiene' : '$script:SecretBytes = @{}';
     assert.ok(text.indexOf(firstEffect) > call.index, script);
   }
+});
+
+test('舰队清洁重装预检并保留原连接，安装使用原 Binding 和凭据', () => {
+  const read = script => fs.readFileSync(new URL(script, resident), 'utf8');
+  const host = read(scripts[0]);
+  const bootstrap = read('rollout/fleet/bootstrap.ps1');
+  const lifecycle = read('rollout/fleet/package-lifecycle.ps1');
+
+  const verifyConnection = bootstrap.indexOf('$context.checkConnection = {');
+  const install = bootstrap.indexOf('$context.install = {', verifyConnection);
+  assert.ok(verifyConnection >= 0 && install > verifyConnection);
+  const preflight = bootstrap.slice(verifyConnection, install);
+  assert.match(preflight, /'ciPrincipalBindingId'\) -cne \$ctx\.bindingId/);
+  assert.match(preflight, /'-PreservedConnectionFile', \$connectionFile, '-PreservedCarrierDirectory', \$carry, '-PreservedNodeExe', \$protected\.node, '-CheckPreservedConnection'/);
+  assert.match(preflight, /'PRESERVED_CONNECTION_CARRIERS_VERIFIED'/);
+  assert.match(bootstrap.slice(install), /& \$ctx\.checkConnection \$ctx \$carry\s+\$args = \$p1Args \+ @\('-PreservedConnectionFile', \$connectionFile, '-PreservedCarrierDirectory', \$carry, '-PreservedNodeExe', \$protected\.node\)/);
+  assert.match(lifecycle, /\$carry = Save-FleetConnectionCarriers \$context\s+if \(\$context\['checkConnection'\]\) \{ & \$context\.checkConnection \$context \$carry \}\s+Stop-FleetWindowsWriters/);
+
+  assert.match(host, /\$preserved = Read-PreservedConnection \$controller\.SID\.Value/);
+  assert.match(host, /'PRESERVED_CONNECTION_CARRIERS_VERIFIED' \}\)\s+return/);
+  assert.match(host, /if \(\$preserved\) \{ \$plan = @\{ mode = 'verify-only'; ask = @\(\) \} \}[\s\S]*?if \(\$plan\.mode -cne 'verify-only'\)/);
+  assert.match(host, /if \(\$preserved\) \{\s+\$nodeRecord = \$preserved\.nodeRecord; \$cred = \$preserved\.credentials/);
+  assert.match(host, /Copy-PreservedCredential \$preserved\.carriers\[\$name\] \$target/);
 });

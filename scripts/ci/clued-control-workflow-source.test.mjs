@@ -142,6 +142,8 @@ test('fixed retirement snapshot authenticates historical objects while the indep
       'scripts/ci/clued-gated-proof-profiles.json':['05650ffd3d4f5c9d8c1cde6aab1668838eaddbd4','0aca06a052b94a0d319595b3b476331eabb1e14ec500d0ae8764a8ef075f4a72'],
       'scripts/ci/clued-gated-proof-role-specs.json':['28a2750730f1d9c9d22759d67acdf7c35985cb5b','c4b86e501a8c4bf1d19b1d34e6e013d528ae69b304a8ebdc2a2693952e194591'],
       'scripts/ci/clued-gated-proof-runtime.mjs':['c7884078fee3afbf98681425982051a87df38ce9','312f7a5a9187007904aadb54b35f3424a73488a84e007253c85a0490dfea49fb'],
+      'scripts/ci/clued-production-publisher-source.mjs':['0e3c2d4df3fb2f4ceb6ec8750028e2b046a1a0b6','abbd23c15357fc190ab60cedd98770e47e821dbcc5a0ba83c2fa4f5e3f09081a'],
+      'scripts/ci/clued-production-publisher-sources.json':['df10a840de4d00961d9df55103e6c6849fba23fb','e1eea0d0e0580294a92e2a66988ef996ced6c4584d67431222c68c7437a291cf'],
       'scripts/ci/clued-workflow-profile.mjs':['69622ceef577da9e4eb8dab25fed4bdc1cbb50f3','35c93cbe1f0fffc7f020e790eafd732b13ade0b8cda8f0ffb77645075a30f84a'],
       '.github/actions/ci-temporary-storage/check-workflows.mjs':['bd30bbb8527d86a9e3c2bd2aafe07e0eb1a342fc','832ae3eac5a222e9630ca9ff34bb269398a2e284ca3ed9d6e61e870f192bd8fa'],
       '.github/actions/ci-temporary-storage/coverage.json':['12f0ff5aca09df465aa0461d493485c3ed2c65b1','55a88fb58198f079d00c2467867b271d850ad198ee0eb1709db04ae2e109f9be'],

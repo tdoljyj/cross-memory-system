@@ -48,6 +48,8 @@ const STARTS = [
 ];
 // The only places allowed: file, a text the line holds, how many lines of the file hold it, and why it is not a companion start.
 const ALLOWED = [
+  { file: 'rollout/fleet/package-lifecycle.ps1', text: "Start-ScheduledTask -TaskPath '\\' -TaskName $taskName -ErrorAction Stop", count: 1,
+    why: 'one-shot S4U WSL cleanup as the distribution owner; its settings allow battery operation and the caller waits for this exact task result' },
   { file: 'windows/install-resident.ps1', text: '$null = $t.Run($null)', count: 1, why: 'a SYSTEM one-shot task; SYSTEM tasks are not held (guest control sys1)' },
   { file: 'windows/test-upgrade-system.ps1', text: '$null = $task.Run($null)', count: 1, why: 'a SYSTEM one-shot task of the upgrade system test' },
   { file: 'windows/upgrade-apply.ps1', text: '{ try { $null = $task.Run($null); $ranTask = $true }', count: 1,

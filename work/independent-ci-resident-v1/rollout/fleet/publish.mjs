@@ -1357,7 +1357,7 @@ export async function seal(options) {
         return digest;
       } catch (error) {
         if ([refusal, 'FLEET_ACCEPTANCE_DEADLINE'].includes(error?.code)) throw error;
-        fail(refusal, { reason: error?.code ?? error?.name ?? 'ERROR' });
+        fail('FLEET_PREVIOUS_INTERFACES_REFUSED', { reason: error?.code ?? error?.name ?? 'ERROR' });
       }
     };
     let deliveryBeforeOpen = guarded ? null : await checkDelivery('before-open', preflightEnd);
