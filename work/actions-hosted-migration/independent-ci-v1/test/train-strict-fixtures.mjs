@@ -151,7 +151,7 @@ async function setup(t, o = {}) {
   e.gh = fakeGithub(e, { ...o.world, strict: o.strict === true });
   e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(NOW - 7_200_000), ...(o.front ?? {}) });
   e.native = fakeNative(e, o.native);
-  const root = await tempDir(t, 'clued-sweep-');
+  const root = o.root ?? await tempDir(t, 'clued-sweep-');
   e.ledger = new GreenLedger((await GreenLedger.open(path.join(root, 'ledger'))).directory, () => e.now);
   e.store = await TrainSweepStore.open(path.join(root, 'sweep'));
   e.publications = { async heads() { if (e.streamDown) throw new Error('down'); return { complete: true, heads: e.stream }; } };

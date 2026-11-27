@@ -18,7 +18,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { setup, jobOf, iso, REPO, NOW, SOURCE } from './train-strict-fixtures.mjs';
 import { tempDir, admittedFacts } from './resident-v2-fixtures.mjs';
-import { batchJobsV2, claimGeneration } from '../src/job-v2.mjs';
+import { admissionExternalIdV2, batchJobsV2, claimGeneration, makeJobV2 } from '../src/job-v2.mjs';
+import { trainBatchKey, trainEffectKey, trainHeadWorkKey } from '../src/merge-train-v2-contract.mjs';
 import { EffectJournal } from '../src/effect-journal.mjs';
 import { digest } from '../src/proof.mjs';
 import { createFixtureControlPublisherV2 } from '../src/independent-control-checks-v2/publisher.mjs';
@@ -36,12 +37,14 @@ import { createFullAdmissionPortV2 } from '../src/full-admission-v2.mjs';
 import { mergeSlotState } from '../../../../scripts/ci/clued-work-admission.mjs';
 import { Poller, MAIN_REF_ROUTE, PULLS_ROUTE } from '../../../independent-ci-resident-v1/src/poller.mjs';
 import { WindowsEngine, DESCRIPTOR_CHAIN_CONTRACT, DESCRIPTOR_CONTRACT } from '../../../independent-ci-resident-v1/src/engine-windows.mjs';
-import { chainOfFront, openFrontBatchOf } from '../../../independent-ci-resident-v1/src/train.mjs';
+import { chainOfFront, openFrontBatchOf, trainDue } from '../../../independent-ci-resident-v1/src/train.mjs';
 import { AdmissionRerunner, AdmissionRerunState, decide, HEAD_RECHECK_MS } from '../../../independent-ci-resident-v1/src/admission-rerun.mjs';
-import { parseStatus, pollerLandingOf, StatusBoard } from '../../../independent-ci-resident-v1/src/status.mjs';
+import { parseStatus, pollerLandingOf, readStatus, StatusBoard, StatusFile } from '../../../independent-ci-resident-v1/src/status.mjs';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../../../independent-ci-resident-v1/src/policy.mjs';
-import { CLEAN_PROOF, executorFixture, fakeCompanion, fakeEngine, rawPolicy, TEST_NODE, TEST_NODE_SHA } from '../../../independent-ci-resident-v1/test/helpers.mjs';
+import { CLEAN_PROOF, executorFixture, fakeCompanion, fakeEngine, rawPolicy, RESIDENT, TEST_NODE } from '../../../independent-ci-resident-v1/test/helpers.mjs';
 import { HOSTED, SCAFFOLD_RULESET as SCAFFOLD_RS, portRules, scaffoldRules } from './s7-rules-fixture.mjs';
+import { nodeProfileSha256 } from '../../../independent-ci-resident-v1/src/node-profile.mjs';
+import { multiDutyGitHub } from '../../../independent-ci-resident-v1/test/multi-duty-fixture.mjs';
 
 const APP = 5368905, ACTIONS = 15368, SCOPE = 'project:00000000-0000-4000-8000-000000000000';
 const h = s => createHash('sha1').update(s).digest('hex');
@@ -266,14 +269,191 @@ async function stage10(e, outcome = null) {
     ...(outcome ? { frontPr: outcome.pr, frontHeadSha: outcome.headSha, frontTestSha: outcome.testSha, frontAttempt: outcome.attempt, frontCode: outcome.code,
       ...(Object.hasOwn(outcome, 'frontFailed') ? { frontFailed: outcome.frontFailed } : {}) } : {}) });
   return runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
-    claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN4 });
+    claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN4,
+    trainV2: e.trainV2, admission: e.sharedAdmission });
+}
+
+test('片 3：按 Native 队序立即封存落后 main 的三个已授权成员', async t => {
+  const e = await sharedTrain(t);
+  await stage10(e);
+  assert.deepEqual(e.shared.batch?.members.map(m => m.pr), [920, 922, 921], '本轮即取 Native 队序，入队者无需另开 auto-merge');
+  assert.equal(e.shared.batch.state, 'waiting_checks');
+  assert.equal(e.shared.batch.baseSha, e.main());
+  assert.equal(e.shared.staged.length, 1);
+  assert.equal(e.W.refs.has('heads/clued-train/staging.tmp'), false);
+});
+
+test('片 3：组合红由另一台继续同一前缀，基础设施失败不拆批', async t => {
+  const e = await sharedTrain(t);
+  await stage10(e);
+  const parent = e.shared.batch;
+  assert.ok([920, 922].every(pr => !e.shared.bad(e.W.content.get(e.head(pr)))), '组成红树的两个 H 各自为绿');
+  assert.equal(e.shared.bad(e.W.content.get(parent.testSha)), true);
+  e.shared.outcome = 'pending';
+  await stage10(e);
+  assert.deepEqual(e.shared.splits, [], '未裁决的运行不得拆批');
+  e.shared.outcome = 'failed';
+  e.shared.effects.arm('batch_bisect', { loseReply: true });
+  await stage10(e);
+  assert.deepEqual(e.shared.splits.map(b => b?.members.map(m => m.pr)), [[920, 922]], '共享账本记录红批的精确前缀');
+  const prefix = e.shared.batch;
+  assert.equal(prefix.parentBatchId, parent.batchId);
+  e.shared.outcome = 'pending';
+  e.trainV2 = e.shared.controller('B');
+  await stage10(e);
+  assert.equal(e.shared.batch.generation, 1, '等待原持有代次到期');
+  await stage10(e);
+  assert.equal(e.shared.batch.batchId, prefix.batchId);
+  assert.equal(e.shared.batch.generation, 2);
+  assert.equal(e.shared.batch.state, 'waiting_checks');
+  assert.deepEqual(e.failed, [], '多人组合失败不应消耗单员失败预算');
+});
+
+test('片 3：首次入队按精确发布回执评估，等待后同一待办立即进入单员批', async t => {
+  const e = await sharedTrain(t, { appScans: [] });
+  const pr = 920, headSha = e.head(pr), baseSha = e.W.pulls.get(pr).base;
+  const claim = { claimId: claimOf(pr), fence: 3, epoch: 1 };
+  const job = makeJobV2({ repo: REPO, pr, headSha, baseSha, testSha: headSha, role: 'work-admission',
+    sourceManifestSha256: SOURCE, createdAt: iso(NOW), attempt: 2 });
+  const checkName = 'kooyumi-work-admission', workKey = trainHeadWorkKey({ ...e.trainV2.scope, pr, headSha, action: 'merge_queue_join' });
+  const effectKey = trainEffectKey({ ...e.trainV2.scope, action: 'publication_begin_independent', subject: [pr, headSha, APP, checkName] });
+  const publication = [...e.W.checks.values()].find(check => check.head_sha === headSha && check.name === checkName);
+  publication.external_id = admissionExternalIdV2('independent-ci:native-work-admission', job, claim);
+  const scan = [...e.W.checks.values()].find(check => check.head_sha === headSha && check.name === 'gitleaks');
+  scan.status = 'in_progress'; scan.conclusion = null;
+  e.sharedAdmission = { fixture: true, async evaluatePr(job, packet) {
+    return admittedFacts(job, { ...claim, expiresAt: iso(e.now + 3_600_000) }, packet,
+      { domain: 'fixture', batchClaim: claim, observedAt: e.now, slotUntil: e.now + 600_000 });
+  } };
+  const send = e.trainV2.command;
+  let joined = false, generation = 0;
+  const decisions = [];
+  e.trainV2.command = async input => {
+    if (input.action === 'work_pending') {
+      const pending = await send(input);
+      return joined ? { ...pending, queue: pending.queue.slice(0, 1) } : { ...pending, queue: [], more_work: true,
+        work: [{ action: 'merge_queue_join', work_key: workKey, pr, head_sha: headSha,
+          claim_id: claim.claimId, claim_fence: claim.fence, execution_epoch: claim.epoch }] };
+    }
+    if (input.action === 'queue_acquire') {
+      assert.equal(input.head_sha, headSha);
+      return { status: 'leased', work_key: workKey, generation: ++generation, lease_version: 1, expires_at: iso(e.now + 90_000),
+        base_sha: baseSha, effect_key: effectKey, entered: false,
+        check: { appId: APP, headSha, externalId: publication.external_id, checkRunId: publication.id } };
+    }
+    if (input.action === 'merge_queue_join') {
+      assert.equal(input.generation, generation);
+      assert.equal(input.check_run_id, publication.id);
+      decisions.push(input.disposition);
+      joined = input.disposition === 'join';
+      return { status: 'ok' };
+    }
+    if (input.action === 'work_release') return { status: 'released' };
+    return send(input);
+  };
+  const waiting = await stage10(e);
+  assert.deepEqual(decisions, ['wait']);
+  const retryAt = Date.parse(trainSummary(waiting.facts).sharedWork.retryAt);
+  assert.equal(retryAt - e.now, 15_000);
+  const cadence = { train: { enabled: 'on', maintenanceMaxPerDay: 1, maintenanceEveryMs: 600_000 },
+    runs: [e.now], sharedRetryAt: retryAt, sharedWork: true };
+  assert.equal(trainDue({ ...cadence, now: retryAt - 1 }), false);
+  assert.equal(trainDue({ ...cadence, now: retryAt }), true);
+  assert.equal(trainDue({ ...cadence, now: retryAt, busy: true }), false);
+  assert.equal(e.shared.batch, null);
+  scan.status = 'completed'; scan.conclusion = 'success';
+  await stage10(e);
+  assert.deepEqual(decisions, ['wait', 'join']);
+  assert.deepEqual(e.shared.batch?.members.map(member => member.pr), [pr]);
+  assert.equal(e.shared.batch.state, 'waiting_checks');
+});
+
+test('片 3：成员关闭、换 H 或发生真实合并冲突时不封存受影响的合成树', async t => {
+  for (const scenario of ['closed', 'new-head', 'conflict']) await t.test(scenario, async t => {
+    const e = await sharedTrain(t);
+    if (scenario === 'closed') e.W.pulls.get(922).state = 'closed';
+    if (scenario === 'new-head') {
+      const next = h('replacement');
+      e.W.commits.set(next, { sha: next, tree: h('tree:replacement'), parents: [e.head(922)] });
+      e.W.content.set(next, new Set(['922', 'replacement']));
+      e.W.pushHead(922, next);
+    }
+    if (scenario === 'conflict') e.shared.conflict = e.head(922);
+    await stage10(e);
+    assert.equal(e.shared.rejected[0]?.member.pr, 922, '精确失效成员应让出位置');
+    assert.equal(e.shared.staged.length, 0, '受影响的链没有暂存效果');
+    assert.deepEqual(e.failed, []);
+  });
+});
+
+async function sharedTrain(t, { appScans = SCANS } = {}) {
+  const bad = set => set.has('920') && set.has('922');
+  const e = await world(t, { prs: [920, 921, 922], behind: 2, bad, appScans });
+  e.W.pulls.get(922).autoMerge = false;
+  const members = [920, 922, 921].map(pr => ({ pr, headSha: e.head(pr), claimId: claimOf(pr), fence: 3, epoch: 1 }));
+  const s = e.shared = { batch: null, owner: null, staged: [], splits: [], rejected: [], outcome: 'pending', bad,
+    effects: multiDutyGitHub({ now: e.clock }) };
+  const scope = { tenantId: claimOf(20), projectId: claimOf(21), repositoryId: 1, targetBranch: 'main' };
+  const batchId = (baseSha, members) => trainBatchKey({ ...scope, baseSha, members, sourceSha256: SOURCE, policyVersion: 'test-policy' });
+  const make = (baseSha, members, parentBatchId = null) => ({ batchId: batchId(baseSha, members), baseSha, members, parentBatchId,
+    generation: 1, expiresAt: iso(e.now + 90_000), state: 'forming' });
+  const refs = new Map();
+  Object.assign(e.port, {
+    async prepareBatchTmp({ batchId, generation, baseSha }) {
+      refs.set(`${batchId}:${generation}`, baseSha);
+      return { acknowledged: true };
+    },
+    async mergeIntoBatchTmp({ batchId, generation, headSha }) {
+      if (headSha === s.conflict) return { status: 409, sha: null };
+      const key = `${batchId}:${generation}`, sha = e.W.merge(refs.get(key), headSha, key);
+      refs.set(key, sha);
+      return { status: 201, sha };
+    },
+  });
+  s.controller = node => ({ protocolVersion: 2, scope,
+    async command({ action, ...p }) {
+      switch (action) {
+        case 'work_pending': return { status: 'ok', policy_version: 'test-policy', batch_max: 3,
+          work: s.batch && (!s.owner || Date.parse(s.batch.expiresAt) <= e.now)
+            ? [{ action: 'batch_acquire', batchId: s.batch.batchId, state: s.batch.state,
+            member_count: s.batch.members.length }] : [], active_batch: s.batch !== null, queue: members.map((member, i) => ({ ...member, position: i + 1, sequence: i })) };
+        case 'batch_reserve': s.owner = node; s.batch = make(p.baseSha, p.members); return s.batch;
+        case 'batch_acquire': s.owner = node; s.batch = { ...s.batch, generation: s.batch.generation + 1, expiresAt: iso(e.now + 90_000) }; return s.batch;
+        case 'batch_seal': s.batch = { ...s.batch, state: 'sealed', testSha: p.testSha, treeSha: p.treeSha, steps: p.steps, checksPolicyVersion: p.checksPolicyVersion }; return s.batch;
+        case 'batch_release':
+          if (p.batchId === s.batch?.batchId && p.generation === s.batch.generation && node === s.owner) s.owner = null;
+          return s.batch;
+        case 'batch_cleanup':
+          if (p.blockedMember) s.rejected.push({ member: p.blockedMember, reason: p.reason });
+          s.owner = null; s.batch = null; return { state: 'invalidated' };
+        case 'batch_bisect': return s.effects.write('batch_bisect', () => {
+          s.batch = make(s.batch.baseSha, s.batch.members.slice(0, Math.ceil(s.batch.members.length / 2)), s.batch.batchId);
+          s.splits.push(s.batch);
+          return s.batch;
+        });
+        default: assert.fail(`意外动作 ${action}`);
+      }
+    },
+    verifyMember: async () => ({ ready: true, protectedLayer: false }),
+    async returnMember(input) { s.rejected.push(input); },
+    async stageBatch(batch) {
+      s.staged.push(batch.testSha);
+      s.effects.count('stagingUpdates', batch.testSha, node);
+      s.batch = { ...batch, state: 'waiting_checks', stagingState: 'settled' };
+      return s.batch;
+    },
+    async inspectBatch(batch) { return { state: s.outcome, testSha: batch.testSha, policyVersion: batch.checksPolicyVersion,
+      evidenceDigest: digest(['required failure', batch.testSha]) }; },
+  });
+  e.trainV2 = s.controller('A');
+  return e;
 }
 // scans: the front batch's stages 2-7 passed and published its own scans on H (gh.frontScans); false for a batch that ran none.
 // batchRoute: what stage 8 read from its batch-route.json (bc982192); claimAssist: Native's claim assist (a claim joins the queue).
 async function stage8(t, e, b, { trainLanding = { landing: 'push', batchMax: 4, unreadable: false }, mode = () => 'normal', scans = true, batchRoute = null, claimAssist = null,
   admission = e.admission } = {}) {
   e.now += 60_000;
-  const claim = pr => ({ claimId: e.claimFor(pr), fence: 3, epoch: 1, expiresAt: iso(e.now + 3_600_000) });
+  const claim = pr => e.claimGeneration ?? { claimId: e.claimFor(pr), fence: 3, epoch: 1, expiresAt: iso(e.now + 3_600_000) };
   const jobs = batchJobsV2({ repo: REPO, pr: b.pr, headSha: b.headSha, baseSha: b.baseSha, testSha: b.testSha, sourceManifestSha256: SOURCE, createdAt: iso(e.now), attempt: b.attempt });
   if (scans) e.gh.frontScans(jobs);
   e.journal ??= await EffectJournal.open(path.join(await tempDir(t), 'effects'));
@@ -457,8 +637,9 @@ const V2 = ['work', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'res
 const CI_SOURCE = 'e'.repeat(64);
 // The resident's WindowsEngine over a fixture Source directory holding the real build-bundle.ps1, prepare-workspaces.py and invoke-stage.mjs
 // (what batchChainSupported reads) and a versions port (both sides of this generation, or not). Its derive runs a stub of derive-batch.mjs.
-async function residentEngine(t, { consistent = true, linuxSource = CI_SOURCE } = {}) {
-  const root = await tempDir(t), sourceRoot = path.join(root, 'source', CI_SOURCE);
+async function residentEngine(t, { consistent = true, linuxSource = CI_SOURCE, root = null, node = TEST_NODE } = {}) {
+  root ??= await tempDir(t);
+  const sourceRoot = path.join(root, 'source', CI_SOURCE);
   await fs.mkdir(path.join(sourceRoot, ...V2), { recursive: true });
   for (const n of ['build-bundle.ps1', 'prepare-workspaces.py', 'invoke-stage.mjs'])
     await fs.copyFile(new URL(`../src/resident-v2/${n}`, import.meta.url), path.join(sourceRoot, ...V2, n));
@@ -469,7 +650,7 @@ async function residentEngine(t, { consistent = true, linuxSource = CI_SOURCE } 
     return { code: 0, stdout: JSON.stringify({ status: 'RESIDENT_BATCH_DERIVED', batchKey: at('--batch-key'), batchId: at('--batch-id'), packageSha256: 'c'.repeat(64),
       ciSourceManifestSha256: CI_SOURCE, sourceCommit: 'd'.repeat(40), gitleaksTomlSha256: '9'.repeat(64), testSha: subject.testSha ?? subject.headSha, stages: rows }) };
   };
-  const engine = new WindowsEngine({ node: TEST_NODE, nodeProfileSha256: TEST_NODE_SHA, run, busy: () => false, sleep: async () => {}, clock: () => NOW,
+  const engine = new WindowsEngine({ node, nodeProfileSha256: nodeProfileSha256(node), run, busy: () => false, sleep: async () => {}, clock: () => NOW,
     trainLanding: { landing: 'push', batchMax: 3 },
     versions: async () => ({ consistent, windows: { ciSourceManifestSha256: CI_SOURCE }, linux: { ciSourceManifestSha256: linuxSource } }),
     paths: { sourceRoot, workRoot: path.join(root, 'work'), outboxRoot: path.join(root, 'outbox'), nodeExe: 'node.exe', powershellExe: 'powershell.exe', scExe: 'sc.exe' } });
@@ -1727,8 +1908,9 @@ const taskOf = pr => `${String(pr).padStart(8, '0')}-3333-4333-8444-555555555555
 // batchRoute: what the stage read from its batch-route.json (bc982192; null: none, main's tip is the batch base).
 function realAdmission(e, { batchRoute = null } = {}) {
   const W = e.W, ref = `merge:${REPO}:main`, policyText = '{"policy":"fixture"}';
-  const config = { domain: 'fixture', repository: REPO, scope: SCOPE, workspace: os.tmpdir(), sourceManifestSha256: SOURCE, evaluatorSha256: digest('EVALUATOR'),
-    policyText, policySha256: digest(policyText), ciPrincipalBindingId: BINDING_ID, ciPrincipalQualificationRef: 'qualification-ref',
+  const scope = e.scope ?? SCOPE, bindingId = e.bindingId ?? BINDING_ID;
+  const config = { domain: 'fixture', repository: REPO, scope, workspace: os.tmpdir(), sourceManifestSha256: SOURCE, evaluatorSha256: digest('EVALUATOR'),
+    policyText, policySha256: digest(policyText), ciPrincipalBindingId: bindingId, ciPrincipalQualificationRef: 'qualification-ref',
     publishableKey: 'sb_publishable_fixture', supabaseUrl: 'https://fixture.supabase.co' };
   const answer = v => ({ ok: true, status: 200, json: async () => structuredClone(v) });
   const fetchImpl = async url => {
@@ -1742,27 +1924,29 @@ function realAdmission(e, { batchRoute = null } = {}) {
   const evaluateImpl = async ({ event, observation_recorder }) => {
     const pr = event.pull_request, n = pr.number, head = pr.head.sha, main = e.main(), prRef = `${REPO}#${n}`, claimId = e.claimFor(n);
     const at = e.queue.indexOf(n), until = iso(e.now + 600_000), paths = [...W.pulls.get(n).paths];
-    const claim = { claim_id: claimId, task_id: taskOf(n), fence: 3, execution_epoch: 1, context_key: SCOPE, status: 'ACTIVE', bound_pr: prRef,
+    const fixtureClaim = { claim_id: claimId, task_id: taskOf(n), fence: 3, execution_epoch: 1, context_key: scope, status: 'ACTIVE', bound_pr: prRef,
       expires_at: iso(e.now + 3_600_000), lease_key_required: false, execution_handover_pending: false, merge_slot_until: until, trigger_refs: [ref],
       merge_queue: at < 0 ? [] : [{ ref, state: at === 0 ? 'head' : 'waiting', position: at + 1, ahead: at === 0 ? [] : e.queue.slice(0, at).map(x => ({ claim_id: e.claimFor(x) })),
         head: { claim_id: e.claimFor(e.queue[0]), bound_pr: `${REPO}#${e.queue[0]}`, since: iso(e.now - 1000), until } }] };
-    const native = { status: 'ok', verdict: 'ADMITTED', execution_authorized: true, execution_policy: 'staged', current_fence: 3, execution_epoch: 1,
-      bound_pr: prRef, pr_ref: prRef, head_sha: head, base_sha: pr.base.sha, verified_at: iso(e.now), paths_outside_write_set: [], claim };
+    const resolved = e.verifyHead ? await e.native.port.resolvePRBinding({ prNumber: n, scope, repository: REPO, headSha: head, baseSha: pr.base.sha, targetBranch: 'main' }) : null;
+    const native = e.verifyHead ? await e.verifyHead(pr, paths) : { status: 'ok', verdict: 'ADMITTED', execution_authorized: true, execution_policy: 'staged',
+      current_fence: 3, execution_epoch: 1, bound_pr: prRef, pr_ref: prRef, head_sha: head, base_sha: pr.base.sha, verified_at: iso(e.now), paths_outside_write_set: [], claim: fixtureClaim };
+    const claim = native.claim;
     observation_recorder.record('claim_verification', { result: { payload: native } });
     const upToDate = W.ancestor(main, head), layer = (e.layerOfPaths ?? (() => 'code'))(paths);
     // evaluate()'s check_and_strict of the protected layer (clued-work-admission.mjs, protected_change_not_up_to_date): unchanged here
-    const rejected = layer === 'protected' && !upToDate;
+    const rejected = native.verdict !== 'ADMITTED' || (layer === 'protected' && !upToDate);
     return { admitted: !rejected, verdict: rejected ? 'REJECTED' : 'ADMITTED', reasons: rejected ? [`protected_change_not_up_to_date:${main}`] : [],
-      head_sha: head, base_sha: pr.base.sha, pr_ref: prRef, claim_id: claimId, task_id: taskOf(n), scope: SCOPE, changed_paths: paths,
-      claim_binding: { status: 'ok', binding_status: 'bound', reason: null, repository: REPO, pr_number: n, pr_ref: prRef, head_sha: head, base_sha: pr.base.sha,
-        target_branch: 'main', scope: SCOPE, task_id: taskOf(n), claim: { claim_id: claimId, task_id: taskOf(n), context_key: SCOPE, fence: 3, execution_epoch: 1,
+      head_sha: head, base_sha: pr.base.sha, pr_ref: prRef, claim_id: claimId, task_id: claim?.task_id, scope, changed_paths: paths,
+      claim_binding: resolved ?? { status: 'ok', binding_status: 'bound', reason: null, repository: REPO, pr_number: n, pr_ref: prRef, head_sha: head, base_sha: pr.base.sha,
+        target_branch: 'main', scope, task_id: taskOf(n), claim: { claim_id: claimId, task_id: taskOf(n), context_key: scope, fence: 3, execution_epoch: 1,
           lease_version: 1, expires_at: claim.expires_at, status: 'ACTIVE', execution_handover_pending: false }, head_authorization_id: null, auto_bound: false, receipt_id: null },
       admission_mode: { state: 'normal', layer, policy_version: 1 },
       merge_slot: mergeSlotState({ repository: REPO, branch: 'main', tip: main, upToDate, claim, verifiedAt: native.verified_at }),
       owner_review: null, workflow_gate_findings: [] };
   };
   return createFullAdmissionPortV2({ protectedConfig: config, batchRoute, clock: () => e.now, monotonic: () => e.now, fetchImpl,
-    tokenProvider: async () => ({ githubToken: 'gh-fixture', ciAdmissionToken: ['clued', 'bnd', 'fixture123'].join('_'), ciPrincipalBindingId: BINDING_ID, ciPrincipalQualificationRef: 'qualification-ref' }),
+    tokenProvider: async () => ({ githubToken: 'gh-fixture', ciAdmissionToken: e.token ?? ['clued', 'bnd', 'fixture123'].join('_'), ciPrincipalBindingId: bindingId, ciPrincipalQualificationRef: 'qualification-ref' }),
     modeProvider: async () => ({ complete: true, repository: REPO, variable: 'CLUED_MERGE_ADMISSION_STATE', source: 'github-repository-variables', exists: false, observedAt: iso(e.now), proofRef: 'mode-proof' }),
     recorderProvider: async () => ({ kind: 'independent-controller', domain: 'fixture', observedAt: iso(e.now), observationRef: 'obs', recorder: { newId: () => h(`id:${e.now}:${Math.random()}`), record() {} } }),
     fixtureHooks: { evaluatorReader: () => 'EVALUATOR', evaluateImpl } });
@@ -1904,9 +2088,10 @@ async function stageRoute(t, real, number, batch, tamper = null) {
 // batch base (REMOTE_MAIN_BASE_CHANGED, which the companion answers as RESIDENT_BASE_MOVED); with baseRule on-main the base must be an
 // ancestor of the head and of main's tip (Base-On-Main).
 // Stage 2 (refs v2, protected-controller-ports-v2/refs.mjs:73): main must be the job's base, else REFS_MAIN_BASE_CHANGED.
-async function residentOver(t, e, { tamper = null, facts = null, queueFacts = false } = {}) {
-  const { engine: real, root } = await residentEngine(t);
+async function residentOver(t, e, { tamper = null, facts = null, queueFacts = false, nodeRoot = null } = {}) {
+  const { engine: real, root } = await residentEngine(t, { root: nodeRoot, node: e.profile });
   const engine = fakeEngine();
+  if (e.runRoleProbe) engine.runRoleProbe = e.runRoleProbe;
   const subjects = new Map();
   Object.assign(engine, { stages: [], stage1: [], stage8: [], routes: [], descriptors: new Map(), trainRuns: [], trainAt: [], subjects, bundles: [], refused: [] });
   const companion = fakeCompanion({}, () => f.clock());
@@ -1935,7 +2120,7 @@ async function residentOver(t, e, { tamper = null, facts = null, queueFacts = fa
     const job = makeTrainRun({ repo: REPO, runId: `${(++run).toString(16).padStart(16, '0')}-0123456789ab`, mode: m, sourceManifestSha256: SOURCE, createdAt: iso(e.now), ...params });
     e.inTen = true; // flakyRules 'ten': only stage 10's reads fail
     const r = await runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
-      claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN3 }).finally(() => { e.inTen = false; });
+      claimScope: e.scope ?? SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN3 }).finally(() => { e.inTen = false; });
     const train = facts ? facts(r.facts) : r.facts;
     engine.trainRuns.push(train);
     engine.trainAt.push(f.clock());
@@ -1954,6 +2139,13 @@ async function residentOver(t, e, { tamper = null, facts = null, queueFacts = fa
     if (stage.number === 1) {
       const batchRoute = await stageRoute(t, real, 1, batch, tamper);
       engine.routes.push({ pr: n, front, stage: 1, stamped: batch.batchRoute ?? null, read: batchRoute });
+      if (e.publishAdmission) {
+        const jobs = batchJobsV2({ repo: REPO, ...b, sourceManifestSha256: SOURCE, createdAt: iso(e.now) });
+        const outcome = await e.publishAdmission(jobs['work-admission'], realAdmission(e, { batchRoute }));
+        engine.stage1.push({ pr: n, front, status: outcome.status, reason: outcome.reason ?? null, diagnostic: outcome.admissionDiagnostic ?? null });
+        return outcome.status === 'SETTLED' ? { ...ok, outcome }
+          : { ok: false, code: outcomeFailureCode(outcome, 1), proof: PROOF, outcome };
+      }
       const job = batchJobsV2({ repo: REPO, ...b, sourceManifestSha256: SOURCE, createdAt: iso(e.now) })['control-admission'];
       const facts = await realAdmission(e, { batchRoute }).evaluatePr(job, await e.gh.readChangedPaths(job));
       engine.stage1.push({ pr: n, front, status: facts.status, reason: facts.reason ?? null, slot: facts.mergeSlot?.state ?? null });
@@ -1973,7 +2165,7 @@ async function residentOver(t, e, { tamper = null, facts = null, queueFacts = fa
     if (stage.number !== 8) return ok;
     const batchRoute = await stageRoute(t, real, 8, batch, tamper);
     engine.routes.push({ pr: n, front, stage: 8, stamped: batch.batchRoute ?? null, read: batchRoute });
-    const claimAssist = { async joinQueue({ pr }) { if (!e.queue.includes(pr)) e.queue.push(pr); return { ok: true, joined: true }; },
+    const claimAssist = e.claimAssist ?? { async joinQueue({ pr }) { if (!e.queue.includes(pr)) e.queue.push(pr); return { ok: true, joined: true }; },
       async extendLease() { return { ok: true, extended: false, reason: null }; } };
     const p = await stage8(t, e, b, { trainLanding: CHAIN3, scans: false, batchRoute, claimAssist, admission: realAdmission(e, { batchRoute }) });
     engine.stage8.push({ pr: n, front, status: p.status, reason: p.reason ?? null });
@@ -1988,11 +2180,12 @@ async function residentOver(t, e, { tamper = null, facts = null, queueFacts = fa
       ...(queueFacts && p.scheduling ? { scheduling: p.scheduling } : {}) };
     return { ok: false, code: outcomeFailureCode(outcome, 8), proof: PROOF, outcome };
   };
-  const policy = rawPolicy({ contract: POLICY_CONTRACT_V8, train: { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * 60_000, maintenanceMaxPerDay: 200,
+  const policy = rawPolicy({ contract: POLICY_CONTRACT_V8, ...(e.profile ? { node: e.profile, nodeProfileSha256: nodeProfileSha256(e.profile) } : {}),
+    train: { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * 60_000, maintenanceMaxPerDay: 200,
     ...TRAIN_DEFAULTS, sweep: 'audit', landing: 'push', batchMax: 3 } });
-  const board = new StatusBoard({ clock: () => e.now });
-  f = await executorFixture(t, { now: e.now, engine, companion, status: board, policy });
-  f.exec.trainTakeoverDone = true;
+  const board = new StatusBoard({ clock: e.statusClock ?? (() => e.now) });
+  f = await executorFixture(t, { now: e.now, engine, companion, status: board, policy, root: nodeRoot });
+  if (!e.runRoleProbe) f.exec.trainTakeoverDone = true;
   await f.exec.trainRecover();
   // companion-main.mjs: the poller's landing port reads the status file the executor writes (out.sees: the status as the poller read it
   // earlier, when that reading is not the board of now; E10b). Every trigger it writes is counted (out.triggers).

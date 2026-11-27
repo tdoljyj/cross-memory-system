@@ -32,7 +32,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { NODE_NAME } from './node-duty.mjs';
+import { NODE_NAME, operationalIntakePause } from './node-duty.mjs';
 import { fleetEvidencePayload, freshDeliveryTime } from './fleet-delivery-evidence.mjs';
 import { parseIncluded } from './poller.mjs';
 
@@ -82,20 +82,21 @@ const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 // The server's p_input from what the companion sees (exactly the keys ci_node_heartbeat_v1 accepts). status: status.mjs#parseStatus
 // or null; serviceRunning: true | false | null (SCM unreadable: the snapshot's freshness stands in, the server needs a boolean).
-export function heartbeatPayload({ nodeName, scope, status, statusError = false, serviceRunning = null, now, delivery = null }) {
+export function heartbeatPayload({ nodeName, scope, status, statusError = false, serviceRunning = null, now, protocolVersion = 1, delivery = null }) {
   const age = status && Number.isFinite(status.writtenAt) ? Math.max(0, now - status.writtenAt) : null;
   const fresh = !!status && !statusError && age !== null && age <= SNAPSHOT_FRESH_MS;
   const running = [true, false].includes(serviceRunning) ? serviceRunning : fresh;
   const readable = fresh && running;
   let state = 'UNKNOWN', halt = null, intakeUntil = null;
   if (readable) {
+    const intakePause = operationalIntakePause(status.intakePause, protocolVersion);
     if (status.halt) {
       state = 'HALTED';
       halt = { code: CODE.test(status.halt.code ?? '') ? status.halt.code : 'HALTED', at: iso(status.halt.at),
         pr: Number.isSafeInteger(status.current?.pr) ? status.current.pr : null, headSha: HEX40.test(status.current?.headSha ?? '') ? status.current.headSha : null };
     } else if (status.paused) state = 'PAUSED';
-    else if (status.intakePause) {
-      intakeUntil = iso(status.intakePause.until);
+    else if (intakePause) {
+      intakeUntil = iso(intakePause.until);
       // An intake pause without a readable end cannot be reported as one (the server needs its end): UNKNOWN, so the server
       // judges by the last readable report.
       state = intakeUntil ? 'INTAKE_PAUSED' : 'UNKNOWN';
@@ -240,7 +241,8 @@ export class CompanionHeartbeat {
     let status = null, statusError = false, running = null;
     try { status = await this.readStatus(); } catch { statusError = true; }
     try { running = await this.serviceRunning(); } catch { running = null; }
-    const input = { nodeName: this.nodeName, scope: this.scope, status, statusError, serviceRunning: running, now };
+    const input = { nodeName: this.nodeName, scope: this.scope, status, statusError, serviceRunning: running, now,
+      protocolVersion: this.protocolVersion };
     let payload = heartbeatPayload(input);
     const changed = this.lastFingerprint !== null && fingerprint(payload) !== this.lastFingerprint;
     // A clock that went back (now < lastSentAt) is due at once: waiting for it to catch up would be silence to the server, whose own

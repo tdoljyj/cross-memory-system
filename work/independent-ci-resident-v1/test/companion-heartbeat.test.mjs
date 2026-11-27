@@ -98,13 +98,35 @@ function beat(o = {}) {
   let now = NOW, replies = o.replies ?? [{ ok: true, tokenRefused: false, notRegistered: false, autoHandovers: [], watchdogTickAt: NOW, watchdogStale: false }];
   let st = o.status ?? status();
   const hb = new CompanionHeartbeat({ nodeName: 'node-a', scope: 'global', clock: () => now, readToken: async () => (o.token === undefined ? TOKEN : o.token), readStatus: async () => st,
-    serviceRunning: async () => true,
+    serviceRunning: async () => true, protocolVersion: o.protocolVersion, readDeliveryEvidence: o.readDeliveryEvidence,
     transport: async (msg, auth) => { sent.push({ msg, auth }); return replies.length > 1 ? replies.shift() : replies[0]; },
     notify: async (key, title, body) => { notes.push({ key, title, body }); },
     memory: { get: async k => memo.get(k) ?? 0, set: async (k, v) => { memo.set(k, v); } },
     handover: { ownerLogin: async () => 'tdoljyj', panelIssue: async () => 77, commentExists: async () => o.existing ?? false, comment: async (issue, body) => { comments.push({ issue, body }); return true; } } });
   return { hb, sent, notes, comments, memo, advance: ms => { now += ms; }, setStatus: s => { st = s; }, setReplies: r => { replies = r; } };
 }
+
+test('协议 2 心跳忽略旧双活互锁，仍上报交付证据和 Owner 暂停', async () => {
+  const until = NOW + 30 * MIN;
+  const legacyHold = { holder: 'dual-active', until };
+  const ownerHold = { holder: 'owner', until: until - MIN };
+  const at = new Date(NOW - MIN).toISOString();
+  const delivery = { schemaVersion: 1, nodeId: RECEIPT, bindingGeneration: 6, packageGeneration: 25, installGeneration: 1,
+    installReceiptSha256: SRC, windowsSourceSha256: SRC, linuxSourceSha256: SRC, brokerEvidenceSha256: SRC, linuxFactsSha256: SRC,
+    brokerObservedAt: at, linuxObservedAt: at, linuxReady: true, acl: true, connectionCarry: true };
+  const st = status({ intakePause: { until, holders: [legacyHold] } });
+  const legacy = beat({ status: st });
+  assert.equal((await legacy.hb.step()).payload.state, 'INTAKE_PAUSED');
+  const v2 = beat({ status: st, protocolVersion: 2, readDeliveryEvidence: async () => delivery });
+  const first = (await v2.hb.step()).payload;
+  assert.equal(first.state, 'NORMAL');
+  assert.equal(first.fleet_delivery.packageGeneration, 25);
+  v2.setStatus(status({ intakePause: { until, holders: [legacyHold, ownerHold] } }));
+  const paused = (await v2.hb.step()).payload;
+  assert.equal(paused.state, 'INTAKE_PAUSED');
+  assert.equal(paused.intake_paused_until, new Date(ownerHold.until).toISOString());
+  assert.deepEqual(paused.fleet_delivery, first.fleet_delivery);
+});
 
 test('no token installed: nothing runs; with one: every minute (ADR 0026), at once on a change, the token as the transport\'s credential', async () => {
   assert.equal(NODE_HEARTBEAT_EVERY_MS, MIN);

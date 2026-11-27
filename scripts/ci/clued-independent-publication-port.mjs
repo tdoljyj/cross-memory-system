@@ -4,14 +4,17 @@
 import { createHash } from 'node:crypto';
 import { admittedFactsMatchJobV2 } from '../../work/actions-hosted-migration/independent-ci-v1/src/admission-facts-v2.mjs';
 import { digest } from '../../work/actions-hosted-migration/independent-ci-v1/src/proof.mjs';
+import { TRAIN_PROTOCOL_VERSION } from '../../work/actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs';
 import { makeIndependentPublicationIdentity, CHECKS } from './clued-independent-publication-identity.mjs';
-import { createIndependentPublicationRuntime, nativeNoPostProof, independentCheckExternalIdMatchesJob } from './clued-independent-publication-runtime.mjs';
+import { createIndependentPublicationRuntime, createTrainHeadPublicationRuntime,
+  nativeNoPostProof, independentCheckExternalIdMatchesJob } from './clued-independent-publication-runtime.mjs';
 
 export const COMPONENT_VERSION = '1.1.78';
 const BRAND = Symbol('qualified-native-publication-facade');
 const brand = Object.freeze({});
 const noPostErrors = new WeakMap();
 export const isNativePublicationPort = port => port?.[BRAND] === brand;
+export const trainHeadProtocolOf = port => isNativePublicationPort(port) ? port.trainHeadProtocol ?? null : null;
 export const nativePublicationNoPostProof = error => nativeNoPostProof(error) ?? noPostErrors.get(error) ?? null;
 export async function prepareNativePublication(port, { facts, packet, payload }) {
   if (facts?.publicationRequired === true && !isNativePublicationPort(port)) fail('independent_native_publisher_not_qualified');
@@ -34,7 +37,7 @@ export function independentControllerId({ invocationNonce, jobId, nodeId }) {
   return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;
 }
 export function createIndependentPublicationPort({ job, controllerId, github, native, journal, assertCurrent,
-  observeStopped, registerController, clock = Date.now }) {
+  observeStopped, registerController, readMainMergeProof, clock = Date.now }) {
   if (typeof assertCurrent !== 'function') fail('independent_current_observer_required');
   const handles = new WeakMap(), modes = new Map();
   const inventory = async head => {
@@ -52,7 +55,7 @@ export function createIndependentPublicationPort({ job, controllerId, github, na
   const facade = {};
   for (const [key, value] of Object.entries(github)) facade[key] = typeof value === 'function' ? (...args) => Reflect.apply(value, github, args) : value;
   Object.defineProperty(facade, BRAND, { value: brand });
-  facade.prepareNativePublication = async ({ facts, packet, payload }) => {
+  const prepareContext = ({ facts, packet, payload }) => {
     if (!admittedFactsMatchJobV2(facts, job, clock(), { batchClaim: facts?.observedClaim })
       || packet?.complete !== true || packet.pr !== job.pr || packet.headSha !== job.headSha || packet.baseSha !== job.baseSha
       || !Array.isArray(packet.paths) || digest(packet) !== facts.packetSha256) fail('independent_complete_admission_required');
@@ -60,15 +63,45 @@ export function createIndependentPublicationPort({ job, controllerId, github, na
       claim: { claim_id: facts.claimId, fence: facts.fence, execution_epoch: facts.epoch } });
     if (payload?.name !== CHECKS[job.role] || payload.head_sha !== job.headSha) throw noPost('independent_publication_subject_changed', identity);
     const mode = { executionPolicy: facts.executionPolicy, guarded: facts.guarded, scope: facts.scope, paths: [...packet.paths] };
+    return { identity, mode, scope: facts.scope, paths: packet.paths, payload };
+  };
+  facade.prepareNativePublication = async input => {
+    if (facade.trainHeadProtocol !== undefined) fail('ci_train_head_work_unconfirmed');
+    const context = prepareContext(input), { facts } = input, { identity, mode, payload } = context;
     modes.set(identity.effect_key, mode);
     if (await assertCurrent(clone(identity), clone(mode)) !== true) throw noPost('independent_current_authority_refused', identity);
     if (registerController) await registerController(clone(identity), clone(mode));
-    const context = { identity, scope: facts.scope, paths: packet.paths, payload };
     const nativeHandle = facts.executionPolicy === 'active' ? await runtime.prepare(context) : null;
     const handle = Object.freeze({ native: nativeHandle !== null, publicationId: nativeHandle?.publicationId ?? null });
     handles.set(handle, { identity, mode, payloadSha256: digest(payload), nativeHandle });
     return handle;
   };
+  if (job.role === 'work-admission' && job.testSha === job.headSha && native.trainProtocolVersion != null) {
+    const train = native.train;
+    facade.trainHeadProtocol = native.trainProtocolVersion;
+    const leases = new WeakMap();
+    const shared = createTrainHeadPublicationRuntime({ train, github: nativeGithub, readMainMergeProof,
+      assertCurrent: (identity, admissionCommand) => assertCurrent(clone(identity), clone(modes.get(identity.effect_key)), admissionCommand) });
+    facade.acquireTrainHead = async () => {
+      if (facade.trainHeadProtocol !== TRAIN_PROTOCOL_VERSION || typeof train?.command !== 'function'
+        || train.scope?.targetBranch !== 'main'
+        || !/^(global|project:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/.test(train.scope.contextKey ?? '')) fail('ci_train_protocol_unconfirmed');
+      const reply = await shared.acquire(job, controllerId);
+      if (reply.reason) return reply;
+      const handle = Object.freeze({});
+      leases.set(handle, reply);
+      return { handle, resumeRequired: reply.resumeRequired, admissionCommand: reply.admissionCommand };
+    };
+    facade.publishTrainHead = async ({ handle, ...input }) => {
+      const lease = leases.get(handle);
+      leases.delete(handle);
+      if (!lease) fail('ci_train_head_work_unconfirmed');
+      if (lease.resumeRequired) return shared.publish(lease);
+      const context = prepareContext(input);
+      modes.set(context.identity.effect_key, context.mode);
+      return shared.publish(lease, context);
+    };
+  }
   facade.createCheck = async (payload, handle) => {
     const prepared = handles.get(handle); handles.delete(handle);
     if (!prepared) fail('independent_publication_prepare_required');
@@ -112,6 +145,12 @@ export function createIndependentPublicationPortsForJobs({ jobs, controllerIdFor
   const owners = new WeakMap(), facade = {};
   for (const [key,value] of Object.entries(options.github)) facade[key] = typeof value === 'function' ? (...args) => Reflect.apply(value,options.github,args) : value;
   Object.defineProperty(facade,BRAND,{value:brand});
+  const train = children.get(jobs.find(job => job.role === 'work-admission' && job.testSha === job.headSha)?.id);
+  if (train?.trainHeadProtocol !== undefined) {
+    facade.trainHeadProtocol = train.trainHeadProtocol;
+    facade.acquireTrainHead = train.acquireTrainHead;
+    facade.publishTrainHead = train.publishTrainHead;
+  }
   facade.prepareNativePublication = async input => {
     const child = children.get(input.facts?.jobId);if(!child)fail('independent_publication_job_not_sealed');
     const handle = await child.prepareNativePublication(input);owners.set(handle,child);return handle;

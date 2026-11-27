@@ -10,6 +10,27 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as admissionModule from './clued-work-admission.mjs';
 
+test('train v2 carries only a main merge attested on the exact head and rooted at the exact main parent', async () => {
+  const repository = 'tdoljyj/cross-memory-system';
+  const [head, from, main, tip] = ['1', '2', '3', '4'].map(c => c.repeat(40));
+  const pr = 789;
+  const check = { id: 301, name: 'kooyumi-main-merge', app: { id: 5164952 }, head_sha: head,
+    status: 'completed', conclusion: 'success', external_id: admissionModule.mainMergeExternalId({ pr, from, main }) };
+  const commit = { sha: head, parents: [{ sha: from }, { sha: main }] };
+  const comparison = { status: 'ahead', base_commit: { sha: main }, merge_base_commit: { sha: main }, ahead_by: 1, behind_by: 0 };
+  const root = 'https://api.test/repos/' + repository;
+  const f = fakeFetch({
+    [`GET ${root}/commits/${head}/check-runs?check_name=kooyumi-main-merge&filter=all`]: { body: { check_runs: [check] } },
+    [`GET ${root}/commits/${head}`]: { body: commit },
+    [`GET ${root}/compare/${main}...${tip}`]: { body: comparison },
+  });
+  const source = options => admissionModule.mainMergeSource(f.fetchImpl, env(), repository, pr, head, tip, options);
+  assert.deepEqual(await source({ proof: true }), { pr, from, main, checkRunId: 301, headSha: head, tip, compare: 'ahead', parents: [from, main] });
+  comparison.merge_base_commit = { sha: from };
+  assert.equal(await source({ proof: true }), null);
+  assert.deepEqual(await source(), { pr, from, main });
+});
+
 function mechanicalGitFixture(before, after, headMode = '100644') {
   const repository = 'tdoljyj/cross-memory-system';
   const file = 'scripts/ci/clued-independent-publication-port.mjs';

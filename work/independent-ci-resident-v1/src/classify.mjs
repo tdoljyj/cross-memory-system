@@ -181,7 +181,9 @@ export function archiveReason(code) {
 export const FAILURE_TABLE_CONTRACT = 'clued.independent-ci.resident-failure-table/1';
 // 'node-role' (primary/standby C3, DESIGN §29): this node holds no ci-admission role. It says nothing about the PR: the release
 // is counted neither as an evaluation nor towards the head's release cap (ledger.mjs#usage), and the executor goes to STANDBY.
-export const FAILURE_CLASSES_V1 = Object.freeze(['not-admitted', 'node-role', 'waiting', 'deterministic-pr', 'unmapped-stage-1', 'transient', 'environment', 'clean-final', 'queue', 'abort', 'unknown']);
+export const FAILURE_CLASSES_V1 = Object.freeze(['not-admitted', 'node-role', 'train-work', 'waiting', 'deterministic-pr', 'unmapped-stage-1', 'transient', 'environment', 'clean-final', 'queue', 'abort', 'unknown']);
+export const TRAIN_HEAD_LEASE_HELD = 'CI_HEAD_LEASE_HELD';
+export const TRAIN_HEAD_LEASE_COMPLETED = 'CI_HEAD_LEASE_COMPLETED';
 export const DISPOSITIONS = Object.freeze(['release', 'release-if-safe', 'park', 'safe-point-release', 'burn', 'halt']);
 export const RETRY_RULES = Object.freeze(['new-trigger', 'attempt2', 'same-batch', 'continuation', 'park', 'new-commit', 'owner-rearm']);
 const ROW_KEYS = ['code', 'stages', 'phase', 'reasons', 'reasonCodesAny', 'reasonCodesWithin', 'class', 'disposition', 'retry', 'breaker', 'note'];
@@ -351,8 +353,8 @@ export function decideFailure({ code, stage, phase = 'stage', outcome = null, br
   // What the deterministic code makes of a release-if-safe row is what the ledger and the status record. Except a node that
   // holds no role (DESIGN §29): it decided nothing about the PR, so no reason beside it can burn the head.
   if (deterministic && row.disposition === 'release-if-safe' && row.class !== 'node-role') row = Object.freeze({ ...row, class: 'deterministic-pr', disposition: 'burn', retry: 'new-commit', breaker: 'neutral' });
-  // A stage-1 row of disposition release (today only TRAIN_MODE_UNREADABLE; BUNDLE_UNAVAILABLE is released before this, at the
-  // bundle): released on a bound BLOCKED outcome with zero side effects that published nothing, whatever its safeToRerun says.
+  // A stage-1 row of disposition release requires a bound BLOCKED outcome
+  // with zero side effects and proof it published nothing.
   if (started !== true && stage === 1 && row.disposition === 'release' && windows && zeroEffect && !deterministic)
     return { klass: 'NOT_ADMITTED', basis: 'stage-1-zero-side-effects', row, release: 'NOT_ADMITTED' };
   if (started !== true && row.disposition === 'release-if-safe' && windows) {

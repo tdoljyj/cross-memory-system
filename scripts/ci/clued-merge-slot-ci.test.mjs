@@ -206,7 +206,7 @@ test('historical slot notification successor binds exact accepted Git bytes and 
   const r=controlRegistry(),file=SLOT_COMPLETION_OBSERVER_SOURCE.file,rows=r.workflows[file].sources,
     previous=rows.find(s=>s.source_kind==='legacy_predecessor'),observer=rows.find(s=>s.source_kind==='completion_observer_successor'),
     old=rows.find(s=>s.source_kind==='controller_successor'),text=observer.source_yaml;
-  assert.equal(rows.length,4);assert.equal(observer.workflow_blob,SLOT_COMPLETION_OBSERVER_SOURCE.workflow_blob);
+  assert.equal(rows.length,5);assert.equal(observer.workflow_blob,SLOT_COMPLETION_OBSERVER_SOURCE.workflow_blob);
   assert.equal(observer.source_yaml,text);assert.equal(observer.operation,'extend_completion_observer');
   assert.deepEqual(observer.workflow_definition.jobs,previous.workflow_definition.jobs,'all commands, permissions, env, route and steps remain unchanged');
   assert.deepEqual(r.roles[file][observer.workflow_blob],r.roles[file][previous.workflow_blob],'the complete job Role is identical');
@@ -424,7 +424,8 @@ test("both pending entry points report CI before the last executor action; seale
     const execute = /- name: Bring the default branch into the queue head, turn on auto-merge or merge it\n {8}timeout-minutes: 5\n {8}env:\n((?: {10}[^\n]+\n)+) {8}run: node scripts\/ci\/clued-merge-executor\.mjs\n?$/.exec(actions);
     assert.ok(report && execute, "both steps use the same job; executor is last with default success condition");
     assert.ok(report.index < execute.index, "the slot state is reported before acting on the queue");
-    assert.equal(execute[1], report[1], "same main-only App/token/state trust envelope");
+    const trainSelector = '          CLUED_MERGE_TRAIN_PROTOCOL_VERSION: ${{ vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION }}\n';
+    assert.equal(execute[1], trainSelector + report[1], "the executor adds only the cutover selector to the shared trust envelope");
     assert.equal((text.match(/run: node scripts\/ci\/clued-merge-executor\.mjs/g) ?? []).length, 1);
     assert.doesNotMatch(actions, /continue-on-error:|if:.*always\(\)/, "failed or cancelled reporting must not authorize execution");
     assert.equal((observations.match(/if: \$\{\{ always\(\) \}\}/g) ?? []).length, 2);

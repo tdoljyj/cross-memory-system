@@ -216,7 +216,8 @@ export function validateTrain(t) {
 // train (contract /8, DESIGN §41.7): 'on' is accepted; the four new settings are bounded like the train-run job /2 bounds
 // them (INTERFACES §2), and a front batch's budget must fit inside the slot's hard cap.
 export function validateTrainV8(t) {
-  exactKeys(t, [...TRAIN_V8_KEYS, ...['sweep', 'landing', 'batchMax'].filter(k => Object.hasOwn(t ?? {}, k))], 'POLICY_TRAIN_KEYS_INVALID');
+  exactKeys(t, [...TRAIN_V8_KEYS, ...['sweep', 'landing', 'batchMax', 'protocolVersion'].filter(k => Object.hasOwn(t ?? {}, k))], 'POLICY_TRAIN_KEYS_INVALID');
+  check([1, 2].includes(trainProtocolVersion(t)), 'POLICY_TRAIN_INVALID');
   check(!Object.hasOwn(t, 'sweep') || TRAIN_SWEEPS.includes(t.sweep), 'POLICY_TRAIN_INVALID');
   check(!Object.hasOwn(t, 'landing') || TRAIN_LANDINGS.includes(t.landing), 'POLICY_TRAIN_INVALID');
   check(!Object.hasOwn(t, 'batchMax') || int(t.batchMax, 1, TRAIN_BATCH_MAX_LIMIT), 'POLICY_TRAIN_INVALID');
@@ -228,6 +229,9 @@ export function validateTrainV8(t) {
     && t.frontBatchBudgetMs < t.slotHardCapMinutes * 60_000, 'POLICY_TRAIN_INVALID');
   return t;
 }
+
+// 安装策略选择协议版本，旧版策略沿用协议 1。
+export function trainProtocolVersion(train) { return Object.hasOwn(train, 'protocolVersion') ? train.protocolVersion : 1; }
 
 // The train settings of an installed policy (/8 its own, /7 TRAIN_DEFAULTS): the clocks the train-run job carries (and Source v2
 // train-strict.mjs#strictSettingsDigest digests; the sweep mode is carried beside them, trainSweepMode).

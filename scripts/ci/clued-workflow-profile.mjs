@@ -195,15 +195,15 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'44b2a88bd74b987f81fa55066046166c4fe87ec2',
-  source_sha256:'d5e8005f966fec200ed8affd3daf8b2821618243fd1d3094dd618120049dda11',
-  workflow_definition_sha256:'6bf1254b389ab9e89a23ce1fd754be5ba6946b54d423824902473e91fc882019',
-  profile_sha256:'ad3adfe0f0fe88805c425e7c0c04abd3a6d1079c106c086645118f7c615b3919',
+  workflow_blob:'6b499f567889e96e215e763b6865e7dedfb7898d',
+  source_sha256:'6110d9cf23a0e6aa55c9f3ad8a0bbfc329f009f018e125b1c258c4d3012d60a3',
+  workflow_definition_sha256:'8d3c1b5123aabbf94f86fb83a3631bac61821b94fb1d9f9367e609c5d7af4c31',
+  profile_sha256:'b4b3844f4895ec70705f99328f9b8a32297784a88987c2680f2123dce5400f4a',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
   role_sha256:Object.freeze({
-    'clued-cloud-tests':'c34d55c18fa85fea715c4f972de0e106ef355e1d1487b42c636918eda39888ee',
-    'ci-suites':'714cfad8a014072f83d8f5ec67f1ee66a725eb746cb331339987873bc00a6234',
-    'migration-verify':'ff03a97c7add0aaebc140ff7662dc61bc10f8af6f51296c74fbc520c440c4069',
+    'clued-cloud-tests':'79da0eeea2a690b803106256e95aacef2fff41edb3b060b63f3faca53da6a8c3',
+    'ci-suites':'2221e045a856d7222892dd165ba863c3c521427b53b786fd896a887702bf4c6a',
+    'migration-verify':'0a1fc6a7d780f11bd5c351599fcacba40bdb0896c7af92ec8d77ba83fe0df6c4',
     'gitleaks':'db2d6957cc30f4b06035197d261bd266f35134895f090e74e58cb8eb64da1b32',
     'trivy':'84163225be96a1aaecb8341bba0043298ff08b9a503b4910415cdb35a6dee298',
     'contract-placement':'08be4e9f9d7c58c0ddca5bdb2621f31afde460a2c14c6ce3714ccc2a26fd6ce8',
@@ -411,6 +411,23 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
       'contract-placement':'08be4e9f9d7c58c0ddca5bdb2621f31afde460a2c14c6ce3714ccc2a26fd6ce8',
     }),
   }),
+  // Before staging test-verdict confirmation (Task 788c2598).
+  Object.freeze({
+    file:'.github/workflows/clued-required-tests.yml',
+    workflow_blob:'44b2a88bd74b987f81fa55066046166c4fe87ec2',
+    source_sha256:'d5e8005f966fec200ed8affd3daf8b2821618243fd1d3094dd618120049dda11',
+    workflow_definition_sha256:'6bf1254b389ab9e89a23ce1fd754be5ba6946b54d423824902473e91fc882019',
+    profile_sha256:'ad3adfe0f0fe88805c425e7c0c04abd3a6d1079c106c086645118f7c615b3919',
+    primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
+    role_sha256:Object.freeze({
+      'clued-cloud-tests':'c34d55c18fa85fea715c4f972de0e106ef355e1d1487b42c636918eda39888ee',
+      'ci-suites':'714cfad8a014072f83d8f5ec67f1ee66a725eb746cb331339987873bc00a6234',
+      'migration-verify':'ff03a97c7add0aaebc140ff7662dc61bc10f8af6f51296c74fbc520c440c4069',
+      'gitleaks':'db2d6957cc30f4b06035197d261bd266f35134895f090e74e58cb8eb64da1b32',
+      'trivy':'84163225be96a1aaecb8341bba0043298ff08b9a503b4910415cdb35a6dee298',
+      'contract-placement':'08be4e9f9d7c58c0ddca5bdb2621f31afde460a2c14c6ce3714ccc2a26fd6ce8',
+    }),
+  }),
 ]);
 const requiredTestsPin=blob=>[REQUIRED_TESTS_SOURCE,...REQUIRED_TESTS_PREVIOUS_SOURCES].find(pin=>pin.workflow_blob===blob)??null;
 // The historical Windows Source used closed only to cancel; its ordinary profile remains readable.
@@ -419,6 +436,7 @@ const WINDOWS_CANCEL_SOURCE=Object.freeze({
   source_sha256:'d29f33377802e716225b27d14fe5da02774e43ead7d17f5087b832d3c0f61701',
   workflow_definition_sha256:'7264d99e97d56ee5ffda0c7aa1717c5150ba0f442a866a60dbf510c319644de6',
 });
+const WINDOWS_TRAIN_VERDICT_SOURCE = '87488dd41a4cdf9f488df45cab6a5bb0712cc5fd';
 export function isExactAllRequiredPrimariesProfile(profile,file) {
   try {
     if(file!==REQUIRED_TESTS_SOURCE.file||!profile||typeof profile!=='object'||Array.isArray(profile))return false;
@@ -618,7 +636,9 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
     const commands=Object.create(null);
     for(const step of job.steps) {
       if(!step || typeof step!=='object' || Array.isArray(step))reject('step type');
-      if(step.run===undefined || step.if==='failure()')continue;
+      // The exact staging confirmation is an observation of a failed push, outside PR proof.
+      if(step.run===undefined || step.if==='failure()' || ((compound||blob===WINDOWS_TRAIN_VERDICT_SOURCE) &&
+        step.name==='Confirm merge train test failure'))continue;
       if(typeof step.run!=='string' || !step.run.trim())reject('empty command');
       const stepName=step.name??('Run '+step.run.split('\n')[0]);
       if(typeof stepName!=='string' || !stepName || stepName.includes('${{'))reject('step name domain');

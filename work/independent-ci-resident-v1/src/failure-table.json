@@ -9,6 +9,13 @@
     "breaker": "counts = a failure the circuit breaker counts (breaker.mjs, phase 2); neutral = caused by the PR, the claim, a wait or a supersession, never counted."
   },
   "rows": [
+    { "code": "CI_HEAD_LEASE_HELD", "stages": [1], "class": "train-work", "disposition": "release", "retry": "new-trigger", "breaker": "neutral", "note": "共享领用竞争，等待服务端给出的有效期，不消耗本机执行预算" },
+    { "code": "CI_HEAD_LEASE_COMPLETED", "stages": [1], "class": "train-work", "disposition": "release", "retry": "new-trigger", "breaker": "neutral", "note": "服务已结清普通 head 工作，本机结清对应队列行" },
+    { "code": "CI_WORK_LEASE_STALE", "stages": [1], "class": "train-work", "disposition": "release", "retry": "new-trigger", "breaker": "neutral", "note": "无副作用的过期领用，下一轮向服务重新申请" },
+    { "code": "CI_HEAD_LEASE_HELD", "stages": "any", "class": "unknown", "disposition": "halt", "retry": "owner-rearm", "breaker": "neutral", "note": "只在第 1 段接受共享领用竞争" },
+    { "code": "CI_HEAD_LEASE_COMPLETED", "stages": "any", "class": "unknown", "disposition": "halt", "retry": "owner-rearm", "breaker": "neutral", "note": "只在第 1 段接受共享领用结清" },
+    { "code": "CI_WORK_LEASE_STALE", "stages": "any", "class": "unknown", "disposition": "halt", "retry": "owner-rearm", "breaker": "neutral", "note": "发布阶段失去租约仍需核对在途效果" },
+    { "code": "CI_EFFECT_UNKNOWN", "stages": "any", "class": "unknown", "disposition": "halt", "retry": "owner-rearm", "breaker": "neutral", "note": "有在途效果，保留本地现场并由共享账本核对；不补发" },
     { "code": "NATIVE_NOT_ADMITTED", "stages": [1], "reasonCodesAny": ["admission_binding_required"], "class": "node-role", "disposition": "release-if-safe", "retry": "new-trigger", "breaker": "neutral", "note": "an older Source names the missing role only as a reason: the same answer as NODE_ROLE_NOT_HELD, the node goes to STANDBY; the head is released on that Source's own flag (false beside a deterministic PR reason: then burned, DESIGN 29)" },
     { "code": "NATIVE_NOT_ADMITTED", "stages": [1], "reasonCodesAny": ["changed_files_truncated", "policy_file_removed", "policy_file_invalid", "protected_change_not_up_to_date"], "class": "deterministic-pr", "disposition": "burn", "retry": "new-commit", "breaker": "neutral", "note": "too many changed files, the PR removed or broke the merge-admission policy file, or the head is not up to date with main" },
     { "code": "NATIVE_NOT_ADMITTED", "stages": [1], "reasonCodesWithin": ["merge_slot_required", "merge_slot_missing", "evaluation_not_completed"], "class": "waiting", "disposition": "release-if-safe", "retry": "new-trigger", "breaker": "neutral", "note": "only merge-slot or not-yet-evaluated reasons: Native says not yet" },

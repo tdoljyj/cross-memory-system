@@ -1,3 +1,4 @@
+// 第 1 版协议使用旧双活互锁，仅受信安装策略选择第 2 版协议后退役。
 // The node's duty on the PR page, the take-over check and the dual-active lock (resident primary/standby design v0.4
 // §5.2, §5.3, §8.2, §9 C5; Task ade5df89; DESIGN §23). Runs in the companion (the Owner's own session and gh login),
 // inside the PR page reporter (pr-status.mjs); everything here is advisory: the service-side ci-admission role and the
@@ -58,7 +59,7 @@ export const DUTY_REFRESH_MS = 14 * MIN;
 export const REFRESH_MAX_POSTS = 900;
 // The dual-active hold (C6): renewed when less than this is left; never written more often than HOLD_WRITE_MS, or
 // HOLD_STALE_WRITE_MS while the executor's status is stale (nobody would read the requests).
-export const HOLDER_DUAL = 'dual-active';
+export const RETIRED_DUAL_ACTIVE_HOLDER = 'dual-active';
 export const HOLD_MINUTES = 120;
 export const HOLD_RENEW_BELOW_MS = 90 * MIN;
 export const HOLD_WRITE_MS = 5 * MIN;
@@ -101,14 +102,14 @@ export function nodeOf(status, fallbackName = null) {
 }
 
 // The stall code when this node is not on duty now (null: on duty). The commit condition is the caller's.
-export function stallCode(status, node, now, staleMs) {
+export function stallCode(status, node, now, staleMs, protocolVersion = 1) {
   if (!status) return 'STATUS_UNREADABLE';
   if (now - status.writtenAt > staleMs) return 'STATUS_STALE';
   if (status.halt) return CODE.test(status.halt.code ?? '') ? status.halt.code : 'HALTED';
   if (status.executor?.state === 'STOPPED') return 'EXECUTOR_STOPPED';
   if (status.executor?.state === 'STARTING') return 'EXECUTOR_STARTING';
   if (status.paused) return 'PAUSED';
-  if (status.intakePause) return 'INTAKE_PAUSED';
+  if (operationalIntakePause(status.intakePause, protocolVersion)) return 'INTAKE_PAUSED';
   if (status.breaker?.state === 'open') return 'BREAKER_OPEN';
   if (node.mode === 'UNCERTAIN') return 'NODE_ROLE_UNCERTAIN';
   return null;
@@ -117,14 +118,17 @@ export function stallCode(status, node, now, staleMs) {
 const STALL_TEXT = Object.freeze({
   STATUS_UNREADABLE: () => '读不到执行器状态', STATUS_STALE: s => `执行器状态自 ${hhmm(s.writtenAt)} 起未更新，可能已停止`, EXECUTOR_STOPPED: () => '执行器已停止',
   EXECUTOR_STARTING: () => '执行器启动中', PAUSED: () => '执行器已暂停，等 Owner 恢复',
-  INTAKE_PAUSED: s => `暂停接新中${s.intakePause?.until ? `，最晚 ${hhmm(s.intakePause.until)} 恢复` : ''}`,
+  INTAKE_PAUSED: (s, protocolVersion) => {
+    const until = operationalIntakePause(s.intakePause, protocolVersion)?.until;
+    return `暂停接新中${until ? `，最晚 ${hhmm(until)} 恢复` : ''}`;
+  },
   BREAKER_OPEN: s => `执行器熔断中${s.breaker?.nextTrialAt ? `，约 ${hhmm(s.breaker.nextTrialAt)} 试跑` : ''}`,
   NODE_ROLE_UNCERTAIN: () => '本节点角色探测不确定', NODE_RESTARTED: () => '本节点重启，等执行器恢复' });
 // HALT codes, STATUS_STALE and a stopped executor need the Owner; the others clear by themselves.
 const STALL_ERROR = new Set(['STATUS_UNREADABLE', 'STATUS_STALE', 'EXECUTOR_STOPPED']);
 
-export function stalledText(code, status) {
-  const text = STALL_TEXT[code] ? STALL_TEXT[code](status ?? {}) : '执行器已停机，等 Owner 复位';
+export function stalledText(code, status, protocolVersion = 1) {
+  const text = STALL_TEXT[code] ? STALL_TEXT[code](status ?? {}, protocolVersion) : '执行器已停机，等 Owner 复位';
   return { state: (STALL_TEXT[code] && !STALL_ERROR.has(code)) ? 'pending' : 'error', description: `${WORD.STALLED}（${code}）：${text}`, kind: 'stalled' };
 }
 // other: one node's name, or the names of every node seen on duty.
@@ -204,19 +208,21 @@ export const loginArgv = ghExe => [ghExe, 'api', '--method', 'GET', 'user', '--j
 //   it was seen on, whether it handed over or aged out), heads (all of them), holdAt (last hold request written), holdUntil
 //   (the hold's end as status.json last showed it), releaseReadAt, resetSeenAt }; handover: { head: since } heads owed an 已交班; standby: { head:
 //   { pr, at } } the reminders written under standbyContext before ADR 0028 and not ended yet.
-export const freshMemory = () => ({ mode: null, probeAt: null, lock: null, handover: {}, standby: {} });
+export const freshMemory = () => ({ mode: null, handover: {}, standby: {} });
+const DUAL_CLEARED_TEXT = Object.freeze({ state: 'success', description: '已清理旧双活暂停状态', kind: 'reset' });
 const KEPT_MS = 86_400_000;
 const num = v => (Number.isSafeInteger(v) ? v : null);
 const bag = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
 
 // A stored memory as the reporter may use it. A lock that does not have the shape is kept as a lock (fail safe: holding
 // is the safe side) with what can be read of it (review m7); everything else that does not fit starts fresh.
-export function validMemory(raw, now) {
+export function validMemory(raw, now, protocolVersion = 1) {
   const m = freshMemory();
   if (!raw || typeof raw !== 'object') return m;
   if (['ACTIVE', 'STANDBY'].includes(raw.mode)) m.mode = raw.mode;
-  m.probeAt = num(raw.probeAt);
   for (const k of ['handover', 'standby']) m[k] = bag(raw[k]);
+  if (protocolVersion === 2) return m;
+  if (Number.isSafeInteger(raw.probeAt)) m.probeAt = raw.probeAt;
   if (raw.lock && typeof raw.lock === 'object') {
     const l = raw.lock;
     const other = NODE_NAME.test(l.other ?? '') ? l.other : 'unknown';
@@ -231,6 +237,15 @@ export function validMemory(raw, now) {
       releaseReadAt: num(l.releaseReadAt), resetSeenAt: num(l.resetSeenAt) };
   }
   return m;
+}
+
+// 协议 2 只忽略旧互锁持有者。Owner 暂停和无法核实的暂停仍有效。
+export function operationalIntakePause(pause, protocolVersion = 1) {
+  if (protocolVersion !== 2 || !Array.isArray(pause?.holders) || !pause.holders.some(h => h?.holder === RETIRED_DUAL_ACTIVE_HOLDER)) return pause;
+  const holders = pause.holders.filter(h => h?.holder !== RETIRED_DUAL_ACTIVE_HOLDER);
+  if (holders.length === 0) return null;
+  const until = holders.every(h => Number.isFinite(h?.until)) ? Math.max(...holders.map(h => h.until)) : null;
+  return { until, holders };
 }
 
 // The nodes a take-over check found on duty ([{ node, headSha }]) as a lock's `others`, first seen first.
@@ -256,6 +271,7 @@ export class NodeDuty {
   //   handed ci-admission to this node; the heartbeat's answer) }
   constructor(ports) {
     Object.assign(this, ports);
+    this.legacyInterlock = ports.protocolVersion !== 2;
     this.restarted = true; // the first passes after the companion started, until the restart writes are done (NIT 4)
     this.login = null;
     this.check = null; // the take-over check in progress: { probeAt, wasActive, heads, idx, found, retryAt, fails }
@@ -297,7 +313,7 @@ export class NodeDuty {
 
   // One pass, after the status notifications and before the PR page texts: the node, what it owes (已交班), the lock
   // (take-over check, releases, the hold) and the events to show. posted: the reporter's memory of its own writes.
-  async prepare({ status, pulls, now, posted = {} }) {
+  async prepare({ status, pulls = [], now, posted = {} }) {
     const m = this.memory;
     const node = this.node = nodeOf(status, this.fallbackName);
     // No node name anywhere: the pass writes nothing (pr-status.mjs#pass: a duty that cannot be worked out).
@@ -319,9 +335,16 @@ export class NodeDuty {
     if (definite && node.mode === 'ACTIVE') m.handover = {};
     if (node.known && node.mode === 'STANDBY') {
       for (const [head, last] of Object.entries(posted)) {
-        if (last?.context === own && last.kind !== 'handed' && now - Date.parse(last.dutyAt) <= DUTY_WINDOW_MS) m.handover[head] ??= iso(now);
+        if (last?.context === own && last.kind !== 'handed' && (this.legacyInterlock || last.kind !== 'dual') && now - Date.parse(last.dutyAt) <= DUTY_WINDOW_MS) m.handover[head] ??= iso(now);
       }
     }
+    if (this.legacyInterlock && this.writeRequest) await this.updateLegacyLock({ status, pulls, now, events });
+    if (definite) m.mode = node.mode;
+    return { node, context: own, events };
+  }
+
+  async updateLegacyLock({ status, pulls, now, events }) {
+    const m = this.memory, node = this.node;
     if (m.lock) await this.release({ status, node, now, events });
     // The take-over check: on a probe that confirms the role, while not locked, at most every TAKEOVER_RECHECK_MS while the node stays
     // ACTIVE; TAKEOVER_READS_PER_PASS heads a pass.
@@ -343,7 +366,7 @@ export class NodeDuty {
       const { found, wasActive } = this.check;
       m.probeAt = this.check.probeAt;
       this.check = null;
-      if (found.length > 0 && this.writeRequest) {
+      if (found.length > 0) {
         const reason = wasActive ? 'dual-active' : 'takeover-refused';
         const others = lockOthers(found);
         m.lock = { since: now, reason, other: others[0].node, others, heads: [...new Set(found.map(f => f.headSha))].slice(0, LOCK_HEADS_MAX), holdAt: null, holdUntil: null,
@@ -357,8 +380,6 @@ export class NodeDuty {
       }
     }
     if (m.lock) await this.keepHold(status, now);
-    if (definite) m.mode = node.mode;
-    return { node, context: own, lock: m.lock, events };
   }
 
   // Reads the next heads of the take-over check. true: every head is read (check.found is the answer); false: not yet
@@ -391,7 +412,7 @@ export class NodeDuty {
     const lock = this.memory.lock;
     if (node.known && node.mode === 'STANDBY') return this.unlock('role-lost', now, events);
     const holders = status?.intakePause?.holders ?? [];
-    const held = holders.find(h => h.holder === HOLDER_DUAL);
+    const held = holders.find(h => h.holder === RETIRED_DUAL_ACTIVE_HOLDER);
     const fresh = status && now - status.writtenAt <= this.staleMs;
     const gone = fresh && !held && !holders.some(h => UNSURE_HOLDERS.includes(h.holder)) && lock.holdAt !== null && status.writtenAt > lock.holdAt + 60_000
       && Number.isFinite(lock.holdUntil) && lock.holdUntil > now;
@@ -428,7 +449,7 @@ export class NodeDuty {
   async unlock(why, now, events) {
     const lock = this.memory.lock;
     // The Owner's own resume already lifted the hold; otherwise this node lifts its own (never another holder's).
-    if (why !== 'owner-reset') await this.writeRequest(intakeResumeRequest({ holder: HOLDER_DUAL, reason: `dual-active lock released: ${why}` }, this.clock));
+    if (why !== 'owner-reset') await this.writeRequest(intakeResumeRequest({ holder: RETIRED_DUAL_ACTIVE_HOLDER, reason: `dual-active lock released: ${why}` }, this.clock));
     this.memory.lock = null;
     const text = { 'role-lost': '本节点已不持有 ci-admission', 'partner-handed-over': `${lock.others.map(o => o.node).join('、')} 已交班或不再当班`, 'owner-reset': 'Owner 已复位' }[why];
     events.push({ key: `unlock:${lock.since}`, title: '双活停机已解除', body: `${text}，本节点恢复取新触发。` });
@@ -440,12 +461,12 @@ export class NodeDuty {
   async keepHold(status, now) {
     const lock = this.memory.lock;
     if (lock.resetSeenAt !== null) return;
-    const held = (status?.intakePause?.holders ?? []).find(h => h.holder === HOLDER_DUAL);
+    const held = (status?.intakePause?.holders ?? []).find(h => h.holder === RETIRED_DUAL_ACTIVE_HOLDER);
     if (held && Number.isFinite(held.until)) lock.holdUntil = held.until;
     if (held && Number.isFinite(held.until) && held.until - now > HOLD_RENEW_BELOW_MS) return;
     const every = status && now - status.writtenAt <= this.staleMs ? HOLD_WRITE_MS : HOLD_STALE_WRITE_MS;
     if (lock.holdAt !== null && now - lock.holdAt < every) return;
-    await this.writeRequest(intakePauseRequest({ holder: HOLDER_DUAL, minutes: HOLD_MINUTES, reason: `dual-active lock: another node (${pending(lock).join(', ') || lock.other}) on duty`.slice(0, 200) }, this.clock));
+    await this.writeRequest(intakePauseRequest({ holder: RETIRED_DUAL_ACTIVE_HOLDER, minutes: HOLD_MINUTES, reason: `dual-active lock: another node (${pending(lock).join(', ') || lock.other}) on duty`.slice(0, 200) }, this.clock));
     lock.holdAt = now;
   }
 
@@ -458,9 +479,13 @@ export class NodeDuty {
     if (!pull.eligible) return base ? { ...base, kind: 'hint' } : null;
     if (!status) return null;
     if (ownLive(status, pull)) {
-      if (this.memory.lock) return dualText(pending(this.memory.lock).length ? pending(this.memory.lock) : this.memory.lock.other);
-      const code = stallCode(status, node, now, this.staleMs);
-      if (code) return stalledText(code, status);
+      const lock = this.legacyInterlock ? this.memory.lock : null;
+      if (lock) {
+        const others = pending(lock);
+        return dualText(others.length ? others : lock.other);
+      }
+      const code = stallCode(status, node, now, this.staleMs, this.protocolVersion);
+      if (code) return stalledText(code, status, this.protocolVersion);
       return base ? { state: base.state, description: `${WORD.ON}：${base.description}`, kind: 'duty', ...(base.weak ? { weak: true } : {}) } : null;
     }
     if (ownAny(status, pull) && base && !base.weak) return { ...base, kind: 'result' };
@@ -489,7 +514,7 @@ export class NodeDuty {
       const open = new Set(pulls.map(p => p.headSha));
       // Fixed at the first pass: a later pass only retries those (re-review: a head merely not described later is no
       // restart's business).
-      this.restartOwed ??= new Set(Object.entries(posted).filter(([, last]) => last?.context === own && ['duty', 'dual'].includes(last.kind)
+      this.restartOwed ??= new Set(Object.entries(posted).filter(([, last]) => last?.context === own && (last.kind === 'duty' || (this.legacyInterlock && last.kind === 'dual'))
         && now - Date.parse(last.at) <= DUTY_WINDOW_MS).map(([h]) => h));
       for (const headSha of [...this.restartOwed]) {
         if (!open.has(headSha) || described.has(headSha)) { this.restartOwed.delete(headSha); continue; }
@@ -500,6 +525,12 @@ export class NodeDuty {
     // ADR 0028: a reminder left pending before is ended once, while its head is still open; a closed one is forgotten.
     m.standby ??= {};
     const open = new Set(pulls.map(p => p.headSha));
+    if (!this.legacyInterlock) {
+      for (const [headSha, last] of Object.entries(posted)) {
+        if (last?.context === own && last.kind === 'dual' && open.has(headSha) && !described.has(headSha)
+          && !Object.hasOwn(m.handover, headSha)) out.push({ headSha, context: own, want: DUAL_CLEARED_TEXT });
+      }
+    }
     // The HALT rows are owed their end (FABLE-resident-halt-merge-race-followup-20261123 §2), in every mode: once a fresh status
     // carries no halt, each one this node left on a still-open head that this pass did not describe again (and that is owed no
     // 已交班 above) is rewritten once as HALT_CLEARED_TEXT. A node still on duty never describes a PR it did not queue, and a STANDBY

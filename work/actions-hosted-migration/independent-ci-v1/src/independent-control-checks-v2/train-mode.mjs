@@ -8,6 +8,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT } from './train-rules.mjs';
 import { createMergeSlotNative } from './merge-slot-native.mjs';
+import { TRAIN_FAILURE, TRAIN_PROBE_FIELDS, TRAIN_PROTOCOL_VERSION } from '../merge-train-v2-contract.mjs';
 import { STATE_V2 } from '../resident-v2/layout.mjs';
 
 export const STAGE_TRAIN_MODE_CONTRACT = 'clued.independent-ci.stage-train-mode/1';
@@ -52,10 +53,69 @@ export async function readStageTrainModeFact(stageDir) {
   } catch { return broken; }
 }
 
-// The ports stages 1 and 8 need with the train on (§41.2, §41.4), built only then: the merge-slot port with the node's CI
+// Only the protected controller transport supplies the live protocol projection.
+const blockedProtocol = Object.freeze({ protocolVersion: null });
+const trainAction = {
+  readBatch: ['landing_prepare', 'read_batch'],
+  atomicLandingQualified: ['landing_prepare', 'atomic_landing_qualified'],
+  readRuleBypass: ['landing_prepare', 'read_rule_bypass'],
+  verifyMember: ['landing_prepare', 'verify_member'],
+  readRequiredRuns: ['landing_prepare', 'read_required_runs'],
+  bisectBatch: ['batch_bisect', 'bisect_batch'],
+  prepareLanding: ['landing_prepare', 'prepare_landing'],
+  authorizeLandingSend: ['landing_send', 'authorize_landing_send'],
+  reconcileLanding: ['landing_reconcile', 'reconcile_landing'],
+  authorizeLandingInvalidation: ['landing_invalidate', 'authorize_landing_invalidation'],
+  readMaintenance: ['batch_reserve', 'read_maintenance'],
+  authorizeComposition: ['batch_reserve', 'authorize_composition'],
+  sealBatch: ['batch_seal', 'seal_batch'],
+  prepareStaging: ['staging_publish', 'prepare_staging'],
+  authorizeStagingSend: ['staging_publish', 'authorize_staging_send'],
+  readStagingRuns: ['staging_publish', 'read_staging_runs'],
+  reconcileStaging: ['staging_publish', 'reconcile_staging'],
+  fixActivationMarker: ['batch_reserve', 'fix_marker'],
+  authorizeGenerationActivation: ['batch_reserve', 'authorize_generation_activation'],
+  reconcileGenerationActivation: ['batch_reserve', 'reconcile_generation_activation'],
+  fixStagingMarker: ['staging_publish', 'fix_marker'],
+  fixLandingMarker: ['landing_prepare', 'fix_marker'],
+  adoptMember: ['claim_adopt', 'adopt_member'],
+};
+
+async function sharedTrainPort({ command, config, repositoryId, sourceManifestSha256 }) {
+  const boundary = { scope: config.scope, repository: config.repository, repository_id: repositoryId,
+    target_branch: 'main', source_manifest_sha256: sourceManifestSha256 };
+  let probe;
+  try { probe = await command({ ...boundary, action: 'role_probe' }); }
+  catch { return blockedProtocol; }
+  if (!probe || probe.source_manifest_sha256 !== sourceManifestSha256) return blockedProtocol;
+  if (probe.protocol_version !== TRAIN_PROTOCOL_VERSION || !TRAIN_PROBE_FIELDS.every(field => Object.hasOwn(probe, field))
+    || probe.on_duty !== true || probe.stop_scope !== 'none' || typeof probe.node_id !== 'string' || !probe.node_id
+    || !Number.isSafeInteger(probe.binding_generation) || probe.binding_generation < 1) return blockedProtocol;
+
+  const call = async ([action, operation], subject) => {
+    const reply = await command({ ...boundary, protocol_version: TRAIN_PROTOCOL_VERSION,
+      node_id: probe.node_id, binding_generation: probe.binding_generation, action, operation, subject });
+    if (reply?.protocol_version !== TRAIN_PROTOCOL_VERSION || !Object.hasOwn(reply, 'result')) {
+      const code = Object.values(TRAIN_FAILURE).find(failure => failure.native === reply?.error_code)?.resident
+        ?? TRAIN_FAILURE.LEASE_STALE.resident;
+      throw Object.assign(new Error(code), { code });
+    }
+    return reply.result;
+  };
+  const port = Object.fromEntries(Object.entries(trainAction).map(([method, route]) => [method, subject => call(route, subject)]));
+  port.authorizeLandingSend = (intent, evidence) => call(trainAction.authorizeLandingSend, { intent, evidence });
+  return Object.freeze({ ...port, protocolVersion: TRAIN_PROTOCOL_VERSION, repositoryId });
+}
+
+// The legacy ports stages 1, 8 and 10 need with the train on (§41.2, §41.4), built only then: the merge-slot port with the node's CI
 // token (holders, touch), the sweep proof store (state\v2\train-sweep, clued-control only; loaded only then; one that
 // cannot be opened is no proof) and GitHub's PRs by updated time. Off and shadow: none, nothing is loaded.
-export async function trainPortsV2({ trainMode, record, fetchImpl, nativeToken, github, sweepDir = STATE_V2.trainSweep, openStore = null, queueReturn = false }) {
+export async function trainPortsV2({ trainMode, record, fetchImpl, nativeToken, github, sweepDir = STATE_V2.trainSweep, openStore = null, queueReturn = false,
+  nativeCommand, repositoryId, sourceManifestSha256 }) {
+  const version = record?.config.mergeTrainProtocolVersion;
+  if (nativeCommand && version !== undefined && version !== 1) {
+    return { trainV2: await sharedTrainPort({ command: nativeCommand, config: record.config, repositoryId, sourceManifestSha256 }) };
+  }
   // Stage 8 must return failed queued PRs in every mode. This port is lazy:
   // constructing it neither reads train state nor makes a Native request.
   if (trainMode !== 'on') return queueReturn ? { slotNative: createMergeSlotNative({ config: record.config, fetchImpl, nativeToken }) } : {};

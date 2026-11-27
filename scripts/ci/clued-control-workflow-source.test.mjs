@@ -5,7 +5,7 @@ import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {CONTROL_WORKFLOW_FILES,CONTROL_WORKFLOW_SOURCE_PATH,DISPATCHER_CHOICE_SOURCE,RETIRED_CONSUMER_OBSERVER_SOURCE,MERGE_RECONCILE_CONTROL_SOURCE,
+import {CONTROL_WORKFLOW_FILES,CONTROL_WORKFLOW_SOURCE_PATH,DISPATCHER_CHOICE_SOURCE,RETIRED_CONSUMER_OBSERVER_SOURCE,MERGE_RECONCILE_CONTROL_SOURCE,TRAIN_V2_EXECUTOR_SOURCE,TRAIN_V2_SLOT_SOURCE,
   compileControlWorkflowSource,registeredControlWorkflowSource,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
 import {roleDefinitionDigest,workflowBlob} from './clued-workflow-profile.mjs';
 import {verifyReconcileSource} from './clued-merge-reconcile-source.mjs';
@@ -14,6 +14,12 @@ const yaml=createRequire(new URL('../../apps/clued-cloud/package.json',import.me
 const root=new URL('../../',import.meta.url),file=DISPATCHER_CHOICE_SOURCE.file;
 const load=()=>JSON.parse(fs.readFileSync(new URL('../../'+CONTROL_WORKFLOW_SOURCE_PATH,import.meta.url)));
 const text=()=>fs.readFileSync(new URL(file,root),'utf8');
+function removeTrainV2(r){
+  for(const {file,workflow_blob} of [TRAIN_V2_SLOT_SOURCE,TRAIN_V2_EXECUTOR_SOURCE]){
+    r.workflows[file].sources=r.workflows[file].sources.filter(s=>s.workflow_blob!==workflow_blob);
+    delete r.roles[file][workflow_blob];
+  }
+}
 const predecessor=r=>r.workflows[file].sources.find(s=>s.source_kind==='legacy_predecessor');
 const roleList=definition=>Object.entries(definition.jobs).map(([job_id,definition])=>({job_id,definition_sha256:roleDefinitionDigest(definition),definition}));
 const compile=(value=text(),opts={})=>{const r=load();return compileControlWorkflowSource(file,value,{parseYaml:s=>yaml.parse(s),
@@ -85,6 +91,7 @@ test('catalogue retains all fourteen old Sources, complete FullRoles and every o
   const retirement=r.workflows[RETIRED_CONSUMER_OBSERVER_SOURCE.file];
   retirement.sources=retirement.sources.filter(s=>s.source_kind!=='retired_consumer_observer_successor');
   delete r.roles[RETIRED_CONSUMER_OBSERVER_SOURCE.file][RETIRED_CONSUMER_OBSERVER_SOURCE.workflow_blob];
+  removeTrainV2(r);
   const row=r.workflows[file],added=row.sources.filter(s=>s.source_kind==='dispatcher_choice_successor');
   assert.equal(added.length,1);assert.equal(row.sources.length,3);assert.equal(Object.keys(r.workflows).length,7);
   row.sources=row.sources.filter(s=>s.source_kind!=='dispatcher_choice_successor');delete r.roles[file][DISPATCHER_CHOICE_SOURCE.workflow_blob];
@@ -160,10 +167,13 @@ test('fixed retirement snapshot authenticates historical objects while the indep
 test('retirement removes only the retired live consumer while preserving the fifteen old Source records',()=>{
   const r=load(),f=RETIRED_CONSUMER_OBSERVER_SOURCE.file,rows=r.workflows[f].sources;
   const historical=structuredClone(r);delete historical.workflows[MERGE_RECONCILE_CONTROL_SOURCE.file];delete historical.roles[MERGE_RECONCILE_CONTROL_SOURCE.file];
+  removeTrainV2(historical);
   const head=rows.find(s=>s.source_kind==='retired_consumer_observer_successor');
   const previous=rows.find(s=>s.workflow_blob===RETIRED_CONSUMER_OBSERVER_SOURCE.retired_from_blob);
   assert.equal(Object.values(historical.workflows).reduce((n,x)=>n+x.sources.length,0),16);
-  assert.equal(rows.length,4);assert.equal(head.source_yaml,fs.readFileSync(new URL(f,root),'utf8'));
+  assert.equal(historical.workflows[f].sources.length,4);
+  const retiredBytes=execFileSync('git',['cat-file','blob',RETIRED_CONSUMER_OBSERVER_SOURCE.workflow_blob],{cwd:fileURLToPath(root),encoding:'utf8'});
+  assert.equal(head.source_yaml,retiredBytes);
   assert.equal(head.operation,'retire_completed_consumer_signal');
   const before=structuredClone(previous.workflow_definition),after=structuredClone(head.workflow_definition);
   const retired=RETIRED_CONSUMER_OBSERVER_SOURCE.removed_workflow;
@@ -182,6 +192,36 @@ test('retirement removes only the retired live consumer while preserving the fif
   const coverage=JSON.parse(fs.readFileSync(new URL('.github/actions/ci-temporary-storage/coverage.json',root)));
   assert.equal(coverage.workflows[removed.split('/').at(-1)],undefined);
 });
+
+for(const pin of [TRAIN_V2_SLOT_SOURCE,TRAIN_V2_EXECUTOR_SOURCE]){
+  test('the train v2 '+pin.job_id+' Source only qualifies the exact Git predecessor and successor',()=>{
+    const r=load(),{file,workflow_blob}=pin,rows=r.workflows[file].sources;
+    const head=rows.find(s=>s.workflow_blob===workflow_blob);
+    const previous=rows.find(s=>s.workflow_blob===head.predecessor_blob);
+    const raw=head.source_yaml;
+    assert.equal(workflowBlob(raw),workflow_blob);
+    const live=fs.readFileSync(new URL(file,root),'utf8');
+    assert.ok(live===previous.source_yaml||live===raw,'checkout contains either exact registered workflow');
+    assert.deepEqual(yaml.parse(raw),head.workflow_definition);
+    const options={parseYaml:yaml.parse,accepted_roles:r.roles[file][workflow_blob],source_kind:head.source_kind};
+    assert.deepEqual(compileControlWorkflowSource(file,raw,{...options,predecessor:previous}),head);
+    assert.throws(()=>compileControlWorkflowSource(file,raw,{...options,predecessor:{...previous,source_yaml:previous.source_yaml+'\n'}}),/exact train v2 predecessor/);
+    const change={filename:file,status:'modified'};
+    const check=(base=previous.source_yaml,c=change)=>registeredControlWorkflowTransition(r,file,raw,base,{change:c});
+    const transition=check();
+    assert.equal(transition.passed,true);
+    for(const key of ['execution_authority','dispatch_authority','production_authority','canonical_authority','runner_hook_exception'])
+      assert.equal(transition.authority_boundary[key],false,key);
+    assert.deepEqual(transition.required_implementation_blobs,pin.implementation_blobs);
+    for(const other of rows.filter(s=>s!==previous))assert.equal(check(other.source_yaml).passed,false);
+    assert.equal(check(previous.source_yaml+'\n').passed,false);
+    assert.equal(check(previous.source_yaml,{...change,status:'renamed'}).passed,false);
+    assert.equal(sourceResult(r,raw+'\n',file).passed,false);
+    const changed=structuredClone(r);
+    changed.roles[file][workflow_blob][0].definition.if='always()';
+    assert.equal(sourceResult(changed,raw,file).passed,false);
+  });
+}
 
 test('retirement transition requires exact actual-main legacy or completion predecessor, modified path and complete unchanged Role',()=>{
   const r=load(),f=RETIRED_CONSUMER_OBSERVER_SOURCE.file,rows=r.workflows[f].sources;

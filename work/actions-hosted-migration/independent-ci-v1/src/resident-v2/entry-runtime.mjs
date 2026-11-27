@@ -21,7 +21,7 @@ import { loadStageInputs, parseEntryArgs, writeOutcome } from './stage-inputs.mj
 import { STATE_V2 } from './layout.mjs';
 import { FIXED_APP } from './record.mjs';
 import { readCiCredential } from './ci-principal.mjs';
-import { cluedRpc } from '../../../../../scripts/ci/clued-work-admission.mjs';
+import { cluedRpc, mainMergeSource } from '../../../../../scripts/ci/clued-work-admission.mjs';
 import { createIndependentPublicationPortsForJobs, independentControllerId } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { registerIndependentController } from '../../../../../scripts/ci/clued-independent-revoker.mjs';
 import { revocationQualification } from './revocation-run.mjs';
@@ -29,6 +29,8 @@ import { ALL_STAGE_CODES } from './stage-fact.mjs';
 import { withReadRetry } from '../read-retry.mjs';
 import { createIndependentScanStartPort } from '../scan-start-v1/native-port.mjs';
 import { HOLDERS_RPC } from '../independent-control-checks-v2/merge-slot-native.mjs';
+import { TRAIN_PROTOCOL_VERSION } from '../merge-train-v2-contract.mjs';
+import { openTrainTransport } from './train-transport.mjs';
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
@@ -38,6 +40,7 @@ const check = (ok, code) => { if (!ok) fail(code); };
 const PUBLIC_ENTRY_REASONS = new Set([...ALL_STAGE_CODES,
   'ENTRY_OPERATION_UNCONFIRMED', 'FIXED_WINDOWS_ENTRY_REQUIRED', 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED', 'CI_CONNECTION_RECORD_REFUSED',
   'NATIVE_PUBLICATION_SCOPE_REFUSED', 'NATIVE_PUBLICATION_UNAVAILABLE', 'independent_revoker_qualification_required',
+  'ci_train_protocol_unconfirmed',
   'MERGE_SLOT_HOLDERS_PROJECTION_UNSUPPORTED',
   'OBSERVATION_KIND_REFUSED', 'OBSERVATION_LOG_BOUNDARY', 'OBSERVATION_LOG_UNCONFIRMED', 'HELD_SOURCE_PINS_CHANGED',
   'ACTUAL_HELD_RECORD_LEASE_REQUIRED', 'ACTUAL_WINDOWS_HELD_RECORD_REQUIRED', 'ENTRY_OUTSIDE_HELD_SOURCE_REFUSED',
@@ -211,7 +214,8 @@ export function immutableReadCache(fetchImpl, { live = () => {}, onHit = () => {
 }
 // batchRoute (stages 1 and 8 only, bc982192): the batch's route stamp read from the stage directory (batch-route.mjs); null for every other
 // stage and whenever the stage has none, which keeps both ports exactly as on origin/main.
-export function controllerPorts({ record, appKey, nativeToken, bindingId, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {}, stagedScanJournal = null, batchRoute = null }) {
+export function controllerPorts({ record, appKey, nativeToken, bindingId, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {}, stagedScanJournal = null, batchRoute = null, protectedTrainTransport, trainControl = false }) {
+  const train = protectedTrainPort(record, protectedTrainTransport, live);
   const budgetObserver = guardedGitHubBudgetObserver(createGitHubBudgetObserver());
   // One timing line per network attempt and per cache hit (URL pattern, status, milliseconds), for later re-measurement.
   const timing = (url, data) => { try { log?.timing?.({ url: fetchUrlPattern(url), ...data }); } catch { /* best-effort */ } };
@@ -229,7 +233,8 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
   // E3 (bf57ff10 P2): SHA-fixed GitHub reads are fetched once per entry process (immutableReadCache); all else as before.
   const fetchImpl = immutableReadCache(retryingFetch, { live, onHit: url => timing(url, { method: 'GET', status: 200, ms: 0, cache: true }) });
   const github = createGitHubChecksPort({ repository: record.config.repository, repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId,
-    installationId: FIXED_APP.installationId, includeModeRead: true, privateKeyProvider: async () => appKey, fetchImpl, budgetObserver, budgetObservedAtFetch: true, stagedScanJournal, batchRoute });
+    installationId: FIXED_APP.installationId, includeModeRead: true,
+    includeActionsRead: record.config.mergeTrainProtocolVersion === 2, privateKeyProvider: async () => appKey, fetchImpl, budgetObserver, budgetObservedAtFetch: true, stagedScanJournal, batchRoute });
   const admission = createFullAdmissionPortV2({ protectedConfig: { ...record.config, ciPrincipalBindingId: bindingId, domain: 'production', workspace: sourceRoot, policyText }, fetchImpl, batchRoute,
     modeProvider: () => github.readAdmissionMode(),
     tokenProvider: async () => ({ githubToken: await github.getInstallationToken(), ciAdmissionToken: nativeToken, ciPrincipalBindingId: bindingId, ciPrincipalQualificationRef: record.config.ciPrincipalQualificationRef }),
@@ -238,8 +243,25 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
     CLUED_SUPABASE_PUBLISHABLE_KEY: record.config.publishableKey };
   const commands = new Set(['publication_begin_independent','publication_finish','publication_abort_independent','publication_reconcile','revocations_list',
     'independent_revocation_heads','independent_legacy_drain_finish','scan_start_independent','resolve_pr_claim']);
-  const native = Object.freeze({ async command(input, options = {}) {
-    live(); check(commands.has(input?.action) && input.scope === record.config.scope, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+  const trainCommands = new Set(['role_probe', 'batch_reserve', 'batch_seal', 'batch_bisect', 'staging_publish',
+    'landing_prepare', 'landing_send', 'landing_reconcile', 'landing_invalidate', 'claim_adopt']);
+  const native = Object.freeze({ trainProtocolVersion: train?.protocolVersion ?? null, train, async command(input, options = {}) {
+    live();
+    const authorizedTrainCommand = trainControl && trainCommands.has(input?.action) && input.repository === record.config.repository
+      && input.repository_id === FIXED_APP.repositoryId && input.target_branch === 'main'
+      && input.source_manifest_sha256 === record.config.sourceManifestSha256;
+    check((commands.has(input?.action) || authorizedTrainCommand) && input.scope === record.config.scope, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+    if (authorizedTrainCommand) {
+      check(typeof train?.command === 'function', 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+      if (input.action === 'role_probe') {
+        const reply = await train.command({ ...input, protocol_version: TRAIN_PROTOCOL_VERSION });
+        check(reply?.status === 'ok' && reply.protocol_version === TRAIN_PROTOCOL_VERSION
+          && reply.node_id === train.nodeId && reply.binding_generation === train.bindingGeneration, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+        return reply;
+      }
+      check(input.node_id === train.nodeId && input.binding_generation === train.bindingGeneration, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+      return train.command(input);
+    }
     if (input.action === 'resolve_pr_claim') check(typeof input.pr_ref === 'string'
       && input.pr_ref.startsWith(`${record.config.repository}#`)
       && /^[1-9][0-9]*$/.test(input.pr_ref.slice(record.config.repository.length + 1)), 'NATIVE_PUBLICATION_SCOPE_REFUSED');
@@ -247,19 +269,22 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
     const reply = await cluedRpc(commandFetch, env, sourceRoot, 'clued_work_verify_v1', input);
     check(reply.status === 200 && reply.body && typeof reply.body === 'object', 'NATIVE_PUBLICATION_UNAVAILABLE');
     return reply.body;
-  }, async current(identity,mode) {
+  }, async current(identity,mode,admissionCommand) {
     live();if(mode?.scope!==record.config.scope||identity.job.repo!==record.config.repository
       ||!Array.isArray(mode.paths)||!mode.paths.length)return false;
     let binding;
     try {
-      binding = await resolvePRTaskBinding({ command: input => native.command(input), scope: record.config.scope,
+      binding = await resolvePRTaskBinding({ command: admissionCommand ?? (input => native.command(input)), scope: record.config.scope,
         repository: record.config.repository, prNumber: identity.job.pr, headSha: identity.job.headSha,
         baseSha: identity.job.baseSha, targetBranch: 'main', readOnly: true });
     } catch { return false; }
     if (binding.binding_status !== 'bound') return false;
     const sentMono = monotonic();
-    const reply = await cluedRpc(fetchImpl, env, sourceRoot, 'clued_work_verify_v1', { scope: mode.scope, claim_id: identity.claim.claim_id,
-      head_sha: identity.job.headSha, base_sha: identity.job.baseSha, changed_paths: mode.paths });
+    const input = { scope: mode.scope, claim_id: identity.claim.claim_id,
+      head_sha: identity.job.headSha, base_sha: identity.job.baseSha, changed_paths: mode.paths };
+    const reply = admissionCommand
+      ? { status: 200, body: await admissionCommand({ ...input, action: 'verify_head', read_only: true }) }
+      : await cluedRpc(fetchImpl, env, sourceRoot, 'clued_work_verify_v1', input);
     const b=reply.body,c=b?.claim,failed=[];
     for (const [name, ok] of [['reply',reply.status===200&&b?.status==='ok'],['verdict',b?.verdict==='ADMITTED'],
       ['execution_policy',b?.execution_policy===mode.executionPolicy],['lease_key_required',effectiveGuard(b?.execution_policy,c?.lease_key_required)===mode.guarded],
@@ -283,16 +308,52 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
   return { github, admission, fetchImpl, native, scanStart, scanStartRegistrySha256, bindingId };
 }
 
+// 协议来自持有记录中的已验收安装配置。受信启动器在进程内注入机器签名命令端口。
+// 作业、阶段文件、环境变量和旧 RPC 均不能选择协议或提供端口。
+export function protectedTrainPort(record, transport, live) {
+  const { mergeTrainProtocolVersion: version, scope, repositoryId } = record.config;
+  if (version === undefined || version === 1) return undefined;
+  const protocolVersion = version === TRAIN_PROTOCOL_VERSION ? version : 0;
+  const { nodeId, bindingGeneration, scope: transportScope, command } = transport ?? {};
+  const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+  if (protocolVersion !== TRAIN_PROTOCOL_VERSION || typeof command !== 'function'
+    || !uuid.test(nodeId ?? '') || !Number.isSafeInteger(bindingGeneration) || bindingGeneration < 1
+    || transportScope?.contextKey !== scope || transportScope.repositoryId !== repositoryId || transportScope.targetBranch !== 'main'
+    || !uuid.test(transportScope.tenantId ?? '') || !uuid.test(transportScope.projectId ?? '')
+    || (scope !== 'global' && scope !== 'project:' + transportScope.projectId)) return Object.freeze({ protocolVersion });
+  return Object.freeze({ protocolVersion, nodeId, bindingGeneration, scope: Object.freeze({ ...transportScope }),
+    async command(input) {
+      live();
+      check(input.scope === scope && input.repository === record.config.repository
+        && (input.repository_id === undefined || input.repository_id === repositoryId)
+        && (input.target_branch === undefined || input.target_branch === 'main')
+        && (input.source_manifest_sha256 === undefined || input.source_manifest_sha256 === record.config.sourceManifestSha256)
+        && input.protocol_version === protocolVersion, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+      const reply = await command.call(transport, { ...input, repository_id: repositoryId, target_branch: 'main',
+        source_manifest_sha256: record.config.sourceManifestSha256 });
+      live();
+      return reply;
+    } });
+}
+
 // Root-held Source/record verification and the existing protected permanent
 // role journal remain prerequisites. No extra secret reader or worker token.
 export function publicationControllerGithub({ ports, jobs, journal, args, record, plan }) {
   return createIndependentPublicationPortsForJobs({ jobs, journal, github: ports.github, native: ports.native,
+    readMainMergeProof: ports.fetchImpl && (async job => {
+      const pr = await ports.github.readPullRequest(job.pr);
+      if (pr?.number !== job.pr || pr.state !== 'open' || pr.head?.sha !== job.headSha
+        || pr.head.repo?.full_name !== job.repo || pr.base?.ref !== 'main' || pr.base.repo?.full_name !== job.repo) return null;
+      const tip = (await ports.github.readBranchHead('main')).sha;
+      return mainMergeSource(ports.fetchImpl, { GITHUB_TOKEN: await ports.github.getInstallationToken() },
+        job.repo, job.pr, job.headSha, tip, { proof: true });
+    }),
     controllerIdFor: job => independentControllerId({ invocationNonce: args.nonce, jobId: job.id, nodeId: record.accepted.node.hostname }),
     registerController: (identity,mode) => {
       if(mode.executionPolicy==='active'&&!revocationQualification(record,{reserveMs:300_000}))fail('independent_revoker_qualification_required');
       return registerIndependentController({ identity, journal, args, record, plan });
     },
-    assertCurrent: (identity,mode) => ports.native.current(identity,mode) });
+    assertCurrent: (identity,mode,admissionCommand) => ports.native.current(identity,mode,admissionCommand) });
 }
 
 // The authority facts every v2 publisher binds (the seven install refs + acceptance window).
@@ -301,7 +362,7 @@ export const authorityOf = accepted => ({ acceptanceValidUntil: accepted.validUn
 
 // Runs one entry: body(ctx) returns {status, reason, sideEffects, ...}. The outcome is written in all
 // cases that reach the finally block. Exit 0 only for a settled (or, for the issuer, received) result.
-export async function runEntry({ argv, entryRole, moduleUrl, body, output = process.stdout, successStatuses = ['SETTLED'] }) {
+export async function runEntry({ argv, entryRole, moduleUrl, body, output = process.stdout, successStatuses = ['SETTLED'], protectedTrainTransport }) {
   let args = null, inputs = null, lease = null, result = { status: 'BLOCKED', reason: 'ENTRY_NOT_STARTED', sideEffects: 0 };
   try {
     args = parseEntryArgs(argv);
@@ -313,7 +374,9 @@ export async function runEntry({ argv, entryRole, moduleUrl, body, output = proc
     check(inputs.record.pins.size === held.sourceHashes.size && [...inputs.record.pins].every(([p, s]) => held.sourceHashes.get(p) === s), 'HELD_SOURCE_PINS_CHANGED');
     const live = () => { takeHeldRecord(lease); };
     live.deadlineAt = Date.parse(held.expiresAt); // the lease's end: read retries never wait or run past it (read-retry.mjs)
-    result = await body({ args, inputs, held, live, sourceRoot: sourceRootOf(moduleUrl) });
+    const trainRole = ['work-admission', 'role-probe', 'control-checks', 'train-maintenance'].includes(entryRole);
+    const transport = trainRole ? protectedTrainTransport ?? await openTrainTransport(inputs.record, live) : undefined;
+    result = await body({ args, inputs, held, live, sourceRoot: sourceRootOf(moduleUrl), protectedTrainTransport: transport });
   } catch (e) {
     result = { status: result?.sideEffects ? 'UNCERTAIN' : 'BLOCKED', reason: safeReason(e), sideEffects: result?.sideEffects ?? 0 };
   } finally {

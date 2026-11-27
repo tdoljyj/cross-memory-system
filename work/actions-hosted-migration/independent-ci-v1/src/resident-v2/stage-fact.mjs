@@ -12,10 +12,15 @@ import { validateRevocationFacts } from './revocation-run.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
 import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON, validHeadScans } from '../published-on-github-v2.mjs';
 import { admissionVerificationRetryable } from '../withdrawal-text.mjs';
+import { TRAIN_FAILURE } from '../merge-train-v2-contract.mjs';
 
 export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
 export const NATIVE_RECEIPT_CONTRACT_V2 = 'clued.independent-ci.windows-formal-entry-receipt/2';
 export const SUCCESS_STATE = 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION';
+// 协议 2 调度器消费这些结果，协议 1 的 Source 与常驻端继续共用原失败表。
+export const TRAIN_HEAD_STAGE_CODES = Object.freeze([
+  TRAIN_FAILURE.HEAD_LEASE_HELD, TRAIN_FAILURE.HEAD_LEASE_COMPLETED, TRAIN_FAILURE.LEASE_STALE, TRAIN_FAILURE.EFFECT_UNKNOWN,
+]);
 
 // ---- catalogue (mirrored, and cross-checked by a test, in independent-ci-resident-v1/src/classify.mjs) ----
 // Stage 1 only: Native said no. Nothing was published, nothing executed.
@@ -135,6 +140,8 @@ export function notAdmittedCode(diagnostic) {
 // later: the batch claim moved under a running batch).
 export function outcomeFailureCode(outcome, stageNumber) {
   if (!plain(outcome)) return 'STAGE_OUTCOME_MISSING';
+  if (stageNumber === 1 && outcome.status === 'UNCERTAIN' && outcome.reason === TRAIN_FAILURE.EFFECT_UNKNOWN.native)
+    return TRAIN_FAILURE.EFFECT_UNKNOWN.resident;
   if (outcome.status === 'UNCERTAIN') return 'PUBLICATION_UNCERTAIN';
   if (outcome.status === 'RECONCILIATION_REQUIRED') return 'RECONCILIATION_REQUIRED';
   // A staged scan had only a pending run, or sent its final conclusion after
@@ -150,6 +157,10 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (outcome.status !== 'BLOCKED') return 'PUBLICATION_UNCERTAIN';
   if (outcome.sideEffects !== 0 || outcome.mayHavePublished !== false) return 'PUBLICATION_UNCERTAIN';
   const r = outcome.reason;
+  if (stageNumber === 1 && r !== TRAIN_FAILURE.EFFECT_UNKNOWN.native) {
+    const train = TRAIN_HEAD_STAGE_CODES.find(code => code.native === r);
+    if (train) return train.resident;
+  }
   // Only the bounded, explicit Native read exhaustion is transient. The status/effect guards above exclude
   // any sent or uncertain publication; refusal and unconfirmed replies keep their existing final semantics.
   if (r === 'native_claim_observation_unavailable') return 'NATIVE_ADMISSION_UNAVAILABLE';
