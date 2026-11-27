@@ -106,6 +106,70 @@ ${body}`;
   return got;
 }
 const ps = (script, names, body) => psLoad([{ script, names }], body);
+
+test('重装取快照时阻止任务重触发，卸载前中止后恢复启用状态', opts, () => {
+  const launcher = path.join(RES, 'reinstall', 'launcher', 'template.ps1');
+  const got = ps(launcher, ['Step-Quiesce', 'Stop-CompanionTask', 'Start-CompanionTask'], `
+Set-StrictMode -Version 2.0
+$helpers = @('Test-CompanionTaskActive', 'Disable-CompanionTaskTriggers', 'Restore-CompanionTaskTriggers')
+foreach ($fn in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in $helpers }, $true)) {
+  . ([scriptblock]::Create($fn.Extent.Text))
+}
+$restore = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Restore-CompanionTaskTriggers' }, $true))
+function New-FakeTask([string]$name, [bool]$enabled) {
+  $task = [pscustomobject]@{ Name = $name; Enabled = $enabled; State = 4 }
+  $task | Add-Member ScriptMethod GetInstances { param($flags) @{ Count = [int]($this.State -in @(2, 4)) } }
+  $task | Add-Member ScriptMethod Stop { param($flags) $this.State = 3 }
+  $task | Add-Member ScriptMethod RunEx { param($params, $flags, $session, $user) if ($this.Enabled) { $this.State = 4 } }
+  $task
+}
+$prefix = 'CluedCIResidentCompanion'
+$script:main = New-FakeTask $prefix $true
+$script:k3 = New-FakeTask ($prefix + 'Start') $true
+$script:fallback = New-FakeTask ($prefix + 'Fallback') $false
+$script:folder = [pscustomobject]@{ Tasks = @{ $main.Name = $main; $k3.Name = $k3; $fallback.Name = $fallback } }
+$folder | Add-Member ScriptMethod GetTask { param($name) $this.Tasks[$name] }
+function New-Object([string]$ComObject) {
+  if ($ComObject -cne 'Schedule.Service') { throw 'UNEXPECTED_COM_OBJECT' }
+  $svc = [pscustomobject]@{}
+  $svc | Add-Member ScriptMethod Connect {}
+  $svc | Add-Member ScriptMethod GetFolder { param($name) $script:folder }
+  $svc
+}
+function Import-Module {}  # baseline: Stop-CompanionTask uses the ScheduledTasks cmdlet
+function Stop-ScheduledTask { $script:main.Stop(0) }
+$FleetFirstInstall = $false; $FleetPlanSha256 = 'reviewed'; $Sc = { 'stopped' }
+$Done = [Collections.Generic.List[string]]::new()
+$CompanionTaskRestore = [ordered]@{ disabled = [Collections.Generic.List[object]]::new(); restart = $false; uninstallStarted = $false }
+$script:spawned = $false
+$script:beforeSnapshot = $null
+function Get-ScState { @{ gone = $false; state = 1 } }
+function Test-ExecutorAlive { @{ alive = $false } }
+function Write-Json {}
+function Wait-Until([scriptblock]$cond, [int]$seconds) { [bool](& $cond) }
+function Stop-Launch([string]$code, $detail) { throw $code }
+function Read-VerifiedResidentLocks([string]$phase) {
+  $script:beforeSnapshot = @($main.Enabled, $main.State, $k3.Enabled, $k3.State, $fallback.Enabled, $fallback.State)
+  # A trigger accepted here can start an instance just after the enumerated PID list was taken.
+  $script:spawned = $main.Enabled -or $k3.Enabled -or $k3.State -eq 4 -or $fallback.Enabled -or $fallback.State -eq 4
+  @{ rootProcesses = @() }
+}
+function Get-ProcessesUnderRoot { if ($script:spawned) { @{ pid = 12345 } } }
+$failure = $null
+try {
+  $null = Step-Quiesce
+  Stop-Launch 'UNINSTALL_PLAN_REFUSED' $null
+} catch { $failure = $_.Exception.Message }
+finally {
+  if ($restore.Count -eq 1) { . ([scriptblock]::Create($restore[0].Extent.Text)) }
+}
+[ordered]@{ failure = $failure; spawned = $spawned; snapshot = $beforeSnapshot; beforeExit = @($main.Enabled, $k3.Enabled, $fallback.Enabled); mainRunning = ($main.State -eq 4) } | ConvertTo-Json -Compress`);
+  assert.equal(got.spawned, false, '快照后的重触发不应启动旧实例');
+  assert.deepEqual(got.snapshot, [false, 4, false, 3, false, 3], '主任务实例保留到身份核验，两个辅助入口已停稳');
+  assert.equal(got.failure, 'UNINSTALL_PLAN_REFUSED');
+  assert.deepEqual(got.beforeExit, [true, true, false], '中止时仅恢复原本启用的任务');
+  assert.equal(got.mainRunning, true, '中止时恢复原本运行的主任务');
+});
 // The fake Task Scheduler: Run always queues (state 2, engine 0, the guest's sequence); RunEx runs only with flags 2. Every call is logged,
 // RunEx with its arguments ($null shown as null). The cmdlets that would reach the real one are stood in and logged too.
 const FAKE_SCHEDULER = `
