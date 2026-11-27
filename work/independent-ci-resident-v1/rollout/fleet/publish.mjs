@@ -114,7 +114,6 @@ import { deliveryWorkflowClient } from './delivery-workflow.mjs';
 import { RESIDENT } from './facts.mjs';
 import { DEFAULT_ROOT, firstInstallKitOf, installedFleetMaterial, readArchive, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
 import { fleetReleaseWorkflow, reconcileFleetRelease } from './release-migration-workflow.mjs';
-import { fleetReleaseWorkflow, reconcileFleetRelease } from './release-migration-workflow.mjs';
 import { readTar } from './tar.mjs';
 import { previousTransportVersion, TRANSPORT, transportAssetNames } from './fetch.mjs';
 import { stageTransport } from './transport-assets.mjs';
