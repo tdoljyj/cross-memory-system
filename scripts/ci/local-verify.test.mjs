@@ -134,7 +134,7 @@ test('yielding: waits while the resident runs, says why, keeps the run alive, go
   c = clock();
   assert.equal(yieldToResident('x', { ...c, busy: () => 'PR #1', log: () => {}, timeoutMs: 45_000 }), 45_000);
   lines = [];
-  assert.equal(yieldToResident('x', { busy: () => 'PR #1', log: (l) => lines.push(l), wait: () => assert.fail('no wait'), timeoutMs: 0 }), 0);
+  assert.equal(yieldToResident('x', { ...clock(), busy: () => 'PR #1', log: (l) => lines.push(l), wait: () => assert.fail('no wait'), timeoutMs: 0 }), 0);
   assert.equal(lines.length, 1);
 });
 
@@ -880,7 +880,8 @@ test('--affected selects exactly what the ci-suites job selects, from the select
     ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry', 'selection']);
   assert.equal(forCheck(picked, 'ci-suites').reason, 'selected by changed paths');
   assert.deepEqual(picked.selections.map((entry) => entry.check), ['ci-suites', 'clued-cloud-tests', 'migration-verify']);
-  assert.deepEqual(picked.suites, [...forCheck(picked, 'ci-suites').suites, 'clued-cloud'], "the application's tests run for every change; no schema file changed");
+  assert.deepEqual(picked.suites, [...forCheck(picked, 'ci-suites').suites, 'clued-cloud', 'production-schema'],
+    'the application tests run for every change; the resident and publication code are migration test inputs');
   // the line CI logs for the check, then why each suite is in
   assert.equal(picked.lines[0],
     'ci-suites: selected by changed paths; suites: resident-node, resident-python, reinstall-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries, mechanical-outputs, ci-deps-entry, selection');
