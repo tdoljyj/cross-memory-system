@@ -314,6 +314,18 @@
       "class": "ledger",
       "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
     },
+    "clued_private.fleet_landing_v1": {
+      "class": "ledger",
+      "reason": "按用户与落地操作键保留一次授权及其结算时刻，供重复发起时去重和核对主分支读回"
+    },
+    "clued_private.fleet_maintenance_v1": {
+      "class": "state",
+      "reason": "每节点一行维护状态，原地更新摘牌、验证、恢复和回执引用，行数随登记节点数有界"
+    },
+    "clued_private.fleet_mixed_v1": {
+      "class": "state",
+      "reason": "每用户至多一行当前包的混版计时与告警标记，包变化时重置，混版结束时删除"
+    },
     "clued_private.fleet_node_delivery_evidence_v1": {
       "class": "state",
       "reason": "节点当前交付证据：每节点至多一行，较新的登记、绑定或心跳证据原地更新，节点或用户删除时级联删除，行数随节点数有界"

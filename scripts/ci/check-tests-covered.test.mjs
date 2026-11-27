@@ -109,6 +109,22 @@ test('the repository as committed: every test file runs in a required suite or i
   assert.ok(result.counts.tests > 900 && result.counts.runs > 600, JSON.stringify(result.counts));
 });
 
+test('the Windows resident suite covers clean reinstall through the bootstrap PowerShell test', () => {
+  const dir = 'work/independent-ci-resident-v1';
+  const runner = `${dir}/test/fleet-node-powershell.test.mjs`;
+  const bootstrap = `${dir}/rollout/fleet/test/test-bootstrap.ps1`;
+  const reinstall = `${dir}/rollout/fleet/test/test-clean-reinstall.ps1`;
+  const tracked = [runner, bootstrap, reinstall];
+  const read = (file) => readFileSync(path.join(ROOT, file), 'utf8');
+  const commands = { 'resident-node': [{ cwd: dir, argv: ['node', '--test', 'test/fleet-node-powershell.test.mjs'] }] };
+  const options = { root: ROOT, tracked, read, commands, table: { tests: [] }, known: {}, baseline: null };
+  assert.deepEqual(coverage(options).problems, []);
+  const withoutReinstall = (file) => file === bootstrap ? read(file).replace(/^.*'test-clean-reinstall\.ps1'.*$/m, '') : read(file);
+  const { problems } = coverage({ ...options, read: withoutReinstall });
+  assert.equal(problems.length, 1, problems.join('\n'));
+  assert.ok(problems[0].startsWith(`${reinstall}: no required suite runs it`), problems[0]);
+});
+
 // PLAN-g4-red-merged-20261125 §2.2 (Task 4432ee9b): the PostgreSQL 17 backup coverage test runs in production-schema (the
 // real database command of migration-verify names it), so its entry (Task 5ba48256: production-schema had no Docker image)
 // is gone; listed again, the table says it runs and the entry must go.
