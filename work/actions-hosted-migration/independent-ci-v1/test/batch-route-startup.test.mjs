@@ -42,7 +42,8 @@ for (const stage of [1, 8]) test(`bc982192 stage ${stage} entry: batch-route.jso
     controllerPorts(opts) {
       seen.push(['ports', opts.batchRoute]);
       if (stage === 1) throw new Error(STOP);
-      return { admission: {}, fetchImpl: async () => { throw new Error('no network'); }, github: {}, scanStartRegistrySha256: null };
+      return { admission: {}, fetchImpl: async () => { throw new Error('no network'); }, github: {}, scanStartRegistrySha256: null,
+        native: { command() { assert.fail('protocol 1 has no protected train transport'); } } };
     },
     publicationControllerGithub: () => ({}),
     observationLog: () => () => {},
@@ -51,7 +52,10 @@ for (const stage of [1, 8]) test(`bc982192 stage ${stage} entry: batch-route.jso
     async readBatchClaim() { return null; }, async recordBatchClaim() {}, async rewriteUnpublishedBatchClaim() {}, async withBatchClaimPublication() {},
     GreenLedger: { async open() { return {}; } },
     async readStageTrainModeFact() { return { trainMode: 'off', unreadable: false }; },
-    async trainPortsV2() { return {}; },
+    async trainPortsV2({ nativeCommand }) {
+      assert.equal(nativeCommand, undefined, 'protocol 1 must use the legacy train ports');
+      return {};
+    },
     createClaimAssistNative: () => ({}), async stage1WithLease({ result }) { return result; }, async stage1FrontRequeue({ result }) { return result; },
     [entries[stage].publisher](opts) { seen.push(['publisher', opts.batchRoute]); throw new Error(STOP); },
   };
