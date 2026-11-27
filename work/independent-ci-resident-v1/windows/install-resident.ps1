@@ -88,6 +88,8 @@ param(
   [switch]$PreviewAfterUninstall,
   [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPlanSha256,
   [ValidateLength(1,2048)][string]$InstalledPackageB64,
+  [ValidateLength(1,1024)][string]$CiConnectionPlanB64,
+  [string]$CiReinstallProof,
   [switch]$StartAfterInstall,
   [string]$AppPrivateKeyFile,        # optional: this node's App private key, downloaded by the Owner on this machine (design 7.1)
   [string]$CiAdmissionTokenFile,     # optional: this node's ci-admission connection token (design 7.2)
@@ -133,7 +135,29 @@ function Assert-CiInstallBaseline([string]$ciRoot) {
   catch { throw 'CI_CONNECTION_RECORD_REFUSED' }
   throw 'CI_CONNECTION_REINSTALL_BASELINE_REQUIRED'
 }
-Assert-CiInstallBaseline $CiRoot
+$CarriedCiPlan = $null
+if ($CiConnectionPlanB64) {
+  try {
+    $CarriedCiPlan = (New-Object Text.UTF8Encoding($false,$true)).GetString([Convert]::FromBase64String($CiConnectionPlanB64)) | ConvertFrom-Json
+    $keys = @('bindingId','receiptSha256','state')
+    if ($CarriedCiPlan.state -ceq 'observed') { $keys += 'observationSha256' }
+    elseif ($CarriedCiPlan.state -ceq 'current') { $keys += @('bindingGeneration','rebindReceiptId','recordSha256') }
+    else { throw 'state' }
+    if (@($CarriedCiPlan.PSObject.Properties).Count -ne $keys.Count -or
+        @($keys | Where-Object { $CarriedCiPlan.PSObject.Properties.Name -cnotcontains $_ }).Count -ne 0 -or
+        $CarriedCiPlan.receiptSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        $CarriedCiPlan.bindingId -cnotmatch '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$') { throw 'fields' }
+    if ($CarriedCiPlan.state -ceq 'observed' -and $CarriedCiPlan.observationSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'digest' }
+    if ($CarriedCiPlan.state -ceq 'current' -and ($CarriedCiPlan.recordSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        $CarriedCiPlan.rebindReceiptId -cnotmatch '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$' -or
+        ($CarriedCiPlan.bindingGeneration -isnot [int] -and $CarriedCiPlan.bindingGeneration -isnot [long]) -or
+        $CarriedCiPlan.bindingGeneration -lt 1 -or $CarriedCiPlan.bindingGeneration -gt 9007199254740991)) { throw 'record' }
+  } catch { throw 'FLEET_CI_CONNECTION_PLAN_REFUSED' }
+  if ($CiAdmissionTokenFile -or ($Apply -and (-not $CiReinstallProof -or -not $StartAfterInstall))) { throw 'CI_CONNECTION_PROTECTED_PROOF_REQUIRED' }
+} else {
+  if ($CiReinstallProof) { throw 'FLEET_CI_CONNECTION_PLAN_REFUSED' }
+  Assert-CiInstallBaseline $CiRoot
+}
 $script:SecretBytes = @{}   # the verified secret bytes, in memory only, between the plan and the 'node-secrets' step
 # Where the fingerprint check runs the package's node.exe and tool (DESIGN.md section 30.5): a directory this script creates, never the package directory.
 $SecretWorkParent = 'C:\Windows\Temp'
@@ -611,6 +635,8 @@ function Get-SecretsPlan {
     $name = $spec[0]; $source = $spec[1]; $prefix = $spec[2]; $target = $SecretTargets[$name]; $dir = Split-Path -Parent $target
     $dirExists = Test-Path -LiteralPath $dir -PathType Container
     $entry = [ordered]@{ target = $target; supplied = [bool]$source; targetExists = (Test-Path -LiteralPath $target); createsDirectory = $false; directorySddl = $null; pin = $spec[4]; verified = $false; sddl = (Get-SecretFileSddl $ControllerSid) }
+    if ($name -ceq 'ciToken' -and (Get-Variable CarriedCiPlan -ValueOnly -ErrorAction SilentlyContinue) -and
+        (-not $entry.targetExists -or -not $dirExists)) { throw 'CI_CONNECTION_TOKEN_TARGET_MISSING' }
     if ($source) {
       # The fingerprint check needs the admin-only work directory (owner Administrators), so it needs the elevated token, also in a dry run.
       if (-not $elevated) { throw 'ELEVATED_OWNER_TOKEN_REQUIRED_FOR_SECRETS' }
@@ -634,6 +660,51 @@ function Get-SecretsPlan {
     $out[$name] = $entry
   }
   $out
+}
+function Read-InstallCiVerifyHelpers {
+  $manifest = [Text.Encoding]::UTF8.GetString($pkgBytes) | ConvertFrom-Json
+  $b = Read-PackageRecordFile ('resident\' + $manifest.residentManifestSha256 + '\windows\verify-resident.ps1')
+  $tk = $null; $er = $null
+  $ast = [Management.Automation.Language.Parser]::ParseInput([Text.Encoding]::UTF8.GetString($b).TrimStart([char]0xfeff), [ref]$tk, [ref]$er)
+  $want = @('Get-EffectiveCiPrincipal','Test-SecretFileSecurity','Test-SecretAclChain','Get-SecretPathState','Get-SecretFileState',
+    'Read-CiPrivateBytes','Get-CiAdmissionTokenPin','Read-CiReinstallSnapshot','Confirm-CiReinstallServer','Read-CiReinstallProof')
+  $defs = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $want -ccontains $n.Name }, $false))
+  $admin = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq '$SecretAdmins' }, $false))
+  if ($er.Count -or $defs.Count -ne $want.Length -or $admin.Count -ne 1) { throw 'VERIFY_CI_HELPERS_NOT_AS_REVIEWED' }
+  foreach ($fn in @($admin) + @($defs)) { $fn.Extent.Text }
+}
+function Assert-ProtectedCiReinstall([switch]$Commit) {
+  foreach ($source in Read-InstallCiVerifyHelpers) { . ([scriptblock]::Create($source)) }
+  $proof = Read-CiReinstallProof $CiReinstallProof $CiRoot $CarriedCiPlan $ExpectedPackageManifestSha256
+  if ($proof.newIdentitySha256 -cne $IdentitySha256) { throw 'CI_CONNECTION_CANDIDATE_IDENTITY_REFUSED' }
+  $connection = $proof.connection
+  $record = Read-CiReinstallSnapshot $CiRoot $ControllerSid $proof.oldIdentitySha256 $connection
+  $installation = [Text.Encoding]::UTF8.GetString((Read-PackageRecordFile 'record\installation.json')) | ConvertFrom-Json
+  $remote = Confirm-CiReinstallServer $CiRoot $ControllerSid $installation $connection $Identity.nodeName $record
+  if ($remote.node_id -cne $proof.nodeId -or $remote.identity_fingerprint -cne $proof.identityFingerprint) { throw 'CI_CONNECTION_SERVER_NODE_CHANGED' }
+  if (-not $Commit) { return }
+  $newRecord = [ordered]@{}
+  foreach ($entry in $record.record.PSObject.Properties) { $newRecord[$entry.Name] = $entry.Value }
+  $newRecord['baseNodeIdentitySha256'] = $IdentitySha256
+  $text = $newRecord | ConvertTo-Json -Compress
+  if ((Sha256Text $text) -cne $proof.newRecordSha256) { throw 'CI_CONNECTION_PROOF_CHANGED' }
+  $target = $record.file
+  $dacl = (Get-Acl -LiteralPath $target).GetSecurityDescriptorSddlForm('Access')
+  $temp = $target + '.reinstall-' + [Guid]::NewGuid().ToString('N')
+  $wrote = $false
+  try {
+    Write-NewSecret $temp ([Text.Encoding]::UTF8.GetBytes($text)) ('O:BAG:BA' + $dacl)
+    $wrote = $true
+    # No old Broker or renew intent can still write here. Compare again just before ReplaceFile.
+    $null = Read-CiReinstallSnapshot $CiRoot $ControllerSid $proof.oldIdentitySha256 $connection
+    [IO.File]::Replace($temp, $target, $null, $false)
+    $back = Read-CiReinstallSnapshot $CiRoot $ControllerSid $IdentitySha256 $connection -AfterReanchor
+    if ($back.digest -cne $proof.newRecordSha256 -or (Get-Acl -LiteralPath $target).GetSecurityDescriptorSddlForm('Access') -cne $dacl) {
+      throw 'CI_CONNECTION_INSTALL_READBACK_CHANGED'
+    }
+  } finally { if ($wrote -and [IO.File]::Exists($temp)) { [IO.File]::Delete($temp) } }
+  [ordered]@{ previousRecordSha256 = $connection.recordSha256; recordSha256 = $proof.newRecordSha256; previousInstallReceiptSha256 = $connection.receiptSha256
+    bindingId = $connection.bindingId; bindingGeneration = $connection.bindingGeneration; rebindReceiptId = $connection.rebindReceiptId }
 }
 function Clear-SecretBytes { foreach ($k in @($script:SecretBytes.Keys)) { [Array]::Clear($script:SecretBytes[$k], 0, $script:SecretBytes[$k].Length) }; $script:SecretBytes.Clear() }
 # Create-only, with the final security descriptor from the first moment (no window with an inherited ACL), then read back.
@@ -1337,6 +1408,7 @@ function Build-Plan {
       linux = [ordered]@{ generation = 1; manifestSha256 = $pkg.linux.manifestSha256; ciSourceManifestSha256 = $pkg.ciSourceManifestSha256 } }
     deletesAnything = $false
   }
+  if (Get-Variable CarriedCiPlan -ValueOnly -ErrorAction SilentlyContinue) { $p['ciConnection'] = $CarriedCiPlan }
   # M5-b (ADR 0023): only on a node whose companion runs as its own account (so every other node's plan is the one it was).
   if ((Test-Path variable:AccountNode) -and $AccountNode) {
     $p.companionAccount = [ordered]@{ companionSid = $OwnerSid; operatorSid = $OperatorSid; record = $CompanionAccountFile
@@ -1395,6 +1467,7 @@ if ($plan.openBatches -ne 0) { throw 'INSTALL_REQUIRES_NO_OPEN_BATCH_REARM_FIRST
 # An installed resident is upgraded in place by CluedCIUpgrader (windows\request-upgrade.ps1, one Owner approval on the Grant page);
 # this script installs only a fresh one (the uninstall comes first when the upgrade channel itself changes).
 if ($plan.rootExists -or $plan.servicesExist) { throw 'FRESH_INSTALL_REQUIRED_UPGRADE_THROUGH_CLUEDCIUPGRADER_REQUEST_UPGRADE' }
+if ($CarriedCiPlan) { Assert-ProtectedCiReinstall }
 if ($plan.upgrader.token.targetExists) { throw 'UPGRADE_TOKEN_TARGET_EXISTS_NOT_OVERWRITTEN' }
 $r = $plan.runnerBefore
 if (-not ($r.originalBinary -and $r.stoppedPid0 -and $r.manual -and $r.accountIsController)) { throw 'RUNNER_SERVICE_NOT_ORIGINAL_STOPPED_MANUAL_CONTROLLER' }
@@ -1502,7 +1575,8 @@ Step 'services' {
   $bin = Get-ResidentBinPath $Root $plan.policySha256 $plan.nodeSha256 $plan.residentManifestSha256 (Sha256File $entry)
   # Windows PowerShell 5.1 does not escape embedded quotes when it builds a native command line, so the
   # binPath= argument carries them as \" (sc.exe's C runtime turns them back into quotes); read back below.
-  $null = Invoke-Sc 'RESIDENT_SERVICE_CREATE_FAILED' @('create', $ServiceName, 'binPath=', $bin.Replace('"', '\"'), 'start=', 'delayed-auto', 'obj=', "NT SERVICE\$ServiceName", 'type=', 'own')
+  $null = Invoke-Sc 'RESIDENT_SERVICE_CREATE_FAILED' @('create', $ServiceName, 'binPath=', $bin.Replace('"', '\"'), 'start=',
+    $(if ($CarriedCiPlan) { 'demand' } else { 'delayed-auto' }), 'obj=', "NT SERVICE\$ServiceName", 'type=', 'own')
   Assert-ServiceBinary $ServiceName $bin
   $null = Invoke-Sc 'RESIDENT_SERVICE_SIDTYPE_FAILED' @('sidtype', $ServiceName, 'unrestricted')
   $null = Invoke-Sc 'RESIDENT_SERVICE_PRIVS_FAILED' @('privs', $ServiceName, ($ResidentPrivileges -join '/'))
@@ -1512,7 +1586,8 @@ Step 'services' {
   $null = Invoke-Sc 'RESIDENT_SERVICE_FAILUREFLAG_FAILED' @('failureflag', $ServiceName, '1')
   $null = Invoke-Sc 'RESIDENT_SERVICE_SDSET_FAILED' @('sdset', $ServiceName, $plan.services.resident.sddl)
   $bbin = Get-BrokerBinPath $Root $script:receipt.brokerConfigSha256 $plan.nodeProfileSha256
-  $null = Invoke-Sc 'BROKER_SERVICE_CREATE_FAILED' @('create', $BrokerName, 'binPath=', $bbin.Replace('"', '\"'), 'start=', 'auto', 'type=', 'own')
+  $null = Invoke-Sc 'BROKER_SERVICE_CREATE_FAILED' @('create', $BrokerName, 'binPath=', $bbin.Replace('"', '\"'), 'start=',
+    $(if ($CarriedCiPlan) { 'demand' } else { 'auto' }), 'type=', 'own')
   Assert-ServiceBinary $BrokerName $bbin
   $null = Invoke-Sc 'BROKER_SERVICE_PRIVS_FAILED' @('privs', $BrokerName, ($BrokerPrivileges -join '/'))
   # A crashed broker comes back (review MINOR-2); a restart never repeats an interrupted swap (taken markers).
@@ -1608,7 +1683,8 @@ Step 'upgrader-host' {
 }
 Step 'upgrader-service' {
   $u = $plan.upgrader
-  $null = Invoke-Sc 'UPGRADER_SERVICE_CREATE_FAILED' @('create', $UpgraderName, 'binPath=', $u.binaryPath.Replace('"', '\"'), 'start=', 'delayed-auto', 'type=', 'own')
+  $null = Invoke-Sc 'UPGRADER_SERVICE_CREATE_FAILED' @('create', $UpgraderName, 'binPath=', $u.binaryPath.Replace('"', '\"'), 'start=',
+    $(if ($CarriedCiPlan) { 'demand' } else { 'delayed-auto' }), 'type=', 'own')
   Assert-ServiceBinary $UpgraderName $u.binaryPath
   $null = Invoke-Sc 'UPGRADER_SERVICE_PRIVS_FAILED' @('privs', $UpgraderName, ($UpgraderPrivileges -join '/'))
   $null = Invoke-Sc 'UPGRADER_SERVICE_FAILURE_FAILED' @('failure', $UpgraderName, 'reset=', '86400', 'actions=', 'restart/60000/restart/300000//300000')
@@ -1652,6 +1728,7 @@ Step 'node-secrets' {
 Step 'runner-unchanged' { if ((Read-RunnerState).sddl -cne $r.sddl) { throw 'RUNNER_SDDL_CHANGED_DURING_INSTALL' } }
 $receipt.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
 $receipt.started = $false
+if ($CarriedCiPlan) { $receipt['ciConnectionReinstall'] = Assert-ProtectedCiReinstall -Commit }
 if ($StartAfterInstall) {
   $null = Invoke-Sc 'BROKER_SERVICE_START_FAILED' @('start', $BrokerName)
   $null = Invoke-Sc 'RESIDENT_SERVICE_START_FAILED' @('start', $ServiceName)
@@ -1694,6 +1771,11 @@ Write-New (Join-Path $Root 'upgrade\current.json') ((New-Object Text.UTF8Encodin
 # 9. The upgrader starts last, once generation 1 is recorded; it records its own token like the two hosts.
 $upgraderTokenPrivileges = $null
 if ($StartAfterInstall) {
+  if ($CarriedCiPlan) {
+    $null = Invoke-Sc 'BROKER_SERVICE_START_MODE_FAILED' @('config', $BrokerName, 'start=', 'auto')
+    $null = Invoke-Sc 'RESIDENT_SERVICE_START_MODE_FAILED' @('config', $ServiceName, 'start=', 'delayed-auto')
+    $null = Invoke-Sc 'UPGRADER_SERVICE_START_MODE_FAILED' @('config', $UpgraderName, 'start=', 'delayed-auto')
+  }
   $null = Invoke-Sc 'UPGRADER_SERVICE_START_FAILED' @('start', $UpgraderName)
   $file = Join-Path $Root $plan.upgrader.tokenRecord; $until = [DateTime]::UtcNow.AddSeconds(30)
   while (-not (Test-Path -LiteralPath $file) -and [DateTime]::UtcNow -lt $until) { Start-Sleep -Milliseconds 500 }

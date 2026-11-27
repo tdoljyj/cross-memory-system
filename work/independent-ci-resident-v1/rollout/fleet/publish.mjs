@@ -105,6 +105,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import os from 'node:os';
 import { acceptResourceOf, openRequest, readAnswer, statusReader } from './accept-door.mjs';
+import { deliverySubject, fleetDeliveryPreflight } from './delivery-preflight.mjs';
 import { RESIDENT } from './facts.mjs';
 import { DEFAULT_ROOT, firstInstallKitOf, installedFleetMaterial, readArchive, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
 import { readTar } from './tar.mjs';
@@ -845,7 +846,8 @@ export const SEAL_INPUT_ERRORS = Object.freeze(['USAGE', 'REQUEST_REFUSED', 'REQ
   'ACCEPTANCE_REFUSED', 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN', 'ACCEPTANCE_NOT_THIS_RELEASE', 'PUBLISH_INDEX_LACKS_VERSION', 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED',
   'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', 'SEAL_REQUEST_REFUSED', 'SEAL_DRILL_RECEIPT_REFUSED', 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE', 'SEAL_DRILL_RECEIPT_NOT_PASS',
   'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE', 'SEAL_DRILL_RECEIPT_NOT_THE_RECORDED', 'ACCEPT_RESOURCE_REFUSED', 'ACCEPT_DOOR_NOT_CONFIGURED',
-  'ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED', 'ACCEPT_DOOR_REFUSED', 'ACCEPT_DOOR_ANSWER_REFUSED', 'FLEET_ACCEPTANCE_DEADLINE']);
+  'ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED', 'ACCEPT_DOOR_REFUSED', 'ACCEPT_DOOR_ANSWER_REFUSED', 'FLEET_ACCEPTANCE_DEADLINE',
+  'FLEET_DELIVERY_PREFLIGHT_REFUSED']);
 
 // The second half of an acceptance (see the head of this file). `deps` is for tests only (a stand-in for the archive's source-hash, the door's
 // anonymous read, the clock and the sleep of --wait); the command line cannot reach it and reads the door with the repository's public
@@ -926,6 +928,18 @@ export async function seal(options) {
     const onRelease = await requestOnRelease({ ghCommand: preflightGh, repo, tag, stage });
     check(onRelease !== null && onRelease.equals(requestBytes), 'SEAL_REQUEST_NOT_ON_RELEASE', { asset: `${tag}.acceptance-request.json`,
       release: onRelease === null ? null : sha(onRelease), request: requestSha256, note: 'the release workflow reads the request from the Release: run the same prepare again' });
+    const candidate = deliverySubject(r, requestSha256);
+    const requiresDelivery = packageGenerationOf(r.version) >= 25 || deps.readFleetRegistry !== undefined;
+    const checkDelivery = async (phase, limit) => {
+      if (!requiresDelivery) return null;
+      const signal = AbortSignal.timeout(remaining(limit));
+      const result = await fleetDeliveryPreflight({ candidate, readFleetRegistry: deps.readFleetRegistry,
+        readNodeEvidence: deps.readNodeEvidence, clock, signal });
+      remaining(limit);
+      check(result.status === 'PASS', 'FLEET_DELIVERY_PREFLIGHT_REFUSED', { phase, candidate, ...result });
+      return result;
+    };
+    const deliveryBeforeOpen = await checkDelivery('before-open', preflightEnd);
     // the Owner's acceptance: one fleet.accept Grant on this request (accept-door.mjs), read anonymously; opened once when the door has none open
     const resource = acceptResourceOf({ repository: r.repository, version: r.version, archiveSha256: r.archive_sha256, requestSha256 });
     let answer = null, openedAt = null, seenOpen = false, skewWaited = false, waitStep = 0, readFailure = null, dispatchFailure = null;
@@ -1028,6 +1042,12 @@ export async function seal(options) {
     const there = await readOrNull(final);
     check(there === null || there.equals(bytes), 'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', final);
     check((c[4] === '' && c[5] === '') || (c[4] === a.acceptedAt && c[5] === a.cluedDecision), 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED', { acceptedAt: c[4], decision: c[5] });
+    const deliveryBeforeAttach = await checkDelivery('before-attach', sealEnd);
+    if (deliveryBeforeAttach) {
+      const currentRequest = await requestOnRelease({ ghCommand: boundedGh(sealEnd), repo, tag, stage });
+      check(currentRequest?.equals(requestBytes) && (await boundedRead(sealEnd)(request)).equals(requestBytes),
+        'FLEET_DELIVERY_PREFLIGHT_REFUSED', { phase: 'before-attach', reason: 'FLEET_CANDIDATE_REQUEST_CHANGED', candidate });
+    }
     const staged = path.join(stage, 'up', `${tag}.acceptance.json`);
     remaining(sealEnd);
     await fs.mkdir(path.dirname(staged));
@@ -1041,6 +1061,7 @@ export async function seal(options) {
       await fs.writeFile(path.join(stage, 'SHA256SUMS'), sumsText([[`${tag}.tar`, r.archive_sha256]]), { flag: 'wx' });
     }
     return { ...attached, status: 'FLEET_ACCEPTANCE_SEALED', acceptance: final, grantId: answer.grantId, receiptId: answer.receiptId,
+      ...(deliveryBeforeAttach ? { deliveryPreflight: { beforeOpen: deliveryBeforeOpen, beforeAttach: deliveryBeforeAttach } } : {}),
       ...(packageDir ? { packageDir } : {}) };
   } catch (error) {
     if (noRetry) error.noSealRetry = true;
@@ -1102,7 +1123,7 @@ export async function main(argv, deps = {}) {
     // --wait <minutes>: a whole number from 1 to WAIT_MAX_MINUTES; without it the door is asked once
     check(values.wait === undefined || (/^[0-9]{1,4}$/.test(values.wait) && Number(values.wait) >= 1 && Number(values.wait) <= WAIT_MAX_MINUTES), 'USAGE', { wait: values.wait });
     return seal({ request: path.resolve(values.request), drillReceipt: values['drill-receipt'] ? path.resolve(values['drill-receipt']) : null,
-      wait: values.wait === undefined ? 0 : Number(values.wait), repo: values.repo, index: values.index });
+      wait: values.wait === undefined ? 0 : Number(values.wait), repo: values.repo, index: values.index, deps });
   }
   return fail('USAGE');
 }

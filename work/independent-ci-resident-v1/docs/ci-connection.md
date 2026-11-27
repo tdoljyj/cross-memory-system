@@ -23,7 +23,9 @@
 
 确认记录缺失时，采用安装记录的编号和指纹，代次为空。存在记录时，先核路径、文件权限、规范字节和安装身份，再使用其中的编号和指纹。无效记录返回 `CI_CONNECTION_RECORD_REFUSED`。当前指纹与盘上令牌不符返回 `ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED`。入口在这两项检查后才使用凭据，通过同一进程内的准入端口复用核验结果。
 
-`ciPrincipalRoleRef` 与 `ciPrincipalQualificationRef` 保留首次授权的决定编号。服务端决定新连接此刻的角色与资格。自检的 `node-identity` 关联安装身份，`node-secrets-receipt` 核对原始回执，`current-ci-connection` 核对实际令牌并显示当前编号、代次及换绑回执。升级及回滚仍以安装身份摘要核验；已有当前连接的节点进入首装或重装时返回 `CI_CONNECTION_REINSTALL_BASELINE_REQUIRED`。
+`ciPrincipalRoleRef` 与 `ciPrincipalQualificationRef` 保留首次授权的决定编号。服务端决定新连接此刻的角色与资格。自检的 `node-identity` 关联安装身份，`node-secrets-receipt` 核对原始回执，`current-ci-connection` 核对实际令牌并显示当前编号、代次及换绑回执。升级及回滚仍以安装身份摘要核验。首装和没有携带证明的重装发现当前连接记录时返回 `CI_CONNECTION_REINSTALL_BASELINE_REQUIRED`。
+
+标准通用重装可使用旧常驻汇报的有效连接观测生成预演计划。提权启动器核对旧回执、当前记录、实际凭据和服务端归属，在 Linux B 前通过 SCM 确认 Broker 已停且没有在途续期，并写入受保护的本次证明。安装器按旧记录摘要比较，只替换记录的安装身份锚，保留连接、代次、原机凭据和换绑回执。回读通过后才启动服务。Linux B 后的续作要求原有阶段证据和本次连接证明。
 
 换绑后的节点使用 v2 控制、v2 one-shot 和 bridge v4。旧版 v1 控制、bridge v2 和 v3 在 Windows 密钥读取时都没有传入控制账号 SID，因而会在指纹比较之前收到 `secret_file_boundary_unconfirmed`。
 

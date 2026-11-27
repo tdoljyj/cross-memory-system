@@ -350,3 +350,65 @@ test('返修 4：冷目录封存后本机升级只下载一次 tar', async t => 
   const sealTar = (await w.calls()).slice(before).filter(c => c.args[1] === 'download' && c.args[c.args.indexOf('--pattern') + 1] === TAG + '.tar').length;
   assert.equal(sealTar + upgradeTar, 1, JSON.stringify({ sealTar, upgradeTar }));
 });
+test('登记缺口在开接受门之前阻断，零派发', async t => {
+  const w = await prepWorld(t);
+  await w.prep();
+  w.door.status = 'none';
+  const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
+  const time = fakeTime('2026-11-25T01:00:00Z');
+  await assert.rejects(timed(w, time, { deps: { ...w.deps, readFleetRegistry: async () => ({ complete: false, nodes: [] }), clock: time.clock, sleep: time.sleep } }),
+    { code: 'FLEET_DELIVERY_PREFLIGHT_REFUSED' });
+  assert.equal((await w.opens()).length, 0);
+  await sealedNothing(w, before, n);
+});
+
+test('批准后节点证据失效时阻断挂接受文件', async t => {
+  const w = await prepWorld(t);
+  await w.prep();
+  Object.assign(w.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: '2026-11-25T01:00:00Z' });
+  const time = fakeTime('2026-11-25T01:00:01Z');
+  const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
+  let reads = 0;
+  const readFleetRegistry = async candidate => ({ complete: ++reads < 3, repository: candidate.repository,
+    scope: candidate.scope, observedAt: new Date(time.now).toISOString(), nodes: [] });
+  await assert.rejects(timed(w, time, { deps: { ...w.deps, readFleetRegistry, clock: time.clock, sleep: time.sleep } }),
+    { code: 'FLEET_DELIVERY_PREFLIGHT_REFUSED' });
+  assert.equal(reads, 3);
+  await sealedNothing(w, before, n);
+});
+test('封存前对在役与排空节点各核两路，只有共同能力足够才挂接受文件', async t => {
+  const w = await prepWorld(t);
+  await w.prep();
+  Object.assign(w.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: '2026-11-25T01:00:00Z' });
+  const time = fakeTime('2026-11-25T01:00:01Z');
+  const registered = [
+    { id: '11111111-1111-4111-8111-111111111111', name: 'DESK', state: 'active', generation: 23, version: 4 },
+    { id: '22222222-2222-4222-8222-222222222222', name: 'TURING', state: 'draining', generation: 24, version: 6 },
+  ];
+  const observedAt = '2026-11-25T01:00:00Z';
+  const readFleetRegistry = async candidate => ({ repository: candidate.repository, scope: candidate.scope, complete: true,
+    observedAt, nodes: [...registered, registered[0]] });
+  let full = false;
+  const readNodeEvidence = async (candidate, row) => ({
+    candidate, nodeId: row.id, node: row.name, generation: row.generation, registrationVersion: row.version, observedAt,
+    receiptSha256: 'a'.repeat(64), evidenceSha256: 'b'.repeat(64),
+    drill: row.state === 'draining' && full ? { status: 'PASS', candidate, receiptSha256: 'c'.repeat(64) } : null,
+    checks: { currentPointer: true, installReceipt: true, linuxFacts: true, ciConnection: true, host: true, roleAndPause: true, operations: true,
+      sourceAgreement: true, frozenChannel: true, acceptanceRefs: true, supervisor: row.state === 'active',
+      launcher: true, acl: true, connectionCarry: true, processClearance: true, continuation: true },
+  });
+  const options = { deps: { ...w.deps, clock: time.clock, sleep: time.sleep, readFleetRegistry, readNodeEvidence } };
+  await assert.rejects(timed(w, time, options), error => {
+    assert.equal(error.code, 'FLEET_DELIVERY_PREFLIGHT_REFUSED');
+    assert.equal(error.detail.phase, 'before-open');
+    assert.deepEqual(error.detail.nodes.map(n => [n.node, n.upgrade.status, n.reinstall.status]),
+      [['DESK', 'PASS', 'UNKNOWN'], ['TURING', 'FAIL', 'UNKNOWN']]);
+    return true;
+  });
+  assert.equal(w.door.reads.length, 0);
+  full = true;
+  const result = await timed(w, time, options);
+  assert.equal(result.status, 'FLEET_ACCEPTANCE_SEALED');
+  assert.deepEqual(result.deliveryPreflight.beforeAttach.nodes.map(n => [n.node, n.upgrade.status, n.reinstall.status]),
+    [['DESK', 'PASS', 'UNKNOWN'], ['TURING', 'FAIL', 'PASS']]);
+});

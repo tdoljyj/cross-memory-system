@@ -22,6 +22,12 @@ function Get-ContinuePrior($report, [scriptblock]$stop) {
   if ($alive) { & $stop 'CONTINUE_PRIOR_LAUNCH_STILL_RUNNING' }
   $report['uninstallProcesses'] = @(Get-ContinueUninstallProcesses)
   if ($report['uninstallProcesses'].Count) { & $stop 'CONTINUE_UNINSTALL_STILL_RUNNING' }
+  $ciProofSha = Get-Variable ContinueCiProofSha256 -ValueOnly -ErrorAction SilentlyContinue
+  if ($ciProofSha) {
+    if ((Get-FileSha (Get-FleetCiProofPath)) -cne $ciProofSha) { & $stop 'PRIOR_CI_CONNECTION_REINSTALL_PROOF_REQUIRED' }
+    foreach ($source in Read-FleetCiVerifyHelpers) { . ([scriptblock]::Create($source)) }
+    $null = Read-CiReinstallProof (Get-FleetCiProofPath) (Split-Path -Parent $ResidentRoot) (Get-FleetCiPlan) $PackageManifestSha256
+  }
   $id = (Sha256Bytes ($U8.GetBytes(([string]$ContinuePriorRoot).ToLowerInvariant()))).Substring(0, 32)
   $elevated = Join-Path $CarryParent ('reinstall-progress-' + $id)
   $names = @(); try { if ([IO.Directory]::Exists($elevated) -and ([IO.File]::GetAttributes($elevated) -band [IO.FileAttributes]::ReparsePoint) -eq 0) { $names = @([IO.Directory]::GetFiles($elevated) | ForEach-Object { [IO.Path]::GetFileName($_) } | Sort-Object) } } catch { $names = @() }
@@ -43,7 +49,10 @@ function Set-ContinueLinuxOutput($report, [scriptblock]$stop, [byte[]]$evidence,
   if ($codes.Count) { $report.codes = @($codes); Write-Json 'continue-report.json' $report; Stop-Launch $codes[0] $report }
   $staged = Join-Path $Stage 'linux-version-facts.phase-B.json'; Write-New $staged $facts
   Write-New (Join-Path $Out 'linux-live-manifest.txt') $evidence; Write-New (Join-Path $Out 'linux-version-facts.json') $facts
-  Write-Json 'linux-report.json' ([ordered]@{ codes = @(); planSha256 = $FleetPlanSha256; versionFactsSha256 = (Sha256Bytes $facts); evidenceSha256 = (Sha256Bytes $evidence); continuedFrom = $ContinuePriorRoot })
+  $linuxReport = [ordered]@{ codes = @(); planSha256 = $FleetPlanSha256; versionFactsSha256 = (Sha256Bytes $facts); evidenceSha256 = (Sha256Bytes $evidence); continuedFrom = $ContinuePriorRoot }
+  $ciProofSha = Get-Variable ContinueCiProofSha256 -ValueOnly -ErrorAction SilentlyContinue
+  if ($ciProofSha) { $linuxReport['ciConnectionProofSha256'] = $ciProofSha }
+  Write-Json 'linux-report.json' $linuxReport
   [ordered]@{ factsSource = $staged; factsSha256 = (Sha256Bytes $facts); evidenceSha256 = (Sha256Bytes $evidence); continuedFrom = $ContinuePriorRoot }
 }
 # A prior run's output (one that ran into the launcher's timeout, or whose output the registrar refused to capture), read as the
@@ -138,6 +147,7 @@ function Step-ContinueBeforeUninstall {
     if ($null -eq $eb -or $null -eq $fb) { & $stop 'LINUX_OUTPUT_UNREADABLE' }
   } else { & $stop 'CONTINUE_PINS_REFUSED' }
   $linux = Set-ContinueLinuxOutput $report $stop $eb $fb
+  if (Get-Variable ContinueCiProofSha256 -ValueOnly -ErrorAction SilentlyContinue) { Confirm-FleetCiBeforeLinuxB }
   $fileLocks = Step-FileLocks
   $carried = Step-CarryTokens
   Write-Json 'continue-report.json' $report

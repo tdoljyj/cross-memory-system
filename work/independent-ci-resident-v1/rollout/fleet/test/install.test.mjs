@@ -664,3 +664,52 @@ test('the target version\'s acceptance without firstInstallKitSha256 is refused 
     validateAcceptance(draft, Date.now(), { draft: true });   // source-hash reads the draft before the kit exists
     validateAcceptance(w.acceptance);
   });
+const fixtureCiConnection = node => ({
+  state: 'current',
+  receiptSha256: readJson(path.join(node.root, 'upgrade', 'current.json')).installReceiptSha256,
+  recordSha256: 'e'.repeat(64),
+  bindingId: '11111111-1111-4111-8111-111111111111',
+  bindingGeneration: 3,
+  rebindReceiptId: '22222222-2222-4222-8222-222222222222',
+});
+
+test('当前 CI 连接的只读证据在 W1 前进入 Q5 和正式启动器计划', async t => {
+  const w = await getWorld(), n = await nodeSite(t, 'a', fleetFacts());
+  const py = pythonTools();
+  const evidence = fixtureCiConnection(n);
+  const result = await prepare(w, n, path.join(n.dir, 'current-reinstall'), { python: py.fn, readCiConnection: async () => evidence });
+  assert.equal(result.status, 'FLEET_NODE_INSTALL_PREPARED');
+  const check = py.calls.findIndex(c => c.name === 'generate.py --check');
+  assert.deepEqual(py.calls[check].plan.ciConnection, evidence);
+  assert.ok(check < py.calls.findIndex(c => c.name === 'pause-old-resident.py'));
+  assert.deepEqual(py.calls.find(c => c.name === 'generate.py').plan.ciConnection, evidence);
+});
+
+test('拒读、代次冲突和旧安装回执发生在 W1 前', async t => {
+  const w = await getWorld(), n = await nodeSite(t, 'a', fleetFacts());
+  for (const [i, evidence] of [
+    { state: 'unknown', reason: 'CI_CONNECTION_RECORD_REFUSED' },
+    { state: 'unknown', reason: 'CI_CONNECTION_GENERATION_CHANGED' },
+    { ...fixtureCiConnection(n), receiptSha256: 'f'.repeat(64) },
+  ].entries()) {
+    const py = pythonTools();
+    await assert.rejects(prepare(w, n, path.join(n.dir, 'refused-' + i), { python: py.fn, readCiConnection: async () => evidence }),
+      { code: evidence.reason ?? 'CI_CONNECTION_INSTALL_RECEIPT_CHANGED' });
+    assert.equal(py.pauses.length, 0);
+  }
+});
+test('普通权限 prepare 沿用旧常驻的 Broker 观测，生成连接摘要而无需读取专用记录', async t => {
+  const w = await getWorld(), now = Date.parse('2026-11-27T01:00:00Z');
+  const n = await nodeSite(t, 'a', fleetFacts(), { now });
+  const cur = readJson(path.join(n.root, 'upgrade', 'current.json'));
+  const bindingId = '11111111-1111-4111-8111-111111111111';
+  const facts = { at: now - 10_000, source: cur.ciSourceManifestSha256, bindingId, expiresAt: '2026-11-30T00:00:00Z' };
+  await fs.mkdir(path.join(n.root, 'state'), { recursive: true });
+  await fs.writeFile(path.join(n.root, 'state', 'connection-renewal.json'), JSON.stringify({
+    pending: null, lanes: { ci: { ...facts, waiting: false, code: null } },
+  }));
+  const py = pythonTools({ now });
+  await prepare(w, n, path.join(n.dir, 'observed-reinstall'), { python: py.fn, now });
+  assert.deepEqual(py.calls.find(c => c.name === 'generate.py --check').plan.ciConnection,
+    { state: 'observed', receiptSha256: cur.installReceiptSha256, bindingId, observationSha256: sha(JSON.stringify(facts)) });
+});

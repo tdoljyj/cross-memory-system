@@ -75,9 +75,29 @@ def opt(name, default=None):
     return A[A.index(name) + 1] if name in A else default
 FIRST = None
 INSTALLED_PACKAGE_B64 = None
+CI_CONNECTION_B64 = None
 if FLEET_PLAN:
     # The values a configuration file gave, from the plan and the node (the rest follows below, once the package is read).
     _S, _RS, FIRST = PLAN.get('secrets'), PLAN.get('reasons'), PLAN.get('firstInstall')
+    _connection = PLAN.get('ciConnection')
+    if _connection is not None:
+        assert not FIRST and isinstance(_connection, dict), 'FLEET_CI_CONNECTION_PLAN_REFUSED'
+        _connection_fields = {
+            'current': {'recordSha256', 'bindingGeneration', 'rebindReceiptId'},
+            'observed': {'observationSha256'},
+        }
+        _state = _connection.get('state')
+        assert _state in _connection_fields and set(_connection) == {
+            'state', 'receiptSha256', 'bindingId'
+        } | _connection_fields[_state], 'FLEET_CI_CONNECTION_PLAN_REFUSED'
+        assert _connection['receiptSha256'] == PLAN['expectedInstalledWindows']['receiptSha256'], 'CI_CONNECTION_INSTALL_RECEIPT_CHANGED'
+        for _k in ('receiptSha256', 'recordSha256' if _state == 'current' else 'observationSha256'):
+            assert isinstance(_connection[_k], str) and re.fullmatch(r'[0-9a-f]{64}', _connection[_k]), 'FLEET_CI_CONNECTION_PLAN_REFUSED'
+        for _k in ('bindingId', 'rebindReceiptId') if _state == 'current' else ('bindingId',):
+            assert isinstance(_connection[_k], str) and re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', _connection[_k]), 'FLEET_CI_CONNECTION_PLAN_REFUSED'
+        if _state == 'current':
+            assert type(_connection['bindingGeneration']) is int and 0 < _connection['bindingGeneration'] <= 9007199254740991, 'FLEET_CI_CONNECTION_PLAN_REFUSED'
+        CI_CONNECTION_B64 = base64.b64encode(json.dumps(_connection, sort_keys=True, separators=(',', ':')).encode('ascii')).decode('ascii')
     _version = PLAN.get('version')
     _generation = re.fullmatch(r'g([0-9]{6})', _version or '')
     if _generation:
@@ -138,7 +158,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = 'a393e7816e303431c8ea65d1eb41a0846ea96f5fc910659eb272914a5d00fbad'
+TEMPLATE_SHA = '439e1cf90118bd70cce82153489818776eff27fc27df91a4e8dbba8b65e9c8aa'
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -454,7 +474,8 @@ dry_file = os.path.join(R4, 'dryrun', 'install.dry-run.post-uninstall.' + COMMIT
 SECRETS_EXIST = ['true' if x else 'false' for x in CFG['secretTargetsExist']]   # r5 S1: app key target, ci token target (elevated truth, checked by the launcher)
 p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', EXPECTED_PLAN, '-View', 'post-uninstall', '-PackageRoot', PKG, '-PackageManifestSha256', pkg_sha,
                     '-AppKeyTargetExists', SECRETS_EXIST[0], '-CiTokenTargetExists', SECRETS_EXIST[1], '-OwnerSid', OWNER, '-ControllerSid', CONTROLLER, '-OperatorSid', OPERATOR]
-                   + (['-InstalledPackageB64', INSTALLED_PACKAGE_B64] if INSTALLED_PACKAGE_B64 else []),
+                   + (['-InstalledPackageB64', INSTALLED_PACKAGE_B64] if INSTALLED_PACKAGE_B64 else [])
+                   + (['-CiConnectionPlanB64', CI_CONNECTION_B64] if CI_CONNECTION_B64 else []),
                    capture_output=True, check=False)
 write_new(dry_file, p.stdout)
 assert p.returncode == 0, ('EXPECTED_PLAN_FAILED', p.stderr.decode('utf8', 'replace')[-800:])
@@ -718,6 +739,7 @@ _fs = lambda k, i: q(FLEET['scripts'][k][i]) if FLEET else '$null'
 lines += [
     '$FleetPlanSha256 = ' + _fq(FLEET and FLEET['planSha256']) + '   # the install plan as it was at generation; set, the launcher runs Linux A and B itself',
     '$FleetInstalledPackageB64 = ' + _fq(INSTALLED_PACKAGE_B64) + '   # the accepted universal identity checked against the install plan',
+    '$FleetCiConnectionB64 = ' + _fq(CI_CONNECTION_B64),
     '$FleetCompanionAccount = ' + (('$true' if FLEET['companionAccount'] else '$false') if FLEET else '$null') + '   # the Linux scripts run as the companion account (registrar root-run)',
     '$FleetDistribution = ' + _fq(FLEET and FLEET['distribution']),
     '$FleetInDir = ' + _fq(FLEET and FLEET['inDir']) + '   # the scripts read it ($W)',

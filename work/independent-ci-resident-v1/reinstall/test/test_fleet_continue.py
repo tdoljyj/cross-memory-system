@@ -52,7 +52,8 @@ class Scene:
         self.pins = {name: "'fixture'" for name in names}
         self.pins.update(DraftOnly='$false', SourceSha="'" + '1' * 40 + "'", PackageHead="'" + '2' * 40 + "'", W="'" + str(self.work) + "'", LaunchOutPin="'" + str(self.prior) + "'",
                          InstalledReceiptSha256="'" + RECEIPT + "'", FleetPlanSha256="'" + '9' * 64 + "'", CiSourceManifestSha256="'" + SOURCE + "'", PackageManifestSha256="'" + PACKAGE + "'",
-                         FleetLinuxManifestSha256="'" + LINUX_MANIFEST + "'", NodeName="'node-a'", FleetFirstInstall='$null', FleetFirstInstallDirectory='$null')
+                         FleetLinuxManifestSha256="'" + LINUX_MANIFEST + "'", NodeName="'node-a'", FleetFirstInstall='$null',
+                         FleetFirstInstallDirectory='$null', FleetCiConnectionB64='$null')
         self.terminal = {'contract': 'clued.independent-ci.source-v2-windows-launch-terminal/1', 'status': 'STOPPED', 'code': 'INSTALL_NOT_COMPLETED', 'detail': {'exit': 1, 'residentRootExists': False},
                          'completed': list(completed), 'sourceSha': '1' * 40, 'packageHead': '2' * 40, 'carriedTokens': {'removed': True}}
         self.progress = None   # None: one record per completed step
@@ -178,6 +179,17 @@ class ContinueGenerator(unittest.TestCase):
         with self.assertRaises(CONTINUE.Refused) as caught:
             CONTINUE.build(str(self.s.launcher), ci_root=str(self.s.ci))
         self.assertEqual(caught.exception.code, 'RESIDENT_ROOT_MISSING_NOT_CONTINUED')
+
+    def test_current_ci_connection_after_b_carries_proof_and_refuses_missing_evidence(self):
+        self.s.pins['FleetCiConnectionB64'] = "'fixture'"
+        self.refused('PRIOR_CI_CONNECTION_REINSTALL_PROOF_REQUIRED')
+        proof = 'a' * 64
+        report = json.loads((self.s.prior / 'linux-report.json').read_bytes())
+        report['ciConnectionProofSha256'] = proof
+        self.s.linux = report
+        data, facts = self.build()
+        self.assertEqual(facts['mode'], 'after-uninstall')
+        self.assertIn("\n$ContinueCiProofSha256 = '" + proof + "'\n", data.decode('utf-8'))
 
     def test_the_field_stop_after_linux_b_is_continued_even_after_its_w1_pause_was_lifted(self):
         # DESIGN section 73, desk-w-591 on 2026-11-13: Linux A and B done, the launch stopped at its uninstall preflight

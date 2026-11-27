@@ -208,12 +208,134 @@ function Invoke-Child([string]$name, [string]$file, [string[]]$argList) {
 }
 
 function Assert-CiInstallBaseline([string]$ciRoot) {
+  if (Get-Variable FleetCiConnectionB64 -ValueOnly -ErrorAction SilentlyContinue) {
+    Assert-FleetCiConnection $ciRoot
+    return
+  }
   $file = Join-Path $ciRoot 'secrets\ci-admission.connection.json'
   try { [void][IO.File]::GetAttributes($file) }
   catch [IO.FileNotFoundException] { return }
   catch [IO.DirectoryNotFoundException] { return }
   catch { throw 'CI_CONNECTION_RECORD_REFUSED' }
   throw 'CI_CONNECTION_REINSTALL_BASELINE_REQUIRED'
+}
+
+function Get-FleetCiPlan {
+  (New-Object Text.UTF8Encoding($false,$true)).GetString([Convert]::FromBase64String($FleetCiConnectionB64)) | ConvertFrom-Json
+}
+function Get-FleetCiProofPath {
+  if ($FleetPlanSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'FLEET_CI_CONNECTION_PLAN_REFUSED' }
+  Join-Path $CarryParent ('reinstall-ci-' + $FleetPlanSha256 + '.json')
+}
+function Read-FleetCiVerifyHelpers {
+  $held = $Staged['verify-resident.ps1']
+  $file = if ($Stage) { Join-Path $Stage 'verify-resident.ps1' } else { Join-Path $PackageRoot $held[0] }
+  $bytes = [IO.File]::ReadAllBytes($file)
+  if ((Sha256Bytes $bytes) -cne $held[1]) { throw 'VERIFY_SCRIPT_NOT_AS_REVIEWED' }
+  $tk = $null; $er = $null
+  $ast = [Management.Automation.Language.Parser]::ParseInput($U8.GetString($bytes).TrimStart([char]0xfeff), [ref]$tk, [ref]$er)
+  $want = @('Sha256Text','Get-EffectiveCiPrincipal','Test-SecretFileSecurity','Test-SecretAclChain','Get-SecretPathState','Get-SecretFileState',
+    'Read-CiPrivateBytes','Get-CiAdmissionTokenPin','Read-CiReinstallSnapshot','Confirm-CiReinstallServer','Read-CiReinstallProof')
+  $defs = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $want -ccontains $n.Name }, $false))
+  $admin = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq '$SecretAdmins' }, $false))
+  if ($er.Count -or $defs.Count -ne $want.Length -or $admin.Count -ne 1) { throw 'VERIFY_CI_HELPERS_NOT_AS_REVIEWED' }
+  foreach ($fn in @($admin) + @($defs)) { $fn.Extent.Text }
+}
+function Assert-CiRenewalIdle([string]$ciRoot) {
+  foreach ($rel in @('secrets\ci-admission.connection.json.pending','secrets\ci-admission.token.renew-pending',
+      'secrets\ci-admission.token.renew-new','secrets\ci-admission.connection.json.renew-new','resident\secrets\resident-upgrade.token.renew-pending')) {
+    try { [void][IO.File]::GetAttributes((Join-Path $ciRoot $rel)) }
+    catch [IO.FileNotFoundException] { continue }
+    catch [IO.DirectoryNotFoundException] {
+      if ($rel.StartsWith('resident\') -and -not [IO.Directory]::Exists($ResidentRoot)) { continue }
+      throw 'CI_CONNECTION_TRANSACTION_UNKNOWN'
+    }
+    catch { throw 'CI_CONNECTION_TRANSACTION_UNKNOWN' }
+    throw 'CI_CONNECTION_TRANSACTION_IN_FLIGHT'
+  }
+}
+function Get-FleetCiVerified([string]$ciRoot) {
+  foreach ($source in Read-FleetCiVerifyHelpers) { . ([scriptblock]::Create($source)) }
+  $plan = Get-FleetCiPlan
+  if ($plan.receiptSha256 -cne $InstalledReceiptSha256) { throw 'CI_CONNECTION_INSTALL_RECEIPT_CHANGED' }
+  Assert-CiRenewalIdle $ciRoot
+  $oldRoot = $ResidentRoot
+  $keptRoot = Get-Variable ContinueKeptRoot -ValueOnly -ErrorAction SilentlyContinue
+  if (-not [IO.Directory]::Exists($oldRoot) -and $keptRoot) { $oldRoot = $keptRoot }
+  if ((Get-Variable ContinueAfterInstallFrom -ValueOnly -ErrorAction SilentlyContinue)) {
+    $proof = Read-CiReinstallProof (Get-FleetCiProofPath) $ciRoot $plan $PackageManifestSha256
+    $snap = Read-CiReinstallSnapshot $ciRoot $ControllerSid $proof.newIdentitySha256 $proof.connection -AfterReanchor
+    if ($snap.digest -cne $proof.newRecordSha256) { throw 'CI_CONNECTION_INSTALL_READBACK_CHANGED' }
+    return $proof
+  }
+  if (([IO.File]::GetAttributes($oldRoot) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'CI_CONNECTION_INSTALL_RECEIPT_CHANGED' }
+  $receipt = Read-FleetFileChecked (Join-Path $oldRoot 'install') 'install-receipt.json' 1048576
+  if (-not $receipt -or (Sha256Bytes $receipt) -cne $InstalledReceiptSha256) { throw 'CI_CONNECTION_INSTALL_RECEIPT_CHANGED' }
+  $old = $Strict8.GetString($receipt) | ConvertFrom-Json
+  $currentBytes = Read-FleetFileChecked (Join-Path $oldRoot 'upgrade') 'current.json' 262144
+  if (-not $currentBytes) { throw 'CI_CONNECTION_INSTALL_RECEIPT_CHANGED' }
+  $current = $Strict8.GetString($currentBytes) | ConvertFrom-Json
+  if ($current.installReceiptSha256 -cne $InstalledReceiptSha256 -or $current.packageManifestSha256 -cne $old.packageManifestSha256) {
+    throw 'CI_CONNECTION_INSTALL_RECEIPT_CHANGED'
+  }
+  if ($plan.state -ceq 'observed') {
+    $bookBytes = Read-FleetFileChecked (Join-Path $oldRoot 'state') 'connection-renewal.json' 65536
+    if (-not $bookBytes) { throw 'CI_CONNECTION_OBSERVATION_REFUSED' }
+    $book = $Strict8.GetString($bookBytes) | ConvertFrom-Json
+    $lane = $book.lanes.ci
+    $facts = [ordered]@{ at = $lane.at; source = $lane.source; bindingId = $lane.bindingId; expiresAt = $lane.expiresAt }
+    if (($book.pending -and $book.pending.kind -ceq 'ci') -or $null -ne $lane.code -or $lane.waiting -ne $false -or
+        $lane.bindingId -cne $plan.bindingId -or $lane.source -cne $current.ciSourceManifestSha256 -or
+        (Sha256Text ($facts | ConvertTo-Json -Compress)) -cne $plan.observationSha256) { throw 'CI_CONNECTION_OBSERVATION_CHANGED' }
+  }
+  $installation = Read-FleetFileChecked (Join-Path $oldRoot 'record') 'installation.json' 262144
+  if (-not $installation -or (Sha256Bytes $installation) -cne $old.installationSha256 -or $old.nodeIdentitySha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'CI_CONNECTION_INSTALL_RECEIPT_CHANGED' }
+  $snap = Read-CiReinstallSnapshot $ciRoot $ControllerSid $old.nodeIdentitySha256 $plan
+  $remote = Confirm-CiReinstallServer $ciRoot $ControllerSid ($Strict8.GetString($installation) | ConvertFrom-Json) $snap.connection $NodeName $snap
+  $package = [IO.File]::ReadAllBytes((Join-Path $PackageRoot 'package-manifest.json'))
+  if ((Sha256Bytes $package) -cne $PackageManifestSha256) { throw 'REVIEWED_PACKAGE_CHANGED' }
+  $newIdentity = ($Strict8.GetString($package) | ConvertFrom-Json).nodeIdentitySha256
+  if ($newIdentity -cnotmatch '^[0-9a-f]{64}$') { throw 'CI_CONNECTION_CANDIDATE_IDENTITY_REFUSED' }
+  $newRecord = [ordered]@{}
+  foreach ($entry in $snap.record.PSObject.Properties) { $newRecord[$entry.Name] = $entry.Value }
+  $newRecord['baseNodeIdentitySha256'] = $newIdentity
+  [ordered]@{ contract = 'clued.independent-ci.ci-reinstall-proof/1'; fleetPlanSha256 = $FleetPlanSha256; packageManifestSha256 = $PackageManifestSha256
+    plan = $plan; connection = $snap.connection; oldIdentitySha256 = $old.nodeIdentitySha256; newIdentitySha256 = $newIdentity
+    newRecordSha256 = (Sha256Text ($newRecord | ConvertTo-Json -Compress)); nodeId = $remote.node_id; identityFingerprint = $remote.identity_fingerprint }
+}
+function Assert-FleetCiConnection([string]$ciRoot) {
+  $snap = Get-FleetCiVerified $ciRoot
+  $prior = Get-Variable VerifiedCiCarry -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+  if ($prior -and ($prior.connection.recordSha256 -cne $snap.connection.recordSha256 -or
+      $prior.nodeId -cne $snap.nodeId -or $prior.identityFingerprint -cne $snap.identityFingerprint)) { throw 'CI_CONNECTION_GENERATION_CHANGED' }
+  $script:VerifiedCiCarry = $snap
+}
+function Confirm-FleetCiBeforeLinuxB {
+  if (-not (Get-Variable FleetCiConnectionB64 -ValueOnly -ErrorAction SilentlyContinue)) { return }
+  $ciRoot = Split-Path -Parent $ResidentRoot
+  $broker = Get-ScState 'CluedCISwapBroker'
+  if ($broker.nativeExit -ne 0) { throw 'CI_CONNECTION_BROKER_NOT_CONFIRMED' }
+  if ($broker.state -ne 1) { $null = & $Sc stop CluedCISwapBroker }
+  if (-not (Wait-Until { $b = Get-ScState 'CluedCISwapBroker'; $b.state -eq 1 -and $b.pid -eq 0 } 120)) { throw 'CI_CONNECTION_BROKER_NOT_STOPPED' }
+  $proof = Get-FleetCiVerified $ciRoot
+  if ($script:VerifiedCiCarry.connection.recordSha256 -cne $proof.connection.recordSha256 -or
+      $script:VerifiedCiCarry.nodeId -cne $proof.nodeId -or $script:VerifiedCiCarry.identityFingerprint -cne $proof.identityFingerprint) {
+    throw 'CI_CONNECTION_GENERATION_CHANGED'
+  }
+  $proofPath = Get-FleetCiProofPath
+  $bytes = $U8.GetBytes(($proof | ConvertTo-Json -Depth 5 -Compress))
+  if (-not [IO.File]::Exists($proofPath)) {
+    $acl = New-Object Security.AccessControl.FileSecurity
+    $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)')
+    $handle = New-Object IO.FileStream($proofPath, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write,
+      [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough, $acl)
+    try { $handle.Write($bytes, 0, $bytes.Length); $handle.Flush($true) } finally { $handle.Dispose() }
+  }
+  foreach ($source in Read-FleetCiVerifyHelpers) { . ([scriptblock]::Create($source)) }
+  $back = Read-CiReinstallProof $proofPath $ciRoot $proof.plan $PackageManifestSha256
+  if ($back.connection.recordSha256 -cne $proof.connection.recordSha256 -or
+      $back.newRecordSha256 -cne $proof.newRecordSha256 -or $back.nodeId -cne $proof.nodeId -or
+      $back.identityFingerprint -cne $proof.identityFingerprint) { throw 'CI_CONNECTION_PROOF_CHANGED' }
 }
 
 function Step-Identity {
@@ -393,6 +515,11 @@ function Get-InstallArgs([switch]$Apply, [switch]$NoToken, [switch]$NoHeartbeat)
   $a = @('-PackageRoot', $PackageRoot, '-ExpectedPackageManifestSha256', $PackageManifestSha256, '-OwnerSid', $OwnerSid, '-ControllerSid', $ControllerSid, '-OperatorSid', $OperatorSid)
   $identity = Get-Variable FleetInstalledPackageB64 -ValueOnly -ErrorAction SilentlyContinue
   if ($identity) { $a += @('-InstalledPackageB64', $identity) }
+  $connection = Get-Variable FleetCiConnectionB64 -ValueOnly -ErrorAction SilentlyContinue
+  if ($connection) {
+    $a += @('-CiConnectionPlanB64', $connection)
+    if ($Apply) { $a += @('-CiReinstallProof', (Get-FleetCiProofPath)) }
+  }
   if ($NoHeartbeat) { $a += @('-PreviewAfterUninstall') }
   if ($Apply) {
     if ([string]$R5c.applyPlanSha256 -cnotmatch '^[0-9a-f]{64}$') { Stop-Launch 'APPLY_PLAN_NOT_CONFIRMED' $null }
@@ -2077,6 +2204,10 @@ function Step-LinuxRoot {
       if (Test-FirstInstallResiduePresent $residue) { & $stop 'FIRST_INSTALL_ROOT_PRESENT_BEFORE_LINUX_B' }
     }
     if (-not $FleetFirstInstall) { [void](Read-VerifiedResidentLocks 'before-linux-b') }
+    if (Get-Variable FleetCiConnectionB64 -ValueOnly -ErrorAction SilentlyContinue) {
+      Confirm-FleetCiBeforeLinuxB
+      $report['ciConnectionProofSha256'] = Get-FileSha (Get-FleetCiProofPath)
+    }
     $b = Invoke-FleetLinuxScript 'B' $exe; $report.runs += ,(Get-FleetRunReport $b)
     if ($b.outcome -ceq 'TIMEOUT') { & $stop 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED' }
     # B ran and exited, and its output could not be captured: whether it completed is not known here. Not "B did not complete" (no
@@ -2088,6 +2219,7 @@ function Step-LinuxRoot {
       # stops here as well, with the node still paused and its Windows side untouched: an alarm for a person, on purpose.
       if (-not ($b.outcome -ceq 'EXITED' -and $b.exit -ne 0)) { & $stop 'LINUX_PHASE_B_NOT_COMPLETED' }
       if (-not $FleetFirstInstall) { [void](Read-VerifiedResidentLocks 'before-linux-b-resume') }
+      if (Get-Variable FleetCiConnectionB64 -ValueOnly -ErrorAction SilentlyContinue) { Confirm-FleetCiBeforeLinuxB }
       $b = Invoke-FleetLinuxScript 'BResume' $exe; $report.runs += ,(Get-FleetRunReport $b)
       if ($b.outcome -ceq 'TIMEOUT') { & $stop 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED' }
       if ($b.captureRefused) { & $stop 'LINUX_PHASE_B_OUTPUT_NOT_CAPTURED' }
@@ -2128,6 +2260,7 @@ function Test-PreparedW1 {
 
 #region main
 Step-Identity
+if (Get-Variable FleetCiConnectionB64 -ValueOnly -ErrorAction SilentlyContinue) { Step-HostHygiene }
 $preparedW1 = Test-PreparedW1
 try {
   Assert-CiInstallBaseline (Split-Path -Parent $ResidentRoot)
