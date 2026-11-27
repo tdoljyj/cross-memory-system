@@ -275,7 +275,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
             self.assertFalse(routes[pair]["legacy_migration_debt"], pair)
         self.assertEqual(sum(row["owner_decision_hosted"] for row in routes.values()), 6)
 
-    def test_exact_732_and_observer_candidate_successors_keep_original_debt_and_fail_unknown(self):
+    def test_exact_candidate_successors_keep_original_debt_and_fail_unknown(self):
         self.assertEqual(sum(len(row["jobs"]) for row in policy.LEGACY_HOSTED_DEBT.values()), 33)
         self.assertEqual(sum(len(row["jobs"]) for row in policy.OWNER_DECISION_HOSTED_JOBS.values()), 6)
         self.assertEqual(policy.LEGACY_HOSTED_DEBT["clued-merge-slot-ci.yml"]["control_sha256"],
@@ -283,7 +283,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
         self.assertEqual(policy.OWNER_DECISION_HOSTED_JOBS["gitleaks.yml"]["jobs"]["gitleaks-trusted-self-hosted"],
                          "b8dac89af1f63b0528c7b2209e071e4f88919f82fb33562591eaf6b50c0186ea")
         self.assertEqual(set(policy.EXACT_SOURCE_CANDIDATE_SUCCESSORS), {
-            "gitleaks.yml", "clued-merge-executor.yml", "clued-merge-slot-ci.yml",
+            "gitleaks.yml", "clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-cloud-production-release.yml",
         })
         for filename, successor in policy.EXACT_SOURCE_CANDIDATE_SUCCESSORS.items():
             text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")

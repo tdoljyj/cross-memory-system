@@ -96,7 +96,9 @@ test('正式发布入口只接收提交，构建一次，并用已占号的 tag 
   };
   const dir = path.join(w.d, 'generated');
   const args = ['prepare', '--commit', source.commit, '--dir', dir, '--out', w.out, '--image', w.image, '--index', w.index];
-  const deps = { ...w.deps, generationTags: tags, buildUniversal };
+  const deps = { ...w.deps, generationTags: tags, buildUniversal, release: {
+    admit: async () => {}, requirements: async () => [], read: async () => ({ snapshot: { base: true, applied: [], interfaces: {} } }),
+  } };
   const entry = { prepareCommit: options => publish.prepareCommit({ ...options, ghCommand, deps }) };
   await assert.rejects(publish.main([...args, '--version', source.version], entry), { code: 'USAGE' });
   const prepared = await publish.main(args, entry);
