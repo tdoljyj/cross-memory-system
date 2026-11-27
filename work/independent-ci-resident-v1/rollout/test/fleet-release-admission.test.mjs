@@ -14,6 +14,7 @@ const files = [
   '20261127120000_fleet_delivery_seal_v1.sql',
   '20261127120100_fleet_pending_delivery_v1.sql',
   '20261127120200_fleet_delivery_recipients_v1.sql',
+  '20261127120210_fleet_delivery_peer_recipients_v1.sql',
 ];
 const workflowPath = '.github/workflows/clued-cloud-production-release.yml';
 const root = new URL('../../../../', import.meta.url);
@@ -21,9 +22,6 @@ const planOf = commit => releaseRequirements(commit, file => readFileSync(new UR
 const required = ['hosted-ci-suites', 'hosted-ci-suites-windows', 'hosted-clued-cloud-tests', 'hosted-migration-verify',
   'hosted-gitleaks', 'hosted-trivy', 'hosted-contract-placement', 'kooyumi-work-admission'];
 const appOf = name => name.startsWith('hosted-') ? 15368 : 5368905;
-const branchRules = JSON.parse(readFileSync(new URL(
-  'work/actions-hosted-migration/independent-ci-v1/test/fixtures/main-rules-scaffold-20261125.json', root)));
-
 async function fixture(t, options = {}) {
   const w = await prepWorld(t, { version: 'g000025', released: false, spawnGh: false });
   const commit = w.source.commit;
@@ -33,7 +31,10 @@ async function fixture(t, options = {}) {
   const ledger = new Set(settings.applied ?? []);
   const index = await fs.readFile(w.index);
   const reply = value => ({ status: 0, stdout: JSON.stringify(value) });
-  const checks = required.map((name, id) => ({ name, id: id + 1, app: { id: appOf(name) }, head_sha: commit, status: 'completed', conclusion: 'success' }));
+  const head = 'd'.repeat(40), tree = 'e'.repeat(40);
+  const pr = { number: 1387, state: 'closed', merged_at: '2026-11-27T01:00:00Z', merge_commit_sha: commit,
+    head: { sha: head, repo: { full_name: DEFAULT_REPO } }, base: { ref: 'main', repo: { full_name: DEFAULT_REPO } } };
+  const checks = required.map((name, id) => ({ name, id: id + 1, app: { id: appOf(name) }, head_sha: head, status: 'completed', conclusion: 'success' }));
   const publisherStateDirectory = join(w.d, 'publisher-state');
   const snapshot = () => ({ base: true, applied: plan.flatMap((row, i) => ledger.has(row.file) ? [{ name: row.name,
     version: `2026112716000${i + 1}`, digest: settings.badDigest && i === 0 ? 'f'.repeat(64) : row.digest }] : []),
@@ -46,24 +47,21 @@ async function fixture(t, options = {}) {
       const sha = settings.wrongTip || (settings.changeBeforeMigrate && runs.length) ? '0'.repeat(40) : commit;
       return reply({ ref: 'refs/heads/main', object: { type: 'commit', sha } });
     }
-    if (args[1] === `${repo}/rules/branches/main?per_page=100`) {
-      const rules = structuredClone(branchRules);
-      const pr = rules.find(rule => rule.type === 'pull_request').parameters;
-      if (settings.relaxPR) pr.require_extra_approval_for_unattributed_changes = false;
-      const requiredChecks = rules.find(rule => rule.type === 'required_status_checks').parameters;
-      requiredChecks.strict_required_status_checks_policy = !settings.noStrict;
-      requiredChecks.required_status_checks = requiredChecks.required_status_checks.filter(entry => entry.context !== settings.removedCheck);
-      return reply(rules);
-    }
-    if (args[1] === `${repo}/rulesets/27843120`) {
-      const rules = JSON.parse(runGh(['api', `${repo}/rules/branches/main?per_page=100`]).stdout);
-      return reply({ id: 27843120, target: 'branch', enforcement: 'active', source_type: 'Repository', source: DEFAULT_REPO,
-        conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } },
-        ...(settings.noBypassMeta ? {} : { bypass_actors: settings.relaxBypass ? [{ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }] : [] }),
-        rules: rules.map(({ type, parameters }) => ({ type, parameters })) });
+    if (args[1] === `${repo}/commits/${commit}`) return reply({
+      sha: commit, parents: [{ sha: 'a'.repeat(40) }, { sha: settings.wrongParent ? 'b'.repeat(40) : head }], commit: { tree: { sha: tree } },
+    });
+    if (args[1] === `${repo}/commits/${head}`) return reply({
+      sha: head, commit: { tree: { sha: settings.otherTree ? 'f'.repeat(40) : tree } },
+    });
+    if (args[1] === `${repo}/commits/${commit}/pulls?per_page=100`) return reply([pr]);
+    if (args[1] === `${repo}/pulls/${pr.number}`) return reply({ ...pr, merged: !settings.notMerged });
+    if (args[1]?.startsWith(`${repo}/rules`)) {
+      assert.ok(!settings.noRules, 'no ruleset read credential');
+      throw new Error('release admission must not query rulesets');
     }
     if (args[1]?.includes('/check-runs?')) {
-      const rows = settings.red ? [...checks, { ...checks[0], id: 80, conclusion: settings.red }]
+      if (!args[1].includes(`/commits/${head}/`)) return reply({ total_count: 0, check_runs: [] });
+      const rows = settings.red ? [...checks, { ...checks[0], id: 80, ...(settings.red === 'queued' ? { status: 'queued', conclusion: null } : { conclusion: settings.red }) }]
         : settings.badCheckApp ? [{ ...checks[0], app: { id: 123 } }, ...checks.slice(1)]
         : settings.otherCheckSha ? [{ ...checks[0], head_sha: '0'.repeat(40) }, ...checks.slice(1)]
         : settings.noMergeChecks ? [] : checks;
@@ -147,6 +145,16 @@ async function fixture(t, options = {}) {
   return { w, commit, plan, effects, settings, prepare, noRelease };
 }
 
+test('落地合并提交无需自身有检查，须读取其已合并 PR 的 head', async t => {
+  const w = await fixture(t, { applied: files });
+  assert.equal((await w.prepare()).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+});
+
+test('没有规则集专用读取授权时，固定检查仍可完成发布准入', async t => {
+  const w = await fixture(t, { applied: files, noRules: true });
+  assert.equal((await w.prepare()).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+});
+
 test('迁移有缺项且备份失败时，正式 prepare 必须零生产写入、零占号、零 Release', async t => {
   const w = await prepWorld(t, { version: 'g000025', released: false, spawnGh: false });
   const index = await fs.readFile(w.index);
@@ -154,7 +162,7 @@ test('迁移有缺项且备份失败时，正式 prepare 必须零生产写入�
   const release = {
     admit: async () => {},
     requirements: async () => planOf(w.source.commit),
-    read: async () => ({ snapshot: { base: true, applied: [], interfaces: { train: false, landing: false, delivery: false, pendingDelivery: false, deliveryRecipients: false } } }),
+    read: async () => ({ snapshot: { base: true, applied: [], interfaces: { train: false, landing: false, delivery: false, pendingDelivery: false, deliveryRecipients: false, deliveryPeerRecipients: false } } }),
     migrate: async missing => {
       effects.push(missing);
       throw Object.assign(new Error('备份失败'), { code: 'FLEET_MIGRATION_RUN_FAILED' });
@@ -184,15 +192,14 @@ test('正式 prepare 一次派发全部迁移缺项，凭同提交回读出包�
   assert.deepEqual(complete.effects, [['read'], ['tag']]);
 });
 
-test('红灯、跳过、规则集缩水、错误身份、换头、备份失败与账本冲突均不出包', async t => {
+test('红灯、跳过、错误 PR、错误身份、换头、备份失败与账本冲突均不出包', async t => {
   for (const [options, code, effectNames] of [
     [{ red: 'failure' }, 'FLEET_RELEASE_CHECKS_NOT_GREEN', []],
+    [{ red: 'queued' }, 'FLEET_RELEASE_CHECKS_NOT_GREEN', []],
     [{ red: 'skipped' }, 'FLEET_RELEASE_CHECKS_NOT_GREEN', []],
-    [{ noStrict: true }, 'FLEET_RELEASE_RULES_CHANGED', []],
-    [{ removedCheck: required[0] }, 'FLEET_RELEASE_RULES_CHANGED', []],
-    [{ relaxBypass: true }, 'FLEET_RELEASE_RULES_CHANGED', []],
-    [{ relaxPR: true }, 'FLEET_RELEASE_RULES_CHANGED', []],
-    [{ noBypassMeta: true }, 'FLEET_RELEASE_RULES_UNREADABLE', []],
+    [{ wrongParent: true }, 'FLEET_RELEASE_MERGED_PR_REFUSED', []],
+    [{ notMerged: true }, 'FLEET_RELEASE_MERGED_PR_REFUSED', []],
+    [{ otherTree: true }, 'FLEET_RELEASE_MERGED_TREE_CHANGED', []],
     [{ noMergeChecks: true }, 'FLEET_RELEASE_CHECKS_NOT_GREEN', []],
     [{ badCheckApp: true }, 'FLEET_RELEASE_CHECKS_NOT_GREEN', []],
     [{ otherCheckSha: true }, 'FLEET_RELEASE_CHECKS_UNREADABLE', []],
@@ -262,5 +269,5 @@ test('账本中的后项已应用而前项缺失时拒绝续跑', () => {
   assert.deepEqual(plan.map(row => row.file), files);
   const row = plan[1];
   assert.throws(() => missingMigrations(plan, { base: true, applied: [{ name: row.name, version: row.version, digest: row.digest }],
-    interfaces: { train: false, landing: true, delivery: false, pendingDelivery: false, deliveryRecipients: false } }), { code: 'FLEET_MIGRATION_DEPENDENCY_MISMATCH' });
+    interfaces: { train: false, landing: true, delivery: false, pendingDelivery: false, deliveryRecipients: false, deliveryPeerRecipients: false } }), { code: 'FLEET_MIGRATION_DEPENDENCY_MISMATCH' });
 });

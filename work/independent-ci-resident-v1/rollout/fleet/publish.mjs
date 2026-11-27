@@ -100,12 +100,12 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import os from 'node:os';
 import { acceptResourceOf, OPEN_RUN_ID, openRequest, openRunFailed, readAnswer, statusReader } from './accept-door.mjs';
-import { deliverySubject, fleetDeliveryPreflight } from './delivery-preflight.mjs';
+import { deliveryBound, deliverySubject, fleetDeliveryPreflight } from './delivery-preflight.mjs';
 import { deliveryProjectionReaders, verifyDeliveryTree } from './delivery-reader.mjs';
 import { deliveryWorkflowClient } from './delivery-workflow.mjs';
 import { RESIDENT } from './facts.mjs';
 import { DEFAULT_ROOT, readArchive, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
-import { previousInterfaceCheck } from './previous-interface-check.mjs';
+import { previousInterfaceCheck, PREVIOUS_INTERFACE_TIMEOUT_MS } from './previous-interface-check.mjs';
 import { fleetReleaseWorkflow, reconcileFleetRelease } from './release-migration-workflow.mjs';
 import { readTar } from './tar.mjs';
 import { previousTransportVersion, TRANSPORT, transportAssetNames } from './fetch.mjs';
@@ -143,7 +143,7 @@ const HEX40 = /^[0-9a-f]{40}$/;
 const BASELINE_TAG = 'fleet-node-2026.11.26-5444c2ac';
 const BASELINE_COMMIT = '5444c2ac92c93fe271d8a6d29afab86029a4939e';
 const BASELINE_GENERATION = 22;
-const STAGED_PREFLIGHT_GENERATION = 27;
+export const STAGED_PREFLIGHT_GENERATION = 27;
 const TAG_PREFIX = 'fleet-node-g';
 const CLAIM_CONTRACT = 'clued.independent-ci.fleet-package-generation/1';
 const checkout = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -673,8 +673,8 @@ async function previousImage({ ghCommand, repo, index, version, id, stage }) {
   return file;
 }
 
-async function previousSeal({ ghCommand, repo, index, version, stage, deps }) {
-  const { lines } = await readIndex(index);
+async function previousSeal({ ghCommand, repo, index, version, stage, deps, timeoutMs, readFile = fs.readFile }) {
+  const { lines } = await readIndex(index, readFile);
   const prior = lines.filter(isRow).map(cells)
     .filter(([value, , , , acceptedAt, grant]) => {
       const generation = packageGenerationOf(value);
@@ -689,11 +689,11 @@ async function previousSeal({ ghCommand, repo, index, version, stage, deps }) {
     'PREPARE_SEALED_TEMPLATE_REFUSED');
   const requestSha256 = sha(requestBytes);
   const resource = acceptResourceOf({ repository: repo, version: request.version, archiveSha256: request.archive_sha256, requestSha256 });
-  const answer = readAnswer(await (deps.readStatus ?? statusReader())(resource), { resource, requestSha256 });
+  const answer = readAnswer(await (deps.readStatus ?? statusReader())(resource, { timeoutMs: timeoutMs?.() }), { resource, requestSha256 });
   check(answer.kind === 'accepted' && answer.grantId === prior[5] && answer.acceptedAt === prior[4],
     'PREPARE_SEALED_TEMPLATE_REFUSED');
   const acceptance = acceptanceBytes(acceptanceOf(request, { decision: answer.grantId, receipt: answer.receiptId, acceptedAt: answer.acceptedAt }));
-  const published = await fs.readFile(downloadAsset(ghCommand, repo, tag, `${tag}.acceptance.json`, stage));
+  const published = await readFile(downloadAsset(ghCommand, repo, tag, `${tag}.acceptance.json`, stage));
   check(published.equals(acceptance) && (packageGenerationOf(request.version) < 25 || sha(acceptance) === answer.sealedAcceptanceSha256),
     'PREPARE_SEALED_TEMPLATE_REFUSED');
   return { tag, request, requestSha256, acceptanceSha256: sha(acceptance), commit: request.commit, version: request.version };
@@ -1180,7 +1180,7 @@ export const SEAL_INPUT_ERRORS = Object.freeze(['USAGE', 'REQUEST_REFUSED', 'REQ
   'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', 'SEAL_REQUEST_REFUSED', 'SEAL_DRILL_RECEIPT_REFUSED', 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE', 'SEAL_DRILL_RECEIPT_NOT_PASS',
   'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE', 'SEAL_DRILL_RECEIPT_NOT_THE_RECORDED', 'ACCEPT_RESOURCE_REFUSED', 'ACCEPT_DOOR_NOT_CONFIGURED',
   'ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED', 'ACCEPT_DOOR_REFUSED', 'ACCEPT_DOOR_ANSWER_REFUSED', 'FLEET_ACCEPTANCE_DEADLINE',
-  'FLEET_DELIVERY_PREFLIGHT_REFUSED', 'FLEET_DELIVERY_SEAL_NOT_CONFIRMED']);
+  'FLEET_DELIVERY_PREFLIGHT_REFUSED', 'FLEET_PREVIOUS_INTERFACES_REFUSED', 'FLEET_DELIVERY_SEAL_NOT_CONFIRMED']);
 
 // The second half of an acceptance (see the head of this file). `deps` is for tests only (a stand-in for the archive's source-hash, the door's
 // anonymous read, the clock and the sleep of --wait); the command line cannot reach it and reads the door with the repository's public
@@ -1195,11 +1195,9 @@ export async function seal(options) {
   const readStatus = deps.readStatus ?? statusReader();
   const clock = deps.clock ?? Date.now, sleep = deps.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
   const started = clock(), nowAt = () => now + (clock() - started);
-  const end = deadline ?? started + (wait === 0 ? OPEN_COMMAND_MS : WAIT_MAX_MINUTES * 60_000);
+  let end = deadline ?? started + (wait === 0 ? OPEN_COMMAND_MS : WAIT_MAX_MINUTES * 60_000);
   const until = waitDeadline ?? started + wait * 60_000;
   const boundedOpen = openOnly || (deadline === undefined && wait === 0);
-  const preflightEnd = boundedOpen ? end - OPEN_WAIT_MS - OPEN_RESERVE_MS : end;
-  const sealEnd = boundedOpen ? end - OPEN_OUTPUT_MS : end;
   const remaining = limit => {
     const left = limit - clock();
     check(left > 0, 'FLEET_ACCEPTANCE_DEADLINE', 'the acceptance command ran out of time');
@@ -1217,13 +1215,17 @@ export async function seal(options) {
       throw e;
     }
   };
-  const readInput = boundedRead(preflightEnd);
+  const readInput = file => boundedRead(boundedOpen ? end - OPEN_WAIT_MS - OPEN_RESERVE_MS : end)(file);
   let requestBytes, r;
   try { requestBytes = await readInput(request); r = JSON.parse(requestBytes.toString('utf8').replace(/^\uFEFF/, '')); } catch (e) {
     if (e?.code === 'FLEET_ACCEPTANCE_DEADLINE') throw e;
     fail('REQUEST_REFUSED', 'not a JSON file');
   }
   readRequest(r);
+  const stagedRelease = packageGenerationOf(r.version) >= STAGED_PREFLIGHT_GENERATION;
+  if (stagedRelease && boundedOpen && deadline === undefined) end += PREVIOUS_INTERFACE_TIMEOUT_MS;
+  const preflightEnd = boundedOpen ? end - OPEN_WAIT_MS - OPEN_RESERVE_MS : end;
+  const sealEnd = boundedOpen ? end - OPEN_OUTPUT_MS : end;
   check(expectedRequestSha256 === undefined || sha(requestBytes) === expectedRequestSha256, 'SEAL_REQUEST_NOT_ON_RELEASE');
   const tag = tagOf(r.version);
   check(path.basename(request) === `${tag}.acceptance-request.json`, 'REQUEST_FILE_NAME_REFUSED', path.basename(request));
@@ -1264,7 +1266,6 @@ export async function seal(options) {
       release: onRelease === null ? null : sha(onRelease), request: requestSha256, note: 'the release workflow reads the request from the Release: run the same prepare again' });
     const candidate = deliverySubject(r, requestSha256);
     const guarded = packageGenerationOf(r.version) >= 25;
-    const stagedRelease = packageGenerationOf(r.version) >= STAGED_PREFLIGHT_GENERATION;
     const durable = candidateDirectory(path.dirname(request), tag);
     const verifyReleaseDelivery = async (limit, archiveFile) => {
       const read = boundedRead(limit);
@@ -1300,6 +1301,57 @@ export async function seal(options) {
       check(result.status === 'PASS',
         'FLEET_DELIVERY_PREFLIGHT_REFUSED', { phase, candidate, ...result });
       return result;
+    };
+    const replayPrefix = `previous-interfaces-${requestSha256}-`;
+    const openPrefix = `open-${requestSha256}-`;
+    let openedReplaySha256;
+    const verifyPrevious = async (limit, runReplay = false) => {
+      const refusal = 'FLEET_PREVIOUS_INTERFACES_REFUSED';
+      const inputs = { ghCommand: boundedGh(limit), repo, index, version: r.version, deps,
+        timeoutMs: () => remaining(limit), readFile: boundedRead(limit) };
+      const readPrevious = deps.previousInterfaceSubject ?? previousSeal;
+      const readSubject = async phase => {
+        const { commit, acceptanceSha256 } = await readPrevious({ ...inputs, stage: path.join(stage, phase) });
+        check(HEX40.test(commit) && HEX64.test(acceptanceSha256), refusal);
+        return { commit, acceptanceSha256 };
+      };
+      try {
+        const files = await fs.readdir(durable);
+        const names = files.filter(name => name.startsWith(replayPrefix) && name.endsWith('.json'));
+        const attempts = files.filter(name => name.startsWith(openPrefix) && name.endsWith('.json'));
+        check(names.length <= 1 && (runReplay || attempts.length > 0), refusal, 'opening is not bound to one replay result');
+        const previous = await readSubject('previous-interface-subject');
+        let file = names[0];
+        if (file === undefined && runReplay && attempts.length === 0) {
+          const run = deps.previousInterfaces ?? previousInterfaceCheck;
+          const evidence = await run({ commit: r.commit, repository: repo, version: r.version, previous, timeoutMs: remaining(limit) });
+          const back = await readSubject('previous-interface-readback');
+          check(evidence?.status === 'PASS' && evidence.commit === r.commit && evidence.previousCommit === previous.commit &&
+            Array.isArray(evidence.files) && evidence.files.length > 0 && evidence.files.every(name => typeof name === 'string' && name.length > 0) &&
+            back.commit === previous.commit && back.acceptanceSha256 === previous.acceptanceSha256, refusal);
+          const bytes = Buffer.from(JSON.stringify({ candidate, previous, files: evidence.files }));
+          file = `${replayPrefix}${sha(bytes)}.json`;
+          remaining(limit);
+          await writeAtomic(path.join(durable, file), bytes);
+        }
+        check(file !== undefined, refusal, 'replay evidence was not recorded before opening');
+        const read = boundedRead(limit);
+        const bytes = await read(path.join(durable, file));
+        const digest = sha(bytes);
+        check(file === `${replayPrefix}${digest}.json` && (openedReplaySha256 === undefined || openedReplaySha256 === digest), refusal);
+        for (const attempt of attempts) {
+          const opened = JSON.parse(await read(path.join(durable, attempt)));
+          check(opened.requestSha256 === requestSha256 && opened.previousInterfacesSha256 === digest,
+            refusal, 'the replay digest differs from the opening journal');
+        }
+        const evidence = JSON.parse(bytes);
+        check(deliveryBound(evidence.candidate, candidate) && evidence.previous?.commit === previous.commit &&
+          evidence.previous.acceptanceSha256 === previous.acceptanceSha256 && Array.isArray(evidence.files) && evidence.files.length > 0, refusal);
+        return digest;
+      } catch (error) {
+        if ([refusal, 'FLEET_ACCEPTANCE_DEADLINE'].includes(error?.code)) throw error;
+        fail(refusal, { reason: error?.code ?? error?.name ?? 'ERROR' });
+      }
     };
     let deliveryBeforeOpen = guarded ? null : await checkDelivery('before-open', preflightEnd);
     // the Owner's acceptance: one fleet.accept Grant on this request (accept-door.mjs), read anonymously; opened once when the door has none open
@@ -1350,7 +1402,10 @@ export async function seal(options) {
       if (a.kind === 'pending') {
         noRetry = true;
         const valid = Date.parse(a.expiresAt) > clock();
-        if (!seenOpen && valid) onPending?.({ confirmUrl: a.confirmUrl, expiresAt: a.expiresAt, resource });
+        if (!seenOpen && valid) {
+          if (stagedRelease) openedReplaySha256 = await verifyPrevious(Math.min(sealEnd, Date.parse(a.expiresAt)));
+          onPending?.({ confirmUrl: a.confirmUrl, expiresAt: a.expiresAt, resource });
+        }
         seenOpen = true;
         await pause(WAIT_STEPS_MS[Math.min(waitStep++, WAIT_STEPS_MS.length - 1)], pendingUntil());
         continue;
@@ -1369,8 +1424,11 @@ export async function seal(options) {
         const subject = { repository: r.repository, version: r.version, requestSha256 };
         const { prior, next: marker } = stagedRelease ? await priorOpenAttempt(durable, subject, epoch, clock) : {};
         const mayRetry = prior?.runId && openRunFailed({ runGh: preflightGh, repository: r.repository, runId: prior.runId });
-        if ((!prior || mayRetry) && guarded) deliveryBeforeOpen = await checkDelivery('before-open', preflightEnd);
-        if (mayRetry) {
+        if ((!prior || mayRetry) && guarded) {
+          deliveryBeforeOpen = await checkDelivery('before-open', preflightEnd);
+          if (stagedRelease) openedReplaySha256 = await verifyPrevious(preflightEnd, true);
+        }
+        if (mayRetry || (stagedRelease && !prior)) {
           const current = await readStatus(resource, { timeoutMs: remaining(preflightEnd) });
           const latest = readAnswer(current, { resource, requestSha256 });
           if (latest.kind !== a.kind || current.request_id !== status.request_id) continue;
@@ -1380,7 +1438,8 @@ export async function seal(options) {
         dispatchId = prior?.dispatchId;
         let dispatch = !prior || mayRetry;
         noRetry = true;
-        const state = { ...subject, epoch, at: clock(), dispatchId: marker && path.basename(marker, '.json') };
+        const state = { ...subject, epoch, at: clock(), dispatchId: marker && path.basename(marker, '.json'),
+          ...(openedReplaySha256 ? { previousInterfacesSha256: openedReplaySha256 } : {}) };
         if (dispatch && marker) {
           // Claim this slot before POST; a missing response leaves the slot unresolved.
           remaining(preflightEnd);
@@ -1417,6 +1476,7 @@ export async function seal(options) {
       await clearStage();
       if (readFailure || Date.parse(answer.expiresAt) <= clock()) return unreadable();
       return { status: 'FLEET_ACCEPTANCE_WAITING_OWNER', version: r.version, opened: true, confirmUrl: answer.confirmUrl, expiresAt: answer.expiresAt, resource,
+        ...(openedReplaySha256 ? { previousInterfacesSha256: openedReplaySha256 } : {}),
         next: 'the Owner approves on confirmUrl; then the same seal again (--wait <minutes> waits for it)' };
     }
     if (NOT_OPEN.includes(answer.kind) && !seenOpen) {
@@ -1450,22 +1510,7 @@ export async function seal(options) {
         'FLEET_DELIVERY_PREFLIGHT_REFUSED', { phase: 'before-attach', reason: 'FLEET_CANDIDATE_REQUEST_CHANGED', candidate });
       if (stagedRelease) await verifyReleaseDelivery(sealEnd);
     }
-    if (stagedRelease && !alreadySealed) {
-      const checkPrevious = deps.previousInterfaces ?? (async subject => {
-        const inputs = { ghCommand: boundedGh(sealEnd), repo, index, version: r.version, stage, deps };
-        const previous = await previousSeal(inputs);
-        const evidence = await previousInterfaceCheck({ ...subject, previous, timeoutMs: remaining(sealEnd) });
-        // The predecessor may have changed while PostgreSQL was running.
-        const back = await previousSeal({ ...inputs, stage: path.join(stage, 'previous-readback') });
-        check(evidence.previousCommit === back.commit && previous.acceptanceSha256 === back.acceptanceSha256,
-          'FLEET_PREVIOUS_INTERFACES_REFUSED');
-        return evidence;
-      });
-      let evidence;
-      try { evidence = await checkPrevious({ commit: r.commit, repository: repo, version: r.version }); }
-      catch (error) { fail('FLEET_PREVIOUS_INTERFACES_REFUSED', { reason: error?.code ?? error?.name ?? 'ERROR' }); }
-      check(evidence?.status === 'PASS' && evidence.commit === r.commit, 'FLEET_PREVIOUS_INTERFACES_REFUSED');
-    }
+    const previousInterfacesSha256 = stagedRelease && !alreadySealed ? await verifyPrevious(sealEnd) : undefined;
     const staged = path.join(stage, 'up', `${tag}.acceptance.json`);
     remaining(sealEnd);
     await fs.mkdir(path.dirname(staged));
@@ -1504,6 +1549,7 @@ export async function seal(options) {
     }
     return { ...attached, status: 'FLEET_ACCEPTANCE_SEALED', acceptance: final, grantId: answer.grantId, receiptId: answer.receiptId,
       ...(guarded ? { acceptanceSha256 } : {}),
+      ...(previousInterfacesSha256 ? { previousInterfacesSha256 } : {}),
       ...(deliveryBeforeAttach ? { deliveryPreflight: { beforeOpen: deliveryBeforeOpen, beforeAttach: deliveryBeforeAttach } } : {}),
       ...(packageDir ? { packageDir } : {}) };
   } catch (error) {

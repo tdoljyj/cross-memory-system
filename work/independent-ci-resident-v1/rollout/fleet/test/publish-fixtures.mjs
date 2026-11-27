@@ -140,7 +140,8 @@ const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = '
   };
   const deps = { kitOf, readKit: () => ({}), fleetMaterial: async () => ({ formalRoles, installed: { ...carried, ciSourceManifestSha256: templateSource } }),
     sourceHash: async args => { s.sourceDrafts.push(args); return { ciSourceManifestSha256: s.sourceOf }; }, readStatus,
-    previousInterfaces: async ({ commit }) => ({ status: 'PASS', commit }) };
+    previousInterfaceSubject: async () => ({ commit: '9'.repeat(40), acceptanceSha256: '7'.repeat(64) }),
+    previousInterfaces: async ({ commit, previous }) => ({ status: 'PASS', commit, previousCommit: previous.commit, files: ['prior.test.mjs'] }) };
   if (version !== VERSION) {
     const tags = new Map(['fleet-node-2026.11.26-5444c2ac', 'fleet-node-g000023', 'fleet-node-g000024'].map(name => [name, null]));
     deps.generationTags = { list: async () => [...tags.keys()], read: async name => tags.get(name),
