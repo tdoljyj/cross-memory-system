@@ -187,8 +187,9 @@ begin
   -- Apply each function's edits in array order before compiling its definition.
   for item in select * from (values
     ('clued_private.fleet_accept_answer_v1(uuid,uuid,text)', array[
-      array[$a$'accepted_at',v_row.accepted_at,$a$,
-            $r$'accepted_at',v_row.accepted_at,'sealed_acceptance_sha256',v_row.acceptance_sha256,$r$]
+      array[$a$    return v_base||jsonb_build_object('status','accepted','grant_id',$a$,
+            $r$    return v_base||jsonb_strip_nulls(jsonb_build_object('sealed_acceptance_sha256',v_row.acceptance_sha256))
+      ||jsonb_build_object('status','accepted','grant_id',$r$]
     ]),
     ('clued_private.fleet_accept_door_v1(jsonb)', array[
       array[$a$k not in ('action','resources','run_id','run_attempt')$a$,
@@ -208,10 +209,10 @@ begin
       array[$a$  select jsonb_build_object('repository', a.repository, 'version', a.version,$a$,
             $r$  select case when clued_private.fleet_package_generation_v1(a.version)>=25 and a.sealed_at is null
     then jsonb_build_object('status','pending_seal')
-    else jsonb_build_object('repository', a.repository, 'version', a.version,
-    'acceptance_sha256',a.acceptance_sha256,$r$],
+    else jsonb_build_object('repository', a.repository, 'version', a.version,$r$],
       array[$a$    ), '[]'::jsonb))$a$,
-            $r$    ), '[]'::jsonb)) end$r$],
+            $r$    ), '[]'::jsonb))
+      ||jsonb_strip_nulls(jsonb_build_object('acceptance_sha256',a.acceptance_sha256)) end$r$],
       array[$a$  order by a.accepted_at desc, a.recorded_at desc, a.grant_id desc$a$,
             $r$  order by case when clued_private.fleet_package_generation_v1(a.version)>=25
     then clued_private.fleet_package_generation_v1(a.version) else 0 end desc,
