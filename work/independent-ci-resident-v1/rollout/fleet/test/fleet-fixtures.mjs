@@ -74,9 +74,9 @@ export function fleetFacts() {
   return { sourceAcceptanceRef: randomUUID(), hostQualificationRef: randomUUID(), formalRoles: roles() };
 }
 
-function rolePolicy(role, letter, fleet, installedCi, { toolchainSha = hex(32), resultPublicKeySha256 = hex(32) } = {}) {
+function rolePolicy(role, letter, fleet, installedCi, { toolchainSha = hex(32), resultPublicKeySha256 = hex(32), image = hex(32) } = {}) {
   const p = { schema: 'independent-ci.linux-policy.v3', role, formalEnabled: true, runtimeIdentity: `fixture-${letter}-runtime`, keyId: 'fixture-key', workspaceRoot: '/var/lib/clued-independent-ci/workspaces', runsRoot: '/var/lib/clued-independent-ci/runs',
-    image: `sha256:${hex(32)}`, executionMode: role === 'contract-placement' ? 'node-entry' : 'scanner', dockerExecutable: '/usr/bin/docker', dockerExecutableSha256: hex(32),
+    image: `sha256:${image}`, executionMode: role === 'contract-placement' ? 'node-entry' : 'scanner', dockerExecutable: '/usr/bin/docker', dockerExecutableSha256: hex(32),
     nodeExecutable: '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node', nodeExecutableSha256: toolchainSha, gitExecutable: '/usr/bin/git', gitExecutableSha256: hex(32),
     cpus: new PyFloat(1.5), entryFile: `${TRUSTED_SOURCE}/${ENTRY}`, trustedSourceDirectory: TRUSTED_SOURCE, hostAcceptanceRef: fleet.hostQualificationRef,
     sourceAcceptanceRef: fleet.sourceAcceptanceRef, sourceManifestSha256: installedCi, entrySha256: hex(32), qualificationSha256: hex(32), workerSha256: hex(32),
@@ -92,7 +92,8 @@ function rolePolicy(role, letter, fleet, installedCi, { toolchainSha = hex(32), 
 // companionAccount: the node runs its companion under its own account (install\companion-account.json, the profile's ownerSid).
 // policyContract: the installed policy's contract (default policy.example.json's /7, whose train it keeps; /8 and later carry the fleet's
 // train, policy.mjs FLEET_TRAIN, on: as the nodes in the field do).
-export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAccount = false, heartbeat = false, policyContract = null } = {}) {
+export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAccount = false, heartbeat = false, policyContract = null,
+  recordOverrides = {}, roleImages = {} } = {}) {
   const d = await tempDir(t, `fleetnode${letter}`);
   const profile = profileOf(letter);
   const signer = signerKeys();
@@ -104,6 +105,7 @@ export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAc
   const toolchainSha = hex(32), resultPublicKeySha256 = sha(Buffer.from(signer.publicKeyPem, 'ascii'));
   const inputs = recordInputs({ node: profile, formalRoles: fleet.formalRoles, sourceCommit: 'c'.repeat(40), controllerNodeSha256: sha(nodeExe),
     publishableKey: 'sb_publishable_0000000000' }, references, signer);   // the upgrader configuration's shape (a fresh install writes one)
+  Object.assign(inputs, recordOverrides);
   const record = path.join(d, 'record');
   writeRecord(record, assembleRecord(inputs, sourceFiles()));
   const policy = JSON.parse(await fs.readFile(path.join(RES, 'config', 'policy.example.json'), 'utf8'));
@@ -134,7 +136,8 @@ export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAc
   const at = new Date(now).toISOString();
   const copy = {}, factsRoles = {};
   for (const role of ['gitleaks', 'trivy', 'contract-placement']) {
-    const { policy: pb, qualification: qb } = rolePolicy(role, letter, fleet, m.ciSourceManifestSha256, { toolchainSha, resultPublicKeySha256 });
+    const { policy: pb, qualification: qb } = rolePolicy(role, letter, fleet, m.ciSourceManifestSha256,
+      { toolchainSha, resultPublicKeySha256, image: roleImages[role] });
     copy[`${role}.json`] = { sha256: sha(pb), base64: pb.toString('base64') };
     copy[`${role}.qualification.json`] = { sha256: sha(qb), base64: qb.toString('base64') };
     factsRoles[role] = { policySha256: sha(pb), qualificationSha256: sha(qb) };
