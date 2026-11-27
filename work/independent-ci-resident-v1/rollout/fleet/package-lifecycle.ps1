@@ -285,7 +285,7 @@ function Assert-FleetJournalRoot([string]$root) {
   $writers = @($actual.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
   if (-not $actual.AreAccessRulesProtected -or $actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -cnotin @('S-1-5-18','S-1-5-32-544') -or
       $writers.Count -ne 2 -or @($writers | Where-Object { $_.IdentityReference.Value -cnotin @('S-1-5-18','S-1-5-32-544') -or $_.AccessControlType -ne 'Allow' -or $_.FileSystemRights -ne 'FullControl' }).Count) {
-    throw 'FLEET_JOURNAL_ACL_REFUSED'
+    throw ('FLEET_JOURNAL_ACL_REFUSED: remove the refused journal directory ' + $root)
   }
 }
 
@@ -755,7 +755,7 @@ function Invoke-FleetStep([string]$step, $context) {
   $context.installed = $result
 }
 
-function Read-FleetProgress([string]$file, $context) {
+function Read-FleetProgress([string]$file, $context, [switch]$ArchiveStaleFresh) {
   Assert-FleetLocalPath $file
   if ($null -eq (Get-FleetPathItem $file)) { return $null }
   if ((Get-Item -LiteralPath $file -Force).Length -gt 4096) { throw 'FLEET_PROGRESS_REFUSED' }
@@ -763,8 +763,21 @@ function Read-FleetProgress([string]$file, $context) {
   if ($value.contract -cne 'clued.fleet.lifecycle-progress/1' -or $value.operationId -cnotmatch '^[0-9a-f]{32}$' -or
       $value.mode -cnotin @('Fresh','Reinstall','Rollback','Retire') -or
       $value.step -cnotin @('intent','cleanup','install','launcher','verify','return','complete')) { throw 'FLEET_PROGRESS_REFUSED' }
-  foreach ($key in @('machine','operatorSid','archiveSha256','acceptanceSha256','action')) {
+  foreach ($key in @('machine','operatorSid','action')) {
     if ($value[$key] -cne $context[$key]) { throw ('FLEET_PROGRESS_DIFFERS:' + $key) }
+  }
+  foreach ($key in @('archiveSha256','acceptanceSha256')) {
+    if ($value[$key] -ceq $context[$key]) { continue }
+    # Only the locked elevated bootstrap opts in after verifying the journal ACL.
+    if ($ArchiveStaleFresh -and $value.mode -ceq 'Fresh' -and
+        $value.archiveSha256 -cmatch '^[0-9a-f]{64}$' -and $value.acceptanceSha256 -cmatch '^[0-9a-f]{64}$') {
+      $root = Split-Path -Parent $file
+      $archive = $root + '.archived-' + $value.operationId
+      Assert-FleetLocalPath $archive
+      [IO.Directory]::Move($root, $archive)
+      return $null
+    }
+    throw ('FLEET_PROGRESS_DIFFERS:' + $key)
   }
   $value
 }
