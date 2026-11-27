@@ -163,9 +163,11 @@ Case 'lifecycle:another package cannot use an earlier preview' {
 Case 'lifecycle:upgrader operation heartbeat belongs to the live service child' {
   . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
   . ([scriptblock]::Create($functions['Get-Key']))
-  $at = [DateTimeOffset]::UtcNow.AddMinutes(-11)
+  $current = [DateTimeOffset]::Parse('2026-11-27T12:00:00Z')
+  $clock = { $current }
+  $at = $current.AddMinutes(-11)
   $service = @{Name='CluedCIUpgrader';State='Running';ProcessId=42}
-  $pulse = @{at=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();token='fixture'}
+  $pulse = @{at=$current.ToUnixTimeMilliseconds();token='fixture'}
   function Get-FleetServices { $service }
   function Read-FleetConnectionJson([string]$file) {
     if ([IO.Path]::GetFileName($file) -ceq 'holder.json') { return @{pid=84;token='fixture'} }
@@ -174,19 +176,19 @@ Case 'lifecycle:upgrader operation heartbeat belongs to the live service child' 
   $child = @{ProcessId=84;ParentProcessId=42;CreationDate=$at.UtcDateTime.AddMinutes(-1)}
   function Get-CimInstance { $child }
   $answer = @{statusAt=$at.ToString('o');upgraderPid=84;op=@{opId='93f65562-5419-4ca8-bff0-8783ebb1b0d2'}}
-  Yes (Test-FleetUpgradeInProgress $answer) 'lifecycle:long-live-upgrader-is-not-abandoned'
+  Yes (Test-FleetUpgradeInProgress $answer -Now $clock) 'lifecycle:long-live-upgrader-is-not-abandoned'
   $pulse.at = $at.ToUnixTimeMilliseconds()
-  Yes (Test-FleetUpgradeInProgress $answer) 'lifecycle:frozen-upgrader-pulse-between-ticks'
+  Yes (Test-FleetUpgradeInProgress $answer -Now $clock) 'lifecycle:frozen-upgrader-pulse-between-ticks'
   $pulse.token = 'another-holder'
-  Throws { Test-FleetUpgradeInProgress $answer } 'FLEET_UPGRADER_HEARTBEAT_UNKNOWN' 'lifecycle:heartbeat-from-another-holder'
+  Throws { Test-FleetUpgradeInProgress $answer -Now $clock } 'FLEET_UPGRADER_HEARTBEAT_UNKNOWN' 'lifecycle:heartbeat-from-another-holder'
   $pulse.token = 'fixture'
   $child.ParentProcessId = 43
-  Throws { Test-FleetUpgradeInProgress $answer } 'FLEET_UPGRADER_HEARTBEAT_UNKNOWN' 'lifecycle:child-belongs-to-another-service'
+  Throws { Test-FleetUpgradeInProgress $answer -Now $clock } 'FLEET_UPGRADER_HEARTBEAT_UNKNOWN' 'lifecycle:child-belongs-to-another-service'
   $child.ParentProcessId = 42
   $child.CreationDate = $at.UtcDateTime.AddMinutes(1)
-  Throws { Test-FleetUpgradeInProgress $answer } 'FLEET_UPGRADER_HEARTBEAT_UNKNOWN' 'lifecycle:reused-pid-postdates-the-pulse'
+  Throws { Test-FleetUpgradeInProgress $answer -Now $clock } 'FLEET_UPGRADER_HEARTBEAT_UNKNOWN' 'lifecycle:reused-pid-postdates-the-pulse'
   $service.State = 'Stopped'; $service.ProcessId = 0
-  Yes (-not (Test-FleetUpgradeInProgress $answer)) 'lifecycle:stopped-upgrader-can-be-abandoned'
+  Yes (-not (Test-FleetUpgradeInProgress $answer -Now $clock)) 'lifecycle:stopped-upgrader-can-be-abandoned'
 }
 Case 'lifecycle:Windows registration identifies WSL ownership before cleanup' {
   . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')

@@ -38,7 +38,7 @@ function Get-FleetTasks {
   @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskPath -ieq $FleetResources.taskPath -and $_.TaskName -iin $FleetResources.tasks })
 }
 
-function Test-FleetUpgradeInProgress($answer) {
+function Test-FleetUpgradeInProgress($answer, [scriptblock]$Now = { [DateTimeOffset]::UtcNow }) {
   $id = [guid]::Empty
   if (-not [guid]::TryParse([string]$answer.op.opId, [ref]$id)) { throw 'FLEET_UPGRADER_OPERATION_REFUSED' }
   $active = @(Get-FleetServices | Where-Object { $_.Name -ieq 'CluedCIUpgrader' -and ($_.State -ine 'Stopped' -or $_.ProcessId -ne 0) })
@@ -48,12 +48,12 @@ function Test-FleetUpgradeInProgress($answer) {
   $heartbeat = Read-FleetConnectionJson (Join-Path $lock 'alive.json')
   $pidNumber = Get-Key $holder 'pid'
   $beatAt = Get-Key $heartbeat 'at'
-  $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  $nowMs = (& $Now).ToUnixTimeMilliseconds()
   # The frozen upgrader touches the lock between ticks. The pulse ties the
   # holder to a point in the lifetime of the current service child.
   if ($active.Count -eq 1 -and $active[0].ProcessId -gt 0 -and $pidNumber -gt 0 -and
       (Get-Key $holder 'token') -and $holder['token'] -ceq (Get-Key $heartbeat 'token') -and
-      $beatAt -is [long] -and $beatAt -le $now) {
+      $beatAt -is [long] -and $beatAt -le $nowMs) {
     $child = Get-CimInstance Win32_Process -Filter ('ProcessId=' + [int]$pidNumber) -ErrorAction Stop
     if ($child -and $child.ProcessId -eq $pidNumber -and $child.ParentProcessId -eq $active[0].ProcessId -and $child.CreationDate -is [DateTime] -and
         ([DateTimeOffset]$child.CreationDate).ToUnixTimeMilliseconds() -le $beatAt) { return $true }

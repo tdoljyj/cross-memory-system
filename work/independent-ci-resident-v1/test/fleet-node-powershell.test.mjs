@@ -96,7 +96,7 @@ function hostScriptLines(body) {
   return { status: r.status, lines: String(r.stdout ?? '').split(/\r?\n/).filter(l => l.trim()), out: `${tail(r.stdout)}\n${tail(r.stderr, 3000)}` };
 }
 
-test('preserved credential asks for a protected file before writing any bytes', { skip, timeout: 30_000 }, () => {
+test('preserved credential asks for a protected file before writing any bytes', { skip }, () => {
   const r = hostScriptLines(`
 $root = Join-Path $env:TEMP ('fleet-acl-' + [Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($root)
