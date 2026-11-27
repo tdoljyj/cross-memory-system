@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { until } from '../../../../scripts/ci/test-clock-guard.mjs';
 import { serviceLoop } from '../../src/service-main.mjs';
@@ -18,7 +19,7 @@ import { readTar } from '../fleet/tar.mjs';
 import { Upgrader } from '../../upgrader/src/upgrader-main.mjs';
 import { FakeDoor, FakeLinux, FakeResident, FakeWindows, fakeClock, installGeneration1, testConfig } from '../../upgrader/test/fixtures.mjs';
 import { renewalWatch } from '../../src/connection-renewal.mjs';
-import { parseVersions, versionNotices } from '../../src/status.mjs';
+import { parseVersions, readVersionState, versionNotices } from '../../src/status.mjs';
 import { acceptanceBytes } from '../../src/fleet-acceptance.mjs';
 
 const repository = 'tdoljyj/cross-memory-system';
@@ -135,20 +136,31 @@ async function fixtureLanes({ node, release, broker, onDuty = false, peers = [],
   const residentLane = residentSelfPull({ root, repository, clock: clockNow });
   const posted = [];
   const submitted = [];
-  let step;
+  let step, canStart;
   return { probe, companion, uploaded, posted, submitted, up, clock, answers, fakeResident: resident,
     state: () => read(path.join(root, 'state', 'fleet-pull.json')),
-    resident: { tick: idle => { step = residentLane.tick(idle); }, stop: () => residentLane.stop() },
+    resident: { ...residentLane, tick: idle => { canStart = idle; step = residentLane.tick(idle); } },
     async tick({ downloadAssets = true } = {}) {
       await step;
+      await residentLane.holdingIdle();
       if (downloadAssets) await companion();
       for (const file of await fs.readdir(path.join(root, 'broker', 'requests'))) {
         const id = path.basename(file, '.json');
         if (await fs.access(path.join(root, 'broker', 'responses', file)).then(() => true, () => false)) continue;
         submitted.push(id);
         assert.deepEqual(Object.keys(await read(path.join(root, 'broker', 'requests', file))).sort(), ['grantId', 'kind']);
-        const { stdout } = await runBroker(['--fleet-pull-fixture', root, id, node.profile.nodeName, process.execPath,
-          new Date(clock.now).toISOString()]);
+        let complete = false;
+        const running = runBroker(['--fleet-pull-fixture', root, id, node.profile.nodeName, process.execPath,
+          new Date(clockNow()).toISOString()]);
+        running.then(() => { complete = true; }, () => { complete = true; });
+        await until(async () => {
+          if (complete) return true;
+          if (!(await fs.stat(path.join(root, 'broker', 'responses', `${id}.idle`)).catch(() => null))) return false;
+          await residentLane.confirmIdle(canStart);
+          if (canStart?.queueEmpty) assert.equal(await residentLane.holdingIdle(), true, '确认发出后常驻须保留空闲');
+          return true;
+        }, 'Broker 完成或请求空闲确认');
+        const { stdout } = await running;
         const answer = JSON.parse(stdout.trim());
         answers.push(answer);
         if (answer.delivered && answer.ok) posted.push(id);
@@ -415,6 +427,71 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
   const target = await release(t, fleet, repo, newerCommit, '2026.11.25-zzz');
   olderContent.target.accepted_at = '2026-11-02T00:00:00.000Z';
 
+  await t.test('当班队列在组装期间转忙，升级 inbox 和投递标记保持为空', async t => {
+    const node = await nodeSite(t, 'l', fleet, { now });
+    const childScript = path.join(await tempDir(t, 'fleet-queue-race'), 'assemble.mjs');
+    const started = path.join(path.dirname(childScript), 'started');
+    const proceed = path.join(path.dirname(childScript), 'proceed');
+    const guard = pathToFileURL(path.join(CHECKOUT, 'scripts', 'ci', 'test-clock-guard.mjs')).href;
+    await fs.writeFile(childScript, `import fs from 'node:fs/promises';
+      import path from 'node:path';
+      import { createHash } from 'node:crypto';
+      import { until } from ${JSON.stringify(guard)};
+      for await (const chunk of process.stdin) {}
+      await fs.writeFile(${JSON.stringify(started)}, '');
+      await until(() => fs.stat(${JSON.stringify(proceed)}).catch(() => null), '夹具允许完成组装');
+      const packageDir = path.join(process.argv.at(-1), 'package');
+      await fs.mkdir(packageDir);
+      await fs.writeFile(path.join(packageDir, 'package-manifest.json'), '{}');
+      console.log(JSON.stringify({ status: 'FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED', packageDir,
+        fromGeneration: 1, packageManifestSha256: createHash('sha256').update('{}').digest('hex') }));
+    `);
+    const lane = await fixtureLanes({ node, release: target, broker, onDuty: true, peers: [source(target)],
+      runBroker: async args => {
+        const running = exec(broker, [...args, childScript], { windowsHide: true });
+        await until(() => fs.stat(started).catch(() => null), 'Broker 组装已开始');
+        lane.resident.tick({ queueEmpty: false });
+        await fs.writeFile(proceed, '');
+        return running;
+      } });
+    await lane.probe();
+    lane.resident.tick({ queueEmpty: true }); await lane.tick();
+    lane.resident.tick({ queueEmpty: true }); await lane.tick();
+    assert.equal(lane.submitted.length, 1);
+    assert.equal(lane.answers[0].delivered, false);
+    assert.equal(lane.answers[0].code, 'FLEET_WAITING_FOR_IDLE');
+    assert.deepEqual(await fs.readdir(path.join(node.root, 'upgrade', 'inbox')), []);
+    assert.equal((await fs.readdir(path.join(node.root, 'broker', 'responses'))).includes(`fleet-${target.target.grant_id}.taken`), false);
+  });
+
+  await t.test('无需投递的结果也复核目标与本机安装身份', async t => {
+    for (const [status, expected] of [
+      ['FLEET_NODE_ALREADY_AT_THIS_PACKAGE', 'FLEET_TARGET_CHANGED'],
+      ['FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'FLEET_GENERATION_CHANGED'],
+    ]) {
+      await t.test(status, async t => {
+        const node = await nodeSite(t, 'm', fleet, { now });
+        const childScript = path.join(await tempDir(t, 'fleet-final-check'), 'assemble.mjs');
+        const currentFile = path.join(node.root, 'upgrade', 'current.json');
+        await fs.writeFile(childScript, `import fs from 'node:fs/promises';
+          for await (const chunk of process.stdin) {}
+          ${expected === 'FLEET_GENERATION_CHANGED' ? `const file = ${JSON.stringify(currentFile)};
+            const current = JSON.parse(await fs.readFile(file, 'utf8'));
+            await fs.writeFile(file, JSON.stringify({ ...current, generation: current.generation + 1 }));` : ''}
+          console.log(JSON.stringify({ status: ${JSON.stringify(status)} }));
+        `);
+        const lane = await fixtureLanes({ node, release: target, broker,
+          runBroker: args => exec(broker, [...args, childScript], { windowsHide: true }) });
+        await lane.probe();
+        if (expected === 'FLEET_TARGET_CHANGED') await lane.probe(null, { recheck: true });
+        await drive(lane, 3);
+        assert.equal(lane.answers[0].code, expected);
+        assert.equal(lane.answers[0].delivered, false);
+        assert.equal((await lane.state()).phase, 'PREPARE_FAILED');
+      });
+    }
+  });
+
   await t.test('T4：组装期间 Broker 中断，重启答未投递，常驻换编号且只投递一次', async t => {
     const node = await nodeSite(t, 'i', fleet, { now });
     const childScript = path.join(await tempDir(t, 'd2interrupted'), 'pause.mjs');
@@ -566,6 +643,15 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
     assert.equal(lane.submitted.length, 1);
     assert.equal(versionNotices({ fleetPull: first }).filter(n => n.kind === 'fleet-pull-refused').length, 1);
     assert.equal(lane.posted.length, 0);
+    await lane.probe({ status: 'pending_seal' });
+    const versionState = () => readVersionState({ root: node.root, policy: { repo: repository, ...windows }, clock: () => time });
+    const beforeTick = (await versionState()).view.fleetPull;
+    assert.equal(beforeTick.reinstall, undefined);
+    assert.equal(beforeTick.code, first.code);
+    assert.deepEqual(lane.answers[0].targetFingerprint, sealed);
+    await drive(lane, 2);
+    assert.equal((await lane.state()).reinstall, undefined);
+    assert.equal((await lane.state()).code, first.code);
     await reinstallFixture(node, frozen);
   });
 

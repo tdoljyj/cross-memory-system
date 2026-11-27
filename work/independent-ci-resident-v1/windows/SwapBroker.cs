@@ -369,18 +369,16 @@ public sealed class SwapBroker : ServiceBase
         fleetPullRequestId = id;
         try {
             new Thread(delegate() {
-                string code = null, status = null;
+                Dictionary<string,object> answer;
                 try {
                     var config = LoadConfig();
-                    var answer = FleetPull.Submit(root,id,config.Node.NodeName,() => ProbeFleet(config),request,
+                    answer = FleetPull.Submit(root,id,config.Node.NodeName,() => ProbeFleet(config),request,
                         () => DateTime.UtcNow,(run,script) => FleetPull.Assemble(root,run,script,
-                            Path.Combine(root,"runtime","node.exe"),stopped));
-                    code = Renewal.Str(answer,"code");
-                    status = Renewal.Str(answer,"status");
-                } catch (BrokerRefusal error) { code = error.Code; }
-                catch (Exception) { code = "FLEET_BROKER_UNCONFIRMED"; }
+                            Path.Combine(root,"runtime","node.exe"),stopped),stopped);
+                } catch (BrokerRefusal error) { answer = FleetPull.Answer(root,id,grant,error.Code,null); }
+                catch (Exception) { answer = FleetPull.Answer(root,id,grant,"FLEET_BROKER_UNCONFIRMED",null); }
                 try {
-                    var bytes = Encoding.UTF8.GetBytes(Renewal.Json(FleetPull.Answer(root,id,grant,code,status)));
+                    var bytes = Encoding.UTF8.GetBytes(Renewal.Json(answer));
                     using (var file = new FileStream(outFile,FileMode.CreateNew,FileAccess.Write,FileShare.None,4096,FileOptions.WriteThrough)) {
                         file.Write(bytes,0,bytes.Length); file.Flush(true);
                     }
@@ -594,6 +592,10 @@ internal static class FleetPull {
     const string RequestContract = "clued.independent-ci.resident-upgrade-request/1";
     const string Prepared = "FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED";
     const string NeedsReinstall = "FLEET_NODE_UPGRADE_NEEDS_REINSTALL";
+    const string AlreadyCurrent = "FLEET_NODE_ALREADY_AT_THIS_PACKAGE";
+    const int IdleWindowMs = 45000;
+    static readonly string[] TargetFields = {"repository","version","grant_id","receipt_id","accepted_at",
+        "request_sha256","archive_sha256","acceptance_sha256"};
     static readonly Regex Version = new Regex(@"\A[A-Za-z0-9][A-Za-z0-9._+-]{0,88}\z");
     static readonly Regex NodeName = new Regex("^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$");
     internal static Dictionary<string,object> Parse(byte[] bytes) {
@@ -605,8 +607,10 @@ internal static class FleetPull {
         return request;
     }
     static string Taken(string root, string grant) { return Path.Combine(root,"broker","responses","fleet-"+grant+".taken"); }
-    internal static Dictionary<string,object> Answer(string root, string id, string grant, string code, string status) {
-        return new Dictionary<string,object> {{"requestId",id},{"ok",code==null},{"code",code},{"status",status},
+    internal static Dictionary<string,object> Answer(string root, string id, string grant, string code, string status,
+        Dictionary<string,object> target = null) {
+        return new Dictionary<string,object> {{"requestId",id},{"grantId",grant},{"ok",code==null},{"code",code},{"status",status},
+            {"targetFingerprint",target},
             {"delivered",File.Exists(Taken(root,grant))}};
     }
     internal static Dictionary<string,object> Interrupted(string root, string id, byte[] bytes, string code) {
@@ -709,8 +713,39 @@ internal static class FleetPull {
         foreach (object peer in (System.Collections.IList)otherSources)
             Renewal.Require((peer as string)==source,"FLEET_WAITING_FOR_PEERS");
     }
+    static FileStream ConfirmIdle(string root, string id, Dictionary<string,object> target, Func<DateTime> clock, WaitHandle stopped, out DateTime deadline) {
+        const string waiting = "FLEET_WAITING_FOR_IDLE";
+        string challenge = Path.Combine(root,"broker","responses",id+".idle");
+        string reply = Path.Combine(root,"broker","requests",id+".idle");
+        string nonce = Guid.NewGuid().ToString("D");
+        long expiresAt = new DateTimeOffset(clock()).ToUnixTimeMilliseconds() + IdleWindowMs;
+        deadline = DateTimeOffset.FromUnixTimeMilliseconds(expiresAt).UtcDateTime;
+        var elapsed = Stopwatch.StartNew();
+        SwapBroker.WritePublicRecord(challenge,Renewal.Json(new {requestId=id,nonce=nonce,expiresAt=expiresAt,targetFingerprint=target}));
+        while (clock()<deadline && elapsed.ElapsedMilliseconds<IdleWindowMs) {
+            Dictionary<string,object> ack = null;
+            try { ack = ReadJson(reply,4096,null); }
+            catch (IOException) { /* 确认文件尚未写完或尚未创建。 */ }
+            if (ack!=null) {
+                object idle;
+                Renewal.Require(Renewal.Str(ack,"requestId")==id && Renewal.Str(ack,"nonce")==nonce &&
+                    Renewal.Number(ack,"expiresAt")==expiresAt && ack.TryGetValue("idle",out idle) && object.Equals(idle,true),waiting);
+                // 常驻在确认过期后检查此独占句柄，再恢复执行队列。
+                FileStream hold;
+                try { hold = File.Open(challenge,FileMode.Open,FileAccess.Read,FileShare.None); }
+                catch (IOException) { throw new BrokerRefusal(waiting); }
+                if (clock()<deadline && elapsed.ElapsedMilliseconds<IdleWindowMs && (stopped==null || !stopped.WaitOne(0))) return hold;
+                hold.Dispose();
+                break;
+            }
+            if (stopped==null) Thread.Sleep(SwapBroker.RequestPollMs);
+            else if (stopped.WaitOne(SwapBroker.RequestPollMs)) break;
+        }
+        throw new BrokerRefusal(waiting);
+    }
     internal static Dictionary<string,object> Submit(string root, string id, string node, Func<Renewal.Connection> probe,
-        Dictionary<string,object> request, Func<DateTime> clock, Func<string,string,Dictionary<string,object>> assemble) {
+        Dictionary<string,object> request, Func<DateTime> clock, Func<string,string,Dictionary<string,object>> assemble,
+        WaitHandle stopped = null) {
         string decision = Renewal.Str(request,"grantId");
         Renewal.Require(Renewal.Id(id) && Renewal.Id(decision) && NodeName.IsMatch(node),"FLEET_BROKER_REQUEST_REFUSED");
         var mark = Taken(root,decision);
@@ -737,8 +772,8 @@ internal static class FleetPull {
             input.Write(bytes,0,bytes.Length);
         }
         var answer = assemble(run,Path.Combine(src,"fleet-assemble-main.mjs"));
-        string status = Renewal.Str(answer,"status");
-        if (status!=Prepared && status!=NeedsReinstall) return answer;
+        string status = Renewal.Str(answer,"status"), code = Renewal.Str(answer,"code");
+        if (status!=Prepared && status!=NeedsReinstall && status!=AlreadyCurrent) return Answer(root,id,decision,code,status);
 
         string package = Renewal.Str(answer,"packageDir"), sha = Renewal.Str(answer,"packageManifestSha256");
         if (status==Prepared) {
@@ -748,32 +783,40 @@ internal static class FleetPull {
             ReadJson(Path.Combine(package,"package-manifest.json"),16*1024*1024,sha);
         }
 
-        // The signed target can change during assembly. Bind both the inbox write and a reinstall referral to the same seal.
+        // 每个结果都绑定组装时的签名目标和本机安装。
         var latest = probe();
-        foreach (var field in new[]{"repository","version","grant_id","receipt_id","accepted_at","request_sha256","archive_sha256","acceptance_sha256"})
-            Renewal.Require(Renewal.Str(latest.FleetTarget,field)==Renewal.Str(target,field),"FLEET_TARGET_CHANGED");
+        var fingerprint = new Dictionary<string,object>();
+        foreach (var field in TargetFields) {
+            string value = Renewal.Str(latest.FleetTarget,field);
+            Renewal.Require(value==Renewal.Str(target,field),"FLEET_TARGET_CHANGED");
+            fingerprint.Add(field,value);
+        }
         if (latest.OnDuty) {
             Renewal.Require(observed.OnDuty,"FLEET_ROLE_CHANGED");
             CheckPeers(root,latest.FleetTarget);
         }
-        if (status==NeedsReinstall) return answer;
-
-        current = ReadJson(currentFile,65536,null);
-        Renewal.Require(Renewal.Number(answer,"fromGeneration")==generation && Renewal.Number(current,"generation")==generation &&
-            Renewal.Str(current,"residentManifestSha256")==residentSha,"FLEET_GENERATION_CHANGED");
-        var now = clock();
-        using (var claim = new FileStream(mark,FileMode.CreateNew,FileAccess.Write,FileShare.None,1,FileOptions.WriteThrough)) {
-            claim.WriteByte(1); claim.Flush(true);
+        DateTime idleDeadline = DateTime.MaxValue;
+        using (var idle = status==Prepared && latest.OnDuty ? ConfirmIdle(root,id,fingerprint,clock,stopped,out idleDeadline) : null) {
+            current = ReadJson(currentFile,65536,null);
+            Renewal.Require(Renewal.Number(current,"generation")==generation && Renewal.Str(current,"residentManifestSha256")==residentSha,
+                "FLEET_GENERATION_CHANGED");
+            if (status!=Prepared) return Answer(root,id,decision,code,status,fingerprint);
+            Renewal.Require(Renewal.Number(answer,"fromGeneration")==generation,"FLEET_GENERATION_CHANGED");
+            var now = clock();
+            Renewal.Require(now<idleDeadline,"FLEET_WAITING_FOR_IDLE");
+            using (var claim = new FileStream(mark,FileMode.CreateNew,FileAccess.Write,FileShare.None,1,FileOptions.WriteThrough)) {
+                claim.WriteByte(1); claim.Flush(true);
+            }
+            var requestBytes=Encoding.UTF8.GetBytes(Renewal.Json(new { contract=RequestContract, requestId=id, node=node,
+                packageManifestSha256=sha, packageDirectory=package, acceptanceDecisionRef=decision, drainMaxMinutes=120,
+                note="", requestedAt=Renewal.Stamp(now), nonce=Guid.NewGuid().ToString("N") }));
+            long ms = (long)(now - new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalMilliseconds;
+            var name=ms.ToString("D13")+"-"+id.Replace("-","").Substring(0,12)+".json";
+            using (var inbox = new FileStream(Path.Combine(root,"upgrade","inbox",name),FileMode.CreateNew,FileAccess.Write,FileShare.None,4096,FileOptions.WriteThrough)) {
+                inbox.Write(requestBytes,0,requestBytes.Length); inbox.Flush(true);
+            }
         }
-        var requestBytes=Encoding.UTF8.GetBytes(Renewal.Json(new { contract=RequestContract, requestId=id, node=node,
-            packageManifestSha256=sha, packageDirectory=package, acceptanceDecisionRef=decision, drainMaxMinutes=120,
-            note="", requestedAt=Renewal.Stamp(now), nonce=Guid.NewGuid().ToString("N") }));
-        long ms = (long)(now - new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalMilliseconds;
-        var name=ms.ToString("D13")+"-"+id.Replace("-","").Substring(0,12)+".json";
-        using (var inbox = new FileStream(Path.Combine(root,"upgrade","inbox",name),FileMode.CreateNew,FileAccess.Write,FileShare.None,4096,FileOptions.WriteThrough)) {
-            inbox.Write(requestBytes,0,requestBytes.Length); inbox.Flush(true);
-        }
-        return answer;
+        return Answer(root,id,decision,code,status,fingerprint);
     }
 }
 

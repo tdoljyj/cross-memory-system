@@ -1,4 +1,5 @@
 import { parseBudget } from './budget-alert.mjs';
+import { matchesFleetTarget, observationOf } from './fleet-self-pull.mjs';
 // The resident's status snapshot (resident quota redesign v0.6 + §9, phase 1, item 7; Owner Decision 38936534).
 //
 // state\status.json is a VIEW, never evidence (the ledger and the receipt chain are): the executor keeps one in-memory
@@ -607,7 +608,12 @@ export async function readVersionState({ root, policy, policySha256 = null, cloc
   await writePackageVersion(root, view.installedPackage).catch(() => {});
   const renewal=await renewalStatus(root,clock());
   if(renewal) view.renewal=renewal;
-  const fleetPull = fleetPullView(await readJsonLenient(path.join(root, 'state', 'fleet-pull.json')));
+  const fleetLedger = await readJsonLenient(path.join(root, 'state', 'fleet-pull.json'));
+  if (fleetLedger?.reinstall) {
+    const observed = observationOf(await readJsonLenient(path.join(root, 'broker', 'renew-ci.json')), policy.repo, clock());
+    if (!matchesFleetTarget(fleetLedger.targetFingerprint, observed?.fleetTarget)) delete fleetLedger.reinstall;
+  }
+  const fleetPull = fleetPullView(fleetLedger);
   if (fleetPull) view.fleetPull = fleetPull;
   const notices=versionNotices(view, inputs.status);
   if(renewal) {

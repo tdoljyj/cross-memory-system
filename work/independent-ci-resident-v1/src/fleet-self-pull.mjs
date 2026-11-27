@@ -18,6 +18,11 @@ const LIMIT = 30 * 60_000;
 const SMALL = 256 * 1024;
 const ARCHIVE_MAX = 512 * 1024 * 1024;
 const MOVING = new Set(['WAITING_GRANT', 'WAITING_DRAIN', 'DEFERRED', 'RUNNING', 'ROLLING_BACK']);
+const TARGET_FIELDS = ['repository', 'version', 'grant_id', 'receipt_id', 'accepted_at',
+  'request_sha256', 'archive_sha256', 'acceptance_sha256'];
+const targetFingerprint = target => Object.fromEntries(TARGET_FIELDS.map(field => [field, target[field] ?? null]));
+export const matchesFleetTarget = (fingerprint, target) => !!target && TARGET_FIELDS.every(field =>
+  fingerprint?.[field] === (target[field] ?? null));
 const needsSeal = target => packageGenerationOf(target.version) >= 25;
 const read = async (filename, limit = SMALL) => {
   try { return JSON.parse(await readBounded(filename, limit, 'FLEET_READ_REFUSED')); }
@@ -130,13 +135,21 @@ export function residentSelfPull({ root, repository, clock = Date.now,
   submit = (id, payload) => dropFleetRequest(root, id, payload) }) {
   const at = (...parts) => path.join(root, ...parts);
   const ledger = at('state', 'fleet-pull.json');
+  const reservation = at('state', 'fleet-idle.json');
+  const observe = async () => observationOf(await read(at('broker', 'renew-ci.json')), repository, clock());
+  const response = id => at('broker', 'responses', `${id}.json`);
+  const challenge = id => at('broker', 'responses', `${id}.idle`);
+  const confirmation = id => at('broker', 'requests', `${id}.idle`);
+  const paused = () => fs.access(at('state', 'PAUSED.json')).then(() => true, error => error.code !== 'ENOENT');
   let next = 0;
   let relayed;
   let active;
   let idle = null;
+  let lease;
   let stopped = false;
   const show = async (target, phase, code = null, requestId = null) => {
     const view = { targetVersion: target.version, grantId: target.grant_id, phase, code, requestId,
+      targetFingerprint: targetFingerprint(target),
       ...(phase === 'NEEDS_REINSTALL' && needsSeal(target) ? {
         reinstall: { repository: target.repository, archiveSha256: target.archive_sha256,
           requestSha256: target.request_sha256, acceptanceSha256: target.acceptance_sha256 },
@@ -145,23 +158,34 @@ export function residentSelfPull({ root, repository, clock = Date.now,
   };
   async function step() {
     refuseUnderTest(root);
-    const view = observationOf(await read(at('broker', 'renew-ci.json')), repository, clock());
+    const view = await observe();
     if (JSON.stringify(view) !== relayed) {
       await writeObservation(at('state', 'fleet-target.json'), view);
       relayed = JSON.stringify(view);
     }
+    const last = await read(ledger);
+    if (last?.reinstall && !matchesFleetTarget(last.targetFingerprint, view?.fleetTarget)) {
+      delete last.reinstall;
+      await writeObservation(ledger, last);
+      return;
+    }
     if (!view) return;
     const { fleetTarget: target, onDuty } = view;
-    const last = await read(ledger);
     const upgrade = await read(at('upgrade', 'status.json'));
     const op = upgrade?.op;
     if (last?.grantId === target.grant_id && last.requestId) {
-      const answer = await read(at('broker', 'responses', `${last.requestId}.json`));
+      const answer = await read(response(last.requestId));
       if (last.phase === 'REQUESTED' && answer?.requestId === last.requestId && answer.delivered === false) {
-        if (answer.status === 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE') {
-          await show(target, 'CURRENT');
-        } else if (answer.status === 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL') {
-          await show(target, 'NEEDS_REINSTALL', codeOf(answer, 'FLEET_NEEDS_REINSTALL'));
+        if (['FLEET_NODE_ALREADY_AT_THIS_PACKAGE', 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL'].includes(answer.status)) {
+          const latest = (await observe())?.fleetTarget;
+          if (answer.grantId === last.grantId && matchesFleetTarget(last.targetFingerprint, latest)
+            && matchesFleetTarget(answer.targetFingerprint, latest)) {
+            if (answer.status === 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE') await show(latest, 'CURRENT');
+            else await show(latest, 'NEEDS_REINSTALL', codeOf(answer, 'FLEET_NEEDS_REINSTALL'));
+          } else {
+            await show(target, 'PREPARE_FAILED', 'FLEET_TARGET_CHANGED');
+            next = clock() + RETRY;
+          }
         } else {
           const code = codeOf(answer, 'FLEET_PREPARE_FAILED');
           await show(target, code === 'FLEET_WAITING_FOR_PEERS' ? 'WAITING_FOR_PEERS' : 'PREPARE_FAILED', code);
@@ -181,9 +205,11 @@ export function residentSelfPull({ root, repository, clock = Date.now,
       // The existing rollback notices own both rollback outcomes.
       return;
     }
-    if (last?.grantId === target.grant_id && ['CURRENT', 'NEEDS_REINSTALL', 'REFUSED'].includes(last.phase)) return;
+    if (last?.grantId === target.grant_id && (['CURRENT', 'REFUSED'].includes(last.phase)
+      || (last.phase === 'NEEDS_REINSTALL' && matchesFleetTarget(last.targetFingerprint, target)
+        && (!needsSeal(target) || last.reinstall)))) return;
     if (!idle || (onDuty && !idle.queueEmpty) || stopped || (op && MOVING.has(op.state))
-      || await fs.access(at('state', 'PAUSED.json')).then(() => true, () => false)) return;
+      || await paused()) return;
     const bundle = byTarget(root, target);
     if ((await read(path.join(bundle, 'ready.json')))?.grantId !== target.grant_id) {
       const failure = await read(path.join(bundle, 'download.json'));
@@ -206,12 +232,53 @@ export function residentSelfPull({ root, repository, clock = Date.now,
     } catch (error) { await show(target, 'REFUSED', codeOf(error, 'FLEET_BROKER_DELIVERY_UNKNOWN'), id); }
   }
   return {
+    async holdingIdle() {
+      if (lease === undefined) {
+        // 服务重启后仍须遵守上一个进程已经确认的空闲保留。
+        const saved = await read(reservation);
+        lease = UUID.test(saved?.requestId ?? '') && saved.idle === true && Number.isSafeInteger(saved.expiresAt) ? saved : null;
+      }
+      if (!lease) return false;
+      const { requestId, expiresAt } = lease;
+      if ((await read(response(requestId)))?.requestId !== requestId) {
+        if (clock() < expiresAt) return true;
+        // 到期时 Broker 可能仍持有独占句柄，正在写入升级 inbox。
+        try { await (await fs.open(challenge(requestId), 'r')).close(); }
+        catch (error) { if (error.code !== 'ENOENT') return true; }
+      }
+      lease = null;
+      return false;
+    },
+    async confirmIdle(canStart) {
+      if (lease || stopped) return;
+      refuseUnderTest(root);
+      const last = await read(ledger);
+      const id = last?.phase === 'REQUESTED' && last.requestId;
+      if (!UUID.test(id ?? '')) return;
+      const ping = await read(challenge(id));
+      if (ping?.requestId !== id || !UUID.test(ping.nonce ?? '') || !Number.isSafeInteger(ping.expiresAt)
+        || ping.expiresAt <= clock() || await fs.access(confirmation(id)).then(() => true, () => false)) return;
+      const latest = await observe();
+      const op = (await read(at('upgrade', 'status.json')))?.op;
+      const confirmed = canStart?.queueEmpty === true && latest?.onDuty === true && !MOVING.has(op?.state)
+        && matchesFleetTarget(last.targetFingerprint, latest.fleetTarget)
+        && matchesFleetTarget(ping.targetFingerprint, latest.fleetTarget) && !(await paused()) && !stopped;
+      const ack = { requestId: id, nonce: ping.nonce, expiresAt: ping.expiresAt, idle: confirmed };
+      // 先保留空闲再发送。确认写入结果未知时仍保留空闲。
+      if (confirmed) {
+        try { await writeObservation(reservation, ack); }
+        catch { return; }
+        lease = ack;
+      }
+      try { await fs.writeFile(confirmation(id), JSON.stringify(ack), { flag: 'wx' }); }
+      catch { /* Broker 在确认缺失或不可读时重试。 */ }
+    },
     tick(canStart) {
       idle = canStart;
       if (stopped || active || clock() < next) return active;
       active = step().catch(async error => {
         next = clock() + RETRY;
-        const view = observationOf(await read(at('broker', 'renew-ci.json')), repository, clock());
+        const view = await observe();
         const last = await read(ledger);
         if (view && !(last?.grantId === view.fleetTarget.grant_id && last.requestId))
           await show(view.fleetTarget, 'PREPARE_FAILED', codeOf(error, 'FLEET_PREPARE_FAILED')).catch(() => {});
