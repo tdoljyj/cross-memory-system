@@ -9,7 +9,7 @@ import { PUMP_CODES } from '../src/engine-windows.mjs';
 import * as source from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
 import { DETERMINISTIC_PR_REASONS, DETERMINISTIC_PR_REASON_CODES, deterministicPrFault, refusalSafeToRerun } from '../../actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs';
 import { writeOutcome } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-inputs.mjs';
-import { DIAGNOSTIC_CODES } from '../../actions-hosted-migration/independent-ci-v1/src/admission-facts-v2.mjs';
+import { DIAGNOSTIC_CODES, reasonCodes } from '../../actions-hosted-migration/independent-ci-v1/src/admission-facts-v2.mjs';
 import { CLEAN_PROOF, WINDOWS_CLEAN, tempRoot } from './helpers.mjs';
 import { ATTEMPT2_RESIDENT_CODES, attempt2Decision } from '../src/attempts.mjs';
 
@@ -251,6 +251,22 @@ test('NODE_ROLE_NOT_HELD (C3, DESIGN §29): a stage-1 node-role row released on 
   // without the role reason the older code keeps its own answers
   assert.equal(failureRow({ code: 'NATIVE_NOT_ADMITTED', stage: 1, diagnostic: { reasonCodes: ['binding_not_authorized'] } }).class, 'not-admitted');
   assert.equal(failureRow({ code: 'NATIVE_NOT_ADMITTED', stage: 1, diagnostic: { reasonCodes: ['protected_change_not_up_to_date'] } }).class, 'deterministic-pr');
+});
+
+test('Native ci_binding_required releases an unstarted stage-1 head with a neutral breaker', async t => {
+  const reason = 'full_admission_rejected';
+  const codes = reasonCodes(['ci_binding_required']);
+  const diagnostic = { verdict: 'REJECTED', nativeVerdict: 'REJECTED', reasonCodes: codes, nativeReasonCodes: codes };
+  const safeToRerun = refusalSafeToRerun({ step: 'boundary', claimed: null, reason, diagnostic });
+  const written = await writeOutcome({ receiptsRoot: await tempRoot(t), nonce: '1'.repeat(32),
+    plan: { stage: 1, entryRole: 'work-admission' }, jobIds: [],
+    result: { status: 'BLOCKED', reason, sideEffects: 0, admissionDiagnostic: diagnostic, safeToRerun } });
+  const code = source.outcomeFailureCode(written, 1), outcome = source.outcomeFacts(written);
+  const { row, release, klass } = decideFailure({ code, stage: 1, outcome, proof: CLEAN_PROOF, started: false });
+  assert.deepEqual({ code, safeToRerun: outcome.safeToRerun, class: row.class, disposition: row.disposition, release, klass, retry: row.retry, breaker: row.breaker }, {
+    code: 'NODE_ROLE_NOT_HELD', safeToRerun: true, class: 'node-role', disposition: 'release-if-safe',
+    release: 'NOT_ADMITTED', klass: 'NOT_ADMITTED', retry: 'new-trigger', breaker: 'neutral',
+  });
 });
 
 test('every release reason is registered with its cool-down and the budget that bounds it (v0.6 §7 minor 6; phase 2)', () => {

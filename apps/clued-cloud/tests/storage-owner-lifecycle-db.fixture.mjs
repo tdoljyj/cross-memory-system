@@ -7,6 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import { newCluster } from './pg-cluster-fixture.mjs';
+import { until } from '../../../scripts/ci/test-clock-guard.mjs';
 import {allowTestIssuerCredentials} from './issuer-credentials-fixture.mjs';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
 import {findGatewayCloseoutMigration,assertGatewayCloseoutBoundary,snapshotCallerCatalog, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
@@ -15,7 +16,7 @@ const sha=v=>crypto.createHash('sha256').update(v).digest('hex'),id=()=>crypto.r
 const envelope=()=>({contract:'clued.storage-credential/1',key_id:'synthetic',nonce:'N'.repeat(16),ciphertext:'X'.repeat(64)});
 const rpcName='public.clued_storage_owner_lifecycle_v1(text,jsonb)';
 const wholeRootMigration='20261010150000_storage_owner_root_trash_scope_v2.sql';
-test('Native owner lifecycle, real migrations and synthetic Google observations',{timeout:240000},async t=>{
+test('Native owner lifecycle, real migrations and synthetic Google observations',async t=>{
   const tempParent=await fs.realpath(os.tmpdir());
   const dir=await fs.mkdtemp(path.join(tempParent,'clued-owner-lifecycle-'));
   const server=newCluster({databaseDir:dir,user:'postgres',password:sha(id()),persistent:true,
@@ -34,12 +35,19 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     let wholeRootPreMasterDefinition,reconnectRetryPredecessorDefinition,reconnectRefreshPredecessorDefinition,demandRuntimePredecessorDefinition;
+    const renewalSignatures=['clued_private.ii_pub_clued_storage_refresh_worker_v1(text,jsonb)','clued_private.clued_storage_refresh_manage_v1(jsonb)'];
+    const demandRuntimeSignatures=[renewalSignatures[0],'clued_private.storage_demand_due_v1(text)'];
+    const renewalPredecessors=[],demandRuntimeSuccessorDefinitions=[];
     for(const file of (await fs.readdir(path.join(cloud,'supabase/migrations'))).filter(n=>n.endsWith('.sql')).sort()){
       if(file.endsWith('_storage_master_control_v1.sql'))wholeRootPreMasterDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
       if(file.endsWith('_storage_reconnect_retry_v1.sql'))reconnectRetryPredecessorDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
       if(file.endsWith('_storage_reconnect_refresh_default_v1.sql'))reconnectRefreshPredecessorDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
       if(file.endsWith('_storage_demand_refresh_runtime_v1.sql'))demandRuntimePredecessorDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
+      if(file.endsWith('_storage_refresh_intent_v1.sql'))for(const signature of renewalSignatures)
+        renewalPredecessors.push((await db.query('select pg_get_functiondef($1::regprocedure) def',[signature])).rows[0].def);
       try{await db.query(await fs.readFile(path.join(cloud,'supabase/migrations',file),'utf8'));}catch(e){throw new Error('Migration '+file+': '+e.message,{cause:e});}
+      if(file.endsWith('_storage_demand_refresh_runtime_v1.sql'))for(const signature of demandRuntimeSignatures)
+        demandRuntimeSuccessorDefinitions.push((await db.query('select pg_get_functiondef($1::regprocedure) def',[signature])).rows[0].def);
     }
     const closeout=await findGatewayCloseoutMigration(cloud);
     await assertGatewayCloseoutBoundary(db);
@@ -82,7 +90,7 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
     const confirm=(r,more)=>({contract:'clued.storage-owner-confirmation/1',root_folder_id:r.rootId,confirmed:true,...more});
     const disconnect=async connection=>{const c=await row(connection);return (await native.query('select public.clued_storage_owner_manage_v2($1::jsonb) v',[JSON.stringify({action:'disconnect',connection_id:connection,base_version:Number(c.version),idempotency_key:id()})])).rows[0].v;};
     await t.test('gateway stays 80; only authenticated can call; live Native session and active issuer both mandatory',async()=>{
-      assert.equal((await db.query("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and has_function_privilege('clued_worker_gateway',p.oid,'EXECUTE')")).rows[0].n,80);
+      await assertGatewayCloseoutBoundary(db);
       for(const role of ['anon','service_role','clued_worker_gateway'])assert.equal((await db.query('select has_function_privilege($1,$2,\'EXECUTE\') v',[role,rpcName])).rows[0].v,false);
       await assert.rejects(call({action:'list'},native,sha(id())),e=>e.code==='42501');
       await login(native,owner,id());await assert.rejects(listing(),e=>e.code==='42501');await login(native);
@@ -294,20 +302,29 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       const pid=(await waiting.query('select pg_backend_pid() pid')).rows[0].pid;
       await locker.query('begin');await locker.query('select pg_advisory_xact_lock(hashtextextended($1,0))',[owner+':'+r.rootId]);
       let settled=false;const pending=call(request,waiting).then(v=>{settled=true;return {v};},error=>{settled=true;return {error};});
-      for(let i=0;i<100;i++){
+      await until(async()=>{
         const waitingNow=(await db.query("select wait_event='advisory' waiting from pg_stat_activity where pid=$1",[pid])).rows[0]?.waiting;
-        if(waitingNow)break;if(settled)assert.fail('Native call did not wait for Root serialization');await new Promise(resolve=>setTimeout(resolve,10));
-        if(i===99)assert.fail('Native root lock wait was not observed');
-      }
+        assert.equal(settled,false,'Native call did not wait for Root serialization');
+        return waitingNow;
+      },'Native root lock wait');
       // The session row SHARE check has already run. Changing only its TTL
       // under the same fixture's administrative connection waits on that row,
       // so use a short initial TTL to prove wall-clock recheck after the wait.
       await locker.query('rollback');assert.equal((await pending).error,undefined);
-      const sid=id();await db.query("insert into auth.sessions(id,user_id,not_after) values($1,$2,clock_timestamp()+interval '200 milliseconds')",[sid,owner]);
-      await login(waiting,owner,sid);const r2=await root(),request2=await deletion(r2);
+      const sid=id(),r2=await root(),request2=await deletion(r2);
       await locker.query('begin');await locker.query('select pg_advisory_xact_lock(hashtextextended($1,0))',[owner+':'+r2.rootId]);
-      const denied=call(request2,waiting).then(v=>({v}),error=>({error}));
-      await new Promise(resolve=>setTimeout(resolve,250));await locker.query('rollback');
+      await db.query("insert into auth.sessions(id,user_id,not_after) values($1,$2,clock_timestamp()+interval '2 seconds')",[sid,owner]);
+      await login(waiting,owner,sid);
+      let secondSettled=false;
+      const denied=call(request2,waiting).then(v=>({v}),error=>({error})).finally(()=>{secondSettled=true;});
+      await until(async()=>{
+        const waitingNow=(await db.query("select wait_event='advisory' waiting from pg_stat_activity where pid=$1",[pid])).rows[0]?.waiting;
+        assert.equal(secondSettled,false,'Native call did not start before the session expired');
+        return waitingNow;
+      },'Native root lock wait before session expiration');
+      await until(async()=>(await db.query('select not_after<=clock_timestamp() expired from auth.sessions where id=$1',[sid])).rows[0].expired,
+        'Native session expiration');
+      await locker.query('rollback');
       assert.equal((await denied).error?.code,'42501');
       assert.equal((await db.query('select count(*)::int n from clued_private.storage_owner_lifecycle_v1 where profile_id=$1',[r2.profile])).rows[0].n,0);
       await login(waiting);
@@ -572,7 +589,7 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       await disconnect(r.connection);const revoked=await row(r.connection),stopped=(await listing()).connections.find(x=>x.id===r.connection);
       await assert.rejects(call(await wholeDeletion(r)),e=>e.code==='42501');assert.deepEqual(await row(r.connection),revoked);
       assert.equal((await listing()).connections.find(x=>x.id===r.connection).root_stop_generation,stopped.root_stop_generation);
-      assert.equal((await db.query("select count(*)::int n from pg_proc where pronamespace='public'::regnamespace and has_function_privilege('clued_worker_gateway',oid,'EXECUTE')")).rows[0].n,80);
+      await assertGatewayCloseoutBoundary(db);
     });
     await t.test('demand preparation is private, validates current Owner/session and does not issue a read or file intent',async()=>{
       const r=await root(),before=(await db.query('select count(*)::int n from clued_private.storage_read_receipts_v1')).rows[0].n;
@@ -605,7 +622,7 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
           idempotency_key:id(),...(action==='enable'?{until_revoked:true}:{})})])).rows[0].v;};
       await manage('enable');
       const current=await prepare();assert.equal(current.renewal_enabled,true);
-      const expiry=new Date(Date.now()-1000).toISOString();
+      const expiry='2000-01-01T00:00:00.000Z';
       assert.deepEqual(await refresh({action:'observe_credential',proof:current.proof,credential_version:current.credential_version,expires_at:expiry}),{status:'current'});
       const observed=(await db.query('select * from clued_private.storage_refresh_activity_v1 where connection_id=$1',[r.connection])).rows[0];
       assert.equal(observed.last_demand_at,null,'opening an Owner page is not an active background task');
@@ -624,9 +641,10 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       const attempt=id(),claim={action:'claim',connection_id:r.connection,attempt_id:attempt,demand_proof:current.proof};
       const acquired=await refresh(claim);assert.equal(acquired.status,'acquired');
       const original=await row(r.connection);
+      const futureExpiry=(await db.query("select clock_timestamp()+interval '1 hour' expiry")).rows[0].expiry.toISOString();
       await manage('disable');
       await assert.rejects(refresh({action:'commit',connection_id:r.connection,attempt_id:attempt,demand_proof:current.proof,
-        credential_envelope:envelope(),expires_at:new Date(Date.now()+3600000).toISOString()}),e=>e.code==='42501');
+        credential_envelope:envelope(),expires_at:futureExpiry}),e=>e.code==='42501');
       const stopped=await row(r.connection);assert.equal(stopped.credential_version,original.credential_version);
       assert.equal((await renewalStatus()).enabled,false);
       await assert.rejects(refresh({...claim,attempt_id:id()}),e=>e.code==='42501');
@@ -648,7 +666,7 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
         const current=await call(input,db,rotated);assert.equal(current.connection_id,r.connection);
         await db.query('savepoint old_identity');await assert.rejects(call(input,db,proof),e=>e.code==='42501');await db.query('rollback to savepoint old_identity');
         await db.query("reset role");
-        const expiry=new Date(Date.now()+3600000).toISOString();
+        const expiry=(await db.query("select clock_timestamp()+interval '1 hour' expiry")).rows[0].expiry.toISOString();
         await db.query("set local role clued_worker_gateway");
         const observed=(await db.query('select public.clued_storage_refresh_worker_v1($1,$2::jsonb) v',
           [rotated,JSON.stringify({action:'observe_credential',proof:current.proof,credential_version:current.credential_version,expires_at:expiry})])).rows[0].v;
@@ -656,14 +674,102 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       }finally{await db.query('rollback');}
     });
     await t.test('demand runtime replay preserves GW80 and every function definition/ACL; catalog drift fails atomically',async()=>{
-      const sql=await fs.readFile(path.join(cloud,'supabase/migrations','20261012113128_storage_demand_refresh_runtime_v1.sql'),'utf8');
-      const before=await snapshotCallerCatalog(db);await db.query(sql);assert.deepEqual(await snapshotCallerCatalog(db),before);
-      await db.query('begin');try{
+      // Replay the historical subject before the later Worker due and renewal
+      // changes. Roll back the disposable database to its current catalog.
+      assert.equal(demandRuntimeSuccessorDefinitions.length,demandRuntimeSignatures.length);
+      await db.query('begin');
+      try{
+        for(const definition of demandRuntimeSuccessorDefinitions)await db.query(definition);
+        const sql=await fs.readFile(path.join(cloud,'supabase/migrations','20261012113128_storage_demand_refresh_runtime_v1.sql'),'utf8');
+        const before=await snapshotCallerCatalog(db);await db.query(sql);assert.deepEqual(await snapshotCallerCatalog(db),before);
+        await db.query('savepoint restore_historical_catalog');
         await db.query('alter function public.clued_storage_owner_lifecycle_v1(text,jsonb) security invoker');
         const drift=await snapshotCallerCatalog(db);await db.query('savepoint bad_catalog');
         await assert.rejects(db.query(sql),/storage_demand_owner_catalog_mismatch/);
         await db.query('rollback to savepoint bad_catalog');assert.deepEqual(await snapshotCallerCatalog(db),drift);
+        await db.query('rollback to savepoint restore_historical_catalog');
+        await assertGatewayCloseoutBoundary(db);
       }finally{await db.query('rollback');}
+    });
+    const refreshStatus=async r=>(await native.query('select public.clued_storage_refresh_manage_v1($1::jsonb) v',
+      [JSON.stringify({action:'status',connection_id:r.connection})])).rows[0].v;
+    const refreshManage=async(r,action)=>{const s=await refreshStatus(r);return (await native.query('select public.clued_storage_refresh_manage_v1($1::jsonb) v',
+      [JSON.stringify({action,connection_id:r.connection,base_version:s.connection_version,delegation_version:s.version,
+        idempotency_key:id(),...(action==='enable'?{until_revoked:true}:{})})])).rows[0].v;};
+    const refreshCall=async input=>(await db.query('select public.clued_storage_refresh_worker_v1($1,$2::jsonb) v',[proof,JSON.stringify(input)])).rows[0].v;
+    const prepareRenewalOAuth=async r=>{const d=await outer({action:'describe',connection_id:r.connection}),state=sha(id());
+      await outer({action:'prepare',connection_id:r.connection,connection_version:d.connection_version,attempt_id:id(),state_hash:state,
+        verifier_envelope:envelope(),requested_scope_profile:'legacy'});await callback({action:'claim',state_hash:state});return state;};
+    const finishRenewalOAuth=(state,subject='synthetic-provider-owner')=>callback({action:'complete',state_hash:state,
+      provider_subject:subject,credential_envelope:envelope(),provider_scope_profile:'legacy'});
+    const pauseRenewal=async(r,reason='provider_rejected',failure_code='token_invalid_grant')=>{
+      await db.query('update clued_private.storage_refresh_delegations_v1 set next_refresh_at=clock_timestamp() where connection_id=$1',[r.connection]);
+      const attempt=id();assert.equal((await refreshCall({action:'claim',connection_id:r.connection,attempt_id:attempt})).status,'acquired');
+      return {attempt,result:await refreshCall({action:'fail',connection_id:r.connection,attempt_id:attempt,reason,failure_code})};
+    };
+    await t.test('renewal intent upgrade replays exactly and rejects source/Owner/ACL drift atomically',async()=>{
+      const sql=await fs.readFile(path.join(cloud,'supabase/migrations','20261117113000_storage_refresh_intent_v1.sql'),'utf8');
+      const catalog=async()=>(await db.query('select oid::regprocedure::text signature,pg_get_userbyid(proowner) owner,prosecdef,proconfig,proacl::text acl,prosrc from pg_proc where oid=any($1::regprocedure[]) order by oid',[renewalSignatures])).rows;
+      const current=await catalog();await db.query(sql);assert.deepEqual(await catalog(),current);
+      await db.query('begin');try{for(const definition of renewalPredecessors)await db.query(definition);await db.query(sql);assert.deepEqual(await catalog(),current);}finally{await db.query('rollback');}
+      for(const signature of renewalSignatures)for(const tamper of ['owner','invoker','path','acl','source']){
+        await db.query('begin');try{
+          if(tamper==='source'){const v=(await db.query('select pg_get_functiondef($1::regprocedure) def,prosrc from pg_proc where oid=$1::regprocedure',[signature])).rows[0];
+            await db.query(v.def.replace(v.prosrc,()=>v.prosrc+'\n-- unexpected drift\n'));}
+          else await db.query(tamper==='owner'?`alter function ${signature} owner to authenticated`:tamper==='invoker'?`alter function ${signature} security invoker`
+            :tamper==='path'?`alter function ${signature} set search_path=public`:`grant execute on function ${signature} to anon`);
+          const changed=await catalog();await db.query('savepoint reject_renewal_drift');
+          await assert.rejects(db.query(sql),/storage_refresh_intent_(source|catalog)_mismatch/);
+          await db.query('rollback to savepoint reject_renewal_drift');assert.deepEqual(await catalog(),changed);
+        }finally{await db.query('rollback');}
+      }
+      await assertGatewayCloseoutBoundary(db);
+    });
+    await t.test('fatal refresh pauses execution, retains authorization and fresh same-identity OAuth restores renewal',async()=>{
+      const r=await root();await refreshManage(r,'enable');const originalStatus=await refreshStatus(r);
+      const failed=await pauseRenewal(r);assert.equal(failed.result.status,'failed');
+      const paused=await refreshStatus(r);assert.equal(paused.authorized_enabled,true);assert.equal(paused.enabled,false);
+      assert.equal(paused.pause_reason,'reauthorization_required');assert.equal(paused.failures,1);assert.equal(paused.version,originalStatus.version);
+      await assert.rejects(refreshCall({action:'claim',connection_id:r.connection,attempt_id:id()}),e=>e.code==='42501');
+      const summary=(await db.query('select change_summary from public.clued_context_events where receipt_id=$1',[failed.result.receipt_id])).rows[0].change_summary;
+      assert.deepEqual(summary,{connection_id:r.connection,attempt_id:failed.attempt,reason:'provider_rejected',failure_code:'token_invalid_grant'});
+      const state=await prepareRenewalOAuth(r),done=await finishRenewalOAuth(state);assert.equal(done.status,'completed');
+      const restored=await refreshStatus(r);assert.equal(restored.authorized_enabled,true);assert.equal(restored.enabled,true);assert.equal(restored.failures,0);
+      assert.equal(restored.pause_reason,'none');const before=await row(r.connection);
+      await callback({action:'claim',state_hash:state});assert.deepEqual(await row(r.connection),before);assert.deepEqual(await refreshStatus(r),restored);
+      await refreshManage(r,'disable');const off=await refreshStatus(r);await callback({action:'claim',state_hash:state});
+      assert.deepEqual(await refreshStatus(r),off,'completed OAuth replay cannot revive a later explicit stop');
+    });
+    await t.test('third temporary failure stops new attempts without forgetting the Owner choice; fresh OAuth resets the limit',async()=>{
+      const r=await root();await refreshManage(r,'enable');
+      for(let n=1;n<=3;n++){await pauseRenewal(r,'provider_unavailable','token_server_error');const s=await refreshStatus(r);
+        assert.equal(s.authorized_enabled,true);assert.equal(s.enabled,n<3);assert.equal(s.failures,n);assert.equal(s.pause_reason,n===3?'failure_limit':'backoff');}
+      await assert.rejects(refreshCall({action:'claim',connection_id:r.connection,attempt_id:id()}),e=>e.code==='42501'&&/storage_refresh_denied/.test(e.message));
+      await finishRenewalOAuth(await prepareRenewalOAuth(r));const current=await refreshStatus(r);
+      assert.equal(current.enabled,true);assert.equal(current.authorized_enabled,true);assert.equal(current.failures,0);
+    });
+    await t.test('explicit Off during OAuth and changed provider identity never inherit renewal authorization',async()=>{
+      const r=await root();await refreshManage(r,'enable');const state=await prepareRenewalOAuth(r);await refreshManage(r,'disable');
+      await finishRenewalOAuth(state);assert.equal((await refreshStatus(r)).authorized_enabled,false);
+      await finishRenewalOAuth(await prepareRenewalOAuth(r));assert.equal((await refreshStatus(r)).authorized_enabled,false);
+      const changed=await root();await refreshManage(changed,'enable');const differentState=await prepareRenewalOAuth(changed),unchanged=await row(changed.connection);
+      await assert.rejects(finishRenewalOAuth(differentState,'different-provider-owner'),e=>e.code==='42501');
+      assert.deepEqual(await row(changed.connection),unchanged,'another identity cannot activate credentials or inherit the old authorization');
+      await finishRenewalOAuth(differentState);
+      await disconnect(changed.connection);assert.equal((await refreshStatus(changed)).authorized_enabled,false);
+    });
+    await t.test('diagnostic codes are closed enums, reason-bound and cannot smuggle upstream bodies or change a pending exchange',async()=>{
+      const r=await root();await refreshManage(r,'enable');const attempt=id(),claim={action:'claim',connection_id:r.connection,attempt_id:attempt};
+      await refreshCall(claim);const before=await row(r.connection),base={...claim,action:'fail',reason:'provider_rejected'};
+      for(const extra of [{failure_code:'unsafe-upstream-body'},{failure_code:{body:'secret'}},{failure_code:'token_server_error'},
+        {failure_code:'token_invalid_grant',upstream_body:'secret'}]){
+        await assert.rejects(refreshCall({...base,...extra}),e=>e.code==='42501');assert.deepEqual(await row(r.connection),before);
+        assert.equal((await db.query('select state from clued_private.storage_refresh_attempts_v1 where id=$1',[attempt])).rows[0].state,'claimed');
+      }
+      const result=await refreshCall({...base,failure_code:'token_invalid_client'});assert.equal(result.status,'failed');
+      const legacy=await root();await refreshManage(legacy,'enable');const legacyAttempt=id();await refreshCall({action:'claim',connection_id:legacy.connection,attempt_id:legacyAttempt});
+      assert.equal((await refreshCall({action:'fail',connection_id:legacy.connection,attempt_id:legacyAttempt,reason:'credential_invalid'})).status,'failed');
+      assert.equal((await refreshStatus(legacy)).authorized_enabled,true,'old Workers retain their compatible reason-only settlement');
       await assertGatewayCloseoutBoundary(db);
     });
     await t.test('issuer retirement rejects even read-only recovery; no identity/verifier fallback',async()=>{

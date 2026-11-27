@@ -6,6 +6,10 @@
 - 代码：`src/role-probe.mjs`、`src/companion-heartbeat.mjs`、`src/node-duty.mjs`（`dutyCut`）、`src/pr-status.mjs`、`src/companion-main.mjs`；服务端迁移 `apps/clued-cloud/supabase/migrations/20261112130500_ci_failover_fast_v1.sql`；页面 `apps/clued-cloud/app/bindings/failover/page.tsx`
 - 测试：`test/handover-timing.test.mjs`（端到端时序）、`test/role-probe.test.mjs`、`test/node-mode.test.mjs`、`test/node-duty.test.mjs`、`test/companion-heartbeat.test.mjs`；`apps/clued-cloud/tests/merge-train-failover-db.test.mjs`、`merge-train-failover-ui.test.mjs`
 
+## 适用范围
+
+本文适用于 v2 启用前的 ACTIVE/STANDBY 换班。v2 生效后，[ADR 0035](0035-merge-train-v2.md) 取代计划内移交、看门狗失联或 HALT 接班、激活延迟、双活仲裁及对应的换班时限。工作由合格节点按项接续，心跳仍用于节点状态观测。
+
 ## 背景
 
 2026-11-12 17:12，Owner 在 `/bindings` 把 ci-admission 从 TURING 移交给 DESK。DESK 上次探测在 17:08，17:23 才发现；TURING 上次探测在 16:57，17:27 才发现交班。计划内移交要 11–20 分钟，当班节点出事时要 45 分钟上下。

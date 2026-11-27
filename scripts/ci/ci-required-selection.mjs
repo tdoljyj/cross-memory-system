@@ -57,6 +57,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, closeSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createInterface } from 'node:readline';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ownIdentityDir, testEnv } from './test-env.mjs';
 import { clockGuardEnv, recordVerdict } from './test-clock-scan.mjs';
@@ -251,7 +253,7 @@ export const SUITES = {
 };
 
 // The entry's relative import closure, including the guard preloaded by the clock scanner.
-export const SELECTOR_IMPORTS = ['test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'test-clock-imports.mjs'];
+export const SELECTOR_IMPORTS = ['test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'test-clock-imports.mjs', 'local-suite-slot-job.ps1'];
 
 // A change to selection, the required-check workflow or the clock guard's inputs selects every suite.
 export const SELECT_ALL = ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs',
@@ -498,11 +500,11 @@ export function selectSuites(check, files, platform = null) {
 // Task cb5017b6: the selection of the trusted table, then the suites the candidate at root adds to the check (candidateSuites),
 // each selected whole whatever changed: a pull request that adds a suite runs it. A candidate table that cannot be read
 // keeps the trusted selection and is returned as the error, which fails the check.
-export function selectWithCandidate(check, files, platform, root, { trusted } = {}) {
+export function selectWithCandidate(check, files, platform, root, { trusted, env, withPlatforms } = {}) {
   const selection = selectSuites(check, files, platform);
   let added = [];
   try {
-    added = candidateSuites(check, root, { platform, ...(trusted ? { trusted } : {}) });
+    added = candidateSuites(check, root, { platform, env, withPlatforms, ...(trusted ? { trusted } : {}) });
   } catch (error) {
     return { selection, error };
   }
@@ -1094,7 +1096,7 @@ export function* requiredCommands(id, root, { baseline = SUITE_COMMANDS[id], tru
 // own platform table (all platforms when it names none), with its application dependency. Empty when the checkout's
 // selector is this file or the checkout has no scripts/ci.
 const SUITE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
-export function candidateSuites(check, root, { platform = null, trusted = fileURLToPath(import.meta.url), env = process.env } = {}) {
+export function candidateSuites(check, root, { platform = null, trusted = fileURLToPath(import.meta.url), env = process.env, withPlatforms = false } = {}) {
   const what = `the suites the candidate adds to ${check}`;
   const candidate = candidateSelectorOf(root, trusted, what);
   if (!candidate) return [];
@@ -1112,7 +1114,7 @@ export function candidateSuites(check, root, { platform = null, trusted = fileUR
         || !existsSync(path.join(root, app, 'package-lock.json')))) {
       throw new Error(`invalid candidate application dependency for ${id}: ${JSON.stringify(app)} (apps/<name> with a package-lock.json)`);
     }
-    if (platform === null || on.includes(platform)) added.push({ id, app });
+    if (platform === null || on.includes(platform)) added.push({ id, app, ...(withPlatforms ? { platforms: on } : {}) });
   }
   return added;
 }
@@ -1283,7 +1285,8 @@ export function runPrepush(root, { env = process.env, spawn = spawnSync, log = c
   return 1;
 }
 
-export async function runSuite(id, { root, env = process.env, log = console.log, captureKnown = false, keep = false, files = null, shard = null } = {}) {
+export async function runSuite(id, { root, env = process.env, log = console.log, captureKnown = false, keep = false, files = null, shard = null,
+  targetedTiming = false } = {}) {
   // A suite this file does not have may be one the candidate adds (requiredCommands reads it); not in this file's own checkout.
   if (!Object.hasOwn(SUITE_COMMANDS, id) && (files || captureKnown || !candidateSelectorOf(root, fileURLToPath(import.meta.url), id))) {
     throw new Error(`unknown suite: ${id}`);
@@ -1320,10 +1323,72 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
     linkSuiteDependencies(id, root, { env, log });
   }
   const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+  const queuedAt = performance.now();
+  // The slot guard copies the environment when it starts, after acquiring the slot.
+  const workerEnv = targetedTiming ? { ...env, get CLUED_CI_TARGETED_WAIT_MS() {
+    return String(Math.round(performance.now() - queuedAt));
+  } } : env;
   return withLocalSuiteSlot(id, {
-    root, env, timeoutExit: LOCAL_TIMEOUT_EXIT,
+    root, env: workerEnv, timeoutExit: LOCAL_TIMEOUT_EXIT,
     work: { selectorUrl: import.meta.url, captureKnown, keep, files },
   });
+}
+
+async function runTargetedFiles(id, { root, env, files, log = console.log }) {
+  let named, plan;
+  try {
+    ({ named } = planFiles(id, { root, files, env }));
+  } catch (error) {
+    log('run-files ' + id + ': ' + error.message);
+    for (const line of await whereFilesRun(error.unmatched, root)) log(line);
+    return 2;
+  }
+  const started = performance.now();
+  try {
+    const { planTargetedFiles } = await import('./check-tests-covered.mjs');
+    plan = planTargetedFiles(root, id, named, { env });
+  } catch (error) {
+    log('run-files ' + id + '：覆盖未确定，退出 2：' + error.message);
+    return 2;
+  }
+  const additions = new Set(plan.matches.map(({ file }) => file).filter((file) => !named.has(file))).size;
+  log('run-files 基准：HEAD ' + plan.head + '，origin/main ' + plan.main + '，共同祖先 ' + plan.base + '；以工作树字节为准');
+  log('run-files 建图 ' + plan.graphMs + ' ms，规划及校验 ' + Math.round(performance.now() - started) +
+    ' ms，显式 ' + named.size + '，新增文件 ' + additions + '，新增套件/文件组合 ' + plan.matches.length);
+  for (const { suite, local, chain } of plan.matches) {
+    log('  ' + suite + (local ? '：' : '（待该平台 CI）：') + chain.join(' -> '));
+  }
+  for (const group of plan.deferred) {
+    for (const reason of group.reasons) log('  ' + group.suite + '（待该平台 CI 整套）：' + reason);
+  }
+  const failures = [];
+  for (const group of plan.groups) {
+    const whole = group.reasons.length > 0;
+    for (const reason of group.reasons) log('  ' + group.suite + ' 整套兜底：' + reason);
+    const options = { root, env: { ...env, CI_BASE_SHA: plan.base }, log, files: whole ? null : group.files, targetedTiming: true };
+    let status;
+    try {
+      status = Object.hasOwn(SUITE_COMMANDS, group.suite)
+        ? await runSuite(group.suite, options) : await runSuiteWithCandidate(group.suite, options);
+    } catch (error) {
+      status = 2;
+      log('run-files ' + group.suite + ' 未执行完：' + error.message);
+    }
+    log('run-files 组 ' + group.suite + '：' + (whole ? '整套' : group.files.length + ' 个文件') + '，退出 ' + status);
+    if (status !== 0) failures.push({ suite: group.suite, status });
+  }
+  if (failures.length) log('run-files 失败或未完成：' + failures.map(({ suite, status }) => suite + '=' + status).join('，'));
+  let status = failures.some((failure) => failure.status === LOCAL_TIMEOUT_EXIT) ? LOCAL_TIMEOUT_EXIT
+    : failures.some((failure) => failure.status === 2) ? 2 : failures[0]?.status ?? 0;
+  try {
+    plan.verify();
+  } catch (error) {
+    log('run-files：输入已变，请重算（' + (String(error.stderr ?? '').trim() || error.message) + '）');
+    if (status !== LOCAL_TIMEOUT_EXIT) status = 2;
+  }
+  log('run-files ' + id + ': ' + named.size + ' 个点名文件，新增 ' + additions + '，待其他平台套件 ' + plan.deferred.length +
+    '，退出 ' + status + ' —— 定向结果，不是套件结论');
+  return status;
 }
 
 const CANDIDATE_PASS = 'CLUED_CI_CANDIDATE_PASS';
@@ -1416,10 +1481,9 @@ const isNodeTest = (argv) => argv[0] === 'node' && argv.includes('--test');
 // One limit at the entry (FABLE-flaky-four-replan-20261124 §2; PLAN-ci-p90-next-20261125 补充裁定, task 3435f8bf): a test or
 // command that hangs fails with its name, not at the job's limit (90 minutes for hosted and node Windows jobs, 30 for
 // migration-verify) with none. executeSuite starts the first run of every command (node --test, the run-tests wrapper, any
-// other) with COMMAND_TIMEOUT_MS and ends it with SIGKILL: Windows ends a process outright anyway, and on POSIX a SIGTERM would
-// let Node cancel gracefully and end what had begun, so the two would differ. The command line stays as it is. Node times
-// each test (--test-timeout) but never a test file (its FileTest has no timeout), so the limit is the whole command's and,
-// for a node --test command with the trusted reporter, the entry then names each file and test that began and did not end:
+// other) with COMMAND_TIMEOUT_MS and ends it with SIGKILL. A resident-node list runs as one command per file, each with
+// its own limit. Node times each test (--test-timeout) but never a test file (its FileTest has no timeout). For a node
+// --test command with the trusted reporter, the entry names each file and test that began and did not end:
 // the reporter writes Node's test:dequeue and test:complete, which reach it as they happen (not in report order), and the
 // parent sends both for each file itself, so a file that hangs is named even when its process sent nothing
 // (unfinishedTests). 25 minutes: 1.5 times the longest step of a passing job (987 s), above the one command of the 11-23
@@ -1449,11 +1513,301 @@ function withReporter(argv, out) {
     `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`, `--test-reporter-destination=${out}`, ...argv.slice(index + 1)];
 }
 
+function logUnfinishedTests(id, raw, root, log) {
+  const open = unfinishedTests(raw, root);
+  for (const entry of open.slice(0, UNFINISHED_SHOWN)) log(`::error title=${id} 开始了没结束::${entry.file ?? '<run>'} :: ${entry.name}`);
+  if (open.length > UNFINISHED_SHOWN) log(`${id}: 另有 ${open.length - UNFINISHED_SHOWN} 条开始了没结束`);
+}
+
 const ORDERED_NODE_TESTS = '--ordered-node-tests';
+const RESIDENT_FILE_POOL = '--resident-file-pool';
+const RESIDENT_FILE = '--resident-file-test';
+const LISTED_TEST_SWITCH = /^--test-(?:concurrency|skip-pattern)=/;
+const DRAIN_MS = 10_000;
+
+// Split execution only after expansion, candidate comparison and shard assignment. Keep the effective Node file concurrency.
+function residentFilePool(id, argv, cwd) {
+  if (id !== 'resident-node' || argv[0] !== 'node' || argv[1] !== '--test') return null;
+  const args = argv.slice(2);
+  const files = args.filter((arg) => !arg.startsWith('-'));
+  if (files.length === 0 || new Set(files.map(posixPath)).size !== files.length
+      || !files.every((file) => file.endsWith('.test.mjs')
+        && (!/[*?\[\]{}]/.test(file) || existsSync(path.resolve(cwd, file))))
+      || !args.every((arg) => !arg.startsWith('-') || LISTED_TEST_SWITCH.test(arg))) return null;
+  const limit = args.findLast((arg) => arg.startsWith('--test-concurrency='))?.split('=')[1];
+  if (limit !== undefined && (!Number.isSafeInteger(Number(limit)) || Number(limit) < 1)) return null;
+  return { files, concurrency: Number(limit) || Math.max(1, os.availableParallelism() - 1) };
+}
+
+// POSIX signals the file's group from inside its verified session. An exited guard's numeric PID is only
+// used to observe drain. It is never a signal target.
+async function drainResidentGroup(pid) {
+  const deadline = performance.now() + DRAIN_MS;
+  for (;;) {
+    try {
+      process.kill(-pid, 0);
+    } catch (error) {
+      if (error.code === 'ESRCH') return;
+      throw error;
+    }
+    const snapshot = spawnSync('ps', ['-A', '-o', 'pgid=', '-o', 'stat='],
+      { encoding: 'utf8', timeout: 1000 });
+    if (snapshot.status !== 0) throw snapshot.error ?? new Error('could not read process group state');
+    // Orphaned zombies may await init's reaping. They hold no ports or file descriptors.
+    const active = snapshot.stdout.trim().split(/\r?\n/).some((line) => {
+      const [group, state] = line.trim().split(/\s+/);
+      return Number(group) === pid && !state?.startsWith('Z');
+    });
+    if (!active) return;
+    if (performance.now() >= deadline) throw new Error('file process group did not drain');
+    await delay(20);
+  }
+}
+
+async function runPosixResidentFile({ input, output, signal, started }) {
+  const fd = openSync(output, 'wx');
+  let child;
+  try {
+    child = spawnAsync(process.execPath, [import.meta.filename, RESIDENT_FILE, input], {
+      detached: true, stdio: ['pipe', fd, fd],
+    });
+  } finally {
+    closeSync(fd);
+  }
+  let spawnError;
+  child.once('error', (error) => { spawnError = error; });
+  child.stdin.on('error', () => {}); // The file guard may finish before our end-of-input reaches it.
+  const stop = () => child.stdin.end();
+  signal.addEventListener('abort', stop, { once: true });
+  child.once('spawn', () => {
+    if (signal.aborted) return stop();
+    started();
+    child.stdin.write(Buffer.of(1));
+  });
+  try {
+    const [status, signalName] = await new Promise((resolve) => {
+      child.once('close', (...result) => resolve(result));
+    });
+    if (spawnError) return { status: null, error: { code: spawnError.code, message: spawnError.message } };
+    try {
+      await drainResidentGroup(child.pid);
+    } catch (error) {
+      return { status: null, signal: signalName, error: { message: error.message, cleanup: error.message } };
+    }
+    const done = input + '.status';
+    return existsSync(done) ? { status: Number(readFileSync(done, 'utf8')) } : { status, signal: signalName };
+  } finally {
+    signal.removeEventListener('abort', stop);
+  }
+}
+
+async function runResidentFileTest(input) {
+  const args = JSON.parse(readFileSync(input, 'utf8'));
+  if (process.platform === 'win32') return runOrderedNodeTests(args);
+  const own = spawnSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], { encoding: 'utf8', timeout: 1000 });
+  if (own.status !== 0 || Number(own.stdout.trim()) !== process.pid) throw new Error('file guard is not its process group leader');
+  const stop = () => process.kill(0, 'SIGKILL');
+  const permitted = await new Promise((resolve) => {
+    process.stdin.once('end', () => resolve(false));
+    process.stdin.once('data', ([byte]) => resolve(byte === 1));
+  });
+  if (!permitted) return 1;
+  process.stdin.once('end', stop);
+  if (process.stdin.readableEnded) return stop();
+  try {
+    writeFileSync(input + '.status', String(await runOrderedNodeTests(args)));
+  } finally {
+    stop();
+  }
+}
+
+function windowsResidentFiles(dir) {
+  const broker = spawnAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', path.join(HERE, 'local-suite-slot-job.ps1'), '-ResidentFiles', '-Directory', dir,
+    '-Node', process.execPath, '-Worker', import.meta.filename], { stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true });
+  const pending = new Map();
+  let brokerError;
+  const { promise: ready, resolve: readyNow, reject: failReady } = Promise.withResolvers();
+  broker.on('error', (error) => { brokerError = error; });
+  broker.stdin.on('error', (error) => { brokerError ??= error; });
+  const closed = new Promise((resolve) => broker.once('close', (status, signal) => {
+    const failure = brokerError ?? new Error('Windows file job host exited ' + (status ?? signal));
+    failReady(failure);
+    for (const entry of pending.values()) {
+      entry.finish({ status: null, error: { message: failure.message, cleanup: 'file job drain was not confirmed' } });
+    }
+    pending.clear();
+    resolve(status === 0 ? brokerError : failure);
+  }));
+  const lines = createInterface({ input: broker.stdout });
+  lines.on('error', (error) => { brokerError ??= error; broker.stdin.end(); });
+  lines.on('line', (line) => {
+    if (line === 'ready') return readyNow();
+    const [index, event, value] = line.split(' ');
+    const entry = pending.get(Number(index));
+    if (!entry) {
+      brokerError = new Error('unexpected Windows file job response: ' + line);
+      broker.stdin.end();
+      return;
+    }
+    if (event === 'started') return entry.started();
+    pending.delete(Number(index));
+    if (event === 'drained') return entry.finish({ status: Number(value) });
+    const message = Buffer.from(value ?? '', 'base64').toString('utf8');
+    entry.finish({ status: null, error: event === 'failed' ? { message } : { message, cleanup: message } });
+  });
+  return {
+    ready,
+    async run({ index, signal, started }) {
+      const { promise, resolve: finish } = Promise.withResolvers();
+      const stop = () => { if (!broker.stdin.writableEnded) broker.stdin.write('-' + index + '\n'); };
+      if (signal.aborted) return { status: null };
+      if (!broker.stdin.writable) return { status: null, error: { message: 'Windows file job host is closed' } };
+      pending.set(index, { started, finish });
+      signal.addEventListener('abort', stop, { once: true });
+      broker.stdin.write('+' + index + '\n');
+      try { return await promise; } finally { signal.removeEventListener('abort', stop); }
+    },
+    async close() {
+      broker.stdin.end();
+      return closed;
+    },
+  };
+}
+
+// Shared scheduling and deadlines for the two file owners. A slot is released only after its owner reports drain.
+async function runResidentPool(input) {
+  const { options, files, concurrency, timeout, wholeTimeout, wholeDeadline } = JSON.parse(readFileSync(input, 'utf8'));
+  const dir = path.dirname(input);
+  const deadline = new AbortController();
+  const stopAt = wholeDeadline === undefined ? null : BigInt(wholeDeadline);
+  const remaining = () => stopAt === null ? Infinity : Number(stopAt - process.hrtime.bigint()) / 1e6;
+  const expire = () => deadline.abort({ code: 'ERETRYDEADLINE', message: '整遍复验超过 ' + limitText(wholeTimeout) });
+  const deadlineTimer = stopAt === null ? null : setTimeout(expire, Math.max(1, Math.ceil(remaining())));
+  const windows = process.platform === 'win32' ? windowsResidentFiles(dir) : null;
+  const run = windows?.run ?? runPosixResidentFile;
+  const results = [];
+  let next = 0;
+  let ownerError;
+  try {
+    if (windows) await windows.ready;
+    await Promise.all(Array.from({ length: Math.min(files.length, concurrency) }, async () => {
+      while (next < files.length) {
+        if (remaining() <= 0) expire();
+        if (deadline.signal.aborted) return;
+        const index = next++;
+        const file = files[index];
+        const args = options.map((arg) => arg === '--test-reporter-destination={file-report}'
+          ? '--test-reporter-destination=' + path.join(dir, index + '.jsonl') : arg);
+        const input = path.join(dir, index + '.args.json');
+        const output = path.join(dir, index + '.log');
+        const fileLimit = new AbortController();
+        const signal = AbortSignal.any([fileLimit.signal, deadline.signal]);
+        let timer;
+        const started = () => {
+          if (signal.aborted) return;
+          timer = setTimeout(() => fileLimit.abort({ code: 'ETIMEDOUT', message: 'timed out after ' + limitText(timeout) }), timeout);
+        };
+        let result;
+        try {
+          writeFileSync(input, JSON.stringify([...args, file]));
+          result = await run({ index, input, output, signal, started });
+        } catch (error) {
+          result = { status: null, error: { code: error.code, message: error.message } };
+        } finally {
+          clearTimeout(timer);
+        }
+        results[index] = { file, ...result, ...(signal.aborted
+          ? { error: { ...signal.reason, cleanup: result.error?.cleanup } } : {}) };
+        if (result.error?.cleanup) deadline.abort({ code: 'ERESIDENTCLEANUP', message: result.error.cleanup });
+      }
+    }));
+    if (remaining() <= 0) expire();
+  } finally {
+    clearTimeout(deadlineTimer);
+    if (windows) ownerError = await windows.close();
+  }
+  const error = deadline.signal.reason ?? (ownerError && { message: ownerError.message });
+  writeFileSync(path.join(dir, 'results.json'), JSON.stringify({ results, error }));
+  return 0;
+}
+
+function writeResidentReport(destination, reports, complete) {
+  const events = reports.flatMap(({ events }) => events.filter(({ type }) => type !== 'summary' && type !== 'metronome'));
+  if (complete && reports.every(({ summary, corrupt }) => summary && !corrupt)) {
+    events.push({ type: 'summary', success: reports.every(({ summary }) => summary.success) });
+  }
+  const medians = reports.map(({ metronome }) => metronome?.median_ms).filter(Number.isFinite).sort((a, b) => a - b);
+  if (medians.length > 0) {
+    const middle = (medians.length - 1) / 2;
+    events.push({ type: 'metronome', n: medians.length, median_ms: (medians[Math.floor(middle)] + medians[Math.ceil(middle)]) / 2 });
+  }
+  writeFileSync(destination, events.map((event) => `${JSON.stringify(event)}\n`).join(''));
+}
+
+function spawnResidentPool(command, args, { cwd, env }, { files, concurrency, root, commandCwd, log, temp, timeout, wholeTimeout }) {
+  const prefix = '--test-reporter-destination=';
+  const destination = args.find((arg) => arg.startsWith(prefix) && arg !== `${prefix}stdout`)?.slice(prefix.length);
+  const flags = args.slice(1).filter((arg) => arg.startsWith('-'));
+  const dir = mkdtempSync(path.join(temp, 'resident-files-'));
+  const input = path.join(dir, 'input.json');
+  const read = (file) => existsSync(file) ? readFileSync(file, 'utf8') : '';
+  try {
+    // hrtime uses the host's monotonic counter, so starting the pool also consumes the retry budget.
+    const wholeDeadline = wholeTimeout === undefined ? undefined
+      : String(process.hrtime.bigint() + BigInt(Math.ceil(wholeTimeout * 1e6)));
+    writeFileSync(input, JSON.stringify({ files, concurrency, timeout, wholeTimeout, wholeDeadline,
+      options: flags.map((arg) => destination && arg === `${prefix}${destination}` ? `${prefix}{file-report}` : arg) }));
+    log(`resident-node: ${files.length} 个文件，并发 ${Math.min(concurrency, files.length)}，每文件限额 ${limitText(timeout)}`);
+    const pool = spawnSync(process.execPath, [fileURLToPath(import.meta.url), RESIDENT_FILE_POOL, input],
+      { cwd, env, stdio: 'inherit', windowsHide: true });
+    if (pool.status !== 0) throw pool.error ?? new Error(`file pool exited ${pool.status ?? pool.signal}`);
+    const { results, error: poolError } = JSON.parse(readFileSync(path.join(dir, 'results.json'), 'utf8'));
+    if ((!poolError && results.length !== files.length) || results.length > files.length
+        || results.some((result, index) => result.file !== files[index])) {
+      throw new Error('file pool returned invalid file coverage');
+    }
+    const reports = [];
+    for (const [index, result] of results.entries()) {
+      const { file, error } = result;
+      log(`::group::resident-node: (${commandCwd}) ${command} --test ${flags.filter((arg) => !arg.startsWith('--test-reporter')).concat(file).join(' ')}`);
+      const output = read(path.join(dir, `${index}.log`));
+      if (output) log(output.trimEnd());
+      log('::endgroup::');
+      const raw = destination ? read(path.join(dir, `${index}.jsonl`)) : '';
+      if (destination) reports.push(readReport(raw));
+      if (error?.code === 'ETIMEDOUT') {
+        log(`::error::resident-node: ${file} 超过 ${limitText(timeout)}被终止`);
+        logUnfinishedTests('resident-node', raw, root, log);
+      } else if (error?.code === 'ERETRYDEADLINE' || error?.code === 'ERESIDENTCLEANUP') {
+        logUnfinishedTests('resident-node', raw, root, log);
+      } else if (error) {
+        log(`::error::resident-node: ${file} did not start (limit ${limitText(timeout)}): ${error.message}`);
+      } else if (result.status !== 0 && result.status !== 1) {
+        log(`::error::resident-node: ${file} exited ${result.status ?? result.signal}`);
+      }
+      if (error?.cleanup) log(`::error::resident-node: ${file} 进程归属清理失败：${error.cleanup}`);
+    }
+    if (destination) writeResidentReport(destination, reports, !poolError);
+    if (poolError) {
+      log(`::error::resident-node: ${poolError.message}`);
+      return { status: null, error: poolError, filePoolReported: true };
+    }
+    // A timeout, start error, signal or crash can never be represented as a normal assertion failure eligible for retry.
+    const interrupted = results.find(({ error, status }) => error || ![0, 1].includes(status));
+    if (interrupted) return { ...interrupted, filePoolReported: true };
+    return { status: results.some(({ status }) => status === 1) ? 1 : 0 };
+  } catch (error) {
+    return { status: null, error };
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* diagnostics left behind */ }
+  }
+}
 
 // Node's CLI sorts even explicit operands as glob results. The same Node test runner accepts an ordered file list
 // through run({ files }); use that path for trusted {tests:} commands with the switches these commands use.
-function spawnSuiteCommand(command, args, { orderedTests, ...options }) {
+function spawnSuiteCommand(command, args, { orderedTests, filePool, ...options }) {
+  if (filePool) return spawnResidentPool(command, args, options, filePool);
   if (orderedTests && command === 'node' && args[0] === '--test' && operandsAfter(args, 0).length > 1
       && args.slice(1).every((arg) => !arg.startsWith('-') || /^--test-(?:concurrency|skip-pattern|reporter|reporter-destination)=/.test(arg))) {
     return spawnSync(command, [fileURLToPath(import.meta.url), ORDERED_NODE_TESTS, ...args.slice(1)], options);
@@ -1538,7 +1892,7 @@ function rerunRefusal({ status, signal, report, failures, elapsed, maxElapsed, r
 
 // Runs the failed command once more, whole; true when that run passes as the command does and passes every test that
 // failed. Logs why not otherwise.
-function passesAgain(id, { command, argv, failures, report, status, signal, elapsed, root, cwd, env, spawn, platform, list, log,
+function passesAgain(id, { command, argv, failures, report, status, signal, elapsed, root, cwd, env, spawn, platform, list, log, filePool,
   readReportFile, maxElapsed, minTimeout, terminalFailure }) {
   const refusal = rerunRefusal({ status, signal, report, failures, elapsed, maxElapsed, root, base: env.CI_BASE_SHA, env });
   if (refusal) {
@@ -1556,11 +1910,11 @@ function passesAgain(id, { command, argv, failures, report, status, signal, elap
     const temp = path.join(dir, 'tmp');
     mkdirSync(temp);
     const kept = Object.entries(testEnv(env)).filter(([name]) => !/^(TEMP|TMP|TMPDIR)$/i.test(name));
-    log(`::group::${id}: run again in full (timeout ${Math.ceil(timeout / 1000)} s): (${command.cwd}) ${argv.join(' ')}`);
+    log(`${filePool ? '' : '::group::'}${id}: run again in full (timeout ${Math.ceil(timeout / 1000)} s): (${command.cwd}) ${argv.join(' ')}`);
     const run = resolveCommand(withReporter(argv, path.join(dir, 'failures.jsonl')), { platform });
     result = spawn(run[0], run.slice(1), { cwd, env: { ...Object.fromEntries(kept), TEMP: temp, TMP: temp, TMPDIR: temp, ...clock.env },
-      stdio: 'inherit', timeout, orderedTests: ordersTestFiles(command) });
-    log('::endgroup::');
+      stdio: 'inherit', timeout, orderedTests: ordersTestFiles(command), filePool: filePool && { ...filePool, wholeTimeout: timeout } });
+    if (!filePool) log('::endgroup::');
     again = readReport(readReportFile(path.join(dir, 'failures.jsonl')), root);
   } finally {
     logFileSeconds(id, again, command, argv, log);
@@ -1689,7 +2043,20 @@ function clockRun(id, root, env) {
 }
 
 // The CI process or the already guarded worker executes the suite here.
-export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCommand, log = console.log, platform = process.platform,
+export function executeSuite(id, options) {
+  const { env = process.env, log = console.log } = options;
+  const wait = env.CLUED_CI_TARGETED_WAIT_MS;
+  if (!/^\d+$/.test(wait ?? '')) return executeSuiteCommands(id, options);
+  const start = performance.now();
+  log('run-files ' + id + ' 等槽 ' + wait + ' ms');
+  try {
+    return executeSuiteCommands(id, options);
+  } finally {
+    log('run-files ' + id + ' 执行 ' + Math.round(performance.now() - start) + ' ms');
+  }
+}
+
+function executeSuiteCommands(id, { root, env = process.env, spawn = spawnSuiteCommand, log = console.log, platform = process.platform,
   captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : ''),
   rerunMaxElapsedMs = RERUN_MAX_ELAPSED_MS, rerunMinTimeoutMs = RERUN_MIN_TIMEOUT_MS, shard = null, shardSecondsFile = SHARD_SECONDS_PATH,
   commandTimeoutMs = COMMAND_TIMEOUT_MS } = {}) {
@@ -1773,6 +2140,9 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
     const switches = given[0] === 'node' && given[1] === '--test'
       ? [...skipSwitches, ...(given.some((arg) => arg.startsWith('--test-concurrency')) ? [] : laneSwitches)] : [];
     const plain = switches.length > 0 ? [given[0], given[1], ...switches, ...given.slice(2)] : given;
+    const pool = !files && residentFilePool(id, plain, cwd);
+    const filePool = pool ? { ...pool, root, commandCwd: command.cwd, log, timeout: commandTimeoutMs,
+      temp: env.RUNNER_TEMP || os.tmpdir() } : null;
     let argv = plain;
     let reportDir = null;
     // A known-failure command reports to the trusted reporter for its verdict; any other node --test command of the trusted
@@ -1792,12 +2162,13 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
       } catch { /* a temporary directory left behind */ }
     };
     const shown = command.known ? argv : plain;
-    log(`::group::${id}: (${command.cwd}) ${shown.join(' ')}`);
+    const grouped = !filePool || spawn !== spawnSuiteCommand;
+    if (grouped) log(`::group::${id}: (${command.cwd}) ${shown.join(' ')}`);
     const run = resolveCommand(argv, { platform });
     const clock = clockRun(id, root, env);
     const started = performance.now();
     const result = spawn(run[0], run.slice(1), { cwd, env: { ...testEnv(env), ...clock.env }, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit',
-      orderedTests: ordersTestFiles(command),
+      orderedTests: ordersTestFiles(command), filePool,
       timeout: commandTimeoutMs, killSignal: 'SIGKILL' });
     const elapsed = performance.now() - started;
     if (command.quiet && result.stdout) {
@@ -1805,7 +2176,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
       const text = stagingOutput(result.stdout.toString(), env);
       log(result.status === 0 ? `${text.split('\n').slice(0, 4).join('\n')}\n...` : text);
     }
-    log('::endgroup::');
+    if (grouped) log('::endgroup::');
     // Timing is diagnostic, including a partial report from a command that timed out.
     let ran = null;
     if (reportDir) {
@@ -1818,17 +2189,19 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
       log(`${id}: whole-seconds ${JSON.stringify({ [wholeShardKey(step)]: Math.round(elapsed / 100) / 10 })}`);
     }
     // At the limit (COMMAND_TIMEOUT_MS) the command fails, a known-failure command too (no verdict), with what never ended.
+    if (result.error && result.filePoolReported) {
+      clock.refused(log);
+      dropReport();
+      return 1;
+    }
     if (result.error?.code === 'ETIMEDOUT') {
       log(`::error::${id}: ${shown.join(' ')} 超过 ${limitText(commandTimeoutMs)}被终止`);
       if (reportDir) {
-        let open = [];
         try {
-          open = unfinishedTests(readReportFile(path.join(reportDir, 'failures.jsonl')), root);
+          logUnfinishedTests(id, readReportFile(path.join(reportDir, 'failures.jsonl')), root, log);
         } catch (error) {
           log(`${id}: the test report cannot be read (${error?.message ?? error})`);
         }
-        for (const entry of open.slice(0, UNFINISHED_SHOWN)) log(`::error title=${id} 开始了没结束::${entry.file ?? '<run>'} :: ${entry.name}`);
-        if (open.length > UNFINISHED_SHOWN) log(`${id}: 另有 ${open.length - UNFINISHED_SHOWN} 条开始了没结束`);
         try {
           rmSync(reportDir, { recursive: true, force: true });
         } catch { /* a temporary directory left behind */ }
@@ -1864,7 +2237,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSuiteCo
       if (files || result.error) return false;
       try {
         return passesAgain(id, { command, argv: plain, failures, report: ran, status, signal: result.signal, elapsed, root, cwd, env,
-          spawn, platform, list, log, readReportFile, maxElapsed: rerunMaxElapsedMs, minTimeout: rerunMinTimeoutMs,
+          spawn, platform, list, log, filePool, readReportFile, maxElapsed: rerunMaxElapsedMs, minTimeout: rerunMinTimeoutMs,
           terminalFailure: () => { terminal = true; } });
       } catch (error) {
         log(`${id}: not run again in full: ${error?.message ?? error}`);
@@ -2246,7 +2619,8 @@ async function main(argv, env = process.env) {
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(USAGE);
     console.log(`Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
-    console.log('--run-files runs only the named test files (repository paths) with the suite command CI runs, takes a local slot, and is refused under GITHUB_ACTIONS (exit 2): its result is not a suite verdict.');
+    console.log('--run-files 执行点名测试，并按与本地 origin/main 的共同祖先计算影响范围，涵盖分支提交、暂存、未暂存和未忽略的新文件。');
+    console.log('各组轮流使用本机套件槽。基准或覆盖范围无法确定时退出 2，GitHub Actions 也拒绝此入口。输出为定向结果。');
     return 0;
   }
   const secondsIndex = argv.indexOf('--write-shard-seconds');
@@ -2321,9 +2695,7 @@ async function main(argv, env = process.env) {
       console.error(`run-files: needs a known suite and at least one test file\n${USAGE}`);
       return 2;
     }
-    const status = await runSuite(id, { root, env, files: named });
-    if (status !== 2) console.log(`run-files ${id}: ${named.length} 个文件，退出 ${status} —— 定向结果，不是套件结论`);
-    return status;
+    return runTargetedFiles(id, { root, env, files: named });
   }
   const writeIndex = argv.indexOf('--write-known');
   if (writeIndex >= 0) {
@@ -2398,5 +2770,10 @@ export function runEntry(run) {
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   const args = process.argv.slice(2);
-  runEntry(() => args[0] === ORDERED_NODE_TESTS ? runOrderedNodeTests(args.slice(1)) : main(args));
+  runEntry(() => {
+    if (args[0] === ORDERED_NODE_TESTS) return runOrderedNodeTests(args.slice(1));
+    if (args[0] === RESIDENT_FILE_POOL) return runResidentPool(args[1]);
+    if (args[0] === RESIDENT_FILE) return runResidentFileTest(args[1]);
+    return main(args);
+  });
 }

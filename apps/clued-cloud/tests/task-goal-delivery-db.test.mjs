@@ -104,6 +104,28 @@ test('Task goal/file completion uses exact M1 admission, persisted Storage proof
           });
           await applyProductionWrappedMigration(admin, name, bytes);
         }
+        else if (name === '20261117102000_task_goal_delivery_reconnect_v1.sql') {
+          await suite.test('reconnect forward migration rejects altered source and function authority', async () => {
+            for (const signature of ['clued_private.task_goal_delivery_storage_read_v1(uuid,uuid,uuid,uuid)',
+              'clued_private.task_goal_delivery_file_v1(uuid,text,uuid,jsonb,jsonb,text,boolean)']) {
+              const definition = (await admin.query('select pg_get_functiondef($1::regprocedure) d', [signature])).rows[0].d;
+              for (const tamper of [
+                'alter function ' + signature + ' owner to authenticated',
+                'alter function ' + signature + ' security invoker',
+                'alter function ' + signature + ' set search_path=public',
+                'grant execute on function ' + signature + ' to anon',
+                definition.replace('\nbegin\n', '\nbegin\n-- unexpected source drift\n'),
+              ]) {
+                await admin.query('begin');
+                try { await admin.query(tamper); await assert.rejects(() => admin.query(bytes.toString('utf8')), /task_goal_reconnect_(read|file)_source_mismatch/); }
+                finally { await admin.query('rollback'); }
+                assert.equal((await admin.query("select to_regprocedure('clued_private.task_goal_delivery_connection_v1(uuid,uuid,boolean)') is null absent")).rows[0].absent, true);
+              }
+            }
+          });
+          await applyProductionWrappedMigration(admin, name, bytes);
+        }
+        else if (name === '20261117113000_storage_refresh_intent_v1.sql') await applyProductionWrappedMigration(admin, name, bytes);
         else await admin.query(bytes.toString('utf8'));
       }
       catch (error) { throw new Error('Migration ' + name + ': ' + error.message, { cause: error }); }
@@ -699,6 +721,131 @@ test('Task goal/file completion uses exact M1 admission, persisted Storage proof
       // Project closure also makes the file's source unavailable to completion.
       await admin.query("update public.clued_projects set lifecycle_status='completed',progress_status='completed' where id=$1", [project]);
       assert.equal((await close(third, 'cancelled')).status, 'committed', 'source Project closure cannot trap the existing Global Task');
+    });
+    await suite.test('a proven Native reconnect preserves the original archived Job and rechecks current access', async () => {
+      const rp = uuid(), rs = 'project:' + rp;
+      const create = { operation: 'create', canonical_project_id: rp, project_schema_version: 2, authority: 'user_explicit',
+        user_confirmed: true, confidence_reason: 'Disposable reconnect Project', source_refs: [],
+        source_unavailable_reason: 'Synthetic fixture', idempotency_key: uuid(), mutation: { name: 'Reconnect fixture', progress_status: 'active', aliases: [] } };
+      await admin.query('begin');
+      try {
+        await admin.query('select clued_private.authorization_writer_guard_v2($1)', [owner]);
+        await admin.query('select clued_private.authorization_writer_lock_fanout_v2($1)', [owner]);
+        assert.equal((await admin.query('select clued_private.project_mutation_core_v2($1,null,$2,clued_private.m1_sha256($2)) v', [owner, create])).rows[0].v.status, 'committed');
+        await admin.query('commit');
+      } catch (error) { await admin.query('rollback'); throw error; }
+      decisions.set(rp, await put({ scope: rs, kind: 'decision' }));
+      const target = await registeredRoot(rp), output = await file({ p: rp });
+      const id = await put({ scope: rs }); await setGoal(id); await bind(id, output.job);
+      const client = await approvedClient(target, [rs]), gateway = await connect(); await setWorkerGatewayCaller(gateway);
+      const source = (await admin.query('select connection_id,mutation,authority_snapshot_v2 from clued_private.storage_jobs_v1 where job_id=$1', [output.job])).rows[0];
+      const saved = (await admin.query('select verified_result_v2,verified_digest_v2,receipt_id from clued_private.resource_center_mutations_v1 where id=$1', [output.intent])).rows[0];
+      const next = uuid(), lifecycle = uuid(), requestKey = uuid(), requestDigest = hash(), issuer = hash(), oauth = uuid();
+      await allowTestIssuerCredentials(admin);
+      await admin.query("insert into clued_private.storage_oauth_apps_v1(issuer_hash,oauth_client_id,redirect_uri,read_enabled,execution_enabled) values($1,$2,'https://reconnect.invalid/storage/google/callback',true,true)", [issuer, 'reconnect-' + next]);
+      const refs = [{ kind: 'system', role: 'primary', id: next }];
+      const prepare = await receipt(owner, 'storage_owner_reconnect', { idempotency_key: 'storage-owner:' + requestKey,
+        request_digest: requestDigest, connection_id: target.connection }, rs, refs);
+      const oauthReceipt = await receipt(owner, 'storage_oauth_activate', { idempotency_key: uuid() }, rs, refs);
+      const activation = await receipt(owner, 'storage_owner_reconnect_activate', { idempotency_key: 'storage-reconnect-activate:' + lifecycle,
+        attempt_id: lifecycle, oauth_receipt_id: oauthReceipt }, rs, refs);
+      const decision = await put({ scope: rs, kind: 'decision' }), policy = uuid();
+      await admin.query('begin');
+      try {
+      await admin.query("update clued_private.storage_account_policies_v2 set state='revoked',revoked_at=clock_timestamp(),revocation_receipt_id=$2 where id=$1", [target.policy, activation]);
+      await admin.query("update clued_private.storage_connections_v1 set state='revoked',auth_mode='revoked',auth_generation=auth_generation+1,revoked_at=clock_timestamp(),version=version+1 where id=$1", [target.connection]);
+      await admin.query("insert into clued_private.storage_connections_v1(id,owner_id,profile_id,profile_version,source_decision_id,decision_version,provider,provider_subject,oauth_client_id,state,credential_version,credential_envelope,receipt_id) values($1,$2,$3,1,$4,1,'google-drive','synthetic-provider',$5,'active',1,'{}',$6)",
+        [next, owner, target.profile, decision, 'reconnect-' + next, prepare]);
+      await admin.query("insert into clued_private.storage_account_policies_v2(id,owner_id,connection_id,provider,provider_subject,root_folder_id,profile_id,scope_digest,policy_generation,source_decision_id,decision_version,consent_source,disclosure_version,consent_receipt_id,activation_receipt_id,state) select $1,c.owner_id,c.id,c.provider,c.provider_subject,p.root_folder_id,p.id,clued_private.storage_policy_scope_digest_v2(c.id),1,c.source_decision_id,c.decision_version,'explicit_restore','reconnect-fixture/1',$3,$4,'active' from clued_private.storage_connections_v1 c join clued_private.resource_center_profiles_v1 p on p.id=c.profile_id where c.id=$2", [policy, next, prepare, activation]);
+      await admin.query("update clued_private.storage_connections_v1 set auth_mode='account_policy',account_policy_id=$2,auth_generation=auth_generation+1 where id=$1", [next, policy]);
+      await admin.query("insert into clued_private.storage_read_access_v1(owner_id,connection_id,account_policy_id,classes,read_generation,disclosure_version,consent_receipt_id) values($1,$2,$3,array['read'],1,'reconnect-read-fixture/1',$4)", [owner, next, policy, prepare]);
+      await admin.query('commit');
+      } catch (error) { await admin.query('rollback'); throw error; }
+      await admin.query("insert into clued_private.storage_oauth_attempts_v1(id,connection_id,owner_id,session_id,issuer_hash,connection_version,state_hash,verifier_envelope,expires_at,status,receipt_id,purpose) values($1,$2,$3,$4,$5,1,$6,'{}',now()+interval '1 hour','completed',$7,'connection')",
+        [oauth, next, owner, claims.session_id, issuer, hash(), oauthReceipt]);
+      const result = { status: 'completed', receipt_id: activation, connection_id: next, old_connection_id: target.connection, profile_id: target.profile, project_id: rp };
+      // Merely sharing the root/profile is insufficient.
+      const resolve = async () => (await admin.query('select clued_private.task_goal_delivery_connection_v1($1,$2,false) v', [owner, target.connection])).rows[0].v;
+      assert.equal(await resolve(), null);
+      await admin.query("insert into clued_private.storage_owner_lifecycle_v1(id,owner_id,session_id,issuer_hash,operation,connection_id,connection_version,profile_id,profile_version,root_folder_id,confirmation,request_key,request_digest,new_connection_id,state,expires_at,receipt_id,result) values($1,$2,$3,$4,'reconnect',$5,1,$6,1,$7,'{}',$8,$9,$10,'completed',now()+interval '1 hour',$11,$12)",
+        [lifecycle, owner, claims.session_id, issuer, target.connection, target.profile, 'root-' + rp, requestKey, requestDigest, next, prepare, result]);
+      await admin.query('insert into clued_private.storage_owner_connection_hidden_v1(connection_id,owner_id,receipt_id) values($1,$2,$3)', [target.connection, owner, activation]);
+      assert.equal(await resolve(), next);
+      const view = await read(id), delivery = view.task_workflow.deliveries[0];
+      assert.equal(view.task_workflow.completion.eligible, true, JSON.stringify(view));
+      assert.deepEqual([delivery.job_id, delivery.connection_id, delivery.source_connection_id, delivery.path, delivery.sha256, delivery.receipt_id],
+        [output.job, next, target.connection, output.filePath, output.digest, output.settled]);
+      const agentRead = async () => {
+        const listing = (await gateway.query('select public.clued_record_list($1,$2::jsonb) v', [client.token, { level: 'project', project_id: rp, record_type: 'task', limit: 200 }])).rows[0].v;
+        return listing.records.find(row => row.id === id);
+      };
+      assert.deepEqual((await agentRead()).task_workflow.deliveries, view.task_workflow.deliveries);
+      // A current reconnect endpoint still obeys account-wide stops and policy
+      // expiry. Constructing rows here is confined to the disposable database.
+      const expirePolicy = async () => {
+        const expired = uuid();
+        await admin.query("update clued_private.storage_account_policies_v2 set state='revoked',revoked_at=clock_timestamp(),revocation_receipt_id=$2 where id=$1", [policy, activation]);
+        await admin.query("insert into clued_private.storage_account_policies_v2(id,owner_id,connection_id,provider,provider_subject,root_folder_id,profile_id,scope_digest,policy_generation,source_decision_id,decision_version,consent_source,disclosure_version,consent_receipt_id,activation_receipt_id,state,expires_at) select $2,owner_id,connection_id,provider,provider_subject,root_folder_id,profile_id,scope_digest,policy_generation+1,source_decision_id,decision_version,consent_source,disclosure_version,consent_receipt_id,activation_receipt_id,'active',clock_timestamp()-interval '1 second' from clued_private.storage_account_policies_v2 where id=$1", [policy, expired]);
+        await admin.query('update clued_private.storage_connections_v1 set account_policy_id=$2,auth_generation=auth_generation+1 where id=$1', [next, expired]);
+      };
+      const cases = [
+        ['expired endpoint policy', expirePolicy],
+        ['endpoint source decision revoked', "update public.clued_memories set lifecycle_status='revoked',version=version+1 where id=$1", [decision]],
+        ['account-wide root stopped', "insert into clued_private.storage_root_denies_v2(owner_id,provider,provider_subject,root_folder_id,lineage_id,receipt_id) values($1,'google-drive','synthetic-provider',$2,null,$3)", [owner, 'root-' + rp, activation]],
+        ['incomplete reconnect', "update clued_private.storage_owner_lifecycle_v1 set state='uncertain' where id=$1", [lifecycle]],
+        ['cancelled reconnect', "update clued_private.storage_owner_lifecycle_v1 set result=result||'{\"status\":\"cancelled\"}'::jsonb where id=$1", [lifecycle]],
+        ['wrong owner', 'update clued_private.storage_owner_lifecycle_v1 set owner_id=$2 where id=$1', [lifecycle, stranger]],
+        ['wrong profile', 'update clued_private.storage_owner_lifecycle_v1 set profile_id=$2 where id=$1', [lifecycle, (await registeredRoot(foreignProject, stranger)).profile]],
+        ['wrong root', "update clued_private.storage_owner_lifecycle_v1 set root_folder_id='other-root' where id=$1", [lifecycle]],
+        ['wrong profile version', 'update clued_private.storage_owner_lifecycle_v1 set profile_version=profile_version+1 where id=$1', [lifecycle]],
+        ['wrong provider subject', "update clued_private.storage_connections_v1 set provider_subject='different-account' where id=$1", [next]],
+        ['wrong result identity', "update clued_private.storage_owner_lifecycle_v1 set result=result||jsonb_build_object('old_connection_id',$2::text) where id=$1", [lifecycle, next]],
+        ['cycle', "update clued_private.storage_owner_lifecycle_v1 set new_connection_id=connection_id,result=result||jsonb_build_object('connection_id',connection_id) where id=$1", [lifecycle]],
+        ['revoked endpoint', "update clued_private.storage_connections_v1 set state='revoked',revoked_at=clock_timestamp(),version=version+1 where id=$1", [next]],
+        ['hidden endpoint', 'insert into clued_private.storage_owner_connection_hidden_v1(connection_id,owner_id,receipt_id) values($1,$2,$3)', [next, owner, activation]],
+        ['revoked current policy', "update clued_private.storage_account_policies_v2 set state='revoked',revoked_at=clock_timestamp(),revocation_receipt_id=$2 where id=$1", [policy, activation]],
+        ['corrupt activation receipt', 'update public.clued_audit_receipts set response_hash=$2 where id=$1', [activation, hash()]],
+        ['corrupt prepare receipt', 'update public.clued_audit_receipts set response_hash=$2 where id=$1', [prepare, hash()]],
+        ['unfinished OAuth', "update clued_private.storage_oauth_attempts_v1 set status='claimed' where id=$1", [oauth]],
+        ['corrupt OAuth receipt', 'update public.clued_audit_receipts set response_hash=$2 where id=$1', [oauthReceipt, hash()]],
+        ['branch', "insert into clued_private.storage_owner_lifecycle_v1(id,owner_id,session_id,issuer_hash,operation,connection_id,connection_version,profile_id,profile_version,root_folder_id,confirmation,request_key,request_digest,new_connection_id,state,expires_at,receipt_id,result) select $2,owner_id,session_id,issuer_hash,operation,connection_id,connection_version,profile_id,profile_version,root_folder_id,confirmation,$3,request_digest,new_connection_id,state,expires_at,receipt_id,result from clued_private.storage_owner_lifecycle_v1 where id=$1", [lifecycle, uuid(), uuid()]],
+      ];
+      for (const [label, sql, params] of cases) {
+        await admin.query('begin');
+        try { if (typeof sql === 'function') await sql(); else await admin.query(sql, params); assert.equal(await resolve(), null, label); }
+        finally { await admin.query('rollback'); }
+      }
+      const access = async () => (await admin.query('select clued_private.task_goal_delivery_storage_read_v1($1,$2,$3,$4) v', [owner, client.id, target.connection, output.job])).rows[0].v;
+      assert.equal(await access(), true);
+      for (const [label, sql, params] of [
+        ['Binding revoked', 'update public.clued_agent_bindings set revoked_at=clock_timestamp() where id=$1', [client.id]],
+        ['read revoked', "update clued_private.storage_read_access_v1 set state='revoked',revoked_at=clock_timestamp(),revocation_receipt_id=$2 where connection_id=$1", [next, activation]],
+        ['explicit client deny', 'insert into clued_private.storage_client_denies_v2(owner_id,lineage_id,receipt_id) values($1,$2,$3)', [owner, client.lineage, activation]],
+        ['explicit read deny', "insert into clued_private.storage_read_client_denies_v1(owner_id,lineage_id,class,receipt_id) values($1,$2,'read',$3)", [owner, client.lineage, activation]],
+        ['explicit root deny', "insert into clued_private.storage_root_denies_v2(owner_id,provider,provider_subject,root_folder_id,lineage_id,receipt_id) values($1,'google-drive','synthetic-provider',$2,$3,$4)", [owner, 'root-' + rp, client.lineage, activation]],
+      ]) {
+        await admin.query('begin');
+        try { await admin.query(sql, params); assert.equal(await access(), false, label); }
+        finally { await admin.query('rollback'); }
+      }
+      // Reconnect changes no historical bytes, proof, original connection or Receipt.
+      assert.deepEqual((await admin.query('select connection_id,mutation,authority_snapshot_v2 from clued_private.storage_jobs_v1 where job_id=$1', [output.job])).rows[0], source);
+      assert.deepEqual((await admin.query('select verified_result_v2,verified_digest_v2,receipt_id from clued_private.resource_center_mutations_v1 where id=$1', [output.intent])).rows[0], saved);
+      const agentComplete = async () => (await gateway.query('select public.clued_record_mutate($1,$2::jsonb) v', [client.token, {
+        operation: 'close', id, base_version: (await stored(id)).version, scope: rs, record_type: 'task', record_schema_version: 1,
+        lifecycle_status: 'completed', authority: 'observed', confidence_reason: 'Disposable original proof with current reconnect authorization',
+        mutation: { closure_summary: 'Same archived bytes, current reconnect and permissions.' }, idempotency_key: uuid(),
+      }])).rows[0].v;
+      await admin.query('begin');
+      try {
+        await admin.query('select pg_advisory_xact_lock(hashtextextended($1,0))', [owner + ':root-' + rp]);
+        // The gateway session has a statement timeout. A blocked SQL call
+        // fails this assertion while the advisory lock is still held.
+        rejected(await agentComplete(), 'task_completion_checks_failed');
+      } finally { await admin.query('rollback'); }
+      assert.equal((await read(id)).task_workflow.completion.eligible, true, 'a refused completion keeps the original active Task');
+      const closed = await agentComplete();
+      assert.equal(closed.status, 'committed', JSON.stringify(closed));
     });
     await suite.test('new private state and helpers have RLS/revokes; gateway fixed surface unchanged', async () => {
       for (const table of ['task_goal_delivery_acceptances_v1', 'task_goal_delivery_completion_admissions_v1']) {

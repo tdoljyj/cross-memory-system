@@ -572,21 +572,28 @@ async function ready(confirm=true) {
 }
 test("standing refresh requires explicit confirmation and exact CAS, then reads fresh status",async()=>{
   const f=await ready(); f.button("授权开启后台续签").props.onClick(); await f.settle();
-  assert.ok(f.confirmations[0].includes("退出登录不影响续签"));
+  assert.ok(f.text().includes("退出登录不影响续签"));
+  assert.equal(f.confirmations.length,0); assert.equal(f.requests.length,2);
+  f.button("确认开启后台续签").props.onClick(); await f.settle();
   assert.deepEqual(JSON.parse(f.requests[2].init.body),{action:"enable",connection_id:connection.id,base_version:2,delegation_version:0,idempotency_key:"fixture-request",until_revoked:true});
   f.respond(2,{status:"committed",receipt_id:fixtureReceipt}); await f.settle();
   assert.deepEqual(JSON.parse(f.requests[3].init.body),{action:"status",connection_id:connection.id});
   f.respond(3,{...status,enabled:true,version:1}); await f.settle(); assert.ok(f.text().includes("后台续签已开启"));
   f.button("停用后台续签").props.onClick(); await f.settle();
+  assert.equal(f.requests.length,4);
+  f.button("确认停用后台续签").props.onClick(); await f.settle();
   assert.deepEqual(JSON.parse(f.requests[4].init.body),{action:"disable",connection_id:connection.id,base_version:2,delegation_version:1,idempotency_key:"fixture-request"});
 });
 test("cancelled confirmation never submits; uncertain pending cannot be re-enabled",async()=>{
   const f=await ready(false); f.button("授权开启后台续签").props.onClick(); await f.settle(); assert.equal(f.requests.length,2);
+  const stale=f.button("确认开启后台续签"); f.button("取消续签设置").props.onClick(); await f.settle();
+  stale.props.onClick(); await f.settle(); assert.equal(f.requests.length,2);
   f.button("查询续签状态").props.onClick(); await f.settle(); f.respond(2,{...status,pending:true}); await f.settle();
   assert.equal(f.button("授权开启后台续签").props.disabled,true); assert.ok(f.text().includes("尚未确认"));
 });
 test("account switch during refresh setting does not query or display the old connection",async()=>{
   const f=await ready(); f.button("授权开启后台续签").props.onClick(); await f.settle();
+  f.button("确认开启后台续签").props.onClick(); await f.settle();
   f.change("b"); await f.settle(); f.respond(3,{connections:[]}); await f.settle();
   f.respond(2,{status:"committed",receipt_id:lateReceipt}); await f.settle();
   assert.equal(f.requests.length,4); assert.equal(f.text().includes(connection.id),false); assert.equal(f.text().includes("设置已确认"),false);
@@ -594,11 +601,15 @@ test("account switch during refresh setting does not query or display the old co
 test("double click cannot dispatch two refresh changes",async()=>{
   const f=await ready(); const enable=f.button("授权开启后台续签");
   enable.props.onClick(); enable.props.onClick(); await f.settle();
-  assert.equal(f.requests.length,3); assert.equal(f.confirmations.length,1);
+  assert.equal(f.requests.length,2); assert.equal(f.confirmations.length,0);
+  const confirm=f.button("确认开启后台续签"); confirm.props.onClick(); confirm.props.onClick(); await f.settle();
+  assert.equal(f.requests.length,3);
   assert.equal(JSON.parse(f.requests[2].init.body).action,"enable");
 });
 test("account switch before refresh dispatch blocks stale consent",async()=>{
-  const f=await ready(); f.button("授权开启后台续签").props.onClick(); f.change("b"); await f.settle();
+  const f=await ready(); f.button("授权开启后台续签").props.onClick(); await f.settle();
+  const stale=f.button("确认开启后台续签"); f.change("b"); await f.settle();
+  stale.props.onClick(); await f.settle();
   assert.equal(f.requests.some(r=>JSON.parse(r.init.body).action === "enable"),false);
   assert.equal(f.text().includes(connection.id),false);
 });

@@ -255,7 +255,6 @@ apps/clued-cloud/tests/storage-legacy-create-registration-db.test.mjs
 apps/clued-cloud/tests/storage-legacy-directory-recovery-db.test.mjs
 apps/clued-cloud/tests/storage-master-control-db.test.mjs
 apps/clued-cloud/tests/storage-native-recovery.test.mjs
-apps/clued-cloud/tests/storage-owner-lifecycle-db.test.mjs
 apps/clued-cloud/tests/storage-owner-lifecycle-route.test.mjs
 apps/clued-cloud/tests/storage-owner-lifecycle-worker.test.mjs
 apps/clued-cloud/tests/storage-recovery-diagnostics.test.mjs
