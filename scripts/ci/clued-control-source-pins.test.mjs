@@ -9,12 +9,21 @@ import {planControlSourcePins,checkControlSourcePins,writeControlSourcePins,CONT
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const BASE='93940d4f6c06179e319c81173269d48cdc8e6420';
+const TRAIN_V2_BASE='c28b21dc0f02dff5b3fb4f2c83e2545ac06bb98e';
 const OPTIONS={base:BASE};
-const baseText=name=>execFileSync('git',['show',`${BASE}:${name}`],{cwd:ROOT}).toString('utf8');
-const baseBlobs=(()=>{const t=baseText(CONTROL_SOURCE_MODULE),e='export const MERGE_RECONCILE_CONTROL_SOURCE=freeze(',a=t.indexOf(e)+e.length;return JSON.parse(t.slice(a,t.indexOf('\n});',a)+2)).implementation_blobs;})();
+const baseText=(name,base=BASE)=>execFileSync('git',['show',`${base}:${name}`],{cwd:ROOT}).toString('utf8');
+function implementationBlobsAt(base){
+  const text=baseText(CONTROL_SOURCE_MODULE,base),marker='export const MERGE_RECONCILE_CONTROL_SOURCE=freeze(';
+  const start=text.indexOf(marker)+marker.length;
+  return JSON.parse(text.slice(start,text.indexOf('\n});',start)+2)).implementation_blobs;
+}
+const baseBlobs=implementationBlobsAt(BASE);
 const CONTROL_SOURCE_MECHANICAL_FILES=controlSourceMechanicalFiles(JSON.parse(baseText('config/clued-mechanical-files.json')),baseBlobs);
-const files=[CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,'config/clued-components.json',...CONTROL_SOURCE_MECHANICAL_FILES,'scripts/ci/clued-workflow-profile.mjs','scripts/ci/component-version-integration-policy.mjs'];
-function fixture(t){
+function fixture(t,base=BASE){
+  const mechanical=base===BASE?CONTROL_SOURCE_MECHANICAL_FILES:
+    controlSourceMechanicalFiles(JSON.parse(baseText('config/clued-mechanical-files.json',base)),implementationBlobsAt(base));
+  const files=new Set([CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY,'config/clued-components.json',...mechanical,
+    'scripts/ci/clued-workflow-profile.mjs','scripts/ci/component-version-integration-policy.mjs']);
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'control-source-pins-'));
   execFileSync('git',['clone','--shared','--no-checkout','--quiet',ROOT,dir],{stdio:'pipe'});
   execFileSync('git',['read-tree','HEAD'],{cwd:dir,stdio:'pipe'});
@@ -22,7 +31,7 @@ function fixture(t){
   // The checked-in descriptor is a frozen base snapshot. Make every case
   // independent from whether another successful test already materialised it.
   for(const name of [CONTROL_SOURCE_MODULE,CONTROL_SOURCE_REGISTRY]){
-    let bytes=execFileSync('git',['show',`${BASE}:${name}`],{cwd:ROOT}).toString('utf8');
+    let bytes=baseText(name,base);
     if(name===CONTROL_SOURCE_MODULE){const marker=fs.readFileSync(path.join(ROOT,name),'utf8').match(/^export const COMPONENT_VERSION[^\r\n]+/m)[0];bytes=bytes.replace(/^export const COMPONENT_VERSION[^\r\n]+/m,marker);}
     fs.writeFileSync(path.join(dir,name),bytes);
   }
@@ -73,6 +82,32 @@ test('the checkout passes with its own commit as the trusted base',async()=>{
   const result=await checkControlSourcePins(ROOT,{base:head});
   assert.equal(result.status,clean?'ok':result.status,JSON.stringify(result.details));
   if(clean)assert.deepEqual(result.details,[]);
+});
+test('the two exact train v2 Source appends pass from the pre-registration base',async()=>{
+  const result=await checkControlSourcePins(ROOT,{base:TRAIN_V2_BASE});
+  assert.equal(result.status,'ok',JSON.stringify(result.details));
+});
+test('tampering with either train v2 Source or FullRole is refused before mechanical writes',async t=>{
+  const root=fixture(t,TRAIN_V2_BASE),options={base:TRAIN_V2_BASE};
+  fs.copyFileSync(path.join(ROOT,CONTROL_SOURCE_MODULE),path.join(root,CONTROL_SOURCE_MODULE));
+  const catalogue=read(ROOT,CONTROL_SOURCE_REGISTRY);
+  fs.writeFileSync(path.join(root,CONTROL_SOURCE_REGISTRY),catalogue);
+  const unmodified=await checkControlSourcePins(root,options);
+  assert.equal(unmodified.status,'ok',JSON.stringify(unmodified.details));
+  for(const name of ['clued-merge-slot-ci','clued-merge-executor']){
+    const file='.github/workflows/'+name+'.yml';
+    for(const tamper of [
+      (entry)=>{entry.authority_boundary.execution_authority=true;},
+      (_entry,roles)=>{roles[0].definition.if='always()';},
+    ]){
+      const data=JSON.parse(catalogue),entry=data.workflows[file].sources.at(-1);
+      tamper(entry,data.roles[file][entry.workflow_blob]);
+      fs.writeFileSync(path.join(root,CONTROL_SOURCE_REGISTRY),JSON.stringify(data,null,2)+'\n');
+      const before=pair(root);
+      await assert.rejects(writeControlSourcePins(root,options),/outside the registered train v2 appends/);
+      assert.deepEqual(pair(root),before);
+    }
+  }
 });
 test('duplicate version markers and manifest mismatches refuse without any registry write',async t=>{
   const root=fixture(t);edit(root,CONTROL_SOURCE_MECHANICAL_FILES[0],x=>x+"\nexport const COMPONENT_VERSION = '9.9.9';\n");await refusesWithoutWrites(root,/one component version marker/);
