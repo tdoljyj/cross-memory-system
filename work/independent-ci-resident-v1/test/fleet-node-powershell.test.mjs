@@ -5,8 +5,12 @@
 // (ci-required-selection.mjs RESIDENT_AND_SOURCE). They need Windows (Windows PowerShell 5.1, Windows paths): on Linux this file is
 // skipped by name.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { FLEET_TESTS, POWERSHELL, RES, childEnv, skip, tail } from './fleet-node-fixtures.mjs';
@@ -172,6 +176,123 @@ function psLines(command) {
   assert.ifError(r.error);
   return { status: r.status, lines: String(r.stdout ?? '').split(/\r?\n/).filter(l => l.trim()), out: `${tail(r.stdout)}\n${tail(r.stderr, 3000)}` };
 }
+
+// Dot-source the real prerequisite step without entering install, and substitute a loopback download server.
+const prereqBody = 'pinned prerequisite bytes';
+const prereqHash = createHash('sha256').update(prereqBody).digest('hex');
+async function downloadPrereq(serve, { sha256 = prereqHash, bytes = prereqBody.length } = {}) {
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'bootstrap-prereq-'));
+  const dest = path.join(work, 'dest');
+  const waitLog = path.join(work, 'retry-waits.txt');
+  const ranges = [];
+  const server = http.createServer((req, res) => {
+    ranges.push(req.headers.range ?? null);
+    serve(ranges.length, req.headers.range, res);
+  });
+  try {
+    fs.mkdirSync(dest);
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const boot = path.join(RES, 'rollout', 'fleet', 'bootstrap.ps1');
+    const command = `
+$ProgressPreference = 'SilentlyContinue'
+. ${psLiteral(boot)} -From ${psLiteral(work)}
+$script:Work = ${psLiteral(work)}
+$item = @{ fileName = 'fixture.zip'; url = 'http://127.0.0.1:${server.address().port}/fixture.zip'; sha256 = '${sha256}'; bytes = ${bytes} }
+$file = Get-Prereq $item ${psLiteral(dest)} { param($ms) [IO.File]::AppendAllLines(${psLiteral(waitLog)}, [string[]]@($ms)) }
+@{ sha256 = (Sha256File $file); bytes = (Get-Item -LiteralPath $file).Length } | ConvertTo-Json -Compress`;
+    const encoded = Buffer.from(command, 'utf16le').toString('base64');
+    const result = await new Promise(resolve => {
+      execFile(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
+        { cwd: RES, env: childEnv(), windowsHide: true },
+        (error, stdout, stderr) => resolve({ status: error ? error.code : 0, stdout, stderr }));
+    });
+    const waits = fs.existsSync(waitLog) ? fs.readFileSync(waitLog, 'utf8').trim().split(/\r?\n/).map(Number) : [];
+    return { ...result, ranges, waits, files: fs.readdirSync(dest), out: `${result.stdout}\n${result.stderr}` };
+  } finally {
+    if (server.listening) {
+      const closed = once(server, 'close');
+      server.close();
+      server.closeAllConnections();
+      await closed;
+    }
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+}
+
+function sendPrereq(res, start, cutoff) {
+  const headers = cutoff === undefined
+    ? { 'Content-Length': prereqBody.length - start, Connection: 'close' }
+    : { 'Transfer-Encoding': 'chunked', Connection: 'close' };
+  if (start) headers['Content-Range'] = `bytes ${start}-${prereqBody.length - 1}/${prereqBody.length}`;
+  res.writeHead(start ? 206 : 200, headers);
+  if (cutoff === undefined) res.end(prereqBody.slice(start));
+  else {
+    const socket = res.socket;
+    res.write(prereqBody.slice(start, cutoff), () => socket.end());
+  }
+}
+
+test('bootstrap prerequisite resumes after two interrupted responses and verifies the completed file', { skip }, async () => {
+  const r = await downloadPrereq((attempt, range, res) => {
+    const start = Number(/^bytes=(\d+)-$/.exec(range)?.[1] ?? 0);
+    sendPrereq(res, start, attempt <= 2 ? start + 4 : undefined);
+  });
+  assert.equal(r.status, 0, r.out);
+  assert.deepEqual(r.ranges, [null, 'bytes=4-', 'bytes=8-'], r.out);
+  assert.deepEqual(r.waits, [1000, 2000], r.out);
+  assert.deepEqual(JSON.parse(r.stdout), { sha256: prereqHash, bytes: prereqBody.length }, r.out);
+  assert.deepEqual(r.files, ['fixture.zip']);
+});
+
+test('bootstrap prerequisite reports exhausted retries with the file name and attempt count', { skip }, async () => {
+  const r = await downloadPrereq((_attempt, _range, res) => res.writeHead(503).end());
+  assert.equal(r.status, 1, r.out);
+  assert.equal(r.stderr, '', r.out);
+  const [step, verdict] = r.stdout.trim().split(/\r?\n/).map(JSON.parse);
+  assert.deepEqual(step, { name: 'prereq', result: 'failed', rejectCode: 'PREREQ_DOWNLOAD_RETRY_EXHAUSTED', detail: null });
+  assert.deepEqual([verdict.status, verdict.code, verdict.detail],
+    ['BOOTSTRAP_REFUSED', 'PREREQ_DOWNLOAD_RETRY_EXHAUSTED', { name: 'fixture.zip', attempts: 5, reason: 'HTTP_503' }]);
+  assert.equal(r.ranges.length, verdict.detail.attempts);
+  assert.deepEqual(r.waits, [1000, 2000, 4000, 8000], r.out);
+  assert.deepEqual(r.files, []);
+});
+
+test('bootstrap prerequisite discards an old fragment when the server sends the full file again', { skip }, async () => {
+  const r = await downloadPrereq((attempt, _range, res) => sendPrereq(res, 0, attempt === 1 ? 4 : undefined));
+  assert.equal(r.status, 0, r.out);
+  assert.deepEqual(r.ranges, [null, 'bytes=4-'], r.out);
+  assert.deepEqual(JSON.parse(r.stdout), { sha256: prereqHash, bytes: prereqBody.length }, r.out);
+  assert.deepEqual(r.files, ['fixture.zip']);
+});
+
+test('bootstrap prerequisite discards a refused range and starts the next request at zero', { skip }, async () => {
+  const r = await downloadPrereq((attempt, _range, res) => {
+    if (attempt === 2) {
+      sendPrereq(res, 3);
+    } else {
+      sendPrereq(res, 0, attempt === 1 ? 4 : undefined);
+    }
+  });
+  assert.equal(r.status, 0, r.out);
+  assert.deepEqual(r.ranges, [null, 'bytes=4-', null], r.out);
+  assert.deepEqual(JSON.parse(r.stdout), { sha256: prereqHash, bytes: prereqBody.length }, r.out);
+  assert.deepEqual(r.files, ['fixture.zip']);
+});
+
+test('bootstrap prerequisite publishes a download only if both pins match', { skip }, async () => {
+  for (const pins of [{ sha256: 'a'.repeat(64) }, { bytes: prereqBody.length - 1 }]) {
+    const r = await downloadPrereq((_attempt, _range, res) => sendPrereq(res, 0), pins);
+    assert.equal(r.status, 1, r.out);
+    assert.equal(r.stderr, '', r.out);
+    const verdict = JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1));
+    assert.deepEqual([verdict.status, verdict.code, verdict.detail.name, verdict.detail.bytes],
+      ['BOOTSTRAP_REFUSED', 'PREREQ_HASH_MISMATCH', 'fixture.zip', prereqBody.length]);
+    assert.deepEqual(r.ranges, [null]);
+    assert.deepEqual(r.files, []);
+  }
+});
+
 test('bootstrap.ps1 and the launcher print their step lines in the host preparation\'s shape', { skip, timeout: 900_000 }, () => {
   const BOOT = path.join(RES, 'rollout', 'fleet', 'bootstrap.ps1');
   const entry = psLines(`. ${psLiteral(BOOT)}\nOut-Step 'assets' 'ok' $null @('SHA256SUMS')\nStop-Bootstrap 'prereq' 'PREREQ_NOT_PINNED' @('PREREQ_NOT_PINNED:git')`);

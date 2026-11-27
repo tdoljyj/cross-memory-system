@@ -20,7 +20,8 @@
     1. the asset set and every hash (Test-AssetSet, Read-Sha256Sums);
     2. the prerequisite manifest (Test-PrereqManifest): every item this run uses pinned (PREREQ_NOT_PINNED otherwise: nothing is fetched
        unpinned). A node with a resident (the reinstall) uses node, python and git only; a first install all seven and the .debs
-       (Get-NeededPrereqs). Each file from <dir> when it is there with its pinned hash, else downloaded, then held to sha256 and size;
+       (Get-NeededPrereqs). Each file from <dir> when it is there with its pinned hash, else downloaded with bounded retries and
+       Range resume where supported, then held to sha256 and size;
        node, python and git expanded once into C:\ProgramData\CluedBootstrap\tools\<name>-<sha256-first-16> (complete only with its full-sha256 marker; a
        cut-off expansion is set aside and done again: Get-ExtractState);
     3. the archive's tree/ (Windows' own tar.exe, which cannot write a name outside ASCII: the package builder refuses such a path,
@@ -457,17 +458,129 @@ function Read-StageResult([string]$path) {
   $last = Get-LastJsonLine $text
   [ordered]@{ lines = @(([string]$text) -split "`r?`n" | Where-Object { $_ -ne '' }); last = $(if ($last -is [Collections.IDictionary] -and [string](Get-Key $last 'status')) { $last } else { $null }) }
 }
-# One prerequisite file into $dest: <From>\<fileName> when it has the pinned hash, else downloaded; held to sha256 and size either way.
-function Get-Prereq($item, [string]$dest) {
+# One HTTP attempt. The response headers and each pending read share the download's deadline and have a 30 s timeout.
+function Receive-Prereq($item, [string]$partial, [long]$offset, [Diagnostics.Stopwatch]$clock, [int]$limitMs) {
+  $expected = [long]$item['bytes']
+  $request = [Net.WebRequest]::Create([string]$item['url'])
+  $request.UserAgent = 'fleet-node-bootstrap'
+  $request.MaximumAutomaticRedirections = 5
+  if ($offset -gt 0) { $request.AddRange($offset) }
+  $response = $null
+  try {
+    try {
+      $wait = [int][Math]::Min(30000, $limitMs - $clock.ElapsedMilliseconds)
+      if ($wait -le 0) { return @{ state = 'retry'; reason = 'deadline' } }
+      $pending = $request.GetResponseAsync()
+      if (-not $pending.Wait($wait)) { return @{ state = 'retry'; reason = 'timeout' } }
+      $response = $pending.Result
+    }
+    catch {
+      $failure = $_.Exception
+      while ($failure -is [Management.Automation.MethodInvocationException] -or $failure -is [AggregateException]) {
+        $failure = $failure.InnerException
+      }
+      if ($failure -is [Net.WebException]) {
+        $response = $failure.Response
+        if ($null -ne $response) {
+          $status = [int]$response.StatusCode
+          if ($status -eq 416 -and $offset -gt 0) { return @{ state = 'restart'; reason = 'HTTP_416' } }
+          $state = if ($status -ge 500 -and $status -lt 600) { 'retry' } else { 'refused' }
+          return @{ state = $state; reason = "HTTP_$status" }
+        }
+        $state = if ($failure.Status -in @('TrustFailure', 'SecureChannelFailure', 'ProtocolError')) { 'refused' } else { 'retry' }
+        return @{ state = $state; reason = [string]$failure.Status }
+      }
+      if ($failure -is [IO.IOException] -or $failure -is [TimeoutException]) {
+        return @{ state = 'retry'; reason = $failure.GetType().Name }
+      }
+      throw
+    }
+    $status = [int]$response.StatusCode
+    $length = $response.ContentLength
+    if ($status -eq 200) {
+      # The server ignored Range, or this is the first GET. Discard the old fragment before writing the full response.
+      [IO.File]::Delete($partial)
+      $offset = 0
+      $mode = [IO.FileMode]::CreateNew
+    } elseif ($status -eq 206) {
+      if ($offset -eq 0 -or $response.Headers['Content-Range'] -cne "bytes ${offset}-$($expected - 1)/$expected" -or
+          ($length -ge 0 -and $length -ne ($expected - $offset))) { return @{ state = 'restart'; reason = 'CONTENT_RANGE' } }
+      $mode = [IO.FileMode]::Append
+      $length = $expected - $offset
+    } else { return @{ state = 'refused'; reason = "HTTP_$status" } }
+    if ($length -gt ($expected - $offset)) { return @{ state = 'length'; bytes = ($offset + $length) } }
+    $stream = $response.GetResponseStream()
+    $file = [IO.File]::Open($partial, $mode, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+      $buffer = New-Object byte[] 65536
+      $received = $offset
+      while ($true) {
+        $wait = [int][Math]::Min(30000, $limitMs - $clock.ElapsedMilliseconds)
+        if ($wait -le 0) { return @{ state = 'retry'; reason = 'deadline' } }
+        try {
+          $read = $stream.ReadAsync($buffer, 0, $buffer.Length)
+          if (-not $read.Wait($wait)) { return @{ state = 'retry'; reason = 'timeout' } }
+          $count = $read.Result
+        } catch { return @{ state = 'retry'; reason = 'interrupted_body' } }
+        if ($count -eq 0) { break }
+        $received += $count
+        if ($received -gt $expected) { return @{ state = 'length'; bytes = $received } }
+        $file.Write($buffer, 0, $count)
+      }
+      if ($length -ge 0 -and $received -lt ($offset + $length)) { return @{ state = 'retry'; reason = 'short_body' } }
+      return @{ state = 'complete' }
+    } finally { $file.Dispose() }
+  } finally {
+    $request.Abort()
+    if ($null -ne $response) { $response.Close() }
+  }
+}
+
+# Local and downloaded bytes both have to match the pin before this file can be used.
+function Get-Prereq($item, [string]$dest, [scriptblock]$waitBeforeRetry = { param($milliseconds) Start-Sleep -Milliseconds $milliseconds }) {
   $target = Join-Path $dest $item['fileName']
   $local = Join-Path $script:From $item['fileName']
-  if ([IO.File]::Exists($local) -and (Sha256File $local) -ceq $item['sha256']) { [IO.File]::Copy($local, $target, $false) }
-  else {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri $item['url'] -OutFile $target -UseBasicParsing
+  $partial = $null
+  try {
+    if ([IO.File]::Exists($local) -and (Sha256File $local) -ceq $item['sha256']) {
+      [IO.File]::Copy($local, $target, $false)
+      $candidate = $target
+      $len = (Get-Item -LiteralPath $target).Length
+    } else {
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+      $partial = $target + '.part'
+      [IO.File]::Delete($partial)
+      $clock = [Diagnostics.Stopwatch]::StartNew()
+      $limitMs = 30 * 60 * 1000
+      $maxAttempts = 5
+      $attempts = 0
+      $download = @{ state = 'retry'; reason = 'deadline' }
+      while ($attempts -lt $maxAttempts -and $clock.ElapsedMilliseconds -lt $limitMs) {
+        $offset = if ([IO.File]::Exists($partial)) { (Get-Item -LiteralPath $partial).Length } else { 0 }
+        if ($offset -ge [long]$item['bytes']) { [IO.File]::Delete($partial); $offset = 0 }
+        $attempts++
+        $download = Receive-Prereq $item $partial $offset $clock $limitMs
+        if ($download.state -notin @('retry', 'restart')) { break }
+        if ($download.state -eq 'restart') { [IO.File]::Delete($partial) }
+        if ($attempts -ge $maxAttempts) { break }
+        $delay = [int](1000 * [Math]::Pow(2, $attempts - 1))
+        if ($clock.ElapsedMilliseconds + $delay -ge $limitMs) { $download.reason = 'deadline'; break }
+        & $waitBeforeRetry $delay
+      }
+      if ($download.state -ne 'complete' -and $download.state -ne 'length') {
+        $code = if ($download.state -eq 'refused') { 'PREREQ_DOWNLOAD_REFUSED' } else { 'PREREQ_DOWNLOAD_RETRY_EXHAUSTED' }
+        Stop-Bootstrap 'prereq' $code ([ordered]@{ name = $item['fileName']; attempts = $attempts; reason = $download.reason })
+      }
+      $candidate = $partial
+      $len = if ($download.state -eq 'length') { $download.bytes } else { (Get-Item -LiteralPath $partial).Length }
+    }
+    if ($len -ne [long]$item['bytes'] -or (Sha256File $candidate) -cne $item['sha256']) {
+      Stop-Bootstrap 'prereq' 'PREREQ_HASH_MISMATCH' ([ordered]@{ name = $item['fileName']; bytes = $len })
+    }
+    if ($partial) { [IO.File]::Move($partial, $target) }
+  } finally {
+    if ($partial) { [IO.File]::Delete($partial) }
   }
-  $len = (Get-Item -LiteralPath $target).Length
-  if ((Sha256File $target) -cne $item['sha256'] -or $len -ne [long]$item['bytes']) { Stop-Bootstrap 'prereq' 'PREREQ_HASH_MISMATCH' ([ordered]@{ name = $item['fileName']; bytes = $len }) }
   $target
 }
 # L1: a zip expanded once per sha256 into the tools cache: into a new directory, marked complete, then renamed into place; a directory
