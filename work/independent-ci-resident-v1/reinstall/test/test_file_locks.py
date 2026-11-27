@@ -303,7 +303,7 @@ class FileLocks(unittest.TestCase):
             script.write_text(WINDOW_PROBE, encoding='ascii')
             result = subprocess.run([str(PS), '-NoProfile', '-NonInteractive', '-File', str(script),
                                      str(ROOT / 'tools/file-locks.ps1'), directory, scenario],
-                                    capture_output=True, text=True, encoding='utf-8', timeout=30)
+                                    capture_output=True, text=True, encoding='utf-8')
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout)
 

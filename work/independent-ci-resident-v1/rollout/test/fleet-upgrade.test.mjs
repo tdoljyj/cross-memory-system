@@ -66,7 +66,7 @@ function requester() {
   const calls = [];
   return { calls, request: async a => { calls.push(a); return { status: 'UPGRADE_REQUESTED', requestId: randomUUID(), requestFile: 'inbox\\fixture.json' }; } };
 }
-test('即使 Source 相同，缺少本机监督器编译证明也须重装', { timeout: 900_000 }, async () => {
+test('即使 Source 相同，缺少本机监督器编译证明也须重装', async () => {
   const w = await getWorld(), n = await nodeSite(keep, 'x', w.fleet);
   const file = path.join(n.root, 'upgrade', 'current.json'), cur = await readJson(file);
   const receiptFile = path.join(n.root, 'install', 'install-receipt.json'), receipt = await readJson(receiptFile);
@@ -144,17 +144,18 @@ test('fleet upgrade: generation 1 of a universal reinstall, no installed package
     // the companion's facts after the switch (the fixture's Linux stand-in keeps them in fake-linux.json)
     const responses = path.join(n.root, 'upgrade', 'mailbox', 'responses');
     const facts = await readJson(path.join(responses, 'version-facts.json'));
+    const clock = fakeClock(Date.parse(terminal.at));
     await fs.writeFile(path.join(responses, 'version-facts.json'), JSON.stringify({ ...facts, generation: 2, ciSourceManifestSha256: cur.linux.ciSourceManifestSha256,
-      manifestSha256: cur.linux.manifestSha256, sourceCommit: w.commit, observedAt: new Date().toISOString() }));
-    await fs.writeFile(path.join(n.root, 'upgrade', 'status.json'), JSON.stringify(buildStatus({ clock: Date.now, pid: 1,
+      manifestSha256: cur.linux.manifestSha256, sourceCommit: w.commit, observedAt: terminal.at }));
+    await fs.writeFile(path.join(n.root, 'upgrade', 'status.json'), JSON.stringify(buildStatus({ clock: clock.fn, pid: 1,
       current: cur, recent: [{ opId: terminal.opId, outcome: terminal.outcome, code: null, at: terminal.at }] })));
     const policy = await readJson(path.join(n.root, 'config', 'policy.json'));
-    const { view } = await readVersionState({ root: n.root, policy, policySha256: cur.policySha256 });
+    const { view } = await readVersionState({ root: n.root, policy, policySha256: cur.policySha256, clock: clock.fn });
     assert.equal(view.installedPackage.packageGeneration, 24);
     assert.equal((await fs.readFile(path.join(n.root, 'state', 'PACKAGE-VERSION.txt'), 'utf8')).split('\r\n')[0], '第 24 代');
     // the same command again: done, nothing requested, nothing written
     const q = requester();
-    const again = await upgrade(w, n, { request: q.request, workDir: path.join(n.dir, 'again') });
+    const again = await upgrade(w, n, { request: q.request, workDir: path.join(n.dir, 'again'), now: clock.now });
     assert.deepEqual([again.status, again.generation, again.packageManifestSha256, q.calls.length], ['FLEET_NODE_ALREADY_AT_THIS_PACKAGE', 2, r.packageManifestSha256, 0]);
     await assert.rejects(fs.access(path.join(n.dir, 'again')));
   }

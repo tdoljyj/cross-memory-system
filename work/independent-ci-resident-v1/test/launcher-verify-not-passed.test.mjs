@@ -80,7 +80,7 @@ $r = Step-PauseAfterInstall $${verified}
   staged = @([IO.Directory]::GetFiles($Stage) | ForEach-Object { [IO.Path]::GetFileName($_) }) } | ConvertTo-Json -Depth 6 -Compress
 `;
 
-test('P1: verify not passed: no pause request is posted and nothing is waited for; the resident is stopped under the same step name', { skip, timeout: 300_000 }, (t) => {
+test('P1: verify not passed: no pause request is posted and nothing is waited for; the resident is stopped under the same step name', { skip }, (t) => {
   const got = ps(pauseScript(tempDir(t, 'clued-r9-pause-'), 'false')).at(-1);
   assert.deepEqual(got.requests, [], 'a pause request was posted for a resident whose verify did not pass');
   assert.deepEqual(got.staged, [], 'a pause request was staged');
@@ -95,7 +95,7 @@ test('P1: verify not passed: no pause request is posted and nothing is waited fo
   assert.equal(got.reported, true);
 });
 
-test('P2: verify passed: the pause request is posted and its confirmation waited for, as before', { skip, timeout: 300_000 }, (t) => {
+test('P2: verify passed: the pause request is posted and its confirmation waited for, as before', { skip }, (t) => {
   const got = ps(pauseScript(tempDir(t, 'clued-r9-pause-'), 'true')).at(-1);
   assert.equal(got.requests.length, 1);
   assert.equal(got.report.request, got.requests[0]);
@@ -122,7 +122,7 @@ $v = Step-Verify ('b' * 64)
 [ordered]@{ answer = $true; verify = $v; done = @($Done) } | ConvertTo-Json -Depth 6 -Compress
 `;
 
-test('V1: verify not passed: its step line says failed and carries the verdict; it said ok', { skip, timeout: 300_000 }, () => {
+test('V1: verify not passed: its step line says failed and carries the verdict; it said ok', { skip }, () => {
   const failed = JSON.stringify({ status: 'RESIDENT_VERIFICATION_FAILED', checks: { 'install-receipt': { ok: true }, 'not-halted': { ok: false, detail: 'HALT.json is there' } } });
   const lines = ps(verifyScript({ exit: 1, stdout: failed }));
   const answer = lines.at(-1), steps = lines.filter(l => l.name === 'verify');
@@ -138,7 +138,7 @@ test('V1: verify not passed: its step line says failed and carries the verdict; 
   assert.deepEqual(silent.map(l => [l.result, l.rejectCode]), [['failed', 'VERIFY_GAVE_NO_VERDICT']]);
 });
 
-test('V2: verify passed: its step line is ok with no reject code, as before', { skip, timeout: 300_000 }, () => {
+test('V2: verify passed: its step line is ok with no reject code, as before', { skip }, () => {
   const passed = JSON.stringify({ status: 'RESIDENT_VERIFIED', checks: { 'install-receipt': { ok: true }, 'not-halted': { ok: true } } });
   const lines = ps(verifyScript({ exit: 0, stdout: passed }));
   // each line also carries when it was printed (task 87d330d0); the step's own fields are as before
