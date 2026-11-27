@@ -167,3 +167,20 @@ def node_profile(cfg):
     need(isinstance(prof, dict) and prof.get('contract') == 'clued.independent-ci.node-profile/1', 'INSTALLED_NODE_PROFILE_MISSING')
     need(prof.get('wslDistribution') == cfg['linux']['distribution'], 'CONFIG_DISTRIBUTION_NOT_THE_PROFILES', prof.get('wslDistribution'))   # review 1-10
     return prof, hashlib.sha256(canonical(prof).encode('utf-8')).hexdigest()
+
+def read_status_bytes(file, maximum=256 * 1024):
+    """Read one snapshot; a Windows reader must not block the service's atomic replace."""
+    def opener(name, flags):
+        import _winapi, msvcrt
+        handle = _winapi.CreateFile(name, 0x80000000, 7, 0, 3, 0, 0)
+        try:
+            return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+        except BaseException:
+            _winapi.CloseHandle(handle)
+            raise
+
+    with open(file, 'rb', opener=opener if os.name == 'nt' else None) as stream:
+        data = stream.read(maximum + 1)
+    if len(data) > maximum:
+        raise ValueError('STATUS_SIZE_REFUSED')
+    return data

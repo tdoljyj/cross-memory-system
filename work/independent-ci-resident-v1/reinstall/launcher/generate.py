@@ -138,7 +138,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '76b7ad66ccac6b95d018c3361dda6d4fa1b9166413a85ca00a0c6c47b3cf22de'
+TEMPLATE_SHA = 'a393e7816e303431c8ea65d1eb41a0846ea96f5fc910659eb272914a5d00fbad'
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -548,6 +548,16 @@ if not FIRST:
         installed_receipt_bytes = _stream.read()
     installed_receipt_sha = hashlib.sha256(installed_receipt_bytes).hexdigest()
     installed_resident = json.loads(installed_receipt_bytes.decode('utf-8-sig'))['residentManifestSha256']
+    if FLEET_PLAN:
+        reviewed = PLAN['expectedInstalledWindows']
+        verify_sha = sha(os.path.join(LIVE_ROOT, 'resident', installed_resident, 'windows', 'verify-resident.ps1'))
+        resident_manifest = os.path.join(LIVE_ROOT, 'config', 'resident-installed-manifest.json')
+        with open(resident_manifest, 'rb') as stream:
+            manifest_bytes = stream.read()
+        assert hashlib.sha256(manifest_bytes).hexdigest() == installed_resident, 'INSTALLED_RESIDENT_MANIFEST_CHANGED'
+        assert [entry['sha256'] for entry in json.loads(manifest_bytes)['files'] if entry['path'] == 'windows/verify-resident.ps1'] == [verify_sha], 'INSTALLED_VERIFY_NOT_IN_MANIFEST'
+        assert reviewed['receiptSha256'] == installed_receipt_sha and reviewed['residentManifestSha256'] == installed_resident and reviewed['verifySha256'] == verify_sha, 'INSTALLED_VERIFY_NOT_AS_REVIEWED'
+        assert type(reviewed['sidesDiffer']) is bool, 'INSTALLED_LINUX_STATE_REFUSED'
     u_sha = sha(os.path.join(LIVE_ROOT, 'resident', installed_resident, 'windows', 'uninstall-resident.ps1'))
     halt_present = os.path.exists(os.path.join(LIVE_ROOT, 'state', 'HALT.json'))
     ACCEPT_HALT = opt('--accept-halt-sha256')
@@ -559,7 +569,7 @@ if not FIRST:
                                    capture_output=True, text=True, env=dict(os.environ, R41_PARENT=PARENT)).stdout.strip()
     paused_present = os.path.exists(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json'))
     paused_sha = sha(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json')) if paused_present else None   # review m6: pinned into the launcher
-    status = json.load(open(os.path.join(LIVE_ROOT, 'state', 'status.json'), encoding='utf-8-sig'))
+    status = json.loads(rconfig.read_status_bytes(os.path.join(LIVE_ROOT, 'state', 'status.json')).decode('utf-8-sig'))
     current = status.get('current')
     ledger = os.path.join(LIVE_ROOT, 'state', 'ledger')
     entries = sorted(os.listdir(ledger))
@@ -656,6 +666,8 @@ lines = [
     '}',
     '$InstalledResidentManifestSha256 = ' + _qn(installed_resident) + '   # the installed (Source34) resident tree (null: a first install)',
     '$InstalledUninstallSha256 = ' + _qn(u_sha),
+    '$InstalledVerifySha256 = ' + _qn(verify_sha if FLEET_PLAN and not FIRST else None),
+    '$InstalledSidesDiffer = ' + ('$true' if FLEET_PLAN and not FIRST and reviewed['sidesDiffer'] else '$false'),
     '$InstalledReceiptSha256 = ' + _qn(installed_receipt_sha),
     '$InstalledHaltSha256 = ' + (q(halt_sha) if halt_accepted else '$null') + '   # r4.1 C3: the accepted HALT.json of the installed resident (--accept-halt-sha256)',
     '$InstalledHaltCode = ' + (q(halt_doc['code']) if halt_accepted else '$null'),

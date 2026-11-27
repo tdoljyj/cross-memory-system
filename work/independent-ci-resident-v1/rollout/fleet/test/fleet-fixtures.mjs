@@ -153,6 +153,10 @@ export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAc
   // section 41.6a): targets and fingerprints only; current.json pins the receipt's bytes
   const receiptFile = path.join(root, 'install', 'install-receipt.json');
   const receipt = JSON.parse(await fs.readFile(receiptFile, 'utf8'));
+  const supervisor = Buffer.from('offline fixture supervisor');
+  await put(path.join(root, 'bin', 'CluedCompanionSupervisor.exe'), supervisor);
+  receipt.companionSupervisorSha256 = sha(supervisor);
+  receipt.companionSupervisorSourceSha256 = sha(await fs.readFile(new URL('../../../windows/CompanionSupervisor.cs', import.meta.url)));
   receipt.upgradeToken = { target: 'C:\\ProgramData\\CluedIndependentCI\\resident\\secrets\\resident-upgrade.token', placed: true, fingerprint: hex(32) };
   if (heartbeat) receipt.heartbeatToken = { target: 'C:\\ProgramData\\CluedIndependentCI\\resident\\secrets\\heartbeat\\ci-node-heartbeat.token', placed: true, fingerprint: hex(32), bindingId: randomUUID() };
   const receiptBytes = Buffer.from(JSON.stringify(receipt));

@@ -14,6 +14,9 @@ import secrets
 import sys
 import time
 
+spec = importlib.util.spec_from_file_location('rconfig', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rconfig.py'))
+config = importlib.util.module_from_spec(spec); spec.loader.exec_module(config)
+
 ROOT = r'C:\ProgramData\CluedIndependentCI\resident'
 PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1'
 STATUS_CONTRACTS = {'clued.independent-ci.resident-status/' + str(n) for n in (5, 6, 7, 8)}
@@ -67,7 +70,9 @@ def read_snapshot(root, want):
             raise PauseRefused('OLD_RESIDENT_PAUSED_BY_OTHER_REQUEST_RESUME_REQUIRED', pausedRequestSha256=paused_request,
                                pausedSha256=paused_sha, advice=_resume_advice(paused_sha))
     try:
-        _, status = _json_bytes(os.path.join(state_dir, 'status.json'))
+        status = json.loads(config.read_status_bytes(os.path.join(state_dir, 'status.json')).decode('utf-8-sig'))
+        if not isinstance(status, dict):
+            raise ValueError('STATUS_OBJECT_REQUIRED')
         executor = status.get('executor')
         if (status.get('contract') not in STATUS_CONTRACTS or not isinstance(executor, dict)
                 or executor.get('state') not in EXECUTOR_STATES or type(status.get('paused')) is not bool
@@ -124,8 +129,6 @@ def main(argv=None):
     parser.add_argument('--wait-seconds', type=int, default=5400)
     args = parser.parse_args(argv)
     try:
-        spec = importlib.util.spec_from_file_location('rconfig', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rconfig.py'))
-        config = importlib.util.module_from_spec(spec); spec.loader.exec_module(config)
         result = run_pause(config.load(args.config)['launcher']['w1PauseReason'], wait_seconds=args.wait_seconds,
                            emit=lambda value: print(json.dumps(value), flush=True))
         print(json.dumps(result, default=str))

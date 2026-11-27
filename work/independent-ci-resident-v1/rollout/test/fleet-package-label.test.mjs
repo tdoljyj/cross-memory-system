@@ -12,6 +12,9 @@ import { writeTar } from '../fleet/tar.mjs';
 import { MANIFEST_NAME, UNIVERSAL_CONTRACT } from '../fleet/universal.mjs';
 import { parseVersions, readStatus, readVersionState, StatusBoard, StatusFile } from '../../src/status.mjs';
 import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, VERSION_FACTS_FILE } from '../../src/upgrade-mailbox.mjs';
+import { acceptanceOf, REQUEST_CONTRACT } from '../../src/fleet-acceptance.mjs';
+import { buildStatus } from '../../upgrader/src/status.mjs';
+import { Journal } from '../../upgrader/src/journal.mjs';
 import { tempRoot } from '../../test/helpers.mjs';
 import { BOOTSTRAP, FLEET, PREREQ, prepWorld } from '../fleet/test/publish-fixtures.mjs';
 import { runFakeGh } from '../fleet/test/fleet-fixtures.mjs';
@@ -153,7 +156,7 @@ async function installed(t, { legacy = false, local = 1, changedWindows = false,
     await fs.writeFile(path.join(root, 'state', 'PACKAGE-VERSION.txt'), '第 23 代\r\n');
   }
   const { view } = await readVersionState({ root, policy, policySha256, clock: () => now });
-  return { root, view, label: () => fs.readFile(path.join(root, 'state', 'PACKAGE-VERSION.txt'), 'utf8') };
+  return { root, view, current, facts, policy, write, label: () => fs.readFile(path.join(root, 'state', 'PACKAGE-VERSION.txt'), 'utf8') };
 }
 
 test('旧包重装后的本机计数为 1，状态、自检及文本显示同一个第 23 代', async t => {
@@ -230,3 +233,80 @@ test('Windows 安装回执与启动器回读使用同一已校验的包身份', 
   assert.deepEqual(JSON.parse(run.stdout), { identity: installedPackage, changed: null });
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(root, 'install', 'install-receipt.json'), 'utf8')).installedPackage, installedPackage);
 });
+
+for (const version of ['g000023', 'g000024']) {
+  test('通用升级以同一操作、双端与接受证据显示 ' + version, async t => {
+    const { root, current, facts, policy, write, label } = await installed(t, { legacy: true, local: 2 });
+    const op = '92431111-1111-4111-8111-111111111111';
+    const decision = '12341111-1111-4111-8111-111111111111', receipt = '12342222-2222-4222-8222-222222222222';
+    const identity = { ...installedPackage, version, packageGeneration: Number(version.slice(1)), releaseTag: 'fleet-node-' + version };
+    policy.repo = 'tdoljyj/cross-memory-system';
+    policy.ownerAcceptance = { decisionRef: decision, installReceiptRef: receipt };
+    const req = { contract: REQUEST_CONTRACT, version, commit: source.commit, repository: policy.repo,
+      archive_sha256: source.archive_sha256, ciSourceManifestSha256: policy.ciSourceManifestSha256,
+      firstInstallKitSha256: hash('6'), fleetRefs: { sourceAcceptanceRef: receipt, hostQualificationRef: receipt,
+        ownerAuthorizationRef: decision, publisherQualificationRef: receipt, ownerPackageAcceptanceRef: receipt, formalRoles: {} } };
+    const requestHash = sha(JSON.stringify(req));
+    const acceptedAt = '2026-11-26T12:00:00Z';
+    const target = { version, repository: policy.repo, archive_sha256: req.archive_sha256, grant_id: decision,
+      receipt_id: receipt, request_sha256: requestHash, accepted_at: acceptedAt, other_sources: [] };
+    if (version === 'g000023') {
+      const dir = 'bundles/fleet-pull/' + requestHash + '/' + identity.releaseTag;
+      await write(dir + '.acceptance-request.json', req);
+      await write(dir + '.acceptance.json', acceptanceOf(req, { decision, receipt, acceptedAt }));
+      await write('broker/renew-ci.json', { at, code: null, onDuty: false, fleetTarget: target });
+    } else { policy.ownerAcceptance.installedPackage = identity; }
+    current.policySha256 = sha(JSON.stringify(policy));
+    const manifest = { contract: 'clued.independent-ci.resident-package/4', ...policy,
+      files: [{ path: 'config/policy.json', target: 'config\\policy.json', sha256: current.policySha256 }],
+      acceptance: { decisionRef: decision }, linux: { manifestSha256: facts.manifestSha256, sourceV2: { commit: source.commit } } };
+    current.packageManifestSha256 = sha(JSON.stringify(manifest));
+    const installedReceipt = { ...policy, contract: 'clued.independent-ci.resident-install-receipt/6', generation: 2,
+      writtenBy: 'CluedCIUpgrader', upgrade: { opId: op, decisionRef: decision, grantId: receipt },
+      policySha256: current.policySha256, packageManifestSha256: current.packageManifestSha256 };
+    current.installReceiptSha256 = sha(JSON.stringify(installedReceipt));
+    current.opId = op;
+    await write('upgrade/current.json', current);
+    await write('install/install-receipt.json', installedReceipt);
+    await write('upgrade/staged/' + current.packageManifestSha256 + '/package-manifest.json', manifest);
+    const plan = { contract: 'clued.independent-ci.resident-upgrade-plan/1', opId: op, fromGeneration: 1, toGeneration: 2,
+      acceptanceDecisionRef: decision, packageManifestSha256: current.packageManifestSha256, target: { ...policy,
+        policySha256: current.policySha256, linux: { manifestSha256: facts.manifestSha256, sourceCommit: source.commit } } };
+    const dir = 'upgrade/ops/' + op;
+    await write(dir + '/010-accept.plan.json', plan);
+    const journal = Journal.open(path.join(root, 'upgrade', 'ops'), op, { clock: () => now });
+    const terminal = await journal.terminal({ outcome: 'SUCCEEDED', generation: 2, grantId: receipt });
+    const status = buildStatus({ clock: () => now, pid: 1, current, recent: [{ opId: op, outcome: terminal.outcome, code: null, at }] });
+    await write('upgrade/status.json', status);
+    const refresh = async (time = now) => (await readVersionState({ root, policy, policySha256: current.policySha256, clock: () => time })).view;
+    const view = await refresh(), board = new StatusBoard();
+    board.setVersions(view);
+    await new StatusFile(path.join(root, 'state', 'status.json')).write(board.snapshot());
+    assert.equal((await readStatus(root)).versions.installedPackage.packageGeneration, identity.packageGeneration);
+    assert.equal((await label()).split('\r\n')[0], '第 ' + identity.packageGeneration + ' 代');
+    await write('config/installed-package.json', { installedPackage, packageManifestSha256: hash('0'), installReceiptSha256: hash('1') });
+    assert.equal((await refresh()).installedPackage.packageGeneration, identity.packageGeneration);
+    const realOpen = fs.open.bind(fs);
+    let reads = 0;
+    const open = t.mock.method(fs, 'open', async (file, ...args) => {
+      if (file === path.join(root, 'upgrade', 'current.json') && ++reads === 2) {
+        await write('upgrade/current.json', { ...current, installReceiptSha256: hash('7') });
+      }
+      return realOpen(file, ...args);
+    });
+    try { assert.equal((await refresh()).installedPackage.packageGeneration, null); }
+    finally { open.mock.restore(); await write('upgrade/current.json', current); }
+    assert.equal(reads, 2);
+    assert.equal((await refresh(now + 20 * 60_000)).installedPackage.packageGeneration, null);
+    await write('upgrade/status.json', { ...status, op: { opId: op, state: 'WAITING_GRANT' } });
+    assert.equal((await refresh()).installedPackage.packageGeneration, null);
+    await write('upgrade/status.json', status);
+    for (const outcome of ['WAITING_GRANT', 'ROLLED_BACK_PAUSED']) {
+      await write(dir + '/900-terminal.json', { ...terminal, outcome });
+      assert.equal((await refresh()).installedPackage.packageGeneration, null);
+    }
+    await write(dir + '/900-terminal.json', terminal);
+    await write(dir + '/010-accept.plan.json', { ...plan, packageManifestSha256: hash('0') });
+    assert.equal((await refresh()).installedPackage.packageGeneration, null);
+  });
+}

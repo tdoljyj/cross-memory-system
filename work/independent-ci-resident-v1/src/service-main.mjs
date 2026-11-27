@@ -115,7 +115,8 @@ export async function main(argv = process.argv.slice(2), ports = {}) {
   const status = new StatusBoard({ clock });
   // Stage timings survive a restart (status /8): the previous snapshot's finished and resting batches and stage-10 rounds are read back, each re-checked.
   try { status.restoreTiming(JSON.parse((await readBounded(path.join(state, STATUS_FILE), STATUS_MAX_BYTES, 'STATUS_REFUSED')).toString('utf8')).timing); } catch { /* none, or unreadable: start empty */ }
-  const statusTimer = startStatusTimer({ board: status, file: new StatusFile(path.join(state, STATUS_FILE)) });
+  const statusTimer = startStatusTimer({ board: status, file: new StatusFile(path.join(state, STATUS_FILE), { windowsHost: path.join(root, 'bin', 'ResidentServiceHost.exe') }),
+    report: event => receipts.append('status-write', event) });
   await statusTimer.flush();
   // The executor's own run queue (phase 2, step 1; DESIGN §17): state\queue\queue.json, a view the ledger overrules.
   const queue = await RunQueue.open(path.join(state, 'queue'), clock);

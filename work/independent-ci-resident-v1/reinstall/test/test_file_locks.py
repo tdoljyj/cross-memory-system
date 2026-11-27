@@ -209,6 +209,22 @@ $taskProcess.executablePath=$task.action;$taskAfter.state=3;$result.stoppedTaskR
 $sup='C:\ProgramData\CluedIndependentCI\resident\bin\CluedCompanionSupervisor.exe'
 $supTask=[pscustomobject]@{path='\Clued\CluedCIResidentCompanion';instance='{12345678-1234-1234-1234-123456789abc}';pid=26080;state=4;action=$sup;currentAction=$sup}
 $supProcess=[pscustomobject]@{pid=26080;startedFileTime=$base;executablePath=$sup}
+$action=[pscustomobject]@{pid=26081;parentPid=26080;startedFileTime=$base+10;executablePath=$sup}
+$engine=[pscustomobject]@{pid=26080;startedFileTime=$base;precisionTicks=10}
+$script:rows[[uint32]26080]=[pscustomobject]@{ProcessId=[uint32]26080;CreationDate=[DateTime]::FromFileTimeUtc($base)}
+$snapshot=[pscustomobject]@{pid=[uint32]26080;executablePath=$sup;startedFileTime=$base;precisionTicks=10}
+$oldRoot='C:\ProgramData\CluedIndependentCI\resident'; $sid='S-1-5-21-1-2-3-1001'
+$old=[pscustomobject]@{ProcessId=26080;CommandLine=('"'+$sup+'" "'+$oldRoot+'"')}
+function Invoke-CimMethod { param($InputObject,$MethodName,$ErrorAction) @{ReturnValue=0;Sid='S-1-5-21-1-2-3-1001'} }
+$result.orphanWithPinnedImageAccountAndArgs=Test-InstalledSupervisor $snapshot $old $sup $sid $oldRoot
+$result.otherAccountRefused=-not(Test-InstalledSupervisor $snapshot $old $sup ($sid+'0') $oldRoot)
+$old.CommandLine=$sup+' '+$oldRoot
+$result.sameUnquotedArgumentsAccepted=Test-InstalledSupervisor $snapshot $old $sup $sid $oldRoot
+$old.CommandLine+=' extra'
+$result.extraArgumentRefused=-not(Test-InstalledSupervisor $snapshot $old $sup $sid $oldRoot)
+$result.engineCanHostSeparateAction=Test-CompanionTaskAnchorPair $supTask $supTask.PSObject.Copy() $action 'C:\ProgramData\CluedIndependentCI\resident' $engine
+$engine.startedFileTime=$base+20
+$result.recycledEngineRefused=-not(Test-CompanionTaskAnchorPair $supTask $supTask.PSObject.Copy() $action 'C:\ProgramData\CluedIndependentCI\resident' $engine)
 $result.registeredSupervisorAccepted=Test-CompanionTaskAnchorPair $supTask $supTask.PSObject.Copy() $supProcess 'C:\ProgramData\CluedIndependentCI\resident'
 $other='C:\elsewhere\bin\CluedCompanionSupervisor.exe';$supTask.action=$other;$supTask.currentAction=$other;$supProcess.executablePath=$other
 $result.otherSupervisorPathRefused=-not(Test-CompanionTaskAnchorPair $supTask $supTask.PSObject.Copy() $supProcess 'C:\ProgramData\CluedIndependentCI\resident')
@@ -239,7 +255,7 @@ class FileLocks(unittest.TestCase):
                                     text=True, encoding='utf-8', timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             data = json.loads(result.stdout)
-            self.assertEqual(len(data), 20)
+            self.assertEqual(len(data), 26)
             self.assertTrue(all(value is True for value in data.values()), data)
 
     def test_native_observation_is_read_only_and_binds_pid_start_time(self):

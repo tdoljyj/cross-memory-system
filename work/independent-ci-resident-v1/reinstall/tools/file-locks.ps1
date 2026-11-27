@@ -2,7 +2,8 @@
 # API contracts: https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmgetlist
 # Directories cannot be registered; this does not prove that a directory has no open handles.
 [CmdletBinding()]
-param([string]$Root = 'C:\ProgramData\CluedIndependentCI\resident', [switch]$LibraryOnly)
+param([string]$Root = 'C:\ProgramData\CluedIndependentCI\resident', [switch]$LibraryOnly,
+  [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedInstallReceiptSha256, [string]$CompanionSid)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 if (-not ('CluedRehearsalLocks.Query' -as [type])) {
@@ -58,12 +59,12 @@ namespace CluedRehearsalLocks {
       if (files == null || files.Length > 200000) throw new ArgumentException("RESOURCE_LIST_INVALID");
       if (files.Length == 0) return new Info[0];
       uint handle; uint code = RmStartSession(out handle, 0, new StringBuilder(33));
-      if (code != 0) throw new Win32Exception((int)code);
+      if (code != 0) throw new Win32Exception((int)code, "RM_START:" + code);
       try {
         for (int offset = 0; offset < files.Length; offset += 512) {
           int length = Math.Min(512, files.Length - offset); string[] batch = new string[length]; Array.Copy(files, offset, batch, 0, length);
           code = RmRegisterResources(handle, (uint)length, batch, 0, null, 0, null);
-          if (code != 0) throw new Win32Exception((int)code);
+          if (code != 0) throw new Win32Exception((int)code, "RM_REGISTER:" + code);
         }
         uint needed = 0, count = 0, reasons = 0;
         code = RmGetList(handle, out needed, ref count, null, ref reasons);
@@ -73,7 +74,7 @@ namespace CluedRehearsalLocks {
           code = RmGetList(handle, out needed, ref count, list, ref reasons);
           if (code == 0) { Array.Resize(ref list, checked((int)count)); return list; }
         }
-        if (code != 0) throw new Win32Exception((int)code);
+        if (code != 0) throw new Win32Exception((int)code, "RM_GET_LIST:" + code);
         return new Info[0];
       } finally { RmEndSession(handle); }
     }
@@ -183,12 +184,16 @@ function Get-CompanionTaskSnapshot {
     return [pscustomobject]@{ status = 'UNREADABLE'; code = 'COMPANION_TASK_ACCESS_DENIED'; instances = @() }
   }
 }
-function Test-CompanionTaskAnchorPair($before, $after, $snapshot, [string]$residentRoot) {
+function Test-CompanionTaskAnchorPair($before, $after, $snapshot, [string]$residentRoot, $engine = $null) {
   if ($null -eq $snapshot -or $before.path -cne '\Clued\CluedCIResidentCompanion' -or
       $before.path -cne $after.path -or $before.instance -cne $after.instance -or
       $before.instance -notmatch '^\{[0-9a-fA-F-]{36}\}$' -or
       $before.state -ne 4 -or $after.state -ne 4 -or $before.pid -le 0 -or
-      $before.pid -ne $after.pid -or $before.pid -ne $snapshot.pid) { return $false }
+      $before.pid -ne $after.pid) { return $false }
+  if ($before.pid -ne $snapshot.pid) {
+    if (!$engine -or $engine.pid -ne $before.pid -or $snapshot.parentPid -ne $engine.pid -or
+        $snapshot.startedFileTime -lt $engine.startedFileTime -or !(Test-CurrentProcessSnapshot $engine)) { return $false }
+  }
   $allowed = @((Join-Path $env:SystemRoot 'System32\conhost.exe'),
     (Join-Path $residentRoot 'runtime\node.exe'), (Join-Path $residentRoot 'bin\CluedCompanionJobHost.exe'),
     (Join-Path $residentRoot 'bin\CluedCompanionSupervisor.exe'))
@@ -198,6 +203,16 @@ function Test-CompanionTaskAnchorPair($before, $after, $snapshot, [string]$resid
     if (-not [string]::Equals([string]$value, $action, [StringComparison]::OrdinalIgnoreCase)) { return $false }
   }
   return $true
+}
+# An orphan from the password task has no task-instance GUID. Pin the image, arguments,
+# account SID and live creation identity independently before admitting its process tree.
+function Test-InstalledSupervisor($snapshot, $process, [string]$image, [string]$sid, [string]$residentRoot) {
+  if ($snapshot.executablePath -ine $image -or $snapshot.pid -ne $process.ProcessId) { return $false }
+  $exe = [regex]::Escape($image); $arg = [regex]::Escape($residentRoot)
+  $pattern = '^(?:"' + $exe + '"|' + $exe + ')\s+(?:"' + $arg + '"|' + $arg + ')\z'
+  if ([string]$process.CommandLine -notmatch $pattern) { return $false }
+  $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop
+  return $owner.ReturnValue -eq 0 -and $owner.Sid -ceq $sid -and (Test-CurrentProcessSnapshot $snapshot)
 }
 if ($LibraryOnly) { return }
 if ($Root -cne 'C:\ProgramData\CluedIndependentCI\resident') { throw 'RESIDENT_ROOT_NOT_THE_FIXED_TARGET' }
@@ -222,9 +237,28 @@ foreach ($relative in @('bin', 'runtime', 'broker\bin', 'upgrader\runtime')) {
 }
 if ($files.Count -eq 0) { throw 'INSTALLED_PUBLIC_BINARIES_NOT_FOUND' }
 $processes = New-Object 'Collections.Generic.Dictionary[uint32,object]'
+$supervisors = @{}
+$unknownProcesses = @()
+$supervisorImage = Join-Path $Root 'bin\CluedCompanionSupervisor.exe'
+if ($ExpectedInstallReceiptSha256) {
+  $receiptBytes = [IO.File]::ReadAllBytes((Join-Path $Root 'install\install-receipt.json'))
+  $hash = [Security.Cryptography.SHA256]::Create()
+  try { $actual = [BitConverter]::ToString($hash.ComputeHash($receiptBytes)).Replace('-','').ToLowerInvariant() } finally { $hash.Dispose() }
+  if ($actual -cne $ExpectedInstallReceiptSha256) { throw 'INSTALLED_RECEIPT_CHANGED' }
+  $receipt = [Text.Encoding]::UTF8.GetString($receiptBytes) | ConvertFrom-Json
+  if ($CompanionSid -notmatch '^S-1-5-21-\d+-\d+-\d+-\d+$' -or
+      $receipt.companionSupervisorSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+      (Get-FileHash -LiteralPath $supervisorImage -Algorithm SHA256).Hash -ine $receipt.companionSupervisorSha256) { throw 'SUPERVISOR_IMAGE_NOT_AS_INSTALLED' }
+}
 foreach ($process in @(Get-CimInstance -ClassName Win32_Process)) {
   $snapshot = New-ProcessSnapshot $process
-  if ($null -ne $snapshot) { $processes[$snapshot.pid] = $snapshot }
+  if ($null -ne $snapshot) {
+    $processes[$snapshot.pid] = $snapshot
+    if ($ExpectedInstallReceiptSha256 -and $snapshot.executablePath -ieq $supervisorImage) {
+      if (Test-InstalledSupervisor $snapshot $process $supervisorImage $CompanionSid $Root) { $supervisors[$snapshot.pid] = $snapshot }
+      else { $unknownProcesses += [int]$snapshot.pid }
+    }
+  } elseif (([string]$process.ExecutablePath).StartsWith($Root + '\', [StringComparison]::OrdinalIgnoreCase)) { $unknownProcesses += [int]$process.ProcessId }
 }
 $servicesBefore = @(Get-CimInstance -ClassName Win32_Service | Where-Object { @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader') -ccontains $_.Name })
 $taskSnapshotBefore = Get-CompanionTaskSnapshot
@@ -246,10 +280,18 @@ foreach ($service in $servicesBefore) {
 }
 foreach ($instance in $taskBefore) {
   foreach ($after in @($taskAfter | Where-Object { $_.instance -ceq $instance.instance })) {
-    if ($processes.ContainsKey($instance.pid) -and (Test-CompanionTaskAnchorPair $instance $after $processes[$instance.pid] $Root) -and
-        (Test-CurrentProcessSnapshot $processes[$instance.pid])) {
-      $expected[$instance.pid] = $processes[$instance.pid].startedFileTime; $precisions[$instance.pid] = $processes[$instance.pid].precisionTicks
+    if (-not $processes.ContainsKey([uint32]$instance.pid)) { continue }
+    $engine = $processes[[uint32]$instance.pid]
+    foreach ($action in @($processes.Values | Where-Object { $_.pid -eq $engine.pid -or $_.parentPid -eq $engine.pid })) {
+      if ((Test-CompanionTaskAnchorPair $instance $after $action $Root $engine) -and (Test-CurrentProcessSnapshot $action)) {
+        $expected[$action.pid] = $action.startedFileTime; $precisions[$action.pid] = $action.precisionTicks
+      }
     }
+  }
+}
+if (Get-Variable supervisors -ErrorAction SilentlyContinue) {
+  foreach ($s in $supervisors.Values) {
+    if (Test-CurrentProcessSnapshot $s) { $expected[$s.pid] = $s.startedFileTime; $precisions[$s.pid] = $s.precisionTicks }
   }
 }
 do {
@@ -270,7 +312,14 @@ foreach ($item in $observed) {
   $lockers += $identity
   if (-not $identity.expected) { $external += $identity }
 }
-[ordered]@{ contract = 'clued.independent-ci.rehearsal-file-locks/1'; status = 'OBSERVED'; coverage = 'installed-public-binaries-only'
+$rootProcesses = @(foreach ($s in $processes.Values) {
+  if ($ExpectedInstallReceiptSha256 -and $s.executablePath -and $s.executablePath.StartsWith($Root + '\', [StringComparison]::OrdinalIgnoreCase)) {
+    if ($expected.ContainsKey($s.pid) -and (Test-CurrentProcessSnapshot $s)) {
+      [ordered]@{ pid = $s.pid; startedFileTime = $s.startedFileTime; precisionTicks = $s.precisionTicks }
+    } else { $unknownProcesses += [int]$s.pid }
+  }
+})
+[ordered]@{ contract = 'clued.independent-ci.rehearsal-file-locks/1'; status = 'OBSERVED'; rootProcesses = $rootProcesses; unknownProcesses = @($unknownProcesses); coverage = 'installed-public-binaries-only'
   directoryHandlesCovered = $false; secretsEnumerated = $false; fileCount = $files.Count; lockers = $lockers; external = $external
   companionTaskObservation = [ordered]@{ before = $taskSnapshotBefore.status; after = $taskSnapshotAfter.status
     beforeCode = $taskSnapshotBefore.code; afterCode = $taskSnapshotAfter.code; unverifiedTaskLockersRemainExternal = $true } } | ConvertTo-Json -Depth 5 -Compress

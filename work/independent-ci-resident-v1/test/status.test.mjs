@@ -4,6 +4,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { once } from 'node:events';
 import { STATUS_CONTRACT, StatusBoard, StatusFile, parseStatus, readStatus, startStatusTimer } from '../src/status.mjs';
 import { HEAD, executorFixture, fakeEngine, rawPolicy, tempRoot, triggerBytes } from './helpers.mjs';
 
@@ -162,4 +165,57 @@ test('the executor reports its batch in flight, recent outcomes, pending trigger
   await f.ledger.halt('ROLE_ALREADY_PUBLISHED_ON_HEAD', {});
   await f.exec.tick();
   assert.deepEqual([status.content.executor.state, status.content.halt.code], ['HALTED', 'ROLE_ALREADY_PUBLISHED_ON_HEAD']);
+});
+
+test('外部只读句柄导致的状态陈旧可见，释放后恢复；短暂争用同轮完成', { skip: process.platform !== 'win32' }, async t => {
+  const root = await tempRoot(t), state = path.join(root, 'state'), name = path.join(state, 'status.json');
+  await fs.mkdir(state);
+  const observation = Date.parse('2026-11-27T06:00:00Z');
+  let now = observation - 6 * 60_000;
+  const board = new StatusBoard({ clock: () => now }), events = [];
+  const bin = path.join(root, 'bin'), windowsHost = path.join(bin, 'ResidentServiceHost.exe');
+  await fs.mkdir(bin);
+  const fw = path.join(process.env.SystemRoot, 'Microsoft.NET', 'Framework64', 'v4.0.30319');
+  const build = spawnSync(path.join(fw, 'csc.exe'), ['/nologo', '/noconfig', '/target:exe', '/out:' + windowsHost,
+    ...['System', 'System.Core', 'System.ServiceProcess'].map(n => '/reference:' + path.join(fw, n + '.dll')),
+    fileURLToPath(new URL('../windows/ResidentServiceHost.cs', import.meta.url))], { encoding: 'utf8', windowsHide: true });
+  assert.equal(build.status, 0, build.stdout);
+  const timer = startStatusTimer({ board, file: new StatusFile(name, { windowsHost }), report: event => events.push(event),
+    schedule: () => ({}), cancel: () => {} });
+  assert.equal(await timer.flush(), true);
+  const original = await fs.readFile(name);
+  const holder = async share => {
+    const script = "$ErrorActionPreference='Stop'; $f=[IO.File]::Open($env:FIXTURE_STATUS,'Open','Read','" + share
+      + "');try{[Console]::WriteLine('ready');[Console]::ReadLine() | Out-Null}finally{$f.Dispose()}";
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script],
+      { windowsHide: true, env: { ...process.env, FIXTURE_STATUS: name } });
+    const end = once(child, 'close');
+    const ready = once(child.stdout, 'data').then(([b]) => b.toString().trim());
+    const release = async () => { if (!child.stdin.writableEnded) child.stdin.end('\n'); await end; };
+    try { assert.equal(await Promise.race([ready, end]), 'ready'); }
+    catch (error) { await release(); throw error; }
+    return release;
+  };
+  now = observation;
+  board.setState('IDLE');
+  const release = await holder('ReadWrite');
+  try {
+    assert.equal(await timer.flush(), false);
+    assert.deepEqual(await fs.readFile(name), original);
+    assert.equal(await timer.flush(), false);
+    assert.equal(events.length, 1);
+    assert.deepEqual([events[0].code, events[0].attempts, events[0].nativeCode], ['STATUS_WRITE_STALE', 5, 32]);
+    assert.deepEqual(await fs.readdir(state), ['status.json']);
+    assert.ok((await readStatus(root, () => now)).notices.some(n => n.code === 'STATUS_SNAPSHOT_STALE'));
+  } finally { await release(); }
+  assert.equal(await timer.flush(), true);
+  assert.deepEqual(events.map(e => e.code), ['STATUS_WRITE_STALE', 'STATUS_WRITE_RECOVERED']);
+  assert.ok(!(await readStatus(root, () => now)).notices.some(n => n.code === 'STATUS_SNAPSHOT_STALE'));
+  const short = await holder('ReadWrite');
+  const delays = [];
+  const recoveringFile = new StatusFile(name, { wait: async ms => { delays.push(ms); await short(); } });
+  try { await recoveringFile.write(board.snapshot()); assert.deepEqual(delays, [25]); }
+  finally { await short(); }
+  const shared = await holder('ReadWrite, Delete');
+  try { assert.equal(await timer.flush(), true); } finally { await shared(); }
 });

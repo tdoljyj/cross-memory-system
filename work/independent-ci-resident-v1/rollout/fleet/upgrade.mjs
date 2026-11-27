@@ -122,7 +122,7 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   timeLeft(deadline);
   validateAcceptance(acceptance, now);
   need(typeof workDir === 'string', 'USAGE');   // the package directory's shape is the installed request tool's to judge (A3)
-  const { entries, universal } = readArchive(await fs.readFile(artifactPath), artifactSha256, acceptance);
+  const { entries, universal, installedPackage } = readArchive(await fs.readFile(artifactPath), artifactSha256, acceptance);
   const byPath = new Map(entries.map(e => [e.path, e.data]));
   for (const n of ['upgrade.mjs', ...OWN_MODULES]) {
     const want = byPath.get(`tree/${RESIDENT}/rollout/fleet/${n}`);
@@ -150,6 +150,14 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   const currentBytes = await readOrNull(at('upgrade', 'current.json'));
   need(currentBytes !== null, 'NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH', 'no upgrade\\current.json: a first install follows reinstall/README.md section 8c');
   const cur = jsonOf(currentBytes);
+  const receiptBytes = await readOrNull(at('install', 'install-receipt.json'));
+  const supervisorSource = byPath.get('tree/' + RESIDENT + '/windows/CompanionSupervisor.cs');
+  const receipt = receiptBytes && sha(receiptBytes) === cur.installReceiptSha256 ? jsonOf(receiptBytes) : null;
+  const supervisor = await readOrNull(at('bin', 'CluedCompanionSupervisor.exe'));
+  if (!supervisorSource || !supervisor || receipt?.companionSupervisorSourceSha256 !== sha(supervisorSource)
+    || receipt.companionSupervisorSha256 !== sha(supervisor)) {
+    return { ...base, status: 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL', code: 'COMPANION_SUPERVISOR_NEEDS_REINSTALL' };
+  }
   let liveFacts = null;
   try { liveFacts = jsonOf(await fs.readFile(at('upgrade', 'mailbox', 'responses', 'version-facts.json'))); } catch { liveFacts = null; }
   if (cur.ciSourceManifestSha256 === accepted && cur.residentManifestSha256 === universal.facts.residentManifestSha256
@@ -204,7 +212,9 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   await writeNew('source-files.txt', JSON.parse((await fs.readFile(closure)).toString('utf8')).paths.join('\n') + '\n');
 
   const ni = configInputsFor(node, acceptance);
-  await writeNew('policy.input.json', ni.policyBytes);
+  // The accepted archive's public identity is part of the policy bytes pinned in this node's package.
+  if (installedPackage) ni.policy.ownerAcceptance.installedPackage = installedPackage;
+  await writeNew('policy.input.json', installedPackage ? pyCanonical(ni.policy) : ni.policyBytes);
   await writeNew('companion.input.json', ni.companionBytes);
   const pins = linuxExternalPins({ residentTree: R, readTreeFile, toolchainNodeSha256: node.linuxHost.toolchainNodeSha256 });
   await writeNew('linux-external-pins.json', pyDumps(pins, { indent: 2 }) + '\n');

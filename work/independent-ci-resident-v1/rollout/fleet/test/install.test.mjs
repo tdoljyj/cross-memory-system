@@ -65,7 +65,10 @@ function pythonTools({ real = [], rehearsal = 'REHEARSAL_PASS', liveRoot = null,
     }
     if (name === 'rehearse.py') {
       const cfg = readJson(args[0]);
-      const report = { contract: 'clued.independent-ci.reinstall-rehearsal/1', status: rehearsal, findings: rehearsal === 'REHEARSAL_PASS' ? [] : [{ code: 'FIXTURE_FINDING' }],
+      const root = path.dirname(path.dirname(cfg.nodeExe));
+      const { residentManifestSha256 } = readJson(path.join(root, 'upgrade', 'current.json'));
+      const verify = fsSync.readFileSync(path.join(root, 'resident', residentManifestSha256, 'windows', 'verify-resident.ps1'));
+      const report = { checks: { verify: { sha256: sha(verify) } }, contract: 'clued.independent-ci.reinstall-rehearsal/1', status: rehearsal, findings: rehearsal === 'REHEARSAL_PASS' ? [] : [{ code: 'FIXTURE_FINDING' }],
         node: cfg.node, commit: opt('--commit'), packageManifestSha256: sha(fsSync.readFileSync(path.join(opt('--package'), 'package-manifest.json'))),
         configSha256: sha(fsSync.readFileSync(args[0])), observedAt: new Date(now ?? Date.now()).toISOString().replace(/\.\d+Z$/, 'Z') };
       const file = path.join(cfg.workDir, 'rehearsal', 'rehearsal.stub.json');
@@ -180,7 +183,7 @@ test('install: one archive and one acceptance, two nodes: one Source, two packag
       assert.ok(r.runCommand.includes(`'${r.launcher.sha256}'`) && r.runCommand.includes(path.join(work, 'launcher.ps1')) && r.runCommand.endsWith('-RunApprovedInstall'));
       // the plan: every field of sections 3 and 7
       const plan = readJson(r.installPlan);
-      assert.deepEqual(Object.keys(plan).sort(), ['archive_sha256', 'ciSourceManifestSha256', 'commit', 'companionAccount', 'contract', 'expectedInstalledLinux', 'expectedLinux', 'launcher', 'linux',
+      assert.deepEqual(Object.keys(plan).sort(), ['archive_sha256', 'ciSourceManifestSha256', 'commit', 'companionAccount', 'contract', 'expectedInstalledLinux', 'expectedInstalledWindows', 'expectedLinux', 'launcher', 'linux',
         'linuxManifestSha256', 'node', 'packageDir', 'packageManifestSha256', 'reasons', 'secrets', 'version', 'w1Paused'].sort());
       // W1: the last step before the launcher, with the plan's reason; the PAUSED.json it confirmed is pinned for generate.py
       const pausedRaw = await fs.readFile(path.join(n.root, 'state', 'PAUSED.json'));
