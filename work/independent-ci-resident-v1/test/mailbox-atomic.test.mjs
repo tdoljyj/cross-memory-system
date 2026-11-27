@@ -334,7 +334,9 @@ test('no mailbox or companion write is create-then-write any more, except the tw
   assert.match(mailbox, /writeNewAtomic\(path\.join\(this\.responses, request\.requestId \+ '\.dispatch\.json'\)/);
   const main = await read('companion-main.mjs');
   assert.doesNotMatch(main, /flag:\s*'wx'/);
-  assert.equal([...main.matchAll(/Inbox\.drop\(/g)].length, 1);
+  // Only the trigger inbox and the protocol 1 interlock's request inbox are create-only.
+  assert.equal([...main.matchAll(/Inbox\.drop\(/g)].length, 2);
   assert.match(main, /writeTrigger: v => Inbox\.drop\(inboxDir, v\)/);
+  assert.match(main, /writeRequest: v => Inbox\.drop\(path\.join\(values\.root, 'requests'\), v\)/);
   assert.doesNotMatch(await read('ruleset-backstop.mjs'), /\bwriteNew\(/);
 });
