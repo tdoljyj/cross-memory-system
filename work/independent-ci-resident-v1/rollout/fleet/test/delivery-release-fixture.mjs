@@ -53,6 +53,7 @@ export async function releaseAssets(t, now, version = 'g000025', sourceFixture =
   };
   const generationTags = {
     list: async () => ['fleet-node-2026.11.26-5444c2ac', 'fleet-node-g000023', 'fleet-node-g000024',
+      ...(version === 'g000026' ? ['fleet-node-g000025'] : []),
       ...git(source, 'tag', '--list').toString().trim().split('\n').filter(Boolean)],
     read: async name => JSON.parse(git(source, 'cat-file', 'tag', name).toString().split('\n\n').at(-1)),
     create: async claim => {

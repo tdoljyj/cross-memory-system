@@ -14,6 +14,7 @@ const files = [
   '20261127120000_fleet_delivery_seal_v1.sql',
   '20261127120100_fleet_pending_delivery_v1.sql',
   '20261127120200_fleet_delivery_recipients_v1.sql',
+  '20261127123000_fleet_previous_interface_gate_v1.sql',
 ];
 const workflowPath = '.github/workflows/clued-cloud-production-release.yml';
 const root = new URL('../../../../', import.meta.url);
@@ -150,11 +151,12 @@ async function fixture(t, options = {}) {
 test('迁移有缺项且备份失败时，正式 prepare 必须零生产写入、零占号、零 Release', async t => {
   const w = await prepWorld(t, { version: 'g000025', released: false, spawnGh: false });
   const index = await fs.readFile(w.index);
+  const plan = planOf(w.source.commit);
   const effects = [];
   const release = {
     admit: async () => {},
-    requirements: async () => planOf(w.source.commit),
-    read: async () => ({ snapshot: { base: true, applied: [], interfaces: { train: false, landing: false, delivery: false, pendingDelivery: false, deliveryRecipients: false } } }),
+    requirements: async () => plan,
+    read: async () => ({ snapshot: { base: true, applied: [], interfaces: Object.fromEntries(plan.map(({ probe }) => [probe, false])) } }),
     migrate: async missing => {
       effects.push(missing);
       throw Object.assign(new Error('备份失败'), { code: 'FLEET_MIGRATION_RUN_FAILED' });

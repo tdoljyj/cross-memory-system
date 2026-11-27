@@ -33,7 +33,10 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from 'node:os';
 import path from 'node:path';
+import { verifyInterfaceEvidence } from './clued-fleet-interface-evidence.mjs';
 import { acceptanceBytes, acceptanceOf } from '../../work/independent-ci-resident-v1/src/fleet-acceptance.mjs';
+import { acceptResourceOf, readAnswer, statusReader } from '../../work/independent-ci-resident-v1/rollout/fleet/accept-door.mjs';
+import { previousInterfaceCheck } from '../../work/independent-ci-resident-v1/rollout/fleet/previous-interface-check.mjs';
 import { deliveryBound, deliverySubject, fleetDeliveryPreflight } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-preflight.mjs';
 import { verifyDeliveryTree } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-reader.mjs';
 import { deliveryWorkflowPacket, STAGED_PAYLOAD_MAX_LENGTH, STAGED_REQUEST_MAX_BYTES } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-workflow.mjs';
@@ -185,6 +188,61 @@ function pinnedGeneration({ version, commit, archive_sha256 }) {
   } catch { return false; }
 }
 
+function generationVersions() {
+  return execFileSync('git', ['for-each-ref', '--format=%(refname:strip=2)', 'refs/tags/fleet-node-g*'], {
+    encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024,
+  }).trim().split('\n').map(tag => tag.trim().slice('fleet-node-'.length));
+}
+
+// Tags supply immutable commits and the published acceptance status selects
+// the sealed predecessor. The seal transaction rechecks the latest row.
+async function readPreviousInterfacePackage(candidate, { fetchImpl = fetch, isPinned = pinnedGeneration,
+  listVersions = generationVersions, readStatus = statusReader() } = {}) {
+  const versions = listVersions().filter(version => gated(version) && version < candidate.version).sort().reverse();
+  for (const version of versions) {
+    let priorBytes;
+    try { priorBytes = await download(assetUrl(candidate.repository, version, requestAssetName(version)), fetchImpl); }
+    catch (error) {
+      if (error.message.startsWith('FLEET_ACCEPT_ASSET_NOT_ON_RELEASE:')) continue;
+      throw error;
+    }
+    const priorRequest = readRequest(JSON.parse(priorBytes));
+    if (priorRequest.repository !== candidate.repository || priorRequest.version !== version || !isPinned(priorRequest)) {
+      refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_SUBJECT_REFUSED');
+    }
+    const prior = deliverySubject(priorRequest, hash(priorBytes));
+    const resource = acceptResourceOf(prior);
+    const status = readAnswer(await readStatus(resource), { resource, requestSha256: prior.requestSha256 });
+    if (status.kind !== 'accepted' || !status.sealedAcceptanceSha256) continue;
+    const { repository, commit, archiveSha256, requestSha256 } = prior;
+    return { repository, version, commit, archiveSha256, requestSha256, acceptanceSha256: status.sealedAcceptanceSha256 };
+  }
+  return refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_PREDECESSOR_MISSING');
+}
+
+export async function replayPreviousInterfaces(env, deps = {}) {
+  const { fetchImpl = fetch, isAncestor = gitIsAncestor, isPinned = pinnedGeneration,
+    replay = previousInterfaceCheck, clock = Date.now } = deps;
+  const run = runInputs(env);
+  if (!gated(run.version) || !/^[0-9a-f]{40}$/.test(env.GITHUB_SHA ?? '') ||
+      !/^[1-9][0-9]{0,19}$/.test(env.GITHUB_RUN_ID ?? '') || env.GITHUB_RUN_ATTEMPT !== '1') {
+    refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_RUN_REFUSED');
+  }
+  const bytes = await download(assetUrl(run.repository, run.version, requestAssetName(run.version)), fetchImpl);
+  if (hash(bytes) !== run.requestSha256) refuse('FLEET_ACCEPT_REQUEST_SHA256_MISMATCH');
+  const request = readRequest(JSON.parse(bytes));
+  if (request.version !== run.version || request.repository !== run.repository || !isAncestor(request.commit) || !isPinned(request)) {
+    refuse('FLEET_DELIVERY_SUBJECT_CHANGED');
+  }
+  const candidate = deliverySubject(request, run.requestSha256);
+  const previous = await readPreviousInterfacePackage(candidate, deps);
+  const result = await replay({ commit: candidate.commit, previous, timeoutMs: 12 * 60_000 });
+  if (result?.status !== 'PASS' || result.commit !== candidate.commit || result.previousCommit !== previous.commit ||
+      !HEX64.test(result.migrationsSha256 ?? '')) refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_RUN_REFUSED');
+  return { status: 'PASS', candidate, previous, migrationsSha256: result.migrationsSha256,
+    checkedAt: clock(), workflowCommit: env.GITHUB_SHA, runId: env.GITHUB_RUN_ID };
+}
+
 async function verifyDeliverySource(archive, request, candidate) {
   verifyDeliveryTree(archive, request);
   const temp = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'fleet-qualified-'));
@@ -240,7 +298,7 @@ async function deliveryInput(env, request, run, sumsBytes, fetchImpl, isPinned =
     acceptanceSha256: expected, acceptedAt: accepted.acceptedAt };
 }
 
-export async function qualifyDelivery(input, database, clock = Date.now, fetchImpl = fetch) {
+export async function qualifyDelivery(input, database, clock = Date.now, { interfaceEvidence, fetchImpl = fetch } = {}) {
   const { delivery, ...door } = input;
   const { operation, candidate } = delivery;
   const read = () => database('project', candidate);
@@ -269,7 +327,7 @@ export async function qualifyDelivery(input, database, clock = Date.now, fetchIm
   const snapshotToken = last.snapshotToken;
   if (operation === 'open') return database('open', { ...door, delivery: { candidate, snapshotToken } });
   const { acceptanceSha256, grantId, receiptId, acceptedAt } = delivery;
-  const confirm = { candidate, acceptanceSha256, grantId, receiptId, acceptedAt, snapshotToken };
+  const confirm = { candidate, acceptanceSha256, grantId, receiptId, acceptedAt, snapshotToken, ...interfaceEvidence };
   if (last.previousSeal) {
     const { version, requestSha256 } = last.previousSeal;
     if (!gated(version) || generation(version) >= generation(candidate.version) || !HEX64.test(requestSha256 ?? '')) {
@@ -291,15 +349,25 @@ const DELIVERY_DB_FUNCTIONS = {
 function callDeliveryDatabase(env, operation, input) {
   const fn = DELIVERY_DB_FUNCTIONS[operation];
   if (!fn || !env.CLUED_FLEET_DATABASE_URL) refuse('FLEET_DELIVERY_DATABASE_NOT_CONFIGURED');
-  const answer = execFileSync('docker', ['run', '--rm', '-i', '--user', `${process.getuid()}:${process.getgid()}`,
-    'postgres:17-alpine', 'psql', env.CLUED_FLEET_DATABASE_URL, '-v', 'ON_ERROR_STOP=1', '-X', '-qtA',
-    '-c', 'create temp table door_input(line text)',
-    '-c', String.raw`copy door_input(line) from stdin with (format csv, delimiter e'\x01', quote e'\x02')`,
-    ...(operation === 'project' ? ['-c', 'begin read only'] : []),
-    '-c', `select clued_private.${fn}(line::jsonb)::text from door_input`,
-    ...(operation === 'project' ? ['-c', 'commit'] : [])],
-  { input: JSON.stringify(input) + '\n', encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] });
-  return JSON.parse(answer.trim());
+  try {
+    const answer = execFileSync('docker', ['run', '--rm', '-i', '--user', `${process.getuid()}:${process.getgid()}`,
+      'postgres:17-alpine', 'psql', env.CLUED_FLEET_DATABASE_URL, '-v', 'ON_ERROR_STOP=1', '-X', '-qtA',
+      '-c', 'create temp table door_input(line text)',
+      '-c', String.raw`copy door_input(line) from stdin with (format csv, delimiter e'\x01', quote e'\x02')`,
+      ...(operation === 'project' ? ['-c', 'begin read only'] : []),
+      ...(operation === 'confirm' ? ['-c', `do $$ begin
+        if to_regprocedure('clued_private.fleet_require_previous_interface_v1(jsonb,clued_private.fleet_accepted_v1)') is null then
+          raise exception 'fleet_previous_interface_migration_required'; end if;
+        end $$`] : []),
+      '-c', `select clued_private.${fn}(line::jsonb)::text from door_input`,
+      ...(operation === 'project' ? ['-c', 'commit'] : [])],
+    { input: JSON.stringify(input) + '\n', encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] });
+    return JSON.parse(answer.trim());
+  } catch (error) {
+    const refusal = /^ERROR:\s+(fleet_previous_interface_[a-z_]+)\s*$/m.exec(String(error.stderr ?? ''));
+    if (refusal) refuse(`FLEET_DELIVERY_${refusal[1].slice('fleet_'.length).toUpperCase()}`);
+    throw error;
+  }
 }
 
 // psql's own words for a failed call, most specific first.
@@ -405,11 +473,26 @@ export async function main(argv = process.argv.slice(2), env = process.env,
       return 1;
     }
   }
+  if (command === 'previous-interfaces') {
+    try {
+      if (!env.GITHUB_OUTPUT) refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_RUN_REFUSED');
+      const result = await replayPreviousInterfaces(env, deps);
+      fs.appendFileSync(env.GITHUB_OUTPUT, `evidence=${JSON.stringify(result)}\n`);
+      io.write(`Previous package interface replay: ${result.previous.commit} -> ${result.candidate.commit}\n`);
+      return 0;
+    } catch (error) {
+      io.error(`::error title=上一包接口检查::${error.message.split('\n')[0]}\n`);
+      return 1;
+    }
+  }
   if (command === "delivery") {
     try {
       const input = JSON.parse(typeof io.stdin === 'string' ? io.stdin : await readStream(io.stdin ?? process.stdin));
       const database = deps.database ?? ((operation, fields) => callDeliveryDatabase(env, operation, fields));
-      const result = await qualifyDelivery(input, database, deps.clock, deps.fetchImpl);
+      const interfaceEvidence = input.delivery.operation === 'confirm'
+        ? await verifyInterfaceEvidence(env, input.delivery, candidate => readPreviousInterfacePackage(candidate, deps))
+        : undefined;
+      const result = await qualifyDelivery(input, database, deps.clock, { interfaceEvidence, fetchImpl: deps.fetchImpl });
       if (input.delivery.operation === 'open') return main(['report'], env, { ...io, stdin: JSON.stringify(result) });
       io.write(deliveryWorkflowPacket({ operation: input.delivery.operation, candidate: input.delivery.candidate, result },
         input.delivery.transportKey, input.delivery.candidate.requestSha256) + '\n');

@@ -62,6 +62,18 @@ const probes = {
         and ${bodyContains("'fleet_target',clued_private.fleet_node_target_v1(u,n.node_id)")})`,
   deliveryRecipients: procedure('fleet_delivery_registry_v1(jsonb)', 'jsonb', `p.provolatile = 's' and ${callerCanExecute}
     and ${bodyContains('jsonb_build_array(identity.user_id,identity.anchor_binding_id,c,recipients)')}`),
+  previousInterfaceGate: `${relation('fleet_accepted_v1', { previous_interface_evidence: 'jsonb' })}
+    and (case when to_regtype('clued_private.fleet_accepted_v1') is not null then
+      ${procedure('fleet_require_previous_interface_v1(jsonb,clued_private.fleet_accepted_v1)', 'jsonb',
+    `p.provolatile = 's' and ${callerCanExecute}
+      and ${bodyContains("proof jsonb:=p_input->'previousInterfaceEvidence';")}
+      and ${bodyContains("proof->'candidate' is distinct from p_input->'candidate'")}
+      and ${bodyContains("proof->>'migrationsSha256' is distinct from p_input->>'migrationsSha256'")}
+      and ${bodyContains('order by version desc limit 1;')}
+      and ${bodyContains("raise exception 'fleet_previous_interface_predecessor_changed'")}`)} else false end)
+    and ${procedure('fleet_delivery_seal_v1(jsonb)', 'jsonb', `${callerCanExecute}
+      and ${bodyContains('proof:=clued_private.fleet_require_previous_interface_v1(p_input,a);')}
+      and ${bodyContains('acceptance_sha256=d,previous_interface_evidence=proof')}`)}`,
 };
 
 export function releaseRequirements(commit, read = file => execFileSync('git', ['show', `${commit}:${file}`], {
