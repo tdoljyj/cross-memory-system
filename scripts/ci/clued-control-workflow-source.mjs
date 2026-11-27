@@ -894,11 +894,11 @@ export function compileControlWorkflowSource(file,text,{parseYaml,accepted_roles
   const descriptor=Object.hasOwn(CONTROL_WORKFLOW_FILES,file)?CONTROL_WORKFLOW_FILES[file]:null;
   if(!descriptor||typeof text!=='string'||!text||Buffer.byteLength(text)>131072||typeof parseYaml!=='function'||
       /\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/.test(text))bad('identity/source/parser');
-  if(!['legacy_predecessor','controller_successor','completion_observer_successor','dispatcher_choice_successor','retired_consumer_observer_successor','train_v2_slot_successor','merge_reconcile_initial'].includes(source_kind)||
+  if(!['legacy_predecessor','controller_successor','completion_observer_successor','dispatcher_choice_successor','retired_consumer_observer_successor','train_v2_slot_successor','train_v2_executor_successor','merge_reconcile_initial'].includes(source_kind)||
     source_kind==='completion_observer_successor'&&file!==SLOT_COMPLETION_OBSERVER_SOURCE.file||
     source_kind==='dispatcher_choice_successor'&&file!==DISPATCHER_CHOICE_SOURCE.file||
     source_kind==='retired_consumer_observer_successor'&&file!==RETIRED_CONSUMER_OBSERVER_SOURCE.file||
-    source_kind==='train_v2_slot_successor'&&file!==TRAIN_V2_SLOT_SOURCE.file||
+    Object.hasOwn(TRAIN_V2_SOURCES,source_kind)&&file!==TRAIN_V2_SOURCES[source_kind].file||
     source_kind==='merge_reconcile_initial'&&file!==MERGE_RECONCILE_CONTROL_SOURCE.file)bad('source kind');
   const value=parseYaml(text);
   if(descriptor.family==='trusted_main_secret_reconcile_controller')return compileInitialReconcileController(file,text,value,{accepted_roles,source_kind,predecessor});
@@ -977,6 +977,7 @@ function compileMainSecretController(file,text,value,{parseYaml,accepted_roles,s
     Object.values(value.jobs).some(job=>!plain(job)||job.environment!=='clued-admission'||job.uses!==undefined))
     bad('exact main-secret controller jobs/environment');
   const role_digests=rolesForDefinition(value,accepted_roles);let predecessor_blob=null;
+  const trainV2=Object.hasOwn(TRAIN_V2_SOURCES,source_kind)?TRAIN_V2_SOURCES[source_kind]:null;
   if(source_kind==='completion_observer_successor'){
     const pin=SLOT_COMPLETION_OBSERVER_SOURCE;
     if(file!==pin.file||workflowBlob(text)!==pin.workflow_blob||hash(text)!==pin.source_sha256||
@@ -998,23 +999,27 @@ function compileMainSecretController(file,text,value,{parseYaml,accepted_roles,s
   if(source_kind==='legacy_predecessor'){
     if(workflowBlob(text)!==descriptor.predecessor_blob||hash(text)!==descriptor.predecessor_sha256||
       roleDefinitionDigest(value)!==descriptor.predecessor_definition_sha256)bad('exact main-secret predecessor');
-  }else if(source_kind==='train_v2_slot_successor'){
-    const pin=TRAIN_V2_SLOT_SOURCE,old=RETIRED_CONSUMER_OBSERVER_SOURCE;
-    if(workflowBlob(text)!==pin.workflow_blob||hash(text)!==pin.source_sha256||
-      roleDefinitionDigest(value)!==pin.workflow_definition_sha256||!same(role_digests,pin.role_digests))
-      bad('exact train v2 slot Source/FullRole required');
-    if(predecessor?.source_kind!=='retired_consumer_observer_successor'||predecessor.workflow_blob!==old.workflow_blob||
-      workflowBlob(predecessor.source_yaml)!==old.workflow_blob||hash(predecessor.source_yaml)!==old.source_sha256||
-      roleDefinitionDigest(predecessor.workflow_definition)!==old.workflow_definition_sha256||
-      !same(predecessor.role_digests,old.role_digests))bad('exact retirement predecessor required');
-    const before=predecessor.workflow_definition,after=structuredClone(value);
-    after.jobs.report.if=before.jobs.report.if;
-    const executor=after.jobs.report.steps.find(step=>step.run==='node scripts/ci/clued-merge-executor.mjs');
-    if(executor?.env?.CLUED_MERGE_TRAIN_PROTOCOL_VERSION!=='${{ vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION }}')
+  }else if(trainV2){
+    const slot=source_kind==='train_v2_slot_successor';
+    const old=slot?RETIRED_CONSUMER_OBSERVER_SOURCE:descriptor;
+    const oldBlob=slot?old.workflow_blob:old.predecessor_blob;
+    if(workflowBlob(text)!==trainV2.workflow_blob||hash(text)!==trainV2.source_sha256||
+      roleDefinitionDigest(value)!==trainV2.workflow_definition_sha256||!same(role_digests,trainV2.role_digests))
+      bad('exact train v2 Source/FullRole required');
+    if(predecessor?.source_kind!==(slot?'retired_consumer_observer_successor':'legacy_predecessor')||
+      predecessor.workflow_blob!==oldBlob||workflowBlob(predecessor.source_yaml)!==oldBlob||
+      hash(predecessor.source_yaml)!==(slot?old.source_sha256:old.predecessor_sha256)||
+      roleDefinitionDigest(predecessor.workflow_definition)!==(slot?old.workflow_definition_sha256:old.predecessor_definition_sha256)||
+      slot&&!same(predecessor.role_digests,old.role_digests))bad('exact train v2 predecessor required');
+    const before=predecessor.workflow_definition,after=structuredClone(value),job=after.jobs[trainV2.job_id];
+    const oldJob=before.jobs[trainV2.job_id];
+    if(Object.hasOwn(oldJob,'if'))job.if=oldJob.if;else delete job.if;
+    const executor=job.steps.find(step=>step.run==='node scripts/ci/clued-merge-executor.mjs');
+    if(executor?.env?.CLUED_MERGE_TRAIN_PROTOCOL_VERSION!=="${{ vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION }}")
       bad('train protocol must reach the executor');
     delete executor.env.CLUED_MERGE_TRAIN_PROTOCOL_VERSION;
     if(!same(before,after))bad('only the train v2 entry condition and executor protocol may change');
-    predecessor_blob=old.workflow_blob;
+    predecessor_blob=oldBlob;
   }else{
     if(!predecessor||predecessor.source_kind!=='legacy_predecessor')bad('exact main-secret predecessor required');
     const old=compileControlWorkflowSource(file,predecessor.source_yaml,{parseYaml:()=>predecessor.workflow_definition,
@@ -1066,13 +1071,13 @@ function compileMainSecretController(file,text,value,{parseYaml,accepted_roles,s
     }commands[id]=names;
   }
   return {registration_status:'registered',family:descriptor.family,source_kind,
-    operation:source_kind==='legacy_predecessor'?'predecessor':source_kind==='completion_observer_successor'?'extend_completion_observer':source_kind==='retired_consumer_observer_successor'?'retire_completed_consumer_signal':source_kind==='train_v2_slot_successor'?'guard_train_v2_slot_entry':source_kind==='dispatcher_choice_successor'?'extend_dispatcher_choice':'migrate_hosted_controller',workflow_blob:workflowBlob(text),
+    operation:source_kind==='legacy_predecessor'?'predecessor':source_kind==='completion_observer_successor'?'extend_completion_observer':source_kind==='retired_consumer_observer_successor'?'retire_completed_consumer_signal':source_kind==='train_v2_slot_successor'?'guard_train_v2_slot_entry':source_kind==='train_v2_executor_successor'?'guard_train_v2_executor_entry':source_kind==='dispatcher_choice_successor'?'extend_dispatcher_choice':'migrate_hosted_controller',workflow_blob:workflowBlob(text),
     source_sha256:hash(text),source_yaml:text,workflow_definition:value,predecessor_blob,
     primary_ids:[...descriptor.migrating_jobs].sort(),role_digests,command_digests:commands,
     implementation_blobs:{...(source_kind==='legacy_predecessor'?descriptor.predecessor_implementation_blobs:
       source_kind==='completion_observer_successor'?SLOT_COMPLETION_OBSERVER_SOURCE.implementation_blobs:
       source_kind==='retired_consumer_observer_successor'?RETIRED_CONSUMER_OBSERVER_SOURCE.implementation_blobs:
-      source_kind==='train_v2_slot_successor'?TRAIN_V2_SLOT_SOURCE.implementation_blobs:
+      trainV2?trainV2.implementation_blobs:
       source_kind==='dispatcher_choice_successor'?DISPATCHER_CHOICE_SOURCE.implementation_blobs:descriptor.implementation_blobs)},authority_boundary:{...mainSecretBoundary}};
 }
 
@@ -1148,8 +1153,9 @@ export function registeredControlWorkflowTransition(registry,file,headText,baseT
     file===SLOT_COMPLETION_OBSERVER_SOURCE.file&&head.profile.source_kind==='completion_observer_successor'||
     file===DISPATCHER_CHOICE_SOURCE.file&&head.profile.source_kind==='dispatcher_choice_successor')&&
     base.profile.source_kind==='legacy_predecessor'&&head.profile.predecessor_blob===base.profile.workflow_blob;
-  const trainV2=head.profile.source_kind==='train_v2_slot_successor'&&
-    base.profile.source_kind==='retired_consumer_observer_successor'&&head.profile.predecessor_blob===base.profile.workflow_blob;
+  const trainV2=Object.hasOwn(TRAIN_V2_SOURCES,head.profile.source_kind)&&
+    base.profile.source_kind===(head.profile.source_kind==='train_v2_slot_successor'?'retired_consumer_observer_successor':'legacy_predecessor')&&
+    head.profile.predecessor_blob===base.profile.workflow_blob;
   if(!retirement&&!legacy&&!trainV2)return unknown('registered controller predecessor/successor absent');
   return {...head,scope:'registered_control_transition_source_only'};
 }
@@ -1198,14 +1204,104 @@ export const RETIRED_CONSUMER_OBSERVER_SOURCE=freeze({
 });
 
 export const TRAIN_V2_SLOT_SOURCE=freeze({
-  file:RETIRED_CONSUMER_OBSERVER_SOURCE.file,
-  workflow_blob:'73215475c1b1a7098b9aee18fb00bbe05c65bc48',
-  source_sha256:'9bd7d356f834736141f3978d1059775b946eaedc680cd814349f348d38f58376',
-  workflow_definition_sha256:'8f6ca0aa1b994d495d598fdcf3c2388f6e7ca183b6e3db53cd329fb81820d55e',
-  role_digests:{report:'673021e36bcd06373b778f812ff808dbcf62295c25dd3e314bc78961496bf2ea'},
-  implementation_blobs:{
-    ...RETIRED_CONSUMER_OBSERVER_SOURCE.implementation_blobs,
-    'scripts/ci/clued-merge-executor.mjs':'4dfa8f4e07676c71ed969c56b111213efd380506',
-    'scripts/ci/clued-independent-publication-port.mjs':'8142daac262152d5c70fe7c2d19f122a3ae3c80e',
+  "file": ".github/workflows/clued-merge-slot-ci.yml",
+  "job_id": "report",
+  "workflow_blob": "73215475c1b1a7098b9aee18fb00bbe05c65bc48",
+  "source_sha256": "9bd7d356f834736141f3978d1059775b946eaedc680cd814349f348d38f58376",
+  "workflow_definition_sha256": "8f6ca0aa1b994d495d598fdcf3c2388f6e7ca183b6e3db53cd329fb81820d55e",
+  "role_digests": {
+    "report": "673021e36bcd06373b778f812ff808dbcf62295c25dd3e314bc78961496bf2ea"
   },
+  "implementation_blobs": {
+    ".github/actions/ci-temporary-storage/action.yml": "72a78ada2553dc42a062dbccf310d1b23e65431f",
+    ".github/actions/ci-temporary-storage/check-workflows.mjs": "b3d1d23d1d6f97792fd2aac5338d4d683bac9df3",
+    ".github/actions/ci-temporary-storage/coverage.json": "c9ed97e5a87013f48a7fbea232df4ca8935ecfe9",
+    ".github/actions/ci-temporary-storage/setup.mjs": "dd162105b2800d31b9970d25575945a140a69d42",
+    ".github/actions/ci-temporary-storage/setup.py": "4e3f82e061162f894e310f6e767bacf8c57a079b",
+    ".github/workflows/clued-standard-runner-actor-qualification.yml": "d752e91ae501313396163df277883d2d02fa100e",
+    "apps/clued-cloud/app/supabase-public-config.ts": "193fedd8e9d5ccaea873e2cc4d0efd894e93d6ae",
+    "config/clued-handover-native-entry-policy.json": "2a26987dfc41458a6db005f144dd07fd49ee8644",
+    "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea",
+    "scripts/ci/clued-gated-proof-profiles.json": "cc4432c1aba3323be10def888ea78d01260ecc11",
+    "scripts/ci/clued-gated-proof-role-specs.json": "be639c2cd4c8d459503c3f559fe7cf31acec73a8",
+    "scripts/ci/clued-gated-proof-runtime.mjs": "5e3b500594acecc4bc52d6b178f0a20816495c0e",
+    "scripts/ci/clued-handover-native-entry.mjs": "d6682bdece007f142bd53185d70427c7eb3e7f7c",
+    "scripts/ci/clued-independent-publication-port.mjs": "8142daac262152d5c70fe7c2d19f122a3ae3c80e",
+    "scripts/ci/clued-independent-publication-runtime.mjs": "c2c42aa9245c2370b7ed7640f166600c7c98f2cf",
+    "scripts/ci/clued-managed-auto-merge.mjs": "738e887104de888abc9bd63f2d86a135a891ffb8",
+    "scripts/ci/clued-merge-executor.mjs": "4dfa8f4e07676c71ed969c56b111213efd380506",
+    "scripts/ci/clued-merge-executor.test.mjs": "6ad025d6c3057bcaa445d0af35312f168bf0be8e",
+    "scripts/ci/clued-merge-reconcile-gate.mjs": "9eeb75422fb8fd1a153255b8791b6612c25525c8",
+    "scripts/ci/clued-merge-slot-ci.mjs": "10e5bfe0dd606308c63d057d9552f93a413094b5",
+    "scripts/ci/clued-merge-slot-ci.test.mjs": "2f7e119748415715837a21e917456ce958d82181",
+    "scripts/ci/clued-non-pr-control-source.mjs": "1b8c31b9235648f6e3812231a4cabbd70174d734",
+    "scripts/ci/clued-non-pr-control-sources.json": "b9a8af7445ab8474560496ec7e31b9e1e08b6999",
+    "scripts/ci/clued-pr-task-binding.mjs": "7f2c012c47a169852d0248edd218414c11b6e5bd",
+    "scripts/ci/clued-production-publisher-source.mjs": "0e3c2d4df3fb2f4ceb6ec8750028e2b046a1a0b6",
+    "scripts/ci/clued-production-publisher-sources.json": "df10a840de4d00961d9df55103e6c6849fba23fb",
+    "scripts/ci/clued-publisher-qualification-source.mjs": "f38859449e35eeeef492db8130f91c266c208d75",
+    "scripts/ci/clued-publisher-qualification-sources.json": "34bbd3c400af8565ed28545af2ba839c5f920d40",
+    "scripts/ci/clued-scan-start.mjs": "07042a02682d818f7e51a8d4e6105d7cc58c4b27",
+    "scripts/ci/clued-standard-runner-actor-source.mjs": "e8de9a37f939941fc5ce05627c08e2db57a298e6",
+    "scripts/ci/clued-standard-runner-actor-sources.json": "5112f5f0102fd7f9828fe96b0b07930f77dd0e6e",
+    "scripts/ci/clued-work-admission.mjs": "1a878b165d32e857ea1ab207594f1356a69b025e",
+    "scripts/ci/clued-workflow-profile.mjs": "381d019b5fb73808c9c74bfa1f6e009fc54b0d35",
+    "scripts/ci/merge-admission-measurement-history.mjs": "6799c148ee7baf51a5ba989de73fb8bffb054f6f",
+    "scripts/ci/merge-admission-policy.mjs": "a3f6830e0087474d3e36222d12975deb7830c4d3",
+    "scripts/ci/merge-admission-source-producer.mjs": "cdaf8896ab5beee43e24fb482a99bfe871e7fac6",
+    "scripts/runner/clued-runner-job-started.mjs": "702004c142d6f6b50938e6d213e8d396b9a9fd37",
+    "scripts/runner/qualify-standard-runner-actor.mjs": "794861b9acf7659ef2bb946f2c1dff7ef33fbd10"
+  }
+});
+
+export const TRAIN_V2_EXECUTOR_SOURCE=freeze({
+  "file": ".github/workflows/clued-merge-executor.yml",
+  "job_id": "execute",
+  "workflow_blob": "9bf8f722f369ff16592e2919b58e7ae898d8e566",
+  "source_sha256": "2e5b98789514fd58e3697e1b47e574d45f454dad984555fee4c5884e28f99759",
+  "workflow_definition_sha256": "5aa32269cdb7472172bb1bcf8134df595aa5d5a65f9c542e64806d82efd0f0f8",
+  "role_digests": {
+    "execute": "e324d81efcfa7868951c51a1329ad1b11afa6ed2b6cb1f6f4b34296e568de648"
+  },
+  "implementation_blobs": {
+    ".github/actions/ci-temporary-storage/action.yml": "72a78ada2553dc42a062dbccf310d1b23e65431f",
+    ".github/actions/ci-temporary-storage/check-workflows.mjs": "b3d1d23d1d6f97792fd2aac5338d4d683bac9df3",
+    ".github/actions/ci-temporary-storage/coverage.json": "c9ed97e5a87013f48a7fbea232df4ca8935ecfe9",
+    ".github/actions/ci-temporary-storage/setup.mjs": "dd162105b2800d31b9970d25575945a140a69d42",
+    ".github/actions/ci-temporary-storage/setup.py": "4e3f82e061162f894e310f6e767bacf8c57a079b",
+    "apps/clued-cloud/app/supabase-public-config.ts": "193fedd8e9d5ccaea873e2cc4d0efd894e93d6ae",
+    "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea",
+    "scripts/ci/clued-docs-only.py": "395f086b58ea3ff6cb5946660da734cc5072938f",
+    "scripts/ci/clued-gated-proof-profiles.json": "cc4432c1aba3323be10def888ea78d01260ecc11",
+    "scripts/ci/clued-gated-proof-role-specs.json": "be639c2cd4c8d459503c3f559fe7cf31acec73a8",
+    "scripts/ci/clued-gated-proof-runtime.mjs": "5e3b500594acecc4bc52d6b178f0a20816495c0e",
+    "scripts/ci/clued-gated-proof.mjs": "10b21cc841cd83d4a4d02935aa9b1438b90ca5a1",
+    "scripts/ci/clued-independent-publication-port.mjs": "8142daac262152d5c70fe7c2d19f122a3ae3c80e",
+    "scripts/ci/clued-independent-publication-runtime.mjs": "c2c42aa9245c2370b7ed7640f166600c7c98f2cf",
+    "scripts/ci/clued-managed-auto-merge.mjs": "738e887104de888abc9bd63f2d86a135a891ffb8",
+    "scripts/ci/clued-merge-executor.mjs": "4dfa8f4e07676c71ed969c56b111213efd380506",
+    "scripts/ci/clued-merge-executor.test.mjs": "6ad025d6c3057bcaa445d0af35312f168bf0be8e",
+    "scripts/ci/clued-merge-reconcile-gate.mjs": "9eeb75422fb8fd1a153255b8791b6612c25525c8",
+    "scripts/ci/clued-merge-slot-ci.mjs": "10e5bfe0dd606308c63d057d9552f93a413094b5",
+    "scripts/ci/clued-merge-slot-ci.test.mjs": "2f7e119748415715837a21e917456ce958d82181",
+    "scripts/ci/clued-non-pr-control-source.mjs": "1b8c31b9235648f6e3812231a4cabbd70174d734",
+    "scripts/ci/clued-non-pr-control-sources.json": "b9a8af7445ab8474560496ec7e31b9e1e08b6999",
+    "scripts/ci/clued-pr-task-binding.mjs": "7f2c012c47a169852d0248edd218414c11b6e5bd",
+    "scripts/ci/clued-production-publisher-source.mjs": "0e3c2d4df3fb2f4ceb6ec8750028e2b046a1a0b6",
+    "scripts/ci/clued-production-publisher-sources.json": "df10a840de4d00961d9df55103e6c6849fba23fb",
+    "scripts/ci/clued-publisher-qualification-source.mjs": "f38859449e35eeeef492db8130f91c266c208d75",
+    "scripts/ci/clued-publisher-qualification-sources.json": "34bbd3c400af8565ed28545af2ba839c5f920d40",
+    "scripts/ci/clued-work-admission.mjs": "1a878b165d32e857ea1ab207594f1356a69b025e",
+    "scripts/ci/clued-workflow-profile.mjs": "381d019b5fb73808c9c74bfa1f6e009fc54b0d35",
+    "scripts/ci/merge-admission-measurement-history.mjs": "6799c148ee7baf51a5ba989de73fb8bffb054f6f",
+    "scripts/ci/merge-admission-policy.mjs": "a3f6830e0087474d3e36222d12975deb7830c4d3",
+    "scripts/ci/merge-admission-source-producer.mjs": "cdaf8896ab5beee43e24fb482a99bfe871e7fac6",
+    "scripts/ci/test_clued_docs_only.py": "810cf5774e3a523a121c99e2ae77f9036d501888",
+    "scripts/runner/clued-runner-job-started.mjs": "702004c142d6f6b50938e6d213e8d396b9a9fd37"
+  }
+});
+
+const TRAIN_V2_SOURCES=freeze({
+  train_v2_slot_successor:TRAIN_V2_SLOT_SOURCE,
+  train_v2_executor_successor:TRAIN_V2_EXECUTOR_SOURCE,
 });

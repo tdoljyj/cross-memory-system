@@ -80,20 +80,26 @@ function initialEntry(registry,file){
   return rows[0];
 }
 function projectedRegistry(value,file,names){const result=structuredClone(value),entry=initialEntry(result,file);entry.implementation_blobs=projectedDescriptor({implementation_blobs:entry.implementation_blobs},names).implementation_blobs;return result;}
-// Task 788c2598 authorizes one exact append. Bind both compiler shapes and
-// the complete appended Source/FullRole independently of the candidate code.
-function withoutRegisteredTrainV2Slot(registry,previousShape,nextShape){
+// Task 788c2598 authorizes these two exact appends. Bind both compiler shapes
+// and every appended Source/FullRole independently of the candidate code.
+const TRAIN_V2_REGISTRATIONS=[
+  ['.github/workflows/clued-merge-slot-ci.yml','73215475c1b1a7098b9aee18fb00bbe05c65bc48',
+    'a33f1786c7b07a3eb9a8d2bb682e084c3b56122adce85c8d6064f066796a9286'],
+  ['.github/workflows/clued-merge-executor.yml','9bf8f722f369ff16592e2919b58e7ae898d8e566',
+    'e36eb2b49426610f9e4b99c9ef0221eae30c6c520d2fe43c137508897fc18b07'],
+];
+function withoutRegisteredTrainV2(registry,previousShape,nextShape){
   if(sha256(previousShape)!=='b2f9a544b42587519c8124147cb16c7b94baf8dc59ef79aa90aa7b992678556c'||
-    sha256(nextShape)!=='91a98c81b3a577acd4a0b9eb21509cc5ef1ae343645d94d25d61db13b3f4a950')
+    sha256(nextShape)!=='fd09f8cabaac542f6ac48ad93041f0bc2d260d82d383e1f27399ac4873e180d9')
     refuse('Source implementation changed beyond its version marker');
-  const file='.github/workflows/clued-merge-slot-ci.yml', workflowBlob='73215475c1b1a7098b9aee18fb00bbe05c65bc48';
   const projected=structuredClone(registry);
-  const appended=projected.workflows?.[file]?.sources?.pop();
-  const roles=projected.roles?.[file];
-  if(appended?.workflow_blob!==workflowBlob||
-    sha256(JSON.stringify([appended,roles?.[workflowBlob]]))!=='bff8dcb515c0f9cf9a474833df6f05eae765b5a2e2625fd366052f9a95c43f75')
-    refuse('frozen catalogue/Role/workflow/authority changed outside the registered train v2 append');
-  delete roles[workflowBlob];
+  for(const [file,workflowBlob,digest] of TRAIN_V2_REGISTRATIONS){
+    const appended=projected.workflows?.[file]?.sources?.pop();
+    const roles=projected.roles?.[file];
+    if(appended?.workflow_blob!==workflowBlob||sha256(JSON.stringify([appended,roles?.[workflowBlob]]))!==digest)
+      refuse('frozen catalogue/Role/workflow/authority changed outside the registered train v2 appends');
+    delete roles[workflowBlob];
+  }
   return projected;
 }
 function ensureVersionManifest(manifest,file,text){
@@ -117,7 +123,7 @@ export async function planControlSourcePins(root=DEFAULT_ROOT,{base}={}){
   if(!isDeepStrictEqual(projectedDescriptor(d.value,mechanical),projectedDescriptor(old.value,mechanical)))refuse('frozen descriptor changed beyond mechanical pins');
   const moduleShape=(text,part)=>withoutVersion(text.slice(0,part.a)+'<registered-descriptor>'+text.slice(part.b));
   const previousShape=moduleShape(before,old),nextShape=moduleShape(source,d);
-  const catalogue=previousShape===nextShape?registry:withoutRegisteredTrainV2Slot(registry,previousShape,nextShape);
+  const catalogue=previousShape===nextShape?registry:withoutRegisteredTrainV2(registry,previousShape,nextShape);
   if(!isDeepStrictEqual(projectedRegistry(catalogue,d.value.file,mechanical),projectedRegistry(beforeRegistry,old.value.file,mechanical)))refuse('frozen catalogue/Role/workflow/authority changed');
   const entry=initialEntry(registry,d.value.file);
   if(!isDeepStrictEqual(entry.implementation_blobs,d.value.implementation_blobs))refuse('descriptor/catalogue pins disagree');
