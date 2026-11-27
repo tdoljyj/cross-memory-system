@@ -492,7 +492,10 @@ test('connection renewal from serving Worker through the migrated database', {ti
       };
       await f.human.query('begin read only');
       let current;
-      try { current=await probe(f.claims()); } finally { await f.human.query('rollback'); }
+      try {
+        const { issued_at } = (await f.human.query('select floor(extract(epoch from statement_timestamp()))::int issued_at')).rows[0];
+        current = await probe(f.claims(f.user, f.session, { auth_time: issued_at }));
+      } finally { await f.human.query('rollback'); }
       assert.equal(current.session_valid,true); assert.ok(current.fresh_seconds>890 && current.fresh_seconds<=900);
       assert.equal(current.reason,null);
       assert.deepEqual(await probe(f.claims(f.user,f.session,{auth_time:1})),{session_valid:true,fresh_seconds:0,reason:null});

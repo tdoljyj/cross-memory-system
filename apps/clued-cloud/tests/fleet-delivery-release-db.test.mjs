@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import test from 'node:test';
 import { qualifyDelivery } from '../../../scripts/ci/clued-fleet-accept.mjs';
 import { firstInstallCheck } from '../../../work/independent-ci-resident-v1/rollout/fleet/install.mjs';
 import { DEFAULT_REPO, seal } from '../../../work/independent-ci-resident-v1/rollout/fleet/publish.mjs';
+import { missingMigrations, readbackSql, releaseRequirements } from '../../../work/independent-ci-resident-v1/rollout/fleet/release-migrations.mjs';
 import { sha, tempDir } from '../../../work/independent-ci-resident-v1/rollout/fleet/test/fleet-fixtures.mjs';
 import { fixtureId as id, releaseAssets } from '../../../work/independent-ci-resident-v1/rollout/fleet/test/delivery-release-fixture.mjs';
 import { checkWindowsBoundary } from '../../../work/independent-ci-resident-v1/rollout/fleet/test/windows-delivery-fixture.mjs';
@@ -214,6 +216,19 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
       dbErrors.length = 0;
     });
     await db.upgrade();
+    await t.test('发布门通过同一 SQL 快照核对 pending 交付迁移和实际续期接口', async () => {
+      const root = new URL('../../../', import.meta.url);
+      const plan = releaseRequirements(w.build.source.commit, file => readFileSync(new URL(file, root)));
+      await admin.query(`create schema supabase_migrations;
+        create table supabase_migrations.schema_migrations(version text primary key, name text, statements text[])`);
+      for (const { file, name, version } of plan) {
+        const sql = await fs.readFile(new URL(file, migrations), 'utf8');
+        await admin.query('insert into supabase_migrations.schema_migrations values ($1, $2, array[$3])', [version, name, sql]);
+      }
+      const snapshot = (await admin.query(readbackSql(plan)))[1].rows[0].jsonb_build_object;
+      assert.equal(snapshot.interfaces.pendingDelivery, true);
+      assert.deepEqual(missingMigrations(plan, snapshot), []);
+    });
     await t.test('发布端拒绝被替换的请求、tar、kit 和 Source', async () => {
       const requestName = `${tag}.acceptance-request.json`;
       const alteredSource = Buffer.from(JSON.stringify({ ...JSON.parse(w.asset(requestName)), ciSourceManifestSha256: sha('other Source') }));

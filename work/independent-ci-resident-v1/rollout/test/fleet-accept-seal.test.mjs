@@ -480,6 +480,7 @@ test('第 27 代统一发布的运输附件经回读验证，部分上传后续�
   let interrupted = false, corruptReadback = false;
   const readbacks = [];
   const ghCommand = args => {
+    if (args[1]?.includes('/compare/main...')) return { status: 0, stdout: JSON.stringify({ status: 'identical' }) };
     if (!interrupted && args[0] === 'release' && args[1] === 'create') {
       interrupted = true;
       assert.ok(args.some(arg => path.basename(arg) === interruptedUpload));
