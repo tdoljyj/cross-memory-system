@@ -70,22 +70,64 @@ export const MERGE_RECONCILE_LANE_EVERY_MS = 30_000;
 export const GH_RECHECK_EVERY_MS = 2 * 60_000;
 const SC_EXE = 'C:\\Windows\\System32\\sc.exe';
 
+// The outbox is independent of the toast/diagnostic store, whose keys are pruned. Only the advisory lane reads or writes it.
+function handoverOutbox(file, repo) {
+  return {
+    async load() {
+      let text;
+      try { text = await fs.readFile(file, 'utf8'); }
+      catch (error) { if (error.code === 'ENOENT') return {}; throw error; }
+      const data = JSON.parse(text);
+      if (data?.repo !== repo || !data.receipts || typeof data.receipts !== 'object' || Array.isArray(data.receipts)) {
+        throw new Error('HANDOVER_OUTBOX_INVALID');
+      }
+      return data.receipts;
+    },
+    async save(receipts) {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      const handle = await fs.open(tmp, 'w');
+      try { await handle.writeFile(JSON.stringify({ repo, receipts }, null, 2) + '\n'); await handle.sync(); }
+      finally { await handle.close(); }
+      await fs.rename(tmp, file);
+    },
+  };
+}
+
 // The node heartbeat, or null when no heartbeat token is installed (then nothing about the companion changes). The server's
 // address, publishable key and scope are the installed record's (record\installation.json), never a configuration of their own.
 // notify(key, title, body): the notification queue (M5, ADR 0022 §4.3); without it (tests) a toast through powershellExe as before.
-export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershellExe, run, store, clock = Date.now, readJson = async p => JSON.parse(await fs.readFile(p, 'utf8')), notify = null }) {
+export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershellExe, run, runHandover = run, store, clock = Date.now,
+  readJson = async p => JSON.parse(await fs.readFile(p, 'utf8')), notify = null }) {
   if (!(await readHeartbeatToken(root))) return null;
   let transport, scope = null;
   try {
     const record = await readJson(path.join(root, 'record', 'installation.json'));
     scope = record.scope;
     transport = supabaseHeartbeatTransport({ supabaseUrl: record.supabaseUrl, publishableKey: record.publishableKey });
-  } catch { transport = async () => ({ ok: false, tokenRefused: false, notRegistered: false, autoHandovers: [], watchdogTickAt: null, watchdogStale: null }); }
-  return new CompanionHeartbeat({ nodeName, scope, transport, clock, readToken: () => readHeartbeatToken(root), readStatus: () => readStatus(root),
+  } catch { transport = async () => ({ ok: false, errorKind: 'TRANSPORT_CONFIG' }); }
+  // Both lanes update the same store. Serialize its atomic writes and coalesce changes while a write is running.
+  let saving = false, dirty = false;
+  const save = async () => {
+    dirty = true;
+    if (saving) return;
+    saving = true;
+    try {
+      while (dirty) {
+        dirty = false;
+        await store.save();
+      }
+    } catch { /* the next update tries again */ }
+    finally { saving = false; }
+  };
+  return new CompanionHeartbeat({ nodeName, scope, transport, clock, handoverClock: () => performance.now(),
+    readToken: () => readHeartbeatToken(root), readStatus: () => readStatus(root),
     serviceRunning: async () => serviceRunningFrom(await run(scQueryArgv(SC_EXE), { timeoutMs: 15_000 })),
     notify: notify ?? (async (key, title, body) => { await run(toastArgv(powershellExe, title, body), { timeoutMs: 15_000 }); }),
-    memory: { get: key => Date.parse(store.data.notified[key]?.at) || 0, set: async (key, at) => { store.data.notified[key] = { at: new Date(at).toISOString() }; await store.save(); } },
-    handover: ghHandoverPort({ ghExe, repo, run }) });
+    memory: { get: key => Date.parse(store.data.notified[key]?.at) || 0, set: (key, at) => { store.data.notified[key] = { at: new Date(at).toISOString() }; void save(); } },
+    recordDiagnostics: snapshot => { store.data.diagnostics = snapshot; void save(); },
+    handoverOutbox: store.file ? handoverOutbox(path.join(path.dirname(store.file), 'companion-heartbeat-handovers.json'), repo) : null,
+    handover: ghHandoverPort({ ghExe, repo, run: runHandover }) });
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -166,7 +208,7 @@ export function pollLane({ poller, readStatus, schedule = setTimeout, cancel = c
 }
 
 export function advisoryLanes({ advisory, pollRunner, repo, ghExe, writeTrigger, clock = Date.now, readStatus, renewKeyCheck, retentionNotifier,
-  pruneOldBundles, backstop, reporter, schedule = setTimeout, cancel = clearTimeout }) {
+  pruneOldBundles, backstop, reporter, heartbeat, schedule = setTimeout, cancel = clearTimeout }) {
   let lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0, lastBundlePrune = 0;
   let poll = null; // the poll lane (pollLane): its pass's status read is what the landing port reads
   // bc982192: the batch route the service stamps a batch born now with (its status board's train.batchRoute, executor.mjs#batchRoute:
@@ -180,6 +222,7 @@ export function advisoryLanes({ advisory, pollRunner, repo, ghExe, writeTrigger,
   return { poller, lanes: [
     { runner: pollRunner, everyMs: POLL_EVERY_MS, work: poll.work },
     { runner: advisory, work: async () => {
+      await heartbeat?.handoverStep();
       await renewKeyCheck();
       try { await retentionNotifier.step(); } catch { /* advisory; retry without marking an undelivered notice */ }
       // The bundle retention (companion.mjs#pruneBundles): bundles of ended batches, at start and every hour.
@@ -390,11 +433,11 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
       return UpgradeMailbox.open(dir, Date.now);
     } });
   // The node heartbeat (DESIGN §41.6a): only with a heartbeat token installed; its own lane and Runner.
-  // Its once-per-key memory is a store of its own (two lanes never write one file).
+  // The advisory lane relays handovers on its own Runner. The store serializes both lanes' updates.
   const heartbeatRunner = new Runner({ env: { ...process.env }, jobHost });
   const heartbeatStore = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-heartbeat.json'));
   const heartbeat = await companionHeartbeat({ root: values.root, nodeName: cfg.node.nodeName, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe,
-    run: (a, o) => heartbeatRunner.run(a, o), store: heartbeatStore, notify });
+    run: (a, o) => heartbeatRunner.run(a, o), runHandover: (a, o) => advisory.run(a, o), store: heartbeatStore, notify });
   const fleetRunner = new Runner({ env: { ...process.env }, jobHost });
   let fleetLag = null;
   const openFleetLag = async () => {
@@ -477,7 +520,7 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
     pruneOldBundles: () => companion.pruneOldBundles(),
     backstop: () => companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o),
       store, notify, observeRules: rules => poller.noteBranchRules(rules) }),
-    reporter });
+    reporter, heartbeat });
   const loopDelay = startLoopDelay();
   companion.loopDelay = loopDelay.between;
   const beating = startHeartbeat(mailbox);
@@ -488,6 +531,7 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
   const ghRecheck = setInterval(() => {
     assertGhIsolation({ env: process.env, profileDir: cfg.node.ownerProfileDirectory, ghExe: raw.ghExe }).catch(() => { process.exit(5); });
   }, GH_RECHECK_EVERY_MS);
+  companion.startProbeLane();
   try {
     await Promise.all([
       // the service times out and classifies a request the companion did not answer; never retried here
@@ -505,6 +549,7 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
     ]);
   } finally {
     clearInterval(beating);
+    companion.stopProbeLane();
     loopDelay.stop();
     clearInterval(lockAlive);
     clearInterval(ghRecheck);

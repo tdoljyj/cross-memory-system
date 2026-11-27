@@ -224,7 +224,9 @@ test('after stage 1 only a live read ends a superseded batch: SUPERSEDED_AT_SAFE
     const base = engine.runStage;
     let f;
     engine.runStage = async (batch, stage, o) => { if (stage.number === 1) await f.drop(triggerBytes({ headSha: H(7) })); return base(batch, stage, o); };
-    f = await executorFixture(t2, { engine, companion: fakeCompanion({ pull }) });
+    f = await executorFixture(t2, { engine, companion: fakeCompanion({
+      pull: (pr, batch) => batch ? pull(pr) : pull(pr) ?? { number: pr, state: 'open', headSha: HEAD },
+    }) });
     await f.drop(triggerBytes());
     return { f, r: await f.exec.tick() };
   };
@@ -345,9 +347,13 @@ test('review M2: attempt 2 runs when the live read disproves the newer commit, o
     const engine = fakeEngine();
     const base = engine.runStage;
     engine.runStage = async (batch, stage, o) => (stage.number === 2 && ++n === 1 ? (engine.calls.push(['stage', 2]), { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', proof: WINDOWS_CLEAN }) : base(batch, stage, o));
-    const f = await executorFixture(t, { engine, companion: fakeCompanion({ pull }) });
+    let retry = false;
+    const f = await executorFixture(t, { engine, companion: fakeCompanion({
+      pull: pr => retry ? pull(pr) : { number: pr, state: 'open', headSha: HEAD },
+    }) });
     await f.drop(triggerBytes());
     assert.ok((await f.exec.tick()).attempt2);
+    retry = true;
     await f.drop(triggerBytes({ headSha: H(7) })); // a stale or forged trigger
     f.advance(10 * MIN);
     const r = await f.exec.tick();

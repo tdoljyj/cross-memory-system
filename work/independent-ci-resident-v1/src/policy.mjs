@@ -64,6 +64,7 @@
 // per batch, more than 1 only with push. push needs strict-permanent mode (sweep audit or off). Neither key written: the policy and its
 // digest are unchanged; an older resident refuses a policy that names one (POLICY_TRAIN_KEYS_INVALID).
 import { HEX64, REPO, UUID, check, exactKeys } from './canonical.mjs';
+import { parseInstalledPackage } from './selfcheck.mjs';
 import { pinnedNodeProfile } from './node-profile.mjs';
 
 export const POLICY_CONTRACT_V7 = 'clued.independent-ci.resident-policy/7';
@@ -135,7 +136,12 @@ export function validatePolicy(p) {
   check(REPO.test(p.repo), 'POLICY_REPO_INVALID');
   check(p.baseBranch === 'main', 'POLICY_BASE_BRANCH_FIXED_MAIN');
   check(HEX64.test(p.sourceManifestSha256) && HEX64.test(p.ciSourceManifestSha256) && HEX64.test(p.residentManifestSha256), 'POLICY_SOURCE_PIN_INVALID');
-  exactKeys(p.ownerAcceptance, ['decisionRef', 'installReceiptRef'], 'POLICY_ACCEPTANCE_KEYS_INVALID');
+  const carriesIdentity = Object.hasOwn(p.ownerAcceptance ?? {}, 'installedPackage');
+  exactKeys(p.ownerAcceptance, ['decisionRef', 'installReceiptRef', ...(carriesIdentity ? ['installedPackage'] : [])], 'POLICY_ACCEPTANCE_KEYS_INVALID');
+  if (carriesIdentity) {
+    const identity = parseInstalledPackage(p.ownerAcceptance.installedPackage);
+    check(identity && identity.ciSourceManifestSha256 === p.ciSourceManifestSha256, 'POLICY_PACKAGE_IDENTITY_INVALID');
+  }
   check(UUID.test(p.ownerAcceptance.decisionRef), 'POLICY_ACCEPTANCE_DECISION_INVALID');
   check(p.ownerAcceptance.installReceiptRef === null || UUID.test(p.ownerAcceptance.installReceiptRef), 'POLICY_INSTALL_RECEIPT_INVALID');
   check(p.validUntil === null || (typeof p.validUntil === 'string' && ISO.test(p.validUntil)), 'POLICY_VALID_UNTIL_INVALID');

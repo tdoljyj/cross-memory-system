@@ -5,7 +5,7 @@ $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../windows/verify-resident.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'VERIFY_SCRIPT_PARSE_FAILED' }
 $names = @('Get-EffectiveCiPrincipal','Get-NodeIdentity','ConvertTo-NodeIdentityCanonical','Sha256Text',
-           'Test-CurrentCiConnection','Read-CiPrivateBytes','Get-CiAdmissionTokenPin')
+           'Get-VerifyReadCode','Test-CurrentCiConnection','Read-CiPrivateBytes','Get-CiAdmissionTokenPin')
 foreach ($name in $names) {
   $fn = $ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name}, $true)
   if ($null -eq $fn) { throw "PARSER_FUNCTION_MISSING $name" }

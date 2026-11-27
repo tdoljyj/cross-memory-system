@@ -9,7 +9,7 @@
 // Not imported by the upgrader (its frozen copy is src/canonical, inbox, instance-lock, intake-pause, store, upgrade-mailbox).
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
+import { HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
 import { TEMP_PREFIX, exists, nonce, readBounded } from './store.mjs';
 
 export const SELFCHECK_CONTRACT = 'clued.independent-ci.node-selfcheck/1';
@@ -24,6 +24,35 @@ export const SELFCHECK_BUSY_RETRY_MS = 60_000;
 const ITEM = /^[A-Z][A-Z0-9_]{2,59}(?::[A-Za-z0-9/._-]{1,120})?$/;
 const isIso = v => typeof v === 'string' && v.length <= 40 && Number.isFinite(Date.parse(v));
 const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+export function packageGenerationOf(version) {
+  const m = typeof version === 'string' && /^g([0-9]{6})$/.exec(version);
+  return m && Number(m[1]) > 0 ? Number(m[1]) : null;
+}
+
+export function parseInstalledPackage(v) {
+  if (!plain(v)) return null;
+  const packageGeneration = packageGenerationOf(v.version);
+  if (packageGeneration === null || v.packageGeneration !== packageGeneration || v.releaseTag !== `fleet-node-${v.version}`
+    || typeof v.commit !== 'string' || !HEX40.test(v.commit)
+    || typeof v.archiveSha256 !== 'string' || !HEX64.test(v.archiveSha256)
+    || typeof v.ciSourceManifestSha256 !== 'string' || !HEX64.test(v.ciSourceManifestSha256)) return null;
+  return { packageGeneration, version: v.version, releaseTag: v.releaseTag, commit: v.commit,
+    archiveSha256: v.archiveSha256, ciSourceManifestSha256: v.ciSourceManifestSha256 };
+}
+
+export function installedPackageView(status, identity = null, observedAt = null) {
+  return { packageGeneration: null, version: null, releaseTag: null, commit: null, archiveSha256: null, ciSourceManifestSha256: null,
+    ...(status === 'verified' ? identity : null), status,
+    display: status === 'verified' ? `第 ${identity.packageGeneration} 代` : status === 'failed' ? '版本核验失败' : '未标注', observedAt };
+}
+
+// This verdict belongs to the live Windows/Linux comparison. The Linux-only
+// selfcheck.json stays on its existing contract.
+export function withPackageSelfcheck(view, installedPackage) {
+  if (installedPackage.status === 'unmarked') return view;
+  return { ...view, installedPackage: { status: installedPackage.status, observedAt: installedPackage.observedAt } };
+}
 
 // The tool's DONE answer, re-checked field by field (BUSY and anything else is not a result: null). Returns the document the file holds.
 export function selfcheckDocument(tool, now) {

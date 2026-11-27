@@ -366,6 +366,7 @@ export const CLAIM_OBSERVATION_SKEW_MS = 30_000;
 // What one batch usually takes (design v0.5 §1: 17.5 to 24 minutes): only the status board's estimate.
 export const ETA_BATCH_MS = 22 * 60_000;
 const QUEUE_PR_CHECK_INTERVAL_MS = 10 * 60_000;
+const QUEUE_PR_STATUS_UNCONFIRMED = 'QUEUE_PR_STATUS_UNCONFIRMED';
 // Queue rows looked at in one tick (an ignored or deferred row does not end the tick; this bounds the work).
 export const ROWS_PER_TICK = 16;
 // Endings after which the batch head may no longer be the PR's head (falsification, queue.mjs#restore): stage 1 saw the
@@ -3504,10 +3505,13 @@ export class ResidentExecutor {
 
   // Close one live, idle queue row even if a later gate holds scheduling. A read (including no answer) spends this row's turn.
   async reconcileQueuedPr(flows) {
-    const due = this.clock() - QUEUE_PR_CHECK_INTERVAL_MS;
+    const now = this.clock();
+    const due = now - QUEUE_PR_CHECK_INTERVAL_MS;
     let row = null, oldest = Infinity;
     for (const candidate of this.queue.live()) {
       if (!candidate.current || candidate.running) continue;
+      if (candidate.deferUntil > now &&
+          (candidate.reason === QUEUE_PR_STATUS_UNCONFIRMED || candidate.deferred === QUEUE_PR_STATUS_UNCONFIRMED)) continue;
       const checkedAt = this.queuePrCheckedAt.get(candidate) ?? -Infinity;
       if (checkedAt > due || checkedAt > oldest || (checkedAt === oldest && row && candidate.order >= row.order)) continue;
       row = candidate;
@@ -3816,10 +3820,8 @@ export class ResidentExecutor {
       if (usage.stage8Retries >= this.policy.park.stage8RetriesPer24h) return this.deferral({ defer: 'STAGE8_RETRY_BUDGET_EXHAUSTED', perRow: true,
         notice: await this.quotaNotice('STAGE8_RETRY_BUDGET_EXHAUSTED', subject, usage) }, key, c.pr);
     }
-    // A merged or closed PR leaves the queue before it is reserved (one live read), not only after a batch of it failed
-    // (falsified): on 2026-11-03 merged PR 984 stayed first in the queue and breaker trials ran merged heads again
-    // (rule 41ab823a). No answer is never a fact: the row runs as before. A draft is held (pr-candidate.mjs): the row, and a flow
-    // continuation with it, waits for the PR's next trigger (field 2026-11-23, #1253).
+    // 终态 PR 在预留前收终（41ab823a），草稿等下一次触发（#1253）。
+    // 缺答或答复无效时，只延后这条普通队列行（#1151）。
     const current = this.queue.row(c.pr)?.current;
     // A read of this exact row earlier in the tick is sufficient. Earlier ticks never supply the pre-reservation read.
     const checkedThisTick = prCheck?.pr === c.pr && prCheck.current === current && this.clock() - prCheck.at < QUEUE_PR_CHECK_INTERVAL_MS;
@@ -3832,6 +3834,10 @@ export class ResidentExecutor {
     if (flow && (!verdict || verdict.basis === HEAD_MOVED)) {
       if (verdict) await this.ledger.retireFlow(flow, 'head-moved');
       return this.deferral({ defer: 'FLOW_HEAD_UNCONFIRMED', perRow: true }, key, c.pr);
+    }
+    if (!verdict && !Object.hasOwn(subject, 'testSha')) {
+      return this.deferral({ defer: QUEUE_PR_STATUS_UNCONFIRMED, perRow: true,
+        until: this.clock() + QUEUE_PR_CHECK_INTERVAL_MS }, key, c.pr);
     }
 
     // DESIGN §62.4: a take-over binding run is recorded before it is reserved (a restart ends it after stage 1 too).
@@ -3871,9 +3877,9 @@ export class ResidentExecutor {
     const row = this.queue.row(pr);
     const pull = await this.livePull(pr);
     if (row) this.queuePrCheckedAt.set(row, this.clock());
-    if (pull?.number !== pr || !PULL_STATES.includes(pull.state)) return null;
-    // Keep the pre-reservation interpretation of an open PR. Closing a row requires a complete terminal reply.
-    return pull.state === 'open' || (typeof pull.headSha === 'string' && HEX40.test(pull.headSha)) ? pull : null;
+    if (pull?.number !== pr || !PULL_STATES.includes(pull.state) ||
+        typeof pull.headSha !== 'string' || !HEX40.test(pull.headSha)) return null;
+    return pull;
   }
 
   // A closed PR has no continuation under any head, front attempt or CI Source. Retire every matching predecessor before saving DONE.

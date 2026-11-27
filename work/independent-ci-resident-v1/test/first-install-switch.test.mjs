@@ -94,7 +94,7 @@ function waitFirstTrain(t, status, waitSeconds) {
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(${psLiteral(TPL)}, [ref]$tokens, [ref]$errors)
 foreach ($f in @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
-    ($n.Name -cin @('Get-Key', 'Parse-Json', 'Wait-Until', 'Write-StepStart', 'Step-WaitFirstTrain') -or $n.Name -cmatch '^(Test|Get)-FirstTrain') }, $false))) {
+    ($n.Name -cin @('Read-StatusBytes', 'Get-Key', 'Parse-Json', 'Wait-Until', 'Write-StepStart', 'Step-WaitFirstTrain') -or $n.Name -cmatch '^(Test|Get)-FirstTrain') }, $false))) {
   . ([scriptblock]::Create($f.Extent.Text))
 }
 $null = [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')

@@ -22,7 +22,7 @@ $Js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
 $c = $Js.DeserializeObject([IO.File]::ReadAllText($Case))
 $t = [IO.File]::ReadAllText($Template)
 # The helpers Step-WaitFirstTrain uses: these by name, and every other Test-FirstTrain*/Get-FirstTrain* the template has.
-$names = @('Get-Key', 'Parse-Json', 'Test-FirstTrainNotApplicable', 'Step-WaitFirstTrain')
+$names = @('Read-StatusBytes', 'Get-Key', 'Parse-Json', 'Test-FirstTrainNotApplicable', 'Step-WaitFirstTrain')
 foreach ($m in [regex]::Matches($t, '(?m)^function ((?:Test|Get)-FirstTrain[A-Za-z]*)\b')) { if ($names -cnotcontains $m.Groups[1].Value) { $names += $m.Groups[1].Value } }
 foreach ($name in $names) {
   $m = [regex]::Match($t, '(?ms)^function ' + [regex]::Escape($name) + '\b.*?^\}')

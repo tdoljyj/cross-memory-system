@@ -1,6 +1,6 @@
 // Archive one universal node package on a GitHub Release (Decision b5d041d2 v2) and keep the 资料中心 index.
 //
-//   node rollout/fleet/publish.mjs prepare --version <v> --dir <build out> --out <dir> [--image <role-image-<id>.tar.gz> ...] [--repo <owner/name>] [--index <index file>]
+//   node rollout/fleet/publish.mjs prepare --commit <main SHA> --dir <build out> --out <dir> [--image <role-image-<id>.tar.gz> ...] [--repo <owner/name>] [--index <index file>]
 //   node rollout/fleet/publish.mjs seal --request <fleet-node-<v>.acceptance-request.json> [--drill-receipt <receipt.json>] [--wait <minutes>]
 //        [--repo <owner/name>] [--index <index file>]
 //
@@ -101,13 +101,15 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import os from 'node:os';
 import { acceptResourceOf, openRequest, readAnswer, statusReader } from './accept-door.mjs';
 import { RESIDENT } from './facts.mjs';
-import { DEFAULT_ROOT, firstInstallKitOf, installedFleetMaterial, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
+import { DEFAULT_ROOT, firstInstallKitOf, installedFleetMaterial, readArchive, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
 import { readTar } from './tar.mjs';
-import { RELEASE_CONTRACT, VERSION, tagOf } from './universal.mjs';
+import { buildUniversal, RELEASE_CONTRACT, VERSION, tagOf } from './universal.mjs';
+import { packageGenerationOf } from '../../src/selfcheck.mjs';
 import { ACCEPTANCE_CONTRACT, REQUEST_CONTRACT, REQUEST_FLEET_REFS, acceptanceOf, acceptanceBytes } from '../../src/fleet-acceptance.mjs';
 
 export { ACCEPTANCE_CONTRACT, REQUEST_CONTRACT, REQUEST_FLEET_REFS, acceptanceOf };
@@ -126,6 +128,88 @@ const check = (ok, code, detail) => { if (!ok) fail(code, detail); };
 const TOKEN_ENV = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'];
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const HEX64 = /^[0-9a-f]{64}$/;
+const HEX40 = /^[0-9a-f]{40}$/;
+const BASELINE_TAG = 'fleet-node-2026.11.26-5444c2ac';
+const BASELINE_COMMIT = '5444c2ac92c93fe271d8a6d29afab86029a4939e';
+const BASELINE_GENERATION = 22;
+const TAG_PREFIX = 'fleet-node-g';
+const CLAIM_CONTRACT = 'clued.independent-ci.fleet-package-generation/1';
+const checkout = fileURLToPath(new URL('../../../../', import.meta.url));
+
+export async function allocatePackageGeneration(tags) {
+  const names = await tags.list();
+  check(Array.isArray(names) && names.includes(BASELINE_TAG) && new Set(names).size === names.length
+    && names.every(n => typeof n === 'string'), 'PUBLISH_GENERATION_INVENTORY_REFUSED');
+  const generations = names.filter(n => n.startsWith(TAG_PREFIX)).map(n => packageGenerationOf(n.slice('fleet-node-'.length))).sort((a, b) => a - b);
+  check(generations.every((n, i) => n === BASELINE_GENERATION + i + 1), 'PUBLISH_GENERATION_INVENTORY_REFUSED');
+  const next = BASELINE_GENERATION + generations.length + 1;
+  check(next <= 999999, 'PUBLISH_GENERATION_EXHAUSTED');
+  return `g${String(next).padStart(6, '0')}`;
+}
+
+const claimOf = s => ({ contract: CLAIM_CONTRACT, version: s.version, release_tag: s.release_tag, commit: s.commit, archive_sha256: s.archive_sha256 });
+const sameClaim = (a, b) => a && Object.keys(a).length === Object.keys(b).length && Object.entries(b).every(([key, value]) => a[key] === value);
+
+export async function reservePackageGeneration(tags, source) {
+  const claim = claimOf(source);
+  const generation = packageGenerationOf(claim.version);
+  check(generation > BASELINE_GENERATION && claim.release_tag === tagOf(claim.version) && HEX40.test(claim.commit ?? '')
+    && HEX64.test(claim.archive_sha256 ?? ''), 'PUBLISH_GENERATION_CANDIDATE_REFUSED');
+  const next = await allocatePackageGeneration(tags);
+  if (generation < packageGenerationOf(next)) {
+    check(sameClaim(await tags.read(claim.release_tag), claim), 'PUBLISH_GENERATION_CONFLICT', claim.release_tag);
+    return { already: true };
+  }
+  check(claim.version === next && await tags.create(claim), 'PUBLISH_GENERATION_CONFLICT', claim.release_tag);
+  check(sameClaim(await tags.read(claim.release_tag), claim), 'PUBLISH_GENERATION_READBACK_REFUSED', claim.release_tag);
+  return { already: false };
+}
+
+function githubGenerationTags(ghCommand, repo) {
+  const gitRef = name => `refs/tags/${name}`;
+  const api = `repos/${repo}/git`;
+  const get = args => {
+    const r = gh(ghCommand, ['api', ...args], 120_000);
+    if (r.status !== 0) return null;
+    try { return JSON.parse(r.stdout); } catch { return null; }
+  };
+  return {
+    list() {
+      // Git's ref advertisement is a single inventory, unaffected by Release pagination or draft visibility.
+      const r = spawnSync('git', ['ls-remote', '--tags', `https://github.com/${repo}.git`, gitRef(BASELINE_TAG), `${gitRef(TAG_PREFIX)}*`],
+        { encoding: 'utf8', windowsHide: true, timeout: 120_000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+      check(r.status === 0 && !r.error, 'PUBLISH_GENERATION_INVENTORY_REFUSED');
+      const refs = new Map();
+      for (const line of r.stdout.split(/\r?\n/).filter(Boolean)) {
+        const m = /^([0-9a-f]{40})\trefs\/tags\/(fleet-node-[A-Za-z0-9._+-]+)(\^\{\})?$/.exec(line);
+        const name = m && m[2] + (m[3] ?? '');
+        check(m && !refs.has(name), 'PUBLISH_GENERATION_INVENTORY_REFUSED');
+        refs.set(name, m[1]);
+      }
+      check(refs.has(BASELINE_TAG) && (refs.get(`${BASELINE_TAG}^{}`) ?? refs.get(BASELINE_TAG)) === BASELINE_COMMIT,
+        'PUBLISH_GENERATION_INVENTORY_REFUSED', BASELINE_TAG);
+      return [...refs.keys()].filter(n => !n.endsWith('^{}'));
+    },
+    read(name) {
+      const ref = get([`${api}/ref/tags/${name}`]);
+      if (ref?.ref !== gitRef(name) || ref.object?.type !== 'tag' || !HEX40.test(ref.object.sha ?? '')) return null;
+      const tag = get([`${api}/tags/${ref.object.sha}`]);
+      if (tag?.sha !== ref.object.sha || tag.tag !== name || tag.object?.type !== 'commit') return null;
+      try {
+        const claim = JSON.parse(tag.message);
+        return tag.object.sha === claim.commit ? claim : null;
+      } catch { return null; }
+    },
+    create(claim) {
+      const tag = get(['-X', 'POST', `${api}/tags`, '-f', `tag=${claim.release_tag}`, '-f', `message=${JSON.stringify(claim)}`,
+        '-f', `object=${claim.commit}`, '-f', 'type=commit']);
+      check(HEX40.test(tag?.sha ?? ''), 'PUBLISH_GENERATION_TAG_OBJECT_FAILED', claim.release_tag);
+      // POST is create-only. Never move, remove or retry the ref on an ambiguous answer.
+      const ref = get(['-X', 'POST', `${api}/refs`, '-f', `ref=${gitRef(claim.release_tag)}`, '-f', `sha=${tag.sha}`]);
+      return ref?.ref === gitRef(claim.release_tag) && ref.object?.sha === tag.sha && ref.object?.type === 'tag';
+    },
+  };
+}
 
 export async function readBuild(dir) {
   const names = await fs.readdir(dir);
@@ -138,10 +222,15 @@ export async function readBuild(dir) {
     && releases[0] === `${tagOf(s.version)}.release.json` && release.archive?.name === `${tagOf(s.version)}.tar`, 'PUBLISH_RELEASE_REFUSED');
   const tarBytes = await fs.readFile(path.join(dir, release.archive.name));
   check(sha(tarBytes) === s.archive_sha256 && release.archive.sha256 === s.archive_sha256 && tarBytes.length === release.archive.bytes, 'PUBLISH_ARCHIVE_SHA_MISMATCH');
+  if (packageGenerationOf(s.version) !== null) {
+    check(typeof s.built_at === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(s.built_at) && Number.isFinite(Date.parse(s.built_at)),
+      'PUBLISH_BUILD_TIME_REFUSED');
+    readArchive(tarBytes, s.archive_sha256, s);
+  }
   const sums = (await fs.readFile(path.join(dir, 'SHA256SUMS'))).toString('utf8');
   const want = [[release.archive.name, s.archive_sha256], [releases[0], sha(releaseBytes)]].map(([n, h]) => `${h}  ${n}`).sort();
   check(sums.split('\n').filter(Boolean).sort().join('\n') === want.join('\n'), 'PUBLISH_SHA256SUMS_MISMATCH');
-  return { release, tarBytes, sums, assets: [release.archive.name, releases[0], 'SHA256SUMS'].map(n => ({ name: n, file: path.join(dir, n) })) };
+  return { release, releaseBytes, tarBytes, sums, assets: [release.archive.name, releases[0], 'SHA256SUMS'].map(n => ({ name: n, file: path.join(dir, n) })) };
 }
 
 // The node entry assets from the checked archive, and the SHA256SUMS that lists them with the build's two files, in a new directory.
@@ -291,7 +380,10 @@ async function publishAssets({ ghCommand, repo, index, idx, s, assets }) {
     `resident_manifest_sha256 ${s.resident_manifest_sha256}`,
     `source_manifest_sha256 ${s.source_manifest_sha256}`, `upgrader_manifest_sha256 ${s.upgrader_manifest_sha256}`,
     `bundle_sha256 ${s.bundle_sha256}`, `universal_files_sha256 ${s.universal_files_sha256}`].join('\n');
-  const created = gh(ghCommand, ['release', 'create', s.release_tag, ...assets.map(a => a.file), '--repo', repo, '--target', s.commit, '--title', s.release_tag, '--notes', notes]);
+  const generation = packageGenerationOf(s.version);
+  const label = generation === null ? s.release_tag : `第 ${generation} 代通用节点包 · ${s.built_at.slice(0, 10)}-${s.commit.slice(0, 8)}`;
+  const target = generation === null ? ['--target', s.commit] : ['--verify-tag'];
+  const created = gh(ghCommand, ['release', 'create', s.release_tag, ...assets.map(a => a.file), '--repo', repo, ...target, '--title', label, '--notes', notes]);
   check(created.status === 0, 'PUBLISH_GH_RELEASE_CREATE_FAILED', created.stderr);
   const v = viewRelease(ghCommand, repo, s.release_tag);
   for (const a of assets) {
@@ -539,6 +631,7 @@ async function checkRequestOnRelease({ ghCommand, repo, request, stage, kit = tr
   try { rel = JSON.parse(relBytes.toString('utf8')); } catch { rel = null; }
   const s = rel?.source;
   check(sums.get(relName) === sha(relBytes) && rel?.contract === RELEASE_CONTRACT && s?.version === request.version && s?.commit === request.commit
+    && (packageGenerationOf(request.version) === null || s.release_tag === tag)
     && s?.archive_sha256 === request.archive_sha256, 'ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS',
     { request: { version: request.version, commit: request.commit, archive_sha256: request.archive_sha256 }, release: s ? { version: s.version, commit: s.commit, archive_sha256: s.archive_sha256 } : null });
   const tarFile = path.join(stage, tarName);
@@ -588,7 +681,14 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     const entryStage = path.join(stage, 'release-assets');
     await fs.mkdir(entryStage);
     const { sums, entry } = await stageNodeEntry(build, entryStage);
-    const releaseAssets = [build.assets[0], build.assets[1], sums, ...entry];
+    const numbered = packageGenerationOf(version) !== null;
+    const [tarAsset, metadataAsset] = await Promise.all(build.assets.slice(0, 2).map(async (asset, i) => {
+      if (!numbered) return asset;
+      const file = path.join(entryStage, asset.name);
+      await fs.writeFile(file, i === 0 ? build.tarBytes : build.releaseBytes, { flag: 'wx' });
+      return { name: asset.name, file };
+    }));
+    const releaseAssets = [tarAsset, metadataAsset, sums, ...entry];
     const idx = await readIndex(index);
     const at = findRow(idx.lines, version);
     const c = at >= 0 ? cells(idx.lines[at]) : null;
@@ -613,7 +713,7 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     const fleetRefs = Object.fromEntries(REQUEST_FLEET_REFS.map(k => [k, k === 'formalRoles' ? m?.formalRoles : m?.installed?.[k]]));
     const request = { contract: REQUEST_CONTRACT, version, archive_sha256: s.archive_sha256, commit: s.commit, repository: repo, ciSourceManifestSha256: undefined,
       firstInstallKitSha256: sha(kitBytes), fleetRefs };
-    const source = await sourceOf({ tarFile: path.join(dir, release.archive.name), request, deps, now });
+    const source = await sourceOf({ tarFile: tarAsset.file, request, deps, now });
     check(kit.config?.ciSourceManifestSha256 !== source, 'PREPARE_TEMPLATE_IS_THIS_SOURCE',
       { template: kit.config?.ciSourceManifestSha256, note: 'this node already runs this version: the kit must be taken before it upgrades' });
     request.ciSourceManifestSha256 = source;
@@ -638,6 +738,10 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     }
     lap(3);
     // 4. all checks passed: the Release and the index row of this build, made or completed (only the tag fleet-node-<v> and this row)
+    if (numbered) {
+      checkCommitOnMain(ghCommand, repo, s.commit);
+      await reservePackageGeneration(deps.generationTags ?? githubGenerationTags(ghCommand, repo), s);
+    }
     await ensureRelease({ ghCommand, repo, index, s, assets: releaseAssets, stage });
     lap(4);
     // 5. the directory, the kit and the images in it, what the Release lacks uploaded, the whole request held to the Release (the same check
@@ -802,6 +906,11 @@ export async function seal(options) {
   check(r.archive_sha256 === c[2] && r.commit === c[3], 'ACCEPTANCE_NOT_THIS_RELEASE');
   const preflightGh = boundedGh(preflightEnd);
   checkCommitOnMain(preflightGh, repo, r.commit);
+  if (packageGenerationOf(r.version) !== null) {
+    const claim = claimOf({ ...r, release_tag: tag });
+    const tags = deps.generationTags ?? githubGenerationTags(preflightGh, repo);
+    check(sameClaim(await tags.read(tag), claim), 'PUBLISH_GENERATION_CONFLICT', tag);
+  }
   // the file goes up from a directory of its own; it is written next to the request only after the Release and the index hold it
   const stage = packageDir ?? await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-seal-'));
   let ownsStage = packageDir === undefined;
@@ -945,12 +1054,37 @@ export async function seal(options) {
 // the workflow did not open (a refusal throws and exits 1 as well); waiting for the Owner is not a failure.
 export const exitCodeOf = r => (['FLEET_ACCEPTANCE_REJECTED', 'FLEET_ACCEPTANCE_NOT_OPENED', SEAL_UNREADABLE].includes(r?.status) ? 1 : 0);
 
-export async function main(argv) {
+export async function prepareCommit({ commit, dir, out, repo = DEFAULT_REPO, ghCommand = ['gh'], deps = {}, ...options }) {
+  check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
+  check(HEX40.test(commit ?? ''), 'COMMIT_MUST_BE_40_LOWERCASE_HEX');
+  checkCommitOnMain(ghCommand, repo, commit);
+  const generationTags = deps.generationTags ?? githubGenerationTags(ghCommand, repo);
+  const existing = await fs.stat(dir).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
+  if (!existing) {
+    const version = await allocatePackageGeneration(generationTags);
+    const scratch = await fs.mkdtemp(path.join(path.dirname(dir), '.fleet-build-'));
+    const built = path.join(scratch, 'build');
+    try {
+      await (deps.buildUniversal ?? buildUniversal)({ repo: checkout, commit, version, out: built });
+      await fs.rename(built, dir);
+    } finally {
+      await fs.rm(scratch, { recursive: true, force: true });
+    }
+  }
+  const meta = (await fs.readdir(dir)).filter(n => /^fleet-node-g[0-9]{6}\.release\.json$/.test(n));
+  check(meta.length === 1, 'PUBLISH_BUILD_DIR_REFUSED');
+  const { release } = await readBuild(dir);
+  const s = release.source;
+  check(s.commit === commit && packageGenerationOf(s.version) > BASELINE_GENERATION, 'PREPARE_BUILD_NOT_THIS_COMMIT', s.commit);
+  return prepare({ ...options, version: s.version, dir, out, repo, ghCommand, deps: { ...deps, generationTags } });
+}
+
+export async function main(argv, deps = {}) {
   const [sub, ...rest] = argv;
   let parsed;
   try {
     parsed = parseArgs({ args: rest, allowPositionals: true, options: { dir: { type: 'string' }, repo: { type: 'string' }, index: { type: 'string' },
-      version: { type: 'string' }, image: { type: 'string', multiple: true }, out: { type: 'string' }, request: { type: 'string' },
+      commit: { type: 'string' }, image: { type: 'string', multiple: true }, out: { type: 'string' }, request: { type: 'string' },
       'drill-receipt': { type: 'string' }, wait: { type: 'string' } } });
   } catch { fail('USAGE'); }   // an option no command has (the old entry's --base, --kit, --acceptance; seal's old --decision, --receipt, --accepted-at
   //                              and --decision-record: the acceptance is the Owner's fleet.accept Grant, PLAN-accept-auto-seal-20261125 2.2)
@@ -959,8 +1093,8 @@ export async function main(argv) {
   check(positionals.length === 0, 'USAGE');
   const only = (...allowed) => check(Object.keys(values).every(k => allowed.includes(k)), 'USAGE');
   if (sub === 'prepare') {
-    only('version', 'dir', 'out', 'image', 'repo', 'index'); check(values.version && values.dir && values.out, 'USAGE');
-    return prepare({ version: values.version, dir: values.dir, out: path.resolve(values.out), images: values.image ?? [], repo: values.repo, index: values.index });
+    only('commit', 'dir', 'out', 'image', 'repo', 'index'); check(values.commit && values.dir && values.out, 'USAGE');
+    return (deps.prepareCommit ?? prepareCommit)({ commit: values.commit, dir: path.resolve(values.dir), out: path.resolve(values.out), images: values.image ?? [], repo: values.repo, index: values.index });
   }
   if (sub === 'seal') {
     only('request', 'drill-receipt', 'wait', 'repo', 'index');

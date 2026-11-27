@@ -264,7 +264,13 @@ async function reinstallFixture(node, target) {
     const option = key => args[args.indexOf(key) + 1];
     let body;
     switch (path.basename(script)) {
-      case 'rehearse.py': body = { status: 'REHEARSAL_PASS', report: path.join(work, 'fixture-rehearsal.json') }; break;
+      case 'rehearse.py': {
+        const current = JSON.parse(readFileSync(path.join(node.root, 'upgrade', 'current.json'), 'utf8'));
+        const verify = readFileSync(path.join(node.root, 'resident', current.residentManifestSha256, 'windows', 'verify-resident.ps1'));
+        body = { status: 'REHEARSAL_PASS', report: path.join(work, 'fixture-rehearsal.json') };
+        writeFileSync(body.report, json({ status: body.status, checks: { verify: { sha256: sha(verify) } } }));
+        break;
+      }
       case 'prep.py': {
         const dir = path.join(work, 'linux');
         mkdirSync(dir, { recursive: true });

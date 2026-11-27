@@ -10,6 +10,9 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
 using System.Security.Cryptography;
 using System.ServiceProcess;
 using System.Threading;
@@ -108,7 +111,16 @@ public sealed class ResidentServiceHost : ServiceBase
     // start runs crash recovery instead, as after any other end of the executor.
     protected override void OnShutdown() { stop.Take(); }
 
-    public static void Main(string[] args) { Run(new ResidentServiceHost(args)); }
+    public static void Main(string[] args)
+    {
+        if (args.Length == 2 && args[0] == "--replace-status") {
+            try { Environment.ExitCode = StatusReplacement.Publish(args[1]); }
+            catch (UnauthorizedAccessException) { Environment.ExitCode = 5; }
+            catch (IOException e) { Environment.ExitCode = e.HResult & 0xffff; }
+            return;
+        }
+        Run(new ResidentServiceHost(args));
+    }
 }
 
 // The host's stop decisions (stop re-entry fix, Task fe6cd7bc). One stop per host process: whichever comes
@@ -226,5 +238,49 @@ public static class ResidentTokenPrivileges
         var parts = new string[privileges.Length];
         for (int i = 0; i < privileges.Length; i++) parts[i] = "\"" + privileges[i] + "\"";
         return "{\"contract\":\"clued.independent-ci.service-token-privileges/1\",\"pid\":" + pid + ",\"privileges\":[" + string.Join(",", parts) + "]}";
+    }
+}
+
+// One-shot fallback for the resident's status file. The only argument is a nonce. The installed
+// host's own location determines both names. No SCM operation or extra privilege is involved.
+internal static class StatusReplacement
+{
+    const uint DeleteAccess = 0x10000, ShareAll = 7, OpenExisting = 3, OpenReparsePoint = 0x00200000;
+    const int FileRenameInfoEx = 22;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct RenameInfo { public uint Flags; public IntPtr Root; public uint NameBytes; public char FirstChar; }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetFileInformationByHandle(SafeFileHandle handle, int kind, IntPtr info, uint length);
+
+    public static int Publish(string nonce)
+    {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(nonce, @"\A[0-9a-f]{12}\z")) return 87;
+        var bin = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+        if (!String.Equals(bin.Name, "bin", StringComparison.OrdinalIgnoreCase) || bin.Parent == null) return 87;
+        string state = Path.Combine(bin.Parent.FullName, "state"), target = Path.Combine(state, "status.json");
+        string source = target + "." + nonce + ".tmp";
+        if ((File.GetAttributes(state) & FileAttributes.ReparsePoint) != 0) return 5;
+        // Respect every external reader's delete-sharing decision before requesting POSIX replacement.
+        using (var reader = CreateFileW(target, DeleteAccess, ShareAll, IntPtr.Zero, OpenExisting, OpenReparsePoint, IntPtr.Zero)) {
+            if (reader.IsInvalid) return Marshal.GetLastWin32Error();
+            using (var tmp = CreateFileW(source, DeleteAccess, ShareAll, IntPtr.Zero, OpenExisting, OpenReparsePoint, IntPtr.Zero)) {
+                if (tmp.IsInvalid) return Marshal.GetLastWin32Error();
+                byte[] name = Encoding.Unicode.GetBytes(target);
+                int offset = Marshal.OffsetOf(typeof(RenameInfo), "FirstChar").ToInt32();
+                int size = Math.Max(Marshal.SizeOf(typeof(RenameInfo)), offset + name.Length + 2);
+                IntPtr buffer = Marshal.AllocHGlobal(size);
+                try {
+                    var info = new RenameInfo { Flags = 3, NameBytes = (uint)name.Length }; // REPLACE_IF_EXISTS | POSIX_SEMANTICS
+                    Marshal.StructureToPtr(info, buffer, false);
+                    Marshal.Copy(name, 0, IntPtr.Add(buffer, offset), name.Length);
+                    Marshal.WriteInt16(buffer, offset + name.Length, 0);
+                    return SetFileInformationByHandle(tmp, FileRenameInfoEx, buffer, (uint)size) ? 0 : Marshal.GetLastWin32Error();
+                } finally { Marshal.FreeHGlobal(buffer); }
+            }
+        }
     }
 }

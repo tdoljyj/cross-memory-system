@@ -97,7 +97,8 @@ async function 调用链(t, options = {}) {
     await companion.step();
     if (!pending.length) f.advance(ms);
   });
-  Object.assign(f.companion, ports);
+  // 复用常驻夹具的精确 PR 答复，阶段 1 的清理证明与归档仍经过真实邮箱适配器。
+  Object.assign(f.companion, { ...ports, prHead: f.companion.prHead });
   return Object.assign(f, { box, log, requests, hostCalls, windows: () => windows, roles: () => roles, code });
 }
 

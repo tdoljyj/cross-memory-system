@@ -40,7 +40,8 @@
 param([Parameter(Mandatory,ParameterSetName='Verify')][ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedInstallReceiptSha256,
   [Parameter(Mandatory,ParameterSetName='Functions')][switch]$FunctionsOnly,
   [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectPausedSha256,
-  [string]$LinuxVersionFactsFile)
+  [string]$LinuxVersionFactsFile,
+  [switch]$ReadOnly)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $Sc = 'C:\Windows\System32\sc.exe'
@@ -185,7 +186,7 @@ function Test-SecretAclChain($items, [string]$controllerSid) {
   return 'ok'
 }
 # The live folders above a secret file: the secret folder is its parent, the protected root the folder above that (as the runtime computes them).
-function Get-SecretPathState([string]$target, [string]$controllerSid) {
+function Get-SecretPathState([string]$target, [string]$controllerSid, [switch]$ThrowReadError) {
   try {
     $secretRoot = Split-Path -Parent $target; $protectedRoot = Split-Path -Parent $secretRoot
     $items = New-Object System.Collections.ArrayList
@@ -197,22 +198,22 @@ function Get-SecretPathState([string]$target, [string]$controllerSid) {
       [void]$items.Insert(0, @{ acl = (Get-Acl -LiteralPath $c); protected = $inProtected; secret = $inSecret })
     }
     return (Test-SecretAclChain $items $controllerSid)
-  } catch { return 'unreadable' }
+  } catch { if ($ThrowReadError) { throw }; return 'unreadable' }
 }
-function Get-SecretFileState([string]$target, [string]$controllerSid) {
+function Get-SecretFileState([string]$target, [string]$controllerSid, [switch]$ThrowReadError) {
   try {
     if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { return 'absent' }
     if (((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return 'link-refused' }
     if (Test-SecretFileSecurity (Get-Acl -LiteralPath $target) $controllerSid) { return 'ok' } else { return 'acl-refused' }
-  } catch { return 'unreadable' }
+  } catch { if ($ThrowReadError) { throw }; return 'unreadable' }
 }
 # Verify the directory chain first; only a leaf file that truly does not exist may use the install identity. The shared read handle forbids replacing the file during the read-back.
 function Read-CiPrivateBytes([string]$file, [string]$controllerSid, [switch]$Optional) {
-  if ((Get-SecretPathState $file $controllerSid) -cne 'ok') { throw 'CI_PRIVATE_PATH_REFUSED' }
+  if ((Get-SecretPathState $file $controllerSid -ThrowReadError) -cne 'ok') { throw 'CI_PRIVATE_PATH_REFUSED' }
   try { $item = Get-Item -LiteralPath $file -Force -ErrorAction Stop }
   catch [Management.Automation.ItemNotFoundException] { if ($Optional) { return $null }; throw }
   if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-      $item.LinkType -eq 'HardLink' -or (Get-SecretFileState $file $controllerSid) -cne 'ok') { throw 'CI_PRIVATE_FILE_REFUSED' }
+      $item.LinkType -eq 'HardLink' -or (Get-SecretFileState $file $controllerSid -ThrowReadError) -cne 'ok') { throw 'CI_PRIVATE_FILE_REFUSED' }
   $s = [IO.File]::Open($file, 'Open', 'Read', 'Read')
   try {
     if ($s.Length -lt 1 -or $s.Length -gt 4096) { throw 'CI_PRIVATE_FILE_REFUSED' }
@@ -249,18 +250,26 @@ function Get-CiAdmissionTokenPin([byte[]]$raw) {
     return ([BitConverter]::ToString($sha.Hash)).Replace('-','').ToLowerInvariant()
   } finally { $sha.Dispose() }
 }
+function Get-VerifyReadCode([Exception]$exception, [string]$prefix, [string]$fallback) {
+  for ($i = 0; $exception -and $i -lt 16; $i++) {
+    if ($exception -is [UnauthorizedAccessException] -or $exception.HResult -eq -2147024891) { return ($prefix + '_ACCESS_DENIED') }
+    if ($exception.HResult -in @(-2147024864,-2147024863)) { return ($prefix + '_SHARING_VIOLATION') }
+    $exception = $exception.InnerException
+  }
+  return $fallback
+}
 function Test-CurrentCiConnection($identity, [string]$tokenFile, [string]$controllerSid) {
   try {
     $file = Join-Path (Split-Path -Parent $tokenFile) 'ci-admission.connection.json'
     $connection = Read-CiPrivateBytes $file $controllerSid -Optional
     $current = Get-EffectiveCiPrincipal $identity $connection
-  } catch { return @{ ok = $false; detail = 'CI_CONNECTION_RECORD_REFUSED' } }
+  } catch { return @{ ok = $false; detail = (Get-VerifyReadCode $_.Exception 'CI_CONNECTION' 'CI_CONNECTION_RECORD_REFUSED') } }
   try {
     $token = Read-CiPrivateBytes $tokenFile $controllerSid
     try { $pin = Get-CiAdmissionTokenPin $token } finally { [Array]::Clear($token,0,$token.Length) }
     if ($pin -cne $current.tokenPinSha256) { throw 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' }
     return @{ ok = $true; detail = [ordered]@{ bindingId = $current.bindingId; generation = $current.generation; rebindReceiptId = $current.receiptId } }
-  } catch { return @{ ok = $false; detail = 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' } }
+  } catch { return @{ ok = $false; detail = (Get-VerifyReadCode $_.Exception 'CI_CONNECTION' 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED') } }
 }
 # ---- DESIGN.md section 33 (first HALT of 2026-10-29): two things the install must leave right and nothing else checked ----
 # Virtual service account SID: S-1-5-80 + SHA-1 of the upper-case service name (UTF-16LE); the same function as install-resident.ps1.
@@ -586,9 +595,10 @@ function Get-VerifyVerdict($checks) {
   return @{ status = 'RESIDENT_VERIFICATION_FAILED'; exit = 1 }
 }
 
-function Get-VerifyInputFailure([string]$check, [string]$message) {
+function Get-VerifyInputFailure([string]$check, [string]$message, [Exception]$exception = $null) {
   $name = if (@('install-receipt', 'record-acceptance', 'policy-input', 'companion-input', 'broker-input') -ccontains $check) { $check } else { 'verify-inputs' }
   $code = if ($message -cmatch '^(INSTALL_RECEIPT_(PIN_REQUIRED|BOUNDARY_REFUSED|CHANGED)|INSTALLED_NODE_(PROFILE_REFUSED|PROFILE_CHANGED|CONFIG_CHANGED))\z') { $message } else { 'VERIFY_INPUT_UNREADABLE' }
+  if ($exception -and $code -ceq 'VERIFY_INPUT_UNREADABLE') { $code = Get-VerifyReadCode $exception 'VERIFY_INPUT' 'VERIFY_INPUT_INVALID' }
   [pscustomobject]@{ check = $name; detail = $code }
 }
 # A failed pinned input must still produce a bounded JSON verdict for the frozen upgrade-apply reader.
@@ -834,6 +844,7 @@ foreach ($m in @('config\source-installed-manifest.json', 'config\resident-insta
 . (Join-Path $PSScriptRoot 'companion-headless.ps1')
 $companionOwnerSid = [string]$Node.ownerSid
 $verifyIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+if ($ReadOnly -and $verifyIdentity.User.Value -ceq 'S-1-5-18') { throw 'READ_ONLY_VERIFY_REQUIRES_OWNER' }
 $verifyCanFix = ($verifyIdentity.User.Value -ceq 'S-1-5-18') -or (New-Object Security.Principal.WindowsPrincipal($verifyIdentity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 # A switch cut off (window closed, restart) leaves its marker: older than 15 minutes it is rolled back here, before anything else is read.
 $companionPending = Read-CompanionPending $Root
@@ -842,6 +853,8 @@ elseif (Test-CompanionPendingAbandoned $companionPending ([DateTimeOffset]::UtcN
   if ($verifyIdentity.User.Value -ceq 'S-1-5-18') {
     # Run by the upgrade channel (SYSTEM): it never touches the companion task (ADR 0022 section 4.4); the SYSTEM fall-back task owns this.
     Record 'companion-headless-pending' (Test-CompanionFallbackTask) 'STALE_MARKER_LEFT_TO_THE_FALLBACK_TASK'
+  } elseif ($ReadOnly) {
+    Record 'companion-headless-pending' $false 'COMPANION_HEADLESS_PENDING_STALE_READ_ONLY'
   } elseif ($verifyCanFix) {
     try { $null = Invoke-CompanionStopAndFallback $Root $companionOwnerSid; try { Start-CompanionTask } catch { }; Record 'companion-headless-pending' $true 'STALE_MARKER_FELL_BACK' }
     catch { Record 'companion-headless-pending' $false 'COMPANION_HEADLESS_FALLBACK_FAILED' }
@@ -1073,7 +1086,7 @@ $verdict = Get-VerifyVerdict $checks
 [ordered]@{ status = $verdict.status; checks = $checks } | ConvertTo-Json -Depth 6
 exit $verdict.exit
 } catch {
-  $failure = Get-VerifyInputFailure $script:VerifyInputCheck ([string]$_.Exception.Message)
+  $failure = Get-VerifyInputFailure $script:VerifyInputCheck ([string]$_.Exception.Message) $_.Exception
   Record $failure.check $false $failure.detail
   [ordered]@{ status = 'RESIDENT_VERIFICATION_FAILED'; checks = $checks } | ConvertTo-Json -Depth 6
   exit 1

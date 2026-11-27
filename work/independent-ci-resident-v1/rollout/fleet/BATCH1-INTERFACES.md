@@ -6,7 +6,7 @@
 
 ## 1. 通用包（块 1 产出，块 3 归档）
 
-- 构建：`node R/rollout/fleet/universal.mjs build --repo <git dir> --commit <40hex> --version <YYYY.MM.DD-c8> --out <新目录>`，只在发布机跑一次。
+- 正式构建由 `node R/rollout/fleet/publish.mjs prepare --commit <main SHA> --dir <构建目录> --out <请求目录>` 自动分配代号并执行。独立演练可用 `universal.mjs build --version drill-<演练标识>`。
 - 产出（即 Release 资产，内容不可变）：
   - `fleet-node-<version>.tar`：确定性 ustar，含 `tree/<提交子集>`、`bundle/accepted.bundle`、`universal-manifest.json`；
   - `fleet-node-<version>.release.json`（合同 `clued.independent-ci.fleet-node-release/1`）：版本、commit、tar 的 sha256、各通用哈希、文件清单；
@@ -87,8 +87,8 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.m
 ## 5. 归档与并入（块 3）
 
 - 没有单独的 `release` 命令（已撤掉，输入它得到 `USAGE`；FABLE-drill-release-step-20261121.md）。该版的 Release 和索引行由 `publish.mjs prepare` 在本地检查全部通过之后建出（README 第 3 节、4.1 第 5 步）：
-  - 候选 commit 必须已在远端：建 Release 之前用 `gh api repos/<repo>/commits/<commit>` 核，GitHub 答“没有这个 commit”即拒绝（`PREPARE_COMMIT_NOT_ON_REMOTE`），查询本身失败报 `PREPARE_COMMIT_LOOKUP_FAILED`；
-  - `gh release create fleet-node-<version> <tar> <release.json> <SHA256SUMS> <bootstrap.ps1> <prereq-manifest.json> --target <commit>`；
+  - 正式构建的提交须在远端 main 历史中。`prepare` 只创建占号 tag，并将提交和 tar SHA-256 写进注解；
+  - `gh release create fleet-node-<version> <tar> <release.json> <SHA256SUMS> <bootstrap.ps1> <prereq-manifest.json> --verify-tag`；
   - 凭据只用 gh 自己的登录，不读、不写、不打印令牌，子进程环境去掉 `GH_TOKEN`/`GITHUB_TOKEN`；
   - 在索引文件追加一行；中途停下后原样重跑 `prepare`：Release 上已有的资产逐字节核过，才只补缺的资产和索引行。
 - `publish.mjs prepare` / `seal`（README 第 4 节）：接受前建 Release 与索引行、出接受请求并挂 kit；接受后填 Decision、上传接受文件，补全索引行的接受时间、Decision 与首装演练。

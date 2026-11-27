@@ -122,7 +122,8 @@ test('E7: a trigger cannot choose the rule: an Agent\'s trigger on a merge base,
   let bundles = 0;
   const comp = { calls: [], async heartbeat() { return { at: f.clock() }; }, async buildBundle() { bundles += 1; return { ok: false, code: 'RESIDENT_BASE_MOVED' }; },
     async prepareWorkspaces() { return { ok: true }; }, async linuxQuiescence() { return { linuxUnitsInactive: true, containersZero: true }; },
-    async archiveLinux(batch, reason) { return { verified: true, directory: `failed-x-${reason}-111111111111` }; }, async prHead() { return null; } };
+    async archiveLinux(batch, reason) { return { verified: true, directory: `failed-x-${reason}-111111111111` }; },
+    async prHead(pr) { return { number: pr, state: 'open', headSha: H(3) }; } };
   const f = await executorFixture(t, { engine, companion: comp });
   const installed = f.exec.policy;
   f.exec.policy = { ...installed, train: { ...installed.train, enabled: 'on', landing: 'push' } };

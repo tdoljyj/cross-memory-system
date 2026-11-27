@@ -46,7 +46,7 @@ export function acceptanceOf(release, over = {}) {
 // site has neither), writing the PASS report prep.py checks (this package, commit and configuration bytes); prep.py and generate.py
 // stubs unless named in `real`. Every call is recorded, with the plan as generate.py saw it.
 // liveRoot: generate.py's LIVE_ROOT (a constant: the real C:\ProgramData root) replaced by the fixture site's, in a copy next to it.
-function pythonTools({ real = [], rehearsal = 'REHEARSAL_PASS', liveRoot = null, pause = 'confirm', check = 0 } = {}) {
+function pythonTools({ real = [], rehearsal = 'REHEARSAL_PASS', liveRoot = null, pause = 'confirm', check = 0, now } = {}) {
   const calls = [], pauses = [];
   const fn = (script, args) => {
     const opt = n => args[args.indexOf(n) + 1];
@@ -65,9 +65,12 @@ function pythonTools({ real = [], rehearsal = 'REHEARSAL_PASS', liveRoot = null,
     }
     if (name === 'rehearse.py') {
       const cfg = readJson(args[0]);
-      const report = { contract: 'clued.independent-ci.reinstall-rehearsal/1', status: rehearsal, findings: rehearsal === 'REHEARSAL_PASS' ? [] : [{ code: 'FIXTURE_FINDING' }],
+      const root = path.dirname(path.dirname(cfg.nodeExe));
+      const { residentManifestSha256 } = readJson(path.join(root, 'upgrade', 'current.json'));
+      const verify = fsSync.readFileSync(path.join(root, 'resident', residentManifestSha256, 'windows', 'verify-resident.ps1'));
+      const report = { checks: { verify: { sha256: sha(verify) } }, contract: 'clued.independent-ci.reinstall-rehearsal/1', status: rehearsal, findings: rehearsal === 'REHEARSAL_PASS' ? [] : [{ code: 'FIXTURE_FINDING' }],
         node: cfg.node, commit: opt('--commit'), packageManifestSha256: sha(fsSync.readFileSync(path.join(opt('--package'), 'package-manifest.json'))),
-        configSha256: sha(fsSync.readFileSync(args[0])), observedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z') };
+        configSha256: sha(fsSync.readFileSync(args[0])), observedAt: new Date(now ?? Date.now()).toISOString().replace(/\.\d+Z$/, 'Z') };
       const file = path.join(cfg.workDir, 'rehearsal', 'rehearsal.stub.json');
       fsSync.writeFileSync(file, JSON.stringify(report), { flag: 'wx' });
       return { status: rehearsal === 'REHEARSAL_PASS' ? 0 : 1, stdout: JSON.stringify({ status: rehearsal, report: file, findings: report.findings }, null, 1), stderr: '' };
@@ -127,6 +130,25 @@ async function getWorld() {
 const prepare = (w, n, work, over = {}) => prepareInstall({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: w.acceptance, root: n.root,
   workDir: work, scm: SCM, ...over });
 
+test('旧包重装入口把正式包身份带进生成启动器的计划', async t => {
+  const w = await getWorld();
+  const now = Date.parse(w.acceptance.acceptedAt);
+  const node = await nodeSite(t, 'a', fleetFacts(), { now });
+  const dir = await tempDir(t, 'fleet-label');
+  const built = await buildUniversal({ repo: w.repo, commit: w.commit, version: 'g000023', out: path.join(dir, 'build') });
+  const acceptance = { ...w.acceptance, version: built.source.version, archive_sha256: built.source.archive_sha256 };
+  const tools = pythonTools({ now });
+  const result = await prepareInstall({ artifactPath: built.tar, artifactSha256: acceptance.archive_sha256, acceptance, root: node.root,
+    workDir: path.join(dir, 'reinstall'), now, python: tools.fn, scm: SCM, wslConfigPath: path.join(dir, '.wslconfig') });
+  assert.equal(result.status, 'FLEET_NODE_INSTALL_PREPARED');
+  const identity = { packageGeneration: 23, version: 'g000023', releaseTag: 'fleet-node-g000023', commit: w.commit,
+    archiveSha256: acceptance.archive_sha256, ciSourceManifestSha256: acceptance.ciSourceManifestSha256 };
+  assert.deepEqual(result.installedPackage, identity);
+  assert.deepEqual(readJson(result.installPlan).installedPackage, identity);
+  for (const call of tools.calls.filter(c => c.name.startsWith('generate.py'))) assert.deepEqual(call.plan.installedPackage, identity);
+  assert.equal(readJson(path.join(node.root, 'upgrade', 'current.json')).generation, 1);
+});
+
 test('universal: two builds of one commit, the same tar; the reinstall subset, no node configuration, no test', { timeout: 600_000 }, async () => {
   const w = await getWorld();
   assert.equal(sha(await fs.readFile(w.r1.tar)), sha(await fs.readFile(w.r2.tar)));
@@ -161,7 +183,7 @@ test('install: one archive and one acceptance, two nodes: one Source, two packag
       assert.ok(r.runCommand.includes(`'${r.launcher.sha256}'`) && r.runCommand.includes(path.join(work, 'launcher.ps1')) && r.runCommand.endsWith('-RunApprovedInstall'));
       // the plan: every field of sections 3 and 7
       const plan = readJson(r.installPlan);
-      assert.deepEqual(Object.keys(plan).sort(), ['archive_sha256', 'ciSourceManifestSha256', 'commit', 'companionAccount', 'contract', 'expectedInstalledLinux', 'expectedLinux', 'launcher', 'linux',
+      assert.deepEqual(Object.keys(plan).sort(), ['archive_sha256', 'ciSourceManifestSha256', 'commit', 'companionAccount', 'contract', 'expectedInstalledLinux', 'expectedInstalledWindows', 'expectedLinux', 'launcher', 'linux',
         'linuxManifestSha256', 'node', 'packageDir', 'packageManifestSha256', 'reasons', 'secrets', 'version', 'w1Paused'].sort());
       // W1: the last step before the launcher, with the plan's reason; the PAUSED.json it confirmed is pinned for generate.py
       const pausedRaw = await fs.readFile(path.join(n.root, 'state', 'PAUSED.json'));

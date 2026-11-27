@@ -47,6 +47,7 @@ if ($c.mode -ceq 'rules') { $codes = Test-FleetLinuxOutput $c.evidence $c.facts;
 foreach ($f in $c.files.PSObject.Properties) { [IO.File]::WriteAllBytes((Join-Path $FleetOutDir $f.Name), $U8.GetBytes([string]$f.Value)) }
 $calls = New-Object Collections.Generic.List[string]
 function Stop-Launch([string]$code, $detail) { $script:stopped = $code; throw $code }
+function Read-VerifiedResidentLocks([string]$phase) { if ($c.PSObject.Properties['externalAt'] -and $c.externalAt -ceq $phase) { Stop-Launch 'EXTERNAL_RESIDENT_BINARY_LOCK' $null } }
 function Set-FleetLinuxDirectories { $calls.Add('directories') }
 function Step-LinuxOutAclProbe([string]$registrar) { $calls.Add('probe:' + $registrar); [ordered]@{ failed = @() } }
 function Read-FleetOutFile([string]$leaf, $run, [string]$registrar, [int]$max) { $calls.Add('read:' + $run.name + ':' + $(if ($registrar) { 'captured' } else { 'direct' })); , (Read-FleetFileChecked $FleetOutDir $leaf $max) }
@@ -94,6 +95,12 @@ class FleetLinuxSteps(unittest.TestCase):
                                     capture_output=True, text=True, encoding='utf-8', timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout)
+
+    def test_external_locker_after_a_stops_before_b(self):
+        result = self.drive(externalAt='before-linux-b')
+        self.assertEqual(result['stopped'], 'EXTERNAL_RESIDENT_BINARY_LOCK')
+        self.assertEqual(result['done'], ['linux-A'])
+        self.assertFalse(any(call.startswith('run:B') for call in result['calls']))
 
     def test_a_then_b_then_the_output_by_rule_as_the_companion_account(self):
         r = self.drive()
@@ -930,7 +937,8 @@ class ProgressRecordsAndCheckedReads(unittest.TestCase):
             root = Path(directory); (root / 'driver.ps1').write_text(RECORDS_DRIVER, encoding='utf-8')
             p = subprocess.run([str(POWERSHELL), '-NoProfile', '-NonInteractive', '-File', str(root / 'driver.ps1'), str(TEMPLATE), str(root / 'work')], capture_output=True, text=True, encoding='utf-8', timeout=60)
             self.assertEqual(p.returncode, 0, p.stderr)
-            r = json.loads(p.stdout)
+            *steps, r = [json.loads(line) for line in p.stdout.splitlines()]
+            self.assertEqual([row['name'] for row in steps], ['carry-swept', 'output', 'first-train-not-observed', 'install'])
         self.assertEqual((r['done'][:3], r['contains'], r['again']), (['carry-swept', 'output', 'first-train-not-observed'], True, 'refused'))
         self.assertEqual(r['launch'][:2], ['002-output.json', '003-first-train-not-observed.json'])   # numbered by completion; the step before the launch directory has no record
         self.assertEqual(r['elevated'], ['002-output.json', '003-first-train-not-observed.json', '004-install.json'])
@@ -1050,7 +1058,7 @@ class OutAclProbeAndW1Restore(unittest.TestCase):
     def test_a_failed_probe_stops_names_what_failed_and_lifts_the_w1_pause_again(self):
         for case, failed in (({'line': 'ROOT_RUN_EXITED 1'}, ['exit']), ({'capturedStdout': 'y\r\n'}, ['stdout']), ({'capturedStdout': 'x\r\nx\r\n'}, ['stdout']), ({'capturedStdout': None}, ['stdout']),
                              ({'capturedStderr': 'Access is denied.\r\n'}, ['stderr']), ({'aclChanges': True}, ['acl']), ({'line': 'ROOT_RUN_REFUSED COMPANION_TASK_NOT_PASSWORD', 'capturedStdout': None, 'capturedStderr': None}, ['exit', 'stdout', 'stderr']),
-                             ({'line': 'ROOT_RUN_EXITED 0\nCAPTURE_REFUSED ROOT_RUN_OUTPUT_IS_A_LINK', 'capturedStdout': None, 'capturedStderr': None}, ['stdout', 'stderr'])):
+                             ({'line': 'ROOT_RUN_EXITED 0\nCAPTURE_REFUSED ROOT_RUN_OUTPUT_IS_A_LINK', 'capturedStdout': None, 'capturedStderr': None}, ['capture:ROOT_RUN_OUTPUT_IS_A_LINK', 'stdout', 'stderr'])):
             r = self.probe(**case)
             self.assertEqual((r['stopped'], r['report']['failed'], r['probeDirectoryLeft'], r['done']), ('LINUX_OUT_ACL_PROBE_FAILED', failed, False, []), case)
             t = r['terminal']

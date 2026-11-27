@@ -60,7 +60,8 @@ import { CLOSURE, PREPARE_RECORD, RESIDENT, universalFilesSha256 } from './facts
 import { PIN_FILES, RECORD_FILES, Refused, TRUSTED_SOURCE, companionCopy, nodeInputs, safeRel } from './ports.mjs';
 import { pyCanonical, pyDumps, pyEqual, pyLoads } from './pyjson.mjs';
 import { extractTar, readTar } from './tar.mjs';
-import { BUNDLE_NAME, MANIFEST_NAME, UNIVERSAL_CONTRACT, VERSION, bundleHeads } from './universal.mjs';
+import { BUNDLE_NAME, MANIFEST_NAME, UNIVERSAL_CONTRACT, VERSION, bundleHeads, tagOf } from './universal.mjs';
+import { packageGenerationOf } from '../../src/selfcheck.mjs';
 import { defaultWslConfigPath, wslCapacityOfArchive } from './wsl-capacity.mjs';
 
 export const ACCEPTANCE_CONTRACT = 'clued.independent-ci.fleet-node-acceptance/1';
@@ -145,7 +146,13 @@ export function readArchive(bytes, artifactSha256, acceptance) {
     need(f && f.sha256 === sha(e.data) && f.bytes === e.data.length, 'FLEET_ARCHIVE_NOT_ITS_MANIFEST', e.path);
   }
   need(universal.version === acceptance.version && universal.commit === acceptance.commit, 'FLEET_ARCHIVE_NOT_THE_ACCEPTED', { version: universal.version, commit: universal.commit });
-  return { entries, universal };
+  const packageGeneration = packageGenerationOf(universal.version);
+  if (packageGeneration !== null) need(universal.releaseTag === tagOf(universal.version), 'FLEET_ARCHIVE_NOT_THE_ACCEPTED', { releaseTag: universal.releaseTag });
+  const installedPackage = packageGeneration !== null && HEX64.test(acceptance.ciSourceManifestSha256 ?? '') ? {
+    packageGeneration, version: universal.version, releaseTag: universal.releaseTag, commit: universal.commit,
+    archiveSha256: artifactSha256, ciSourceManifestSha256: acceptance.ciSourceManifestSha256,
+  } : null;
+  return { entries, universal, installedPackage };
 }
 
 // ---------------------------------------------------------------- stage 2: the node, read-only
@@ -509,7 +516,7 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   validateAcceptance(acceptance, now);
   need(typeof workDir === 'string' && WIN_PATH.test(path.resolve(workDir)), 'WORK_DIR_PATH_REFUSED');
   const bytes = await fs.readFile(artifactPath);
-  const { entries, universal } = readArchive(bytes, artifactSha256, acceptance);
+  const { entries, universal, installedPackage } = readArchive(bytes, artifactSha256, acceptance);
   const byPath = new Map(entries.map(e => [e.path, e.data]));
   // this program is the archive's: the modules running now are its bytes
   for (const n of OWN_MODULES) {
@@ -607,7 +614,7 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   await fs.mkdir(linuxIn);
   await assembleLinuxIn({ pkg: packageDir, residentTree: R, bundle, commit: universal.commit, out: linuxIn, scratch: x });
   if (fresh) {
-    const prepared = await prepareFirstInstallTail({ node, acceptance, universal, work, inputs, R, packageDir, linuxIn, linuxOut, pkgSha256: first.packageManifestSha256, m,
+    const prepared = await prepareFirstInstallTail({ node, acceptance, universal, installedPackage, work, inputs, R, packageDir, linuxIn, linuxOut, pkgSha256: first.packageManifestSha256, m,
       ciSourceManifestSha256, now, python, scm, secrets });
     return { ...prepared, wslCapacity: applyWslCapacity() };
   }
@@ -642,6 +649,9 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   const rr = pyJson(rh);
   need(rh.status === 0 && rr?.status === 'REHEARSAL_PASS' && typeof rr.report === 'string', 'REHEARSAL_FAILED', { findings: rr?.findings ?? null, report: rr?.report ?? null, stderr: rr ? undefined : rh.stderr });
 
+  const reviewedVerify = jsonOf(await fs.readFile(rr.report)).checks?.verify?.sha256;
+  need(HEX64.test(reviewedVerify ?? '') && reviewedVerify === sha(await fs.readFile(path.join(root, 'resident', node.current.residentManifestSha256, 'windows', 'verify-resident.ps1'))), 'INSTALLED_VERIFY_NOT_AS_REVIEWED');
+
   // the package's prep.py, --in-dir/--out-dir form: A.sh, B.sh, B-resume.sh in <work>\linux\
   const suffix = `f${new Date(now).toISOString().replace(/[-:]/g, '').slice(0, 15).toLowerCase()}`;
   const p = python(path.join(R, 'reinstall', 'linux', 'prep.py'), [configFile, universal.commit, ciSourceManifestSha256, acceptance.fleetRefs.sourceAcceptanceRef, packageDir, suffix,
@@ -660,9 +670,15 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   // pause, nothing written. Only then W1, so that a launcher that cannot be generated never leaves the old resident paused (review new-3).
   const linuxManifestSha256 = m.linux.manifestSha256;
   const plan = { contract: PLAN_CONTRACT, node: node.profile.nodeName, version: universal.version, archive_sha256: acceptance.archive_sha256, commit: universal.commit,
+    ...(installedPackage ? { installedPackage } : {}),
     packageDir, packageManifestSha256: first.packageManifestSha256, ciSourceManifestSha256, linuxManifestSha256, companionAccount,
     linux: { distribution: node.distribution, inDir: linuxIn, wslInDir: wslPath(linuxIn), outDir: linuxOut, scripts, timeoutSeconds: { ...LINUX_TIMEOUT_SECONDS } },
     expectedLinux: { generation: 1, ciSourceManifestSha256, manifestSha256: linuxManifestSha256, packageManifestSha256: first.packageManifestSha256 },
+    expectedInstalledWindows: { receiptSha256: node.current.installReceiptSha256, residentManifestSha256: node.current.residentManifestSha256,
+      verifySha256: reviewedVerify,
+      sidesDiffer: node.expectedInstalledLinux.generation !== node.current.linux?.generation
+        || node.expectedInstalledLinux.manifestSha256 !== node.current.linux?.manifestSha256
+        || node.expectedInstalledLinux.ciSourceManifestSha256 !== node.current.linux?.ciSourceManifestSha256 },
     expectedInstalledLinux: { ...node.expectedInstalledLinux }, secrets, reasons, w1Paused: null, launcher: null };
   const planFile = path.join(work, 'install-plan.json');
   await writePlan(planFile, plan);
@@ -692,6 +708,7 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   plan.launcher = { path: launcherFile, sha256: sha(lb) };
   await writePlan(planFile, plan);
   return { status: 'FLEET_NODE_INSTALL_PREPARED', node: plan.node, version: plan.version, workDir: work, installPlan: planFile,
+    ...(installedPackage ? { installedPackage } : {}),
     launcher: plan.launcher, runCommand: runCommandOf(launcherFile, plan.launcher.sha256), wslCapacity: applyWslCapacity() };
 }
 
@@ -947,7 +964,7 @@ export async function firstInstallCheck({ artifactPath, artifactSha256, acceptan
 // The first install's tail, after the package and the Linux inputs (prepareInstall): the template and the role images into the
 // Linux inputs, the package's first-install.py in its --in-dir/--out-dir form (A.sh, B.sh, B-resume.sh: Linux A refuses a node
 // with any Linux CI, B installs it), the plan (firstInstall; no W1: there is no old resident to pause) and generate.py.
-async function prepareFirstInstallTail({ node, acceptance, universal, work, inputs, R, packageDir, linuxIn, linuxOut, pkgSha256, m, ciSourceManifestSha256, now, python, scm, secrets }) {
+async function prepareFirstInstallTail({ node, acceptance, universal, installedPackage, work, inputs, R, packageDir, linuxIn, linuxOut, pkgSha256, m, ciSourceManifestSha256, now, python, scm, secrets }) {
   const template = path.join(inputs, 'template');
   await fs.mkdir(template);
   for (const role of FORMAL_ROLES) {
@@ -994,6 +1011,7 @@ async function prepareFirstInstallTail({ node, acceptance, universal, work, inpu
   const plan = { contract: PLAN_CONTRACT, firstInstall: { factsSha256: sha(node.factsRaw), operatorSid: node.companionAccount.operatorSid,
     wslVhdxDirectory: node.companionAccount.wslVhdxDirectory, kitSha256: acceptance.firstInstallKitSha256 },
   node: node.profile.nodeName, version: universal.version, archive_sha256: acceptance.archive_sha256, commit: universal.commit,
+  ...(installedPackage ? { installedPackage } : {}),
   packageDir, packageManifestSha256: pkgSha256, ciSourceManifestSha256, linuxManifestSha256: m.linux.manifestSha256,
   // the Linux root steps run as the elevated operator (wsl --user root): the distribution is the operator's until the companion takes it
   companionAccount: false,
@@ -1013,6 +1031,7 @@ async function prepareFirstInstallTail({ node, acceptance, universal, work, inpu
   plan.launcher = { path: launcherFile, sha256: sha(lb) };
   await writePlan(planFile, plan);
   return { status: 'FLEET_NODE_FIRST_INSTALL_PREPARED', node: plan.node, version: plan.version, workDir: work, installPlan: planFile,
+    ...(installedPackage ? { installedPackage } : {}),
     launcher: plan.launcher, runCommand: runCommandOf(launcherFile, plan.launcher.sha256), residueUnchecked: [...node.residueUnchecked] };
 }
 

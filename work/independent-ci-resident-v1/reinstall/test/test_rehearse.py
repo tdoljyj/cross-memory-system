@@ -736,6 +736,31 @@ class CompanionNode(unittest.TestCase):
         r = self.run_with(CompanionHost(self.fx), linux_version_facts=path)
         self.assertEqual(r['findings'], [{'code': 'LINUX_FACTS_LIVE_OBSERVATION_UNAVAILABLE', 'reason': 'COMPANION_ACCOUNT_DISTRIBUTION'}])
 
+    def test_zero_creation_time_is_deferred_but_never_an_expected_locker(self):
+        locker = {'pid': 4, 'application': '', 'startedFileTime': 0, 'expected': False}
+        r = self.run_with(CompanionHost(self.fx, file_locks={'external': [locker]}), file_locks_in_launcher=True)
+        self.assertEqual(r['findings'], [])
+        self.assertEqual(r['checks']['fileLocksFinding']['processes'], [locker])
+        locker['expected'] = True
+        r = self.run_with(CompanionHost(self.fx, file_locks={'lockers': [locker]}), file_locks_in_launcher=True)
+        self.assertIn('RESIDENT_FILE_LOCK_OBSERVATION_INVALID', codes(r))
+
+    def test_two_protected_failures_are_bound_to_review_of_the_old_verify(self):
+        host = CompanionHost(self.fx)
+        run = host.powershell
+        checks = {'current-ci-connection': {'ok': False, 'detail': 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED'},
+                  'verify-inputs': {'ok': False, 'detail': 'VERIFY_INPUT_UNREADABLE'}}
+        host.powershell = lambda script, args: (1, json.dumps({'status': 'RESIDENT_VERIFICATION_FAILED', 'checks': checks}), '') if script[-1] == 'verify-resident.ps1' else run(script, args)
+        host.sha = lambda p: '22b7be93c18db02f17294e15b34fd5dcb57a32a52ae4ee59eeec7e9040d7e4d1' if p[-1] == 'verify-resident.ps1' else '7' * 64
+        result = self.run_with(host, installed_linux_in_phase_a=True, file_locks_in_launcher=True)
+        self.assertEqual(result['findings'], [])
+        self.assertTrue(result['checks']['verify']['notRunnableUnelevated'])
+        checks['acl'] = {'ok': False, 'detail': 'acl-refused'}
+        self.assertIn('INSTALLED_VERIFY_NOT_PASSING', codes(self.run_with(host, installed_linux_in_phase_a=True, file_locks_in_launcher=True)))
+        del checks['acl']
+        host.sha = lambda p: '8' * 64
+        self.assertIn('INSTALLED_VERIFY_NOT_PASSING', codes(self.run_with(host, installed_linux_in_phase_a=True, file_locks_in_launcher=True)))
+
     def test_companion_processes_still_lock_as_external(self):
         locker = {'pid': 4321, 'application': 'CluedCompanionSupervisor', 'startedFileTime': 1, 'expected': False}
         r = self.run_with(CompanionHost(self.fx, file_locks={'external': [locker]}))

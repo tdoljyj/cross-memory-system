@@ -42,7 +42,7 @@ name).
 What the launcher does, and why each step is there (Q1..Q5, r4.1 C1..C3, r5 S1..S3, r5c, r7): README.md section 4 and the comments in
 template.ps1.
 """
-import datetime, hashlib, json, os, re, subprocess, sys
+import base64, datetime, hashlib, json, os, re, subprocess, sys
 
 if sys.flags.optimize:   # the gates below are asserts
     sys.exit('RUN_WITHOUT_PYTHON_-O')
@@ -74,9 +74,23 @@ else:
 def opt(name, default=None):
     return A[A.index(name) + 1] if name in A else default
 FIRST = None
+INSTALLED_PACKAGE_B64 = None
 if FLEET_PLAN:
     # The values a configuration file gave, from the plan and the node (the rest follows below, once the package is read).
     _S, _RS, FIRST = PLAN.get('secrets'), PLAN.get('reasons'), PLAN.get('firstInstall')
+    _version = PLAN.get('version')
+    _generation = re.fullmatch(r'g([0-9]{6})', _version or '')
+    if _generation:
+        _installed = PLAN.get('installedPackage')
+        assert isinstance(_installed, dict) and type(_installed.get('packageGeneration')) is int \
+            and _installed == {'packageGeneration': int(_generation[1]), 'version': _version, 'releaseTag': 'fleet-node-' + _version,
+                               'commit': PLAN['commit'], 'archiveSha256': PLAN['archive_sha256'],
+                               'ciSourceManifestSha256': PLAN['ciSourceManifestSha256']} \
+            and _installed['packageGeneration'] >= 23 \
+            and re.fullmatch(r'[0-9a-f]{64}', _installed['archiveSha256']), 'FLEET_PLAN_INSTALLED_PACKAGE'
+        INSTALLED_PACKAGE_B64 = base64.b64encode(json.dumps(_installed, separators=(',', ':')).encode('ascii')).decode('ascii')
+    else:
+        assert PLAN.get('installedPackage') is None, 'FLEET_PLAN_INSTALLED_PACKAGE'
     _UUID0 = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
     assert FIRST is None or (isinstance(FIRST, dict) and set(FIRST) == {'factsSha256', 'operatorSid', 'wslVhdxDirectory', 'kitSha256'}
                              and all(isinstance(FIRST[k], str) and re.fullmatch(r'[0-9a-f]{64}', FIRST[k]) for k in ('factsSha256', 'kitSha256'))
@@ -124,7 +138,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = 'ac265b03f84d08ac5a915da918131f46eb4060294f72d11911309e2b80b3cd18'
+TEMPLATE_SHA = 'a393e7816e303431c8ea65d1eb41a0846ea96f5fc910659eb272914a5d00fbad'
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -439,7 +453,8 @@ os.makedirs(os.path.join(R4, 'dryrun'), exist_ok=True)
 dry_file = os.path.join(R4, 'dryrun', 'install.dry-run.post-uninstall.' + COMMIT[:8] + '.' + GEN_UTC + '.json')
 SECRETS_EXIST = ['true' if x else 'false' for x in CFG['secretTargetsExist']]   # r5 S1: app key target, ci token target (elevated truth, checked by the launcher)
 p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', EXPECTED_PLAN, '-View', 'post-uninstall', '-PackageRoot', PKG, '-PackageManifestSha256', pkg_sha,
-                    '-AppKeyTargetExists', SECRETS_EXIST[0], '-CiTokenTargetExists', SECRETS_EXIST[1], '-OwnerSid', OWNER, '-ControllerSid', CONTROLLER, '-OperatorSid', OPERATOR],
+                    '-AppKeyTargetExists', SECRETS_EXIST[0], '-CiTokenTargetExists', SECRETS_EXIST[1], '-OwnerSid', OWNER, '-ControllerSid', CONTROLLER, '-OperatorSid', OPERATOR]
+                   + (['-InstalledPackageB64', INSTALLED_PACKAGE_B64] if INSTALLED_PACKAGE_B64 else []),
                    capture_output=True, check=False)
 write_new(dry_file, p.stdout)
 assert p.returncode == 0, ('EXPECTED_PLAN_FAILED', p.stderr.decode('utf8', 'replace')[-800:])
@@ -533,6 +548,16 @@ if not FIRST:
         installed_receipt_bytes = _stream.read()
     installed_receipt_sha = hashlib.sha256(installed_receipt_bytes).hexdigest()
     installed_resident = json.loads(installed_receipt_bytes.decode('utf-8-sig'))['residentManifestSha256']
+    if FLEET_PLAN:
+        reviewed = PLAN['expectedInstalledWindows']
+        verify_sha = sha(os.path.join(LIVE_ROOT, 'resident', installed_resident, 'windows', 'verify-resident.ps1'))
+        resident_manifest = os.path.join(LIVE_ROOT, 'config', 'resident-installed-manifest.json')
+        with open(resident_manifest, 'rb') as stream:
+            manifest_bytes = stream.read()
+        assert hashlib.sha256(manifest_bytes).hexdigest() == installed_resident, 'INSTALLED_RESIDENT_MANIFEST_CHANGED'
+        assert [entry['sha256'] for entry in json.loads(manifest_bytes)['files'] if entry['path'] == 'windows/verify-resident.ps1'] == [verify_sha], 'INSTALLED_VERIFY_NOT_IN_MANIFEST'
+        assert reviewed['receiptSha256'] == installed_receipt_sha and reviewed['residentManifestSha256'] == installed_resident and reviewed['verifySha256'] == verify_sha, 'INSTALLED_VERIFY_NOT_AS_REVIEWED'
+        assert type(reviewed['sidesDiffer']) is bool, 'INSTALLED_LINUX_STATE_REFUSED'
     u_sha = sha(os.path.join(LIVE_ROOT, 'resident', installed_resident, 'windows', 'uninstall-resident.ps1'))
     halt_present = os.path.exists(os.path.join(LIVE_ROOT, 'state', 'HALT.json'))
     ACCEPT_HALT = opt('--accept-halt-sha256')
@@ -544,7 +569,7 @@ if not FIRST:
                                    capture_output=True, text=True, env=dict(os.environ, R41_PARENT=PARENT)).stdout.strip()
     paused_present = os.path.exists(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json'))
     paused_sha = sha(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json')) if paused_present else None   # review m6: pinned into the launcher
-    status = json.load(open(os.path.join(LIVE_ROOT, 'state', 'status.json'), encoding='utf-8-sig'))
+    status = json.loads(rconfig.read_status_bytes(os.path.join(LIVE_ROOT, 'state', 'status.json')).decode('utf-8-sig'))
     current = status.get('current')
     ledger = os.path.join(LIVE_ROOT, 'state', 'ledger')
     entries = sorted(os.listdir(ledger))
@@ -641,6 +666,8 @@ lines = [
     '}',
     '$InstalledResidentManifestSha256 = ' + _qn(installed_resident) + '   # the installed (Source34) resident tree (null: a first install)',
     '$InstalledUninstallSha256 = ' + _qn(u_sha),
+    '$InstalledVerifySha256 = ' + _qn(verify_sha if FLEET_PLAN and not FIRST else None),
+    '$InstalledSidesDiffer = ' + ('$true' if FLEET_PLAN and not FIRST and reviewed['sidesDiffer'] else '$false'),
     '$InstalledReceiptSha256 = ' + _qn(installed_receipt_sha),
     '$InstalledHaltSha256 = ' + (q(halt_sha) if halt_accepted else '$null') + '   # r4.1 C3: the accepted HALT.json of the installed resident (--accept-halt-sha256)',
     '$InstalledHaltCode = ' + (q(halt_doc['code']) if halt_accepted else '$null'),
@@ -690,6 +717,7 @@ def _fq(v):
 _fs = lambda k, i: q(FLEET['scripts'][k][i]) if FLEET else '$null'
 lines += [
     '$FleetPlanSha256 = ' + _fq(FLEET and FLEET['planSha256']) + '   # the install plan as it was at generation; set, the launcher runs Linux A and B itself',
+    '$FleetInstalledPackageB64 = ' + _fq(INSTALLED_PACKAGE_B64) + '   # the accepted universal identity checked against the install plan',
     '$FleetCompanionAccount = ' + (('$true' if FLEET['companionAccount'] else '$false') if FLEET else '$null') + '   # the Linux scripts run as the companion account (registrar root-run)',
     '$FleetDistribution = ' + _fq(FLEET and FLEET['distribution']),
     '$FleetInDir = ' + _fq(FLEET and FLEET['inDir']) + '   # the scripts read it ($W)',

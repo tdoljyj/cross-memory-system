@@ -120,8 +120,10 @@ const engine = {
   async windowsQuiescence() { return WINDOWS_CLEAN; },
 };
 let duringBundle = null; // a push while the bundle is built (phase 2 supersession)
+const prHeads = new Map();
 const companion = {
   async heartbeat() { return { at: now }; },
+  async prHead(pr) { return { number: pr, state: 'open', headSha: prHeads.get(pr) ?? head(pr) }; },
   async buildBundle() { if (duringBundle) { const f = duringBundle; duringBundle = null; await f(); } return { ok: true }; },
   async prepareWorkspaces() { return { ok: true }; },
   async linuxQuiescence() { return { linuxUnitsInactive: !linuxBusy, containersZero: true }; },
@@ -212,7 +214,10 @@ await step('PR 920 waits for its merge slot: released as a wait, nothing burned'
 script.delete(920);
 await step('  ten minutes later it is retried on its own (no new trigger) and runs', async () => { now += 600_001; return exec.tick(); }, r => r.state === 'COMPLETED');
 await step('PR 921 gets a newer commit while its bundle is built: released before stage 1, the newer commit runs next', async () => {
-  duringBundle = () => drop({ ...trigger(921), headSha: head(9210) });
+  duringBundle = () => {
+    prHeads.set(921, head(9210));
+    return drop(trigger(921, { headSha: prHeads.get(921) }));
+  };
   await drop(trigger(921)); const first = await exec.tick(); const second = await exec.tick(); return { ...second, first: first.failureCode };
 }, r => r.first === 'BATCH_SUPERSEDED' && r.state === 'COMPLETED' && queue.row(921).current.headSha === head(9210));
 for (const pr of [922, 923, 924]) script.set(pr, { 3: { ok: false, code: 'STAGE_PACKAGE_REFUSED', proof: WINDOWS_CLEAN } });
@@ -445,6 +450,10 @@ async function incidentReplay(variant) {
   const workerActive = () => w.startedAt !== null && vt.now >= w.startedAt + 3000 && (variant === 'worker-active' || w.exitedAt === null || vt.now < w.exitedAt);
   const never = () => new Promise(() => {});
   const crun = async a => {
+    if (a[0] === 'fixture-gh') {
+      const pr = Number(a[1]);
+      return { code: 0, stdout: JSON.stringify({ number: pr, state: 'open', merged: false, head: head(pr) }) };
+    }
     const s = a.join(' ');
     if (a.includes('-Mode')) {
       const mode = a[a.indexOf('-Mode') + 1], seq = Number(a[a.indexOf('-Sequence') + 1]);
@@ -503,7 +512,8 @@ ${zone(variant === 'memory-low' ? 0 : 900)}` };
     return false;
   };
   const mailbox = await Mailbox.open(path.join(iRoot, 'mailbox'), clock);
-  const companionProcess = new Companion({ cfg: ccfg, mailbox, run: crun, fileExists: cExists, sleep: vt.sleep, clock });
+  const companionProcess = new Companion({ cfg: ccfg, mailbox, run: crun, fileExists: cExists, sleep: vt.sleep, clock,
+    readPull: pr => ['fixture-gh', String(pr)] });
   const alive = () => w.alive;
   startHeartbeat(mailbox, { schedule: (fn, ms) => { (async () => { while (alive()) { await vt.sleep(ms); if (alive()) await fn(); } })(); } });
   (async () => { while (alive()) { await companionProcess.step(); await vt.sleep(2000); } })();

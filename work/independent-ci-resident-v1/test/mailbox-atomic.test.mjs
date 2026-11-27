@@ -31,8 +31,13 @@ async function steps(t, probe) {
 
 // Every file in the directory that is not a temporary name is complete JSON: no reader can meet an empty or short one.
 async function assertNoPartialFile(dir, where) {
-  for (const name of await fs.readdir(dir)) {
+  for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+    const { name } = entry;
     if (TEMP_FILE.test(name)) continue;
+    if (entry.isDirectory()) {
+      await assertNoPartialFile(path.join(dir, name), where);
+      continue;
+    }
     const bytes = await fs.readFile(path.join(dir, name));
     assert.ok(bytes.length > 0, `${where}: ${name} is empty`);
     assert.doesNotThrow(() => JSON.parse(bytes.toString('utf8')), `${where}: ${name} is incomplete`);
@@ -325,7 +330,8 @@ test('no mailbox or companion write is create-then-write any more, except the tw
   // mailbox.mjs: one writeNew (the pump mark), every other mailbox file through writeNewAtomic
   assert.equal([...mailbox.matchAll(/\bwriteNew\(/g)].length, 1);
   assert.match(mailbox, /async claimPump[\s\S]{0,900}await writeNew\(/);
-  assert.equal([...mailbox.matchAll(/\bwriteNewAtomic\(/g)].length, 7); // 请求、撤销、应答、计时，以及静止证明的开工、发布、收件记录
+  assert.equal([...mailbox.matchAll(/\bwriteNewAtomic\(/g)].length, 8); // 包括探针取件、执行和落盘的诊断记录
+  assert.match(mailbox, /writeNewAtomic\(path\.join\(this\.responses, request\.requestId \+ '\.dispatch\.json'\)/);
   const main = await read('companion-main.mjs');
   assert.doesNotMatch(main, /flag:\s*'wx'/);
   assert.equal([...main.matchAll(/Inbox\.drop\(/g)].length, 1);

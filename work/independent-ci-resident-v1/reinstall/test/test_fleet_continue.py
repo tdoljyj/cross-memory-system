@@ -228,7 +228,7 @@ $null = [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Cul
 $Js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
 $errors = $null; $tokens = $null
 $ast = [Management.Automation.Language.Parser]::ParseInput($t, [ref]$tokens, [ref]$errors)
-foreach ($name in @('Sha256Bytes', 'Get-FileSha', 'Get-Key', 'Parse-Json', 'Test-OldRootQuiet')) {
+foreach ($name in @('Read-StatusBytes', 'Sha256Bytes', 'Get-FileSha', 'Get-Key', 'Parse-Json', 'Test-OldRootQuiet')) {
   $nodes = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $false))
   if ($nodes.Count -ne 1) { throw 'FUNCTION_MISSING_OR_DUPLICATED' }
   . ([scriptblock]::Create($nodes[0].Extent.Text))
@@ -454,6 +454,7 @@ function Step-FinishUninstall {
 }
 function Get-ContinueUninstallProcesses { @($c.uninstallProcesses) }
 function Test-TerminalEvidence([string]$root) { $script:evidenceRoot = $root; [bool]$c.terminalEvidence }
+function Read-VerifiedResidentLocks([string]$phase) { @{ external=@(); unknownProcesses=@(); rootProcesses=@() } }
 function Step-FileLocks { if ($script:failLocks) { $script:failLocks = $false; Stop-Launch 'EXTERNAL_RESIDENT_BINARY_LOCK' $null }; $Done.Add('file-locks'); [ordered]@{ fileCount = 3; external = 0 } }
 # a companion node's registrar and its capture-file (create-only, the announced source and target shapes), this continuation's capture
 # directory (its ACL is the launcher's; a non-elevated test cannot make an Administrators-owned directory). Get-FleetRunProcesses is the
