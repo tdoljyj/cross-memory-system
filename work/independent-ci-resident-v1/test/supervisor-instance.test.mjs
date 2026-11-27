@@ -60,7 +60,7 @@ test('重复触发在创建 Job 前争锁，持有者退出后可接班', { skip
   finally { next.child.stdin.end('\n'); await next.end; }
 });
 
-test('启动文件撤除后，等待子进程的监督器自行退出并释放锁', { skip: process.platform !== 'win32' }, async t => {
+async function makeRunningFixture(t) {
   const { root, start } = await makeSupervisor(t, source => source
     // 用标准输入驱动等待结果和退避，运行真正的启动文件检查、派生、Job 和锁。
     .replace(/WaitForSingleObject\(pi\.process, [^)]+\)/, 'FixtureWait()')
@@ -74,6 +74,7 @@ test('启动文件撤除后，等待子进程的监督器自行退出并释放�
   const nodeExe = path.join(root, 'runtime', 'node.exe');
   const entry = path.join(root, 'resident', 'a'.repeat(64), 'src', 'companion-main.mjs');
   const launch = path.join(root, 'config', 'companion-launch.json');
+  const retire = path.join(root, 'config', 'companion-supervisor-retired');
   for (const file of [nodeExe, entry, launch]) await fs.mkdir(path.dirname(file), { recursive: true });
   const childSource = path.join(root, 'waiting-child.cs');
   await fs.writeFile(childSource, 'class WaitingChild { static void Main() { new System.Threading.ManualResetEvent(false).WaitOne(); } }');
@@ -86,12 +87,16 @@ test('启动文件撤除后，等待子进程的监督器自行退出并释放�
     nodeExe, nodeExeSha256: await digest(nodeExe), entry, entrySha256: await digest(entry),
     configSha256: 'b'.repeat(64), ghConfigDir: path.join(profile, 'gh'), homeDir: path.join(profile, 'home'), pathDirs: [],
   });
-  await fs.writeFile(launch, spec);
+  return { start, launch, retire, spec };
+}
 
+test('卸载发布退役标志后，等待子进程的监督器自行退出并释放锁', { skip: process.platform !== 'win32' }, async t => {
+  const { start, launch, retire, spec } = await makeRunningFixture(t);
+  await fs.writeFile(launch, spec);
   const first = start();
   try {
     assert.equal(await first.result(), 'waiting');
-    await fs.unlink(launch);
+    await fs.writeFile(retire, '');
     const retired = first.result();
     first.child.stdin.write('tick\n');
     assert.equal(await retired, 0, '撤除后应退出，不能进入退避循环');
@@ -99,7 +104,7 @@ test('启动文件撤除后，等待子进程的监督器自行退出并释放�
     if (first.child.exitCode === null) first.child.stdin.end();
     await first.end;
   }
-  await fs.writeFile(launch, spec);
+  await fs.unlink(retire);
   const replacement = start();
   try {
     assert.equal(await replacement.result(), 'waiting');
@@ -108,4 +113,35 @@ test('启动文件撤除后，等待子进程的监督器自行退出并释放�
     assert.equal(await stillWaiting, 'waiting', '有效安装继续等待原子进程');
   }
   finally { replacement.child.stdin.end(); await replacement.end; }
+});
+
+test('启动文件暂缺时退避或保留原子进程，回滚重发后同一监督器继续工作', { skip: process.platform !== 'win32' }, async t => {
+  const { start, launch, spec } = await makeRunningFixture(t);
+  await fs.writeFile(launch, spec);
+  const supervisor = start();
+  async function tick(instance) {
+    const next = instance.result();
+    instance.child.stdin.write('tick\n');
+    return next;
+  }
+  try {
+    assert.equal(await supervisor.result(), 'waiting');
+    await fs.unlink(launch);
+    assert.equal(await tick(supervisor), 'waiting', '启动文件暂缺时应继续等待同一个子进程');
+    await fs.writeFile(launch, spec);
+    assert.equal(await tick(supervisor), 'waiting', '回滚重发后应继续等待同一个子进程');
+  } finally {
+    if (supervisor.child.exitCode === null) supervisor.child.stdin.end();
+    await supervisor.end;
+  }
+  await fs.unlink(launch);
+  const retrying = start();
+  try {
+    assert.equal(await retrying.result(), 'retry', '无子进程时启动文件暂缺应退避');
+    await fs.writeFile(launch, spec);
+    assert.equal(await tick(retrying), 'waiting');
+  } finally {
+    if (retrying.child.exitCode === null) retrying.child.stdin.end();
+    await retrying.end;
+  }
 });

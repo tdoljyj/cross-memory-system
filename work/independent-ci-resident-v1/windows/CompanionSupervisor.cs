@@ -219,7 +219,6 @@ public static class CluedCompanionSupervisor {
 
   const uint GENERIC_READ = 0x80000000, FILE_SHARE_READ = 1, OPEN_EXISTING = 3, FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000, FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
   const uint ATTR_DIRECTORY = 0x10, ATTR_REPARSE = 0x400, INVALID_ATTRIBUTES = 0xFFFFFFFF;
-  const int ERROR_FILE_NOT_FOUND = 2, ERROR_PATH_NOT_FOUND = 3;
   const uint WAIT_OBJECT_0 = 0, WAIT_TIMEOUT = 258, LAUNCH_CHECK_MS = 5000;
 
   public static int Main(string[] args) {
@@ -250,7 +249,7 @@ public static class CluedCompanionSupervisor {
     int lastGeneration = 0, consecutive = 0;
     bool waitServed = true;
     List<Dictionary<string, object>> exits = new List<Dictionary<string, object>>();
-    while (!LaunchRemoved(launchPath)) {
+    while (!InstallationRetired(root)) {
       LaunchSpec spec = null;
       List<FileStream> held = new List<FileStream>();
       try {
@@ -283,7 +282,7 @@ public static class CluedCompanionSupervisor {
       DateTime started = DateTime.UtcNow;
       uint? exitCode;
       string startFailure = null;
-      try { exitCode = RunChild(job, spec, root, launchPath, held); }
+      try { exitCode = RunChild(job, spec, root, held); }
       catch (SupervisorRefusal r) { startFailure = r.Code; exitCode = 0xFFFFFFFF; }
       catch (Win32Exception) { Record(exits, "CHILD_WAIT_FAILED", spec.Generation); return 3; }
       finally { foreach (FileStream f in held) f.Dispose(); }
@@ -297,7 +296,7 @@ public static class CluedCompanionSupervisor {
       Record(exits, null, spec.Generation);
       // The next round reads the launch file again: a new generation starts at once (DelayBeforeStart), the same one after the back-off.
     }
-    Record(exits, "SUPERVISOR_LAUNCH_REMOVED", lastGeneration == 0 ? (int?)null : lastGeneration);
+    Record(exits, "SUPERVISOR_RETIRED", lastGeneration == 0 ? (int?)null : lastGeneration);
     return 0;
   }
 
@@ -370,12 +369,13 @@ public static class CluedCompanionSupervisor {
     s.Position = 0;
     using (SHA256 h = SHA256.Create()) return BitConverter.ToString(h.ComputeHash(s)).Replace("-", "").ToLowerInvariant();
   }
-  // The installer publishes this file before running the task. Upgrades replace it atomically.
-  // Only absence retires the supervisor; access, ACL and validation failures keep the existing retry behavior.
-  static bool LaunchRemoved(string launchPath) {
-    if (GetFileAttributesW(launchPath) != INVALID_ATTRIBUTES) return false;
-    int error = Marshal.GetLastWin32Error();
-    return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+  // Uninstall publishes this empty marker in the protected config directory of the installation it is removing.
+  // It moves away with that root. ReplaceFile failure and rollback can temporarily leave the launch file absent.
+  static bool InstallationRetired(string root) {
+    string marker = Path.Combine(root, @"config\companion-supervisor-retired");
+    if (GetFileAttributesW(marker) == INVALID_ATTRIBUTES) return false;
+    try { using (FileStream f = OpenChecked(root, marker)) return f.Length == 0; }
+    catch (Exception) { return false; }
   }
   static LaunchSpec OpenLaunch(string root, string launchPath, List<FileStream> held) {
     string json;
@@ -407,7 +407,7 @@ public static class CluedCompanionSupervisor {
     } finally { Marshal.FreeHGlobal(info); }
     return job;
   }
-  static uint? RunChild(IntPtr job, LaunchSpec spec, string root, string launchPath, List<FileStream> held) {
+  static uint? RunChild(IntPtr job, LaunchSpec spec, string root, List<FileStream> held) {
     string env = SupervisorCore.EnvironmentBlock(SupervisorCore.ChildEnvironment(Environment.GetEnvironmentVariables(), spec));
     STARTUPINFO si = new STARTUPINFO(); si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
     PROCESS_INFORMATION pi;
@@ -423,7 +423,7 @@ public static class CluedCompanionSupervisor {
       held.Clear();
       uint wait;
       while ((wait = WaitForSingleObject(pi.process, LAUNCH_CHECK_MS)) == WAIT_TIMEOUT) {
-        if (LaunchRemoved(launchPath)) return null;
+        if (InstallationRetired(root)) return null;
       }
       if (wait != WAIT_OBJECT_0) throw new Win32Exception(Marshal.GetLastWin32Error());
       uint code;
