@@ -511,6 +511,24 @@ test('完整标记下的空登记集仍阻断，不签发交付 PASS', async () 
   assert.equal(result.reason, 'FLEET_REGISTRY_EMPTY');
 });
 
+test('第 25 代两台 pending 节点的心跳和证据齐备时通过过渡预检', async () => {
+  const { fleetDeliveryPreflight } = await import('../fleet/delivery-preflight.mjs');
+  const at = '2026-11-25T01:00:00Z';
+  const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000025' };
+  const nodes = [legacyNode('11111111-1111-4111-8111-111111111111', 'DESK', 'ACTIVE', at),
+    legacyNode('22222222-2222-4222-8222-222222222222', 'TURING', 'STANDBY', at)].map(row => ({
+    ...row, state: 'pending', evidence: { nodeId: row.id, observedAt: at, bindingGeneration: row.bindingGeneration,
+      registrationVersion: row.registrationVersion, windowsSourceSha256: row.reportedSourceSha256,
+      linuxSourceSha256: row.reportedSourceSha256, linuxReady: true, processClearance: true,
+      currentHeartbeat: true, operations: true, connectionCarry: true, acl: true },
+  }));
+  const result = await fleetDeliveryPreflight({ candidate, requirements: { standardReinstall: true }, clock: () => Date.parse(at),
+    readFleetRegistry: async () => ({ ...candidate, complete: true, observedAt: at, nodes }),
+  });
+  assert.equal(result.status, 'TRANSITION_PASS', result.reason);
+  assert.deepEqual(result.nodes.map(node => [node.node, node.transition.status]), [['DESK', 'PASS'], ['TURING', 'PASS']]);
+});
+
 test('第 26 代逐台核对绑定、退休记录、登记范围和重装实据', async () => {
   const { fleetDeliveryPreflight } = await import('../fleet/delivery-preflight.mjs');
   const at = '2026-11-25T01:00:00Z';
@@ -539,7 +557,6 @@ test('第 26 代逐台核对绑定、退休记录、登记范围和重装实据'
     delete checks[field];
     assert.equal((await check({ checks })).reason, 'FLEET_NODE_HAS_NO_COMPLETE_PATH');
   }
-  assert.equal((await check({}, [{ ...row, state: 'pending' }])).reason, 'FLEET_NODE_REGISTRATION_PENDING');
   assert.equal((await check({}, [row], [{ ...row, bindingGeneration: 3 }])).reason, 'FLEET_REGISTRY_CHANGED');
   assert.equal((await check({}, [row], [row], 'another/repo')).reason, 'FLEET_REGISTRY_INCOMPLETE');
   assert.equal((await check({ observedAt: '2026-11-25T00:44:59Z' })).reason, 'FLEET_NODE_HAS_NO_COMPLETE_PATH');
