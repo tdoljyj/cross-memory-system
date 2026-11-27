@@ -1,4 +1,5 @@
 """Native read-only Restart Manager against a disposable held file, never installed state."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -232,8 +233,105 @@ $result|ConvertTo-Json -Compress
 '''
 
 
+WINDOW_PROBE = r'''
+param([string]$Library, [string]$FixtureRoot, [string]$Scenario)
+. $Library -LibraryOnly
+$Root = $FixtureRoot
+$ExpectedInstallReceiptSha256 = (Get-FileHash (Join-Path $Root 'install\install-receipt.json')).Hash.ToLowerInvariant()
+$CompanionSid = 'S-1-5-21-1-2-3-1001'
+$image = Join-Path $Root 'bin\CluedCompanionSupervisor.exe'
+function New-Row([uint32]$id, [uint32]$parent, [long]$start, [string]$path) {
+  [pscustomobject]@{ ProcessId=$id; ParentProcessId=$parent; CreationDate=[DateTime]::FromFileTimeUtc($start)
+    ExecutablePath=$path; CommandLine=('"'+$path+'" "'+$Root+'"') }
+}
+$supervisor = New-Row 100 1 100 $image
+$childParent = if ($Scenario -eq 'unowned') { 1 } else { 100 }
+$child = New-Row 101 $childParent 200 (Join-Path $Root 'runtime\node.exe')
+$script:live = @{ [uint32]100=$supervisor }
+if ($Scenario -ne 'born') { $script:live[$child.ProcessId] = $child }
+function Get-CimInstance($ClassName, $Filter) {
+  if ($ClassName -eq 'Win32_Service') { return }
+  if ($ClassName -ne 'Win32_Process') { throw 'UNEXPECTED_QUERY' }
+  if (!$Filter) { return $script:live.Values }
+  if ($Filter -notmatch '^ProcessId=(\d+)$') { throw 'UNEXPECTED_FILTER' }
+  $id = [uint32]$Matches[1]
+  if ($script:live.ContainsKey($id)) { return $script:live[$id] }
+}
+function Get-LiveProcessStarted([uint32]$pidValue) {
+  return $script:live[$pidValue].CreationDate.ToFileTimeUtc()
+}
+function Invoke-CimMethod($InputObject, $MethodName) {
+  if ($MethodName -ne 'GetOwnerSid' -or $InputObject.ProcessId -ne 100) { throw 'UNEXPECTED_OWNER_QUERY' }
+  return @{ ReturnValue=0; Sid=$CompanionSid }
+}
+function Get-CompanionTaskObservations { }
+function Get-WindowLockers {
+  if ($Scenario -eq 'exited') { $script:live.Remove($child.ProcessId); return }
+  $locker = $child
+  if ($Scenario -eq 'reused') { $locker = New-Row 101 100 300 $child.ExecutablePath }
+  $script:live[$locker.ProcessId] = $locker
+  $started = New-Object Runtime.InteropServices.ComTypes.FILETIME
+  $started.dwLowDateTime = [int]$locker.CreationDate.ToFileTimeUtc()
+  $identity = New-Object CluedRehearsalLocks.Identity
+  $identity.Pid = $locker.ProcessId; $identity.Started = $started
+  $item = New-Object CluedRehearsalLocks.Info
+  $item.Process = $identity
+  return $item
+}
+# Run production receipt verification, sampling and classification on disposable inputs.
+# Change the live table at the RM call itself, independently of the number of CIM reads.
+$source = [IO.File]::ReadAllText($Library)
+$body = $source.Substring($source.IndexOf('$processes = New-Object'))
+$rm = '[CluedRehearsalLocks.Query]::Files($files.ToArray())'
+if (!$body.Contains($rm)) { throw 'PRODUCTION_RM_CALL_NOT_FOUND' }
+. ([scriptblock]::Create($body.Replace($rm, 'Get-WindowLockers')))
+'''
+
+
 @unittest.skipUnless(PS.is_file(), 'Windows PowerShell 5.1 required')
 class FileLocks(unittest.TestCase):
+    def classify_window(self, scenario):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'bin').mkdir()
+            image = b'fixture supervisor'
+            (root / 'bin/CluedCompanionSupervisor.exe').write_bytes(image)
+            (root / 'install').mkdir()
+            receipt = {'companionSupervisorSha256': hashlib.sha256(image).hexdigest()}
+            (root / 'install/install-receipt.json').write_text(json.dumps(receipt), encoding='ascii')
+            script = root / 'window.ps1'
+            script.write_text(WINDOW_PROBE, encoding='ascii')
+            result = subprocess.run([str(PS), '-NoProfile', '-NonInteractive', '-File', str(script),
+                                     str(ROOT / 'tools/file-locks.ps1'), directory, scenario],
+                                    capture_output=True, text=True, encoding='utf-8', timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(result.stdout)
+
+    def test_child_born_during_lock_query_is_expected(self):
+        report = self.classify_window('born')
+        self.assertEqual(report['external'], [])
+        self.assertEqual(report['unknownProcesses'], [])
+        self.assertEqual([(p['pid'], p['expected']) for p in report['lockers']], [(101, True)])
+        self.assertCountEqual([p['pid'] for p in report['rootProcesses']], [100, 101])
+
+    def test_child_exited_during_lock_query_is_omitted(self):
+        report = self.classify_window('exited')
+        self.assertEqual(report['unknownProcesses'], [])
+        self.assertEqual(report['external'], [])
+        self.assertEqual([p['pid'] for p in report['rootProcesses']], [100])
+
+    def test_pid_reused_during_lock_query_is_refused(self):
+        report = self.classify_window('reused')
+        self.assertIn(101, report['unknownProcesses'])
+        self.assertEqual([(p['pid'], p['startedFileTime']) for p in report['external']], [(101, 300)])
+        self.assertEqual([p['pid'] for p in report['rootProcesses']], [100])
+
+    def test_live_unowned_locker_is_refused(self):
+        report = self.classify_window('unowned')
+        self.assertIn(101, report['unknownProcesses'])
+        self.assertEqual([p['pid'] for p in report['external']], [101])
+        self.assertEqual([p['pid'] for p in report['rootProcesses']], [100])
+
     def test_task_access_denied_has_no_partial_or_unverified_exemptions(self):
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / 'task-access.ps1'
