@@ -279,42 +279,39 @@ function Read-CiReinstallSnapshot([string]$ciRoot, [string]$controllerSid, [stri
       bindingId = $current.bindingId; bindingGeneration = $current.generation; rebindReceiptId = $current.receiptId } }
 }
 
-function Confirm-CiReinstallServer([string]$ciRoot, [string]$controllerSid, $installation, $plan, [string]$name, $nodeHint) {
-  if ($installation.supabaseUrl -cnotmatch '^https://[a-z0-9]+\.supabase\.co$' -or
-      $installation.publishableKey -cnotmatch '^sb_publishable_[A-Za-z0-9_-]+$' -or
-      $installation.scope -cnotmatch '^(global|project:[0-9a-f-]{36})$') { throw 'CI_CONNECTION_SERVICE_PINS_REFUSED' }
-  $raw = Read-CiPrivateBytes (Join-Path $ciRoot 'secrets\ci-admission.token') $controllerSid
-  try {
-    if ((Get-CiAdmissionTokenPin $raw) -cne $nodeHint.record.tokenPinSha256) { throw 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' }
-    $request = @{
-      Uri = $installation.supabaseUrl + '/rest/v1/rpc/clued_ci_connection_self_v1'
-      Method = 'Post'; ContentType = 'application/json'; MaximumRedirection = 0; TimeoutSec = 15; UseBasicParsing = $true
-      Headers = @{ apikey = $installation.publishableKey }
-      Body = (@{ p_token_hash = (Get-CiAdmissionTokenPin $raw -ConnectionProof); p_input = @{ scope = $installation.scope } } | ConvertTo-Json -Compress)
-    }
-    try { $reply = Invoke-RestMethod @request }
-    catch {
-      if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -in @(401,403)) { throw 'CI_CONNECTION_REVOKED' }
-      throw 'CI_CONNECTION_SERVICE_UNAVAILABLE'
-    } finally { $request.Clear() }
-  } finally { [Array]::Clear($raw,0,$raw.Length) }
-  $expiry = [DateTimeOffset]::MinValue
-  if ($reply.status -cne 'ok' -or $reply.contract -cne 'clued.ci.connection-self/1' -or $reply.binding_id -cne $plan.bindingId -or
-      $null -eq $reply.node -or $reply.node.name -cne $name -or $reply.node.node_id -cnotmatch '^[0-9a-f-]{36}$' -or
-      $reply.node.identity_fingerprint -cnotmatch '^[0-9a-f]{64}$' -or $reply.node.state -cnotin @('active','draining') -or
-      $reply.node.rebind_receipt_id -cne $plan.rebindReceiptId -or
-      -not [DateTimeOffset]::TryParse([string]$reply.connection_expires_at, [ref]$expiry) -or $expiry -le [DateTimeOffset]::UtcNow) {
-    throw 'CI_CONNECTION_SERVER_EVIDENCE_REFUSED'
+function Assert-CiRenewalIdle([string]$ciRoot, [string]$residentRoot = (Join-Path $ciRoot 'resident')) {
+  foreach ($rel in @('secrets\ci-admission.connection.json.pending','secrets\ci-admission.token.renew-pending',
+      'secrets\ci-admission.token.renew-new','secrets\ci-admission.connection.json.renew-new')) {
+    try { [void][IO.File]::GetAttributes((Join-Path $ciRoot $rel)) }
+    catch [IO.FileNotFoundException] { continue }
+    catch { throw 'CI_CONNECTION_TRANSACTION_UNKNOWN' }
+    throw 'CI_CONNECTION_TRANSACTION_IN_FLIGHT'
   }
-  if ($reply.node.binding_generation -ne $plan.bindingGeneration) { throw 'CI_CONNECTION_GENERATION_CHANGED' }
-  $reply.node
+  try { [void][IO.File]::GetAttributes((Join-Path $residentRoot 'secrets\resident-upgrade.token.renew-pending')) }
+  catch [IO.FileNotFoundException] { return }
+  catch [IO.DirectoryNotFoundException] {
+    if (-not [IO.Directory]::Exists($residentRoot)) { return }
+    throw 'CI_CONNECTION_TRANSACTION_UNKNOWN'
+  }
+  catch { throw 'CI_CONNECTION_TRANSACTION_UNKNOWN' }
+  throw 'CI_CONNECTION_TRANSACTION_IN_FLIGHT'
 }
 
-function Read-CiReinstallProof([string]$file, [string]$ciRoot, $plan, [string]$packageSha256) {
-  $leaf = [IO.Path]::GetFileName($file)
-  if ([IO.Path]::GetDirectoryName($file) -cne $ciRoot -or $leaf -cnotmatch '^reinstall-ci-([0-9a-f]{64})\.json$') { throw 'CI_CONNECTION_PROOF_PATH_REFUSED' }
-  $fleetPlanSha = $Matches[1]
-  $item = Get-Item -LiteralPath $file -Force -ErrorAction Stop
+function Assert-CiReinstallBrokerStopped([string]$sc, [switch]$AllowAbsent) {
+  $state = & $sc queryex CluedCISwapBroker | Out-String
+  $code = $LASTEXITCODE
+  if ($AllowAbsent -and $code -eq 1060) { return }
+  if ($code -ne 0 -or $state -notmatch 'STATE\s*:\s*1\b' -or $state -notmatch 'PID\s*:\s*0\b') {
+    throw 'CI_CONNECTION_BROKER_NOT_STOPPED'
+  }
+}
+
+function Read-CiReinstallEvidence([string]$file, [string]$expectedSha256) {
+  for ($dir = [IO.Path]::GetDirectoryName($file); $dir; $dir = [IO.Path]::GetDirectoryName($dir)) {
+    if (([IO.File]::GetAttributes($dir) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'CI_CONNECTION_PROOF_PATH_REFUSED' }
+  }
+  try { $item = Get-Item -LiteralPath $file -Force -ErrorAction Stop }
+  catch [Management.Automation.ItemNotFoundException] { throw 'CI_CONNECTION_PROTECTED_PROOF_REQUIRED' }
   if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.LinkType -eq 'HardLink') { throw 'CI_CONNECTION_PROOF_PATH_REFUSED' }
   $h = [IO.File]::Open($file,'Open','Read','Read')
   try {
@@ -324,12 +321,29 @@ function Read-CiReinstallProof([string]$file, [string]$ciRoot, $plan, [string]$p
     if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne 'S-1-5-32-544' -or
         $acl.GetSecurityDescriptorSddlForm('Access') -cne $expected.GetSecurityDescriptorSddlForm('Access') -or
         $h.Length -lt 1 -or $h.Length -gt 4096) { throw 'CI_CONNECTION_PROOF_BOUNDARY_REFUSED' }
+    if ($expectedSha256) {
+      $sha = [Security.Cryptography.SHA256]::Create()
+      try { $actualSha256 = ([BitConverter]::ToString($sha.ComputeHash($h))).Replace('-', '').ToLowerInvariant() }
+      finally { $sha.Dispose() }
+      if ($actualSha256 -cne $expectedSha256) { throw 'CI_CONNECTION_PROOF_CHANGED' }
+      $h.Position = 0
+    }
     $reader = [IO.StreamReader]::new($h, [Text.UTF8Encoding]::new($false,$true), $false, 1024, $true)
-    try { $proof = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+    try { $text = $reader.ReadToEnd() } catch { throw 'CI_CONNECTION_PROOF_CHANGED' } finally { $reader.Dispose() }
   } finally { $h.Dispose() }
+  try { $text | ConvertFrom-Json -ErrorAction Stop }
+  catch { throw 'CI_CONNECTION_PROOF_CHANGED' }
+}
+
+function Read-CiReinstallProof([string]$file, [string]$ciRoot, $plan, [string]$packageSha256, [string]$expectedSha256) {
+  $leaf = [IO.Path]::GetFileName($file)
+  if ([IO.Path]::GetDirectoryName($file) -cne $ciRoot -or $leaf -cnotmatch '^reinstall-ci-([0-9a-f]{64})\.json$') { throw 'CI_CONNECTION_PROOF_PATH_REFUSED' }
+  $fleetPlanSha = $Matches[1]
+  $proof = Read-CiReinstallEvidence $file $expectedSha256
   if ($proof.contract -cne 'clued.independent-ci.ci-reinstall-proof/1' -or $proof.fleetPlanSha256 -cne $fleetPlanSha -or
       $proof.packageManifestSha256 -cne $packageSha256 -or $proof.oldIdentitySha256 -cnotmatch '^[0-9a-f]{64}$' -or
       $proof.newIdentitySha256 -cnotmatch '^[0-9a-f]{64}$' -or $proof.newRecordSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+      $proof.oldInstallationSha256 -cnotmatch '^[0-9a-f]{64}$' -or $proof.newInstallationSha256 -cnotmatch '^[0-9a-f]{64}$' -or
       $proof.identityFingerprint -cnotmatch '^[0-9a-f]{64}$' -or $proof.nodeId -cnotmatch '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$' -or
       ($proof.plan | ConvertTo-Json -Compress) -cne ($plan | ConvertTo-Json -Compress) -or
       $proof.connection.state -cne 'current' -or $proof.connection.receiptSha256 -cne $plan.receiptSha256 -or
@@ -337,6 +351,25 @@ function Read-CiReinstallProof([string]$file, [string]$ciRoot, $plan, [string]$p
       ($plan.state -ceq 'current' -and ($proof.connection.recordSha256 -cne $plan.recordSha256 -or
         $proof.connection.bindingGeneration -ne $plan.bindingGeneration -or $proof.connection.rebindReceiptId -cne $plan.rebindReceiptId))) {
     throw 'CI_CONNECTION_PROOF_CHANGED'
+  }
+  $proof
+}
+
+function Read-CiReinstallApplyProof([string]$file, [string]$stage, [string]$sha, [string]$applyPlanSha) {
+  if (-not $file -or $sha -cnotmatch '^[0-9a-f]{64}$') { throw 'CI_CONNECTION_PROTECTED_PROOF_REQUIRED' }
+  if ($file -cne (Join-Path $stage 'ci-reinstall-apply.json')) { throw 'CI_CONNECTION_PROOF_PATH_REFUSED' }
+  $proof = Read-CiReinstallEvidence $file $sha
+  if ($proof.contract -cne 'clued.independent-ci.ci-reinstall-apply/1' -or $proof.phase -cne 'before-windows-apply' -or
+      $proof.installPlanSha256 -cne $applyPlanSha -or $proof.linuxBProofSha256 -cnotmatch '^[0-9a-f]{64}$') {
+    throw 'CI_CONNECTION_APPLY_PROOF_CHANGED'
+  }
+  $at = $until = $serviceExpiry = [DateTimeOffset]::MinValue
+  $now = [DateTimeOffset]::UtcNow
+  if (-not [DateTimeOffset]::TryParse([string]$proof.observedAt, [ref]$at) -or
+      -not [DateTimeOffset]::TryParse([string]$proof.expiresAt, [ref]$until) -or
+      -not [DateTimeOffset]::TryParse([string]$proof.serviceExpiresAt, [ref]$serviceExpiry) -or
+      $at -gt $now -or $until -le $now -or $until -gt $at.AddMinutes(5) -or $until -gt $serviceExpiry) {
+    throw 'CI_CONNECTION_APPLY_PROOF_EXPIRED'
   }
   $proof
 }

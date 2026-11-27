@@ -58,7 +58,7 @@ _spec = importlib.util.spec_from_file_location('resume', HERE / 'resume.py')
 RESUME = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(RESUME)
 BS = chr(92)
 CI_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI'])
-CONTINUE_FRAGMENT_SHA = 'dce937ca2baba71cc4509f39cae3c6891b4975054b933a26444031833af30a6b'   # continue-install.ps1: the bytes of 2026-11-13's independent review (PASS-WITH-FIXES) with the r5 fix of Get-ContinuePriorRunResult (Get-FleetRunProcesses' one array, no @( ); FABLE-r5-continue-install-20261121), whose own review is separate
+CONTINUE_FRAGMENT_SHA = '4f549074926bd154c48c1d0e230fbd857978bb78d9f51c2441d625729495f33d'   # continue-install.ps1, including the generation 25 connection gate ordering
 FINISH_FRAGMENT_SHA = '2211dce65916ca9acdee4412016f41d6f913a2c1ccc4fa5e9825d6b22ff81ae2'   # finish-uninstall.ps1, resume.py's fragment + the cut-off evidence branch (independent review 2026-11-13: PASS-WITH-FIXES)
 KEPT = re.compile(r'resident-uninstalled-\d{8}T\d{6}Z-[0-9a-f]{12}')
 LINUX_FILES = ['linux-report.json', 'linux-version-facts.json', 'linux-live-manifest.txt']
@@ -265,12 +265,17 @@ def transform(source, block, new_block, extra, mode, start, fragment, finish):
         result = result.replace(old_steps, new_steps, 1)
     head, main = result.split('#region main', 1)
     if mode == 'after-install':
-        # the steps that passed: their results, proven again elevated; from `start` on, the launcher's own lines (the pause checked first)
+        # Carry passed results, but always run the launcher's connection gate before replaying the companion.
         need(start in POST_INSTALL, 'CONTINUE_NOT_APPLIED', start)
         for step in POST_INSTALL[:POST_INSTALL.index(start)]:
+            if step == 'companion':
+                continue
             lines = [line for line in main.split('\n') if line.startswith(POST_LINES[step])]
             need(len(lines) == 1, 'PRIOR_LAUNCHER_STEP_BOUNDARY_CHANGED', step)
-            main = main.replace(lines[0] + '\n', POST_LINES[step] + '$continue.' + POST_LINES[step].strip()[1:-2] + CARRIED_LINE, 1)
+            replacement = POST_LINES[step] + '$continue.' + POST_LINES[step].strip()[1:-2] + CARRIED_LINE
+            if step == 'rearm':
+                replacement += "  $Done.Add($(if ((Get-Key $rearm 'notNeeded') -eq $true) { 'rearm-not-needed' } else { 'rearm' }))\n"
+            main = main.replace(lines[0] + '\n', replacement, 1)
         if POST_INSTALL.index(start) <= POST_INSTALL.index('pause'):
             need(main.count('$pause = Step-PauseAfterInstall (') == 1, 'PRIOR_LAUNCHER_STEP_BOUNDARY_CHANGED', 'pause')
             main = main.replace('$pause = Step-PauseAfterInstall (', '$pause = Step-ContinuePauseAfterInstall (', 1)

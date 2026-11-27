@@ -24,9 +24,9 @@ function Get-ContinuePrior($report, [scriptblock]$stop) {
   if ($report['uninstallProcesses'].Count) { & $stop 'CONTINUE_UNINSTALL_STILL_RUNNING' }
   $ciProofSha = Get-Variable ContinueCiProofSha256 -ValueOnly -ErrorAction SilentlyContinue
   if ($ciProofSha) {
-    if ((Get-FileSha (Get-FleetCiProofPath)) -cne $ciProofSha) { & $stop 'PRIOR_CI_CONNECTION_REINSTALL_PROOF_REQUIRED' }
     foreach ($source in Read-FleetCiVerifyHelpers) { . ([scriptblock]::Create($source)) }
-    $null = Read-CiReinstallProof (Get-FleetCiProofPath) (Split-Path -Parent $ResidentRoot) (Get-FleetCiPlan) $PackageManifestSha256
+    try { $null = Read-CiReinstallProof (Get-FleetCiProofPath) (Split-Path -Parent $ResidentRoot) (Get-FleetCiPlan) $PackageManifestSha256 $ciProofSha }
+    catch { & $stop 'PRIOR_CI_CONNECTION_REINSTALL_PROOF_REQUIRED' }
   }
   $id = (Sha256Bytes ($U8.GetBytes(([string]$ContinuePriorRoot).ToLowerInvariant()))).Substring(0, 32)
   $elevated = Join-Path $CarryParent ('reinstall-progress-' + $id)
@@ -147,7 +147,7 @@ function Step-ContinueBeforeUninstall {
     if ($null -eq $eb -or $null -eq $fb) { & $stop 'LINUX_OUTPUT_UNREADABLE' }
   } else { & $stop 'CONTINUE_PINS_REFUSED' }
   $linux = Set-ContinueLinuxOutput $report $stop $eb $fb
-  if (Get-Variable ContinueCiProofSha256 -ValueOnly -ErrorAction SilentlyContinue) { Confirm-FleetCiBeforeLinuxB }
+  if (Get-Variable ContinueCiProofSha256 -ValueOnly -ErrorAction SilentlyContinue) { Confirm-FleetCiBeforeLinuxB -AfterLinuxB }
   $fileLocks = Step-FileLocks
   $carried = Step-CarryTokens
   Write-Json 'continue-report.json' $report
@@ -241,7 +241,7 @@ function Step-ContinueInsideUninstall {
 #   - the installed root is the prior launch's install (its receipt is the one the prior launch kept);
 #   - first-train: the prior report says runnerQuiet; verify: the prior verify printed RESIDENT_VERIFIED;
 #   - pause: state\PAUSED.json still names the prior pause request (otherwise CONTINUE_PRIOR_PAUSE_NO_LONGER_IN_FORCE);
-#   - companion: Step-StartCompanion again (a no-op while the companion runs), so that what follows has it running;
+#   - companion: the main flow starts it again after the connection gate, a no-op while the task runs;
 #   - rearm: its prior report (nothing after it depends on it).
 # Starting at or before the pause with the resident service stopped: started again only when the prior launch stopped it itself (its
 # not-verified / not-paused path, recorded as pause-not-confirmed-resident-stopped), which is the state the install leaves; otherwise stop.
@@ -297,9 +297,6 @@ function Step-ContinueAfterInstall {
   if ($from -gt 0) { $Done.Add($(if ((Get-Key $r.train 'notApplicable') -eq $true) { 'first-train-not-applicable' } elseif ((Get-Key $r.train 'observed') -eq $true -and (Get-Key $r.train 'halted') -ne $true) { 'first-train' } else { 'first-train-not-observed' })) }
   if ($from -gt 1) { $Done.Add('verify') }
   if ($from -gt 2) { $Done.Add('pause') }
-  # a first install (the plan's $FleetFirstInstall) goes to the companion switch without starting the interactive task first, as the main flow
-  if ($from -gt 3) { $r['companion'] = $(if ($FleetFirstInstall) { [ordered]@{ started = $false; firstInstallSwitch = $true; error = $null } } else { Step-StartCompanion }) }
-  if ($from -gt 4) { $Done.Add($(if ((Get-Key $r.rearm 'notNeeded') -eq $true) { 'rearm-not-needed' } else { 'rearm' })) }
   Write-Json 'continue-report.json' $report
   $Done.Add('continued-after-install')
   $r

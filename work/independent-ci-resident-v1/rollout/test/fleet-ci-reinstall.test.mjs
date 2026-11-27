@@ -51,7 +51,10 @@ for (const [scenario, title] of [
   ['observed', '提权复核接受更新了 at 的观测'],
   ['continue', 'Linux B 后续作接受已刷新的观测和未应答请求'],
   ['recover', 'Linux B 前服务端复核失败会恢复 Broker 后再抛原错误'],
-  ['commit', '当前连接按 Broker 规范 JSON 原子重锚并接受新身份'],
+  ['commit', '真实 Apply 校验和原子重锚零网络请求，保留 Broker 规范 JSON 和连接身份'],
+  ['pre-apply-revoked', 'Linux B 后撤销的连接在启动 Windows 安装进程前被拒绝'],
+  ['apply-proof-refused', '只有 Linux B 证明不能授权 Windows Apply'],
+  ['post-install-refused', '本地 verify 和 pause 后的连接拒绝阻断 companion 和 rearm'],
   ['refuse', '拒绝连接字段篡改、在途事务以及错误的证明属主和 ACL'],
 ]) {
   test(title, { skip: !windows }, async t => {

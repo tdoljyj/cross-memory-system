@@ -90,6 +90,8 @@ param(
   [ValidateLength(1,2048)][string]$InstalledPackageB64,
   [ValidateLength(1,1024)][string]$CiConnectionPlanB64,
   [string]$CiReinstallProof,
+  [string]$CiReinstallApplyProof,
+  [ValidatePattern('^[0-9a-f]{64}$')][string]$CiReinstallApplyProofSha256,
   [switch]$StartAfterInstall,
   [string]$AppPrivateKeyFile,        # optional: this node's App private key, downloaded by the Owner on this machine (design 7.1)
   [string]$CiAdmissionTokenFile,     # optional: this node's ci-admission connection token (design 7.2)
@@ -153,12 +155,14 @@ if ($CiConnectionPlanB64) {
         ($CarriedCiPlan.bindingGeneration -isnot [int] -and $CarriedCiPlan.bindingGeneration -isnot [long]) -or
         $CarriedCiPlan.bindingGeneration -lt 1 -or $CarriedCiPlan.bindingGeneration -gt 9007199254740991)) { throw 'record' }
   } catch { throw 'FLEET_CI_CONNECTION_PLAN_REFUSED' }
-  if ($CiAdmissionTokenFile -or ($Apply -and (-not $CiReinstallProof -or -not $StartAfterInstall))) { throw 'CI_CONNECTION_PROTECTED_PROOF_REQUIRED' }
+  if ($CiAdmissionTokenFile -or ($Apply -and (-not $CiReinstallProof -or -not $CiReinstallApplyProof -or
+        -not $CiReinstallApplyProofSha256 -or -not $StartAfterInstall))) { throw 'CI_CONNECTION_PROTECTED_PROOF_REQUIRED' }
 } else {
-  if ($CiReinstallProof) { throw 'FLEET_CI_CONNECTION_PLAN_REFUSED' }
+  if ($CiReinstallProof -or $CiReinstallApplyProof -or $CiReinstallApplyProofSha256) { throw 'FLEET_CI_CONNECTION_PLAN_REFUSED' }
   Assert-CiInstallBaseline $CiRoot
 }
 $script:SecretBytes = @{}   # the verified secret bytes, in memory only, between the plan and the 'node-secrets' step
+$CiReinstallApplyStage = $PSScriptRoot
 # Where the fingerprint check runs the package's node.exe and tool (DESIGN.md section 30.5): a directory this script creates, never the package directory.
 $SecretWorkParent = 'C:\Windows\Temp'
 $SecretWorkSddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
@@ -667,7 +671,8 @@ function Read-InstallCiVerifyHelpers {
   $tk = $null; $er = $null
   $ast = [Management.Automation.Language.Parser]::ParseInput([Text.Encoding]::UTF8.GetString($b).TrimStart([char]0xfeff), [ref]$tk, [ref]$er)
   $want = @('Get-EffectiveCiPrincipal','Test-SecretFileSecurity','Test-SecretAclChain','Get-SecretPathState','Get-SecretFileState',
-    'Read-CiPrivateBytes','Get-CiAdmissionTokenPin','Read-CiReinstallSnapshot','Confirm-CiReinstallServer','Read-CiReinstallProof')
+    'Read-CiPrivateBytes','Get-CiAdmissionTokenPin','Read-CiReinstallSnapshot','Assert-CiRenewalIdle','Assert-CiReinstallBrokerStopped',
+    'Read-CiReinstallEvidence','Read-CiReinstallProof','Read-CiReinstallApplyProof')
   $defs = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $want -ccontains $n.Name }, $false))
   $admin = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq '$SecretAdmins' }, $false))
   if ($er.Count -or $defs.Count -ne $want.Length -or $admin.Count -ne 1) { throw 'VERIFY_CI_HELPERS_NOT_AS_REVIEWED' }
@@ -675,19 +680,22 @@ function Read-InstallCiVerifyHelpers {
 }
 function Assert-ProtectedCiReinstall([switch]$Commit) {
   foreach ($source in Read-InstallCiVerifyHelpers) { . ([scriptblock]::Create($source)) }
-  $proof = Read-CiReinstallProof $CiReinstallProof $CiRoot $CarriedCiPlan $ExpectedPackageManifestSha256
+  $apply = Read-CiReinstallApplyProof $CiReinstallApplyProof $CiReinstallApplyStage $CiReinstallApplyProofSha256 $ExpectedPlanSha256
+  $proof = Read-CiReinstallProof $CiReinstallProof $CiRoot $CarriedCiPlan $ExpectedPackageManifestSha256 $apply.linuxBProofSha256
   if ($proof.newIdentitySha256 -cne $IdentitySha256) { throw 'CI_CONNECTION_CANDIDATE_IDENTITY_REFUSED' }
+  if ((Sha256Bytes (Read-PackageRecordFile 'record\installation.json')) -cne $proof.newInstallationSha256) {
+    throw 'CI_CONNECTION_CANDIDATE_INSTALLATION_REFUSED'
+  }
+  Assert-CiReinstallBrokerStopped $Sc -AllowAbsent:(-not $Commit)
+  Assert-CiRenewalIdle $CiRoot
   $connection = $proof.connection
   $record = Read-CiReinstallSnapshot $CiRoot $ControllerSid $proof.oldIdentitySha256 $connection
-  $installation = [Text.Encoding]::UTF8.GetString((Read-PackageRecordFile 'record\installation.json')) | ConvertFrom-Json
-  $remote = Confirm-CiReinstallServer $CiRoot $ControllerSid $installation $connection $Identity.nodeName $record
-  if ($remote.node_id -cne $proof.nodeId -or $remote.identity_fingerprint -cne $proof.identityFingerprint) { throw 'CI_CONNECTION_SERVER_NODE_CHANGED' }
-  if (-not $Commit) { return }
   $newRecord = [ordered]@{}
   foreach ($entry in $record.record.PSObject.Properties) { $newRecord[$entry.Name] = $entry.Value }
   $newRecord['baseNodeIdentitySha256'] = $IdentitySha256
   $text = $newRecord | ConvertTo-Json -Compress
   if ((Sha256Text $text) -cne $proof.newRecordSha256) { throw 'CI_CONNECTION_PROOF_CHANGED' }
+  if (-not $Commit) { return }
   $target = $record.file
   $dacl = (Get-Acl -LiteralPath $target).GetSecurityDescriptorSddlForm('Access')
   $temp = $target + '.reinstall-' + [Guid]::NewGuid().ToString('N')
@@ -710,6 +718,9 @@ public static class CluedCiReinstallRecordMove {
 '@
     }
     # No old Broker or renew intent can still write here. Compare again just before the move.
+    $null = Read-CiReinstallApplyProof $CiReinstallApplyProof $CiReinstallApplyStage $CiReinstallApplyProofSha256 $ExpectedPlanSha256
+    Assert-CiReinstallBrokerStopped $Sc
+    Assert-CiRenewalIdle $CiRoot
     $null = Read-CiReinstallSnapshot $CiRoot $ControllerSid $proof.oldIdentitySha256 $connection
     if (-not [CluedCiReinstallRecordMove]::Replace($temp, $target)) { throw 'CI_CONNECTION_INSTALL_REPLACE_FAILED' }
     $back = Read-CiReinstallSnapshot $CiRoot $ControllerSid $IdentitySha256 $connection -AfterReanchor
