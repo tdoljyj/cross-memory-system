@@ -695,9 +695,23 @@ function Assert-ProtectedCiReinstall([switch]$Commit) {
   try {
     Write-NewSecret $temp ([Text.Encoding]::UTF8.GetBytes($text)) ('O:BAG:BA' + $dacl)
     $wrote = $true
-    # No old Broker or renew intent can still write here. Compare again just before ReplaceFile.
+    # Use the same same-directory atomic move as the Broker. ReplaceFile can
+    # merge ACL control flags; the staged record already has the verified DACL.
+    if (-not ('CluedCiReinstallRecordMove' -as [type])) {
+      Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class CluedCiReinstallRecordMove {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+  private static extern bool MoveFileExW(string source, string destination, uint flags);
+  public static bool Replace(string source, string destination) {
+    return MoveFileExW(source, destination, 0x1 | 0x8);
+  }
+}
+'@
+    }
+    # No old Broker or renew intent can still write here. Compare again just before the move.
     $null = Read-CiReinstallSnapshot $CiRoot $ControllerSid $proof.oldIdentitySha256 $connection
-    [IO.File]::Replace($temp, $target, $null, $false)
+    if (-not [CluedCiReinstallRecordMove]::Replace($temp, $target)) { throw 'CI_CONNECTION_INSTALL_REPLACE_FAILED' }
     $back = Read-CiReinstallSnapshot $CiRoot $ControllerSid $IdentitySha256 $connection -AfterReanchor
     if ($back.digest -cne $proof.newRecordSha256 -or (Get-Acl -LiteralPath $target).GetSecurityDescriptorSddlForm('Access') -cne $dacl) {
       throw 'CI_CONNECTION_INSTALL_READBACK_CHANGED'

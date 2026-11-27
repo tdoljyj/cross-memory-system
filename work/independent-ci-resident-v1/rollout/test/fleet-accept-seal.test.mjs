@@ -10,6 +10,73 @@ import { planFiles } from '../../../../scripts/ci/ci-required-selection.mjs';
 import * as publishModule from '../fleet/publish.mjs';
 import { GRANT, GRANT_RECEIPT, TAG, fakeTime, prepWorld, resourceOf, sealedNothing, sha, timed, uploadsOf } from '../fleet/test/publish-fixtures.mjs';
 
+const legacyNode = (id, name, mode, observedAt) => ({ id, name, state: 'active', mode,
+  registrationVersion: 4, bindingGeneration: 2, identityFingerprint: 'c'.repeat(64), bindingLive: true,
+  reportedSourceSha256: 'd'.repeat(64), heartbeatAt: observedAt, heartbeatSequence: 81,
+  reportedState: 'NORMAL', serviceRunning: true, onDuty: mode === 'ACTIVE', evidence: null });
+
+test('第 25 代 seal、open 和 run 共用生产读者，复查失败后沿用原 Grant', async t => {
+  const w = await prepWorld(t, { version: 'g000025', released: false, spawnGh: false });
+  await w.prep();
+  const time = fakeTime('2026-11-25T01:00:01Z');
+  const at = '2026-11-25T01:00:00Z';
+  const request = JSON.parse(await fs.readFile(w.requestFile, 'utf8'));
+  const first = legacyNode('11111111-1111-4111-8111-111111111111', 'DESK', 'ACTIVE', at);
+  const second = legacyNode('22222222-2222-4222-8222-222222222222', 'TURING', 'STANDBY', at);
+  const spawnSync = childProcess.spawnSync;
+  const mock = t.mock.method(childProcess, 'spawnSync', (command, args, options) => command === 'gh'
+    ? w.gh(args) : spawnSync(command, args, options));
+  syncBuiltinESMExports();
+  t.after(() => { mock.mock.restore(); syncBuiltinESMExports(); });
+  let readCount = 0;
+  const confirmations = [];
+  const fleetWorkflow = async (operation, candidate, seal) => {
+    if (operation === 'confirm') {
+      assert.equal(seal.grantId, GRANT);
+      assert.equal(seal.receiptId, GRANT_RECEIPT);
+      assert.ok((await w.assets()).some(a => a.name.endsWith('.acceptance.json')));
+      confirmations.push(seal);
+      w.door.sealedDigest = seal.acceptanceSha256;
+      return { status: 'sealed', ...seal };
+    }
+    assert.equal(operation, 'project');
+    assert.deepEqual([candidate.version, candidate.commit, candidate.archiveSha256, candidate.sourceSha256, candidate.requestSha256, candidate.kitSha256],
+      [request.version, request.commit, request.archive_sha256, request.ciSourceManifestSha256, sha(await fs.readFile(w.requestFile)), request.firstInstallKitSha256]);
+    const nodes = [first, { ...second, serviceRunning: ++readCount !== 2 }];
+    const projection = { candidate, repository: candidate.repository, scope: candidate.scope, complete: true, observedAt: at, nodes };
+    return { first: projection, last: { ...projection, nodes: nodes.map(n => ({ ...n, heartbeatSequence: n.heartbeatSequence + 1 })) } };
+  };
+  const deps = { ...w.deps, fleetWorkflow, clock: time.clock, sleep: time.sleep };
+  const { main } = await import('../fleet/accept.mjs');
+  const upgrades = [];
+  const accept = (command, ...extra) => main([command, '--request', w.requestFile, ...extra], {
+    sealOptions: { index: w.index, deps }, root: path.join(w.d, 'node'), now: time.clock, sleep: time.sleep, readStatus: w.deps.readStatus,
+    upgrade: async argv => { upgrades.push(argv); return { status: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', node: 'DESK' }; },
+  });
+  Object.assign(w.door, { status: 'none', openTo: 'pending' });
+  const opened = await accept('open');
+  assert.equal(opened.status, 'FLEET_ACCEPTANCE_WAITING_OWNER', JSON.stringify(opened));
+  assert.equal((await w.opens()).length, 1);
+  Object.assign(w.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: at,
+    nodes: [first, second].map(n => ({ name: n.name, source_sha256: request.ciSourceManifestSha256, paused: false })) });
+  const before = await fs.readFile(w.index), uploaded = (await uploadsOf(w)).length;
+  const work = path.join(w.d, 'work');
+  const blocked = await accept('run', '--work', work);
+  assert.equal(blocked.code, 'FLEET_DELIVERY_PREFLIGHT_REFUSED', JSON.stringify(blocked));
+  assert.deepEqual(upgrades, []);
+  assert.deepEqual(confirmations, []);
+  await sealedNothing(w, before, uploaded);
+  const sealed = await publishModule.main(['seal', '--request', w.requestFile, '--index', w.index], deps);
+  assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
+  assert.equal(sealed.deliveryPreflight.beforeAttach.status, 'TRANSITION_PASS');
+  assert.equal(sealed.grantId, GRANT);
+  assert.equal((await accept('run', '--work', work)).status, 'ROLLOUT_DONE');
+  assert.equal((await w.opens()).length, 1);
+  assert.equal((await uploadsOf(w)).length, uploaded + 1);
+  assert.equal(confirmations.length, 1);
+  assert.equal(readCount, 3);
+});
+
 // PLAN-accept-align-open-20261125 1.2 (red before: a rejected request was opened again, one gh workflow run, and answered WAITING_OWNER)
 // the Owner's "reject" is final (the door replays rejected and never opens it again): seal reading rejected, at the start or after waiting,
 // with or without --wait, answers REJECTED at once; no workflow run, no sleep, nothing written, the command exits non-zero
@@ -369,9 +436,14 @@ test('批准后节点证据失效时阻断挂接受文件', async t => {
   const time = fakeTime('2026-11-25T01:00:01Z');
   const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
   let reads = 0;
+  const row = { id: '22222222-2222-4222-8222-222222222222', name: 'TURING', state: 'active', generation: 24, version: 6 };
   const readFleetRegistry = async candidate => ({ complete: ++reads < 3, repository: candidate.repository,
-    scope: candidate.scope, observedAt: new Date(time.now).toISOString(), nodes: [] });
-  await assert.rejects(timed(w, time, { deps: { ...w.deps, readFleetRegistry, clock: time.clock, sleep: time.sleep } }),
+    scope: candidate.scope, observedAt: new Date(time.now).toISOString(), nodes: [row] });
+  const readNodeEvidence = async candidate => ({ candidate, nodeId: row.id, node: row.name, generation: row.generation,
+    registrationVersion: row.version, observedAt: new Date(time.now).toISOString(), receiptSha256: 'a'.repeat(64), evidenceSha256: 'b'.repeat(64),
+    checks: Object.fromEntries(['currentPointer', 'installReceipt', 'linuxFacts', 'ciConnection', 'host', 'roleAndPause', 'operations',
+      'sourceAgreement', 'frozenChannel', 'acceptanceRefs', 'supervisor'].map(key => [key, true])) });
+  await assert.rejects(timed(w, time, { deps: { ...w.deps, readFleetRegistry, readNodeEvidence, clock: time.clock, sleep: time.sleep } }),
     { code: 'FLEET_DELIVERY_PREFLIGHT_REFUSED' });
   assert.equal(reads, 3);
   await sealedNothing(w, before, n);
@@ -388,27 +460,137 @@ test('封存前对在役与排空节点各核两路，只有共同能力足够�
   const observedAt = '2026-11-25T01:00:00Z';
   const readFleetRegistry = async candidate => ({ repository: candidate.repository, scope: candidate.scope, complete: true,
     observedAt, nodes: [...registered, registered[0]] });
-  let full = false;
+  let processClearance = false;
   const readNodeEvidence = async (candidate, row) => ({
     candidate, nodeId: row.id, node: row.name, generation: row.generation, registrationVersion: row.version, observedAt,
     receiptSha256: 'a'.repeat(64), evidenceSha256: 'b'.repeat(64),
-    drill: row.state === 'draining' && full ? { status: 'PASS', candidate, receiptSha256: 'c'.repeat(64) } : null,
     checks: { currentPointer: true, installReceipt: true, linuxFacts: true, ciConnection: true, host: true, roleAndPause: true, operations: true,
       sourceAgreement: true, frozenChannel: true, acceptanceRefs: true, supervisor: row.state === 'active',
-      launcher: true, acl: true, connectionCarry: true, processClearance: true, continuation: true },
+      launcher: true, acl: true, connectionCarry: true, processClearance: row.state === 'draining' && processClearance, continuation: true },
   });
   const options = { deps: { ...w.deps, clock: time.clock, sleep: time.sleep, readFleetRegistry, readNodeEvidence } };
   await assert.rejects(timed(w, time, options), error => {
     assert.equal(error.code, 'FLEET_DELIVERY_PREFLIGHT_REFUSED');
     assert.equal(error.detail.phase, 'before-open');
     assert.deepEqual(error.detail.nodes.map(n => [n.node, n.upgrade.status, n.reinstall.status]),
-      [['DESK', 'PASS', 'UNKNOWN'], ['TURING', 'FAIL', 'UNKNOWN']]);
+      [['DESK', 'PASS', 'FAIL'], ['TURING', 'FAIL', 'FAIL']]);
     return true;
   });
   assert.equal(w.door.reads.length, 0);
-  full = true;
+  processClearance = true;
   const result = await timed(w, time, options);
   assert.equal(result.status, 'FLEET_ACCEPTANCE_SEALED');
   assert.deepEqual(result.deliveryPreflight.beforeAttach.nodes.map(n => [n.node, n.upgrade.status, n.reinstall.status]),
-    [['DESK', 'PASS', 'UNKNOWN'], ['TURING', 'FAIL', 'PASS']]);
+    [['DESK', 'PASS', 'FAIL'], ['TURING', 'FAIL', 'PASS']]);
+  assert.equal(result.deliveryPreflight.beforeAttach.nodes[1].reinstall.drill, undefined);
+});
+
+test('重装演练失败只作为附带信息，重装检查齐备仍通过', async () => {
+  const { fleetDeliveryPreflight } = await import('../fleet/delivery-preflight.mjs');
+  const observedAt = '2026-11-25T01:00:00Z';
+  const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000026' };
+  const row = { id: '22222222-2222-4222-8222-222222222222', name: 'TURING', state: 'active', generation: 24, version: 6 };
+  const drill = { status: 'FAIL', candidate, receiptSha256: 'c'.repeat(64) };
+  const result = await fleetDeliveryPreflight({ candidate, clock: () => Date.parse(observedAt),
+    readFleetRegistry: async () => ({ ...candidate, complete: true, observedAt, nodes: [row] }),
+    readNodeEvidence: async () => ({ candidate, nodeId: row.id, node: row.name, generation: row.generation,
+      registrationVersion: row.version, observedAt, receiptSha256: 'a'.repeat(64), evidenceSha256: 'b'.repeat(64), drill,
+      checks: { currentPointer: true, installReceipt: true, linuxFacts: true, ciConnection: true, host: true,
+        roleAndPause: true, operations: true, launcher: true, acl: true, connectionCarry: true, processClearance: true, continuation: true } }),
+  });
+  assert.equal(result.status, 'PASS');
+  assert.deepEqual(result.nodes[0].reinstall.drill, { status: drill.status, receiptSha256: drill.receiptSha256 });
+});
+
+test('完整标记下的空登记集仍阻断，不签发交付 PASS', async () => {
+  const { fleetDeliveryPreflight } = await import('../fleet/delivery-preflight.mjs');
+  const observedAt = '2026-11-25T01:00:00Z';
+  const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000025' };
+  const result = await fleetDeliveryPreflight({ candidate, clock: () => Date.parse(observedAt),
+    readFleetRegistry: async () => ({ repository: candidate.repository, scope: candidate.scope, complete: true, observedAt, nodes: [] }) });
+  assert.equal(result.reason, 'FLEET_REGISTRY_EMPTY');
+});
+
+test('第 26 代逐台核对绑定、退休记录、登记范围和重装实据', async () => {
+  const { fleetDeliveryPreflight } = await import('../fleet/delivery-preflight.mjs');
+  const at = '2026-11-25T01:00:00Z';
+  const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000026' };
+  const row = { ...legacyNode('22222222-2222-4222-8222-222222222222', 'TURING', 'ACTIVE', at), generation: 25, version: 4 };
+  const retired = { id: '44444444-4444-4444-8444-444444444444', name: 'LEFT', state: 'retired' };
+  const check = async (edit, rows = [row, retired], endRows = rows, repository = candidate.repository) => {
+    let reads = 0;
+    return fleetDeliveryPreflight({ candidate, clock: () => Date.parse(at),
+      readFleetRegistry: async () => ({ repository, scope: 'global', complete: true, observedAt: at, nodes: reads++ === 0 ? rows : endRows }),
+      readNodeEvidence: async () => ({ candidate, nodeId: row.id, node: row.name, generation: row.generation, registrationVersion: row.version,
+        bindingGeneration: row.bindingGeneration, observedAt: at, receiptSha256: 'a'.repeat(64), evidenceSha256: 'b'.repeat(64),
+        checks: { currentPointer: true, installReceipt: true, linuxFacts: true, ciConnection: true, host: true,
+          roleAndPause: true, operations: true, supervisor: false, launcher: true, acl: true,
+          connectionCarry: true, processClearance: true, continuation: true }, ...edit }),
+    });
+  };
+  const exact = await check({});
+  assert.equal(exact.status, 'PASS');
+  assert.deepEqual(exact.nodes.map(node => [node.node, node.upgrade.status, node.reinstall.status]), [['TURING', 'FAIL', 'PASS']]);
+  assert.equal((await check({ bindingGeneration: 1 })).reason, 'FLEET_NODE_HAS_NO_COMPLETE_PATH');
+  for (const field of ['connectionCarry', 'acl']) {
+    const checks = { currentPointer: true, installReceipt: true, linuxFacts: true, ciConnection: true, host: true,
+      roleAndPause: true, operations: true, supervisor: false, launcher: true, acl: true,
+      connectionCarry: true, processClearance: true, continuation: true };
+    delete checks[field];
+    assert.equal((await check({ checks })).reason, 'FLEET_NODE_HAS_NO_COMPLETE_PATH');
+  }
+  assert.equal((await check({}, [{ ...row, state: 'pending' }])).reason, 'FLEET_NODE_REGISTRATION_PENDING');
+  assert.equal((await check({}, [row], [{ ...row, bindingGeneration: 3 }])).reason, 'FLEET_REGISTRY_CHANGED');
+  assert.equal((await check({}, [row], [row], 'another/repo')).reason, 'FLEET_REGISTRY_INCOMPLETE');
+  assert.equal((await check({ observedAt: '2026-11-25T00:44:59Z' })).reason, 'FLEET_NODE_HAS_NO_COMPLETE_PATH');
+});
+
+test('直派发布工作流使用同一预检，登记读取通过后才进入开单 SQL', async () => {
+  const { qualifyDelivery } = await import('../../../../scripts/ci/clued-fleet-accept.mjs');
+  const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000025' };
+  const at = '2026-11-25T01:00:00Z';
+  const nodes = [legacyNode('11111111-1111-4111-8111-111111111111', 'DESK', 'ACTIVE', at),
+    legacyNode('22222222-2222-4222-8222-222222222222', 'TURING', 'STANDBY', at)];
+  const snapshotToken = 'a'.repeat(64);
+  const input = { action: 'fleet.accept', delivery: { operation: 'open', candidate, requirements: { standardReinstall: true } } };
+  const calls = [];
+  let unhealthy = true;
+  const database = async (operation, subject) => {
+    calls.push(operation);
+    if (operation === 'open') {
+      assert.deepEqual(subject.delivery, { candidate, snapshotToken });
+      return { status: 'pending' };
+    }
+    const registered = [nodes[0], { ...nodes[1], reportedState: unhealthy ? 'HALTED' : 'NORMAL' }];
+    return { candidate, repository: candidate.repository, scope: candidate.scope, observedAt: at, complete: true, snapshotToken, nodes: registered };
+  };
+  await assert.rejects(qualifyDelivery(input, database, () => Date.parse(at)), /FLEET_DELIVERY_PREFLIGHT_REFUSED/);
+  assert.deepEqual(calls, ['project', 'project']);
+  unhealthy = false;
+  assert.deepEqual(await qualifyDelivery(input, database, () => Date.parse(at)), { status: 'pending' });
+  assert.deepEqual(calls.slice(2), ['project', 'project', 'open']);
+});
+
+test('发布工作流只接收本次主线调度的加密登记回包', async () => {
+  const { deliveryWorkflowClient, deliveryWorkflowPacket } = await import('../fleet/delivery-workflow.mjs');
+  const candidate = { repository: 'fixture/repo', version: 'g000025', requestSha256: 'a'.repeat(64) };
+  const result = { first: { complete: true, nodes: [{ name: 'private fixture' }] }, last: { complete: true } };
+  let packet, tamper = false;
+  const runGh = args => {
+    if (args[0] === 'workflow') {
+      const key = args.find(a => a.startsWith('fleet_delivery_key=')).split('=')[1];
+      packet = deliveryWorkflowPacket({ operation: 'project', candidate,
+        result }, key, tamper ? 'b'.repeat(64) : candidate.requestSha256);
+      assert.ok(!packet.includes('private fixture'));
+      return { status: 0, stdout: 'https://github.com/fixture/repo/actions/runs/81\n' };
+    }
+    assert.deepEqual(args.slice(0, 7), ['run', 'view', '81', '--repo', candidate.repository, '--attempt', '1']);
+    return { status: 0, stdout: args.includes('--log') ? 'release\tcheck\t' + packet + '\n' :
+      JSON.stringify({ status: 'completed', conclusion: 'success', attempt: 1, event: 'workflow_dispatch', headBranch: 'main' }) };
+  };
+  const read = deliveryWorkflowClient({ runGh, sleep: async () => assert.fail('workflow should already be completed') });
+  const options = { signal: new AbortController().signal };
+  assert.deepEqual(await read('project', candidate, null, options), result);
+  tamper = true;
+  await assert.rejects(read('project', candidate, null, options));
 });

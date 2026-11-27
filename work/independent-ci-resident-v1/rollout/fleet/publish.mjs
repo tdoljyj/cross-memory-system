@@ -106,6 +106,8 @@ import { parseArgs } from 'node:util';
 import os from 'node:os';
 import { acceptResourceOf, openRequest, readAnswer, statusReader } from './accept-door.mjs';
 import { deliverySubject, fleetDeliveryPreflight } from './delivery-preflight.mjs';
+import { deliveryProjectionReaders, deliveryRequirements } from './delivery-reader.mjs';
+import { deliveryWorkflowClient } from './delivery-workflow.mjs';
 import { RESIDENT } from './facts.mjs';
 import { DEFAULT_ROOT, firstInstallKitOf, installedFleetMaterial, readArchive, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
 import { readTar } from './tar.mjs';
@@ -847,7 +849,7 @@ export const SEAL_INPUT_ERRORS = Object.freeze(['USAGE', 'REQUEST_REFUSED', 'REQ
   'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', 'SEAL_REQUEST_REFUSED', 'SEAL_DRILL_RECEIPT_REFUSED', 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE', 'SEAL_DRILL_RECEIPT_NOT_PASS',
   'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE', 'SEAL_DRILL_RECEIPT_NOT_THE_RECORDED', 'ACCEPT_RESOURCE_REFUSED', 'ACCEPT_DOOR_NOT_CONFIGURED',
   'ACCEPT_DOOR_VERSION_ALREADY_ACCEPTED', 'ACCEPT_DOOR_REFUSED', 'ACCEPT_DOOR_ANSWER_REFUSED', 'FLEET_ACCEPTANCE_DEADLINE',
-  'FLEET_DELIVERY_PREFLIGHT_REFUSED']);
+  'FLEET_DELIVERY_PREFLIGHT_REFUSED', 'FLEET_DELIVERY_SEAL_NOT_CONFIRMED']);
 
 // The second half of an acceptance (see the head of this file). `deps` is for tests only (a stand-in for the archive's source-hash, the door's
 // anonymous read, the clock and the sleep of --wait); the command line cannot reach it and reads the door with the repository's public
@@ -929,17 +931,24 @@ export async function seal(options) {
     check(onRelease !== null && onRelease.equals(requestBytes), 'SEAL_REQUEST_NOT_ON_RELEASE', { asset: `${tag}.acceptance-request.json`,
       release: onRelease === null ? null : sha(onRelease), request: requestSha256, note: 'the release workflow reads the request from the Release: run the same prepare again' });
     const candidate = deliverySubject(r, requestSha256);
-    const requiresDelivery = packageGenerationOf(r.version) >= 25 || deps.readFleetRegistry !== undefined;
+    const guarded = packageGenerationOf(r.version) >= 25;
+    const requirements = guarded ? deliveryRequirements(await readInput(path.join(stage, `${tag}.tar`)), r) : null;
+    const workflow = limit => deps.fleetWorkflow ?? deliveryWorkflowClient({ runGh: boundedGh(limit), sleep });
     const checkDelivery = async (phase, limit) => {
-      if (!requiresDelivery) return null;
-      const signal = AbortSignal.timeout(remaining(limit));
-      const result = await fleetDeliveryPreflight({ candidate, readFleetRegistry: deps.readFleetRegistry,
-        readNodeEvidence: deps.readNodeEvidence, clock, signal });
+      if (!guarded && deps.readFleetRegistry === undefined) return null;
+      const readEnd = Math.min(limit, clock() + OPEN_WAIT_MS);
+      const signal = AbortSignal.timeout(remaining(readEnd));
+      const readers = deliveryProjectionReaders({ requirements, clock,
+        read: (candidate, options) => workflow(readEnd)('project', candidate, null, options) });
+      const result = await fleetDeliveryPreflight({ candidate, requirements, clock, signal,
+        readFleetRegistry: deps.readFleetRegistry ?? readers.readFleetRegistry,
+        readNodeEvidence: deps.readNodeEvidence ?? readers.readNodeEvidence });
       remaining(limit);
-      check(result.status === 'PASS', 'FLEET_DELIVERY_PREFLIGHT_REFUSED', { phase, candidate, ...result });
+      check(result.status === 'PASS' || (packageGenerationOf(r.version) === 25 && result.status === 'TRANSITION_PASS'),
+        'FLEET_DELIVERY_PREFLIGHT_REFUSED', { phase, candidate, ...result });
       return result;
     };
-    const deliveryBeforeOpen = await checkDelivery('before-open', preflightEnd);
+    let deliveryBeforeOpen = guarded ? null : await checkDelivery('before-open', preflightEnd);
     // the Owner's acceptance: one fleet.accept Grant on this request (accept-door.mjs), read anonymously; opened once when the door has none open
     const resource = acceptResourceOf({ repository: r.repository, version: r.version, archiveSha256: r.archive_sha256, requestSha256 });
     let answer = null, openedAt = null, seenOpen = false, skewWaited = false, waitStep = 0, readFailure = null, dispatchFailure = null;
@@ -1000,6 +1009,7 @@ export async function seal(options) {
         break;
       }
       if (openedAt === null) {
+        if (guarded) deliveryBeforeOpen = await checkDelivery('before-open', preflightEnd);
         remaining(preflightEnd);
         noRetry = true;   // even a failed dispatch response leaves its delivery uncertain
         try {
@@ -1042,7 +1052,11 @@ export async function seal(options) {
     const there = await readOrNull(final);
     check(there === null || there.equals(bytes), 'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', final);
     check((c[4] === '' && c[5] === '') || (c[4] === a.acceptedAt && c[5] === a.cluedDecision), 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED', { acceptedAt: c[4], decision: c[5] });
-    const deliveryBeforeAttach = await checkDelivery('before-attach', sealEnd);
+    const acceptanceSha256 = sha(bytes);
+    check(!guarded || answer.sealedAcceptanceSha256 == null || answer.sealedAcceptanceSha256 === acceptanceSha256,
+      'FLEET_DELIVERY_SEAL_NOT_CONFIRMED', 'the acceptance door sealed different bytes');
+    const alreadySealed = guarded && answer.sealedAcceptanceSha256 === acceptanceSha256;
+    const deliveryBeforeAttach = alreadySealed ? null : await checkDelivery('before-attach', sealEnd);
     if (deliveryBeforeAttach) {
       const currentRequest = await requestOnRelease({ ghCommand: boundedGh(sealEnd), repo, tag, stage });
       check(currentRequest?.equals(requestBytes) && (await boundedRead(sealEnd)(request)).equals(requestBytes),
@@ -1054,6 +1068,15 @@ export async function seal(options) {
     await fs.writeFile(staged, bytes, { flag: 'wx' });
     const attached = await attachAcceptance({ version: r.version, acceptance: staged, repo, index, drill,
       ghCommand: boundedGh(sealEnd), checkTime: () => remaining(sealEnd), readFile: boundedRead(sealEnd) });
+    if (guarded && !alreadySealed) {
+      const details = { grantId: answer.grantId, receiptId: answer.receiptId, acceptanceSha256 };
+      let confirmed;
+      const confirmEnd = Math.min(sealEnd, clock() + OPEN_WAIT_MS);
+      try { confirmed = await workflow(confirmEnd)('confirm', candidate, details, { signal: AbortSignal.timeout(remaining(confirmEnd)) }); }
+      catch (error) { fail('FLEET_DELIVERY_SEAL_NOT_CONFIRMED', { ...details, reason: error?.message }); }
+      check(confirmed?.status === 'sealed' && Object.entries(details).every(([key, value]) => confirmed[key] === value),
+        'FLEET_DELIVERY_SEAL_NOT_CONFIRMED', details);
+    }
     remaining(sealEnd);
     if (there === null) await writeAtomic(final, bytes);
     if (packageDir) {

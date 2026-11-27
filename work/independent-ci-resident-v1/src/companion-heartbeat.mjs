@@ -8,7 +8,7 @@
 // The wire (step 2b, migration 20261031090000_merge_train_failover_v1.sql, clued_private.ci_node_heartbeat_v1): the CI command
 // door action ci_node_heartbeat, POST <supabase>/rest/v1/rpc/clued_work_verify_v1 { p_token_hash: sha256 hex of the token,
 // p_input } with p_input exactly { action, scope (the installed record's), state, mode, probe, [intake_paused_until], halt,
-// ci_source_manifest_sha256, service_running, snapshot_age_seconds, node_name } (heartbeatPayload; the server refuses any other
+// ci_source_manifest_sha256, service_running, snapshot_age_seconds, node_name, [fleet_delivery] } (heartbeatPayload; the server refuses any other
 // key). The self-report: the Source the executor actually runs (status versions.windows.ciSourceManifestSha256, never the
 // companion's own configuration), the node mode and the newest probe result, the state (NORMAL, HALTED with its code and time
 // from status.halt and the batch's PR and head from status.current, PAUSED, INTAKE_PAUSED with its end, or UNKNOWN when the
@@ -33,13 +33,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { NODE_NAME } from './node-duty.mjs';
+import { fleetEvidencePayload, freshDeliveryTime } from './fleet-delivery-evidence.mjs';
 import { parseIncluded } from './poller.mjs';
 
 // The CI command door (clued_work_verify_v1 -> work_claim_ci_command_v1) and its heartbeat action.
 export const HEARTBEAT_RPC = 'clued_work_verify_v1';
 export const HEARTBEAT_ACTION = 'ci_node_heartbeat';
 export const HEARTBEAT_INPUT_KEYS = Object.freeze(['action', 'scope', 'state', 'mode', 'probe', 'intake_paused_until', 'halt', 'ci_source_manifest_sha256',
-  'service_running', 'snapshot_age_seconds', 'node_name']);
+  'service_running', 'snapshot_age_seconds', 'node_name', 'fleet_delivery']);
 // Every minute (ADR 0026; was 10 minutes): the failover watchdog judges a holder lost after FAILOVER_SILENCE_MINUTES without a beat,
 // so a node that is alive must be heard well inside that. A failed beat is tried again at the next lane pass (30 s), not after a
 // whole interval, so one lost request never looks like silence.
@@ -81,7 +82,7 @@ const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 // The server's p_input from what the companion sees (exactly the keys ci_node_heartbeat_v1 accepts). status: status.mjs#parseStatus
 // or null; serviceRunning: true | false | null (SCM unreadable: the snapshot's freshness stands in, the server needs a boolean).
-export function heartbeatPayload({ nodeName, scope, status, statusError = false, serviceRunning = null, now }) {
+export function heartbeatPayload({ nodeName, scope, status, statusError = false, serviceRunning = null, now, delivery = null }) {
   const age = status && Number.isFinite(status.writtenAt) ? Math.max(0, now - status.writtenAt) : null;
   const fresh = !!status && !statusError && age !== null && age <= SNAPSHOT_FRESH_MS;
   const running = [true, false].includes(serviceRunning) ? serviceRunning : fresh;
@@ -111,11 +112,14 @@ export function heartbeatPayload({ nodeName, scope, status, statusError = false,
     ci_source_manifest_sha256: HEX64.test(source ?? '') ? source : null, service_running: running,
     snapshot_age_seconds: age === null ? null : Math.min(999_999_999, Math.floor(age / 1000)) };
   if (NODE_NAME.test(nodeName ?? '')) p.node_name = nodeName;
+  const evidence = readable ? fleetEvidencePayload(delivery) : null;
+  if (evidence && evidence.windowsSourceSha256 === p.ci_source_manifest_sha256 &&
+      freshDeliveryTime(evidence.brokerObservedAt, now) && freshDeliveryTime(evidence.linuxObservedAt, now)) p.fleet_delivery = evidence;
   return Object.freeze(p);
 }
 
 // What a change means: anything but the snapshot's age (which moves every pass).
-const fingerprint = p => JSON.stringify({ ...p, snapshot_age_seconds: null });
+const fingerprint = p => JSON.stringify({ ...p, snapshot_age_seconds: null, fleet_delivery: null });
 
 const FAILED = Object.freeze({ ok: false, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, autoHandovers: Object.freeze([]), watchdogTickAt: null, watchdogStale: null });
 const WIRE_ERRORS = new Set(['TRANSPORT_ERROR', 'TRANSPORT_TIMEOUT', 'TRANSPORT_CONFIG', 'HTTP_ERROR', 'INVALID_REPLY', 'SERVER_REJECTED']);
@@ -236,11 +240,16 @@ export class CompanionHeartbeat {
     let status = null, statusError = false, running = null;
     try { status = await this.readStatus(); } catch { statusError = true; }
     try { running = await this.serviceRunning(); } catch { running = null; }
-    const payload = heartbeatPayload({ nodeName: this.nodeName, scope: this.scope, status, statusError, serviceRunning: running, now });
+    const input = { nodeName: this.nodeName, scope: this.scope, status, statusError, serviceRunning: running, now };
+    let payload = heartbeatPayload(input);
     const changed = this.lastFingerprint !== null && fingerprint(payload) !== this.lastFingerprint;
     // A clock that went back (now < lastSentAt) is due at once: waiting for it to catch up would be silence to the server, whose own
     // clock stamps every beat (ADR 0026; with a 5-minute silence rule a 10-minute jump back would hand the role away).
     if (this.lastSentAt !== null && this.failures === 0 && now >= this.lastSentAt && now - this.lastSentAt < NODE_HEARTBEAT_EVERY_MS && !changed) return { skipped: 'NOT_DUE' };
+    if (this.readDeliveryEvidence && payload.state !== 'UNKNOWN') {
+      const delivery = await this.readDeliveryEvidence({ status, now }).catch(() => null);
+      payload = heartbeatPayload({ ...input, delivery });
+    }
     this.updateDiagnostics({ lastAttemptAt: iso(this.clock()) });
     let r;
     try { r = await this.transport({ payload }, { token }); } catch { r = null; }

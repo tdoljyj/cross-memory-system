@@ -45,3 +45,24 @@ for (const code of ['PASS', 'CI_CONNECTION_GENERATION_CHANGED', 'CI_CONNECTION_R
     assert.equal(result.stdout, code);
   });
 }
+
+const fixture = fileURLToPath(new URL('./fleet-ci-reinstall.fixture.ps1', import.meta.url));
+for (const [scenario, title] of [
+  ['observed', '提权复核接受更新了 at 的观测'],
+  ['continue', 'Linux B 后续作接受已刷新的观测和未应答请求'],
+  ['recover', 'Linux B 前服务端复核失败会恢复 Broker 后再抛原错误'],
+  ['commit', '当前连接按 Broker 规范 JSON 原子重锚并接受新身份'],
+  ['refuse', '拒绝连接字段篡改、在途事务以及错误的证明属主和 ACL'],
+]) {
+  test(title, { skip: !windows }, async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ci-reinstall-'));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', fixture, '-SourceRoot', resident, '-CiRoot', root, '-Scenario', scenario], {
+      windowsHide: true, encoding: 'utf8',
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'PASS');
+  });
+}

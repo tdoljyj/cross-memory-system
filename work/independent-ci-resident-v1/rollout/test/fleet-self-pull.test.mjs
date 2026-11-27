@@ -26,6 +26,20 @@ const json = value => Buffer.from(JSON.stringify(value, null, 2) + '\n');
 const read = async file => JSON.parse(await fs.readFile(file, 'utf8'));
 const exec = promisify(execFile);
 
+test('第 25 代已批准待封存时，companion 不下载或补传接受文件', async t => {
+  const { companionSelfPull } = await lanes();
+  const root = await tempDir(t, 'fleet-pending-seal');
+  await fs.mkdir(path.join(root, 'state'), { recursive: true });
+  const at = new Date(now).toISOString();
+  const target = { repository, version: 'g000025', archive_sha256: 'a'.repeat(64), request_sha256: 'b'.repeat(64),
+    grant_id: randomUUID(), receipt_id: randomUUID(), accepted_at: at, other_sources: [] };
+  await fs.writeFile(path.join(root, 'state', 'fleet-target.json'), json({ at, code: null, onDuty: false, fleetTarget: target }));
+  const calls = [];
+  await companionSelfPull({ root, repository, clock: () => now,
+    download: async arg => { calls.push(arg.name); return false; }, upload: async arg => { calls.push(arg.tag); } })();
+  assert.deepEqual(calls, []);
+});
+
 async function release(t, fleet, repo, commit, version) {
   const out = path.join(await tempDir(t, 'dpkg'), 'out');
   const built = await buildUniversal({ repo, commit, version, out });
@@ -454,13 +468,17 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
     await fs.appendFile(path.join(repo, 'work', 'independent-ci-resident-v1', 'upgrader', 'src', 'codes.mjs'), '\n// Frozen channel fixture.\n');
     git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'change fixture frozen channel');
     const frozen = await release(t, fleet, repo, git(repo, 'rev-parse', 'HEAD').toString().trim(), '2026.11.25-frozen');
-    const lane = await fixtureLanes({ node, release: frozen, broker });
+    let time = now;
+    const lane = await fixtureLanes({ node, release: frozen, broker, clockNow: () => time });
     await lane.probe(); await drive(lane);
     const first = await lane.state();
     assert.equal(first.phase, 'NEEDS_REINSTALL');
     assert.equal(first.code, 'UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL');
-    await drive(lane, 2);
+    assert.equal(lane.submitted.length, 1);
+    time += 61_000; // The installed self-pull would already retry a PREPARE_FAILED answer.
+    await lane.probe(); await drive(lane, 2);
     assert.deepEqual(await lane.state(), first);
+    assert.equal(lane.submitted.length, 1);
     assert.equal(versionNotices({ fleetPull: first }).filter(n => n.kind === 'fleet-pull-refused').length, 1);
     assert.equal(lane.posted.length, 0);
     await reinstallFixture(node, frozen);

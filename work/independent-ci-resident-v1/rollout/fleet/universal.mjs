@@ -47,7 +47,7 @@ export const TREE_FILES = Object.freeze([`${RESIDENT}/rollout/precheck.mjs`, `${
   `${RESIDENT}/reinstall/tools/check-record.mjs`, `${RESIDENT}/reinstall/rehearse.py`, `${RESIDENT}/windows/install-resident.ps1`, `${RESIDENT}/windows/verify-resident.ps1`,
   `${RESIDENT}/windows/uninstall-resident.ps1`, `${RESIDENT}/windows/CompanionTaskRegistrar.cs`, `${RESIDENT}/reinstall/linux/prep.py`, `${RESIDENT}/reinstall/launcher/generate.py`,
   `${RESIDENT}/reinstall/launcher/template.ps1`, `${RESIDENT}/reinstall/launcher/expected-plan.ps1`, `${RESIDENT}/reinstall/launcher/continue.py`,
-  `${RESIDENT}/reinstall/launcher/continue-install.ps1`, `${RESIDENT}/reinstall/tools/file-locks.ps1`, `${RESIDENT}/reinstall/tools/ledger-evidence.py`,
+  `${RESIDENT}/reinstall/launcher/continue-install.ps1`, `${RESIDENT}/reinstall/tools/ledger-evidence.py`,
   `${RESIDENT}/reinstall/tools/rconfig.py`, `${RESIDENT}/reinstall/linux/assemble.py`,
   // the node's identity keys (Fable 11-21 r5 N7): first-install-host.ps1 reads them with this script's Find-MachineKey and makes them with
   // its init-keys, which needs no other file (export-node-registration.mjs is its export mode's, run where a node is registered)

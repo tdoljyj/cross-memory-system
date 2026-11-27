@@ -20,6 +20,24 @@ const nextTurn = () => new Promise(resolve => setImmediate(resolve));
 const status = (o = {}) => ({ writtenAt: NOW - 10_000, executor: { state: 'IDLE' }, halt: null, paused: false, intakePause: null, current: null,
   node: { name: 'node-b', mode: 'ACTIVE', probe: { at: NOW - 5 * MIN, result: 'held' } }, versions: { windows: { ciSourceManifestSha256: SRC } }, ...o });
 
+test('心跳只转发本代和双端 Source 证据的许可字段', () => {
+  const at = new Date(NOW - MIN).toISOString();
+  const delivery = { schemaVersion: 1, nodeId: RECEIPT, bindingGeneration: 6, packageGeneration: 25, installGeneration: 1,
+    installReceiptSha256: SRC, windowsSourceSha256: SRC, linuxSourceSha256: SRC, brokerEvidenceSha256: SRC, linuxFactsSha256: SRC,
+    brokerObservedAt: at, linuxObservedAt: at, linuxReady: true, acl: true, connectionCarry: true,
+    privateRecord: 'must stay local', token: TOKEN };
+  const input = { nodeName: 'node-b', scope: 'global', status: status(), serviceRunning: true, now: NOW };
+  const payload = heartbeatPayload({ ...input, delivery });
+  assert.equal(payload.fleet_delivery.packageGeneration, 25);
+  assert.equal(payload.fleet_delivery.bindingGeneration, 6);
+  assert.equal(payload.fleet_delivery.installGeneration, 1);
+  assert.equal(payload.fleet_delivery.processClearance, null);
+  assert.ok(!JSON.stringify(payload).includes(TOKEN));
+  assert.equal(payload.fleet_delivery.privateRecord, undefined);
+  assert.equal(heartbeatPayload({ ...input, delivery: { ...delivery, windowsSourceSha256: 'b'.repeat(64) } }).fleet_delivery, undefined);
+  assert.equal(heartbeatPayload({ ...input, serviceRunning: false, delivery }).fleet_delivery, undefined);
+});
+
 // The input check of clued_private.ci_node_heartbeat_v1 (migration 20261031090000_merge_train_failover_v1.sql), mirrored: true
 // when the server would accept p_input.
 const has = (o, k) => Object.hasOwn(o, k);

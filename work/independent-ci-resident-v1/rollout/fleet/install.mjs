@@ -62,6 +62,7 @@ import { pyCanonical, pyDumps, pyEqual, pyLoads } from './pyjson.mjs';
 import { extractTar, readTar } from './tar.mjs';
 import { BUNDLE_NAME, MANIFEST_NAME, UNIVERSAL_CONTRACT, VERSION, bundleHeads, tagOf } from './universal.mjs';
 import { packageGenerationOf } from '../../src/selfcheck.mjs';
+import { fleetInstallIdentity } from '../../src/fleet-delivery-evidence.mjs';
 import { defaultWslConfigPath, wslCapacityOfArchive } from './wsl-capacity.mjs';
 
 export const ACCEPTANCE_CONTRACT = 'clued.independent-ci.fleet-node-acceptance/1';
@@ -164,10 +165,9 @@ export async function readNode({ root, now = Date.now() }) {
   const at = (...p) => path.join(root, ...p);
   const receiptBytes = await readOrNull(at('install', 'install-receipt.json'));
   need(receiptBytes !== null, 'NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH', 'no install\\install-receipt.json: prepareInstall takes its first-install branch (readFreshNode)');
-  const receipt = jsonOf(receiptBytes);
-  const current = jsonOf(await fs.readFile(at('upgrade', 'current.json')));
-  need(HEX64.test(current?.packageManifestSha256 ?? '') && current.packageManifestSha256 === receipt.packageManifestSha256 && current.installReceiptSha256 === sha(receiptBytes),
-    'NODE_RECEIPT_NOT_THE_CURRENT_GENERATION');
+  const identity = fleetInstallIdentity(receiptBytes, await fs.readFile(at('upgrade', 'current.json')));
+  need(identity !== null, 'NODE_RECEIPT_NOT_THE_CURRENT_GENERATION');
+  const { receipt, current } = identity;
   // the installed record: its manifest's hashes and the receipt's
   const raw = Object.fromEntries(await Promise.all(RECORD_FILES.map(async n => [n, await fs.readFile(at('record', n))])));
   const rm = jsonOf(raw['record-manifest.json']);
@@ -516,7 +516,7 @@ async function readBrokerCiObservation(root, node, now) {
     if (!st.isFile() || st.nlink !== 1 || st.size > 65_536) return null;
     const book = jsonOf(await fs.readFile(file)), lane = book.lanes?.ci;
     if (book.pending?.kind === 'ci' || lane?.waiting !== false || lane.code !== null ||
-        lane.source !== node.current.ciSourceManifestSha256 || !UUID.test(lane.bindingId ?? '') ||
+        !HEX64.test(lane.source ?? '') || !UUID.test(lane.bindingId ?? '') ||
         lane.bindingId === node.inst.ciPrincipalBindingId || !Number.isSafeInteger(lane.at) ||
         lane.at > now || now - lane.at > 25 * 3600_000 || !(Date.parse(lane.expiresAt) > now)) return null;
     const publicFacts = { at: lane.at, source: lane.source, bindingId: lane.bindingId, expiresAt: lane.expiresAt };
@@ -588,11 +588,11 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   const applyWslCapacity = () => wslCapacityOfArchive(byPath, { hostname: hostname(), configPath: wslConfigPath, now });
   const fresh = (await readOrNull(path.join(root, 'install', 'install-receipt.json'))) === null;
   const node = fresh ? await readFreshNode({ root, ciRoot, from, acceptance, controllerNode, serviceState, hostname, ciRootSddl, listDir }) : await readNode({ root, now });
-  const ciConnection = fresh ? null : await ciConnectionFor(readCiConnection, root, node, now);
   // The Linux side is already this package's and the Windows side is not: this package's own launch stopped between the two. Its
   // Linux phases cannot run again over themselves; that launch is continued from where it stopped (reinstall/README.md, --fleet-continue).
   need(fresh || !(node.facts.ciSourceManifestSha256 === acceptance.ciSourceManifestSha256 && node.current.ciSourceManifestSha256 !== acceptance.ciSourceManifestSha256),
     'LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH', { continueWith: 'python -I <tree>/work/independent-ci-resident-v1/reinstall/launcher/generate.py --fleet-continue <the stopped launch: launcher.ps1> --out <new launcher.ps1>' });
+  const ciConnection = fresh ? null : await ciConnectionFor(readCiConnection, root, node, now);
   need(typeof node.distribution === 'string' && node.distribution === node.profile.wslDistribution && /^[A-Za-z0-9._-]{1,64}$/.test(node.distribution), 'NODE_DISTRIBUTION_REFUSED');
   const secrets = fresh ? node.secrets : installedSecretsOf(node.receipt, await readUpgradePin(root));
   need(acceptance.repository === node.inst.repository, 'FLEET_ACCEPTANCE_NOT_THIS_REPOSITORY', { accepted: acceptance.repository, installed: node.inst.repository });

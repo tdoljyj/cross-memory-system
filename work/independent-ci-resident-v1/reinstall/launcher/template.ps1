@@ -278,16 +278,9 @@ function Get-FleetCiVerified([string]$ciRoot) {
   if ($current.installReceiptSha256 -cne $InstalledReceiptSha256 -or $current.packageManifestSha256 -cne $old.packageManifestSha256) {
     throw 'CI_CONNECTION_INSTALL_RECEIPT_CHANGED'
   }
-  if ($plan.state -ceq 'observed') {
-    $bookBytes = Read-FleetFileChecked (Join-Path $oldRoot 'state') 'connection-renewal.json' 65536
-    if (-not $bookBytes) { throw 'CI_CONNECTION_OBSERVATION_REFUSED' }
-    $book = $Strict8.GetString($bookBytes) | ConvertFrom-Json
-    $lane = $book.lanes.ci
-    $facts = [ordered]@{ at = $lane.at; source = $lane.source; bindingId = $lane.bindingId; expiresAt = $lane.expiresAt }
-    if (($book.pending -and $book.pending.kind -ceq 'ci') -or $null -ne $lane.code -or $lane.waiting -ne $false -or
-        $lane.bindingId -cne $plan.bindingId -or $lane.source -cne $current.ciSourceManifestSha256 -or
-        (Sha256Text ($facts | ConvertTo-Json -Compress)) -cne $plan.observationSha256) { throw 'CI_CONNECTION_OBSERVATION_CHANGED' }
-  }
+  # The renewal observation only selected the Binding for the unprivileged plan.
+  # Recheck the protected record and server below; a new observation can arrive
+  # without any connection change, including between Linux B and continuation.
   $installation = Read-FleetFileChecked (Join-Path $oldRoot 'record') 'installation.json' 262144
   if (-not $installation -or (Sha256Bytes $installation) -cne $old.installationSha256 -or $old.nodeIdentitySha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'CI_CONNECTION_INSTALL_RECEIPT_CHANGED' }
   $snap = Read-CiReinstallSnapshot $ciRoot $ControllerSid $old.nodeIdentitySha256 $plan
@@ -310,32 +303,61 @@ function Assert-FleetCiConnection([string]$ciRoot) {
       $prior.nodeId -cne $snap.nodeId -or $prior.identityFingerprint -cne $snap.identityFingerprint)) { throw 'CI_CONNECTION_GENERATION_CHANGED' }
   $script:VerifiedCiCarry = $snap
 }
+function Restore-FleetCiBrokerBeforeLinuxB([bool]$confirmedStopped) {
+  try {
+    if (-not $confirmedStopped) { $confirmedStopped = Wait-Until { $b = Get-ScState 'CluedCISwapBroker'; $b.nativeExit -eq 0 -and $b.state -eq 1 -and $b.pid -eq 0 } 120 }
+    if (-not $confirmedStopped) { throw 'CI_CONNECTION_BROKER_NOT_STOPPED' }
+    $null = & $Sc start CluedCISwapBroker
+    if (-not (Wait-Until { $b = Get-ScState 'CluedCISwapBroker'; $b.nativeExit -eq 0 -and $b.state -eq 4 -and $b.pid -gt 0 } 120)) {
+      throw 'CI_CONNECTION_BROKER_NOT_RESTORED'
+    }
+  } catch { Write-Warning 'CI_CONNECTION_BROKER_NOT_RESTORED' }
+}
 function Confirm-FleetCiBeforeLinuxB {
+  $script:FleetCiStoppedBrokerBeforeB = $false
   if (-not (Get-Variable FleetCiConnectionB64 -ValueOnly -ErrorAction SilentlyContinue)) { return }
   $ciRoot = Split-Path -Parent $ResidentRoot
   $broker = Get-ScState 'CluedCISwapBroker'
-  if ($broker.nativeExit -ne 0) { throw 'CI_CONNECTION_BROKER_NOT_CONFIRMED' }
-  if ($broker.state -ne 1) { $null = & $Sc stop CluedCISwapBroker }
-  if (-not (Wait-Until { $b = Get-ScState 'CluedCISwapBroker'; $b.state -eq 1 -and $b.pid -eq 0 } 120)) { throw 'CI_CONNECTION_BROKER_NOT_STOPPED' }
-  $proof = Get-FleetCiVerified $ciRoot
-  if ($script:VerifiedCiCarry.connection.recordSha256 -cne $proof.connection.recordSha256 -or
-      $script:VerifiedCiCarry.nodeId -cne $proof.nodeId -or $script:VerifiedCiCarry.identityFingerprint -cne $proof.identityFingerprint) {
-    throw 'CI_CONNECTION_GENERATION_CHANGED'
+  if ($broker.nativeExit -ne 0 -or $broker.state -notin @(1, 4)) { throw 'CI_CONNECTION_BROKER_NOT_CONFIRMED' }
+  $stoppedHere = $false
+  $confirmedStopped = $false
+  try {
+    if ($broker.state -eq 4) {
+      $null = & $Sc stop CluedCISwapBroker
+      $stoppedHere = $LASTEXITCODE -eq 0
+    }
+    $confirmedStopped = Wait-Until { $b = Get-ScState 'CluedCISwapBroker'; $b.nativeExit -eq 0 -and $b.state -eq 1 -and $b.pid -eq 0 } 120
+    if (-not $confirmedStopped) { throw 'CI_CONNECTION_BROKER_NOT_STOPPED' }
+    $proof = Get-FleetCiVerified $ciRoot
+    if ($script:VerifiedCiCarry.connection.recordSha256 -cne $proof.connection.recordSha256 -or
+        $script:VerifiedCiCarry.nodeId -cne $proof.nodeId -or $script:VerifiedCiCarry.identityFingerprint -cne $proof.identityFingerprint) {
+      throw 'CI_CONNECTION_GENERATION_CHANGED'
+    }
+    $proofPath = Get-FleetCiProofPath
+    $bytes = $U8.GetBytes(($proof | ConvertTo-Json -Depth 5 -Compress))
+    if (-not [IO.File]::Exists($proofPath)) {
+      $acl = New-Object Security.AccessControl.FileSecurity
+      $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)')
+      $temp = $proofPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+      try {
+        $handle = New-Object IO.FileStream($temp, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write,
+          [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough, $acl)
+        try { $handle.Write($bytes, 0, $bytes.Length); $handle.Flush($true) } finally { $handle.Dispose() }
+        [IO.File]::Move($temp, $proofPath)
+      } finally { [IO.File]::Delete($temp) }
+    }
+    foreach ($source in Read-FleetCiVerifyHelpers) { . ([scriptblock]::Create($source)) }
+    $back = Read-CiReinstallProof $proofPath $ciRoot $proof.plan $PackageManifestSha256
+    if ($back.connection.recordSha256 -cne $proof.connection.recordSha256 -or
+        $back.newRecordSha256 -cne $proof.newRecordSha256 -or $back.nodeId -cne $proof.nodeId -or
+        $back.identityFingerprint -cne $proof.identityFingerprint) { throw 'CI_CONNECTION_PROOF_CHANGED' }
+    $script:FleetCiProofSha256 = Get-FileSha $proofPath
+    $script:FleetCiStoppedBrokerBeforeB = $stoppedHere
+  } catch {
+    $original = $_
+    if ($stoppedHere) { Restore-FleetCiBrokerBeforeLinuxB $confirmedStopped }
+    throw $original
   }
-  $proofPath = Get-FleetCiProofPath
-  $bytes = $U8.GetBytes(($proof | ConvertTo-Json -Depth 5 -Compress))
-  if (-not [IO.File]::Exists($proofPath)) {
-    $acl = New-Object Security.AccessControl.FileSecurity
-    $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)')
-    $handle = New-Object IO.FileStream($proofPath, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write,
-      [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough, $acl)
-    try { $handle.Write($bytes, 0, $bytes.Length); $handle.Flush($true) } finally { $handle.Dispose() }
-  }
-  foreach ($source in Read-FleetCiVerifyHelpers) { . ([scriptblock]::Create($source)) }
-  $back = Read-CiReinstallProof $proofPath $ciRoot $proof.plan $PackageManifestSha256
-  if ($back.connection.recordSha256 -cne $proof.connection.recordSha256 -or
-      $back.newRecordSha256 -cne $proof.newRecordSha256 -or $back.nodeId -cne $proof.nodeId -or
-      $back.identityFingerprint -cne $proof.identityFingerprint) { throw 'CI_CONNECTION_PROOF_CHANGED' }
 }
 
 function Step-Identity {
@@ -1659,7 +1681,13 @@ function Step-LinuxOutAclProbe([string]$registrar) {
 # One Linux script, as root in the node's distribution: through the registrar's root-run as the companion account, or directly as this
 # elevated Owner (the same command line and environment either way). Returns outcome, exit, code, the script's stdout and the directory.
 function Invoke-FleetLinuxScript([string]$name, [string]$registrar) {
-  $run = New-FleetRunDirectory $name
+  try { $run = New-FleetRunDirectory $name }
+  catch {
+    if ($name -ceq 'B' -and (Get-Variable FleetCiStoppedBrokerBeforeB -Scope Script -ValueOnly -ErrorAction SilentlyContinue)) {
+      Restore-FleetCiBrokerBeforeLinuxB $true
+    }
+    throw
+  }
   $r = [ordered]@{ name = $name; directory = $run.directory; captured = $run.captured; outcome = 'UNREADABLE'; exit = $null; code = $null; captureRefused = $null; stdout = $null; stderrTail = $null; registrarStderr = $null; seconds = $null }
   $t0 = [DateTime]::UtcNow
   if ($FleetCompanionAccount) {
@@ -2206,9 +2234,13 @@ function Step-LinuxRoot {
     if (-not $FleetFirstInstall) { [void](Read-VerifiedResidentLocks 'before-linux-b') }
     if (Get-Variable FleetCiConnectionB64 -ValueOnly -ErrorAction SilentlyContinue) {
       Confirm-FleetCiBeforeLinuxB
-      $report['ciConnectionProofSha256'] = Get-FileSha (Get-FleetCiProofPath)
+      $report['ciConnectionProofSha256'] = $script:FleetCiProofSha256
     }
     $b = Invoke-FleetLinuxScript 'B' $exe; $report.runs += ,(Get-FleetRunReport $b)
+    if ($b.outcome -ceq 'REFUSED' -and (Test-FleetRefusedBeforeAnyChange $b.code) -and
+        (Get-Variable FleetCiStoppedBrokerBeforeB -Scope Script -ValueOnly -ErrorAction SilentlyContinue)) {
+      Restore-FleetCiBrokerBeforeLinuxB $true
+    }
     if ($b.outcome -ceq 'TIMEOUT') { & $stop 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED' }
     # B ran and exited, and its output could not be captured: whether it completed is not known here. Not "B did not complete" (no
     # resume is run over it): stopped like a timeout, and the continuation captures and checks the output (capture-file).

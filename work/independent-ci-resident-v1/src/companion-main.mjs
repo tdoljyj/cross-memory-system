@@ -30,6 +30,7 @@ import {MERGE_RECONCILE_REPO,MERGE_RECONCILE_WORKFLOW_SHA256,validateMergeReconc
 import { AdmissionRerunState, AdmissionRerunner, RERUN_LANE_EVERY_MS, ghPort } from './admission-rerun.mjs';
 import { FRONT_MERGE_LANE_EVERY_MS, FRONT_MERGE_REPO, FrontMergeDispatchState, FrontMergeDispatcher } from './front-merge-dispatch.mjs';
 import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
+import { readFleetDeliveryEvidence } from './fleet-delivery-evidence.mjs';
 import { NotifyQueue, notifyQueueDir, queueNotify } from './notify-queue.mjs';
 import { ReceiptChain } from './receipts.mjs';
 import { RetentionNotifier } from './retention-notify.mjs';
@@ -119,6 +120,7 @@ export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershe
   };
   return new CompanionHeartbeat({ nodeName, scope, transport, clock, handoverClock: () => performance.now(),
     readToken: () => readHeartbeatToken(root), readStatus: () => readStatus(root),
+    readDeliveryEvidence: ({ status, now }) => readFleetDeliveryEvidence({ root, status, now }),
     serviceRunning: async () => serviceRunningFrom(await run(scQueryArgv(SC_EXE), { timeoutMs: 15_000 })),
     notify: notify ?? (async (key, title, body) => { await run(toastArgv(powershellExe, title, body), { timeoutMs: 15_000 }); }),
     memory: { get: key => Date.parse(store.data.notified[key]?.at) || 0, set: (key, at) => { store.data.notified[key] = { at: new Date(at).toISOString() }; void save(); } },

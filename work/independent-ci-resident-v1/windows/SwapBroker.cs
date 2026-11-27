@@ -30,6 +30,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Collections.Generic;
+using System.Linq;
 using System.Web.Script.Serialization;
 
 public sealed class SwapBroker : ServiceBase
@@ -235,6 +236,7 @@ public sealed class SwapBroker : ServiceBase
     }
     void ObserveConnection(string kind) {
         string code=null;Renewal.Connection result=null;
+        Dictionary<string,object> delivery=null;
         try {
             var config=LoadConfig();
             using(var key=RenewalKey.Open()) {
@@ -245,14 +247,108 @@ public sealed class SwapBroker : ServiceBase
                 if(store.Read("intent")!=null)
                     result=gateway.Run(store,null,standbyConfirmation);
                 else result=gateway.Probe(Renewal.Digest(Renewal.Token(store.Read("token"))));
+                if(kind=="ci") {
+                    try { delivery=ObserveFleetDelivery(config,gateway,store,result); } catch { /* Unknown delivery evidence. */ }
+                }
             }
         } catch(BrokerRefusal refusal) {code=refusal.Code;}catch {code="RENEW_UNAVAILABLE";}
         try {WritePublicRecord(Path.Combine(root,"broker","renew-"+kind+".json"),Renewal.Json(new {
             at=Renewal.Stamp(DateTime.UtcNow),code=code,bindingId=result==null?null:result.Binding,expiresAt=result==null?null:Renewal.Stamp(result.Expires),
             renewalWindowOpensAt=result==null?null:result.WindowStamp,onDuty=kind=="ci" && result!=null && result.OnDuty,
-            fleetTarget=kind=="ci" && result!=null ? result.FleetTarget : null
+            fleetTarget=kind=="ci" && result!=null ? result.FleetTarget : null, delivery=delivery
         }));} catch {}
     }
+
+    // Only bounded booleans and hashes leave the Broker. The protected CI
+    // record, token, ACLs and process identities stay on this host.
+    Dictionary<string,object> ObserveFleetDelivery(BrokerConfig config, RenewalGateway gateway,
+      RenewalFiles store, Renewal.Connection live) {
+      if (live == null || live.Expires <= DateTime.UtcNow || store.Read("intent") != null) return null;
+      var token = Renewal.Token(store.Read("token"));
+      string record = store.Read("record");
+      Renewal.ValidateCurrentCi(gateway.Context, live, token, record);
+      if (record != null)
+        Renewal.Require(Renewal.Str(Renewal.Object(record),"rebindReceiptId")==live.Receipt,"RENEW_CONNECTION_MISMATCH");
+      string currentPath = Path.Combine(root,@"upgrade\current.json");
+      string currentBytes = RenewalFiles.ReadProtected(currentPath,16384,false,null,false);
+      var current = Renewal.Object(currentBytes);
+      var receipt = RenewalGateway.ActiveReceipt(root);
+      string receiptSha = Renewal.Str(current,"installReceiptSha256");
+      Renewal.Require(currentBytes==RenewalFiles.ReadProtected(currentPath,16384,false,null,false),"RENEW_GENERATION_NOT_PINNED");
+      string resident = Renewal.Str(current,"residentManifestSha256");
+      string exe = Path.Combine(root,@"bin\CluedCompanionSupervisor.exe");
+      string lockFile = Path.Combine(root,@"bin\companion-supervisor.lock");
+      bool supervisor = false;
+      try {
+        RenewalFiles.CheckParents(exe);
+        NodeProfilePublicFileV2.ValidateBootstrapAcl(File.GetAccessControl(exe).GetSecurityDescriptorBinaryForm(),exe);
+        var desc = File.GetAccessControl(lockFile).GetSecurityDescriptorBinaryForm();
+        NodeProfilePublicFileV2.ValidateBootstrapAcl(desc,lockFile);
+        supervisor = (File.GetAttributes(exe)&FileAttributes.ReparsePoint)==0 &&
+          (File.GetAttributes(lockFile)&FileAttributes.ReparsePoint)==0 &&
+          ShaFile(exe)==Renewal.Str(receipt,"companionSupervisorSha256");
+      } catch { /* No qualified supervisor readback. */ }
+      var upgrade = ReadFleetUpgradeState();
+      return new Dictionary<string,object> {
+        {"schemaVersion",1},{"observedAt",Renewal.Stamp(DateTime.UtcNow)},{"nodeId",live.Node},
+        {"bindingGeneration",live.Generation},{"installReceiptSha256",receiptSha},
+        {"installGeneration",Renewal.Number(current,"generation")},
+        {"windowsSourceSha256",Renewal.Str(current,"ciSourceManifestSha256")},
+        {"supervisorSourceSha256",supervisor ? Renewal.Str(receipt,"companionSupervisorSourceSha256") : null},
+        {"acl",true},{"connectionCarry",true},
+        {"operations",fleetPullRequestId!=null ? (object)false : upgrade},
+        {"processClearance",InspectFleetLocks(config.Node.OwnerSid,resident,receiptSha)}
+      };
+    }
+    bool? ReadFleetUpgradeState() {
+      try {
+        string raw=RenewalFiles.ReadProtected(Path.Combine(root,@"upgrade\status.json"),262144,false,null,false);
+        var status=Renewal.Object(raw);
+        object active;
+        if (!status.TryGetValue("op",out active)) return null;
+        if (active==null) return true;
+        string state=Renewal.Str(active as Dictionary<string,object>,"state");
+        switch (state) {
+          case "WAITING_GRANT": case "WAITING_DRAIN": case "DEFERRED": case "RUNNING": case "ROLLING_BACK": return false;
+          case "SUCCEEDED": case "SUCCEEDED_STILL_PAUSED": case "REFUSED": case "GRANT_REJECTED":
+          case "GRANT_EXPIRED": case "CANCELLED": case "STALE": case "ROLLED_BACK_PAUSED": return true;
+          default: return null;
+        }
+      } catch { return null; }
+    }
+    bool? InspectFleetLocks(string ownerSid,string resident,string receiptSha) {
+      try {
+        string manifest=RenewalFiles.ReadProtected(Path.Combine(root,@"config\resident-installed-manifest.json"),262144,false,null,false);
+        if (Renewal.Digest(manifest)!=resident) return null;
+        var files=Renewal.Object(manifest)["files"] as object[];
+        const string rel="windows/fleet-file-locks.ps1";
+        var entry=files.Cast<Dictionary<string,object>>().Single(row=>Renewal.Str(row,"path")==rel);
+        var script=Path.Combine(root,"resident",resident,@"windows\fleet-file-locks.ps1");
+        var raw=RenewalFiles.ReadProtected(script,262144,false,null,false);
+        if (Renewal.Digest(raw)!=Renewal.Str(entry,"sha256")) return null;
+        var psi=new System.Diagnostics.ProcessStartInfo(@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+          "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \""+script+"\" -Root \""+root+
+          "\" -ExpectedInstallReceiptSha256 "+receiptSha+" -CompanionSid "+ownerSid);
+        psi.UseShellExecute=false; psi.CreateNoWindow=true;
+        psi.RedirectStandardOutput=true; psi.RedirectStandardError=true;
+        using (var child=System.Diagnostics.Process.Start(psi)) {
+          var output=child.StandardOutput.ReadToEndAsync();
+          var error=child.StandardError.ReadToEndAsync();
+          if (!child.WaitForExit(30000)) { child.Kill(); return null; }
+          if (child.ExitCode!=0 || !output.Wait(1000) || !error.Wait(1000) || output.Result.Length>262144) return null;
+          var readback=Renewal.Object(output.Result);
+          if (Renewal.Str(readback,"status")!="OBSERVED" ||
+              Renewal.Str(readback,"contract")!="clued.independent-ci.rehearsal-file-locks/1" ||
+              Renewal.Str(readback,"coverage")!="installed-public-binaries-only" ||
+              !object.Equals(readback["secretsEnumerated"],false) || Renewal.Number(readback,"fileCount")<1) return null;
+          var external=readback["external"] as object[];
+          var unknown=readback["unknownProcesses"] as object[];
+          if (external==null || unknown==null) return null;
+          return external.Length==0 && unknown.Length==0;
+        }
+      } catch { return null; }
+    }
+
     int renewalBusy;
     readonly Renewal.StandbyConfirmation standbyConfirmation = new Renewal.StandbyConfirmation();
     volatile string renewalRequestId;
@@ -792,6 +888,21 @@ internal static class Renewal
         Require(old.WindowOpens.HasValue && old.WindowOpens.Value<=old.Expires,"RENEW_CONNECTION_MISMATCH");
         return now>=old.WindowOpens.Value;
     }
+    internal static void ValidateCurrentCi(Context ctx,Connection old,string actual,string record) {
+        if(record != null) {
+            var previous=Object(record);
+            var sorted=new SortedDictionary<string,object>(previous,StringComparer.Ordinal);
+            Require(previous.Count==8 && previous.ContainsKey("previousSha256") && Json(sorted)==record &&
+                (previous["previousSha256"]==null || NodeProfileV2.Hash(Str(previous,"previousSha256"))) &&
+                Id(Str(previous,"rebindReceiptId")) && Stamp(Expires(Str(previous,"activatedAt")))==Str(previous,"activatedAt") &&
+                Str(previous,"contract")=="clued.independent-ci.ci-connection/1" && Str(previous,"baseNodeIdentitySha256")==ctx.Identity &&
+                Str(previous,"bindingId")==old.Binding && Number(previous,"bindingGeneration")==old.Generation && Str(previous,"tokenPinSha256")==Pin(actual),
+                "RENEW_CURRENT_TOKEN_REFUSED");
+        } else if(ctx.BaselineBinding!=null) {
+            Require(old.Binding==ctx.BaselineBinding && Pin(actual)==ctx.BaselinePin,"RENEW_CURRENT_TOKEN_REFUSED");
+        }
+    }
+
     internal static Connection Run(Context ctx, Store store, Func<DateTime> clock, Func<string,Connection> probe,
         Func<Intent,string,Connection> renew, Action<string,Connection> verify, Func<Connection,string,bool> prepareCi,
         Func<Intent,string,Connection> recover=null)
@@ -807,20 +918,7 @@ internal static class Renewal
         if (raw == null) {
             var old = probe(currentHash);
             Require(Id(old.Project) && Id(old.Node) && Id(old.Binding) && old.Generation > 0,"RENEW_CONNECTION_MISMATCH");
-            if(ctx.Kind == "ci") {
-                if(record != null) {
-                    var previous=Object(record);
-                    var sorted=new SortedDictionary<string,object>(previous,StringComparer.Ordinal);
-                    Require(previous.Count==8 && previous.ContainsKey("previousSha256") && Json(sorted)==record &&
-                        (previous["previousSha256"]==null || NodeProfileV2.Hash(Str(previous,"previousSha256"))) &&
-                        Id(Str(previous,"rebindReceiptId")) && Stamp(Expires(Str(previous,"activatedAt")))==Str(previous,"activatedAt") &&
-                        Str(previous,"contract")=="clued.independent-ci.ci-connection/1" && Str(previous,"baseNodeIdentitySha256")==ctx.Identity &&
-                        Str(previous,"bindingId")==old.Binding && Number(previous,"bindingGeneration")==old.Generation && Str(previous,"tokenPinSha256")==Pin(actual),
-                        "RENEW_CURRENT_TOKEN_REFUSED");
-                } else if(ctx.BaselineBinding!=null) {
-                    Require(old.Binding==ctx.BaselineBinding && Pin(actual)==ctx.BaselinePin,"RENEW_CURRENT_TOKEN_REFUSED");
-                }
-            }
+            if(ctx.Kind == "ci") ValidateCurrentCi(ctx,old,actual,record);
             if(!WindowOpen(old,clock())) return old;
             if (ctx.Kind == "ci" && !prepareCi(old,currentHash)) return old;
             intent = new Intent { Kind=ctx.Kind, Identity=ctx.Identity, Project=old.Project, Fingerprint=ctx.Fingerprint,

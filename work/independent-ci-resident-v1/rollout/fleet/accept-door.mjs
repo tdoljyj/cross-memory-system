@@ -132,7 +132,10 @@ export function readAnswer(answer, { resource, requestSha256 }) {
     { status: 'accepted', note: 'grant_id and receipt_id: two different UUIDs' });
   const at = TIME.test(answer.accepted_at ?? '') ? Date.parse(answer.accepted_at) : NaN;
   check(Number.isFinite(at), 'ACCEPT_DOOR_ANSWER_REFUSED', { status: 'accepted', accepted_at: answer.accepted_at ?? null });
+  const sealed = answer.sealed_acceptance_sha256;
+  check(sealed == null || HEX64.test(sealed), 'ACCEPT_DOOR_ANSWER_REFUSED', { status: 'accepted', note: 'invalid sealed acceptance digest' });
   return { kind: 'accepted', grantId: answer.grant_id, receiptId: answer.receipt_id, acceptedAtMs: at,
+    ...(sealed == null ? {} : { sealedAcceptanceSha256: sealed }),
     acceptedAt: new Date(Math.floor(at / 1000) * 1000).toISOString().replace('.000Z', 'Z') };
 }
 

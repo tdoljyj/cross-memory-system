@@ -698,12 +698,13 @@ test('拒读、代次冲突和旧安装回执发生在 W1 前', async t => {
     assert.equal(py.pauses.length, 0);
   }
 });
-test('普通权限 prepare 沿用旧常驻的 Broker 观测，生成连接摘要而无需读取专用记录', async t => {
+test('普通权限 prepare 接受上一代 Source 的 Broker 观测，无需读取专用记录', async t => {
   const w = await getWorld(), now = Date.parse('2026-11-27T01:00:00Z');
   const n = await nodeSite(t, 'a', fleetFacts(), { now });
   const cur = readJson(path.join(n.root, 'upgrade', 'current.json'));
   const bindingId = '11111111-1111-4111-8111-111111111111';
-  const facts = { at: now - 10_000, source: cur.ciSourceManifestSha256, bindingId, expiresAt: '2026-11-30T00:00:00Z' };
+  const facts = { at: now - 10_000, source: 'f'.repeat(64), bindingId, expiresAt: '2026-11-30T00:00:00Z' };
+  assert.notEqual(facts.source, cur.ciSourceManifestSha256);
   await fs.mkdir(path.join(n.root, 'state'), { recursive: true });
   await fs.writeFile(path.join(n.root, 'state', 'connection-renewal.json'), JSON.stringify({
     pending: null, lanes: { ci: { ...facts, waiting: false, code: null } },

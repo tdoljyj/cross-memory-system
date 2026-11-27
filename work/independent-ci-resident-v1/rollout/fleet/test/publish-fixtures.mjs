@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepare, readBuild, seal, stageNodeEntry } from '../publish.mjs';
 import { writeTar } from '../tar.mjs';
+import { TREE_FILES, UNIVERSAL_CONTRACT } from '../universal.mjs';
 import { FAKE_GH, runFakeGh } from './fleet-fixtures.mjs';
 
 const IMAGE = 'c'.repeat(64);
@@ -18,28 +19,40 @@ const FLEET = 'tree/work/independent-ci-resident-v1/rollout/fleet/';
 const BOOTSTRAP = Buffer.from('# bootstrap.ps1 of the accepted commit\r\nparam([string]$From)\r\n');
 const PREREQ = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-prereq-manifest/1', items: [] }) + '\n');
 
-function makeBuild() {
+function makeBuild(version = VERSION) {
+  const tag = `fleet-node-${version}`;
   // the archive carries the commit's bootstrap.ps1 and prereq-manifest.json: publish takes those bytes, never a working-tree copy
-  const tar = writeTar([{ path: `${FLEET}bootstrap.ps1`, data: BOOTSTRAP }, { path: `${FLEET}prereq-manifest.json`, data: PREREQ },
-    { path: 'universal-manifest.json', data: Buffer.from('{}') }]);
-  const source = { version: VERSION, release_tag: TAG, archive_sha256: sha(tar), commit: COMMIT, resident_manifest_sha256: '2'.repeat(64),
-    source_manifest_sha256: '3'.repeat(64), upgrader_manifest_sha256: '4'.repeat(64), bundle_sha256: '5'.repeat(64), universal_files_sha256: '6'.repeat(64) };
-  const release = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-release/1', source, archive: { name: `${TAG}.tar`, bytes: tar.length, sha256: sha(tar) } }, null, 1) + '\n');
+  const entries = [{ path: `${FLEET}bootstrap.ps1`, data: BOOTSTRAP }, { path: `${FLEET}prereq-manifest.json`, data: PREREQ }];
+  const numbered = version !== VERSION;
+  if (numbered) {
+    for (const name of new Set(TREE_FILES)) {
+      const path = `tree/${name}`;
+      if (!entries.some(entry => entry.path === path)) entries.push({ path, data: Buffer.from('pinned fixture\n') });
+    }
+  }
+  const manifest = numbered ? { contract: UNIVERSAL_CONTRACT, version, commit: COMMIT, releaseTag: tag,
+    files: entries.map(({ path, data }) => ({ path, bytes: data.length, sha256: sha(data) })) } : {};
+  const tar = writeTar([...entries, { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify(manifest)) }]);
+  const source = { version, release_tag: tag, archive_sha256: sha(tar), commit: COMMIT, resident_manifest_sha256: '2'.repeat(64),
+    source_manifest_sha256: '3'.repeat(64), upgrader_manifest_sha256: '4'.repeat(64), bundle_sha256: '5'.repeat(64), universal_files_sha256: '6'.repeat(64),
+    ...(numbered ? { built_at: '2026-11-25T00:00:00.000Z' } : {}) };
+  const release = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-release/1', source, archive: { name: `${tag}.tar`, bytes: tar.length, sha256: sha(tar) } }, null, 1) + '\n');
   return { tar, source, files: {
-    [`${TAG}.tar`]: tar,
-    [`${TAG}.release.json`]: release,
-    SHA256SUMS: `${sha(release)}  ${TAG}.release.json\n${source.archive_sha256}  ${TAG}.tar\n`,
+    [`${tag}.tar`]: tar,
+    [`${tag}.release.json`]: release,
+    SHA256SUMS: `${sha(release)}  ${tag}.release.json\n${source.archive_sha256}  ${tag}.tar\n`,
   } };
 }
 
 const BUILD = makeBuild();
-async function world(t) {
+async function world(t, version = VERSION) {
+  const build = version === VERSION ? BUILD : makeBuild(version);
   const d = await fs.mkdtemp(path.join(os.tmpdir(), 'fleetpub'));
   t.after(() => fs.rm(d, { recursive: true, force: true }));
   const out = path.join(d, 'out');
   await fs.mkdir(out);
   // Each case gets private copies so corrupt-build cases can rewrite them.
-  await Promise.all(Object.entries(BUILD.files).map(([name, bytes]) => fs.writeFile(path.join(out, name), bytes)));
+  await Promise.all(Object.entries(build.files).map(([name, bytes]) => fs.writeFile(path.join(out, name), bytes)));
   const index = path.join(d, 'index.md');
   await fs.writeFile(index, '| 版本 | Release | tar sha256 | commit | 接受时间 |\r\n|---|---|---|---|---|\r\n');
   const fake = path.join(d, 'fake-gh.mjs');
@@ -47,7 +60,7 @@ async function world(t) {
   const state = path.join(d, 'gh-state.json');
   const calls = async () => { try { return JSON.parse(await fs.readFile(state, 'utf8')).calls; } catch { return []; } };
   const assets = async () => { try { return JSON.parse(await fs.readFile(state, 'utf8')).assets; } catch { return []; } };
-  return { d, out, build: out, tar: Buffer.from(BUILD.tar), source: { ...BUILD.source }, index, calls, assets, fake, state };
+  return { d, out, build: out, tar: Buffer.from(build.tar), source: { ...build.source }, index, calls, assets, fake, state };
 }
 
 const REPO = 'tdoljyj/cross-memory-system';
@@ -79,8 +92,9 @@ const FIX_DECISION = FIX.target_refs[0].id, FIX_RECEIPT = FIX.receipt_id, FIX_AC
 // the line DESK used to copy into a hand-written Decision (the generation-18 shape below names the request with it)
 const requestLine = hash => `acceptance-request ${TAG} sha256:${hash}`;
 // released: false leaves the Release and the index row to prepare (an empty gh state, an index with its header only)
-const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = 'b'.repeat(64), released = true, spawnGh = true } = {}) => {
-  const w = await world(t);
+const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = 'b'.repeat(64), released = true, spawnGh = true, version = VERSION } = {}) => {
+  const w = await world(t, version);
+  const tag = w.source.release_tag;
   if (released) await seedRelease(w, { row: true });
   const image = path.join(w.d, `role-image-${IMAGE}.tar.gz`);
   await fs.writeFile(image, Buffer.from('gzip of a docker save'));
@@ -116,7 +130,8 @@ const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = '
     const opens = opensNow();
     if (opens > door.opensSeen) { door.opensSeen = opens; if (['none', 'expired'].includes(door.status)) door.status = door.openTo; }
     if (door.status === 'pending') return { ...base, status: 'pending', request_id: requestId, confirm_path: `/confirm/${requestId}`, expires_at: door.expiresAt };
-    if (door.status === 'accepted') return { ...base, status: 'accepted', grant_id: door.grant, receipt_id: door.receipt, accepted_at: door.acceptedAt, nodes: door.nodes };
+    if (door.status === 'accepted') return { ...base, status: 'accepted', grant_id: door.grant, receipt_id: door.receipt, accepted_at: door.acceptedAt,
+      nodes: door.nodes, ...(door.sealedDigest ? { sealed_acceptance_sha256: door.sealedDigest } : {}) };
     return { ...base, status: door.status };
   };
   const readStatus = async resource => {
@@ -126,17 +141,22 @@ const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = '
   };
   const deps = { kitOf, readKit: () => ({}), fleetMaterial: async () => ({ formalRoles, installed: { ...carried, ciSourceManifestSha256: templateSource } }),
     sourceHash: async args => { s.sourceDrafts.push(args); return { ciSourceManifestSha256: s.sourceOf }; }, readStatus };
+  if (version !== VERSION) {
+    const tags = new Map(['fleet-node-2026.11.26-5444c2ac', 'fleet-node-g000023', 'fleet-node-g000024'].map(name => [name, null]));
+    deps.generationTags = { list: async () => [...tags.keys()], read: async name => tags.get(name),
+      create: async claim => !tags.has(claim.release_tag) && !!tags.set(claim.release_tag, claim) };
+  }
   const opens = async () => (await w.calls()).filter(c => c.args[0] === 'workflow');
   // The default exercises subprocess timeouts and environment filtering with fake gh.
   const gh = spawnGh ? [process.execPath, w.fake] : fakeCommand(w.state);
-  const prep = (over = {}) => prepare({ version: VERSION, dir: w.out, out, images: [image], index: w.index, ghCommand: gh, deps, ...over });
-  const requestFile = path.join(out, `${TAG}.acceptance-request.json`);
+  const prep = (over = {}) => prepare({ version, dir: w.out, out, images: [image], index: w.index, ghCommand: gh, deps, ...over });
+  const requestFile = path.join(out, `${tag}.acceptance-request.json`);
   const kitAssets = async () => (await w.assets()).filter(a => a.name === `${TAG}.first-install-kit.json`);
   const setState = async edit => { const f = path.join(w.d, 'gh-state.json'); const st = JSON.parse(await fs.readFile(f, 'utf8')); edit(st); await fs.writeFile(f, JSON.stringify(st)); };
   // seal through the door: no Decision record, no Decision, receipt or time anywhere
   const sealDoor = async (over = {}) => seal({ request: requestFile, index: w.index, ghCommand: gh, deps, ...over });
   const sealIt = sealDoor;
-  return { ...w, image, out, s, deps, prep, requestFile, sealIt, sealDoor, door, opens, kitAssets, carried, formalRoles, setState };
+  return { ...w, gh, image, out, s, deps, prep, requestFile, sealIt, sealDoor, door, opens, kitAssets, carried, formalRoles, setState };
 };
 const GRANT = 'a5a5a5a5-1111-4111-8111-0000000000a1', GRANT_RECEIPT = 'b6b6b6b6-2222-4222-8222-0000000000b2';
 const REQUEST_ASSET = `${TAG}.acceptance-request.json`;
@@ -145,7 +165,7 @@ const sealedNothing = async (w, indexBefore, uploadsBefore) => {
   assert.ok((await fs.readFile(w.index)).equals(indexBefore), 'the index is as it was');
   assert.equal((await uploadsOf(w)).length, uploadsBefore, 'nothing uploaded');
   assert.ok(!(await w.assets()).some(a => a.name.endsWith('.acceptance.json')), 'no acceptance on the Release');
-  await assert.rejects(fs.access(path.join(w.out, `${TAG}.acceptance.json`)), 'no acceptance next to the request');
+  await assert.rejects(fs.access(path.join(w.out, `${w.source.release_tag}.acceptance.json`)), 'no acceptance next to the request');
 };
 // a clock and a sleep for seal (deps.clock, deps.sleep): sleeping moves the clock; `onSleep` runs after each sleep
 const fakeTime = (start, onSleep = () => {}) => {

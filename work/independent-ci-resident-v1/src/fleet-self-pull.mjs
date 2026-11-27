@@ -7,6 +7,7 @@ import { writeObservation } from './connection-renewal.mjs';
 import { acceptanceBytes, acceptanceOf, REQUEST_CONTRACT, REQUEST_FLEET_REFS } from './fleet-acceptance.mjs';
 import { refuseUnderTest } from './production-root-guard.mjs';
 import { readBounded } from './store.mjs';
+import { packageGenerationOf } from './selfcheck.mjs';
 import { fetchFleetReleaseAsset, sha256File } from '../rollout/fleet/fetch.mjs';
 
 const VERSION = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,88}$/;
@@ -17,6 +18,7 @@ const LIMIT = 30 * 60_000;
 const SMALL = 256 * 1024;
 const ARCHIVE_MAX = 512 * 1024 * 1024;
 const MOVING = new Set(['WAITING_GRANT', 'WAITING_DRAIN', 'DEFERRED', 'RUNNING', 'ROLLING_BACK']);
+const needsSeal = target => packageGenerationOf(target.version) >= 25;
 const read = async (filename, limit = SMALL) => {
   try { return JSON.parse(await readBounded(filename, limit, 'FLEET_READ_REFUSED')); }
   catch { return null; }
@@ -25,6 +27,7 @@ const read = async (filename, limit = SMALL) => {
 function saneTarget(target, repository) {
   return REPO.test(repository) && target?.repository === repository && VERSION.test(target.version ?? '')
     && HEX64.test(target.archive_sha256 ?? '') && HEX64.test(target.request_sha256 ?? '')
+    && (!needsSeal(target) || HEX64.test(target.acceptance_sha256 ?? ''))
     && UUID.test(target.grant_id ?? '') && UUID.test(target.receipt_id ?? '')
     && typeof target.accepted_at === 'string' && Number.isFinite(Date.parse(target.accepted_at));
 }
@@ -51,7 +54,9 @@ export function acceptanceFromTarget(target, bytes) {
   // Match seal's seconds precision, including PostgREST's offsets and fractional seconds.
   const at = Date.parse(target.accepted_at);
   const acceptedAt = new Date(Math.floor(at / 1000) * 1000).toISOString().replace('.000Z', 'Z');
-  return acceptanceOf(r, { decision: target.grant_id, receipt: target.receipt_id, acceptedAt });
+  const acceptance = acceptanceOf(r, { decision: target.grant_id, receipt: target.receipt_id, acceptedAt });
+  check(!needsSeal(target) || sha256(acceptanceBytes(acceptance)) === target.acceptance_sha256, 'FLEET_ACCEPTANCE_SEAL_MISMATCH');
+  return acceptance;
 }
 
 export const byTarget = (root, target) => path.join(root, 'bundles', 'fleet-pull', target.request_sha256);
@@ -83,6 +88,13 @@ export function companionSelfPull({ root, repository, clock = Date.now, download
         check(await fetch(files.request), 'FLEET_REQUEST_MISSING');
       }
       const acceptance = acceptanceFromTarget(target, await readBounded(requestFile, SMALL, 'FLEET_REQUEST_REFUSED'));
+      if (needsSeal(target)) {
+        const file = path.join(dir, files.acceptance);
+        if (await sha256File(file).catch(() => null) !== target.acceptance_sha256) {
+          check(await fetch(files.acceptance), 'FLEET_ACCEPTANCE_ASSET_MISSING');
+        }
+        check(await sha256File(file) === target.acceptance_sha256, 'FLEET_ACCEPTANCE_SEAL_MISMATCH');
+      }
       const tar = path.join(dir, files.tar);
       if (await sha256File(tar).catch(() => null) !== target.archive_sha256) {
         check(await fetch('SHA256SUMS'), 'FLEET_SUMS_MISSING');
@@ -94,7 +106,7 @@ export function companionSelfPull({ root, repository, clock = Date.now, download
       await writeObservation(path.join(dir, 'ready.json'), { grantId: target.grant_id });
       done = target.grant_id;
       // Existing acceptance bytes are never the authority and are never overwritten on the Release.
-      if (!(await fetch(files.acceptance))) {
+      if (!needsSeal(target) && !(await fetch(files.acceptance))) {
         const file = path.join(dir, files.acceptance);
         await fs.writeFile(file, acceptanceBytes(acceptance));
         await upload({ tag: files.tag, file });
