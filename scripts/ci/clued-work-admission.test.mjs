@@ -407,7 +407,7 @@ test("admission accepts the exact controls preregistered on main even if absent 
   assert.equal(accepted.calls.filter(call => call.url === `${api}/git/ref/heads/main`).length, 2);
 
   await t.test("resident stage 1 returns complete admission using the installed evaluator", async () => {
-    const now = Date.now(), observedAt = new Date(now).toISOString();
+    const observedAt = "2026-11-27T00:00:00Z", now = Date.parse(observedAt);
     const sourceManifestSha256 = "d".repeat(64);
     const ciPrincipalBindingId = crypto.randomUUID(), ciPrincipalQualificationRef = "fixture-principal";
     const supabaseUrl = "https://stage-one.invalid";
@@ -427,6 +427,7 @@ test("admission accepts the exact controls preregistered on main even if absent 
         policyText, policySha256: sha256Hex(policyText), evaluatorSha256: sha256Hex(fs.readFileSync(new URL("./clued-work-admission.mjs", import.meta.url), "utf8")),
         ciPrincipalBindingId, ciPrincipalQualificationRef, supabaseUrl, publishableKey: "sb_publishable_fixture" },
       clock: () => now,
+      monotonic: () => 0,
       tokenProvider: async () => ({ githubToken: "fixture-token", ciAdmissionToken: "clued_bnd_aaaaaaaa", ciPrincipalBindingId, ciPrincipalQualificationRef }),
       modeProvider: async () => ({ complete: true, repository: CONTROL_REPO, variable: "CLUED_MERGE_ADMISSION_STATE",
         source: "github-repository-variables", exists: false, observedAt, proofRef: "fixture-mode" }),

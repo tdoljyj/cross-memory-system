@@ -22,6 +22,10 @@ function Expect-Refusal([string]$code, [scriptblock]$operation) {
 function Write-JsonFixture([string]$file, $value) {
   [IO.File]::WriteAllText($file, ($value | ConvertTo-Json -Compress -Depth 8), $U8)
 }
+function Get-DrillTime { [DateTimeOffset]::Parse('2026-11-27T01:00:00Z') }
+function Use-FixtureClock([string]$source) {
+  $source -creplace '\[DateTimeOffset\]::UtcNow\b', '(Get-DrillTime)'
+}
 
 function Read-CiPrivateBytes([string]$file, [string]$sid) {
   if ($sid -cne $ControllerSid) { throw 'FIXTURE_CONTROLLER_SID' }
@@ -93,7 +97,7 @@ $names = @('Sha256Bytes','Get-FleetCiPlan','Get-FleetCiProofPath','Read-FleetCiV
   'Get-FleetCiVerified','Assert-CiInstallBaseline','Assert-FleetCiConnection','Confirm-FleetCiBeforeLinuxB','Restore-FleetCiBrokerBeforeLinuxB',
   'Wait-Until','Get-ScState','Read-FleetFileChecked','Get-FileSha','Step-Install','Stop-Launch')
 foreach ($fn in Read-Functions $launcher $names) {
-  . ([scriptblock]::Create($fn.Extent.Text.Replace($productionSddl, $fixtureSddl)))
+  . ([scriptblock]::Create((Use-FixtureClock $fn.Extent.Text).Replace($productionSddl, $fixtureSddl)))
 }
 $verdict = Read-Functions (Join-Path $SourceRoot 'rollout\fleet\bootstrap.ps1') @('Get-LauncherVerdict')
 . ([scriptblock]::Create($verdict.Extent.Text))
@@ -110,6 +114,7 @@ $private = (Read-Functions $verifier @('Read-CiPrivateBytes')).Extent.Text
 $privateStub = (Read-Functions $PSCommandPath @('Read-CiPrivateBytes')).Extent.Text
 $proofSource = (Read-Functions $verifier @('Read-CiReinstallEvidence')).Extent.Text
 $fixtureProofSource = $proofSource.Replace($productionSddl, $fixtureSddl).Replace('S-1-5-32-544', $ControllerSid)
+$applyProofSource = (Read-Functions $verifier @('Read-CiReinstallApplyProof')).Extent.Text
 . ([scriptblock]::Create($fixtureProofSource))
 foreach ($fn in Read-Functions $verifier @('Get-EffectiveCiPrincipal','Get-CiAdmissionTokenPin','Read-CiReinstallProof')) {
   . ([scriptblock]::Create($fn.Extent.Text))
@@ -124,7 +129,8 @@ foreach ($dir in @('secrets','resident\state','resident\secrets','resident\upgra
   $null = [IO.Directory]::CreateDirectory((Join-Path $CiRoot $dir))
 }
 $verifyPath = Join-Path $PackageRoot 'verify-resident.ps1'
-[IO.File]::WriteAllText($verifyPath, [IO.File]::ReadAllText($verifier).Replace($private, $privateStub).Replace($proofSource, $fixtureProofSource), $U8)
+$fixtureVerifySource = [IO.File]::ReadAllText($verifier).Replace($private, $privateStub).Replace($proofSource, $fixtureProofSource)
+[IO.File]::WriteAllText($verifyPath, $fixtureVerifySource.Replace($applyProofSource, (Use-FixtureClock $applyProofSource)), $U8)
 $verifySha = Get-FileSha $verifyPath
 $Staged = @{ 'verify-resident.ps1' = @('verify-resident.ps1', $verifySha) }
 $NodeName = 'FIXTURE-NODE'
@@ -158,7 +164,7 @@ $record = [ordered]@{
 }
 Write-NewSecret $RecordFile ($U8.GetBytes(($record | ConvertTo-Json -Compress))) $fixtureSddl
 $script:ServerReply = [pscustomobject]@{ status = 'ok'; contract = 'clued.ci.connection-self/1'; binding_id = $record.bindingId
-  connection_expires_at = [DateTimeOffset]::UtcNow.AddHours(1).ToString('o'); node = [pscustomobject]@{
+  connection_expires_at = (Get-DrillTime).AddHours(1).ToString('o'); node = [pscustomobject]@{
     name = $NodeName; node_id = '33333333-3333-4333-8333-333333333333'; identity_fingerprint = '4' * 64; state = 'active'
     rebind_receipt_id = $record.rebindReceiptId; binding_generation = $record.bindingGeneration
   }
@@ -337,7 +343,7 @@ switch -CaseSensitive ($Scenario) {
     $CiReinstallApplyProofSha256 = Get-FileSha $CiReinstallApplyProof
     Expect-Refusal 'CI_CONNECTION_APPLY_PROOF_CHANGED' { Assert-ProtectedCiReinstall }
     $changed.phase = 'before-windows-apply'
-    $changed.expiresAt = [DateTimeOffset]::UtcNow.AddSeconds(-10).ToString('o')
+    $changed.expiresAt = (Get-DrillTime).AddSeconds(-10).ToString('o')
     Write-JsonFixture $CiReinstallApplyProof $changed
     $CiReinstallApplyProofSha256 = Get-FileSha $CiReinstallApplyProof
     Expect-Refusal 'CI_CONNECTION_APPLY_PROOF_EXPIRED' { Assert-ProtectedCiReinstall -Commit }

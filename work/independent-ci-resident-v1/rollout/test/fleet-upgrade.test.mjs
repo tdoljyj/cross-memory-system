@@ -417,8 +417,9 @@ test('fleet upgrade: --no-request, an open operation, a refusal and a reinstall 
   await untouched('a refusal');
   assert.equal(q.calls.length, 0);
 });
-test('缺少监督器证明且重装不可用时，冻结通道仍可升级但不能证明本代完整交付', { timeout: 900_000 }, async t => {
-  const w = await getWorld(), n = await nodeSite(t, 'a', w.fleet);
+test('缺少监督器证明且重装不可用时，冻结通道仍可升级但不能证明本代完整交付', async t => {
+  const clock = fakeClock(Date.parse('2026-11-27T00:01:00Z'));
+  const w = await getWorld(), n = await nodeSite(t, 'a', w.fleet, { now: clock.now });
   const file = path.join(n.root, 'install', 'install-receipt.json');
   const receipt = await readJson(file);
   delete receipt.companionSupervisorSourceSha256;
@@ -427,7 +428,7 @@ test('缺少监督器证明且重装不可用时，冻结通道仍可升级但�
   const curFile = path.join(n.root, 'upgrade', 'current.json');
   await fs.writeFile(curFile, JSON.stringify({ ...await readJson(curFile), installReceiptSha256: sha(bytes) }));
   const q = requester();
-  const r = await upgrade(w, n, { request: q.request, checkReinstall: async () => ({ status: 'UNKNOWN' }) });
+  const r = await upgrade(w, n, { now: clock.now, request: q.request, checkReinstall: async () => ({ status: 'UNKNOWN' }) });
   assert.equal(r.status, 'FLEET_NODE_UPGRADE_REQUESTED', JSON.stringify(r).slice(0, 1500));
   assert.equal(r.capabilities.companionSupervisor, 'UNPROVEN');
   assert.equal(r.capabilities.complete, false);
