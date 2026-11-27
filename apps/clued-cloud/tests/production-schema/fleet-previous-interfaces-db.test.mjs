@@ -6,7 +6,7 @@ import { previousInterfaceCheck, PREVIOUS_INTERFACE_TIMEOUT_MS } from '../../../
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 
-test('第 26 代接口在候选提交的迁移上真跑且零跳过', { timeout: PREVIOUS_INTERFACE_TIMEOUT_MS + 30_000 }, async () => {
+test('第 26 代接口在候选提交的迁移上真跑且零跳过', async () => {
   const resolveCommit = (ref) => execFileSync('git', ['rev-parse', '--verify', `${ref}^{commit}`], {
     cwd: root, encoding: 'utf8',
   }).trim();
