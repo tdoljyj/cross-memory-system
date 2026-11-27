@@ -111,6 +111,7 @@ import { deliveryProjectionReaders, deliveryRequirements } from './delivery-read
 import { deliveryWorkflowClient } from './delivery-workflow.mjs';
 import { RESIDENT } from './facts.mjs';
 import { DEFAULT_ROOT, firstInstallKitOf, installedFleetMaterial, readArchive, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
+import { fleetReleaseWorkflow, reconcileFleetRelease } from './release-migration-workflow.mjs';
 import { readTar } from './tar.mjs';
 import { previousTransportVersion, TRANSPORT } from './fetch.mjs';
 import { stageTransport } from './transport-assets.mjs';
@@ -691,7 +692,7 @@ async function writeAtomic(file, bytes) {
 // The first half of an acceptance (see the head of this file). `deps` is for tests only (the kit and the record material of a fixture node, a
 // stand-in for the archive's source-hash); the command line cannot reach it.
 export async function prepare({ version, dir, out, images = [], transportBase = null, repo = DEFAULT_REPO, index = DEFAULT_INDEX, root = DEFAULT_ROOT, ghCommand = ['gh'],
-  now = Date.now(), deps = {} }) {
+  now = Date.now(), deps = {} }, beforePublish) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
   check(VERSION.test(version ?? ''), 'PUBLISH_VERSION_REFUSED');
   const build = await readBuild(dir);
@@ -766,7 +767,8 @@ export async function prepare({ version, dir, out, images = [], transportBase = 
       files.set(id, f);
     }
     lap(3);
-    // 4. all checks passed: the Release and the index row of this build, made or completed (only the tag fleet-node-<v> and this row)
+    // 4. The formal entry reconciles production for the staged commit before any tag, Release or index write.
+    const migrationAdmission = await beforePublish?.();
     if (numbered) {
       checkCommitOnMain(ghCommand, repo, s.commit);
       await reservePackageGeneration(generationTags, s);
@@ -789,7 +791,7 @@ export async function prepare({ version, dir, out, images = [], transportBase = 
     await writeAtomic(requestFile, requestBytes);
     return { status: 'FLEET_ACCEPTANCE_REQUEST_WRITTEN', version, request: requestFile, directory: out, kitFrom: kitFromRelease ? 'release' : 'node',
       firstInstallKitSha256: request.firstInstallKitSha256, ciSourceManifestSha256: request.ciSourceManifestSha256, images: attached.images,
-      requestSha256: sha(requestBytes) };
+      requestSha256: sha(requestBytes), ...(migrationAdmission && { migrationAdmission: { commit: s.commit, ...migrationAdmission } }) };
   } finally {
     await fs.rm(stage, { recursive: true, force: true });
   }
@@ -1146,7 +1148,10 @@ export async function prepareCommit({ commit, dir, out, repo = DEFAULT_REPO, ghC
   const { release } = await readBuild(dir);
   const s = release.source;
   check(s.commit === commit && packageGenerationOf(s.version) > BASELINE_GENERATION, 'PREPARE_BUILD_NOT_THIS_COMMIT', s.commit);
-  return prepare({ ...options, version: s.version, dir, out, repo, ghCommand, deps: { ...deps, generationTags } });
+  const beforePublish = () => reconcileFleetRelease(deps.release ?? fleetReleaseWorkflow({
+    repository: repo, commit, directory: dir, runGh: (args, timeout) => gh(ghCommand, args, timeout),
+  }));
+  return prepare({ ...options, version: s.version, dir, out, repo, ghCommand, deps: { ...deps, generationTags } }, beforePublish);
 }
 
 export async function main(argv, deps = {}) {
