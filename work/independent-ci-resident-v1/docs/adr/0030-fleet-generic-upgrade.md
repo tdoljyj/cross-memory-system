@@ -1,6 +1,7 @@
 # ADR 0030：通用升级：同一个通用包、同一份接受文件，已装节点原地升级，零 UAC
 
 - 状态：已实现（分支 `claude/fleet-generic-upgrade`，未发布、未安装）
+- 封存舰队的跨节点 Source、接班及升级顺序以 Owner 决定 `d398d049` 为准。无封存记录时沿用历史同源规则。见[运维手册 §5.1](../runbook.md#51-当班包不合格或无法核实)。
 - 日期：2026-11-13
 - Owner Decision：统领原则（`42d5bf8d`）；节点只有两条路：通用升级，升不了就删干净用通用安装包重装，操作单位是“对全部登记节点发同一个通用包”（`b5d041d2`）
 - 代码：`rollout/fleet/upgrade.mjs`（新，取代 `rollout/fleet/assemble.mjs`）、`rollout/precheck.mjs`（已装包目录改为可选）、`rollout/fleet/install.mjs`（`recordInputsFor` 带出 `validUntil`）、`rollout/fleet/universal.mjs`（包内文件清单）

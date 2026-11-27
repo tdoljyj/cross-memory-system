@@ -7,11 +7,8 @@
 //        [--handover-issued-at <ISO>] [--ack-op <opId> ...]   (an op the Owner has looked at: its outcome no longer blocks)
 //
 // `next` is a pure function of the plan, one fresh observation per node and the clock. It names the one next step: UPGRADE a node,
-// WAIT, DONE or BLOCKED. The STANDBY nodes go first, one at a time (the same rule for any number of nodes, Decision d6eef30e); the
-// holder goes last, in place, with ciPause: ci-admission is never handed to a node on another Source (the server refuses it,
-// migration 20261114120000: ci_admission_target_source_not_accepted), and while the nodes run different Sources the train stands
-// still anyway (TRAIN_SOURCE_MISMATCH). With no upgraded, healthy STANDBY the holder is upgraded only when the Owner chose to pause CI
-// (--allow-active-upgrade). A hand-over the Owner wants (between nodes of one Source) is made before the rollout starts.
+// 封存舰队等待服务端完成交班、后备验证和摘牌。没有封存历史时，旧流程先升级备班，
+// 再在已允许的停机窗口内升级当班。
 //
 // Nothing here admits anything: the Owner's Grant on the KooYomi page (one per node and package, resource ci-resident:<node>/<sha>)
 // admits each upgrade. This tool only says what is due.
@@ -128,7 +125,20 @@ export async function observe(root, clock = Date.now) {
     } catch { unreadable.push('upgrade/status.json'); }
   } else if (up.error !== 'missing') unreadable.push('upgrade/status.json');
   else upgrade = { op: null, last: null };
-  return { contract: OBSERVATION_CONTRACT, observedAt: iso(clock()), node: resident?.node ?? null, resident, generation, upgrade, unreadable };
+  const broker = await readOrNull(path.join(root, 'broker', 'renew-ci.json'), 262144);
+  let sealedFleet;
+  if (broker.bytes) {
+    try {
+      const record = JSON.parse(broker.bytes.toString('utf8'));
+      if (record.fleetTarget?.holder_package || record.fleetTarget?.acceptance_sha256) {
+        const age = clock() - Date.parse(record.at);
+        sealedFleet = { fresh: age >= 0 && age <= OBSERVATION_FRESH_MS && record.code === null,
+          classification: record.fleetTarget.holder_package?.classification ?? null,
+          maintenance: record.fleetTarget.holder_package?.maintenance ?? null };
+      }
+    } catch { unreadable.push('broker/renew-ci.json'); }
+  }
+  return { ...(sealedFleet ? { sealedFleet } : {}), contract: OBSERVATION_CONTRACT, observedAt: iso(clock()), node: resident?.node ?? null, resident, generation, upgrade, unreadable };
 }
 
 export function validateObservation(v) {
@@ -201,6 +211,13 @@ export function nextStep(plan, observations, now, { allowActiveUpgrade = false, 
   if (active.length > 1) return handoverPending ? out('WAIT', { code: 'ROLLOUT_HANDOVER_PENDING', nodes: active.map(r => r.node) }) : out('BLOCKED', { code: 'ROLLOUT_TWO_ACTIVE', nodes: active.map(r => r.node) });
   const uncertain = rows.find(r => r.mode === 'UNCERTAIN');
   if (uncertain) return out('WAIT', { code: 'ROLLOUT_NODE_UNCERTAIN', node: uncertain.node });
+  if (observations.some(o => o.sealedFleet)) {
+    const pending = rows.find(r => {
+      const seal = byNode.get(r.node).sealedFleet;
+      return !r.atTarget || !seal?.fresh || seal.classification !== 'current' || seal.maintenance !== 'available';
+    });
+    if (pending) return out('WAIT', { code: 'ROLLOUT_SEALED_ROTATION', node: pending.node });
+  }
   if (rows.every(r => r.atTarget)) {
     const skew = rows.find(r => r.consistent !== true);
     if (skew) return out('WAIT', { code: 'ROLLOUT_VERSIONS_NOT_CONSISTENT', node: skew.node, consistent: skew.consistent });

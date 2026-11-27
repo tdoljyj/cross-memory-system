@@ -25,12 +25,12 @@
 |---|---|---|
 | 接受这一版 | 在 Clued 确认页批准一次 `fleet.accept`（页上写版本、哈希与后果：全部登记节点原地升级，当班节点升级时 CI 暂停几分钟）。口头“接受”、手写的 Decision 都不起作用 | 无 |
 | 每台节点升级 | 自动审批开着：什么都不做。没开：在该节点 `upgrade\status.json` 的 `confirmUrl` 页面点一次批准 | 无 |
-| 当班节点 | 不另问：确认页那一下已含当班节点升级时的 CI 暂停。它最后升（其余节点都到接受的 Source、都没停在暂停时才动）。服务端不把 ci-admission 移交给 Source 与全队不同的节点（迁移 `20261114120000`），所以要移交只能在开始前、两台还是同一 Source 时做 | 无 |
+| 当班节点 | 可用包当班可继续落地，有健康空闲的当前包备班时排空交班。旧方留作后备，服务端放行清理后才升级。 | 单机删旧重装须明确确认 |
 | 升级回滚了（`ROLLED_BACK_PAUSED`） | 看原因；恢复该节点 | 无 |
 
 自动审批的边界（服务端现有规则）：每节点 24 小时内自动批 6 次；同一个包第二次请求、或上一次自动批的升级没成功，归 Owner 手动批。
 
-装有自拉功能的节点定期探询最新的已接受包。待命节点先升，当班节点等其他登记节点报告同一目标 Source 且可用，再于本机队列空闲时投递升级。进度和拒绝码见 `state/status.json` 的 `versions.fleetPull`。首次装上自拉功能仍按下文逐台升级。
+装有自拉功能的节点探询服务端封存目标。查看 `state/status.json` 的 `versions.fleetPull` 可区分等交班、后备、摘牌待修和待 UAC 重装。
 
 需要回到旧内容时，用旧 commit 出一个新版本号，再走同一条接受流程。
 
@@ -57,7 +57,7 @@ node R/rollout/fleet/accept.mjs run --request <目录>\fleet-node-<version>.acce
      - 请求被升级代理归档为 `rejected` 或 `ignored`（`upgrade\inbox-archive`：空文件、读不了、当天新开操作已到上限）：答 `ROLLOUT_STOPPED`、`code = ROLLOUT_REQUEST_NOT_TAKEN`、`disposition`；它没有变成操作，记录删掉，原样重跑会再请求一次。
      - 请求还在 `upgrade\inbox`、`status.json` 15 分钟没刷新（升级代理每一轮都重写它，间隔不超过 60 秒）：答 `ROLLOUT_STOPPED`、`code = ROLLOUT_UPGRADER_NOT_RUNNING`；记录保留，CluedCIUpgrader 起来后原样重跑，跟的还是这一个请求。
    - 在途（`FLEET_NODE_UPGRADE_IN_PROGRESS`）：同样记下（按它的 opId）再照读，它回滚了重跑也不再投。它若以成功结束而本机不在接受的 Source（那是别的包的操作），记录删掉，再请求本机一次。
-   - 当班（`FLEET_NODE_UPGRADE_HAND_OVER_FIRST`）：读全队；其余节点都报告接受的 Source、都没停在暂停时，才带 `--allow-active-upgrade` 再发；否则不发请求。
+   - 当班（`FLEET_NODE_UPGRADE_HAND_OVER_FIRST`）等当前包健康备班接手，再按服务端维护回读处理旧装。
    - 已到位：照读；其他回答（要重装、预检拒绝、拒绝）即停。
 3. **读回**：全部登记节点报告的 Source 等于接受的 Source、都没停在暂停时，才答 `ROLLOUT_DONE`。只差本机时（门上本机的 Source 还没跟上 `current.json`），有界地再读，最多 10 分钟。
 
@@ -101,7 +101,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 | `FLEET_NODE_ALREADY_AT_THIS_PACKAGE` | 两侧都已是这个包 | 这台做完了 |
 | `FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED` | `--no-request` | 无（演练：也不写 `.wslconfig`，`wslCapacity` 为 `skipped NOT_REQUESTED`） |
 | `FLEET_NODE_UPGRADE_NEEDS_REINSTALL` | 这台不能原地升（`code` 写明：通道变了、Source 引用变了、两侧不是同一个包、Linux 现场与记录不符） | 把该版资产放进一个目录，走第 5 节唯一入口 `fleet-node-<v>.bootstrap.ps1 -From <目录>` |
-| `FLEET_NODE_UPGRADE_HAND_OVER_FIRST` | 这台现在当班，没有发请求 | 其他节点都升好后加 `--allow-active-upgrade` 再跑（CI 暂停几分钟）；不能移交给已升级的节点（Source 不同，服务端拒绝） |
+| `FLEET_NODE_UPGRADE_HAND_OVER_FIRST` | 本机仍当班 | 封存模式等服务端排空交班，单机按第 6 节核实维护资格 |
 | `FLEET_NODE_UPGRADE_PRECHECK_REFUSED` | 预检拒绝但不用重装 | 按 `precheck.advice` |
 | `FLEET_NODE_UPGRADE_REFUSED` | 输入不对（包、接受文件、节点记录） | 按 `code` 改正 |
 
@@ -109,7 +109,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 
 ### 0.4 顺序
 
-与滚动升级相同（`rollout/README.md` 第 4 节）：待命节点先升 → 核对 `FLEET_NODE_ALREADY_AT_THIS_PACKAGE` → 当班节点加 `--allow-active-upgrade` 原地升（升级代理排空、暂停、切换、核验、恢复）。不跨 Source 移交：服务端拒绝把 ci-admission 交给 Source 与全队不同的节点（迁移 `20261114120000`）。两台 Source 不同的窗口里列车以 `TRAIN_SOURCE_MISMATCH` 停车，所以前后接着做。
+封存舰队的轮换顺序见第 6 节。没有封存记录时沿用旧工具的先待命、后当班顺序。
 
 ### 0.5 失败
 
@@ -136,7 +136,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 节点     该版资产放进一个目录 -> fleet-node-<v>.bootstrap.ps1 -From <目录>（非提权；它取前置、解包、prepare，在要提权处自己请求 UAC）
 ```
 
-节点顺序：先待命节点 -> 核验 -> 再当班节点（重装期间 CI 停）。要换当班，在开始前、两台还是同一 Source 时移交；装好一台之后不能再移交给它（Source 与全队不同，服务端拒绝，迁移 `20261114120000`）。两台装同一个提交的同一个包，前后接着装。
+已登记节点重装前读服务端的其它健康节点数及本次摘牌许可。交班、保留后备和单机确认见第 6 节。
 
 ## 2. 发布机：构建一次
 
@@ -255,7 +255,7 @@ node R/rollout/fleet/publish.mjs seal --request <目录>\fleet-node-<version>.ac
   "firstInstallKitSha256": "<Release 上那份 kit 的 sha256>" }
 ```
 
-规则：凡进入 `record\source-manifest.json`（从而进入 `ciSourceManifestSha256`）的引用，都必须放在 `fleetRefs`，各节点相同，这样同一个包在两台上得到同一个 Source。按节点不同的（CI 连接资格 `ciPrincipalQualificationRef`、App 指纹、binding 等）不放这里，从本机记录读。确切字段清单见 `BATCH1-INTERFACES.md` 第 6 节。`ciSourceManifestSha256` 就是 Owner 接受的 Source，列车只比较它；每台节点的 `prepare` 都重算一遍，不等即拒绝（`FLEET_SOURCE_NOT_THE_ACCEPTED_ONE`）；`repository` 必须等于节点 record 的仓库。
+规则：凡进入 `record\source-manifest.json`（从而进入 `ciSourceManifestSha256`）的引用，都必须放在 `fleetRefs`，各节点相同，这样同一个包在两台上得到同一个 Source。按节点不同的（CI 连接资格 `ciPrincipalQualificationRef`、App 指纹、binding 等）不放这里，从本机记录读。确切字段清单见 `BATCH1-INTERFACES.md` 第 6 节。`ciSourceManifestSha256` 标识运行 Source；同一 Source 重新打包时，服务端还要按安装代次判定封存资格；每台节点的 `prepare` 都重算一遍，不等即拒绝（`FLEET_SOURCE_NOT_THE_ACCEPTED_ONE`）；`repository` 必须等于节点 record 的仓库。
 
 ## 5. 每台节点：唯一入口 bootstrap.ps1（重装与首装）
 
@@ -306,7 +306,12 @@ bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象�
 
 ## 6. 本机维护窗口
 
-重装、退役和回滚只处理目标机器。目标先摘牌并排空，以现场读回确认无当班后再清理。安装后复读封存状态，向服务端恢复待命。维护窗口由服务端提供，本分支的占位在清理前返回 `FLEET_MAINTENANCE_INTERFACE_UNAVAILABLE`。
+重装、退役和回滚只处理目标机器。维护窗口由服务端提供。
+
+1. 正式封存后先让备班上报当前包、Windows 和 Linux 身份、近期健康和空闲。
+2. 旧当班完成在途批再交班，随后作为后备保留旧装。新当班主线推进读回成功，或无活满 12 小时且新当班自检通过后，服务端才释放后备。
+3. 安装器在 UAC 前查询其它健康节点。摘牌操作匹配目标包、节点与 Binding 代次，且 `install_ready=true` 时才能清理。单机删旧重装需要明确确认。
+4. 服务端根据新启动后的当前包回执、自检和备班状态自动恢复节点。节点故障导致自动推进暂停时，按[运维手册 §5.1](../../docs/runbook.md#51-当班包不合格或无法核实)处理。
 
 ## 7. 凭据在哪里
 

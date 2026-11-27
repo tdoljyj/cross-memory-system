@@ -240,7 +240,7 @@ async function deliveryInput(env, request, run, sumsBytes, fetchImpl, isPinned =
     acceptanceSha256: expected, acceptedAt: accepted.acceptedAt };
 }
 
-export async function qualifyDelivery(input, database, clock = Date.now) {
+export async function qualifyDelivery(input, database, clock = Date.now, fetchImpl = fetch) {
   const { delivery, ...door } = input;
   const { operation, candidate } = delivery;
   const read = () => database('project', candidate);
@@ -269,7 +269,17 @@ export async function qualifyDelivery(input, database, clock = Date.now) {
   const snapshotToken = last.snapshotToken;
   if (operation === 'open') return database('open', { ...door, delivery: { candidate, snapshotToken } });
   const { acceptanceSha256, grantId, receiptId, acceptedAt } = delivery;
-  return database('confirm', { candidate, acceptanceSha256, grantId, receiptId, acceptedAt, snapshotToken });
+  const confirm = { candidate, acceptanceSha256, grantId, receiptId, acceptedAt, snapshotToken };
+  if (last.previousSeal) {
+    const { version, requestSha256 } = last.previousSeal;
+    if (!gated(version) || generation(version) >= generation(candidate.version) || !HEX64.test(requestSha256 ?? '')) {
+      refuse('FLEET_DELIVERY_PREVIOUS_SEAL_INVALID');
+    }
+    const bytes = await download(assetUrl(candidate.repository, version, requestAssetName(version)), fetchImpl);
+    if (hash(bytes) !== requestSha256) refuse('FLEET_DELIVERY_PREVIOUS_SEAL_DIGEST_CHANGED');
+    confirm.previousRequest = bytes.toString('base64');
+  }
+  return database('confirm', confirm);
 }
 
 const DELIVERY_DB_FUNCTIONS = {
@@ -398,7 +408,8 @@ export async function main(argv = process.argv.slice(2), env = process.env,
   if (command === "delivery") {
     try {
       const input = JSON.parse(typeof io.stdin === 'string' ? io.stdin : await readStream(io.stdin ?? process.stdin));
-      const result = await qualifyDelivery(input, deps.database ?? ((operation, input) => callDeliveryDatabase(env, operation, input)));
+      const database = deps.database ?? ((operation, fields) => callDeliveryDatabase(env, operation, fields));
+      const result = await qualifyDelivery(input, database, deps.clock, deps.fetchImpl);
       if (input.delivery.operation === 'open') return main(['report'], env, { ...io, stdin: JSON.stringify(result) });
       io.write(deliveryWorkflowPacket({ operation: input.delivery.operation, candidate: input.delivery.candidate, result },
         input.delivery.transportKey, input.delivery.candidate.requestSha256) + '\n');

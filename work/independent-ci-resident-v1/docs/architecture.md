@@ -433,7 +433,7 @@ B 上的第 8 段尝试：
 | `TRAIN_FRONT_BATCH_RUNNING` | 车头批次在跑 | 等。只因行忙被拒过的，会再提交一次（`frontRetry`，回执 `train-front-reoffered`） |
 | `FRONT_NEEDS_MAIN_MERGE` | 车头落后 main（BEHIND） | PR 页面提示持有者合 main。自动更新分支尚未实现（Decision `78a3052f` 第 2 项） |
 | `TRAIN_FRONT_NOT_PROVEN` | 这一轮写不出 strict-front 观察 | 不开批次，下一轮再看 |
-| `TRAIN_SOURCE_MISMATCH` / `_UNREADABLE` | 24 小时内有心跳的节点 Source 不一致 / 读不出 | 推迟所有新批次，2 分钟后重核，通知 Owner |
+| `TRAIN_SOURCE_MISMATCH` / `_UNREADABLE` | 当班运行包不在可用集合或无法核实；无封存记录时按原同源规则 | 推迟新批次，两分钟后重核，通知 Owner |
 | `TRAIN_STRICT_OFF` | 读到 strict 被关 | 锁 PAUSE，通知 Owner |
 | `TRAIN_LANDED_TREE_MISMATCH` | 落地的树不等于 S 的树 | 锁 PAUSE，通知 Owner |
 | `TRAIN_TAKEOVER_SWEEP_PENDING` | 只在 main 被改写、scope all 轮没扫完时出现 | 推迟所有新批次 |
@@ -649,7 +649,7 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 - 服务端看门狗（`pg_cron` 每分钟）**只在当班节点失联时**交接，条件包括：
   - 5 分钟没有心跳，或连续 5 分钟报服务没在运行（ADR 0026，迁移 `20261112130500`；以前 30 分钟）；
   - 最近一条自报不是 HALTED、PAUSED 或未到期的暂停接新；
-  - 目标是有资格、5 分钟内有心跳、沉默期间至少 2 次心跳、STANDBY 且最近探测为 not-held、健康、Source 全一致的备用节点，按 Owner 定的次序取第一个；
+  - 目标是有资格、5 分钟内有心跳、沉默期间至少 2 次心跳、STANDBY 且最近探测为 not-held、健康且包满足故障接管资格的备用节点，按 Owner 定的次序取第一个；
   - 没有冷却（迁移 `20261115100000`）：Owner 计划内移交之后，交出的节点照常可接班；被自动交出的节点不自动交回，直到它重新连续健康满 30 分钟（`ci_node_liveness_v1.steady_since`，规则 `rejoin_steady_minutes`，迁移 `20261115120000`），或 Owner 做过一次涉及它的手动交接。
 - 交接 5 分钟后生效；旧持有者 210 秒内没有拿到任何肯定的当班答复时立即生效（服务端记录 `ci_duty_answers_v1`，ADR 0026）。写回执 `CI_ADMISSION_AUTO_HANDOVER`。接班节点在算力面板 Issue 里 @Owner。
 - 接班节点的 companion 从心跳回答里得知这次自动交接；接班核对不再被别的节点在交接之前写的“当班”挡住（那是已证实沉默的节点的最后一句），交接之后写的照旧上锁（`node-duty.mjs#dutyCut`）。
@@ -657,7 +657,7 @@ companion 单实例锁。现装版本由 Owner 登录时启动；第 29 代起�
 
 ### 10.4 Source 一致
 
-24 小时内有心跳的节点 Source 必须相同，否则第 10 段 `TRAIN_SOURCE_MISMATCH`：所有新批次推迟，2 分钟后重核。所以两台按顺序升级时，中间会有一段推迟。做法见 runbook §5.1。
+服务端 `fleet_seals_v1` 从封存与撤销记录导出当前包和未撤销的上一包。列车依据实际当班的包资格开批、落地。正常交班要求当前包，故障接管允许可用集合中的健康节点。没有封存记录时沿用 24 小时同源窗口。处置见 [运维手册 §5.1](runbook.md#51-当班包不合格或无法核实)。
 
 ---
 

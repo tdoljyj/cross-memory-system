@@ -166,6 +166,7 @@ export async function readFleet({ resource, readStatus = statusReader(), timeout
   check(a.kind === 'accepted', 'FLEET_NOT_ACCEPTED', { answer: a.kind });
   const nodes = answer.nodes;
   check(Array.isArray(nodes) && nodes.every(n => plain(n) && typeof n.name === 'string' && n.name !== '' && (n.source_sha256 === null || HEX64.test(n.source_sha256 ?? ''))
-    && typeof n.paused === 'boolean'), 'ACCEPT_DOOR_ANSWER_REFUSED', { status: 'accepted', note: 'nodes: [{ name, source_sha256 (hex or null), paused }]' });
-  return nodes.map(n => ({ node: n.name, ciSourceManifestSha256: n.source_sha256, paused: n.paused }));
+    && typeof n.paused === 'boolean' && (!Object.hasOwn(n, 'at_sealed_target') || typeof n.at_sealed_target === 'boolean')), 'ACCEPT_DOOR_ANSWER_REFUSED', { status: 'accepted', note: 'nodes: [{ name, source_sha256 (hex or null), paused }]' });
+  return nodes.map(n => ({ node: n.name, ciSourceManifestSha256: n.source_sha256, paused: n.paused,
+    ...(Object.hasOwn(n, 'at_sealed_target') ? { atSealedTarget: n.at_sealed_target } : {}) }));
 }

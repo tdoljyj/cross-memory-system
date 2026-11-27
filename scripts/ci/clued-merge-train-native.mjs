@@ -71,7 +71,8 @@ function statusNode(x) {
     const text = v => (v === null || v === undefined ? null : typeof v === 'string' && v.length <= 40 ? v : undefined);
     const heard = isoOrNull(n.last_heartbeat_at), state = text(n.state), mode = text(n.mode);
     if ([name, source, heard, state, mode].includes(undefined)) return null;
-    node = Object.freeze({ name, sourceManifestSha256: source, state, mode, lastHeartbeatAt: heard });
+    node = Object.freeze({ name, sourceManifestSha256: source, state, mode, lastHeartbeatAt: heard,
+      ...(plain(n.package) && n.package.classification !== 'legacy' ? { package: n.package } : {}) });
   }
   return Object.freeze({ bindingId: x.binding_id, agentName: x.agent_name, live: x.live, rank: x.rank ?? null, markedAt: x.marked_at ?? null, node });
 }
@@ -206,16 +207,23 @@ export function createMergeTrainNativeWriter({ supabaseUrl, publishableKey, scop
     // Not on duty: { onDuty:false, deployed:true, nodes:null, ... }. Not deployed (before 2b): { onDuty:null, deployed:false,
     // nodes:null, ... }: no node record exists, which §41.6 treats as "no record". The reply's frame (status, nodes array) is
     // strict; one malformed node or watermark is dropped and counted, never fatal; past MAX_STATUS_NODES the rest is dropped.
+    async fleetLanding(input) {
+      const reply = ok(await call(VERIFY_RPC, { ...input, action: 'fleet_landing', repository, scope }));
+      check(reply.status === 'ok', MERGE_TRAIN_NATIVE_UNREADABLE);
+      return reply;
+    },
     async nodesStatus() {
       const none = (onDuty, deployed) => ({ onDuty, deployed, observedAt: null, watchdog: null, nodes: null, dropped: 0, sweepWatermark: null });
       const reply = await call(VERIFY_RPC, { action: NODES_STATUS_ACTION, scope });
       if (unknownRpc(reply) || refused22023(reply)) return none(null, false);
       const b = ok(reply);
       if (b.status === 'rejected' && b.error_code === NOT_ON_DUTY) return none(false, true);
-      check(b.status === 'ok' && iso(b.observed_at) && Array.isArray(b.nodes) && (b.sweep_watermarks === undefined || Array.isArray(b.sweep_watermarks)), MERGE_TRAIN_NATIVE_UNREADABLE);
-      let dropped = Math.max(0, b.nodes.length - MAX_STATUS_NODES);
+      const sealed = Object.hasOwn(b, 'holder_package');
+      const fleet = sealed ? b.fleet_nodes : b.nodes;
+      check(b.status === 'ok' && iso(b.observed_at) && Array.isArray(fleet) && (b.sweep_watermarks === undefined || Array.isArray(b.sweep_watermarks)), MERGE_TRAIN_NATIVE_UNREADABLE);
+      let dropped = Math.max(0, fleet.length - MAX_STATUS_NODES);
       const nodes = [];
-      for (const x of b.nodes.slice(0, MAX_STATUS_NODES)) { const n = statusNode(x); if (n) nodes.push(n); else dropped++; }
+      for (const x of fleet.slice(0, MAX_STATUS_NODES)) { const n = statusNode(x); if (n) nodes.push(n); else dropped++; }
       const w = plain(b.watchdog) && typeof b.watchdog.stale === 'boolean' && isoOrNull(b.watchdog.last_tick_at) !== undefined
         ? Object.freeze({ lastTickAt: b.watchdog.last_tick_at ?? null, stale: b.watchdog.stale }) : null;
       let sweepWatermark = null;
@@ -223,7 +231,7 @@ export function createMergeTrainNativeWriter({ supabaseUrl, publishableKey, scop
         if (!plain(x) || typeof x.repository !== 'string' || !iso(x.completed_at) || !iso(x.updated_cursor) || !SHA.test(x.main_sha ?? '')) { dropped++; continue; }
         if (x.repository === repository.toLowerCase()) sweepWatermark = Object.freeze({ completedAt: x.completed_at, updatedCursor: x.updated_cursor, mainSha: x.main_sha });
       }
-      return { onDuty: true, deployed: true, observedAt: b.observed_at, watchdog: w, nodes: Object.freeze(nodes), dropped, sweepWatermark };
+      return { onDuty: true, deployed: true, observedAt: b.observed_at, watchdog: w, nodes: Object.freeze(nodes), ...(sealed ? { holderPackage: b.holder_package } : {}), dropped, sweepWatermark };
     },
   });
   return port;

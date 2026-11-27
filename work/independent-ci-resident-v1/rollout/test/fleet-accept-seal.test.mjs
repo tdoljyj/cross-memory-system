@@ -681,12 +681,20 @@ test('两台待定节点在心跳中断、代次混合时使用同一 Grant 封�
     nodes: [first, second].map(n => ({ name: n.name, source_sha256: request.ciSourceManifestSha256, paused: false })) });
   const uploaded = (await uploadsOf(w)).length;
   const work = path.join(w.d, 'work');
+  const record = path.join(w.d, 'node', 'record');
+  await fs.mkdir(record, { recursive: true });
+  await fs.writeFile(path.join(record, 'acceptance.json'), JSON.stringify({ node: { nodeName: first.name } }));
+  for (const node of w.door.nodes) node.at_sealed_target = false;
+  const waiting = await accept('run', '--work', work);
+  assert.equal(waiting.status, 'ROLLOUT_WAITING_OTHER_NODES');
+  assert.deepEqual(waiting.pending.map(n => n.node), [first.name, second.name]);
+  for (const node of w.door.nodes) node.at_sealed_target = true;
   assert.equal((await accept('run', '--work', work)).status, 'ROLLOUT_DONE');
   assert.equal((await w.opens()).length, 1);
   assert.equal((await uploadsOf(w)).length, uploaded + 1);
   assert.equal(confirmations.length, 1);
   assert.equal(readCount, 2);
-
+  assert.deepEqual(upgrades, []);
 });
 
 // PLAN-accept-align-open-20261125 1.2 (red before: a rejected request was opened again, one gh workflow run, and answered WAITING_OWNER)

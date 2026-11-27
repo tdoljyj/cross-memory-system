@@ -49,7 +49,8 @@ export function fleetInstallIdentity(bytes, currentBytes) {
 export async function readFleetDeliveryEvidence({ root, status, now }) {
   const read = name => readBounded(path.join(root, name), 262144, 'FLEET_DELIVERY_EVIDENCE_REFUSED');
   try {
-    const broker = JSON.parse(await read('broker/renew-ci.json')).delivery;
+    const observation = JSON.parse(await read('broker/renew-ci.json'));
+    const broker = observation.delivery;
     if (!broker || !freshDeliveryTime(broker.observedAt, now)) return null;
     const identity = fleetInstallIdentity(await read('install/install-receipt.json'), await read('upgrade/current.json'));
     if (!identity) return null;
@@ -76,12 +77,28 @@ export async function readFleetDeliveryEvidence({ root, status, now }) {
       }
     } catch { /* Optional upgrade evidence remains unknown. */ }
 
-    return fleetEvidencePayload({ ...broker, brokerObservedAt: broker.observedAt, packageGeneration,
+    const evidence = fleetEvidencePayload({ ...broker, brokerObservedAt: broker.observedAt, packageGeneration,
       brokerEvidenceSha256: sha256(canonicalJson(broker)), linuxFactsSha256: sha256(linuxBytes),
       linuxSourceSha256: linux.ciSourceManifestSha256, linuxObservedAt: linux.observedAt,
       linuxConsistent: versions.consistent,
       linuxReady: linux.staged === null && linux.pinsOk === true && linux.liveMatchesCurrent !== false,
       upgraderSha256: receipt.upgrader?.manifestSha256, linuxToolSha256: linux.upgradeToolSha256, sourceRefsSha256 });
+    if (evidence && observation.fleetTarget?.holder_package) {
+      const check = versions.selfcheck;
+      const recent = (status.recent ?? []).filter(r => r.code && Number.isFinite(r.at) && r.at <= now && now - r.at <= 300_000)
+        .sort((a, b) => b.at - a.at);
+      const landing = status.train?.last;
+      const landingAt = typeof landing?.at === 'number' ? landing.at : Date.parse(landing?.at);
+      if (landing?.landing?.error && landingAt <= now && now - landingAt <= 300_000)
+        recent.unshift({ code: landing.landing.error, at: landingAt });
+      evidence.runtime = {
+        idle: ['IDLE', 'COMPLETED', 'NOT_ADMITTED', 'DEFERRED'].includes(status.executor?.state)
+          && status.current === null && status.pending?.length === 0 && !status.halt && !status.paused,
+        selfcheckAt: check?.result === 'PASS' ? check.observedAt : null,
+        failures: recent.slice(0, 6).map(r => ({ code: r.code, at: new Date(r.at).toISOString() })),
+      };
+    }
+    return evidence;
   } catch {
     return null;
   }
