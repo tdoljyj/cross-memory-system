@@ -82,6 +82,8 @@ node <任一份 upgrade.mjs> fetch --version <version> --work <新目录> [--fro
 
 `<任一份 upgrade.mjs>` 用上一版已解包的包里的（或任何一份 `upgrade.mjs` 加 `fetch.mjs`）；真正执行升级的是新包解出来的那份 `upgrade.mjs`。取包由 `fetch.mjs` 做：按 release 资产分段续传（Range，连接被断就从已收到的字节接着要，退避重试，总时限 30 分钟），令牌只在进程内取自 `gh auth token`，不打印不落盘；也可以把 `fleet-node-<version>.tar`、`.acceptance.json`、`SHA256SUMS` 放进 `--from` 目录（Google Drive、共享盘都行，release 取不下来时用）。两个来源一视同仁，只认哈希：tar 的 sha256 必须等于接受文件的 `archive_sha256` 且等于 `SHA256SUMS` 那行，不符就删掉、不解包、不组装。断了就原样再跑同一条命令（同一个 `--work`），续传。产物：`<新目录>\dl\`（下载）、`<新目录>\unpacked\`（解包）、`<新目录>\upgrade\`（升级的工作目录）。输出是新包 `upgrade.mjs` 的那一行 JSON，多一个 `fetched`（来源、尝试次数、续传次数）。
 
+支持运输附件的取包入口在正式 tar 未命中时，可从 Release 或 `--from` 读取相应运输描述和附件。手动取包时，可把紧邻上一代的正式 tar 放在 `<work>\dl\` 或 `--from`。常驻 companion 优先查上一次通过验包的自拉缓存，也能在既有自拉目录中有界查找。命中旧代的大小和 SHA-256 后尝试增量，缺失、跳代或校验失败时尝试完整 gzip，再按原路径取正式 tar。运输解码限时、限字节，得到同一个正式 tar 的大小和 SHA-256 才解包。
+
 分步手动做仍可以：`gh release download` + `Get-FileHash` + 解包，再用 `--artifact` 形式（输出相同）：
 
 ```
@@ -234,7 +236,9 @@ node R/rollout/fleet/publish.mjs seal --request <目录>\fleet-node-<version>.ac
 - 同样的参数再跑一次：门回放同一行，接受文件字节相同；已挂上、已写索引就什么都不改（`already: true`）；上传后、写索引前断了的，补写索引。同一版本换一个接受请求：Release 上已是另一份，`prepare` 拒绝，`seal` 以 `SEAL_REQUEST_NOT_ON_RELEASE` 拒绝；目录或索引里已有另一份接受：在上传之前拒绝。
 - 门连不上、没上线或答得不成形：`ACCEPT_DOOR_UNAVAILABLE`（`detail` 带 HTTP 状态或网络错误码）/ `ACCEPT_DOOR_ANSWER_REFUSED`，什么都不写，原样重跑；门拒绝读：`ACCEPT_DOOR_REFUSED`。派发被明确拒绝时返回 `ACCEPT_DOOR_OPEN_FAILED`。派发响应丢失时，在本次开单窗口内只读门核实。
 
-**交付目录**（给新节点 `bootstrap.ps1 -From`，第 5 节）就是该版 Release 的全部资产，在 `seal` 之后用 `gh release download fleet-node-<version> --pattern "fleet-node-<version>.tar" --pattern "fleet-node-<version>.release.json" --pattern "fleet-node-<version>.bootstrap.ps1" --pattern "fleet-node-<version>.prereq-manifest.json" --pattern "fleet-node-<version>.acceptance.json" --pattern "fleet-node-<version>.first-install*" --pattern "SHA256SUMS" --pattern "role-image-*.tar.gz"` 取进一个新目录（只取这一条，它取的就是 bootstrap 首装要的全部资产；Release 上的接受请求不取，bootstrap 会把它当多出的文件拒绝）。`prepare` 的 `--out`（含接受请求）不是交付目录：bootstrap 会把其中没列在两份 sums 里的文件当作多出的文件拒绝。
+正式编号代的 `prepare` 在能节省字节时附上完整 gzip。提供 `--transport-base <上一代正式 tar 路径>` 时，`prepare` 按紧邻上一代的远端编号 tag 和 Release 接受文件核验本地基线，再生成增量。发布小于完整传输且不超过 8,000,000 字节的增量。两种附件各有独立描述文件，绑定仓库、版次、正式 tar 大小和 SHA-256，并列出编码字节的大小和 SHA-256。增量还绑定上一代的版次、大小和 SHA-256。
+
+**交付目录**（给新节点 `bootstrap.ps1 -From`，第 5 节）在 `seal` 之后用 `gh release download fleet-node-<version> --pattern "fleet-node-<version>.tar" --pattern "fleet-node-<version>.release.json" --pattern "fleet-node-<version>.bootstrap.ps1" --pattern "fleet-node-<version>.prereq-manifest.json" --pattern "fleet-node-<version>.acceptance.json" --pattern "fleet-node-<version>.first-install*" --pattern "SHA256SUMS" --pattern "role-image-*.tar.gz"` 取进一个新目录。该命令精确选择 bootstrap 首装资产，接受请求和运输附件留在 Release。bootstrap 继续按两份校验单检查交付目录，并拒绝多出的文件。
 
 接受文件（合同 `clued.independent-ci.fleet-node-acceptance/1`，文件名 `fleet-node-<version>.acceptance.json`）由 `seal` 写出，形如：
 

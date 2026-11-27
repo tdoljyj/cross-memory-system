@@ -12,6 +12,7 @@ const files = [
   '20261126174100_merge_train_control_v2.sql',
   '20261126175000_ci_train_landing_receipts_v2.sql',
   '20261127120000_fleet_delivery_seal_v1.sql',
+  '20261127120100_fleet_pending_delivery_v1.sql',
 ];
 const workflowPath = '.github/workflows/clued-cloud-production-release.yml';
 const root = new URL('../../../../', import.meta.url);
@@ -145,14 +146,14 @@ async function fixture(t, options = {}) {
   return { w, commit, plan, effects, settings, prepare, noRelease };
 }
 
-test('修前必红：前态缺三条迁移，且备份失败时，正式 prepare 必须零生产写入、零占号、零 Release', async t => {
+test('迁移有缺项且备份失败时，正式 prepare 必须零生产写入、零占号、零 Release', async t => {
   const w = await prepWorld(t, { version: 'g000025', released: false, spawnGh: false });
   const index = await fs.readFile(w.index);
   const effects = [];
   const release = {
     admit: async () => {},
     requirements: async () => planOf(w.source.commit),
-    read: async () => ({ snapshot: { base: true, applied: [], interfaces: { train: false, landing: false, delivery: false } } }),
+    read: async () => ({ snapshot: { base: true, applied: [], interfaces: { train: false, landing: false, delivery: false, pendingDelivery: false } } }),
     migrate: async missing => {
       effects.push(missing);
       throw Object.assign(new Error('备份失败'), { code: 'FLEET_MIGRATION_RUN_FAILED' });
@@ -169,7 +170,7 @@ test('修前必红：前态缺三条迁移，且备份失败时，正式 prepare
   assert.deepEqual(await fs.readFile(w.index), index);
 });
 
-test('正式 prepare 对账到三条缺项，单次派发后凭同提交回读出包，空缺项直接出包', async t => {
+test('正式 prepare 一次派发全部迁移缺项，凭同提交回读出包，空缺项直接出包', async t => {
   const w = await fixture(t);
   const published = await w.prepare();
   assert.equal(published.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
@@ -210,7 +211,7 @@ test('红灯、跳过、规则集缩水、错误身份、换头、备份失败�
   });
 });
 
-test('派发回执丢失时保留未决操作，重新发现部分成功的运行后只派剩余两条', async t => {
+test('派发回执丢失时保留未决操作，重新发现部分成功的运行后只派剩余项', async t => {
   const w = await fixture(t, { lostDispatch: true, migrateFailure: 'partial' });
   const secondBuild = join(w.w.d, 'second-build');
   await fs.cp(w.w.build, secondBuild, { recursive: true });
@@ -260,5 +261,5 @@ test('账本中的后项已应用而前项缺失时拒绝续跑', () => {
   assert.deepEqual(plan.map(row => row.file), files);
   const row = plan[1];
   assert.throws(() => missingMigrations(plan, { base: true, applied: [{ name: row.name, version: row.version, digest: row.digest }],
-    interfaces: { train: false, landing: true, delivery: false } }), { code: 'FLEET_MIGRATION_DEPENDENCY_MISMATCH' });
+    interfaces: { train: false, landing: true, delivery: false, pendingDelivery: false } }), { code: 'FLEET_MIGRATION_DEPENDENCY_MISMATCH' });
 });

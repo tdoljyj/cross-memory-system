@@ -1,8 +1,9 @@
 // Archive one universal node package on a GitHub Release (Decision b5d041d2 v2) and keep the 资料中心 index.
 //
 //   node rollout/fleet/publish.mjs publish --commit <main SHA> --dir <build out> --out <dir> [--image <file> ...] [--wait <minutes>]
-//        [--repo <owner/name>] [--index <index file>]
-//   node rollout/fleet/publish.mjs prepare --commit <main SHA> --dir <build out> --out <dir> [--image <role-image-<id>.tar.gz> ...] [--repo <owner/name>] [--index <index file>]
+//        [--transport-base <previous-generation tar>] [--repo <owner/name>] [--index <index file>]
+//   node rollout/fleet/publish.mjs prepare --commit <main SHA> --dir <build out> --out <dir> [--image <role-image-<id>.tar.gz> ...]
+//        [--transport-base <previous-generation tar>] [--repo <owner/name>] [--index <index file>]
 //   node rollout/fleet/publish.mjs seal --request <fleet-node-<v>.acceptance-request.json> [--drill-receipt <receipt.json>] [--wait <minutes>]
 //        [--repo <owner/name>] [--index <index file>]
 //
@@ -113,7 +114,10 @@ import { deliveryWorkflowClient } from './delivery-workflow.mjs';
 import { RESIDENT } from './facts.mjs';
 import { DEFAULT_ROOT, firstInstallKitOf, installedFleetMaterial, readArchive, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
 import { fleetReleaseWorkflow, reconcileFleetRelease } from './release-migration-workflow.mjs';
+import { fleetReleaseWorkflow, reconcileFleetRelease } from './release-migration-workflow.mjs';
 import { readTar } from './tar.mjs';
+import { previousTransportVersion, TRANSPORT, transportAssetNames } from './fetch.mjs';
+import { stageTransport } from './transport-assets.mjs';
 import { buildUniversal, RELEASE_CONTRACT, VERSION, tagOf } from './universal.mjs';
 import { packageGenerationOf } from '../../src/selfcheck.mjs';
 import { ACCEPTANCE_CONTRACT, REQUEST_CONTRACT, REQUEST_FLEET_REFS, acceptanceOf, acceptanceBytes } from '../../src/fleet-acceptance.mjs';
@@ -813,17 +817,26 @@ async function admitFleetRelease({ repository, commit, admit }) {
   return admission;
 }
 
-async function loadReleaseWorkflow() {
-  try { return await import('./release-migration-workflow.mjs'); }
-  catch (error) {
-    if (error.code === 'ERR_MODULE_NOT_FOUND') fail('FLEET_RELEASE_ADMISSION_UNAVAILABLE', error.url);
-    throw error;
-  }
+async function readTransportBase({ file, version, tags, ghCommand, repo, stage }) {
+  const previous = previousTransportVersion(version);
+  const tag = previous && tagOf(previous);
+  check(tag && path.basename(file) === `${tag}.tar`, 'PUBLISH_TRANSPORT_BASE_VERSION_REFUSED');
+  const pin = await tags.read(tag);
+  check(pin?.contract === CLAIM_CONTRACT && pin.release_tag === tag && pin.version === previous
+    && HEX64.test(pin.archive_sha256 ?? '') && HEX40.test(pin.commit ?? ''), 'PUBLISH_TRANSPORT_BASE_TAG_REFUSED', tag);
+  const accepted = JSON.parse(await fs.readFile(downloadAsset(ghCommand, repo, tag, `${tag}.acceptance.json`, stage), 'utf8'));
+  check(accepted?.contract === ACCEPTANCE_CONTRACT && accepted.repository === repo && accepted.version === previous
+    && accepted.commit === pin.commit && accepted.archive_sha256 === pin.archive_sha256, 'PUBLISH_TRANSPORT_BASE_ACCEPTANCE_REFUSED', tag);
+  const stat = await fs.stat(file);
+  check(stat.isFile() && stat.size > 0 && stat.size <= TRANSPORT.archiveMax, 'PUBLISH_TRANSPORT_BASE_SIZE_REFUSED', tag);
+  const bytes = await fs.readFile(file);
+  check(bytes.length === stat.size && sha(bytes) === pin.archive_sha256, 'PUBLISH_TRANSPORT_BASE_SHA_MISMATCH', tag);
+  return { version: previous, bytes, sha256: pin.archive_sha256 };
 }
 
 // The first half of an acceptance (see the head of this file). `deps` is for tests only (the kit and the record material of a fixture node, a
 // stand-in for the archive's source-hash); the command line cannot reach it.
-export async function prepare({ version, dir, out, images = [], repo = DEFAULT_REPO, index = DEFAULT_INDEX, root = DEFAULT_ROOT, ghCommand = ['gh'],
+export async function prepare({ version, dir, out, images = [], transportBase = null, repo = DEFAULT_REPO, index = DEFAULT_INDEX, root = DEFAULT_ROOT, ghCommand = ['gh'],
   now = Date.now(), deps = {} }, beforePublish) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
   check(VERSION.test(version ?? ''), 'PUBLISH_VERSION_REFUSED');
@@ -863,6 +876,29 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
       { version, note: 'the Release holds its acceptance; if the index row is empty, run the same seal again to complete it' });
     check(c === null || (c[4] === '' && c[5] === ''), 'PUBLISH_ACCEPTANCE_INDEX_WITHOUT_ASSET', { version, acceptedAt: c?.[4], decision: c?.[5] });
     const held = guarded ? await readOrNull(path.join(durable, 'candidate.SHA256SUMS')) : null;
+    const generationTags = deps.generationTags ?? githubGenerationTags(ghCommand, repo);
+    const transportDigests = new Map();
+    let transportAssets = [];
+    if (held) {
+      const heldDigests = sumsOf(held.toString('utf8'));
+      for (const kind of ['gzip', 'delta']) {
+        const { payload, meta } = transportAssetNames(version, kind);
+        if (!heldDigests.has(payload) && !heldDigests.has(meta)) continue;
+        for (const name of [payload, meta]) {
+          const digest = heldDigests.get(name);
+          check(HEX64.test(digest ?? ''), 'PREPARE_STAGED_ASSET_CHANGED', name);
+          transportDigests.set(name, digest);
+          transportAssets.push({ name, file: path.join(durable, name) });
+        }
+      }
+    } else if (numbered) {
+      const previous = transportBase && await readTransportBase({ file: transportBase, version, tags: generationTags, ghCommand, repo, stage });
+      transportAssets = await stageTransport({ repository: repo, version, archiveSha256: s.archive_sha256,
+        archive: build.tarBytes, previous, stage: entryStage });
+      if (guarded) {
+        for (const { name, file } of transportAssets) transportDigests.set(name, await fileSha(file));
+      }
+    }
     const heldRequest = held && await fs.readFile(path.join(durable, requestName));
     const publishedRequest = guarded && onRelease.has(requestName) ? await requestOnRelease({ ghCommand, repo, tag, stage }) : null;
     check(!heldRequest || (!publishedRequest || heldRequest.equals(publishedRequest)), 'PREPARE_REQUEST_ON_RELEASE_DIFFERENT', requestName);
@@ -936,12 +972,13 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
       stagedSums = Buffer.from(sumsText(kitDigests));
       const firstInstallSums = await stageAsset(`${tag}.first-install.SHA256SUMS`, stagedSums);
       const digests = new Map([...releaseDigests, ...kitDigests, [firstInstallSums.name, sha(stagedSums)]]);
-      const receipt = Buffer.from(sumsText(digests));
-      const manifestSha256 = sha(receipt);
+      const manifestBytes = Buffer.from(sumsText(digests));
+      const manifestSha256 = sha(manifestBytes);
+      const receipt = Buffer.from(sumsText(new Map([...digests, ...transportDigests])));
       check(!held || held.equals(receipt), 'PREPARE_STAGED_ASSET_CHANGED', requestName);
       check(!savedRequest || request.deliveryAssetsSha256 === manifestSha256, 'PREPARE_STAGED_ASSET_CHANGED', requestName);
       request.deliveryAssetsSha256 = manifestSha256;
-      const manifest = await stageAsset(deliveryAssetManifestName(version), receipt);
+      const manifest = await stageAsset(deliveryAssetManifestName(version), manifestBytes);
       releaseAssets.push(manifest);
       digests.set(manifest.name, manifestSha256);
       stagedCandidate = { receipt, digests, materialAssets: [kitAsset, ...imageAssets, firstInstallSums] };
@@ -954,6 +991,7 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
       check(!namesDrillReserved(request), 'PREPARE_REQUEST_REFUSED', requestName);
       checkDeliveryKit(kitBytes, candidate, deps.readKit);
       await checkStagedFiles([...releaseAssets, ...stagedCandidate.materialAssets], stagedCandidate.digests);
+      await checkStagedFiles(transportAssets, transportDigests);
     }
     lap(3);
     // 4. The formal entry reconciles production for the staged commit before any tag, Release or index write.
@@ -969,11 +1007,12 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
         deliveryPreflight = await preflightStaged({ candidate: deliverySubject(request, requestSha256), requestBytes,
           archive: build.tarBytes, request, ghCommand, deps });
         await checkStagedFiles(assets, digests);
+        await checkStagedFiles(transportAssets, transportDigests);
         if (!held) {
           await fs.mkdir(out, { recursive: true });
           const scratch = await fs.mkdtemp(path.join(out, '.fleet-candidate-'));
           try {
-            for (const { name, file } of materialAssets) await fs.copyFile(file, path.join(scratch, name));
+            for (const { name, file } of [...materialAssets, ...transportAssets]) await fs.copyFile(file, path.join(scratch, name));
             await fs.writeFile(path.join(scratch, requestName), requestBytes, { flag: 'wx' });
             await fs.writeFile(path.join(scratch, 'candidate.SHA256SUMS'), receipt, { flag: 'wx' });
             await fs.rename(scratch, durable);
@@ -984,9 +1023,9 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
         check(freshDeliveryTime(deliveryPreflight.observedAt, (deps.clock ?? Date.now)()),
           'FLEET_DELIVERY_PREFLIGHT_REFUSED', 'FLEET_PROJECTION_EXPIRED');
       }
-      await reservePackageGeneration(deps.generationTags ?? githubGenerationTags(ghCommand, repo), s, verifyMain);
+      await reservePackageGeneration(generationTags, s, verifyMain);
     }
-    await ensureRelease({ ghCommand, repo, index, s, assets: releaseAssets, stage, verifyMain });
+    await ensureRelease({ ghCommand, repo, index, s, assets: [...releaseAssets, ...transportAssets], stage, verifyMain });
     lap(4);
     // 5. the directory, the kit and the images in it, what the Release lacks uploaded, the whole request held to the Release (the same check
     //    as seal's); 6. only then the request
@@ -1000,6 +1039,8 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     if (guarded) {
       await checkPublishedFiles({ names: [sums, ...entry, releaseAssets.at(-1)].map(a => a.name), digests: stagedCandidate.digests, ghCommand, repo, tag,
         stage: path.join(stage, 'verify-assets') });
+      await checkPublishedFiles({ names: transportDigests.keys(), digests: transportDigests, ghCommand, repo, tag,
+        stage: path.join(stage, 'verify-transport') });
     }
     lap(5);
     const requestFile = path.join(out, requestName);
@@ -1008,7 +1049,8 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     return { status: 'FLEET_ACCEPTANCE_REQUEST_WRITTEN', version, request: requestFile, directory: out, kitFrom: kitFromRelease ? 'release' : 'node',
       ...(deliveryPreflight ? { deliveryPreflight } : {}),
       firstInstallKitSha256: request.firstInstallKitSha256, ciSourceManifestSha256: request.ciSourceManifestSha256, images: attached.images,
-      requestSha256: sha(requestBytes), ...(migrationAdmission && { migrationAdmission: { commit: s.commit, ...migrationAdmission } }) };
+      requestSha256, ...(migrationAdmission && { migrationAdmission: { commit: s.commit, ...migrationAdmission } }),
+      ...(typeof migrationAdmission?.migrationReceiptRef === 'string' ? { migrationReceiptRef: migrationAdmission.migrationReceiptRef } : {}) };
   } finally {
     await fs.rm(stage, { recursive: true, force: true });
   }
@@ -1418,7 +1460,7 @@ export const exitCodeOf = r => (['FLEET_ACCEPTANCE_REJECTED', 'FLEET_ACCEPTANCE_
 
 // A completed prepare can resume against its tag, Release and acceptance door
 // even when main has advanced. A new prepare still needs exact-main admission.
-export async function publishCommit({ commit, dir, out, images, repo = DEFAULT_REPO, index, wait = WAIT_MAX_MINUTES,
+export async function publishCommit({ commit, dir, out, images, transportBase, repo = DEFAULT_REPO, index, wait = WAIT_MAX_MINUTES,
   ghCommand = ['gh'], onPending, deps = {} }) {
   check(REPO.test(repo ?? '') && HEX40.test(commit ?? ''), 'PUBLISH_SUBJECT_REFUSED');
   check(Number.isInteger(wait) && wait >= 1 && wait <= WAIT_MAX_MINUTES, 'USAGE', { wait });
@@ -1437,12 +1479,13 @@ export async function publishCommit({ commit, dir, out, images, repo = DEFAULT_R
     }
   }
   const clock = deps.clock ?? Date.now;
-  prepared ??= await prepareCommit({ commit, dir, out, images, repo, index, ghCommand, deps, now: clock(), requireDelivery: true });
+  prepared ??= await prepareCommit({ commit, dir, out, images, transportBase, repo, index, ghCommand, deps, now: clock(), requireDelivery: true });
   const sealed = await seal({ request: prepared.request, expectedRequestSha256: prepared.requestSha256, repo, index, ghCommand,
     wait, onPending, deps, now: clock() });
   return { ...sealed, request: prepared.request, requestSha256: prepared.requestSha256,
     ...(prepared.deliveryPreflight ? { preparePreflight: prepared.deliveryPreflight } : {}),
-    ...(prepared.migrationAdmission ? { migrationAdmission: prepared.migrationAdmission } : {}) };
+    ...(prepared.migrationAdmission ? { migrationAdmission: prepared.migrationAdmission } : {}),
+    ...(prepared.migrationReceiptRef ? { migrationReceiptRef: prepared.migrationReceiptRef } : {}) };
 }
 
 export async function prepareCommit({ commit, dir, out, repo = DEFAULT_REPO, ghCommand = ['gh'], deps = {}, requireDelivery = false, ...options }) {
@@ -1465,24 +1508,21 @@ export async function prepareCommit({ commit, dir, out, repo = DEFAULT_REPO, ghC
   }
   const meta = (await fs.readdir(dir)).filter(n => /^fleet-node-g[0-9]{6}\.release\.json$/.test(n));
   check(meta.length === 1, 'PUBLISH_BUILD_DIR_REFUSED');
-  const releaseWorkflow = deps.admitRelease ? null : await (deps.loadReleaseWorkflow ?? loadReleaseWorkflow)();
-  const fleetReleaseWorkflow = releaseWorkflow?.fleetReleaseWorkflow ?? (() => null);
-  const reconcileFleetRelease = async workflow => {
+  const { release } = await readBuild(dir);
+  const s = release.source;
+  check(!requireDelivery || packageGenerationOf(s.version) >= STAGED_PREFLIGHT_GENERATION, 'FLEET_DELIVERY_GENERATION_REFUSED');
+  check(s.commit === commit && packageGenerationOf(s.version) > BASELINE_GENERATION, 'PREPARE_BUILD_NOT_THIS_COMMIT', s.commit);
+  const beforePublish = async () => {
     if (deps.admitRelease) return admitFleetRelease({ repository: repo, commit, admit: deps.admitRelease });
-    const evidence = await releaseWorkflow.reconcileFleetRelease(workflow);
+    const evidence = await reconcileFleetRelease(deps.release ?? fleetReleaseWorkflow({
+      repository: repo, commit, runGh: (args, timeout) => gh(ghCommand, args, timeout),
+    }));
     if (packageGenerationOf(s.version) < STAGED_PREFLIGHT_GENERATION) return evidence;
     check(HEX64.test(evidence?.requirementsSha256 ?? '') && OPEN_RUN_ID.test(evidence.readRunId ?? '') &&
       Array.isArray(evidence.dispatched) && (evidence.dispatched.length ? OPEN_RUN_ID.test(evidence.migrationRunId ?? '') : evidence.migrationRunId === null),
     'FLEET_RELEASE_ADMISSION_REFUSED');
     return { ...evidence, repository: repo, commit, status: 'PASS' };
   };
-  const { release } = await readBuild(dir);
-  const s = release.source;
-  check(!requireDelivery || packageGenerationOf(s.version) >= STAGED_PREFLIGHT_GENERATION, 'FLEET_DELIVERY_GENERATION_REFUSED');
-  check(s.commit === commit && packageGenerationOf(s.version) > BASELINE_GENERATION, 'PREPARE_BUILD_NOT_THIS_COMMIT', s.commit);
-  const beforePublish = () => reconcileFleetRelease(deps.release ?? fleetReleaseWorkflow({
-    repository: repo, commit, runGh: (args, timeout) => gh(ghCommand, args, timeout),
-  }));
   return prepare({ ...options, version: s.version, dir, out, repo, ghCommand, deps: { ...deps, generationTags } }, beforePublish);
 }
 
@@ -1492,7 +1532,7 @@ export async function main(argv, deps = {}) {
   try {
     parsed = parseArgs({ args: rest, allowPositionals: true, options: { dir: { type: 'string' }, repo: { type: 'string' }, index: { type: 'string' },
       commit: { type: 'string' }, image: { type: 'string', multiple: true }, out: { type: 'string' }, request: { type: 'string' },
-      'drill-receipt': { type: 'string' }, wait: { type: 'string' } } });
+      'drill-receipt': { type: 'string' }, 'transport-base': { type: 'string' }, wait: { type: 'string' } } });
   } catch { fail('USAGE'); }   // an option no command has (the old entry's --base, --kit, --acceptance; seal's old --decision, --receipt, --accepted-at
   //                              and --decision-record: the acceptance is the Owner's fleet.accept Grant, PLAN-accept-auto-seal-20261125 2.2)
   // the release command is gone (prepare makes the Release): `release`, with or without options, ends in USAGE below like any unknown command
@@ -1504,12 +1544,13 @@ export async function main(argv, deps = {}) {
     return values.wait === undefined ? undefined : Number(values.wait);
   };
   if (sub === 'prepare' || sub === 'publish') {
-    only('commit', 'dir', 'out', 'image', 'repo', 'index', ...(sub === 'publish' ? ['wait'] : []));
+    only('commit', 'dir', 'out', 'image', 'transport-base', 'repo', 'index', ...(sub === 'publish' ? ['wait'] : []));
     check(values.commit && values.dir && values.out, 'USAGE');
+    const transportBase = values['transport-base'] ? path.resolve(values['transport-base']) : undefined;
     if (sub === 'publish') return publishCommit({ commit: values.commit, dir: path.resolve(values.dir), out: path.resolve(values.out),
-      images: values.image ?? [], repo: values.repo, index: values.index, wait: wait(), ghCommand: deps.ghCommand, onPending: deps.onPending, deps });
+      images: values.image ?? [], transportBase, repo: values.repo, index: values.index, wait: wait(), ghCommand: deps.ghCommand, onPending: deps.onPending, deps });
     return (deps.prepareCommit ?? prepareCommit)({ commit: values.commit, dir: path.resolve(values.dir), out: path.resolve(values.out), images: values.image ?? [],
-      repo: values.repo, index: values.index, ghCommand: deps.ghCommand, deps });
+      transportBase, repo: values.repo, index: values.index, ghCommand: deps.ghCommand, deps });
   }
   if (sub === 'seal') {
     only('request', 'drill-receipt', 'wait', 'repo', 'index');

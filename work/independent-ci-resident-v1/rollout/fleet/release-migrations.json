@@ -13,5 +13,10 @@
     "file": "20261127120000_fleet_delivery_seal_v1.sql",
     "requires": [],
     "probe": "delivery"
+  },
+  {
+    "file": "20261127120100_fleet_pending_delivery_v1.sql",
+    "requires": ["20261127120000_fleet_delivery_seal_v1.sql"],
+    "probe": "pendingDelivery"
   }
 ]

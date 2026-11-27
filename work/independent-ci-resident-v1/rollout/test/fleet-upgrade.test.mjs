@@ -19,6 +19,7 @@ import { POLICY_CONTRACT_V8 } from '../../src/policy.mjs';
 import { sourceHashOf } from '../fleet/install.mjs';
 import { main, upgradeNode } from '../fleet/upgrade.mjs';
 import { buildUniversal } from '../fleet/universal.mjs';
+import { stageTransport } from '../fleet/transport-assets.mjs';
 import { fixtureRepo, fleetFacts, nodeSite, sha, tempDir } from '../fleet/test/fleet-fixtures.mjs';
 import { Journal } from '../../upgrader/src/journal.mjs';
 import { parseInboxEntry } from '../../upgrader/src/request.mjs';
@@ -310,13 +311,21 @@ test('fleet upgrade fetch: one command takes the tar from the second source, che
   await fs.access(path.join(path.dirname(script), 'fetch.mjs'));
   assert.deepEqual(rest.slice(0, 6), ['--artifact', path.join(dir, 'w1', 'dl', `${tag}.tar`), '--artifact-sha', sha256, '--acceptance', path.join(dir, 'w1', 'dl', `${tag}.acceptance.json`)]);
   assert.ok(rest.includes('--no-request'));
+  const archive = await fs.readFile(w.tar);
+  const transports = await stageTransport({ repository: w.acceptance.repository, version, archiveSha256: sha256, archive, stage: from });
+  await fs.rm(path.join(from, `${tag}.tar`));
+  const compressed = await main(['fetch', '--version', version, '--work', path.join(dir, 'compressed'), '--from', from, '--no-request'],
+    { ...noNetwork, runChild });
+  assert.equal(compressed.fetched?.source, 'from-gzip');
+  assert.equal(sha(await fs.readFile(ran[1][2])), sha256, 'prepare receives the reconstructed formal tar');
+  for (const { file } of transports) await fs.rm(file);
   // a tar that is not the accepted one: refused, nothing unpacked, nothing run
-  const bad = Buffer.from(await fs.readFile(w.tar)); bad[600] ^= 1;
+  const bad = Buffer.from(archive); bad[600] ^= 1;
   await fs.writeFile(path.join(from, `${tag}.tar`), bad);
   const r2 = await main(['fetch', '--version', version, '--work', path.join(dir, 'w2'), '--from', from], { ...noNetwork, fetch: { ...noNetwork.fetch, deadlineMs: 100, backoffMs: () => 10 }, runChild });
   assert.equal(r2.status, 'FLEET_NODE_UPGRADE_REFUSED');
   await assert.rejects(fs.access(path.join(dir, 'w2', 'unpacked')));
-  assert.equal(ran.length, 1);
+  assert.equal(ran.length, 2);
 });
 
 test('fleet upgrade fetch: a rollback to a package whose acceptance has no kit field is not stopped by this (newer) copy; the unpacked package judges it, and a new package without a kit is still refused by its own rule', { timeout: 900_000 }, async t => {

@@ -1,19 +1,67 @@
 // Real seal and accept commands through the existing resident-node suite. GitHub and the acceptance door are controlled fixtures.
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 import { planFiles } from '../../../../scripts/ci/ci-required-selection.mjs';
 import * as publishModule from '../fleet/publish.mjs';
-import { GRANT, GRANT_RECEIPT, TAG, fakeTime, prepWorld, resourceOf, sealedNothing, sha, timed, uploadsOf } from '../fleet/test/publish-fixtures.mjs';
+import { transportAssetNames } from '../fleet/fetch.mjs';
+import { requirementsDigest } from '../fleet/release-migrations.mjs';
+import { GRANT, GRANT_RECEIPT, REPO, TAG, fakeTime, prepWorld, resourceOf, sealedNothing, sha, timed, uploadsOf, world } from '../fleet/test/publish-fixtures.mjs';
 
 const legacyNode = (id, name, mode, observedAt) => ({ id, name, state: 'active', mode,
   registrationVersion: 4, bindingGeneration: 2, identityFingerprint: 'c'.repeat(64), bindingLive: true,
   reportedSourceSha256: 'd'.repeat(64), heartbeatAt: observedAt, heartbeatSequence: 81,
   reportedState: 'NORMAL', serviceRunning: true, onDuty: mode === 'ACTIVE', evidence: null });
+
+test('prepare 发布可复验的运输资产，续跑保持正式 tar、清单和请求字节', async t => {
+  const old = await world(t, 'g000024');
+  const w = await prepWorld(t, { version: 'g000025', released: false, spawnGh: false });
+  const oldTag = old.source.release_tag;
+  const name = `${oldTag}.acceptance.json`;
+  const accepted = Buffer.from(JSON.stringify({ contract: publishModule.ACCEPTANCE_CONTRACT, repository: REPO,
+    version: old.source.version, commit: old.source.commit, archive_sha256: old.source.archive_sha256 }));
+  await fs.writeFile(w.state, JSON.stringify({ calls: [], assets: [], other: {
+    [oldTag]: [{ name, size: accepted.length, b64: accepted.toString('base64') }]
+  } }));
+  const tags = w.deps.generationTags;
+  const deps = { ...w.deps, generationTags: { ...tags, read: tag => tag === oldTag ? {
+    contract: 'clued.independent-ci.fleet-package-generation/1', version: old.source.version, release_tag: oldTag,
+    commit: old.source.commit, archive_sha256: old.source.archive_sha256
+  } : tags.read(tag) } };
+  const transportBase = path.join(old.build, `${oldTag}.tar`);
+  const bad = Buffer.from(old.tar);
+  bad[0] ^= 1;
+  await fs.writeFile(transportBase, bad);
+  await assert.rejects(w.prep({ deps, transportBase }), { code: 'PUBLISH_TRANSPORT_BASE_SHA_MISMATCH' });
+  assert.deepEqual(await w.assets(), []);
+  await fs.writeFile(transportBase, old.tar);
+  await w.prep({ deps, transportBase });
+  const assets = new Map((await w.assets()).map(asset => [asset.name, Buffer.from(asset.b64, 'base64')]));
+  const version = w.source.version, tarName = `${w.source.release_tag}.tar`;
+  assert.deepEqual(assets.get(tarName), w.tar);
+  assert.match(assets.get('SHA256SUMS').toString(), new RegExp(`${w.source.archive_sha256}  ${tarName}\\n`));
+  assert.doesNotMatch(assets.get('SHA256SUMS').toString(), /transport-|\.delta\.gz|\.tar\.gz/);
+  for (const kind of ['gzip', 'delta']) {
+    const { meta, payload } = transportAssetNames(version, kind);
+    const descriptor = JSON.parse(assets.get(meta));
+    assert.deepEqual([descriptor.version, descriptor.repository, descriptor.archive_sha256, descriptor.archive_bytes, descriptor.sha256],
+      [version, REPO, w.source.archive_sha256, w.tar.length, sha(assets.get(payload))]);
+    if (kind === 'gzip') assert.deepEqual(gunzipSync(assets.get(payload)), w.tar);
+    else assert.deepEqual(descriptor.base, { version: old.source.version, bytes: old.tar.length, sha256: old.source.archive_sha256 });
+  }
+  const request = await fs.readFile(w.requestFile);
+  assert.equal(JSON.parse(request).archive_sha256, w.source.archive_sha256);
+  const uploads = await uploadsOf(w);
+  await w.prep({ deps, transportBase });
+  assert.deepEqual(await uploadsOf(w), uploads);
+  assert.deepEqual(await fs.readFile(w.requestFile), request);
+});
 
 const fixtureKit = () => ({ record: { repository: 'tdoljyj/cross-memory-system', scope: 'project:11111111-1111-4111-8111-111111111111' } });
 const prepareFixtures = { readKit: fixtureKit, verifyDeliveryTree: () => {}, admitRelease: async subject => ({ ...subject, status: 'PASS' }) };
@@ -87,9 +135,11 @@ async function publishWorld(t, overrides = {}) {
   const w = await prepWorld(t, { version: 'g000027', released: false, spawnGh: false });
   const time = fakeTime('2026-11-27T01:00:00Z');
   const phases = [], confirms = [], links = [];
+  let mainStatus = 'identical';
   const approve = () => Object.assign(w.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT,
     acceptedAt: new Date(time.now).toISOString() });
-  const deps = { ...w.deps, ...prepareFixtures, clock: time.clock, sleep: time.sleep, ghCommand: w.gh,
+  const deps = { ...w.deps, ...prepareFixtures, clock: time.clock, sleep: time.sleep,
+    ghCommand: args => args[1]?.includes('/compare/main...') ? { status: 0, stdout: JSON.stringify({ status: mainStatus }) } : w.gh(args),
     generationTags: gen27Tags(w), onPending: link => links.push(link),
     fleetWorkflow: async (operation, candidate, details) => {
       phases.push(operation);
@@ -108,7 +158,7 @@ async function publishWorld(t, overrides = {}) {
     command, '--commit', w.source.commit, '--dir', directory, '--out', w.out, '--image', w.image, '--index', w.index,
     ...(command === 'publish' ? ['--wait', '1'] : []),
   ], { ...deps, ...extra });
-  return { w, time, phases, confirms, links, approve, deps, run };
+  return { w, time, phases, confirms, links, approve, deps, run, advanceMain: () => { mainStatus = 'behind'; } };
 }
 
 test('正式 publish 和旧 prepare 在新建目录、候选通过本地校验后才接入一次迁移对账', async t => {
@@ -116,34 +166,42 @@ test('正式 publish 和旧 prepare 在新建目录、候选通过本地校验�
     const { w, run, phases, approve } = await publishWorld(t);
     const dir = path.join(w.d, 'new', 'build');
     await assert.rejects(fs.access(dir), { code: 'ENOENT' });
-    const loadReleaseWorkflow = async () => ({
-      fleetReleaseWorkflow: subject => subject,
-      reconcileFleetRelease: async ({ repository, commit, directory, runGh }) => {
+    const migration = { file: '20261127120100_fleet_pending_delivery_v1.sql', version: '20261127120100',
+      name: 'fleet_pending_delivery_v1', digest: 'a'.repeat(64), requires: [], probe: 'pendingDelivery' };
+    const plan = [migration];
+    const complete = { base: true, applied: [{ version: migration.version, name: migration.name, digest: migration.digest }],
+      interfaces: { pendingDelivery: true } };
+    const release = {
+      admit: async () => {},
+      requirements: async () => plan,
+      read: async requirements => {
         phases.push('reconcile');
-        assert.equal(repository, fixtureKit().record.repository);
-        assert.equal(commit, w.source.commit);
-        assert.equal(directory, dir);
-        assert.equal(typeof runGh, 'function');
-        assert.ok((await fs.readdir(directory)).includes(`${w.source.release_tag}.tar`));
-        assert.equal(w.s.sourceDrafts.length, 1);
+        assert.deepEqual(requirements, plan);
+        assert.ok((await fs.readdir(dir)).includes(`${w.source.release_tag}.tar`));
+        assert.equal(w.s.sourceDrafts.length, 1, '本地候选应已验证');
         assert.deepEqual(await w.assets(), []);
-        return { requirementsSha256: 'a'.repeat(64), readRunId: '401', migrationRunId: command === 'publish' ? '402' : null,
-          dispatched: command === 'publish' ? ['20261127120000'] : [] };
+        return { runId: '401', snapshot: command === 'publish' ? { base: true, applied: [], interfaces: { pendingDelivery: false } } : complete };
       },
-    });
-    const result = await run({ admitRelease: undefined, loadReleaseWorkflow, onPending: approve,
+      migrate: async (missing, requirements) => {
+        assert.equal(command, 'publish');
+        assert.deepEqual(missing, [migration.file]);
+        assert.deepEqual(requirements, plan);
+        return { runId: '402', snapshot: complete };
+      },
+    };
+    const result = await run({ admitRelease: undefined, release, onPending: approve,
       buildUniversal: ({ out }) => fs.cp(w.build, out, { recursive: true }) }, command, dir);
     assert.equal(result.status, command === 'publish' ? 'FLEET_ACCEPTANCE_SEALED' : 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
     assert.deepEqual(phases.slice(0, 2), ['reconcile', 'preflight']);
     assert.equal(phases.filter(phase => phase === 'reconcile').length, 1);
     assert.deepEqual(result.migrationAdmission, { status: 'PASS', repository: fixtureKit().record.repository, commit: w.source.commit,
-      requirementsSha256: 'a'.repeat(64), readRunId: '401', migrationRunId: command === 'publish' ? '402' : null,
-      dispatched: command === 'publish' ? ['20261127120000'] : [] });
+      requirementsSha256: requirementsDigest(plan), readRunId: '401', migrationRunId: command === 'publish' ? '402' : null,
+      dispatched: command === 'publish' ? [migration.file] : [] });
   });
 });
 
 test('开单后 main 前进，重启沿原 Grant、Receipt 和请求摘要续封', async t => {
-  const { w, run, approve, confirms } = await publishWorld(t);
+  const { w, run, approve, confirms, advanceMain } = await publishWorld(t);
   let admissions = 0, mainMoved = false;
   const admitRelease = async subject => {
     admissions++;
@@ -154,6 +212,7 @@ test('开单后 main 前进，重启沿原 Grant、Receipt 和请求摘要续封
   assert.equal(opened.status, 'FLEET_ACCEPTANCE_WAITING_OWNER');
   const before = (await w.calls()).length;
   mainMoved = true;
+  advanceMain();
   approve();
   const sealed = await run({ admitRelease });
   assert.deepEqual([sealed.status, sealed.grantId, sealed.receiptId, sealed.requestSha256],
@@ -172,6 +231,7 @@ test('已受理的开单运行终局失败且门为 none，才按准确运行编
   const runReads = [];
   let conclusion = null;
   const ghCommand = args => {
+    if (args[1]?.includes('/compare/main...')) return { status: 0, stdout: JSON.stringify({ status: 'identical' }) };
     const result = w.gh(args);
     if (args[0] === 'workflow') {
       if (args.includes('fleet_request_sha256=' + w.door.reads[0]?.split('/').at(-1))) {
@@ -396,6 +456,122 @@ test('第 27 代部分上传后沿用同一暂存请求、kit 和镜像', async 
   assert.equal(sha(await fs.readFile(w.requestFile)), result.requestSha256);
   assert.equal(w.s.kitReads, 1);
   assert.equal((await w.calls()).filter(c => c.args[0] === 'release' && c.args[1] === 'create').length, 1);
+});
+
+test('第 27 代统一发布的运输附件经回读验证，部分上传后续跑沿用原字节', async t => {
+  const old = await world(t, 'g000026');
+  const w = await prepWorld(t, { version: 'g000027', released: false, spawnGh: false });
+  const { version, release_tag: tag, commit } = w.source;
+  const oldTag = old.source.release_tag;
+  const transportBase = path.join(old.build, `${oldTag}.tar`);
+  const accepted = Buffer.from(JSON.stringify({ contract: publishModule.ACCEPTANCE_CONTRACT, repository: REPO,
+    version: old.source.version, commit: old.source.commit, archive_sha256: old.source.archive_sha256 }));
+  await fs.writeFile(w.state, JSON.stringify({ calls: [], assets: [], other: {
+    [oldTag]: [{ name: `${oldTag}.acceptance.json`, size: accepted.length, b64: accepted.toString('base64') }]
+  } }));
+  const tags = w.deps.generationTags;
+  const generationTags = { ...tags, list: async () => ['fleet-node-g000025', oldTag, ...await tags.list()],
+    read: name => name === oldTag ? { contract: 'clued.independent-ci.fleet-package-generation/1', version: old.source.version,
+      release_tag: oldTag, commit: old.source.commit, archive_sha256: old.source.archive_sha256 } : tags.read(name) };
+  const time = fakeTime('2026-11-27T01:00:00Z');
+  const freshAttachment = transportAssetNames(version, 'gzip').payload;
+  const interruptedUpload = transportAssetNames(version, 'delta').meta;
+  const candidateDir = path.join(w.out, `.${tag}.candidate`);
+  let interrupted = false, corruptReadback = false;
+  const readbacks = [];
+  const ghCommand = args => {
+    if (!interrupted && args[0] === 'release' && args[1] === 'create') {
+      interrupted = true;
+      assert.ok(args.some(arg => path.basename(arg) === interruptedUpload));
+      const created = w.gh(args.filter(arg => path.basename(arg) !== interruptedUpload));
+      assert.equal(created.status, 0, created.stderr);
+      return { status: 1, stderr: 'fixture interrupted the transport upload' };
+    }
+    const result = w.gh(args);
+    if (args[0] === 'release' && args[1] === 'download' && result.status === 0) {
+      const name = args[args.indexOf('--pattern') + 1];
+      const directory = args[args.indexOf('--dir') + 1];
+      if (name === freshAttachment && path.basename(path.dirname(directory)) === 'verify-transport') {
+        readbacks.push(name);
+        if (corruptReadback) {
+          const file = path.join(directory, name);
+          const bytes = readFileSync(file);
+          bytes[0] ^= 1;
+          writeFileSync(file, bytes);
+        }
+      }
+    }
+    return result;
+  };
+  const reconciliation = [];
+  const release = {
+    admit: async () => { reconciliation.push('admit'); },
+    requirements: async () => [],
+    read: async () => {
+      reconciliation.push('read');
+      return { runId: '81', snapshot: { base: true, applied: [], interfaces: {} } };
+    },
+  };
+  const projections = [];
+  w.door.status = 'none';
+  const args = ['--commit', commit, '--dir', w.build, '--out', w.out, '--image', w.image, '--index', w.index, '--transport-base', transportBase];
+  const run = (argv = ['publish', ...args, '--wait', '5']) => publishModule.main(argv, {
+    ...w.deps, clock: time.clock, sleep: time.sleep, ghCommand, generationTags,
+    release, readKit: () => fixtureKit(), verifyDeliveryTree: () => {},
+    fleetWorkflow: async (phase, candidate, details) => {
+      if (phase === 'preflight') {
+        projections.push(candidate.requestSha256);
+        return stagedProjection(phase, candidate, details, time);
+      }
+      if (phase === 'project') {
+        const view = fleetProjection(candidate, new Date(time.now).toISOString());
+        return { first: view, last: view };
+      }
+      assert.equal(phase, 'confirm');
+      w.door.sealedDigest = details.acceptanceSha256;
+      return { status: 'sealed', ...details };
+    },
+    onPending: () => Object.assign(w.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT, acceptedAt: '2026-11-27T01:00:00Z' }),
+  });
+  await assert.rejects(run(), { code: 'PUBLISH_GH_RELEASE_CREATE_FAILED' });
+  assert.deepEqual(reconciliation, ['admit', 'read', 'admit']);
+  assert.equal((await w.opens()).length, 0);
+  await assert.rejects(fs.access(w.requestFile), { code: 'ENOENT' });
+  const heldRequest = await fs.readFile(path.join(candidateDir, `${tag}.acceptance-request.json`));
+  const heldTransport = await fs.readFile(path.join(candidateDir, freshAttachment));
+  const heldReceipt = await fs.readFile(path.join(candidateDir, 'candidate.SHA256SUMS'), 'utf8');
+  const publishedSums = Buffer.from((await w.assets()).find(asset => asset.name === 'SHA256SUMS').b64, 'base64');
+  assert.ok(heldReceipt.includes(`${sha(heldTransport)}  ${freshAttachment}\n`));
+  await fs.unlink(transportBase);
+  corruptReadback = true;
+  await assert.rejects(run(['prepare', ...args]), { code: 'PUBLISH_RELEASE_ASSET_CHANGED', detail: freshAttachment });
+  assert.equal((await w.opens()).length, 0);
+  await assert.rejects(fs.access(w.requestFile), { code: 'ENOENT' });
+  corruptReadback = false;
+  const result = await run();
+  assert.equal(result.status, 'FLEET_ACCEPTANCE_SEALED');
+  assert.equal(result.requestSha256, sha(heldRequest));
+  assert.deepEqual(reconciliation, Array.from({ length: 3 }, () => ['admit', 'read', 'admit']).flat());
+  assert.deepEqual([result.migrationAdmission.commit, result.migrationAdmission.readRunId, result.migrationAdmission.dispatched], [commit, '81', []]);
+  assert.deepEqual(projections, Array(3).fill(result.requestSha256));
+  assert.deepEqual(readbacks, [freshAttachment, freshAttachment]);
+  const assets = new Map((await w.assets()).map(asset => [asset.name, Buffer.from(asset.b64, 'base64')]));
+  assert.deepEqual(assets.get(`${tag}.tar`), w.tar);
+  assert.deepEqual(assets.get(`${tag}.acceptance-request.json`), heldRequest);
+  assert.deepEqual(await fs.readFile(w.requestFile), heldRequest);
+  assert.equal(JSON.parse(assets.get(`${tag}.acceptance.json`)).archive_sha256, w.source.archive_sha256);
+  assert.deepEqual(assets.get('SHA256SUMS'), publishedSums);
+  assert.doesNotMatch(assets.get('SHA256SUMS').toString(), /transport-|\.delta\.gz|\.tar\.gz/);
+  const manifest = assets.get(`${tag}.candidate.SHA256SUMS`);
+  assert.equal(sha(manifest), JSON.parse(heldRequest).deliveryAssetsSha256);
+  assert.doesNotMatch(manifest.toString(), /transport-|\.delta\.gz/);
+  for (const kind of ['gzip', 'delta']) {
+    const { meta, payload } = transportAssetNames(version, kind);
+    assert.equal(JSON.parse(assets.get(meta)).sha256, sha(assets.get(payload)));
+  }
+  assert.deepEqual(assets.get(freshAttachment), heldTransport);
+  assert.equal((await uploadsOf(w)).filter(call => path.basename(call.args[3]) === interruptedUpload).length, 1);
+  assert.equal((await w.opens()).length, 1);
 });
 
 test('第 25 代 seal、open 和 run 共用生产读者，复查失败后沿用原 Grant', async t => {

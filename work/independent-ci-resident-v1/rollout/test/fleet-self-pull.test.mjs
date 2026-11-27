@@ -9,12 +9,14 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { until } from '../../../../scripts/ci/test-clock-guard.mjs';
+import { acceptanceBytes } from '../../src/fleet-acceptance.mjs';
 import { serviceLoop } from '../../src/service-main.mjs';
 import { LINUX_SCRIPTS, prepareInstall, sourceHashOf } from '../fleet/install.mjs';
 import { acceptanceOf, REQUEST_CONTRACT } from '../fleet/publish.mjs';
 import { buildUniversal } from '../fleet/universal.mjs';
 import { CHECKOUT, RES, fixtureRepo, fleetFacts, git, nodeSite, sha, tempDir } from '../fleet/test/fleet-fixtures.mjs';
-import { fetchFleetReleaseAsset } from '../fleet/fetch.mjs';
+import { fetchFleetReleaseAsset, sha256File, transportAssetNames } from '../fleet/fetch.mjs';
+import { stageTransport } from '../fleet/transport-assets.mjs';
 import { readTar } from '../fleet/tar.mjs';
 import { Upgrader } from '../../upgrader/src/upgrader-main.mjs';
 import { FakeDoor, FakeLinux, FakeResident, FakeWindows, fakeClock, installGeneration1, testConfig } from '../../upgrader/test/fixtures.mjs';
@@ -40,6 +42,87 @@ test('第 25 代已批准待封存时，companion 不下载或补传接受文件
   await companionSelfPull({ root, repository, clock: () => now,
     download: async arg => { calls.push(arg.name); return false; }, upload: async arg => { calls.push(arg.tag); } })();
   assert.deepEqual(calls, []);
+});
+
+test('自拉重启后用已验上一代走增量，坏运输资产和坏完整 tar 不触发组装', async t => {
+  const { companionSelfPull, residentSelfPull, byTarget, names } = await lanes();
+  const root = await tempDir(t, 'fleet-transport-lanes');
+  await fs.mkdir(path.join(root, 'state'));
+  await fs.mkdir(path.join(root, 'broker'));
+  const releases = new Map();
+  const downloaded = [];
+  const server = http.createServer((req, res) => {
+    const prefix = `/${repository}/releases/download/`;
+    const [tag, name] = req.url.startsWith(prefix) ? req.url.slice(prefix.length).split('/') : [];
+    const bytes = releases.get(tag)?.get(name);
+    if (!bytes || req.headers.authorization) return res.writeHead(404).end();
+    downloaded.push(name);
+    res.writeHead(200, { 'content-length': bytes.length }).end(bytes);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+  const releaseBase = `http://127.0.0.1:${server.address().port}`;
+  const companion = () => companionSelfPull({ root, repository, clock: () => now,
+    download: options => fetchFleetReleaseAsset({ ...options, releaseBase, now: () => now }) });
+
+  const makeTarget = async (version, tar, base) => {
+    const archive_sha256 = sha(tar);
+    const request = { contract: REQUEST_CONTRACT, repository, version, commit: '1'.repeat(40), archive_sha256,
+      firstInstallKitSha256: '2'.repeat(64), ciSourceManifestSha256: '3'.repeat(64),
+      fleetRefs: { ...fleetFacts(), ownerAuthorizationRef: randomUUID(), publisherQualificationRef: randomUUID(), ownerPackageAcceptanceRef: randomUUID() } };
+    const grant = { decision: randomUUID(), receipt: randomUUID(), acceptedAt: new Date(now).toISOString().replace('.000Z', 'Z') };
+    const sealed = acceptanceBytes(acceptanceOf(request, grant));
+    const requestBytes = json(request);
+    const target = { repository, version, archive_sha256, request_sha256: sha(requestBytes), acceptance_sha256: sha(sealed),
+      grant_id: grant.decision, receipt_id: grant.receipt, accepted_at: grant.acceptedAt, other_sources: [] };
+    const files = names(target);
+    const assets = new Map([[files.tar, tar], [files.request, requestBytes], [files.acceptance, sealed],
+      ['SHA256SUMS', Buffer.from(`${archive_sha256}  ${files.tar}\n`)]]);
+    if (base) {
+      const stage = await tempDir(t, 'fleet-transport-assets');
+      const previous = { version: base.target.version, sha256: base.target.archive_sha256, bytes: base.tar };
+      for (const { name, file } of await stageTransport({ repository, version, archiveSha256: archive_sha256, archive: tar, stage, previous }))
+        assets.set(name, await fs.readFile(file));
+    }
+    releases.set(files.tag, assets);
+    return { target, files, tar, assets, dir: byTarget(root, target) };
+  };
+  const observe = async ({ target }) => {
+    const probe = json({ at: new Date(now).toISOString(), onDuty: false, code: null, fleetTarget: target });
+    await fs.writeFile(path.join(root, 'state', 'fleet-target.json'), probe);
+    await fs.writeFile(path.join(root, 'broker', 'renew-ci.json'), probe);
+  };
+  const old = await makeTarget('g000024', Buffer.alloc(512_000, 4));
+  const next = await makeTarget('g000025', Buffer.concat([old.tar, Buffer.from('second package')]), old);
+  await observe(old);
+  await companion()();
+  assert.equal(await sha256File(path.join(old.dir, old.files.tar)), old.target.archive_sha256);
+  // An old companion already put the tar in its request-SHA directory.
+  const pointer = path.join(path.dirname(old.dir), 'transport-base.json');
+  await fs.rm(pointer);
+  await observe(next);
+  await companion()();
+  assert.equal((await read(path.join(next.dir, 'ready.json'))).grantId, next.target.grant_id);
+  assert.equal((await read(pointer)).request_sha256, next.target.request_sha256);
+  assert.equal(await sha256File(path.join(next.dir, next.files.tar)), next.target.archive_sha256);
+  assert.ok(downloaded.includes(transportAssetNames(next.target.version, 'delta').payload));
+  assert.ok(!downloaded.includes(next.files.tar));
+
+  const bad = await makeTarget('g000026', Buffer.concat([next.tar, Buffer.from('third package')]), next);
+  for (const name of [bad.files.tar, ...['delta', 'gzip'].map(kind => transportAssetNames(bad.target.version, kind).payload)]) {
+    bad.assets.set(name, Buffer.from('corrupted'));
+  }
+  await observe(bad);
+  await companion()();
+  assert.ok(downloaded.includes(bad.files.tar));
+  assert.equal((await read(path.join(bad.dir, 'download.json'))).code, 'FLEET_ARCHIVE_SHA_MISMATCH');
+  await assert.rejects(fs.access(path.join(bad.dir, 'ready.json')), { code: 'ENOENT' });
+  await assert.rejects(fs.access(path.join(bad.dir, bad.files.tar)), { code: 'ENOENT' });
+  const requests = [];
+  const resident = residentSelfPull({ root, repository, clock: () => now, submit: (...args) => requests.push(args) });
+  await resident.tick({ queueEmpty: true });
+  assert.deepEqual(requests, []);
+  assert.equal((await read(path.join(root, 'state', 'fleet-pull.json'))).phase, 'DOWNLOADING');
 });
 
 async function release(t, fleet, repo, commit, version) {

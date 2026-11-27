@@ -8,7 +8,7 @@ import { acceptanceBytes, acceptanceOf, REQUEST_CONTRACT, REQUEST_FLEET_REFS } f
 import { refuseUnderTest } from './production-root-guard.mjs';
 import { readBounded } from './store.mjs';
 import { packageGenerationOf } from './selfcheck.mjs';
-import { fetchFleetReleaseAsset, sha256File } from '../rollout/fleet/fetch.mjs';
+import { fetchFleetReleaseAsset, previousTransportVersion, restoreTransport, sha256File, TRANSPORT } from '../rollout/fleet/fetch.mjs';
 
 const VERSION = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,88}$/;
 const REPO = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/;
@@ -16,7 +16,8 @@ const OBSERVATION_AGE = 15 * 60_000;
 const RETRY = 60_000;
 const LIMIT = 30 * 60_000;
 const SMALL = 256 * 1024;
-const ARCHIVE_MAX = 512 * 1024 * 1024;
+const LEGACY_CACHE_SCAN = 64;
+const LEGACY_BASE_CANDIDATES = 4;
 const MOVING = new Set(['WAITING_GRANT', 'WAITING_DRAIN', 'DEFERRED', 'RUNNING', 'ROLLING_BACK']);
 const TARGET_FIELDS = ['repository', 'version', 'grant_id', 'receipt_id', 'accepted_at',
   'request_sha256', 'archive_sha256', 'acceptance_sha256'];
@@ -70,11 +71,39 @@ export const names = target => {
   return { tag, tar: `${tag}.tar`, request: `${tag}.acceptance-request.json`, acceptance: `${tag}.acceptance.json` };
 };
 
+async function previousTars({ root, repository, version, pointer }) {
+  const previous = previousTransportVersion(version);
+  if (!previous) return [];
+  const tar = names({ version: previous }).tar;
+  const cached = await read(pointer, TRANSPORT.metaMax);
+  const exists = file => fs.stat(file).then(stat => stat.isFile(), () => false);
+  if (cached?.repository === repository && cached.version === previous && HEX64.test(cached.request_sha256 ?? '')) {
+    const file = path.join(byTarget(root, cached), tar);
+    if (await exists(file)) return [file];
+  }
+  // Before the pointer existed, companion used the same request-SHA folders.
+  // Probe a bounded number of them. The caller verifies each candidate's hash.
+  const candidates = [];
+  const parent = path.dirname(pointer);
+  try {
+    const entries = await fs.opendir(parent);
+    let scanned = 0;
+    for await (const entry of entries) {
+      if (++scanned > LEGACY_CACHE_SCAN || candidates.length === LEGACY_BASE_CANDIDATES) break;
+      if (!entry.isDirectory() || !HEX64.test(entry.name)) continue;
+      const file = path.join(parent, entry.name, tar);
+      if (await exists(file)) candidates.push(file);
+    }
+  } catch { /* Cache discovery is optional. */ }
+  return candidates;
+}
+
 // An independent companion lane. The download is credentialless. Only the optional upload uses
 // the companion's existing GitHub session, and neither its timing nor its result gates the resident.
 export function companionSelfPull({ root, repository, clock = Date.now, download = fetchFleetReleaseAsset, upload = async () => {} }) {
   let done = null;
   let next = 0;
+  const basePointer = path.join(root, 'bundles', 'fleet-pull', 'transport-base.json');
   return async () => {
     if (clock() < next) return;
     const observation = observationOf(await read(path.join(root, 'state', 'fleet-target.json')), repository, clock());
@@ -85,7 +114,8 @@ export function companionSelfPull({ root, repository, clock = Date.now, download
     refuseUnderTest(dir);
     const files = names(target);
     const deadline = clock() + LIMIT;
-    const fetch = (name, maxBytes = SMALL) => download({ repository, version: target.version, name, file: path.join(dir, name), maxBytes, deadline });
+    const fetch = (name, maxBytes = SMALL, file = path.join(dir, name), stop = deadline) =>
+      download({ repository, version: target.version, name, file, maxBytes, deadline: stop });
     try {
       await fs.mkdir(dir, { recursive: true });
       const requestFile = path.join(dir, files.request);
@@ -101,14 +131,27 @@ export function companionSelfPull({ root, repository, clock = Date.now, download
         check(await sha256File(file) === target.acceptance_sha256, 'FLEET_ACCEPTANCE_SEAL_MISMATCH');
       }
       const tar = path.join(dir, files.tar);
+      const ready = path.join(dir, 'ready.json');
       if (await sha256File(tar).catch(() => null) !== target.archive_sha256) {
+        await fs.rm(ready, { force: true });
         check(await fetch('SHA256SUMS'), 'FLEET_SUMS_MISSING');
         const sums = (await readBounded(path.join(dir, 'SHA256SUMS'), SMALL, 'FLEET_SUMS_REFUSED')).toString('utf8');
         check(sums.split(/\r?\n/).some(line => line === `${target.archive_sha256}  ${files.tar}`), 'FLEET_SUMS_MISMATCH');
-        check(await fetch(files.tar, ARCHIVE_MAX), 'FLEET_ARCHIVE_MISSING');
-        check(await sha256File(tar) === target.archive_sha256, 'FLEET_ARCHIVE_SHA_MISMATCH');
+        const baseFiles = await previousTars({ root, repository, version: target.version, pointer: basePointer });
+        const restored = await restoreTransport({ repository, version: target.version, archiveSha256: target.archive_sha256,
+          dir, baseFiles, deadline, now: clock, fetchAsset: (name, file, maxBytes, stop) => fetch(name, maxBytes, file, stop) });
+        if (!restored) {
+          check(await fetch(files.tar, TRANSPORT.archiveMax), 'FLEET_ARCHIVE_MISSING');
+          const valid = await sha256File(tar) === target.archive_sha256;
+          if (!valid) await fs.rm(tar, { force: true });
+          check(valid, 'FLEET_ARCHIVE_SHA_MISMATCH');
+        }
       }
-      await writeObservation(path.join(dir, 'ready.json'), { grantId: target.grant_id });
+      await writeObservation(ready, { grantId: target.grant_id });
+      // The pointer is only a lookup hint; the next delta re-hashes the base.
+      if (packageGenerationOf(target.version) !== null) {
+        await writeObservation(basePointer, { repository, version: target.version, request_sha256: target.request_sha256 }).catch(() => {});
+      }
       done = target.grant_id;
       // Existing acceptance bytes are never the authority and are never overwritten on the Release.
       if (!needsSeal(target) && !(await fetch(files.acceptance))) {

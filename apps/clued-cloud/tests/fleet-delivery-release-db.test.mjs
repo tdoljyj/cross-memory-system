@@ -350,6 +350,7 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
     for (const node of [primary, standby]) {
       const target = await targetOf(node);
       assert.equal(target.acceptance_sha256, sha(w.asset(acceptanceName)));
+      assert.deepEqual(target.other_sources, [installedSource], '同伴投影必须包含另一项目中已登记的 pending 节点');
       assert.ok(observationOf(observation(node, target), repo, sqlNow));
       const request = await fs.readFile(w.prepared.request);
       const acceptance = acceptanceFromTarget(target, request);

@@ -36,6 +36,7 @@ const callerCanExecute = `exists (select 1 from pg_proc door join pg_roles r on 
     where door.oid = to_regprocedure('clued_private.release_door_v1(jsonb)') and r.rolcanlogin
       and has_schema_privilege(r.oid, p.pronamespace, 'USAGE') and has_function_privilege(r.oid, p.oid, 'EXECUTE'))`;
 const bodyContains = code => `strpos(p.prosrc, $probe$${code}$probe$) > 0`;
+const pendingStates = "n.state in ('pending','active','draining')";
 const probes = {
   train: `${relation('ci_train_batches_v2', { batch_id: 'text', state: 'text', test_sha: 'text', tree_sha: 'text', receipt_id: 'uuid' })}
     and ${procedure('ci_train_command_v2(clued_private.ci_nodes_v1,text,jsonb)', 'jsonb')}`,
@@ -52,6 +53,13 @@ const probes = {
     and ${procedure('fleet_accept_door_v1(jsonb)', 'jsonb', `p.prosecdef
       and ${bodyContains("k not in ('action','resources','run_id','run_attempt','delivery')")}
       and ${bodyContains(acceptanceGuard)}`)}`,
+  pendingDelivery: `${procedure('fleet_node_target_v1(uuid,uuid)', 'jsonb', `p.provolatile = 's'
+      and ${bodyContains("n.revoked_at is null and " + pendingStates)}
+      and ${bodyContains("'acceptance_sha256',a.acceptance_sha256")}`)}
+    and exists (select 1 from pg_proc p
+      where p.oid = to_regprocedure('public.clued_ci_connection_renew_v1(jsonb)')
+        and ${bodyContains("case when k='ci' and " + pendingStates)}
+        and ${bodyContains("'fleet_target',clued_private.fleet_node_target_v1(u,n.node_id)")})`,
 };
 
 export function releaseRequirements(commit, read = file => execFileSync('git', ['show', `${commit}:${file}`], {

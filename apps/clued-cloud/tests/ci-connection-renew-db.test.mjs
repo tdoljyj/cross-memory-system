@@ -857,10 +857,15 @@ test('fleet target on the CI probe follows the latest approval and survives an o
     const peerSource = digest('peer-source');
     await sql('update clued_private.ci_node_liveness_v1 set reported_source_sha256=$2 where node_id=$1', [peer.id, peerSource]);
     assert.deepEqual((await probe()).other_sources, [peerSource]);
+    await sql("update clued_private.ci_nodes_v1 set state='pending' where node_id=any($1)", [[caller.id, peer.id]]);
+    assert.deepEqual((await probe()).other_sources, [peerSource]);
+    assert.equal((await probe(peer)).grant_id, n1.grant_id);
     await f.live(peer.id, '21 minutes');
     assert.deepEqual((await probe()).other_sources, [null]);
     await f.live(peer.id);
     await sql("update clued_private.ci_node_liveness_v1 set reported_state='PAUSED' where node_id=$1", [peer.id]);
     assert.deepEqual((await probe()).other_sources, [null]);
+    await sql("update clued_private.ci_nodes_v1 set state='retired' where node_id=$1", [peer.id]);
+    assert.deepEqual((await probe()).other_sources, []);
   } finally { await f.close(); }
 });
