@@ -636,6 +636,14 @@ test('第 26 代为两台无证据的待定节点开链接和封存，复查失�
     assert.ok(node.transition.recheckAtInstall.includes('ciConnection'));
   }
   assert.equal(sealed.grantId, GRANT);
+  const record = path.join(w.d, 'node', 'record');
+  await fs.mkdir(record, { recursive: true });
+  await fs.writeFile(path.join(record, 'acceptance.json'), JSON.stringify({ node: { nodeName: first.name } }));
+  for (const node of w.door.nodes) node.at_sealed_target = false;
+  const waiting = await accept('run', '--work', work);
+  assert.equal(waiting.status, 'ROLLOUT_WAITING_OTHER_NODES');
+  assert.deepEqual(waiting.pending.map(n => n.node), [first.name, second.name]);
+  for (const node of w.door.nodes) node.at_sealed_target = true;
   assert.equal((await accept('run', '--work', work)).status, 'ROLLOUT_DONE');
   assert.equal((await w.opens()).length, 1);
   assert.equal((await uploadsOf(w)).length, uploaded + 1);

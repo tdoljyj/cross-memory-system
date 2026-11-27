@@ -21,6 +21,7 @@ import { EPHEMERAL_INITDB_FLAGS, EPHEMERAL_POSTGRES_FLAGS, removeTestDirectory, 
 import { newCluster } from './pg-cluster-fixture.mjs';
 import { drill as sharedTrainFixture, landReadyBatch } from './merge-train-rollout-db.test.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { TRANSIENT_CODES } from '../../../work/independent-ci-resident-v1/src/classify.mjs';
 
 const repo = DEFAULT_REPO;
 const sealMigration = '20261127120000_fleet_delivery_seal_v1.sql';
@@ -398,7 +399,7 @@ function testDelivery(node, source, generation, at) {
     upgraderSha256: null, linuxToolSha256: null, supervisorSourceSha256: null, sourceRefsSha256: null };
 }
 
-async function seedSealedPackage({ admin, human }, generation, sourceSha256, identity = {}) {
+async function seedSealedPackage({ admin, human }, generation, sourceSha256, identity = {}, confirm) {
   const version = 'g' + String(generation).padStart(6, '0');
   const candidate = { version, repository: repo, scope: 'global', commit: 'a'.repeat(40),
     sourceSha256, archiveSha256: sha(version), requestSha256: sha('request' + version), kitSha256: sha('kit'), ...identity };
@@ -411,10 +412,11 @@ async function seedSealedPackage({ admin, human }, generation, sourceSha256, ide
     [{ confirmation_token: issue.confirmation_token, view_digest: issue.view_digest }]);
   assert.equal(approval.status, 'committed');
   const record = await dbValue(admin, 'select public.clued_fleet_accept_status_v1($1) v', [resource]);
-  return dbValue(admin, 'select clued_private.fleet_delivery_seal_v1($1) v',
-    [{ candidate, acceptanceSha256: sha(version + 'sealed'), grantId: record.grant_id, receiptId: record.receipt_id,
+  const input = { candidate, acceptanceSha256: sha(version + 'sealed'), grantId: record.grant_id, receiptId: record.receipt_id,
       acceptedAt: new Date(Math.floor(Date.parse(record.accepted_at) / 1000) * 1000).toISOString(),
-      snapshotToken: (await registry()).snapshotToken }]);
+      snapshotToken: (await registry()).snapshotToken };
+  const sealInput = fields => dbValue(admin, 'select clued_private.fleet_delivery_seal_v1($1) v', [fields]);
+  return confirm ? confirm(input, registry, sealInput) : sealInput(input);
 }
 
 test('封存前同源兜底，封存后正常交班只给当前包，旧包能故障接班', async t => {
@@ -494,7 +496,7 @@ test('封存前同源兜底，封存后正常交班只给当前包，旧包能�
       where user_id=$1 and binding_id=$2 and revoked_at is null`, [owner, id(12)]);
     await admin.query(`update clued_private.ci_node_liveness_v1 set reported_mode=case when node_id=$1 then 'STANDBY' else 'ACTIVE' end,
       reported_probe=case when node_id=$1 then 'not-held' else 'held' end where user_id=$2`, [primary, owner]);
-    await admin.query("select clued_private.fleet_fail_holder_v1($1,$2,'TRAIN_LANDING_CHECK_FAILED')", [owner, standby]);
+    assert.equal(await dbValue(admin,"select clued_private.fleet_node_fault_v1('TRAIN_LANDING_CHECK_FAILED') v"),false);
     assert.equal((await classification(standby)).maintenance, 'available', 'PR 自身测试红不算节点故障');
     await housekeep();
     assert.equal((await classification(primary)).maintenance, 'reserve', '只跑作业不能清理后备');
@@ -616,7 +618,8 @@ test('并发摘牌、精确包验证和单机重装确认', async t => {
     assert.ok(winner >= 0, results.map(r => r.reason).join(', '));
     const loser = 1 - winner;
     assert.equal(results[loser].status,'rejected');
-    assert.match(results[loser].reason.message,/fleet_maintenance_last_node/);
+    assert.equal(winner,1,'仅备班可以在健康同伴存在时摘牌');
+    assert.match(results[loser].reason.message,/fleet_maintenance_(last_node|handover_first)/);
     assert.equal((await call(db.anon,winner,'status')).install_ready,true);
     assert.equal((await call(db.anon,loser,'status')).has_other_healthy,false);
     await admin.query('begin');
@@ -650,7 +653,13 @@ test('并发摘牌、精确包验证和单机重装确认', async t => {
     await tick();
     assert.equal((await call(db.anon,winner,'status')).state,'returned');
     assert.equal((await call(db.anon,winner,'verify_started',{operation_id:operations[winner]})).receipt_id,started.receipt_id);
-    assert.equal((await call(db.anon,winner,'delist',{method:'in_place',operation_id:operations[winner]})).receipt_id,results[winner].value.receipt_id);
+    await db.anon.query('begin');
+    try {
+      const retry = await call(db.anon,winner,'delist',{method:'in_place',operation_id:operations[winner]});
+      assert.equal(retry.state,'delisted');
+      assert.notEqual(retry.receipt_id,results[winner].value.receipt_id);
+      assert.ok(retry.drain_confirmed_at);
+    } finally { await db.anon.query('rollback'); }
     await admin.query('select clued_private.ci_admission_target_require_v1($1,$2)',[owner,id(11+winner)]);
     const maintain = command => call(db.anon,winner,command,{operation_id:id(607),method:'in_place'});
     await admin.query(`insert into clued_private.fleet_landing_v1(user_id,node_id,effect_key,grant_id,binding_generation,base_sha,test_sha,started_at)
@@ -730,20 +739,24 @@ test('第 25 代发布原包对新库心跳、读取当班资格并在混版舰�
   } finally { await db.close(); }
 });
 
+async function installReleaseDoor({ admin, user, claimResult }) {
+  const release = await dbValue(admin,`insert into public.clued_agent_bindings
+    (user_id,vendor,agent_name,token_hash,scopes,context_keys) values($1,'synthetic','release fixture',$2,
+      array['context:read','context:write'],array['*']) returning id v`,[user,sha('release fixture')]);
+  await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
+    values($1,$2,'release-door',now(),$3)`,[user,release,claimResult.receipt_id]);
+  await admin.query('select clued_private.release_door_install_v1($1)',[repo]);
+}
+
 test('共享列车签名开批和落地由真实当班授权，检查完成后后备仍可救场，主线读回才摘牌', async t => {
   const d = await sharedTrainFixture(t);
-  const {admin,user,claimResult} = d.db;
+  const {admin,user} = d.db;
   const holder = await d.addNode('sealed holder',{legacy:true});
   const reserve = await d.addNode('sealed reserve');
   const subject = d.head();
   await d.authorize(subject);
   await d.enableV2();
-  const release = await dbValue(admin,`insert into public.clued_agent_bindings
-    (user_id,vendor,agent_name,token_hash,scopes,context_keys) values($1,'synthetic','release fixture',$2,
-      array['context:read','context:write'],array['*']) returning id v`,[user,d.digest('release fixture')]);
-  await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
-    values($1,$2,'release-door',now(),$3)`,[user,release,claimResult.receipt_id]);
-  await admin.query('select clued_private.release_door_install_v1($1)',[repo]);
+  await installReleaseDoor(d.db);
   await seedSealedPackage(d.db,25,sha('reserve package'),{commit:d.sha('source')});
   const pack = await seedSealedPackage(d.db,26,d.source,{commit:d.sha('source')});
   await admin.query(`update clued_private.ci_node_liveness_v1 set reported_source_sha256=case when node_id=$1 then $2 else $3 end
@@ -764,4 +777,211 @@ test('共享列车签名开批和落地由真实当班授权，检查完成后�
   await admin.query('update clued_private.ci_node_liveness_v1 set reported_source_sha256=$1 where node_id=$2',[d.source,holder.id]);
   await landReadyBatch(d,holder,acquired,staged);
   assert.equal(await state(),'delisted');
+});
+
+test('历史封存迁移与第 26 代列车', async t => {
+  const d = await sharedTrainFixture(t, { through: '20261127120100_fleet_pending_delivery_v1.sql' });
+  const { admin, user } = d.db;
+  const holder = await d.addNode('第26代当班', { legacy: true });
+  await d.addNode('第26代备班');
+  const subject = d.head();
+  await d.authorize(subject);
+  await d.enableV2();
+  await installReleaseDoor(d.db);
+  const version = 'g000026';
+  const oldRequest = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-acceptance-request/1',
+    repository: repo, version, archive_sha256: sha(version), ciSourceManifestSha256: d.source, commit: d.sha('source') }));
+  const old = await seedSealedPackage(d.db, 26, d.source, { commit: d.sha('source'), requestSha256: sha(oldRequest) });
+  await admin.query(await fs.readFile(new URL('20261127210000_fleet_sealed_source_rule_v1.sql', migrations), 'utf8'));
+  assert.equal(await dbValue(admin,'select source_sha256 v from clued_private.fleet_accepted_v1 where grant_id=$1',[old.grantId]), null);
+  await admin.query(`update clued_private.ci_node_liveness_v1 set reported_source_sha256=$1,
+    reported_mode=case when node_id=$2 then 'ACTIVE' else 'STANDBY' end where user_id=$3`, [d.source, holder.id, user]);
+
+  let staged;
+  await t.test('1a 无 Source 的旧行仍按同源开批', async () => {
+    const status = await d.legacy(holder, { action: 'ci_nodes_status' });
+    assert.equal(status.nodes?.length, 2);
+    staged = await d.joinAndStage(holder, subject);
+    assert.ok(staged.batchId);
+  });
+  await t.test('1b 同一次正式封存为上一包补证，第 26 代继续落地', async () => {
+    let reads = 0, confirms = 0;
+    await seedSealedPackage(d.db, 27, sha('g27'), {}, (input, registry, sealInput) =>
+      qualifyDelivery({ delivery: { ...input, operation: 'confirm', requirements: { standardReinstall: true } } },
+        async (op, fields) => {
+          if (op === 'project') return registry();
+          assert.equal(op, 'confirm');
+          confirms++;
+          await assert.rejects(sealInput({ ...fields, previousRequest: Buffer.from('{}').toString('base64') }), /fleet_previous_seal/);
+          assert.equal(await dbValue(admin,'select sealed_at v from clued_private.fleet_accepted_v1 where grant_id=$1',[input.grantId]), null);
+          return sealInput(fields);
+        }, Date.now, async url => {
+          assert.equal(new URL(url).pathname, '/' + repo + '/releases/download/fleet-node-g000026/fleet-node-g000026.acceptance-request.json');
+          reads++;
+          return new Response(oldRequest);
+        }));
+    assert.deepEqual([reads, confirms], [1, 1]);
+    const status = await d.legacy(holder, { action: 'ci_nodes_status' });
+    assert.equal(status.holder_package?.classification, 'previous');
+    assert.equal(status.nodes.length, 1);
+    const acquired = await d.command(holder, 'batch_acquire', { batchId: staged.batchId });
+    await landReadyBatch(d, holder, acquired, staged);
+  });
+});
+
+test('4 阶段四上一封存包取得真实列车租约', async t => {
+  const d = await sharedTrainFixture(t);
+  const f = d.db, { admin, user, project } = f;
+  const holder = await d.addNode('阶段四当班', { legacy: true }), node = holder.id;
+  const subject = d.head();
+  await d.authorize(subject);
+  await d.enableV2();
+  await d.openCheck(holder, subject);
+  const { admission_id, repository, pr_ref, target_branch } = await d.one(admin,
+    'select * from clued_private.work_claim_execution_admissions_v1 where claim_id=$1 and head_sha=$2',
+    [subject.claim_id, subject.head_sha]);
+  const { authorization_id } = await d.one(admin,
+    'select authorization_id from clued_private.work_claim_head_authorizations_v1 where claim_id=$1 and head_sha=$2 and repository=$3',
+    [subject.claim_id, subject.head_sha, repository]);
+  const job = await dbValue(admin, 'select clued_private.ci_job_enqueue_v1($1,$2,$3) v', [user,project,{
+    kind:'maintenance', repository_id:d.keyScope.repositoryId, task_id:f.task, claim_id:subject.claim_id,
+    claim_fence:subject.claim_fence, execution_epoch:subject.execution_epoch, pr_ref, target_branch, admission_id,
+    head_authorization_id:authorization_id, head_sha:subject.head_sha, base_sha:d.sha('base'), test_sha:d.sha('test'),
+    source_sha:d.sha('source'), combination_sha256:sha('maintenance'), role:'train-maintenance' }]);
+  await f.modelMode(4);
+  await admin.query('select clued_private.ci_train_request_v1($1,$2,$3,$4)', [user, project, node, job]);
+  await installReleaseDoor(f);
+  await seedSealedPackage(f, 26, installedSource);
+  const current = await seedSealedPackage(f, 27, sha('g27'));
+  await admin.query('update clued_private.ci_node_liveness_v1 set reported_source_sha256=$1 where node_id=$2', [installedSource, node]);
+  const lease = await dbValue(admin, 'select clued_private.ci_train_acquire_v1($1,$2,$3) v', [user, project, node]);
+  assert.equal(lease.state, 'sweep_required');
+  assert.equal(await dbValue(admin, 'select node_id v from clued_private.ci_duty_holder_v1($1,$2)', [user, project]), node);
+  await t.test('6b 阶段四唯一节点装回后，等待静默期并重获租约', async () => {
+    const operation = id(711);
+    const request = action => dbValue(admin,'select clued_private.fleet_maintenance_request_v1($1,$2,$3) v',
+      [user,holder.binding,{ action, node_id:node, binding_generation:1, grant_id:current.grantId,
+        method:'reinstall', operation_id:operation, sole_node_agreed:true }]);
+    await request('delist');
+    await request('verify_started');
+    await admin.query("update clued_private.fleet_maintenance_v1 set verify_started_at=clock_timestamp()-interval '1 second' where node_id=$1", [node]);
+    const at = (await dbValue(admin,'select clock_timestamp() v')).toISOString();
+    await d.legacy(holder,{ action:'ci_node_heartbeat', state:'NORMAL', mode:'STANDBY', probe:'not-held', service_running:true,
+      snapshot_age_seconds:0, ci_source_manifest_sha256:sha('g27'), fleet_delivery:testDelivery(node,sha('g27'),27,at),
+      fleet_runtime:{ idle:true, selfcheckAt:at } });
+    const upkeep = () => admin.query('select clued_private.fleet_maintenance_tick_v1($1)', [user]);
+    await upkeep();
+    assert.equal((await request('status')).state, 'returned');
+    const duty = () => dbValue(admin,'select (select node_id from clued_private.ci_duty_holder_v1($1,$2)) v',[user,project]);
+    await upkeep();
+    assert.equal(await duty(), null);
+    await admin.query("update clued_private.ci_train_lease_v1 set silence_until=clock_timestamp()-interval '1 second' where user_id=$1", [user]);
+    await upkeep();
+    assert.equal(await duty(), node);
+    await upkeep();
+    assert.equal(await dbValue(admin,'select generation::int v from clued_private.ci_train_lease_v1 where user_id=$1',[user]), 2);
+  });
+});
+
+test('舰队故障交班与安装恢复', async t => {
+  const db = await seedPreviousSchema(t);
+  try {
+    await db.upgrade();
+    const { admin } = db;
+    await seedSealedPackage(db, 26, sha('previous'));
+    const pkg = await seedSealedPackage(db, 27, installedSource);
+    const sql = (s, p) => dbValue(admin, s, p);
+    const now = async () => (await sql('select clock_timestamp() v')).toISOString();
+    const beat = async (node, mode, failures = [], receipt = 'initial') => {
+      const at = await now();
+      return sql(`select clued_private.ci_node_heartbeat_v1(b,$2) v from public.clued_agent_bindings b where b.id=$1`,
+        [node === primary ? id(11) : id(12), { action: 'ci_node_heartbeat', scope: 'global', state: 'NORMAL', mode,
+          probe: mode === 'ACTIVE' ? 'held' : 'not-held', service_running: true, snapshot_age_seconds: 0,
+          ci_source_manifest_sha256: installedSource,
+          fleet_delivery: { ...testDelivery(node, installedSource, 27, at), installReceiptSha256: sha(receipt),
+            upgraderSha256: sha('upgrader'), linuxToolSha256: sha('linux tool') },
+          fleet_runtime: { idle: true, selfcheckAt: at, failures: failures.map(code => ({ code, at })) } }]);
+    };
+    const request = (node, action, method = 'reinstall') => sql('select clued_private.fleet_maintenance_request_v1($1,$2,$3) v',
+      [owner, node === primary ? id(11) : id(12), { action, scope: 'global', node_id: node, binding_generation: 1,
+        method, grant_id: pkg.grantId, operation_id: id(710), sole_node_agreed: true }]);
+    const tick = () => sql('select clued_private.ci_admission_failover_owner_v1($1) v', [owner]);
+    const upkeep = () => admin.query('select clued_private.fleet_maintenance_tick_v1($1)', [owner]);
+    const holder = () => sql('select (select binding_id from clued_private.ci_duty_holder_v1($1)) v', [owner]);
+    const paused = () => sql('select promotion_paused_at v from clued_private.fleet_accepted_v1 where grant_id=$1', [pkg.grantId]);
+    const scenario = (name, run) => t.test(name, async () => {
+      await admin.query('begin');
+      try { await run(); } finally { await admin.query('rollback'); }
+    });
+    await admin.query(`insert into clued_private.ci_failover_members_v1 values
+      ($1,$2,1,now()-interval '1 hour',$4),($1,$3,2,now()-interval '1 hour',$4)`, [owner,id(11),id(12),pkg.receiptId]);
+    await admin.query(`insert into clued_private.ci_failover_settings_v1 values ($1,true,now()-interval '1 hour',1,now(),$2)`,
+      [owner,pkg.receiptId]);
+    await admin.query(`insert into clued_private.ci_duty_answers_v1(user_id,binding_id,at) values($1,$2,now()-interval '1 hour')`, [owner,id(11)]);
+    await beat(standby, 'STANDBY');
+    await scenario('2a 当班自报节点故障，由看门狗交给上一包备班再标记待修', async () => {
+      await admin.query('update clued_private.ci_node_liveness_v1 set reported_source_sha256=$1 where node_id=$2', [sha('previous'), standby]);
+      await beat(primary, 'ACTIVE', ['PROCESS_CRASH']);
+      const result = await tick();
+      assert.equal(result.outcome, 'handed_over', JSON.stringify(result));
+      assert.equal(result.target, id(12));
+      assert.equal(await holder(), id(12));
+      assert.equal((await request(primary, 'status')).state, 'repair');
+      assert.ok(await paused());
+    });
+    await scenario('2b PR 瞬时码不暂停推进', async () => {
+      for (const code of TRANSIENT_CODES) assert.equal(await sql('select clued_private.fleet_node_fault_v1($1) v', [code]), false, code);
+      await beat(primary, 'ACTIVE', ['NATIVE_ADMISSION_UNAVAILABLE']);
+      assert.equal((await tick()).outcome, 'holder_alive');
+      assert.equal(await paused(), null);
+    });
+    await scenario('2c 无候选时保留原当班准入', async () => {
+      await admin.query("update clued_private.ci_node_liveness_v1 set reported_mode='UNCERTAIN' where node_id=$1", [standby]);
+      await beat(primary, 'ACTIVE', ['PROCESS_CRASH']);
+      assert.equal((await request(primary, 'status')).state, 'available');
+      assert.equal((await tick()).outcome, 'no_target');
+      assert.equal(await holder(), id(11));
+      assert.equal(await sql("select clued_private.ci_duty_admits_v1($1,$2,'duty_role',$3) v", [owner,id(11),project]), true);
+      assert.equal(await paused(), null);
+    });
+    await scenario('3 有健康同伴时当班必须先交班', async () => {
+      await assert.rejects(request(primary, 'delist'), /fleet_maintenance_handover_first/);
+    });
+    await scenario('5 已开始验证的操作重试摘牌必须重新排空', async () => {
+      const first = await request(standby, 'delist');
+      assert.equal(first.install_ready, true);
+      await request(standby, 'verify_started');
+      await admin.query(`insert into clued_private.fleet_landing_v1(user_id,node_id,effect_key,grant_id,binding_generation,base_sha,test_sha)
+        values($1,$2,'retry',$3,1,$4,$5)`, [owner,standby,pkg.grantId,'a'.repeat(40),'b'.repeat(40)]);
+      const retryAt = Date.parse(await now());
+      const waiting = await request(standby, 'delist');
+      assert.notEqual(waiting.receipt_id, first.receipt_id);
+      assert.equal(waiting.install_ready, false);
+      assert.equal(waiting.drain_confirmed_at, null);
+      await admin.query("update clued_private.fleet_landing_v1 set settled_at=clock_timestamp() where effect_key='retry'");
+      const ready = await request(standby, 'delist');
+      assert.equal(ready.install_ready, true);
+      assert.equal(ready.receipt_id, waiting.receipt_id);
+      assert.ok(Date.parse(ready.drain_confirmed_at) >= retryAt);
+    });
+    for (const method of ['in_place','reinstall']) await scenario('6 唯一节点装回当前包后自动恢复当班 ' + method, async () => {
+      await admin.query("update clued_private.ci_nodes_v1 set state='retired' where node_id=$1", [standby]);
+      await beat(primary, 'ACTIVE');
+      await request(primary, 'delist', method);
+      assert.equal(await holder(), null);
+      await request(primary, 'verify_started');
+      await admin.query("update clued_private.fleet_maintenance_v1 set verify_started_at=clock_timestamp()-interval '1 second' where node_id=$1", [primary]);
+      await beat(primary, 'STANDBY', [], 'new installation');
+      await upkeep();
+      assert.equal((await request(primary, 'status')).state, 'returned');
+      await upkeep();
+      const roles = await admin.query(`select binding_id,effective_at=clued_private.binding_role_start_v1(role,purpose,granted_at) as normal_start
+        from clued_private.binding_roles_v1 where user_id=$1 and role='ci-admission' and revoked_at is null`, [owner]);
+      assert.deepEqual(roles.rows.map(row => row.binding_id), [id(11)]);
+      assert.ok(roles.rows[0].normal_start);
+      // 推进隔离夹具的授职等待期，随后读取实际当班。
+      await admin.query("update clued_private.binding_roles_v1 set effective_at=clock_timestamp() where user_id=$1 and role='ci-admission' and revoked_at is null", [owner]);
+      assert.equal(await holder(), id(11));
+    });
+  } finally { await db.close(); }
 });
