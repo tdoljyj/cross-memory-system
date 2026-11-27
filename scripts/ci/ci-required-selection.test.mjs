@@ -1275,6 +1275,30 @@ test('a node script command takes its script and its test file operands, nothing
 // Every database test, like every other test file, runs in a required suite or is listed in ci-uncovered-tests.json with its
 // kind, reason and Task: check-tests-covered.mjs (its test runs in clued-cloud) checks it; the database exemptions moved there.
 
+test('单独改发布、构建、节点入口或迁移文件都执行真实舰队交付检查', () => {
+  const file = 'apps/clued-cloud/tests/fleet-delivery-release-db.test.mjs';
+  assert.ok(productionSchemaFiles().includes(file), file);
+  const fleet = 'work/independent-ci-resident-v1/rollout/fleet';
+  for (const input of [file, 'scripts/ci/clued-fleet-accept.mjs', `${fleet}/publish.mjs`,
+    `${fleet}/delivery-preflight.mjs`, `${fleet}/universal.mjs`, `${fleet}/install.mjs`, `${fleet}/bootstrap.ps1`,
+    'work/independent-ci-resident-v1/src/fleet-self-pull.mjs',
+    'apps/clued-cloud/supabase/migrations/20261127120000_fleet_delivery_seal_v1.sql']) {
+    assert.deepEqual(selectSuites('migration-verify', [input], 'linux').suites, ['production-schema'], input);
+  }
+});
+
+test('单独改 bootstrap 或安装入口会执行 Windows 舰队安装前置检查', () => {
+  const resident = 'work/independent-ci-resident-v1';
+  const testFile = 'rollout/test/fleet-delivery-windows.test.mjs';
+  for (const input of ['rollout/fleet/bootstrap.ps1', 'rollout/fleet/install.mjs', 'windows/install-resident.ps1',
+    'reinstall/launcher/generate.py', testFile]) {
+    const { suites } = selectSuites('ci-suites', [`${resident}/${input}`], 'win32');
+    assert.ok(suites.includes('resident-node'), input);
+  }
+  assert.ok(SUITE_COMMANDS['resident-node'].some(({ cwd, argv }) =>
+    cwd === resident && expandArgv(argv, { cwd: path.join(ROOT, cwd) }).includes(testFile)), testFile);
+});
+
 test('a migration selects the production-schema check; ordinary documentation selects only the application check', (t) => {
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/supabase/migrations/20261101000000_x.sql']).suites,
     ['production-schema']);
@@ -1295,7 +1319,8 @@ test('a migration selects the production-schema check; ordinary documentation se
   assert.equal(scanStart.cwd, 'apps/clued-cloud');
   t.mock.method(os, 'availableParallelism', () => 16);
   assert.deepEqual(expandArgv(scanStart.argv, { cwd: scanStart.cwd }), ['node', '--test', '--test-concurrency=4',
-    'tests/ci-scan-start-native-db.test.mjs', 'tests/ci-scan-start-batch-key-db.test.mjs', 'tests/ci-node-binding-rebind-db.test.mjs',
+    'tests/ci-scan-start-native-db.test.mjs', 'tests/ci-scan-start-batch-key-db.test.mjs', 'tests/fleet-delivery-release-db.test.mjs',
+    'tests/ci-node-binding-rebind-db.test.mjs',
     'tests/ci-connection-self-db.test.mjs', 'tests/binding-role-single-reader-db.test.mjs',
     'tests/integration-runtime-derivation-db.test.mjs', 'tests/db-security-hygiene-db.test.mjs',
     'tests/storage-runtime-authority-db.test.mjs', 'tests/work-claims-pr-end-release-db.test.mjs',
