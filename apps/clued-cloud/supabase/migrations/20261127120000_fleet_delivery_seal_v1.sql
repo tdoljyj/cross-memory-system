@@ -182,18 +182,19 @@ begin
 end $$;
 
 do $patch$
-declare item record; body text;
+declare item record; edit text[]; body text;
 begin
+  -- Apply each function's edits in array order before compiling its definition.
   for item in select * from (values
-    ('clued_private.fleet_accept_answer_v1(uuid,uuid,text)',
-      $a$'accepted_at',v_row.accepted_at,$a$,
-      $r$'accepted_at',v_row.accepted_at,'sealed_acceptance_sha256',v_row.acceptance_sha256,$r$),
-    ('clued_private.fleet_accept_door_v1(jsonb)',
-      $a$k not in ('action','resources','run_id','run_attempt')$a$,
-      $r$k not in ('action','resources','run_id','run_attempt','delivery')$r$),
-    ('clued_private.fleet_accept_door_v1(jsonb)',
-      $a$  v_req:=clued_private.owner_grant_door_request_v1(v_anchor,'fleet.accept',array[v_resource]);$a$,
-      $r$  if clued_private.fleet_package_generation_v1(v_parts[2])>=25 then
+    ('clued_private.fleet_accept_answer_v1(uuid,uuid,text)', array[
+      array[$a$'accepted_at',v_row.accepted_at,$a$,
+            $r$'accepted_at',v_row.accepted_at,'sealed_acceptance_sha256',v_row.acceptance_sha256,$r$]
+    ]),
+    ('clued_private.fleet_accept_door_v1(jsonb)', array[
+      array[$a$k not in ('action','resources','run_id','run_attempt')$a$,
+            $r$k not in ('action','resources','run_id','run_attempt','delivery')$r$],
+      array[$a$  v_req:=clued_private.owner_grant_door_request_v1(v_anchor,'fleet.accept',array[v_resource]);$a$,
+            $r$  if clued_private.fleet_package_generation_v1(v_parts[2])>=25 then
     if p_input->'delivery'->'candidate'->>'repository' is distinct from v_parts[1]
         or p_input->'delivery'->'candidate'->>'version' is distinct from v_parts[2]
         or p_input->'delivery'->'candidate'->>'archiveSha256' is distinct from v_parts[3]
@@ -201,26 +202,29 @@ begin
       raise exception 'fleet_delivery_subject_invalid' using errcode='22023'; end if;
     perform clued_private.fleet_delivery_require_snapshot_v1(p_input->'delivery'->'candidate',p_input->'delivery'->>'snapshotToken');
   end if;
-  v_req:=clued_private.owner_grant_door_request_v1(v_anchor,'fleet.accept',array[v_resource]);$r$),
-    ('clued_private.fleet_node_target_v1(uuid,uuid)',
-      $a$  select jsonb_build_object('repository', a.repository, 'version', a.version,$a$,
-      $r$  select case when clued_private.fleet_package_generation_v1(a.version)>=25 and a.sealed_at is null
+  v_req:=clued_private.owner_grant_door_request_v1(v_anchor,'fleet.accept',array[v_resource]);$r$]
+    ]),
+    ('clued_private.fleet_node_target_v1(uuid,uuid)', array[
+      array[$a$  select jsonb_build_object('repository', a.repository, 'version', a.version,$a$,
+            $r$  select case when clued_private.fleet_package_generation_v1(a.version)>=25 and a.sealed_at is null
     then jsonb_build_object('status','pending_seal')
     else jsonb_build_object('repository', a.repository, 'version', a.version,
-    'acceptance_sha256',a.acceptance_sha256,$r$),
-    ('clued_private.fleet_node_target_v1(uuid,uuid)',
-      $a$    ), '[]'::jsonb))$a$,
-      $r$    ), '[]'::jsonb)) end$r$),
-    ('clued_private.fleet_node_target_v1(uuid,uuid)',
-      $a$  order by a.accepted_at desc, a.recorded_at desc, a.grant_id desc$a$,
-      $r$  order by case when clued_private.fleet_package_generation_v1(a.version)>=25
+    'acceptance_sha256',a.acceptance_sha256,$r$],
+      array[$a$    ), '[]'::jsonb))$a$,
+            $r$    ), '[]'::jsonb)) end$r$],
+      array[$a$  order by a.accepted_at desc, a.recorded_at desc, a.grant_id desc$a$,
+            $r$  order by case when clued_private.fleet_package_generation_v1(a.version)>=25
     then clued_private.fleet_package_generation_v1(a.version) else 0 end desc,
-    a.accepted_at desc, a.recorded_at desc, a.grant_id desc$r$)
-  ) as replacements(signature,anchor,replacement) loop
+    a.accepted_at desc, a.recorded_at desc, a.grant_id desc$r$]
+    ])
+  ) as patches(signature,edits) loop
     body:=pg_get_functiondef(item.signature::regprocedure);
-    if length(body)-length(replace(body,item.anchor,'')) <> length(item.anchor) then
-      raise exception 'fleet_delivery_seal_patch_anchor_mismatch: %',item.signature; end if;
-    execute replace(body,item.anchor,item.replacement);
+    foreach edit slice 1 in array item.edits loop
+      if length(body)-length(replace(body,edit[1],'')) <> length(edit[1]) then
+        raise exception 'fleet_delivery_seal_patch_anchor_mismatch: %',item.signature; end if;
+      body:=replace(body,edit[1],edit[2]);
+    end loop;
+    execute body;
   end loop;
 end $patch$;
 
