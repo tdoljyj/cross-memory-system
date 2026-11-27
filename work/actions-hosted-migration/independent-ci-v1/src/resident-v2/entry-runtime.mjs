@@ -251,19 +251,15 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
       && input.source_manifest_sha256 === record.config.sourceManifestSha256;
     check((commands.has(input?.action) || authorizedTrainCommand) && input.scope === record.config.scope, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
     if (authorizedTrainCommand) {
-      if (train !== undefined) {
-        check(typeof train.command === 'function', 'NATIVE_PUBLICATION_SCOPE_REFUSED');
-        if (input.action === 'role_probe') {
-          const reply = await train.command({ ...input, protocol_version: TRAIN_PROTOCOL_VERSION });
-          check(reply?.status === 'ok' && reply.protocol_version === TRAIN_PROTOCOL_VERSION
-            && reply.node_id === train.nodeId && reply.binding_generation === train.bindingGeneration, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
-          return reply;
-        }
-        check(input.node_id === train.nodeId && input.binding_generation === train.bindingGeneration, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
-        return train.command(input);
+      check(typeof train?.command === 'function', 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+      if (input.action === 'role_probe') {
+        const reply = await train.command({ ...input, protocol_version: TRAIN_PROTOCOL_VERSION });
+        check(reply?.status === 'ok' && reply.protocol_version === TRAIN_PROTOCOL_VERSION
+          && reply.node_id === train.nodeId && reply.binding_generation === train.bindingGeneration, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+        return reply;
       }
-      // The compatibility RPC may attest protocol 1 for the legacy path.
-      check(input.action === 'role_probe', 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+      check(input.node_id === train.nodeId && input.binding_generation === train.bindingGeneration, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
+      return train.command(input);
     }
     if (input.action === 'resolve_pr_claim') check(typeof input.pr_ref === 'string'
       && input.pr_ref.startsWith(`${record.config.repository}#`)
@@ -271,7 +267,6 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
     const commandFetch = options.signal ? (url, opts) => fetchImpl(url, { ...opts, signal: options.signal }) : fetchImpl;
     const reply = await cluedRpc(commandFetch, env, sourceRoot, 'clued_work_verify_v1', input);
     check(reply.status === 200 && reply.body && typeof reply.body === 'object', 'NATIVE_PUBLICATION_UNAVAILABLE');
-    check(!authorizedTrainCommand || reply.body.protocol_version === 1, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
     return reply.body;
   }, async current(identity,mode,admissionCommand) {
     live();if(mode?.scope!==record.config.scope||identity.job.repo!==record.config.repository

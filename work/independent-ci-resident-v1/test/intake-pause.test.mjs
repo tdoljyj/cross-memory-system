@@ -62,6 +62,19 @@ function stage8Engine(answers) {
   return engine;
 }
 
+test('协议 1 接受并执行双活暂停与解除请求', async t => {
+  const f = await executorFixture(t, { now: T0 });
+  await f.drop(json(intakePauseRequest({ holder: 'dual-active', reason: 'peer still on duty' }, f.clock)), 'requests');
+  await f.drop(triggerBytes());
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'INTAKE_PAUSED']);
+  assert.equal((await readIntakePause(f.ledger.root, f.clock)).view.holders[0].holder, 'dual-active');
+  assert.deepEqual(stagesRun(f.engine), []);
+  f.advance(MIN);
+  await f.drop(json(intakeResumeRequest({ holder: 'dual-active', reason: 'peer handed over' }, f.clock)), 'requests');
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.equal((await readIntakePause(f.ledger.root, f.clock)).view, null);
+});
+
 test('train v2: persistent dual-active and delayed renewal are retired, while Owner pause, HALT and an old B batch survive', async t => {
   const engine = stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]);
   const a = await executorFixture(t, { engine, now: T0 });
@@ -76,8 +89,9 @@ test('train v2: persistent dual-active and delayed renewal are retired, while Ow
   }
   await b.ledger.halt('RECOVERY_UNCONFIRMED', {});
   // Service restarts with two independent journals from the previous package.
-  const restartedA = await executorFixture(t, { engine, now: T0 + MIN, root: a.root });
-  const restartedB = await executorFixture(t, { now: T0 + MIN, root: b.root });
+  const policy = trainPolicy(TRAIN_PROTOCOL_VERSION);
+  const restartedA = await executorFixture(t, { engine, now: T0 + MIN, root: a.root, policy });
+  const restartedB = await executorFixture(t, { now: T0 + MIN, root: b.root, policy });
   for (const f of [restartedA, restartedB]) {
     await f.drop(json(intakePauseRequest({ holder: 'dual-active', reason: 'late legacy renewal' }, f.clock)), 'requests');
     await f.exec.tick();
@@ -86,9 +100,12 @@ test('train v2: persistent dual-active and delayed renewal are retired, while Ow
     assert.ok((await receiptTypes(f)).includes('intake-pause-ended'));
   }
   assert.equal((await restartedB.ledger.halted()).value.code, 'RECOVERY_UNCONFIRMED');
+  engine.handoffTrainWork = async ({ key }) => ({
+    protocol_version: TRAIN_PROTOCOL_VERSION, key, receiptId: 'b7abb84e-43e9-438b-ac4f-664f4b217b76',
+  });
   restartedA.advance(10 * MIN);
   assert.equal((await restartedA.exec.tick()).state, 'COMPLETED');
-  assert.deepEqual(stagesRun(engine), [1, 2, 3, 4, 5, 6, 7, 8, 8]);
+  assert.deepEqual(stagesRun(engine), [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.equal((await restartedA.ledger.state(batchKey(subject()))).outcome, 'COMPLETED');
   assert.equal((await readIntakePause(restartedA.ledger.root, restartedA.clock)).view.holders[0].holder, 'owner');
 });
@@ -649,7 +666,11 @@ test('the command line: --minutes takes 1 to 120 whole minutes; the request goes
   assert.deepEqual([v.contract, v.holder, v.minutes], [INTAKE_PAUSE_CONTRACT, 'owner', 45]);
   for (const m of ['1.5', '121', '0', 'x']) assert.deepEqual(await run('request-intake-pause', '--root', root, '--reason', 'r', '--minutes', m), { code: 1, out: { status: 'REFUSED', code: 'INTAKE_REQUEST_REFUSED' } }, m);
   assert.equal((await run('request-intake-resume', '--root', root, '--reason', 'done', '--holder', 'owner')).out.status, 'INTAKE_RESUME_REQUESTED');
+  assert.equal((await run('request-intake-pause', '--root', root, '--reason', 'legacy', '--holder', 'dual-active')).code, 0);
+  assert.equal((await run('request-intake-resume', '--root', root, '--reason', 'legacy', '--holder', 'dual-active')).code, 0);
+  await fs.mkdir(path.join(root, 'config'));
+  await fs.writeFile(path.join(root, 'config', 'policy.json'), JSON.stringify(trainPolicy(TRAIN_PROTOCOL_VERSION)));
   for (const command of ['request-intake-pause', 'request-intake-resume'])
     assert.deepEqual(await run(command, '--root', root, '--reason', 'legacy', '--holder', 'dual-active'), { code: 1, out: { status: 'REFUSED', code: 'INTAKE_HOLDER_RETIRED' } });
-  assert.equal((await fs.readdir(path.join(root, 'requests'))).length, 2);
+  assert.equal((await fs.readdir(path.join(root, 'requests'))).length, 4);
 });

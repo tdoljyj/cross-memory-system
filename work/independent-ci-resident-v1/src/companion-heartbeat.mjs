@@ -81,14 +81,14 @@ const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 // The server's p_input from what the companion sees (exactly the keys ci_node_heartbeat_v1 accepts). status: status.mjs#parseStatus
 // or null; serviceRunning: true | false | null (SCM unreadable: the snapshot's freshness stands in, the server needs a boolean).
-export function heartbeatPayload({ nodeName, scope, status, statusError = false, serviceRunning = null, now }) {
+export function heartbeatPayload({ nodeName, scope, status, statusError = false, serviceRunning = null, now, protocolVersion = 1 }) {
   const age = status && Number.isFinite(status.writtenAt) ? Math.max(0, now - status.writtenAt) : null;
   const fresh = !!status && !statusError && age !== null && age <= SNAPSHOT_FRESH_MS;
   const running = [true, false].includes(serviceRunning) ? serviceRunning : fresh;
   const readable = fresh && running;
   let state = 'UNKNOWN', halt = null, intakeUntil = null;
   if (readable) {
-    const intakePause = operationalIntakePause(status.intakePause);
+    const intakePause = operationalIntakePause(status.intakePause, protocolVersion);
     if (status.halt) {
       state = 'HALTED';
       halt = { code: CODE.test(status.halt.code ?? '') ? status.halt.code : 'HALTED', at: iso(status.halt.at),
@@ -237,7 +237,8 @@ export class CompanionHeartbeat {
     let status = null, statusError = false, running = null;
     try { status = await this.readStatus(); } catch { statusError = true; }
     try { running = await this.serviceRunning(); } catch { running = null; }
-    const payload = heartbeatPayload({ nodeName: this.nodeName, scope: this.scope, status, statusError, serviceRunning: running, now });
+    const payload = heartbeatPayload({ nodeName: this.nodeName, scope: this.scope, status, statusError, serviceRunning: running, now,
+      protocolVersion: this.protocolVersion });
     const changed = this.lastFingerprint !== null && fingerprint(payload) !== this.lastFingerprint;
     // A clock that went back (now < lastSentAt) is due at once: waiting for it to catch up would be silence to the server, whose own
     // clock stamps every beat (ADR 0026; with a 5-minute silence rule a 10-minute jump back would hand the role away).

@@ -45,7 +45,7 @@ import { nonce, readBounded } from './store.mjs';
 import { reasonCodeList } from './queue.mjs';
 import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
 import { parseRevokeHead, parseTrainLast, parseTrainNodes, parseTrainSweep } from './train.mjs';
-import { NODE_NAME, NODE_SOURCE, operationalIntakePause } from './node-duty.mjs';
+import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
 import { StageTimings, parseTiming } from './stage-timing.mjs';
 import { renewalStatus, parseRenewalStatus, RESPONSE_WAITING } from './connection-renewal.mjs';
 import { acceptanceFromTarget, byTarget, names as fleetNames } from './fleet-self-pull.mjs';
@@ -323,9 +323,9 @@ export function parseStatus(bytes) {
     halt: v.halt && typeof v.halt.code === 'string' && CODE.test(v.halt.code) ? { code: v.halt.code, at: Date.parse(v.halt.at) || null } : null,
     paused: v.paused === true,
     // A hold whose end the reader cannot read is still a hold (the companion then shows it without an end).
-    intakePause: operationalIntakePause(v.intakePause && typeof v.intakePause === 'object' && !Array.isArray(v.intakePause)
+    intakePause: v.intakePause && typeof v.intakePause === 'object' && !Array.isArray(v.intakePause)
       ? { until: ms(v.intakePause.until), holders: Array.isArray(v.intakePause.holders) ? v.intakePause.holders.filter(h => typeof h?.holder === 'string' && HOLDER.test(h.holder))
-        .slice(0, INTAKE_HOLDS_MAX).map(h => ({ holder: h.holder, since: ms(h.since), until: ms(h.until) })) : [] } : null),
+        .slice(0, INTAKE_HOLDS_MAX).map(h => ({ holder: h.holder, since: ms(h.since), until: ms(h.until) })) : [] } : null,
     // The node (C1, C3); null: one node. A name that does not fit is no node: the companion falls back to its own. source: /6 only.
     node: v.node && typeof v.node === 'object' && NODE_NAME.test(v.node.name ?? '')
       ? { name: v.node.name, source: NODE_SOURCE.test(v.node.source ?? '') ? v.node.source : null, mode: NODE_MODES.includes(v.node.mode) ? v.node.mode : 'UNCERTAIN',

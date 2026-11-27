@@ -461,8 +461,9 @@ test('legacy dual-active memory is pruned and own status is replaced; both conte
   store.data.posted[H(7)] = { kind: 'dual', context: 'resident-queue/node-b (info only)', state: 'error',
     description: '双活停机：另一节点也在当班', at: new Date(now - 30_000).toISOString(), n: 1 };
   await store.save();
-  const reopened = await LocalStore.open(store.file, () => now);
-  const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: reopened, writeRequest: async v => { requests.push(v); } });
+  const reopened = await LocalStore.open(store.file, () => now, 2);
+  const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: reopened,
+    trainProtocolVersion: 2, writeRequest: async v => { requests.push(v); } });
   const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }, { pr: 9, headSha: H(9), eligible: true, hint: null, behindBy: 0 }];
   const node = { name: 'node-b', mode: 'ACTIVE', probe: { at: new Date(now - 30_000).toISOString(), result: 'held', failures: 0, failingSince: null } };
   const status = boardStatus(b => { b.setState('IDLE'); b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node }); b.setPending([{ pr: 7, headSha: H(7), baseSha: MAIN, position: 1 }]); }, now);
@@ -473,8 +474,8 @@ test('legacy dual-active memory is pruned and own status is replaced; both conte
   const persisted = JSON.parse(await fs.readFile(store.file, 'utf8'));
   assert.equal(Object.hasOwn(persisted.node, 'lock'), false);
   assert.equal(Object.hasOwn(persisted.node, 'probeAt'), false);
-  const again = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now),
-    writeRequest: async v => { requests.push(v); } });
+  const again = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now, 2),
+    trainProtocolVersion: 2, writeRequest: async v => { requests.push(v); } });
   assert.equal(again.store.data.posted[H(7)].kind, 'duty');
   // either context among the required checks: nothing is written, the Owner is told which
   required = [...REQUIRED, standbyContext('node-b')];
@@ -542,9 +543,9 @@ test('HALT notices precede GitHub reads; a failed role projection writes nothing
   const node = { name: 'node-b', mode: 'ACTIVE', probe: { at: new Date(now - 30_000).toISOString(), result: 'held', failures: 0, failingSince: null } };
   const halted = boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node, halt: { code: 'X_Y', at: '2026-10-23T05:59:00Z' } }); }, now);
   await reporter.pass({ pulls: [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }], status: halted });
-  const toastAt = calls.findIndex(a => a.includes('-EncodedCommand')), readAt = calls.findIndex(a => a.some(x => x.includes('/rules/branches/main')));
-  assert.ok(toastAt >= 0 && readAt > toastAt, 'the HALT toast precedes the rules read');
-  assert.equal(calls.some(a => a[4]?.includes('/statuses?')), false);
+  const toastAt = calls.findIndex(a => a.includes('-EncodedCommand')), readAt = calls.findIndex(a => a.includes('GET'));
+  assert.ok(toastAt >= 0 && readAt > toastAt, 'the HALT toast precedes the legacy interlock and rules reads');
+  assert.ok(calls.some(a => a[4]?.includes('/statuses?')), 'the default protocol runs the legacy interlock');
   // m1: the duty throws: no PR page write at all this pass (never under a fallback name)
   reporter.duty.prepare = () => { throw new Error('bad memory'); };
   const posts = () => calls.filter(a => a.includes('POST')).length;

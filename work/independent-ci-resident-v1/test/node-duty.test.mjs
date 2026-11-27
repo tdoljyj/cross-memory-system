@@ -57,10 +57,11 @@ test('own commits only: queued or running is live; outcomes and stopped rows are
 // ---- the companion's side ----
 
 // A NodeDuty over scripted GitHub answers: statuses[head] (newest first) or null (the read fails), checks[head] (count).
-function duty({ statuses = {}, checks = {}, memory = freshMemory(), login = OWNER, budget = () => true, write = true } = {}) {
+function duty({ statuses = {}, checks = {}, memory = freshMemory(), login = OWNER, budget = () => true, write = true, protocolVersion } = {}) {
   const calls = [], requests = [];
   let time = NOW;
   const d = new NodeDuty({
+    protocolVersion,
     repo: 'tdoljyj/cross-memory-system', ghExe: 'C:\\gh.exe', clock: () => time, memory, fallbackName: 'node-b', timeoutMs: 15_000, inBudget: budget, staleMs: 5 * 60_000,
     writeRequest: write ? async v => { requests.push(v); } : null,
     run: async argv => {
@@ -79,10 +80,18 @@ const pull = (n, o = {}) => ({ pr: n, headSha: H(n), eligible: true, ...o });
 const known = (mode, probe = { at: NOW - MIN, result: mode === 'ACTIVE' ? 'held' : 'not-held', failures: 0 }) => ({ name: 'node-b', mode, probe });
 const reads = calls => calls.filter(a => a[4]?.includes('/statuses')).length;
 
+test('列车协议缺省时，另一节点仍在当班会触发双活停机与原有接新暂停', async () => {
+  const t = duty({ statuses: { [H(1)]: [gh('node-a', '当班：排队第 1 位', NOW - MIN)] } });
+  const status = fresh({ node: known('ACTIVE'), pending: [{ pr: 1, headSha: H(1), state: 'QUEUED' }] });
+  await t.d.prepare({ status, pulls: [pull(1)], now: NOW });
+  const want = t.d.want(pull(1), status, NOW, { state: 'pending', description: '排队第 1 位' });
+  assert.deepEqual([reads(t.calls), t.requests.map(r => [r.holder, r.minutes]), want.kind], [1, [['dual-active', 120]], 'dual']);
+});
+
 test('train v2: for an hour two healthy nodes can refresh the same PR without taking an intake hold', async () => {
   const shared = { [H(1)]: [] };
-  const a = duty({ statuses: shared });
-  const b = duty({ statuses: shared });
+  const a = duty({ statuses: shared, protocolVersion: 2 });
+  const b = duty({ statuses: shared, protocolVersion: 2 });
   a.memory.mode = b.memory.mode = 'ACTIVE';
   const clock = multiDutyClock(NOW);
   const names = ['node-a', 'node-b'];
@@ -123,7 +132,7 @@ test('Task 9cac75be A2, A3: each standby has its own reminder context; no node n
   assert.notEqual(standbyContext('node-b'), LEGACY_STANDBY_CONTEXT);
   const t = duty();
   t.d.fallbackName = null;
-  assert.throws(() => t.d.prepare({ status: fresh(), now: NOW }), /NODE_NAME_REQUIRED/);
+  await assert.rejects(() => t.d.prepare({ status: fresh(), now: NOW }), /NODE_NAME_REQUIRED/);
   assert.equal(t.calls.length, 0);
 });
 
@@ -137,7 +146,7 @@ test('STANDBY hands over its own recent duty, and a restart ends both stale duty
     [H(5)]: { context: 'resident-queue (info only)', kind: 'duty', at: iso(NOW - MIN), dutyAt: iso(NOW - MIN) },
     [H(6)]: { context: own, kind: 'result', at: iso(NOW - MIN), dutyAt: null },
   };
-  const standby = duty();
+  const standby = duty({ protocolVersion: 2 });
   await standby.d.prepare({ status: fresh({ node: known('STANDBY') }), pulls: [], now: NOW, posted });
   const out = await standby.d.extra({ posted, described: new Set(), pulls: [], now: NOW });
   assert.deepEqual(out.map(o => [o.headSha, o.want.kind]), [[H(1), 'handed'], [H(3), 'handed']]);
@@ -147,7 +156,7 @@ test('STANDBY hands over its own recent duty, and a restart ends both stale duty
   assert.deepEqual(Object.keys((await (async () => { standby.advance(60 * MIN); await standby.d.prepare({ status: fresh({ node: known('STANDBY') }), pulls: [], now: standby.now(), posted }); return standby.memory.handover; })())).length, 2);
   assert.equal(standby.d.want(pull(1), fresh({ node: known('STANDBY'), current: { pr: 1, headSha: H(1) } }), NOW, { state: 'pending', description: 'x' }), null, 'a STANDBY writes no queue text');
   // a restarted companion (ACTIVE): the duty texts not described again in its first pass become 停摆（NODE_RESTARTED）, once
-  const restarted = duty();
+  const restarted = duty({ protocolVersion: 2 });
   await restarted.d.prepare({ status: fresh(), pulls: [], now: NOW });
   const open = [pull(1), pull(2), pull(4)];
   const first = await restarted.d.extra({ posted, described: new Set(), pulls: open, now: NOW });

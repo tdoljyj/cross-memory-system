@@ -98,7 +98,7 @@ function handoverOutbox(file, repo) {
 // address, publishable key and scope are the installed record's (record\installation.json), never a configuration of their own.
 // notify(key, title, body): the notification queue (M5, ADR 0022 §4.3); without it (tests) a toast through powershellExe as before.
 export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershellExe, run, runHandover = run, store, clock = Date.now,
-  readJson = async p => JSON.parse(await fs.readFile(p, 'utf8')), notify = null }) {
+  readJson = async p => JSON.parse(await fs.readFile(p, 'utf8')), notify = null, protocolVersion = 1 }) {
   if (!(await readHeartbeatToken(root))) return null;
   let transport, scope = null;
   try {
@@ -120,7 +120,7 @@ export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershe
     } catch { /* the next update tries again */ }
     finally { saving = false; }
   };
-  return new CompanionHeartbeat({ nodeName, scope, transport, clock, handoverClock: () => performance.now(),
+  return new CompanionHeartbeat({ nodeName, scope, transport, clock, protocolVersion, handoverClock: () => performance.now(),
     readToken: () => readHeartbeatToken(root), readStatus: () => readStatus(root),
     serviceRunning: async () => serviceRunningFrom(await run(scQueryArgv(SC_EXE), { timeoutMs: 15_000 })),
     notify: notify ?? (async (key, title, body) => { await run(toastArgv(powershellExe, title, body), { timeoutMs: 15_000 }); }),
@@ -415,7 +415,12 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
   const statusCfg = validateStatusConfig(raw.status);
   // The node's name is the pinned node profile's; a status.node that names another node refuses (never a default node).
   check(statusCfg.node === cfg.node.nodeName || statusCfg.node === null, 'COMPANION_NODE_IDENTITY_CHANGED');
-  const store = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-pr-status.json'));
+  const trainDispatch = await companionTrainDispatchPorts({
+    root: values.root, repo: raw.repo, ciSourceManifestSha256, nodeProfileSha256: cfg.nodeProfileSha256, dispatchTrainEffect,
+  });
+  const protocolVersion = trainDispatch.trainProtocolVersion;
+  const store = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-pr-status.json'),
+    Date.now, protocolVersion);
   // Read receipts only: never open/seal/append the service's chain from the companion.
   const retentionNotifier = new RetentionNotifier({ receipts: new ReceiptChain(path.join(values.root, 'state', 'receipts'), Date.now), store, notify,
     reviewGenerations: async () => {
@@ -423,7 +428,8 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
       return settings.ok ? pruneArchivedGenerations({ root: values.root, settings: settings.settings }) : { code: settings.code };
     } });
   const reporter = new PrStatusReporter({ repo: raw.repo, ghExe: raw.ghExe, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), clock: Date.now, store,
-    prStatus: statusCfg.prStatus, notifications: statusCfg.notifications, node: cfg.node.nodeName, notify });
+    prStatus: statusCfg.prStatus, notifications: statusCfg.notifications, node: cfg.node.nodeName, notify,
+    trainProtocolVersion: protocolVersion, writeRequest: v => Inbox.drop(path.join(values.root, 'requests'), v) });
   // The upgrade mailbox lane (DESIGN §34): upgrade\mailbox\ is opened once it exists (an install before the channel has none; the
   // lane then tries again each pass and the companion runs as before). The companion never creates it.
   const upgradeLane = new UpgradeLane({ cfg, run: (a, o) => upgradeRunner.run(a, o), clock: Date.now,
@@ -437,7 +443,7 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
   const heartbeatRunner = new Runner({ env: { ...process.env }, jobHost });
   const heartbeatStore = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-heartbeat.json'));
   const heartbeat = await companionHeartbeat({ root: values.root, nodeName: cfg.node.nodeName, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe,
-    run: (a, o) => heartbeatRunner.run(a, o), runHandover: (a, o) => advisory.run(a, o), store: heartbeatStore, notify });
+    run: (a, o) => heartbeatRunner.run(a, o), runHandover: (a, o) => advisory.run(a, o), store: heartbeatStore, notify, protocolVersion });
   const fleetRunner = new Runner({ env: { ...process.env }, jobHost });
   let fleetLag = null;
   const openFleetLag = async () => {
@@ -450,6 +456,7 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
   };
   // §41.6a: while the heartbeat's answer shows the failover watchdog stale, the PR page status says so too.
   reporter.watchdogStale = () => heartbeat?.watchdogStale === true;
+  reporter.autoHandoverSince = () => heartbeat?.autoHandoverSince ?? null;
   // Node governance v1: while the node status names a red line (new batches held, or the Linux runners held back), the PR page says so too
   // (the companion writes that status itself: no channel to the service is involved).
   // The resident's own disk/memory hold (holder node-resource in the intake pause) says the same line without a governance status.
@@ -457,9 +464,6 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
   // The panel trigger (DESIGN §43, Decision 7eb98011): on unless companion.json says panelDispatch.enabled false; dispatches only while
   // this node's status says ACTIVE. Its own Runner and its own memory file (two lanes never write one file).
   const panelRunner = new Runner({ env: { ...process.env }, jobHost });
-  const trainDispatch = await companionTrainDispatchPorts({
-    root: values.root, repo: raw.repo, ciSourceManifestSha256, nodeProfileSha256: cfg.nodeProfileSha256, dispatchTrainEffect,
-  });
   // Only for the repository the panel workflow is in (panel-dispatch.mjs#PANEL_REPO); tools/build-package.mjs refuses a configuration that names another one.
   const panelDispatch = validatePanelDispatchConfig(raw.panelDispatch).enabled && raw.repo === PANEL_REPO
     ? new PanelDispatcher({ nodeName: cfg.node.nodeName, repo: raw.repo, ghExe: raw.ghExe, clock: Date.now, run: (a, o) => panelRunner.run(a, o), readStatus: () => readStatus(values.root),

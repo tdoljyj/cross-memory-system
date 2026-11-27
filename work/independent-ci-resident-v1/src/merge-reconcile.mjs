@@ -50,14 +50,14 @@ export function reconcileDispatchArgv(ghExe, repo, requestId) {
 
 // Every absence is unknown. In particular, an old status contract without
 // version consistency cannot authorize a new periodic control route.
-export function reconcileDutyOf(status, nodeName, now) {
+export function reconcileDutyOf(status, nodeName, now, protocolVersion = 1) {
   if (!status || !time(status.writtenAt)) return 'STATUS_UNREADABLE';
   if (status.writtenAt > now) return 'STATUS_FROM_FUTURE';
   if (now - status.writtenAt > RECONCILE_STATUS_FRESH_MS) return 'STATUS_STALE';
   if (status.node?.name !== nodeName) return 'NODE_NAME_MISMATCH';
   if (status.node?.mode !== 'ACTIVE') return 'NOT_ACTIVE';
   if (status.paused !== false || status.halt !== null) return 'PAUSED_OR_HALTED';
-  if (operationalIntakePause(status.intakePause) !== null) return 'INTAKE_HELD';
+  if (operationalIntakePause(status.intakePause, protocolVersion) !== null) return 'INTAKE_HELD';
   if (status.versions?.consistent !== true || status.versions.upgrade !== null) return 'VERSION_OR_UPGRADE_HOLD';
   if ((status.draining !== undefined && status.draining !== false) || (status.drain !== undefined && status.drain !== null)
       || /DRAIN|UPGRADE/i.test(`${status.executor?.state ?? ''} ${status.executor?.reason ?? ''}`)) return 'DRAIN_HOLD';
@@ -173,7 +173,7 @@ export class MergeReconciler {
   async held() {
     let status;
     try { status = await this.readStatus(); } catch { return 'STATUS_UNREADABLE'; }
-    return reconcileDutyOf(status, this.nodeName, this.clock());
+    return reconcileDutyOf(status, this.nodeName, this.clock(), this.trainProtocolVersion);
   }
   async persist(now) { this.state.data.lastTickAt = now; await this.state.save(); }
   async notifyOnce(code) {

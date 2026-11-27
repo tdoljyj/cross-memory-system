@@ -344,7 +344,7 @@ test('列车 v2：第 8 段只消费一次 Native 发送权，重启从共享回
   assert.equal(w.remote.totals().mainUpdates, 1);
 });
 
-function productionTrainPorts(w, command, record = { config: { scope: 'project:fixture', repository: REPO } }) {
+function productionTrainPorts(w, command, record = { config: { scope: 'project:fixture', repository: REPO, mergeTrainProtocolVersion: TRAIN_PROTOCOL_VERSION } }) {
   return trainPortsV2({ trainMode: 'on', record,
     github: w.github, nativeCommand: command, sourceManifestSha256: w.batch.sourceSha256, repositoryId: scope.repositoryId,
     openStore: async () => null, queueReturn: true });
@@ -402,37 +402,48 @@ function sharedCommand(w, protocolVersion = TRAIN_PROTOCOL_VERSION) {
   };
 }
 
-async function runStage8Startup(t, w, command) {
+async function runStage8Startup(t, w, command, legacy) {
   const dir = await tempDir(t);
   await fs.writeFile(path.join(dir, STAGE_TRAIN_MODE_FILE), stageTrainModeText('on'));
   await fs.writeFile(path.join(dir, L.STAGE_TRAIN_LANDING_FILE), L.stageTrainLandingText({ landing: 'push' }));
   t.mock.timers.enable({ apis: ['Date'], now: w.clock.now() });
-  const record = { config: { repository: REPO, scope: 'project:fixture' }, accepted: { validUntil: w.batch.expiresAt } };
+  const record = legacy?.record ?? { config: { repository: REPO, scope: 'project:fixture', mergeTrainProtocolVersion: TRAIN_PROTOCOL_VERSION },
+    accepted: { validUntil: w.batch.expiresAt } };
   const github = { ...w.github, readChangedPaths() { throw Object.assign(new Error('no local batch'), { code: 'full_admission_claim_missing' }); } };
-  globalThis.trainStartupFixture = {
+  const fixture = {
     runEntry: ({ body }) => body({ args: {}, inputs: { record, jobs: w.jobs, dir }, held: {}, live() {}, sourceRoot: dir }),
     controllerPrincipal: async () => ({ nativeToken: 'fixture', bindingId: 'fixture' }),
-    controllerPorts: () => ({ github, native: { command }, admission: {} }),
+    controllerPorts: options => legacy ? { ...controllerPorts({ ...options, baseFetch: legacy.baseFetch }), github } : { github, native: { command }, admission: {} },
     publicationControllerGithub: () => github,
     observationLog: () => () => {}, authorityOf: () => ({}),
     readBatchClaim: async () => null,
     EffectJournal: { open: async () => ({}) }, GreenLedger: { open: async () => null },
     createLandingPort: () => w.port, createClaimAssistNative: () => ({}),
     readStageTrainModeFact,
-    trainPortsV2: options => trainPortsV2({ ...options, openStore: async () => null }),
+    async trainPortsV2(options) {
+      const train = await trainPortsV2({ ...options, openStore: async () => null });
+      legacy?.project(train);
+      return train;
+    },
   };
-  const entry = new URL('../src/independent-control-checks-v2/startup.mjs?train-r1-fixture', import.meta.url);
+  const entry = new URL('../src/independent-control-checks-v2/startup.mjs', import.meta.url);
+  entry.search = legacy ? 'train-r1-legacy' : 'train-r1-fixture';
   const replacements = new Map([
     ['entry-runtime.mjs', 'runEntry, controllerPrincipal, controllerPorts, publicationControllerGithub, observationLog, authorityOf'],
     ['batch-claim-v2.mjs', 'readBatchClaim'], ['effect-journal.mjs', 'EffectJournal'],
     ['green-ledger.mjs', 'GreenLedger'], ['train-landing-port.mjs', 'createLandingPort'],
     ['train-mode.mjs', 'readStageTrainModeFact, trainPortsV2'], ['claim-assist-native.mjs', 'createClaimAssistNative'],
   ]);
+  return runTrainEntry(entry, fixture, replacements);
+}
+
+async function runTrainEntry(entry, fixture, replacements) {
+  globalThis.trainStartupFixture = fixture;
   const hook = registerHooks({ resolve(spec, context, next) {
     const url = next(spec, context);
     const names = context.parentURL === entry.href && replacements.get(spec.split('/').pop());
     if (!names) return url;
-    return { url: 'data:text/javascript,' + encodeURIComponent(`export const { ${names} } = globalThis.trainStartupFixture;`), shortCircuit: true };
+    return { url: 'data:text/javascript,' + encodeURIComponent(`export const { ${names} } = globalThis.trainStartupFixture;`) + '#' + encodeURIComponent(entry.href), shortCircuit: true };
   } });
   try { return await (await import(entry.href)).main([]); }
   finally { hook.deregister(); delete globalThis.trainStartupFixture; }
@@ -447,6 +458,64 @@ function runStage10(w, ports) {
   native: { holders: async () => ({ onDuty: false, holders: [] }) },
   sweepStore: { landingBatches: async () => [] } });
 }
+
+function legacyTrainFixture(w) {
+  const record = { config: { repository: REPO, scope: 'project:00000000-0000-4000-8000-000000000003', repositoryId: FIXED_APP.repositoryId,
+    sourceManifestSha256: w.batch.sourceSha256, supabaseUrl: 'https://example.invalid', publishableKey: 'sb_publishable_test' },
+    accepted: { validUntil: w.batch.expiresAt } };
+  const actions = [];
+  const projections = [];
+  return { record, actions, projections, project: train => projections.push(train.trainV2 ?? null), async baseFetch(url, opts) {
+    if (url.endsWith('/clued_work_verify_v1')) {
+      actions.push(JSON.parse(opts.body).p_input.action);
+      return Response.json({ code: '22023', message: 'work_claim_id_invalid' }, { status: 400 });
+    }
+    assert.ok(url.endsWith('/clued_work_merge_slot_holders_v1'), url);
+    return Response.json({ status: 'ok', holders: [], reason: 'admission_binding_required' });
+  } };
+}
+
+test('协议缺省的第 8 段走协议 1 发布器，且不发送 role_probe', async t => {
+  const w = stage8World();
+  const legacy = legacyTrainFixture(w);
+  const out = await runStage8Startup(t, w, null, legacy);
+  assert.deepEqual([legacy.projections, out.reason, legacy.actions], [[null], 'full_admission_claim_missing', []]);
+});
+
+test('协议缺省的第 10 段读取旧 ledger 和 sweep，且不发送 role_probe', async t => {
+  const w = stage8World();
+  const legacy = legacyTrainFixture(w);
+  const dir = await tempDir(t);
+  t.mock.timers.enable({ apis: ['Date'], now: w.clock.now() });
+  const job = makeTrainRun({ ...TRAIN_RUN_SHADOW_DEFAULTS, repo: REPO, runId: 'a'.repeat(16) + '-' + 'b'.repeat(12),
+    mode: 'on', onSince: new Date(w.clock.now()).toISOString(), sweep: 'off',
+    sourceManifestSha256: w.batch.sourceSha256, createdAt: new Date(w.clock.now()).toISOString() });
+  const reads = [];
+  const fixture = {
+    runEntry: ({ body }) => body({ inputs: { record: legacy.record, jobs: [job], dir }, held: { policyText: '{}' }, live() {}, sourceRoot: dir }),
+    controllerPrincipal: async () => ({ nativeToken: 'fixture', bindingId: 'fixture' }),
+    controllerPorts(options) {
+      return { ...controllerPorts({ ...options, baseFetch: legacy.baseFetch }), github: { readPullsPage: async () => ({ pulls: [] }) } };
+    },
+    observationLog: () => () => {},
+    GreenLedger: { open: async () => ({ list: async () => { reads.push('ledger'); return { entries: [], refused: [] }; } }) },
+    TrainSweepStore: { open: async () => ({ readPendingRevocations: async () => { reads.push('sweep'); return null; } }) },
+    TrainShadowStore: { open: async () => ({ append: async () => {} }) },
+    stateRetention: async () => {},
+    async trainPortsV2(options) {
+      const train = await trainPortsV2({ ...options, openStore: fixture.TrainSweepStore.open });
+      legacy.project(train);
+      return train;
+    },
+  };
+  const entry = new URL('../src/independent-control-checks-v2/train-maintenance.mjs?train-r1-legacy', import.meta.url);
+  const out = await runTrainEntry(entry, fixture, new Map([
+    ['entry-runtime.mjs', 'runEntry, controllerPrincipal, controllerPorts, observationLog'],
+    ['green-ledger.mjs', 'GreenLedger'], ['train-sweep-store.mjs', 'TrainSweepStore'], ['train-shadow-store.mjs', 'TrainShadowStore'],
+    ['state-retention.mjs', 'stateRetention'], ['train-mode.mjs', 'trainPortsV2'],
+  ]));
+  assert.deepEqual([legacy.projections, out.train.decision, reads, legacy.actions], [[null], 'NOT_ON_DUTY', ['ledger', 'sweep'], []]);
+});
 
 test('返修 1：第 10 段创建标记，由 Native 固定 OID 后激活并读回', async () => {
   const w = stage8World();
@@ -610,7 +679,7 @@ test('返修 1、7：B 通过正式第 8、10 段接同一个已暂存 S，丢�
   assert.equal(w.remote.totals().stagingUpdates, 0);
 });
 
-for (const protocol of [null, 11]) test(`返修 1：协议投影 ${protocol} 时旧写入口关闭`, async () => {
+for (const protocol of [null, 1, 11]) test(`返修 1：协议投影 ${protocol} 时旧写入口关闭`, async () => {
   const w = stage8World();
   w.qualify();
   const ports = await productionTrainPorts(w, sharedCommand(w, protocol));

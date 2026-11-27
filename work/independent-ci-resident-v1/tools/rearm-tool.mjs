@@ -38,7 +38,7 @@ import { breakerOf, breakerView } from '../src/breaker.mjs';
 import { QUEUE_FILE, QUEUE_MAX_BYTES } from '../src/queue.mjs';
 import { nonce, readBounded, writeNew } from '../src/store.mjs';
 import { readVersionInputs, versionsView } from '../src/status.mjs';
-import { validatePolicy } from '../src/policy.mjs';
+import { trainProtocolVersion, validatePolicy } from '../src/policy.mjs';
 import { intakePauseRequest, intakeResumeRequest, readIntakePause } from '../src/intake-pause.mjs';
 import { probeRequest, revokeHeadRequest } from '../src/resident-requests.mjs';
 import { refuseUnderTest } from '../src/production-root-guard.mjs';
@@ -186,6 +186,13 @@ export function resumeRequest({ expectedPausedSha256, by }, clock = Date.now) {
   return { contract: RESUME_CONTRACT, pausedSha256: expectedPausedSha256, by, requestedAt: new Date(clock()).toISOString(), nonce: nonce(8) };
 }
 
+async function installedPolicy(root) {
+  try {
+    const bytes = await readBounded(path.join(root, 'config', 'policy.json'), 65_536, 'POLICY_UNREADABLE');
+    return validatePolicy(parseBoundedJson(bytes, 65_536, 'POLICY_UNREADABLE'));
+  } catch { return null; }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const { positionals, values } = parseArgs({ allowPositionals: true, options: {
     root: { type: 'string' }, 'expected-halt-sha256': { type: 'string' }, 'expected-paused-sha256': { type: 'string' }, reason: { type: 'string' }, by: { type: 'string' },
@@ -196,12 +203,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     // root is judged first, so a test aimed outside the temporary directory is refused before anything else is checked; the
     // writers judge the folder they actually write into again (production-root-guard.mjs).
     if (positionals[0] !== 'inspect') refuseUnderTest(values.root);
+    if (values.holder === RETIRED_DUAL_ACTIVE_HOLDER && ['request-intake-pause', 'request-intake-resume'].includes(positionals[0])) {
+      const policy = await installedPolicy(values.root);
+      check(policy === null || trainProtocolVersion(policy.train) !== 2, 'INTAKE_HOLDER_RETIRED');
+    }
     const state = path.join(values.root, 'state');
     if (positionals[0] === 'inspect') {
       const ledger = new Ledger(state, Date.now);
       // The installed policy names what the Windows side runs; without it the upgrade view still shows the files, but no agreement.
-      let policy = null;
-      try { policy = validatePolicy(parseBoundedJson(await readBounded(path.join(values.root, 'config', 'policy.json'), 65536, 'POLICY_UNREADABLE'), 65536, 'POLICY_UNREADABLE')); } catch { policy = null; }
+      const policy = await installedPolicy(values.root);
       console.log(JSON.stringify(await inspect({ ledger, receipts: new ReceiptChain(path.join(state, 'receipts'), Date.now), intake: await readIntakePause(state),
         upgrade: await inspectUpgrade(values.root, policy), breaker: await readBreakerView(state) }), null, 2));
     } else if (positionals[0] === 'request-rearm') {
@@ -217,13 +227,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
       const file = await writeOwnerRequest(path.join(values.root, 'owner'), breakerReleaseRequest({ reason: values.reason, by: values.by }));
       console.log(JSON.stringify({ status: 'BREAKER_RELEASE_REQUESTED_SERVICE_WILL_VERIFY', file }));
     } else if (positionals[0] === 'request-intake-pause') {
-      check(values.holder !== RETIRED_DUAL_ACTIVE_HOLDER, 'INTAKE_HOLDER_RETIRED');
       check(values.minutes === undefined || /^[0-9]{1,3}$/.test(values.minutes), 'INTAKE_REQUEST_REFUSED');
       const file = await writeOwnerRequest(path.join(values.root, 'requests'), intakePauseRequest({ holder: values.holder ?? 'owner',
         minutes: values.minutes === undefined ? undefined : Number(values.minutes), reason: values.reason }));
       console.log(JSON.stringify({ status: 'INTAKE_PAUSE_REQUESTED_SERVICE_WILL_HOLD_NEW_BATCHES', file }));
     } else if (positionals[0] === 'request-intake-resume') {
-      check(values.holder !== RETIRED_DUAL_ACTIVE_HOLDER, 'INTAKE_HOLDER_RETIRED');
       const file = await writeOwnerRequest(path.join(values.root, 'requests'), intakeResumeRequest({ holder: values.holder ?? 'owner', reason: values.reason }));
       console.log(JSON.stringify({ status: 'INTAKE_RESUME_REQUESTED', file }));
     } else if (positionals[0] === 'request-probe' || positionals[0] === 'request-revoke-head') {

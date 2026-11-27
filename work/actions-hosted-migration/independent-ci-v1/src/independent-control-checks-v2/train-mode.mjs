@@ -88,8 +88,6 @@ async function sharedTrainPort({ command, config, repositoryId, sourceManifestSh
   try { probe = await command({ ...boundary, action: 'role_probe' }); }
   catch { return blockedProtocol; }
   if (!probe || probe.source_manifest_sha256 !== sourceManifestSha256) return blockedProtocol;
-  // Native explicitly names the branch's compatibility phase before either route may write.
-  if (probe.protocol_version === 1) return null;
   if (probe.protocol_version !== TRAIN_PROTOCOL_VERSION || !TRAIN_PROBE_FIELDS.every(field => Object.hasOwn(probe, field))
     || probe.on_duty !== true || probe.stop_scope !== 'none' || typeof probe.node_id !== 'string' || !probe.node_id
     || !Number.isSafeInteger(probe.binding_generation) || probe.binding_generation < 1) return blockedProtocol;
@@ -114,9 +112,9 @@ async function sharedTrainPort({ command, config, repositoryId, sourceManifestSh
 // cannot be opened is no proof) and GitHub's PRs by updated time. Off and shadow: none, nothing is loaded.
 export async function trainPortsV2({ trainMode, record, fetchImpl, nativeToken, github, sweepDir = STATE_V2.trainSweep, openStore = null, queueReturn = false,
   nativeCommand, repositoryId, sourceManifestSha256 }) {
-  if (nativeCommand) {
-    const trainV2 = await sharedTrainPort({ command: nativeCommand, config: record.config, repositoryId, sourceManifestSha256 });
-    if (trainV2 !== null) return { trainV2 };
+  const version = record?.config.mergeTrainProtocolVersion;
+  if (nativeCommand && version !== undefined && version !== 1) {
+    return { trainV2: await sharedTrainPort({ command: nativeCommand, config: record.config, repositoryId, sourceManifestSha256 }) };
   }
   // Stage 8 must return failed queued PRs in every mode. This port is lazy:
   // constructing it neither reads train state nor makes a Native request.

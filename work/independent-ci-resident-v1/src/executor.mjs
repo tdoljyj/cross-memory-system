@@ -1728,7 +1728,7 @@ export class ResidentExecutor {
   async intakeRefresh() {
     let p, next;
     try { p = await this.intakeHolds(); next = p.settle(this.clock()); } catch (error) { await this.intakeTrouble(error, 'read'); throw error; }
-    const retired = p.data.holds.find(h => h.holder === RETIRED_DUAL_ACTIVE_HOLDER);
+    const retired = trainProtocolVersion(this.policy.train) === 2 ? p.data.holds.find(h => h.holder === RETIRED_DUAL_ACTIVE_HOLDER) : null;
     if (retired) {
       const data = next?.data ?? p.data;
       next = { data: { ...data, holds: data.holds.filter(h => h.holder !== RETIRED_DUAL_ACTIVE_HOLDER) },
@@ -1775,7 +1775,7 @@ export class ResidentExecutor {
     try { await this.intakeRefresh(); } catch { return null; }
     let next;
     try {
-      check(v.holder !== RETIRED_DUAL_ACTIVE_HOLDER, 'INTAKE_HOLDER_RETIRED');
+      check(v.holder !== RETIRED_DUAL_ACTIVE_HOLDER || trainProtocolVersion(this.policy.train) !== 2, 'INTAKE_HOLDER_RETIRED');
       next = this.intakePause.apply(v, requestSha256, this.clock());
     } catch (error) {
       await this.receipt('intake-request-refused', { requestSha256, failureCode: codeOf(error) });

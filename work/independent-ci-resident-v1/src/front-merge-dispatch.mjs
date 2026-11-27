@@ -29,7 +29,7 @@ const STATE_CONTRACT = 'clued.independent-ci.front-merge-dispatch/1';
 export function wantedFrontMerge(status, nodeName, now, protocolVersion = 1) {
   if (dutyOf(status, nodeName, now) !== null || status.paused || status.halt) return null;
   // 仅暂停接新时，协议 1 的既有车头可以继续。
-  if (protocolVersion !== 1 && operationalIntakePause(status.intakePause)) return null;
+  if (protocolVersion !== 1 && operationalIntakePause(status.intakePause, protocolVersion)) return null;
   const last = status?.train?.last;
   if (!last || last.mode !== 'on' || last.decision !== 'FRONT_NEEDS_MAIN_MERGE' || !(now - last.at <= SUMMARY_FRESH_MS)) return null;
   if (!Number.isSafeInteger(last.front?.pr) || last.front.pr < 1 || !SHA.test(last.front.headSha ?? '') || !SHA.test(last.mainSha ?? '')) return null;

@@ -126,7 +126,9 @@ test('standby/stale/future/Owner intake pause/PAUSE/HALT/upgrade/drain/version u
     assert.equal((await h.r.step()).skipped, 'NOT_ON_DUTY'); assert.equal(h.calls.length, 0);
   }
   assert.equal(reconcileDutyOf(publicStatus(T0), NODE, T0), null);
-  assert.equal(reconcileDutyOf({ ...publicStatus(T0), intakePause: { holders: [{ holder: 'dual-active' }] } }, NODE, T0), null);
+  const dualPause = { ...publicStatus(T0), intakePause: { holders: [{ holder: 'dual-active' }] } };
+  assert.equal(reconcileDutyOf(dualPause, NODE, T0), 'INTAKE_HELD');
+  assert.equal(reconcileDutyOf(dualPause, NODE, T0, 2), null);
 });
 
 test('duty changes while reading or the final pinned Source changes: zero POST', async t => {

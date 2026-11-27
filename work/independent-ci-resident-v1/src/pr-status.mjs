@@ -661,13 +661,13 @@ export function toastArgv(powershellExe, title, body) {
 // notification keys were shown. Lost memory only means one more write or one more toast.
 export class LocalStore {
   constructor(file, clock) { this.file = file; this.clock = clock; this.data = { contract: STORE_CONTRACT, posted: {}, notified: {}, node: freshMemory() }; }
-  static async open(file, clock = Date.now) {
+  static async open(file, clock = Date.now, protocolVersion = 1) {
     const s = new LocalStore(file, clock);
     try {
       const v = JSON.parse(await fs.readFile(file, 'utf8'));
       if (v?.contract === STORE_CONTRACT && v.posted && typeof v.posted === 'object' && v.notified && typeof v.notified === 'object') {
-        s.data = { contract: STORE_CONTRACT, posted: v.posted, notified: v.notified, node: validMemory(v.node) };
-        s.retiredDutyMemory = v.node != null && ['lock', 'probeAt'].some(key => Object.hasOwn(v.node, key));
+        s.data = { contract: STORE_CONTRACT, posted: v.posted, notified: v.notified, node: validMemory(v.node, clock(), protocolVersion) };
+        s.retiredDutyMemory = protocolVersion === 2 && v.node != null && ['lock', 'probeAt'].some(key => Object.hasOwn(v.node, key));
       }
     } catch { /* fresh memory */ }
     return s;
@@ -699,7 +699,10 @@ export class PrStatusReporter {
     this.required = null; this.requiredAt = 0; this.collision = false; this.startedAt = this.clock(); this.failed = new Map();
     this.store.data.node ??= freshMemory();
     this.dirty = this.store.retiredDutyMemory === true;
-    this.duty = new NodeDuty({ memory: this.store.data.node, fallbackName: this.node, staleMs: STATUS_STALE_MS });
+    this.duty = new NodeDuty({ memory: this.store.data.node, fallbackName: this.node, staleMs: STATUS_STALE_MS,
+      protocolVersion: this.trainProtocolVersion, repo: this.repo, ghExe: this.ghExe, run: (a, o) => this.call(a, o),
+      clock: this.clock, inBudget: () => this.inBudget(), timeoutMs: ADVISORY_TIMEOUT_MS, writeRequest: this.writeRequest,
+      autoHandoverSince: () => this.autoHandoverSince?.() ?? null });
   }
 
   async call(argv, o) {
@@ -813,7 +816,7 @@ export class PrStatusReporter {
     let toasts = await this.showAll(events({ status, statusError, now, pulls, startedAt: this.startedAt, collision: this.collision }), now, 0);
     // A pass whose duty could not be worked out writes nothing on the PR page (never under a fallback name: review m1).
     let prep = null;
-    if (!this.stalled) { try { prep = this.duty.prepare({ status, now, posted: this.store.data.posted }); } catch { prep = null; } }
+    if (!this.stalled) { try { prep = await this.duty.prepare({ status, pulls, now, posted: this.store.data.posted }); } catch { prep = null; } }
     if (prep) toasts = await this.showAll(prep.events, now, toasts);
     if (prep && this.prStatus !== false && (pulls.length > 0 || drafts.length > 0) && !this.stalled) {
       const context = prep.context;
@@ -837,7 +840,8 @@ export class PrStatusReporter {
           const last = this.store.data.posted[headSha];
           const mine = last?.context === context;
           this.store.data.posted[headSha] = { state: want.state, description: clip(want.description), at: new Date(now).toISOString(), context, kind: want.kind ?? null,
-            dutyAt: want.kind === 'duty' ? new Date(now).toISOString() : (mine && last.kind !== 'dual' ? last.dutyAt ?? null : null), n: (mine ? last.n ?? 0 : 0) + 1 };
+            dutyAt: want.kind === 'duty' || want.kind === 'dual' ? new Date(now).toISOString()
+              : (mine && (this.duty.legacyInterlock || last.kind !== 'dual') ? last.dutyAt ?? null : null), n: (mine ? last.n ?? 0 : 0) + 1 };
         };
         // Owner decision 241824b2: the host watchdog's capacity marker, read once per pass; any failure is no marker.
         let capacity = null;
@@ -855,10 +859,10 @@ export class PrStatusReporter {
           const mine = last && last.context === context;
           const same = mine && last.state === want.state && last.description === clip(want.description);
           // A weak text never replaces another text; the same weak duty text is still refreshed (re-review).
-          if (want.weak && mine && last.kind !== 'dual' && !same) continue;
+          if (want.weak && mine && (this.duty.legacyInterlock || last.kind !== 'dual') && !same) continue;
           // A duty text is written again every DUTY_REFRESH_MS even when unchanged,
           // up to REFRESH_MAX_POSTS writes per head.
-          const due = same && ['duty', 'stalled'].includes(want.kind) && now - Date.parse(last.at) >= DUTY_REFRESH_MS && (last.n ?? 0) < REFRESH_MAX_POSTS;
+          const due = same && ['duty', 'stalled', 'dual'].includes(want.kind) && now - Date.parse(last.at) >= DUTY_REFRESH_MS && (last.n ?? 0) < REFRESH_MAX_POSTS;
           if (same && !due) continue;
           if (await write(pull.headSha, want, context, pull.headSha)) remember(pull.headSha, want);
           if (this.stalled) break;
