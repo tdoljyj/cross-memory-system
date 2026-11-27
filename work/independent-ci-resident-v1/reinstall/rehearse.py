@@ -357,6 +357,8 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
 
     # This covers installed public binary files, not directories or protected
     # secrets. A later rename still has its own exact completion evidence.
+    can_defer_file_locks = installed_linux_in_phase_a and file_locks_in_launcher and companion
+
     def defer_file_locks(**detail):
         if 'function Step-FileLocks' not in template or '$fileLocks = Step-FileLocks' not in template:
             find('LAUNCHER_HAS_NO_ELEVATED_FILE_LOCK_STEP')
@@ -376,7 +378,7 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
                        or type(row.get('expected')) is not bool for row in locks['lockers'])
                 or locks['external'] != [row for row in locks['lockers'] if row['expected'] is False]):
             find('RESIDENT_FILE_LOCK_OBSERVATION_INVALID')
-        elif locks['external'] and companion and file_locks_in_launcher:
+        elif locks['external'] and can_defer_file_locks:
             # The launcher of the generic node package observes the locks again, elevated, where the account's processes can be told
             # apart, and stops before anything changes on any external one. Only then, and only on a companion node (where this
             # non-elevated observation cannot tell them apart), is the finding left to it; what was seen here is kept in the report.
@@ -388,7 +390,7 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
                  **({'companionProcessIdentity': 'UNREADABLE_NON_ELEVATED'} if companion else {}))
     except Exception as error:
         reason = str(error)[:400]
-        if companion and file_locks_in_launcher and isinstance(error, RestartManagerProbeFailed):
+        if can_defer_file_locks and isinstance(error, RestartManagerProbeFailed):
             defer_file_locks(reason=reason, nativeReason=error.native_reason)
         else:
             find('RESIDENT_FILE_LOCK_OBSERVATION_UNAVAILABLE', reason=reason)
@@ -707,14 +709,17 @@ def rehearse(cfg, commit, pkg_dir, host, skip_roles=False, template_path=None, l
 
 
 def main(argv):
-    assert '--fleet' not in argv or '--file-locks-in-launcher' in argv, 'USAGE: --fleet goes with --file-locks-in-launcher'
-    cfg = rconfig.load(argv[0])
     a = argv[1:]
+    fleet = '--fleet' in a
+    file_locks_in_launcher = '--file-locks-in-launcher' in a
+    assert not fleet or file_locks_in_launcher, 'USAGE: --fleet goes with --file-locks-in-launcher'
+    assert not file_locks_in_launcher or fleet, 'USAGE: --file-locks-in-launcher requires --fleet'
+    cfg = rconfig.load(argv[0])
     opt = lambda n, d=None: a[a.index(n) + 1] if n in a else d
     commit, pkg_dir = opt('--commit'), opt('--package')
-    assert commit and re.fullmatch(r'[0-9a-f]{40}', commit) and pkg_dir, 'USAGE: <config> --commit <40hex> --package <dir> [--file-locks-in-launcher] [--fleet]'
+    assert commit and re.fullmatch(r'[0-9a-f]{40}', commit) and pkg_dir, 'USAGE: <config> --commit <40hex> --package <dir> [--fleet --file-locks-in-launcher]'
     report = rehearse(cfg, commit, os.path.abspath(pkg_dir), Host(), skip_roles='--skip-roles' in a,
-                      linux_version_facts=opt('--linux-version-facts'), file_locks_in_launcher='--file-locks-in-launcher' in a, installed_linux_in_phase_a='--fleet' in a)
+                      linux_version_facts=opt('--linux-version-facts'), file_locks_in_launcher=file_locks_in_launcher, installed_linux_in_phase_a=fleet)
     out_dir = opt('--report-dir', os.path.join(cfg['workDir'], 'rehearsal'))
     os.makedirs(out_dir, exist_ok=True)
     name = 'rehearsal.%s.%s.%s.%s.json' % (report['node'], commit[:8], report['packageManifestSha256'][:8], report['observedAt'].replace('-', '').replace(':', ''))

@@ -227,9 +227,11 @@ python -I rehearse.py <本机生成的配置> --commit <40hex> --package <包目
 - 显式快照 `--linux-version-facts` 无法不经 wsl 现场复核，记 `LINUX_FACTS_LIVE_OBSERVATION_UNAVAILABLE`（`reason=COMPANION_ACCOUNT_DISTRIBUTION`）；此类节点用 companion 写的默认 facts。
 - 其余检查不变；文件占用见上文（companion 进程仍为 external）。没有这两份记录的节点行为与之前完全相同。
 
-`--fleet`（通用节点包的 prepare 使用）必须与 `--file-locks-in-launcher` 同时给（否则参数错误）：已装 Linux manifest 的字节在 Windows 侧不存在，配置里的 `linux.installedManifest` 指向的文件可以不存在，这项记为 `checks.linux.installedManifestCopy = {deferredTo: linux-phase-a, expectedSha256}`，不算 finding，由 Linux A 以 root 核对现场 manifest（外部钉值在这里只核"source-v2 条目等于新提交的文件、toolchain node 等于配置值"，形状与其余条目由 A 核）。
+通用节点包的 prepare 同时传 `--fleet` 和 `--file-locks-in-launcher`，单独传任一开关都是参数错误。通用包中配置的 `linux.installedManifest` 文件可以不存在，这项记为 `checks.linux.installedManifestCopy = {deferredTo: linux-phase-a, expectedSha256}`，不算 finding，由 Linux A 以 root 核对现场 manifest（外部钉值在这里只核"source-v2 条目等于新提交的文件、toolchain node 等于配置值"，形状与其余条目由 A 核）。
 
 `--file-locks-in-launcher`：companion 账户节点上，非提权观察到 external 占用或 Restart Manager 调用失败时，记录 `checks.fileLocksFinding = {deferredTo: launch-elevated-file-locks, ...}`，保留观察到的进程或失败原因。启动器在 UAC 内以提权身份重查（`Step-FileLocks`，有 external 或无法取得有效观察即停，早于任何改动）。输出无效或其他探测失败仍是 finding。模板没有该步骤时为 `LAUNCHER_HAS_NO_ELEVATED_FILE_LOCK_STEP`。没有 companion 记录的节点不受此开关影响。
+
+手工 `linux/prep.py` 和非通用包的 `generate.py --final` 遇到含 `checks.fileLocksFinding.deferredTo` 的报告时，返回 `REHEARSAL_FILE_LOCKS_DEFERRED_TO_FLEET_LAUNCHER`。
 
 r7 那次三回被拒，都能被预演提前抓到，`test/test_rehearse.py` 里有对应的回归测试：
 
