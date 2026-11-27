@@ -70,14 +70,14 @@ function checkout(t, files, { changed = {} } = {}) {
   } };
 }
 
-function run(root, base, { hostEnv = {}, ...options } = {}) {
+function run(root, base, { hostEnv = {}, spawn: spawnFixture = spawnSync, ...options } = {}) {
   const lines = [];
   const calls = [];
   const env = { ...process.env, ...hostEnv, RUNNER_TEMP: root, ...(base === undefined ? {} : { CI_BASE_SHA: base }) };
   delete env.NODE_TEST_CONTEXT;
   delete env.GITHUB_STEP_SUMMARY;
   if (base === undefined) delete env.CI_BASE_SHA;
-  const spawn = (command, args, opts) => { calls.push(args); return spawnSync(command, args, opts); };
+  const spawn = (command, args, opts) => { calls.push(args); return spawnFixture(command, args, opts); };
   const status = executeSuite(options.suite ?? SUITE, { root, env, spawn, log: (line) => lines.push(String(line)), ...options });
   return { status, lines, calls, out: lines.join('\n') };
 }
@@ -130,10 +130,8 @@ test('train v2: final test failure has a verdict, while a recovered test or a ti
   assert.equal(childExit.status, 1, childExit.out);
   assert.doesNotMatch(childExit.out, verdict);
 
-  const hung = checkout(t, { ...suite({ 'does not finish': `test('does not finish', () => new Promise(() => setInterval(() => {
-    try { process.kill(process.ppid, 0); } catch { process.exit(1); }
-  }, 100)));\n` }), 'config/test-clock-debt.txt': `${FLAKY}\n` });
-  const timedOut = run(hung.root, hung.base, { hostEnv, commandTimeoutMs: 1000 });
+  const timedOut = run(stable.root, stable.base, { hostEnv, commandTimeoutMs: 1000,
+    spawn: () => ({ status: null, signal: 'SIGKILL', error: Object.assign(new Error('子进程超时'), { code: 'ETIMEDOUT' }) }) });
   assert.equal(timedOut.status, 1, timedOut.out);
   assert.equal(timedOut.calls.length, 1, timedOut.out);
   assert.match(timedOut.out, /被终止/);

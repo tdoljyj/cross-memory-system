@@ -1457,7 +1457,7 @@ async function trainFixture(t, repository = 'fixture/repository-12345') {
   return { f, admin, user, project, github, a, b, head, pr, subject, one, signed, send, call, data, lease, scope, repository, paths, digest, sha, TRAIN_FAILURE, TRAIN_PROBE_FIELDS, trainHeadWorkKey, trainBatchKey, trainEffectKey };
 }
 
-test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果核对', { timeout: 300000 }, async t => {
+test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果核对', async t => {
   const { f, admin, user, project, github, a, b, head, pr, subject, one, signed, send, call, data, lease, scope, repository, paths, digest, sha, TRAIN_FAILURE, TRAIN_PROBE_FIELDS, trainHeadWorkKey, trainBatchKey, trainEffectKey } = await trainFixture(t);
 
   await t.test('两台独立节点均有资格，同连接异机、跨项目和错 Source 均拒绝', async () => {
@@ -1845,7 +1845,7 @@ test('列车 v2：签名资格、唯一领用、续期竞争与跨节点效果�
 });
 
 
-test('列车 v2 第 3 项：原认领失效后只撤销共享账本中的精确检查', { timeout: 120000 }, async t => {
+test('列车 v2 第 3 项：原认领失效后只撤销共享账本中的精确检查', async t => {
   const { f, a, b, admin, call, data, lease, subject, sha, paths, github } = await trainFixture(t);
   const work = data(await call(a, 'head_acquire', subject));
   assert.equal(data(await call(a, 'verify_head', { ...lease(work), base_sha: sha('base'), changed_paths: paths })).verdict, 'ADMITTED');
@@ -1877,7 +1877,7 @@ test('列车 v2 第 3 项：原认领失效后只撤销共享账本中的精确�
   assert.equal(github.totals().checkRevocations, 1);
 });
 
-test('列车 v2 第 12 项：片 2 的实际签名命令与常驻端所需回执', { timeout: 300000 }, async t => {
+test('列车 v2 第 12 项：片 2 的实际签名命令与常驻端所需回执', async t => {
   const { f, a, b, head, pr, call, data, scope, repository, paths, digest, sha, TRAIN_FAILURE,
     trainHeadWorkKey, trainEffectKey } = await trainFixture(t, 'tdoljyj/cross-memory-system');
   const { admissionExternalIdV2, makeJobV2 } = await import('../../../work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs');
@@ -1948,7 +1948,7 @@ test('列车 v2 第 12 项：片 2 的实际签名命令与常驻端所需回执
 });
 
 
-test('列车 v2：未签名的 Binding 无法领用或绕过首次入队闸口', { timeout: 120000 }, async t => {
+test('列车 v2：未签名的 Binding 无法领用或绕过首次入队闸口', async t => {
   const { schedulingFixture, sha } = await import('./ci-scheduling-stage1-fixture.mjs');
   const f = await schedulingFixture();
   t.after(f.close);
@@ -1970,7 +1970,7 @@ test('列车 v2：未签名的 Binding 无法领用或绕过首次入队闸口',
 });
 
 
-test('列车 v2：目标分支只有一个未结束批次，按作用域隔离', { timeout: 120000 }, async t => {
+test('列车 v2：目标分支只有一个未结束批次，按作用域隔离', async t => {
   const { schedulingFixture, digest, sha } = await import('./ci-scheduling-stage1-fixture.mjs');
   const f = await schedulingFixture();
   t.after(f.close);

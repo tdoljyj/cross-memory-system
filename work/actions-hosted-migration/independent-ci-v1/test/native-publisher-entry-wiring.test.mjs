@@ -102,7 +102,7 @@ async function fixture(t, active = true) {
   return { jobs, claim, checks, calls, trace, journal, admission, wrap, record, signer, rawGithub, native, time, setCurrent: value => { current = value; } };
 }
 
-async function trainFixture(t, { staged = false, mustRevoke = false, omitTicket = false } = {}) {
+async function trainFixture(t, { staged = false, mustRevoke = false, omitTicket = false, publisherUsesTrainClock = false } = {}) {
   const f = await fixture(t, !staged), job = f.jobs['work-admission'];
   const clock = multiDutyClock(f.time), remote = multiDutyGitHub(clock);
   const projectId = '00000000-0000-4000-8000-000000000000';
@@ -219,6 +219,7 @@ async function trainFixture(t, { staged = false, mustRevoke = false, omitTicket 
     const port = qualified ? f.wrap([job], { ports: { github, native: { ...f.native, train: trainNative, trainProtocolVersion: TRAIN_PROTOCOL_VERSION } },
       journal, nonce }) : github;
     const engine = createFixtureWorkAdmissionPublisherV2({ github: port, journal, admission: evaluator,
+      clock: publisherUsesTrainClock ? clock.now : undefined,
       ...(qualified ? {} : { trainProtocolVersion: TRAIN_PROTOCOL_VERSION }), assertLive() {}, record() {}, authority: {}, batchClaims: {
         async read() { return claim; }, async record(j, c) { claim = claimGeneration(c); },
       } });
@@ -265,7 +266,8 @@ test('片2返修1：实际探测与阶段1入口使用受保护传输，缺传�
 });
 
 test('片2返修2：完整准入的计量请求固定在领用代次，迟到旧代在计量前拒绝', async t => {
-  const f = await trainFixture(t, { staged: true }), pause = gate(), requests = [], legacy = [];
+  const f = await trainFixture(t, { staged: true, publisherUsesTrainClock: true });
+  const pause = gate(), requests = [], legacy = [];
   const { job, claim } = f, scope = f.scope.contextKey, prRef = job.repo + '#' + job.pr, taskId = randomUUID();
   const pr = await f.rawGithub.readPullRequest(job.pr);
   const claimReply = { claim_id: claim.claimId, task_id: taskId, context_key: scope, fence: claim.fence,
@@ -286,13 +288,14 @@ test('片2返修2：完整准入的计量请求固定在领用代次，迟到旧
   });
   const config = { ...f.record.config, domain: 'fixture', scope, workspace: await tempDir(t), sourceManifestSha256: job.sourceManifestSha256,
     evaluatorSha256: digest('fixture evaluator'), policyText: '', policySha256: digest('') };
+  const observedAt = () => new Date(f.clock.now()).toISOString();
   function evaluator(index) {
-    return createFullAdmissionPortV2({ protectedConfig: config,
+    return createFullAdmissionPortV2({ protectedConfig: config, clock: f.clock.now,
       tokenProvider: async () => ({ githubToken: 'fixture', ciAdmissionToken: ['clued', 'bnd', 'fixture123'].join('_'),
         ciPrincipalBindingId: config.ciPrincipalBindingId, ciPrincipalQualificationRef: config.ciPrincipalQualificationRef }),
       modeProvider: async () => ({ complete: true, repository: job.repo, variable: 'CLUED_MERGE_ADMISSION_STATE',
-        source: 'github-repository-variables', exists: false, observedAt: new Date().toISOString(), proofRef: 'fixture' }),
-      recorderProvider: async () => ({ kind: 'independent-controller', domain: 'fixture', observedAt: new Date().toISOString(),
+        source: 'github-repository-variables', exists: false, observedAt: observedAt(), proofRef: 'fixture' }),
+      recorderProvider: async () => ({ kind: 'independent-controller', domain: 'fixture', observedAt: observedAt(),
         observationRef: 'fixture', recorder: { newId: randomUUID, record() {} } }),
       fetchImpl: async (url, opts) => {
         if (new URL(url).hostname === 'api.github.com') return Response.json(pr);
