@@ -7,6 +7,16 @@ const inactive = new Set(['retired', 'revoked']);
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const positive = n => Number.isSafeInteger(n) && n >= 1;
 
+function recipientExclusion(row) {
+  if (row.rebindPending === true) return 'FLEET_RECIPIENT_REBIND_PENDING';
+  if (row.bindingLive === false) return 'FLEET_RECIPIENT_BINDING_NOT_LIVE';
+  if (!positive(row.registrationVersion) || !positive(row.bindingGeneration) ||
+      !hex.test(row.identityFingerprint ?? '') || row.bindingLive !== true || row.rebindPending !== false) {
+    return 'FLEET_RECIPIENT_BINDING_UNCONFIRMED';
+  }
+  return null;
+}
+
 export function deliverySubject(request, requestSha256) {
   return Object.freeze({ repository: request.repository, scope: 'global', version: request.version, commit: request.commit,
     archiveSha256: request.archive_sha256, sourceSha256: request.ciSourceManifestSha256,
@@ -50,11 +60,12 @@ export async function fleetDeliveryPreflight({ candidate, readFleetRegistry, clo
   const last = await read();
   const registrySha256 = digest(first.rows);
   if (!last || first.snapshotToken !== last.snapshotToken || digest(last.rows) !== registrySha256) return refused('FLEET_REGISTRY_CHANGED');
-  const nodes = last.rows.filter(row => eligible.has(row.state));
-  if (nodes.some(row => !positive(row.registrationVersion) || !positive(row.bindingGeneration) ||
-      !hex.test(row.identityFingerprint ?? '') || row.bindingLive !== true || row.rebindPending !== false)) {
-    return refused('FLEET_RECIPIENT_BINDING_UNCONFIRMED');
+  const nodes = [], excludedNodes = [];
+  for (const row of last.rows.filter(row => eligible.has(row.state))) {
+    const { id, name: node, state } = row;
+    const reason = recipientExclusion(row);
+    if (reason) excludedNodes.push({ id, node, state, reason });
+    else nodes.push({ id, node, state });
   }
-  return { status: 'PASS', observedAt: new Date(clock()).toISOString(), registrySha256,
-    nodes: nodes.map(({ id, name, state }) => ({ id, node: name, state })) };
+  return { status: 'PASS', observedAt: new Date(clock()).toISOString(), registrySha256, nodes, excludedNodes };
 }

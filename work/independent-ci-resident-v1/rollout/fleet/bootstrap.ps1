@@ -199,7 +199,9 @@ function Get-ExtractState([string]$dir, [string]$sourceSha256) {
 }
 # L4: a stage's terminating exception, kept with its message and type.
 function Get-StageFailure([string]$stage, $exception) {
-  [ordered]@{ status = 'BOOTSTRAP_STAGE_FAILED'; stage = $stage; message = [string]$exception.Message; type = $exception.GetType().FullName }
+  $message = [string]$exception.Message
+  $code = if ($message -cmatch '^([A-Z][A-Z0-9_]+)(?::|$)') { $Matches[1] } else { 'BOOTSTRAP_STAGE_FAILED' }
+  [ordered]@{ status = 'BOOTSTRAP_STAGE_FAILED'; stage = $stage; code = $code; message = $message; type = $exception.GetType().FullName }
 }
 # M4: the elevated stage runs as the operator who started the bootstrap, or not at all (a UAC prompt answered with another account).
 function Test-StageOperator([string]$actualSid, [string]$expectedSid) {
@@ -272,6 +274,72 @@ function Get-LauncherVerdict([bool]$firstInstall, $terminal) {
       next = 'installed and verified, but the distribution is still the operator''s: the companion switch (the installed rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory <facts.companionWsl.vhdxDirectory>, elevated) has to pass; see companion-headless-report.json of this launch' }
   }
   [ordered]@{ status = 'BOOTSTRAP_DONE'; companionSwitch = $ch; next = $null }
+}
+
+function Get-InstallStageVerdict($terminal) {
+  if ((Get-Key $terminal 'bootstrapPhase') -ceq 'launcher' -and (Get-Key $terminal 'status') -cne 'BOOTSTRAP_STAGE_FAILED') {
+    $result = Get-LauncherVerdict $true $terminal
+  } else {
+    $code = Get-Key $terminal 'code'
+    if (-not $code) { $code = Get-Key $terminal 'status' }
+    $result = [ordered]@{ status = 'HOST_PREPARATION_NOT_DONE'; code = $code; message = (Get-Key $terminal 'message') }
+  }
+  foreach ($key in @('evidenceDirectory','evidenceError','stagingDirectory')) {
+    $value = Get-Key $terminal $key
+    if ($value) { $result[$key] = $value }
+  }
+  $result
+}
+
+function New-BootstrapFailureDirectory {
+  # The normal bootstrap work parent is user writable. Keep elevated evidence
+  # under a separate, checked Administrator/SYSTEM directory.
+  $root = 'C:\ProgramData\CluedBootstrapFailures'
+  $ds = New-Object Security.AccessControl.DirectorySecurity
+  $ds.SetSecurityDescriptorSddlForm($AdminOnlySddl)
+  $item = [IO.Directory]::CreateDirectory($root, $ds)
+  if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'BOOTSTRAP_EVIDENCE_ROOT_REFUSED' }
+  $acl = Get-Acl -LiteralPath $root
+  $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+  if (-not $acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cnotin @('S-1-5-18','S-1-5-32-544') -or
+      $rules.Count -ne 2 -or @($rules | Where-Object { $_.IdentityReference.Value -cnotin @('S-1-5-18','S-1-5-32-544') -or
+        $_.AccessControlType -ne 'Allow' -or $_.FileSystemRights -ne 'FullControl' }).Count) { throw 'BOOTSTRAP_EVIDENCE_ROOT_REFUSED' }
+  $target = Join-Path $root ([guid]::NewGuid().ToString('N'))
+  [void][IO.Directory]::CreateDirectory($target, $ds)
+  $target
+}
+
+function Copy-BootstrapEvidence($item, [string]$target) {
+  if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'BOOTSTRAP_EVIDENCE_REPARSE_POINT' }
+  if ($item.PSIsContainer) {
+    [void][IO.Directory]::CreateDirectory($target)
+    foreach ($child in @(Get-ChildItem -LiteralPath $item.FullName -Force)) {
+      Copy-BootstrapEvidence $child (Join-Path $target $child.Name)
+    }
+  } else {
+    [IO.File]::Copy($item.FullName, $target, $false)
+  }
+}
+
+function Complete-InstallStageVerdict($terminal, [string]$stageDir) {
+  if ($null -eq $terminal -or -not $stageDir -or (Get-InstallStageVerdict $terminal).status -ceq 'BOOTSTRAP_DONE') { return $terminal }
+  try {
+    $work = Join-Path $stageDir 'prepare'
+    if (-not [IO.Directory]::Exists($work)) { return $terminal }
+    if (([IO.File]::GetAttributes($work) -band [IO.FileAttributes]::ReparsePoint)) { throw 'BOOTSTRAP_EVIDENCE_REPARSE_POINT' }
+    $items = @(Get-ChildItem -LiteralPath $work -Force | Where-Object {
+      ($_.PSIsContainer -and $_.Name -clike 'launch-*') -or (-not $_.PSIsContainer -and $_.Name -ceq 'install-plan.json')
+    })
+    if ($items.Count) {
+      $saved = New-BootstrapFailureDirectory
+      foreach ($item in $items) { Copy-BootstrapEvidence $item (Join-Path $saved $item.Name) }
+      $terminal['evidenceDirectory'] = $saved
+    }
+  } catch {
+    $terminal['evidenceError'] = [string]$_.Exception.Message
+    $terminal['stagingDirectory'] = $stageDir
+  }
+  $terminal
 }
 # M6: what a run fetches: a first install everything; a node with a resident (the reinstall: prepare, rehearse.py, generate.py) node,
 # python and git only, never the rootfs, the WSL package, the runner, the Linux toolchain node or the .debs.
@@ -688,6 +756,7 @@ function Invoke-Stage {
         if ($progress.step -cin @('launcher','verify','complete')) {
           $verdict = (Read-StageResult $protectedOutput).last
           if ((Get-LauncherVerdict $true $verdict).status -cne 'BOOTSTRAP_DONE') { throw 'FLEET_INSTALL_RESULT_UNCONFIRMED' }
+          $verdict['bootstrapPhase'] = 'launcher'
           $progress.step = 'complete'
           Write-FleetProgress $progressFile $progress
           [IO.File]::Delete($progressFile)
@@ -719,6 +788,7 @@ function Invoke-Stage {
         $progress.step = 'launcher'
         Write-FleetProgress $progressFile $progress
         $verdict = Invoke-FirstInstallLauncher $stageDir $copy $entry $protected $protectedOutput
+        $verdict['bootstrapPhase'] = 'launcher'
         $status = [string](Get-Key $verdict 'status')
         if ((Get-LauncherVerdict $true $verdict).status -ceq 'BOOTSTRAP_DONE') {
           $progress.step = 'complete'
@@ -733,12 +803,13 @@ function Invoke-Stage {
     $f = Get-StageFailure $Stage $_.Exception
     Add-ResultLine $out (ConvertTo-JsonLine $f -Progress); $status = $f.status; $verdict = $f
   } finally {
-    if ($stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }
     if ($clearCredentials) {
       $c = Clear-CredentialDirectory $CredentialDirectory
       Add-ResultLine $out (ConvertTo-JsonLine ([ordered]@{ credentialsCleared = $c.cleared; directory = $CredentialDirectory }) -Progress)
       if (-not $c.cleared) { $verdict = [ordered]@{ status = 'BOOTSTRAP_STAGE_FAILED'; code = 'CREDENTIAL_STAGING_CLEANUP_FAILED' } }
     }
+    $verdict = Complete-InstallStageVerdict $verdict $stageDir
+    if ($stageDir -and -not (Get-Key $verdict 'stagingDirectory')) { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }
     if ($locked) { $lock.ReleaseMutex() }
     if ($lock) { $lock.Dispose() }
     # the verdict stays the last object: the child's (or the stage's failure), repeated after the notes
@@ -883,8 +954,16 @@ function Invoke-Bootstrap {
       Out-Result $(if ($resetDone) { 'BOOTSTRAP_RESET_DONE' } else { 'BOOTSTRAP_RESET_NOT_DONE' }) 'host' ([ordered]@{ last = $h.last; output = $h.output }); return
     }
     if ($st -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { Out-Step 'host' 'failed' 'RESTART_THEN_RUN_THE_SAME_COMMAND' $null; Out-Result 'RESTART_THEN_RUN_THE_SAME_COMMAND' 'host' ([ordered]@{ detail = $h.last }); exit 3 }
-    $v = Get-LauncherVerdict $true $h.last
-    Out-LauncherVerdict $v ([ordered]@{ firstInstall = $true; launcher = $st; companionSwitch = $v.companionSwitch; next = $v.next; exit = $h.exit; output = $h.output })
+    $v = Get-InstallStageVerdict $h.last
+    if ($v.status -ceq 'HOST_PREPARATION_NOT_DONE') {
+      Out-Step 'host' 'failed' $v.code $h.last
+      Out-Result $v.status 'host' ([ordered]@{ code = $v.code; message = $v.message; last = $h.last; exit = $h.exit; output = $h.output;
+        evidenceDirectory = (Get-Key $v 'evidenceDirectory'); evidenceError = (Get-Key $v 'evidenceError'); stagingDirectory = (Get-Key $v 'stagingDirectory') })
+      exit 1
+    }
+    Out-LauncherVerdict $v ([ordered]@{ firstInstall = $true; launcher = $st; companionSwitch = $v.companionSwitch; next = $v.next;
+      exit = $h.exit; output = $h.output; evidenceDirectory = (Get-Key $v 'evidenceDirectory'); evidenceError = (Get-Key $v 'evidenceError');
+      stagingDirectory = (Get-Key $v 'stagingDirectory') })
     if ($v.status -cne 'BOOTSTRAP_DONE') { exit 1 }
 }
 

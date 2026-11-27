@@ -128,12 +128,90 @@ Case 'lifecycle:paths and native credential carriers' {
     if ([IO.Directory]::Exists($directory)) { [IO.Directory]::Delete($directory, $true) }
   }
 }
+Case 'lifecycle:Windows registration identifies WSL ownership before cleanup' {
+  . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
+  $operator = 'S-1-5-21-1-2-3-1001'
+  $companion = 'S-1-5-21-1-2-3-1002'
+  $opProfile = 'C:\Users\FixtureOperator'
+  $coProfile = 'C:\Users\FixtureCompanion'
+  $ownedBase = Join-Path $FleetResources.ciRoot $FleetResources.distributionDirectories[0]
+  function Get-FleetWslRegistryRows([string]$sid) {
+    if ($sid -ceq $operator) {
+      @{ id = '{11111111-1111-4111-8111-111111111111}'; name = 'CluedResident-Linux'; basePath = ($opProfile + '\WSL\CluedResident-Linux') }
+      @{ id = '{22222222-2222-4222-8222-222222222222}'; name = 'Ubuntu-24.04'; basePath = ($opProfile + '\AppData\Local\wsl\fixture') }
+      @{ id = '{33333333-3333-4333-8333-333333333333}'; name = 'Unrelated'; basePath = 'D:\AnotherProduct' }
+    } else {
+      @{ id = '{44444444-4444-4444-8444-444444444444}'; name = 'CluedResident-Linux'; basePath = $ownedBase }
+    }
+  }
+  $first = @(Get-FleetWslInventory $operator $opProfile)
+  $second = @(Get-FleetWslInventory $companion $coProfile)
+  Yes ($first.Count -eq 2 -and $first[0].kind -ceq 'dedicated' -and $first[0].ownerSid -ceq $operator) 'lifecycle:dedicated-operator-vhd-identified'
+  Yes ($first[1].kind -ceq 'shared-candidate' -and $first[1].ownerSid -ceq $operator) 'lifecycle:shared-distro-is-only-a-candidate'
+  Yes ($second.Count -eq 1 -and $second[0].kind -ceq 'dedicated' -and $second[0].ownerSid -ceq $companion -and $second[0].basePath -ceq $ownedBase) 'lifecycle:dedicated-companion-vhd-bound-to-sid'
+  $ownedBase = 'D:\UnrelatedVhd'
+  Throws { Get-FleetWslInventory $companion $coProfile } 'FLEET_WSL_REGISTRATION_PATH_REFUSED' 'lifecycle:dedicated-name-alone-cannot-authorize-cleanup'
+}
+Case 'lifecycle:cleanup readback excludes preserved connection carriers' {
+  . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
+  $fixture = @{ complete = $true; residue = @(); wsl = @() }
+  $kept = @('directory:ci-root', 'directory:app-key', 'account:clued-control', 'account:clued-companion')
+  $paths = @('resident\upgrade\current.json')
+  $residentAce = $true
+  function Get-FleetInventory { $fixture }
+  function Get-FleetProductPaths { $paths }
+  function Test-FleetResidentRootAce { $residentAce }
+  $fixture.residue = $kept + @('service:CluedCIResident','task:CluedCIResidentCompanion','firewall:CluedCIResident-BlockOutbound',
+    'wsl:S-1-5-21-1-2-3-1002:CluedResident-Linux')
+  Yes ((Get-FleetStepState 'cleanup' @{}) -ceq 'pending') 'lifecycle:Windows-effects-remain'
+  $fixture.residue = $kept
+  Yes ((Get-FleetStepState 'cleanup' @{}) -ceq 'pending') 'lifecycle:malformed-pointer-still-counts-as-residue'
+  $paths = @()
+  Yes ((Get-FleetStepState 'cleanup' @{}) -ceq 'pending') 'lifecycle:resident-ACE-still-counts-as-residue'
+  $residentAce = $false
+  $fixture.wsl = @(@{kind = 'shared-candidate'})
+  Yes ((Get-FleetStepState 'cleanup' @{}) -ceq 'unknown') 'lifecycle:shared-Linux-needs-its-own-proof'
+  $fixture.wsl = @()
+  Yes ((Get-FleetStepState 'cleanup' @{}) -ceq 'complete') 'lifecycle:preserved-resources-do-not-block-readback'
+}
 foreach ($name in @('Get-Key', 'Read-Sha256Sums', 'Get-ReleaseVersion', 'Get-RequiredAssets', 'Test-AssetSet', 'Test-PrereqManifest', 'Get-LastJsonLine', 'Get-ElevatedArguments', 'Test-UacDeclined',
     'Test-SafePath', 'Test-SafeArgument', 'Get-ExtractState', 'Get-StageFailure', 'Test-StageOperator',
     'Sha256File', 'Invoke-StageChild', 'Clear-CredentialDirectory', 'Test-FirstInstallCheck', 'Copy-ToWork', 'Test-UnderDirectory', 'Get-LauncherVerdict',
     'Get-NeededPrereqs', 'Expand-Cached', 'ConvertTo-PlainData', 'ConvertTo-JsonLine', 'Out-Result', 'Out-Step', 'Add-ResultLine', 'Get-StageVerdict', 'Read-StageResult',
-    'Invoke-FirstInstallLauncher')) {
+    'Invoke-FirstInstallLauncher', 'Complete-InstallStageVerdict', 'Get-InstallStageVerdict', 'Copy-BootstrapEvidence')) {
   Yes ($functions.ContainsKey($name)) ('present:' + $name); if ($functions.ContainsKey($name)) { . ([scriptblock]::Create($functions[$name])) }
+}
+Case 'first-install:launcher failure keeps evidence after staging cleanup' {
+  $fixture = Join-Path $env:TEMP ('clued-bootstrap-evidence-' + [guid]::NewGuid().ToString('N'))
+  $stage = Join-Path $fixture 'staging'
+  $work = Join-Path $stage 'prepare'
+  $launch = Join-Path $work 'launch-fixture'
+  function New-BootstrapFailureDirectory {
+    $saved = Join-Path $fixture 'saved'
+    [void][IO.Directory]::CreateDirectory($saved)
+    $saved
+  }
+  try {
+    [void][IO.Directory]::CreateDirectory($launch)
+    foreach ($name in @('first-train-report.json', 'companion-headless-report.json')) { [IO.File]::WriteAllText((Join-Path $launch $name), '{}') }
+    [IO.File]::WriteAllText((Join-Path $work 'install-plan.json'), '{}')
+    $failed = Complete-InstallStageVerdict @{ status = 'STOPPED'; code = 'FIXTURE_LAUNCHER_REFUSED'; bootstrapPhase = 'launcher' } $stage
+    [IO.Directory]::Delete($stage, $true)
+    $v = Get-InstallStageVerdict $failed
+    Yes ($v.status -ceq 'BOOTSTRAP_LAUNCHER_ENDED' -and $v.code -ceq 'FIXTURE_LAUNCHER_REFUSED') 'first-install:retains-launcher-refusal'
+    foreach ($name in @('install-plan.json','launch-fixture\first-train-report.json','launch-fixture\companion-headless-report.json')) {
+      Yes ([IO.File]::Exists((Join-Path $v.evidenceDirectory $name))) ('first-install:retains:' + $name)
+    }
+  } finally {
+    [IO.Directory]::Delete($fixture, $true)
+  }
+}
+Case 'first-install:stage failure keeps the original refusal' {
+  $failed = Get-StageFailure 'install' ([InvalidOperationException]::new('PROTECTED_INSTALL_INPUTS_REFUSED'))
+  $v = Get-InstallStageVerdict $failed
+  Yes ($v.status -ceq 'HOST_PREPARATION_NOT_DONE' -and $v.code -ceq 'PROTECTED_INSTALL_INPUTS_REFUSED' -and $v.message -ceq $failed.message) 'first-install:stage-refusal-code'
+  $hostFailure = Get-InstallStageVerdict @{ status = 'FIRST_INSTALL_HOST_REFUSED'; code = 'WSL_UNAVAILABLE'; message = 'Host refused' }
+  Yes ($hostFailure.status -ceq 'HOST_PREPARATION_NOT_DONE' -and $hostFailure.code -ceq 'WSL_UNAVAILABLE' -and $hostFailure.message -ceq 'Host refused') 'first-install:host-refusal-code'
 }
 # the constants the functions read, from the script itself
 foreach ($a in $ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] }, $false)) {
@@ -455,7 +533,7 @@ try {
     # the launcher prints its terminal with ConvertTo-Json: the switch's status is read from it
     $printed = "x`r`n" + ((& $term 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' 'COMPANION_HEADLESS_FAILED') | ConvertTo-Json -Depth 6)
     Yes ((Get-LauncherVerdict $true (Get-LastJsonLine $printed)).status -ceq 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE') 'm4:read-from-the-printed-terminal'
-    Yes ($main -match 'Get-LauncherVerdict \$true \$h\.last') 'm4:the-bootstrap-uses-it'
+    Yes ($main -match 'Get-InstallStageVerdict \$h\.last' -and $functions['Get-InstallStageVerdict'] -match 'Get-LauncherVerdict') 'm4:the-bootstrap-uses-it'
   }
 
   # M6: a node with a resident (the reinstall) fetches and needs pinned only what its path runs: node, python, git; never the rootfs,

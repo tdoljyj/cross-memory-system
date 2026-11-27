@@ -14,6 +14,7 @@ $FleetResources = [ordered]@{
   machineKeys = @('Clued-CI-Node-Identity-v1', 'Clued-CI-Node-Encryption-v1')
   distribution = 'CluedResident-Linux'
   distributionDirectories = @('wsl\CluedResident-Linux', 'wsl-first-install\CluedResident-Linux')
+  sharedDistribution = 'Ubuntu-24.04'
   ciDirectories = @('resident', 'first-install', 'state', 'formal-spool')
   controlEntries = @('runner', 'runner.first-install-complete')
   keptRootPattern = '^(?:resident-uninstalled-[A-Za-z0-9_-]+|reinstall-(?:carry|linux-out|progress)-[0-9a-f]{32})$'
@@ -111,10 +112,68 @@ function Assert-FleetJournalRoot([string]$root) {
   }
 }
 
+function Get-FleetProfileDirectory([string]$sid) {
+  $profile = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(
+    ('SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\' + $sid))
+  if ($null -eq $profile) { return }
+  try {
+    $path = $profile.GetValue('ProfileImagePath')
+    if ($path -isnot [string] -or $path -notmatch '^[A-Z]:\\') { throw 'FLEET_WSL_OWNER_PROFILE_REFUSED' }
+    $path
+  } finally { $profile.Dispose() }
+}
+
+function Get-FleetWslRegistryRows([string]$sid) {
+  $owner = [Microsoft.Win32.Registry]::Users.OpenSubKey($sid)
+  if ($null -eq $owner) {
+    # No loaded hive means unknown for an existing profile. It provides no
+    # evidence of absence and never authorizes deletion from another SID.
+    if (Get-FleetProfileDirectory $sid) { throw 'FLEET_WSL_OWNER_HIVE_UNAVAILABLE' }
+    return
+  }
+  try {
+    $lxss = $owner.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Lxss')
+    if ($null -eq $lxss) { return }
+    try {
+      foreach ($id in $lxss.GetSubKeyNames()) {
+        $key = $lxss.OpenSubKey($id)
+        if ($null -eq $key) { throw 'FLEET_WSL_REGISTRATION_CHANGED' }
+        try { @{ id = $id; name = $key.GetValue('DistributionName'); basePath = $key.GetValue('BasePath') } }
+        finally { $key.Dispose() }
+      }
+    } finally { $lxss.Dispose() }
+  } finally { $owner.Dispose() }
+}
+
+function Get-FleetWslInventory([string]$sid, [string]$profileDirectory) {
+  if ($sid -cnotmatch '^S-1-5-21-\d+-\d+-\d+-\d+$') { throw 'FLEET_WSL_OWNER_SID_REFUSED' }
+  $dedicated = @($FleetResources.distributionDirectories | ForEach-Object { Join-Path $FleetResources.ciRoot $_ })
+  if ($profileDirectory) { $dedicated += Join-Path $profileDirectory ('WSL\' + $FleetResources.distribution) }
+  $seen = @{}
+  foreach ($row in @(Get-FleetWslRegistryRows $sid)) {
+    if ($row.name -ine $FleetResources.distribution -and $row.name -ine $FleetResources.sharedDistribution) { continue }
+    $id = [guid]::Empty
+    if (-not [guid]::TryParseExact($row.id, 'B', [ref]$id) -or $seen.ContainsKey($row.name)) { throw 'FLEET_WSL_REGISTRATION_REFUSED' }
+    $seen[$row.name] = $true
+    $path = [string]$row.basePath
+    if ($path.StartsWith('\\?\', [StringComparison]::Ordinal)) { $path = $path.Substring(4) }
+    if ($path -notmatch '^[A-Z]:\\[^:*?"<>|]+$' -or $path.Split('\') -contains '..' -or $path.Split('\') -contains '.') {
+      throw 'FLEET_WSL_REGISTRATION_PATH_REFUSED'
+    }
+    $path = [IO.Path]::GetFullPath($path).TrimEnd('\')
+    $kind = if ($row.name -ieq $FleetResources.distribution) {
+      if ($dedicated -inotcontains $path) { throw 'FLEET_WSL_REGISTRATION_PATH_REFUSED' }
+      'dedicated'
+    } else { 'shared-candidate' }
+    @{ id = $id.ToString('B'); ownerSid = $sid; name = $row.name; basePath = $path; kind = $kind }
+  }
+}
+
 # A denied or unreadable observation may never classify a host as clean.
 function Get-FleetInventory {
   $residue = [Collections.Generic.List[string]]::new()
   $unknown = [Collections.Generic.List[string]]::new()
+  $wsl = @()
   try {
     $runner = $FleetResources.runnerPrefix + [Environment]::MachineName.ToLowerInvariant()
     foreach ($service in @(Get-Service -ErrorAction Stop | Where-Object { $_.Name -iin $FleetResources.services -or $_.Name -ieq $runner })) {
@@ -129,12 +188,8 @@ function Get-FleetInventory {
     } catch { $unknown.Add('directory:' + $root) }
   }
   try {
-    $operatorLxss = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
-    if (Test-Path -LiteralPath $operatorLxss -ErrorAction Stop) {
-      foreach ($key in @(Get-ChildItem -LiteralPath $operatorLxss -ErrorAction Stop)) {
-        if ($key.GetValue('DistributionName') -ieq $FleetResources.distribution) { $residue.Add('operator-wsl:' + $FleetResources.distribution) }
-      }
-    }
+    $operator = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $wsl += @(Get-FleetWslInventory $operator (Get-FleetProfileDirectory $operator))
   } catch { $unknown.Add('operator-wsl') }
   try {
     $tasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskPath -ieq $FleetResources.taskPath -and $_.TaskName -iin $FleetResources.tasks })
@@ -147,9 +202,16 @@ function Get-FleetInventory {
   try {
     foreach ($account in @(Get-LocalUser -ErrorAction Stop | Where-Object { $_.Name -iin @($FleetResources.account,$FleetResources.controller) })) {
       $residue.Add('account:' + $account.Name)
+      if ($account.Name -ieq $FleetResources.account) {
+        try { $wsl += @(Get-FleetWslInventory $account.SID.Value (Get-FleetProfileDirectory $account.SID.Value)) }
+        catch { $unknown.Add('companion-wsl') }
+      }
     }
   } catch { $unknown.Add('accounts') }
-  @{ complete = $unknown.Count -eq 0; residue = $residue.ToArray(); unknown = $unknown.ToArray() }
+  foreach ($registration in $wsl) {
+    if ($registration.kind -ceq 'dedicated') { $residue.Add('wsl:' + $registration.ownerSid + ':' + $registration.name) }
+  }
+  @{ complete = $unknown.Count -eq 0; residue = $residue.ToArray(); unknown = $unknown.ToArray(); wsl = $wsl }
 }
 
 # Collect only paths with reserved product names. Refuse nested links before
@@ -216,12 +278,31 @@ function Remove-FleetProductPaths {
   }
 }
 
+function Test-FleetResidentRootAce {
+  $root = $FleetResources.ciRoot
+  Assert-FleetLocalPath $root
+  if ($null -eq (Get-FleetPathItem $root)) { return $false }
+  $sha1 = [Security.Cryptography.SHA1]::Create()
+  try { $bytes = $sha1.ComputeHash([Text.Encoding]::Unicode.GetBytes($FleetResources.services[0].ToUpperInvariant())) }
+  finally { $sha1.Dispose() }
+  $sid = 'S-1-5-80-' + ((0..4 | ForEach-Object { [BitConverter]::ToUInt32($bytes, $_ * 4) }) -join '-')
+  $acl = Get-Acl -LiteralPath $root -ErrorAction Stop
+  @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -ceq $sid }).Count -gt 0
+}
+
 function Get-FleetStepState([string]$step, $context) {
   if ($step -ceq 'cleanup') {
-    $facts = Get-FleetInventory
-    if (-not $facts.complete) { return 'unknown' }
-    if ($facts.residue.Count -eq 0) { return 'complete' }
-    return 'pending'
+    try {
+      $facts = Get-FleetInventory
+      if (-not $facts.complete) { return 'unknown' }
+      # The CI root, controller and companion accounts and the App key are
+      # routing signals, but can legitimately remain during a clean reinstall.
+      if (@($facts.residue -match '^(service|task|firewall|wsl):').Count -or @(Get-FleetProductPaths).Count -or (Test-FleetResidentRootAce)) {
+        return 'pending'
+      }
+      if (@($facts.wsl | Where-Object { $_.kind -ceq 'shared-candidate' }).Count) { return 'unknown' }
+      return 'complete'
+    } catch { return 'unknown' }
   }
   if ($step -ceq 'return' -and $context.maintenance['restored'] -eq $true) { return 'complete' }
   'unknown'

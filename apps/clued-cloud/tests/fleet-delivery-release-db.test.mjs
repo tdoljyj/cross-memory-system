@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { qualifyDelivery } from '../../../scripts/ci/clued-fleet-accept.mjs';
+import { fleetDeliveryPreflight } from '../../../work/independent-ci-resident-v1/rollout/fleet/delivery-preflight.mjs';
 import { firstInstallCheck } from '../../../work/independent-ci-resident-v1/rollout/fleet/install.mjs';
 import { DEFAULT_REPO, seal } from '../../../work/independent-ci-resident-v1/rollout/fleet/publish.mjs';
 import { missingMigrations, readbackSql, releaseRequirements } from '../../../work/independent-ci-resident-v1/rollout/fleet/release-migrations.mjs';
@@ -285,17 +286,25 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
       await assert.rejects(dbValue(admin, 'select clued_private.fleet_delivery_require_snapshot_v1($1,$2) v', [candidate, before.snapshotToken]),
         /fleet_delivery_registry_changed/);
     });
-    await t.test('SQL 投影显示待重绑，过渡代拒单且无副作用', async () => {
+    await t.test('SQL 投影的待重绑节点退出收件集，保留健康节点与原快照 CAS', async () => {
       await admin.query(`insert into clued_private.native_confirmation_tokens
         (user_id,action,subject_key,subject_version,native_choices,confirmation_view,view_digest,token_hash,auth_time,expires_at)
         select user_id,'ci_node_binding_rebind',node_id::text,version,'{}','{}',$2,$3,now(),now()+interval '10 minutes'
         from clued_private.ci_nodes_v1 where node_id=$1`, [standby, sha('rebind view'), sha('rebind confirmation fixture')]);
-      afterProject = projection => {
-        afterProject = undefined;
-        assert.equal(projection.nodes.find(row => row.id === standby).rebindPending, true);
-      };
       try {
-        await refuseBeforeOpen('FLEET_RECIPIENT_BINDING_UNCONFIRMED');
+        const input = await w.input('open');
+        const { candidate } = input.delivery;
+        let projection;
+        const result = await fleetDeliveryPreflight({ candidate, clock: sqlClock, readFleetRegistry: async () => {
+          projection = await database(w, 'project', candidate);
+          return projection;
+        } });
+        assert.equal(result.status, 'PASS');
+        assert.deepEqual(result.nodes.map(row => row.id), [primary]);
+        assert.deepEqual(result.excludedNodes.map(({ id, reason }) => [id, reason]), [[standby, 'FLEET_RECIPIENT_REBIND_PENDING']]);
+        await dbValue(admin, 'select clued_private.fleet_delivery_require_snapshot_v1($1,$2) v', [candidate, projection.snapshotToken]);
+        assert.deepEqual(trace(), ['sql:project', 'sql:project']);
+        assert.equal(await requests(), 0);
       } finally {
         await admin.query("delete from clued_private.native_confirmation_tokens where user_id=$1 and action='ci_node_binding_rebind'", [owner]);
       }

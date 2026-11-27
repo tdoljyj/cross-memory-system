@@ -176,7 +176,7 @@ node R/rollout/fleet/publish.mjs prepare --commit <main 的 40 位 SHA> --dir <�
 
 1. Release 上已有该版接受文件：拒绝（`PREPARE_VERSION_ALREADY_ACCEPTED`），不再挂 kit、不再写请求，Release 缺 kit 也一样；索引行还空着，说明上次 `seal` 在写索引之前断了，用原参数重跑 `seal` 补上。索引行有值而 Release 上没有接受文件：拒绝，不猜。索引有该版的行而没有 Release：当场拒绝（`PREPARE_INDEX_ROW_WITHOUT_RELEASE`），不取 kit、不取镜像。
 2. 首装 kit：新候选以索引中最新的合格前版 Release 为模板。回读精确请求、Owner Grant、Receipt 和接受文件，核对 kit 的已接受摘要，再用 `readKit` 解析。已暂存的候选沿用原字节。
-3. 接受请求沿用该发布的 `fleetRefs`，用当前候选 tar 重算 Source，封存时再用 Release 的 tar 重算。待定、在役及排空节点按登记和有效 Binding 确认收件资格，空登记允许制包。
+3. 接受请求沿用该发布的 `fleetRefs`，用当前候选 tar 重算 Source，封存时再用 Release 的 tar 重算。待定、在役及排空节点按登记和有效 Binding 确认收件资格。失效 Binding、待确认的 Binding 和待重绑节点列入 `excludedNodes`，空收件集仍可制包。两次读取和写入前的快照校验仍覆盖完整登记。
 4. 备齐 kit 列的本地角色镜像。上一 Release 的接受请求钉住镜像摘要时可以按摘要取用，也可用 `--image` 提供镜像。
 5. 建 Release 与索引行（`ensureRelease`，第 3 节）：
    - 没有 Release、索引也没有该版的行：核对并占用正式 tag，再建 Release、核资产、追加索引行。
@@ -274,6 +274,8 @@ bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象�
 3. 用 Windows 自带的 `tar.exe` 解出 `tree/`。`tar.exe` 写不了非 ASCII 文件名，所以构建器不许包里有这样的路径（第 2 节）；`prepare` 再逐文件核自己的字节，不信任解包工具。
 4. 有产品资源时先走现有升级通道。已到位、升级在途或已投递直接返回。旧装明确无法升级时以同包进入重装分流。只有完整盘点确认空机，才进入首装。提权阶段以同一把机器锁读回与本机、操作人和包摘要绑定的进度。
 5. 维护接口未接通时，重装、显式 `-Action Retire` 和 `-Action Rollback` 返回 `FLEET_MAINTENANCE_INTERFACE_UNAVAILABLE`。旧版保持运行。首装的 `BOOTSTRAP_DONE` 要求运行核验和 companion 切换成功。
+
+主机准备或提权阶段拒绝时，`HOST_PREPARATION_NOT_DONE` 带原拒绝码和消息。失败时若已生成安装计划或启动器报告，从结果的 `evidenceDirectory` 进入管理员专用留存目录。留存失败时，结果带 `evidenceError` 和保留的 `stagingDirectory`。
 
 `install.mjs prepare` 是 bootstrap 内部的一步，不是 Owner 的命令，不要绕过 bootstrap 手工运行它。**注意**：在协调者钉住 `prereq-manifest.json` 的 node、python、git 之前，bootstrap 对重装和首装都答 `PREREQ_NOT_PINNED`。
 

@@ -363,8 +363,8 @@ test('展示确认链接后的镜像、节点入口漂移在发布端和受信�
   });
 });
 
-test('出包前拒绝过期登记、无效收件绑定及被替换的暂存资产，零正式写入', async t => {
-  for (const fault of ['stale', 'revoked', 'changed']) await t.test(fault, async t => {
+test('出包前拒绝过期登记及被替换的暂存资产，零正式写入', async t => {
+  for (const fault of ['stale', 'changed']) await t.test(fault, async t => {
     const w = await prepWorld(t, { version: 'g000027', released: false, spawnGh: false });
     const time = fakeTime('2026-11-27T01:00:00Z');
     const before = await fs.readFile(w.index);
@@ -394,12 +394,12 @@ test('出包前拒绝过期登记、无效收件绑定及被替换的暂存资�
     assert.deepEqual(await w.assets(), []);
     await assert.rejects(fs.access(w.requestFile), { code: 'ENOENT' });
     assert.equal(result.code, fault === 'changed' ? 'PREPARE_STAGED_ASSET_CHANGED' : 'FLEET_DELIVERY_PREFLIGHT_REFUSED');
-    if (fault !== 'changed') assert.equal(result.detail.reason, fault === 'stale' ? 'FLEET_REGISTRY_INCOMPLETE' : 'FLEET_RECIPIENT_BINDING_UNCONFIRMED');
+    if (fault === 'stale') assert.equal(result.detail.reason, 'FLEET_REGISTRY_INCOMPLETE');
   });
 });
 
-test('一次发布自动开单和续封，响应丢失沿用原 Grant 和接受摘要，批准后漂移阻断目标', async t => {
-  for (const scenario of ['reply', 'restart', 'open-unknown', 'drift']) await t.test(scenario, async t => {
+test('一次发布自动开单和续封，登记 CAS 拒绝并发变化，失效节点只退出收件集', async t => {
+  for (const scenario of ['reply', 'restart', 'open-unknown', 'drift', 'excluded']) await t.test(scenario, async t => {
     const w = await prepWorld(t, { version: 'g000027', released: false, spawnGh: false });
     await fs.writeFile(w.state, JSON.stringify({ calls: [], assets: [], compare: 'identical', workflowLostReply: true }));
     const time = fakeTime('2026-11-27T01:00:00Z');
@@ -415,8 +415,9 @@ test('一次发布自动开单和续封，响应丢失沿用原 Grant 和接受�
       }
       const at = new Date(time.now).toISOString();
       if (operation === 'project') {
-        const view = fleetProjection(candidate, at, drift && w.door.status === 'accepted' ? 'revoked' : null);
-        return { first: view, last: view };
+        const accepted = w.door.status === 'accepted';
+        const view = fleetProjection(candidate, at, scenario === 'excluded' && accepted ? 'revoked' : null);
+        return { first: view, last: drift && accepted ? fleetProjection(candidate, at, 'revoked') : view };
       }
       assert.equal(operation, 'confirm');
       assert.deepEqual([details.grantId, details.receiptId], [GRANT, GRANT_RECEIPT]);
@@ -465,6 +466,12 @@ test('一次发布自动开单和续封，响应丢失沿用原 Grant 和接受�
     const sealed = await run();
     assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
     assert.equal(sealed.grantId, GRANT);
+    if (scenario === 'excluded') {
+      assert.deepEqual(sealed.deliveryPreflight.beforeOpen.excludedNodes, []);
+      assert.deepEqual(sealed.deliveryPreflight.beforeAttach.nodes.map(row => row.node), ['DESK']);
+      assert.deepEqual(sealed.deliveryPreflight.beforeAttach.excludedNodes.map(({ node, reason }) => [node, reason]),
+        [['TURING', 'FLEET_RECIPIENT_BINDING_NOT_LIVE']]);
+    }
     assert.equal(sealed.receiptId, GRANT_RECEIPT);
     assert.equal(sealed.acceptanceSha256, confirms[0].acceptanceSha256);
     assert.equal(sha(await fs.readFile(sealed.acceptance)), sealed.acceptanceSha256);
@@ -1063,7 +1070,32 @@ test('完整的空登记集可以封存，退役和撤销节点不收件', async
   }
 });
 
-test('登记范围、收件绑定、重复身份和登记并发改变继续阻断发布', async () => {
+test('过期或待重绑的节点从收件集排除，空收件集也可以发布', async () => {
+  const { fleetDeliveryPreflight } = await import('../fleet/delivery-preflight.mjs');
+  const at = '2026-11-25T01:00:00Z';
+  const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000026' };
+  const healthy = legacyNode('22222222-2222-4222-8222-222222222222', 'TURING', 'ACTIVE', at);
+  const other = legacyNode('33333333-3333-4333-8333-333333333333', 'DESK', 'STANDBY', at);
+  const check = nodes => fleetDeliveryPreflight({ candidate, clock: () => Date.parse(at),
+    readFleetRegistry: async () => ({ ...candidate, complete: true, observedAt: at, nodes }) });
+  for (const [change, reason] of [
+    [{ bindingLive: false }, 'FLEET_RECIPIENT_BINDING_NOT_LIVE'],
+    [{ bindingGeneration: null }, 'FLEET_RECIPIENT_BINDING_UNCONFIRMED'],
+    [{ rebindPending: true }, 'FLEET_RECIPIENT_REBIND_PENDING'],
+  ]) {
+    const unhealthy = { ...other, ...change };
+    const mixed = await check([unhealthy, healthy]);
+    assert.equal(mixed.status, 'PASS');
+    assert.deepEqual(mixed.nodes, [{ id: healthy.id, node: 'TURING', state: 'active' }]);
+    assert.deepEqual(mixed.excludedNodes, [{ id: unhealthy.id, node: 'DESK', state: 'active', reason }]);
+    const empty = await check([unhealthy]);
+    assert.equal(empty.status, 'PASS');
+    assert.deepEqual(empty.nodes, []);
+    assert.deepEqual(empty.excludedNodes, mixed.excludedNodes);
+  }
+});
+
+test('登记范围、重复身份和登记并发改变继续阻断发布', async () => {
   const { fleetDeliveryPreflight } = await import('../fleet/delivery-preflight.mjs');
   const at = '2026-11-25T01:00:00Z';
   const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000026' };
@@ -1073,9 +1105,8 @@ test('登记范围、收件绑定、重复身份和登记并发改变继续阻�
     return fleetDeliveryPreflight({ candidate, clock: () => Date.parse(at),
       readFleetRegistry: async () => ({ ...candidate, repository, complete: true, observedAt: at, nodes: reads++ === 0 ? nodes : end }) });
   };
-  for (const change of [{ bindingLive: false }, { bindingGeneration: null }, { rebindPending: true }]) {
-    assert.equal((await check([{ ...row, ...change }])).reason, 'FLEET_RECIPIENT_BINDING_UNCONFIRMED');
-  }
+  const excluded = { ...row, bindingLive: false };
+  assert.equal((await check([excluded], [{ ...excluded, rebindPending: true }])).reason, 'FLEET_REGISTRY_CHANGED');
   assert.equal((await check([row, { ...row, bindingGeneration: 3 }])).reason, 'FLEET_REGISTRY_INCOMPLETE');
   assert.equal((await check([row], [{ ...row, bindingGeneration: 3 }])).reason, 'FLEET_REGISTRY_CHANGED');
   assert.equal((await check([row], [row], 'another/repo')).reason, 'FLEET_REGISTRY_INCOMPLETE');
@@ -1118,19 +1149,20 @@ test('直派发布工作流使用同一预检，登记读取通过后才进入�
   const snapshotToken = 'a'.repeat(64);
   const input = { action: 'fleet.accept', delivery: { operation: 'open', candidate, requirements: { standardReinstall: true } } };
   const calls = [];
-  let bindingLive = false;
+  let changing = true;
   const database = async (operation, subject) => {
     calls.push(operation);
     if (operation === 'open') {
       assert.deepEqual(subject.delivery, { candidate, snapshotToken });
       return { status: 'pending' };
     }
+    const bindingLive = changing && calls.length === 1;
     const registered = [nodes[0], { ...nodes[1], bindingLive, reportedState: 'HALTED' }];
     return { candidate, repository: candidate.repository, scope: candidate.scope, observedAt: at, complete: true, snapshotToken, nodes: registered };
   };
   await assert.rejects(qualifyDelivery(input, database, () => Date.parse(at)), /FLEET_DELIVERY_PREFLIGHT_REFUSED/);
   assert.deepEqual(calls, ['project', 'project']);
-  bindingLive = true;
+  changing = false;
   assert.deepEqual(await qualifyDelivery(input, database, () => Date.parse(at)), { status: 'pending' });
   assert.deepEqual(calls.slice(2), ['project', 'project', 'open']);
 });
