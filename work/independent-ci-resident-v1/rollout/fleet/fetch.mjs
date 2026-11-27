@@ -174,7 +174,7 @@ export async function restoreTransport({ repository, version, archiveSha256, dir
     }
     return null;
   } finally {
-    await fs.rm(stage, { recursive: true, force: true });
+    await fs.rm(stage, { recursive: true, force: true, maxRetries: 0 }).catch(() => {});
   }
 }
 

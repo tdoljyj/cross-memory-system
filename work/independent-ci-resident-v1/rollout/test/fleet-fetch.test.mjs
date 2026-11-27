@@ -251,6 +251,34 @@ test('损坏、超界解压和错代压缩表示都回到正式 tar，坏正式 
   }
 });
 
+test('可选运输暂存目录被占用时保留已验结果，错哈希时仅取一次正式 tar', async t => {
+  const version = transportVersion, tar = Buffer.alloc(256_000, 7);
+  const { meta, payload } = transportAssetNames(version, 'gzip');
+  const fixture = await transportRelease(t, tar, version);
+  const bad = gzipSync(Buffer.alloc(tar.length, 9));
+  const badMeta = Buffer.from(JSON.stringify({ ...JSON.parse(fixture[meta]), bytes: bad.length, sha256: sha(bad) }));
+  const rm = fs.rm;
+  for (const corrupted of [true, false]) await t.test(corrupted ? '还原摘要不符' : '还原摘要命中', async t => {
+    const dir = await tmp();
+    const api = await fakeApi(corrupted ? { ...fixture, [meta]: badMeta, [payload]: bad } : fixture, { version });
+    t.after(api.close);
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    let attempts = 0;
+    t.mock.method(fs, 'rm', (file, options) => {
+      if (path.dirname(file) !== dir || !path.basename(file).startsWith('.fleet-transport-')) return rm(file, options);
+      attempts++;
+      return Promise.reject(Object.assign(new Error('fixture stage busy'), { code: 'EBUSY' }));
+    });
+    const result = await fetchPackage({ ...base, version, dir, apiBase: api.base });
+    assert.equal(attempts, 1);
+    assert.ok(api.seen.downloads.includes(payload));
+    assert.equal(api.seen.tarRequests, corrupted ? 1 : 0);
+    assert.equal(result.source, corrupted ? 'release' : 'release-gzip');
+    assert.deepEqual(await fs.readFile(result.artifact), tar);
+    assert.equal(result.artifactSha256, sha(tar));
+  });
+});
+
 test('旧代缺失、损坏、跳代及坏增量均只回落一次到完整压缩资产', async t => {
   const previous = { version: 'g000024', bytes: Buffer.concat([randomBytes(200_000), Buffer.alloc(300_000, 10)]) };
   const tar = Buffer.concat([previous.bytes, Buffer.from('updated')]);
