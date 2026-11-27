@@ -54,6 +54,7 @@ const RESIDENT_FILES = ['src', 'tools', 'windows'];
 // path inside the resident tree is refused (PACKAGE_RESIDENT_DUPLICATE), so a second copy cannot come back.
 export const RESIDENT_EXTERNAL = Object.freeze([
   Object.freeze({ path: 'windows/ci-connection-renew.contract.json', source: 'apps/clued-cloud/worker/ci-connection-renew.contract.json' }),
+  Object.freeze({ path: 'windows/fleet-file-locks.ps1', source: 'work/independent-ci-resident-v1/reinstall/tools/file-locks.ps1' }),
   ...['fetch.mjs', 'tar.mjs'].map(name => Object.freeze({ path: `rollout/fleet/${name}`,
     source: `work/independent-ci-resident-v1/rollout/fleet/${name}` })),
 ]);

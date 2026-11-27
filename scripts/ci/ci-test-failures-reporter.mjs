@@ -55,6 +55,10 @@ export function normalizeFailure(message) {
 
 // A package or module that cannot be loaded: the run proves nothing about the change.
 export const MISSING_DEPENDENCY = new Set(['ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND']);
+const NETWORK_ERROR_CODES = new Set([
+  'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'ECONNREFUSED', 'EPIPE',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET',
+]);
 
 export function failureFingerprint(error) {
   const cause = error?.cause ?? error;
@@ -118,9 +122,12 @@ async function* testEvents(source) {
     } else if (event.type === 'test:fail') {
       const error = data.details?.error;
       if (error?.failureType === 'subtestsFailed' || (data.todo !== undefined && data.todo !== false)) continue;
-      const code = (error?.cause ?? error)?.code;
+      const cause = error?.cause ?? error;
+      const code = cause?.code;
+      const networkFailure = NETWORK_ERROR_CODES.has(code) || NETWORK_ERROR_CODES.has(cause?.cause?.code);
       yield `${JSON.stringify({ type: 'fail', file: data.file ?? null, path: pathOf(data), failure_type: error?.failureType ?? null,
-        fingerprint: failureFingerprint(error), ...(MISSING_DEPENDENCY.has(code) ? { missing_dependency: code } : {}), ...timed(data) })}\n`;
+        fingerprint: failureFingerprint(error), ...(MISSING_DEPENDENCY.has(code) ? { missing_dependency: code } : {}),
+        ...(networkFailure ? { network_failure: true } : {}), ...timed(data) })}\n`;
     } else if (event.type === 'test:diagnostic' && ASYNC_AFTER_END.test(String(data.message ?? ''))) {
       // Without process isolation the diagnostic names no file; it is still a
       // failure, recorded under <run> so it never matches a known entry.

@@ -9,6 +9,29 @@ import {ACTOR_WORKFLOW,registeredActorTransition as actorSourceTransition} from 
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as admissionModule from './clued-work-admission.mjs';
+import { createFullAdmissionPortV2 } from '../../work/actions-hosted-migration/independent-ci-v1/src/full-admission-v2.mjs';
+import { makeJobV2 } from '../../work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
+
+test('train v2 carries only a main merge attested on the exact head and rooted at the exact main parent', async () => {
+  const repository = 'tdoljyj/cross-memory-system';
+  const [head, from, main, tip] = ['1', '2', '3', '4'].map(c => c.repeat(40));
+  const pr = 789;
+  const check = { id: 301, name: 'kooyumi-main-merge', app: { id: 5164952 }, head_sha: head,
+    status: 'completed', conclusion: 'success', external_id: admissionModule.mainMergeExternalId({ pr, from, main }) };
+  const commit = { sha: head, parents: [{ sha: from }, { sha: main }] };
+  const comparison = { status: 'ahead', base_commit: { sha: main }, merge_base_commit: { sha: main }, ahead_by: 1, behind_by: 0 };
+  const root = 'https://api.test/repos/' + repository;
+  const f = fakeFetch({
+    [`GET ${root}/commits/${head}/check-runs?check_name=kooyumi-main-merge&filter=all`]: { body: { check_runs: [check] } },
+    [`GET ${root}/commits/${head}`]: { body: commit },
+    [`GET ${root}/compare/${main}...${tip}`]: { body: comparison },
+  });
+  const source = options => admissionModule.mainMergeSource(f.fetchImpl, env(), repository, pr, head, tip, options);
+  assert.deepEqual(await source({ proof: true }), { pr, from, main, checkRunId: 301, headSha: head, tip, compare: 'ahead', parents: [from, main] });
+  comparison.merge_base_commit = { sha: from };
+  assert.equal(await source({ proof: true }), null);
+  assert.deepEqual(await source(), { pr, from, main });
+});
 
 function mechanicalGitFixture(before, after, headMode = '100644') {
   const repository = 'tdoljyj/cross-memory-system';
@@ -305,6 +328,176 @@ const evaluateIn = (options) => {
   };
   return evaluate({ workspace: ROOT, ...options, fetchImpl });
 };
+
+// PR #1383 was main's tip, verified by ls-remote and Git object lookup.
+// Keep the test independent of the checked-out registry and of the network.
+const CONTROL_REPO = "tdoljyj/cross-memory-system";
+const CONTROL_MAIN = "816b2ed9b2f78ba8439d64d348054e05f027cee8";
+const CONTROL_INSTALLED = "c28b21dc0f02dff5b3fb4f2c83e2545ac06bb98e";
+const CONTROL_REGISTRY = "scripts/ci/clued-control-workflow-sources.json";
+const CONTROL_BLOB = "b89de3d30a0856dda4571550ccbdc7e2c42e7bde";
+const CONTROL_TREE = "e1dfaf024a1afb4983ec07f70a611b0c44f2eb4d";
+const CONTROL_SCRIPTS = "e95b80bb3bcdb1e4071e7b6d9ded52943f8fc9d2";
+const CONTROL_CI = "4264f567c704b73f148c77e454b36fbbc6269759";
+
+function gitControlBytes(commit) {
+  const result = spawnSync("git", ["show", `${commit}:${CONTROL_REGISTRY}`], { cwd: ROOT });
+  assert.equal(result.status, 0, result.stderr?.toString());
+  return result.stdout;
+}
+
+test("admission accepts the exact controls preregistered on main even if absent from the installed catalogue", async t => {
+  const bytes = gitControlBytes(CONTROL_MAIN);
+  assert.equal(workflowBlob(bytes.toString("utf8")), CONTROL_BLOB);
+  const installed = gitControlBytes(CONTROL_INSTALLED);
+  const registry = JSON.parse(bytes), oldRegistry = JSON.parse(installed);
+  const files = [".github/workflows/clued-merge-executor.yml", ".github/workflows/clued-merge-slot-ci.yml"];
+  const api = `https://api.test/repos/${CONTROL_REPO}`;
+  const entry = (path, type, sha, mode) => ({ path, type, sha, mode });
+  const tree = (sha, child) => ({ body: { sha, truncated: false, tree: [child] } });
+  const leaf = (sha, size, mode = "100644") =>
+    tree(CONTROL_CI, { ...entry(path.basename(CONTROL_REGISTRY), "blob", sha, mode), size });
+  const refRoute = `GET ${api}/git/ref/heads/main`;
+  const leafRoute = `GET ${api}/git/trees/${CONTROL_CI}`;
+  const blobRoute = sha => `GET ${api}/git/blobs/${sha}`;
+  const blob = (raw, sha) => ({ body: { sha, size: raw.length, encoding: "base64", content: raw.toString("base64") } });
+  const contents = raw => ({ body: { content: Buffer.from(raw).toString("base64") } });
+  const pr = { ...event().pull_request, state: "open", changed_files: files.length,
+    head: { sha: HEAD, repo: { full_name: CONTROL_REPO } },
+    base: { sha: BASE, ref: "main", repo: { full_name: CONTROL_REPO } } };
+  const ref = () => ({ body: { ref: "refs/heads/main", object: { type: "commit", sha: CONTROL_MAIN } } });
+  const script = {
+    [refRoute]: ref,
+    [`GET ${api}/git/commits/${CONTROL_MAIN}`]: { body: { sha: CONTROL_MAIN, tree: { sha: CONTROL_TREE } } },
+    [`GET ${api}/git/trees/${CONTROL_TREE}`]: tree(CONTROL_TREE, entry("scripts", "tree", CONTROL_SCRIPTS, "040000")),
+    [`GET ${api}/git/trees/${CONTROL_SCRIPTS}`]: tree(CONTROL_SCRIPTS, entry("ci", "tree", CONTROL_CI, "040000")),
+    [leafRoute]: leaf(CONTROL_BLOB, bytes.length),
+    [blobRoute(CONTROL_BLOB)]: blob(bytes, CONTROL_BLOB),
+    [`GET ${api}/pulls/452/files`]: { body: files.map(filename => ({ filename, status: "modified" })) },
+    [`GET ${api}/pulls/452`]: { body: pr },
+    [`GET ${api}/branches/main`]: { body: { name: "main", commit: { sha: CONTROL_MAIN } } },
+    [`GET ${api}/compare/${CONTROL_MAIN}...${HEAD}`]: { body: { status: "ahead", files: [] } },
+    [`GET ${api}/compare/${CLAIM_BASE}...${BASE}`]: { body: { status: "ahead" } },
+    [VERIFY]: { body: admittedPayload },
+    [`POST ${PUBLIC.url}/rest/v1/rpc/${OWNER_REVIEW_RPC}`]: { body: { status: "ok", admitted: true, grant: { grant_id: "g1" } } },
+  };
+  for (const file of files) {
+    const sources = registry.workflows[file].sources;
+    const next = sources.find(source => source.source_kind.startsWith("train_v2_"));
+    const before = sources.find(source => source.workflow_blob === next.predecessor_blob);
+    assert.ok(!oldRegistry.workflows[file].sources.some(source => source.workflow_blob === next.workflow_blob));
+    for (const [commit, source] of [[BASE, before], [HEAD, next]]) {
+      script[`GET ${api}/contents/${file}?ref=${commit}`] = contents(source.source_yaml);
+    }
+  }
+  const readFile = fs.readFileSync;
+  t.mock.method(fs, "readFileSync", (file, ...args) =>
+    file instanceof URL && file.pathname.endsWith(`/${CONTROL_REGISTRY}`) ? installed : readFile(file, ...args));
+  const run = async (overrides = {}) => {
+    const { fetchImpl, calls } = fakeFetch({ ...script, ...overrides });
+    const outcome = await evaluateIn({ env: env({ GITHUB_REPOSITORY: CONTROL_REPO }), event: { pull_request: pr }, eventName: "pull_request", fetchImpl });
+    assert.ok(!calls.some(call => call.url.includes(`/contents/${CONTROL_REGISTRY}`)), "only main's Git objects may supply the registry");
+    return { outcome, calls };
+  };
+  const accepted = await run();
+  assert.equal(accepted.outcome.verdict, "ADMITTED", JSON.stringify(accepted.outcome.reasons));
+  assert.deepEqual(accepted.outcome.control_registry, { main_sha: CONTROL_MAIN, blob_sha: CONTROL_BLOB });
+  assert.equal(accepted.outcome.owner_review.kind, "granted");
+  assert.equal(accepted.calls.filter(call => call.url === `${api}/git/blobs/${CONTROL_BLOB}`).length, 1);
+  assert.equal(accepted.calls.filter(call => call.url === `${api}/git/ref/heads/main`).length, 2);
+
+  await t.test("resident stage 1 returns complete admission using the installed evaluator", async () => {
+    const observedAt = "2026-11-27T00:00:00Z", now = Date.parse(observedAt);
+    const sourceManifestSha256 = "d".repeat(64);
+    const ciPrincipalBindingId = crypto.randomUUID(), ciPrincipalQualificationRef = "fixture-principal";
+    const supabaseUrl = "https://stage-one.invalid";
+    const rpc = name => `POST ${supabaseUrl}/rest/v1/rpc/${name}`;
+    const policyText = fixedPolicy()();
+    const { fetchImpl } = fakeFetch({ ...script,
+      [rpc(admissionModule.VERIFY_RPC)]: { body: {
+        ...admittedPayload, execution_policy: "staged", execution_authorized: true, pr_ref: `${CONTROL_REPO}#452`,
+        head_sha: HEAD, base_sha: BASE, verified_at: observedAt,
+        claim: { ...admittedPayload.claim, expires_at: new Date(now + 3600_000).toISOString(),
+          lease_key_required: false, execution_handover_pending: false },
+      } },
+      [rpc(OWNER_REVIEW_RPC)]: { body: { status: "ok", admitted: true, grant: { grant_id: "g1" } } },
+    });
+    const port = createFullAdmissionPortV2({
+      protectedConfig: { domain: "fixture", repository: CONTROL_REPO, scope: "global", workspace: ROOT, sourceManifestSha256,
+        policyText, policySha256: sha256Hex(policyText), evaluatorSha256: sha256Hex(fs.readFileSync(new URL("./clued-work-admission.mjs", import.meta.url), "utf8")),
+        ciPrincipalBindingId, ciPrincipalQualificationRef, supabaseUrl, publishableKey: "sb_publishable_fixture" },
+      clock: () => now,
+      monotonic: () => 0,
+      tokenProvider: async () => ({ githubToken: "fixture-token", ciAdmissionToken: "clued_bnd_aaaaaaaa", ciPrincipalBindingId, ciPrincipalQualificationRef }),
+      modeProvider: async () => ({ complete: true, repository: CONTROL_REPO, variable: "CLUED_MERGE_ADMISSION_STATE",
+        source: "github-repository-variables", exists: false, observedAt, proofRef: "fixture-mode" }),
+      recorderProvider: async () => ({ kind: "independent-controller", domain: "fixture", observedAt,
+        observationRef: "fixture-observation", recorder: { newId: crypto.randomUUID, record() {} } }),
+      fetchImpl: (url, init) => fetchImpl(String(url).replace("https://api.github.com/", "https://api.test/"), init),
+    });
+    const job = makeJobV2({ repo: CONTROL_REPO, pr: 452, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256,
+      createdAt: observedAt, attempt: 1, role: "work-admission" });
+    const result = await port.evaluatePr(job, { complete: true, pr: 452, headSha: HEAD, baseSha: BASE, paths: files });
+    assert.equal(result.status, "ADMITTED", JSON.stringify(result));
+    assert.equal(result.completeAdmission, true);
+    assert.equal(result.ownerReview.grantId, "g1");
+  });
+
+  const useBytes = raw => {
+    const sha = workflowBlob(raw);
+    return { [leafRoute]: leaf(sha, raw.length), [blobRoute(sha)]: blob(raw, sha) };
+  };
+  const missing = { body: { sha: CONTROL_CI, truncated: false, tree: [] } };
+  const cases = [
+    ["main catalogue lacks the exact workflow blobs", useBytes(installed), "control_Source_not_registered"],
+    ["main catalogue path is missing", { [leafRoute]: missing }, "control_registry_missing"],
+    ["main returns bytes of another blob", {
+      [leafRoute]: leaf(CONTROL_BLOB, installed.length),
+      [blobRoute(CONTROL_BLOB)]: blob(installed, CONTROL_BLOB),
+    }, "control_registry_invalid_blob"],
+    ["main catalogue path is a symlink", { [leafRoute]: leaf(CONTROL_BLOB, bytes.length, "120000") }, "control_registry_invalid_tree"],
+    ["main catalogue too large", { [leafRoute]: leaf(CONTROL_BLOB, 524289) }, "control_registry_invalid_blob"],
+    ["main catalogue blob unreadable", { [blobRoute(CONTROL_BLOB)]: { status: 403 } }, "control_registry_unavailable"],
+    ["main catalogue has incompatible schema", useBytes(Buffer.from(JSON.stringify({
+      ...registry, schema: "clued.control-workflow-sources/2",
+    }))), "control_registry_incompatible"],
+    ["main catalogue has invalid UTF-8", useBytes(Buffer.from([0xff])), "control_registry_invalid_blob"],
+    ["PR head and base supply a catalogue while main is missing it", {
+      [leafRoute]: missing,
+      [`GET ${api}/contents/${CONTROL_REGISTRY}?ref=${HEAD}`]: contents(bytes),
+      [`GET ${api}/contents/${CONTROL_REGISTRY}?ref=${BASE}`]: contents(bytes),
+    }, "control_registry_missing"],
+  ];
+  for (const [name, overrides, reason] of cases) {
+    await t.test(name, async () => {
+      const { outcome, calls } = await run(overrides);
+      assert.equal(outcome.verdict, "REJECTED");
+      assert.ok(outcome.reasons.some(finding => finding.endsWith(`:${reason}`)), JSON.stringify(outcome.reasons));
+      assert.ok(!calls.some(call => call.url.endsWith(OWNER_REVIEW_RPC)));
+      if (name === "main catalogue too large") assert.ok(!calls.some(call => call.url.includes("/git/blobs/")));
+    });
+  }
+  await t.test("main advances after the initial snapshot and comparison", async () => {
+    let refReads = 0;
+    const { outcome, calls } = await run({ [refRoute]: () => {
+      const answer = ref();
+      if (++refReads > 1) answer.body.object.sha = TIP;
+      return answer;
+    } });
+    assert.equal(outcome.verdict, "REJECTED");
+    assert.ok(outcome.reasons.some(finding => finding.endsWith(":control_registry_main_changed")));
+    assert.equal(refReads, 2);
+    assert.equal(calls.filter(call => call.url.includes("/git/blobs/")).length, 1);
+    const next = await run({
+      [refRoute]: { body: { ref: "refs/heads/main", object: { type: "commit", sha: TIP } } },
+      [`GET ${api}/git/commits/${TIP}`]: { body: { sha: TIP, tree: { sha: CONTROL_TREE } } },
+      [`GET ${api}/branches/main`]: { body: { name: "main", commit: { sha: TIP } } },
+      [`GET ${api}/compare/${TIP}...${HEAD}`]: { body: { status: "ahead", files: [] } },
+    });
+    assert.equal(next.outcome.verdict, "ADMITTED", "the next evaluation reads a fresh snapshot");
+    assert.equal(next.outcome.control_registry.main_sha, TIP);
+  });
+});
 
 test("non-PR events are not admission subjects", async () => {
   const { fetchImpl, calls } = fakeFetch({});

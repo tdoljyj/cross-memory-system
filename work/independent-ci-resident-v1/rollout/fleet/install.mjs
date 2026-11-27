@@ -62,6 +62,7 @@ import { pyCanonical, pyDumps, pyEqual, pyLoads } from './pyjson.mjs';
 import { extractTar, readTar } from './tar.mjs';
 import { BUNDLE_NAME, MANIFEST_NAME, UNIVERSAL_CONTRACT, VERSION, bundleHeads, tagOf } from './universal.mjs';
 import { packageGenerationOf } from '../../src/selfcheck.mjs';
+import { fleetInstallIdentity } from '../../src/fleet-delivery-evidence.mjs';
 import { defaultWslConfigPath, wslCapacityOfArchive } from './wsl-capacity.mjs';
 
 export const ACCEPTANCE_CONTRACT = 'clued.independent-ci.fleet-node-acceptance/1';
@@ -77,7 +78,7 @@ export const FLEET_REF_KEYS = Object.freeze(['sourceAcceptanceRef', 'hostQualifi
   'ownerPackageAcceptanceRef', 'installationReceiptRef', 'ownerDecisionRef', 'ownerReceiptRef']);
 export const FORMAL_ROLES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
 // The modules of this directory that run before the archive is extracted: they must be the archive's bytes.
-export const OWN_MODULES = Object.freeze(['install.mjs', 'facts.mjs', 'fetch.mjs', 'ports.mjs', 'pyjson.mjs', 'tar.mjs', 'universal.mjs', 'wsl-capacity.mjs']);
+export const OWN_MODULES = Object.freeze(['install.mjs', 'facts.mjs', 'fetch.mjs', 'ports.mjs', 'pyjson.mjs', 'tar.mjs', 'universal.mjs', 'wsl-capacity.mjs', 'delivery-preflight.mjs']);
 export const LINUX_TIMEOUT_SECONDS = Object.freeze({ A: 1800, B: 7200 });
 export const LINUX_SCRIPTS = Object.freeze({ A: 'A.sh', B: 'B.sh', BResume: 'B-resume.sh' });
 const TOOLCHAIN_NODE = '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node';
@@ -164,10 +165,9 @@ export async function readNode({ root, now = Date.now() }) {
   const at = (...p) => path.join(root, ...p);
   const receiptBytes = await readOrNull(at('install', 'install-receipt.json'));
   need(receiptBytes !== null, 'NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH', 'no install\\install-receipt.json: prepareInstall takes its first-install branch (readFreshNode)');
-  const receipt = jsonOf(receiptBytes);
-  const current = jsonOf(await fs.readFile(at('upgrade', 'current.json')));
-  need(HEX64.test(current?.packageManifestSha256 ?? '') && current.packageManifestSha256 === receipt.packageManifestSha256 && current.installReceiptSha256 === sha(receiptBytes),
-    'NODE_RECEIPT_NOT_THE_CURRENT_GENERATION');
+  const identity = fleetInstallIdentity(receiptBytes, await fs.readFile(at('upgrade', 'current.json')));
+  need(identity !== null, 'NODE_RECEIPT_NOT_THE_CURRENT_GENERATION');
+  const { receipt, current } = identity;
   // the installed record: its manifest's hashes and the receipt's
   const raw = Object.fromEntries(await Promise.all(RECORD_FILES.map(async n => [n, await fs.readFile(at('record', n))])));
   const rm = jsonOf(raw['record-manifest.json']);
@@ -509,10 +509,70 @@ export function runCommandOf(launcher, launcherSha256) {
 // ---------------------------------------------------------------- prepare
 // One command for every node (section 8): with install\install-receipt.json the reinstall (readNode); without it the first install
 // (readFreshNode: this machine's own facts, the version's first-install kit; the same package, Linux and launcher steps after it).
+async function readBrokerCiObservation(root, node, now) {
+  const file = path.join(root, 'state', 'connection-renewal.json');
+  try {
+    const st = await fs.lstat(file);
+    if (!st.isFile() || st.nlink !== 1 || st.size > 65_536) return null;
+    const book = jsonOf(await fs.readFile(file)), lane = book.lanes?.ci;
+    if (book.pending?.kind === 'ci' || lane?.waiting !== false || lane.code !== null ||
+        !HEX64.test(lane.source ?? '') || !UUID.test(lane.bindingId ?? '') ||
+        lane.bindingId === node.inst.ciPrincipalBindingId || !Number.isSafeInteger(lane.at) ||
+        lane.at > now || now - lane.at > 25 * 3600_000 || !(Date.parse(lane.expiresAt) > now)) return null;
+    const publicFacts = { at: lane.at, source: lane.source, bindingId: lane.bindingId, expiresAt: lane.expiresAt };
+    return { state: 'observed', receiptSha256: node.current.installReceiptSha256, bindingId: lane.bindingId,
+      observationSha256: sha(Buffer.from(JSON.stringify(publicFacts))) };
+  } catch { return null; }
+}
+
+async function readVisibleCiConnection({ root, node, now }) {
+  // The old resident's read-only state already relays the Broker's confirmed Binding.
+  // It never carries the private record's digest or generation; the elevated gate pins both.
+  const observation = await readBrokerCiObservation(root, node, now);
+  if (observation) return observation;
+  const file = path.join(path.dirname(root), 'secrets', 'ci-admission.connection.json');
+  let handle;
+  try {
+    const named = await fs.lstat(file);
+    need(named.isFile() && named.nlink === 1 && named.size <= 4096, 'CI_CONNECTION_RECORD_REFUSED');
+    handle = await fs.open(file, 'r');
+    const opened = await handle.stat();
+    need(opened.ino === named.ino && opened.dev === named.dev && opened.nlink === 1 && opened.size === named.size, 'CI_CONNECTION_RECORD_REFUSED');
+    const bytes = Buffer.alloc(opened.size);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+    const after = await handle.stat();
+    need(bytesRead === bytes.length && opened.size === after.size && opened.mtimeMs === after.mtimeMs, 'CI_CONNECTION_RECORD_REFUSED');
+    const record = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes));
+    need(record.contract === 'clued.independent-ci.ci-connection/1' && record.baseNodeIdentitySha256 === node.receipt.nodeIdentitySha256 &&
+      Buffer.from(pyCanonical(record)).equals(bytes), 'CI_CONNECTION_RECORD_REFUSED');
+    return { state: 'current', receiptSha256: node.current.installReceiptSha256, recordSha256: sha(bytes),
+      bindingId: record.bindingId, bindingGeneration: record.bindingGeneration, rebindReceiptId: record.rebindReceiptId };
+  } catch (error) {
+    if (error?.code === 'ENOENT' && handle === undefined) return { state: 'absent' };
+    return { state: 'unknown', reason: 'CI_CONNECTION_RECORD_REFUSED' };
+  } finally { await handle?.close(); }
+}
+
+async function ciConnectionFor(read, root, node, now) {
+  const evidence = await read({ root, node, now });
+  if (evidence?.state === 'absent') return null;
+  const refusal = ['CI_CONNECTION_RECORD_REFUSED', 'CI_CONNECTION_GENERATION_CHANGED'].includes(evidence?.reason) ? evidence.reason : 'CI_CONNECTION_EVIDENCE_REQUIRED';
+  need(['current', 'observed'].includes(evidence?.state), refusal);
+  const { receiptSha256, recordSha256, bindingId, bindingGeneration, rebindReceiptId } = evidence;
+  need(receiptSha256 === node.current.installReceiptSha256, 'CI_CONNECTION_INSTALL_RECEIPT_CHANGED');
+  if (evidence.state === 'observed') {
+    need(UUID.test(bindingId ?? '') && HEX64.test(evidence.observationSha256 ?? ''), 'CI_CONNECTION_EVIDENCE_REQUIRED');
+    return { state: 'observed', receiptSha256, bindingId, observationSha256: evidence.observationSha256 };
+  }
+  need(HEX64.test(recordSha256 ?? '') && UUID.test(bindingId ?? '') && UUID.test(rebindReceiptId ?? '') &&
+    Number.isSafeInteger(bindingGeneration) && bindingGeneration > 0, 'CI_CONNECTION_EVIDENCE_REQUIRED');
+  return { state: 'current', receiptSha256, recordSha256, bindingId, bindingGeneration, rebindReceiptId };
+}
+
 export async function prepareInstall({ artifactPath, artifactSha256, acceptance, root = DEFAULT_ROOT, workDir, now = Date.now(),
   node: nodeBin = process.execPath, python = defaultPython, scm = defaultScm, selfDir = HERE,
   from = null, ciRoot = CI_ROOT, serviceState = defaultServiceState, hostname = defaultHostname, controllerNode = process.execPath, ciRootSddl = defaultCiRootSddl,
-  listDir = undefined, wslConfigPath = defaultWslConfigPath() }) {
+  listDir = undefined, wslConfigPath = defaultWslConfigPath(), readCiConnection = readVisibleCiConnection }) {
   validateAcceptance(acceptance, now);
   need(typeof workDir === 'string' && WIN_PATH.test(path.resolve(workDir)), 'WORK_DIR_PATH_REFUSED');
   const bytes = await fs.readFile(artifactPath);
@@ -532,6 +592,7 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   // Linux phases cannot run again over themselves; that launch is continued from where it stopped (reinstall/README.md, --fleet-continue).
   need(fresh || !(node.facts.ciSourceManifestSha256 === acceptance.ciSourceManifestSha256 && node.current.ciSourceManifestSha256 !== acceptance.ciSourceManifestSha256),
     'LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH', { continueWith: 'python -I <tree>/work/independent-ci-resident-v1/reinstall/launcher/generate.py --fleet-continue <the stopped launch: launcher.ps1> --out <new launcher.ps1>' });
+  const ciConnection = fresh ? null : await ciConnectionFor(readCiConnection, root, node, now);
   need(typeof node.distribution === 'string' && node.distribution === node.profile.wslDistribution && /^[A-Za-z0-9._-]{1,64}$/.test(node.distribution), 'NODE_DISTRIBUTION_REFUSED');
   const secrets = fresh ? node.secrets : installedSecretsOf(node.receipt, await readUpgradePin(root));
   need(acceptance.repository === node.inst.repository, 'FLEET_ACCEPTANCE_NOT_THIS_REPOSITORY', { accepted: acceptance.repository, installed: node.inst.repository });
@@ -671,6 +732,7 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   const linuxManifestSha256 = m.linux.manifestSha256;
   const plan = { contract: PLAN_CONTRACT, node: node.profile.nodeName, version: universal.version, archive_sha256: acceptance.archive_sha256, commit: universal.commit,
     ...(installedPackage ? { installedPackage } : {}),
+    ...(ciConnection ? { ciConnection } : {}),
     packageDir, packageManifestSha256: first.packageManifestSha256, ciSourceManifestSha256, linuxManifestSha256, companionAccount,
     linux: { distribution: node.distribution, inDir: linuxIn, wslInDir: wslPath(linuxIn), outDir: linuxOut, scripts, timeoutSeconds: { ...LINUX_TIMEOUT_SECONDS } },
     expectedLinux: { generation: 1, ciSourceManifestSha256, manifestSha256: linuxManifestSha256, packageManifestSha256: first.packageManifestSha256 },

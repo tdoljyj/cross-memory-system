@@ -15,7 +15,8 @@ param([Parameter(Mandatory)][ValidateSet('current', 'post-uninstall')][string]$V
       [Parameter(Mandatory)][ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$OwnerSid,       # the node profile's
       [Parameter(Mandatory)][ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$ControllerSid,
       [ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$OperatorSid,   # M5-b (ADR 0023): the Owner when ownerSid is the companion's account
-      [ValidateLength(1,2048)][string]$InstalledPackageB64)
+      [ValidateLength(1,2048)][string]$InstalledPackageB64,
+      [ValidateLength(1,1024)][string]$CiConnectionPlanB64)
 if (-not $OperatorSid) { $OperatorSid = $OwnerSid }
 $ErrorActionPreference = 'Stop'
 # The installer's JSON can carry the system's own (localized) text, e.g. an access-denied message in carryForwardPreview. Without this,
@@ -46,4 +47,8 @@ if ($View -ceq 'post-uninstall') {
 }
 $extra = @{}
 if ($InstalledPackageB64) { $extra.InstalledPackageB64 = $InstalledPackageB64 }
+if ($CiConnectionPlanB64) {
+  if ($View -cne 'post-uninstall' -or $CiTokenTargetExists -cne 'true') { throw 'FLEET_CI_CONNECTION_PLAN_REFUSED' }
+  $extra.CiConnectionPlanB64 = $CiConnectionPlanB64
+}
 & (Join-Path $PackageRoot 'resident\windows\install-resident.ps1') -PackageRoot $PackageRoot -ExpectedPackageManifestSha256 $PackageManifestSha256 -OwnerSid $OwnerSid -ControllerSid $ControllerSid -OperatorSid $OperatorSid -StartAfterInstall @extra

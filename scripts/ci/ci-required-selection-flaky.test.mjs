@@ -70,14 +70,14 @@ function checkout(t, files, { changed = {} } = {}) {
   } };
 }
 
-function run(root, base, { hostEnv = {}, ...options } = {}) {
+function run(root, base, { hostEnv = {}, spawn: spawnFixture = spawnSync, ...options } = {}) {
   const lines = [];
   const calls = [];
   const env = { ...process.env, ...hostEnv, RUNNER_TEMP: root, ...(base === undefined ? {} : { CI_BASE_SHA: base }) };
   delete env.NODE_TEST_CONTEXT;
   delete env.GITHUB_STEP_SUMMARY;
   if (base === undefined) delete env.CI_BASE_SHA;
-  const spawn = (command, args, opts) => { calls.push(args); return spawnSync(command, args, opts); };
+  const spawn = (command, args, opts) => { calls.push(args); return spawnFixture(command, args, opts); };
   const status = executeSuite(options.suite ?? SUITE, { root, env, spawn, log: (line) => lines.push(String(line)), ...options });
   return { status, lines, calls, out: lines.join('\n') };
 }
@@ -107,6 +107,61 @@ test('B: a test that fails every time stays red; the command runs again once', (
   assert.equal(runsOf(FLAKY), 2);
   assert.match(out, /整条再跑仍失败/);
   assert.doesNotMatch(out, /flaky::/);
+});
+
+test('train v2: final test failure has a verdict, while a recovered test or a timeout has none', (t) => {
+  const hostEnv = { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/clued-train/staging', GITHUB_SHA: 'a'.repeat(40) };
+  const verdict = /::error title=Merge train test failure::source-v2-node/;
+  const flaky = checkout(t, suite({ 'flaky on S': [1] }));
+  const recovered = run(flaky.root, flaky.base, { hostEnv });
+  assert.equal(recovered.status, 0, recovered.out);
+  assert.equal(recovered.calls.length, 2, recovered.out);
+  assert.doesNotMatch(recovered.out, verdict);
+
+  const stable = checkout(t, suite({ 'stable on S': true }));
+  const failed = run(stable.root, stable.base, { hostEnv });
+  assert.equal(failed.status, 1, failed.out);
+  assert.equal(failed.calls.length, 2, failed.out);
+  assert.match(failed.out, verdict);
+  const trusted = run(stable.root, stable.base, { hostEnv: { ...hostEnv, CLUED_TRAIN_TERMINAL_EXIT: '1' } });
+  assert.equal(trusted.status, 86, trusted.out);
+  const childExit = run(stable.root, stable.base, { hostEnv: { ...hostEnv, CLUED_TRAIN_TERMINAL_EXIT: '1' },
+    spawn: () => ({ status: 86 }) });
+  assert.equal(childExit.status, 1, childExit.out);
+  assert.doesNotMatch(childExit.out, verdict);
+
+  const timedOut = run(stable.root, stable.base, { hostEnv, commandTimeoutMs: 1000,
+    spawn: () => ({ status: null, signal: 'SIGKILL', error: Object.assign(new Error('子进程超时'), { code: 'ETIMEDOUT' }) }) });
+  assert.equal(timedOut.status, 1, timedOut.out);
+  assert.equal(timedOut.calls.length, 1, timedOut.out);
+  assert.match(timedOut.out, /被终止/);
+  assert.doesNotMatch(timedOut.out, verdict);
+
+  const network = checkout(t, suite({ 'network failure':
+    "test('network failure', () => { throw Object.assign(new Error('network reset'), { code: 'ECONNRESET' }); });\n" }));
+  const interrupted = run(network.root, network.base, { hostEnv });
+  assert.equal(interrupted.status, 1, interrupted.out);
+  assert.doesNotMatch(interrupted.out, verdict);
+});
+
+test('staging candidate stdout and stderr cannot execute an Actions annotation command', t => {
+  const sha = 'a'.repeat(40);
+  const fake = `::error title=Merge train test failure::source-v2-node ${sha}`;
+  const hostEnv = { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/clued-train/staging', GITHUB_SHA: sha };
+  const candidate = checkout(t, suite({ 'candidate logs': `test('candidate logs', () => {
+    console.log(${JSON.stringify(fake)});
+    console.error(${JSON.stringify(fake)});
+  });` }));
+  const observed = [];
+  const spawn = (command, args, opts) => {
+    observed.push(opts.stdio);
+    return spawnSync(command, args, opts);
+  };
+  const result = run(candidate.root, candidate.base, { hostEnv, spawn });
+  assert.equal(result.status, 0, result.out);
+  assert.ok(observed.every(stdio => Array.isArray(stdio) && stdio[1] !== 'inherit' && stdio[2] !== 'inherit'),
+    JSON.stringify(observed));
+  assert.ok(result.lines.every(line => !line.startsWith(fake)), result.out);
 });
 
 test('C: a failing test file the change edited is not run again', (t) => {
@@ -290,7 +345,8 @@ test('O: a run again that times out leaves the command red', (t) => {
   }, 100));
 });
 ` }), 'config/test-clock-debt.txt': `${FLAKY}\n` });
-  const { status, calls, out } = run(root, base, { rerunMinTimeoutMs: 0 });
+  // 给测试子进程留出启动时间，再验证它运行后仍未完成的超时。
+  const { status, calls, out } = run(root, base, { rerunMinTimeoutMs: 5_000 });
   assert.equal(status, 1, out);
   assert.equal(calls.length, 2, out);
   assert.equal(runsOf(FLAKY), 2);

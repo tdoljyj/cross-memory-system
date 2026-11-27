@@ -17,7 +17,7 @@ export const limits=(cap=100)=>Object.fromEntries(['execution_start','evaluation
 
 // through: the last migration file to apply (a test of an earlier migration's repair that a later one supersedes);
 // every migration by default.
-export async function schedulingFixture({through}={}){
+export async function schedulingFixture({through, tokenHash}={}){
   const parent=await fs.realpath(os.tmpdir());
   const directory=await fs.mkdtemp(path.join(parent,'clued-ci-stage1-'));
   const server=newCluster({databaseDir:directory,user:'postgres',password:crypto.randomBytes(32).toString('hex'),persistent:false,
@@ -54,12 +54,13 @@ export async function schedulingFixture({through}={}){
         values($1,$2,'recognized_project','Synthetic isolated database fixture',1,'v2_explicit_create','{}',$3)`,[id,u,digest('project')]);
       await admin.query('commit');
     }
-    await admin.query(`insert into auth.sessions(id,user_id,not_after)values($1,$2,now()+interval '1 hour')`,[session,user]);
-    const token=crypto.randomBytes(32).toString('hex');
+    const sessionIssuedAt=(await admin.query(`insert into auth.sessions(id,user_id,not_after)values($1,$2,now()+interval '1 hour')
+      returning not_after-interval '1 hour' issued_at`,[session,user])).rows[0].issued_at.getTime();
+    const token=tokenHash ?? crypto.randomBytes(32).toString('hex');
     const binding=(await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','ci-stage1-fixture',$2,array['context:read','context:write'],array['*'])returning id`,[user,token])).rows[0].id;
     const human=await connect('authenticated'),gateway=await connect();
-    const claims=(u=user,s=session,extra={})=>({sub:u,role:'authenticated',session_id:s,amr:[{method:'password',timestamp:Math.floor(Date.now()/1000)}],...extra});
+    const claims=(u=user,s=session,extra={})=>({sub:u,role:'authenticated',session_id:s,amr:[{method:'password',timestamp:Math.floor(sessionIssuedAt/1000)}],...extra});
     const native=async(name,input,c=claims(),client=human)=>{await client.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",[c.sub,JSON.stringify(c)]);
       return(await client.query(`select public.${name}($1::jsonb)v`,[JSON.stringify(input)])).rows[0].v;};
     const committed=r=>{assert.equal(r.status,'committed',JSON.stringify(r));return r;};
@@ -104,6 +105,6 @@ export async function schedulingFixture({through}={}){
       data.head_authorization_id=auth.authorization_id;
       data.admission_id=(await admin.query(`select admission_id from clued_private.work_claim_execution_admissions_v1 where claim_id=$1 and head_sha=$2 order by created_at desc limit 1`,[claim.claim_id,data.head_sha])).rows[0].admission_id;
       return(await client.query('select clued_private.ci_job_enqueue_v1($1,$2,$3::jsonb)id',[user,project,JSON.stringify(data)])).rows[0].id;};
-    return{admin,human,gateway,connect,close,user,other,project,project2,otherProject,session,binding,token,claims,native,committed,registration,register,approve,pool,trustedNode,live,modelMode,enqueue,claim,task,server};
+    return{admin,human,gateway,connect,close,user,other,project,project2,otherProject,session,sessionIssuedAt,binding,token,claims,native,committed,registration,register,approve,pool,trustedNode,live,modelMode,enqueue,claim,claimResult,task,server};
   }catch(error){await close().catch(()=>{});throw error;}
 }

@@ -55,6 +55,9 @@ import { DEFAULT_ROOT, FLEET_REF_KEYS, FORMAL_ROLES, OWN_MODULES, configInputsFo
 import { Refused, TOOL_PATH, rolesDerived } from './ports.mjs';
 import { pyCanonical, pyDumps } from './pyjson.mjs';
 import { DEFAULT_REPO, fetchPackage } from './fetch.mjs';
+import { deliverySubject, reinstallDeliveryProved } from './delivery-preflight.mjs';
+import { packageGenerationOf } from '../../src/selfcheck.mjs';
+import { sourceRefsOf } from '../../src/fleet-delivery-evidence.mjs';
 import { extractTar } from './tar.mjs';
 import { BUNDLE_NAME, bundleHeads } from './universal.mjs';
 import { defaultWslConfigPath, wslCapacityNotApplied, wslCapacityOfArchive } from './wsl-capacity.mjs';
@@ -78,8 +81,6 @@ const timeLeft = deadline => {
   need(Number.isSafeInteger(left) && left > 0, 'FLEET_ACCEPTANCE_DEADLINE');
   return left;
 };
-// The node's other way (Decision b5d041d2): the same package and acceptance file, install.mjs prepare.
-const needUpgradable = (ok, code, detail) => { if (!ok) throw Object.assign(new Refused(code, detail), { reinstall: true }); };
 const jsonOf = b => JSON.parse(Buffer.from(b).toString('utf8').replace(/^\uFEFF/, ''));
 const parsed = s => { try { return JSON.parse(s); } catch { return null; } };
 // What a failed child said, never empty: its exit status, the end of its stderr, the end of its stdout.
@@ -96,8 +97,7 @@ function run(exe, args, { cwd, deadline, env } = {}) {
 
 // The Source-entering part of the installed record (what an acceptance file's fleetRefs must carry for this package to upgrade in place).
 export function installedSourceRefs(node) {
-  const formalRoles = Object.fromEntries(FORMAL_ROLES.map(r => [r, Object.fromEntries(Object.entries(node.man.roles[r]).filter(([k]) => k !== 'sourceFiles' && k !== 'controllerRelay'))]));
-  return { sourceAcceptanceRef: node.acc.sourceAcceptanceRef, hostQualificationRef: node.acc.hostQualificationRef, formalRoles };
+  return sourceRefsOf(node.acc, node.man);
 }
 
 // The installed record as recordInputsFor takes an acceptance: every reference, the Owner's decision and its time are the installed
@@ -118,7 +118,8 @@ export function defaultRequest({ script, packageDir, packageManifestSha256, deci
 }
 
 export async function upgradeNode({ artifactPath, artifactSha256, acceptance, root = DEFAULT_ROOT, workDir, now = Date.now(), node: nodeBin = process.execPath,
-  request = defaultRequest, noRequest = false, allowActiveUpgrade = false, selfDir = HERE, hostname = defaultHostname, wslConfigPath = defaultWslConfigPath(), deadline }) {
+  request = defaultRequest, checkReinstall, noRequest = false, allowActiveUpgrade = false, selfDir = HERE, hostname = defaultHostname,
+  wslConfigPath = defaultWslConfigPath(), deadline }) {
   timeLeft(deadline);
   validateAcceptance(acceptance, now);
   need(typeof workDir === 'string', 'USAGE');   // the package directory's shape is the installed request tool's to judge (A3)
@@ -152,11 +153,37 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   const cur = jsonOf(currentBytes);
   const receiptBytes = await readOrNull(at('install', 'install-receipt.json'));
   const supervisorSource = byPath.get('tree/' + RESIDENT + '/windows/CompanionSupervisor.cs');
-  const receipt = receiptBytes && sha(receiptBytes) === cur.installReceiptSha256 ? jsonOf(receiptBytes) : null;
+  need(supervisorSource, 'FLEET_ARCHIVE_REFUSED', 'no companion supervisor source');
   const supervisor = await readOrNull(at('bin', 'CluedCompanionSupervisor.exe'));
-  if (!supervisorSource || !supervisor || receipt?.companionSupervisorSourceSha256 !== sha(supervisorSource)
-    || receipt.companionSupervisorSha256 !== sha(supervisor)) {
-    return { ...base, status: 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL', code: 'COMPANION_SUPERVISOR_NEEDS_REINSTALL' };
+  const candidate = deliverySubject(acceptance, sha(Buffer.from(pyCanonical(acceptance))));
+  const receiptMatches = receiptBytes && sha(receiptBytes) === cur.installReceiptSha256;
+  const receipt = receiptMatches ? jsonOf(receiptBytes) : null;
+  const installed = { node: receipt?.node?.nodeName ?? receipt?.nodeIdentity?.nodeName, generation: cur.generation, receiptSha256: cur.installReceiptSha256 };
+  const delivery = async () => {
+    if (!receiptMatches || !checkReinstall) return 'UNKNOWN';
+    try {
+      return reinstallDeliveryProved(await checkReinstall(candidate, installed, { timeoutMs: timeLeft(deadline) }), candidate, installed, now) ? 'PASS' : 'UNKNOWN';
+    } catch { return 'UNKNOWN'; }
+  };
+  const route = async (code, result) => {
+    const reinstallStatus = await delivery();
+    return { ...result, status: 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL',
+      code, reinstallStatus, ...(reinstallStatus === 'PASS' ? { reinstall: REINSTALL_HINT } : {}) };
+  };
+  if (!receiptMatches) return route('NODE_RECEIPT_NOT_THE_CURRENT_GENERATION', base);
+  const exePin = receipt.companionSupervisorSha256;
+  if (exePin !== undefined && (!HEX64.test(exePin) || !supervisor || exePin !== sha(supervisor))) {
+    return route('COMPANION_SUPERVISOR_EXE_CHANGED', base);
+  }
+  const sourcePin = receipt.companionSupervisorSourceSha256;
+  need(sourcePin === undefined || HEX64.test(sourcePin), 'COMPANION_SUPERVISOR_RECEIPT_REFUSED');
+  const companionSupervisor = sourcePin === undefined || exePin === undefined ? 'UNPROVEN'
+    : sourcePin === sha(supervisorSource) ? 'SATISFIED' : 'NEEDS_REPLACEMENT';
+  base.capabilities = { companionSupervisor, complete: companionSupervisor === 'SATISFIED' };
+  if (!base.capabilities.complete) {
+    if (packageGenerationOf(acceptance.version) >= 25) return route('COMPANION_SUPERVISOR_NEEDS_REINSTALL', base);
+    if (await delivery() === 'PASS') return { ...base, status: 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL',
+      code: 'COMPANION_SUPERVISOR_NEEDS_REINSTALL', reinstallStatus: 'PASS', reinstall: REINSTALL_HINT };
   }
   let liveFacts = null;
   try { liveFacts = jsonOf(await fs.readFile(at('upgrade', 'mailbox', 'responses', 'version-facts.json'))); } catch { liveFacts = null; }
@@ -168,20 +195,26 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   // 3. the node, as a reinstall reads it; an upgrade also needs its two sides to be one Source
   const node = await readNode({ root, now });
   need(acceptance.repository === node.inst.repository, 'FLEET_ACCEPTANCE_NOT_THIS_REPOSITORY', { accepted: acceptance.repository, installed: node.inst.repository });
-  needUpgradable(node.facts.ciSourceManifestSha256 === node.current.ciSourceManifestSha256 && node.facts.generation === node.current.linux?.generation,
-    'NODE_SIDES_NOT_ONE_PACKAGE', { windows: node.current.ciSourceManifestSha256, linux: node.facts.ciSourceManifestSha256 });
+  if (node.facts.ciSourceManifestSha256 !== node.current.ciSourceManifestSha256 || node.facts.generation !== node.current.linux?.generation) {
+    return route('NODE_SIDES_NOT_ONE_PACKAGE', { ...base, detail: { windows: node.current.ciSourceManifestSha256, linux: node.facts.ciSourceManifestSha256 } });
+  }
 
   // 4. the channel is the installed one, and the Source-entering references are the acceptance's
-  needUpgradable(node.receipt.upgrader?.manifestSha256 === universal.facts.upgraderManifestSha256, 'UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL',
-    { what: 'upgrader', installed: node.receipt.upgrader?.manifestSha256 ?? null, package: universal.facts.upgraderManifestSha256 });
+  if (node.receipt.upgrader?.manifestSha256 !== universal.facts.upgraderManifestSha256) {
+    return route('UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL',
+      { ...base, detail: { what: 'upgrader', installed: node.receipt.upgrader?.manifestSha256 ?? null, package: universal.facts.upgraderManifestSha256 } });
+  }
   const toolBytes = byPath.get(`tree/${TOOL_PATH}`);
   need(toolBytes, 'FLEET_ARCHIVE_REFUSED', 'no Linux upgrade tool');
-  needUpgradable(sha(toolBytes) === node.facts.upgradeToolSha256, 'UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL',
-    { what: 'linux-upgrade-tool', installed: node.facts.upgradeToolSha256 ?? null, package: sha(toolBytes) });
+  const toolSha256 = sha(toolBytes);
+  if (toolSha256 !== node.facts.upgradeToolSha256) {
+    return route('UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL',
+      { ...base, detail: { what: 'linux-upgrade-tool', installed: node.facts.upgradeToolSha256 ?? null, package: toolSha256 } });
+  }
   const installedRefs = installedSourceRefs(node);
   const changed = [...SOURCE_REFS.filter(k => installedRefs[k] !== acceptance.fleetRefs[k]),
     ...(pyCanonical(installedRefs.formalRoles) === pyCanonical(acceptance.fleetRefs.formalRoles) ? [] : ['formalRoles'])];
-  needUpgradable(changed.length === 0, 'FLEET_SOURCE_REFS_CHANGED_NEEDS_REINSTALL', { changed });
+  if (changed.length) return route('FLEET_SOURCE_REFS_CHANGED_NEEDS_REINSTALL', { ...base, detail: { changed } });
 
   // The same --work again (to see where the node is, or after a refusal; field 2026-11-16: EEXIST): every run that assembles a package
   // does it in a new directory of its own under it, so nothing an earlier run wrote (a package a request names) is touched or reused.
@@ -260,7 +293,8 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   const result = { ...base, node: node.profile.nodeName, workDir: work, packageDir, packageManifestSha256: first.packageManifestSha256,
     grantResource: `ci-resident:${node.profile.nodeName}/${first.packageManifestSha256}`, fromGeneration: node.current.generation, precheck };
   if (!(pre.status === 0 && typeof precheck.status === 'string' && precheck.status.startsWith('PRECHECK_PASS'))) {
-    return { ...result, status: PRECHECK_REINSTALL.includes(precheck.code) ? 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL' : 'FLEET_NODE_UPGRADE_PRECHECK_REFUSED', code: precheck.code ?? null };
+    if (PRECHECK_REINSTALL.includes(precheck.code)) return route(precheck.code, result);
+    return { ...result, status: 'FLEET_NODE_UPGRADE_PRECHECK_REFUSED', code: precheck.code ?? null };
   }
   // 8. the node on duty: its upgrade pauses CI (the upgrader drains and pauses it), so it is the Owner's choice, never a default
   const onDuty = precheck.warnings?.includes('NODE_HOLDS_CI_ADMISSION_HAND_OVER_FIRST') === true;
@@ -316,10 +350,10 @@ export async function main(argv, deps = {}) {
     need(values.artifact && values['artifact-sha'] && values.acceptance && values.work, 'USAGE');
     const r = await upgradeNode({ ...deps, artifactPath: values.artifact, artifactSha256: values['artifact-sha'], acceptance: jsonOf(await fs.readFile(values.acceptance)),
       workDir: values.work, noRequest: values['no-request'] === true, allowActiveUpgrade: values['allow-active-upgrade'] === true });
-    return r.status === 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL' ? { ...r, reinstall: REINSTALL_HINT } : r;
+    return r;
   } catch (e) {
-    return { contract: UPGRADE_CONTRACT, status: e?.reinstall ? 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL' : 'FLEET_NODE_UPGRADE_REFUSED', code: e?.code ?? 'FLEET_NODE_UPGRADE_FAILED',
-      detail: e?.detail ?? String(e?.message ?? e).slice(0, 300), ...(e?.reinstall ? { reinstall: REINSTALL_HINT } : {}) };
+    return { contract: UPGRADE_CONTRACT, status: 'FLEET_NODE_UPGRADE_REFUSED', code: e?.code ?? 'FLEET_NODE_UPGRADE_FAILED',
+      detail: e?.detail ?? String(e?.message ?? e).slice(0, 300) };
   }
 }
 

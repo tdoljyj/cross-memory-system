@@ -159,7 +159,7 @@ class Generation(unittest.TestCase):
                     self.assertNotIn(gone, main, gone)   # nothing up to and including the install runs again, no token is carried
                 for i, step in enumerate(CONTINUE.POST_INSTALL[:-1]):
                     carried = CONTINUE.POST_LINES[step] + '$continue.' + CONTINUE.POST_LINES[step].strip()[1:-2] + CONTINUE.CARRIED_LINE
-                    self.assertEqual(carried in main, i < at, step)
+                    self.assertEqual(carried in main, i < at and step != 'companion', step)
                 first = CONTINUE.POST_LINES.get(start, '  $companionHeadless = ')
                 tail = first + main.split('\n' + first, 1)[1]
                 own = original.split('#region main', 1)[1]
@@ -193,6 +193,29 @@ class Generation(unittest.TestCase):
         self.assertEqual((caught.exception.code, caught.exception.detail), ('PRIOR_EVIDENCE_MISSING', 'verify.stdout.json'))
         shutil.rmtree(self.s.ci / 'resident')
         self.refused('RESIDENT_ROOT_MISSING_NOT_CONTINUED')
+
+    def test_connection_refusal_after_install_is_continuable_before_companion(self):
+        proof_sha = 'a' * 64
+        self.s.pins['FleetCiConnectionB64'] = "'e30='"
+        self.s.linux = {'codes': [], 'planSha256': '9' * 64, 'versionFactsSha256': sha(self.s.facts),
+                        'evidenceSha256': sha(self.s.evidence), 'ciConnectionProofSha256': proof_sha}
+        installed_scene(self.s, ['first-train', 'verify', 'pause'], status='STOPPED', companion=False)
+        self.s.terminal['code'] = 'CI_CONNECTION_SERVICE_UNAVAILABLE'
+        data, facts = self.build()
+        self.assertEqual((facts['mode'], facts['afterInstallFrom']), ('after-install', 'companion'))
+        self.assertEqual(facts['priorStopCode'], 'CI_CONNECTION_SERVICE_UNAVAILABLE')
+        text = data.decode('utf-8')
+        self.assertIn("$ContinueCiProofSha256 = '" + proof_sha + "'", text)
+        main = text.split('#region main', 1)[1]
+        self.assertLess(main.index('Confirm-FleetCiAfterInstall'), main.index('Step-StartCompanion'))
+        self.assertNotIn('Step-LinuxRoot', main)
+        self.assertNotIn('Step-Install', main)
+        data, facts = self.start_of(['first-train', 'verify', 'pause', 'companion', 'rearm'], cleared=False)
+        self.assertEqual(facts['afterInstallFrom'], 'rearm')
+        main = data.decode('utf-8').split('#region main', 1)[1]
+        self.assertLess(main.index('Confirm-FleetCiAfterInstall'), main.index('Step-StartCompanion'))
+        fragment = (LAUNCHER / 'continue-install.ps1').read_text(encoding='utf-8')
+        self.assertNotIn('else { Step-StartCompanion }', fragment)
 
     def test_the_pause_body_is_the_launchers(self):
         template = (LAUNCHER / 'template.ps1').read_text(encoding='utf-8')
@@ -255,9 +278,10 @@ class Steps(unittest.TestCase):
         r, produced, _ = self.run_step(**self.installed_case(post, 'companion-headless', pinned=['first-train-report.json', 'verify.stdout.json', 'pause-report.json', 'rearm-report.json']))
         self.assertIsNone(r['stopped'])
         step = r['step']
-        self.assertEqual((step['verify']['status'], step['pause']['requestSha256'], step['companion']['started'], step['rearm']['notNeeded'], step['install']['receiptSha256']),
-                         ('RESIDENT_VERIFIED', PAUSE_SHA, True, False, sha(RECEIPT_BYTES)))
-        self.assertEqual((r['done'], r['copies'], r['carried']['directory'], r['sc']), (['first-train-not-observed', 'verify', 'pause', 'companion', 'rearm', 'continued-after-install'], {}, None, []))
+        self.assertEqual((step['verify']['status'], step['pause']['requestSha256'], step['rearm']['notNeeded'], step['install']['receiptSha256']),
+                         ('RESIDENT_VERIFIED', PAUSE_SHA, False, sha(RECEIPT_BYTES)))
+        self.assertNotIn('companion', step)
+        self.assertEqual((r['done'], r['copies'], r['carried']['directory'], r['sc']), (['first-train-not-observed', 'verify', 'pause', 'continued-after-install'], {}, None, []))
         for name in ('install-receipt.json', 'first-train-report.json', 'verify.stdout.json', 'pause-report.json', 'rearm-report.json', 'linux-report.json'):
             self.assertIn(os.path.join('launch', name), produced, name)   # what a continuation of this run reads from its launch directory
         self.assertIn(os.path.join('stage', 'linux-version-facts.phase-B.json'), produced)   # verify's facts staged again

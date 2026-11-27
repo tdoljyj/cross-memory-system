@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { readCiCredential } from './ci-principal.mjs';
 import { assertProtectedPaths, readProtected } from '../../runtime/protected-files.mjs';
 import { createMergeSlotNative } from '../independent-control-checks-v2/merge-slot-native.mjs';
-import { nativeReadPost, runEntry } from './entry-runtime.mjs';
+import { nativeReadPost, protectedTrainPort, runEntry } from './entry-runtime.mjs';
 import { withReadRetry } from '../read-retry.mjs';
 import { WIN_ROOT } from './layout.mjs';
 import { ROLE_PROBE_RUN_CONTRACT_WATCH, validWatchPr } from './role-probe-run.mjs';
@@ -15,8 +15,14 @@ import { ROLE_PROBE_RUN_CONTRACT_WATCH, validWatchPr } from './role-probe-run.mj
 // own deadline (live), like every other read of a controller entry.
 // watchPr (generation 12, resident DESIGN 56.2): the job's watched PR (role-probe-run/2), else null. It changes nothing but the
 // held code (merge-slot-native.mjs#parseRoleProbe).
-export async function probeRole({ record, live, tokenFile = path.join(WIN_ROOT, 'secrets', 'ci-admission.token'), watchPr = null, tokenReader = readProtected, protect = assertProtectedPaths, fetchImpl = globalThis.fetch, readRetry = {} }) {
+export async function probeRole({ record, live, tokenFile = path.join(WIN_ROOT, 'secrets', 'ci-admission.token'), watchPr = null, tokenReader = readProtected, protect = assertProtectedPaths, fetchImpl = globalThis.fetch, readRetry = {}, train }) {
   live();
+  if (train !== undefined) {
+    const native = createMergeSlotNative({ config: record.config, train });
+    const fact = await native.roleProbe();
+    live();
+    return { status: 'BLOCKED', reason: fact.code, sideEffects: 0 };
+  }
   const { nativeToken: token } = await readCiCredential(record, { tokenFile, protect, tokenReader });
   // Each repeat keeps the probe's own 10 s bound (merge-slot-native.mjs). No log port here: the outcome's code says what was seen.
   const reads = withReadRetry((url, opts) => { live(); return fetchImpl(url, opts); }, { live, deadlineAt: () => live.deadlineAt ?? null, attemptTimeoutMs: 10_000,
@@ -26,7 +32,9 @@ export async function probeRole({ record, live, tokenFile = path.join(WIN_ROOT, 
   live();
   return { status: 'BLOCKED', reason: fact.code, sideEffects: 0 };
 }
-export const main = (argv = process.argv.slice(2), output = process.stdout) => runEntry({ argv, entryRole: 'role-probe', moduleUrl: import.meta.url,
-  successStatuses: ['BLOCKED'], output, body: ({ inputs, live }) => probeRole({ record: inputs.record, live,
-    watchPr: inputs.jobs?.[0]?.contract === ROLE_PROBE_RUN_CONTRACT_WATCH ? inputs.jobs[0].watchPr : null }) });
+export const main = (argv = process.argv.slice(2), output = process.stdout, { run = runEntry, protectedTrainTransport, fetchImpl } = {}) =>
+  run({ argv, entryRole: 'role-probe', moduleUrl: import.meta.url, successStatuses: ['BLOCKED'], output, protectedTrainTransport,
+    body: ({ inputs, live, protectedTrainTransport: transport = protectedTrainTransport }) => probeRole({ record: inputs.record, live, fetchImpl,
+      train: protectedTrainPort(inputs.record, transport, live),
+      watchPr: inputs.jobs?.[0]?.contract === ROLE_PROBE_RUN_CONTRACT_WATCH ? inputs.jobs[0].watchPr : null }) });
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) process.exitCode = await main();

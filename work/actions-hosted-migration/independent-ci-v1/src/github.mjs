@@ -7,6 +7,8 @@ const READ_REQUEST_GUARD = Symbol.for('clued-read-request-guard');
 const READ_REQUEST_NO_RETRY = Symbol.for('clued-read-request-no-retry');
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
+const TRAIN_WORKFLOWS = new Set(['.github/workflows/clued-required-tests.yml', '.github/workflows/clued-required-tests-windows.yml',
+  '.github/workflows/hosted-required.yml']);
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const sha = /^[a-f0-9]{40}$/;
 const repoPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -63,13 +65,13 @@ function jwt(appId, key, now) {
 // it is never passed to worker processes, manifests, PRs or loggers.
 export function createGitHubChecksPort({ repository, repositoryId, appId, installationId,
   privateKeyProvider, fetchImpl = globalThis.fetch, clock = Date.now, maxPages = 10,
-  forbiddenAppIds = [5365273, 5164952], includeModeRead = false, retryWindowMs = 4_000, sleep = wait, budgetObserver = null, budgetObservedAtFetch = false,
+  forbiddenAppIds = [5365273, 5164952], includeModeRead = false, includeActionsRead = false, retryWindowMs = 4_000, sleep = wait, budgetObserver = null, budgetObservedAtFetch = false,
   stagedScanJournal = null, batchRoute = null } = {}) {
   if (!repoPattern.test(repository ?? '') || ![repositoryId, appId, installationId].every(positive)
     || [5365273, 5164952].includes(appId) || !Array.isArray(forbiddenAppIds)
     || forbiddenAppIds.includes(appId) || typeof privateKeyProvider !== 'function'
     || typeof fetchImpl !== 'function' || !positive(maxPages) || maxPages > 100
-    || typeof includeModeRead !== 'boolean' || typeof clock !== 'function' || typeof sleep !== 'function'
+    || typeof includeModeRead !== 'boolean' || typeof includeActionsRead !== 'boolean' || typeof clock !== 'function' || typeof sleep !== 'function'
     || !Number.isSafeInteger(retryWindowMs) || retryWindowMs < 0 || retryWindowMs > 10_000 || typeof budgetObservedAtFetch !== 'boolean'
     || (budgetObservedAtFetch && budgetObserver === null)
     || (budgetObserver !== null && !['begin', 'observe', 'observeBody', 'seed', 'snapshot'].every(k => typeof budgetObserver?.[k] === 'function'))) fail('invalid_checks_configuration');
@@ -185,6 +187,7 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     const app = await request('https://api.github.com/app', 'GET', appJwt, undefined, { until });
     if (app.id !== appId) fail('unexpected_app_identity');
     const requested = { checks: 'write', contents: 'read', pull_requests: 'read',
+      ...(includeActionsRead ? { actions: 'read' } : {}),
       ...(includeModeRead ? { actions_variables: 'read', environments: 'read' } : {}) };
     // Minting changes no repository state; a token whose reply was lost is never
     // seen or used and expires by itself, so this exchange repeats like a read.
@@ -433,6 +436,60 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: [...packet.paths] };
     },
     async readChecks(headSha) { return inventory(headSha); },
+    async readTrainStagingRun({ testSha, workflow }) {
+      if (!sha.test(testSha) || !TRAIN_WORKFLOWS.has(workflow)) fail('invalid_train_run');
+      const query = new URLSearchParams({ head_sha: testSha, event: 'push', branch: 'clued-train/staging', per_page: '2' });
+      const list = await scoped('/actions/workflows/' + workflow.split('/').at(-1) + '/runs?' + query);
+      if (list?.total_count !== 1 || list.workflow_runs?.length !== 1) fail('train_run_unconfirmed');
+      const run = list.workflow_runs[0];
+      if (run.head_sha !== testSha || run.path !== workflow || !positive(run.id) || run.run_attempt !== 1
+        || run.event !== 'push' || run.head_branch !== 'clued-train/staging') fail('train_run_unconfirmed');
+      return run.id;
+    },
+    async readTrainRun({ runId, attempt, testSha, workflow }) {
+      if (!positive(runId) || !positive(attempt) || !sha.test(testSha) || !TRAIN_WORKFLOWS.has(workflow))
+        fail('invalid_train_run');
+      const route = '/actions/runs/' + runId;
+      const current = await scoped(route);
+      if (current?.id !== runId || current.run_attempt !== attempt || current.head_sha !== testSha
+        || current.event !== 'push' || current.head_branch !== 'clued-train/staging' || current.path !== workflow
+        || current.actor?.login !== 'clued-ci-checks-turing-20261018[bot]') fail('train_run_unconfirmed');
+      const body = await scoped(route + '/attempts/' + attempt + '/jobs?per_page=100');
+      if (!Array.isArray(body?.jobs) || body.total_count !== body.jobs.length || body.jobs.length >= 100)
+        fail('train_jobs_unconfirmed');
+      const checkPrefix = root + '/check-runs/';
+      const jobs = body.jobs.map(job => {
+        const url = job?.check_run_url;
+        const checkRunId = typeof url === 'string' && url.startsWith(checkPrefix) ? Number(url.slice(checkPrefix.length)) : null;
+        if (!positive(checkRunId) || url !== checkPrefix + checkRunId || job.run_id !== runId
+          || (job.run_attempt !== undefined && job.run_attempt !== attempt) || job.head_sha !== testSha || typeof job.name !== 'string') fail('train_job_unconfirmed');
+        return { checkRunId, name: job.name, status: job.status, conclusion: job.conclusion, steps: Array.isArray(job.steps) ? job.steps : [] };
+      });
+      if (new Set(jobs.map(job => job.checkRunId)).size !== jobs.length) fail('train_jobs_unconfirmed');
+      const latest = await scoped(route);
+      if (latest?.run_attempt !== attempt || latest.id !== runId || latest.head_sha !== testSha
+        || latest.actor?.id !== current.actor?.id || latest.triggering_actor?.id !== current.triggering_actor?.id)
+        fail('train_run_unconfirmed');
+      return { jobs, actorId: current.actor?.id, triggeringActorId: current.triggering_actor?.id };
+    },
+    async sameTrainWorkflow({ workflow, baseSha, testSha }) {
+      if (!TRAIN_WORKFLOWS.has(workflow) || !sha.test(baseSha) || !sha.test(testSha)) fail('invalid_train_workflow');
+      const read = at => scoped('/contents/' + workflow + '?ref=' + at);
+      const [base, test] = await Promise.all([read(baseSha), read(testSha)]);
+      return base?.path === workflow && test?.path === workflow && base.type === 'file' && test.type === 'file'
+        && sha.test(base.sha ?? '') && test.sha === base.sha;
+    },
+    async readCheckAnnotations(checkRunId) {
+      if (!positive(checkRunId)) fail('invalid_check_run');
+      const annotations = [];
+      for (let page = 1; page <= maxPages; page++) {
+        const list = await scoped(`/check-runs/${checkRunId}/annotations?per_page=100&page=${page}`);
+        if (!Array.isArray(list) || list.length > 100) fail('invalid_check_annotations');
+        annotations.push(...list);
+        if (list.length < 100) return annotations;
+      }
+      fail('check_annotations_page_limit');
+    },
     // This App's runs on the head, every run of every name (filter=all, app_id): the cross-node "already published"
     // read-back (resident primary/standby design v0.4 §6.2; published-on-github-v2.mjs). Complete, or refused.
     async readAppChecks(headSha) { return inventory(headSha, null, null, true); },
@@ -482,6 +539,12 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       const can = body?.current_user_can_bypass;
       if (body?.id !== id || !(can === undefined || can === null || typeof can === 'string')) fail('invalid_ruleset_reply');
       return { id, currentUserCanBypass: typeof can === 'string' ? can : null };
+    },
+    async readRuleBypass(id) {
+      if (!positive(id)) fail('invalid_ruleset');
+      const body = await scoped(`/rulesets/${id}?includes_parents=true`);
+      if (body?.id !== id || !Array.isArray(body.bypass_actors) || body.bypass_actors.length > 100) fail('invalid_ruleset_reply');
+      return body.bypass_actors;
     },
     // Merge-train sweep reads (DESIGN §41.3; stage 10). Bounded, complete or refused. GET only, except the GraphQL
     // query: a read sent as POST, repeated like a read.

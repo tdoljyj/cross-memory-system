@@ -144,7 +144,7 @@ class Unreadable extends Error {}
 const unreadable = what => { throw new Unreadable(what); };
 
 // The gh port: fixed argv, routes built here from validated values only. get -> parsed JSON or throws Unreadable.
-export function ghPort({ ghExe, repo, run, nodeName }) {
+export function ghPort({ ghExe, repo, run, nodeName, trainRecovery }) {
   check(typeof ghExe === 'string' && /^[A-Z]:\\/.test(ghExe) && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '') && typeof run === 'function', 'ADMISSION_RERUN_CONFIG_INVALID');
   const routeOk = route => typeof route === 'string' && /^[A-Za-z0-9_./?&=%:-]*$/.test(route) && !route.split(/[/?]/).slice(1).some(p => p === '.' || p === '..');
   async function get(route, { missingOk = false } = {}) {
@@ -209,8 +209,21 @@ export function ghPort({ ghExe, repo, run, nodeName }) {
     //   refused: gh ran and GitHub answered an HTTP 4xx: the run was not started;
     //   unknown: gh timed out, its job host could not confirm how it ended, or it failed without an HTTP answer (the line): GitHub may
     //   or may not have started the run.
-    async rerun(runId) {
+    async rerun(runId, staging = null) {
       check(positive(runId), 'ADMISSION_RERUN_ROUTE_REFUSED');
+      if (staging) {
+        try {
+          const generation = await get('/git/ref/heads/clued-train/generation', { missingOk: true });
+          if (generation !== null) {
+            if (generation?.ref !== 'refs/heads/clued-train/generation' || generation.object?.type !== 'commit'
+              || !HEX40.test(generation.object.sha ?? '') || typeof trainRecovery !== 'function')
+              return { outcome: 'unsent', why: '列车 v2 恢复身份或代次未就绪' };
+            return await trainRecovery({ runId, ...staging, read: get });
+          }
+        } catch {
+          return { outcome: 'unsent', why: '列车协议无法核对' };
+        }
+      }
       return post([`repos/${repo}/actions/runs/${runId}/rerun`]);
     },
     // The lost-run write: "Run workflow" of the required tests on a pull request's branch. Same outcomes as rerun.
@@ -1015,7 +1028,7 @@ export class AdmissionRerunner {
           return { acted, reason: 'ADMISSION_RERUN_STATE_UNSAVED' };
         }
         let r;
-        try { r = await (lost ? this.gh.dispatch(d.workflowId, d.ref, record.pr, headSha, d.markRun) : this.gh.rerun(d.runId)); } catch { r = { outcome: 'unsent', why: 'gh 没有启动' }; }
+        try { r = await (lost ? this.gh.dispatch(d.workflowId, d.ref, record.pr, headSha, d.markRun) : this.gh.rerun(d.runId, testSha ? { testSha, attempt: d.attempt } : null)); } catch { r = { outcome: 'unsent', why: 'gh 没有启动' }; }
         Object.assign(record, { outcome: r.outcome, why: r.outcome === 'sent' ? null : short(r.why), at: new Date(this.clock()).toISOString() });
         if (lost && r.http !== undefined) record.http = r.http;
         // The intent on disk already stops a second request; an unsaved outcome is written again at the end of this step or the next

@@ -10,6 +10,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { HEX64, check, parseBoundedJson, sha256 } from './canonical.mjs';
+import { trainProtocolVersion, validatePolicy } from './policy.mjs';
+import { readBounded } from './store.mjs';
 import { fileURLToPath } from 'node:url';
 import { BUNDLE_PRUNE_EVERY_MS, Companion, UpgradeLane, argv as companionArgv, readPullArgv, validateCompanionConfig } from './companion.mjs';
 import { UpgradeMailbox } from './upgrade-mailbox.mjs';
@@ -28,8 +30,10 @@ import { PANEL_REPO, PanelDispatchState, PanelDispatcher, validatePanelDispatchC
 import {MergeReconcileState,MergeReconciler} from './merge-reconcile.mjs';
 import {MERGE_RECONCILE_REPO,MERGE_RECONCILE_WORKFLOW_SHA256,validateMergeReconcileConfig} from './merge-reconcile-config.mjs';
 import { AdmissionRerunState, AdmissionRerunner, RERUN_LANE_EVERY_MS, ghPort } from './admission-rerun.mjs';
+import { createTrainRecoveryPort } from './train-recovery.mjs';
 import { FRONT_MERGE_LANE_EVERY_MS, FRONT_MERGE_REPO, FrontMergeDispatchState, FrontMergeDispatcher } from './front-merge-dispatch.mjs';
 import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
+import { readFleetDeliveryEvidence } from './fleet-delivery-evidence.mjs';
 import { NotifyQueue, notifyQueueDir, queueNotify } from './notify-queue.mjs';
 import { ReceiptChain } from './receipts.mjs';
 import { RetentionNotifier } from './retention-notify.mjs';
@@ -95,7 +99,7 @@ function handoverOutbox(file, repo) {
 // address, publishable key and scope are the installed record's (record\installation.json), never a configuration of their own.
 // notify(key, title, body): the notification queue (M5, ADR 0022 §4.3); without it (tests) a toast through powershellExe as before.
 export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershellExe, run, runHandover = run, store, clock = Date.now,
-  readJson = async p => JSON.parse(await fs.readFile(p, 'utf8')), notify = null }) {
+  readJson = async p => JSON.parse(await fs.readFile(p, 'utf8')), notify = null, protocolVersion = 1 }) {
   if (!(await readHeartbeatToken(root))) return null;
   let transport, scope = null;
   try {
@@ -117,8 +121,9 @@ export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershe
     } catch { /* the next update tries again */ }
     finally { saving = false; }
   };
-  return new CompanionHeartbeat({ nodeName, scope, transport, clock, handoverClock: () => performance.now(),
+  return new CompanionHeartbeat({ nodeName, scope, transport, clock, protocolVersion, handoverClock: () => performance.now(),
     readToken: () => readHeartbeatToken(root), readStatus: () => readStatus(root),
+    readDeliveryEvidence: ({ status, now }) => readFleetDeliveryEvidence({ root, status, now }),
     serviceRunning: async () => serviceRunningFrom(await run(scQueryArgv(SC_EXE), { timeoutMs: 15_000 })),
     notify: notify ?? (async (key, title, body) => { await run(toastArgv(powershellExe, title, body), { timeoutMs: 15_000 }); }),
     memory: { get: key => Date.parse(store.data.notified[key]?.at) || 0, set: (key, at) => { store.data.notified[key] = { at: new Date(at).toISOString() }; void save(); } },
@@ -352,7 +357,19 @@ export async function acquireCompanionLock(dir, root, { alive = pid => companion
   return lock;
 }
 
-export async function main(args = process.argv.slice(2)) {
+// 伴随进程和服务读取同一份安装策略。读不到可信策略时只暂停派发通道，其他通道照常工作。
+export async function companionTrainDispatchPorts({ root, repo, ciSourceManifestSha256, nodeProfileSha256, dispatchTrainEffect }) {
+  let protocolVersion = null;
+  try {
+    const bytes = await readBounded(path.join(root, 'config', 'policy.json'), 65_536, 'COMPANION_TRAIN_POLICY_REFUSED');
+    const policy = validatePolicy(parseBoundedJson(bytes, 65_536, 'COMPANION_TRAIN_POLICY_REFUSED'));
+    if (policy.repo === repo && policy.ciSourceManifestSha256 === ciSourceManifestSha256 && policy.nodeProfileSha256 === nodeProfileSha256)
+      protocolVersion = trainProtocolVersion(policy.train);
+  } catch { /* no dispatch authority from this installation read */ }
+  return { trainProtocolVersion: protocolVersion, dispatchTrainEffect };
+}
+
+export async function main(args = process.argv.slice(2), { dispatchTrainEffect, authorizeTrainRecovery } = {}) {
   const { values } = parseArgs({ args, options: { root: { type: 'string' }, 'config-sha256': { type: 'string' } } });
   check(typeof values.root === 'string' && path.isAbsolute(values.root) && HEX64.test(values['config-sha256'] ?? ''), 'COMPANION_ARGS_REQUIRED');
   const bytes = await fs.readFile(path.join(values.root, 'config', 'companion.json'));
@@ -400,19 +417,21 @@ export async function main(args = process.argv.slice(2)) {
   const statusCfg = validateStatusConfig(raw.status);
   // The node's name is the pinned node profile's; a status.node that names another node refuses (never a default node).
   check(statusCfg.node === cfg.node.nodeName || statusCfg.node === null, 'COMPANION_NODE_IDENTITY_CHANGED');
-  const store = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-pr-status.json'));
+  const trainDispatch = await companionTrainDispatchPorts({
+    root: values.root, repo: raw.repo, ciSourceManifestSha256, nodeProfileSha256: cfg.nodeProfileSha256, dispatchTrainEffect,
+  });
+  const protocolVersion = trainDispatch.trainProtocolVersion;
+  const store = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-pr-status.json'),
+    Date.now, protocolVersion);
   // Read receipts only: never open/seal/append the service's chain from the companion.
   const retentionNotifier = new RetentionNotifier({ receipts: new ReceiptChain(path.join(values.root, 'state', 'receipts'), Date.now), store, notify,
     reviewGenerations: async () => {
       const settings = await readRetentionSettings(path.join(values.root, 'owner', SETTINGS_FILE));
       return settings.ok ? pruneArchivedGenerations({ root: values.root, settings: settings.settings }) : { code: settings.code };
     } });
-  // The node's duty (primary/standby C5, node-duty.mjs): its name while status.json names none, and the one write it may
-  // make into the resident, the dual-active hold (an intake pause request in the user-writable requests\, like a pause).
-  const requestsDir = path.join(values.root, 'requests');
   const reporter = new PrStatusReporter({ repo: raw.repo, ghExe: raw.ghExe, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), clock: Date.now, store,
-    prStatus: statusCfg.prStatus, notifications: statusCfg.notifications, node: cfg.node.nodeName,
-    writeRequest: v => Inbox.drop(requestsDir, v), notify });
+    prStatus: statusCfg.prStatus, notifications: statusCfg.notifications, node: cfg.node.nodeName, notify,
+    trainProtocolVersion: protocolVersion, writeRequest: v => Inbox.drop(path.join(values.root, 'requests'), v) });
   // The upgrade mailbox lane (DESIGN §34): upgrade\mailbox\ is opened once it exists (an install before the channel has none; the
   // lane then tries again each pass and the companion runs as before). The companion never creates it.
   const upgradeLane = new UpgradeLane({ cfg, run: (a, o) => upgradeRunner.run(a, o), clock: Date.now,
@@ -426,7 +445,7 @@ export async function main(args = process.argv.slice(2)) {
   const heartbeatRunner = new Runner({ env: { ...process.env }, jobHost });
   const heartbeatStore = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-heartbeat.json'));
   const heartbeat = await companionHeartbeat({ root: values.root, nodeName: cfg.node.nodeName, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe,
-    run: (a, o) => heartbeatRunner.run(a, o), runHandover: (a, o) => advisory.run(a, o), store: heartbeatStore, notify });
+    run: (a, o) => heartbeatRunner.run(a, o), runHandover: (a, o) => advisory.run(a, o), store: heartbeatStore, notify, protocolVersion });
   const fleetRunner = new Runner({ env: { ...process.env }, jobHost });
   let fleetLag = null;
   const openFleetLag = async () => {
@@ -439,7 +458,6 @@ export async function main(args = process.argv.slice(2)) {
   };
   // §41.6a: while the heartbeat's answer shows the failover watchdog stale, the PR page status says so too.
   reporter.watchdogStale = () => heartbeat?.watchdogStale === true;
-  // ADR 0026: the last automatic take-over to this node, for the take-over check (node-duty.mjs).
   reporter.autoHandoverSince = () => heartbeat?.autoHandoverSince ?? null;
   // Node governance v1: while the node status names a red line (new batches held, or the Linux runners held back), the PR page says so too
   // (the companion writes that status itself: no channel to the service is involved).
@@ -451,7 +469,7 @@ export async function main(args = process.argv.slice(2)) {
   // Only for the repository the panel workflow is in (panel-dispatch.mjs#PANEL_REPO); tools/build-package.mjs refuses a configuration that names another one.
   const panelDispatch = validatePanelDispatchConfig(raw.panelDispatch).enabled && raw.repo === PANEL_REPO
     ? new PanelDispatcher({ nodeName: cfg.node.nodeName, repo: raw.repo, ghExe: raw.ghExe, clock: Date.now, run: (a, o) => panelRunner.run(a, o), readStatus: () => readStatus(values.root),
-      notify,
+      notify, ...trainDispatch,
       state: await PanelDispatchState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-panel-dispatch.json')) })
     : null;
   // Off in existing packages. Enabling belongs to a separately accepted
@@ -462,18 +480,20 @@ export async function main(args = process.argv.slice(2)) {
   const mergeIdentity={nodeName:cfg.node.nodeName,repo:raw.repo,pinnedSource:MERGE_RECONCILE_WORKFLOW_SHA256};
   const mergeReconcile=mergeConfig.enabled?new MergeReconciler({...mergeIdentity,ghExe:raw.ghExe,clock:Date.now,
     run:(a,o)=>mergeRunner.run(a,o),readStatus:()=>readStatus(values.root),
-    notify,
+    notify,...trainDispatch,
     state:await MergeReconcileState.open(path.join(cfg.node.ownerProfileDirectory,'AppData','Local','CluedIndependentCI','companion-merge-reconcile.json'),mergeIdentity)}):null;
   // DESIGN §80: the train front's main merge, asked for while this node is on duty and stage 10 says FRONT_NEEDS_MAIN_MERGE.
   // Its own Runner and its own memory file (two lanes never write one file).
   const frontMergeRunner = new Runner({ env: { ...process.env }, jobHost });
   const frontMerge = raw.repo === FRONT_MERGE_REPO ? new FrontMergeDispatcher({ nodeName: cfg.node.nodeName, repo: raw.repo, ghExe: raw.ghExe,
-    clock: Date.now, run: (a, o) => frontMergeRunner.run(a, o), readStatus: () => readStatus(values.root),
+    ...trainDispatch, clock: Date.now, run: (a, o) => frontMergeRunner.run(a, o), readStatus: () => readStatus(values.root),
     state: await FrontMergeDispatchState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-front-merge.json')) }) : null;
   // Generation 12 (DESIGN §56.5, Decision 207c0cd0 v2): the one repair re-run of the required tests the admission gate allows, clicked
   // with the Owner's gh login when the gate timed out before stage 1's admission. Its own Runner and its own memory file.
   const rerunRunner = new Runner({ env: { ...process.env }, jobHost });
-  const rerunner = new AdmissionRerunner({ gh: ghPort({ ghExe: raw.ghExe, repo: raw.repo, nodeName: cfg.node.nodeName, run: (a, o) => rerunRunner.run(a, o) }),
+  const rerunner = new AdmissionRerunner({ gh: ghPort({ ghExe: raw.ghExe, repo: raw.repo, nodeName: cfg.node.nodeName, run: (a, o) => rerunRunner.run(a, o),
+    trainRecovery: createTrainRecoveryPort({ repository: raw.repo, appId: process.env.CLUED_TRAIN_REPAIR_APP_ID,
+      keyFile: process.env.CLUED_TRAIN_REPAIR_APP_KEY_FILE, authorize: authorizeTrainRecovery }) }),
     state: await AdmissionRerunState.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-admission-rerun.json')),
     clock: Date.now, readStatus: () => readStatus(values.root), pulls: () => (poller.lastPass ? poller.lastPass.pulls : null),
     notify });

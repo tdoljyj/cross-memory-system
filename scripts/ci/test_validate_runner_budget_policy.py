@@ -282,7 +282,9 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                          "500da29fb3c1fbe9df2be795e84f92908249a8ee057bef709e17e5aa7c5e341f")
         self.assertEqual(policy.OWNER_DECISION_HOSTED_JOBS["gitleaks.yml"]["jobs"]["gitleaks-trusted-self-hosted"],
                          "b8dac89af1f63b0528c7b2209e071e4f88919f82fb33562591eaf6b50c0186ea")
-        self.assertEqual(set(policy.EXACT_SOURCE_CANDIDATE_SUCCESSORS), {"gitleaks.yml", "clued-merge-slot-ci.yml"})
+        self.assertEqual(set(policy.EXACT_SOURCE_CANDIDATE_SUCCESSORS), {
+            "gitleaks.yml", "clued-merge-executor.yml", "clued-merge-slot-ci.yml",
+        })
         for filename, successor in policy.EXACT_SOURCE_CANDIDATE_SUCCESSORS.items():
             text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
             debt = ({filename: policy.LEGACY_HOSTED_DEBT[filename]} if successor["kind"] == "legacy" else {})

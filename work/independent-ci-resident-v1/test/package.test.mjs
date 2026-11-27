@@ -267,10 +267,11 @@ test('package /4 for a fresh install: the upgrader copy, host source, node and c
 });
 
 // D2c 裁定 B1：续期合同的单一来源在服务端，常驻树里的同名合同会导致构建被拒。
-// 续期合同与两个自拉模块按 RESIDENT_EXTERNAL 的顺序追加，三处来源的变更均选中节点套件。
+// 外部条目按 RESIDENT_EXTERNAL 的顺序追加，各来源的变更均选中节点套件。
 test('常驻包按顺序追加外部条目，变更来源即选中节点套件，重复续期合同被拒', async t => {
   const external = [
     { path: 'windows/ci-connection-renew.contract.json', source: SERVER_CONTRACT },
+    { path: 'windows/fleet-file-locks.ps1', source: 'work/independent-ci-resident-v1/reinstall/tools/file-locks.ps1' },
     { path: 'rollout/fleet/fetch.mjs', source: 'work/independent-ci-resident-v1/rollout/fleet/fetch.mjs' },
     { path: 'rollout/fleet/tar.mjs', source: 'work/independent-ci-resident-v1/rollout/fleet/tar.mjs' },
   ];
@@ -298,7 +299,7 @@ test('常驻包按顺序追加外部条目，变更来源即选中节点套件�
   const rows = manifest.files.filter(f => f.path === 'windows/ci-connection-renew.contract.json');
   assert.equal(rows.length, 1);
   assert.equal(rows[0].sha256, sha256(await fs.readFile(server)), '树里的服务端文件就是包内合同');
-  assert.deepEqual(manifest.files.slice(-3), externalRows, '三条外部条目按表中顺序追加');
+  assert.deepEqual(manifest.files.slice(-external.length), externalRows, '外部条目按表中顺序追加');
   assert.match(built.residentManifestSha256, /^[0-9a-f]{64}$/);
   await fs.copyFile(server, path.join(res, 'windows', 'ci-connection-renew.contract.json'));
   await assert.rejects(build('pkg-duplicate'), { code: 'PACKAGE_RESIDENT_DUPLICATE' });

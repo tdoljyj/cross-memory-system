@@ -11,30 +11,59 @@ import { fileURLToPath } from 'node:url';
 
 const RES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TPL = path.join(RES, 'reinstall', 'launcher', 'template.ps1');
+const CONT = path.join(RES, 'reinstall', 'launcher', 'continue-install.ps1');
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const skip = process.platform === 'win32' ? false : 'Windows PowerShell 5.1 runs on Windows only';
 const psLiteral = value => `'${String(value).replaceAll("'", "''")}'`;
 
-function run({ firstInstall, verified = true, paused = true, maintenance = false }) {
+function run({ firstInstall, verified = true, paused = true, maintenance = false, afterInstall = false }) {
   const command = `$ErrorActionPreference = 'Stop'; Set-StrictMode -Version 2
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(${psLiteral(TPL)}, [ref]$tokens, [ref]$errors)
 $FleetFirstInstall = ${firstInstall ? '$true' : '$null'}; $CompanionMaintenance = ${maintenance ? '$true' : '$false'}
 $verify = @{ status = ${verified ? "'RESIDENT_VERIFIED'" : "'R4_WINDOWS_REINSTALLED_VERIFY_NOT_PASSED_RESIDENT_STOPPED'"} }; $pause = @{ confirmed = ${paused ? '$true' : '$false'} }
+$afterInstall = ${afterInstall ? '$true' : '$false'}
 $script:starts = 0; $script:switches = 0
+$script:steps = @()
 $fn = { param($name) @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))[0] }
 . ([scriptblock]::Create((& $fn 'Get-Key').Extent.Text))
 # the real Step-StartCompanion's first statement (a first install steps aside there, as every old-resident step does), then a counter
 # for the interactive start it would make
 $first = (& $fn 'Step-StartCompanion').Body.EndBlock.Statements[0].Extent.Text
-. ([scriptblock]::Create('function Step-StartCompanion { ' + $first + "\`n" + '$script:starts++; @{ started = $false; error = ''interactive token: the account is not logged on'' } }'))
-function Step-CompanionHeadless { $script:switches++; @{ ran = $true } }
+. ([scriptblock]::Create('function Step-StartCompanion { ' + $first + "\`n" + '$script:starts++; $script:steps += ''start''; @{ started = $afterInstall } }'))
+function Step-CompanionHeadless { $script:switches++; $script:steps += 'switch'; @{ ran = $true } }
+$statements = @()
+if ($afterInstall) {
+  $cont = [Management.Automation.Language.Parser]::ParseFile(${psLiteral(CONT)}, [ref]$tokens, [ref]$errors)
+  $helper = @($cont.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Step-ContinueAfterInstall' }, $true))
+  if ($helper.Count -ne 1) { throw 'CONTINUATION_NOT_UNIQUE' }
+  $early = $helper[0].Find({ param($n) $n -is [Management.Automation.Language.CommandAst] -and
+    $n.GetCommandName() -cin @('Step-StartCompanion', 'Start-CompanionTask', 'Step-CompanionHeadless') }, $true)
+  if ($early) { throw 'CONTINUATION_TOUCHES_COMPANION_BEFORE_CONNECTION_CHECK' }
+  $gate = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and
+    $n.GetCommandName() -ceq 'Confirm-FleetCiAfterInstall' }, $true))
+  if ($gate.Count -ne 1) { throw 'CONNECTION_CHECK_NOT_UNIQUE' }
+  $statement = $gate[0].Parent.Parent.Parent
+  if ($statement -isnot [Management.Automation.Language.IfStatementAst]) { throw 'CONNECTION_CHECK_NOT_GUARDED' }
+  $statements += $statement
+  $install = @{ receiptSha256 = 'receipt-digest' }
+  $pause.requestSha256 = 'pause-digest'
+}
+function Confirm-FleetCiAfterInstall($receipt, $pauseDigest) {
+  if ($receipt -cne 'receipt-digest' -or $pauseDigest -cne 'pause-digest') { throw 'CONNECTION_CHECK_INPUTS_CHANGED' }
+  $script:steps += 'connection'
+}
 foreach ($name in @('maintenanceDeferred', 'companion', 'companionHeadless')) {
   $nodes = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq ('$' + $name) }, $true))
   if ($nodes.Count -ne 1) { throw ('ASSIGNMENT_NOT_UNIQUE:' + $name + ':' + $nodes.Count) }
-  . ([scriptblock]::Create($nodes[0].Extent.Text))
+  $statements += $nodes[0]
 }
-'{"starts":' + $script:starts + ',"switches":' + $script:switches + '}'`;
+foreach ($statement in ($statements | Sort-Object { $_.Extent.StartOffset })) {
+  . ([scriptblock]::Create($statement.Extent.Text))
+}
+$result = @{ starts = $script:starts; switches = $script:switches }
+if ($afterInstall) { $result.steps = $script:steps }
+ConvertTo-Json -InputObject $result -Compress`;
   const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
   const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
     { cwd: RES, env, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
@@ -55,30 +84,10 @@ test('a reinstall is unchanged: the companion is started first, and a start that
   assert.deepEqual(run({ firstInstall: false, paused: false }), { starts: 0, switches: 0 });
 });
 
-// The continuation of a launch cut off after the install (continue-install.ps1 Step-ContinueAfterInstall) follows the same rule: under
-// the first-install plan it does not start the interactive companion task before the switch (Fable ruling 11-19, "包分支两处").
-const CONT = path.join(RES, 'reinstall', 'launcher', 'continue-install.ps1');
-function cont(firstInstall) {
-  const command = `$ErrorActionPreference = 'Stop'; Set-StrictMode -Version 2
-$tokens = $null; $errors = $null
-$ast = [Management.Automation.Language.Parser]::ParseFile(${psLiteral(CONT)}, [ref]$tokens, [ref]$errors)
-$fn = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Step-ContinueAfterInstall' }, $true))[0]
-$ifs = @($fn.FindAll({ param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -ceq '$from -gt 3' }, $true))
-if ($ifs.Count -ne 1) { throw ('COMPANION_LINE_NOT_ONE:' + $ifs.Count) }
-$FleetFirstInstall = ${firstInstall ? '$true' : '$null'}; $from = 4; $r = [ordered]@{}; $script:starts = 0
-function Step-StartCompanion { $script:starts++; @{ started = $true } }
-. ([scriptblock]::Create($ifs[0].Extent.Text))
-'{"starts":' + $script:starts + ',"firstInstallSwitch":' + $(if ($r['companion'].Contains('firstInstallSwitch')) { 'true' } else { 'false' }) + '}'`;
-  const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
-  const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
-    { cwd: RES, env, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
-  assert.ifError(r.error);
-  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
-  return JSON.parse(String(r.stdout).trim().split(/\r?\n/).at(-1));
-}
+// continue.py keeps the connection gate and companion steps in the generated launcher's main flow.
 test('the continuation after the install: a first install does not start the companion first; a reinstall does', { skip, timeout: 300_000 }, () => {
-  assert.deepEqual(cont(true), { starts: 0, firstInstallSwitch: true });
-  assert.deepEqual(cont(false), { starts: 1, firstInstallSwitch: false });
+  assert.deepEqual(run({ firstInstall: true, afterInstall: true }), { starts: 0, switches: 1, steps: ['connection', 'switch'] });
+  assert.deepEqual(run({ firstInstall: false, afterInstall: true }), { starts: 1, switches: 1, steps: ['connection', 'start', 'switch'] });
 });
 
 // "包分支两处" A: the first-train wait is not changed; its step line carries when it started and ended and what the new resident's status

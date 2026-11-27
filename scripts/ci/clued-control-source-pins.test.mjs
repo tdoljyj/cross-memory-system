@@ -11,6 +11,7 @@ const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const BASE='93940d4f6c06179e319c81173269d48cdc8e6420';
 const TRAIN_V2_BASE='c28b21dc0f02dff5b3fb4f2c83e2545ac06bb98e';
 const OPTIONS={base:BASE};
+const PUBLICATION_PORT='scripts/ci/clued-independent-publication-port.mjs';
 const baseText=(name,base=BASE)=>execFileSync('git',['show',`${base}:${name}`],{cwd:ROOT}).toString('utf8');
 function implementationBlobsAt(base){
   const text=baseText(CONTROL_SOURCE_MODULE,base),marker='export const MERGE_RECONCILE_CONTROL_SOURCE=freeze(';
@@ -45,6 +46,12 @@ async function refusesWithoutWrites(root,match){const before=pair(root);await as
 
 test('actual version materialisation is reported, deterministically generated and idempotent without changing historical pins',async t=>{
   const root=fixture(t),before=JSON.parse(read(root,CONTROL_SOURCE_REGISTRY));
+  // The real v2 publication port changes behavior, so its historical pin
+  // cannot move. Exercise its mechanical path with a marker-only fixture.
+  const actual=await planControlSourcePins(root,OPTIONS);
+  assert.deepEqual(actual.changes.map(c=>c.file),CONTROL_SOURCE_MECHANICAL_FILES.filter(name=>name!==PUBLICATION_PORT));
+  const marker=/^export const COMPONENT_VERSION[^\r\n]+/m;
+  edit(root,PUBLICATION_PORT,current=>baseText(PUBLICATION_PORT).replace(marker,current.match(marker)[0]));
   const planned=await planControlSourcePins(root,OPTIONS);
   assert.deepEqual(planned.changes.map(c=>c.file),CONTROL_SOURCE_MECHANICAL_FILES);
   assert.equal((await checkControlSourcePins(root,OPTIONS)).status,'stale');

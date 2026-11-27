@@ -234,6 +234,11 @@ export async function handleCiNodeGatewayV1(request: Request, env: DatabaseGatew
     if (!verified.ok) throw new Denied('CI_NODE_' + verified.code, verified.code === 'TRUST_LOOKUP_FAILED' ? 503 : 403);
     const observation = verified.observation;
     ensure(HEX64.test(observation.nonce_sha256) && observation.payload_sha256 === command!.payload_sha256, 'CI_NODE_GATEWAY_UNCONFIRMED', 503);
+    if (observation.operation === 'merge_train_v2') {
+      const payload = object(input.payload, 'CI_NODE_INPUT_REFUSED', 400);
+      ensure(payload.protocol_version === 2 && command!.execution_generation === 0 && command!.train_generation === 0,
+        'CI_NODE_INPUT_REFUSED', 400);
+    }
     // The command exactly as signed (canonical, so key order and number forms
     // cannot differ from the signed bytes) and the payload as digested.
     const reply = await rpc('clued_ci_node_command_v1', {

@@ -88,6 +88,7 @@ export async function main(argv = process.argv.slice(2), ports = {}) {
   const versions = () => readVersionState({ root, policy, policySha256: values['policy-sha256'], clock });
   const engine = new WindowsEngine({
     node: policy.node, nodeProfileSha256: policy.nodeProfileSha256, versions: async () => (await versions()).view,
+    handoffTrainWork: ports.handoffTrainWork,
     run: (a, o) => runner.run(a, o), busy: () => runner.busy, companionMailbox: mailbox, sleep, clock,
     // DESIGN §41.2: stages 1 and 8 learn the installed train.enabled through the stage directory (train-mode.json).
     trainMode: installedTrainMode(policy),

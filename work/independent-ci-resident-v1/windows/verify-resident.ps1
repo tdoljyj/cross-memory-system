@@ -114,7 +114,7 @@ function ConvertTo-NodeIdentityCanonical($id) {
 }
 
 # Uses the same byte fixtures as the Source v2 parser. The install receipt is always verified against the identity at install time.
-function Get-EffectiveCiPrincipal($identity, [byte[]]$bytes) {
+function Get-EffectiveCiPrincipal($identity, [byte[]]$bytes, [string]$identitySha256) {
   if ($null -eq $bytes) {
     return [pscustomobject]@{ bindingId = $identity.ciPrincipalBindingId; tokenPinSha256 = $identity.ciTokenPinSha256; generation = $null; receiptId = $null }
   }
@@ -125,12 +125,13 @@ function Get-EffectiveCiPrincipal($identity, [byte[]]$bytes) {
     $keys = @('activatedAt','baseNodeIdentitySha256','bindingGeneration','bindingId','contract','previousSha256','rebindReceiptId','tokenPinSha256')
     if ($v -isnot [pscustomobject] -or @($v.PSObject.Properties).Count -ne $keys.Length) { throw 'keys' }
     foreach ($key in $keys) { if (@($v.PSObject.Properties.Name) -cnotcontains $key) { throw 'keys' } }
+    if (-not $identitySha256) { $identitySha256 = Sha256Text (ConvertTo-NodeIdentityCanonical $identity) }
     $uuid = '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z'; $hash = '^[0-9a-f]{64}\z'
     foreach ($key in @('bindingId','rebindReceiptId')) {
       if ($v.$key -isnot [string] -or $v.$key -cnotmatch $uuid) { throw 'id' }
     }
     if ($v.contract -isnot [string] -or -not [string]::Equals($v.contract, 'clued.independent-ci.ci-connection/1', [StringComparison]::Ordinal) -or $v.tokenPinSha256 -isnot [string] -or $v.tokenPinSha256 -cnotmatch $hash -or
-        $v.baseNodeIdentitySha256 -isnot [string] -or -not [string]::Equals($v.baseNodeIdentitySha256, (Sha256Text (ConvertTo-NodeIdentityCanonical $identity)), [StringComparison]::Ordinal) -or $v.activatedAt -isnot [string] -or
+        $v.baseNodeIdentitySha256 -isnot [string] -or -not [string]::Equals($v.baseNodeIdentitySha256, $identitySha256, [StringComparison]::Ordinal) -or $v.activatedAt -isnot [string] -or
         ($null -ne $v.previousSha256 -and ($v.previousSha256 -isnot [string] -or $v.previousSha256 -cnotmatch $hash)) -or
         ($v.bindingGeneration -isnot [int] -and $v.bindingGeneration -isnot [long]) -or $v.bindingGeneration -lt 1 -or $v.bindingGeneration -gt 9007199254740991) { throw 'fields' }
     $format = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'"
@@ -228,7 +229,7 @@ function Read-CiPrivateBytes([string]$file, [string]$controllerSid, [switch]$Opt
   } catch { if ($null -ne (Get-Variable b -ErrorAction SilentlyContinue)) { [Array]::Clear($b, 0, $b.Length) }; throw }
   finally { $s.Dispose() }
 }
-function Get-CiAdmissionTokenPin([byte[]]$raw) {
+function Get-CiAdmissionTokenPin([byte[]]$raw, [switch]$ConnectionProof) {
   # Same token prefix, alphabet and domain separator as the control entry. Avoids creating a string for the token that cannot be zeroed.
   $start = 0; $end = $raw.Length
   while ($start -lt $end -and $raw[$start] -in @(9,10,11,12,13,32)) { $start++ }
@@ -241,14 +242,136 @@ function Get-CiAdmissionTokenPin([byte[]]$raw) {
     if ($i -lt $prefix.Length) { if ($c -ne $prefix[$i]) { throw 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' } }
     elseif (!(($c -ge 48 -and $c -le 57) -or ($c -ge 65 -and $c -le 90) -or ($c -ge 97 -and $c -le 122) -or $c -in @(45,95))) { throw 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' }
   }
-  $domain = [Text.Encoding]::ASCII.GetBytes('clued.independent-ci.ci-binding-pin/1' + [char]0)
   $sha = [Security.Cryptography.SHA256]::Create()
   try {
+    if ($ConnectionProof) {
+      return ([BitConverter]::ToString($sha.ComputeHash($raw,$start,$size))).Replace('-','').ToLowerInvariant()
+    }
+    $domain = [Text.Encoding]::ASCII.GetBytes('clued.independent-ci.ci-binding-pin/1' + [char]0)
     [void]$sha.TransformBlock($domain,0,$domain.Length,$domain,0)
     $final = $sha.TransformFinalBlock($raw,$start,$size)
     [Array]::Clear($final,0,$final.Length)
     return ([BitConverter]::ToString($sha.Hash)).Replace('-','').ToLowerInvariant()
   } finally { $sha.Dispose() }
+}
+
+# The launcher and installer load these functions from the package's hash-checked verify script.
+# No credential or proof derived from the raw token is returned to their output.
+function Read-CiReinstallSnapshot([string]$ciRoot, [string]$controllerSid, [string]$identitySha, $plan, [switch]$AfterReanchor) {
+  $file = Join-Path $ciRoot 'secrets\ci-admission.connection.json'
+  $raw = Read-CiPrivateBytes $file $controllerSid
+  $current = Get-EffectiveCiPrincipal $null $raw $identitySha
+  $text = (New-Object Text.UTF8Encoding($false,$true)).GetString($raw)
+  $recordSha = Sha256Text $text
+  if ($current.bindingId -cne $plan.bindingId) { throw 'CI_CONNECTION_GENERATION_CHANGED' }
+  if ($plan.state -ceq 'current') {
+    if ($current.generation -ne $plan.bindingGeneration) { throw 'CI_CONNECTION_GENERATION_CHANGED' }
+    if ($current.receiptId -cne $plan.rebindReceiptId -or (-not $AfterReanchor -and $recordSha -cne $plan.recordSha256)) {
+      throw 'CI_CONNECTION_RECORD_CHANGED'
+    }
+  }
+  $token = Read-CiPrivateBytes (Join-Path $ciRoot 'secrets\ci-admission.token') $controllerSid
+  try {
+    if ((Get-CiAdmissionTokenPin $token) -cne $current.tokenPinSha256) { throw 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' }
+  } finally { [Array]::Clear($token,0,$token.Length) }
+  [pscustomobject]@{ file = $file; digest = $recordSha; record = ($text | ConvertFrom-Json)
+    connection = [pscustomobject][ordered]@{ state = 'current'; receiptSha256 = $plan.receiptSha256; recordSha256 = $recordSha
+      bindingId = $current.bindingId; bindingGeneration = $current.generation; rebindReceiptId = $current.receiptId } }
+}
+
+function Assert-CiRenewalIdle([string]$ciRoot, [string]$residentRoot = (Join-Path $ciRoot 'resident')) {
+  foreach ($rel in @('secrets\ci-admission.connection.json.pending','secrets\ci-admission.token.renew-pending',
+      'secrets\ci-admission.token.renew-new','secrets\ci-admission.connection.json.renew-new')) {
+    try { [void][IO.File]::GetAttributes((Join-Path $ciRoot $rel)) }
+    catch [IO.FileNotFoundException] { continue }
+    catch { throw 'CI_CONNECTION_TRANSACTION_UNKNOWN' }
+    throw 'CI_CONNECTION_TRANSACTION_IN_FLIGHT'
+  }
+  try { [void][IO.File]::GetAttributes((Join-Path $residentRoot 'secrets\resident-upgrade.token.renew-pending')) }
+  catch [IO.FileNotFoundException] { return }
+  catch [IO.DirectoryNotFoundException] {
+    if (-not [IO.Directory]::Exists($residentRoot)) { return }
+    throw 'CI_CONNECTION_TRANSACTION_UNKNOWN'
+  }
+  catch { throw 'CI_CONNECTION_TRANSACTION_UNKNOWN' }
+  throw 'CI_CONNECTION_TRANSACTION_IN_FLIGHT'
+}
+
+function Assert-CiReinstallBrokerStopped([string]$sc, [switch]$AllowAbsent) {
+  $state = & $sc queryex CluedCISwapBroker | Out-String
+  $code = $LASTEXITCODE
+  if ($AllowAbsent -and $code -eq 1060) { return }
+  if ($code -ne 0 -or $state -notmatch 'STATE\s*:\s*1\b' -or $state -notmatch 'PID\s*:\s*0\b') {
+    throw 'CI_CONNECTION_BROKER_NOT_STOPPED'
+  }
+}
+
+function Read-CiReinstallEvidence([string]$file, [string]$expectedSha256) {
+  for ($dir = [IO.Path]::GetDirectoryName($file); $dir; $dir = [IO.Path]::GetDirectoryName($dir)) {
+    if (([IO.File]::GetAttributes($dir) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'CI_CONNECTION_PROOF_PATH_REFUSED' }
+  }
+  try { $item = Get-Item -LiteralPath $file -Force -ErrorAction Stop }
+  catch [Management.Automation.ItemNotFoundException] { throw 'CI_CONNECTION_PROTECTED_PROOF_REQUIRED' }
+  if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.LinkType -eq 'HardLink') { throw 'CI_CONNECTION_PROOF_PATH_REFUSED' }
+  $h = [IO.File]::Open($file,'Open','Read','Read')
+  try {
+    $acl = $h.GetAccessControl()
+    $expected = New-Object Security.AccessControl.FileSecurity
+    $expected.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)')
+    if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne 'S-1-5-32-544' -or
+        $acl.GetSecurityDescriptorSddlForm('Access') -cne $expected.GetSecurityDescriptorSddlForm('Access') -or
+        $h.Length -lt 1 -or $h.Length -gt 4096) { throw 'CI_CONNECTION_PROOF_BOUNDARY_REFUSED' }
+    if ($expectedSha256) {
+      $sha = [Security.Cryptography.SHA256]::Create()
+      try { $actualSha256 = ([BitConverter]::ToString($sha.ComputeHash($h))).Replace('-', '').ToLowerInvariant() }
+      finally { $sha.Dispose() }
+      if ($actualSha256 -cne $expectedSha256) { throw 'CI_CONNECTION_PROOF_CHANGED' }
+      $h.Position = 0
+    }
+    $reader = [IO.StreamReader]::new($h, [Text.UTF8Encoding]::new($false,$true), $false, 1024, $true)
+    try { $text = $reader.ReadToEnd() } catch { throw 'CI_CONNECTION_PROOF_CHANGED' } finally { $reader.Dispose() }
+  } finally { $h.Dispose() }
+  try { $text | ConvertFrom-Json -ErrorAction Stop }
+  catch { throw 'CI_CONNECTION_PROOF_CHANGED' }
+}
+
+function Read-CiReinstallProof([string]$file, [string]$ciRoot, $plan, [string]$packageSha256, [string]$expectedSha256) {
+  $leaf = [IO.Path]::GetFileName($file)
+  if ([IO.Path]::GetDirectoryName($file) -cne $ciRoot -or $leaf -cnotmatch '^reinstall-ci-([0-9a-f]{64})\.json$') { throw 'CI_CONNECTION_PROOF_PATH_REFUSED' }
+  $fleetPlanSha = $Matches[1]
+  $proof = Read-CiReinstallEvidence $file $expectedSha256
+  if ($proof.contract -cne 'clued.independent-ci.ci-reinstall-proof/1' -or $proof.fleetPlanSha256 -cne $fleetPlanSha -or
+      $proof.packageManifestSha256 -cne $packageSha256 -or $proof.oldIdentitySha256 -cnotmatch '^[0-9a-f]{64}$' -or
+      $proof.newIdentitySha256 -cnotmatch '^[0-9a-f]{64}$' -or $proof.newRecordSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+      $proof.oldInstallationSha256 -cnotmatch '^[0-9a-f]{64}$' -or $proof.newInstallationSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+      $proof.identityFingerprint -cnotmatch '^[0-9a-f]{64}$' -or $proof.nodeId -cnotmatch '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$' -or
+      ($proof.plan | ConvertTo-Json -Compress) -cne ($plan | ConvertTo-Json -Compress) -or
+      $proof.connection.state -cne 'current' -or $proof.connection.receiptSha256 -cne $plan.receiptSha256 -or
+      $proof.connection.bindingId -cne $plan.bindingId -or $proof.connection.recordSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+      ($plan.state -ceq 'current' -and ($proof.connection.recordSha256 -cne $plan.recordSha256 -or
+        $proof.connection.bindingGeneration -ne $plan.bindingGeneration -or $proof.connection.rebindReceiptId -cne $plan.rebindReceiptId))) {
+    throw 'CI_CONNECTION_PROOF_CHANGED'
+  }
+  $proof
+}
+
+function Read-CiReinstallApplyProof([string]$file, [string]$stage, [string]$sha, [string]$applyPlanSha) {
+  if (-not $file -or $sha -cnotmatch '^[0-9a-f]{64}$') { throw 'CI_CONNECTION_PROTECTED_PROOF_REQUIRED' }
+  if ($file -cne (Join-Path $stage 'ci-reinstall-apply.json')) { throw 'CI_CONNECTION_PROOF_PATH_REFUSED' }
+  $proof = Read-CiReinstallEvidence $file $sha
+  if ($proof.contract -cne 'clued.independent-ci.ci-reinstall-apply/1' -or $proof.phase -cne 'before-windows-apply' -or
+      $proof.installPlanSha256 -cne $applyPlanSha -or $proof.linuxBProofSha256 -cnotmatch '^[0-9a-f]{64}$') {
+    throw 'CI_CONNECTION_APPLY_PROOF_CHANGED'
+  }
+  $at = $until = $serviceExpiry = [DateTimeOffset]::MinValue
+  $now = [DateTimeOffset]::UtcNow
+  if (-not [DateTimeOffset]::TryParse([string]$proof.observedAt, [ref]$at) -or
+      -not [DateTimeOffset]::TryParse([string]$proof.expiresAt, [ref]$until) -or
+      -not [DateTimeOffset]::TryParse([string]$proof.serviceExpiresAt, [ref]$serviceExpiry) -or
+      $at -gt $now -or $until -le $now -or $until -gt $at.AddMinutes(5) -or $until -gt $serviceExpiry) {
+    throw 'CI_CONNECTION_APPLY_PROOF_EXPIRED'
+  }
+  $proof
 }
 function Get-VerifyReadCode([Exception]$exception, [string]$prefix, [string]$fallback) {
   for ($i = 0; $exception -and $i -lt 16; $i++) {

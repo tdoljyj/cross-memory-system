@@ -5,8 +5,8 @@ on:
     inputs:
       mode:
         description: >-
-          Release mode. Only deploy, migrate and release change production, and each first
-          consumes an Owner Grant for this commit. preflight runs the read-only gate, backup
+          Release mode. deploy, migrate and release each first consume an Owner Grant for
+          this commit. preflight runs the read-only gate, backup
           creates the encrypted pre-migration backup, source-capture captures one reviewed
           storage client source, migrate applies the named migration files. deploy publishes
           the PDF, main application and Kooyumi Connect Workers as one controlled release.
@@ -15,10 +15,9 @@ on:
           first) and runs only when the three wrangler production configurations are byte for
           byte those of the commit the edge serves (otherwise use deploy). deploy and release
           roll the Workers back to the versions they served if a deploy or verification fails.
-          fleet-accept changes nothing but one pending request: it checks the acceptance
-          request of the published universal node package fleet-node-<fleet_version> and
-          opens the Owner's fleet.accept request for it; the Owner's approval on the
-          confirmation page is the acceptance.
+          fleet-accept checks the universal node package fleet-node-<fleet_version>.
+          It opens one Owner request, reads the private delivery projection, or confirms
+          the Release's attached acceptance file. The Owner approves on the confirmation page.
         type: choice
         required: true
         default: preflight
@@ -56,6 +55,18 @@ on:
           fleet-node-<version>.acceptance-request.json, 64 lowercase hex characters
         type: string
         default: ''
+      fleet_operation:
+        description: fleet-accept operation (empty/open, project or confirm)
+        type: string
+        default: ''
+      fleet_delivery_key:
+        description: Ephemeral X25519 reply key for project and confirm
+        type: string
+        default: ''
+      fleet_acceptance_sha256:
+        description: SHA-256 of the already attached acceptance file (confirm)
+        type: string
+        default: ''
       rollback_drill:
         description: >-
           release mode only: after every verification has passed, fail on purpose before
@@ -66,8 +77,7 @@ on:
 permissions:
   contents: read
 
-# fleet-accept opens a request and changes nothing else in production: it has
-# its own group, so it neither waits for a release nor holds one up.
+# Fleet delivery has its own group so it does not queue behind a Worker release.
 concurrency:
   group: ${{ inputs.mode == 'fleet-accept' && 'clued-cloud-fleet-accept' || 'clued-cloud-production-release' }}
   cancel-in-progress: false
@@ -83,7 +93,7 @@ jobs:
     # own timeout-minutes; tests/production-release-gate.test.mjs checks the sum).
     # Every other mode keeps 45: the migrate steps have no step timeout, and a
     # stalled migration must not hold the concurrency group longer than before.
-    # fleet-accept reads two small files and makes one database call: 10.
+    # Each fleet-accept operation has a 10-minute job limit.
     timeout-minutes: ${{ (inputs.mode == 'deploy' || inputs.mode == 'release') && 165 || inputs.mode == 'fleet-accept' && 10 || 45 }}
     # OwnerCredential §6.1: CLUED_MIGRATION_DATABASE_URL lives in this
     # environment (Owner setting: deployment branches main only). Its database
@@ -102,7 +112,7 @@ jobs:
         timeout-minutes: 5
         with:
           node-version: 24.19.0
-          cache: npm
+          cache: ${{ inputs.mode != 'fleet-accept' && 'npm' || '' }}
           cache-dependency-path: apps/clued-cloud/package-lock.json
       - name: Configure job temporary storage
         timeout-minutes: 2
@@ -117,6 +127,9 @@ jobs:
           ROLLBACK_DRILL: ${{ inputs.rollback_drill }}
           FLEET_VERSION: ${{ inputs.fleet_version }}
           FLEET_REQUEST_SHA256: ${{ inputs.fleet_request_sha256 }}
+          FLEET_OPERATION: ${{ inputs.fleet_operation }}
+          FLEET_DELIVERY_KEY: ${{ inputs.fleet_delivery_key }}
+          FLEET_ACCEPTANCE_SHA256: ${{ inputs.fleet_acceptance_sha256 }}
         run: |
           set -euo pipefail
           # Deploy is never implied: an unknown or missing mode stops here, before any
@@ -161,8 +174,8 @@ jobs:
               echo "::error::Unknown release mode '$RELEASE_MODE'" >&2
               exit 1 ;;
           esac
-          if [ "$RELEASE_MODE" != "fleet-accept" ] && [ -n "${FLEET_VERSION:-}${FLEET_REQUEST_SHA256:-}" ]; then
-            echo "::error::fleet_version and fleet_request_sha256 are fleet-accept inputs" >&2
+          if [ "$RELEASE_MODE" != "fleet-accept" ] && [ -n "${FLEET_VERSION:-}${FLEET_REQUEST_SHA256:-}${FLEET_OPERATION:-}${FLEET_DELIVERY_KEY:-}${FLEET_ACCEPTANCE_SHA256:-}" ]; then
+            echo "::error::fleet_* inputs require fleet-accept mode" >&2
             exit 1
           fi
           if [ "${ROLLBACK_DRILL:-false}" != "false" ] && [ "$RELEASE_MODE" != "release" ]; then
@@ -467,23 +480,23 @@ jobs:
           done
           node -e 'process.stdout.write(JSON.stringify({contract:"clued.production-migration-apply.v1",source_commit:process.env.GITHUB_SHA,applied:JSON.parse(process.argv[1]),finished_at:new Date().toISOString()},null,2)+"\n")' "$applied" \
             > "$evidence_dir/production-migrations.json"
-      # fleet-accept (Task 87d330d0; migration 20261125100000_fleet_accept_door_v1.sql).
-      # The first step holds no secret: it downloads the package's acceptance
-      # request and SHA256SUMS from its public Release without a token, checks
-      # them against the two inputs, this repository and main, and writes the
-      # door's input. The second gives that input to the door as COPY data. The
-      # door opens (or returns) the Owner's pending request and never approves:
-      # the run ends green with the confirmation link in its summary, and the
-      # Owner's approval on that page is the acceptance. Neither step installs
-      # or runs dependency code; scripts/ci/clued-fleet-accept.mjs uses Node only.
+      # The first step checks the public Release assets and prepares the request
+      # without credentials. The second uses the release database login and
+      # passes the checked request as COPY data. Packages before generation 25
+      # use the original request door. Newer packages can also read a private
+      # projection or confirm the attached acceptance file. The Owner approves
+      # through the confirmation page. Both steps use repository code only.
       - name: Check the published acceptance request
         if: ${{ inputs.mode == 'fleet-accept' }}
-        timeout-minutes: 3
+        timeout-minutes: 4
         working-directory: .
         env:
           NODE_OPTIONS: ''
           FLEET_VERSION: ${{ inputs.fleet_version }}
           FLEET_REQUEST_SHA256: ${{ inputs.fleet_request_sha256 }}
+          FLEET_OPERATION: ${{ inputs.fleet_operation }}
+          FLEET_DELIVERY_KEY: ${{ inputs.fleet_delivery_key }}
+          FLEET_ACCEPTANCE_SHA256: ${{ inputs.fleet_acceptance_sha256 }}
         run: |
           set -euo pipefail
           node scripts/ci/clued-fleet-accept.mjs input > "$RUNNER_TEMP/clued-fleet-accept-input.json"
@@ -498,6 +511,11 @@ jobs:
         run: |
           set -euo pipefail
           database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
+          delivery=$(node -e 'const input = JSON.parse(require("node:fs").readFileSync(process.argv[1])); process.stdout.write(input.delivery ? "yes" : "no")' "$RUNNER_TEMP/clued-fleet-accept-input.json")
+          if [ "$delivery" = yes ]; then
+            CLUED_FLEET_DATABASE_URL="$database_url" node scripts/ci/clued-fleet-accept.mjs delivery < "$RUNNER_TEMP/clued-fleet-accept-input.json"
+            exit
+          fi
           psql() { docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine psql "$database_url" -v ON_ERROR_STOP=1 -X "$@"; }
           err=$(mktemp "$RUNNER_TEMP/clued-fleet-accept-XXXXXX")
           trap 'rm -f -- "$err"' EXIT
@@ -780,8 +798,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: ${{ inputs.mode == 'source-capture' && 1 || 30 }}
       # Drill test project sync (Task 87d330d0; FABLE-drill-test-project-sync-20261124 §2.1 and its ruling).
-      # After a run that succeeded, in every mode: production's applied
-      # migration list (names, md5, order; the facts the committed ledger
+      # After a successful run, except fleet delivery projection/confirmation:
+      # export the applied migration list (names, md5, order; the facts the committed ledger
       # holds, no statement text, no secret), read in one read-only transaction
       # with the attestation login. The drill host brings the test project
       # clued-auth-test to this list before a drill (scripts/drill-test-sync.mjs);
@@ -789,6 +807,7 @@ jobs:
       # release; a missed one is caught up by the next.
       # Its own artifact, apart from the release evidence and the encrypted backup.
       - name: Export the applied production history
+        if: ${{ inputs.mode != 'fleet-accept' || (inputs.fleet_operation != 'project' && inputs.fleet_operation != 'confirm') }}
         timeout-minutes: 3
         continue-on-error: true
         env:
@@ -809,6 +828,7 @@ jobs:
             "$out/applied.rows" "$out/production-applied.json"
           rm -f "$out/applied.rows"
       - name: Publish the applied production history
+        if: ${{ inputs.mode != 'fleet-accept' || (inputs.fleet_operation != 'project' && inputs.fleet_operation != 'confirm') }}
         timeout-minutes: 2
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

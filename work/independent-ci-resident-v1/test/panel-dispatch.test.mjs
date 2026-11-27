@@ -7,8 +7,10 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { BACKOFF_MS, DISPATCH_EVERY_MS, DUTY_LOG_KEPT, MAX_PER_HOUR, MIN_GAP_MS, PANEL_REF, PANEL_REPO, PANEL_WORKFLOW, PanelDispatchState, PanelDispatcher, STAGGER_STEPS, STAGGER_STEP_MS,
   STALL_NOTIFY_MS, dispatchArgv, dutyOf, parseRuns, runsArgv, staggerMs, validatePanelDispatchConfig } from '../src/panel-dispatch.mjs';
-import { PANEL_DISPATCH_LANE_EVERY_MS } from '../src/companion-main.mjs';
-import { tempRoot } from './helpers.mjs';
+import { PANEL_DISPATCH_LANE_EVERY_MS, companionTrainDispatchPorts } from '../src/companion-main.mjs';
+import { rawPolicy, tempRoot } from './helpers.mjs';
+import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
+import { TRAIN_PROTOCOL_VERSION, trainEffectKey } from '../../actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs';
 
 const MIN = 60_000;
 const T0 = Date.parse('2026-11-04T10:00:00Z');
@@ -81,24 +83,23 @@ test('the runs answer: newest first, GitHub\'s Date header as the clock, anythin
     `HTTP/2.0 200 OK\r\n\r\n${JSON.stringify({ workflow_runs: [{ id: 3, event: 'e', status: 's', created_at: 'yesterday' }] })}`, '', null]) assert.equal(parseRuns(bad, 5), null);
 });
 
-test('who is on duty: ACTIVE, a fresh snapshot, its own name, no dual-active hold; every other state is a named reason', () => {
+test('who is on duty: ACTIVE and a fresh snapshot with its own name; old dual-active is ignored', () => {
   assert.equal(dutyOf(status(), 'node-a', T0), null);
   const cases = [[null, 'STATUS_UNREADABLE'], [status({}, T0 - 6 * MIN), 'STATUS_STALE'], [status({ node: null }), 'NODE_UNKNOWN'], [status({ node: { name: 'node-b', mode: 'ACTIVE' } }), 'NODE_NAME_MISMATCH'],
-    [status({ node: { name: 'node-a', mode: 'STANDBY' } }), 'NOT_ACTIVE'], [status({ node: { name: 'node-a', mode: 'UNCERTAIN' } }), 'NODE_ROLE_UNCERTAIN'],
-    [status({ intakePause: { until: T0 + MIN, holders: [{ holder: 'dual-active', until: T0 + MIN }] } }), 'DUAL_ACTIVE_HOLD']];
+    [status({ node: { name: 'node-a', mode: 'STANDBY' } }), 'NOT_ACTIVE'], [status({ node: { name: 'node-a', mode: 'UNCERTAIN' } }), 'NODE_ROLE_UNCERTAIN']];
   for (const [s, why] of cases) assert.equal(dutyOf(s, 'node-a', T0), why, why);
   // a HALT, a PAUSE or another intake pause does not stop the panel: it must keep showing exactly those outages
   assert.equal(dutyOf(status({ halt: { code: 'X_Y' }, paused: true, intakePause: { until: T0 + MIN, holders: [{ holder: 'owner' }] } }), 'node-a', T0), null);
+  assert.equal(dutyOf(status({ intakePause: { until: T0 + MIN, holders: [{ holder: 'dual-active', until: T0 + MIN }] } }), 'node-a', T0), null);
 });
 
-test('not on duty: not one call to GitHub (standby, stale snapshot, dual-active hold, unreadable status)', async t => {
+test('not on duty: not one call to GitHub (standby, stale snapshot, unreadable status)', async t => {
   const g = github();
   const n = await node(t, g, { status: now => status({ node: { name: 'node-a', mode: 'STANDBY' } }, now) });
   for (let i = 0; i < 5; i += 1) { assert.deepEqual(await n.d.step(), { skipped: 'NOT_ON_DUTY', reason: 'NOT_ACTIVE' }); g.advance(DISPATCH_EVERY_MS); }
   n.setStatus(null); assert.equal((await n.d.step()).reason, 'STATUS_UNREADABLE');
   n.setStatus(() => { throw new Error('unreadable'); }); assert.equal((await n.d.step()).reason, 'STATUS_UNREADABLE');
   n.setStatus(status({}, g.now - 10 * MIN)); assert.equal((await n.d.step()).reason, 'STATUS_STALE');
-  n.setStatus(status({ intakePause: { until: g.now + MIN, holders: [{ holder: 'dual-active' }] } }, g.now)); assert.equal((await n.d.step()).reason, 'DUAL_ACTIVE_HOLD');
   assert.equal(g.calls.length, 0);
 });
 
@@ -140,6 +141,48 @@ test('a run younger than four minutes holds the slot, whoever made it: the cron,
   assert.equal((await a.d.step()).skipped, 'RECENT_RUN');
   assert.equal(g.posts().length, 2);
   assert.ok(MIN_GAP_MS < DISPATCH_EVERY_MS);
+});
+
+test('train v2: two nodes with the same stale run list reserve one wake-up, including when the POST reply is lost', async t => {
+  const g = github({ dispatchMakesRun: false, dispatchFails: { code: 1, timedOut: true } });
+  const a = await node(t, g);
+  const b = await node(t, g, { name: 'node-b', status: now => status({ node: { name: 'node-b', mode: 'ACTIVE' } }, now) });
+  const effects = new Set();
+  const dispatch = async ({ repo, ref, subject }, send) => {
+    const key = trainEffectKey({ tenantId: 'tenant', projectId: 'project', repositoryId: repo, targetBranch: ref, action: 'workflow_dispatch', subject });
+    if (effects.has(key)) return;
+    effects.add(key);
+    await send();
+  };
+  a.d.dispatchTrainEffect = b.d.dispatchTrainEffect = dispatch;
+  a.d.trainProtocolVersion = b.d.trainProtocolVersion = TRAIN_PROTOCOL_VERSION;
+  const results = await Promise.all([a.d.step(), b.d.step()]);
+  assert.equal(effects.size, 1);
+  assert.equal(g.posts().length, 1);
+  assert.equal(results.filter(r => r.skipped === 'SHARED_EFFECT_HELD').length, 1);
+  assert.equal(results.filter(r => r.failed === 'DISPATCH_TIMEOUT').length, 1);
+});
+
+test('片 5 审查 1：正式伴随入口缺少共享端口时，两份 ACTIVE 快照都不能发旧 POST', async t => {
+  const countPosts = async protocolVersion => {
+    const g = github({ dispatchMakesRun: false, runs: [{ id: 42, event: 'schedule', at: T0 - 10 * MIN }] });
+    const a = await node(t, g);
+    const b = await node(t, g, { name: 'node-b', status: now => status({ node: { name: 'node-b', mode: 'ACTIVE' } }, now) });
+    for (const { d } of [a, b]) {
+      const root = await tempRoot(t);
+      const base = rawPolicy();
+      const policy = { ...base, contract: POLICY_CONTRACT_V8, train: { ...base.train, ...TRAIN_DEFAULTS, protocolVersion } };
+      await fs.mkdir(path.join(root, 'config'));
+      await fs.writeFile(path.join(root, 'config', 'policy.json'), JSON.stringify(policy));
+      Object.assign(d, await companionTrainDispatchPorts({
+        root, repo: REPO, ciSourceManifestSha256: policy.ciSourceManifestSha256, nodeProfileSha256: policy.nodeProfileSha256,
+      }));
+    }
+    await Promise.all([a.d.step(), b.d.step()]);
+    return g.posts().length;
+  };
+  assert.equal(await countPosts(1), 2, '协议 1 仍走标准派发');
+  assert.equal(await countPosts(TRAIN_PROTOCOL_VERSION), 0, '协议 2 零次旧 POST');
 });
 
 test('a node that is off by minutes: the runs are aged by GitHub\'s own clock', async t => {

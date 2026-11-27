@@ -81,7 +81,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { computeMechanicalPathsProven, parseMechanicalPolicy } from './component-version-integration-policy.mjs';
 import {isDeepStrictEqual} from "node:util";
-import {CONTROL_WORKFLOW_FILES,MERGE_RECONCILE_CONTROL_SOURCE,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
+import {CONTROL_WORKFLOW_FILES,CONTROL_WORKFLOW_SOURCE_PATH,CONTROL_WORKFLOW_SOURCE_SCHEMA,MERGE_RECONCILE_CONTROL_SOURCE,registeredControlWorkflowTransition} from './clued-control-workflow-source.mjs';
 import {ACTOR_WORKFLOW,registeredActorTransition as actorSourceTransition} from './clued-standard-runner-actor-source.mjs';
 import {PUBLISHER_FILES,registeredPublisherTransition} from "./clued-production-publisher-source.mjs";
 import {PUBLISHER_PR_QUALIFICATION_FILES,registeredPublisherPrQualificationTransition} from "./clued-publisher-qualification-source.mjs";
@@ -804,16 +804,6 @@ export function registeredPublisherGatedSuccessor(file, headText, baseText, prof
   return registeredPublisherTransition(profiles, workflowPath, headText, baseText).passed;
 }
 
-function trustedControlProfiles() {
-  try {
-    const location=new URL('./clued-control-workflow-sources.json',import.meta.url),info=fs.lstatSync(location);
-    if(!info.isFile()||info.isSymbolicLink()||info.size>524288)return null;
-    const bytes=fs.readFileSync(location),text=bytes.toString('utf8');
-    if(bytes.length>524288||!Buffer.from(text,'utf8').equals(bytes))return null;
-    return JSON.parse(text);
-  }catch{return null;}
-}
-
 function trustedPublisherProfiles() {
   // The fixed adjacent default-branch catalogue is not a PR proof registry.
   // A caller workspace, environment variable or PR file cannot select it.
@@ -1435,6 +1425,65 @@ async function fileAt(fetchImpl, env, repository, path, ref) {
   return Buffer.from(body.content, "base64").toString("utf8");
 }
 
+const CONTROL_REPOSITORY = "tdoljyj/cross-memory-system";
+const CONTROL_MAIN_REF = "refs/heads/main";
+const CONTROL_REGISTRY_LIMIT = 512 * 1024;
+const gitSha = value => typeof value === "string" && value.length === 40 && /^[0-9a-f]{40}$/.test(value);
+
+function controlGitRead(fetchImpl, env, route) {
+  return githubJson((url, init) => fetchImpl(url, { ...init, redirect: "error" }), env,
+    `/repos/${CONTROL_REPOSITORY}/git/${route}`, { allowMissing: true });
+}
+
+async function controlMainTip(fetchImpl, env) {
+  const ref = await controlGitRead(fetchImpl, env, "ref/heads/main");
+  return ref?.ref === CONTROL_MAIN_REF && ref.object?.type === "commit" && gitSha(ref.object?.sha)
+    ? ref.object.sha : null;
+}
+
+// Resolve the protected ref once and walk only its immutable Git objects.
+// The raw tree entry distinguishes a regular blob from a symlink or submodule.
+async function readControlRegistry(fetchImpl, env, repository) {
+  if (repository !== CONTROL_REPOSITORY) return { error: "control_registry_target_mismatch" };
+  try {
+    const tip = await controlMainTip(fetchImpl, env);
+    if (!tip) return { error: "control_registry_unavailable" };
+    const commit = await controlGitRead(fetchImpl, env, `commits/${tip}`);
+    if (!commit || commit.sha !== tip || !gitSha(commit.tree?.sha)) return { error: "control_registry_invalid_commit" };
+    let oid = commit.tree.sha, size;
+    const path = CONTROL_WORKFLOW_SOURCE_PATH.split("/");
+    for (const [i, segment] of path.entries()) {
+      const tree = await controlGitRead(fetchImpl, env, `trees/${oid}`);
+      if (!tree || tree.sha !== oid || tree.truncated !== false || !Array.isArray(tree.tree)) return { error: "control_registry_invalid_tree" };
+      const entries = tree.tree.filter(entry => entry?.path === segment);
+      if (!entries.length) return { error: "control_registry_missing" };
+      const [entry] = entries, leaf = i === path.length - 1;
+      if (entries.length !== 1 || !gitSha(entry.sha) || entry.type !== (leaf ? "blob" : "tree") ||
+        entry.mode !== (leaf ? "100644" : "040000")) return { error: "control_registry_invalid_tree" };
+      oid = entry.sha;
+      if (leaf) size = entry.size;
+    }
+    if (!Number.isSafeInteger(size) || size < 1 || size > CONTROL_REGISTRY_LIMIT)
+      return { error: "control_registry_invalid_blob" };
+    const blob = await controlGitRead(fetchImpl, env, `blobs/${oid}`);
+    if (!blob) return { error: "control_registry_unavailable" };
+    if (blob.sha !== oid || blob.encoding !== "base64" || blob.size !== size || typeof blob.content !== "string" ||
+      blob.content.length > 2 * CONTROL_REGISTRY_LIMIT) return { error: "control_registry_invalid_blob" };
+    const encoded = blob.content.replace(/[\r\n]/g, "");
+    if (encoded.length !== 4 * Math.ceil(blob.size / 3)) return { error: "control_registry_invalid_blob" };
+    const bytes = Buffer.from(encoded, "base64"), text = bytes.toString("utf8");
+    if (bytes.length !== blob.size || bytes.toString("base64") !== encoded ||
+      !Buffer.from(text, "utf8").equals(bytes) || workflowBlob(text) !== oid) return { error: "control_registry_invalid_blob" };
+    let registry;
+    try { registry = JSON.parse(text); } catch { return { error: "control_registry_incompatible" }; }
+    if (registry?.schema !== CONTROL_WORKFLOW_SOURCE_SCHEMA || registry.repository !== repository ||
+      registry.default_branch !== "main") return { error: "control_registry_incompatible" };
+    return { tip, blob: oid, registry };
+  } catch {
+    return { error: "control_registry_unavailable" };
+  }
+}
+
 // The one generated-file list, as bytes of the accepted gate's own checkout
 // (the default branch), never PR input. Native reads exactly these bytes.
 const MECHANICAL_POLICY_FILE = new URL('../../config/clued-mechanical-files.json', import.meta.url);
@@ -1510,9 +1559,10 @@ export function workflowBasePath(file) {
 
 // Workflow findings of a pull request: `gate` are refused outright (the gate
 // guard above), `owner` need an Owner Grant on the head commit (ownerReviewFindings).
-export async function workflowFindings(fetchImpl, env, repository, files, headSha, baseSha) {
+async function collectWorkflowFindings(fetchImpl, env, repository, files, headSha, baseSha, mainTarget = true) {
   const gate = [];
   const owner = [];
+  let control;
   for (const file of files) {
     if (file.status === "removed" || !WORKFLOW_FILE.test(file.filename ?? "")) continue;
     const head = await fileAt(fetchImpl, env, repository, file.filename, headSha);
@@ -1530,8 +1580,12 @@ export async function workflowFindings(fetchImpl, env, repository, files, headSh
       (file.status==='added'||basePath===file.filename)?actorSourceTransition(file.filename,head):null;
     if(actorKnown&&!actorSource?.passed)gate.push(`workflow_gate:${file.filename}:actor_Source_FullRoles_not_registered`);
     const controlKnown=Object.hasOwn(CONTROL_WORKFLOW_FILES,file.filename)||Object.hasOwn(CONTROL_WORKFLOW_FILES,file.previous_filename??'');
-    const controlSource=controlKnown?registeredControlWorkflowTransition(trustedControlProfiles(),file.filename,head,base,{repository,change:file}):null;
-    if(controlKnown&&!controlSource.passed)gate.push(`workflow_gate:${file.filename}:control_Source_not_registered`);
+    if (controlKnown) {
+      control ??= mainTarget ? await readControlRegistry(fetchImpl, env, repository) : { error: "control_registry_target_mismatch" };
+    }
+    const controlSource = controlKnown && control.registry
+      ? registeredControlWorkflowTransition(control.registry, file.filename, head, base, { repository, change: file }) : null;
+    if (controlKnown && !controlSource?.passed) gate.push(`workflow_gate:${file.filename}:${control.error ?? "control_Source_not_registered"}`);
     const registeredPublisherTransition = file.filename === PRODUCTION_PUBLISHER_WORKFLOW &&
       registeredPublisherGatedSuccessor(file, head, base, trustedPublisherProfiles());
     const placement=(file.filename===PLACEMENT_WORKFLOW || file.previous_filename===PLACEMENT_WORKFLOW) &&
@@ -1562,6 +1616,11 @@ export async function workflowFindings(fetchImpl, env, repository, files, headSh
     const base = await fileAt(fetchImpl, env, repository, gone, baseSha);
     if (base !== null && workflowHasEnvironment(base)) owner.push(`${gone}:environment_workflow_removed`);
   }
+  return { gate, owner, control };
+}
+
+export async function workflowFindings(fetchImpl, env, repository, files, headSha, baseSha) {
+  const { gate, owner } = await collectWorkflowFindings(fetchImpl, env, repository, files, headSha, baseSha);
   return { gate, owner };
 }
 
@@ -1953,10 +2012,11 @@ async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, 
 //     re-verification) refuses it until main is merged in: a new head, a new
 //     grant.
 export const BASE_COMPARE_LIMIT = 300;
-export async function baseTipCompare(fetchImpl, env, repository, pr) {
+export async function baseTipCompare(fetchImpl, env, repository, pr, expectedTip) {
   const branch = await githubJson(fetchImpl, env, `/repos/${repository}/branches/${encodeURIComponent(pr.base.ref)}`);
   const tip = branch && branch.commit && branch.commit.sha;
   if (typeof tip !== "string" || !/^[0-9a-f]{40}$/.test(tip)) throw new Error(`the tip of ${pr.base.ref} could not be read`);
+  if (expectedTip && tip !== expectedTip) return { tip };
   if (tip === pr.head.sha) return { tip, upToDate: true, paths: [], truncated: false };
   const body = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${tip}...${pr.head.sha}`);
   const files = body && Array.isArray(body.files) ? body.files : [];
@@ -1998,23 +2058,32 @@ export function parseMainMergeExternalId(value) {
 // then needed, as before): the newest successful kooyumi-main-merge check of
 // the clued-admission App on this head names this PR, the head's parents are
 // exactly [from, main], and main (tip) still contains main.
-export async function mainMergeSource(fetchImpl, env, repository, prNumber, headSha, tip) {
+export async function mainMergeSource(fetchImpl, env, repository, prNumber, headSha, tip, { proof = false } = {}) {
   if (!/^[0-9a-f]{40}$/.test(headSha ?? "") || !/^[0-9a-f]{40}$/.test(tip ?? "")) return null;
   const listed = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${headSha}/check-runs?check_name=${MAIN_MERGE_CHECK}&filter=all`);
   const attested = (Array.isArray(listed?.check_runs) ? listed.check_runs : [])
     .filter((c) => c?.name === MAIN_MERGE_CHECK && c.head_sha === headSha && Number(c.app?.id) === ADMISSION_APP_ID
       && c.status === "completed" && c.conclusion === "success")
     .sort((a, b) => Number(b.id) - Number(a.id))
-    .map((c) => parseMainMergeExternalId(c.external_id)).find((a) => a && a.pr === prNumber);
+    .map((c) => ({ ...parseMainMergeExternalId(c.external_id), checkRunId: Number(c.id) }))
+    .find((a) => a.pr === prNumber);
   if (!attested) return null;
   const commit = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${headSha}`);
   const parents = Array.isArray(commit?.parents) ? commit.parents.map((p) => p?.sha) : [];
   if (commit?.sha !== headSha || parents.length !== 2 || parents[0] !== attested.from || parents[1] !== attested.main) return null;
+  let compare = 'identical';
   if (attested.main !== tip) {
     const onMain = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${attested.main}...${tip}`);
     if (onMain?.status !== "ahead" && onMain?.status !== "identical") return null;
+    if (proof && (onMain.status !== 'ahead' || onMain.base_commit?.sha !== attested.main
+      || onMain.merge_base_commit?.sha !== attested.main || onMain.behind_by !== 0
+      || !Number.isSafeInteger(onMain.ahead_by) || onMain.ahead_by < 1)) return null;
+    compare = onMain.status;
   }
-  return attested;
+  const { checkRunId, ...source } = attested;
+  if (!proof) return source;
+  return Number.isSafeInteger(checkRunId) && checkRunId > 0
+    ? { ...source, checkRunId, headSha, tip, compare, parents } : null;
 }
 
 // For a head the PR's claim has not authorized: when it only merged main into
@@ -2188,10 +2257,19 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
   const changed = await changedPathsOfPullRequest(fetchImpl, env, repository, pr.number);
   outcome.changed_paths = changed.paths;
   const truncated = Number.isInteger(pr.changed_files) && changed.file_count < pr.changed_files;
-  const workflowResult = await workflowFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha);
+  const workflowResult = await collectWorkflowFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha,
+    pr.base.ref === "main" && pr.base.repo?.full_name === CONTROL_REPOSITORY);
   const gateFindingsOfPr = [...workflowResult.gate, ...await policyFileFindings(fetchImpl, env, repository, changed.files, pr.head.sha)];
   if (gateFindingsOfPr.length) outcome.workflow_gate_findings = gateFindingsOfPr;
-  const tipCompare = await baseTipCompare(fetchImpl, env, repository, pr);
+  const control = workflowResult.control;
+  if (control?.error) {
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push(...gateFindingsOfPr);
+    return outcome;
+  }
+  if (control) outcome.control_registry = { main_sha: control.tip, blob_sha: control.blob };
+  const tipCompare = await baseTipCompare(fetchImpl, env, repository, pr, control?.tip);
+  if (control && control.tip !== tipCompare.tip) return refuseControlMain(outcome, "control_registry_main_changed");
   const allPaths = [...new Set([...changed.paths, ...tipCompare.paths])].sort();
   const protectedPaths = effectiveProtectedPaths(mode.policy);
   const ownerFindings = protectedPathFindings(allPaths, protectedPaths);
@@ -2240,7 +2318,7 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
   if (!reference) {
     if (!claimAdvisory) {
       outcome.verdict = "REJECTED";
-      outcome.reasons.push(`pr_task_binding_${outcome.claim_binding?.binding_status ?? 'unknown'}`);
+      outcome.reasons.push(`pr_task_binding_${outcome.claim_binding?.binding_status ?? 'unknown'}`, ...gateFindingsOfPr);
       return outcome;
     }
     // Merge Admission v0.1 §5.1: work_claim: advise admits it and says so.
@@ -2385,6 +2463,14 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
     if (!now || !now.head || now.head.sha !== pr.head.sha) {
       throw new Error(`the pull request's head moved from ${pr.head.sha} to ${now && now.head ? now.head.sha : "(unknown)"} during admission; the next run judges the new head`);
     }
+    if (control) {
+      if (now.state !== "open" || now.base?.ref !== "main" ||
+        now.base.repo?.full_name !== CONTROL_REPOSITORY || now.base.sha !== pr.base.sha)
+        return refuseControlMain(outcome, "control_registry_target_mismatch");
+      const tip = await controlMainTip(fetchImpl, env).catch(() => null);
+      if (tip !== control.tip)
+        return refuseControlMain(outcome, tip ? "control_registry_main_changed" : "control_registry_unavailable");
+    }
   }
   // Owner Decision 2ea795e4: a head that contains the base branch's tip can
   // merge, so only the claim holding the merge slot may have it.
@@ -2397,6 +2483,14 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
   else if (rules.merge_slot === "advise") outcome.merge_slot = { ...slot, observed: slot.state, state: "not_required" };
   else outcome.merge_slot = slot;
   outcome.admitted = outcome.verdict === "ADMITTED";
+  return outcome;
+}
+
+function refuseControlMain(outcome, code) {
+  const reason = `workflow_gate:${CONTROL_WORKFLOW_SOURCE_PATH}:${code}`;
+  outcome.verdict = "REJECTED";
+  outcome.reasons.push(reason);
+  (outcome.workflow_gate_findings ??= []).push(reason);
   return outcome;
 }
 

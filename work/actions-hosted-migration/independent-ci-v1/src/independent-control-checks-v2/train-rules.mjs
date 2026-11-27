@@ -81,7 +81,7 @@ export async function readMainRules(github, appId) {
 
 // Only a confirmed terminal failure blocks queue participation. A newer rerun
 // supersedes an old failure; unrelated checks and another App's checks do not.
-export function requiredCheckFailure(rules, inventory, headSha, appId) {
+export function requiredCheckFailure(rules, inventory, headSha, appId, { include = () => true } = {}) {
   rulesetFacts(rules, appId);
   check(inventory?.complete === true && Array.isArray(inventory.checks), REQUIRED_CHECKS_UNREADABLE);
   const seen = new Set();
@@ -94,6 +94,7 @@ export function requiredCheckFailure(rules, inventory, headSha, appId) {
   }
   const failed = []; let uncertain = false;
   for (const r of rules.filter(r => r.type === 'required_status_checks')) for (const required of r.parameters.required_status_checks) {
+    if (!include(required)) continue;
     check(typeof required.context === 'string' && (required.integration_id == null || required.integration_id === -1
       || (Number.isSafeInteger(required.integration_id) && required.integration_id > 0)), RULESET_UNREADABLE);
     // A check pinned to an App is read from that App's check runs (below), whichever App it is: the same name pinned to another App

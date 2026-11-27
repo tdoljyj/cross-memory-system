@@ -496,6 +496,9 @@ test('production release deploys only when deploy is chosen explicitly', () => {
   for (const mode of ['preflight', 'backup', 'deploy', 'release']) {
     assert.notEqual(run({ RELEASE_MODE: mode, FLEET_VERSION: '1.4.0' }), 0, mode);
     assert.notEqual(run({ RELEASE_MODE: mode, FLEET_REQUEST_SHA256: 'a'.repeat(64) }), 0, mode);
+    for (const key of ['FLEET_OPERATION', 'FLEET_DELIVERY_KEY', 'FLEET_ACCEPTANCE_SHA256']) {
+      assert.notEqual(run({ RELEASE_MODE: mode, [key]: 'unexpected' }), 0, `${mode}: ${key}`);
+    }
   }
 });
 
@@ -525,9 +528,13 @@ test('fleet-accept only checks the published request and opens the Owner request
   assert.doesNotMatch(check.text, /secrets\.|GITHUB_TOKEN|GH_TOKEN/);
   assert.match(check.text, /FLEET_VERSION: \$\{\{ inputs\.fleet_version \}\}\n/);
   assert.match(check.text, /FLEET_REQUEST_SHA256: \$\{\{ inputs\.fleet_request_sha256 \}\}\n/);
+  assert.match(check.text, /FLEET_OPERATION: \$\{\{ inputs\.fleet_operation \}\}\n/);
+  assert.match(check.text, /FLEET_DELIVERY_KEY: \$\{\{ inputs\.fleet_delivery_key \}\}\n/);
+  assert.match(check.text, /FLEET_ACCEPTANCE_SHA256: \$\{\{ inputs\.fleet_acceptance_sha256 \}\}\n/);
   assert.match(check.text, /node scripts\/ci\/clued-fleet-accept\.mjs input > "\$RUNNER_TEMP\/clued-fleet-accept-input\.json"/);
   // The door gets that file as COPY data; no input is spliced into shell or SQL text.
   assert.match(open.text, /CLUED_MIGRATION_DATABASE_URL: \$\{\{ secrets\.CLUED_MIGRATION_DATABASE_URL \}\}/);
+  assert.match(open.text, /if \[ "\$delivery" = yes \]; then\n +CLUED_FLEET_DATABASE_URL="\$database_url" node scripts\/ci\/clued-fleet-accept\.mjs delivery < "\$RUNNER_TEMP\/clued-fleet-accept-input\.json"\n +exit\n +fi\n +psql\(\)/);
   assert.match(open.text, /-c "copy door_input\(line\) from stdin with \(format csv, delimiter e'\\x01', quote e'\\x02'\)"/);
   assert.match(open.text, /-c "select clued_private\.fleet_accept_door_v1\(line::jsonb\)::text from door_input"/);
   assert.match(open.text, /< "\$RUNNER_TEMP\/clued-fleet-accept-input\.json"/);
@@ -2042,7 +2049,7 @@ function configPathFindings(source) {
   return [...new Set(findings)];
 }
 
-test('every mode ends by exporting the applied production history, read-only, and the export cannot fail a release', () => {
+test('the applied production history export is read-only, skips delivery projections and confirmations, and cannot fail a release', () => {
   const [exportStep, publishStep] = APPLIED_EXPORT_STEPS.map((name) => releaseSteps.find((s) => s.name === name));
   assert.ok(exportStep && publishStep, 'the release workflow has no applied-history export');
   for (const mode of RELEASE_MODES) {
@@ -2053,13 +2060,19 @@ test('every mode ends by exporting the applied production history, read-only, an
     // The export failing, or the upload, leaves the release as it was.
     for (const failAt of APPLIED_EXPORT_STEPS) assert.equal(simulateRelease(inputs, failAt).conclusion, 'success', `${mode}: ${failAt}`);
   }
+  for (const fleet_operation of ['project', 'confirm']) {
+    const run = simulateRelease({ mode: 'fleet-accept', fleet_operation });
+    assert.equal(run.conclusion, 'success', fleet_operation);
+    assert.deepEqual(run.ran.slice(-3), [FLEET_CHECK_STEP, FLEET_OPEN_STEP, 'Preserve release evidence'], fleet_operation);
+  }
+  assert.deepEqual(simulateRelease({ mode: 'fleet-accept', fleet_operation: 'open' }).ran.slice(-3),
+    ['Preserve release evidence', ...APPLIED_EXPORT_STEPS]);
   // A failed release exports nothing: the test project follows only what a successful run reports.
   const failed = simulateRelease({ mode: 'release' }, 'Deploy Clued production Worker');
   for (const name of APPLIED_EXPORT_STEPS) assert.ok(!failed.ran.includes(name), name);
   for (const step of [exportStep, publishStep]) {
     assert.match(step.text, /\n {8}continue-on-error: true\n/);
     assert.match(step.text, /\n {8}timeout-minutes: \d+\n/);
-    assert.equal(step.condition, null, `${step.name} runs in every mode`);
   }
   // Read-only: the attestation login, one read-only transaction, the committed query; names, md5 and order only.
   assert.deepEqual([...exportStep.text.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]), ['CLUED_ATTESTATION_DATABASE_URL_V2']);

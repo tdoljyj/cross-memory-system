@@ -17,7 +17,59 @@ import * as selection from './ci-required-selection.mjs';
 import reporterStream, { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+import { executorEntryAllowed } from './clued-merge-executor.mjs';
+
 const log = () => {};
+
+test('列车 v2 的未签名写拒绝和单目标未结批约束由正式数据库套件执行', () => {
+  const files = SUITE_COMMANDS['production-schema'].flatMap(({ argv }) => argv).filter(arg => arg.endsWith('.test.mjs'));
+  for (const name of ['未签名的 Binding 无法领用或绕过首次入队闸口', '目标分支只有一个未结束批次，按作用域隔离']) {
+    assert.ok(files.some(file => readFileSync(path.join(ROOT, 'apps/clued-cloud', file), 'utf8').includes(name)), name);
+  }
+});
+
+test('train v2: privileged executor entry only accepts a new main push or an Owner dispatch', () => {
+  const workflow = readFileSync(path.join(ROOT, '.github/workflows/clued-merge-executor.yml'), 'utf8');
+  const job = workflow.slice(workflow.indexOf('  execute:'), workflow.indexOf('    steps:'));
+  const expression = job.match(/    if: >-\r?\n((?:      .+\r?\n)+)/)[1];
+  const allowed = Function('github', 'vars', 'return (' + expression + ')');
+  const retried = { event_name: 'push', ref: 'refs/heads/main', run_attempt: 2 };
+  assert.equal(allowed(retried, {}), true, '协议 1 的作业入口沿用原判断');
+  assert.equal(allowed(retried, { CLUED_MERGE_TRAIN_PROTOCOL_VERSION: '2' }), false);
+  assert.match(job, /github\.event_name == 'push'/);
+  assert.match(job, /github\.event_name == 'workflow_dispatch' && github\.actor == github\.repository_owner/);
+  assert.match(job, /github\.triggering_actor == github\.repository_owner/);
+});
+
+test('train v2: slot workflow admits only a fresh PR completion or fresh Owner dispatch', () => {
+  const workflow = readFileSync(path.join(ROOT, '.github/workflows/clued-merge-slot-ci.yml'), 'utf8');
+  const expression = workflow.match(/    if: >-\r?\n((?:      .*\r?\n)+)/)[1];
+  const allowed = Function('github', 'vars', 'return (' + expression + ')');
+  const base = { ref: 'refs/heads/main', run_attempt: 1, repository_owner: 'owner', actor: 'owner', triggering_actor: 'owner',
+    event: { action: 'completed', workflow_run: { event: 'pull_request', run_attempt: 1 } } };
+  const dispatch = { ...base, event_name: 'workflow_dispatch' };
+  const completion = { ...base, event_name: 'workflow_run', actor: 'contributor', triggering_actor: 'contributor' };
+  const scenarios = [
+    [{ ...dispatch, actor: 'agent', triggering_actor: 'agent' }, false],
+    [{ ...dispatch, triggering_actor: 'agent' }, false],
+    [{ ...dispatch, run_attempt: 2 }, false],
+    [{ ...completion, run_attempt: 2 }, false],
+    [{ ...completion, ref: 'refs/heads/feature' }, false],
+    [{ ...completion, event: { ...completion.event, action: 'requested' } }, false],
+    [dispatch, true], [completion, true],
+    [{ ...completion, event: { action: 'completed', workflow_run: { event: 'pull_request_target', run_attempt: 2 } } }, true],
+  ];
+  for (const [github, expected] of scenarios) {
+    assert.equal(Boolean(allowed(github, { CLUED_MERGE_TRAIN_PROTOCOL_VERSION: '2' })), expected, JSON.stringify(github));
+    assert.equal(Boolean(allowed(github, {})), true, '原 PR 完成与 dispatch 路径在协议 1 保持准入');
+    assert.equal(executorEntryAllowed({
+      GITHUB_REF: github.ref, GITHUB_RUN_ATTEMPT: String(github.run_attempt), GITHUB_REPOSITORY_OWNER: github.repository_owner,
+      GITHUB_ACTOR: github.actor, GITHUB_TRIGGERING_ACTOR: github.triggering_actor, GITHUB_EVENT_NAME: github.event_name,
+    }, { ...github.event, repository: { owner: { login: github.repository_owner } } }), expected, JSON.stringify(github));
+  }
+  assert.equal(executorEntryAllowed({ GITHUB_REF: 'refs/heads/main', GITHUB_RUN_ATTEMPT: '1', GITHUB_EVENT_NAME: 'push' }), true);
+  assert.equal(executorEntryAllowed({ GITHUB_REF: 'refs/heads/main', GITHUB_RUN_ATTEMPT: '2', GITHUB_EVENT_NAME: 'push' }), false);
+});
 
 test('U6 真时钟欠账清单和许可清单分别触发全选', () => {
   for (const file of ['config/test-clock-debt.txt', 'scripts/ci/test-clock-allow.json']) {
@@ -995,13 +1047,15 @@ test('every Node suite runs when any file its tests reach through imports change
     'admission-self-tests': SUITE_COMMANDS['admission-self-tests'][0].argv.filter((arg) => arg.endsWith('.mjs'))
       .map((file) => path.join(ROOT, file)),
   };
+  const missing = [];
   for (const [id, files] of Object.entries(entries)) {
     const reached = closure(files);
     assert.ok(reached.length > files.length, id);
     for (const file of reached) {
-      assert.ok(selectSuites('ci-suites', [file]).suites.includes(id), `${id} reaches ${file}, which does not select it`);
+      if (!selectSuites('ci-suites', [file]).suites.includes(id)) missing.push(`${id} reaches ${file}, which does not select it`);
     }
   }
+  assert.deepEqual(missing, []);
   // The examples the round-2 review found.
   assert.ok(selectSuites('ci-suites', ['scripts/runner/clued-runner-job-started.mjs']).suites.includes('resident-node'));
   assert.ok(selectSuites('ci-suites', ['work/actions-hosted-migration/independent-ci-v1/src/proof.mjs']).suites.includes('admission-self-tests'));
@@ -1233,7 +1287,8 @@ test('a migration selects the production-schema check; ordinary documentation se
     ['production-schema']);
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/tests/work-claims-pr-end-release-db.test.mjs']).suites,
     ['production-schema']);
-  for (const file of ['ci-connection-self-db.test.mjs', 'fixtures/ci-connection-self-v1.json']) {
+  for (const file of ['ci-connection-self-db.test.mjs', 'fixtures/ci-connection-self-v1.json',
+    'merge-train-rollout-db.test.mjs', 'merge-train-handover-db.test.mjs', 'merge-train-landing-db.test.mjs']) {
     assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/tests/' + file]).suites, ['production-schema']);
   }
   const scanStart = SUITE_COMMANDS['production-schema'].find(({ argv }) => argv[1] === '--test' && argv.includes('{db-concurrency}'));
@@ -1242,7 +1297,9 @@ test('a migration selects the production-schema check; ordinary documentation se
   assert.deepEqual(expandArgv(scanStart.argv, { cwd: scanStart.cwd }), ['node', '--test', '--test-concurrency=4',
     'tests/ci-scan-start-native-db.test.mjs', 'tests/ci-scan-start-batch-key-db.test.mjs', 'tests/ci-node-binding-rebind-db.test.mjs',
     'tests/ci-connection-self-db.test.mjs', 'tests/binding-role-single-reader-db.test.mjs',
-    'tests/integration-runtime-derivation-db.test.mjs', 'tests/db-security-hygiene-db.test.mjs', 'tests/storage-runtime-authority-db.test.mjs', 'tests/work-claims-pr-end-release-db.test.mjs']);
+    'tests/integration-runtime-derivation-db.test.mjs', 'tests/db-security-hygiene-db.test.mjs',
+    'tests/storage-runtime-authority-db.test.mjs', 'tests/work-claims-pr-end-release-db.test.mjs',
+    'tests/merge-train-rollout-db.test.mjs', 'tests/merge-train-handover-db.test.mjs', 'tests/merge-train-landing-db.test.mjs']);
   const docs = selectSuites('migration-verify', ['docs/README.md']);
   assert.deepEqual(docs.suites, []);
   assert.match(docs.reason, /no file this check covers changed/);
@@ -1428,17 +1485,21 @@ test('the required primaries have no conditional step that a run can skip, excep
     'the clued-cloud-tests job names its suite in the workflow and runs no other: add a new suite to ci-suites');
   assert.deepEqual(Object.keys(SUITES['migration-verify']), ['production-schema'],
     'the migration-verify job names its suite in the workflow and runs no other: add a new suite to ci-suites');
+  const verdict = 'Confirm merge train test failure';
   const expected = {
     'clued-cloud-tests': { 'Install from lockfile': "steps.select.outputs.run_clued_cloud == 'true'",
-      'Lint, ledger, typecheck, build and unit tests': "steps.select.outputs.run_clued_cloud == 'true'" },
-    'ci-suites': {},
+      'Lint, ledger, typecheck, build and unit tests': "steps.select.outputs.run_clued_cloud == 'true'", [verdict]: '>-' },
+    'ci-suites': { [verdict]: '>-' },
     'migration-verify': { 'Install from lockfile': "steps.select.outputs.run_production_schema == 'true'",
       'Verify migrations on the production schema': "steps.select.outputs.run_production_schema == 'true'",
-      'Not affected': "steps.select.outputs.run_production_schema != 'true'" },
+      'Not affected': "steps.select.outputs.run_production_schema != 'true'", [verdict]: '>-' },
   };
   const actual = Object.fromEntries(Object.keys(expected).map((name) => [name, Object.fromEntries(jobs.find((job) => job.name === name)
     .steps.filter((step) => step.run !== undefined && step.condition !== null).map((step) => [step.name, step.condition]))]));
   assert.deepEqual(actual, expected);
+  const workflow = readFileSync(path.join(ROOT, file), 'utf8');
+  const confirmation = /- name: Confirm merge train test failure\n *if: >-\n *\$\{\{ failure\(\) && steps\.test_verdict\.outputs\.terminal == 'true' &&\n *github\.event_name == 'push' && github\.ref == 'refs\/heads\/clued-train\/staging' \}\}/g;
+  assert.equal([...workflow.matchAll(confirmation)].length, 3);
 });
 
 test('a missing application dependency fails when the job provided them and is skipped, saying why, when it did not', () => {
@@ -2371,7 +2432,7 @@ function windowsJob() {
   const job = text.slice(text.indexOf('\n  ci-suites-windows:\n') + 1);
   const published = /&& '([a-z-]+)' \|\| '[a-z-]+-skipped' \}\}\n/.exec(job)[1];
   const labels = /\n {4}runs-on: \[([^\]]+)\]\n/.exec(job)[1].split(',').map((label) => label.trim());
-  const [, check, root] = /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected (\S+) --root (\S+)\n {10}exit \$LASTEXITCODE\n/.exec(job);
+  const [, check, root] = /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected (\S+) --root (\S+)\n {10}\$status = \$LASTEXITCODE\n/.exec(job);
   return { published, platform: labels.includes('Windows') ? 'win32' : 'linux', check, root };
 }
 
@@ -2453,11 +2514,12 @@ test('the Windows job of the workflow selects and runs with the trusted selectio
   const labels = /\n {4}runs-on: \[([^\]]+)\]\n/.exec(job)[1].split(',').map((label) => label.trim());
   for (const label of ['self-hosted', 'Windows', 'trust-internal', 'cap-node24', 'cap-python312']) assert.ok(labels.includes(label), label);
   assert.ok(!labels.includes('Linux') && !/ubuntu|windows-latest/.test(job), 'no Linux route and no GitHub-hosted runner');
-  assert.match(job, /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected ci-suites --root candidate\n {10}exit \$LASTEXITCODE\n/);
+  assert.match(job, /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected ci-suites --root candidate\n {10}\$status = \$LASTEXITCODE\n[\s\S]*? {10}exit \$status\n/);
   // Resolve the base, export its trusted files locally, and run the selection's own entry point.
   assert.deepEqual([...job.matchAll(/\n {6}- name: (.+)\n(?:(?! {6}- ).*\n)*? {8}run: /g)].map((m) => m[1]),
     ['Resolve push baseline before loading trusted commands', 'Export the trusted base (selection and commands)',
-      'Select and run the suites declared for Windows'], 'only the trusted selection flow runs');
+      'Select and run the suites declared for Windows', 'Confirm merge train test failure'], 'only the trusted selection flow runs');
+  assert.match(job, /failure\(\) && steps\.test_verdict\.outputs\.terminal == 'true' &&\n\s+github\.event_name == 'push' && github\.ref == 'refs\/heads\/clued-train\/staging'/);
   assert.doesNotMatch(job, /continue-on-error|setup-node|npm /);
 });
 
