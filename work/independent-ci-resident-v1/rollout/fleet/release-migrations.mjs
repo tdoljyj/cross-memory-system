@@ -63,16 +63,13 @@ const probes = {
   deliveryRecipients: procedure('fleet_delivery_registry_v1(jsonb)', 'jsonb', `p.provolatile = 's' and ${callerCanExecute}
     and ${bodyContains('jsonb_build_array(identity.user_id,identity.anchor_binding_id,c,recipients)')}`),
   previousInterfaceGate: `${relation('fleet_accepted_v1', { previous_interface_evidence: 'jsonb' })}
-    and ${relation('fleet_interface_proof_key_v1', { singleton: 'boolean', secret: 'bytea' })}
-    and (select relrowsecurity from pg_class where oid=to_regclass('clued_private.fleet_interface_proof_key_v1'))
-    and not exists (select 1 from pg_roles r
-      where r.rolname in ('anon', 'authenticated', 'service_role', 'clued_worker_gateway')
-        and has_table_privilege(r.oid,to_regclass('clued_private.fleet_interface_proof_key_v1'),
-          'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'))
     and (case when to_regtype('clued_private.fleet_accepted_v1') is not null then
       ${procedure('fleet_require_previous_interface_v1(jsonb,clued_private.fleet_accepted_v1)', 'jsonb',
     `p.provolatile = 's' and ${callerCanExecute}
-      and ${bodyContains("extensions.hmac(convert_to(raw,'UTF8'),secret_key,'sha256')")}
+      and ${bodyContains("proof jsonb:=p_input->'previousInterfaceEvidence';")}
+      and ${bodyContains("proof->'candidate' is distinct from p_input->'candidate'")}
+      and ${bodyContains("proof->>'migrationsSha256' is distinct from p_input->>'migrationsSha256'")}
+      and ${bodyContains('order by version desc limit 1;')}
       and ${bodyContains("raise exception 'fleet_previous_interface_predecessor_changed'")}`)} else false end)
     and ${procedure('fleet_delivery_seal_v1(jsonb)', 'jsonb', `${callerCanExecute}
       and ${bodyContains('proof:=clued_private.fleet_require_previous_interface_v1(p_input,a);')}

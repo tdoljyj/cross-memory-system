@@ -33,7 +33,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from 'node:os';
 import path from 'node:path';
-import { sealInterfaceEvidence } from './clued-fleet-interface-evidence.mjs';
+import { verifyInterfaceEvidence } from './clued-fleet-interface-evidence.mjs';
 import { acceptanceBytes, acceptanceOf } from '../../work/independent-ci-resident-v1/src/fleet-acceptance.mjs';
 import { acceptResourceOf, readAnswer, statusReader } from '../../work/independent-ci-resident-v1/rollout/fleet/accept-door.mjs';
 import { previousInterfaceCheck } from '../../work/independent-ci-resident-v1/rollout/fleet/previous-interface-check.mjs';
@@ -194,33 +194,20 @@ function generationVersions() {
   }).trim().split('\n').map(tag => tag.trim().slice('fleet-node-'.length));
 }
 
-// Tags supply immutable commits. The accepted row, independently checked
-// again in the seal transaction, supplies the identity of the sealed package.
-export async function replayPreviousInterfaces(env, { fetchImpl = fetch, isAncestor = gitIsAncestor, isPinned = pinnedGeneration,
-  listVersions = generationVersions, readStatus = statusReader(), replay = previousInterfaceCheck, clock = Date.now } = {}) {
-  const run = runInputs(env);
-  if (!gated(run.version) || !/^[0-9a-f]{40}$/.test(env.GITHUB_SHA ?? '') ||
-      !/^[1-9][0-9]{0,19}$/.test(env.GITHUB_RUN_ID ?? '') || env.GITHUB_RUN_ATTEMPT !== '1') {
-    refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_RUN_REFUSED');
-  }
-  const fetchRequest = version => download(assetUrl(run.repository, version, requestAssetName(version)), fetchImpl);
-  const bytes = await fetchRequest(run.version);
-  if (hash(bytes) !== run.requestSha256) refuse('FLEET_ACCEPT_REQUEST_SHA256_MISMATCH');
-  const request = readRequest(JSON.parse(bytes));
-  if (request.version !== run.version || request.repository !== run.repository || !isAncestor(request.commit) || !isPinned(request)) {
-    refuse('FLEET_DELIVERY_SUBJECT_CHANGED');
-  }
-  const candidate = deliverySubject(request, run.requestSha256);
-  const versions = listVersions().filter(version => gated(version) && version < run.version).sort().reverse();
+// Tags supply immutable commits and the published acceptance status selects
+// the sealed predecessor. The seal transaction rechecks the latest row.
+async function readPreviousInterfacePackage(candidate, { fetchImpl = fetch, isPinned = pinnedGeneration,
+  listVersions = generationVersions, readStatus = statusReader() } = {}) {
+  const versions = listVersions().filter(version => gated(version) && version < candidate.version).sort().reverse();
   for (const version of versions) {
     let priorBytes;
-    try { priorBytes = await fetchRequest(version); }
+    try { priorBytes = await download(assetUrl(candidate.repository, version, requestAssetName(version)), fetchImpl); }
     catch (error) {
       if (error.message.startsWith('FLEET_ACCEPT_ASSET_NOT_ON_RELEASE:')) continue;
       throw error;
     }
     const priorRequest = readRequest(JSON.parse(priorBytes));
-    if (priorRequest.repository !== run.repository || priorRequest.version !== version || !isPinned(priorRequest)) {
+    if (priorRequest.repository !== candidate.repository || priorRequest.version !== version || !isPinned(priorRequest)) {
       refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_SUBJECT_REFUSED');
     }
     const prior = deliverySubject(priorRequest, hash(priorBytes));
@@ -228,14 +215,32 @@ export async function replayPreviousInterfaces(env, { fetchImpl = fetch, isAnces
     const status = readAnswer(await readStatus(resource), { resource, requestSha256: prior.requestSha256 });
     if (status.kind !== 'accepted' || !status.sealedAcceptanceSha256) continue;
     const { repository, commit, archiveSha256, requestSha256 } = prior;
-    const previous = { repository, version, commit, archiveSha256, requestSha256, acceptanceSha256: status.sealedAcceptanceSha256 };
-    const result = await replay({ commit: candidate.commit, previous, timeoutMs: 12 * 60_000 });
-    if (result?.status !== 'PASS' || result.commit !== candidate.commit || result.previousCommit !== previous.commit ||
-        !HEX64.test(result.migrationsSha256 ?? '')) refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_RUN_REFUSED');
-    return { status: 'PASS', candidate, previous, migrationsSha256: result.migrationsSha256,
-      checkedAt: clock(), workflowCommit: env.GITHUB_SHA, runId: env.GITHUB_RUN_ID };
+    return { repository, version, commit, archiveSha256, requestSha256, acceptanceSha256: status.sealedAcceptanceSha256 };
   }
   return refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_PREDECESSOR_MISSING');
+}
+
+export async function replayPreviousInterfaces(env, deps = {}) {
+  const { fetchImpl = fetch, isAncestor = gitIsAncestor, isPinned = pinnedGeneration,
+    replay = previousInterfaceCheck, clock = Date.now } = deps;
+  const run = runInputs(env);
+  if (!gated(run.version) || !/^[0-9a-f]{40}$/.test(env.GITHUB_SHA ?? '') ||
+      !/^[1-9][0-9]{0,19}$/.test(env.GITHUB_RUN_ID ?? '') || env.GITHUB_RUN_ATTEMPT !== '1') {
+    refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_RUN_REFUSED');
+  }
+  const bytes = await download(assetUrl(run.repository, run.version, requestAssetName(run.version)), fetchImpl);
+  if (hash(bytes) !== run.requestSha256) refuse('FLEET_ACCEPT_REQUEST_SHA256_MISMATCH');
+  const request = readRequest(JSON.parse(bytes));
+  if (request.version !== run.version || request.repository !== run.repository || !isAncestor(request.commit) || !isPinned(request)) {
+    refuse('FLEET_DELIVERY_SUBJECT_CHANGED');
+  }
+  const candidate = deliverySubject(request, run.requestSha256);
+  const previous = await readPreviousInterfacePackage(candidate, deps);
+  const result = await replay({ commit: candidate.commit, previous, timeoutMs: 12 * 60_000 });
+  if (result?.status !== 'PASS' || result.commit !== candidate.commit || result.previousCommit !== previous.commit ||
+      !HEX64.test(result.migrationsSha256 ?? '')) refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_RUN_REFUSED');
+  return { status: 'PASS', candidate, previous, migrationsSha256: result.migrationsSha256,
+    checkedAt: clock(), workflowCommit: env.GITHUB_SHA, runId: env.GITHUB_RUN_ID };
 }
 
 async function verifyDeliverySource(archive, request, candidate) {
@@ -473,8 +478,10 @@ export async function main(argv = process.argv.slice(2), env = process.env,
   if (command === "delivery") {
     try {
       const input = JSON.parse(typeof io.stdin === 'string' ? io.stdin : await readStream(io.stdin ?? process.stdin));
-      const evidence = input.delivery.operation === 'confirm' ? sealInterfaceEvidence(env, input.delivery) : undefined;
-      const result = await qualifyDelivery(input, deps.database ?? ((operation, input) => callDeliveryDatabase(env, operation, input)), Date.now, evidence);
+      const evidence = input.delivery.operation === 'confirm'
+        ? await verifyInterfaceEvidence(env, input.delivery, candidate => readPreviousInterfacePackage(candidate, deps))
+        : undefined;
+      const result = await qualifyDelivery(input, deps.database ?? ((operation, input) => callDeliveryDatabase(env, operation, input)), deps.clock, evidence);
       if (input.delivery.operation === 'open') return main(['report'], env, { ...io, stdin: JSON.stringify(result) });
       io.write(deliveryWorkflowPacket({ operation: input.delivery.operation, candidate: input.delivery.candidate, result },
         input.delivery.transportKey, input.delivery.candidate.requestSha256) + '\n');

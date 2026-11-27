@@ -120,13 +120,15 @@ jobs:
           FLEET_REQUEST_SHA256: ${{ inputs.fleet_request_sha256 }}
         run: node scripts/ci/clued-fleet-accept.mjs previous-interfaces
   release:
+    # Confirm can reach the protected environment only through this run's replay.
     needs: fleet-interface-check
     if: >-
       !cancelled() &&
       github.ref == 'refs/heads/main' &&
       github.actor == github.repository_owner &&
       github.triggering_actor == github.repository_owner &&
-      (inputs.mode != 'fleet-accept' || inputs.fleet_operation != 'confirm' || needs.fleet-interface-check.result == 'success')
+      (inputs.mode != 'fleet-accept' || inputs.fleet_operation != 'confirm' ||
+        (needs.fleet-interface-check.result == 'success' && needs.fleet-interface-check.outputs.evidence != ''))
     runs-on: ubuntu-24.04
     # deploy and release: at least every step plus the rollback (each has its
     # own timeout-minutes; tests/production-release-gate.test.mjs checks the sum).
@@ -572,6 +574,8 @@ jobs:
       # use the original request door. Newer packages can also read a private
       # projection or confirm the attached acceptance file. The Owner approves
       # through the confirmation page. Both steps use repository code only.
+      # For confirm, the delivery command checks the replay against the checked
+      # release assets, current predecessor and committed migrations before sealing.
       - name: Check the published acceptance request
         if: ${{ inputs.mode == 'fleet-accept' }}
         timeout-minutes: 4
@@ -595,7 +599,6 @@ jobs:
           CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
           CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
           FLEET_INTERFACE_RESULT: ${{ needs.fleet-interface-check.outputs.evidence }}
-          CLUED_FLEET_INTERFACE_PROOF_KEY: ${{ inputs.fleet_operation == 'confirm' && secrets.CLUED_FLEET_INTERFACE_PROOF_KEY || '' }}
         run: |
           set -euo pipefail
           database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')

@@ -1,32 +1,17 @@
--- Only the protected release job can attest to the prior package's replay.
--- The corresponding 32-byte key is provisioned separately through the release
--- credential boundary. Until then every new seal fails closed.
-create table clued_private.fleet_interface_proof_key_v1 (
-  singleton boolean primary key default true check(singleton),
-  secret bytea not null check(octet_length(secret)=32)
-);
-alter table clued_private.fleet_interface_proof_key_v1 enable row level security;
-revoke all on clued_private.fleet_interface_proof_key_v1 from public,anon,authenticated,service_role,clued_worker_gateway;
-
+-- The protected release job enforces successful replay. The seal transaction
+-- checks the evidence bindings and current predecessor, then records the evidence.
 alter table clued_private.fleet_accepted_v1 add column previous_interface_evidence jsonb;
 
 create function clued_private.fleet_require_previous_interface_v1(p_input jsonb, p_accepted clued_private.fleet_accepted_v1)
 returns jsonb language plpgsql stable set search_path='' as $$
 declare
-  raw text:=p_input->'previousInterfaceEvidence'->>'payload';
-  mac text:=p_input->'previousInterfaceEvidence'->>'mac';
-  secret_key bytea;
-  proof jsonb;
+  proof jsonb:=p_input->'previousInterfaceEvidence';
   predecessor jsonb;
   prior clued_private.fleet_accepted_v1%rowtype;
   now_ms numeric:=extract(epoch from statement_timestamp())*1000;
 begin
-  if raw is null or octet_length(raw)>4096 or coalesce(mac,'') !~ '^[0-9a-f]{64}$' then
+  if jsonb_typeof(proof) is distinct from 'object' or octet_length(proof::text)>4096 then
     raise exception 'fleet_previous_interface_evidence_required' using errcode='22023'; end if;
-  select secret into secret_key from clued_private.fleet_interface_proof_key_v1 where singleton;
-  if secret_key is null or extensions.hmac(convert_to(raw,'UTF8'),secret_key,'sha256') is distinct from decode(mac,'hex') then
-    raise exception 'fleet_previous_interface_evidence_untrusted' using errcode='42501'; end if;
-  proof:=raw::jsonb;
   predecessor:=proof->'previous';
   if proof->>'contract' is distinct from 'clued.fleet-previous-interface.v1'
       or proof->>'status' is distinct from 'PASS'

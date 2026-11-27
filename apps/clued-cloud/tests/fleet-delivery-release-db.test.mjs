@@ -6,7 +6,6 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { qualifyDelivery } from '../../../scripts/ci/clued-fleet-accept.mjs';
-import { sealInterfaceEvidence } from '../../../scripts/ci/clued-fleet-interface-evidence.mjs';
 import { acceptResourceOf, readAnswer } from '../../../work/independent-ci-resident-v1/rollout/fleet/accept-door.mjs';
 import { fleetDeliveryPreflight } from '../../../work/independent-ci-resident-v1/rollout/fleet/delivery-preflight.mjs';
 import { firstInstallCheck } from '../../../work/independent-ci-resident-v1/rollout/fleet/install.mjs';
@@ -148,15 +147,13 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
     await heartbeat(primary);
     await heartbeat(standby);
     const operations = { project: 'fleet_delivery_registry_v1', open: 'fleet_accept_door_v1', confirm: 'fleet_delivery_seal_v1' };
-    const proofKey = randomBytes(32).toString('hex');
     const migrationsSha256 = sha('fixture migration tree');
     let previous;
-    const proofFor = (delivery, overrides = {}) => {
-      const result = { status: 'PASS', candidate: delivery.candidate, previous, migrationsSha256,
-        checkedAt: sqlNow, workflowCommit: 'a'.repeat(40), runId: '1234', ...overrides };
-      return sealInterfaceEvidence({ GITHUB_SHA: result.workflowCommit, GITHUB_RUN_ID: result.runId, GITHUB_RUN_ATTEMPT: '1',
-        CLUED_FLEET_INTERFACE_PROOF_KEY: proofKey, FLEET_INTERFACE_RESULT: JSON.stringify(result) }, delivery, () => migrationsSha256);
-    };
+    const evidenceFor = ({ candidate, acceptanceSha256 }, overrides = {}) => ({
+      migrationsSha256,
+      previousInterfaceEvidence: { contract: 'clued.fleet-previous-interface.v1', status: 'PASS', candidate, previous,
+        migrationsSha256, acceptanceSha256, checkedAt: sqlNow, workflowCommit: 'a'.repeat(40), runId: '1234', ...overrides },
+    });
     const targetOf = node => dbValue(admin, 'select clued_private.fleet_node_target_v1($1,$2) v', [owner, node]);
     const dbErrors = [];
     let afterProject, loseSealResponse = false, openError;
@@ -179,7 +176,7 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
         assert.deepEqual(await targetOf(primary), { status: 'pending_seal' }, '仅上传接受文件不能发布节点目标');
       }
       const result = await qualifyDelivery(input, (op, arg) => database(release, op, arg), sqlClock,
-        op === 'confirm' ? proofFor(input.delivery) : undefined);
+        op === 'confirm' ? evidenceFor(input.delivery) : undefined);
       if (op === 'confirm' && loseSealResponse) throw new Error('测试传输丢失封存响应');
       return result;
     };
@@ -377,17 +374,14 @@ test('真实舰队资产和迁移贯通预检、接受、封存与节点入口',
     await approve(priorRequest.request_id);
     previous = { ...prior, acceptanceSha256: sha('prior seal') };
     await admin.query("update clued_private.fleet_accepted_v1 set sealed_at=now(),acceptance_sha256=$1 where version='g000025'", [previous.acceptanceSha256]);
-    await admin.query("insert into clued_private.fleet_interface_proof_key_v1(secret) values(decode($1,'hex'))", [proofKey]);
-
-    await t.test('直接确认拒绝别的候选、迁移、上一包和伪造签名', async () => {
-      const otherCandidate = proofFor({ ...input.delivery, candidate: { ...input.delivery.candidate, commit: 'c'.repeat(40) } });
-      const correct = proofFor(input.delivery);
-      const otherPredecessor = proofFor(input.delivery, { previous: { ...previous, requestSha256: sha('other request') } });
-      for (const [proof, error] of [[otherCandidate, /evidence_mismatch/],
+    await t.test('数据库拒绝候选、迁移或最新上一封存包不符的证据', async () => {
+      const otherCandidate = evidenceFor({ ...input.delivery, candidate: { ...input.delivery.candidate, commit: 'c'.repeat(40) } });
+      const correct = evidenceFor(input.delivery);
+      const otherPredecessor = evidenceFor(input.delivery, { previous: { ...previous, requestSha256: sha('other request') } });
+      for (const [evidence, error] of [[otherCandidate, /evidence_mismatch/],
         [{ ...correct, migrationsSha256: sha('other migrations') }, /evidence_mismatch/],
-        [otherPredecessor, /predecessor_changed/],
-        [{ ...correct, previousInterfaceEvidence: { ...correct.previousInterfaceEvidence, mac: '0'.repeat(64) } }, /evidence_untrusted/]]) {
-        await assert.rejects(qualifyDelivery(input, directDatabase, sqlClock, proof), error);
+        [otherPredecessor, /predecessor_changed/]]) {
+        await assert.rejects(qualifyDelivery(input, directDatabase, sqlClock, evidence), error);
         assert.deepEqual(await targetOf(primary), { status: 'pending_seal' });
       }
     });

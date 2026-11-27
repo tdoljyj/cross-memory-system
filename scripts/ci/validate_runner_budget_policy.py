@@ -422,14 +422,14 @@ EXACT_SOURCE_CANDIDATE_SUCCESSORS = {'gitleaks.yml': {'kind': 'owner',
                              'successor': {'control_sha256': '6002ab6e9058f16a2a216be0f10076e2f0c740e8817478d7454f322ae9345a0c',
                                             'jobs': {'report': '4c829014acf6eb4d0e7f829d37e630036e07869cc68f2122f7ce58191e60f0ca'}}},
  # Task 788c2598：从 d7da5f592 的发布作业 19f39da1… 接续。兼容回放走自托管，
- # 既有托管作业仍用原路由、触发、权限和时限，仅接收本次回放输出。
+ # 既有托管作业只接受本次成功回放的输出，沿用原路由、触发、权限和时限。
  'clued-cloud-production-release.yml': {'kind': 'legacy',
                                        'predecessor_commit': 'd7da5f5926f8720d1c2675c7224f417a1da359c2',
-                                       'workflow_sha256': '79fb47fc38db94c2b302e9e58e0c4cbb6e42979a7952e384ec4ccc73ff0ddd22',
+                                       'workflow_sha256': 'f06f66dbf80536eb98c028ba993a3215884633e7b66c3c61a8ae562b1ccb1c4f',
                                        'predecessor': {'control_sha256': '5fe5907c67e557a5ffdae9ffc7b3da3b724e015ae11b5945a1cb5564d932e58f',
                                                        'jobs': {'release': 'a595f8ca810d915fd2921a6ba43d277f51da0e65b9def36679c0dea3ca120626'}},
                                        'successor': {'control_sha256': '88a1449203b74f0dc64517fbef507434e4d037bae485a95e4bde82905cb40193',
-                                                     'jobs': {'release': '31c1c0551ebdc7ab4543bec8f32082872fe93e0597e6fe3e906cd4e178ffbe03'}}}}
+                                                     'jobs': {'release': 'f8a44f7544f4b18a0895465fd21e048ee2bdc1b8dc1e55bfad9afb982531eb43'}}}}
 
 # The preceding clued-merge-slot-ci.yml pin recorded the home-linux-01 retirement
 # (Owner Decision 2907d858). That change removed the one "Clued handover hook
