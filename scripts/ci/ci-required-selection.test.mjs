@@ -1287,6 +1287,18 @@ test('单独改发布、构建、节点入口或迁移文件都执行真实舰�
   }
 });
 
+test('单独改 bootstrap 或安装入口会执行 Windows 舰队安装前置检查', () => {
+  const resident = 'work/independent-ci-resident-v1';
+  const testFile = 'rollout/test/fleet-delivery-windows.test.mjs';
+  for (const input of ['rollout/fleet/bootstrap.ps1', 'rollout/fleet/install.mjs', 'windows/install-resident.ps1',
+    'reinstall/launcher/generate.py', testFile]) {
+    const { suites } = selectSuites('ci-suites', [`${resident}/${input}`], 'win32');
+    assert.ok(suites.includes('resident-node'), input);
+  }
+  assert.ok(SUITE_COMMANDS['resident-node'].some(({ cwd, argv }) =>
+    cwd === resident && expandArgv(argv, { cwd: path.join(ROOT, cwd) }).includes(testFile)), testFile);
+});
+
 test('a migration selects the production-schema check; ordinary documentation selects only the application check', (t) => {
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/supabase/migrations/20261101000000_x.sql']).suites,
     ['production-schema']);
