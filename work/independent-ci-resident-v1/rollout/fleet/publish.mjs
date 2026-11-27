@@ -944,7 +944,7 @@ export async function seal(options) {
         readFleetRegistry: deps.readFleetRegistry ?? readers.readFleetRegistry,
         readNodeEvidence: deps.readNodeEvidence ?? readers.readNodeEvidence });
       remaining(limit);
-      check(result.status === 'PASS' || (packageGenerationOf(r.version) === 25 && result.status === 'TRANSITION_PASS'),
+      check(['PASS', 'TRANSITION_PASS'].includes(result.status),
         'FLEET_DELIVERY_PREFLIGHT_REFUSED', { phase, candidate, ...result });
       return result;
     };

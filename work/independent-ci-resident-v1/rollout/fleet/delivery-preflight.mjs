@@ -110,14 +110,15 @@ export async function fleetDeliveryPreflight({ candidate, requirements, readFlee
   const first = firstRead.rows;
   const rows = first.filter(row => !inactive.has(row.state));
   if (rows.length === 0) return refused('FLEET_REGISTRY_EMPTY');
-  const transition = packageGenerationOf(candidate.version) === 25;
+  // A node with a known installed package still needs complete, fresh evidence.
+  const transition = !rows.some(({ generation, evidence }) => positive(generation) || positive(evidence?.packageGeneration));
   if (transition && (rows.length !== 2 || requirements?.standardReinstall !== true)) return refused('FLEET_TRANSITION_SUBJECT_INCOMPLETE');
   const nodes = await Promise.all(rows.map(async row => {
     const unproved = reason => ({ id: row.id, node: row.name, upgrade: unknown(reason), reinstall: unknown(reason) });
     if (transition) {
       const problem = transitionProblem(row, clock());
       if (problem) return { ...unproved(problem), transition: { status: 'FAIL', reasons: [problem] } };
-      return { ...unproved('GEN25_TRANSITION_ONLY'), transition: { status: 'PASS', recheckAtInstall: [
+      return { ...unproved('NODE_TRANSITION_ONLY'), transition: { status: 'PASS', recheckAtInstall: [
         'ciConnection', 'connectionCarry', 'acl', 'processClearance', 'continuation', 'currentPointer', 'installReceipt', 'linuxFacts', 'host',
       ] } };
     }
