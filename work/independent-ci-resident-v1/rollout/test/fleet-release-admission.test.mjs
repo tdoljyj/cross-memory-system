@@ -202,7 +202,7 @@ test('红灯、跳过、规则集缩水、错误身份、换头、备份失败�
     [{ migrateFailure: 'backup' }, 'FLEET_MIGRATION_RUN_FAILED', ['read', 'migrate']],
     [{ applied: files, badDigest: true }, 'FLEET_MIGRATION_LEDGER_CONFLICT', ['read']],
     [{ applied: files, brokenInterface: 'delivery' }, 'FLEET_MIGRATION_INTERFACE_MISMATCH', ['read']],
-    [{ badReadback: true }, 'FLEET_MIGRATION_READBACK_REFUSED', ['read', 'migrate', 'apply', 'apply', 'apply']],
+    [{ badReadback: true }, 'FLEET_MIGRATION_READBACK_REFUSED', ['read', 'migrate', ...files.map(() => 'apply')]],
   ]) await t.test(JSON.stringify(options), async t => {
     const w = await fixture(t, options);
     await assert.rejects(w.prepare(), { code });

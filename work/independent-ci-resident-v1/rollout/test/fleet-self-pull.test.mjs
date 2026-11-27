@@ -22,7 +22,6 @@ import { Upgrader } from '../../upgrader/src/upgrader-main.mjs';
 import { FakeDoor, FakeLinux, FakeResident, FakeWindows, fakeClock, installGeneration1, testConfig } from '../../upgrader/test/fixtures.mjs';
 import { renewalWatch } from '../../src/connection-renewal.mjs';
 import { parseVersions, readVersionState, versionNotices } from '../../src/status.mjs';
-import { acceptanceBytes } from '../../src/fleet-acceptance.mjs';
 
 const repository = 'tdoljyj/cross-memory-system';
 const now = Date.parse('2026-11-25T08:00:00Z');
