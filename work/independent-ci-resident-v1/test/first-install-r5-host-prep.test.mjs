@@ -67,6 +67,22 @@ Add-Type -AssemblyName System.Core
 `;
 const POLICY_FNS = ['Get-Key', 'Get-ExecutionPolicyCheck', 'Get-ExecutionPolicyBaseline', 'Set-ExecutionPolicyValue', 'Get-PolicyProbeStart', 'Invoke-PolicyProbe',
   'Get-PolicyProbeResult', 'Invoke-ExecutionPolicyBaseline'];
+// The probe uses its temp directory as USERPROFILE and drops PSModuleAnalysisCachePath. WinPS 5.1 then looks for the
+// cache under that profile, outside the cache warmed by hosted-required.yml. Seed the disposable profile so cold module
+// discovery on the hosted image does not consume the probe deadline. Keep the real -File launch and all seven variables.
+const seedPolicyProbeCache = dir => `
+$cacheFile = 'Microsoft\\Windows\\PowerShell\\ModuleAnalysisCache'
+$source = $env:PSModuleAnalysisCachePath
+if (-not [IO.File]::Exists($source)) {
+  $appData = [Environment]::GetFolderPath('LocalApplicationData')
+  if ($appData) { $source = Join-Path $appData $cacheFile }
+}
+if ([IO.File]::Exists($source)) {
+  $target = Join-Path ${psLiteral(dir)} ('AppData\\Local\\' + $cacheFile)
+  $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+  [IO.File]::Copy($source, $target)
+}
+`;
 // The main flow's text (Invoke-HostPreparation), for the order of its steps.
 const mainFlow = () => { const text = fs.readFileSync(HOST, 'utf8'); return text.slice(text.indexOf('function Invoke-HostPreparation')); };
 
@@ -123,6 +139,7 @@ test('baseline: the probe is held-record.mjs\'s start (executable, arguments, th
   const heldEnv = [...m[3].matchAll(/(\w+): (?:'([^']*)'|(\w+))/g)].map(x => [x[1], x[2] !== undefined ? x[2].replaceAll('\\\\', '\\') : `<${x[3]}>`]);
   const r = ps(`${PRELUDE}
 ${load(HOST, POLICY_FNS, ['PowerShellExe'])}
+${seedPolicyProbeCache(dir)}
 $probe = Join-Path ${psLiteral(dir)} 'probe.ps1'
 $start = Get-PolicyProbeStart $PowerShellExe $probe ${psLiteral(dir)}
 $run = Invoke-PolicyProbe $start
@@ -167,6 +184,7 @@ test('baseline: the step writes only when it must, then proves the result with t
   const sub = `Software\\Clued-r5-policy-step-${process.pid}-${Date.now()}`;
   const r = ps(`${PRELUDE}
 ${load(HOST, POLICY_FNS, ['PowerShellExe'])}
+${seedPolicyProbeCache(dir)}
 $list = { param($machine, $lm) foreach ($s in @(@('MachinePolicy', $machine), @('UserPolicy', 'Undefined'), @('Process', 'Undefined'), @('CurrentUser', 'Undefined'), @('LocalMachine', $lm))) { [pscustomobject]@{ Scope = $s[0]; ExecutionPolicy = $s[1] } } }
 $cu = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, [Microsoft.Win32.RegistryView]::Registry64)
 $val = { param($k) $x = $cu.OpenSubKey($k); if ($null -eq $x) { return '<no key>' }; try { [string]$x.GetValue('ExecutionPolicy') } finally { $x.Dispose() } }
