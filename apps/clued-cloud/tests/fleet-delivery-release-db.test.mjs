@@ -222,12 +222,7 @@ async function seedPreviousSchema(t) {
     await bind(id(10), 'fixture-release');
     await role(id(10), 'release-door');
     await admin.query('select clued_private.release_door_install_v1($1)', [repo]);
-    for (const [node, binding, name, state, home] of [
-      [primary, id(11), 'fixture-primary', 'pending', project],
-      [standby, id(12), 'fixture-standby', 'pending', otherProject],
-      [retired, id(13), 'fixture-retired', 'retired', project],
-      [revoked, id(16), 'fixture-revoked', 'revoked', otherProject],
-    ]) {
+    const registerNode = async (node, binding, name, state, home) => {
       await bind(binding, name);
       if (state === 'revoked') await admin.query('update public.clued_agent_bindings set revoked_at=now() where id=$1', [binding]);
       await admin.query(`insert into clued_private.ci_nodes_v1
@@ -235,6 +230,14 @@ async function seedPreviousSchema(t) {
          identity_fingerprint,encryption_fingerprint,state,registration_digest,idempotency_key)
         values($1,$2,$3,$4,$5,'{}',$6,'{}','{}',case when $9='revoked' then now() end,$7,$8,$9,$10,$5)`,
       [node, owner, home, binding, name, sha('profile'), sha(node), sha(binding), state, sha(name)]);
+    };
+    for (const node of [
+      [primary, id(11), 'fixture-primary', 'pending', project],
+      [standby, id(12), 'fixture-standby', 'pending', otherProject],
+      [retired, id(13), 'fixture-retired', 'retired', project],
+      [revoked, id(16), 'fixture-revoked', 'revoked', otherProject],
+    ]) {
+      await registerNode(...node);
     }
     await role(id(11), 'ci-admission');
     const heartbeat = async (node, age = '0 seconds') => admin.query(`insert into clued_private.ci_node_liveness_v1
@@ -251,7 +254,7 @@ async function seedPreviousSchema(t) {
     await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
       [owner, JSON.stringify({ sub: owner, role: 'authenticated', session_id: id(6), aal: 'aal1',
         amr: [{ method: 'password', timestamp: 1795000000 }] })]);
-    return { admin, anon, human, heartbeat, connect, upgrade: async () => {
+    return { admin, anon, human, heartbeat, registerNode, connect, upgrade: async () => {
       assert.ok(names.includes(sealMigration), `缺迁移 ${sealMigration}`);
       for (const name of names.filter(name => name >= sealMigration)) await migrate(name);
     }, close };
@@ -1137,10 +1140,13 @@ test('舰队故障交班与安装恢复', async t => {
     const pkg = await seedSealedPackage(db, 27, installedSource);
     const sql = (s, p) => dbValue(admin, s, p);
     const now = async () => (await sql('select clock_timestamp() v')).toISOString();
+    const third = id(9);
+    const bindings = new Map([[primary, id(11)], [standby, id(12)], [third, id(17)]]);
+    const operations = new Map([[primary, id(711)], [standby, id(710)], [third, id(712)]]);
     const beat = async (node, mode, failures = [], receipt = 'initial') => {
-      const at = await now();
+      const at = await sql(`select to_char(clock_timestamp() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') v`);
       return sql(`select clued_private.ci_node_heartbeat_v1(b,$2) v from public.clued_agent_bindings b where b.id=$1`,
-        [node === primary ? id(11) : id(12), { action: 'ci_node_heartbeat', scope: 'global', state: 'NORMAL', mode,
+        [bindings.get(node), { action: 'ci_node_heartbeat', scope: 'global', state: 'NORMAL', mode,
           probe: mode === 'ACTIVE' ? 'held' : 'not-held', service_running: true, snapshot_age_seconds: 0,
           ci_source_manifest_sha256: installedSource,
           fleet_delivery: { ...testDelivery(node, installedSource, 27, at), installReceiptSha256: sha(receipt),
@@ -1148,8 +1154,8 @@ test('舰队故障交班与安装恢复', async t => {
           fleet_runtime: { idle: true, selfcheckAt: at, failures: failures.map(code => ({ code, at })) } }]);
     };
     const request = (node, action, method = 'reinstall') => sql('select clued_private.fleet_maintenance_request_v1($1,$2,$3) v',
-      [owner, node === primary ? id(11) : id(12), { action, scope: 'global', node_id: node, binding_generation: 1,
-        method, grant_id: pkg.grantId, operation_id: node === primary ? id(711) : id(710), sole_node_agreed: true }]);
+      [owner, bindings.get(node), { action, scope: 'global', node_id: node, binding_generation: 1,
+        method, grant_id: pkg.grantId, operation_id: operations.get(node), sole_node_agreed: true }]);
     const tick = () => sql('select clued_private.ci_admission_failover_owner_v1($1) v', [owner]);
     const upkeep = () => admin.query('select clued_private.fleet_maintenance_tick_v1($1)', [owner]);
     const holder = () => sql('select (select binding_id from clued_private.ci_duty_holder_v1($1)) v', [owner]);
@@ -1329,6 +1335,53 @@ test('舰队故障交班与安装恢复', async t => {
       assert.equal((await request(waiting, 'status')).state, 'delisted');
       assert.equal(await sql(`select count(*)::int v from public.clued_audit_receipts
         where user_id=$1 and metadata->>'receipt_kind'='FLEET_REINSTALL_WINDOW_EXPIRED'`, [owner]), 1);
+    });
+    const startThreeNodeWindow = async () => {
+      await db.registerNode(third, bindings.get(third), 'fixture-third', 'pending', project);
+      await beat(primary, 'ACTIVE');
+      await beat(standby, 'STANDBY');
+      await beat(third, 'STANDBY');
+      for (const node of [third, standby, primary]) {
+        const result = await request(node, 'delist');
+        assert.equal(result.state, 'delisted');
+        assert.equal(result.install_ready, true);
+      }
+      const rows = (await admin.query(`select id, metadata from public.clued_audit_receipts
+        where user_id=$1 and operation='fleet_reinstall_train_paused'`, [owner])).rows;
+      assert.equal(rows.length, 1);
+      assert.deepEqual(rows[0].metadata.peers.map(peer => peer.node_id).sort(), [standby, third].sort());
+      assert.equal(await holder(), null);
+      return rows[0].id;
+    };
+    const verifyReinstalled = async node => {
+      await request(node, 'verify_started');
+      await beat(node, 'STANDBY', [], 'new installation ' + node);
+      await upkeep();
+      assert.equal((await request(node, 'status')).state, 'returned');
+    };
+    const grantedDuty = async () => (await admin.query(`select binding_id from clued_private.binding_roles_v1
+      where user_id=$1 and role='ci-admission' and revoked_at is null`, [owner])).rows.map(row => row.binding_id);
+    const resumedWindow = async () => (await admin.query(`select metadata->>'node_id' as node, metadata->>'pause_receipt_id' as pause
+      from public.clued_audit_receipts where user_id=$1 and operation='fleet_reinstall_train_resumed'`, [owner])).rows;
+
+    await scenario('三台重装窗口到期，仅向通过验证的节点授职', async () => {
+      const pause = await startThreeNodeWindow();
+      await verifyReinstalled(standby);
+      assert.deepEqual(await grantedDuty(), []);
+      // 向窗口检查传入到期时刻，保留维护请求和验证产生的数据库状态。
+      await admin.query(`select clued_private.fleet_reinstall_window_tick_v1($1,$2,reinstall_pause_until)
+        from clued_private.fleet_maintenance_v1 where node_id=$3`, [owner, pkg.grantId, primary]);
+      assert.deepEqual(await grantedDuty(), [bindings.get(standby)]);
+      assert.deepEqual(await resumedWindow(), [{ node: standby, pause }]);
+      for (const node of [primary, third]) assert.equal((await request(node, 'status')).state, 'delisted');
+    });
+    await scenario('三台重装窗口到期前已有两台通过验证，仍等待第三台', async () => {
+      await startThreeNodeWindow();
+      await verifyReinstalled(standby);
+      await verifyReinstalled(third);
+      assert.equal((await request(primary, 'status')).state, 'delisted');
+      assert.deepEqual(await grantedDuty(), []);
+      assert.deepEqual(await resumedWindow(), []);
     });
     await t.test('DESK 与 TURING 同时重装，排空后有界暂停，两台备班挂牌后自动恢复当班', reinstallTogether);
   } finally { await db.close(); }

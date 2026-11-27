@@ -12,8 +12,8 @@ begin
   if t>=w.reinstall_pause_until and w.reinstall_pause_alerted_at is null then
     r:=clued_private.ci_failover_alert_v1(u,'FLEET_REINSTALL_WINDOW_EXPIRED',w.operation_id::text,
       jsonb_build_object('grant_id',w.grant_id,'deadline',w.reinstall_pause_until,'recovery','verify_reinstalled_nodes_as_standby_then_restore_duty'));
-    if r is not null then perform clued_private.ci_failover_note_v1(u,r,'FLEET_REINSTALL_WINDOW_EXPIRED','双节点重装窗口已到期',
-      '已有节点通过验证即自动接班。无合格节点时列车仍停接新工作，请核对仍在维护的节点。'); end if;
+    if r is not null then perform clued_private.ci_failover_note_v1(u,r,'FLEET_REINSTALL_WINDOW_EXPIRED','重装窗口已到期',
+      '重装窗口到期后，通过验证的节点可自动接班。无合格节点时列车仍停接新工作，请核对仍在维护的节点。'); end if;
     update clued_private.fleet_maintenance_v1 set reinstall_pause_alerted_at=t where node_id=w.node_id;
   end if;
   if w.grant_id is distinct from g then return; end if;
