@@ -1,4 +1,5 @@
 name: Clued Cloud production release
+run-name: ${{ inputs.fleet_release_run != '' && format('fleet-release-{0}-{1}', inputs.mode, inputs.fleet_release_run) || 'Clued Cloud production release' }}
 
 on:
   workflow_dispatch:
@@ -43,6 +44,14 @@ on:
           comma-separated, in the order to apply
         type: string
         default: ''
+      expected_release_sha:
+        description: Exact main SHA for fleet migration reconciliation and apply
+        type: string
+        default: ''
+      fleet_release_run:
+        description: Fleet prepare operation ID for preflight or migrate
+        type: string
+        default: ''
       fleet_version:
         description: >-
           fleet-accept mode only: the version of the published universal node package
@@ -76,10 +85,12 @@ on:
 
 permissions:
   contents: read
+  checks: read
+  pull-requests: read
 
 # Fleet delivery has its own group so it does not queue behind a Worker release.
 concurrency:
-  group: ${{ inputs.mode == 'fleet-accept' && 'clued-cloud-fleet-accept' || 'clued-cloud-production-release' }}
+  group: ${{ inputs.mode == 'fleet-accept' && 'clued-cloud-fleet-accept' || (inputs.mode == 'preflight' && inputs.fleet_release_run != '') && 'clued-cloud-fleet-migration-read' || 'clued-cloud-production-release' }}
   cancel-in-progress: false
 
 jobs:
@@ -93,8 +104,8 @@ jobs:
     # own timeout-minutes; tests/production-release-gate.test.mjs checks the sum).
     # Every other mode keeps 45: the migrate steps have no step timeout, and a
     # stalled migration must not hold the concurrency group longer than before.
-    # Each fleet-accept operation has a 10-minute job limit.
-    timeout-minutes: ${{ (inputs.mode == 'deploy' || inputs.mode == 'release') && 165 || inputs.mode == 'fleet-accept' && 10 || 45 }}
+    # Fleet confirmation includes replay setup, the replay, and all shared steps.
+    timeout-minutes: ${{ (inputs.mode == 'deploy' || inputs.mode == 'release') && 165 || (inputs.mode == 'fleet-accept' && inputs.fleet_operation == 'confirm') && 50 || inputs.mode == 'fleet-accept' && 10 || 45 }}
     # OwnerCredential §6.1: CLUED_MIGRATION_DATABASE_URL lives in this
     # environment (Owner setting: deployment branches main only). Its database
     # login is also the release identity: only it may call the release door.
@@ -112,7 +123,7 @@ jobs:
         timeout-minutes: 5
         with:
           node-version: 24.19.0
-          cache: ${{ inputs.mode != 'fleet-accept' && 'npm' || '' }}
+          cache: ${{ inputs.mode != 'fleet-accept' && inputs.fleet_release_run == '' && 'npm' || '' }}
           cache-dependency-path: apps/clued-cloud/package-lock.json
       - name: Configure job temporary storage
         timeout-minutes: 2
@@ -124,6 +135,8 @@ jobs:
           SOURCE_REQUEST_ID: ${{ inputs.source_request_id }}
           SOURCE_REQUEST_DIGEST: ${{ inputs.source_request_digest }}
           MIGRATIONS: ${{ inputs.migrations }}
+          EXPECTED_RELEASE_SHA: ${{ inputs.expected_release_sha }}
+          FLEET_RELEASE_RUN: ${{ inputs.fleet_release_run }}
           ROLLBACK_DRILL: ${{ inputs.rollback_drill }}
           FLEET_VERSION: ${{ inputs.fleet_version }}
           FLEET_REQUEST_SHA256: ${{ inputs.fleet_request_sha256 }}
@@ -178,13 +191,62 @@ jobs:
             echo "::error::fleet_* inputs require fleet-accept mode" >&2
             exit 1
           fi
+          if [ -n "${FLEET_RELEASE_RUN:-}${EXPECTED_RELEASE_SHA:-}" ]; then
+            [[ "$RELEASE_MODE" = preflight || "$RELEASE_MODE" = migrate ]]
+            [[ "$FLEET_RELEASE_RUN" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]]
+            [[ "$EXPECTED_RELEASE_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_RELEASE_SHA" = "$GITHUB_SHA" ]]
+            test "$(git rev-parse HEAD)" = "$EXPECTED_RELEASE_SHA"
+          fi
           if [ "${ROLLBACK_DRILL:-false}" != "false" ] && [ "$RELEASE_MODE" != "release" ]; then
             echo "::error::rollback_drill is a release-mode switch" >&2
             exit 1
           fi
           echo "Release mode: $RELEASE_MODE"
+      - name: Set up Python for interface replay
+        if: ${{ inputs.mode == 'fleet-accept' && inputs.fleet_operation == 'confirm' }}
+        timeout-minutes: 3
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install isolated replay dependencies
+        if: ${{ inputs.mode == 'fleet-accept' && inputs.fleet_operation == 'confirm' }}
+        timeout-minutes: 6
+        working-directory: .
+        run: node scripts/ci/ci-deps.mjs install apps/clued-cloud
+      - name: Replay the previous sealed package interfaces
+        id: replay
+        if: ${{ inputs.mode == 'fleet-accept' && inputs.fleet_operation == 'confirm' }}
+        timeout-minutes: 15
+        working-directory: .
+        env:
+          NODE_OPTIONS: ''
+          FLEET_VERSION: ${{ inputs.fleet_version }}
+          FLEET_REQUEST_SHA256: ${{ inputs.fleet_request_sha256 }}
+        run: node scripts/ci/clued-fleet-accept.mjs previous-interfaces
+      - name: Admit the exact fleet release commit
+        if: ${{ inputs.fleet_release_run != '' }}
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_RELEASE_SHA: ${{ inputs.expected_release_sha }}
+        run: node ../../work/independent-ci-resident-v1/rollout/fleet/release-admission.mjs
+      - name: Read the fleet migration prerequisites
+        if: ${{ inputs.mode == 'preflight' && inputs.fleet_release_run != '' }}
+        timeout-minutes: 3
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
+          EXPECTED_RELEASE_SHA: ${{ inputs.expected_release_sha }}
+        run: node ../../work/independent-ci-resident-v1/rollout/fleet/release-migrations.mjs read
+      - name: Verify the missing fleet migration list
+        if: ${{ inputs.mode == 'migrate' && inputs.fleet_release_run != '' }}
+        timeout-minutes: 3
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
+          EXPECTED_RELEASE_SHA: ${{ inputs.expected_release_sha }}
+          MIGRATIONS: ${{ inputs.migrations }}
+        run: node ../../work/independent-ci-resident-v1/rollout/fleet/release-migrations.mjs before-migrate
       - name: Check production database credential
-        if: ${{ inputs.mode != 'source-capture' }}
+        if: ${{ inputs.mode != 'source-capture' && (inputs.mode != 'preflight' || inputs.fleet_release_run == '') }}
         timeout-minutes: 1
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
@@ -343,6 +405,13 @@ jobs:
             || { echo "::error::Cannot connect with CLUED_MIGRATION_DATABASE_URL; nothing changed"; exit 1; }
           [ -n "$role" ] || { echo "::error::Unexpected answer from the migration database; nothing changed"; exit 1; }
           echo "Migration database login role: $role"
+      - name: Recheck the fleet release commit before applying migrations
+        if: ${{ inputs.mode == 'migrate' && inputs.fleet_release_run != '' }}
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_RELEASE_SHA: ${{ inputs.expected_release_sha }}
+        run: node ../../work/independent-ci-resident-v1/rollout/fleet/release-admission.mjs
       # OwnerCredential §6.1: each named file from this commit is applied in its
       # own transaction together with its schema_migrations row (statements =
       # the file's exact text), then md5(statements) is checked against the file.
@@ -367,6 +436,7 @@ jobs:
       # whose md5 is RELEASE_DOOR_INSTALL_MD5 (the install migration) run first;
       # its transaction must then hold the door and consume through it.
       - name: Apply the named migrations
+        id: apply_migrations
         if: ${{ inputs.mode == 'migrate' }}
         env:
           CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
@@ -480,12 +550,21 @@ jobs:
           done
           node -e 'process.stdout.write(JSON.stringify({contract:"clued.production-migration-apply.v1",source_commit:process.env.GITHUB_SHA,applied:JSON.parse(process.argv[1]),finished_at:new Date().toISOString()},null,2)+"\n")' "$applied" \
             > "$evidence_dir/production-migrations.json"
+      - name: Read back fleet migrations and interfaces
+        if: ${{ !cancelled() && inputs.mode == 'migrate' && inputs.fleet_release_run != '' && (steps.apply_migrations.outcome == 'success' || steps.apply_migrations.outcome == 'failure') }}
+        timeout-minutes: 3
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
+          EXPECTED_RELEASE_SHA: ${{ inputs.expected_release_sha }}
+        run: node ../../work/independent-ci-resident-v1/rollout/fleet/release-migrations.mjs after-migrate
       # The first step checks the public Release assets and prepares the request
       # without credentials. The second uses the release database login and
       # passes the checked request as COPY data. Packages before generation 25
       # use the original request door. Newer packages can also read a private
       # projection or confirm the attached acceptance file. The Owner approves
       # through the confirmation page. Both steps use repository code only.
+      # For confirm, the delivery command checks the replay against the checked
+      # release assets, current predecessor and committed migrations before sealing.
       - name: Check the published acceptance request
         if: ${{ inputs.mode == 'fleet-accept' }}
         timeout-minutes: 4
@@ -508,6 +587,7 @@ jobs:
           NODE_OPTIONS: ''
           CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
           CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
+          FLEET_INTERFACE_RESULT: ${{ steps.replay.outputs.evidence }}
         run: |
           set -euo pipefail
           database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
@@ -532,7 +612,7 @@ jobs:
             < "$RUNNER_TEMP/clued-fleet-accept-input.json" 2>"$err") || true
           cat -- "$err" >&2
           printf '%s\n' "$answer" | node scripts/ci/clued-fleet-accept.mjs report --error-file "$err"
-      - if: ${{ inputs.mode != 'backup' && inputs.mode != 'migrate' && inputs.mode != 'fleet-accept' }}
+      - if: ${{ inputs.mode != 'backup' && inputs.mode != 'migrate' && inputs.mode != 'fleet-accept' && inputs.fleet_release_run == '' }}
         timeout-minutes: 10
         run: npm ci --ignore-scripts
       - name: Capture exact nonsecret registration source
@@ -551,7 +631,7 @@ jobs:
             --expected-release-sha "$GITHUB_SHA" \
             --output .sites-runtime/storage-client-source/registration.json
       - name: Install embedded PostgreSQL ICU compatibility runtime
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        if: ${{ (inputs.mode == 'preflight' && inputs.fleet_release_run == '') || inputs.mode == 'deploy' || inputs.mode == 'release' }}
         timeout-minutes: 5
         run: |
           set -euo pipefail
@@ -560,7 +640,7 @@ jobs:
           curl -fsSLo "$icu_deb" https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
           sudo dpkg -i "$icu_deb"
       - name: Verify projection and MTPE behavior
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        if: ${{ (inputs.mode == 'preflight' && inputs.fleet_release_run == '') || inputs.mode == 'deploy' || inputs.mode == 'release' }}
         timeout-minutes: 10
         run: |
           node --test tests/production-release-gate.test.mjs tests/served-agent-contract.test.mjs
@@ -568,13 +648,13 @@ jobs:
           npm run test:mtpe:intake
           npm run typecheck
       - name: Build exact Worker source
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        if: ${{ (inputs.mode == 'preflight' && inputs.fleet_release_run == '') || inputs.mode == 'deploy' || inputs.mode == 'release' }}
         timeout-minutes: 5
         # Builds the main Worker and the PDF extractor Worker (dist/pdf-extractor),
         # and fails if the main Worker's bundle contains pdf.js.
         run: npm run build
       - name: Verify and build Kooyumi Connect release source
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        if: ${{ (inputs.mode == 'preflight' && inputs.fleet_release_run == '') || inputs.mode == 'deploy' || inputs.mode == 'release' }}
         timeout-minutes: 5
         run: |
           set -euo pipefail
@@ -587,7 +667,7 @@ jobs:
             --evidence-out .sites-runtime/release-evidence/connect-build.json
           node --check "$RUNNER_TEMP/kooyumi-connect-build/worker.mjs"
       - name: Verify database prerequisites and record projection state
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        if: ${{ (inputs.mode == 'preflight' && inputs.fleet_release_run == '') || inputs.mode == 'deploy' || inputs.mode == 'release' }}
         timeout-minutes: 5
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
@@ -776,7 +856,7 @@ jobs:
             echo 'The G6 currentness attestation is not confirmed: run the Clued currentness production post-deploy attestation workflow.'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve release evidence
-        if: always()
+        if: ${{ always() && (inputs.mode != 'preflight' || inputs.fleet_release_run == '') }}
         timeout-minutes: 5
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -807,7 +887,7 @@ jobs:
       # release; a missed one is caught up by the next.
       # Its own artifact, apart from the release evidence and the encrypted backup.
       - name: Export the applied production history
-        if: ${{ inputs.mode != 'fleet-accept' || (inputs.fleet_operation != 'project' && inputs.fleet_operation != 'confirm') }}
+        if: ${{ (inputs.mode != 'fleet-accept' || (inputs.fleet_operation != 'project' && inputs.fleet_operation != 'confirm')) && (inputs.mode != 'preflight' || inputs.fleet_release_run == '') }}
         timeout-minutes: 3
         continue-on-error: true
         env:
@@ -828,7 +908,7 @@ jobs:
             "$out/applied.rows" "$out/production-applied.json"
           rm -f "$out/applied.rows"
       - name: Publish the applied production history
-        if: ${{ inputs.mode != 'fleet-accept' || (inputs.fleet_operation != 'project' && inputs.fleet_operation != 'confirm') }}
+        if: ${{ (inputs.mode != 'fleet-accept' || (inputs.fleet_operation != 'project' && inputs.fleet_operation != 'confirm')) && (inputs.mode != 'preflight' || inputs.fleet_release_run == '') }}
         timeout-minutes: 2
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

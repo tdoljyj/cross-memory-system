@@ -1298,3 +1298,19 @@ test('shadow over the real GitHub and KooYomi ports: every GitHub call a read (G
     || w.startsWith(`POST x.supabase.co/rest/v1/rpc/${HOLDERS_RPC}`)), seen.join('\n'));
   assert.ok(!seen.some(w => w.startsWith('PATCH ')));
 });
+
+test('封存舰队按当班包开批，备班可以先升级，当班越界即停车', async t => {
+  const nodes = [SOURCE, 'f'.repeat(64)].map((sourceManifestSha256, index) => ({
+    node: { name: String(index), state: 'NORMAL', sourceManifestSha256, lastHeartbeatAt: iso(NOW - 1000) },
+  }));
+  for (const [classification, expected] of [
+    ['previous', 'OPEN_FRONT_BATCH'], ['current', 'OPEN_FRONT_BATCH'],
+    ['outside', 'TRAIN_SOURCE_MISMATCH'], ['unknown', 'TRAIN_SOURCE_UNREADABLE'],
+  ]) {
+    const status = { deployed: true, onDuty: true, dropped: 0, nodes,
+      holderPackage: { classification, source: SOURCE, maintenance: 'available',
+        refusal: { outside: 'ci_admission_target_source_not_accepted', unknown: 'ci_admission_target_source_unknown' }[classification] ?? null } };
+    const e = await setup(t, { native: { status } });
+    assert.equal((await e.run()).facts.decision, expected, classification);
+  }
+});

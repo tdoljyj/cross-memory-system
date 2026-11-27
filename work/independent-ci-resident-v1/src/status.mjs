@@ -1,4 +1,5 @@
 import { parseBudget } from './budget-alert.mjs';
+import { matchesFleetTarget, observationOf } from './fleet-self-pull.mjs';
 // The resident's status snapshot (resident quota redesign v0.6 + §9, phase 1, item 7; Owner Decision 38936534).
 //
 // state\status.json is a VIEW, never evidence (the ledger and the receipt chain are): the executor keeps one in-memory
@@ -445,8 +446,17 @@ async function readJsonLenient(file) {
 
 function fleetPullView(v) {
   if (!plain(v) || !UUID.test(v.grantId ?? '') || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,88}$/.test(v.targetVersion ?? '')
-    || !['DOWNLOADING', 'WAITING_FOR_PEERS', 'PREPARING', 'PREPARE_FAILED', 'REQUESTED', 'REFUSED', 'NEEDS_REINSTALL', 'ROLLED_BACK', 'CURRENT'].includes(v.phase)) return null;
-  return { grantId: v.grantId, targetVersion: v.targetVersion, phase: v.phase, code: codeOrNull(v.code) };
+    || !['DOWNLOADING', 'WAITING_FOR_PEERS', 'WAITING_FOR_HANDOVER', 'RESERVE', 'REPAIR', 'PREPARING', 'PREPARE_FAILED', 'REQUESTED', 'REFUSED', 'NEEDS_REINSTALL', 'ROLLED_BACK', 'CURRENT'].includes(v.phase)) return null;
+  const view = { grantId: v.grantId, targetVersion: v.targetVersion, phase: v.phase, code: codeOrNull(v.code) };
+  const r = v.reinstall;
+  if (v.phase === 'NEEDS_REINSTALL' && packageGenerationOf(v.targetVersion) >= 25 && plain(r)
+    && typeof r.repository === 'string' && /^[A-Za-z0-9_-][A-Za-z0-9_.-]*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(r.repository)
+    && [r.archiveSha256, r.requestSha256, r.acceptanceSha256].every(hexOrNull)) {
+    const { repository, archiveSha256, requestSha256, acceptanceSha256 } = r;
+    view.reinstall = { repository, bootstrapAsset: `fleet-node-${v.targetVersion}.bootstrap.ps1`,
+      archiveSha256, requestSha256, acceptanceSha256 };
+  }
+  return view;
 }
 
 // The three files of one root as raw values (null for a file that cannot be read now).
@@ -598,7 +608,12 @@ export async function readVersionState({ root, policy, policySha256 = null, cloc
   await writePackageVersion(root, view.installedPackage).catch(() => {});
   const renewal=await renewalStatus(root,clock());
   if(renewal) view.renewal=renewal;
-  const fleetPull = fleetPullView(await readJsonLenient(path.join(root, 'state', 'fleet-pull.json')));
+  const fleetLedger = await readJsonLenient(path.join(root, 'state', 'fleet-pull.json'));
+  if (fleetLedger?.reinstall) {
+    const observed = observationOf(await readJsonLenient(path.join(root, 'broker', 'renew-ci.json')), policy.repo, clock());
+    if (!matchesFleetTarget(fleetLedger.targetFingerprint, observed?.fleetTarget)) delete fleetLedger.reinstall;
+  }
+  const fleetPull = fleetPullView(fleetLedger);
   if (fleetPull) view.fleetPull = fleetPull;
   const notices=versionNotices(view, inputs.status);
   if(renewal) {

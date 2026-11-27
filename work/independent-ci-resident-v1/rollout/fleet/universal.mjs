@@ -11,10 +11,10 @@
 //                               reinstall/launcher/, reinstall/linux/, reinstall/tools/ and reinstall/rehearse.py (never reinstall/test/
 //                               or reinstall/config/: no node's configuration), registration/export-node-registration.ps1 (the first
 //                               install's node keys), rollout/precheck.mjs, rollout/fleet/ (install.mjs,
-//                               upgrade.mjs; without their tests), the CI Source closure (source-closure.json) with the closure file
-//                               itself, prepare-record.mjs and record.mjs, scripts/ci/self-hosted/node-profiles.json at its repository
-//                               path (the capacity profiles wsl-capacity.mjs writes from: their one source, never a copy), and every
-//                               file these .mjs reach by relative import;
+//                               upgrade.mjs; excludes tests and the CluedDev-Linux verification note), the CI Source closure
+//                               (source-closure.json) with the closure file itself, prepare-record.mjs and record.mjs,
+//                               scripts/ci/self-hosted/node-profiles.json at its repository path (the capacity profiles
+//                               wsl-capacity.mjs writes from: their one source, never a copy), and every file these .mjs reach by relative import;
 //   bundle/accepted.bundle      the git bundle whose only ref is refs/heads/accepted = the commit (full history, as build-upgrade.ps1),
 //                               packed deterministically (single-threaded full repack, no user or system git configuration);
 //   universal-manifest.json     contract, version, commit, the universal values (facts.mjs), the Source's stateCompat (null: each node keeps its installed one) and every other entry's sha256.
@@ -41,6 +41,8 @@ export const tagOf = v => `fleet-node-${v}`;
 export const TREE_PREFIXES = Object.freeze(['src/', 'tools/', 'windows/', 'linux/', 'upgrader/src/', 'config/', 'rollout/fleet/',
   'reinstall/launcher/', 'reinstall/linux/', 'reinstall/tools/'].map(p => `${RESIDENT}/${p}`));
 export const TREE_EXCLUDED = Object.freeze([`${RESIDENT}/rollout/fleet/test/`]);
+// Coordinator's development verification instructions. No node preparation step reads this note.
+const DEV_VERIFY_NOTE = `${RESIDENT}/rollout/fleet/CLUEDDEV-LINUX-VERIFY.md`;
 // Below reinstall/ no test directory or Python byte-code (never under src/, tools/, windows/: those are the resident manifest's, whole).
 const EXCLUDED_PART = /^reinstall\/(?:.*\/)?(?:test|tests|__pycache__)\//;
 export const TREE_FILES = Object.freeze([`${RESIDENT}/rollout/precheck.mjs`, `${RESIDENT}/rollout/fleet/upgrade.mjs`, `${RESIDENT}/rollout/fleet/install.mjs`,
@@ -91,7 +93,7 @@ function firstNonAscii(buf) {
 // The tree subset. listing: Map(path -> { mode, oid }); read(paths) -> Map(path -> Buffer) (async, batched).
 export async function selectTree(listing, read) {
   const chosen = new Set();
-  for (const p of listing.keys()) if (TREE_PREFIXES.some(x => p.startsWith(x)) && !excluded(p)) chosen.add(p);
+  for (const p of listing.keys()) if (p !== DEV_VERIFY_NOTE && TREE_PREFIXES.some(x => p.startsWith(x)) && !excluded(p)) chosen.add(p);
   for (const p of TREE_FILES) { check(listing.has(p), 'UNIVERSAL_TREE_FILE_MISSING', p); chosen.add(p); }
   const closure = JSON.parse((await read([CLOSURE])).get(CLOSURE).toString('utf8'));
   check(closure?.contract === 'clued.independent-ci.source-closure/2' && Array.isArray(closure.paths), 'SOURCE_CLOSURE_REFUSED');

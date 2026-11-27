@@ -20,12 +20,13 @@ test('the selector identity comes from the sibling file bytes',()=>{
 const gateScript=Buffer.from('public trusted gate fixture, not a credential');
 const copy=value=>structuredClone(value),hash=x=>createHash('sha256').update(x).digest('hex');
 const step=(name,conclusion='success')=>({name,status:'completed',conclusion});
+const nonMigrationPath='docs/safe-change.md';
 function jobs(){return [{id:101,run_id:runId,run_attempt:runAttempt,name:'admission-gate',status:'completed',conclusion:'success',labels:['self-hosted']},
   ...profile.routes.map((r,i)=>({id:102+i,run_id:runId,run_attempt:runAttempt,name:r.name,status:'completed',conclusion:'success',labels:['self-hosted'],
     steps:[...Object.entries(r.required_steps).flatMap(([name,n])=>Array.from({length:n},()=>step(name,
       r.job_id==='migration-verify'&&name!=='Select suites'?'skipped':'success'))),...(r.job_id==='migration-verify'?[step('Not affected')]:[])]}))];}
 const content=(path,bytes)=>({type:'file',path,sha:workflowBlob(bytes.toString('utf8')),encoding:'base64',size:bytes.length,content:bytes.toString('base64')});
-function fixture(files=[{filename:'scripts/ci/safe-change.mjs',status:'modified'}]) {
+function fixture(files=[{filename:nonMigrationPath,status:'modified'}]) {
   const calls=[],requestKey=Object.freeze({}),nativeJobs=jobs();
   const pr={number:prNumber,state:'open',head:{sha:H,repo:{full_name:repository}},base:{sha:B,ref:'main',repo:{full_name:repository,default_branch:'main'}},commits:1,changed_files:files.length};
   const run={id:runId,run_attempt:runAttempt,path:REQUIRED_TESTS_SOURCE.file,event:'pull_request',head_sha:H,
@@ -55,7 +56,7 @@ test('live issuer independently closes native diff, actual gate base and exact b
   const f=fixture(),token=await readRequiredApplicability(f.options());assert.ok(token);
   assert.deepEqual(Object.keys(token),[]);
   const e=inspectRequiredApplicability(token,f.expected);assert.ok(e);assert.ok(Object.isFrozen(e));assert.ok(Object.isFrozen(e.changed_paths));
-  assert.deepEqual(e.changed_paths,['scripts/ci/safe-change.mjs']);assert.equal(e.base_sha,B);assert.equal(e.merge_base_sha,M);
+  assert.deepEqual(e.changed_paths,[nonMigrationPath]);assert.equal(e.base_sha,B);assert.equal(e.merge_base_sha,M);
   assert.equal(e.selector_blob,REQUIRED_SELECTOR_SOURCE.blob);assert.equal(e.selector_sha256,hash(selector));
   assert.equal(e.scope,'migration-verify:not_applicable');assert.equal(e.execution_authority,false);assert.equal(e.source_authority,false);
   assert.equal(e.gate_log_sha256,hash(f.gateLog.text));
@@ -101,6 +102,7 @@ test('the migration and select-all paths of the selector deny no-op qualificatio
     'apps/clued-cloud/scripts/migration-ledger.mjs','apps/clued-cloud/scripts/production-release-baseline.json',
     'apps/clued-cloud/tests/production-schema-drift.test.mjs','apps/clued-cloud/package.json','apps/clued-cloud/package-lock.json',
     'scripts/ci/ci-required-selection.mjs','scripts/ci/ci-known-failures.json','scripts/ci/ci-test-failures-reporter.mjs',
+    'scripts/ci/safe-change.mjs','scripts/ci/clued-push-reuse.mjs',
     '.github/workflows/clued-required-tests.yml','.github/actions/something/action.yml'];
   for(const path of examples){
     assert.deepEqual(selectSuites('migration-verify',[path]).suites,['production-schema']);

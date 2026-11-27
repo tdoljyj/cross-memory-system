@@ -148,7 +148,7 @@ export async function p2({ gh, repo, files, checkout, now, mode = 'before' }) {
   const fleet = fleetSourceCheck({ view, target: source, now, onDuty: status?.node?.mode === 'ACTIVE', selfNames: [status?.node?.name] });
   // Review C (open points §9): a node heard within 24 hours that reports no Source is not proven on this one (fleetSourceCheck, shared
   // with the upgrade precheck and stage 10, skips it and stays as it is). Optional 1 (half): a view with dropped entries is not whole.
-  const unreported = (view?.nodes ?? []).filter(n => n.sourceManifestSha256 === null && n.lastHeartbeatAt !== null
+  const unreported = (view && Object.hasOwn(view, 'holderPackage') ? [] : view?.nodes ?? []).filter(n => n.sourceManifestSha256 === null && n.lastHeartbeatAt !== null
     && now - Date.parse(n.lastHeartbeatAt) <= FLEET_HEARTBEAT_WINDOW_MS).map(n => n.node);
   const failed = [
     ...(head !== main ? ['CHECKOUT_NOT_MAIN'] : []),
@@ -156,7 +156,7 @@ export async function p2({ gh, repo, files, checkout, now, mode = 'before' }) {
     ...(installed !== source ? ['SOURCE_RECORD_NOT_THIS_NODE'] : []),
     ...(fleet.status !== 'PASS' ? [`FLEET_${fleet.status}${fleet.reason ? `_${fleet.reason}` : ''}`] : []),
     ...(unreported.length ? ['FLEET_NODE_SOURCE_UNREPORTED'] : []),
-    ...(view && view.dropped > 0 ? ['FLEET_NODES_DROPPED'] : []),
+    ...(view && !Object.hasOwn(view, 'holderPackage') && view.dropped > 0 ? ['FLEET_NODES_DROPPED'] : []),
     ...policyFailures({ status, fleetTrain: await checkout.fleetTrain(), mode, now }),
   ];
   return { pass: failed.length === 0, ...(failed.length ? { failed } : {}), checkoutHead: head, mainSha: main ?? null, ciSourceManifestSha256: source,

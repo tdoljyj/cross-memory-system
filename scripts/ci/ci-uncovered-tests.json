@@ -791,12 +791,6 @@
       "reason": "从没在 CI 跑过；B2 把整个目录并入 resident-node 后删本条（等 #1199、#1206 合入）"
     },
     {
-      "path": "work/independent-ci-resident-v1/rollout/fleet/test/test-bootstrap.ps1",
-      "kind": "unsorted",
-      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
-      "reason": "PowerShell 测试脚本，11-24 起进全集；选择脚本的套件命令还不收 .ps1，必需检查没有直接跑它；测试 pure-v2-csharp.test.mjs、fleet-node-powershell.test.mjs 提到它，是否真跑待查；C4：逐个定，进套件（选择脚本先要能收 .ps1）或删"
-    },
-    {
       "path": "work/independent-ci-resident-v1/upgrader/test/drill-upgrade.test.mjs",
       "kind": "unsorted",
       "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",

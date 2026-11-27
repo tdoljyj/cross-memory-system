@@ -112,6 +112,7 @@ export function createMergeSlotNative({ config, fetchImpl, nativeToken, train })
     keepalive: async input => write().keepalive(input),
     reportSweepWatermark: async input => write().reportSweepWatermark(input),
     nodesStatus: async () => write().nodesStatus(),
+    fleetLanding: input => write().fleetLanding(input),
     // Migration 20261115150000: the head claim whose front PR cannot land joins its queue again at the back when another claim waits
     // (CI door action merge_queue_yield). -> {onDuty, yielded}; onDuty null: a server without the action (or an answer that cannot be
     // read), which yields nothing and changes nothing. Never throws.

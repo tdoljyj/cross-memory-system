@@ -16,6 +16,8 @@ export const PUBLISHER_JOB_CONDITION=`needs.admission-gate.outputs.admitted == '
 export const PUBLISHER_PROBE_LABELS=Object.freeze(['self-hosted','Windows','X64','clued','pool-general','trust-internal','cap-python312','cap-node24','site-company']);
 export const PUBLISHER_PROBE_CONDITION=`needs.admission-gate.outputs.admitted == 'true' && (${PUBLISHER_OWNER_CONDITION} && inputs.mode == 'host-principal-probe')`;
 export const PUBLISHER_QUALIFY_CONDITION=`needs.admission-gate.outputs.admitted == 'true' && (${PUBLISHER_OWNER_CONDITION} && (inputs.mode == 'success' || inputs.mode == 'failure' || inputs.mode == 'cancel'))`;
+const FLEET_REPLAY_KIND='fleet_replay_successor';
+const FLEET_RELEASE_TIMEOUT="${{ (inputs.mode == 'deploy' || inputs.mode == 'release') && 165 || (inputs.mode == 'fleet-accept' && inputs.fleet_operation == 'confirm') && 50 || inputs.mode == 'fleet-accept' && 10 || 45 }}";
 const hash=text=>createHash('sha256').update(text).digest('hex');
 const sha=/^[a-f0-9]{40}$/,digest=/^[a-f0-9]{64}$/;
 const plain=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
@@ -33,16 +35,17 @@ export function compilePublisherSource(file,text,{parseYaml,accepted_roles,sourc
   if(!descriptor||typeof text!=='string'||!text.length||Buffer.byteLength(text)>131072||
     Buffer.from(text,'utf8').toString('utf8')!==text||typeof parseYaml!=='function'||
     /\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/.test(text))bad('file/source/parser');
-  const legacy=source_kind==='legacy_predecessor',primary_ids=descriptor.primary_ids;
+  const legacy=source_kind==='legacy_predecessor',fleet=source_kind===FLEET_REPLAY_KIND;
+  const primary_ids=descriptor.primary_ids;
   operation??=legacy?'predecessor':descriptor.purpose==='production_publisher'?'modify_workflow':'install_workflow';
   if(legacy?operation!=='predecessor':!['modify_workflow','install_workflow'].includes(operation)||
     descriptor.purpose==='production_publisher'&&operation!=='modify_workflow')bad('exact Source operation');
-  if(!legacy&&source_kind!=='gated_successor'||legacy&&file!=='.github/workflows/clued-cloud-production-release.yml')bad('source kind');
+  if((legacy||fleet)?descriptor.purpose!=='production_publisher':source_kind!=='gated_successor')bad('source kind');
   const value=parseYaml(text),production=descriptor.purpose==='production_publisher';
   if(!plain(value)||!keys(value.on,['workflow_dispatch'])||!plain(value.jobs)||
-    !same(Object.keys(value.jobs).sort(),[...primary_ids,...legacy?[]:['admission-gate']].sort()))bad('dispatch-only concrete jobs');
+    !same(Object.keys(value.jobs).sort(),[...primary_ids,...legacy||fleet?[]:['admission-gate']].sort()))bad('dispatch-only concrete jobs');
   const inputs=value.on.workflow_dispatch?.inputs;
-  if(!legacy&&(!plain(inputs)||inputs.admission_run_id?.type!=='string'||inputs.admission_run_id?.required!==true))bad('exact dispatch admission input');
+  if(!legacy&&!fleet&&(!plain(inputs)||inputs.admission_run_id?.type!=='string'||inputs.admission_run_id?.required!==true))bad('exact dispatch admission input');
   if(!production&&(!same(inputs.mode?.options,['host-principal-probe','success','failure','cancel'])||
     inputs.mode?.type!=='choice'||inputs.mode?.required!==true))bad('qualification modes');
   const job_ids=Object.keys(value.jobs).sort();
@@ -50,16 +53,20 @@ export function compilePublisherSource(file,text,{parseYaml,accepted_roles,sourc
     new Set(accepted_roles.map(r=>r?.job_id)).size!==job_ids.length||
     accepted_roles.some(r=>!keys(r,['job_id','definition_sha256'])||!job_ids.includes(r.job_id)||
       !digest.test(r.definition_sha256)||r.definition_sha256!==roleDefinitionDigest(value.jobs[r.job_id])))bad('independent primary roles');
-  if(!keys(value.permissions,['contents'])||value.permissions.contents!=='read')bad('workflow permissions');
+  if(!same(value.permissions,fleet?{contents:'read',checks:'read','pull-requests':'read'}:{contents:'read'}))bad('workflow permissions');
   if(!production&&(Object.values(value.jobs).some(j=>j.environment!==undefined)||/\bsecrets\s*(?:\.|\[)/i.test(text)))
     bad('qualification must have no environment or Secrets');
   const commands={};
   for(const id of primary_ids) {
     const job=value.jobs[id],probe=id==='host-principal-probe';
     if(!plain(job)||job.uses!==undefined||job.strategy!==undefined||!Array.isArray(job.steps)||!job.steps.length||
-      !Number.isInteger(job['timeout-minutes'])||job['timeout-minutes']<1||job['timeout-minutes']>(production?45:probe?5:12)||
       job.permissions!==undefined&&(!keys(job.permissions,['contents'])||job.permissions.contents!=='read'))bad('primary job');
-    if(!legacy&&(!same(job['runs-on'],probe?PUBLISHER_PROBE_LABELS:PUBLISHER_LABELS)||job.needs!=='admission-gate'||
+    if(fleet) {
+      if(job['runs-on']!=='ubuntu-24.04'||job['timeout-minutes']!==FLEET_RELEASE_TIMEOUT||
+        job.needs!==undefined||condition(job.if)!==PUBLISHER_OWNER_CONDITION)bad('exact fleet release job');
+    } else if(!Number.isInteger(job['timeout-minutes'])||job['timeout-minutes']<1||
+      job['timeout-minutes']>(production?45:probe?5:12))bad('primary job timeout');
+    if(!legacy&&!fleet&&(!same(job['runs-on'],probe?PUBLISHER_PROBE_LABELS:PUBLISHER_LABELS)||job.needs!=='admission-gate'||
       condition(job.if)!==(production?PUBLISHER_JOB_CONDITION:probe?PUBLISHER_PROBE_CONDITION:PUBLISHER_QUALIFY_CONDITION)))
       bad('exact one-shot route/gate/main/Owner/mode condition');
     if(production&&job.environment!=='clued-release')bad('production environment');
@@ -80,7 +87,7 @@ export function compilePublisherSource(file,text,{parseYaml,accepted_roles,sourc
   return {registration_status:'registered',purpose:descriptor.purpose,operation,source_kind,
     workflow_blob:workflowBlob(text),source_sha256:hash(text),source_yaml:text,workflow_definition:value,
     primary_ids:[...primary_ids],role_digests:Object.fromEntries(job_ids.map(id=>[id,accepted_roles.find(r=>r.job_id===id).definition_sha256])),
-    command_digests:commands,gated:!legacy};
+    command_digests:commands,gated:!legacy&&!fleet};
 }
 
 export function registeredPublisherSource(registry,file,text,{repository='tdoljyj/cross-memory-system'}={}) {

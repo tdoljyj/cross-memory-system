@@ -43,6 +43,7 @@ const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const CONFIRM_PATH = /^\/confirm\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/;
 const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+export const OPEN_RUN_ID = /^[1-9][0-9]{0,15}$/;
 // this file lies at <checkout>/work/independent-ci-resident-v1/rollout/fleet/
 const CHECKOUT = fileURLToPath(new URL('../../../../', import.meta.url));
 
@@ -61,7 +62,23 @@ export function openRequest({ runGh, repository, version, requestSha256 }) {
     '-f', `fleet_version=${version}`, '-f', `fleet_request_sha256=${requestSha256}`]);
   check(r?.status === 0, 'ACCEPT_DOOR_OPEN_FAILED', { exit: r?.status ?? null, stderr: r?.stderr ?? null,
     note: 'dispatch was not confirmed; read the door before deciding whether to open the request again' });
-  return { workflow: RELEASE_WORKFLOW, mode: OPEN_MODE };
+  const url = /https:\/\/github\.com\/([^/]+\/[^/]+)\/actions\/runs\/([1-9][0-9]*)\s*$/.exec(r.stdout ?? '');
+  const runId = url?.[1] === repository && OPEN_RUN_ID.test(url[2]) ? url[2] : null;
+  return { workflow: RELEASE_WORKFLOW, mode: OPEN_MODE, runId };
+}
+
+// Only an exact first-attempt result can authorize another dispatch. A
+// missing run, an unreadable answer or a manual rerun keeps the outcome unknown.
+export function openRunFailed({ runGh, repository, runId }) {
+  check(REPO.test(repository) && OPEN_RUN_ID.test(runId), 'ACCEPT_DOOR_RUN_REFUSED');
+  const result = runGh(['api', 'repos/' + repository + '/actions/runs/' + runId, '--hostname', 'github.com']);
+  if (result?.status !== 0) return false;
+  let run;
+  try { run = JSON.parse(result.stdout); } catch { return false; }
+  return String(run?.id) === runId && run.path === '.github/workflows/' + RELEASE_WORKFLOW &&
+    run.repository?.full_name === repository && run.head_repository?.full_name === repository &&
+    run.head_branch === 'main' && run.event === 'workflow_dispatch' && run.run_attempt === 1 &&
+    run.status === 'completed' && ['failure', 'cancelled', 'timed_out', 'startup_failure'].includes(run.conclusion);
 }
 
 // The repository's public Supabase address and publishable key, read from PUBLIC_CONFIG_SOURCE the way scripts/ci/clued-work-admission.mjs
@@ -149,6 +166,7 @@ export async function readFleet({ resource, readStatus = statusReader(), timeout
   check(a.kind === 'accepted', 'FLEET_NOT_ACCEPTED', { answer: a.kind });
   const nodes = answer.nodes;
   check(Array.isArray(nodes) && nodes.every(n => plain(n) && typeof n.name === 'string' && n.name !== '' && (n.source_sha256 === null || HEX64.test(n.source_sha256 ?? ''))
-    && typeof n.paused === 'boolean'), 'ACCEPT_DOOR_ANSWER_REFUSED', { status: 'accepted', note: 'nodes: [{ name, source_sha256 (hex or null), paused }]' });
-  return nodes.map(n => ({ node: n.name, ciSourceManifestSha256: n.source_sha256, paused: n.paused }));
+    && typeof n.paused === 'boolean' && (!Object.hasOwn(n, 'at_sealed_target') || typeof n.at_sealed_target === 'boolean')), 'ACCEPT_DOOR_ANSWER_REFUSED', { status: 'accepted', note: 'nodes: [{ name, source_sha256 (hex or null), paused }]' });
+  return nodes.map(n => ({ node: n.name, ciSourceManifestSha256: n.source_sha256, paused: n.paused,
+    ...(Object.hasOwn(n, 'at_sealed_target') ? { atSealedTarget: n.at_sealed_target } : {}) }));
 }

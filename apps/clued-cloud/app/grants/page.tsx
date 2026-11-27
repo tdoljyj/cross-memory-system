@@ -62,6 +62,7 @@ export default function OwnerGrantsPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [grants, setGrants] = useState<Json[] | null>(null);
+  const [packages, setPackages] = useState<Json[]>([]);
   const [requests, setRequests] = useState<Json[]>([]);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
@@ -79,7 +80,7 @@ export default function OwnerGrantsPage() {
       current.current = next; setSession(next); setReady(true);
       if (!changed) return;
       ++epoch.current;
-      setGrants(null); setRequests([]); setAuto(null); setError(""); setNotice(""); setWorking(false);
+      setGrants(null); setPackages([]); setRequests([]); setAuto(null); setError(""); setNotice(""); setWorking(false);
     });
     return () => { disposed = true; ++lifetime.current; data.subscription.unsubscribe(); };
   }, []);
@@ -96,6 +97,7 @@ export default function OwnerGrantsPage() {
       const value = await rpc("clued_owner_grants_list_v1", {});
       if (epoch.current !== generation) return;
       setGrants(Array.isArray(value.grants) ? value.grants.filter(object) : []);
+      setPackages(Array.isArray(value.sealed_packages) ? value.sealed_packages.filter(object) : []);
       setRequests(Array.isArray(value.pending_requests) ? value.pending_requests.filter(object) : []);
       setAuto(object(value.auto_approve) ? value.auto_approve : null);
     } catch (failure) {
@@ -103,15 +105,19 @@ export default function OwnerGrantsPage() {
     } finally { if (epoch.current === generation) setWorking(false); }
   }
 
-  async function revoke(grantId: string) {
+  async function revoke(grantId: string, acceptance?: string) {
     if (!current.current || working) return;
     const generation = epoch.current;
     setWorking(true); setError(""); setNotice("");
     try {
-      await rpc("clued_owner_grant_revoke_v1", { grant_id: grantId });
+      const result = await rpc("clued_owner_grant_revoke_v1", { grant_id: grantId, ...(acceptance ? { acceptance_sha256: acceptance } : {}) }, current.current.access_token);
+      if (epoch.current !== generation) return;
+      if (acceptance) await load();
       if (epoch.current !== generation) return;
       setGrants(previous => (previous ?? []).filter(grant => grant.grant_id !== grantId));
-      setNotice("已撤销，之后的使用都会被拒绝。");
+      setNotice(acceptance
+        ? (object(result.current_package) ? "已撤销。当前封存包为 " + String(result.current_package.version) + "。" : "已撤销。当前没有可用封存包。")
+        : "已撤销，之后的使用都会被拒绝。");
     } catch (failure) {
       if (epoch.current === generation) setError(failure instanceof RequestFailure ? failure.message : "暂时无法撤销，请刷新后重试。");
     } finally { if (epoch.current === generation) setWorking(false); }
@@ -146,6 +152,11 @@ export default function OwnerGrantsPage() {
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       <AutoApprovalSwitch auto={auto} working={working}
         onToggle={(enabled, baseVersion) => void setAutoEnabled(enabled, baseVersion)} />
+      {packages.filter(pkg => pkg.classification === "current").map(pkg => <section key={String(pkg.grant_id)}>
+        <h2>当前封存包 {String(pkg.version)}</h2>
+        <p>{pkg.after_revoke_version ? "撤销后将使用 " + String(pkg.after_revoke_version) + "。" : "撤销后将没有可用封存包。"}</p>
+        <button type="button" disabled={working} onClick={() => void revoke(String(pkg.grant_id), String(pkg.acceptance_sha256))}>撤销此封存包</button>
+      </section>)}
       {requests.length > 0 && <section aria-label="等待确认"><h2>等待你确认</h2>
         <ul>{requests.map(request => <li key={String(request.request_id)}>
           {shortId(request.request_id) && <code>申请 {shortId(request.request_id)}</code>}{" "}

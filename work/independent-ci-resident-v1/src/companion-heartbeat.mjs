@@ -40,7 +40,7 @@ import { parseIncluded } from './poller.mjs';
 export const HEARTBEAT_RPC = 'clued_work_verify_v1';
 export const HEARTBEAT_ACTION = 'ci_node_heartbeat';
 export const HEARTBEAT_INPUT_KEYS = Object.freeze(['action', 'scope', 'state', 'mode', 'probe', 'intake_paused_until', 'halt', 'ci_source_manifest_sha256',
-  'service_running', 'snapshot_age_seconds', 'node_name', 'fleet_delivery']);
+  'service_running', 'snapshot_age_seconds', 'node_name', 'fleet_delivery', 'fleet_runtime']);
 // Every minute (ADR 0026; was 10 minutes): the failover watchdog judges a holder lost after FAILOVER_SILENCE_MINUTES without a beat,
 // so a node that is alive must be heard well inside that. A failed beat is tried again at the next lane pass (30 s), not after a
 // whole interval, so one lost request never looks like silence.
@@ -116,11 +116,12 @@ export function heartbeatPayload({ nodeName, scope, status, statusError = false,
   const evidence = readable ? fleetEvidencePayload(delivery) : null;
   if (evidence && evidence.windowsSourceSha256 === p.ci_source_manifest_sha256 &&
       freshDeliveryTime(evidence.brokerObservedAt, now) && freshDeliveryTime(evidence.linuxObservedAt, now)) p.fleet_delivery = evidence;
+  if (p.fleet_delivery && delivery.runtime) p.fleet_runtime = delivery.runtime;
   return Object.freeze(p);
 }
 
 // What a change means: anything but the snapshot's age (which moves every pass).
-const fingerprint = p => JSON.stringify({ ...p, snapshot_age_seconds: null, fleet_delivery: null });
+const fingerprint = p => JSON.stringify({ ...p, snapshot_age_seconds: null, fleet_delivery: null, fleet_runtime: null });
 
 const FAILED = Object.freeze({ ok: false, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, autoHandovers: Object.freeze([]), watchdogTickAt: null, watchdogStale: null });
 const WIRE_ERRORS = new Set(['TRANSPORT_ERROR', 'TRANSPORT_TIMEOUT', 'TRANSPORT_CONFIG', 'HTTP_ERROR', 'INVALID_REPLY', 'SERVER_REJECTED']);

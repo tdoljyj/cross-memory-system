@@ -68,9 +68,11 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { DEFAULT_ROOT } from './install.mjs';
+import { packageGenerationOf } from '../../src/selfcheck.mjs';
 import { acceptResourceOf, readFleet } from './accept-door.mjs';
-import { OPEN_COMMAND_MS, READ_ACCEPTANCE_AGAIN, SEAL_INPUT_ERRORS, SEAL_UNREADABLE, WAIT_MAX_MINUTES, readRequest, seal } from './publish.mjs';
+import { DEFAULT_ROOT } from './install.mjs';
+import { PREVIOUS_INTERFACE_TIMEOUT_MS } from './previous-interface-check.mjs';
+import { OPEN_COMMAND_MS, STAGED_PREFLIGHT_GENERATION, READ_ACCEPTANCE_AGAIN, SEAL_INPUT_ERRORS, SEAL_UNREADABLE, WAIT_MAX_MINUTES, readRequest, seal } from './publish.mjs';
 import { Refused } from './ports.mjs';
 import { tagOf } from './universal.mjs';
 import { OP_MOVING, main as upgradeMain } from './upgrade.mjs';
@@ -145,7 +147,8 @@ async function fleetOf(ctx, self, deadline) {
     if (!ok) return null;
     const names = f.map(n => n.node);
     if (new Set(names).size !== names.length || !names.includes(self)) return null;
-    return f.map(n => ({ node: n.node, ciSourceManifestSha256: n.ciSourceManifestSha256, paused: n.paused }));
+    return f.map(n => ({ node: n.node, ciSourceManifestSha256: n.ciSourceManifestSha256, paused: n.paused,
+      ...(typeof n.atSealedTarget === 'boolean' ? { atSealedTarget: n.atSealedTarget } : {}) }));
   } catch { return null; }
 }
 const notThere = (fleet, accepted) => fleet.filter(n => n.ciSourceManifestSha256 !== accepted || n.paused);
@@ -355,6 +358,15 @@ export async function run(ctx) {
 async function runRollout(ctx, packageDir) {
   const acc = await accept(ctx, packageDir);
   if (acc.stop) return acc.stop;
+  if (HEX64.test(acc.sealed.acceptanceSha256 ?? '')) {
+    const fleet = await fleetOf(ctx, await selfOf(ctx), ctx.lifeEnd);
+    if (!fleet || fleet.some(n => typeof n.atSealedTarget !== 'boolean'))
+      return answer(ctx, 'ROLLOUT_WAITING_OTHER_NODES', { code: 'ROLLOUT_FLEET_UNREADABLE', next: rerun(ctx) });
+    const pending = fleet.filter(n => !n.atSealedTarget || n.paused);
+    if (pending.length) return answer(ctx, 'ROLLOUT_WAITING_OTHER_NODES', {
+      pending, next: '等待服务端完成交班和摘牌。可原地升级的节点由 Broker 自取，其余节点等 Owner 确认重装。' });
+    return answer(ctx, 'ROLLOUT_DONE', { acceptance: acc.sealed.acceptance, nodes: fleet.map(n => n.node), next: null });
+  }
   const here = await upgradeHere(ctx, acc.sealed.packageDir);
   if (here.stop) return here.stop;
   // 3. the fleet
@@ -378,9 +390,10 @@ async function runRollout(ctx, packageDir) {
 // open: one seal (wait 0); its answer as it is, the workflow not opening the request as NOT_OPENED (drill-vm.ps1 reads this shape)
 async function open(ctx) {
   const out = (status, fields) => ({ contract: ROLLOUT_CONTRACT, command: 'open', status, confirmUrl: null, expiresAt: null, code: null, ...fields });
+  const replayBudget = packageGenerationOf(ctx.request.version) >= STAGED_PREFLIGHT_GENERATION ? PREVIOUS_INTERFACE_TIMEOUT_MS : 0;
   let s;
   try { s = await ctx.seal({ request: ctx.requestFile, drillReceipt: ctx.drillReceipt, repo: ctx.request.repository, wait: 0,
-    deadline: ctx.lifeEnd, openOnly: true }); } catch (e) {
+    deadline: ctx.lifeEnd + replayBudget, openOnly: true }); } catch (e) {
     return out('ROLLOUT_REFUSED', sealFailure(e));
   }
   if (s?.status === SEAL_NOT_OPENED) {

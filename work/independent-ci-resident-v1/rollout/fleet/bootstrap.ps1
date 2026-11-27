@@ -32,38 +32,28 @@
             whole, every role image asset there; its output (kit sha256, toolchain node sha256, the registrar's pin in the archive's
             resident manifest, the images) is all the host preparation is given (M2, L2); the toolchain's node.exe must be the kit's
             controller runtime (Test-FirstInstallCheck: CONTROLLER_NODE_NOT_THE_FLEETS before any UAC);
-         b. the host preparation ELEVATED (UAC 1): this same file with -Stage host and its arguments one by one (-File, M3), which
-            first refuses an elevated account that is not the operator who started this (M4), copies the archive into an admin-only
-            directory, checks its sha256, extracts it and runs its windows\first-install-host.ps1. Everything it reads is a local copy
-            in the work directory (Copy-ToWork): an elevated token does not see a drive letter the Owner mapped;
-         c. install.mjs prepare --from <dir> (not elevated);
-       then the launcher ELEVATED (UAC 2): -Stage launcher copies the launcher prepare wrote into an admin-only directory, checks its
-       sha256 and runs that copy with -RunApprovedInstall. A first install ends BOOTSTRAP_DONE only when the launcher verified and paused,
-       its first-train wait confirmed the node's role, held or not-held, and the companion switch passed (Get-LauncherVerdict, in this
-       order: the role first, else BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED with FIRST_INSTALL_ROLE_UNAUTHORIZED, the service refused the
-       node's CI token, or FIRST_INSTALL_ROLE_UNCONFIRMED, whatever the switch did; then the switch, else
-       BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE).
-  An elevated stage runs its child (P1, the launcher) with stdout and stderr read apart (Invoke-StageChild): a line on stderr never
-  ends the stage or loses the child's verdict.
-  The first install's token directory (C:\ProgramData\CluedIndependentCI\first-install\credentials) never outlives the run (L3): the
-  host stage removes one an earlier run left before P1 starts, and removes it on every end but FIRST_INSTALL_HOST_READY while this
-  bootstrap still waits (its process id and start time, -ParentProcessId/-ParentStartTicks; one that gave up or was closed does not:
-  H2); the launcher stage removes it on every end, and a prepare that fails or a launcher UAC that is declined is followed by
-  -Stage cleanup (one more UAC; declined, the result says CREDENTIALS_LEFT and where, and the next run's host stage removes it).
-  -Reset (a first install only, no resident on the host): the host stage runs first-install-host.ps1 -Reset, which removes what this
+         b. one elevated stage copies the checked assets and pinned tools to an admin-only directory, verifies them again, and
+            runs host preparation, package preparation and the launcher under the same operator and install lock. The token
+            staging directory is cleaned in that stage before host preparation and after its final verdict.
+       The legacy reinstall launcher is elevated separately from its non-elevated preparation.
+  An elevated stage reads child stdout and stderr separately so it can retain the final verdict.
+  -Reset (a first install only, no resident on the host): the install stage runs first-install-host.ps1 -Reset, which removes what this
   host preparation made and nothing else.
   A declined UAC prompt is UAC_DECLINED (nothing elevated ran); an elevated run that has not ended within its limit is
   ELEVATED_RUN_STILL_RUNNING (nothing is killed). A stage's terminating exception is kept in its result with its message (L4) and its
   temporary copies are removed in every case. The last line printed is one JSON object: {status, step, code?, detail?, workDir}.
 #>
-param([string]$From, [ValidateSet('', 'host', 'launcher', 'cleanup')][string]$Stage = '', [string]$Result, [string]$Tar, [string]$ArchiveSha256,
+param([string]$From, [ValidateSet('', 'install')][string]$Stage = '', [string]$Result, [string]$Tar, [string]$ArchiveSha256,
   [string]$PrereqDirectory, [string]$PrereqManifest, [string]$PrereqManifestSha256, [string]$KitSha256, [string]$ToolchainNodeSha256, [string]$RegistrarSha256,
-  [string]$ExpectedOperatorSid, [string]$Launcher, [string]$LauncherSha256, [int]$ParentProcessId = 0, [long]$ParentStartTicks = 0, [string]$Kit, [switch]$Reset)
+  [string]$ExpectedOperatorSid, [string]$Kit,
+  [ValidateSet('Install','Retire','Rollback')][string]$Action = 'Install',
+  [ValidateSet('Fresh','Probe','Reinstall','Retire','Rollback')][string]$LifecycleMode = 'Probe',
+  [string]$PreviewReceipt, [switch]$ZeroNodeConsent,
+  [string]$AcceptanceFile, [string]$AcceptanceSha256, [string]$FirstInstallSums, [string]$FirstInstallSumsSha256, [switch]$Reset)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions   # JavaScriptSerializer (Windows PowerShell 5.1 does not load it by itself)
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
-$ReceiptFile = 'C:\ProgramData\CluedIndependentCI\resident\install\install-receipt.json'
 $CredentialDirectory = 'C:\ProgramData\CluedIndependentCI\first-install\credentials'
 $WorkParent = 'C:\ProgramData\CluedBootstrap'
 $PowerShellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -210,27 +200,15 @@ function Get-ExtractState([string]$dir, [string]$sourceSha256) {
 }
 # L4: a stage's terminating exception, kept with its message and type.
 function Get-StageFailure([string]$stage, $exception) {
-  [ordered]@{ status = 'BOOTSTRAP_STAGE_FAILED'; stage = $stage; message = [string]$exception.Message; type = $exception.GetType().FullName }
+  $message = [string]$exception.Message
+  $code = if ($message -cmatch '^([A-Z][A-Z0-9_]+)(?::|$)') { $Matches[1] } else { 'BOOTSTRAP_STAGE_FAILED' }
+  [ordered]@{ status = 'BOOTSTRAP_STAGE_FAILED'; stage = $stage; code = $code; message = $message; type = $exception.GetType().FullName }
 }
 # M4: the elevated stage runs as the operator who started the bootstrap, or not at all (a UAC prompt answered with another account).
 function Test-StageOperator([string]$actualSid, [string]$expectedSid) {
   if ($expectedSid -cnotmatch '^S-1-5-21-\d+-\d+-\d+-\d+$') { return 'EXPECTED_OPERATOR_SID_REQUIRED' }
   if ($actualSid -cne $expectedSid) { return 'ELEVATED_ACCOUNT_IS_NOT_THE_OPERATOR' }
   $null
-}
-# L3: whether a stage's end clears the token directory: always, but after a host preparation that left it for the launcher.
-# H2: and only while the bootstrap that started the host stage still waits for it ($parentAlive): one that gave up (its 4-hour limit,
-# ELEVATED_RUN_STILL_RUNNING) or whose window was closed never runs the launcher that would take them.
-function Test-CredentialsToClear([string]$stage, [string]$status, [bool]$parentAlive = $true) {
-  if ($stage -ceq 'host') { return ($status -cne 'FIRST_INSTALL_HOST_READY' -or -not $parentAlive) }
-  $true
-}
-# H2: the bootstrap that started a stage, by its process id and start time (a reused id is another process).
-function Test-ParentAlive([int]$processId, [long]$startTicks) {
-  if ($processId -le 0) { return $false }
-  $p = Get-Process -Id $processId -ErrorAction SilentlyContinue
-  if ($null -eq $p) { return $false }
-  try { $p.StartTime.ToUniversalTime().Ticks -eq $startTicks } catch { $false }
 }
 # H2: the token directory removed: what was there and whether it is gone.
 function Clear-CredentialDirectory([string]$dir) {
@@ -297,6 +275,73 @@ function Get-LauncherVerdict([bool]$firstInstall, $terminal) {
       next = 'installed and verified, but the distribution is still the operator''s: the companion switch (the installed rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory <facts.companionWsl.vhdxDirectory>, elevated) has to pass; see companion-headless-report.json of this launch' }
   }
   [ordered]@{ status = 'BOOTSTRAP_DONE'; companionSwitch = $ch; next = $null }
+}
+
+function Get-InstallStageVerdict($terminal) {
+  if ((Get-Key $terminal 'bootstrapPhase') -ceq 'launcher' -and (Get-Key $terminal 'status') -cne 'BOOTSTRAP_STAGE_FAILED') {
+    $result = Get-LauncherVerdict $true $terminal
+  } else {
+    $code = Get-Key $terminal 'code'
+    if (-not $code) { $code = Get-Key $terminal 'status' }
+    $result = [ordered]@{ status = 'HOST_PREPARATION_NOT_DONE'; code = $code; message = (Get-Key $terminal 'message') }
+  }
+  foreach ($key in @('evidenceDirectory','evidenceError','stagingDirectory')) {
+    $value = Get-Key $terminal $key
+    if ($value) { $result[$key] = $value }
+  }
+  $result
+}
+
+function New-BootstrapFailureDirectory {
+  # The normal bootstrap work parent is user writable. Keep elevated evidence
+  # under a separate, checked Administrator/SYSTEM directory.
+  $root = 'C:\ProgramData\CluedBootstrapFailures'
+  $ds = New-Object Security.AccessControl.DirectorySecurity
+  $ds.SetSecurityDescriptorSddlForm($AdminOnlySddl)
+  $item = [IO.Directory]::CreateDirectory($root, $ds)
+  if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'BOOTSTRAP_EVIDENCE_ROOT_REFUSED' }
+  $acl = Get-Acl -LiteralPath $root
+  $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+  if (-not $acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cnotin @('S-1-5-18','S-1-5-32-544') -or
+      $rules.Count -ne 2 -or @($rules | Where-Object { $_.IdentityReference.Value -cnotin @('S-1-5-18','S-1-5-32-544') -or
+        $_.AccessControlType -ne 'Allow' -or $_.FileSystemRights -ne 'FullControl' }).Count) { throw 'BOOTSTRAP_EVIDENCE_ROOT_REFUSED' }
+  $target = Join-Path $root ([guid]::NewGuid().ToString('N'))
+  [void][IO.Directory]::CreateDirectory($target, $ds)
+  $target
+}
+
+function Copy-BootstrapEvidence($item, [string]$target) {
+  if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'BOOTSTRAP_EVIDENCE_REPARSE_POINT' }
+  if ($item.PSIsContainer) {
+    [void][IO.Directory]::CreateDirectory($target)
+    foreach ($child in @(Get-ChildItem -LiteralPath $item.FullName -Force)) {
+      Copy-BootstrapEvidence $child (Join-Path $target $child.Name)
+    }
+  } else {
+    [IO.File]::Copy($item.FullName, $target, $false)
+  }
+}
+
+function Complete-InstallStageVerdict($terminal, [string]$stageDir) {
+  if ($null -eq $terminal -or -not $stageDir -or (Get-Key $terminal 'status') -ceq 'FLEET_LIFECYCLE_COMPLETE' -or
+      (Get-InstallStageVerdict $terminal).status -ceq 'BOOTSTRAP_DONE') { return $terminal }
+  try {
+    $work = Join-Path $stageDir 'prepare'
+    if (-not [IO.Directory]::Exists($work)) { return $terminal }
+    if (([IO.File]::GetAttributes($work) -band [IO.FileAttributes]::ReparsePoint)) { throw 'BOOTSTRAP_EVIDENCE_REPARSE_POINT' }
+    $items = @(Get-ChildItem -LiteralPath $work -Force | Where-Object {
+      ($_.PSIsContainer -and $_.Name -clike 'launch-*') -or (-not $_.PSIsContainer -and $_.Name -ceq 'install-plan.json')
+    })
+    if ($items.Count) {
+      $saved = New-BootstrapFailureDirectory
+      foreach ($item in $items) { Copy-BootstrapEvidence $item (Join-Path $saved $item.Name) }
+      $terminal['evidenceDirectory'] = $saved
+    }
+  } catch {
+    $terminal['evidenceError'] = [string]$_.Exception.Message
+    $terminal['stagingDirectory'] = $stageDir
+  }
+  $terminal
 }
 # M6: what a run fetches: a first install everything; a node with a resident (the reinstall: prepare, rehearse.py, generate.py) node,
 # python and git only, never the rootfs, the WSL package, the runner, the Linux toolchain node or the .debs.
@@ -381,12 +426,24 @@ function Out-LauncherVerdict($v, $extra) {
   foreach ($k in @($extra.Keys)) { $r[$k] = $extra[$k] }
   Out-Result $v.status 'launcher' $r
 }
+
+function Out-InstallStageResult($stage, $verdict) {
+  if ($verdict.status -ceq 'HOST_PREPARATION_NOT_DONE') {
+    Out-Step 'host' 'failed' $verdict.code $stage.last
+    Out-Result $verdict.status 'host' ([ordered]@{ code = $verdict.code; message = $verdict.message; last = $stage.last; exit = $stage.exit; output = $stage.output;
+      evidenceDirectory = (Get-Key $verdict 'evidenceDirectory'); evidenceError = (Get-Key $verdict 'evidenceError'); stagingDirectory = (Get-Key $verdict 'stagingDirectory') })
+    return
+  }
+  Out-LauncherVerdict $verdict ([ordered]@{ firstInstall = $true; launcher = (Get-Key $stage.last 'status'); companionSwitch = $verdict.companionSwitch; next = $verdict.next;
+    exit = $stage.exit; output = $stage.output; evidenceDirectory = (Get-Key $verdict 'evidenceDirectory'); evidenceError = (Get-Key $verdict 'evidenceError');
+    stagingDirectory = (Get-Key $verdict 'stagingDirectory') })
+}
 function Stop-Bootstrap([string]$step, [string]$code, $detail) { Out-Step $step 'failed' $code $null; Out-Result 'BOOTSTRAP_REFUSED' $step ([ordered]@{ code = $code; detail = $detail }); exit 1 }
 # One elevated stage of this same file (-File, arguments one by one). Returns its exit, its last JSON object and the output file;
 # declined: { declined = $true } (the caller decides what follows).
 function Invoke-Elevated([string]$step, [string[]]$named, [int]$limitSeconds, [string[]]$switches = @()) {
   $result = Join-Path $script:Work ('elevated-' + $step + '-' + [Guid]::NewGuid().ToString('N') + '.txt')
-  $arguments = try { Get-ElevatedArguments $script:Self (@('-Stage', $step, '-Result', $result) + @($script:ParentArgs) + @($named)) $switches } catch { Stop-Bootstrap $step 'ELEVATED_ARGUMENT_REFUSED' ([string]$_.Exception.Message) }
+  $arguments = try { Get-ElevatedArguments $script:Self (@('-Stage', $step, '-Result', $result) + @($named)) $switches } catch { Stop-Bootstrap $step 'ELEVATED_ARGUMENT_REFUSED' ([string]$_.Exception.Message) }
   $p = $null
   try { $p = Start-Process -FilePath $PowerShellExe -ArgumentList $arguments -Verb RunAs -PassThru -WindowStyle Normal }
   catch { if (Test-UacDeclined $_.Exception) { return [ordered]@{ declined = $true; exit = $null; last = $null; output = $null } }; throw }
@@ -396,7 +453,7 @@ function Invoke-Elevated([string]$step, [string[]]$named, [int]$limitSeconds, [s
   }
   $read = Read-StageResult $result
   foreach ($l in @($read.lines)) { [Console]::Out.WriteLine($l) }   # the stage's lines, as they are (the child's step lines, the stage's notes, its verdict)
-  if ($step -cne 'cleanup' -and $null -eq $read.last) { Stop-Bootstrap $step 'STAGE_GAVE_NO_VERDICT' ([ordered]@{ exit = $p.ExitCode; output = $result; lines = @($read.lines).Count }) }
+  if ($null -eq $read.last) { Stop-Bootstrap $step 'STAGE_GAVE_NO_VERDICT' ([ordered]@{ exit = $p.ExitCode; output = $result; lines = @($read.lines).Count }) }
   [ordered]@{ declined = $false; exit = $p.ExitCode; last = $read.last; output = $result }
 }
 function Invoke-NonElevated([string]$exe, [string[]]$arguments, [hashtable]$envAdd) {
@@ -416,10 +473,11 @@ function Invoke-NonElevated([string]$exe, [string[]]$arguments, [hashtable]$envA
 # Defect 0e004509: stdout is read line by line as the child prints it, and each line is appended to $appendTo (the stage's output file)
 # and flushed at once, so a child still running at the limit, or one that ends without a verdict, leaves every line it printed on disk
 # and in stdout here (ReadToEndAsync held them all until the child's end). At the limit: timedOut, the lines so far, nothing killed.
-function Invoke-StageChild([string]$exe, [string[]]$arguments, [int]$limitSeconds, [string]$appendTo = $null) {
+function Invoke-StageChild([string]$exe, [string[]]$arguments, [int]$limitSeconds, [string]$appendTo = $null, [hashtable]$envAdd = @{}) {
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = $exe; $psi.Arguments = (($arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' ')
   $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $false
+  foreach ($k in $envAdd.Keys) { $psi.EnvironmentVariables[$k] = $envAdd[$k] }
   $proc = [Diagnostics.Process]::Start($psi)
   $e = $proc.StandardError.ReadToEndAsync()
   $out = New-Object Text.StringBuilder
@@ -600,64 +658,349 @@ function Expand-Cached([string]$zip, [string]$name, [string]$sha256, $maxEntryPa
 }
 
 # ------------------------------------------------------------------ the elevated stages (this file, -Stage)
+function Get-ProtectedInstallInputs([string]$stageDir) {
+  $assets = Join-Path $stageDir 'assets'
+  $accept = Copy-ToWork $AcceptanceFile $assets $AcceptanceSha256
+  $sumsCopy = Copy-ToWork $FirstInstallSums $assets $FirstInstallSumsSha256
+  $first = Read-Sha256Sums ([IO.File]::ReadAllText($sumsCopy))
+  $assetDir = Split-Path -Parent $FirstInstallSums
+  foreach ($name in $first.Keys) {
+    if ($name -cne [IO.Path]::GetFileName($Kit) -and $name -cnotmatch '^role-image-[0-9a-f]{64}\.tar\.gz$') { throw 'FIRST_INSTALL_ASSET_NAME_REFUSED' }
+    $null = Copy-ToWork (Join-Path $assetDir $name) $assets $first[$name]
+  }
+  if ($first[[IO.Path]::GetFileName($Kit)] -cne $KitSha256) { throw 'FIRST_INSTALL_KIT_CHANGED' }
+
+  $js = New-Object Web.Script.Serialization.JavaScriptSerializer
+  $pm = Copy-ToWork $PrereqManifest $stageDir $PrereqManifestSha256
+  $tools = @{}
+  foreach ($item in @($js.DeserializeObject([IO.File]::ReadAllText($pm))['items'])) {
+    $name = [string]$item['name']
+    if (@('node','git','python') -cnotcontains $name) { continue }
+    if ($item['fileName'] -cnotmatch '^[A-Za-z0-9_-][A-Za-z0-9._-]*\.zip$') { throw 'FIRST_INSTALL_TOOL_NAME_REFUSED' }
+    $zip = Copy-ToWork (Join-Path $PrereqDirectory $item['fileName']) $stageDir $item['sha256']
+    $toolDir = Join-Path $stageDir $name
+    Expand-Archive -LiteralPath $zip -DestinationPath $toolDir
+    $exe = @(Get-ChildItem -LiteralPath $toolDir -Recurse -File -Filter ($name + '.exe') | Where-Object { $name -cne 'git' -or $_.Directory.Name -ceq 'cmd' })
+    if ($exe.Count -ne 1) { throw 'FIRST_INSTALL_TOOL_NOT_ONE' }
+    $tools[$name] = $exe[0].FullName
+  }
+  if ($tools.Count -ne 3) { throw 'FIRST_INSTALL_TOOLS_MISSING' }
+  $path = (@('node','git','python') | ForEach-Object { Split-Path -Parent $tools[$_] }) -join ';'
+  [ordered]@{ assets = $assets; acceptance = $accept; node = $tools['node'];
+    environment = @{ PATH = ($path + ';C:\Windows\System32;C:\Windows'); PSModulePath = $env:PSModulePath; NODE_OPTIONS = ''; NODE_PATH = '' } }
+}
+
+function Invoke-FirstInstallLauncher([string]$stageDir, [string]$archive, [string]$entry, $inputFiles, [string]$out, [scriptblock]$BeforeLaunch) {
+  $work = Join-Path $stageDir 'prepare'
+  $run = Invoke-StageChild $inputFiles.node @($entry, 'prepare', '--artifact', $archive, '--artifact-sha', $ArchiveSha256,
+    '--acceptance', $inputFiles.acceptance, '--work', $work, '--from', $inputFiles.assets) 0 $out $inputFiles.environment
+  $prepared = Get-StageVerdict $run 'install.mjs'
+  if ($run.exit -ne 0 -or (Get-Key $prepared 'status') -cne 'FLEET_NODE_FIRST_INSTALL_PREPARED') { return $prepared }
+  $launcher = Get-Key $prepared 'launcher'
+  $file = Join-Path $work 'launcher.ps1'
+  if ((Get-Key $launcher 'path') -cne $file -or (Get-Key $launcher 'sha256') -cne (Sha256File $file)) { throw 'LAUNCHER_CHANGED' }
+  if ($BeforeLaunch) { & $BeforeLaunch }
+  $run = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $file, '-RunApprovedInstall') 0 $out $inputFiles.environment
+  $verdict = Get-StageVerdict $run 'launcher'
+  if ($run.exit -ne 0 -and (Get-Key $verdict 'status') -ceq 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED') { throw 'LAUNCHER_EXIT_CONFLICT' }
+  $verdict
+}
+
+function Get-FleetNewInstall($context, [string]$resultFile) {
+  Assert-FleetLocalPath $resultFile
+  $terminal = (Read-StageResult $resultFile).last
+  if ((Get-LauncherVerdict $true $terminal).status -cne 'BOOTSTRAP_DONE') { return }
+  $package = Get-Key $terminal 'installedPackage'
+  if ((Get-Key $package 'archiveSha256') -cne $context.archiveSha256 -or
+      (Get-Key $package 'ciSourceManifestSha256') -cne $context.sourceSha256 -or
+      (Get-Key $package 'commit') -cne $context.commit -or (Get-Key $package 'version') -cne $context.version) { return }
+  $receiptSha = Get-Key (Get-Key $terminal 'install') 'receiptSha256'
+  $started = [DateTimeOffset]::MinValue
+  if ($receiptSha -cnotmatch '^[0-9a-f]{64}$' -or -not [DateTimeOffset]::TryParse([string](Get-Key $terminal 'at'), [ref]$started)) { return }
+  $receipt = Join-Path $FleetResources.ciRoot 'resident\install\install-receipt.json'
+  Assert-FleetLocalPath $receipt
+  if (-not [IO.File]::Exists($receipt) -or (Sha256File $receipt) -cne $receiptSha) { return }
+  $running = @(Get-FleetServices | Where-Object { $_.Name -iin $FleetResources.services -and $_.State -ieq 'Running' -and $_.ProcessId -gt 0 })
+  if ($running.Count -ne $FleetResources.services.Count) { return }
+  @{
+    sourceSha256 = $context.sourceSha256; receiptSha256 = $receiptSha
+    startedAt = $started.ToUniversalTime().ToString('o'); localVerification = 'RESIDENT_VERIFIED_AND_COMPANION_QUALIFIED'
+  }
+}
+
 function Invoke-Stage {
   $stageDir = $null; $status = $null; $verdict = $null
+  $lock = $null; $locked = $false; $clearCredentials = $false
   $out = if ($Result -and (Test-SafePath $Result)) { $Result } else { $null }   # every line below is appended to it when it is made
   try {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent()
     if (-not (New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'STAGE_NOT_ELEVATED' }
     $code = Test-StageOperator $me.User.Value $ExpectedOperatorSid
     if ($code) { throw $code }
-    if ($Stage -cne 'cleanup') {
-      $stageDir = Join-Path 'C:\Windows\Temp' ('clued-bootstrap-' + $Stage + '-' + [Guid]::NewGuid().ToString('N'))
-      $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($AdminOnlySddl)
-      [void][IO.Directory]::CreateDirectory($stageDir, $ds)
+    $mutexAcl = [Security.AccessControl.MutexSecurity]::new()
+    foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) {
+      $rule = [Security.AccessControl.MutexAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid), 'FullControl', 'Allow')
+      $mutexAcl.AddAccessRule($rule)
     }
-    if ($Stage -ceq 'host') {
-      foreach ($p in @($Tar, $PrereqDirectory, $PrereqManifest, $Kit)) { if (-not (Test-SafePath $p)) { throw ('STAGE_ARGUMENT_REFUSED:' + $p) } }
-      foreach ($h in @($ArchiveSha256, $PrereqManifestSha256, $KitSha256, $ToolchainNodeSha256, $RegistrarSha256)) { if ($h -cnotmatch '^[0-9a-f]{64}$') { throw 'STAGE_ARGUMENT_REFUSED:sha256' } }
-      # H2: tokens an earlier run left (it gave up waiting, its window was closed, its cleanup was declined) never outlive this start:
-      # P1 asks for them again and holds them to the fingerprints facts.json records
-      $swept = Clear-CredentialDirectory $CredentialDirectory
-      Add-ResultLine $out (ConvertTo-JsonLine ([ordered]@{ credentialsLeftByAnEarlierRun = $swept.existed; removed = $swept.cleared; directory = $CredentialDirectory }) -Progress)
-      if (-not $swept.cleared) { throw ('CREDENTIALS_LEFT_BY_AN_EARLIER_RUN_NOT_REMOVED:' + $CredentialDirectory) }
+    $created = $false
+    $lock = [Threading.Mutex]::new($false, 'Global\CluedIndependentCI.PackageLifecycle', [ref]$created, $mutexAcl)
+    try { $locked = $lock.WaitOne(0) } catch [Threading.AbandonedMutexException] { $locked = $true }
+    if (-not $locked) { throw 'FLEET_INSTALL_ALREADY_RUNNING' }
+    $stageDir = Join-Path 'C:\Windows\Temp' ('cb-' + [Guid]::NewGuid().ToString('N'))
+    $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($AdminOnlySddl)
+    [void][IO.Directory]::CreateDirectory($stageDir, $ds)
+    if ($Stage -ceq 'install') {
+      foreach ($p in @($Tar, $PrereqDirectory, $PrereqManifest, $Kit, $AcceptanceFile, $FirstInstallSums)) { if (-not (Test-SafePath $p)) { throw ('STAGE_ARGUMENT_REFUSED:' + $p) } }
+      foreach ($h in @($ArchiveSha256, $PrereqManifestSha256, $KitSha256, $ToolchainNodeSha256, $RegistrarSha256, $AcceptanceSha256, $FirstInstallSumsSha256)) { if ($h -cnotmatch '^[0-9a-f]{64}$') { throw 'STAGE_ARGUMENT_REFUSED:sha256' } }
       $copy = Join-Path $stageDir 'a.tar'
       [IO.File]::Copy($Tar, $copy, $false)
       if ((Sha256File $copy) -cne $ArchiveSha256) { throw 'ARCHIVE_COPY_NOT_THE_ACCEPTED' }
       & $TarExe -x -f $copy -C $stageDir 'tree'
       if ($LASTEXITCODE -ne 0) { throw ('ARCHIVE_EXTRACT_FAILED:' + $LASTEXITCODE) }
-      $p1 = Join-Path $stageDir ($Resident.Replace('/', '\') + '\windows\first-install-host.ps1')
+      $residentTree = Join-Path $stageDir $Resident.Replace('/', '\')
+      $entry = Join-Path $residentTree 'rollout\fleet\install.mjs'
+      $protected = Get-ProtectedInstallInputs $stageDir
+      $check = Invoke-StageChild $protected.node @($entry, 'first-install-check', '--artifact', $copy, '--artifact-sha', $ArchiveSha256,
+        '--acceptance', $protected.acceptance, '--from', $protected.assets) 0 $out $protected.environment
+      $codes = Test-FirstInstallCheck $check.last $ArchiveSha256 $KitSha256 (Sha256File $protected.node)
+      if ($check.exit -ne 0 -or $codes.Count) { throw 'PROTECTED_INSTALL_INPUTS_REFUSED' }
+      . (Join-Path $residentTree 'rollout\fleet\package-lifecycle.ps1')
+      $context = New-FleetContext $protected.acceptance $ArchiveSha256 $ExpectedOperatorSid $Action
+      $context.ownerUac = $true
+      $p1 = Join-Path $residentTree 'windows\first-install-host.ps1'
       $p1Args = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $p1, '-Tree', (Join-Path $stageDir 'tree'), '-PrereqDirectory', $PrereqDirectory,
         '-PrereqManifest', $PrereqManifest, '-PrereqManifestSha256', $PrereqManifestSha256, '-KitSha256', $KitSha256, '-ToolchainNodeSha256', $ToolchainNodeSha256,
-        '-RegistrarSha256', $RegistrarSha256, '-ExpectedOperatorSid', $ExpectedOperatorSid, '-Kit', $Kit)   # the kit: P1 holds it to -KitSha256 and reads gh's path from it
+        '-RegistrarSha256', $RegistrarSha256, '-ExpectedOperatorSid', $ExpectedOperatorSid, '-Kit', $Kit)
+      $facts = Get-FleetInventory
+      $journalRoot = $FleetResources.journalRoot
+      $progressFile = Join-Path $journalRoot 'operation.json'
+      $progress = $null
+      Assert-FleetLocalPath $journalRoot
+      if ($null -ne (Get-FleetPathItem $journalRoot)) {
+        Assert-FleetJournalRoot $journalRoot
+        $progress = Read-FleetProgress $progressFile $context -ArchiveStaleFresh -RetargetReinstall
+        if ($null -eq $progress) {
+          if ([IO.Directory]::Exists($journalRoot) -and @(Get-ChildItem -LiteralPath $journalRoot -Force -ErrorAction Stop).Count -eq 0) {
+            [IO.Directory]::Delete($journalRoot)
+          }
+          if ($null -eq (Get-FleetPathItem $journalRoot)) {
+            $verdict = @{ status = 'FLEET_LIFECYCLE_RESELECT' }
+            return
+          }
+        }
+      }
+      $freshOutput = $null
+      if ($null -ne $progress -and $progress.mode -ceq 'Fresh') {
+        $freshOutput = Join-Path $journalRoot ('launcher-' + $progress.operationId + '.jsonl')
+        Assert-FleetLocalPath $freshOutput
+        if ($progress.step -ceq 'launcher') {
+          $terminal = (Read-StageResult $freshOutput).last
+          $terminalStatus = Get-Key $terminal 'status'
+          $launcherTerminal = (Get-Key $terminal 'contract') -ceq 'clued.independent-ci.source-v2-windows-launch-terminal/1' -and
+            $terminalStatus -cin @('STOPPED','R4_WINDOWS_REINSTALLED_VERIFY_NOT_PASSED_RESIDENT_STOPPED','PAUSE_NOT_CONFIRMED','R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED')
+          # Old journals could already say launcher when prepare refused.
+          if ($terminalStatus -ceq 'FLEET_NODE_INSTALL_REFUSED' -or
+              ($launcherTerminal -and (Get-LauncherVerdict $true $terminal).status -cne 'BOOTSTRAP_DONE')) {
+            $progress.step = 'install'
+            Write-FleetProgress $progressFile $progress
+          }
+        }
+      }
+      if ($null -ne $progress -and $progress.mode -ceq 'Fresh' -and $progress.step -cin @('launcher','verify') -and -not $Reset) {
+        if (-not (Get-FleetNewInstall $context $freshOutput)) {
+          if (-not $PreviewReceipt) { throw 'FLEET_REINSTALL_REQUIRES_PREVIEW' }
+          # The fresh lane has no server maintenance operation. Keep its
+          # operation ID, and commit the clean-reinstall intent before retrying.
+          $progress.mode = 'Reinstall'
+          $progress.step = 'intent'
+          $progress['previewReceipt'] = $PreviewReceipt
+          $progress['zeroNodeConsent'] = $ZeroNodeConsent.IsPresent
+          Write-FleetProgress $progressFile $progress
+        }
+      }
+      $mode = Get-FleetLifecycleMode $Action $facts $progress
+      if ($mode -ceq 'InspectUpgrade') { $mode = 'Reinstall' }
+      if ($null -eq $progress -and $mode -ceq 'Reinstall' -and $LifecycleMode -cne 'Reinstall' -and -not $PreviewReceipt) {
+        throw 'FLEET_REINSTALL_REQUIRES_PREVIEW'
+      }
+      if ($mode -ceq 'Probe') { throw 'FLEET_LOCAL_INVENTORY_INCOMPLETE' }
+      if ($Reset -and $mode -cne 'Fresh' -and -not ($null -ne $progress -and $progress.mode -ceq 'Fresh' -and $progress.step -ceq 'install')) {
+        throw 'RESET_ONLY_WITHOUT_A_RESIDENT'
+      }
+      if ($mode -cnotin @('Fresh') -and ($null -eq $progress -or $progress.mode -cne 'Fresh')) {
+        Assert-FleetJournalRoot $FleetResources.journalRoot
+        if ($Action -cne 'Install') { throw 'FLEET_MAINTENANCE_ACTION_REFUSED' }
+        $kitCopy = Join-Path $protected.assets ([IO.Path]::GetFileName($Kit))
+        $kitRecord = Get-Key (Read-FleetConnectionJson $kitCopy) 'record'
+        $fingerprintTool = Join-Path $residentTree 'tools\secret-fingerprint.mjs'
+        $carriedSite = $null
+        if ($progress) {
+          $priorCarry = Get-FleetCarryDirectory $progress
+          if ($null -ne (Get-FleetPathItem $priorCarry)) {
+            Assert-FleetJournalRoot $priorCarry
+            $carriedSite = Get-Key (Read-FleetConnectionJson (Join-Path $priorCarry 'metadata.json')) 'rpcSite'
+          }
+        }
+        $context.nodeConnection = Connect-FleetMaintenance $kitRecord $carriedSite $protected.node $fingerprintTool
+        $context.bindingId = $context.nodeConnection.bindingId
+        $context.bindingGeneration = $context.nodeConnection.generation
+        $preview = Invoke-FleetMaintenance -Phase 'preview' -Context $context
+        if (-not $preview.ok) { throw $preview.code }
+        if ($PreviewReceipt -and $PreviewReceipt -cne $preview.previewReceipt) { throw 'FLEET_MAINTENANCE_PREVIEW_REFUSED' }
+        if ($preview.healthyPeers -eq 0 -and (-not $PreviewReceipt -or -not $ZeroNodeConsent)) {
+          # After a partial cleanup the low-privilege Broker projection can
+          # be absent. Return this read-only result for a new, informed UAC.
+          $verdict = @{ status = 'FLEET_LIFECYCLE_PREVIEW_REQUIRED'; preview = $preview }
+          return
+        }
+        $context.previewReceipt = $preview.previewReceipt
+        $context.zeroNodeConsent = $ZeroNodeConsent.IsPresent -and $PreviewReceipt -ceq $preview.previewReceipt
+        $connectionFile = Join-Path $stageDir 'preserved-connection.json'
+        $context.preflightCleanup = {
+          param($ctx)
+          foreach ($feature in @('Microsoft-Windows-Subsystem-Linux','VirtualMachinePlatform')) {
+            if ((Get-WindowsOptionalFeature -Online -FeatureName $feature -ErrorAction Stop).State -ne 'Enabled') { throw 'FLEET_WINDOWS_FEATURE_NOT_READY' }
+          }
+        }
+        $context.checkConnection = {
+          param($ctx, $carry)
+          $connection = Get-FleetPreservedConnection $ctx $carry $protected.node $fingerprintTool
+          if ($null -eq $connection -or (Get-Key (Get-Key $connection 'nodeRecord') 'ciPrincipalBindingId') -cne $ctx.bindingId) {
+            throw 'FLEET_PRESERVED_BINDING_REFUSED'
+          }
+          $record = [ordered]@{}
+          foreach ($key in @('appKeyId','appPublicKeySha256Base64','ciPrincipalBindingId','ciPrincipalQualificationRef','ciPrincipalRoleRef','ciTokenPinSha256')) {
+            $record[$key] = Get-Key (Get-Key $connection 'nodeRecord') $key
+            if ($record[$key] -isnot [string] -and $record[$key] -isnot [int] -and $record[$key] -isnot [long]) { throw 'FLEET_PRESERVED_CONNECTION_SHAPE_REFUSED' }
+          }
+          $upgradePin = Get-Key (Get-Key $connection 'upgradeToken') 'fingerprint'
+          $heartbeat = Get-Key $connection 'heartbeatToken'
+          $heartbeatProjection = if ($heartbeat) {
+            @{ bindingId = Get-Key $heartbeat 'bindingId'; fingerprint = Get-Key $heartbeat 'fingerprint' }
+          }
+          if ($upgradePin -cnotmatch '^[0-9a-f]{64}$' -or ($heartbeat -and ($heartbeatProjection.fingerprint -cnotmatch '^[0-9a-f]{64}$' -or
+              $heartbeatProjection.bindingId -cnotmatch '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$'))) { throw 'FLEET_PRESERVED_CONNECTION_SHAPE_REFUSED' }
+          [IO.File]::WriteAllText($connectionFile, (ConvertTo-JsonLine -Progress @{
+            nodeRecord = $record; upgradeToken = @{fingerprint = $upgradePin}; heartbeatToken = $heartbeatProjection
+          }))
+          $args = $p1Args + @('-PreservedConnectionFile', $connectionFile, '-PreservedCarrierDirectory', $carry, '-PreservedNodeExe', $protected.node, '-CheckPreservedConnection')
+          $run = Invoke-StageChild $PowerShellExe $args 0 $out $protected.environment
+          $answer = Get-StageVerdict $run 'first-install-host.ps1'
+          if ($run.exit -ne 0 -or (Get-Key $answer 'status') -cne 'PRESERVED_CONNECTION_CARRIERS_VERIFIED') {
+            throw ('FLEET_PRESERVED_CONNECTION_CHECK_FAILED:' + (Get-Key $answer 'code'))
+          }
+          $connection.rpcSite = @{ scope=$ctx.nodeConnection.scope; supabaseUrl=$ctx.nodeConnection.supabaseUrl; publishableKey=$ctx.nodeConnection.publishableKey }
+          Write-FleetJournalJson (Join-Path $carry 'metadata.json') $connection
+        }
+        $context.observeInstall = {
+          param($ctx)
+          Get-FleetNewInstall $ctx (Join-Path $FleetResources.journalRoot ('launcher-' + $ctx.operationId + '.jsonl'))
+        }
+        $context.install = {
+          param($ctx)
+          $carry = Get-FleetCarryDirectory $ctx
+          & $ctx.checkConnection $ctx $carry
+          $args = $p1Args + @('-PreservedConnectionFile', $connectionFile, '-PreservedCarrierDirectory', $carry, '-PreservedNodeExe', $protected.node)
+          $run = Invoke-StageChild $PowerShellExe $args 0 $out $protected.environment
+          $answer = Get-StageVerdict $run 'first-install-host.ps1'
+          if ($run.exit -ne 0 -or (Get-Key $answer 'status') -cne 'FIRST_INSTALL_HOST_READY') {
+            throw ('FLEET_HOST_PREPARATION_FAILED:' + (Get-Key $answer 'code'))
+          }
+          $localResult = Join-Path $FleetResources.journalRoot ('launcher-' + $ctx.operationId + '.jsonl')
+          Assert-FleetLocalPath $localResult
+          [IO.File]::Delete($localResult)
+          $terminal = Invoke-FirstInstallLauncher $stageDir $copy $entry $protected $localResult
+          $proof = Get-FleetNewInstall $ctx $localResult
+          if (-not $proof) {
+            $result = Get-LauncherVerdict $true $terminal
+            throw ('FLEET_LOCAL_INSTALL_NOT_VERIFIED:' + $result['code'])
+          }
+          $proof
+        }
+        $verdict = Invoke-FleetLifecycle $context $mode $progressFile ${function:Get-FleetStepState} ${function:Invoke-FleetStep}
+        $status = $verdict.status
+        if ($context.mode -ceq 'Reinstall') {
+          $carry = Get-FleetCarryDirectory $context
+          Assert-FleetLocalPath $carry
+          foreach ($name in $FleetResources.stagedTokens.Values) {
+            $file = Join-Path $carry $name
+            Assert-FleetLocalPath $file
+            [IO.File]::Delete($file)
+            [IO.File]::Delete($file + '.pending')
+          }
+          if ([IO.Directory]::Exists($carry)) { [IO.Directory]::Delete($carry) }
+          [IO.File]::Delete((Join-Path $FleetResources.journalRoot ('launcher-' + $context.operationId + '.jsonl')))
+          [IO.File]::Delete($progressFile)
+          [IO.Directory]::Delete($FleetResources.journalRoot)
+        }
+        return
+      }
+      $protectedOutput = $out
+      if (-not $Reset) {
+        Assert-FleetJournalRoot $FleetResources.journalRoot
+        if ($null -eq $progress) { $progress = New-FleetProgress $context 'Fresh' }
+        $protectedOutput = Join-Path $FleetResources.journalRoot ('launcher-' + $progress.operationId + '.jsonl')
+        Assert-FleetLocalPath $protectedOutput
+        if ($progress.step -cin @('launcher','verify','complete')) {
+          $verdict = (Read-StageResult $protectedOutput).last
+          if ((Get-LauncherVerdict $true $verdict).status -cne 'BOOTSTRAP_DONE') { throw 'FLEET_INSTALL_RESULT_UNCONFIRMED' }
+          $verdict['bootstrapPhase'] = 'launcher'
+          $progress.step = 'complete'
+          Write-FleetProgress $progressFile $progress
+          [IO.File]::Delete($progressFile)
+          [IO.File]::Delete($protectedOutput)
+          [IO.Directory]::Delete($FleetResources.journalRoot)
+          return
+        }
+        $progress.step = 'install'
+        Write-FleetProgress $progressFile $progress
+      }
+      $clearCredentials = $true
+      $swept = Clear-CredentialDirectory $CredentialDirectory
+      Add-ResultLine $out (ConvertTo-JsonLine ([ordered]@{ credentialsLeftByAnEarlierRun = $swept.existed; removed = $swept.cleared; directory = $CredentialDirectory }) -Progress)
+      if (-not $swept.cleared) { throw ('CREDENTIALS_LEFT_BY_AN_EARLIER_RUN_NOT_REMOVED:' + $CredentialDirectory) }
       if ($Reset) { $p1Args += '-Reset' }
-      $run = Invoke-StageChild $PowerShellExe $p1Args 0 $out
+      $run = Invoke-StageChild $PowerShellExe $p1Args 0 $out $protected.environment
       Add-ResultLine $out (ConvertTo-JsonLine ([ordered]@{ child = 'first-install-host.ps1'; exit = $run.exit; stderr = $run.stderr }) -Progress)
       $verdict = Get-StageVerdict $run 'first-install-host.ps1'
       $status = [string](Get-Key $verdict 'status')
-    } elseif ($Stage -ceq 'launcher') {
-      if (-not (Test-SafePath $Launcher) -or $LauncherSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'STAGE_ARGUMENT_REFUSED:launcher' }
-      $copy = Join-Path $stageDir 'launcher.ps1'
-      [IO.File]::Copy($Launcher, $copy, $false)
-      if ((Sha256File $copy) -cne $LauncherSha256) { throw 'LAUNCHER_CHANGED' }
-      $run = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $copy, '-RunApprovedInstall') 0 $out
-      Add-ResultLine $out (ConvertTo-JsonLine ([ordered]@{ child = 'launcher'; exit = $run.exit; stderr = $run.stderr }) -Progress)
-      $verdict = Get-StageVerdict $run 'launcher'
-      $status = [string](Get-Key $verdict 'status')
-    } else { $status = 'CLEANUP' }
+      if ($Reset -and $run.exit -eq 0 -and $status -ceq 'FIRST_INSTALL_HOST_RESET' -and $null -ne $progress) {
+        [IO.File]::Delete($freshOutput)
+        [IO.File]::Delete($progressFile)
+        [IO.Directory]::Delete($FleetResources.journalRoot)
+      }
+      if ($run.exit -eq 0 -and $status -ceq 'FIRST_INSTALL_HOST_READY' -and -not $Reset) {
+        $verdict = Invoke-FirstInstallLauncher $stageDir $copy $entry $protected $protectedOutput -BeforeLaunch {
+          [IO.File]::Delete($protectedOutput)
+          $progress.step = 'launcher'
+          Write-FleetProgress $progressFile $progress
+        }
+        if ($progress.step -ceq 'launcher') { $verdict['bootstrapPhase'] = 'launcher' }
+        $status = [string](Get-Key $verdict 'status')
+        if ((Get-LauncherVerdict $true $verdict).status -ceq 'BOOTSTRAP_DONE') {
+          $progress.step = 'complete'
+          Write-FleetProgress $progressFile $progress
+          [IO.File]::Delete($progressFile)
+          [IO.File]::Delete($protectedOutput)
+          [IO.Directory]::Delete($FleetResources.journalRoot)
+        }
+      }
+    }
   } catch {
     $f = Get-StageFailure $Stage $_.Exception
     Add-ResultLine $out (ConvertTo-JsonLine $f -Progress); $status = $f.status; $verdict = $f
   } finally {
-    if ($stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }
-    $parentAlive = Test-ParentAlive $ParentProcessId $ParentStartTicks
-    if (Test-CredentialsToClear $Stage $status $parentAlive) {
+    if ($clearCredentials) {
       $c = Clear-CredentialDirectory $CredentialDirectory
-      Add-ResultLine $out (ConvertTo-JsonLine ([ordered]@{ credentialsCleared = $c.cleared; directory = $CredentialDirectory; bootstrapStillWaiting = $parentAlive }) -Progress)
-      if ($Stage -ceq 'cleanup') { Add-ResultLine $out (ConvertTo-JsonLine ([ordered]@{ status = $(if ($c.cleared) { 'CREDENTIALS_CLEARED' } else { 'CREDENTIALS_LEFT' }); directory = $CredentialDirectory }) -Progress) }
+      Add-ResultLine $out (ConvertTo-JsonLine ([ordered]@{ credentialsCleared = $c.cleared; directory = $CredentialDirectory }) -Progress)
+      if (-not $c.cleared) { $verdict = [ordered]@{ status = 'BOOTSTRAP_STAGE_FAILED'; code = 'CREDENTIAL_STAGING_CLEANUP_FAILED' } }
     }
+    $verdict = Complete-InstallStageVerdict $verdict $stageDir
+    if ($stageDir -and -not (Get-Key $verdict 'stagingDirectory')) { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($locked) { $lock.ReleaseMutex() }
+    if ($lock) { $lock.Dispose() }
     # the verdict stays the last object: the child's (or the stage's failure), repeated after the notes
-    if ($Stage -cne 'cleanup' -and $null -ne $verdict) { Add-ResultLine $out (ConvertTo-JsonLine $verdict -Progress) }
+    if ($null -ne $verdict) { Add-ResultLine $out (ConvertTo-JsonLine $verdict -Progress) }
   }
 }
 
@@ -670,15 +1013,12 @@ function Invoke-Bootstrap {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   if ((New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Stop-Bootstrap 'arguments' 'RUN_NOT_ELEVATED' 'run this in a normal window: it asks for UAC itself where it must' }
   $operator = $id.User.Value
-  # H2: every elevated stage knows this process (id and start time): a host preparation that ends after this run gave up never keeps tokens
-  $script:ParentArgs = @('-ParentProcessId', [string]$PID, '-ParentStartTicks', [string](Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks)
   # 1. the asset set and every hash
   $present = @(Get-ChildItem -LiteralPath $script:From -File -Force | ForEach-Object { $_.Name })
   $version = try { Get-ReleaseVersion $present } catch { Stop-Bootstrap 'assets' ([string]$_.Exception.Message) $null }
   $t = 'fleet-node-' + $version
-  $firstInstall = -not [IO.File]::Exists($ReceiptFile)
-  if ($Reset -and -not $firstInstall) { Stop-Bootstrap 'arguments' 'RESET_ONLY_WITHOUT_A_RESIDENT' 'this node has an install receipt: it is reinstalled or uninstalled, never reset' }
-  Out-Step 'arguments' 'ok' $null ([ordered]@{ firstInstall = $firstInstall; version = $version })
+  if ($Reset -and $Action -cne 'Install') { Stop-Bootstrap 'arguments' 'RESET_ACTION_REFUSED' $null }
+  Out-Step 'arguments' 'ok' $null ([ordered]@{ action = $Action; version = $version })
   $sums = try { Read-Sha256Sums ([IO.File]::ReadAllText((Join-Path $script:From 'SHA256SUMS'))) } catch { Stop-Bootstrap 'assets' ([string]$_.Exception.Message) $null }
   $firstSumsFile = Join-Path $script:From "$t.first-install.SHA256SUMS"
   $firstSums = if ([IO.File]::Exists($firstSumsFile)) { try { Read-Sha256Sums ([IO.File]::ReadAllText($firstSumsFile)) } catch { Stop-Bootstrap 'assets' ([string]$_.Exception.Message) $null } } else { $null }
@@ -688,16 +1028,16 @@ function Invoke-Bootstrap {
   if ([IO.File]::Exists($prereqFile)) {
     try { $pm = $js.DeserializeObject([IO.File]::ReadAllText($prereqFile)); $prereqNamesInDir = @(@(Get-Key $pm 'items') + @(Get-Key $pm 'debs') | Where-Object { $null -ne $_ } | ForEach-Object { [string](Get-Key $_ 'fileName') }) } catch { $prereqNamesInDir = @() }
   }
-  $codes = Test-AssetSet $present $sums $firstSums $version $firstInstall $prereqNamesInDir
+  $codes = Test-AssetSet $present $sums $firstSums $version $false $prereqNamesInDir
   if ($codes.Count) { Stop-Bootstrap 'assets' 'ASSET_SET_REFUSED' $codes }
   $all = [ordered]@{}; foreach ($k in @($sums.Keys)) { $all[$k] = $sums[$k] }; if ($null -ne $firstSums) { foreach ($k in @($firstSums.Keys)) { $all[$k] = $firstSums[$k] } }
   foreach ($n in @($all.Keys)) { if ((Sha256File (Join-Path $script:From $n)) -cne $all[$n]) { Stop-Bootstrap 'assets' 'ASSET_HASH_MISMATCH' $n } }
   Out-Step 'assets' 'ok' $null @($all.Keys)
   # 2. the prerequisites
   $m = $js.DeserializeObject([IO.File]::ReadAllText($prereqFile))
-  # M6: only what this run's path uses is fetched and must be pinned (a reinstall: node, python, git; a first install: everything)
-  $needed = Get-NeededPrereqs $firstInstall
-  $pc = Test-PrereqManifest $m $needed $firstInstall
+  # Download the controller tools before selecting the installation lane.
+  $needed = Get-NeededPrereqs $false
+  $pc = Test-PrereqManifest $m $needed $false
   if ($pc.Count) { Stop-Bootstrap 'prereq' $(if (@($pc | Where-Object { $_ -like 'PREREQ_NOT_PINNED:*' }).Count) { 'PREREQ_NOT_PINNED' } else { 'PREREQ_MANIFEST_REFUSED' }) $pc }
   if (-not [IO.Directory]::Exists($WorkParent)) { [void][IO.Directory]::CreateDirectory($WorkParent) }
   $script:Work = Join-Path $WorkParent ([Guid]::NewGuid().ToString('N'))
@@ -708,7 +1048,6 @@ function Invoke-Bootstrap {
     $file = Get-Prereq $i $pre
     if (@('node', 'python', 'git') -ccontains [string]$i['name']) { $tools[[string]$i['name']] = Expand-Cached $file ([string]$i['name']) ([string]$i['sha256']) (Get-Key $i 'maxEntryPathLength') }
   }
-  if ($firstInstall) { $debDir = Join-Path $pre 'debs'; [void][IO.Directory]::CreateDirectory($debDir); foreach ($d in @($m['debs'])) { $null = Get-Prereq $d $debDir } }
   $nodeExe = @(Get-ChildItem -LiteralPath $tools['node'] -Recurse -Filter node.exe | ForEach-Object { $_.FullName })
   $pyExe = @(Get-ChildItem -LiteralPath $tools['python'] -Recurse -Filter python.exe | ForEach-Object { $_.FullName })
   $gitExe = @(Get-ChildItem -LiteralPath $tools['git'] -Recurse -Filter git.exe | Where-Object { $_.Directory.Name -ceq 'cmd' } | ForEach-Object { $_.FullName })
@@ -725,63 +1064,118 @@ function Invoke-Bootstrap {
   $install = Join-Path $x ($Resident.Replace('/', '\') + '\rollout\fleet\install.mjs')
   $acceptance = Join-Path $script:From "$t.acceptance.json"
   $archiveSha = $sums["$t.tar"]
-  $prepareArgs = @($install, 'prepare', '--artifact', $tar, '--artifact-sha', $archiveSha, '--acceptance', $acceptance, '--work', (Join-Path $script:Work 'prepare'))
-  # 4. a first install: the accepted inputs checked non-elevated, then the host preparation elevated with exactly their pins
-  if ($firstInstall) {
-    $c = Invoke-NonElevated $nodeExe[0] @($install, 'first-install-check', '--artifact', $tar, '--artifact-sha', $archiveSha, '--acceptance', $acceptance, '--from', $script:From) $childEnv
-    $chk = $c.last
-    # M2: the toolchain's node.exe is the fleet's controller runtime, checked here before the first UAC (not first in prepare, after P1)
-    $kitListed = $(if ($null -ne $firstSums) { [string]$firstSums["$t.first-install-kit.json"] } else { $null })
-    $fc = Test-FirstInstallCheck $chk $archiveSha $kitListed (Sha256File $nodeExe[0])
-    if ($c.exit -ne 0 -or $fc.Count) {
-      Stop-Bootstrap 'first-install-check' $(if ($fc -ccontains 'CONTROLLER_NODE_NOT_THE_FLEETS') { 'CONTROLLER_NODE_NOT_THE_FLEETS' } else { 'FIRST_INSTALL_INPUTS_NOT_ACCEPTED' }) ([ordered]@{ codes = $fc; exit = $c.exit; last = $chk; stderr = $c.stderr })
+  $lifecycle = Join-Path (Split-Path -Parent $install) 'package-lifecycle.ps1'
+  if (-not [IO.File]::Exists($lifecycle)) { Stop-Bootstrap 'unpack' 'FLEET_PACKAGE_LIFECYCLE_MISSING' $null }
+  . $lifecycle
+  $hostInputs = $null
+  $reselected = $false
+  $protectedPreview = $null
+  while ($true) {
+    $facts = Get-FleetInventory
+    $mode = Get-FleetLifecycleMode $Action $facts $null
+    if ($Action -ceq 'Install' -and (Test-FleetProgressHint)) { $mode = 'Probe' }
+    if ($Reset -and $mode -ceq 'InspectUpgrade') { Stop-Bootstrap 'arguments' 'RESET_ONLY_WITHOUT_A_RESIDENT' $null }
+    if ($mode -ceq 'InspectUpgrade') {
+      $upgrade = Join-Path (Split-Path -Parent $install) 'upgrade.mjs'
+      $u = Invoke-NonElevated $nodeExe[0] @($upgrade, '--artifact', $tar, '--artifact-sha', $archiveSha, '--acceptance', $acceptance,
+        '--work', (Join-Path $script:Work 'upgrade')) $childEnv
+      $upgradeStatus = [string](Get-Key $u.last 'status')
+      $abandonedUpgrade = $false
+      if ($upgradeStatus -ceq 'FLEET_NODE_UPGRADE_IN_PROGRESS') {
+        try { $abandonedUpgrade = -not (Test-FleetUpgradeInProgress $u.last) }
+        catch { Stop-Bootstrap 'upgrade' 'FLEET_UPGRADER_HEARTBEAT_UNKNOWN' $null }
+      }
+      if ($u.exit -eq 0 -and -not $abandonedUpgrade -and $upgradeStatus -cin @('FLEET_NODE_ALREADY_AT_THIS_PACKAGE','FLEET_NODE_UPGRADE_IN_PROGRESS','FLEET_NODE_UPGRADE_REQUESTED')) {
+        Out-Step 'upgrade' 'ok' $null $upgradeStatus
+        Out-Result $upgradeStatus 'upgrade' $u.last
+        return
+      }
+      if (-not $abandonedUpgrade -and $upgradeStatus -cne 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL' -and (Get-Key $u.last 'code') -cne 'NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH') {
+        Stop-Bootstrap 'upgrade' 'FLEET_UPGRADE_REFUSED' $u.last
+      }
+      Out-Step 'upgrade' 'ok' $null 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL'
+      $mode = 'Reinstall'
     }
-    Out-Step 'first-install-check' 'ok' $null $null
-    # M3: the elevated stage reads local copies only (the archive and the manifest copied into the work directory, held to their hashes;
-    # the prerequisites are there already): an elevated token does not see a drive letter the Owner mapped
-    $hostIn = Join-Path $script:Work 'host-inputs'
-    $tarLocal = try { Copy-ToWork $tar $hostIn $archiveSha } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
-    $prereqLocal = try { Copy-ToWork $prereqFile $hostIn $sums["$t.prereq-manifest.json"] } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
-    $kitLocal = try { Copy-ToWork (Join-Path $script:From "$t.first-install-kit.json") $hostIn ([string]$chk['kitSha256']) } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
-    foreach ($p in @($tarLocal, $pre, $prereqLocal, $kitLocal)) { if (-not (Test-UnderDirectory $p $script:Work)) { Stop-Bootstrap 'host' 'ELEVATED_INPUT_NOT_LOCAL' $p } }
-    $hostArgs = @('-Tar', $tarLocal, '-ArchiveSha256', $archiveSha, '-PrereqDirectory', $pre, '-PrereqManifest', $prereqLocal, '-PrereqManifestSha256', $sums["$t.prereq-manifest.json"],
-      '-KitSha256', [string]$chk['kitSha256'], '-ToolchainNodeSha256', [string]$chk['toolchainNodeSha256'], '-RegistrarSha256', [string]$chk['registrarSha256'], '-ExpectedOperatorSid', $operator, '-Kit', $kitLocal)
-    $h = Invoke-Elevated 'host' $hostArgs $HostLimitSeconds $(if ($Reset) { @('-Reset') } else { @() })
+    if ($null -eq $hostInputs) {
+      # Install and clean reinstall share these pinned host assets across a reselect.
+      $codes = Test-AssetSet $present $sums $firstSums $version $true $prereqNamesInDir
+      if ($codes.Count) { Stop-Bootstrap 'assets' 'ASSET_SET_REFUSED' $codes }
+      $pc = Test-PrereqManifest $m (Get-NeededPrereqs $true) $true
+      if ($pc.Count) { Stop-Bootstrap 'prereq' 'PREREQ_MANIFEST_REFUSED' $pc }
+      foreach ($i in @($m['items'] | Where-Object { $needed -cnotcontains [string]$_['name'] })) { $null = Get-Prereq $i $pre }
+      $debDir = Join-Path $pre 'debs'; [void][IO.Directory]::CreateDirectory($debDir)
+      foreach ($d in @($m['debs'])) { $null = Get-Prereq $d $debDir }
+      $c = Invoke-NonElevated $nodeExe[0] @($install, 'first-install-check', '--artifact', $tar, '--artifact-sha', $archiveSha, '--acceptance', $acceptance, '--from', $script:From) $childEnv
+      $chk = $c.last
+      # M2: the toolchain's node.exe is the fleet's controller runtime, checked here before the first UAC (not first in prepare, after P1)
+      $kitListed = $(if ($null -ne $firstSums) { [string]$firstSums["$t.first-install-kit.json"] } else { $null })
+      $fc = Test-FirstInstallCheck $chk $archiveSha $kitListed (Sha256File $nodeExe[0])
+      if ($c.exit -ne 0 -or $fc.Count) {
+        Stop-Bootstrap 'first-install-check' $(if ($fc -ccontains 'CONTROLLER_NODE_NOT_THE_FLEETS') { 'CONTROLLER_NODE_NOT_THE_FLEETS' } else { 'FIRST_INSTALL_INPUTS_NOT_ACCEPTED' }) ([ordered]@{ codes = $fc; exit = $c.exit; last = $chk; stderr = $c.stderr })
+      }
+      Out-Step 'first-install-check' 'ok' $null $null
+      # M3: the elevated stage reads local copies only (the archive and the manifest copied into the work directory, held to their hashes;
+      # the prerequisites are there already): an elevated token does not see a drive letter the Owner mapped
+      $hostIn = Join-Path $script:Work 'host-inputs'
+      $tarLocal = try { Copy-ToWork $tar $hostIn $archiveSha } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
+      $prereqLocal = try { Copy-ToWork $prereqFile $hostIn $sums["$t.prereq-manifest.json"] } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
+      $kitLocal = try { Copy-ToWork (Join-Path $script:From "$t.first-install-kit.json") $hostIn ([string]$chk['kitSha256']) } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
+      $acceptHash = Sha256File $acceptance
+      $sumsHash = Sha256File $firstSumsFile
+      $acceptLocal = Copy-ToWork $acceptance $hostIn $acceptHash
+      $sumsLocal = Copy-ToWork $firstSumsFile $hostIn $sumsHash
+      foreach ($name in $firstSums.Keys) {
+        if ($name -cne "$t.first-install-kit.json") { $null = Copy-ToWork (Join-Path $script:From $name) $hostIn $firstSums[$name] }
+      }
+      foreach ($p in @($tarLocal, $pre, $prereqLocal, $kitLocal)) { if (-not (Test-UnderDirectory $p $script:Work)) { Stop-Bootstrap 'host' 'ELEVATED_INPUT_NOT_LOCAL' $p } }
+      $hostInputs = @('-Tar', $tarLocal, '-ArchiveSha256', $archiveSha, '-PrereqDirectory', $pre, '-PrereqManifest', $prereqLocal, '-PrereqManifestSha256', $sums["$t.prereq-manifest.json"],
+        '-KitSha256', [string]$chk['kitSha256'], '-ToolchainNodeSha256', [string]$chk['toolchainNodeSha256'], '-RegistrarSha256', [string]$chk['registrarSha256'], '-ExpectedOperatorSid', $operator, '-Kit', $kitLocal,
+        '-AcceptanceFile', $acceptLocal, '-AcceptanceSha256', $acceptHash, '-FirstInstallSums', $sumsLocal, '-FirstInstallSumsSha256', $sumsHash)
+    }
+    $hostArgs = $hostInputs + @('-Action', $Action, '-LifecycleMode', $mode)
+    $switches = @()
+    if ($Reset) { $switches += '-Reset' }
+    if ($mode -cin @('Probe','Reinstall','Retire','Rollback') -and -not $Reset) {
+      $context = New-FleetContext $acceptLocal $archiveSha $operator $Action
+      $preview = if ($protectedPreview) { $protectedPreview } else { Invoke-FleetMaintenance -Phase 'preview' -Context $context }
+      if ($preview.ok -eq $true) {
+        Assert-FleetPreview $preview $context
+        $hostArgs += @('-PreviewReceipt', $preview.previewReceipt)
+        if ($preview.healthyPeers -eq 0) {
+          Write-Host 'CI will be unavailable until the new installation passes service verification. Continue at the Windows UAC prompt to consent.'
+          $switches += '-ZeroNodeConsent'
+        }
+      } elseif ($mode -cne 'Probe' -and -not ($mode -ceq 'Reinstall' -and $preview.code -ceq 'FLEET_MAINTENANCE_PREVIEW_UNKNOWN')) {
+        Stop-Bootstrap 'host' $preview.code $null
+      }
+    }
+    $h = Invoke-Elevated 'install' $hostArgs ($HostLimitSeconds + $LauncherLimitSeconds + 5400) $switches
     if ($h.declined) { Stop-Bootstrap 'host' 'UAC_DECLINED' 'nothing elevated ran; run the same command again to continue' }
     $st = [string](Get-Key $h.last 'status')
+    if ($st -ceq 'FLEET_LIFECYCLE_PREVIEW_REQUIRED') {
+      if ($protectedPreview) { Stop-Bootstrap 'host' 'FLEET_MAINTENANCE_PREVIEW_REFUSED' $null }
+      $protectedPreview = Get-Key $h.last 'preview'
+      if (-not $protectedPreview) { Stop-Bootstrap 'host' 'FLEET_MAINTENANCE_PREVIEW_REFUSED' $null }
+      continue
+    }
+    if ($st -ceq 'FLEET_LIFECYCLE_RESELECT') {
+      if ($reselected) { Stop-Bootstrap 'host' 'FLEET_LIFECYCLE_RESELECT_REPEATED' $h.last }
+      $reselected = $true
+      continue
+    }
+    if ($st -ceq 'FLEET_LIFECYCLE_COMPLETE') { Out-Result $st 'host' $h.last; return }
     if ($Reset) {
       $resetDone = $st -ceq 'FIRST_INSTALL_HOST_RESET'
       Out-Step 'host' $(if ($resetDone) { 'ok' } else { 'failed' }) $(if ($resetDone) { $null } else { 'BOOTSTRAP_RESET_NOT_DONE' }) $(if ($resetDone) { [ordered]@{ status = $st } } else { $null })
       Out-Result $(if ($resetDone) { 'BOOTSTRAP_RESET_DONE' } else { 'BOOTSTRAP_RESET_NOT_DONE' }) 'host' ([ordered]@{ last = $h.last; output = $h.output }); return
     }
     if ($st -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { Out-Step 'host' 'failed' 'RESTART_THEN_RUN_THE_SAME_COMMAND' $null; Out-Result 'RESTART_THEN_RUN_THE_SAME_COMMAND' 'host' ([ordered]@{ detail = $h.last }); exit 3 }
-    if ($h.exit -ne 0 -or $st -cne 'FIRST_INSTALL_HOST_READY') { Stop-Bootstrap 'host' 'HOST_PREPARATION_NOT_DONE' ([ordered]@{ exit = $h.exit; last = $h.last; output = $h.output }) }
-    Out-Step 'host' 'ok' $null ([ordered]@{ status = $st })
-    $prepareArgs += @('--from', $script:From)
+    $v = Get-InstallStageVerdict $h.last
+    Out-InstallStageResult $h $v
+    if ($v.status -cne 'BOOTSTRAP_DONE') { exit 1 }
+    return
   }
-  # 5. prepare (non-elevated), then its launcher elevated; after a first install's host preparation every failure clears the tokens
-  $clear = {
-    param([string]$why)
-    if (-not $firstInstall) { return $null }
-    $cl = Invoke-Elevated 'cleanup' @('-ExpectedOperatorSid', $operator) 600
-    [ordered]@{ why = $why; credentials = $(if ($cl.declined) { 'CREDENTIALS_LEFT_UAC_DECLINED: ' + $CredentialDirectory } else { [string](Get-Key $cl.last 'status') }) }
-  }
-  $pr = Invoke-NonElevated $nodeExe[0] $prepareArgs $childEnv
-  $ps = [string](Get-Key $pr.last 'status')
-  $lch = Get-Key $pr.last 'launcher'
-  if ($pr.exit -ne 0 -or @('FLEET_NODE_INSTALL_PREPARED', 'FLEET_NODE_FIRST_INSTALL_PREPARED') -cnotcontains $ps -or -not (Test-SafePath ([string](Get-Key $lch 'path'))) -or [string](Get-Key $lch 'sha256') -cnotmatch '^[0-9a-f]{64}$') {
-    Stop-Bootstrap 'prepare' 'PREPARE_REFUSED' ([ordered]@{ exit = $pr.exit; last = $pr.last; stderr = $pr.stderr; cleanup = (& $clear 'prepare') })
-  }
-  Out-Step 'prepare' 'ok' $null ([ordered]@{ status = $ps })
-  $l = Invoke-Elevated 'launcher' @('-Launcher', [string]$lch['path'], '-LauncherSha256', [string]$lch['sha256'], '-ExpectedOperatorSid', $operator) $LauncherLimitSeconds
-  if ($l.declined) { Stop-Bootstrap 'launcher' 'UAC_DECLINED' ([ordered]@{ note = 'the launcher did not run; run the same command again'; cleanup = (& $clear 'launcher declined') }) }
-  $ls = [string](Get-Key $l.last 'status')
-  # M4: a first install is done only with a confirmed role and the companion switch passed (Get-LauncherVerdict)
-  $v = Get-LauncherVerdict $firstInstall $l.last
-  Out-LauncherVerdict $v ([ordered]@{ firstInstall = $firstInstall; prepare = $ps; launcher = $ls; companionSwitch = $v.companionSwitch; next = $v.next
-    residueUnchecked = (Get-Key $pr.last 'residueUnchecked'); exit = $l.exit; output = $l.output })
-  if ($v.status -cne 'BOOTSTRAP_DONE') { exit 1 }
 }
 
-$script:Work = $null; $script:Self = $null; $script:ParentArgs = @()
+$script:Work = $null; $script:Self = $null
 if ($MyInvocation.InvocationName -ne '.') { if ($Stage) { Invoke-Stage } else { Invoke-Bootstrap } }

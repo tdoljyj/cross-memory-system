@@ -53,7 +53,7 @@ async function assemble(root, run, deadline) {
   check(await fs.realpath(bundle) === bundle, 'FLEET_BROKER_PATH_REFUSED');
   const requestBytes = await readBounded(path.join(bundle, files.request), SMALL, 'FLEET_REQUEST_REFUSED');
   const acceptance = acceptanceFromTarget(target, requestBytes);
-  check(!onDuty || target.other_sources.every(peer => peer === acceptance.ciSourceManifestSha256), 'FLEET_WAITING_FOR_PEERS');
+  check(Object.hasOwn(target, 'holder_package') || !onDuty || target.other_sources.every(peer => peer === acceptance.ciSourceManifestSha256), 'FLEET_WAITING_FOR_PEERS');
   const source = path.join(bundle, files.tar);
   const stat = await fs.lstat(source);
   check(stat.isFile() && stat.size > 0 && stat.size <= ARCHIVE_MAX, 'FLEET_ARCHIVE_REFUSED');

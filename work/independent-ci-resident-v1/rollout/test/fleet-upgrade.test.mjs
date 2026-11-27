@@ -19,6 +19,7 @@ import { POLICY_CONTRACT_V8 } from '../../src/policy.mjs';
 import { sourceHashOf } from '../fleet/install.mjs';
 import { main, upgradeNode } from '../fleet/upgrade.mjs';
 import { buildUniversal } from '../fleet/universal.mjs';
+import { stageTransport } from '../fleet/transport-assets.mjs';
 import { fixtureRepo, fleetFacts, nodeSite, sha, tempDir } from '../fleet/test/fleet-fixtures.mjs';
 import { Journal } from '../../upgrader/src/journal.mjs';
 import { parseInboxEntry } from '../../upgrader/src/request.mjs';
@@ -78,14 +79,8 @@ test('即使 Source 相同，缺少本机监督器编译证明也须重装', asy
   const facts = path.join(n.root, 'upgrade', 'mailbox', 'responses', 'version-facts.json');
   await fs.writeFile(facts, JSON.stringify({ ...await readJson(facts), staged: null, ciSourceManifestSha256: w.acceptance.ciSourceManifestSha256 }));
   const q = requester();
-  const checkReinstall = async (candidate, installed) => ({ candidate, ...installed, observedAt: '2026-11-27T00:00:00Z',
-    evidenceSha256: 'a'.repeat(64), checks: {
-      currentPointer: true, installReceipt: true, linuxFacts: true, ciConnection: true, host: true, roleAndPause: true,
-      operations: true, launcher: true, acl: true, connectionCarry: true, processClearance: true, continuation: true,
-    } });
-  const result = await upgrade(w, n, { now: Date.parse('2026-11-27T00:01:00Z'), request: q.request, checkReinstall });
+  const result = await upgrade(w, n, { now: Date.parse('2026-11-27T00:01:00Z'), request: q.request });
   assert.equal(result.status, 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL');
-  assert.equal(result.reinstallStatus, 'PASS');
   assert.ok(result.reinstall);
   assert.equal(q.calls.length, 0);
 });
@@ -206,8 +201,7 @@ test('fleet upgrade: safe to run again, and the nodes it cannot take in place go
   const r1 = await viaMain(moved);
   await refusedBeforeAnyWork(r1, 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'FLEET_SOURCE_REFS_CHANGED_NEEDS_REINSTALL');
   assert.deepEqual(r1.detail, { changed: ['sourceAcceptanceRef'] });
-  assert.equal(r1.reinstallStatus, 'UNKNOWN');
-  assert.equal(r1.reinstall, undefined);
+  assert.ok(r1.reinstall);
 
   // 2. the Linux upgrade tool is not the installed one
   let undo = await rewrite(at('upgrade', 'mailbox', 'responses', 'version-facts.json'), f => ({ ...f, upgradeToolSha256: 'e'.repeat(64) }));
@@ -231,8 +225,8 @@ test('fleet upgrade: safe to run again, and the nodes it cannot take in place go
   // 4. the precheck's own refusal (the Linux live tree is not the generation on record): assembled, never requested
   undo = await rewrite(at('upgrade', 'mailbox', 'responses', 'version-facts.json'), f => ({ ...f, liveMatchesCurrent: false }));
   const r4 = await viaMain(w.acceptance);
-  assert.deepEqual([r4.status, r4.code, r4.reinstallStatus, r4.precheck.status, q.calls.length],
-    ['FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'LINUX_LIVE_NOT_THE_CURRENT_GENERATION', 'UNKNOWN', 'PRECHECK_REFUSED', 0], JSON.stringify(r4).slice(0, 2000));
+  assert.deepEqual([r4.status, r4.code, r4.precheck.status, q.calls.length],
+    ['FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'LINUX_LIVE_NOT_THE_CURRENT_GENERATION', 'PRECHECK_REFUSED', 0], JSON.stringify(r4).slice(0, 2000));
   await undo();
 
   // 5. the two sides are not one package (a reinstall that stopped half way): the reinstall finishes it, never an upgrade
@@ -310,13 +304,21 @@ test('fleet upgrade fetch: one command takes the tar from the second source, che
   await fs.access(path.join(path.dirname(script), 'fetch.mjs'));
   assert.deepEqual(rest.slice(0, 6), ['--artifact', path.join(dir, 'w1', 'dl', `${tag}.tar`), '--artifact-sha', sha256, '--acceptance', path.join(dir, 'w1', 'dl', `${tag}.acceptance.json`)]);
   assert.ok(rest.includes('--no-request'));
+  const archive = await fs.readFile(w.tar);
+  const transports = await stageTransport({ repository: w.acceptance.repository, version, archiveSha256: sha256, archive, stage: from });
+  await fs.rm(path.join(from, `${tag}.tar`));
+  const compressed = await main(['fetch', '--version', version, '--work', path.join(dir, 'compressed'), '--from', from, '--no-request'],
+    { ...noNetwork, runChild });
+  assert.equal(compressed.fetched?.source, 'from-gzip');
+  assert.equal(sha(await fs.readFile(ran[1][2])), sha256, 'prepare receives the reconstructed formal tar');
+  for (const { file } of transports) await fs.rm(file);
   // a tar that is not the accepted one: refused, nothing unpacked, nothing run
-  const bad = Buffer.from(await fs.readFile(w.tar)); bad[600] ^= 1;
+  const bad = Buffer.from(archive); bad[600] ^= 1;
   await fs.writeFile(path.join(from, `${tag}.tar`), bad);
   const r2 = await main(['fetch', '--version', version, '--work', path.join(dir, 'w2'), '--from', from], { ...noNetwork, fetch: { ...noNetwork.fetch, deadlineMs: 100, backoffMs: () => 10 }, runChild });
   assert.equal(r2.status, 'FLEET_NODE_UPGRADE_REFUSED');
   await assert.rejects(fs.access(path.join(dir, 'w2', 'unpacked')));
-  assert.equal(ran.length, 1);
+  assert.equal(ran.length, 2);
 });
 
 test('fleet upgrade fetch: a rollback to a package whose acceptance has no kit field is not stopped by this (newer) copy; the unpacked package judges it, and a new package without a kit is still refused by its own rule', { timeout: 900_000 }, async t => {
@@ -417,7 +419,7 @@ test('fleet upgrade: --no-request, an open operation, a refusal and a reinstall 
   await untouched('a refusal');
   assert.equal(q.calls.length, 0);
 });
-test('缺少监督器证明且重装不可用时，冻结通道仍可升级但不能证明本代完整交付', async t => {
+test('第 24 代包缺少监督器证明时沿用其冻结通道', async t => {
   const clock = fakeClock(Date.parse('2026-11-27T00:01:00Z'));
   const w = await getWorld(), n = await nodeSite(t, 'a', w.fleet, { now: clock.now });
   const file = path.join(n.root, 'install', 'install-receipt.json');
@@ -428,7 +430,7 @@ test('缺少监督器证明且重装不可用时，冻结通道仍可升级但�
   const curFile = path.join(n.root, 'upgrade', 'current.json');
   await fs.writeFile(curFile, JSON.stringify({ ...await readJson(curFile), installReceiptSha256: sha(bytes) }));
   const q = requester();
-  const r = await upgrade(w, n, { now: clock.now, request: q.request, checkReinstall: async () => ({ status: 'UNKNOWN' }) });
+  const r = await upgrade(w, n, { now: clock.now, request: q.request });
   assert.equal(r.status, 'FLEET_NODE_UPGRADE_REQUESTED', JSON.stringify(r).slice(0, 1500));
   assert.equal(r.capabilities.companionSupervisor, 'UNPROVEN');
   assert.equal(r.capabilities.complete, false);
@@ -440,8 +442,8 @@ test('已钉监督器 EXE 摘要不符时拒绝升级，零投递', async t => {
   await fs.writeFile(path.join(n.root, 'bin', 'CluedCompanionSupervisor.exe'), 'fixture changed');
   const q = requester();
   const r = await upgrade(w, n, { request: q.request });
-  assert.deepEqual([r.status, r.code, r.reinstallStatus, q.calls.length],
-    ['FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'COMPANION_SUPERVISOR_EXE_CHANGED', 'UNKNOWN', 0]);
+  assert.deepEqual([r.status, r.code, q.calls.length],
+    ['FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'COMPANION_SUPERVISOR_EXE_CHANGED', 0]);
 });
 
 test('安装回执与当前代次不符时结束升级，零投递', async t => {
@@ -450,6 +452,34 @@ test('安装回执与当前代次不符时结束升级，零投递', async t => 
   await fs.appendFile(receipt, '\n');
   const q = requester();
   const r = await upgrade(w, n, { request: q.request });
-  assert.deepEqual([r.status, r.code, r.reinstallStatus, r.reinstall, q.calls.length],
-    ['FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'NODE_RECEIPT_NOT_THE_CURRENT_GENERATION', 'UNKNOWN', undefined, 0]);
+  assert.deepEqual([r.status, r.code, q.calls.length],
+    ['FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'NODE_RECEIPT_NOT_THE_CURRENT_GENERATION', 0]);
+});
+
+
+test('无法解析旧代指针时可交给同包重装且升级入口不写入', async t => {
+  const w = await getWorld(), n = await nodeSite(t, 'a', w.fleet);
+  const current = path.join(n.root, 'upgrade', 'current.json');
+  await fs.writeFile(current, '{malformed');
+  const q = requester();
+  const result = await upgrade(w, n, { request: q.request });
+  assert.equal(result.status, 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL');
+  assert.equal(result.code, 'NODE_CURRENT_POINTER_INVALID');
+  assert.ok(result.reinstall);
+  assert.equal(q.calls.length, 0);
+  assert.equal(await fs.readFile(current, 'utf8'), '{malformed');
+});
+
+test('WSL 半装和 Windows 回滚失败都转交给清洁重装且零投递', async t => {
+  const w = await getWorld(), n = await nodeSite(t, 'a', w.fleet);
+  const factsFile = path.join(n.root, 'upgrade', 'mailbox', 'responses', 'version-facts.json');
+  const facts = await readJson(factsFile);
+  await fs.writeFile(factsFile, JSON.stringify({ ...facts, staged: { generation: facts.generation + 1 } }));
+  const q = requester();
+  const half = await upgrade(w, n, { request: q.request });
+  assert.deepEqual([half.status, half.code], ['FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'NODE_INSTALLED_GENERATION_UNCONFIRMED']);
+  await fs.writeFile(path.join(n.root, 'upgrade', 'status.json'), JSON.stringify({ op: { state: 'ROLLBACK_FAILED' } }));
+  const switched = await upgrade(w, n, { request: q.request });
+  assert.deepEqual([switched.status, switched.code], ['FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'NODE_UPGRADE_WITHOUT_TRUSTED_TERMINAL']);
+  assert.equal(q.calls.length, 0);
 });

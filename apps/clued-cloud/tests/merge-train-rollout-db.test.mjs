@@ -34,7 +34,7 @@ export const batchOf = ({ batchId, generation }) => ({ batchId, generation });
 const rolloutTest = import.meta.main ? test : () => {};
 
 let gatewayModule;
-export async function drill(t) {
+export async function drill(t, { through } = {}) {
   // 与片 1 使用同一真实 Worker 入口。HTTP 替身只把 RPC 转发给隔离库。
   gatewayModule ??= (async () => {
     const { build, stop } = appRequire('esbuild');
@@ -47,7 +47,7 @@ export async function drill(t) {
   const api = await gatewayModule;
   const primaryToken = randomBytes(32).toString('hex');
   // raw-binding-grants: schedulingFixture calls allowRawTestBindings(admin) after applying the migrations.
-  const db = await schedulingFixture({ tokenHash: digest(primaryToken) });
+  const db = await schedulingFixture({ tokenHash: digest(primaryToken), through });
   t.after(db.close);
   const { admin, user, project } = db;
   const atomicLandingQualificationRef = uuid();

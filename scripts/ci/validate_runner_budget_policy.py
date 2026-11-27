@@ -420,7 +420,16 @@ EXACT_SOURCE_CANDIDATE_SUCCESSORS = {'gitleaks.yml': {'kind': 'owner',
                              'predecessor': {'control_sha256': '500da29fb3c1fbe9df2be795e84f92908249a8ee057bef709e17e5aa7c5e341f',
                                              'jobs': {'report': '13d032eddeef15d56c9b98d7e74cc09325e6b40fbbe190820bd9aa86a2f41089'}},
                              'successor': {'control_sha256': '6002ab6e9058f16a2a216be0f10076e2f0c740e8817478d7454f322ae9345a0c',
-                                           'jobs': {'report': '4c829014acf6eb4d0e7f829d37e630036e07869cc68f2122f7ce58191e60f0ca'}}}}
+                                            'jobs': {'report': '4c829014acf6eb4d0e7f829d37e630036e07869cc68f2122f7ce58191e60f0ca'}}},
+ # Task 788c2598：从 d7da5f592 接续。兼容回放是 release 作业内的一步，
+ # 仅确认延长时限。确认只接受本次回放，发布准入用内置令牌只读 PR。
+ 'clued-cloud-production-release.yml': {'kind': 'legacy',
+                                       'predecessor_commit': 'd7da5f5926f8720d1c2675c7224f417a1da359c2',
+                                       'workflow_sha256': '59629a6c6899474cb7a3269029f389665b31eeacd69046bdb12e30ecaa51fdc4',
+                                       'predecessor': {'control_sha256': '5fe5907c67e557a5ffdae9ffc7b3da3b724e015ae11b5945a1cb5564d932e58f',
+                                                       'jobs': {'release': 'a595f8ca810d915fd2921a6ba43d277f51da0e65b9def36679c0dea3ca120626'}},
+                                       'successor': {'control_sha256': '2726af89d1f0d6952148f282034b4918180a4f036775ee28d46aef72b4720232',
+                                                     'jobs': {'release': '8d7814ca41da3424edffee01b76cebe380480964e0a9fa3b179b512e03693bd1'}}}}
 
 # The preceding clued-merge-slot-ci.yml pin recorded the home-linux-01 retirement
 # (Owner Decision 2907d858). That change removed the one "Clued handover hook

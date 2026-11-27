@@ -190,8 +190,10 @@ test('E5(a): the launcher\'s own code reaches the bootstrap verdict, the entry\'
   const r = ps(`. ${q(bootstrap)} -From ${q(tmp)}
     $script:Work = 'C:\\w'
     $out = { param($t)
-      $v = Get-LauncherVerdict $true $t
-      $lines = @(try { Out-LauncherVerdict $v ([ordered]@{ firstInstall = $true; prepare = 'FLEET_NODE_FIRST_INSTALL_PREPARED'; launcher = (Get-Key $t 'status'); companionSwitch = $v.companionSwitch; next = $v.next; exit = 1; output = 'o.txt' }) } catch { 'MISSING:' + $_.Exception.Message })
+      if ($null -eq $t) { $t = @{} }
+      $t['bootstrapPhase'] = 'launcher'
+      $v = Get-InstallStageVerdict $t
+      $lines = @(Out-InstallStageResult @{last=$t; exit=1; output='o.txt'} $v)
       $last = $lines[-1]; $step = $lines[0]
       [ordered]@{ verdict = $v; hasCode = $v.Contains('code'); entry = (ConvertTo-FirstInstallEntryResult $v $(if ($v.status -ceq 'BOOTSTRAP_DONE') { 0 } else { 1 }) 'C:\\t' 'C:\\n.exe')
         step = $(try { $step | ConvertFrom-Json } catch { $step }); last = $(try { $last | ConvertFrom-Json } catch { $last }) } }
@@ -221,10 +223,6 @@ test('E5(a): the launcher\'s own code reaches the bootstrap verdict, the entry\'
   assert.equal(r.none.verdict.code, null);
   assert.equal(r.none.entry.stopCode, 'BOOTSTRAP_LAUNCHER_ENDED');
   assert.equal(r.none.step.rejectCode, 'BOOTSTRAP_LAUNCHER_ENDED');
-  // the bootstrap prints its launcher verdict through that one function; the entry reads the verdict, not the terminal
-  const text = fs.readFileSync(bootstrap, 'utf8');
-  assert.match(text, /\$v = Get-LauncherVerdict \$firstInstall \$l\.last\r?\n\s*Out-LauncherVerdict \$v /);
-  assert.match(fs.readFileSync(entryScript, 'utf8'), /return \(ConvertTo-FirstInstallEntryResult \$verdict /);
 });
 
 // Audit item 6 (D:/w/tmp/claude-drill-r4-audit.result.md, Fable section 7.1 "same-kind gaps"): the entry loads the release's bootstrap by
@@ -237,18 +235,15 @@ test('the entry loads the real bootstrap.ps1 and its helpers are callable', opts
   const r = ps(`. Import-EntryBootstrap ${q(assets)} '1.2.3'
     $names = @('Get-ReleaseVersion', 'Read-Sha256Sums', 'Get-LauncherVerdict', 'Get-LastJsonLine', 'Invoke-StageChild', 'Expand-Cached', 'Test-FirstInstallCheck')
     [ordered]@{ missing = @($names | Where-Object { -not (Get-Command $_ -CommandType Function -ErrorAction SilentlyContinue) })
-      version = (Get-ReleaseVersion @('fleet-node-1.2.3.tar', 'SHA256SUMS')); from = $From; receipt = $ReceiptFile
+      version = (Get-ReleaseVersion @('fleet-node-1.2.3.tar', 'SHA256SUMS')); from = $From
       stop = $(try { Stop-Bootstrap 'host' 'SOME_CODE' 'why'; 'returned' } catch { $_.Exception.Message })
-      verdict = (Get-LauncherVerdict $true (Get-LastJsonLine '{"status":"STOPPED","code":"X"}')).status }`, entryScript);
+      verdict = (Get-InstallStageVerdict (Get-LastJsonLine '{"bootstrapPhase":"launcher","status":"STOPPED","code":"X"}')) }`, entryScript);
   assert.deepEqual(r.missing, []);
   assert.equal(r.version, '1.2.3');
   assert.equal(r.from, assets);
-  assert.match(r.receipt, /install-receipt\.json$/, 'the bootstrap\'s own constants are loaded');
   assert.equal(r.stop, 'SOME_CODE:why', 'the entry owns the stop: it throws, the process is not ended');
-  assert.equal(r.verdict, 'BOOTSTRAP_LAUNCHER_ENDED');
-  const text = fs.readFileSync(entryScript, 'utf8');
-  assert.match(text, /function Invoke-FirstInstallAccepted\([^\n]*\{\r?\n\s*\. Import-EntryBootstrap \$Assets \$ReleaseVersion\r?\n/);
-  assert.equal(text.split('. $bootstrap -From').length - 1, 1, 'one place loads the bootstrap');
+  assert.equal(r.verdict.status, 'BOOTSTRAP_LAUNCHER_ENDED');
+  assert.equal(r.verdict.code, 'X');
 });
 
 // ---------------------------------------------------------------- E5 (b)

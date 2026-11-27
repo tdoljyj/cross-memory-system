@@ -81,7 +81,7 @@ import { requiredOnHead } from './train-facts.mjs';
 import { GREEN_LEDGER_UNAVAILABLE } from './green-ledger.mjs';
 import { ROLE_ALREADY_ON_GITHUB, publishedNames, ofJobIds } from '../published-on-github-v2.mjs';
 import { withdrawalTitle, withdrawalNote } from '../withdrawal-text.mjs';
-import { strictFrontSourceHealthy, recordFollows } from './train-strict.mjs';
+import { sealedHolderStop, strictFrontSourceHealthy, recordFollows } from './train-strict.mjs';
 
 export const APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
 export const CONTROL_CHECKS_V2 = Object.freeze({
@@ -717,8 +717,20 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       mainNow = (await github.readBranchHead('main'))?.sha;
       if (mainNow !== job.baseSha && mainNow !== job.testSha) return blocked('RESIDENT_BASE_MOVED');
     } catch (e) { return blocked(safe(e)); }
-    let phase = 'intent';
+    let phase = 'intent', fleetLanding = null;
     try {
+      if (slotNative?.nodesStatus && mainNow !== job.testSha) {
+        const status = await slotNative.nodesStatus();
+        if (status?.onDuty === false) return blocked('NOT_ON_DUTY');
+        if (status && Object.hasOwn(status, 'holderPackage')) {
+          const refusal = sealedHolderStop(status.holderPackage, job.sourceManifestSha256);
+          if (refusal) return blocked(refusal);
+          fleetLanding = { effect_key: key, grant_id: status.holderPackage.grantId, source: job.sourceManifestSha256,
+            base_sha: job.baseSha, test_sha: job.testSha };
+          if ((await slotNative.fleetLanding({ ...fleetLanding, command: 'begin', main_sha: mainNow })).authorized !== true)
+            return blocked('TRAIN_LANDING_REFUSED');
+        }
+      }
       const intent = await journal.begin(key, { action: 'train-land-main/1', subject: subjectOfV2(job), claim: batchClaim, members, baseSha: job.baseSha, testSha: job.testSha,
         nativeObservationSha256: before.facts.observationSha256 });
       if (intent.existing) return { status: 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false, ...lease };
@@ -734,6 +746,10 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     const landed = { mainSha: job.testSha, baseSha: job.baseSha, members: members.map(m => ({ pr: m.pr, headSha: m.headSha })) };
     try { record('native_train_landing', { jobId: job.id, effectKey: key, state: r.state, mainSha: r.mainSha ?? null, members: landed.members }); } catch { /* best-effort */ }
     if (r.state === 'landed') {
+      if (fleetLanding && r.sent && r.mainSha === job.testSha) {
+        try { await slotNative.fleetLanding({ ...fleetLanding, command: 'settle', main_sha: r.mainSha }); }
+        catch { /* 主线已读回。服务端未获回执时继续保留后备，直到独立验证完成。 */ }
+      }
       await transition(key, 'sent', 'settled', { landed });
       return { status: 'SETTLED', effectKey: key, sideEffects: r.sent ? 1 : 0, productionAuthorized: production, landed, qualificationIssued: false, nativeTicketIssued: false };
     }

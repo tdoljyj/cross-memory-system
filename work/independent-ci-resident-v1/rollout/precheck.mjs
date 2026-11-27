@@ -34,10 +34,7 @@ import { canonicalJson } from '../src/canonical.mjs';
 import { powershellArgs } from '../src/powershell-argv.mjs';
 
 export const PRECHECK_CONTRACT = 'clued.independent-ci.upgrade-precheck/1';
-// No Source comparison across nodes here (task 0b1516c0): the precheck reads no live view of the other nodes, only stage 10's cached
-// list (status.json train.nodes), which cannot tell "the other node is already upgraded, the list is behind" from "it is older". The
-// order (standby first, the node on duty last) is upgrade.mjs step 8 (FLEET_NODE_UPGRADE_HAND_OVER_FIRST); one Source across the
-// fleet is stage 10's own check at run time (TRAIN_SOURCE_MISMATCH) and the server's refusal to hand ci-admission to another Source.
+// 本机预检只读安装事实；缓存的其他节点列表不能授权交班或升级。舰队资格由第 10 段和服务端核对。
 const HEX64 = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const STAND_IN = 'f'.repeat(64);

@@ -356,7 +356,8 @@ async function releaseWorld(t, w) {
   const kitName = `fleet-node-${VERSION}.first-install-kit.json`;
   const out = path.join(d, 'accept');
   const prepare = (over = {}) => publishModule.prepare({ version: VERSION, dir: outDir, out, images: w.kit.images.local.map(l => path.join(w.from, l.asset)), index,
-    root: w.template.root, ghCommand, ...over });
+    root: w.template.root, ghCommand, ...over,
+    deps: { kitOf: firstInstallKitOf, fleetMaterial: installedFleetMaterial, ...over.deps } });
   // the Owner's acceptance: a stand-in of the acceptance door's anonymous read (accept-door.mjs) answering the fleet.accept Grant of 3bc571a6's
   // values (Grant c556370f, receipt 7ccaefca) for the resource read, naming its request; the door replays the same row on every read
   const readStatus = async resource => ({ status: 'accepted', request_sha256: resource.split('/').pop(), resources: [resource],
@@ -378,7 +379,7 @@ test('3bc571a6 end to end: prepare on the installed node with no Decision, the O
     await factsObservedAgain(w, isoNow());
     const p = await r0.prepare();
     assert.equal(p.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
-    assert.equal(p.kitFrom, 'node');
+    assert.equal(p.kitFrom, 'fixture');
     const request = readJson(p.request);
     assert.ok(!('cluedDecision' in request) && !('acceptedAt' in request), 'no Decision, no time');
     // the request names the kit on the Release, this package and the references the node carries

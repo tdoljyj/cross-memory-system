@@ -8,7 +8,8 @@
 // A test file is a tracked *.test.{mjs,js,cjs,ts}, test_*.py, *_test.py, test-*.ps1 or *.Tests.ps1, wherever it is
 // (FABLE-defect-remediation-plan-20261124 §3.6: the whole checkout by file name). It runs when a suite command takes it:
 // each command of SUITE_COMMANDS expanded by the selection's own expandArgv and read by its filterCommand (the
-// files --run-files would run), or when a file that runs imports it with a top-level static import. Fails on:
+// files --run-files would run), or when a running test imports it at the top level or invokes it through a registered
+// PowerShell call. Fails on:
 //   - a test file that does not run and is not listed;
 //   - a listed file that runs, no longer exists, or is no test file and no runner file (below); a listed pattern
 //     that matches none of them, or matches a file that runs: remove or narrow the entry;
@@ -103,16 +104,17 @@ export function suiteFiles(root, { commands = SUITE_COMMANDS, tracked, listUnit,
   return { runs, collects };
 }
 
-// Test files that run: those a command takes, and the test files they import at top level, transitively. Each maps to
-// the file a command takes that brings it in: itself, or the running test that imports it.
+// Map each running test, including transitive imports and invocations, to the test file the suite command takes.
 function runningTests(bySuite, trackedSet, source) {
   const direct = [...bySuite.keys()].filter(isTestFile);
   const runs = new Map(direct.map((file) => [file, file]));
   const pending = [...direct];
   while (pending.length > 0) {
     const file = pending.pop();
-    if (!NODE_SOURCE.test(file)) continue;
-    for (const target of topLevelImports(source(file)).map((spec) => resolve(file, spec))) {
+    const imports = NODE_SOURCE.test(file) ? topLevelImports(source(file) ?? '').map((spec) => resolve(file, spec)) : [];
+    const invoked = FLEET_POWERSHELL_CALLS.filter(({ caller, call }) => caller === file && call.test(source(file)))
+      .map(({ script }) => script);
+    for (const target of [...imports, ...invoked]) {
       if (!isTestFile(target) || !trackedSet.has(target) || runs.has(target)) continue;
       runs.set(target, runs.get(file));
       pending.push(target);
@@ -348,6 +350,12 @@ const GOVERNANCE_TEST = 'scripts/ci/self-hosted/node-governance/governance.test.
 const FLEET = RESIDENT + '/rollout/fleet';
 const FLEET_CHILDREN = new RegExp('^' + FLEET + '/test/[^/]+\\.test\\.mjs$');
 const FLEET_WRAPPERS = [1, 2, 3].map((part) => RESIDENT + '/test/fleet-node-children-' + part + '.test.mjs');
+const FLEET_POWERSHELL_CALLS = [
+  { caller: RESIDENT + '/test/fleet-node-powershell.test.mjs', script: FLEET + '/test/test-bootstrap.ps1',
+    call: /^\s*const r = powershellFile\(path\.join\(FLEET_TESTS, 'test-bootstrap\.ps1'\)\);\s*$/m },
+  { caller: FLEET + '/test/test-bootstrap.ps1', script: FLEET + '/test/test-clean-reinstall.ps1',
+    call: /^\s*\. \(Join-Path \$here 'test-clean-reinstall\.ps1'\)\s*$/m },
+];
 const R9_REGISTRY = 'scripts/ci/merge-admission-r9-source.json';
 const R9_READER = 'scripts/ci/merge-admission-r9-reregister.mjs';
 // Runtime paths produced by path composition, directory enumeration or
@@ -361,7 +369,7 @@ const RUNTIME_READERS = new Map([
   ['scripts/ci/ci-shard-seconds.json', ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/local-verify.mjs']],
   ['scripts/ci/ci-required-selection.mjs', ['scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-verify.mjs']],
   [FLEET + '/bootstrap.ps1', [FLEET + '/test/test-bootstrap.ps1']],
-  [FLEET + '/test/test-bootstrap.ps1', [RESIDENT + '/test/fleet-node-powershell.test.mjs']],
+  ...FLEET_POWERSHELL_CALLS.map(({ caller, script }) => [script, [caller]]),
 ]);
 
 // The reregistration command reads these fields when it hashes source blobs.

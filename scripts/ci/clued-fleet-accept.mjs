@@ -33,12 +33,17 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from 'node:os';
 import path from 'node:path';
+import { verifyInterfaceEvidence } from './clued-fleet-interface-evidence.mjs';
 import { acceptanceBytes, acceptanceOf } from '../../work/independent-ci-resident-v1/src/fleet-acceptance.mjs';
+import { acceptResourceOf, readAnswer, statusReader } from '../../work/independent-ci-resident-v1/rollout/fleet/accept-door.mjs';
+import { previousInterfaceCheck } from '../../work/independent-ci-resident-v1/rollout/fleet/previous-interface-check.mjs';
 import { deliveryBound, deliverySubject, fleetDeliveryPreflight } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-preflight.mjs';
-import { deliveryProjectionReaders, deliveryRequirements } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-reader.mjs';
-import { deliveryWorkflowPacket } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-workflow.mjs';
-import { readArchive, readKit, sourceHashOf, validateAcceptance } from '../../work/independent-ci-resident-v1/rollout/fleet/install.mjs';
-import { DRILL_RESERVED, readRequest } from '../../work/independent-ci-resident-v1/rollout/fleet/publish.mjs';
+import { verifyDeliveryTree } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-reader.mjs';
+import { deliveryWorkflowPacket, STAGED_PAYLOAD_MAX_LENGTH, STAGED_REQUEST_MAX_BYTES } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-workflow.mjs';
+import { sourceHashOf, validateAcceptance } from '../../work/independent-ci-resident-v1/rollout/fleet/install.mjs';
+import { checkDeliveryAssets, checkDeliveryKit, deliveryAssetManifestName, DRILL_RESERVED, namesDrillReserved, readRequest } from '../../work/independent-ci-resident-v1/rollout/fleet/publish.mjs';
+
+export { checkDeliveryKit };
 
 export const DOOR_FUNCTION = "clued_private.fleet_accept_door_v1(jsonb)";
 export const ACTION = "fleet.accept";
@@ -104,24 +109,25 @@ export function doorInput(env, resource) {
 }
 
 // One public asset, whole, within the size limit; a failed read is tried three times.
-export async function download(url, fetchImpl = fetch, maxBytes = MAX_ASSET_BYTES) {
+export async function download(url, fetchImpl = fetch, maxBytes = MAX_ASSET_BYTES, { digestOnly = false, timeout = 30_000 } = {}) {
   let last;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(30_000) });
+      const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(timeout) });
       if (response.status === 404) refuse("FLEET_ACCEPT_ASSET_NOT_ON_RELEASE", url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const chunks = [];
+      const digest = digestOnly ? crypto.createHash('sha256') : null;
       let length = 0;
       const body = response.body ?? [Buffer.from(await response.arrayBuffer())];
       for await (const chunk of body) {
         length += chunk.length;
         if (length > maxBytes) refuse("FLEET_ACCEPT_ASSET_SIZE", url);
-        chunks.push(Buffer.from(chunk));
+        if (digest) digest.update(chunk);
+        else chunks.push(Buffer.from(chunk));
       }
       if (length === 0) refuse("FLEET_ACCEPT_ASSET_SIZE", url);
-      const bytes = Buffer.concat(chunks, length);
-      return bytes;
+      return digest ? digest.digest('hex') : Buffer.concat(chunks, length);
     } catch (error) {
       if (/^FLEET_ACCEPT_/.test(error?.message ?? "")) throw error;
       last = error;
@@ -137,27 +143,37 @@ const gitIsAncestor = (commit) => {
 
 export async function buildInput(env, { fetchImpl = fetch, isAncestor = gitIsAncestor, isPinned } = {}) {
   const run = runInputs(env);
+  if (env.FLEET_OPERATION === 'project' && env.FLEET_DELIVERY_KEY?.includes('.')) return stagedInput(env, run, isAncestor);
   const requestBytes = await download(assetUrl(run.repository, run.version, requestAssetName(run.version)), fetchImpl);
   const sumsBytes = await download(assetUrl(run.repository, run.version, "SHA256SUMS"), fetchImpl);
   const { resource, commit } = checkRequest(run, requestBytes, sumsBytes);
   if (!isAncestor(commit)) refuse("FLEET_ACCEPT_COMMIT_NOT_ON_MAIN", commit);
   const input = doorInput(env, resource);
-  if (gated(run.version)) input.delivery = await deliveryInput(env, JSON.parse(requestBytes), run, fetchImpl, isPinned);
+  if (gated(run.version)) input.delivery = await deliveryInput(env, JSON.parse(requestBytes), run, sumsBytes, fetchImpl, isPinned);
   else if (env.FLEET_OPERATION || env.FLEET_DELIVERY_KEY || env.FLEET_ACCEPTANCE_SHA256) refuse('FLEET_DELIVERY_GENERATION_REFUSED');
   return input;
 }
 
 const FLEET_GENERATION = /^g(\d{6})$/;
 const ID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
-const gated = version => Number(FLEET_GENERATION.exec(version)?.[1]) >= 25;
+const generation = version => Number(FLEET_GENERATION.exec(version)?.[1]);
+const gated = version => generation(version) >= 25;
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
-export function checkDeliveryKit(kit, candidate) {
-  if (hash(kit) !== candidate.kitSha256) refuse('FLEET_DELIVERY_KIT_REFUSED');
-  const { record: { repository, scope } } = readKit(kit);
-  // The kit carries the CI registration scope. The candidate carries the fleet delivery scope.
-  const validScope = scope === 'global' || (scope.startsWith('project:') && ID.test(scope.slice('project:'.length)));
-  if (repository !== candidate.repository || !validScope) refuse('FLEET_DELIVERY_KIT_REFUSED');
+function stagedInput(env, run, isAncestor) {
+  const match = /^([A-Za-z0-9_-]{59})\.([A-Za-z0-9_-]+)$/.exec(env.FLEET_DELIVERY_KEY ?? '');
+  if (!gated(run.version) || !match || match[2].length > STAGED_PAYLOAD_MAX_LENGTH || env.FLEET_ACCEPTANCE_SHA256) refuse('FLEET_DELIVERY_INPUT_REFUSED');
+  const [, transportKey, packed] = match;
+  const { request: encoded } = JSON.parse(Buffer.from(packed, 'base64url'));
+  if (typeof encoded !== 'string' || !/^[A-Za-z0-9_-]+$/.test(encoded)) refuse('FLEET_DELIVERY_INPUT_REFUSED');
+  const bytes = Buffer.from(encoded, 'base64url');
+  if (bytes.length > STAGED_REQUEST_MAX_BYTES) refuse('FLEET_DELIVERY_INPUT_REFUSED');
+  if (hash(bytes) !== run.requestSha256) refuse('FLEET_ACCEPT_REQUEST_SHA256_MISMATCH');
+  const request = readRequest(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
+  if (request.version !== run.version || request.repository !== run.repository || request.commit !== env.GITHUB_SHA ||
+      !isAncestor(request.commit) || namesDrillReserved(request)) refuse('FLEET_DELIVERY_SUBJECT_CHANGED');
+  validateAcceptance(acceptanceOf(request, DRILL_RESERVED));
+  return { delivery: { operation: 'preflight', candidate: deliverySubject(request, run.requestSha256), transportKey } };
 }
 
 function pinnedGeneration({ version, commit, archive_sha256 }) {
@@ -172,21 +188,63 @@ function pinnedGeneration({ version, commit, archive_sha256 }) {
   } catch { return false; }
 }
 
+function generationVersions() {
+  return execFileSync('git', ['for-each-ref', '--format=%(refname:strip=2)', 'refs/tags/fleet-node-g*'], {
+    encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024,
+  }).trim().split('\n').map(tag => tag.trim().slice('fleet-node-'.length));
+}
+
+// Tags supply immutable commits and the published acceptance status selects
+// the sealed predecessor. The seal transaction rechecks the latest row.
+async function readPreviousInterfacePackage(candidate, { fetchImpl = fetch, isPinned = pinnedGeneration,
+  listVersions = generationVersions, readStatus = statusReader() } = {}) {
+  const versions = listVersions().filter(version => gated(version) && version < candidate.version).sort().reverse();
+  for (const version of versions) {
+    let priorBytes;
+    try { priorBytes = await download(assetUrl(candidate.repository, version, requestAssetName(version)), fetchImpl); }
+    catch (error) {
+      if (error.message.startsWith('FLEET_ACCEPT_ASSET_NOT_ON_RELEASE:')) continue;
+      throw error;
+    }
+    const priorRequest = readRequest(JSON.parse(priorBytes));
+    if (priorRequest.repository !== candidate.repository || priorRequest.version !== version || !isPinned(priorRequest)) {
+      refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_SUBJECT_REFUSED');
+    }
+    const prior = deliverySubject(priorRequest, hash(priorBytes));
+    const resource = acceptResourceOf(prior);
+    const status = readAnswer(await readStatus(resource), { resource, requestSha256: prior.requestSha256 });
+    if (status.kind !== 'accepted' || !status.sealedAcceptanceSha256) continue;
+    const { repository, commit, archiveSha256, requestSha256 } = prior;
+    return { repository, version, commit, archiveSha256, requestSha256, acceptanceSha256: status.sealedAcceptanceSha256 };
+  }
+  return refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_PREDECESSOR_MISSING');
+}
+
+export async function replayPreviousInterfaces(env, deps = {}) {
+  const { fetchImpl = fetch, isAncestor = gitIsAncestor, isPinned = pinnedGeneration,
+    replay = previousInterfaceCheck, clock = Date.now } = deps;
+  const run = runInputs(env);
+  if (!gated(run.version) || !/^[0-9a-f]{40}$/.test(env.GITHUB_SHA ?? '') ||
+      !/^[1-9][0-9]{0,19}$/.test(env.GITHUB_RUN_ID ?? '') || env.GITHUB_RUN_ATTEMPT !== '1') {
+    refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_RUN_REFUSED');
+  }
+  const bytes = await download(assetUrl(run.repository, run.version, requestAssetName(run.version)), fetchImpl);
+  if (hash(bytes) !== run.requestSha256) refuse('FLEET_ACCEPT_REQUEST_SHA256_MISMATCH');
+  const request = readRequest(JSON.parse(bytes));
+  if (request.version !== run.version || request.repository !== run.repository || !isAncestor(request.commit) || !isPinned(request)) {
+    refuse('FLEET_DELIVERY_SUBJECT_CHANGED');
+  }
+  const candidate = deliverySubject(request, run.requestSha256);
+  const previous = await readPreviousInterfacePackage(candidate, deps);
+  const result = await replay({ commit: candidate.commit, previous, timeoutMs: 12 * 60_000 });
+  if (result?.status !== 'PASS' || result.commit !== candidate.commit || result.previousCommit !== previous.commit ||
+      !HEX64.test(result.migrationsSha256 ?? '')) refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_RUN_REFUSED');
+  return { status: 'PASS', candidate, previous, migrationsSha256: result.migrationsSha256,
+    checkedAt: clock(), workflowCommit: env.GITHUB_SHA, runId: env.GITHUB_RUN_ID };
+}
+
 async function verifyDeliverySource(archive, request, candidate) {
-  const { entries } = readArchive(archive, candidate.archiveSha256, request);
-  const tree = execFileSync('git', ['ls-tree', '-r', '-z', candidate.commit],
-    { encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
-  const blobs = new Map();
-  for (const row of tree.split('\0')) {
-    const m = /^100(?:644|755) blob ([0-9a-f]{40})\t(.+)$/s.exec(row);
-    if (m) blobs.set(m[2], m[1]);
-  }
-  // Source assembly imports code. Only exact bytes held by the checked commit
-  // on main may run in the release job, even before the credential step.
-  for (const entry of entries.filter(entry => entry.path.startsWith('tree/'))) {
-    const blob = crypto.createHash('sha1').update(`blob ${entry.data.length}\0`).update(entry.data).digest('hex');
-    if (blobs.get(entry.path.slice(5)) !== blob) refuse('FLEET_DELIVERY_RELEASE_TREE_CHANGED');
-  }
+  verifyDeliveryTree(archive, request);
   const temp = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'fleet-qualified-'));
   try {
     const artifactPath = path.join(temp, 'candidate.tar');
@@ -198,7 +256,7 @@ async function verifyDeliverySource(archive, request, candidate) {
   }
 }
 
-async function deliveryInput(env, request, run, fetchImpl, isPinned = pinnedGeneration) {
+async function deliveryInput(env, request, run, sumsBytes, fetchImpl, isPinned = pinnedGeneration) {
   const operation = env.FLEET_OPERATION || 'open';
   const transportKey = env.FLEET_DELIVERY_KEY || null;
   const expected = env.FLEET_ACCEPTANCE_SHA256 || null;
@@ -213,12 +271,21 @@ async function deliveryInput(env, request, run, fetchImpl, isPinned = pinnedGene
   const tag = tagOf(run.version);
   const asset = name => assetUrl(run.repository, run.version, name);
   const archive = await download(asset(tag + '.tar'), fetchImpl, 512 * 1024 * 1024);
-  await verifyDeliverySource(archive, request, candidate);
-  const requirements = deliveryRequirements(archive, request);
   const kit = await download(asset(tag + '.first-install-kit.json'), fetchImpl);
+  if (generation(run.version) >= 27) {
+    const manifest = await download(asset(deliveryAssetManifestName(run.version)), fetchImpl);
+    await checkDeliveryAssets({ request, manifest, kit, assetSha256: name => {
+      if (name === tag + '.tar') return hash(archive);
+      if (name === 'SHA256SUMS') return hash(sumsBytes);
+      const roleImage = name.startsWith('role-image-');
+      return download(asset(name), fetchImpl, roleImage ? 2 * 1024 ** 3 : MAX_ASSET_BYTES,
+        { digestOnly: true, timeout: roleImage ? 90_000 : 30_000 });
+    } });
+  }
+  await verifyDeliverySource(archive, request, candidate);
   checkDeliveryKit(kit, candidate);
 
-  if (operation === 'open') return { operation, candidate, requirements };
+  if (operation === 'open') return { operation, candidate };
   const bytes = await download(asset(tag + '.acceptance.json'), fetchImpl);
   const accepted = JSON.parse(bytes);
   const grantId = accepted.cluedDecision, receiptId = accepted.fleetRefs?.ownerReceiptRef;
@@ -227,33 +294,50 @@ async function deliveryInput(env, request, run, fetchImpl, isPinned = pinnedGene
     refuse('FLEET_DELIVERY_ACCEPTANCE_ASSET_REFUSED');
   }
   validateAcceptance(accepted, Date.now());
-  return { operation, candidate, requirements, transportKey, grantId, receiptId,
+  return { operation, candidate, transportKey, grantId, receiptId,
     acceptanceSha256: expected, acceptedAt: accepted.acceptedAt };
 }
 
-export async function qualifyDelivery(input, database, clock = Date.now) {
+export async function qualifyDelivery(input, database, clock = Date.now, { interfaceEvidence, fetchImpl = fetch } = {}) {
   const { delivery, ...door } = input;
-  const { operation, candidate, requirements } = delivery;
+  const { operation, candidate } = delivery;
   const read = () => database('project', candidate);
   if (operation === 'project') {
     // The two queries each return a complete, single-statement snapshot.
     const first = await read();
     return { first, last: await read() };
   }
+  if (!['preflight', 'open', 'confirm'].includes(operation)) refuse('FLEET_DELIVERY_INPUT_REFUSED');
   let last;
   const readFleetRegistry = async candidate => {
     last = await read();
     return deliveryBound(last?.candidate, candidate) ? last : null;
   };
-  const { readNodeEvidence } = deliveryProjectionReaders({ requirements, clock });
-  const result = await fleetDeliveryPreflight({ candidate, requirements, readFleetRegistry, readNodeEvidence, clock });
-  if (!['PASS', 'TRANSITION_PASS'].includes(result.status) || !HEX64.test(last?.snapshotToken ?? '')) {
+  const result = await fleetDeliveryPreflight({ candidate, readFleetRegistry, clock });
+  if (operation === 'preflight') {
+    // 暂存端只需判定结果和绑定证据摘要。
+    const { status, reason, observedAt, registrySha256 } = result;
+    if (reason) return { status, reason };
+    if (!HEX64.test(last?.snapshotToken ?? '')) refuse('FLEET_DELIVERY_PREFLIGHT_REFUSED');
+    return { status, observedAt, registrySha256 };
+  }
+  if (result.status !== 'PASS' || !HEX64.test(last?.snapshotToken ?? '')) {
     refuse('FLEET_DELIVERY_PREFLIGHT_REFUSED', result.reason ?? result.status);
   }
   const snapshotToken = last.snapshotToken;
   if (operation === 'open') return database('open', { ...door, delivery: { candidate, snapshotToken } });
   const { acceptanceSha256, grantId, receiptId, acceptedAt } = delivery;
-  return database('confirm', { candidate, acceptanceSha256, grantId, receiptId, acceptedAt, snapshotToken });
+  const confirm = { candidate, acceptanceSha256, grantId, receiptId, acceptedAt, snapshotToken, ...interfaceEvidence };
+  if (last.previousSeal) {
+    const { version, requestSha256 } = last.previousSeal;
+    if (!gated(version) || generation(version) >= generation(candidate.version) || !HEX64.test(requestSha256 ?? '')) {
+      refuse('FLEET_DELIVERY_PREVIOUS_SEAL_INVALID');
+    }
+    const bytes = await download(assetUrl(candidate.repository, version, requestAssetName(version)), fetchImpl);
+    if (hash(bytes) !== requestSha256) refuse('FLEET_DELIVERY_PREVIOUS_SEAL_DIGEST_CHANGED');
+    confirm.previousRequest = bytes.toString('base64');
+  }
+  return database('confirm', confirm);
 }
 
 const DELIVERY_DB_FUNCTIONS = {
@@ -265,15 +349,25 @@ const DELIVERY_DB_FUNCTIONS = {
 function callDeliveryDatabase(env, operation, input) {
   const fn = DELIVERY_DB_FUNCTIONS[operation];
   if (!fn || !env.CLUED_FLEET_DATABASE_URL) refuse('FLEET_DELIVERY_DATABASE_NOT_CONFIGURED');
-  const answer = execFileSync('docker', ['run', '--rm', '-i', '--user', `${process.getuid()}:${process.getgid()}`,
-    'postgres:17-alpine', 'psql', env.CLUED_FLEET_DATABASE_URL, '-v', 'ON_ERROR_STOP=1', '-X', '-qtA',
-    '-c', 'create temp table door_input(line text)',
-    '-c', String.raw`copy door_input(line) from stdin with (format csv, delimiter e'\x01', quote e'\x02')`,
-    ...(operation === 'project' ? ['-c', 'begin read only'] : []),
-    '-c', `select clued_private.${fn}(line::jsonb)::text from door_input`,
-    ...(operation === 'project' ? ['-c', 'commit'] : [])],
-  { input: JSON.stringify(input) + '\n', encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] });
-  return JSON.parse(answer.trim());
+  try {
+    const answer = execFileSync('docker', ['run', '--rm', '-i', '--user', `${process.getuid()}:${process.getgid()}`,
+      'postgres:17-alpine', 'psql', env.CLUED_FLEET_DATABASE_URL, '-v', 'ON_ERROR_STOP=1', '-X', '-qtA',
+      '-c', 'create temp table door_input(line text)',
+      '-c', String.raw`copy door_input(line) from stdin with (format csv, delimiter e'\x01', quote e'\x02')`,
+      ...(operation === 'project' ? ['-c', 'begin read only'] : []),
+      ...(operation === 'confirm' ? ['-c', `do $$ begin
+        if to_regprocedure('clued_private.fleet_require_previous_interface_v1(jsonb,clued_private.fleet_accepted_v1)') is null then
+          raise exception 'fleet_previous_interface_migration_required'; end if;
+        end $$`] : []),
+      '-c', `select clued_private.${fn}(line::jsonb)::text from door_input`,
+      ...(operation === 'project' ? ['-c', 'commit'] : [])],
+    { input: JSON.stringify(input) + '\n', encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] });
+    return JSON.parse(answer.trim());
+  } catch (error) {
+    const refusal = /^ERROR:\s+(fleet_previous_interface_[a-z_]+)\s*$/m.exec(String(error.stderr ?? ''));
+    if (refusal) refuse(`FLEET_DELIVERY_${refusal[1].slice('fleet_'.length).toUpperCase()}`);
+    throw error;
+  }
 }
 
 // psql's own words for a failed call, most specific first.
@@ -379,10 +473,26 @@ export async function main(argv = process.argv.slice(2), env = process.env,
       return 1;
     }
   }
+  if (command === 'previous-interfaces') {
+    try {
+      if (!env.GITHUB_OUTPUT) refuse('FLEET_DELIVERY_PREVIOUS_INTERFACE_RUN_REFUSED');
+      const result = await replayPreviousInterfaces(env, deps);
+      fs.appendFileSync(env.GITHUB_OUTPUT, `evidence=${JSON.stringify(result)}\n`);
+      io.write(`Previous package interface replay: ${result.previous.commit} -> ${result.candidate.commit}\n`);
+      return 0;
+    } catch (error) {
+      io.error(`::error title=上一包接口检查::${error.message.split('\n')[0]}\n`);
+      return 1;
+    }
+  }
   if (command === "delivery") {
     try {
       const input = JSON.parse(typeof io.stdin === 'string' ? io.stdin : await readStream(io.stdin ?? process.stdin));
-      const result = await qualifyDelivery(input, deps.database ?? ((operation, input) => callDeliveryDatabase(env, operation, input)));
+      const database = deps.database ?? ((operation, fields) => callDeliveryDatabase(env, operation, fields));
+      const interfaceEvidence = input.delivery.operation === 'confirm'
+        ? await verifyInterfaceEvidence(env, input.delivery, candidate => readPreviousInterfacePackage(candidate, deps))
+        : undefined;
+      const result = await qualifyDelivery(input, database, deps.clock, { interfaceEvidence, fetchImpl: deps.fetchImpl });
       if (input.delivery.operation === 'open') return main(['report'], env, { ...io, stdin: JSON.stringify(result) });
       io.write(deliveryWorkflowPacket({ operation: input.delivery.operation, candidate: input.delivery.candidate, result },
         input.delivery.transportKey, input.delivery.candidate.requestSha256) + '\n');

@@ -1,6 +1,6 @@
 # 原地升级与滚动升级工具（rollout/）
 
-换常驻或 CI Source 时，不再整套卸载重装：用节点上**已装的**升级代理（`CluedCIUpgrader`）原地升级，失败自动回滚到上一代；多个节点按“先待命、后当班（原地，CI 暂停几分钟）”的顺序滚动；要移交就在开始前、两台还是同一 Source 时做。设计见 DESIGN §42，Task `018da927`。
+节点可用已装的 `CluedCIUpgrader` 原地升级，失败自动回退。正式封存舰队按服务端的当班、后备与摘牌状态轮换，步骤见[运维手册 §5.1](../docs/runbook.md#51-当班包不合格或无法核实)。
 
 ## 1. 边界
 
@@ -32,7 +32,7 @@ node rollout\precheck.mjs --root C:\ProgramData\CluedIndependentCI\resident --pa
 - 包里带的升级代理副本与已装的不同：`PRECHECK_REFUSED` / `UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL`，与现装包逐文件比较，列出变化（`changedFrozenFiles`）。冻结的 Linux 升级工具、签名器和工具清单与现装包不同，或工具不是 version facts 里的 `upgradeToolSha256`，同样是通道变更。
 - 都相同：先逐文件核对副本，再用**本检出**的 `canonical.mjs` 算出副本清单的哈希，必须等于已装的；之后才从包里的副本（与节点上冻结的那份逐字节相同）import `readPackageOnce`、`buildPlan`，对节点现场跑一遍 ACCEPT。非提权读不到的槽列在 `unreadableSlots`，结论为 `PRECHECK_PASS_EXCEPT_UNREADABLE_SLOTS`。
 - `warnings`：进行中的 op、HALT、两侧不一致、Linux 有暂存代、本节点当班（要先移交）。这些会变，只提醒。
-- 跨节点 Source（任务 0b1516c0）：预检不比对其他节点的 Source。它非提权，拿不到 ci-admission 令牌，读不到对端现况，只能读本节点 `state\status.json` 的 `train.nodes`（第 10 段上一次读到的缓存表）；这张表分不清“对端已升好、表还旧”和“对端确实还旧”，按缓存比对只会误拒。升级顺序（待命节点先升、当班节点最后升）由 `rollout/fleet/upgrade.mjs` 第 8 步保证：当班节点不带 `--allow-active-upgrade` 一律 `FLEET_NODE_UPGRADE_HAND_OVER_FIRST`。各节点 Source 一致由运行期保证：第 10 段现读 Native，24 小时内有心跳的节点 Source 不同时列车以 `TRAIN_SOURCE_MISMATCH` 停车；服务端也不会把 ci-admission 交给 Source 不同的节点。轮升窗口里停车是预期的，另一台升完即恢复。`train.nodes` 仍由 fleet-lag 告警和落地预检读取。
+- 本机预检核对 Windows 与 Linux 的安装身份。跨节点轮换由服务端依据封存记录、实时心跳及维护状态判定。本机缓存的 `train.nodes` 可供排障。
 - 构建汇总带出 `precheckWarnings` 和 `precheckAdvice`。
 
 ## 4. 滚动升级：`rollout.mjs`
@@ -52,7 +52,7 @@ node rollout\rollout.mjs next    --plan rollout.json --observation observation.<
 | `BLOCKED` | 协调者报告 Owner：回滚了（`ROLLOUT_NODE_ROLLED_BACK`，节点保持暂停）、本次升级被拒或 Grant 过期（`ROLLOUT_NODE_UPGRADE_REFUSED`）、HALT、两个当班、没有待命节点等。plan 记了 `createdAt`：它之前的结局属于上一次 rollout，不算。Owner 看过之后（ROLLBACK_FAILED 先提权 `-Recover`），协调者用 `--ack-op <opId>` 确认那一个 op，它就不再阻塞 |
 | `DONE` | 全部节点到了目标包、两侧一致、没有暂停，当班节点也在 plan 里 |
 
-- 待命节点都已升好且有一个健康时，下一步是 `UPGRADE <当班节点>`，带 `ciPause: true`（协调者加 `--allow-active-upgrade` 运行它的升级命令）：不再给 `HANDOVER`，因为服务端只把 ci-admission 移交给与全队同一 Source 的节点（迁移 `20261114120000`，`ci_admission_target_source_not_accepted`），而且 Source 不同的窗口里列车本来就以 `TRAIN_SOURCE_MISMATCH` 停车。没有待命节点时，只有 Owner 在弹窗里选了“接受暂停 CI”、协调者加 `--allow-active-upgrade` 才给出它。
+- 封存舰队等服务端轮换，`ROLLOUT_SEALED_ROTATION` 携带尚待完成的节点。没有封存历史的舰队沿用先待命、后当班的升级顺序。
 - 一次只升一个节点，任意多个节点同一规则。
 
 ## 5. 测试

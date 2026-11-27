@@ -957,7 +957,9 @@ test('--affected: the branch against main, as the pull request lists it, picks t
   const chosen = (head) => chooseSuites(dir, head, main, selection);
   assert.deepEqual(chosen(application).suites, ['clued-cloud'], "main's own commits are not the branch's");
   assert.deepEqual(chosen(application).files, ['apps/clued-cloud/src/a.ts']);
-  assert.deepEqual(chosen(drill).suites, ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'admission-self-tests', 'clued-cloud']);
+  // The fleet delivery migration test also depends on the resident tree.
+  assert.deepEqual(chosen(drill).suites, ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill',
+    'source-v2-node', 'source-v2-python', 'admission-self-tests', 'clued-cloud', 'production-schema']);
   // a rename counts under both names, as the pull request lists it
   assert.deepEqual(chosen(moved).files.filter((file) => file.endsWith('moved.ts')),
     ['apps/clued-cloud/src/moved.ts', 'work/independent-ci-resident-v1/drill/moved.ts']);

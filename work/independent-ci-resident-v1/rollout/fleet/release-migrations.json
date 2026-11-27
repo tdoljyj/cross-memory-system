@@ -1,0 +1,42 @@
+[
+  {
+    "file": "20261126174100_merge_train_control_v2.sql",
+    "requires": [],
+    "probe": "train"
+  },
+  {
+    "file": "20261126175000_ci_train_landing_receipts_v2.sql",
+    "requires": ["20261126174100_merge_train_control_v2.sql"],
+    "probe": "landing"
+  },
+  {
+    "file": "20261127120000_fleet_delivery_seal_v1.sql",
+    "requires": [],
+    "probe": "delivery"
+  },
+  {
+    "file": "20261127120100_fleet_pending_delivery_v1.sql",
+    "requires": ["20261127120000_fleet_delivery_seal_v1.sql"],
+    "probe": "pendingDelivery"
+  },
+  {
+    "file": "20261127120200_fleet_delivery_recipients_v1.sql",
+    "requires": ["20261127120000_fleet_delivery_seal_v1.sql", "20261127120100_fleet_pending_delivery_v1.sql"],
+    "probe": "deliveryRecipients"
+  },
+  {
+    "file": "20261127120210_fleet_delivery_peer_recipients_v1.sql",
+    "requires": ["20261127120200_fleet_delivery_recipients_v1.sql"],
+    "probe": "deliveryPeerRecipients"
+  },
+  {
+    "file": "20261127123000_fleet_previous_interface_gate_v1.sql",
+    "requires": ["20261127120200_fleet_delivery_recipients_v1.sql"],
+    "probe": "previousInterfaceGate"
+  },
+  {
+    "file": "20261127210000_fleet_sealed_source_rule_v1.sql",
+    "requires": ["20261126174100_merge_train_control_v2.sql", "20261126175000_ci_train_landing_receipts_v2.sql", "20261127120210_fleet_delivery_peer_recipients_v1.sql", "20261127123000_fleet_previous_interface_gate_v1.sql"],
+    "probe": "sealedSourceRule"
+  }
+]

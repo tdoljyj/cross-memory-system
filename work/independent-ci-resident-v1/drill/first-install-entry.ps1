@@ -937,7 +937,7 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
   try {
     # Each stage is ended by the next one's start, after its own verdict; a stop ends the open one failed with its code (catch below).
     Start-EntryStage 'assets'
-    if ([IO.File]::Exists($ReceiptFile)) { throw 'DRILL_ENTRY_REQUIRES_FIRST_INSTALL' }
+    if ([IO.Directory]::Exists((Join-Path $script:EntryFailureRoots.ci 'resident'))) { throw 'DRILL_ENTRY_REQUIRES_FIRST_INSTALL' }
     Enter-EntryPhase $measurements $phase 'assets'
     $prefix = 'fleet-node-' + $ReleaseVersion
     $present = @(Get-ChildItem -LiteralPath $Assets -File -Force | ForEach-Object { $_.Name })
