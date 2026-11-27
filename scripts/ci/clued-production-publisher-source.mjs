@@ -17,7 +17,6 @@ export const PUBLISHER_PROBE_LABELS=Object.freeze(['self-hosted','Windows','X64'
 export const PUBLISHER_PROBE_CONDITION=`needs.admission-gate.outputs.admitted == 'true' && (${PUBLISHER_OWNER_CONDITION} && inputs.mode == 'host-principal-probe')`;
 export const PUBLISHER_QUALIFY_CONDITION=`needs.admission-gate.outputs.admitted == 'true' && (${PUBLISHER_OWNER_CONDITION} && (inputs.mode == 'success' || inputs.mode == 'failure' || inputs.mode == 'cancel'))`;
 const FLEET_REPLAY_KIND='fleet_replay_successor';
-const FLEET_REPLAY_LABELS=['self-hosted','Windows','X64','clued','pool-general','trust-internal','cap-node24','cap-python312'];
 const FLEET_CONFIRM="inputs.mode == 'fleet-accept' && inputs.fleet_operation == 'confirm'";
 const FLEET_REPLAY_CONDITION=`${PUBLISHER_OWNER_CONDITION} && ${FLEET_CONFIRM}`;
 const FLEET_RELEASE_CONDITION=`!cancelled() && ${PUBLISHER_OWNER_CONDITION} && (inputs.mode != 'fleet-accept' || inputs.fleet_operation != 'confirm' || (needs.fleet-interface-check.result == 'success' && needs.fleet-interface-check.outputs.evidence != ''))`;
@@ -66,7 +65,7 @@ export function compilePublisherSource(file,text,{parseYaml,accepted_roles,sourc
     if(!plain(job)||job.uses!==undefined||job.strategy!==undefined||!Array.isArray(job.steps)||!job.steps.length||
       job.permissions!==undefined&&(!keys(job.permissions,['contents'])||job.permissions.contents!=='read'))bad('primary job');
     if(fleet) {
-      if(replay ? !same(job['runs-on'],FLEET_REPLAY_LABELS)||job['timeout-minutes']!==22|| job.environment!==undefined||
+      if(replay ? job['runs-on']!=='windows-2025'||job['timeout-minutes']!==22|| job.environment!==undefined||
         job.needs!==undefined||condition(job.if)!==FLEET_REPLAY_CONDITION||
         !same(job.outputs,{evidence:'${{ steps.replay.outputs.evidence }}'})||/\bsecrets\s*(?:\.|\[)/i.test(JSON.stringify(job))
         : job['runs-on']!=='ubuntu-24.04'||job['timeout-minutes']!==FLEET_RELEASE_TIMEOUT||

@@ -100,7 +100,7 @@ jobs:
       github.actor == github.repository_owner &&
       github.triggering_actor == github.repository_owner &&
       inputs.mode == 'fleet-accept' && inputs.fleet_operation == 'confirm'
-    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24, cap-python312]
+    runs-on: windows-2025
     timeout-minutes: 22
     outputs:
       evidence: ${{ steps.replay.outputs.evidence }}
@@ -109,6 +109,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       - name: Install isolated replay dependencies

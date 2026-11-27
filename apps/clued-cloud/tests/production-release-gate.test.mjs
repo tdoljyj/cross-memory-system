@@ -563,7 +563,9 @@ test('fleet-accept only checks the published request and opens the Owner request
 test('直接派发确认只有同次兼容回放成功才进入发布环境', () => {
   const [, replay, release] = productionWorkflow.split(/\n  (?:fleet-interface-check|release):\n/);
   assert.match(replay, /inputs\.mode == 'fleet-accept' && inputs\.fleet_operation == 'confirm'/);
-  assert.match(replay, /runs-on: \[self-hosted, Windows,/);
+  assert.match(replay, /^    runs-on: windows-2025$/m);
+  assert.match(replay, /uses: actions\/setup-node@[a-f0-9]{40}[^\n]*\n\s+with:\n\s+node-version: 24\.19\.0\b/);
+  assert.match(replay, /uses: actions\/setup-python@[a-f0-9]{40}[^\n]*\n\s+with:\n\s+python-version: "3\.12"/);
   assert.match(replay, /evidence: \$\{\{ steps\.replay\.outputs\.evidence \}\}/);
   assert.match(replay, /node scripts\/ci\/clued-fleet-accept\.mjs previous-interfaces/);
   assert.doesNotMatch(replay, /secrets\.|environment:|persist-credentials: true/);
