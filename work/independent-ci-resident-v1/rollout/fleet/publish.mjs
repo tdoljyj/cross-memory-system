@@ -106,7 +106,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import os from 'node:os';
-import { acceptResourceOf, openRequest, readAnswer, statusReader } from './accept-door.mjs';
+import { acceptResourceOf, OPEN_RUN_ID, openRequest, openRunFailed, readAnswer, statusReader } from './accept-door.mjs';
 import { deliverySubject, fleetDeliveryPreflight } from './delivery-preflight.mjs';
 import { deliveryProjectionReaders, deliveryRequirements, verifyDeliveryTree } from './delivery-reader.mjs';
 import { deliveryWorkflowClient } from './delivery-workflow.mjs';
@@ -428,9 +428,12 @@ const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const exactKeys = (o, keys) => o !== null && typeof o === 'object' && !Array.isArray(o) && Object.keys(o).length === keys.length && keys.every(k => Object.hasOwn(o, k));
 
 export function readRequest(r) {
-  check(exactKeys(r, REQUEST_KEYS) && r.contract === REQUEST_CONTRACT, 'REQUEST_REFUSED', 'shape');
+  const staged = packageGenerationOf(r?.version) >= STAGED_PREFLIGHT_GENERATION;
+  const keys = staged ? [...REQUEST_KEYS, 'deliveryAssetsSha256'] : REQUEST_KEYS;
+  check(exactKeys(r, keys) && r.contract === REQUEST_CONTRACT, 'REQUEST_REFUSED', 'shape');
   check(VERSION.test(r.version ?? '') && HEX64.test(r.archive_sha256 ?? '') && /^[0-9a-f]{40}$/.test(r.commit ?? '') && REPO.test(r.repository ?? '')
-    && HEX64.test(r.ciSourceManifestSha256 ?? '') && HEX64.test(r.firstInstallKitSha256 ?? ''), 'REQUEST_REFUSED', 'hashes');
+    && HEX64.test(r.ciSourceManifestSha256 ?? '') && HEX64.test(r.firstInstallKitSha256 ?? '')
+    && (!staged || HEX64.test(r.deliveryAssetsSha256 ?? '')), 'REQUEST_REFUSED', 'hashes');
   check(exactKeys(r.fleetRefs, [...REQUEST_FLEET_REFS]) && REQUEST_FLEET_REFS.every(k => k === 'formalRoles' || UUID.test(r.fleetRefs[k] ?? '')), 'REQUEST_REFUSED', 'fleetRefs');
   return r;
 }
@@ -543,6 +546,26 @@ const localImagesOf = k => {
   check(k?.contract === KIT_CONTRACT && local && local.every(i => HEX64.test(i?.id ?? '') && i.asset === `role-image-${i.id}.tar.gz`), 'FIRST_INSTALL_KIT_IMAGES_REFUSED');
   return [...new Set(local.map(i => i.id))].sort();
 };
+
+export const deliveryAssetManifestName = version => tagOf(version) + '.candidate.SHA256SUMS';
+
+export async function checkDeliveryAssets({ request, manifest, kit, assetSha256 }) {
+  check(sha(manifest) === request.deliveryAssetsSha256, 'FLEET_DELIVERY_ASSET_MANIFEST_REFUSED');
+  const tag = tagOf(request.version);
+  const kitName = tag + '.first-install-kit.json';
+  check(sha(kit) === request.firstInstallKitSha256, 'FLEET_DELIVERY_ASSET_MANIFEST_REFUSED');
+  const images = localImagesOf(JSON.parse(kit)).map(id => 'role-image-' + id + '.tar.gz');
+  const names = [tag + '.tar', tag + '.release.json', 'SHA256SUMS', kitName, tag + '.first-install.SHA256SUMS',
+    ...Object.keys(NODE_ENTRY).map(suffix => tag + '.' + suffix), ...images];
+  const digests = sumsOf(manifest.toString('utf8'));
+  check(digests.size === names.length && names.every(name => HEX64.test(digests.get(name) ?? '')) &&
+    manifest.equals(Buffer.from(sumsText(digests))) && digests.get(tag + '.tar') === request.archive_sha256 &&
+    digests.get(kitName) === request.firstInstallKitSha256, 'FLEET_DELIVERY_ASSET_MANIFEST_REFUSED');
+  for (const name of names) {
+    const current = name === kitName ? sha(kit) : await assetSha256(name);
+    check(current === digests.get(name), 'FLEET_DELIVERY_RELEASE_ASSET_CHANGED', name);
+  }
+}
 
 // What an acceptance of this version needs on the Release: the kit asset and first-install.SHA256SUMS naming the accepted hash for it, every
 // local role image the kit lists, both as an asset and in that sums file, and (archiveSha256) the release's SHA256SUMS naming the tar with
@@ -732,6 +755,31 @@ async function beginDispatch(file, clock) {
   }
 }
 
+async function priorOpenAttempt(directory, subject, epoch, clock) {
+  const marker = 'open-' + subject.requestSha256 + '-' + epoch;
+  const legacy = await readOrNull(path.join(directory, marker));
+  if (legacy) {
+    const at = Number(legacy.toString('utf8'));
+    check(Number.isSafeInteger(at) && at > 0 && at <= clock(), 'FLEET_DISPATCH_STATE_UNREADABLE');
+    return { prior: { at }, next: null };
+  }
+  const prefix = marker + '-';
+  const slots = (await fs.readdir(directory)).filter(name => name.startsWith(prefix) && name.endsWith('.json'))
+    .map(name => name.slice(prefix.length, -5)).sort((a, b) => Number(a) - Number(b));
+  check(slots.every((slot, index) => slot === String(index + 1)), 'FLEET_DISPATCH_STATE_UNREADABLE');
+  const next = path.join(directory, prefix + (slots.length + 1) + '.json');
+  if (!slots.length) return { next };
+  const dispatchId = prefix + slots.length;
+  let prior;
+  try { prior = JSON.parse(await fs.readFile(path.join(directory, dispatchId + '.json'), 'utf8')); }
+  catch { fail('FLEET_DISPATCH_STATE_UNREADABLE', dispatchId); }
+  check(prior?.dispatchId === dispatchId && prior.repository === subject.repository && prior.version === subject.version && prior.requestSha256 === subject.requestSha256 &&
+    prior.epoch === epoch && Number.isSafeInteger(prior.at) && prior.at > 0 && prior.at <= clock() &&
+    (prior.runId === undefined || (typeof prior.runId === 'string' && OPEN_RUN_ID.test(prior.runId))),
+  'FLEET_DISPATCH_STATE_UNREADABLE');
+  return { prior, next };
+}
+
 async function preflightStaged({ candidate, requestBytes, archive, request, ghCommand, deps }) {
   const clock = deps.clock ?? Date.now;
   const sleep = deps.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
@@ -753,20 +801,25 @@ async function preflightStaged({ candidate, requestBytes, archive, request, ghCo
   return { status, observedAt, registrySha256 };
 }
 
-// 切片 2 提供同提交准入及迁移对账结果，两个发布入口都检查其对象。
-async function admitFleetRelease({ repository, commit, admission, deps }) {
-  if (!admission) {
-    check(typeof deps.admitRelease === 'function', 'FLEET_RELEASE_ADMISSION_UNAVAILABLE');
-    admission = await deps.admitRelease({ repository, commit });
-  }
+async function admitFleetRelease({ repository, commit, admit }) {
+  check(typeof admit === 'function', 'FLEET_RELEASE_ADMISSION_UNAVAILABLE');
+  const admission = await admit({ repository, commit });
   check(admission?.status === 'PASS' && admission.repository === repository && admission.commit === commit, 'FLEET_RELEASE_ADMISSION_REFUSED');
   return admission;
+}
+
+async function loadReleaseWorkflow() {
+  try { return await import('./release-migration-workflow.mjs'); }
+  catch (error) {
+    if (error.code === 'ERR_MODULE_NOT_FOUND') fail('FLEET_RELEASE_ADMISSION_UNAVAILABLE', error.url);
+    throw error;
+  }
 }
 
 // The first half of an acceptance (see the head of this file). `deps` is for tests only (the kit and the record material of a fixture node, a
 // stand-in for the archive's source-hash); the command line cannot reach it.
 export async function prepare({ version, dir, out, images = [], repo = DEFAULT_REPO, index = DEFAULT_INDEX, root = DEFAULT_ROOT, ghCommand = ['gh'],
-  now = Date.now(), admission, deps = {} }) {
+  now = Date.now(), deps = {} }, beforePublish) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
   check(VERSION.test(version ?? ''), 'PUBLISH_VERSION_REFUSED');
   const build = await readBuild(dir);
@@ -774,7 +827,6 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
   check(s.version === version, 'PREPARE_BUILD_NOT_THIS_VERSION', s.version);
   const tag = tagOf(version), kitName = `${tag}.first-install-kit.json`;
   const guarded = packageGenerationOf(version) >= STAGED_PREFLIGHT_GENERATION;
-  if (guarded) await admitFleetRelease({ repository: repo, commit: s.commit, admission, deps });
   const requestName = `${tag}.acceptance-request.json`;
   const durable = candidateDirectory(out, tag);
   const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-prepare-'));
@@ -837,7 +889,6 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     check(kit.config?.ciSourceManifestSha256 !== source, 'PREPARE_TEMPLATE_IS_THIS_SOURCE',
       { template: kit.config?.ciSourceManifestSha256, note: 'this node already runs this version: the kit must be taken before it upgrades' });
     request.ciSourceManifestSha256 = source;
-    readRequest(request);
     // the request becomes an acceptance every node reads (the five fields seal fills aside)
     try { validateAcceptance(acceptanceOf(request, DRILL_RESERVED), now); } catch (e) { fail('PREPARE_REQUEST_REFUSED', e?.detail ?? e?.code ?? String(e)); }
     // steps 3, 4 and 5 each print one line of when they started and ended, on stderr (Fable ruling 0e418483, node-install batch 3.3 B: what
@@ -857,14 +908,8 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
       check(f, 'PREPARE_IMAGE_MISSING', { id, asset: `role-image-${id}.tar.gz`, note: 'give it with --image; the previous Release has none of that id' });
       files.set(id, f);
     }
-    lap(3);
-    const requestBytes = savedRequest ?? Buffer.from(JSON.stringify(request, null, 2) + '\n');
-    const requestSha256 = sha(requestBytes);
-    let deliveryPreflight, stagedSums;
+    let deliveryPreflight, stagedSums, stagedCandidate;
     if (guarded) {
-      const candidate = deliverySubject(request, requestSha256);
-      check(!namesDrillReserved(request), 'PREPARE_REQUEST_REFUSED', requestName);
-      checkDeliveryKit(kitBytes, candidate, deps.readKit);
       const material = path.join(stage, 'candidate');
       await fs.mkdir(material);
       const stageAsset = async (name, bytes) => {
@@ -873,7 +918,7 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
         return { name, file };
       };
       const kitAsset = await stageAsset(kitName, kitBytes);
-      const kitDigests = new Map([[kitName, candidate.kitSha256]]);
+      const kitDigests = new Map([[kitName, request.firstInstallKitSha256]]);
       const imageAssets = [];
       for (const [id, file] of files) {
         const name = `role-image-${id}.tar.gz`;
@@ -885,31 +930,54 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
       }
       stagedSums = Buffer.from(sumsText(kitDigests));
       const firstInstallSums = await stageAsset(`${tag}.first-install.SHA256SUMS`, stagedSums);
-      const requestAsset = await stageAsset(requestName, requestBytes);
-      const materialAssets = [kitAsset, ...imageAssets, firstInstallSums, requestAsset];
-      const digests = new Map([...releaseDigests, ...kitDigests, [firstInstallSums.name, sha(stagedSums)], [requestName, requestSha256]]);
+      const digests = new Map([...releaseDigests, ...kitDigests, [firstInstallSums.name, sha(stagedSums)]]);
       const receipt = Buffer.from(sumsText(digests));
+      const manifestSha256 = sha(receipt);
       check(!held || held.equals(receipt), 'PREPARE_STAGED_ASSET_CHANGED', requestName);
-      await checkStagedFiles(releaseAssets, digests);
-      deliveryPreflight = await preflightStaged({ candidate, requestBytes, archive: build.tarBytes, request, ghCommand, deps });
-      await checkStagedFiles([...releaseAssets, ...materialAssets], digests);
-      if (!held) {
-        await fs.mkdir(out, { recursive: true });
-        const scratch = await fs.mkdtemp(path.join(out, '.fleet-candidate-'));
-        try {
-          for (const { name, file } of materialAssets) await fs.copyFile(file, path.join(scratch, name));
-          await fs.writeFile(path.join(scratch, 'candidate.SHA256SUMS'), receipt, { flag: 'wx' });
-          await fs.rename(scratch, durable);
-        } finally {
-          await fs.rm(scratch, { recursive: true, force: true });
-        }
-      }
+      check(!savedRequest || request.deliveryAssetsSha256 === manifestSha256, 'PREPARE_STAGED_ASSET_CHANGED', requestName);
+      request.deliveryAssetsSha256 = manifestSha256;
+      const manifest = await stageAsset(deliveryAssetManifestName(version), receipt);
+      releaseAssets.push(manifest);
+      digests.set(manifest.name, manifestSha256);
+      stagedCandidate = { receipt, digests, materialAssets: [kitAsset, ...imageAssets, firstInstallSums] };
     }
-    // 4. all checks passed: the Release and the index row of this build, made or completed (only the tag fleet-node-<v> and this row)
+    readRequest(request);
+    const requestBytes = savedRequest ?? Buffer.from(JSON.stringify(request, null, 2) + '\n');
+    const requestSha256 = sha(requestBytes);
+    if (guarded) {
+      const candidate = deliverySubject(request, requestSha256);
+      check(!namesDrillReserved(request), 'PREPARE_REQUEST_REFUSED', requestName);
+      checkDeliveryKit(kitBytes, candidate, deps.readKit);
+      await checkStagedFiles([...releaseAssets, ...stagedCandidate.materialAssets], stagedCandidate.digests);
+    }
+    lap(3);
+    // 4. The formal entry reconciles production for the staged commit before any tag, Release or index write.
+    const migrationAdmission = await beforePublish?.();
     if (numbered) {
       checkCommitOnMain(ghCommand, repo, s.commit);
-      if (guarded) check(freshDeliveryTime(deliveryPreflight.observedAt, (deps.clock ?? Date.now)()),
-        'FLEET_DELIVERY_PREFLIGHT_REFUSED', 'FLEET_PROJECTION_EXPIRED');
+      if (guarded) {
+        if (!beforePublish) await admitFleetRelease({ repository: repo, commit: s.commit, admit: deps.admitRelease });
+        const { receipt, digests, materialAssets } = stagedCandidate;
+        const assets = [...releaseAssets, ...materialAssets];
+        await checkStagedFiles(assets, digests);
+        deliveryPreflight = await preflightStaged({ candidate: deliverySubject(request, requestSha256), requestBytes,
+          archive: build.tarBytes, request, ghCommand, deps });
+        await checkStagedFiles(assets, digests);
+        if (!held) {
+          await fs.mkdir(out, { recursive: true });
+          const scratch = await fs.mkdtemp(path.join(out, '.fleet-candidate-'));
+          try {
+            for (const { name, file } of materialAssets) await fs.copyFile(file, path.join(scratch, name));
+            await fs.writeFile(path.join(scratch, requestName), requestBytes, { flag: 'wx' });
+            await fs.writeFile(path.join(scratch, 'candidate.SHA256SUMS'), receipt, { flag: 'wx' });
+            await fs.rename(scratch, durable);
+          } finally {
+            await fs.rm(scratch, { recursive: true, force: true });
+          }
+        }
+        check(freshDeliveryTime(deliveryPreflight.observedAt, (deps.clock ?? Date.now)()),
+          'FLEET_DELIVERY_PREFLIGHT_REFUSED', 'FLEET_PROJECTION_EXPIRED');
+      }
       await reservePackageGeneration(deps.generationTags ?? githubGenerationTags(ghCommand, repo), s);
     }
     await ensureRelease({ ghCommand, repo, index, s, assets: releaseAssets, stage });
@@ -924,7 +992,7 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     const attached = await attachFirstInstallKit({ version, kit: kitFile, images: placed, repo, ghCommand, resume: true, stagedSums });
     await checkRequestOnRelease({ ghCommand, repo, request, stage, kit: true, deps, now });
     if (guarded) {
-      await checkPublishedFiles({ names: [sums, ...entry].map(a => a.name), digests: releaseDigests, ghCommand, repo, tag,
+      await checkPublishedFiles({ names: [sums, ...entry, releaseAssets.at(-1)].map(a => a.name), digests: stagedCandidate.digests, ghCommand, repo, tag,
         stage: path.join(stage, 'verify-assets') });
     }
     lap(5);
@@ -932,8 +1000,9 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     await putRequestOnRelease({ ghCommand, repo, tag, bytes: requestBytes, stage });
     await writeAtomic(requestFile, requestBytes);
     return { status: 'FLEET_ACCEPTANCE_REQUEST_WRITTEN', version, request: requestFile, directory: out, kitFrom: kitFromRelease ? 'release' : 'node',
+      ...(deliveryPreflight ? { deliveryPreflight } : {}),
       firstInstallKitSha256: request.firstInstallKitSha256, ciSourceManifestSha256: request.ciSourceManifestSha256, images: attached.images,
-      requestSha256, ...(deliveryPreflight ? { deliveryPreflight } : {}) };
+      requestSha256: sha(requestBytes), ...(migrationAdmission && { migrationAdmission: { commit: s.commit, ...migrationAdmission } }) };
   } finally {
     await fs.rm(stage, { recursive: true, force: true });
   }
@@ -1105,15 +1174,24 @@ export async function seal(options) {
     const guarded = packageGenerationOf(r.version) >= 25;
     const stagedRelease = packageGenerationOf(r.version) >= STAGED_PREFLIGHT_GENERATION;
     const durable = candidateDirectory(path.dirname(request), tag);
-    const held = stagedRelease ? await readOrNull(path.join(durable, 'candidate.SHA256SUMS')) : null;
-    if (held) {
-      const digests = sumsOf(held.toString('utf8'));
-      check(digests.get(path.basename(request)) === requestSha256 && digests.get(`${tag}.tar`) === candidate.archiveSha256 &&
-        digests.get(`${tag}.first-install-kit.json`) === candidate.kitSha256, 'PREPARE_STAGED_ASSET_CHANGED', path.basename(request));
-      const names = ['SHA256SUMS', `${tag}.first-install.SHA256SUMS`, ...Object.keys(NODE_ENTRY).map(suffix => `${tag}.${suffix}`),
-        ...[...digests.keys()].filter(name => ROLE_IMAGE.test(name))];
-      await checkPublishedFiles({ names, digests, ghCommand: preflightGh, repo, tag, stage: path.join(stage, 'verify-assets') });
-    }
+    const verifyReleaseDelivery = async (limit, archiveFile) => {
+      const read = boundedRead(limit);
+      const local = await readOrNull(path.join(durable, 'candidate.SHA256SUMS'));
+      const localRequest = await readOrNull(path.join(durable, path.basename(request)));
+      check(local && localRequest?.equals(requestBytes) && sha(local) === r.deliveryAssetsSha256,
+        'FLEET_DELIVERY_ASSET_MANIFEST_REFUSED');
+      const assetFile = name => downloadAsset(boundedGh(limit), repo, tag, name, path.join(stage, 'verify-assets'));
+      const manifest = await read(assetFile(deliveryAssetManifestName(r.version)));
+      const kit = await read(assetFile(tag + '.first-install-kit.json'));
+      await checkDeliveryAssets({ request: r, manifest, kit, assetSha256: async name => {
+        if (archiveFile && name === tag + '.tar') return fileSha(archiveFile);
+        const file = assetFile(name);
+        try { return await fileSha(file); }
+        finally { await fs.rm(file, { force: true }); }
+      } });
+      remaining(limit);
+    };
+    if (stagedRelease) await verifyReleaseDelivery(preflightEnd, path.join(stage, tag + '.tar'));
     const requirements = guarded ? deliveryRequirements(await readInput(path.join(stage, `${tag}.tar`)), r) : null;
     const workflow = limit => deps.fleetWorkflow ?? deliveryWorkflowClient({ runGh: boundedGh(limit), sleep });
     const checkDelivery = async (phase, limit) => {
@@ -1133,7 +1211,7 @@ export async function seal(options) {
     let deliveryBeforeOpen = guarded ? null : await checkDelivery('before-open', preflightEnd);
     // the Owner's acceptance: one fleet.accept Grant on this request (accept-door.mjs), read anonymously; opened once when the door has none open
     const resource = acceptResourceOf({ repository: r.repository, version: r.version, archiveSha256: r.archive_sha256, requestSha256 });
-    let answer = null, openedAt = null, seenOpen = false, skewWaited = false, waitStep = 0, readFailure = null, dispatchFailure = null;
+    let answer = null, openedAt = null, seenOpen = false, skewWaited = false, waitStep = 0, readFailure = null, dispatchFailure = null, runId, dispatchId;
     const unreadable = () => ({ status: SEAL_UNREADABLE, code: SEAL_UNREADABLE, version: r.version, resource, next: READ_ACCEPTANCE_AGAIN });
     const openUntil = () => Math.min(sealEnd, openedAt + OPEN_WAIT_MS);
     const pendingUntil = () => Math.min(end, until, Date.parse(answer.expiresAt));
@@ -1195,16 +1273,38 @@ export async function seal(options) {
         // An expired request has its own id, so renewal never replays the
         // initial dispatch or a possibly in-flight renewal of that request.
         const epoch = a.kind === 'expired' && UUID.test(status.request_id ?? '') ? status.request_id : a.kind;
-        const marker = held ? path.join(durable, `open-${requestSha256}-${epoch}`) : null;
-        const prior = marker && await readOrNull(marker);
-        if (!prior && guarded) deliveryBeforeOpen = await checkDelivery('before-open', preflightEnd);
-        remaining(preflightEnd);
-        const dispatch = await beginDispatch(marker, clock);
-        openedAt = dispatch.at;
+        const subject = { repository: r.repository, version: r.version, requestSha256 };
+        const { prior, next: marker } = stagedRelease ? await priorOpenAttempt(durable, subject, epoch, clock) : {};
+        const mayRetry = prior?.runId && openRunFailed({ runGh: preflightGh, repository: r.repository, runId: prior.runId });
+        if ((!prior || mayRetry) && guarded) deliveryBeforeOpen = await checkDelivery('before-open', preflightEnd);
+        if (mayRetry) {
+          const current = await readStatus(resource, { timeoutMs: remaining(preflightEnd) });
+          const latest = readAnswer(current, { resource, requestSha256 });
+          if (latest.kind !== a.kind || current.request_id !== status.request_id) continue;
+        }
+        openedAt = prior?.at ?? clock();
+        runId = prior?.runId;
+        dispatchId = prior?.dispatchId;
+        let dispatch = !prior || mayRetry;
         noRetry = true;
-        if (dispatch.fresh) {
+        const state = { ...subject, epoch, at: clock(), dispatchId: marker && path.basename(marker, '.json') };
+        if (dispatch && marker) {
+          // Claim this slot before POST; a missing response leaves the slot unresolved.
+          remaining(preflightEnd);
+          try { await fs.writeFile(marker, JSON.stringify(state), { flag: 'wx' }); }
+          catch (error) { if (error.code !== 'EEXIST') throw error; dispatch = false; }
+        }
+        if (dispatch) {
+          openedAt = state.at;
+          dispatchId = state.dispatchId;
+          runId = undefined;
+          remaining(preflightEnd);
           try {
-            openRequest({ runGh: preflightGh, repository: r.repository, version: r.version, requestSha256 });
+            const opened = openRequest({ runGh: preflightGh, ...subject });
+            if (opened.runId) {
+              runId = opened.runId;
+              if (marker) await writeAtomic(marker, JSON.stringify({ ...state, runId }));
+            }
           } catch (e) {
             // An explicit refusal is final for this attempt. A lost response may still have queued the run.
             const refused = e?.code === 'ACCEPT_DOOR_OPEN_FAILED' && /\bHTTP (401|403|404|422)\b/i.test(e.detail?.stderr ?? '');
@@ -1227,10 +1327,12 @@ export async function seal(options) {
         next: 'the Owner approves on confirmUrl; then the same seal again (--wait <minutes> waits for it)' };
     }
     if (NOT_OPEN.includes(answer.kind) && !seenOpen) {
-      // only after this seal's one run (none or expired is always opened): the workflow did not open it within OPEN_WAIT_MS
+      // The gate has no request. Without a verified terminal failure the journal prevents another dispatch.
       return { status: 'FLEET_ACCEPTANCE_NOT_OPENED', version: r.version, resource, dispatchedAt: new Date(now + (openedAt - started)).toISOString(), waitedMs: clock() - openedAt,
-        ...(dispatchFailure ? { dispatchFailure } : {}),
-        next: 'the release workflow (mode fleet-accept) did not open the request: read why in its latest run, fix that, then run the same command again' };
+        ...(dispatchFailure ? { dispatchFailure } : {}), ...(dispatchId ? { dispatchId } : {}), ...(runId ? { runId } : {}),
+        next: !stagedRelease || runId
+          ? 'the release workflow (mode fleet-accept) did not open the request: check the dispatched run, fix the failure, then run the same command again'
+          : 'the exact dispatch result is unknown: run the same command again to read the acceptance door' };
     }
     if (answer.kind !== 'accepted') {
       return { status: 'FLEET_ACCEPTANCE_REJECTED', version: r.version, answer: answer.kind, resource,
@@ -1253,6 +1355,7 @@ export async function seal(options) {
       const currentRequest = await requestOnRelease({ ghCommand: boundedGh(sealEnd), repo, tag, stage });
       check(currentRequest?.equals(requestBytes) && (await boundedRead(sealEnd)(request)).equals(requestBytes),
         'FLEET_DELIVERY_PREFLIGHT_REFUSED', { phase: 'before-attach', reason: 'FLEET_CANDIDATE_REQUEST_CHANGED', candidate });
+      if (stagedRelease) await verifyReleaseDelivery(sealEnd);
     }
     const staged = path.join(stage, 'up', `${tag}.acceptance.json`);
     remaining(sealEnd);
@@ -1262,7 +1365,7 @@ export async function seal(options) {
       const details = { grantId: answer.grantId, receiptId: answer.receiptId, acceptanceSha256 };
       let confirmed;
       const confirmEnd = Math.min(sealEnd, clock() + OPEN_WAIT_MS);
-      const marker = held ? path.join(durable, `confirm-${acceptanceSha256}`) : null;
+      const marker = stagedRelease ? path.join(durable, `confirm-${acceptanceSha256}`) : null;
       const dispatch = await beginDispatch(marker, clock);
       check(dispatch.fresh, 'FLEET_DELIVERY_SEAL_NOT_CONFIRMED', { ...details, reason: 'FLEET_CONFIRM_DISPATCH_UNRESOLVED' });
       try { confirmed = await workflow(confirmEnd)('confirm', candidate, details, { signal: AbortSignal.timeout(remaining(confirmEnd)) }); }
@@ -1306,39 +1409,12 @@ export async function seal(options) {
 // the workflow did not open (a refusal throws and exits 1 as well); waiting for the Owner is not a failure.
 export const exitCodeOf = r => (['FLEET_ACCEPTANCE_REJECTED', 'FLEET_ACCEPTANCE_NOT_OPENED', SEAL_UNREADABLE].includes(r?.status) ? 1 : 0);
 
-export async function prepareCommit({ commit, dir, out, repo = DEFAULT_REPO, ghCommand = ['gh'], deps = {}, requireDelivery = false, ...options }) {
-  check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
-  check(HEX40.test(commit ?? ''), 'COMMIT_MUST_BE_40_LOWERCASE_HEX');
-  checkCommitOnMain(ghCommand, repo, commit);
-  const generationTags = deps.generationTags ?? githubGenerationTags(ghCommand, repo);
-  const existing = await fs.stat(dir).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
-  if (!existing) {
-    const version = await allocatePackageGeneration(generationTags);
-    const scratch = await fs.mkdtemp(path.join(path.dirname(dir), '.fleet-build-'));
-    const built = path.join(scratch, 'build');
-    try {
-      await (deps.buildUniversal ?? buildUniversal)({ repo: checkout, commit, version, out: built });
-      await fs.rename(built, dir);
-    } finally {
-      await fs.rm(scratch, { recursive: true, force: true });
-    }
-  }
-  const meta = (await fs.readdir(dir)).filter(n => /^fleet-node-g[0-9]{6}\.release\.json$/.test(n));
-  check(meta.length === 1, 'PUBLISH_BUILD_DIR_REFUSED');
-  const { release } = await readBuild(dir);
-  const s = release.source;
-  check(s.commit === commit && packageGenerationOf(s.version) > BASELINE_GENERATION, 'PREPARE_BUILD_NOT_THIS_COMMIT', s.commit);
-  check(!requireDelivery || packageGenerationOf(s.version) >= STAGED_PREFLIGHT_GENERATION, 'FLEET_DELIVERY_GENERATION_REFUSED');
-  return prepare({ ...options, version: s.version, dir, out, repo, ghCommand, deps: { ...deps, generationTags } });
-}
-
-// The same publisher owns prepare, open and seal. Slice 2 supplies admission
-// and migration reconciliation for this commit before this entry can publish.
+// A completed prepare can resume against its tag, Release and acceptance door
+// even when main has advanced. A new prepare still needs exact-main admission.
 export async function publishCommit({ commit, dir, out, images, repo = DEFAULT_REPO, index, wait = WAIT_MAX_MINUTES,
   ghCommand = ['gh'], onPending, deps = {} }) {
   check(REPO.test(repo ?? '') && HEX40.test(commit ?? ''), 'PUBLISH_SUBJECT_REFUSED');
   check(Number.isInteger(wait) && wait >= 1 && wait <= WAIT_MAX_MINUTES, 'USAGE', { wait });
-  const admission = await admitFleetRelease({ repository: repo, commit, deps });
   const build = await fs.stat(dir).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
   let prepared;
   if (build) {
@@ -1354,12 +1430,53 @@ export async function publishCommit({ commit, dir, out, images, repo = DEFAULT_R
     }
   }
   const clock = deps.clock ?? Date.now;
-  prepared ??= await prepareCommit({ commit, dir, out, images, repo, index, ghCommand, deps, admission, now: clock(), requireDelivery: true });
+  prepared ??= await prepareCommit({ commit, dir, out, images, repo, index, ghCommand, deps, now: clock(), requireDelivery: true });
   const sealed = await seal({ request: prepared.request, expectedRequestSha256: prepared.requestSha256, repo, index, ghCommand,
     wait, onPending, deps, now: clock() });
   return { ...sealed, request: prepared.request, requestSha256: prepared.requestSha256,
     ...(prepared.deliveryPreflight ? { preparePreflight: prepared.deliveryPreflight } : {}),
-    ...(typeof admission.migrationReceiptRef === 'string' ? { migrationReceiptRef: admission.migrationReceiptRef } : {}) };
+    ...(prepared.migrationAdmission ? { migrationAdmission: prepared.migrationAdmission } : {}) };
+}
+
+export async function prepareCommit({ commit, dir, out, repo = DEFAULT_REPO, ghCommand = ['gh'], deps = {}, requireDelivery = false, ...options }) {
+  check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
+  check(HEX40.test(commit ?? ''), 'COMMIT_MUST_BE_40_LOWERCASE_HEX');
+  checkCommitOnMain(ghCommand, repo, commit);
+  const generationTags = deps.generationTags ?? githubGenerationTags(ghCommand, repo);
+  const existing = await fs.stat(dir).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
+  if (!existing) {
+    const version = await allocatePackageGeneration(generationTags);
+    await fs.mkdir(path.dirname(dir), { recursive: true });
+    const scratch = await fs.mkdtemp(path.join(path.dirname(dir), '.fleet-build-'));
+    const built = path.join(scratch, 'build');
+    try {
+      await (deps.buildUniversal ?? buildUniversal)({ repo: checkout, commit, version, out: built });
+      await fs.rename(built, dir);
+    } finally {
+      await fs.rm(scratch, { recursive: true, force: true });
+    }
+  }
+  const meta = (await fs.readdir(dir)).filter(n => /^fleet-node-g[0-9]{6}\.release\.json$/.test(n));
+  check(meta.length === 1, 'PUBLISH_BUILD_DIR_REFUSED');
+  const releaseWorkflow = deps.admitRelease ? null : await (deps.loadReleaseWorkflow ?? loadReleaseWorkflow)();
+  const fleetReleaseWorkflow = releaseWorkflow?.fleetReleaseWorkflow ?? (() => null);
+  const reconcileFleetRelease = async workflow => {
+    if (deps.admitRelease) return admitFleetRelease({ repository: repo, commit, admit: deps.admitRelease });
+    const evidence = await releaseWorkflow.reconcileFleetRelease(workflow);
+    if (packageGenerationOf(s.version) < STAGED_PREFLIGHT_GENERATION) return evidence;
+    check(HEX64.test(evidence?.requirementsSha256 ?? '') && OPEN_RUN_ID.test(evidence.readRunId ?? '') &&
+      Array.isArray(evidence.dispatched) && (evidence.dispatched.length ? OPEN_RUN_ID.test(evidence.migrationRunId ?? '') : evidence.migrationRunId === null),
+    'FLEET_RELEASE_ADMISSION_REFUSED');
+    return { ...evidence, repository: repo, commit, status: 'PASS' };
+  };
+  const { release } = await readBuild(dir);
+  const s = release.source;
+  check(!requireDelivery || packageGenerationOf(s.version) >= STAGED_PREFLIGHT_GENERATION, 'FLEET_DELIVERY_GENERATION_REFUSED');
+  check(s.commit === commit && packageGenerationOf(s.version) > BASELINE_GENERATION, 'PREPARE_BUILD_NOT_THIS_COMMIT', s.commit);
+  const beforePublish = () => reconcileFleetRelease(deps.release ?? fleetReleaseWorkflow({
+    repository: repo, commit, directory: dir, runGh: (args, timeout) => gh(ghCommand, args, timeout),
+  }));
+  return prepare({ ...options, version: s.version, dir, out, repo, ghCommand, deps: { ...deps, generationTags } }, beforePublish);
 }
 
 export async function main(argv, deps = {}) {

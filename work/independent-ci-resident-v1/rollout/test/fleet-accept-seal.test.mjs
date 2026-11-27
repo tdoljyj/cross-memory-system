@@ -83,6 +83,175 @@ async function stagedProjection(operation, candidate, details, time, fault) {
   return result;
 }
 
+async function publishWorld(t, overrides = {}) {
+  const w = await prepWorld(t, { version: 'g000027', released: false, spawnGh: false });
+  const time = fakeTime('2026-11-27T01:00:00Z');
+  const phases = [], confirms = [], links = [];
+  const approve = () => Object.assign(w.door, { status: 'accepted', grant: GRANT, receipt: GRANT_RECEIPT,
+    acceptedAt: new Date(time.now).toISOString() });
+  const deps = { ...w.deps, ...prepareFixtures, clock: time.clock, sleep: time.sleep, ghCommand: w.gh,
+    generationTags: gen27Tags(w), onPending: link => links.push(link),
+    fleetWorkflow: async (operation, candidate, details) => {
+      phases.push(operation);
+      if (operation === 'preflight') return stagedProjection(operation, candidate, details, time);
+      if (operation === 'project') {
+        const view = fleetProjection(candidate, new Date(time.now).toISOString());
+        return { first: view, last: view };
+      }
+      assert.equal(operation, 'confirm');
+      confirms.push(details);
+      w.door.sealedDigest = details.acceptanceSha256;
+      return { status: 'sealed', ...details };
+    }, ...overrides };
+  w.door.status = 'none';
+  const run = (extra = {}, command = 'publish', directory = w.build) => publishModule.main([
+    command, '--commit', w.source.commit, '--dir', directory, '--out', w.out, '--image', w.image, '--index', w.index,
+    ...(command === 'publish' ? ['--wait', '1'] : []),
+  ], { ...deps, ...extra });
+  return { w, time, phases, confirms, links, approve, deps, run };
+}
+
+test('正式 publish 和旧 prepare 在新建目录、候选通过本地校验后才接入一次迁移对账', async t => {
+  for (const command of ['publish', 'prepare']) await t.test(command, async t => {
+    const { w, run, phases, approve } = await publishWorld(t);
+    const dir = path.join(w.d, 'new', 'build');
+    await assert.rejects(fs.access(dir), { code: 'ENOENT' });
+    const loadReleaseWorkflow = async () => ({
+      fleetReleaseWorkflow: subject => subject,
+      reconcileFleetRelease: async ({ repository, commit, directory, runGh }) => {
+        phases.push('reconcile');
+        assert.equal(repository, fixtureKit().record.repository);
+        assert.equal(commit, w.source.commit);
+        assert.equal(directory, dir);
+        assert.equal(typeof runGh, 'function');
+        assert.ok((await fs.readdir(directory)).includes(`${w.source.release_tag}.tar`));
+        assert.equal(w.s.sourceDrafts.length, 1);
+        assert.deepEqual(await w.assets(), []);
+        return { requirementsSha256: 'a'.repeat(64), readRunId: '401', migrationRunId: command === 'publish' ? '402' : null,
+          dispatched: command === 'publish' ? ['20261127120000'] : [] };
+      },
+    });
+    const result = await run({ admitRelease: undefined, loadReleaseWorkflow, onPending: approve,
+      buildUniversal: ({ out }) => fs.cp(w.build, out, { recursive: true }) }, command, dir);
+    assert.equal(result.status, command === 'publish' ? 'FLEET_ACCEPTANCE_SEALED' : 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+    assert.deepEqual(phases.slice(0, 2), ['reconcile', 'preflight']);
+    assert.equal(phases.filter(phase => phase === 'reconcile').length, 1);
+    assert.deepEqual(result.migrationAdmission, { status: 'PASS', repository: fixtureKit().record.repository, commit: w.source.commit,
+      requirementsSha256: 'a'.repeat(64), readRunId: '401', migrationRunId: command === 'publish' ? '402' : null,
+      dispatched: command === 'publish' ? ['20261127120000'] : [] });
+  });
+});
+
+test('开单后 main 前进，重启沿原 Grant、Receipt 和请求摘要续封', async t => {
+  const { w, run, approve, confirms } = await publishWorld(t);
+  let admissions = 0, mainMoved = false;
+  const admitRelease = async subject => {
+    admissions++;
+    if (mainMoved) throw Object.assign(new Error('FLEET_RELEASE_MAIN_CHANGED'), { code: 'FLEET_RELEASE_MAIN_CHANGED' });
+    return { ...subject, status: 'PASS' };
+  };
+  const opened = await run({ admitRelease });
+  assert.equal(opened.status, 'FLEET_ACCEPTANCE_WAITING_OWNER');
+  const before = (await w.calls()).length;
+  mainMoved = true;
+  approve();
+  const sealed = await run({ admitRelease });
+  assert.deepEqual([sealed.status, sealed.grantId, sealed.receiptId, sealed.requestSha256],
+    ['FLEET_ACCEPTANCE_SEALED', GRANT, GRANT_RECEIPT, opened.requestSha256]);
+  assert.equal(admissions, 1);
+  assert.equal(sealed.acceptanceSha256, confirms[0].acceptanceSha256);
+  assert.equal(sha(await fs.readFile(sealed.acceptance)), sealed.acceptanceSha256);
+  assert.equal((await w.opens()).length, 1);
+  assert.deepEqual((await w.calls()).slice(before).filter(c => c.args.slice(0, 2).join(' ') === 'release create'), []);
+});
+
+test('已受理的开单运行终局失败且门为 none，才按准确运行编号重试', async t => {
+  const { w, run } = await publishWorld(t);
+  w.door.openTo = 'none';
+  const repository = fixtureKit().record.repository;
+  const runReads = [];
+  let conclusion = null;
+  const ghCommand = args => {
+    const result = w.gh(args);
+    if (args[0] === 'workflow') {
+      if (args.includes('fleet_request_sha256=' + w.door.reads[0]?.split('/').at(-1))) {
+        if (conclusion === 'failure') w.door.openTo = 'pending';
+        return { ...result, stdout: `https://github.com/${repository}/actions/runs/${conclusion === 'failure' ? 802 : 801}\n` };
+      }
+    }
+    if (args[0] === 'api' && args[1].includes('/actions/runs/')) {
+      const id = Number(args[1].split('/').at(-1));
+      runReads.push(id);
+      return { status: 0, stdout: JSON.stringify({ id, path: '.github/workflows/clued-cloud-production-release.yml',
+        repository: { full_name: repository }, head_repository: { full_name: repository }, head_branch: 'main',
+        event: 'workflow_dispatch', run_attempt: 1, status: conclusion ? 'completed' : 'in_progress', conclusion }) };
+    }
+    return result;
+  };
+  assert.equal((await run({ ghCommand })).status, 'FLEET_ACCEPTANCE_NOT_OPENED');
+  assert.equal((await run({ ghCommand })).status, 'FLEET_ACCEPTANCE_NOT_OPENED');
+  assert.equal((await w.opens()).length, 1);
+  conclusion = 'failure';
+  assert.equal((await run({ ghCommand })).status, 'FLEET_ACCEPTANCE_WAITING_OWNER');
+  assert.equal((await w.opens()).length, 2);
+  assert.ok(runReads.length > 0 && runReads.every(id => id === 801));
+});
+
+test('展示确认链接后的镜像、节点入口漂移在发布端和受信确认入口均阻止封存', async t => {
+  for (const boundary of ['publisher', 'confirm']) await t.test(boundary, async t => {
+    const { w, time, run, approve, confirms, links, deps } = await publishWorld(t);
+    const changed = boundary === 'publisher' ? path.basename(w.image) : `${w.source.release_tag}.bootstrap.ps1`;
+    const replace = () => w.setState(state => {
+      const asset = state.assets.find(asset => asset.name === changed);
+      const bytes = Buffer.from(asset.b64, 'base64');
+      bytes[0] ^= 1;
+      Object.assign(asset, { b64: bytes.toString('base64'), sha256: sha(bytes) });
+    });
+    if (boundary === 'confirm') {
+      const opened = await run();
+      assert.equal(opened.status, 'FLEET_ACCEPTANCE_WAITING_OWNER');
+      approve();
+    }
+    let workflowRefusal;
+    const fleetWorkflow = async (operation, candidate, details) => {
+      if (operation !== 'confirm') return deps.fleetWorkflow(operation, candidate, details);
+      await replace();
+      const { main } = await import('../../../../scripts/ci/clued-fleet-accept.mjs');
+      const { generateKeyPairSync } = await import('node:crypto');
+      const { publicKey } = generateKeyPairSync('x25519');
+      const exit = await main(['input'], { GITHUB_REPOSITORY: candidate.repository, FLEET_VERSION: candidate.version,
+        FLEET_REQUEST_SHA256: candidate.requestSha256, FLEET_OPERATION: 'confirm', FLEET_ACCEPTANCE_SHA256: details.acceptanceSha256,
+        FLEET_DELIVERY_KEY: publicKey.export({ type: 'spki', format: 'der' }).toString('base64url') },
+      { write: () => assert.fail('漂移资产不得进入封存 SQL'), error: message => { workflowRefusal = message; } },
+      { isAncestor: () => true, isPinned: () => true, fetchImpl: async url => {
+        const asset = (await w.assets()).find(asset => asset.name === url.split('/').at(-1));
+        return asset ? new Response(Buffer.from(asset.b64, 'base64')) : new Response(null, { status: 404 });
+      } });
+      assert.equal(exit, 1);
+      throw Object.assign(new Error('FLEET_DELIVERY_WORKFLOW_REFUSED'), { workflowCompleted: true });
+    };
+    const sleep = async ms => {
+      await time.sleep(ms);
+      if (boundary === 'publisher' && links.length && w.door.status === 'pending') {
+        await replace();
+        approve();
+      }
+    };
+    await assert.rejects(run({ fleetWorkflow, sleep }), { code: boundary === 'publisher' ? 'FLEET_DELIVERY_RELEASE_ASSET_CHANGED' : 'FLEET_DELIVERY_SEAL_NOT_CONFIRMED' });
+    assert.equal(links.length, 1);
+    if (boundary === 'confirm') assert.match(workflowRefusal, /FLEET_DELIVERY_RELEASE_ASSET_CHANGED/);
+    else assert.ok(!(await w.assets()).some(a => a.name.endsWith('.acceptance.json')));
+    assert.deepEqual(confirms, []);
+    assert.equal(w.door.sealedDigest, undefined);
+    assert.ok(!(await fs.readFile(w.index, 'utf8')).includes(GRANT));
+    const { observationOf } = await import('../../src/fleet-self-pull.mjs');
+    const repository = fixtureKit().record.repository;
+    assert.equal(observationOf({ at: new Date(time.now).toISOString(), code: null, onDuty: false,
+      fleetTarget: { repository, version: 'g000027', archive_sha256: w.source.archive_sha256, request_sha256: sha(await fs.readFile(w.requestFile)),
+        grant_id: GRANT, receipt_id: GRANT_RECEIPT, accepted_at: w.door.acceptedAt, other_sources: [] } }, repository, time.now), null);
+  });
+});
+
 test('出包前拒绝过期投影、缺失节点交付路径及被替换的暂存资产，零正式写入', async t => {
   for (const fault of ['stale', 'missing', 'changed']) await t.test(fault, async t => {
     const w = await prepWorld(t, { version: 'g000027', released: false, spawnGh: false });
@@ -158,7 +327,8 @@ test('一次发布自动开单和续封，响应丢失沿用原 Grant 和接受�
     const args = ['publish', '--commit', w.source.commit, '--dir', w.build, '--out', w.out, '--image', w.image, '--index', w.index, '--wait', '5'];
     await assert.rejects(publishModule.main(args, { ...opts, admitRelease: async subject => ({ ...subject, commit: 'c'.repeat(40), status: 'PASS' }) }),
       { code: 'FLEET_RELEASE_ADMISSION_REFUSED' });
-    assert.deepEqual(await w.calls(), []);
+    assert.deepEqual(await w.assets(), []);
+    assert.equal((await w.opens()).length, 0);
     const run = () => publishModule.main(args, opts);
     if (scenario === 'open-unknown') {
       assert.equal((await run()).status, 'FLEET_ACCEPTANCE_NOT_OPENED');

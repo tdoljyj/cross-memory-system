@@ -38,7 +38,7 @@ import { deliveryBound, deliverySubject, fleetDeliveryPreflight } from '../../wo
 import { deliveryProjectionReaders, deliveryRequirements, verifyDeliveryTree } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-reader.mjs';
 import { deliveryWorkflowPacket, STAGED_PAYLOAD_MAX_LENGTH, STAGED_REQUEST_MAX_BYTES } from '../../work/independent-ci-resident-v1/rollout/fleet/delivery-workflow.mjs';
 import { sourceHashOf, validateAcceptance } from '../../work/independent-ci-resident-v1/rollout/fleet/install.mjs';
-import { checkDeliveryKit, DRILL_RESERVED, namesDrillReserved, readRequest } from '../../work/independent-ci-resident-v1/rollout/fleet/publish.mjs';
+import { checkDeliveryAssets, checkDeliveryKit, deliveryAssetManifestName, DRILL_RESERVED, namesDrillReserved, readRequest } from '../../work/independent-ci-resident-v1/rollout/fleet/publish.mjs';
 import { sourceRefsDigest } from '../../work/independent-ci-resident-v1/src/fleet-delivery-evidence.mjs';
 
 export { checkDeliveryKit };
@@ -107,24 +107,25 @@ export function doorInput(env, resource) {
 }
 
 // One public asset, whole, within the size limit; a failed read is tried three times.
-export async function download(url, fetchImpl = fetch, maxBytes = MAX_ASSET_BYTES) {
+export async function download(url, fetchImpl = fetch, maxBytes = MAX_ASSET_BYTES, { digestOnly = false, timeout = 30_000 } = {}) {
   let last;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(30_000) });
+      const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(timeout) });
       if (response.status === 404) refuse("FLEET_ACCEPT_ASSET_NOT_ON_RELEASE", url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const chunks = [];
+      const digest = digestOnly ? crypto.createHash('sha256') : null;
       let length = 0;
       const body = response.body ?? [Buffer.from(await response.arrayBuffer())];
       for await (const chunk of body) {
         length += chunk.length;
         if (length > maxBytes) refuse("FLEET_ACCEPT_ASSET_SIZE", url);
-        chunks.push(Buffer.from(chunk));
+        if (digest) digest.update(chunk);
+        else chunks.push(Buffer.from(chunk));
       }
       if (length === 0) refuse("FLEET_ACCEPT_ASSET_SIZE", url);
-      const bytes = Buffer.concat(chunks, length);
-      return bytes;
+      return digest ? digest.digest('hex') : Buffer.concat(chunks, length);
     } catch (error) {
       if (/^FLEET_ACCEPT_/.test(error?.message ?? "")) throw error;
       last = error;
@@ -146,14 +147,15 @@ export async function buildInput(env, { fetchImpl = fetch, isAncestor = gitIsAnc
   const { resource, commit } = checkRequest(run, requestBytes, sumsBytes);
   if (!isAncestor(commit)) refuse("FLEET_ACCEPT_COMMIT_NOT_ON_MAIN", commit);
   const input = doorInput(env, resource);
-  if (gated(run.version)) input.delivery = await deliveryInput(env, JSON.parse(requestBytes), run, fetchImpl, isPinned);
+  if (gated(run.version)) input.delivery = await deliveryInput(env, JSON.parse(requestBytes), run, sumsBytes, fetchImpl, isPinned);
   else if (env.FLEET_OPERATION || env.FLEET_DELIVERY_KEY || env.FLEET_ACCEPTANCE_SHA256) refuse('FLEET_DELIVERY_GENERATION_REFUSED');
   return input;
 }
 
 const FLEET_GENERATION = /^g(\d{6})$/;
 const ID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
-const gated = version => Number(FLEET_GENERATION.exec(version)?.[1]) >= 25;
+const generation = version => Number(FLEET_GENERATION.exec(version)?.[1]);
+const gated = version => generation(version) >= 25;
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
 function stagedInput(env, run, isAncestor) {
@@ -201,7 +203,7 @@ async function verifyDeliverySource(archive, request, candidate) {
   }
 }
 
-async function deliveryInput(env, request, run, fetchImpl, isPinned = pinnedGeneration) {
+async function deliveryInput(env, request, run, sumsBytes, fetchImpl, isPinned = pinnedGeneration) {
   const operation = env.FLEET_OPERATION || 'open';
   const transportKey = env.FLEET_DELIVERY_KEY || null;
   const expected = env.FLEET_ACCEPTANCE_SHA256 || null;
@@ -216,9 +218,19 @@ async function deliveryInput(env, request, run, fetchImpl, isPinned = pinnedGene
   const tag = tagOf(run.version);
   const asset = name => assetUrl(run.repository, run.version, name);
   const archive = await download(asset(tag + '.tar'), fetchImpl, 512 * 1024 * 1024);
+  const kit = await download(asset(tag + '.first-install-kit.json'), fetchImpl);
+  if (generation(run.version) >= 27) {
+    const manifest = await download(asset(deliveryAssetManifestName(run.version)), fetchImpl);
+    await checkDeliveryAssets({ request, manifest, kit, assetSha256: name => {
+      if (name === tag + '.tar') return hash(archive);
+      if (name === 'SHA256SUMS') return hash(sumsBytes);
+      const roleImage = name.startsWith('role-image-');
+      return download(asset(name), fetchImpl, roleImage ? 2 * 1024 ** 3 : MAX_ASSET_BYTES,
+        { digestOnly: true, timeout: roleImage ? 90_000 : 30_000 });
+    } });
+  }
   await verifyDeliverySource(archive, request, candidate);
   const requirements = deliveryRequirements(archive, request);
-  const kit = await download(asset(tag + '.first-install-kit.json'), fetchImpl);
   checkDeliveryKit(kit, candidate);
 
   if (operation === 'open') return { operation, candidate, requirements };
