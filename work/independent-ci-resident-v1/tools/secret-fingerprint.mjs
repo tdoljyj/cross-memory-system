@@ -48,11 +48,19 @@ export function fingerprintHeartbeatToken(text) {
 
 export async function main(argv = process.argv.slice(2), input = process.stdin, output = process.stdout) {
   try {
-    if (argv.length !== 1 || !['app-key', 'ci-token', 'heartbeat-token'].includes(argv[0])) refuse();
+    if (argv.length !== 1 || !['app-key', 'ci-token', 'heartbeat-token', 'ci-rpc'].includes(argv[0])) refuse();
     const chunks = []; let size = 0;
     for await (const chunk of input) { size += chunk.length; if (size > MAX_BYTES) refuse(); chunks.push(chunk); }
     if (size === 0) refuse();
     const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks));   // a BOM stays, as in the runtime's utf8 read
+    if (argv[0] === 'ci-rpc') {
+      // Private stdout pipe to the protected lifecycle stage. This digest
+      // authenticates an RPC and must never be printed in installation logs.
+      const token = text.trim();
+      if (!TOKEN.test(token)) refuse();
+      output.write(JSON.stringify({ kind: 'ci-rpc', fingerprint: createHash('sha256').update(token, 'utf8').digest('hex') }) + '\n');
+      return 0;
+    }
     const fingerprint = argv[0] === 'app-key' ? fingerprintAppKey(text) : argv[0] === 'ci-token' ? fingerprintCiToken(text) : fingerprintHeartbeatToken(text);
     output.write(JSON.stringify({ kind: argv[0], fingerprint }) + '\n');
     return 0;

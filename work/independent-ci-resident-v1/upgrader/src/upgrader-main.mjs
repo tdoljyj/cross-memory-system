@@ -11,6 +11,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { setInterval as intervals } from 'node:timers/promises';
 import { ResidentError, check } from '../../src/canonical.mjs';
 import { ensureDir, exists, readBounded } from '../../src/store.mjs';
 import { Inbox } from '../../src/inbox.mjs';
@@ -246,15 +247,29 @@ export async function main({ argv = process.argv.slice(2), clock = Date.now, sle
   const upgraderDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const upgrader = await new Upgrader({ root, config, clock, ports: ports ?? await realPorts({ root, config, upgraderDir, clock }) }).open();
   const stopFile = path.join(root, 'upgrade', 'STOP-REQUESTED');
-  for (;;) {
-    if (await exists(stopFile)) {
-      await fs.rename(stopFile, path.join(root, 'upgrade', 'lock', `stop-${clock()}.json`)).catch(() => {});
-      return 0;
+  // A Windows compile alone can take ten minutes. Refresh the existing
+  // lock heartbeat independently of the operation status and its long tick.
+  const controller = new AbortController();
+  let heartbeatFailure;
+  const heartbeat = (async () => {
+    for await (const _ of intervals(30_000, undefined, { signal: controller.signal })) {
+      await lock.touch();
     }
-    const wait = await upgrader.tick();
-    await lock.touch();
-    if (once || values.once) return 0;
-    await sleep(Math.max(1_000, Math.min(wait, IDLE_MS)));
+  })().catch(error => { if (!controller.signal.aborted) heartbeatFailure = error; });
+  try {
+    for (;;) {
+      if (await exists(stopFile)) {
+        await fs.rename(stopFile, path.join(root, 'upgrade', 'lock', `stop-${clock()}.json`)).catch(() => {});
+        return 0;
+      }
+      const wait = await upgrader.tick();
+      if (heartbeatFailure) throw heartbeatFailure;
+      if (once || values.once) return 0;
+      await sleep(Math.max(1_000, Math.min(wait, IDLE_MS)));
+    }
+  } finally {
+    controller.abort();
+    await heartbeat;
   }
 }
 

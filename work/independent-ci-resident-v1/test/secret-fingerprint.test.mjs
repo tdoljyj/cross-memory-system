@@ -86,3 +86,12 @@ test('heartbeat-token: only clued_hbt_ tokens, under their own domain; a CI toke
   const refused = await run('heartbeat-token', token);
   assert.deepEqual([refused.code, refused.stdout, refused.stderr], [2, '', 'SECRET_FINGERPRINT_REFUSED\n']);
 });
+
+test('the private RPC pipe returns the authentication digest of the trimmed installed carrier', async () => {
+  const out = await run('ci-rpc', '  ' + token + '\r\n');
+  assert.deepEqual([out.code, out.stderr], [0, '']);
+  assert.deepEqual(JSON.parse(out.stdout), { kind: 'ci-rpc', fingerprint: digest(token) });
+  assert.ok(!out.stdout.includes(token));
+  const refused = await run('ci-rpc', 'not-a-ci-carrier');
+  assert.deepEqual([refused.code, refused.stdout, refused.stderr], [2, '', 'SECRET_FINGERPRINT_REFUSED\n']);
+});

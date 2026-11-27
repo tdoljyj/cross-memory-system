@@ -546,6 +546,26 @@ function Write-NewFile([string]$path, [byte[]]$bytes, [string]$sddl) {
     [IO.File]::Move($partial, $path)
   } finally { if ([IO.File]::Exists($partial)) { [IO.File]::Delete($partial) } }
 }
+
+function Copy-PreservedCredential([string]$source, [string]$target, [scriptblock]$Create = {
+    param($path, $security)
+    [IO.FileStream]::new($path, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write,
+      [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough, $security)
+  }) {
+  $partial = $target + '.partial-' + [Guid]::NewGuid().ToString('N')
+  $acl = [Security.AccessControl.FileSecurity]::new()
+  $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)')
+  $inputFile = [IO.File]::Open($source, 'Open', 'Read', 'Read')
+  try {
+    $output = & $Create $partial $acl
+    try { $inputFile.CopyTo($output); $output.Flush($true) }
+    finally { $output.Dispose() }
+    [IO.File]::Move($partial, $target)
+  } finally {
+    $inputFile.Dispose()
+    if ([IO.File]::Exists($partial)) { [IO.File]::Delete($partial) }
+  }
+}
 # M5: an expansion of a pinned archive is complete only with its mark (a file beside the directory naming the archive's sha256).
 function Get-ExpandState([string]$dir, [string]$marker, [string]$sha256) {
   if (-not [IO.Directory]::Exists($dir)) { return 'absent' }
@@ -1418,10 +1438,7 @@ function Invoke-HostPreparation {
     if ($preserved) {
       foreach ($name in $preserved.carriers.Keys) {
         $target = Join-Path $CredDir $script:CredentialList.files[$name]
-        [IO.File]::Copy($preserved.carriers[$name], $target, $false)
-        $acl = [Security.AccessControl.FileSecurity]::new()
-        $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)')
-        Set-Acl -LiteralPath $target -AclObject $acl -ErrorAction Stop
+        Copy-PreservedCredential $preserved.carriers[$name] $target
       }
     }
     Write-Secrets $controllerSid

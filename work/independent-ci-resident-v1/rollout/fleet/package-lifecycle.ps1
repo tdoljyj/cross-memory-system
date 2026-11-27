@@ -40,11 +40,25 @@ function Get-FleetTasks {
 
 function Test-FleetUpgradeInProgress($answer) {
   $id = [guid]::Empty
-  $at = [DateTimeOffset]::MinValue
-  if (-not [guid]::TryParse([string]$answer.op.opId, [ref]$id) -or
-      -not [DateTimeOffset]::TryParse([string]$answer['statusAt'], [ref]$at) -or
-      [Math]::Abs(([DateTimeOffset]::UtcNow - $at).TotalMinutes) -gt 5) { return $false }
-  @(Get-FleetServices | Where-Object { $_.Name -ieq 'CluedCIUpgrader' -and $_.State -ieq 'Running' -and $_.ProcessId -gt 0 }).Count -eq 1
+  if (-not [guid]::TryParse([string]$answer.op.opId, [ref]$id)) { throw 'FLEET_UPGRADER_OPERATION_REFUSED' }
+  $active = @(Get-FleetServices | Where-Object { $_.Name -ieq 'CluedCIUpgrader' -and ($_.State -ine 'Stopped' -or $_.ProcessId -ne 0) })
+  if ($active.Count -eq 0) { return $false }
+  $lock = Join-Path $FleetResources.ciRoot 'resident\upgrade\lock\executor.lock'
+  $holder = Read-FleetConnectionJson (Join-Path $lock 'holder.json')
+  $heartbeat = Read-FleetConnectionJson (Join-Path $lock 'alive.json')
+  $pidNumber = Get-Key $holder 'pid'
+  $beatAt = Get-Key $heartbeat 'at'
+  $age = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - $beatAt
+  if ($active.Count -eq 1 -and $active[0].ProcessId -gt 0 -and $pidNumber -gt 0 -and
+      (Get-Key $holder 'token') -and $holder['token'] -ceq (Get-Key $heartbeat 'token') -and
+      $beatAt -is [long] -and $age -ge 0 -and $age -le 120000) {
+    $child = Get-CimInstance Win32_Process -Filter ('ProcessId=' + [int]$pidNumber) -ErrorAction Stop
+    if ($child -and $child.ParentProcessId -eq $active[0].ProcessId -and $child.CreationDate -is [DateTime] -and
+        ([DateTimeOffset]$child.CreationDate).ToUnixTimeMilliseconds() -le $beatAt) { return $true }
+  }
+  # A frozen older upgrader only touches the lock between ticks. An active
+  # SCM service with a stale or unreadable heartbeat can still hold a writer.
+  throw 'FLEET_UPGRADER_HEARTBEAT_UNKNOWN'
 }
 
 function Get-FleetFirewallRules {
@@ -147,99 +161,237 @@ function Test-FleetProgressHint {
   @(Get-ChildItem -LiteralPath (Split-Path -Parent $root) -Directory -Force -Filter (Split-Path -Leaf $root) -ErrorAction Stop).Count -eq 1
 }
 
-# All wire details are provisional and live here. The transport and clock
-# parameters are used only by the offline fixture; the bootstrap passes neither.
+# The low-privilege preview reads the Broker's signed-probe projection. The
+# node credential remains protected; elevated status rechecks the observation.
+function Get-FleetMaintenancePreview($Context, [scriptblock]$Now) {
+  try { $probe = Read-FleetConnectionJson (Join-Path $FleetResources.ciRoot 'resident\broker\renew-ci.json') }
+  catch { throw 'FLEET_MAINTENANCE_PREVIEW_UNKNOWN' }
+  $target = Get-Key $probe 'fleetTarget'
+  $at = [DateTimeOffset]::MinValue
+  if (-not [DateTimeOffset]::TryParse([string](Get-Key $probe 'at'), [ref]$at) -or $at -gt (& $Now) -or
+      $at.AddMinutes(10) -lt (& $Now) -or (Get-Key $probe 'code') -or
+      (Get-Key $target 'archive_sha256') -cne $Context.archiveSha256 -or (Get-Key $target 'grant_id') -cne $Context.grantId -or
+      (Get-Key $target 'has_other_healthy') -isnot [bool]) { throw 'FLEET_MAINTENANCE_PREVIEW_UNKNOWN' }
+  New-FleetMaintenancePreview $Context $target['has_other_healthy']
+}
+
+function New-FleetMaintenancePreview($Context, [bool]$hasPeer) {
+  @{
+    ok = $true; sealed = $true; archiveSha256 = $Context.archiveSha256; acceptanceSha256 = $Context.acceptanceSha256
+    healthyPeers = [int]$hasPeer; previewReceipt = ($Context.grantId + '.' + $Context.acceptanceSha256)
+  }
+}
+
+function Read-FleetConnectionJson([string]$file) {
+  $item = Get-FleetConnectionCarrier $file
+  if ($null -ne $item) {
+    (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject([IO.File]::ReadAllText($item.FullName))
+  }
+}
+
+function Get-FleetCarrierFingerprint([string]$node, [string]$tool, [string]$kind, [string]$file) {
+  if ($null -eq (Get-FleetConnectionCarrier $file)) { throw 'FLEET_REQUIRED_CONNECTION_CARRIER_MISSING' }
+  $psi = [Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $node
+  $psi.Arguments = '"' + $tool + '" ' + $kind
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardInput = $true
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.CreateNoWindow = $true
+  $psi.EnvironmentVariables.Clear()
+  $psi.EnvironmentVariables['SystemRoot'] = 'C:\Windows'
+  $encoding = [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static')
+  $oldEncoding = if ($encoding) { $encoding.GetValue($null) }
+  if ($encoding) { $encoding.SetValue($null, [Text.UTF8Encoding]::new($false)) }
+  try { $process = [Diagnostics.Process]::Start($psi) }
+  finally { if ($encoding) { $encoding.SetValue($null, $oldEncoding) } }
+  try {
+    $output = $process.StandardOutput.ReadToEndAsync()
+    $null = $process.StandardError.ReadToEndAsync()
+    $carrier = [IO.File]::Open($file, 'Open', 'Read', 'Read')
+    try { $carrier.CopyTo($process.StandardInput.BaseStream) }
+    finally { $carrier.Dispose(); $process.StandardInput.Close() }
+    if (-not $process.WaitForExit(20000)) { $process.Kill(); throw 'FLEET_CONNECTION_FINGERPRINT_TIMEOUT' }
+    if ($process.ExitCode -ne 0) { throw 'FLEET_CONNECTION_FINGERPRINT_REFUSED' }
+    $answer = (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject($output.Result.Trim())
+    if ($answer['kind'] -cne $kind -or $answer['fingerprint'] -cnotmatch '^[0-9a-f]{64}$') { throw 'FLEET_CONNECTION_FINGERPRINT_REFUSED' }
+    [string]$answer['fingerprint']
+  } finally { $process.Dispose() }
+}
+
+function Connect-FleetMaintenance($kitRecord, $carriedSite, [string]$nodeExe, [string]$tool) {
+  $installed = Read-FleetConnectionJson (Join-Path $FleetResources.ciRoot 'resident\record\installation.json')
+  $site = if ($installed) { $installed } else { $carriedSite }
+  foreach ($key in @('scope','supabaseUrl','publishableKey')) {
+    if (-not (Get-Key $site $key) -or (Get-Key $site $key) -cne (Get-Key $kitRecord $key)) { throw 'FLEET_MAINTENANCE_ENDPOINT_REFUSED' }
+  }
+  $file = Join-Path $FleetResources.ciRoot $FleetResources.admissionAssets[0]
+  if ($null -eq (Get-FleetConnectionCarrier $file)) { throw 'FLEET_REQUIRED_CONNECTION_CARRIER_MISSING' }
+  $acl = Get-Acl -LiteralPath $file -ErrorAction Stop
+  $controller = (Get-LocalUser -Name $FleetResources.controller -ErrorAction Stop).SID.Value
+  $administrators = @('S-1-5-18','S-1-5-32-544')
+  $rules = @($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
+  if (-not $acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cnotin $administrators -or
+      @($rules | Where-Object {
+        $_.AccessControlType -ne 'Allow' -or ($_.IdentityReference.Value -cnotin $administrators -and
+          ($_.IdentityReference.Value -cne $controller -or ($_.FileSystemRights -band ([Security.AccessControl.FileSystemRights]'Write,ChangePermissions,TakeOwnership'))))
+      }).Count) { throw 'FLEET_MAINTENANCE_CARRIER_ACL_REFUSED' }
+  $connection = @{
+    scope = $site['scope']; supabaseUrl = $site['supabaseUrl']; publishableKey = $site['publishableKey']
+    authHash = Get-FleetCarrierFingerprint $nodeExe $tool 'ci-rpc' $file
+  }
+  $self = Invoke-FleetNodeRpc $connection 'clued_ci_connection_self_v1' @{scope=$connection.scope}
+  $registered = Get-Key $self 'node'
+  if ((Get-Key $self 'status') -cne 'ok' -or (Get-Key $self 'contract') -cne 'clued.ci.connection-self/1' -or
+      $null -eq $registered) { throw 'FLEET_MAINTENANCE_CONNECTION_REFUSED' }
+  $connection.nodeId = Get-Key $registered 'node_id'
+  $connection.generation = Get-Key $registered 'binding_generation'
+  $connection.bindingId = Get-Key $self 'binding_id'
+  $connection
+}
+
+function Get-FleetPreservedConnection($Context, [string]$carry, [string]$nodeExe, [string]$tool) {
+  $root = $FleetResources.ciRoot
+  $saved = Read-FleetConnectionJson (Join-Path $carry 'metadata.json')
+  $install = Read-FleetConnectionJson (Join-Path $root 'resident\record\installation.json')
+  $facts = Read-FleetConnectionJson (Join-Path $root 'first-install\facts.json')
+  $record = if ($install) { $install } elseif ($facts) { Get-Key $facts 'nodeRecord' } else { Get-Key $saved 'nodeRecord' }
+  if ($null -eq $record) { throw 'FLEET_PRESERVED_CONNECTION_SHAPE_REFUSED' }
+  $ciPin = Get-FleetCarrierFingerprint $nodeExe $tool 'ci-token' (Join-Path $root $FleetResources.admissionAssets[0])
+  $sidecar = Read-FleetConnectionJson (Join-Path $root $FleetResources.admissionAssets[1])
+  if ($sidecar) {
+    if ($sidecar['contract'] -cne 'clued.independent-ci.ci-connection/1' -or
+        $sidecar['bindingId'] -cne $Context.bindingId -or $sidecar['bindingGeneration'] -ne $Context.bindingGeneration -or
+        $sidecar['tokenPinSha256'] -cne $ciPin) { throw 'FLEET_PRESERVED_BINDING_REFUSED' }
+  } elseif ((Get-Key $record 'ciPrincipalBindingId') -cne $Context.bindingId -or (Get-Key $record 'ciTokenPinSha256') -cne $ciPin) {
+    throw 'FLEET_PRESERVED_BINDING_REFUSED'
+  }
+  $next = [ordered]@{}
+  foreach ($key in @('appKeyId','appPublicKeySha256Base64','ciPrincipalQualificationRef','ciPrincipalRoleRef')) {
+    $next[$key] = Get-Key $record $key
+  }
+  $next.ciPrincipalBindingId = $Context.bindingId
+  $next.ciTokenPinSha256 = $ciPin
+  $upgrade = Get-FleetCarrierFingerprint $nodeExe $tool 'ci-token' (Join-Path $carry 'resident-upgrade.token')
+  $hbFile = Join-Path $carry 'ci-node-heartbeat.token'
+  $receipt = Read-FleetConnectionJson (Join-Path $root 'resident\install\install-receipt.json')
+  $heartbeat = Get-Key $receipt 'heartbeatToken'
+  if (-not $heartbeat) { $heartbeat = Get-Key (Get-Key $facts 'credentials') 'heartbeatToken' }
+  if (-not $heartbeat) { $heartbeat = Get-Key $saved 'heartbeatToken' }
+  if (Get-FleetConnectionCarrier $hbFile) {
+    $heartbeat = @{bindingId=(Get-Key $heartbeat 'bindingId'); fingerprint=(Get-FleetCarrierFingerprint $nodeExe $tool 'heartbeat-token' $hbFile)}
+  } elseif ($heartbeat -and ((Get-Key $heartbeat 'placed') -eq $true -or (Get-Key $heartbeat 'fingerprint'))) {
+    throw 'FLEET_REQUIRED_CONNECTION_CARRIER_MISSING'
+  } else { $heartbeat = $null }
+  @{nodeRecord=$next; upgradeToken=@{fingerprint=$upgrade}; heartbeatToken=$heartbeat}
+}
+
+function Invoke-FleetNodeRpc($Connection, [ValidateSet('clued_ci_connection_self_v1','clued_work_verify_v1')][string]$Rpc, $InputData) {
+  if ($Connection['supabaseUrl'] -cnotmatch '^https://[a-z0-9]+\.supabase\.co$' -or
+      $Connection['publishableKey'] -cnotmatch '^sb_publishable_[A-Za-z0-9_-]+$' -or
+      $Connection['authHash'] -cnotmatch '^[0-9a-f]{64}$') { throw 'FLEET_MAINTENANCE_CONNECTION_REFUSED' }
+  try {
+    $public = $Connection['publishableKey']
+    $body = @{ p_token_hash = $Connection['authHash']; p_input = $InputData } | ConvertTo-Json -Depth 4 -Compress
+    $reply = Invoke-WebRequest -UseBasicParsing -Method Post -Uri ($Connection['supabaseUrl'] + '/rest/v1/rpc/' + $Rpc) -ContentType 'application/json' -Body $body -TimeoutSec 20 -MaximumRedirection 0 -ErrorAction Stop -Headers @{apikey=$public; Authorization=('Bearer ' + $public)}
+    if ($reply.Content.Length -gt 32768) { throw 'FLEET_MAINTENANCE_REPLY_REFUSED' }
+    (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject($reply.Content)
+  } catch { throw 'FLEET_MAINTENANCE_REQUEST_FAILED' }
+}
+
 function Invoke-FleetMaintenance([ValidateSet('preview','before-remove','before-return')][string]$Phase, $Context,
     [scriptblock]$Send, [scriptblock]$Wait = { Start-Sleep -Seconds 5 }, [scriptblock]$Now = { [DateTimeOffset]::UtcNow }) {
-  $unavailable = @{ ok = $false; code = 'FLEET_MAINTENANCE_INTERFACE_UNAVAILABLE' }
-  if (-not $Context['repository']) { return $unavailable }
-  if ($null -eq $Send) {
-    if ($Context.action -cne 'Install') { return $unavailable }
-    $Send = {
-      param($request)
-      $key = $null; $signer = $null
-      try {
-        foreach ($provider in @([Security.Cryptography.CngProvider]::new('Microsoft Platform Crypto Provider'), [Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider)) {
-          $name = $FleetResources.machineKeys[0]
-          if ([Security.Cryptography.CngKey]::Exists($name, $provider, [Security.Cryptography.CngKeyOpenOptions]::MachineKey)) {
-            if ($null -ne $key) { throw 'FLEET_MAINTENANCE_IDENTITY_AMBIGUOUS' }
-            $key = [Security.Cryptography.CngKey]::Open($name, $provider, [Security.Cryptography.CngKeyOpenOptions]::MachineKey)
+  try {
+    if ($Context['action'] -cne 'Install') { throw 'FLEET_MAINTENANCE_ACTION_REFUSED' }
+    if ($null -eq $Send -and $Phase -ceq 'preview' -and -not $Context['nodeConnection']) {
+      return Get-FleetMaintenancePreview $Context $Now
+    }
+    $uuid = '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
+    $node = $Context['nodeConnection']
+    if ($null -eq $node -or $node['nodeId'] -cnotmatch $uuid -or $node['bindingId'] -cnotmatch $uuid -or
+        ($node['generation'] -isnot [int] -and $node['generation'] -isnot [long]) -or
+        $node['generation'] -lt 1 -or $Context['grantId'] -cnotmatch $uuid) { throw 'FLEET_MAINTENANCE_CONNECTION_REFUSED' }
+    if (($Context['bindingId'] -and $Context['bindingId'] -cne $node['bindingId']) -or
+        ($Context['bindingGeneration'] -and $Context['bindingGeneration'] -ne $node['generation'])) { throw 'FLEET_MAINTENANCE_BINDING_REFUSED' }
+    if ($null -eq $Send) { $Send = { param($inputData) Invoke-FleetNodeRpc $node 'clued_work_verify_v1' $inputData } }
+    $read = @{ action='fleet_maintenance'; command='status'; scope=$node['scope']; node_id=$node['nodeId']; binding_generation=$node['generation'] }
+    $status = & $Send $read
+    Assert-FleetMaintenanceStatus $status $read $Context.grantId
+    if ($Phase -ceq 'preview') { return New-FleetMaintenancePreview $Context $status['has_other_healthy'] }
+    if ($Context['ownerUac'] -ne $true) { throw 'FLEET_MAINTENANCE_UAC_REQUIRED' }
+    $operation = ([Guid]$(if ($Context['maintenanceOperationId']) { $Context['maintenanceOperationId'] } else { $Context.operationId })).ToString('D')
+    $write = $read.Clone()
+    $write.grant_id = $Context.grantId
+    $write.operation_id = $operation
+    if ($Phase -ceq 'before-remove') {
+      if (-not $status['has_other_healthy'] -and -not $Context['zeroNodeConsent']) { throw 'FLEET_MAINTENANCE_NEEDS_SOLE_NODE_CONSENT' }
+      $write.command = 'delist'
+      $write.method = 'reinstall'
+      if (-not $status['has_other_healthy'] -and $Context['zeroNodeConsent'] -eq $true) { $write.sole_node_agreed = $true }
+    } else {
+      if (-not $Context['installed']) { throw 'FLEET_INSTALL_POSTCONDITION_UNAVAILABLE' }
+      $write.command = 'verify_started'
+    }
+    $requested = & $Now
+    $deadline = $requested.AddMinutes(45)
+    $response = & $Send $write
+    Assert-FleetMaintenanceStatus $response $read $Context.grantId
+    if ($response['operation_id'] -cne $operation -or $response['receipt_id'] -cnotmatch $uuid) { throw 'FLEET_MAINTENANCE_SUBJECT_REFUSED' }
+    do {
+      # The write receipt alone can be an idempotent replay. Only the current
+      # status for this very operation can authorize cleanup or return.
+      $status = & $Send $read
+      Assert-FleetMaintenanceStatus $status $read $Context.grantId
+      if ($status['operation_id'] -cne $operation -or $status['receipt_id'] -cnotmatch $uuid) { throw 'FLEET_MAINTENANCE_SUBJECT_REFUSED' }
+      if ($Phase -ceq 'before-remove') {
+        if ($status['state'] -cnotin @('delisted','draining')) { throw 'FLEET_MAINTENANCE_NOT_SAFE_TO_REMOVE' }
+        if ($status['state'] -ceq 'delisted' -and $status['install_ready']) {
+          if ($Context['requireFreshDrain']) {
+            $confirmed = [DateTimeOffset]::MinValue
+            if (-not [DateTimeOffset]::TryParse([string](Get-Key $status 'drain_confirmed_at'), [ref]$confirmed) -or
+                $confirmed -lt $requested -or $confirmed -gt (& $Now)) {
+              throw 'FLEET_MAINTENANCE_STALE_DRAIN'
+            }
+          }
+      return @{
+            ok=$true; sealed=$true; archiveSha256=$Context.archiveSha256; acceptanceSha256=$Context.acceptanceSha256
+            operationId=$Context.operationId; bindingId=$node['bindingId']; bindingGeneration=$node['generation']
+            ownerUac=$true; drained=$true; hasDuty=$false; freshDrain=($Context['requireFreshDrain'] -eq $true)
+            connection=$Context['preservedConnection']
           }
         }
-        if ($null -eq $key) { return @{ ok = $false; code = 'FLEET_MAINTENANCE_IDENTITY_UNAVAILABLE' } }
-        $signer = [Security.Cryptography.ECDsaCng]::new($key)
-        $signer.HashAlgorithm = [Security.Cryptography.CngAlgorithm]::Sha256
-        $request['identityPublicKey'] = [Convert]::ToBase64String($key.Export([Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob))
-        $payload = [Text.Encoding]::UTF8.GetBytes(($request | ConvertTo-Json -Depth 8 -Compress))
-        $body = @{ payload = [Convert]::ToBase64String($payload); signature = [Convert]::ToBase64String($signer.SignData($payload)) } | ConvertTo-Json -Compress
-        try {
-          $response = Invoke-WebRequest -UseBasicParsing -Method Post -Uri 'https://kooyomi.pixelgrav.com/v1/ci/node/fleet-maintenance' -ContentType 'application/json' -Body $body -TimeoutSec 20 -MaximumRedirection 0 -ErrorAction Stop
-        } catch {
-          $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
-          if ($status -in @(404,405,501)) { return $unavailable }
-          return @{ ok = $false; code = 'FLEET_MAINTENANCE_REQUEST_FAILED' }
+      } else {
+        if ($status['state'] -ceq 'returned' -and -not $status['install_ready']) {
+          return @{ok=$true; sealed=$true; restored=$true; archiveSha256=$Context.archiveSha256; acceptanceSha256=$Context.acceptanceSha256; operationId=$Context.operationId}
         }
-        if ($response.Content.Length -gt 32768) { return @{ ok = $false; code = 'FLEET_MAINTENANCE_REPLY_REFUSED' } }
-        (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject($response.Content)
-      } catch { @{ ok = $false; code = 'FLEET_MAINTENANCE_IDENTITY_OR_REPLY_REFUSED' } }
-      finally { if ($signer) { $signer.Dispose() }; if ($key) { $key.Dispose() } }
-    }
+        if ($status['state'] -cnotin @('delisted','verifying')) { throw 'FLEET_MAINTENANCE_NOT_RESTORED' }
+        $started = [DateTimeOffset]::MinValue
+        if ([DateTimeOffset]::TryParse([string](Get-Key $status 'verify_started_at'), [ref]$started)) {
+          $serverDeadline = $started.AddMinutes(45)
+          if ($serverDeadline -lt $deadline) { $deadline = $serverDeadline }
+        }
+      }
+      if ((& $Now) -ge $deadline) { break }
+      & $Wait
+    } while ($true)
+    if ($Phase -ceq 'before-remove') { throw 'FLEET_MAINTENANCE_DRAIN_TIMEOUT' }
+    throw 'FLEET_MAINTENANCE_VERIFY_TIMEOUT'
+  } catch {
+    $code = [string]$_.Exception.Message
+    if ($code -cnotmatch '^FLEET_[A-Z0-9_]{1,90}$') { $code = 'FLEET_MAINTENANCE_REPLY_REFUSED' }
+    @{ ok = $false; code = $code }
   }
-  $deadline = (& $Now).AddMinutes(45)
-  $pendingState = if ($Phase -ceq 'before-return') { 'verifying' } else { 'draining' }
-  do {
-    $request = [ordered]@{
-      contract = 'clued.fleet.maintenance/1'; phase = $Phase; nonce = [Guid]::NewGuid().ToString('N')
-      at = (& $Now).ToUniversalTime().ToString('o')
-    }
-    foreach ($key in @('repository','version','archiveSha256','acceptanceSha256','sourceSha256','machine','operatorSid','action','operationId',
-        'previewReceipt','ownerUac','zeroNodeConsent','bindingId','bindingGeneration','installed')) {
-      if ($Context.Contains($key)) { $request[$key] = $Context[$key] }
-    }
-    $reply = & $Send $request
-    if ($reply -isnot [Collections.IDictionary] -or $reply['ok'] -isnot [bool] -or -not $reply['ok']) {
-      $code = if ($reply -is [Collections.IDictionary]) { [string]$reply['code'] } else { '' }
-      if ($code -cnotmatch '^FLEET_[A-Z0-9_]{1,90}$') { $code = 'FLEET_MAINTENANCE_REPLY_REFUSED' }
-      return @{ ok = $false; code = $code }
-    }
-    if ($reply['nonce'] -cne $request.nonce -or $reply['archiveSha256'] -cne $Context.archiveSha256 -or
-        $reply['acceptanceSha256'] -cne $Context.acceptanceSha256 -or $reply['sourceSha256'] -cne $Context.sourceSha256 -or
-        $reply['sealed'] -isnot [bool] -or -not $reply['sealed'] -or ($Phase -cne 'preview' -and $reply['operationId'] -cne $Context.operationId)) {
-      return @{ ok = $false; code = 'FLEET_MAINTENANCE_SUBJECT_REFUSED' }
-    }
-    if ($Phase -ceq 'preview') { return $reply }
-    if ($reply['bindingId'] -cnotmatch '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$' -or
-        ($reply['bindingGeneration'] -isnot [int] -and $reply['bindingGeneration'] -isnot [long]) -or $reply['bindingGeneration'] -lt 1 -or
-        ($Context['bindingId'] -and ($reply['bindingId'] -cne $Context.bindingId -or $reply['bindingGeneration'] -ne $Context.bindingGeneration))) {
-      return @{ ok = $false; code = 'FLEET_MAINTENANCE_BINDING_REFUSED' }
-    }
-    if ($reply['state'] -cne $pendingState) {
-      if ($Phase -ceq 'before-remove' -and ($reply['state'] -cne 'removed' -or $reply['noNewWork'] -isnot [bool] -or -not $reply['noNewWork'] -or
-          $reply['zeroNodes'] -isnot [bool] -or ($reply['zeroNodes'] -and (
-            $reply['zeroNodeConsentAccepted'] -isnot [bool] -or -not $reply['zeroNodeConsentAccepted'] -or -not $Context['zeroNodeConsent'])))) {
-        return @{ ok = $false; code = 'FLEET_MAINTENANCE_NOT_SAFE_TO_REMOVE' }
-      }
-      if ($Phase -ceq 'before-return') {
-        foreach ($flag in @('restored','connectionUsable','freshHeartbeat','healthy')) {
-          if ($reply[$flag] -isnot [bool] -or -not $reply[$flag]) { return @{ ok = $false; code = 'FLEET_MAINTENANCE_NOT_RESTORED' } }
-        }
-        if ($reply['state'] -cne 'restored' -or $reply['role'] -cne 'STANDBY') { return @{ ok = $false; code = 'FLEET_MAINTENANCE_NOT_RESTORED' } }
-      }
-      return $reply
-    }
-    if ($Phase -ceq 'before-return') {
-      $started = [DateTimeOffset]::MinValue
-      if (-not [DateTimeOffset]::TryParse($reply['verificationStartedAt'], [ref]$started) -or $started -gt (& $Now)) {
-        return @{ ok = $false; code = 'FLEET_MAINTENANCE_VERIFY_CLOCK_REFUSED' }
-      }
-      $serverDeadline = $started.AddMinutes(45)
-      if ($serverDeadline -lt $deadline) { $deadline = $serverDeadline }
-    }
-    if ((& $Now) -ge $deadline) { break }
-    & $Wait
-  } while ($true)
-  @{ ok = $false; code = $(if ($Phase -ceq 'before-return') { 'FLEET_MAINTENANCE_VERIFY_TIMEOUT' } else { 'FLEET_MAINTENANCE_DRAIN_TIMEOUT' }) }
 }
+
+function Assert-FleetMaintenanceStatus($Reply, $Read, [string]$Grant) {
+  if ($Reply -isnot [Collections.IDictionary] -or $Reply['status'] -cne 'ok' -or $Reply['node_id'] -cne $Read.node_id -or
+      $Reply['binding_generation'] -ne $Read.binding_generation -or $Reply['grant_id'] -cne $Grant -or
+      $Reply['has_other_healthy'] -isnot [bool] -or $Reply['install_ready'] -isnot [bool]) {
+    throw 'FLEET_MAINTENANCE_SUBJECT_REFUSED'
+  }
+}
+
 
 function New-FleetContext([string]$acceptanceFile, [string]$archiveSha256, [string]$operatorSid, [string]$action) {
   $acceptance = (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject([IO.File]::ReadAllText($acceptanceFile))
@@ -247,6 +399,7 @@ function New-FleetContext([string]$acceptanceFile, [string]$archiveSha256, [stri
       $acceptance['repository'] -cnotmatch '^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$') { throw 'FLEET_TARGET_REFUSED' }
   @{
     repository = $acceptance['repository']; version = $acceptance['version']; commit = $acceptance['commit']; archiveSha256 = $archiveSha256
+    grantId = $acceptance['cluedDecision']
     acceptanceSha256 = Sha256File $acceptanceFile; sourceSha256 = $acceptance['ciSourceManifestSha256']
     machine = [Environment]::MachineName.ToUpperInvariant(); operatorSid = $operatorSid; action = $action
   }
@@ -256,8 +409,7 @@ function Assert-FleetPreview($preview, $context) {
   if ($preview['archiveSha256'] -cne $context.archiveSha256 -or $preview['acceptanceSha256'] -cne $context.acceptanceSha256 -or
       $preview['sealed'] -ne $true -or ($context.action -ceq 'Rollback' -and $preview['previous'] -ne $true) -or
       $preview['healthyPeers'] -isnot [int] -or $preview['healthyPeers'] -lt 0 -or
-      $preview['estimatedMinutes'] -isnot [int] -or $preview['estimatedMinutes'] -lt 1 -or $preview['estimatedMinutes'] -gt 1440 -or
-      $preview['previewReceipt'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$') { throw 'FLEET_MAINTENANCE_PREVIEW_REFUSED' }
+      $preview['previewReceipt'] -cne ($context.grantId + '.' + $context.acceptanceSha256)) { throw 'FLEET_MAINTENANCE_PREVIEW_REFUSED' }
 }
 
 function Get-FleetPathItem([string]$path) {
@@ -285,7 +437,7 @@ function Assert-FleetJournalRoot([string]$root) {
   $writers = @($actual.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
   if (-not $actual.AreAccessRulesProtected -or $actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -cnotin @('S-1-5-18','S-1-5-32-544') -or
       $writers.Count -ne 2 -or @($writers | Where-Object { $_.IdentityReference.Value -cnotin @('S-1-5-18','S-1-5-32-544') -or $_.AccessControlType -ne 'Allow' -or $_.FileSystemRights -ne 'FullControl' }).Count) {
-    throw 'FLEET_JOURNAL_ACL_REFUSED'
+    throw ('FLEET_JOURNAL_ACL_REFUSED: remove the refused journal directory ' + $root)
   }
 }
 
@@ -677,10 +829,11 @@ function Save-FleetConnectionCarriers($context) {
   foreach ($relative in $FleetResources.stagedTokens.Keys) {
     $name = $FleetResources.stagedTokens[$relative]
     $target = Join-Path $carry $name
-    if (Get-FleetConnectionCarrier $target) { continue }
+    $carried = Get-FleetConnectionCarrier $target
     $source = Get-FleetConnectionCarrier (Join-Path $FleetResources.ciRoot $relative)
-    if ($null -eq $source) { $source = Get-FleetConnectionCarrier (Join-Path $FleetResources.ciRoot ('first-install\credentials\' + $name)) }
+    if ($null -eq $source -and $null -eq $carried) { $source = Get-FleetConnectionCarrier (Join-Path $FleetResources.ciRoot ('first-install\credentials\' + $name)) }
     if ($null -eq $source) {
+      if ($null -ne $carried) { continue }
       if ($name -ceq 'resident-upgrade.token' -or $null -ne $context.maintenance.connection['heartbeatToken']) { throw 'FLEET_REQUIRED_CONNECTION_CARRIER_MISSING' }
       continue
     }
@@ -690,7 +843,8 @@ function Save-FleetConnectionCarriers($context) {
     Assert-FleetLocalPath $pending
     [IO.File]::Delete($pending)
     [IO.File]::Copy($source.FullName, $pending, $false)
-    [IO.File]::Move($pending, $target)
+    if ($null -eq $carried) { [IO.File]::Move($pending, $target) }
+    else { [IO.File]::Replace($pending, $target, [NullString]::Value) }
     if ($null -eq (Get-FleetConnectionCarrier $target)) { throw 'FLEET_CREDENTIAL_CARRY_READBACK_REFUSED' }
   }
   $carry
@@ -701,9 +855,9 @@ function Invoke-FleetCleanup($context) {
   if (-not $facts.complete) { throw 'FLEET_LOCAL_INVENTORY_INCOMPLETE' }
   $null = @(Get-FleetProductPaths)
   if ($context['preflightCleanup']) { & $context.preflightCleanup $context }
-  Stop-FleetWindowsWriters
   $carry = Save-FleetConnectionCarriers $context
   if ($context['checkConnection']) { & $context.checkConnection $context $carry }
+  Stop-FleetWindowsWriters
   Clear-FleetWslScratchTasks $context.operationId
   Remove-FleetWslProducts $facts.wsl $context.operationId
   Remove-FleetWindowsRegistrations
@@ -743,10 +897,13 @@ function Invoke-FleetStep([string]$step, $context) {
   if ($step -ceq 'cleanup') { Invoke-FleetCleanup $context; return }
   if ($step -cne 'install' -or -not $context['install']) { throw 'FLEET_INSTALL_POSTCONDITION_UNAVAILABLE' }
   if ($context.retryingInstall) {
+    $cleanup = Get-FleetStepState 'cleanup' $context
+    if ($cleanup -ceq 'pending') { $context.requireFreshDrain = $true }
     $gate = Invoke-FleetMaintenance -Phase 'before-remove' -Context $context
     Assert-FleetRemovalGate $gate $context
     $context.maintenance = $gate
     $cleanup = Get-FleetStepState 'cleanup' $context
+    if ($cleanup -ceq 'pending' -and -not $context['requireFreshDrain']) { throw 'FLEET_MAINTENANCE_STALE_DRAIN' }
     if ($cleanup -ceq 'pending') { Invoke-FleetCleanup $context }
     if ((Get-FleetStepState 'cleanup' $context) -cne 'complete') { throw 'FLEET_STEP_NOT_CONFIRMED:cleanup' }
   }
@@ -755,7 +912,7 @@ function Invoke-FleetStep([string]$step, $context) {
   $context.installed = $result
 }
 
-function Read-FleetProgress([string]$file, $context) {
+function Read-FleetProgress([string]$file, $context, [switch]$ArchiveStaleFresh, [switch]$RetargetReinstall) {
   Assert-FleetLocalPath $file
   if ($null -eq (Get-FleetPathItem $file)) { return $null }
   if ((Get-Item -LiteralPath $file -Force).Length -gt 4096) { throw 'FLEET_PROGRESS_REFUSED' }
@@ -763,13 +920,35 @@ function Read-FleetProgress([string]$file, $context) {
   if ($value.contract -cne 'clued.fleet.lifecycle-progress/1' -or $value.operationId -cnotmatch '^[0-9a-f]{32}$' -or
       $value.mode -cnotin @('Fresh','Reinstall','Rollback','Retire') -or
       $value.step -cnotin @('intent','cleanup','install','launcher','verify','return','complete')) { throw 'FLEET_PROGRESS_REFUSED' }
-  foreach ($key in @('machine','operatorSid','archiveSha256','acceptanceSha256','action')) {
+  foreach ($key in @('machine','operatorSid','action')) {
     if ($value[$key] -cne $context[$key]) { throw ('FLEET_PROGRESS_DIFFERS:' + $key) }
+  }
+  foreach ($key in @('archiveSha256','acceptanceSha256')) {
+    if ($value[$key] -ceq $context[$key]) { continue }
+    # Only the locked elevated bootstrap opts in after verifying the journal ACL.
+    if ($ArchiveStaleFresh -and $value.mode -ceq 'Fresh' -and
+        $value.archiveSha256 -cmatch '^[0-9a-f]{64}$' -and $value.acceptanceSha256 -cmatch '^[0-9a-f]{64}$') {
+      $root = Split-Path -Parent $file
+      $archive = $root + '.archived-' + $value.operationId
+      Assert-FleetLocalPath $archive
+      [IO.Directory]::Move($root, $archive)
+      return $null
+    }
+    if ($RetargetReinstall -and $context.action -ceq 'Install' -and $value.mode -ceq 'Reinstall' -and
+        $value.archiveSha256 -cmatch '^[0-9a-f]{64}$' -and $value.acceptanceSha256 -cmatch '^[0-9a-f]{64}$') {
+      # Keep the carry and the local journal directory. The server operation
+      # belongs to the previous Grant, so the new package has its own UUID.
+      $next = New-FleetProgress $context 'Reinstall'
+      $next.maintenanceOperationId = ([Guid]$next.operationId).ToString('D')
+      $next.operationId = $value.operationId
+      return $next
+    }
+    throw ('FLEET_PROGRESS_DIFFERS:' + $key)
   }
   $value
 }
 
-function Write-FleetProgress([string]$file, $value) {
+function Write-FleetJournalJson([string]$file, $value) {
   $tmp = $file + '.pending'
   Assert-FleetLocalPath $tmp
   if ($null -ne (Get-FleetPathItem $tmp)) { [IO.File]::Delete($tmp) }
@@ -777,6 +956,10 @@ function Write-FleetProgress([string]$file, $value) {
   $stream = [IO.FileStream]::new($tmp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough)
   try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
   if ([IO.File]::Exists($file)) { [IO.File]::Replace($tmp, $file, [NullString]::Value) } else { [IO.File]::Move($tmp, $file) }
+}
+
+function Write-FleetProgress([string]$file, $value) {
+  Write-FleetJournalJson $file $value
   $back = Read-FleetProgress $file $value
   if ($back.step -cne $value.step -or $back.operationId -cne $value.operationId) { throw 'FLEET_PROGRESS_READBACK_FAILED' }
 }
@@ -790,22 +973,25 @@ function Assert-FleetRemovalGate($gate, $context) {
       ($context.mode -ceq 'Retire' -and $gate['retired'] -ne $true) -or ($context.mode -ceq 'Rollback' -and $gate['previous'] -ne $true)) {
     throw 'FLEET_MAINTENANCE_NOT_SAFE_TO_REMOVE'
   }
+  if ($context['requireFreshDrain'] -and $gate['freshDrain'] -ne $true) { throw 'FLEET_MAINTENANCE_STALE_DRAIN' }
 }
 
 # Observe callbacks return complete only from durable postconditions. In
 # particular, an unknown side effect is not a reason to run cleanup again.
 # The caller executes this function only while holding the machine mutex.
 function Invoke-FleetLifecycle($context, [string]$mode, [string]$file, [scriptblock]$Observe, [scriptblock]$Apply) {
-  $progress = Read-FleetProgress $file $context
+  $progress = Read-FleetProgress $file $context -RetargetReinstall
   if ($null -eq $progress) {
     $progress = New-FleetProgress $context $mode
-    Write-FleetProgress $file $progress
+  } elseif ($progress.Keys -ccontains 'maintenanceOperationId' -and $progress.step -ceq 'intent' -and
+      $context['previewReceipt'] -cne ($context['grantId'] + '.' + $context.acceptanceSha256)) {
+    throw 'FLEET_REINSTALL_REQUIRES_PREVIEW'
   }
   $mode = $progress.mode
   $context.mode = $mode
   $context.operationId = $progress.operationId
-  foreach ($key in @('bindingId','bindingGeneration','previewReceipt','zeroNodeConsent')) {
-    if ($progress.step -ceq 'intent' -and $context['previewReceipt'] -and $key -cin @('previewReceipt','zeroNodeConsent')) {
+  foreach ($key in @('bindingId','bindingGeneration','previewReceipt','maintenanceOperationId','requireFreshDrain')) {
+    if ($progress.step -ceq 'intent' -and $context['previewReceipt'] -and $key -ceq 'previewReceipt') {
       $progress[$key] = $context[$key]
     } elseif ($progress.Keys -ccontains $key) { $context[$key] = $progress[$key] }
     elseif ($context.Keys -ccontains $key) { $progress[$key] = $context[$key] }
@@ -817,6 +1003,7 @@ function Invoke-FleetLifecycle($context, [string]$mode, [string]$file, [scriptbl
     # The protected journal is a cursor. A missing terminal still requires
     # fresh maintenance authorization before the retry may clean anything.
     $progress.step = 'install'
+    $context.requireFreshDrain = $progress['requireFreshDrain'] = $true
     Write-FleetProgress $file $progress
   }
   $start = if ($progress.step -ceq 'intent') { 0 } else { [Array]::IndexOf($steps, $progress.step) }

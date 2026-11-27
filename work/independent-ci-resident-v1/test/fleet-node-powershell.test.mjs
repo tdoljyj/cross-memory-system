@@ -96,6 +96,29 @@ function hostScriptLines(body) {
   return { status: r.status, lines: String(r.stdout ?? '').split(/\r?\n/).filter(l => l.trim()), out: `${tail(r.stdout)}\n${tail(r.stderr, 3000)}` };
 }
 
+test('preserved credential asks for a protected file before writing any bytes', { skip, timeout: 30_000 }, () => {
+  const r = hostScriptLines(`
+$root = Join-Path $env:TEMP ('fleet-acl-' + [Guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($root)
+try {
+  $source = Join-Path $root 'source'
+  $target = Join-Path $root 'target'
+  [IO.File]::WriteAllText($source, 'synthetic-carrier')
+  $create = {
+    param($file, $acl)
+    $sids = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value } | Sort-Object)
+    if (-not $acl.AreAccessRulesProtected -or ($sids -join ',') -cne 'S-1-5-18,S-1-5-32-544' -or
+        [IO.File]::Exists($file) -or [IO.File]::Exists($target)) { throw 'FLEET_TEST_INSECURE_CREATION' }
+    [IO.File]::Open($file, 'CreateNew', 'Write', 'None')
+  }
+  Copy-PreservedCredential $source $target $create
+  if ([IO.File]::ReadAllText($target) -cne 'synthetic-carrier') { throw 'FLEET_TEST_COPY_INCOMPLETE' }
+  '{"status":"protected-copy"}'
+} finally { [IO.Directory]::Delete($root,$true) }`);
+  assert.equal(r.status, 0, r.out);
+  assert.equal(JSON.parse(r.lines.at(-1)).status, 'protected-copy');
+});
+
 test('windows/first-install-host.ps1 under Windows PowerShell 5.1: its lines carry cmdlet output', { skip, timeout: 900_000 }, () => {
   const steps = hostScriptLines(`
 $stage = Join-Path 'C:\\Windows\\Temp' ('clued-p1-' + '0123')
