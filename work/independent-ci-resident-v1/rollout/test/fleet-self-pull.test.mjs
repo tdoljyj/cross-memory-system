@@ -18,7 +18,8 @@ import { readTar } from '../fleet/tar.mjs';
 import { Upgrader } from '../../upgrader/src/upgrader-main.mjs';
 import { FakeDoor, FakeLinux, FakeResident, FakeWindows, fakeClock, installGeneration1, testConfig } from '../../upgrader/test/fixtures.mjs';
 import { renewalWatch } from '../../src/connection-renewal.mjs';
-import { versionNotices } from '../../src/status.mjs';
+import { parseVersions, versionNotices } from '../../src/status.mjs';
+import { acceptanceBytes } from '../../src/fleet-acceptance.mjs';
 
 const repository = 'tdoljyj/cross-memory-system';
 const now = Date.parse('2026-11-25T08:00:00Z');
@@ -116,8 +117,9 @@ async function fixtureLanes({ node, release, broker, onDuty = false, peers = [],
   for (const parts of [['state'], ['broker', 'requests'], ['broker', 'responses'], ['upgrade', 'inbox']])
     await fs.mkdir(path.join(root, ...parts), { recursive: true });
   const observed = path.join(root, 'broker', 'renew-ci.json');
-  const probe = async (fleetTarget = release.target, { active = onDuty, otherSources = peers } = {}) =>
-    fs.writeFile(observed, json({ at: new Date(clockNow()).toISOString(), code: null, onDuty: active,
+  const probe = async (fleetTarget = release.target, { active = onDuty, otherSources = peers, recheck = false } = {}) =>
+    fs.writeFile(recheck ? path.join(root, 'broker', 'renew-ci-recheck.fixture.json') : observed,
+      json({ at: new Date(clockNow()).toISOString(), code: null, onDuty: active,
       fleetTarget: fleetTarget && { ...fleetTarget, other_sources: otherSources } }));
   const clock = fakeClock(clockNow());
   const resident = new FakeResident(clock);
@@ -219,6 +221,82 @@ const source = release => release.request.ciSourceManifestSha256;
 const accepted = release => acceptanceOf(release.request,
   { decision: release.target.grant_id, receipt: release.target.receipt_id, acceptedAt: '2026-11-01T00:00:00Z' });
 const current = node => read(path.join(node.root, 'upgrade', 'current.json'));
+
+function uploadAcceptance(release) {
+  const bytes = acceptanceBytes(accepted(release));
+  release.assets.set(`${release.tag}.acceptance.json`, bytes);
+  return { ...release.target, acceptance_sha256: sha(bytes) };
+}
+
+test('正式第 27 代从封存经自拉到位，逐次复核目标、同伴和队列', { skip: process.platform !== 'win32' }, async t => {
+  const fleet = fleetFacts();
+  const { repo, commit } = await fixtureRepo(t);
+  const candidate = await release(t, fleet, repo, commit, 'g000027');
+  const standbyNode = await nodeSite(t, 'j', fleet, { now });
+  const dutyNode = await nodeSite(t, 'k', fleet, { now });
+  const broker = await brokerFixture(t);
+  let time = now;
+  const standby = await fixtureLanes({ node: standbyNode, release: candidate, broker, clockNow: () => time });
+  const duty = await fixtureLanes({ node: dutyNode, release: candidate, broker, onDuty: true, peers: [null], clockNow: () => time });
+  const pending = { ...candidate.target };
+  const sealed = uploadAcceptance(candidate);
+
+  await standby.probe(pending);
+  await duty.probe({ status: 'pending_seal' });
+  await drive(standby, 2);
+  await drive(duty, 2);
+  assert.deepEqual(standby.submitted, []);
+  assert.deepEqual(duty.submitted, []);
+
+  await standby.probe(sealed);
+  await duty.probe(sealed);
+  // The first signed probe is sealed. The Broker's after-assembly probe reports a different seal.
+  await standby.probe({ ...sealed, acceptance_sha256: 'f'.repeat(64) }, { recheck: true });
+  await drive(standby, 3);
+  assert.equal(standby.answers[0]?.code, 'FLEET_TARGET_CHANGED');
+  assert.equal(standby.answers[0]?.delivered, false);
+  assert.deepEqual(standby.posted, []);
+  assert.deepEqual(await fs.readdir(path.join(standbyNode.root, 'upgrade', 'inbox')), []);
+
+  await drive(duty, 3);
+  assert.equal((await duty.state()).phase, 'WAITING_FOR_PEERS');
+  assert.deepEqual(duty.submitted, []);
+  await duty.probe(sealed, { otherSources: [standbyNode.pkg.ciSource] });
+  await drive(duty, 2);
+  assert.equal((await duty.state()).phase, 'WAITING_FOR_PEERS');
+  assert.deepEqual(duty.submitted, []);
+
+  time += 61_000;
+  await standby.probe(sealed);
+  await standby.probe(sealed, { recheck: true });
+  await drive(standby, 12);
+  const ready = await current(standbyNode);
+  assert.equal(ready.ciSourceManifestSha256, source(candidate));
+  assert.equal(ready.linux.ciSourceManifestSha256, source(candidate));
+  assert.equal(standby.posted.length, 1);
+  assert.equal((await standby.state()).reinstall, undefined);
+
+  await duty.probe(sealed, { otherSources: [ready.ciSourceManifestSha256] });
+  let ticks = 0;
+  await serviceLoop({
+    exec: { tick: async () => { ticks += 1; return { state: 'IDLE' }; } }, lock: { touch: async () => {} },
+    stopRequested: async () => ticks >= 12 || (await duty.state()).phase === 'CURRENT',
+    acknowledgeStop: async () => {}, onLoopException: error => { throw error; },
+    betweenBatches: async () => {}, selfPull: duty.resident,
+    upgradeIdle: async () => ({ queueEmpty: ticks > 3 }),
+    sleep: async () => {
+      await duty.tick();
+      if (ticks <= 3) assert.deepEqual(duty.submitted, [], '当班队列未空时不能投递');
+    },
+  });
+  assert.equal(duty.posted.length, 1);
+  assert.equal((await duty.state()).phase, 'CURRENT');
+  assert.equal((await duty.state()).reinstall, undefined);
+  const upgraded = await current(dutyNode);
+  assert.equal(upgraded.ciSourceManifestSha256, source(candidate));
+  assert.equal(upgraded.linux.ciSourceManifestSha256, source(candidate));
+  assert.deepEqual([...standby.uploaded, ...duty.uploaded], []);
+});
 const residentSid = 'S-1-5-80-1873410639-838332518-375536672-3951882173-2447812046'; // fixture principal with the Windows service SID shape
 const companionSid = 'S-1-5-21-1-2-3-2001';
 
@@ -467,16 +545,23 @@ test('节点自拉场景 2–6 与旧内容回切', { skip: process.platform !==
     const node = await nodeSite(t, 'g', fleet, { now });
     await fs.appendFile(path.join(repo, 'work', 'independent-ci-resident-v1', 'upgrader', 'src', 'codes.mjs'), '\n// Frozen channel fixture.\n');
     git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'change fixture frozen channel');
-    const frozen = await release(t, fleet, repo, git(repo, 'rev-parse', 'HEAD').toString().trim(), '2026.11.25-frozen');
+    const frozen = await release(t, fleet, repo, git(repo, 'rev-parse', 'HEAD').toString().trim(), 'g000028');
+    const sealed = uploadAcceptance(frozen);
     let time = now;
     const lane = await fixtureLanes({ node, release: frozen, broker, clockNow: () => time });
-    await lane.probe(); await drive(lane);
+    await lane.probe(sealed); await drive(lane);
     const first = await lane.state();
     assert.equal(first.phase, 'NEEDS_REINSTALL');
     assert.equal(first.code, 'UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL');
+    const windows = { residentManifestSha256: node.pkg.residentSha, ciSourceManifestSha256: node.pkg.ciSource };
+    assert.deepEqual(parseVersions({ windows, fleetPull: first }).fleetPull.reinstall, {
+      repository, bootstrapAsset: `${frozen.tag}.bootstrap.ps1`, archiveSha256: sealed.archive_sha256,
+      requestSha256: sealed.request_sha256, acceptanceSha256: sealed.acceptance_sha256,
+    });
+    assert.equal(parseVersions({ windows, fleetPull: { ...first, phase: 'REFUSED' } }).fleetPull.reinstall, undefined);
     assert.equal(lane.submitted.length, 1);
     time += 61_000; // The installed self-pull would already retry a PREPARE_FAILED answer.
-    await lane.probe(); await drive(lane, 2);
+    await lane.probe(sealed); await drive(lane, 2);
     assert.deepEqual(await lane.state(), first);
     assert.equal(lane.submitted.length, 1);
     assert.equal(versionNotices({ fleetPull: first }).filter(n => n.kind === 'fleet-pull-refused').length, 1);

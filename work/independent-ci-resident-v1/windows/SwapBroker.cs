@@ -593,6 +593,7 @@ internal static class FleetPull {
     const string Kind = "fleet-pull";
     const string RequestContract = "clued.independent-ci.resident-upgrade-request/1";
     const string Prepared = "FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED";
+    const string NeedsReinstall = "FLEET_NODE_UPGRADE_NEEDS_REINSTALL";
     static readonly Regex Version = new Regex(@"\A[A-Za-z0-9][A-Za-z0-9._+-]{0,88}\z");
     static readonly Regex NodeName = new Regex("^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$");
     internal static Dictionary<string,object> Parse(byte[] bytes) {
@@ -736,23 +737,27 @@ internal static class FleetPull {
             input.Write(bytes,0,bytes.Length);
         }
         var answer = assemble(run,Path.Combine(src,"fleet-assemble-main.mjs"));
-        if (Renewal.Str(answer,"status")!=Prepared) return answer;
+        string status = Renewal.Str(answer,"status");
+        if (status!=Prepared && status!=NeedsReinstall) return answer;
 
         string package = Renewal.Str(answer,"packageDir"), sha = Renewal.Str(answer,"packageManifestSha256");
-        Renewal.Require(package!=null && package.Length<=260 && Path.GetFullPath(package)==package &&
-            package.StartsWith(run+"\\",StringComparison.OrdinalIgnoreCase) && NodeProfileV2.Hash(sha),"FLEET_BROKER_PATH_REFUSED");
-        VerifyDirectory(root,package);
-        ReadJson(Path.Combine(package,"package-manifest.json"),16*1024*1024,sha);
+        if (status==Prepared) {
+            Renewal.Require(package!=null && package.Length<=260 && Path.GetFullPath(package)==package &&
+                package.StartsWith(run+"\\",StringComparison.OrdinalIgnoreCase) && NodeProfileV2.Hash(sha),"FLEET_BROKER_PATH_REFUSED");
+            VerifyDirectory(root,package);
+            ReadJson(Path.Combine(package,"package-manifest.json"),16*1024*1024,sha);
+        }
 
-        // Assembly can take minutes. Recheck the signed target and role before committing to the inbox.
+        // The signed target can change during assembly. Bind both the inbox write and a reinstall referral to the same seal.
         var latest = probe();
-        Renewal.Require(Renewal.Str(latest.FleetTarget,"grant_id")==decision &&
-            Renewal.Str(latest.FleetTarget,"request_sha256")==Renewal.Str(target,"request_sha256") &&
-            Renewal.Str(latest.FleetTarget,"archive_sha256")==Renewal.Str(target,"archive_sha256"),"FLEET_TARGET_CHANGED");
+        foreach (var field in new[]{"repository","version","grant_id","receipt_id","accepted_at","request_sha256","archive_sha256","acceptance_sha256"})
+            Renewal.Require(Renewal.Str(latest.FleetTarget,field)==Renewal.Str(target,field),"FLEET_TARGET_CHANGED");
         if (latest.OnDuty) {
             Renewal.Require(observed.OnDuty,"FLEET_ROLE_CHANGED");
             CheckPeers(root,latest.FleetTarget);
         }
+        if (status==NeedsReinstall) return answer;
+
         current = ReadJson(currentFile,65536,null);
         Renewal.Require(Renewal.Number(answer,"fromGeneration")==generation && Renewal.Number(current,"generation")==generation &&
             Renewal.Str(current,"residentManifestSha256")==residentSha,"FLEET_GENERATION_CHANGED");

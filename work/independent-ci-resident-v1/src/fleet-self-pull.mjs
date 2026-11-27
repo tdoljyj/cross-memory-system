@@ -136,7 +136,11 @@ export function residentSelfPull({ root, repository, clock = Date.now,
   let idle = null;
   let stopped = false;
   const show = async (target, phase, code = null, requestId = null) => {
-    const view = { targetVersion: target.version, grantId: target.grant_id, phase, code, requestId };
+    const view = { targetVersion: target.version, grantId: target.grant_id, phase, code, requestId,
+      ...(phase === 'NEEDS_REINSTALL' && needsSeal(target) ? {
+        reinstall: { repository: target.repository, archiveSha256: target.archive_sha256,
+          requestSha256: target.request_sha256, acceptanceSha256: target.acceptance_sha256 },
+      } : {}) };
     if (JSON.stringify(view) !== JSON.stringify(await read(ledger))) await writeObservation(ledger, view);
   };
   async function step() {

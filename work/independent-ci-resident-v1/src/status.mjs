@@ -446,7 +446,16 @@ async function readJsonLenient(file) {
 function fleetPullView(v) {
   if (!plain(v) || !UUID.test(v.grantId ?? '') || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,88}$/.test(v.targetVersion ?? '')
     || !['DOWNLOADING', 'WAITING_FOR_PEERS', 'PREPARING', 'PREPARE_FAILED', 'REQUESTED', 'REFUSED', 'NEEDS_REINSTALL', 'ROLLED_BACK', 'CURRENT'].includes(v.phase)) return null;
-  return { grantId: v.grantId, targetVersion: v.targetVersion, phase: v.phase, code: codeOrNull(v.code) };
+  const view = { grantId: v.grantId, targetVersion: v.targetVersion, phase: v.phase, code: codeOrNull(v.code) };
+  const r = v.reinstall;
+  if (v.phase === 'NEEDS_REINSTALL' && packageGenerationOf(v.targetVersion) >= 25 && plain(r)
+    && typeof r.repository === 'string' && /^[A-Za-z0-9_-][A-Za-z0-9_.-]*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(r.repository)
+    && [r.archiveSha256, r.requestSha256, r.acceptanceSha256].every(hexOrNull)) {
+    const { repository, archiveSha256, requestSha256, acceptanceSha256 } = r;
+    view.reinstall = { repository, bootstrapAsset: `fleet-node-${v.targetVersion}.bootstrap.ps1`,
+      archiveSha256, requestSha256, acceptanceSha256 };
+  }
+  return view;
 }
 
 // The three files of one root as raw values (null for a file that cannot be read now).
