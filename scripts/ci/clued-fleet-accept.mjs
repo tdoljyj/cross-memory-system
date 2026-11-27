@@ -152,6 +152,14 @@ const ID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const gated = version => Number(FLEET_GENERATION.exec(version)?.[1]) >= 25;
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
+export function checkDeliveryKit(kit, candidate) {
+  if (hash(kit) !== candidate.kitSha256) refuse('FLEET_DELIVERY_KIT_REFUSED');
+  const { record: { repository, scope } } = readKit(kit);
+  // The kit carries the CI registration scope. The candidate carries the fleet delivery scope.
+  const validScope = scope === 'global' || (scope.startsWith('project:') && ID.test(scope.slice('project:'.length)));
+  if (repository !== candidate.repository || !validScope) refuse('FLEET_DELIVERY_KIT_REFUSED');
+}
+
 function pinnedGeneration({ version, commit, archive_sha256 }) {
   try {
     const tag = tagOf(version);
@@ -208,9 +216,7 @@ async function deliveryInput(env, request, run, fetchImpl, isPinned = pinnedGene
   await verifyDeliverySource(archive, request, candidate);
   const requirements = deliveryRequirements(archive, request);
   const kit = await download(asset(tag + '.first-install-kit.json'), fetchImpl);
-  if (hash(kit) !== candidate.kitSha256) refuse('FLEET_DELIVERY_KIT_REFUSED');
-  const checkedKit = readKit(kit);
-  if (checkedKit.record.repository !== candidate.repository || checkedKit.record.scope !== candidate.scope) refuse('FLEET_DELIVERY_KIT_REFUSED');
+  checkDeliveryKit(kit, candidate);
 
   if (operation === 'open') return { operation, candidate, requirements };
   const bytes = await download(asset(tag + '.acceptance.json'), fetchImpl);
