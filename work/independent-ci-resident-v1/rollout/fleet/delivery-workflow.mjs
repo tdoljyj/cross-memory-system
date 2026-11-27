@@ -5,6 +5,8 @@ const WORKFLOW = 'clued-cloud-production-release.yml';
 const KEY = /^[A-Za-z0-9_-]{59}$/;
 const PACKET = 'CLUED_FLEET_DELIVERY_V1';
 const LIMIT = 256 * 1024;
+export const STAGED_REQUEST_MAX_BYTES = 12 * 1024;
+export const STAGED_PAYLOAD_MAX_LENGTH = 24 * 1024;
 const aad = requestSha256 => Buffer.from(requestSha256, 'hex');
 const publicBytes = key => key.export({ type: 'spki', format: 'der' }).toString('base64url');
 
@@ -50,18 +52,30 @@ export function deliveryWorkflowClient({ runGh, sleep }) {
       if (r.status !== 0) throw new Error('FLEET_DELIVERY_WORKFLOW_UNAVAILABLE');
       return r.stdout;
     };
+    // 暂存预检走现有 project 输入，只传回包公钥、待发布请求和交付条件。
+    const key = publicBytes(publicKey);
+    let deliveryInput = key;
+    if (operation === 'preflight') {
+      const { requestBytes, requirements } = details;
+      if (requestBytes.length > STAGED_REQUEST_MAX_BYTES) throw new Error('FLEET_DELIVERY_STAGED_INPUT_TOO_LARGE');
+      const payload = Buffer.from(JSON.stringify({ request: requestBytes.toString('base64url'), requirements })).toString('base64url');
+      if (payload.length > STAGED_PAYLOAD_MAX_LENGTH) throw new Error('FLEET_DELIVERY_STAGED_INPUT_TOO_LARGE');
+      deliveryInput = `${key}.${payload}`;
+    }
     const dispatched = call(['workflow', 'run', WORKFLOW, '--repo', repository, '--ref', 'main', '-f', 'mode=fleet-accept',
-      '-f', 'fleet_operation=' + operation, '-f', 'fleet_version=' + version, '-f', 'fleet_request_sha256=' + requestSha256,
-      '-f', 'fleet_delivery_key=' + publicBytes(publicKey),
+      '-f', 'fleet_operation=' + (operation === 'preflight' ? 'project' : operation),
+      '-f', 'fleet_version=' + version, '-f', 'fleet_request_sha256=' + requestSha256,
+      '-f', 'fleet_delivery_key=' + deliveryInput,
       ...(operation === 'confirm' ? ['-f', 'fleet_acceptance_sha256=' + details.acceptanceSha256] : [])]);
     const match = dispatched.match(/https:\/\/github\.com\/([^/]+\/[^/]+)\/actions\/runs\/([1-9][0-9]*)\s*$/);
     if (match?.[1] !== repository) throw new Error('FLEET_DELIVERY_WORKFLOW_RUN_UNKNOWN');
     const run = ['run', 'view', match[2], '--repo', repository, '--attempt', '1'];
     for (;;) {
-      const state = JSON.parse(call([...run, '--json', 'status,conclusion,attempt,event,headBranch']));
+      const state = JSON.parse(call([...run, '--json', 'status,conclusion,attempt,event,headBranch,headSha']));
       if (state.attempt !== 1 || state.event !== 'workflow_dispatch' || state.headBranch !== 'main') throw new Error('FLEET_DELIVERY_WORKFLOW_RUN_UNKNOWN');
+      if (operation === 'preflight' && state.headSha !== candidate.commit) throw new Error('FLEET_DELIVERY_SUBJECT_CHANGED');
       if (state.status === 'completed') {
-        if (state.conclusion !== 'success') throw new Error('FLEET_DELIVERY_WORKFLOW_REFUSED');
+        if (state.conclusion !== 'success') throw Object.assign(new Error('FLEET_DELIVERY_WORKFLOW_REFUSED'), { workflowCompleted: true });
         const value = openPacket(call([...run, '--log']), privateKey, requestSha256);
         if (value.operation !== operation || !deliveryBound(value.candidate, candidate)) throw new Error('FLEET_DELIVERY_SUBJECT_CHANGED');
         return value.result;
