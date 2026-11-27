@@ -217,9 +217,13 @@ async function checkWindowsBoundary(t, w, acceptance, checked, now) {
   const dir = await tempDir(t, 'fleet-win-');
   const from = path.join(dir, 'release'), script = path.join(dir, 'check.ps1');
   await fs.mkdir(from);
+  // 按发布文档的 gh release download --pattern 构造 bootstrap 的交付目录。
+  const deliveryNames = new Set(['SHA256SUMS', acceptanceName,
+    ...['tar', 'release.json', 'bootstrap.ps1', 'prereq-manifest.json'].map(suffix => `${tag}.${suffix}`)]);
   for (const { name } of w.assets()) {
-    // 自拉取读取接受请求，bootstrap 的输入目录只放安装资产。
-    if (!name.endsWith('.acceptance-request.json')) await fs.writeFile(path.join(from, name), w.asset(name));
+    if (deliveryNames.has(name) || name.startsWith(`${tag}.first-install`) || /^role-image-.*\.tar\.gz$/.test(name)) {
+      await fs.writeFile(path.join(from, name), w.asset(name));
+    }
   }
   const pins = path.join(dir, 'pins.json');
   await fs.writeFile(pins, JSON.stringify(checked));
