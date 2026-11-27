@@ -575,14 +575,16 @@ test('第 27 代统一发布的运输附件经回读验证，部分上传后续�
   assert.equal((await w.opens()).length, 1);
 });
 
-test('第 25 代 seal、open 和 run 共用生产读者，复查失败后沿用原 Grant', async t => {
-  const w = await prepWorld(t, { version: 'g000025', released: false, spawnGh: false });
+test('第 26 代为两台无证据的待定节点开链接和封存，复查失败后沿用原 Grant', async t => {
+  const w = await prepWorld(t, { version: 'g000026', released: false, spawnGh: false });
+  const listTags = w.deps.generationTags.list;
+  w.deps.generationTags.list = async () => [...await listTags(), 'fleet-node-g000025'];
   await w.prep();
   const time = fakeTime('2026-11-25T01:00:01Z');
   const at = '2026-11-25T01:00:00Z';
   const request = JSON.parse(await fs.readFile(w.requestFile, 'utf8'));
-  const first = legacyNode('11111111-1111-4111-8111-111111111111', 'DESK', 'ACTIVE', at);
-  const second = legacyNode('22222222-2222-4222-8222-222222222222', 'TURING', 'STANDBY', at);
+  const first = { ...legacyNode('89855b40-1111-4111-8111-111111111111', 'desk-w-591', 'ACTIVE', at), state: 'pending' };
+  const second = { ...legacyNode('b24be772-2222-4222-8222-222222222222', 'TURING', 'STANDBY', at), state: 'pending' };
   const spawnSync = childProcess.spawnSync;
   const mock = t.mock.method(childProcess, 'spawnSync', (command, args, options) => command === 'gh'
     ? w.gh(args) : spawnSync(command, args, options));
@@ -611,7 +613,7 @@ test('第 25 代 seal、open 和 run 共用生产读者，复查失败后沿用�
   const upgrades = [];
   const accept = (command, ...extra) => main([command, '--request', w.requestFile, ...extra], {
     sealOptions: { index: w.index, deps }, root: path.join(w.d, 'node'), now: time.clock, sleep: time.sleep, readStatus: w.deps.readStatus,
-    upgrade: async argv => { upgrades.push(argv); return { status: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', node: 'DESK' }; },
+    upgrade: async argv => { upgrades.push(argv); return { status: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', node: first.name }; },
   });
   Object.assign(w.door, { status: 'none', openTo: 'pending' });
   const opened = await accept('open');
@@ -629,6 +631,10 @@ test('第 25 代 seal、open 和 run 共用生产读者，复查失败后沿用�
   const sealed = await publishModule.main(['seal', '--request', w.requestFile, '--index', w.index], deps);
   assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
   assert.equal(sealed.deliveryPreflight.beforeAttach.status, 'TRANSITION_PASS');
+  for (const node of sealed.deliveryPreflight.beforeAttach.nodes) {
+    assert.deepEqual([node.upgrade.evidenceSha256, node.reinstall.evidenceSha256], [null, null]);
+    assert.ok(node.transition.recheckAtInstall.includes('ciConnection'));
+  }
   assert.equal(sealed.grantId, GRANT);
   assert.equal((await accept('run', '--work', work)).status, 'ROLLOUT_DONE');
   assert.equal((await w.opens()).length, 1);
@@ -1122,9 +1128,37 @@ test('第 26 代逐台核对绑定、退休记录、登记范围和重装实据'
   assert.equal((await check({ observedAt: '2026-11-25T00:44:59Z' })).reason, 'FLEET_NODE_HAS_NO_COMPLETE_PATH');
 });
 
+test('登记投影已有一台节点报告已装代与新鲜证据时，另一台仍须证明完整路径', async () => {
+  const { fleetDeliveryPreflight } = await import('../fleet/delivery-preflight.mjs');
+  const { deliveryProjectionReaders } = await import('../fleet/delivery-reader.mjs');
+  const at = '2026-11-27T11:12:00Z';
+  const clock = () => Date.parse(at);
+  const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000026' };
+  const requirements = { standardReinstall: true };
+  const first = legacyNode('11111111-1111-4111-8111-111111111111', 'DESK', 'ACTIVE', at);
+  const second = legacyNode('22222222-2222-4222-8222-222222222222', 'TURING', 'STANDBY', at);
+  const withEvidence = row => ({ ...row, evidence: { schemaVersion: 1, nodeId: row.id, packageGeneration: 25, installGeneration: 7,
+    bindingGeneration: row.bindingGeneration, registrationVersion: row.registrationVersion, currentHeartbeat: true,
+    observedAt: at, brokerObservedAt: at, linuxObservedAt: at,
+    windowsSourceSha256: row.reportedSourceSha256, linuxSourceSha256: row.reportedSourceSha256,
+    installReceiptSha256: 'a'.repeat(64), brokerEvidenceSha256: 'b'.repeat(64), linuxFactsSha256: 'c'.repeat(64), evidenceSha256: 'e'.repeat(64),
+    linuxReady: true, linuxConsistent: true, acl: true, connectionCarry: true, operations: true, processClearance: true } });
+  const check = async nodes => {
+    const view = { ...candidate, candidate, complete: true, observedAt: at, nodes };
+    const readers = deliveryProjectionReaders({ read: async () => ({ first: view, last: view }), requirements, clock });
+    return fleetDeliveryPreflight({ candidate, requirements, clock, ...readers });
+  };
+  const mixed = await check([withEvidence(first), second]);
+  assert.equal(mixed.reason, 'FLEET_NODE_HAS_NO_COMPLETE_PATH');
+  assert.deepEqual(mixed.nodes.map(node => node.reinstall.status), ['PASS', 'UNKNOWN']);
+  const ready = await check([withEvidence(first), withEvidence(second)]);
+  assert.equal(ready.status, 'PASS');
+  assert.ok(ready.nodes.every(node => node.reinstall.status === 'PASS' && node.transition === undefined));
+});
+
 test('直派发布工作流使用同一预检，登记读取通过后才进入开单 SQL', async () => {
   const { qualifyDelivery } = await import('../../../../scripts/ci/clued-fleet-accept.mjs');
-  const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000025' };
+  const candidate = { repository: 'fixture/repo', scope: 'global', version: 'g000027' };
   const at = '2026-11-25T01:00:00Z';
   const nodes = [legacyNode('11111111-1111-4111-8111-111111111111', 'DESK', 'ACTIVE', at),
     legacyNode('22222222-2222-4222-8222-222222222222', 'TURING', 'STANDBY', at)];
