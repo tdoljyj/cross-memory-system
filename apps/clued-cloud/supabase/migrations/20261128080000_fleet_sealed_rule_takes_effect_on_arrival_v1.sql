@@ -6,7 +6,10 @@ returns boolean language sql stable set search_path='' as $$
   select exists (
     select 1 from clued_private.ci_nodes_v1 n
     join clued_private.ci_node_liveness_v1 l using(user_id,node_id)
-    join clued_private.fleet_accepted_v1 a on a.user_id=u and a.source_sha256=l.reported_source_sha256
+    left join clued_private.fleet_node_delivery_evidence_v1 e on e.user_id=n.user_id and e.node_id=n.node_id
+      and e.registration_version=n.version and e.binding_generation=n.binding_generation
+    join clued_private.fleet_accepted_v1 a on a.user_id=u
+      and a.source_sha256=coalesce(l.reported_source_sha256,e.evidence->>'windowsSourceSha256')
     join clued_private.release_identity_v1 i on i.user_id=u and i.repository=a.repository
     join clued_private.owner_grants_v1 g on g.user_id=u and g.id=a.grant_id
     where n.user_id=u and n.state not in ('retired','revoked') and n.revoked_at is null
@@ -237,9 +240,10 @@ select pg_temp.fleet_patch('clued_private.ci_admission_failover_owner_v1(uuid)',
   $r$where (c->>'eligible')::boolean and (v_trigger<>'fleet_holder_package_revoked'
       or (c->>'binding_id')::uuid=clued_private.fleet_rollback_target_v1(p_owner,v_holder,null))
     order by$r$);
-select pg_temp.fleet_patch('clued_private.fleet_fail_holder_v1(uuid,uuid,text,uuid)',
-  $a$if info->>'classification'<>'current' or$a$,
-  $r$if (info->>'classification'<>'current' and not ((info->>'revoked')::boolean and g is not null)) or$r$);
+select pg_temp.fleet_patch('clued_private.ci_admission_failover_owner_v1(uuid)',
+  $a$else '自报节点故障 '||v_trigger end$a$,
+  $r$when 'fleet_holder_package_revoked' then '在跑的包已被撤销'
+      else '自报节点故障 '||v_trigger end$r$);
 
 select pg_temp.fleet_patch('public.clued_owner_grants_list_v1(jsonb)',
   $a$(select next.version from clued_private.fleet_seals_v1(v_owner,s.grant_id) next where next.classification='current')$a$,

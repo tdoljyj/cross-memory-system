@@ -1097,6 +1097,10 @@ test('到位规则 3：首台回归时旧批作废，同一队首在交班后重
   [d.db.user, subject.claim_id, staged.batchId]), 1);
   assert.equal(await dbValue(admin, 'select node_id v from clued_private.ci_duty_holder_v1($1,$2)',
     [d.db.user, d.db.project]), standby.id);
+  const heartbeat = await d.legacy(standby, { action: 'ci_node_heartbeat', state: 'UNKNOWN', mode: null,
+    probe: null, service_running: false, snapshot_age_seconds: null, ci_source_manifest_sha256: null });
+  assert.equal(heartbeat.status, 'ok', JSON.stringify(heartbeat));
+  assert.equal((await pkg(holder)).classification, 'outside', '到位节点的空 Source 心跳不能切回同源模式');
 });
 
 test('到位规则 4：全部封存包已撤销，全员仍在同一撤销包上可开批', async t => {
@@ -1116,13 +1120,20 @@ test('到位规则 5：撤销在跑的当班包，后备取回当班并可开批
   await report(holder, source27, 27, 'ACTIVE');
   await reserveStandby(current);
   assert.equal((await revoke(current)).status, 'committed');
-  await tick();
+  const handover = await tick();
   const { admin, user } = d.db;
   await admin.query('update clued_private.binding_roles_v1 set effective_at=granted_at where binding_id=$1 and revoked_at is null', [standby.binding]);
   assert.equal(await dbValue(admin, 'select binding_id v from clued_private.ci_duty_holder_v1($1,$2)', [user,d.db.project]), standby.binding);
   assert.equal((await pkg(standby)).maintenance, 'available');
+  assert.equal((await pkg(holder)).maintenance, 'available', '撤销回班后原当班仍可申请升级');
+  const notice = await dbValue(admin, 'select content v from public.clued_memories where id=$1', [handover.note.note_id]);
+  assert.match(notice, /在跑的包已被撤销/);
   await report(standby, d.source, 23, 'ACTIVE');
   assert.ok((await d.joinAndStage(standby, subject)).batchId);
+  const next = await seedSealedPackage(d.db, 28, sha('arrival-g28'));
+  const delist = await d.legacy(holder, { action: 'fleet_maintenance', command: 'delist', node_id: holder.id,
+    binding_generation: 1, method: 'reinstall', operation_id: d.uuid(), grant_id: next.grantId });
+  assert.equal(delist.state, 'delisted', JSON.stringify(delist));
 });
 
 test('到位规则 6：撤销预演按节点已装的包，全员在本包时提示出修复包', async t => {
