@@ -2,16 +2,18 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { qualifyDelivery } from '../../../scripts/ci/clued-fleet-accept.mjs';
 import { firstInstallCheck } from '../../../work/independent-ci-resident-v1/rollout/fleet/install.mjs';
 import { DEFAULT_REPO, seal } from '../../../work/independent-ci-resident-v1/rollout/fleet/publish.mjs';
 import { missingMigrations, readbackSql, releaseRequirements } from '../../../work/independent-ci-resident-v1/rollout/fleet/release-migrations.mjs';
-import { sha, tempDir } from '../../../work/independent-ci-resident-v1/rollout/fleet/test/fleet-fixtures.mjs';
+import { sha } from '../../../work/independent-ci-resident-v1/rollout/fleet/test/fleet-fixtures.mjs';
 import { fixtureId as id, releaseAssets } from '../../../work/independent-ci-resident-v1/rollout/fleet/test/delivery-release-fixture.mjs';
 import { checkWindowsBoundary } from '../../../work/independent-ci-resident-v1/rollout/fleet/test/windows-delivery-fixture.mjs';
 import { acceptanceFromTarget, observationOf } from '../../../work/independent-ci-resident-v1/src/fleet-self-pull.mjs';
-import { EPHEMERAL_INITDB_FLAGS, EPHEMERAL_POSTGRES_FLAGS, startCluster, stopCluster } from './cluster-cleanup.mjs';
+import { EPHEMERAL_INITDB_FLAGS, EPHEMERAL_POSTGRES_FLAGS, removeTestDirectory, startCluster, stopCluster } from './cluster-cleanup.mjs';
 import { newCluster } from './pg-cluster-fixture.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
@@ -25,7 +27,10 @@ const installedSource = sha('installed fleet Source');
 const dbValue = async (client, sql, params) => (await client.query(sql, params)).rows[0].v;
 
 async function seedPreviousSchema(t) {
-  const directory = await tempDir(t, 'fleet-db-');
+  const directory = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'fleet-db-'));
+  t.after(async () => {
+    assert.ok(await removeTestDirectory(directory), `未能清理 PostgreSQL 测试目录 ${directory}`);
+  });
   const server = newCluster({
     databaseDir: directory, user: 'postgres', password: randomBytes(32).toString('hex'), persistent: false,
     initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
