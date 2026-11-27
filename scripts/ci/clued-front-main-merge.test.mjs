@@ -952,7 +952,7 @@ test('R3: hosted-required still cancels PR runs and skips all jobs on close', ()
   const jobs = [...source.split('\njobs:\n')[1].matchAll(/^  ([a-z0-9-]+):\n([\s\S]*?)(?=^  [a-z0-9-]+:\n|(?![\s\S]))/gm)];
   assert.ok(jobs.length > 1);
   for (const [, id, job] of jobs) {
-    assert.match(job, /^    if: (?:always\(\) && )?github.event.action != 'closed'$/m, id);
+    assert.match(job, /^    if: (?:always\(\) && )?github.event.action != 'closed' && \(github.event_name != 'push' \|\| vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION != '2'\)$/m, id);
   }
 });
 

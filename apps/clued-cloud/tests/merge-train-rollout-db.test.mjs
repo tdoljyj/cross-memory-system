@@ -8,16 +8,18 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { createIndependentPublicationRuntime } from '../../../scripts/ci/clued-independent-publication-runtime.mjs';
 import { makeIndependentPublicationIdentity } from '../../../scripts/ci/clued-independent-publication-identity.mjs';
-import { makeJobV2, REPO_V2 as repository } from '../../actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
-import * as landing from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs';
-import { EffectJournal } from '../../actions-hosted-migration/independent-ci-v1/src/effect-journal.mjs';
+import { makeJobV2, REPO_V2 as repository } from '../../../work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
+import * as landing from '../../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs';
+import { EffectJournal } from '../../../work/actions-hosted-migration/independent-ci-v1/src/effect-journal.mjs';
 import {
   TRAIN_FAILURE, TRAIN_PROBE_FIELDS, TRAIN_PROTOCOL_VERSION, trainBatchKey, trainEffectKey, trainLandingSlotKey,
-} from '../../actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs';
-import { removeTestDirectory } from '../../../apps/clued-cloud/tests/cluster-cleanup.mjs';
-import { multiDutyClock, multiDutyGitHub } from './multi-duty-fixture.mjs';
+} from '../../../work/actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs';
+import { TRAIN_STAGING_WORKFLOWS } from '../../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs';
+import { removeTestDirectory } from './cluster-cleanup.mjs';
+import { multiDutyClock, multiDutyGitHub } from '../../../work/independent-ci-resident-v1/test/multi-duty-fixture.mjs';
+import { openTrainTransport } from '../../../work/actions-hosted-migration/independent-ci-v1/src/resident-v2/train-transport.mjs';
 
-const cloud = new URL('../../../apps/clued-cloud/', import.meta.url);
+const cloud = new URL('../', import.meta.url);
 const appRequire = createRequire(new URL('package.json', cloud));
 const repositoryId = 12345;
 const appId = 5368905;
@@ -44,9 +46,11 @@ export async function drill(t) {
   const { schedulingFixture, digest, sha, uuid, limits } = await import(new URL('tests/ci-scheduling-stage1-fixture.mjs', cloud));
   const { setWorkerGatewayCaller, workerGatewayRpc } = await import(new URL('tests/worker-gateway-caller-fixture.mjs', cloud));
   const primaryToken = randomBytes(32).toString('hex');
+  // raw-binding-grants: schedulingFixture calls allowRawTestBindings(admin) after applying the migrations.
   const db = await schedulingFixture({ tokenHash: digest(primaryToken) });
   t.after(db.close);
   const { admin, user, project } = db;
+  const atomicLandingQualificationRef = uuid();
   const scope = `project:${project}`;
   const keyScope = { tenantId: user, projectId: project, repositoryId, targetBranch: 'main' };
   const source = digest('s7-source');
@@ -100,7 +104,8 @@ export async function drill(t) {
     // 只设定隔离库切换后的配置，排空和拒写由真实发布入口判定。
     await admin.query(`update clued_private.ci_quota_counters_v1 set policy=policy||$2::jsonb
       where project_id=$1 and row_kind='pool_policy'`, [project, { signature_gateway_active: true,
-      merge_train_v2: { source_manifest_sha256: source, source_commit: sha('source'), policy_version: policyVersion, stop_scope: 'none' } }]);
+      merge_train_v2: { source_manifest_sha256: source, source_commit: sha('source'), policy_version: policyVersion, stop_scope: 'none',
+        staging_actor_id: 501, atomic_landing_qualification_ref: atomicLandingQualificationRef } }]);
   }
   async function command(node, action, fields = {}) {
     const { value: trust } = await one(transport, 'select public.clued_ci_node_trust_v1($1,$2) value', [node.tokenHash, node.id]);
@@ -135,6 +140,41 @@ export async function drill(t) {
     const data = await reply.json();
     return data.result ?? data;
   }
+  async function protectedTransport(node) {
+    const { value: trust } = await one(transport, 'select public.clued_ci_node_trust_v1($1,$2) value', [node.tokenHash, node.id]);
+    const config = { repository, repositoryId, scope, sourceManifestSha256: source, mergeTrainProtocolVersion: 2,
+      mergeTrainNode: { nodeId: node.id, tenantId: user, projectId: project, keyFingerprint: trust.node.identity_fingerprint,
+        atomicLandingQualificationRef } };
+    const dbClock = () => one(admin, 'select floor(extract(epoch from clock_timestamp())*1000)::float8 now');
+    const { now } = await dbClock();
+    const transportPort = await openTrainTransport({ config }, () => {}, {
+      readCredential: async () => ({ nativeToken: node.token, bindingId: node.binding, bindingGeneration: trust.node.binding_generation }),
+      clock: () => now,
+      sign: data => sign('sha256', Buffer.from(data), { key: node.pair.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url'),
+      fetchImpl: (url, init) => api.handleCiNodeGatewayV1(new Request(url, init),
+        { SUPABASE_URL: 'https://db.example.test', SUPABASE_PUBLISHABLE_KEY: 'pk-fixture', CLUED_DB_GATEWAY_TOKEN: 'gw-fixture' }, {
+          now: () => now,
+          async fetchImpl(rpc, options) {
+            const input = JSON.parse(options.body);
+            if (new URL(rpc).pathname.endsWith('/clued_ci_node_trust_v1')) {
+              const { value } = await one(transport, 'select public.clued_ci_node_trust_v1($1,$2) value', [input.p_token_hash, input.p_node_id]);
+              return Response.json(value);
+            }
+            try {
+              const { value } = await one(transport, 'select public.clued_ci_node_command_v1($1,$2,$3,$4) value',
+                [input.p_token_hash, input.p_command, input.p_payload, input.p_verified]);
+              if (value.status !== 'committed') t.diagnostic(input.p_payload.action + ': ' + value.error_code);
+              return Response.json(value);
+            } catch (error) {
+              t.diagnostic(input.p_payload.action + ': ' + error.message);
+              throw error;
+            }
+          },
+        }),
+    });
+    return { config, transport: { ...transportPort, command: input => transportPort.command({ repository_id: repositoryId,
+      target_branch: 'main', source_manifest_sha256: source, ...input }) } };
+  }
   const legacy = async (node, input) => (await one(anon, 'select public.clued_work_verify_v1($1,$2) value',
     [node.tokenHash, { scope, ...input }])).value;
   function checkFor(subject) { return { appId, headSha: subject.head_sha, externalId: `s7-work-admission-${subject.pr}` }; }
@@ -152,7 +192,7 @@ export async function drill(t) {
     return { acquired, effect, check: checkFor(subject) };
   }
   const postCheck = (node, check) => github.write('v2 check POST', () => {
-    const result = { ...check, checkRunId: checks.size + 100, state: 'published', must_revoke: false };
+    const result = { ...check, checkName, checkRunId: checks.size + 100, state: 'published', must_revoke: false };
     checks.set(result.checkRunId, result);
     return result;
   }, result => ['checkCreates', result, node.id]);
@@ -166,6 +206,8 @@ export async function drill(t) {
     const { effect, check } = await openCheck(node, subject);
     const observed = await postCheck(node, check);
     await finishCheck(node, effect, observed);
+    const readback = await command(node, 'head_admission_read', { work_key: effect.work_key, base_sha: sha('base'), changed_paths: paths });
+    assert.equal(readback.verdict, 'ADMITTED', JSON.stringify(readback));
     const queue = await command(node, 'queue_acquire', subject);
     assert.equal(queue.status, 'leased', JSON.stringify(queue));
     assert.equal((await command(node, 'merge_queue_join', { ...leaseOf(queue), check_run_id: observed.checkRunId,
@@ -184,16 +226,25 @@ export async function drill(t) {
     assert.equal((await command(node, 'staging_prepare', { ...handle, generationRefOid })).stagingState, 'reserved');
     assert.equal((await command(node, 'staging_send', handle)).stagingState, 'sent');
     const runs = ['linux', 'windows'].map((platform, i) => ({ testSha, platform, policyVersion, runId: i + 10,
-      checkName: `fixture-${platform}`, checkRunId: i + 1000, appId: 15368 }));
+      checkName: `fixture-${platform}`, checkRunId: i + 1000, appId: 15368, actorId: 501, attempt: 1,
+      event: 'push', ref: 'refs/heads/clued-train/staging', workflow: TRAIN_STAGING_WORKFLOWS[platform] }));
     const observation = await github.write('staging ref', () => {
       for (const run of runs) github.count('requiredRuns', run, node.id);
       return { testSha, generationRefOid, evidence_digest: digest(JSON.stringify(runs)) };
     }, value => ['stagingUpdates', value.testSha, node.id]);
     assert.equal((await command(node, 'staging_publish', { ...handle, observation })).state, 'waiting_checks');
-    return { ...handle, baseSha, testSha, generationRefOid, members, runs };
+    const acquired = await command(node, 'batch_acquire', { batchId: batch.batchId });
+    const runHandle = batchOf(acquired);
+    for (const run of runs) {
+      const result = await command(node, 'required_run_register', { ...runHandle, run });
+      assert.equal(result.status, 'committed', JSON.stringify(result));
+    }
+    await command(node, 'batch_release', runHandle);
+    const staged = await command(node, 'batch_read', { batchId: batch.batchId });
+    return { ...staged, generationRefOid, runs };
   }
   return { db, scope, keyScope, source, clock, github, digest, sha, uuid, one, head, addNode, enableV2, authorize, command,
-    legacy, openCheck, postCheck, finishCheck, checks, joinAndStage };
+    legacy, openCheck, postCheck, finishCheck, checks, joinAndStage, protectedTransport };
 }
 
 export async function probe(d, node) {
@@ -206,7 +257,7 @@ export async function probe(d, node) {
   return result;
 }
 
-export function requiredRunDecision(d, staged, completed) {
+export async function requiredRunDecision(d, staged, completed) {
   assert.equal(typeof landing.exactTrainChecksDecision, 'function', '片 4、6 未集成 S 上的精确检查判定');
   const requirements = staged.runs.map(({ checkName, appId, platform }) => ({ checkName, appId, platform }));
   const rules = [{ type: 'required_status_checks', parameters: {
@@ -215,16 +266,23 @@ export function requiredRunDecision(d, staged, completed) {
   const checks = staged.runs.map(({ checkRunId, checkName, appId, testSha }) => ({ id: checkRunId, name: checkName,
     app: { id: appId }, head_sha: testSha, status: completed ? 'completed' : 'in_progress', conclusion: completed ? 'success' : null,
     completed_at: completed ? new Date(d.clock.now()).toISOString() : null }));
-  return landing.exactTrainChecksDecision({ rules, inventory: { complete: true, checks }, commitSha: staged.testSha,
-    appId, policyVersion, runEvidence: { complete: true, requirements, runs: staged.runs }, now: d.clock.now() });
+  const github = { async readTrainRun({ runId, attempt, testSha, workflow }) {
+    const run = staged.runs.find(candidate => candidate.runId === runId && candidate.attempt === attempt
+      && candidate.testSha === testSha && candidate.workflow === workflow);
+    assert.ok(run);
+    return { jobs: [{ name: run.checkName, checkRunId: run.checkRunId, status: 'completed', conclusion: 'success' }] };
+  } };
+  return (await landing.exactTrainChecksDecision({ rules, inventory: { complete: true, checks }, batch: staged,
+    github, now: d.clock.now() })).reason;
 }
 
 async function sendLandingIntent(d, node, acquired, staged) {
-  assert.equal(requiredRunDecision(d, staged, true), null);
+  assert.equal(await requiredRunDecision(d, staged, true), null);
   const handle = batchOf(acquired);
   const landedRefOid = d.sha(`landed:${staged.testSha}`);
   const prepared = await d.command(node, 'landing_prepare', { ...handle, generationRefOid: staged.generationRefOid,
-    successorRefOid: landedRefOid, evidence_digest: d.digest(JSON.stringify(staged.runs)) });
+    successorRefOid: landedRefOid, evidence_digest: d.digest(JSON.stringify(staged.runs)),
+    requiredRunsSha256: acquired.requiredRunsSha256 });
   assert.equal(prepared.state, 'reserved', JSON.stringify(prepared));
   const intent = { ...prepared.intent, effectId: prepared.effect_key, slotId: trainLandingSlotKey(d.keyScope), landedRefOid };
   assert.deepEqual([intent.baseSha, intent.testSha, intent.members], [staged.baseSha, staged.testSha, staged.members]);
@@ -292,7 +350,7 @@ async function legacyPublisher(d, node, subject) {
   return { runtime, context, replies };
 }
 
-rolloutTest('片 7：数据库排空后旧包迟到，已排空票和新旧包竞争均无旧 POST', { timeout: 300_000 }, async t => {
+rolloutTest('片 7：数据库排空后旧包迟到，已排空票和新旧包竞争均无旧 POST', async t => {
   const d = await drill(t);
   const old = await d.addNode('old', { legacy: true });
   const next = await d.addNode('new');
@@ -338,7 +396,7 @@ rolloutTest('片 7：数据库排空后旧包迟到，已排空票和新旧包�
   assert.deepEqual(d.github.effects().map(row => [row.kind, row.node]), [['checkCreates', next.id]]);
 });
 
-rolloutTest('片 7：同一节点回滚到旧协议重连，接手只读回原检查一次', { timeout: 300_000 }, async t => {
+rolloutTest('片 7：同一节点回滚到旧协议重连，接手只读回原检查一次', async t => {
   const d = await drill(t);
   const writer = await d.addNode('writer', { legacy: true });
   const reader = await d.addNode('reader');
@@ -370,14 +428,14 @@ rolloutTest('片 7：同一节点回滚到旧协议重连，接手只读回原�
   assert.equal(d.github.totals().checkCreates, 1);
 });
 
-rolloutTest('片 7：S 等 CI 时重装，空本机目录从共享批接回原 S 和运行', { timeout: 300_000 }, async t => {
+rolloutTest('片 7：S 等 CI 时重装，空本机目录从共享批接回原 S 和运行', async t => {
   const d = await drill(t);
   const original = await d.addNode('original');
   const subject = d.head();
   await d.authorize(subject);
   await d.enableV2();
   const staged = await d.joinAndStage(original, subject);
-  assert.equal(requiredRunDecision(d, staged, false), landing.TRAIN_LANDING_CHECKS_PENDING);
+  assert.equal(await requiredRunDecision(d, staged, false), landing.TRAIN_LANDING_CHECKS_PENDING);
   const replacement = await d.addNode('reinstalled');
   await d.db.admin.query('update public.clued_agent_bindings set revoked_at=clock_timestamp() where id=$1', [original.binding]);
   assert.notEqual(original.local, replacement.local);
@@ -389,7 +447,7 @@ rolloutTest('片 7：S 等 CI 时重装，空本机目录从共享批接回原 S
   const runs = d.github.effects().filter(row => row.kind === 'requiredRuns' && row.subject.testSha === resumed.testSha).map(row => row.subject);
   assert.equal(resumed.stagingObservation?.evidence_digest, d.digest(JSON.stringify(runs)), '共享暂存证据要绑定重新读回的原运行');
   const recoveredStage = { ...resumed, generationRefOid: resumed.stagingObservation.generationRefOid, runs };
-  assert.equal(requiredRunDecision(d, recoveredStage, false), landing.TRAIN_LANDING_CHECKS_PENDING);
+  assert.equal(await requiredRunDecision(d, recoveredStage, false), landing.TRAIN_LANDING_CHECKS_PENDING);
   assert.equal(d.github.totals().mainUpdates, 0, '检查未结束时 main 保持 T');
   d.github.emit('ci-completed', staged.testSha);
   await d.github.deliver('ci-completed', async testSha => {
@@ -401,7 +459,7 @@ rolloutTest('片 7：S 等 CI 时重装，空本机目录从共享批接回原 S
   assert.equal(d.github.requests().filter(row => row.operation === 'staging ref').length, 1);
 });
 
-rolloutTest('片 7：1→2→3→1→0→1，零容量保留共享批，再入班承接同一批', { timeout: 300_000 }, async t => {
+rolloutTest('片 7：1→2→3→1→0→1，零容量保留共享批，再入班承接同一批', async t => {
   const d = await drill(t);
   await d.enableV2();
   const a = await d.addNode('a');
@@ -441,7 +499,7 @@ rolloutTest('片 7：1→2→3→1→0→1，零容量保留共享批，再入�
   await landReadyBatch(d, a, resumed, staged);
 });
 
-rolloutTest('片 7：main 已动但远端代次证据不全，保留已发落地意图并判停', { timeout: 300_000 }, async t => {
+rolloutTest('片 7：main 已动但远端代次证据不全，保留已发落地意图并判停', async t => {
   assert.equal(typeof landing.reconcileTrainIntent, 'function', '片 4 未集成 landing_reconcile');
   const d = await drill(t);
   const a = await d.addNode('sender');

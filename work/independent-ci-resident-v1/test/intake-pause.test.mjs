@@ -100,12 +100,9 @@ test('train v2: persistent dual-active and delayed renewal are retired, while Ow
     assert.ok((await receiptTypes(f)).includes('intake-pause-ended'));
   }
   assert.equal((await restartedB.ledger.halted()).value.code, 'RECOVERY_UNCONFIRMED');
-  engine.handoffTrainWork = async ({ key }) => ({
-    protocol_version: TRAIN_PROTOCOL_VERSION, key, receiptId: 'b7abb84e-43e9-438b-ac4f-664f4b217b76',
-  });
-  restartedA.advance(10 * MIN);
-  assert.equal((await restartedA.exec.tick()).state, 'COMPLETED');
-  assert.deepEqual(stagesRun(engine), [1, 2, 3, 4, 5, 6, 7, 8]);
+  const legacy = await executorFixture(t, { engine, now: T0 + 11 * MIN, root: restartedA.root, policy: rawPolicy() });
+  assert.equal((await legacy.exec.tick()).state, 'COMPLETED');
+  assert.deepEqual(stagesRun(engine), [1, 2, 3, 4, 5, 6, 7, 8, 8]);
   assert.equal((await restartedA.ledger.state(batchKey(subject()))).outcome, 'COMPLETED');
   assert.equal((await readIntakePause(restartedA.ledger.root, restartedA.clock)).view.holders[0].holder, 'owner');
 });

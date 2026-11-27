@@ -14,22 +14,25 @@ import { createClaimAssistNative } from './claim-assist-native.mjs';
 import { readStageTrainLandingFact } from './train-landing.mjs';
 import { createLandingPort } from './train-landing-port.mjs';
 import { FIXED_APP } from '../resident-v2/record.mjs';
+import { createSharedTrainPorts } from './train-shared-ports.mjs';
 
 export async function main(argv = process.argv.slice(2), output = process.stdout, { protectedTrainTransport } = {}) {
   const startedAt = Date.now();
-  return runEntry({ argv, entryRole: 'control-checks', moduleUrl: import.meta.url, output, body: async ({ args, inputs, held, live, sourceRoot }) => {
+  return runEntry({ argv, entryRole: 'control-checks', moduleUrl: import.meta.url, output, protectedTrainTransport,
+    body: async ({ args, inputs, held, live, sourceRoot, protectedTrainTransport: transport }) => {
     const jobs = inputs.jobs;
     const { appKey, nativeToken, bindingId } = await controllerPrincipal(inputs.record);
     const log = observationLog(STATE_V2.effectsControl, jobs[0].id);
     // bc982192: the batch's own route stamp from this stage directory (batch-route.mjs; none: main's tip is the batch base).
     const batchRoute = await readStageBatchRoute(inputs.dir);
     const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot,
-      live, log, batchRoute, protectedTrainTransport, trainControl: true });
+      live, log, batchRoute, protectedTrainTransport: transport, trainControl: true });
     const { admission } = ports;
     // §41.2: the installed train.enabled, written by the resident into this stage directory (train-mode.mjs; default off).
     const { trainMode, unreadable: trainModeUnreadable } = await readStageTrainModeFact(inputs.dir);
     const train = await trainPortsV2({ trainMode, record: inputs.record, fetchImpl: ports.fetchImpl, nativeToken, github: ports.github, queueReturn: true,
-      nativeCommand: input => ports.native.command(input), repositoryId: FIXED_APP.repositoryId, sourceManifestSha256: jobs[0].sourceManifestSha256 });
+      nativeCommand: ports.native.train === undefined ? undefined : ports.native.command,
+      repositoryId: FIXED_APP.repositoryId, sourceManifestSha256: jobs[0].sourceManifestSha256 });
     let batchClaim = null, journal = null, greenLedger = null, github = ports.github;
     if (train.trainV2 == null) {
       batchClaim = await readBatchClaim(STATE_V2.batchClaims, jobs[0]);
@@ -43,8 +46,10 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const trainLanding = await readStageTrainLandingFact(inputs.dir);
     const landing = trainMode === 'on' && trainLanding.landing === 'push' && !trainLanding.unreadable ? createLandingPort({ repository: inputs.record.config.repository,
       repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId, installationId: FIXED_APP.installationId, privateKeyProvider: async () => appKey, fetchImpl: ports.fetchImpl }) : null;
+    const shared = train.trainV2?.protocolVersion === 2 && ports.native.train?.scope
+      ? createSharedTrainPorts({ transport: ports.native.train, config: inputs.record.config, github, landing }) : null;
     const publisher = createProductionControlPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(inputs.record.accepted), batchClaim, greenLedger,
-      trainMode, trainModeUnreadable, ...train, trainLanding, landing, batchRoute,
+      trainMode, trainModeUnreadable, ...train, ...(shared ? { trainV2: shared } : {}), trainLanding, landing, batchRoute,
       // Generation 12 (resident DESIGN 56.4): join the merge queue and extend the lease with the CI identity (claim-assist-native.mjs).
       claimAssist: createClaimAssistNative({ config: inputs.record.config, fetchImpl: ports.fetchImpl, nativeToken }) });
     // The claim lease bound is read from the first live observation inside the wait; the outer bound is
@@ -52,7 +57,8 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     // resident parks the batch and runs this stage again on its own back-off.
     const waitUntil = queueWindow({ startedAt, claimExpiresAt: new Date(startedAt + 24 * 3600_000).toISOString(), validUntil: inputs.record.accepted.validUntil,
       stageDeadline: startedAt + stageByNumber(8).runMilliseconds, checkMs: STAGE8_CHECK_MS });
-    return publisher.publishPair(jobs, { waitUntil });
+    try { return await publisher.publishPair(jobs, { waitUntil }); }
+    finally { if (shared) await shared.release().catch(() => {}); }
   } });
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) process.exitCode = await main();

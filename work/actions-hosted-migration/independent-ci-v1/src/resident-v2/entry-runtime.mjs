@@ -21,7 +21,7 @@ import { loadStageInputs, parseEntryArgs, writeOutcome } from './stage-inputs.mj
 import { STATE_V2 } from './layout.mjs';
 import { FIXED_APP } from './record.mjs';
 import { readCiCredential } from './ci-principal.mjs';
-import { cluedRpc } from '../../../../../scripts/ci/clued-work-admission.mjs';
+import { cluedRpc, mainMergeSource } from '../../../../../scripts/ci/clued-work-admission.mjs';
 import { createIndependentPublicationPortsForJobs, independentControllerId } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { registerIndependentController } from '../../../../../scripts/ci/clued-independent-revoker.mjs';
 import { revocationQualification } from './revocation-run.mjs';
@@ -30,6 +30,7 @@ import { withReadRetry } from '../read-retry.mjs';
 import { createIndependentScanStartPort } from '../scan-start-v1/native-port.mjs';
 import { HOLDERS_RPC } from '../independent-control-checks-v2/merge-slot-native.mjs';
 import { TRAIN_PROTOCOL_VERSION } from '../merge-train-v2-contract.mjs';
+import { openTrainTransport } from './train-transport.mjs';
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
@@ -324,9 +325,12 @@ export function protectedTrainPort(record, transport, live) {
     async command(input) {
       live();
       check(input.scope === scope && input.repository === record.config.repository
-        && input.source_manifest_sha256 === record.config.sourceManifestSha256
+        && (input.repository_id === undefined || input.repository_id === repositoryId)
+        && (input.target_branch === undefined || input.target_branch === 'main')
+        && (input.source_manifest_sha256 === undefined || input.source_manifest_sha256 === record.config.sourceManifestSha256)
         && input.protocol_version === protocolVersion, 'NATIVE_PUBLICATION_SCOPE_REFUSED');
-      const reply = await command.call(transport, input);
+      const reply = await command.call(transport, { ...input, repository_id: repositoryId, target_branch: 'main',
+        source_manifest_sha256: record.config.sourceManifestSha256 });
       live();
       return reply;
     } });
@@ -336,6 +340,14 @@ export function protectedTrainPort(record, transport, live) {
 // role journal remain prerequisites. No extra secret reader or worker token.
 export function publicationControllerGithub({ ports, jobs, journal, args, record, plan }) {
   return createIndependentPublicationPortsForJobs({ jobs, journal, github: ports.github, native: ports.native,
+    readMainMergeProof: ports.fetchImpl && (async job => {
+      const pr = await ports.github.readPullRequest(job.pr);
+      if (pr?.number !== job.pr || pr.state !== 'open' || pr.head?.sha !== job.headSha
+        || pr.head.repo?.full_name !== job.repo || pr.base?.ref !== 'main' || pr.base.repo?.full_name !== job.repo) return null;
+      const tip = (await ports.github.readBranchHead('main')).sha;
+      return mainMergeSource(ports.fetchImpl, { GITHUB_TOKEN: await ports.github.getInstallationToken() },
+        job.repo, job.pr, job.headSha, tip, { proof: true });
+    }),
     controllerIdFor: job => independentControllerId({ invocationNonce: args.nonce, jobId: job.id, nodeId: record.accepted.node.hostname }),
     registerController: (identity,mode) => {
       if(mode.executionPolicy==='active'&&!revocationQualification(record,{reserveMs:300_000}))fail('independent_revoker_qualification_required');
@@ -350,7 +362,7 @@ export const authorityOf = accepted => ({ acceptanceValidUntil: accepted.validUn
 
 // Runs one entry: body(ctx) returns {status, reason, sideEffects, ...}. The outcome is written in all
 // cases that reach the finally block. Exit 0 only for a settled (or, for the issuer, received) result.
-export async function runEntry({ argv, entryRole, moduleUrl, body, output = process.stdout, successStatuses = ['SETTLED'] }) {
+export async function runEntry({ argv, entryRole, moduleUrl, body, output = process.stdout, successStatuses = ['SETTLED'], protectedTrainTransport }) {
   let args = null, inputs = null, lease = null, result = { status: 'BLOCKED', reason: 'ENTRY_NOT_STARTED', sideEffects: 0 };
   try {
     args = parseEntryArgs(argv);
@@ -362,7 +374,9 @@ export async function runEntry({ argv, entryRole, moduleUrl, body, output = proc
     check(inputs.record.pins.size === held.sourceHashes.size && [...inputs.record.pins].every(([p, s]) => held.sourceHashes.get(p) === s), 'HELD_SOURCE_PINS_CHANGED');
     const live = () => { takeHeldRecord(lease); };
     live.deadlineAt = Date.parse(held.expiresAt); // the lease's end: read retries never wait or run past it (read-retry.mjs)
-    result = await body({ args, inputs, held, live, sourceRoot: sourceRootOf(moduleUrl) });
+    const trainRole = ['work-admission', 'role-probe', 'control-checks', 'train-maintenance'].includes(entryRole);
+    const transport = trainRole ? protectedTrainTransport ?? await openTrainTransport(inputs.record, live) : undefined;
+    result = await body({ args, inputs, held, live, sourceRoot: sourceRootOf(moduleUrl), protectedTrainTransport: transport });
   } catch (e) {
     result = { status: result?.sideEffects ? 'UNCERTAIN' : 'BLOCKED', reason: safeReason(e), sideEffects: result?.sideEffects ?? 0 };
   } finally {

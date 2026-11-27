@@ -753,7 +753,9 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       check(push && job.role === 'control-merge-slot' && isTrainFrontJobV2(job)
         && trainV2.protocolVersion === TRAIN_PROTOCOL_VERSION, TRAIN_FAILURE.LEASE_STALE.resident);
       assertLive();
-      const batch = await trainV2.readBatch({ repository: job.repo, targetBranch: 'main', testSha: job.testSha });
+      const batch = await trainV2.readBatch({ repository: job.repo, targetBranch: 'main', testSha: job.testSha,
+        baseSha: job.baseSha, headSha: job.headSha, pr: job.pr });
+      if (batch == null) return blocked(TRAIN_LANDING_CHECKS_PENDING);
       check(batch?.baseSha === job.baseSha && batch.testSha === job.testSha && batch.sourceSha256 === job.sourceManifestSha256
         && validTrainMembers(batch.members) && batch.members[0].pr === job.pr && batch.members[0].headSha === job.headSha, TRAIN_BATCH_CHANGED);
       const { scope } = batch;

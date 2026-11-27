@@ -68,12 +68,16 @@ jobs:
   report:
     name: clued-merge-slot-ci
     if: >-
+      (vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION != '2' &&
+       (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request' ||
+        github.event.workflow_run.event == 'pull_request_target')) ||
+      (vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION == '2' &&
       github.ref == 'refs/heads/main' && github.run_attempt == 1 &&
       ((github.event_name == 'workflow_run' && github.event.action == 'completed' &&
         (github.event.workflow_run.event == 'pull_request' ||
          github.event.workflow_run.event == 'pull_request_target')) ||
        (github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner &&
-        github.triggering_actor == github.repository_owner))
+        github.triggering_actor == github.repository_owner)))
     runs-on: ubuntu-slim
     timeout-minutes: 10
     environment: clued-admission
@@ -106,6 +110,7 @@ jobs:
       - name: Bring the default branch into the queue head, turn on auto-merge or merge it
         timeout-minutes: 5
         env:
+          CLUED_MERGE_TRAIN_PROTOCOL_VERSION: ${{ vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION }}
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
           CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
           CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}

@@ -540,6 +540,12 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       if (body?.id !== id || !(can === undefined || can === null || typeof can === 'string')) fail('invalid_ruleset_reply');
       return { id, currentUserCanBypass: typeof can === 'string' ? can : null };
     },
+    async readRuleBypass(id) {
+      if (!positive(id)) fail('invalid_ruleset');
+      const body = await scoped(`/rulesets/${id}?includes_parents=true`);
+      if (body?.id !== id || !Array.isArray(body.bypass_actors) || body.bypass_actors.length > 100) fail('invalid_ruleset_reply');
+      return body.bypass_actors;
+    },
     // Merge-train sweep reads (DESIGN §41.3; stage 10). Bounded, complete or refused. GET only, except the GraphQL
     // query: a read sent as POST, repeated like a read.
     // This App's runs of one name on a commit (app_id and check_name filtered by GitHub, every run checked again).

@@ -103,7 +103,10 @@ const MIGRATION_DB_TESTS = ['apps/clued-cloud/tests/ci-scan-start-native-db.test
   'apps/clued-cloud/tests/binding-role-single-reader-db.test.mjs', 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs',
   'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs',
   'apps/clued-cloud/tests/storage-runtime-authority-db.test.mjs',
-  'apps/clued-cloud/tests/work-claims-pr-end-release-db.test.mjs'];
+  'apps/clued-cloud/tests/work-claims-pr-end-release-db.test.mjs',
+  'apps/clued-cloud/tests/merge-train-rollout-db.test.mjs',
+  'apps/clued-cloud/tests/merge-train-handover-db.test.mjs',
+  'apps/clued-cloud/tests/merge-train-landing-db.test.mjs'];
 // The database tests clued-connection-authorization.yml ran (authorization, context v2, projection refresh, work
 // claims, Information Flow, records, MTPE, invitations, migration chain, Resource Center authority, end-to-end
 // authorization, DatasetSplit grants); nothing ran them once it was disabled
@@ -163,6 +166,8 @@ const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 
   'apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
   'apps/clued-cloud/tests/*fixture*.mjs', 'apps/clued-cloud/tests/*.case.mjs', 'apps/clued-cloud/tests/worker/**',
   'apps/clued-cloud/tests/worker-continuity-loader.mjs', 'apps/clued-cloud/tests/independent-review-db.test.mjs',
+  'work/actions-hosted-migration/independent-ci-v1/src/**', 'work/independent-ci-resident-v1/src/**',
+  'work/independent-ci-resident-v1/test/multi-duty-fixture.mjs', 'scripts/ci/clued-independent-publication-*.mjs',
   'apps/clued-cloud/worker/*', 'apps/clued-cloud/build/pdfjs-decode-guard.mjs', 'kernel/host/resource-center-*.mjs',
   'kernel/policy/resource-center-*.mjs', 'scripts/phase2-qualification/minimum-context-compiler/**',
   'development/contracts/information-flow/vendored/**',
@@ -175,6 +180,14 @@ const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 
   'work/actions-hosted-migration/independent-ci-v1/src/merge-train-v2-contract.mjs',
   'work/independent-ci-resident-v1/test/multi-duty-fixture.mjs'];
 
+// The landing suite points to a test also registered in the migration suite.
+const TRAIN_DB_INPUTS = [
+  'apps/clued-cloud/tests/merge-train-v2-db.fixture.mjs', 'apps/clued-cloud/tests/ci-scheduling-stage1-fixture.mjs',
+  'apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/tests/pg-cluster-fixture.mjs',
+  'apps/clued-cloud/tests/raw-binding-grants-fixture.mjs', 'apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs',
+  'apps/clued-cloud/worker/ci-node-gateway-v1.ts', 'apps/clued-cloud/worker/ci-scheduling-v1.ts',
+  'apps/clued-cloud/supabase/migrations/**', 'scripts/ci/test-clock-guard.mjs', 'scripts/ci/test-clock-imports.mjs',
+];
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
   'ci-suites': {
@@ -191,13 +204,8 @@ export const SUITES = {
     // windows/linux/rollout files and the Source v2 resident-v2 record code, so they run on the same paths as the resident suites.
     'reinstall-python': RESIDENT_AND_SOURCE,
     'offline-drill': RESIDENT_AND_SOURCE,
-    'source-v2-node': [...RESIDENT_AND_SOURCE, 'apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
-      'apps/clued-cloud/supabase/migrations/*_ci_connection_self_v1.sql', 'apps/clued-cloud/tests/ci-connection-self-db.test.mjs',
-      // The train e2e case imports the shared ephemeral database fixture.
-      'apps/clued-cloud/tests/merge-train-v2-db.fixture.mjs', 'apps/clued-cloud/tests/ci-scheduling-stage1-fixture.mjs',
-      'apps/clued-cloud/tests/pg-cluster-fixture.mjs', 'apps/clued-cloud/tests/raw-binding-grants-fixture.mjs',
-      'apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs',
-      'apps/clued-cloud/tests/cluster-cleanup.mjs', 'scripts/ci/test-clock-guard.mjs', 'scripts/ci/test-clock-imports.mjs'],
+    'source-v2-node': [...RESIDENT_AND_SOURCE, ...TRAIN_DB_INPUTS,
+      'apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json', 'apps/clued-cloud/tests/ci-connection-self-db.test.mjs'],
     'source-v2-python': RESIDENT_AND_SOURCE,
     'components': ['scripts/clued_components.py', 'scripts/hooks/**', 'skills/**', 'integrations/**',
       'config/clued-components.json', 'tests/test_clued_components.py', 'tests/test_clued_version_check.py',
@@ -1334,7 +1342,7 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
   });
 }
 
-async function runTargetedFiles(id, { root, env, files, log = console.log }) {
+async function runTargetedFiles(id, { root, env, files, onlyNamed, log = console.log }) {
   let named, plan;
   try {
     ({ named } = planFiles(id, { root, files, env }));
@@ -1342,6 +1350,12 @@ async function runTargetedFiles(id, { root, env, files, log = console.log }) {
     log('run-files ' + id + ': ' + error.message);
     for (const line of await whereFilesRun(error.unmatched, root)) log(line);
     return 2;
+  }
+  if (onlyNamed) {
+    const { execFileSync } = await import('node:child_process');
+    const base = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { cwd: root, encoding: 'utf8' }).trim();
+    log('run-files ' + id + '：仅执行 ' + named.size + ' 个点名文件，定向结果，不是套件结论');
+    return runSuite(id, { root, env: { ...env, CI_BASE_SHA: base }, log, files: [...named], targetedTiming: true });
   }
   const started = performance.now();
   try {
@@ -2620,6 +2634,7 @@ async function main(argv, env = process.env) {
     console.log(USAGE);
     console.log(`Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
     console.log('--run-files 执行点名测试，并按与本地 origin/main 的共同祖先计算影响范围，涵盖分支提交、暂存、未暂存和未忽略的新文件。');
+    console.log('--run-files <套件> <文件...> --only-named 仅执行点名文件，不扩展影响范围。');
     console.log('各组轮流使用本机套件槽。基准或覆盖范围无法确定时退出 2，GitHub Actions 也拒绝此入口。输出为定向结果。');
     return 0;
   }
@@ -2695,7 +2710,7 @@ async function main(argv, env = process.env) {
       console.error(`run-files: needs a known suite and at least one test file\n${USAGE}`);
       return 2;
     }
-    return runTargetedFiles(id, { root, env, files: named });
+    return runTargetedFiles(id, { root, env, files: named, onlyNamed: argv.includes('--only-named') });
   }
   const writeIndex = argv.indexOf('--write-known');
   if (writeIndex >= 0) {

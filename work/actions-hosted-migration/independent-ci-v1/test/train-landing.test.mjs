@@ -413,7 +413,9 @@ async function runStage8Startup(t, w, command, legacy) {
   const fixture = {
     runEntry: ({ body }) => body({ args: {}, inputs: { record, jobs: w.jobs, dir }, held: {}, live() {}, sourceRoot: dir }),
     controllerPrincipal: async () => ({ nativeToken: 'fixture', bindingId: 'fixture' }),
-    controllerPorts: options => legacy ? { ...controllerPorts({ ...options, baseFetch: legacy.baseFetch }), github } : { github, native: { command }, admission: {} },
+    controllerPorts: options => legacy
+      ? { ...controllerPorts({ ...options, baseFetch: legacy.baseFetch }), github }
+      : { github, native: { train: { protocolVersion: TRAIN_PROTOCOL_VERSION }, command }, admission: {} },
     publicationControllerGithub: () => github,
     observationLog: () => () => {}, authorityOf: () => ({}),
     readBatchClaim: async () => null,

@@ -4,6 +4,7 @@
 import { canonical } from '../proof.mjs';
 import { ACCEPTANCE_CONTRACT_V2, CHECKS_V2, INSTALLATION_CONTRACT_V2, REFS, SOURCES_SCHEMA_V2, hash, validateNodeProfile } from './prepare-record.mjs';
 import { REPO } from './layout.mjs';
+import { validTrainInstall } from './train-transport.mjs';
 
 export const FIXED_APP = Object.freeze({ appId: 5368905, installationId: 172706661, repositoryId: 1334673495 });
 const HASH = /^[a-f0-9]{64}$/, UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -35,7 +36,7 @@ export function validateRecordV2(docs, { now = Date.now(), required = [], identi
   const manifest = parse(t['source-manifest.json'], 'RECORD_MANIFEST_INVALID');
   const signersFile = parse(t['signers.json'], 'RECORD_SIGNERS_INVALID');
   for (const v of [config, accepted, manifest]) check(canonical(v) === t[v === config ? 'installation.json' : v === accepted ? 'acceptance.json' : 'source-manifest.json'], 'RECORD_CANONICAL_BYTES_REQUIRED');
-  check(plain(config) && config.contract === INSTALLATION_CONTRACT_V2 && config.enabled === true && config.repository === REPO
+  check(plain(config) && validTrainInstall(config) && config.contract === INSTALLATION_CONTRACT_V2 && config.enabled === true && config.repository === REPO
     && config.appId === FIXED_APP.appId && config.installationId === FIXED_APP.installationId && config.repositoryId === FIXED_APP.repositoryId
     && !Object.hasOwn(config, 'currentClaim') && !Object.hasOwn(config, 'ciTokenSha256') && !Object.hasOwn(config, 'finiteFirstRun') && !Object.hasOwn(config, 'observationOnly')
     && ['acceptanceSha256', 'sourceManifestSha256', 'ciTokenPinSha256', 'evaluatorSha256', 'policySha256', 'controllerNodeSha256'].every(k => HASH.test(config[k] ?? ''))

@@ -800,6 +800,8 @@ export class ResidentExecutor {
     const decision = this.trainLast?.mode === 'on' ? this.trainLast.decision : null;
     // Source skew and unreadability still hold every row, even one whose previous strict proof has not expired.
     if (['TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE'].includes(decision)) return { state: 'DEFERRED', reason: decision };
+    if (this.sharedTrainActive() && this.trainLast.strict === true && this.trainLast.landing?.route === 'push')
+      return TRAIN_SCHEDULE_DEFERRALS.includes(decision) ? { state: 'DEFERRED', reason: decision } : null;
     if (this.trainSweep?.fullAllPending !== 'TRAIN_MAIN_REWRITTEN' && this.trainStrictFront(subject)) return null;
     if (this.trainFrontBind(subject)) return null;
     if (!this.trainTakeoverDone) return { state: 'DEFERRED', reason: TRAIN_SCHEDULE_DEFERRALS.includes(decision) ? decision : 'TRAIN_TAKEOVER_SWEEP_PENDING' };
@@ -3046,7 +3048,7 @@ export class ResidentExecutor {
     this.parkingFull = counts.inside >= this.policy.park.maxParked || (outsideMax > 0 && counts.outside >= outsideMax);
     // A batch that no longer stands (its PR closed, a newer head, this node off duty) was ended by the rule before this (endNotStanding,
     // DESIGN §72), whatever the train gate below says: field defect PR #1035 needs no step of its own here.
-    const handoffs = this.sharedTrainHandoff() ? entries.filter(e => Ledger.parkedAt(e)) : [];
+    const handoffs = this.sharedTrainHandoff() ? entries.filter(e => Ledger.parkedAt(e) && !e.reserved?.subject?.testSha) : [];
     const handoffDueAt = e => {
       const { pr } = e.reserved.subject;
       const row = this.queue.row(pr);
@@ -3156,7 +3158,11 @@ export class ResidentExecutor {
   }
 
   sharedTrainHandoff() {
-    return trainProtocolVersion(this.policy.train) !== 1;
+    return trainProtocolVersion(this.policy.train) === 2;
+  }
+
+  sharedTrainActive() {
+    return this.sharedTrainHandoff() && this.trainLast?.sharedWork?.protocolVersion === 2 && this.trainLast.onDuty === true;
   }
 
   async handoffParkedTrainWork(key, subject, batch, entry) {
@@ -3217,7 +3223,7 @@ export class ResidentExecutor {
   }
 
   async stage8Try(key, subject, batch) {
-    if (this.sharedTrainHandoff()) {
+    if (this.sharedTrainHandoff() && !subject.testSha) {
       if (this.trainLast?.sharedWork?.protocolVersion === 2 && this.trainLast.onDuty === true) this.trainUrgent = true;
       return this.handoffParkedTrainWork(key, subject, batch, await this.ledger.state(key));
     }

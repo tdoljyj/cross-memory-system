@@ -1998,23 +1998,29 @@ export function parseMainMergeExternalId(value) {
 // then needed, as before): the newest successful kooyumi-main-merge check of
 // the clued-admission App on this head names this PR, the head's parents are
 // exactly [from, main], and main (tip) still contains main.
-export async function mainMergeSource(fetchImpl, env, repository, prNumber, headSha, tip) {
+export async function mainMergeSource(fetchImpl, env, repository, prNumber, headSha, tip, { proof = false } = {}) {
   if (!/^[0-9a-f]{40}$/.test(headSha ?? "") || !/^[0-9a-f]{40}$/.test(tip ?? "")) return null;
   const listed = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${headSha}/check-runs?check_name=${MAIN_MERGE_CHECK}&filter=all`);
   const attested = (Array.isArray(listed?.check_runs) ? listed.check_runs : [])
     .filter((c) => c?.name === MAIN_MERGE_CHECK && c.head_sha === headSha && Number(c.app?.id) === ADMISSION_APP_ID
       && c.status === "completed" && c.conclusion === "success")
     .sort((a, b) => Number(b.id) - Number(a.id))
-    .map((c) => parseMainMergeExternalId(c.external_id)).find((a) => a && a.pr === prNumber);
+    .map((c) => ({ ...parseMainMergeExternalId(c.external_id), checkRunId: Number(c.id) }))
+    .find((a) => a.pr === prNumber);
   if (!attested) return null;
   const commit = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${headSha}`);
   const parents = Array.isArray(commit?.parents) ? commit.parents.map((p) => p?.sha) : [];
   if (commit?.sha !== headSha || parents.length !== 2 || parents[0] !== attested.from || parents[1] !== attested.main) return null;
+  let compare = 'identical';
   if (attested.main !== tip) {
     const onMain = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${attested.main}...${tip}`);
     if (onMain?.status !== "ahead" && onMain?.status !== "identical") return null;
+    compare = onMain.status;
   }
-  return attested;
+  const { checkRunId, ...source } = attested;
+  if (!proof) return source;
+  return Number.isSafeInteger(checkRunId) && checkRunId > 0
+    ? { ...source, checkRunId, headSha, tip, compare, parents } : null;
 }
 
 // For a head the PR's claim has not authorized: when it only merged main into

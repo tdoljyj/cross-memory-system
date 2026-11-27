@@ -22,6 +22,8 @@ import { createMergeSlotNative } from '../src/independent-control-checks-v2/merg
 import { main as roleProbeMain, probeRole } from '../src/resident-v2/role-probe-entry.mjs';
 import { main as stageOneMain } from '../src/formal-work-admission-check-v2/startup.mjs';
 import { createFullAdmissionPortV2 } from '../src/full-admission-v2.mjs';
+import { createTrainHeadPublicationRuntime } from '../../../../scripts/ci/clued-independent-publication-runtime.mjs';
+import { trainHeadWorkKey } from '../src/merge-train-v2-contract.mjs';
 
 const gate = () => {
   const entered = Promise.withResolvers(), released = Promise.withResolvers();
@@ -524,7 +526,40 @@ test('the actual entry adapter wires work admission to the original Native ticke
   assert.equal(result.status, 'SETTLED', JSON.stringify(result));
   assert.equal(f.checks.length, 1); assert.match(f.checks[0].output.summary, /Native publication independent-ci:native:v1:/);
   assert.deepEqual(f.calls.map(c => c.action), ['publication_begin_independent', 'publication_begin_independent', 'publication_finish']);
+  assert.deepEqual(f.trace, ['read', 'evaluate', 'read', 'publication_begin_independent', 'publication_begin_independent',
+    'create:completed', 'publication_finish', 'read', 'evaluate', 'read']);
   assert.equal((await publisher.publish(job)).sideEffects, 0); assert.equal(f.checks.length, 1);
+});
+
+test('协议 2 主线合并沿用原 H 句柄，比较不可证时不写沿用记录', async () => {
+  const job = batchJobsV2(subject({ testSha: subject().headSha }))['work-admission'];
+  const old = 'a'.repeat(40), main = 'c'.repeat(40), tip = 'd'.repeat(40);
+  const scope = { contextKey: 'project:b7abb84e-43e9-438b-ac4f-664f4b217b76', tenantId: 'tenant',
+    projectId: 'b7abb84e-43e9-438b-ac4f-664f4b217b76', repositoryId: 123, targetBranch: 'main' };
+  const oldKey = trainHeadWorkKey({ ...scope, pr: job.pr, headSha: old, action: 'verify_head' });
+  for (const compare of ['behind', 'ahead']) {
+    const calls = [];
+    const runtime = createTrainHeadPublicationRuntime({ train: { scope, async command(input) {
+      calls.push(input);
+      const reply = { protocol_version: 2, work_key: input.work_key };
+      if (input.action === 'carry_head_read') return { ...reply, status: 'ok', generation: 7, lease_version: 4, pr: job.pr, head_sha: old };
+      if (input.action === 'carry_main_merge') return { ...reply, status: 'committed', head_sha: job.headSha, authorization_id: randomUUID() };
+      if (calls.length === 1) return { ...reply, status: 'rejected', error_code: 'head_not_authorized' };
+      return { ...reply, status: 'ok', lease_generation: 1, resume_required: false };
+    } }, github: {}, readMainMergeProof: async () => ({ pr: job.pr, from: old, main, tip, compare,
+      checkRunId: 123, headSha: job.headSha, parents: [old, main] }) });
+    const acquired = await runtime.acquire(job, randomUUID());
+    if (compare === 'behind') {
+      assert.deepEqual(calls.map(row => row.action), ['verify_head']);
+      assert.equal(acquired.reason, 'head_not_authorized');
+    } else {
+      assert.deepEqual(calls.map(row => row.action), ['verify_head', 'carry_head_read', 'carry_main_merge', 'verify_head']);
+      assert.deepEqual([calls[2].work_key, calls[2].generation, calls[2].lease_version, calls[2].new_head_sha, calls[2].main_sha],
+        [oldKey, 7, 4, job.headSha, main]);
+      assert.match(calls[2].evidence_digest, /^[a-f0-9]{64}$/);
+      assert.equal(acquired.fields.head_sha, job.headSha);
+    }
+  }
 });
 
 test('one control invocation routes both roles to distinct real publication identities', async t => {

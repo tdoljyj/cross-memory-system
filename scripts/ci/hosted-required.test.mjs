@@ -24,6 +24,17 @@ function jobs(source) {
 }
 
 const BASE_ENV = /^\s+(BASE|CI_BASE_SHA):\s*(.+)$/gm;
+const STAGING_GATE = " && (github.event_name != 'push' || vars.CLUED_MERGE_TRAIN_PROTOCOL_VERSION != '2')";
+
+test('协议 2 只停用 hosted 暂存作业，PR 和协议 1 保留各作业原条件', () => {
+  assert.match(text, /pull_request:\n    types: \[opened, synchronize, reopened, closed\]\n    branches: \[main\]/);
+  assert.match(text, /push:\n    branches: \[clued-train\/staging\]/);
+  const always = new Set(['clued-cloud-tests', 'ci-suites', 'migration-verify', 'ci-suites-windows', 'ci-suites-windows-duration']);
+  for (const [id, block] of jobs(text)) {
+    const guard = /^    if: (.+)$/m.exec(block)?.[1];
+    assert.equal(guard, (always.has(id) ? 'always() && ' : '') + "github.event.action != 'closed'" + STAGING_GATE, id);
+  }
+});
 
 test('托管工作流不拿 github.event.before 当基线（staging 强制改指后它可能不存在）', () => {
   assert.doesNotMatch(text, /github\.event\.before/);
@@ -150,7 +161,7 @@ test('Windows 分片由 PowerShell 运行并传回选择器退出码', () => {
 const summaryJob = (name, needs, step) => [
   `    name: ${name}`,
   `    needs: ${needs}`,
-  "    if: always() && github.event.action != 'closed'",
+  "    if: always() && github.event.action != 'closed'" + STAGING_GATE,
   '    runs-on: ubuntu-24.04',
   '    timeout-minutes: 5',
   '    permissions: {}',
@@ -224,7 +235,7 @@ test('块 4：时长作业非必需，不在影子比对的七项里，只读 ac
   const block = jobs(text).get('ci-suites-windows-duration') ?? '';
   assert.match(block, /^    name: hosted-ci-suites-windows-duration$/m);
   assert.match(block, /^    needs: ci-suites-windows-shard$/m);
-  assert.match(block, /^    if: always\(\) && github\.event\.action != 'closed'$/m);
+  assert.ok(block.split('\n').includes("    if: always() && github.event.action != 'closed'" + STAGING_GATE));
   assert.match(block, /\n    permissions:\n      actions: read\n      contents: read\n    steps:\n/);
   assert.match(block, /\n {8}run: node candidate\/scripts\/ci\/hosted-windows-duration\.mjs(?:\n|$)/);
   const { PAIRS } = await import('./shadow-compare.mjs');

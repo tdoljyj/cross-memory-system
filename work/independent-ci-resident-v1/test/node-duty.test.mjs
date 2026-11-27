@@ -82,7 +82,8 @@ const reads = calls => calls.filter(a => a[4]?.includes('/statuses')).length;
 
 test('列车协议缺省时，另一节点仍在当班会触发双活停机与原有接新暂停', async () => {
   const t = duty({ statuses: { [H(1)]: [gh('node-a', '当班：排队第 1 位', NOW - MIN)] } });
-  const status = fresh({ node: known('ACTIVE'), pending: [{ pr: 1, headSha: H(1), state: 'QUEUED' }] });
+  const status = fresh({ node: known('ACTIVE'), pending: [{ pr: 1, headSha: H(1), state: 'QUEUED' }],
+    train: { last: { sharedWork: { protocolVersion: 2 }, onDuty: true } } });
   await t.d.prepare({ status, pulls: [pull(1)], now: NOW });
   const want = t.d.want(pull(1), status, NOW, { state: 'pending', description: '排队第 1 位' });
   assert.deepEqual([reads(t.calls), t.requests.map(r => [r.holder, r.minutes]), want.kind], [1, [['dual-active', 120]], 'dual']);
