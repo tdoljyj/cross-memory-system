@@ -99,7 +99,8 @@
   Step-CompanionHeadless) moves it to the companion account and writes install\companion-wsl.json itself.
 #>
 param([string]$Tree, [string]$PrereqDirectory, [string]$PrereqManifest, [string]$PrereqManifestSha256, [string]$KitSha256, [string]$ToolchainNodeSha256,
-  [string]$RegistrarSha256, [string]$ExpectedOperatorSid, [string]$CredentialDirectory, [string]$Kit, [switch]$Reset, [string]$StepProgress)
+  [string]$RegistrarSha256, [string]$ExpectedOperatorSid, [string]$CredentialDirectory, [string]$Kit, [switch]$Reset, [string]$StepProgress,
+  [string]$PreservedConnectionFile, [string]$PreservedCarrierDirectory, [string]$PreservedNodeExe, [switch]$CheckPreservedConnection)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions   # JavaScriptSerializer (Windows PowerShell 5.1 does not load it by itself)
@@ -682,7 +683,7 @@ function Invoke-Root([string]$wslScript, [string[]]$scriptArgs, [string]$interpr
 }
 function To-WslPath([string]$p) { '/mnt/' + $p.Substring(0, 1).ToLowerInvariant() + $p.Substring(2).Replace('\', '/') }
 # The secret-fingerprint tool of the package, with the staged node, a cleared environment, the secret on stdin (place-app-key.ps1's way).
-function Get-SecretFingerprint([byte[]]$secret, [string]$kind) {
+function Get-SecretFingerprint([byte[]]$secret, [string]$kind, [string]$carrier) {
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = $script:NodeExe; $psi.Arguments = '"' + $script:FingerprintTool + '" ' + $kind; $psi.WorkingDirectory = 'C:\Windows\System32'
   $psi.UseShellExecute = $false; $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
@@ -692,7 +693,12 @@ function Get-SecretFingerprint([byte[]]$secret, [string]$kind) {
   $was = if ($null -ne $cie) { $cie.GetValue($null) } else { $null }
   if ($null -ne $cie) { $cie.SetValue($null, (New-Object Text.UTF8Encoding($false))) }
   try { $p = [Diagnostics.Process]::Start($psi) } finally { if ($null -ne $cie) { $cie.SetValue($null, $was) } }
-  try { $p.StandardInput.BaseStream.Write($secret, 0, $secret.Length) } finally { $p.StandardInput.Close() }
+  try {
+    if ($carrier) {
+      $inputFile = [IO.File]::Open($carrier, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+      try { $inputFile.CopyTo($p.StandardInput.BaseStream) } finally { $inputFile.Dispose() }
+    } else { $p.StandardInput.BaseStream.Write($secret, 0, $secret.Length) }
+  } finally { $p.StandardInput.Close() }
   $o = $p.StandardOutput.ReadToEndAsync(); $null = $p.StandardError.ReadToEndAsync()
   if (-not $p.WaitForExit(60000)) { try { $p.Kill() } catch { }; Stop-Host 'SECRET_FINGERPRINT_TIMEOUT' $kind }
   if ($p.ExitCode -ne 0) { return $null }
@@ -1049,6 +1055,59 @@ function Assert-CiInstallBaseline([string]$ciRoot) {
   throw 'CI_CONNECTION_REINSTALL_BASELINE_REQUIRED'
 }
 
+function Read-PreservedConnection([string]$controllerSid) {
+  $resident = Join-Path $Tree 'work\independent-ci-resident-v1'
+  . (Join-Path $resident 'rollout\fleet\package-lifecycle.ps1')
+  $root = $FleetResources.journalRoot
+  if ($Reset -or $CredentialDirectory -or -not $PreservedNodeExe -or
+      [IO.Path]::GetDirectoryName($PreservedCarrierDirectory) -ine $root -or
+      [IO.Path]::GetFileName($PreservedCarrierDirectory) -cnotmatch '^connection-[0-9a-f]{32}$') {
+    throw 'FLEET_PRESERVED_INPUT_REFUSED'
+  }
+  Assert-FleetLocalPath $PreservedConnectionFile
+  Assert-FleetLocalPath $PreservedNodeExe
+  if ((Get-Item -LiteralPath $PreservedConnectionFile -Force).Length -gt 8192 -or
+      (Get-FileHash -LiteralPath $PreservedNodeExe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ToolchainNodeSha256) { throw 'FLEET_PRESERVED_INPUT_REFUSED' }
+  $data = (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject([IO.File]::ReadAllText($PreservedConnectionFile))
+  $record = Get-Key $data 'nodeRecord'
+  $upgrade = Get-Key $data 'upgradeToken'
+  $heartbeat = Get-Key $data 'heartbeatToken'
+  $uuid = '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
+  foreach ($ref in @('ciPrincipalBindingId','ciPrincipalRoleRef','ciPrincipalQualificationRef')) {
+    if ((Get-Key $record $ref) -cnotmatch $uuid) { throw 'FLEET_PRESERVED_BINDING_REFUSED' }
+  }
+  if ($null -ne $heartbeat -and (Get-Key $heartbeat 'bindingId') -cnotmatch $uuid) { throw 'FLEET_PRESERVED_BINDING_REFUSED' }
+  $oldNode = $script:NodeExe
+  $oldTool = $script:FingerprintTool
+  $script:NodeExe = $PreservedNodeExe
+  $script:FingerprintTool = Join-Path $resident 'tools\secret-fingerprint.mjs'
+  $carriers = [ordered]@{}
+  try {
+    $specs = @(@('appKey','app-key',$record['appPublicKeySha256Base64'],$SecretTargets['appKey']),
+      @('ciToken','ci-token',$record['ciTokenPinSha256'],$SecretTargets['ciToken']),
+      @('upgradeToken','ci-token',(Get-Key $upgrade 'fingerprint'),(Join-Path $PreservedCarrierDirectory $script:CredentialList.files['upgradeToken'])))
+    if ($null -ne $heartbeat) {
+      $specs += ,@('heartbeatToken','heartbeat-token',(Get-Key $heartbeat 'fingerprint'),(Join-Path $PreservedCarrierDirectory $script:CredentialList.files['heartbeatToken']))
+    }
+    foreach ($spec in $specs) {
+      $file = Get-FleetConnectionCarrier $spec[3]
+      if ($null -eq $file -or -not $spec[2] -or
+          ($SecretTargets.Contains($spec[0]) -and -not (Test-SddlIs (Get-Acl -LiteralPath $file.FullName -ErrorAction Stop).Sddl (Get-SecretFileSddl $controllerSid))) -or
+          (Get-SecretFingerprint $null $spec[1] $file.FullName) -cne $spec[2]) { throw ('FLEET_PRESERVED_CARRIER_REFUSED:' + $spec[0]) }
+      if (-not $SecretTargets.Contains($spec[0])) { $carriers[$spec[0]] = $file.FullName }
+    }
+  } finally { $script:NodeExe = $oldNode; $script:FingerprintTool = $oldTool }
+  $appKeyId = 0L
+  if (-not [long]::TryParse([string](Get-Key $record 'appKeyId'), [ref]$appKeyId) -or $appKeyId -lt 1) { throw 'FLEET_PRESERVED_APP_KEY_ID_REFUSED' }
+  @{
+    nodeRecord = [ordered]@{ appKeyId = $appKeyId; appPublicKeySha256Base64 = $record['appPublicKeySha256Base64']
+      ciPrincipalBindingId = $record['ciPrincipalBindingId']; ciPrincipalQualificationRef = $record['ciPrincipalQualificationRef']
+      ciPrincipalRoleRef = $record['ciPrincipalRoleRef']; ciTokenPinSha256 = $record['ciTokenPinSha256'] }
+    credentials = [ordered]@{ heartbeatToken = $heartbeat; upgradeToken = $upgrade }
+    carriers = $carriers
+  }
+}
+
 function Invoke-HostPreparation {
   # the credential list (data next to this script, in the archive under its hash), read before anything else is done
   Enter-Step 'credential-files'
@@ -1063,19 +1122,40 @@ function Invoke-HostPreparation {
   Enter-Step 'operator'
   $wi = [Security.Principal.WindowsIdentity]::GetCurrent()
   if (-not (New-Object Security.Principal.WindowsPrincipal($wi)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Stop-Host 'RUN_ELEVATED' $null }
-  Assert-CiInstallBaseline $CiRoot
+  if (-not $CheckPreservedConnection) { Assert-CiInstallBaseline $CiRoot }
   $operator = $wi.User.Value
   $oc = Test-ExpectedOperator $operator $ExpectedOperatorSid
   if ($oc) { Stop-Host $oc ([ordered]@{ elevatedAs = $operator; bootstrapRanAs = $ExpectedOperatorSid }) }
   foreach ($a in @($Tree, $PrereqDirectory, $PrereqManifest, $Kit)) { if (-not $a) { Stop-Host 'USAGE' $null } }
   foreach ($h in @($PrereqManifestSha256, $KitSha256, $ToolchainNodeSha256, $RegistrarSha256)) { if ($h -cnotmatch '^[0-9a-f]{64}$') { Stop-Host 'USAGE' 'pinned sha256 required (install.mjs first-install-check)' } }
   Step 'operator' $operator
+  $preserved = $null
+  if ($PreservedConnectionFile -or $CheckPreservedConnection) {
+    $controller = Get-LocalUser -Name 'clued-control' -ErrorAction Stop
+    $preserved = Read-PreservedConnection $controller.SID.Value
+    if ($CheckPreservedConnection) {
+      $companion = Get-LocalUser -Name $CompanionAccountName -ErrorAction Stop
+      . (Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet\package-lifecycle.ps1')
+      $profile = Get-FleetProfileDirectory $companion.SID.Value
+      if (-not $profile -or (Sha256File $Kit) -cne $KitSha256) { throw 'FLEET_PRESERVED_COMPANION_LOGIN_REFUSED' }
+      $gh = Get-KitGhExe ([IO.File]::ReadAllText($Kit))
+      $script = Join-Path $Tree 'work\independent-ci-resident-v1\windows\companion-gh-login.ps1'
+      $login = Invoke-CompanionGhLogin $script 'Check' @('-Offline') $profile $companion.SID.Value $gh
+      if ($login.exit -ne 0 -or $login.status -cne 'COMPANION_GH_LOGIN_READY') { throw 'FLEET_PRESERVED_COMPANION_LOGIN_REFUSED' }
+      ConvertTo-JsonLine ([ordered]@{ status = 'PRESERVED_CONNECTION_CARRIERS_VERIFIED' })
+      return
+    }
+  }
   Enter-Step 'residue'
   $factsFile = Join-Path $FirstDir 'facts.json'
   $js = New-Object Web.Script.Serialization.JavaScriptSerializer
   $old = if ([IO.File]::Exists($factsFile)) { $js.DeserializeObject($Strict8.GetString([IO.File]::ReadAllBytes($factsFile))) } else { $null }
   # residue (M5); -Reset needs only that no resident is there
   $observed = Get-ObservedResidue ($null -ne $old)
+  if ($preserved) {
+    if ($null -ne $old) { Stop-Host 'FLEET_PRESERVED_INSTALL_RESIDUE' $null }
+    $observed['ciTokenWithoutFacts'] = $false
+  }
   $res = Get-ResidueCodes $observed
   if (-not $Reset -and $res.Count) { Stop-Host 'FIRST_INSTALL_RESIDUE_PRESENT' ([ordered]@{ found = $res; next = 'a first install needs a clean machine: a node with a resident is reinstalled; leftovers of an uninstalled one (named above) are removed by a person first' }) }
   Step 'residue' $(if ($res.Count) { $res } else { 'none' })
@@ -1266,11 +1346,16 @@ function Invoke-HostPreparation {
     Enter-Step 'credentials'
     # the companion's token: in place, else the Owner's copied by the login script, else asked for below with the others (B3)
     $gl = Join-Path $R 'windows\companion-gh-login.ps1'
-    $companionSource = Resolve-CompanionTokenSource $gl $nodeProfile.ownerProfileDirectory $nodeProfile.ownerSid $GhExe
+    $companionSource = if ($preserved) {
+      $connection = Invoke-CompanionGhLogin $gl 'Check' @('-Offline') $nodeProfile.ownerProfileDirectory $nodeProfile.ownerSid $GhExe
+      if ($connection.exit -ne 0 -or $connection.status -cne 'COMPANION_GH_LOGIN_READY') { Stop-Host 'FLEET_PRESERVED_COMPANION_LOGIN_REFUSED' $null }
+      'present'
+    } else { Resolve-CompanionTokenSource $gl $nodeProfile.ownerProfileDirectory $nodeProfile.ownerSid $GhExe }
     # credentials (H2): what is in place and recorded is only checked; what is asked for is checked whole before anything is written
     $state = [ordered]@{}
     foreach ($k in @('appKey', 'ciToken', 'upgradeToken', 'heartbeatToken')) { $state[$k] = if ($null -ne $old) { Get-SecretState $k $old $controllerSid } else { 'missing' } }
     $plan = Get-CredentialPlan ($null -ne $old) $state
+    if ($preserved) { $plan = @{ mode = 'verify-only'; ask = @() } }
     if ($plan.mode -ceq 'refused') { Stop-Host $plan.code 'run bootstrap.ps1 -Reset first (it removes what this first install placed)' }
     $public = $null
     if ($plan.mode -cne 'verify-only') {
@@ -1303,7 +1388,9 @@ function Invoke-HostPreparation {
     }
     $fps = [ordered]@{}
     foreach ($k in @($script:Secrets.Keys)) { $fps[$k] = Get-SecretFingerprintOf $k $script:Secrets[$k]; if (-not $fps[$k]) { Stop-Host 'CREDENTIAL_NOT_ITS_KIND' $k } }
-    if ($null -ne $old) {
+    if ($preserved) {
+      $nodeRecord = $preserved.nodeRecord; $cred = $preserved.credentials; $keyId = $null
+    } elseif ($null -ne $old) {
       # every secret given now must be the one facts.json records; the rest of the draft is the facts' own
       foreach ($k in @($fps.Keys)) { if ($state[$k] -cne 'missing' -or $fps[$k] -cne (Get-SecretRecorded $k $old)) { Stop-Host 'SECRET_GIVEN_IS_NOT_THE_FACTS' $k } }
       $nodeRecord = $old['nodeRecord']; $cred = $old['credentials']; $keyId = [string]$old['signer']['keyId']
@@ -1328,6 +1415,15 @@ function Invoke-HostPreparation {
     # cut off between them leaves facts.json without (some) secrets: the next run asks for what is missing, held to the fingerprints it
     # records, and -Reset removes it; never the App key and the ci-admission token without the facts that say whose they are.
     if ($null -eq $old) { Write-NewFile $factsFile ($Utf8.GetBytes((ConvertTo-JsonLine $facts) + "`n")) (Get-FirstInstallSddl $operator) }
+    if ($preserved) {
+      foreach ($name in $preserved.carriers.Keys) {
+        $target = Join-Path $CredDir $script:CredentialList.files[$name]
+        [IO.File]::Copy($preserved.carriers[$name], $target, $false)
+        $acl = [Security.AccessControl.FileSecurity]::new()
+        $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)')
+        Set-Acl -LiteralPath $target -AclObject $acl -ErrorAction Stop
+      }
+    }
     Write-Secrets $controllerSid
     # then the companion's token into its own isolated configuration (the login script; never in facts.json, never in credentials\)
     if ($companionSource -ceq 'ask' -and $null -ne $script:CompanionToken) { Write-CompanionToken $gl $nodeProfile.ownerProfileDirectory $nodeProfile.ownerSid $GhExe $script:CompanionToken }
