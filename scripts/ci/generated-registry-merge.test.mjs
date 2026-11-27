@@ -209,7 +209,9 @@ test('本地选择器加载即抛时仍能加载准入模块，适用性返回 n
 });
 
 test('同一份基线证据在选择器相同时有效，换用另一提交的选择器后返回 null',async()=>{
-  const prHead=edit(base,firstHelper,'PR change');
+  // Reach the selector identity check with a diff that does not require migration verification.
+  const changedFile='docs/EXTERNAL_DOCUMENT_ARCHIVE.md';
+  const prHead=edit(base,changedFile,'PR change');
   edit(base,selector,'different local selector');
   const local=await import(pathToFileURL(path.join(tree,'scripts/ci/clued-required-applicability.mjs')));
   const repository='fixture/repo',prefix='/repos/'+repository,gate='scripts/ci/clued-work-admission.mjs';
@@ -226,7 +228,7 @@ test('同一份基线证据在选择器相同时有效，换用另一提交的�
     [prefix+'/actions/runs/1',{id:1,run_attempt:1,event:'pull_request',path:REQUIRED_TESTS_SOURCE.file,head_sha:prHead,
       repository:{full_name:repository},status:'completed',conclusion:'success',pull_requests:[]}],
     [prefix+'/compare/'+base+'...'+prHead+'?per_page=100&page=1',{base_commit:{sha:base},merge_base_commit:{sha:base},
-      total_commits:1,commits:[{sha:prHead}],files:[{filename:firstHelper,status:'modified'}]}],
+      total_commits:1,commits:[{sha:prHead}],files:[{filename:changedFile,status:'modified'}]}],
     [prefix+'/actions/runs/1/attempts/1/jobs?per_page=100&page=1',{total_count:jobs.length,jobs}],
     [prefix+'/contents/'+selector+'?ref='+base,content(selector)],
     [prefix+'/contents/'+gate+'?ref='+base,content(gate)],

@@ -317,17 +317,21 @@ test('production capture workflow is owner-only on main and cannot qualify or mu
   assert.match(workflow, /retention-days: \$\{\{ inputs\.mode == 'source-capture' && 1 \|\| 30 \}\}/);
   const capture = workflow.slice(workflow.indexOf('- name: Capture exact nonsecret registration source'),
     workflow.indexOf('- name: Install embedded PostgreSQL ICU compatibility runtime'));
+  assert.match(capture, /^        if: \$\{\{ inputs\.mode == 'source-capture' \}\}$/m);
   assert.doesNotMatch(capture, /secrets\.CLUED_ATTESTATION_DATABASE_URL|secrets\.CLUED_CLOUDFLARE_DEPLOY_TOKEN|wrangler deploy/);
   assert.doesNotMatch(capture, /storage_client_capability_admin_v2|register_snapshot|qualify|supabase_apply/);
-  for (const name of ['Install embedded PostgreSQL ICU compatibility runtime',
-    'Verify projection and MTPE behavior', 'Build exact Worker source',
-    'Verify database prerequisites and record projection state',
-    'Check Cloudflare deployment credential', 'Deploy Clued production Worker',
-    'Verify exact live commit and currentness transport',
-    'Verify projection currentness after deployment']) {
-    const step = workflow.slice(workflow.indexOf(`- name: ${name}`),
-      workflow.indexOf('- name:', workflow.indexOf(`- name: ${name}`) + 1));
-    // Each of these runs only in preflight, deploy or release, never in source-capture.
-    assert.match(step, /if: \$\{\{ inputs\.mode == '(?:preflight' \|\| inputs\.mode == ')?deploy' \|\| inputs\.mode == 'release' \}\}/);
+  const deployOrRelease = "inputs.mode == 'deploy' || inputs.mode == 'release'";
+  const workerPreflight = "(inputs.mode == 'preflight' && inputs.fleet_release_run == '')";
+  const steps = workflow.split(/^      - /m);
+  for (const [name, condition] of [
+    ...['Install embedded PostgreSQL ICU compatibility runtime', 'Verify projection and MTPE behavior',
+      'Build exact Worker source', 'Verify and build Kooyumi Connect release source',
+      'Verify database prerequisites and record projection state'].map(name => [name, `${workerPreflight} || ${deployOrRelease}`]),
+    ...['Check Cloudflare deployment credential', 'Deploy Clued production Worker',
+      'Verify exact live commit and currentness transport', 'Verify projection currentness after deployment']
+      .map(name => [name, deployOrRelease]),
+  ]) {
+    const step = steps.find(step => step.split(/\r?\n/, 1)[0] === `name: ${name}`);
+    assert.equal(step?.match(/^        if: (.+)$/m)?.[1], '${{ ' + condition + ' }}', name);
   }
 });
