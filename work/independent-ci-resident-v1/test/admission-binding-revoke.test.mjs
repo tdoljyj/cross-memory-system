@@ -10,6 +10,7 @@
 //     it ran (stage 1 is the first stage, its check is attempt-scoped), so the one automatic attempt 2 admits it again, no new commit.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { batchJobsV2, scanExternalIdV2 } from '../../actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
@@ -17,7 +18,9 @@ import { digest } from '../../actions-hosted-migration/independent-ci-v1/src/pro
 import { EffectJournal } from '../../actions-hosted-migration/independent-ci-v1/src/effect-journal.mjs';
 import { recordBatchClaim, readBatchClaim } from '../../actions-hosted-migration/independent-ci-v1/src/batch-claim-v2.mjs';
 import { createFixtureWorkAdmissionPublisherV2 } from '../../actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs';
-import { outcomeFailureCode } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
+import { createFullAdmissionPortV2 } from '../../actions-hosted-migration/independent-ci-v1/src/full-admission-v2.mjs';
+import { outcomeFacts, outcomeFailureCode } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
+import { writeOutcome } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-inputs.mjs';
 import { admittedFacts, tempDir } from '../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
 import { describe } from '../src/pr-status.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
@@ -27,11 +30,11 @@ const REPO = 'tdoljyj/cross-memory-system', APP = 5368905, MIN = 60_000;
 const iso = ms => new Date(ms).toISOString();
 const BASE_SHA = 'b'.repeat(40);
 
-function github() {
+function github(headSha = HEAD, baseSha = BASE_SHA) {
   const checks = []; let next = 1000;
   return { fixture: true, checks,
     async readChangedPaths(job) { return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] }; },
-    async readPullRequest(n) { return { number: n, state: 'open', merged: false, mergeable: true, head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: BASE_SHA, ref: 'main', repo: { full_name: REPO } } }; },
+    async readPullRequest(n) { return { number: n, state: 'open', merged: false, mergeable: true, head: { sha: headSha, repo: { full_name: REPO } }, base: { sha: baseSha, ref: 'main', repo: { full_name: REPO } } }; },
     async readChecks(head) { return { complete: true, checks: checks.filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
     async readAppChecks(head) { return { complete: true, checks: checks.filter(c => c.head_sha === head && c.app.id === APP).map(c => structuredClone(c)) }; },
     async createCheck(body) { const c = { id: next++, app: { id: APP }, ...structuredClone(body) }; checks.push(c); return structuredClone(c); },
@@ -47,21 +50,23 @@ function answer(job, claim, packet, change = {}) {
 }
 // The stage-1 publisher of one node. `observe(job, written)` is what Native's answer shows over the admitted facts, before the write of
 // this attempt's check (written false) and when it is verified again after the write (written true).
-async function stage1(t, gh, observe) {
+async function stage1(t, gh, observe, verifyAfterWrite) {
   const dir = await tempDir(t);
   const batchClaims = { read: async j => { try { return await readBatchClaim(dir, j); } catch (e) { if (e.code === 'BATCH_CLAIM_MISSING') return null; throw e; } },
     record: (j, c, at) => recordBatchClaim(dir, j, c, at) };
   const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
   const claim = { claimId: randomUUID(), fence: 37, epoch: 1, expiresAt: iso(Date.now() + 3600_000) };
-  const admission = { fixture: true, async evaluatePr(job, packet) {
+  const admission = { fixture: true, async evaluatePr(job, packet, options) {
     const written = gh.checks.some(c => c.name === 'kooyumi-work-admission' && c.external_id.includes(`:a${job.attempt}:`));
+    if (written && job.attempt === 1 && verifyAfterWrite) return verifyAfterWrite(job, packet, options);
     return answer(job, claim, packet, observe(job, written));
   } };
-  return createFixtureWorkAdmissionPublisherV2({ github: gh, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaims });
+  return createFixtureWorkAdmissionPublisherV2({ github: gh, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaims, sleep: async () => {} });
 }
 // A resident whose stage 1 is the real Source publisher; stage 3 publishes the batch's gitleaks (the first role check).
-async function node(t, gh, observe) {
-  const pub = await stage1(t, gh, observe);
+async function node(t, gh, observe, verifyAfterWrite) {
+  const pub = await stage1(t, gh, observe, verifyAfterWrite);
+  const receiptsRoot = await tempDir(t);
   const engine = fakeEngine(), subjects = new Map(), derive = engine.derive, run = engine.runStage;
   engine.derive = async (subject, key, chain) => { subjects.set(key, subject); return derive(subject, key, chain); };
   const jobsOf = key => { const s = subjects.get(key);
@@ -69,9 +74,11 @@ async function node(t, gh, observe) {
   engine.runStage = async (batch, stage, o) => {
     if (stage.number === 1) {
       engine.calls.push(['stage', 1]);
-      const r = await pub.publish(jobsOf(batch.key)['work-admission']);
+      const job = jobsOf(batch.key)['work-admission'];
+      const r = await pub.publish(job);
       if (r.status === 'SETTLED') return { ok: true, factsSha256: 'd'.repeat(64), outcome: { status: 'SETTLED', reason: null, sideEffects: r.sideEffects, mayHavePublished: true } };
-      const outcome = { status: r.status, reason: r.reason ?? null, sideEffects: r.sideEffects, mayHavePublished: r.status === 'REVOKED', safeToRerun: r.safeToRerun === true, diagnostic: null, scheduling: null };
+      const entry = await writeOutcome({ receiptsRoot, nonce: randomUUID().replaceAll('-', ''), plan: { stage: 1, entryRole: 'work-admission' }, jobIds: [job.id], result: r });
+      const outcome = outcomeFacts(entry);
       return { ok: false, code: outcomeFailureCode(outcome, 1), proof: WINDOWS_CLEAN, outcome, brokerNoLaunch: false };
     }
     if (stage.number === 3) {
@@ -84,6 +91,73 @@ async function node(t, gh, observe) {
   return { f, stages: () => engine.calls.filter(c => c[0] === 'stage').map(c => c[1]) };
 }
 const admissions = gh => gh.checks.filter(c => c.name === 'kooyumi-work-admission').map(c => [/:a(\d):c/.exec(c.external_id)?.[1], c.conclusion]);
+
+// Replay #1397's withdrawal using a concrete fault that produces its exact wording on the old Source:
+// the Native PR binding RPC replies with a temporary HTTP error during the verification after the write.
+const FIELD_PR = { pr: 1397, headSha: '90140323d6f06c2cbfe521ccb8320ec3c95145bb', baseSha: 'd95c894c395158790533d0b2de94a82ba5fb2ee9' };
+function nativeBindingHttp(gh, status, seen) {
+  const policyText = readFileSync(new URL('../../../config/merge-admission-policy.json', import.meta.url), 'utf8');
+  const evaluatorSha256 = digest(readFileSync(new URL('../../../scripts/ci/clued-work-admission.mjs', import.meta.url), 'utf8'));
+  const qualification = { ciPrincipalBindingId: randomUUID(), ciPrincipalQualificationRef: 'fixture' };
+  return (job, packet, options) => createFullAdmissionPortV2({
+    protectedConfig: { ...qualification, domain: 'fixture', repository: REPO, scope: 'global', workspace: process.cwd(),
+      sourceManifestSha256: job.sourceManifestSha256, evaluatorSha256, policyText, policySha256: digest(policyText),
+      publishableKey: 'sb_publishable_fixture', supabaseUrl: 'https://fixture.supabase.co' },
+    tokenProvider: async () => ({ ...qualification, githubToken: 'fixture', ciAdmissionToken: ['clued', 'bnd', 'fixture123'].join('_') }),
+    modeProvider: async () => ({ complete: true, repository: REPO, variable: 'CLUED_MERGE_ADMISSION_STATE', source: 'github-repository-variables',
+      exists: false, observedAt: iso(Date.now()), proofRef: 'fixture' }),
+    recorderProvider: async () => ({ kind: 'independent-controller', domain: 'fixture', observedAt: iso(Date.now()), observationRef: 'fixture',
+      recorder: { newId: randomUUID, record() {} } }),
+    fetchImpl: async (url, opts) => {
+      const { hostname, pathname } = new URL(url);
+      const prRoute = `/repos/${REPO}/pulls/${job.pr}`;
+      if (hostname === 'api.github.com' && pathname === prRoute) return Response.json(await gh.readPullRequest(job.pr));
+      if (hostname === 'api.github.com' && pathname === `${prRoute}/files`) return Response.json([{ filename: 'a.txt', status: 'modified' }]);
+      if (hostname === 'api.github.com' && pathname.endsWith('/branches/main')) return Response.json({ commit: { sha: job.baseSha } });
+      if (hostname === 'api.github.com' && pathname.endsWith(`/compare/${job.baseSha}...${job.headSha}`)) return Response.json({ status: 'ahead', files: [] });
+      if (hostname === 'fixture.supabase.co' && pathname === '/rest/v1/rpc/clued_work_verify_v1' && opts.method === 'POST') {
+        seen.push(JSON.parse(opts.body).p_input.action);
+        return Response.json({ message: 'fixture' }, { status });
+      }
+      throw new Error(`unexpected fixture route: ${pathname}`);
+    },
+  }).evaluatePr(job, packet, options);
+}
+
+test('stage 1: #1397 withdrawal after a temporary Native HTTP failure schedules attempt 2 for the same head', async t => {
+  const gh = github(FIELD_PR.headSha, FIELD_PR.baseSha), seen = [];
+  const n = await node(t, gh, () => ({}), nativeBindingHttp(gh, 503, seen));
+  await n.f.drop(triggerBytes(FIELD_PR));
+  const first = await n.f.exec.tick();
+  const { terminal } = await n.f.ledger.state(first.key);
+  const check = gh.checks[0];
+  assert.equal(seen[0], 'resolve_pr_claim');
+  assert.deepEqual(admissions(gh), [['1', 'failure']]);
+  assert.match(check.output.summary, /^Reconcile Native admission check [a-f0-9]{64}; full_admission_unavailable\./);
+  assert.deepEqual([first.state, first.failureCode, terminal.facts.retry, check.output.title],
+    ['FAILED_CLEAN', 'ADMISSION_VERIFICATION_UNAVAILABLE', 'attempt2', 'Work admission check withdrawn: verification unavailable'],
+    check.output.summary);
+  assert.match(check.output.summary, /could not be read in time.*no change of it was observed/);
+  assert.deepEqual(seen, Array(4).fill('resolve_pr_claim'), 'the existing bounded verification re-reads');
+  assert.equal(await n.f.executedHeads.published({ repo: REPO, headSha: FIELD_PR.headSha }), false, 'nothing of the head ran');
+  const pending = await n.f.ledger.pendingAttempts2();
+  assert.deepEqual(pending.map(({ subject }) => [subject.pr, subject.headSha, subject.attempt]), [[FIELD_PR.pr, FIELD_PR.headSha, 2]]);
+  n.f.advance(10 * MIN + 1);
+  assert.equal((await n.f.exec.tick()).state, 'COMPLETED');
+  assert.deepEqual(admissions(gh), [['1', 'failure'], ['2', 'success']]);
+});
+
+test('stage 1: a Native binding HTTP 403 still withdraws the check and ends the head', async t => {
+  const gh = github(FIELD_PR.headSha, FIELD_PR.baseSha), seen = [];
+  const n = await node(t, gh, () => ({}), nativeBindingHttp(gh, 403, seen));
+  await n.f.drop(triggerBytes(FIELD_PR));
+  const first = await n.f.exec.tick();
+  const { terminal } = await n.f.ledger.state(first.key);
+  assert.deepEqual([first.state, first.failureCode, terminal.facts.retry], ['FAILED_CLEAN', 'PUBLICATION_REVOKED', 'new-commit']);
+  assert.deepEqual(seen, ['resolve_pr_claim']);
+  assert.equal(gh.checks[0].output.title, 'Work admission check withdrawn: verification failed');
+  assert.deepEqual(await n.f.ledger.pendingAttempts2(), []);
+});
 
 test('stage 1: the merge slot leaving the queue between the two reads (field PR #1123) no longer withdraws the admission; the head runs', async t => {
   const gh = github();
