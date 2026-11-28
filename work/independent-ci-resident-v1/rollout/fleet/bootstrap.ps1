@@ -831,7 +831,9 @@ function Invoke-Stage {
         Assert-FleetJournalRoot $FleetResources.journalRoot
         if ($Action -cne 'Install') { throw 'FLEET_MAINTENANCE_ACTION_REFUSED' }
         $kitCopy = Join-Path $protected.assets ([IO.Path]::GetFileName($Kit))
-        $kitRecord = Get-Key (Read-FleetConnectionJson $kitCopy) 'record'
+        # The protected kit was checked above against the accepted digest and embeds the Source manifest.
+        $kitJson = New-Object Web.Script.Serialization.JavaScriptSerializer -Property @{ MaxJsonLength = [int]::MaxValue }
+        $kitRecord = Get-Key ($kitJson.DeserializeObject([IO.File]::ReadAllText($kitCopy))) 'record'
         $fingerprintTool = Join-Path $residentTree 'tools\secret-fingerprint.mjs'
         $carriedSite = $null
         if ($progress) {

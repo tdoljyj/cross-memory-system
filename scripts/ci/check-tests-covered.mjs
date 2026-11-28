@@ -352,7 +352,7 @@ const FLEET_CHILDREN = new RegExp('^' + FLEET + '/test/[^/]+\\.test\\.mjs$');
 const FLEET_WRAPPERS = [1, 2, 3].map((part) => RESIDENT + '/test/fleet-node-children-' + part + '.test.mjs');
 const FLEET_POWERSHELL_CALLS = [
   { caller: RESIDENT + '/test/fleet-node-powershell.test.mjs', script: FLEET + '/test/test-bootstrap.ps1',
-    call: /^\s*const r = powershellFile\(path\.join\(FLEET_TESTS, 'test-bootstrap\.ps1'\)\);\s*$/m },
+    call: /^\s*const r = powershellFile\(path\.join\(FLEET_TESTS, 'test-bootstrap\.ps1'\)(?:, \[[^\]]*\])?\);\s*$/m },
   { caller: FLEET + '/test/test-bootstrap.ps1', script: FLEET + '/test/test-clean-reinstall.ps1',
     call: /^\s*\. \(Join-Path \$here 'test-clean-reinstall\.ps1'\)\s*$/m },
 ];
