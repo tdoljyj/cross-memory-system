@@ -1347,10 +1347,14 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
   });
 }
 
-async function runTargetedFiles(id, { root, env, files, onlyNamed, log = console.log }) {
+async function runTargetedFiles(id, { root, env, files, onlyNamed, runtimeReader, log = console.log }) {
   let named, plan;
   try {
     ({ named } = planFiles(id, { root, files, env }));
+    if (runtimeReader !== undefined) {
+      const { assertRuntimeTestEdges } = await import('./check-tests-covered.mjs');
+      assertRuntimeTestEdges({ root, reader: runtimeReader, files: named });
+    }
   } catch (error) {
     log('run-files ' + id + ': ' + error.message);
     for (const line of await whereFilesRun(error.unmatched, root)) log(line);
@@ -1374,8 +1378,11 @@ async function runTargetedFiles(id, { root, env, files, onlyNamed, log = console
   log('run-files 基准：HEAD ' + plan.head + '，origin/main ' + plan.main + '，共同祖先 ' + plan.base + '；以工作树字节为准');
   log('run-files 建图 ' + plan.graphMs + ' ms，规划及校验 ' + Math.round(performance.now() - started) +
     ' ms，显式 ' + named.size + '，新增文件 ' + additions + '，新增套件/文件组合 ' + plan.matches.length);
-  for (const { suite, local, chain } of plan.matches) {
-    log('  ' + suite + (local ? '：' : '（待该平台 CI）：') + chain.join(' -> '));
+  for (const { suite, file, local, platforms, chain } of plan.matches) {
+    const reason = chain.length > 1 ? '因依赖带上' : '因改动带上';
+    const pending = local ? '' : '（待 ' + platforms.map((platform) => platform === 'linux' ? 'Linux' : 'Windows').join('/') + ' 验证）';
+    const dependency = chain.length > 1 ? '，依赖链 ' + chain.join(' -> ') : '';
+    log('  ' + reason + ' ' + suite + pending + '：' + file + dependency);
   }
   for (const group of plan.deferred) {
     for (const reason of group.reasons) log('  ' + group.suite + '（待该平台 CI 整套）：' + reason);
@@ -2640,6 +2647,7 @@ async function main(argv, env = process.env) {
     console.log(`Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
     console.log('--run-files 执行点名测试，并按与本地 origin/main 的共同祖先计算影响范围，涵盖分支提交、暂存、未暂存和未忽略的新文件。');
     console.log('--run-files <套件> <文件...> --only-named 仅执行点名文件，不扩展影响范围。');
+    console.log('回放助手用 --only-named --runtime-reader <读取者测试绝对路径> 核对实际点名路径的登记。');
     console.log('各组轮流使用本机套件槽。基准或覆盖范围无法确定时退出 2，GitHub Actions 也拒绝此入口。输出为定向结果。');
     return 0;
   }
@@ -2715,7 +2723,15 @@ async function main(argv, env = process.env) {
       console.error(`run-files: needs a known suite and at least one test file\n${USAGE}`);
       return 2;
     }
-    return runTargetedFiles(id, { root, env, files: named, onlyNamed: argv.includes('--only-named') });
+    const onlyNamed = argv.includes('--only-named');
+    const readerIndex = argv.indexOf('--runtime-reader');
+    const runtimeReader = readerIndex < 0 ? undefined : argv[readerIndex + 1];
+    if (readerIndex >= 0 && (!onlyNamed || !runtimeReader || !path.isAbsolute(runtimeReader) ||
+        argv.lastIndexOf('--runtime-reader') !== readerIndex)) {
+      console.error('run-files: --runtime-reader <读取者测试绝对路径> 须和 --only-named 一起使用，且只可传入一次');
+      return 2;
+    }
+    return runTargetedFiles(id, { root, env, files: named, onlyNamed, runtimeReader });
   }
   const writeIndex = argv.indexOf('--write-known');
   if (writeIndex >= 0) {

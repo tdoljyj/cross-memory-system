@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, watch, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, globSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, watch, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -91,6 +91,7 @@ function slotFixture(t) {
   const changes = new EventEmitter();
   const selector = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs');
   const slotModule = pathToFileURL(path.join(ROOT, 'scripts/ci/local-suite-slots.mjs')).href;
+  const plannerModule = pathToFileURL(path.join(ROOT, 'scripts/ci/check-tests-covered.mjs')).href;
   const loader = path.join(dir, 'loader.mjs');
   writeFileSync(loader, `import { registerHooks } from 'node:module';
     import childProcess from 'node:child_process';
@@ -113,6 +114,11 @@ function slotFixture(t) {
       });
     }
     registerHooks({ resolve(specifier, context, next) {
+      if (specifier === './check-tests-covered.mjs' && process.env.SLOT_FIXTURE_PLAN_LINUX === '1') {
+        const source = 'import { planTargetedFiles as plan } from ' + JSON.stringify(${JSON.stringify(plannerModule)}) +
+          '; export const planTargetedFiles = (root, suite, named, options) => plan(root, suite, named, { ...options, platform: "linux" });';
+        return { url: 'data:text/javascript,' + encodeURIComponent(source), shortCircuit: true };
+      }
       if (specifier !== './local-suite-slots.mjs') return next(specifier, context);
       const source = \`import { withLocalSuiteSlot as acquire } from \${JSON.stringify(${JSON.stringify(slotModule)})};
         export const withLocalSuiteSlot = (id, run) => acquire(id, run, {
@@ -135,7 +141,7 @@ function slotFixture(t) {
   });
   return function start(name, {
     waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter', mode = '--run', body = null, named = null, extraFiles = {},
-    extraEnv = {}, startupDelayMs = 0, prepare,
+    extraEnv = {}, startupDelayMs = 0, prepare, onlyNamed = false, runtimeReader,
   } = {}) {
     const root = path.join(dir, name);
     const scripts = path.join(root, 'scripts', 'ci');
@@ -209,17 +215,21 @@ function slotFixture(t) {
       Object.assign(env, { SLOT_FIXTURE_EVENT: '1', GITHUB_EVENT_NAME: 'pull_request',
         GITHUB_EVENT_PATH: event, GITHUB_REPOSITORY: 'fixture/repo', GITHUB_TOKEN: 'fixture' });
     }
-    for (const [file, text] of Object.entries(extraFiles)) {
+    // Default --run-files needs the other suites' expansion inputs to build its graph.
+    const fixtureFiles = mode === '--run-files' && !onlyNamed ? { ...TARGET_EXPANSIONS, ...extraFiles } : extraFiles;
+    for (const [file, text] of Object.entries(fixtureFiles)) {
       mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
       writeFileSync(path.join(root, file), text);
     }
     if (prepare) prepare(root);
     else if (mode === '--run-files') fixtureBase(root);
-    const namedFiles = mode === '--run-files' ? (named ?? ['scripts/ci/retrigger-counter.test.mjs']) : [];
+    const files = typeof named === 'function' ? named(root) : named;
+    const namedFiles = mode === '--run-files' ? (files ?? ['scripts/ci/retrigger-counter.test.mjs']) : [];
     const notify = () => changes.emit('change');
     const watcher = watch(root, { persistent: false }, notify);
     const child = spawn(process.execPath, ['--import', pathToFileURL(loader).href, tool,
-      mode, target, ...namedFiles, '--root', root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      mode, target, ...namedFiles, '--root', root, ...(onlyNamed ? ['--only-named'] : []),
+      ...(runtimeReader ? ['--runtime-reader', path.resolve(root, runtimeReader)] : [])], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     const appendOutput = (data) => {
       output += data;
@@ -358,6 +368,137 @@ const TARGET_RETRIGGER = 'scripts/ci/retrigger-counter.test.mjs';
 const TARGET_CRON = 'scripts/ci/check-cron-budget.test.mjs';
 const TARGET_BUDGET = 'scripts/ci/ci-required-selection-budget.test.mjs';
 const TARGET_LOCALS = 'scripts/ci/local-verify.test.mjs';
+const TARGET_DELIVERY = 'apps/clued-cloud/tests/fleet-delivery-release-db.test.mjs';
+const TARGET_REPLAY = 'apps/clued-cloud/tests/production-schema/fleet-previous-interfaces-db.test.mjs';
+const TARGET_DB_CONTROL = 'apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs';
+const RUNTIME_READER = 'scripts/ci/runtime/reader.test.mjs';
+const RUNTIME_STEM = 'retrigger-counter';
+for (const [name, operands] of [
+  ['多段拼接', () => ['scripts/' + 'ci/' + 'retrigger-counter' + '.test.mjs']],
+  ['path.join 中拼文件名', () => [path.join('scripts/ci', RUNTIME_STEM + '.test.mjs')]],
+  ['文件名模板串', () => [`./scripts/ci/${RUNTIME_STEM}.test.mjs`]],
+  ['glob 枚举', (root) => globSync('scripts/ci/retrigger*.test.mjs', { cwd: root })],
+  ['实际 cwd 里有同名文件', (root) => {
+    const cwd = path.join(root, 'scripts/ci');
+    const operand = path.join /* 这里的注释故意较长，路径求值与调用的换行和排版无关。 */ (cwd, 'retrigger-counter.test.mjs');
+    return [path.relative(root, operand)];
+  }],
+  ['普通模块间接执行', null],
+]) {
+  test('运行时缺边：' + name, async (t) => {
+    const start = slotFixture(t);
+    const options = { mode: '--run-files', onlyNamed: true, runtimeReader: RUNTIME_READER,
+      named: operands, body: "console.log('REPLAY_OPERAND_EXECUTED');", extraFiles: {
+        [RUNTIME_READER]: '',
+        'scripts/ci/runtime/retrigger-counter.test.mjs': '',
+      } };
+    let run;
+    if (operands) run = start('runtime-edge', options);
+    else {
+      const dir = mkdtempSync(path.join(os.tmpdir(), 'runtime-helper-'));
+      t.after(() => rmSync(dir, { recursive: true, force: true }));
+      fixtureWrite(dir, 'helper.mjs', `export function launch(run, options) {
+        return run('runtime-edge', { ...options, named: ['scripts/ci/retrigger-counter.test.mjs'] });
+      }`);
+      const { launch } = await import(pathToFileURL(path.join(dir, 'helper.mjs')).href);
+      run = launch(start, options);
+    }
+    assert.deepEqual(await run.done, [2, null], run.output());
+    assert.ok(run.output().includes('RUNTIME_READERS 缺边：' + TARGET_RETRIGGER + ' -> ' + RUNTIME_READER), run.output());
+    assert.doesNotMatch(run.output(), /REPLAY_OPERAND_EXECUTED/);
+  });
+}
+
+const REPLAY_EXPANSIONS = {
+  ...TARGET_EXPANSIONS,
+  // The coverage gate reads the delivery test source in the full checkout;
+  // this fixture exercises just the production-schema command.
+  'apps/clued-cloud/tests/production-release-gate.test.mjs': '',
+};
+
+test('已登记的回放从源检出上报读取者，在历史检出执行同名测试', async (t) => {
+  const run = slotFixture(t)('registered-replay', {
+    mode: '--run-files', suite: 'production-schema', onlyNamed: true,
+    runtimeReader: path.join(ROOT, TARGET_REPLAY), named: [TARGET_DELIVERY],
+    extraFiles: { [TARGET_DELIVERY]: "console.log('REGISTERED_REPLAY_EXECUTED');" },
+  });
+  assert.deepEqual(await run.done, [0, null], run.output());
+  assert.match(run.output(), /^REGISTERED_REPLAY_EXECUTED$/m);
+});
+
+test('定向 #1400：纯点名、实际改动都补选上一代接口回放', async (t) => {
+  const start = slotFixture(t);
+  const marker = (name) => `console.log('REPLAY_FIXTURE:${name}');\n`;
+  for (const [name, named, change, fail, onlyNamed, expected] of [
+    ['纯点名回放失败', TARGET_DELIVERY, false, true, false, ['delivery', 'replay']],
+    ['纯点名回放通过', TARGET_DELIVERY, false, false, false, ['delivery', 'replay']],
+    ['实际改动补选回放', TARGET_DB_CONTROL, true, false, false, ['control', 'delivery', 'replay']],
+    ['仅点名避免递归', TARGET_DELIVERY, true, true, true, ['delivery']],
+  ]) {
+    await t.test(name, async () => {
+      const run = start('replay-' + (onlyNamed ? 'only' : expected[0] + '-' + fail), { mode: '--run-files',
+        suite: 'production-schema', named: [named], onlyNamed, extraEnv: { SLOT_FIXTURE_PLAN_LINUX: '1' },
+        extraFiles: {
+          ...REPLAY_EXPANSIONS,
+          [TARGET_DELIVERY]: marker('delivery'),
+          [TARGET_REPLAY]: marker('replay') + (fail ? "throw Error('PREVIOUS_INTERFACES_REPLAY_FAILURE');" : ''),
+          [TARGET_DB_CONTROL]: marker('control'),
+        },
+        prepare(root) {
+          fixtureBase(root);
+          if (change) fixtureWrite(root, TARGET_DELIVERY, marker('delivery') + '// worktree change\n');
+        },
+      });
+      const status = fail && !onlyNamed ? 1 : 0;
+      assert.deepEqual(await run.done, [status, null], run.output());
+      const output = run.output();
+      assert.deepEqual([...output.matchAll(/^REPLAY_FIXTURE:(\w+)$/gm)].map((match) => match[1]).sort(), expected, output);
+      if (onlyNamed) assert.doesNotMatch(output, /因依赖带上|PREVIOUS_INTERFACES_REPLAY_FAILURE/);
+      else {
+        assert.ok(output.includes('因依赖带上') && output.includes(TARGET_DELIVERY + ' -> ' + TARGET_REPLAY), output);
+        assert.match(output, new RegExp('run-files 组 production-schema.*退出 ' + status));
+        if (fail) assert.match(output, /Error: PREVIOUS_INTERFACES_REPLAY_FAILURE/);
+      }
+      t.diagnostic(name + '，定向命令退出 ' + status + '，实际执行 ' + expected.join(', '));
+    });
+  }
+});
+
+test('定向 #1400：Windows 推迟回放，入口缺失或脱离套件时拒绝规划', { skip: process.platform !== 'win32' }, async (t) => {
+  const start = slotFixture(t);
+  for (const missing of [false, true]) {
+    const run = start(missing ? 'missing' : 'deferred', { mode: '--run-files', suite: 'production-schema',
+      named: [TARGET_DELIVERY], extraFiles: {
+        ...REPLAY_EXPANSIONS,
+        [TARGET_DELIVERY]: "console.log('DELIVERY_EXECUTED');",
+        ...(missing ? {} : { [TARGET_REPLAY]: "throw Error('LINUX_REPLAY_MUST_BE_DEFERRED');" }),
+      },
+    });
+    assert.deepEqual(await run.done, [missing ? 2 : 0, null], run.output());
+    const output = run.output();
+    if (missing) {
+      assert.match(output, /退出 2.*登记读取者缺失/);
+      assert.ok(output.includes(TARGET_REPLAY), output);
+      assert.doesNotMatch(output, /DELIVERY_EXECUTED/);
+    } else {
+      assert.match(output, /因依赖带上 production-schema（待 Linux 验证）/);
+      assert.ok(output.includes(TARGET_DELIVERY + ' -> ' + TARGET_REPLAY), output);
+      assert.match(output, /^DELIVERY_EXECUTED$/m);
+      assert.doesNotMatch(output, /LINUX_REPLAY_MUST_BE_DEFERRED/);
+      const { planTargetedFiles } = await import('./check-tests-covered.mjs');
+      const commands = SUITE_COMMANDS['production-schema'];
+      SUITE_COMMANDS['production-schema'] = commands.map((command) => ({
+        ...command, argv: command.argv.filter((arg) => arg !== TARGET_REPLAY.slice('apps/clued-cloud/'.length)),
+      }));
+      try {
+        assert.throws(() => planTargetedFiles(run.root, 'production-schema', new Set([TARGET_DELIVERY])),
+          /回放入口未编入 production-schema/);
+      } finally {
+        SUITE_COMMANDS['production-schema'] = commands;
+      }
+    }
+  }
+});
 
 function targetTiming(t, label, run) {
   const timing = run.output().split(/\r?\n/).filter((line) => /^run-files (?:建图|组 )|^run-files \S+ (?:等槽|执行) /.test(line));

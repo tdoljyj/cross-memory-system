@@ -27,6 +27,30 @@ function fixture(t, files, { commands = { unit: [{ cwd: '.', argv: ['node', '--t
 }
 const entry = (file, extra = {}) => ({ path: file, kind: 'unsorted', task: TASK, reason: '从没在必需检查里跑过，红绿未知，等下一批分拣', ...extra });
 
+const PRINT_TEST_NAME = "spawnSync(process.execPath, ['-e', 'console.log(process.argv[1])', './child.test.mjs']);";
+const GENERATE_TEMP_TEST = [
+  "const child = path.join(mkdtempSync(path.join(os.tmpdir(), 'case-')), 'child.test.mjs');",
+  "writeFileSync(child, '');",
+  "spawnSync(process.execPath, ['--test', child]);",
+].join('\n');
+
+for (const [name, source] of [['node -e 打印同名文件', PRINT_TEST_NAME], ['执行 TEMP 下的同名生成文件', GENERATE_TEMP_TEST]]) {
+  test('覆盖检查不误报：' + name, (t) => {
+    assert.deepEqual(fixture(t, { 't/child.test.mjs': '', 't/parent.test.mjs': source }).problems, []);
+  });
+}
+
+test('仅改文档不受基线已有的路径误报影响', (t) => {
+  const { put, commit, run } = cliCheckout(t);
+  put('scripts/ci/child.test.mjs');
+  put('scripts/ci/parent.test.mjs', PRINT_TEST_NAME);
+  put('docs/README.md', 'base');
+  commit();
+  put('docs/README.md', 'candidate');
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test('test files are named *.test.{mjs,js,cjs,ts}, test_*.py or *_test.py', () => {
   for (const file of ['a.test.mjs', 'x/a.test.js', 'x/a.test.cjs', 'x/a.test.ts', 'tests/test_a.py', 'x/a_test.py']) assert.ok(isTestFile(file), file);
   for (const file of ['a.mjs', 'x/a.case.mjs', 'x/test-a.mjs', 'x/test_a.cjs', 'x/a.test.py', 'x/latest_a.py.txt']) assert.ok(!isTestFile(file), file);

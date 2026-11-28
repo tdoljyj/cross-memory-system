@@ -24,6 +24,7 @@
 //     pattern matches that the base does not have (an archive is sealed: no new test hides under it, whatever the
 //     base's schema); a base it cannot read. Both lists only shrink: a file leaves the table when a suite runs it, a
 //     failure leaves when it is fixed.
+// 子进程助手用 --runtime-reader 上报调用者。实际测试操作数由选择器在派发时核对。
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
@@ -348,6 +349,12 @@ function dependencySyntax(file, source) {
 const RESIDENT = 'work/independent-ci-resident-v1';
 const GOVERNANCE_TEST = 'scripts/ci/self-hosted/node-governance/governance.test.mjs';
 const FLEET = RESIDENT + '/rollout/fleet';
+const APP_TESTS = 'apps/clued-cloud/tests/';
+const SOURCE_V2 = 'work/actions-hosted-migration/independent-ci-v1';
+const QUALIFICATION = 'scripts/phase2-qualification';
+const MODEL_TEST = 'tests/test_model_';
+const FLEET_REPLAY = APP_TESTS + 'production-schema/fleet-previous-interfaces-db.test.mjs';
+const FLEET_DELIVERY = APP_TESTS + 'fleet-delivery-release-db.test.mjs';
 const FLEET_CHILDREN = new RegExp('^' + FLEET + '/test/[^/]+\\.test\\.mjs$');
 const FLEET_WRAPPERS = [1, 2, 3].map((part) => RESIDENT + '/test/fleet-node-children-' + part + '.test.mjs');
 const FLEET_POWERSHELL_CALLS = [
@@ -371,6 +378,94 @@ const RUNTIME_READERS = new Map([
   [FLEET + '/bootstrap.ps1', [FLEET + '/test/test-bootstrap.ps1']],
   ...FLEET_POWERSHELL_CALLS.map(({ caller, script }) => [script, [caller]]),
 ]);
+
+// Runtime test references include replay, direct subprocesses, dynamic fixture
+// imports and tests that read another test's source. Group inputs by their reader.
+for (const [reader, inputs] of [
+  [FLEET_REPLAY, [FLEET_DELIVERY, APP_TESTS + 'owner-grants-fleet-accept-door-db.test.mjs']],
+  [APP_TESTS + 'production-release-gate.test.mjs', [FLEET_DELIVERY]],
+  [APP_TESTS + 'integration-runtime-gate-evidence.test.mjs', ['derivation-db', 'worker'].map((name) => APP_TESTS + 'integration-runtime-' + name + '.test.mjs')],
+  [APP_TESTS + 'independent-review-ui.test.mjs', [APP_TESTS + 'resume-constraint-index-db.test.mjs']],
+  [APP_TESTS + 'resource-center-binding-expiry-coverage.test.mjs', [APP_TESTS + 'resource-center-authority-db.test.mjs']],
+  [APP_TESTS + 'worker-source-pins-current.test.mjs', [APP_TESTS + 'merge-admission-clock-audit-transport-db.test.mjs']],
+  [APP_TESTS + 'storage-zip-packaging.test.mjs', ['tests/test_storage_zip.py']],
+  ['scripts/ci/ci-required-selection.test.mjs', ['scripts/ci/main-entry-realpath.test.mjs',
+    ...['local-dev-tools', 'storage-semantic-recovery-db', 'integration-runtime-derivation-db'].map((name) => APP_TESTS + name + '.test.mjs')]],
+  ['scripts/ci/merge-admission-r9-checkout-tree.test.mjs', ['scripts/ci/merge-admission-r9-collector.test.mjs']],
+  ['scripts/ci/clued-control-workflow-reconcile-source.test.mjs', ['clued-pr-task-binding', 'clued-pr-write-set', 'merge-admission-r9-collector']
+    .map((name) => 'scripts/ci/' + name + '.test.mjs')],
+  [QUALIFICATION + '/docker-engineering-observation/test_observation.py', [QUALIFICATION + '/linux-docker-driver/test_candidate.py']],
+  ...['test_attempt_scope_fix.py', 'test_commit_identity_fix.py'].map((file) =>
+    [QUALIFICATION + '/qualification-runtime/' + file, [QUALIFICATION + '/qualification-runtime/test_branch_successor.py']]),
+  [QUALIFICATION + '/qualification-runtime/history/branch-target-d8f125cc/test_attempt_scope_fix.py',
+    [QUALIFICATION + '/qualification-runtime/history/branch-target-d8f125cc/test_branch_successor.py']],
+  [MODEL_TEST + 'completion_v2_records.py', ['program_invocation_saved_projection', 'observed_completion_response'].map((name) => MODEL_TEST + name + '.py')],
+  [MODEL_TEST + 'decision_candidate_projection.py', [MODEL_TEST + 'workflow_saved_scorers.py']],
+  [MODEL_TEST + 'program_m2_saved_harness.py', [MODEL_TEST + 'program_m2_saved_report_runner.py']],
+  [MODEL_TEST + 'program_m2_scoped_consumer.py', [
+    'program_m2_saved_output_metrics', 'program_m2_saved_report_runner', 'program_m2_saved_harness', 'program_m2_core_saved_adapter',
+    'program_m2_input_generator', 'program_development_invocation_projection', 'program_invocation_saved_projection',
+    'local_completion_execution', 'completion_saved_response', 'workflow_saved_scorers', 'completion_v2_records',
+    'observed_completion_execution', 'runtime_observation_records', 'observed_completion_response', 'decision_candidate_projection',
+    'workflow_domain_contract', 'provider_timing_saved_projection', 'reference_4b_preparation',
+  ].map((name) => MODEL_TEST + name + '.py')],
+  [MODEL_TEST + 'workflow_domain_contract.py', [MODEL_TEST + 'decision_candidate_projection.py']],
+  ['tests/test_naming_governance_trusted_launcher.py', ['tests/test_naming_governance_post_migration.py']],
+  ['tests/test_p6_release.py', [APP_TESTS + 'p6-shadow-canary.test.mjs']],
+  [SOURCE_V2 + '/src/control-install-delta-v2/test-offline.ps1', [SOURCE_V2 + '/src/control-install-delta-v2/batch/test-pure.ps1']],
+  ...['pure-v2-csharp', 'train-run'].map((name) =>
+    [SOURCE_V2 + '/test/' + name + '.test.mjs', [SOURCE_V2 + '/src/resident-v2/windows/test-pure-v2.ps1']]),
+  [RESIDENT + '/reinstall/test/test_docker_activating_wait.py', [RESIDENT + '/reinstall/test/test_reinstall_kit.py']],
+  [RESIDENT + '/rollout/test/test_upgrade_tools.py', [RESIDENT + '/test/test_upgrade_linux.py']],
+  [RESIDENT + '/test/companion-run-ignores-constraints.test.mjs', ['test-companion-headless', 'test-upgrade-system', 'test-upgrade-windows']
+    .map((name) => RESIDENT + '/windows/' + name + '.ps1')],
+  [RESIDENT + '/test/drill-vm-part4.test.mjs', [1, 2, 3].map((part) => RESIDENT + '/test/drill-vm-part' + part + '.test.mjs')],
+  [RESIDENT + '/test/fleet-node-powershell.test.mjs', [RESIDENT + '/windows/test-first-install-host.ps1']],
+  [RESIDENT + '/test/m5b-reinstall-regressions.test.mjs', [RESIDENT + '/windows/test-m5b-wsl-release.ps1']],
+  [RESIDENT + '/test/ps-execution-policy.test.mjs', [RESIDENT + '/windows/test-first-install-host.ps1']],
+  [RESIDENT + '/test/relay-parent-acl.test.mjs', ['test-companion-relay-parent-acl', 'test-verify-relay-parents-ensure']
+    .map((name) => RESIDENT + '/windows/' + name + '.ps1')],
+  [RESIDENT + '/test/test_upgrade_system_script.py', [RESIDENT + '/windows/test-upgrade-system.ps1']],
+  [RESIDENT + '/test/verify-verdict.test.mjs', [RESIDENT + '/windows/test-resident-windows.ps1']],
+  [RESIDENT + '/windows/test-companion-headless.ps1', ['test-companion-maintenance-switch', 'test-vhdx-file-acl']
+    .map((name) => RESIDENT + '/windows/' + name + '.ps1')],
+  [RESIDENT + '/windows/test-job-host.ps1', [RESIDENT + '/test/job-host.test.mjs']],
+]) {
+  for (const input of inputs) RUNTIME_READERS.set(input, [...(RUNTIME_READERS.get(input) ?? []), reader]);
+}
+
+const registeredRuntimeReaders = (file) => [
+  ...(RUNTIME_READERS.get(file) ?? []), ...(FLEET_CHILDREN.test(file) ? FLEET_WRAPPERS : []),
+];
+
+// 核对选择器已解析的执行路径。回放在历史检出中执行，读取者仍来自选择器所在的检出。
+export function assertRuntimeTestEdges({ root, reader, files }) {
+  const relativeTest = (directory, absolute) => {
+    const file = slash(path.relative(directory, absolute));
+    return inside(file) && isTestFile(file) ? file : null;
+  };
+  if (!path.isAbsolute(reader)) throw new Error('--runtime-reader 须为读取者测试的绝对路径');
+  const readerPath = realpathSync.native(reader);
+  const tracked = fileLookup(trackedFiles(root));
+  const rootPath = realpathSync.native(root);
+  let from = tracked(relativeTest(rootPath, readerPath) ?? '');
+  if (!from) {
+    const sourcePath = realpathSync.native(DEFAULT_ROOT);
+    const candidate = relativeTest(sourcePath, readerPath);
+    if (candidate && sourcePath !== rootPath) from = fileLookup(trackedFiles(DEFAULT_ROOT))(candidate);
+  }
+  if (!from || !statSync(readerPath).isFile()) throw new Error('--runtime-reader 须指向源检出或执行检出中已跟踪的测试文件');
+
+  const missing = new Set();
+  for (const file of files) {
+    const absolute = realpathSync.native(path.join(root, file));
+    const target = tracked(relativeTest(rootPath, absolute) ?? '');
+    if (target && target !== from && statSync(absolute).isFile() && !registeredRuntimeReaders(target).includes(from)) {
+      missing.add(`RUNTIME_READERS 缺边：${target} -> ${from}`);
+    }
+  }
+  if (missing.size > 0) throw new Error([...missing].sort().join('\n'));
+}
 
 // The reregistration command reads these fields when it hashes source blobs.
 // Paths in prose, prior generations or other registry fields do not add edges.
@@ -538,11 +633,6 @@ function dependencyGraph(state, old, work, entries) {
       }
     }
   }
-  for (const file of state.seeds) {
-    for (const reader of RUNTIME_READERS.get(file) ?? (FLEET_CHILDREN.test(file) ? FLEET_WRAPPERS : [])) {
-      if (!state.files.has(reader) || !work.read(reader)) throw new Error('覆盖未确定：' + file + ' 的登记读取者缺失：' + reader);
-    }
-  }
   return { readers, opaque };
 }
 
@@ -568,7 +658,8 @@ export function planTargetedFiles(root, suite, named, { env = process.env, platf
   const state = targetInputs(root);
   const work = worktreeReader(root);
   const currentFiles = new Set(state.files);
-  for (const file of [...new Set([...state.seeds, ...named])]) if (!work.read(file)) currentFiles.delete(file);
+  const seeds = [...new Set([...state.seeds, ...named])];
+  for (const file of seeds) if (!work.read(file)) currentFiles.delete(file);
   const graphState = { ...state, files: currentFiles };
   const groups = new Map([[suite, { suite, names: new Set(named), reasons: new Set() }]]);
   const deferred = new Map();
@@ -579,11 +670,20 @@ export function planTargetedFiles(root, suite, named, { env = process.env, platf
   const matches = [];
   const matchKeys = new Set();
   const graphStart = performance.now();
-  if (state.seeds.length) {
+  if (seeds.length) {
     const old = oldGraphInputs(root, state);
     const { entries, platforms, addedSuites } = targetedEntries(root, graphState, env, work);
     const { readers, opaque } = dependencyGraph(graphState, old, work, entries);
-    const affected = reverseClosure(state.seeds, readers);
+    const affected = reverseClosure(seeds, readers);
+    const changed = reverseClosure(state.seeds, readers);
+    for (const file of affected.parent.keys()) {
+      for (const reader of registeredRuntimeReaders(file)) {
+        if (!currentFiles.has(reader) || !work.read(reader)) throw new Error(file + ' 的登记读取者缺失：' + reader);
+        if (reader === FLEET_REPLAY && !entries.get(reader)?.some(({ suite, whole }) => suite === 'production-schema' && !whole)) {
+          throw new Error(file + ' 的回放入口未编入 production-schema：' + reader);
+        }
+      }
+    }
     const fallback = (id, reason, on = platforms.get(id)) => {
       groupFor(on.includes(platform) ? groups : deferred, id).reasons.add(reason);
     };
@@ -591,14 +691,18 @@ export function planTargetedFiles(root, suite, named, { env = process.env, platf
       if (!affected.parent.has(file)) continue;
       for (const command of commands) {
         const explicit = command.suite === suite && named.has(file);
+        // A named file by itself belongs to the requested suite. Actual changes
+        // retain their existing cross-suite expansion even when also named.
+        if (!explicit && named.has(file) && !changed.parent.has(file)) continue;
         const local = explicit || command.platforms.includes(platform);
         const group = groupFor(local ? groups : deferred, command.suite);
         group.names.add(file);
-        if (command.whole) group.reasons.add(file + ' 的命令只能整条执行');
+        if (command.whole && (!explicit || changed.parent.has(file))) group.reasons.add(file + ' 的命令只能整条执行');
         const key = JSON.stringify([command.suite, file, local]);
         if (!explicit && !matchKeys.has(key)) {
           matchKeys.add(key);
-          matches.push({ suite: command.suite, file, local, chain: affected.chain(file) });
+          const chain = named.has(file) ? changed.chain(file) : affected.chain(file);
+          matches.push({ suite: command.suite, file, local, platforms: command.platforms, chain });
         }
       }
     }
@@ -648,7 +752,7 @@ export function planTargetedFiles(root, suite, named, { env = process.env, platf
     }
   }
   if (matches.length > MAX_PLAN_ENTRIES) throw new Error('定向计划超过安全上限 (' + MAX_PLAN_ENTRIES + ')');
-  const graphMs = state.seeds.length ? Math.round(performance.now() - graphStart) : 0;
+  const graphMs = seeds.length ? Math.round(performance.now() - graphStart) : 0;
   // A path may change during planning itself. Check the same byte evidence
   // before acquiring a slot and after all groups complete.
   const verify = () => checkInputs(root, state, work.cache);
