@@ -106,6 +106,64 @@ const notReady = code => ({ ok: false, code, proof: WINDOWS_CLEAN, brokerNoLaunc
 
 // ---- the mode ----
 
+test('接班与第 10 段干净结束同轮时，既有排队行不会把候补理由写回', async t => {
+  const f = await nodeFx(t, { facts: [NOT_HELD, HELD], policy: rawPolicy({ train: {
+    enabled: 'shadow', nonFrontRuns: true, maintenanceEveryMs: 600_000, maintenanceMaxPerDay: 200,
+  } }) });
+  await f.drop(triggerBytes());
+  await f.exec.tick();
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'NODE_STANDBY']);
+
+  const views = [];
+  const update = f.board.update.bind(f.board);
+  f.board.update = patch => {
+    const changed = update(patch);
+    if (changed) views.push(f.board.snapshot());
+    return changed;
+  };
+  const schedule = f.exec.schedule.bind(f.exec);
+  const order = [];
+  f.exec.schedule = async (...args) => {
+    const result = await schedule(...args);
+    order.push(result.reason);
+    return result;
+  };
+  const probe = f.engine.runRoleProbe;
+  f.engine.runRoleProbe = async () => { order.push('probe'); return probe(); };
+  const train = f.engine.runTrainStage;
+  f.engine.runTrainStage = async (...args) => { order.push('stage-10'); return train(...args); };
+
+  f.advance(10 * MIN);
+  const result = await f.exec.tick();
+  assert.deepEqual(order, ['NODE_STANDBY', 'probe', 'stage-10']);
+  assert.equal((await receiptBodies(f, 'train-run')).at(-1).ok, true);
+  assert.equal(f.board.content.node.mode, 'ACTIVE');
+  assert.equal(f.board.content.executor.reason, null, '第 10 段结束后不得回写探针前的 NODE_STANDBY');
+  assert.ok(views.some(v => v.node.mode === 'ACTIVE'));
+  assert.ok(views.every(v => v.node.mode !== 'ACTIVE' || v.executor.reason !== 'NODE_STANDBY'), '角色与旧理由必须在同一次更新中切换');
+  assert.equal(result.immediate, true);
+  assert.equal(derives(f), 0);
+  assert.equal(f.queue.row(884).state, 'QUEUED');
+  const replanned = await f.exec.tick();
+  assert.equal(replanned.state, 'COMPLETED');
+  assert.equal(replanned.immediate, undefined, '一次接班只触发一次立即重排');
+});
+
+test('接班同轮第 10 段清理未经证实时，保留 HALT 且不开批', async t => {
+  const f = await nodeFx(t, { facts: [NOT_HELD, HELD], policy: rawPolicy({ train: {
+    enabled: 'shadow', nonFrontRuns: true, maintenanceEveryMs: 600_000, maintenanceMaxPerDay: 200,
+  } }) });
+  await f.drop(triggerBytes());
+  await f.exec.tick();
+  f.advance(10 * MIN);
+  f.engine.runTrainStage = async () => ({ ok: false, code: 'BROKER_BUSY' });
+  const result = await f.exec.tick();
+  assert.deepEqual(result, { state: 'HALTED', failureCode: 'TRAIN_STAGE_CLEANUP_UNCONFIRMED' });
+  assert.equal(f.board.content.executor.reason, result.failureCode);
+  assert.equal((await f.ledger.halted()).value.code, result.failureCode);
+  assert.equal(derives(f), 0);
+});
+
 test('让班回执立即停止开批，回执前已发出的角色探针不能重新打开接单', async t => {
   const f = await nodeFx(t);
   await f.exec.tick();
@@ -119,7 +177,7 @@ test('让班回执立即停止开批，回执前已发出的角色探针不能�
   assert.equal(f.exec.renewalMode(), 'UNCERTAIN');
   await f.drop(triggerBytes());
   f.engine.runRoleProbe = async () => probeResult(NOT_HELD);
-  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'NODE_ROLE_UNCERTAIN']);
+  assert.deepEqual(pick(await f.exec.tick()), ['IDLE', undefined]);
   assert.equal(f.exec.renewalMode(), 'STANDBY');
   assert.equal(derives(f), 0);
   assert.equal(f.queue.row(884).state, 'QUEUED');
@@ -131,7 +189,7 @@ test('a start begins UNCERTAIN with the probe due at once: no trigger is taken b
   assert.deepEqual(f.board.content.node, { name: 'fixture-node', source: CI_SOURCE.slice(0, 12), mode: 'UNCERTAIN', probe: null }, 'shown from the start');
   await f.drop(triggerBytes());
   const first = await f.exec.tick();
-  assert.deepEqual(pick(first), ['DEFERRED', 'NODE_ROLE_UNCERTAIN']);
+  assert.deepEqual(first, { state: 'IDLE', immediate: true });
   assert.deepEqual(f.engine.probes, ['held'], 'the probe came at once, in the same quiet tick');
   assert.equal(derives(f), 0, 'no batch, no bundle, no stage 1');
   assert.equal(f.exec.roleProbeMode, 'ACTIVE');
@@ -239,7 +297,7 @@ test('a restart begins UNCERTAIN again and probes at once, although the last pro
   assert.equal(restarted.roleProbeMode, 'UNCERTAIN');
   assert.equal(f.board.content.node.mode, 'UNCERTAIN', 'the status shows it at once');
   await f.drop(triggerBytes());
-  assert.deepEqual(pick(await restarted.tick()), ['DEFERRED', 'NODE_ROLE_UNCERTAIN']);
+  assert.deepEqual(pick(await restarted.tick()), ['IDLE', undefined]);
   assert.equal(f.engine.probes.length, 2, 'not the 30 minutes of an ACTIVE node');
   assert.equal(restarted.roleProbeMode, 'ACTIVE');
   assert.equal(derives(f), 0);
@@ -297,11 +355,13 @@ for (const [form, answer] of [['NODE_ROLE_NOT_HELD', notAdmitted('NODE_ROLE_NOT_
     assert.deepEqual([f.queue.row(884).state, f.queue.row(884).reason, f.queue.row(884).stopKind], ['BACKOFF', answer.code, null]);
     assert.deepEqual([f.board.content.recent[0].outcome, f.board.content.recent[0].class, f.board.content.recent[0].retry], ['NOT_ADMITTED', 'node-role', 'new-trigger']);
     assert.deepEqual((await receiptBodies(f, 'node-mode')).at(-1), { from: 'ACTIVE', to: 'STANDBY', why: 'role-not-held' });
+    f.engine.facts = [NOT_HELD];
     assert.equal((await f.exec.tick()).state, 'IDLE', 'the row waits in its back-off');
     f.advance(11 * MIN);
     assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'NODE_STANDBY'], 'due, but a STANDBY node starts nothing');
     assert.equal(derives(f), 1);
     // The role comes back and goes again three times (the head's release cap is 2): the row is never stopped and nothing is counted.
+    f.engine.facts = [HELD];
     for (let i = 0; i < 3; i++) {
       await f.exec.setNodeMode('ACTIVE', 'test');
       f.advance(41 * MIN);
@@ -374,9 +434,11 @@ test('m2: a node-role release of attempt 2 gives the same attempt 2 back (never 
   assert.deepEqual((await f.ledger.pendingAttempts2()).map(a => a.key2), [key2], 'the same attempt 2 is pending again');
   assert.deepEqual(await receiptBodies(f, 'attempt2-reopened'), [{ key: key2, attempt1: first.key }]);
   // STANDBY runs nothing; once the node is ACTIVE again (and the 10-minute cool-down is over) attempt 2 runs, with the same key
+  f.engine.facts = [NOT_HELD];
   f.advance(11 * MIN);
   assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'NODE_STANDBY']);
   assert.deepEqual(f.engine.attempts, [1, 2]);
+  f.engine.facts = [HELD];
   await f.exec.setNodeMode('ACTIVE', 'test');
   const third = await f.exec.tick();
   assert.deepEqual([third.state, third.key, third.attempt2], ['FAILED_CLEAN', key2, undefined], 'it ends like attempt 2 does, and schedules no attempt 3');
@@ -481,7 +543,7 @@ test('M1: after a restart or a re-arm a batch parked at B or A does not keep the
   assert.equal(restarted.roleProbeMode, 'UNCERTAIN');
   await f.drop(triggerBytes({ pr: 901, headSha: H(5) }));
   const before = derives(f);
-  assert.deepEqual(pick(await restarted.tick()), ['DEFERRED', 'NODE_ROLE_UNCERTAIN'], 'a new PR is not started before the probe');
+  assert.deepEqual(pick(await restarted.tick()), ['IDLE', undefined], 'a new PR is not started before the probe');
   assert.equal(f.engine.probes.length, 2, 'the parked batch did not stop the probe');
   assert.equal(restarted.roleProbeMode, 'ACTIVE');
   assert.equal(derives(f), before);
@@ -572,10 +634,12 @@ test('STANDBY starts no attempt 2 and no waiting-retry when they fall due; ACTIV
   assert.equal(first.state, 'FAILED_CLEAN');
   assert.match(first.attempt2 ?? '', /^[0-9a-f]{64}$/);
   await a.exec.setNodeMode('STANDBY', 'test');
+  a.engine.facts = [NOT_HELD];
   a.advance(11 * MIN);
   assert.deepEqual(pick(await a.exec.tick()), ['DEFERRED', 'NODE_STANDBY']);
   assert.equal(derives(a), 1);
   assert.equal((await a.ledger.pendingAttempts2()).length, 1, 'still pending, not lost');
+  a.engine.facts = [HELD];
   await a.exec.setNodeMode('ACTIVE', 'test');
   await a.exec.tick();
   assert.equal(derives(a), 2, 'attempt 2 ran once the node was ACTIVE again');
@@ -587,9 +651,11 @@ test('STANDBY starts no attempt 2 and no waiting-retry when they fall due; ACTIV
   assert.equal((await w.exec.tick()).state, 'NOT_ADMITTED');
   assert.equal(w.queue.row(884).state, 'WAITING');
   await w.exec.setNodeMode('STANDBY', 'test');
+  w.engine.facts = [NOT_HELD];
   w.advance(11 * MIN);
   assert.deepEqual(pick(await w.exec.tick()), ['DEFERRED', 'NODE_STANDBY']);
   assert.equal(derives(w), 1);
+  w.engine.facts = [HELD];
   await w.exec.setNodeMode('ACTIVE', 'test');
   assert.equal((await w.exec.tick()).state, 'NOT_ADMITTED');
   assert.equal(derives(w), 2, 'the retry ran once the node was ACTIVE again');

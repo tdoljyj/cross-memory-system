@@ -104,6 +104,7 @@ export function leaseShort({ expiresAt, now, running = false, since = null }) {
 }
 export const BREAKER_STATES = Object.freeze(['closed', 'open', 'half-open']);
 export const NODE_MODES = Object.freeze(['ACTIVE', 'STANDBY', 'UNCERTAIN']);
+export const NODE_DEFERRALS = Object.freeze({ STANDBY: 'NODE_STANDBY', UNCERTAIN: 'NODE_ROLE_UNCERTAIN' });
 export const PROBE_RESULTS = Object.freeze(['held', 'not-held', 'uncertain']);
 const iso = ms => new Date(ms).toISOString();
 const isoOrNull = v => (Number.isSafeInteger(v) && v > 0) ? iso(v) : (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? iso(Date.parse(v)) : null);
@@ -156,8 +157,12 @@ export class StatusBoard {
   // The executor's node (C3): its name, the Source it runs, its mode. The last probe stays as it was.
   setNode(name, source, mode) {
     if (!NODE_NAME.test(name ?? '') || !NODE_MODES.includes(mode)) return false;
-    const node = this.content.node;
-    return this.update({ node: { name, source: key12(source), mode, probe: node?.probe ?? null } });
+    const { node, executor } = this.content;
+    const patch = { node: { name, source: key12(source), mode, probe: node?.probe ?? null } };
+    if (node?.mode !== mode && executor.state === 'DEFERRED' && Object.values(NODE_DEFERRALS).includes(executor.reason)) {
+      patch.executor = { ...executor, state: 'IDLE', reason: null, since: iso(this.clock()) };
+    }
+    return this.update(patch);
   }
 
   // Observation only: a probe reply never changes the mode here (the executor does, through setNode). With no mode set it is UNCERTAIN.

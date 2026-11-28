@@ -151,7 +151,7 @@ import { TRAIN_STAGE } from './policy.mjs';
 import { TRAIN_HEAD_LEASE_COMPLETED, TRAIN_HEAD_LEASE_HELD, classifyFailure } from './classify.mjs';
 import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, chainOfFront, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainFrontRecheckNext, trainIdleExtraDue, trainNodesView, trainRunInput, trainRunMode, trainSummary, trainSweepView, claimBindingObservationOf } from './train.mjs';
 import { ROLE_PROBE_CODES, RoleProbe, roleBookFact, validateRoleProbeFact } from './role-probe.mjs';
-import { NODE_MODES, leaseShort } from './status.mjs';
+import { NODE_DEFERRALS, NODE_MODES, leaseShort } from './status.mjs';
 import { RevocationMaintenanceBook,validateRevocationFacts,validateRevocationQualification,
   REVOCATION_RUN_MS,REVOCATION_HELPER_MARGIN_MS,REVOCATION_RUN_ID } from './revocation-maintenance.mjs';
 
@@ -252,7 +252,8 @@ const FRONT_BIND_ASKED_PER_HEAD = 2;
 export const FRONT_PROOF_MARGIN_MS = 3 * 60_000;
 // Primary/standby C3 (DESIGN §29): why the schedule starts nothing while the node mode is not ACTIVE. These results are quiet (the
 // role probe and stage 10 may run) and, like an intake pause, leave a batch resting at parking point A as the tick's result.
-export const NODE_DEFERRALS = Object.freeze({ STANDBY: 'NODE_STANDBY', UNCERTAIN: 'NODE_ROLE_UNCERTAIN' });
+export { NODE_DEFERRALS };
+const SCHEDULE_ROLE = Symbol('schedule role');
 // Endings after stage 1 that may mean the node lost its role (a live admission or a publisher refused): the next quiet tick
 // probes at once. The Source maps a refused live admission after stage 1 to BATCH_CLAIM_CHANGED and a refused publisher to
 // PUBLICATION_BLOCKED; the not-admitted codes are listed because PR_NOT_OPEN_OR_CHANGED can come at any stage.
@@ -522,6 +523,8 @@ export class ResidentExecutor {
     this.revocationBook = new RevocationMaintenanceBook();
     // C3: every start begins UNCERTAIN (behaves like STANDBY) with the probe due at once; nothing is taken from before the start.
     this.roleProbeMode = 'UNCERTAIN';
+    this.roleRevision = 0;
+    this.roleReplanPending = false;
     this.roleProbe.markUrgent();
     this.reportNode();
     // The train on (DESIGN §41): when this node became eligible for on-mode duty (null: it is not), whether its take-over sweep is
@@ -835,7 +838,18 @@ export class ResidentExecutor {
   nodeMode() { return !this.handoverProbePending && NODE_MODES.includes(this.roleProbeMode) ? this.roleProbeMode : 'UNCERTAIN'; }
 
   // 收回接单资格。下一次串行 tick 再复核角色，避免让班前已发出的探针用旧应答重新开批。
-  requestHandoverProbe() { this.handoverProbePending = true; }
+  requestHandoverProbe() {
+    if (this.handoverProbePending) return;
+    this.handoverProbePending = true;
+    this.roleChanged();
+  }
+
+  roleChanged() {
+    this.roleRevision += 1;
+    this.roleReplanPending = true;
+    if (this.tickBusy) this.tickRoleChanged = true;
+    this.reportNode();
+  }
 
   renewalMode() {
     const role = this.nodeMode();
@@ -852,7 +866,7 @@ export class ResidentExecutor {
     if (!this.probing() || this.handoverProbePending || from === to) return false;
     this.roleProbeMode = to;
     this.queuePrUnread = null;
-    this.reportNode();
+    this.roleChanged();
     this.trainEligibility();
     await this.trainDutySave();
     try { await this.receipt('node-mode', { from, to, why }); } catch { /* see above */ }
@@ -869,7 +883,13 @@ export class ResidentExecutor {
   nodeGate() {
     if (!this.probing()) return null;
     const mode = this.nodeMode();
-    return mode === 'ACTIVE' ? null : { state: 'DEFERRED', reason: mode === 'STANDBY' ? NODE_DEFERRALS.STANDBY : NODE_DEFERRALS.UNCERTAIN };
+    return mode === 'ACTIVE' ? null : { state: 'DEFERRED', reason: NODE_DEFERRALS[mode], [SCHEDULE_ROLE]: this.roleRevision };
+  }
+
+  // 角色理由只对门禁取样时的班次有效，即使同轮后来又回到了相同的角色。
+  currentScheduleResult(result) {
+    if (result?.[SCHEDULE_ROLE] === undefined || result[SCHEDULE_ROLE] === this.roleRevision) return result;
+    return { state: 'IDLE' };
   }
 
   // Stage timings (stage-timing.mjs): a stage-terminal receipt ends that stage's interval on the status board (the work between stages is not the stage's).
@@ -1842,16 +1862,22 @@ export class ResidentExecutor {
     this.betweenBatchesRunning = betweenBatchesRunning === true;
     this.tickSeq = (this.tickSeq ?? 0) + 1;
     this.tickBatchDue = false;
+    this.tickRoleChanged = false;
     try {
       if (this.handoverProbePending) {
         this.handoverProbePending = false;
         await this.nodeRestart('renewal-handover');
       }
-      let result = await this.tickInner();
-      // Stage 10 just named a batch to open now (OPEN_FRONT_BATCH queued, or a front-bind pending): the loop must not rest 15 s first.
-      // The state stays the resting one for the status board; `immediate` only tells the service loop to sleep the short interval.
-      if (this.tickBatchDue === true && result && typeof result === 'object') result = { ...result, immediate: true };
-      await this.reportTick(result);
+      const sampled = await this.tickInner();
+      await this.reportTick(sampled);
+      let result = this.currentScheduleResult(sampled);
+      if (result?.[SCHEDULE_ROLE] !== undefined) {
+        const { [SCHEDULE_ROLE]: role, ...rest } = result;
+        result = rest;
+      }
+      // 第 10 段开出车头批次或角色变化后用短间隔。HALT 和 PAUSE 仍按原有路径处理。
+      const replan = this.tickRoleChanged && this.roleReplanPending && !['HALTED', 'PAUSED'].includes(result?.state);
+      if ((this.tickBatchDue || replan) && result && typeof result === 'object') result = { ...result, immediate: true };
       return result;
     }
     finally { this.tickBusy = false; }
@@ -1866,6 +1892,8 @@ export class ResidentExecutor {
       let intake;
       try { intake = { intakePause: await this.intakeRefresh() }; } catch { intake = {}; }
       if (this.intakeTroubleSince != null) intake = { intakePause: (await this.intakeTrouble(null)).view };
+      result = this.currentScheduleResult(result);
+      this.reportNode();
       const state = ['IDLE', 'RUNNING', 'WAITING', 'PARKED', 'DEFERRED', 'HALTED', 'PAUSED', 'BACKFILL_PENDING', 'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED'].includes(result?.state) ? result.state : 'IDLE';
       this.report(s => {
         s.setState(halt ? 'HALTED' : state, halt ? (halt.value?.code ?? null) : (result?.reason ?? result?.failureCode ?? null));
@@ -1878,7 +1906,6 @@ export class ResidentExecutor {
       // and the stage-10 run after it took (review round 27, MINOR 1): the status written now says watched.
       if (Number.isFinite(this.queueWatchViewAt) && this.queueWatchViewTick === this.tickSeq && this.clock() >= this.queueWatchViewAt) this.queueWatchViewAt = this.clock();
       this.reportQueue();
-      this.reportNode();
     } catch { /* advisory */ }
   }
 
@@ -2128,7 +2155,21 @@ export class ResidentExecutor {
     const ended = await this.endNotStanding();
     if (ended) return ended;
     const flows = await this.requeueFlowEnds();
-    const prCheck = this.betweenBatchesRunning ? null : await this.reconcileQueuedPr(flows);
+    // 到期探针和换班后的首次重排先于普通行的后台读。批次预留前仍读回精确 PR。
+    const role = this.nodeMode();
+    const probeDue = this.probing() && this.roleProbe.due({ now: this.clock(), mode: role, idle: true });
+    let probedEarly = false;
+    if (!this.betweenBatchesRunning && probeDue && role === 'ACTIVE') {
+      const held = await this.intakeGate();
+      if (held?.state === 'HALTED') return held;
+      if (!held) {
+        probedEarly = true;
+        const probed = await this.roleProbeMaintenance();
+        if (probed) return probed;
+      }
+    }
+    const priority = this.betweenBatchesRunning || probeDue || this.roleReplanPending;
+    const prCheck = priority ? null : await this.reconcileQueuedPr(flows);
     // Field 2026-11-13 (PR #1085): the stage-10 run a lifted pause owes (trainResumeOwed, defect b0426896) comes before any batch work,
     // so the schedule and the front's yield after stage 1 (§62.6) read the train as it is now, never the revoke-only run under the pause;
     // otherwise the queue head's ordinary batch scanned H and the front batch scanned the same tree again on S.
@@ -2148,6 +2189,7 @@ export class ResidentExecutor {
     const { acted, waiting } = await this.resumeParked({ hold: this.trainTakeoverPending() });
     if (acted) return acted;
     // Nothing else to do: the tick rests in the hosted wait (the status keeps showing it).
+    if (!this.betweenBatchesRunning && !this.handoverProbePending) this.roleReplanPending = false;
     const r = await this.schedule(prCheck);
     this.scheduleHold = r?.state === 'DEFERRED' && SCHEDULE_HOLDS.includes(r.reason) ? r.reason : null;
     // A batch resting at parking point A stays the tick's result (and the status's current batch) while only the intake
@@ -2157,7 +2199,7 @@ export class ResidentExecutor {
     if (this.betweenBatchesRunning) return waiting ?? r;
     // Stage 10 only after a schedule that ran nothing (a batch resting at a parking point runs nothing either). The role probe
     // also while a batch rests at A, when it may be run at a parking point (probeAtParking, DESIGN §29.2 item 5).
-    if ((!waiting || this.probeAtParking()) && TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) {
+    if (!probedEarly && (!waiting || this.probeAtParking()) && TRAIN_QUIET_STATES.includes(r.state) && !TRAIN_HELD_REASONS.includes(r.reason)) {
       const probeResult = await this.roleProbeMaintenance();
       if (probeResult) return probeResult;
     }
@@ -3862,6 +3904,9 @@ export class ResidentExecutor {
         until: now + QUEUE_PR_UNREAD_RETRY_MS }, key, c.pr);
     }
 
+    // 让班回执可能在等待 PR 读回时到达，预留前重查串行调度的角色门。
+    const notActive = this.nodeGate();
+    if (notActive) return notActive;
     // DESIGN §62.4: a take-over binding run is recorded before it is reserved (a restart ends it after stage 1 too).
     if (this.trainFrontBind(subject)) {
       await this.receipt('train-front-bind', { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, claimId: this.trainLast.frontBind.claimId });
@@ -4049,6 +4094,8 @@ export class ResidentExecutor {
       await this.persistQueue();
       await this.receipt('supersede-disproved', { key: key2, pr: subject.pr, safePoint: 'before-attempt-2' });
     }
+    const notActive = this.nodeGate();
+    if (notActive) return notActive;
     // Consumed create-only before the reservation: whatever attempt 2 ends with, it never runs again.
     await this.ledger.consumeAttempt2(key1, { key2 });
     await this.ledger.reserve(key2, subject, { origin: 'attempt2' });
