@@ -325,17 +325,83 @@ function Get-FleetPreservedConnection($Context, [string]$carry, [string]$nodeExe
   @{nodeRecord=$next; upgradeToken=@{fingerprint=$upgrade}; heartbeatToken=$heartbeat}
 }
 
+function Get-FleetNodeRpcFailure($ErrorRecord) {
+  $failure = $ErrorRecord.Exception
+  while ($failure.InnerException -and $failure -isnot [Net.WebException] -and $failure -isnot [TimeoutException]) {
+    $failure = $failure.InnerException
+  }
+  $status = 0
+  $postgrest = $null
+  $retryable = $failure -is [TimeoutException] -or $failure -is [IO.IOException] -or $failure -is [Net.Sockets.SocketException]
+  $code = 'FLEET_MAINTENANCE_REQUEST_FAILED'
+  if ($failure -is [Net.WebException]) {
+    $response = $failure.Response
+    if ($response -is [Net.HttpWebResponse]) {
+      $status = [int]$response.StatusCode
+      if ($response.Headers['Proxy-Status'] -match '(?:^|,)\s*PostgREST\s*;\s*error\s*=\s*(?<code>"[A-Z0-9]+"|[A-Z0-9]+)(?=\s*(?:[,;]|$))') {
+        $postgrest = $Matches['code'].Trim('"')
+      }
+      $codePattern = '\A(?:[A-Z0-9]{5}|PGRST[0-9]{3})\z'
+      if ($postgrest -cnotmatch $codePattern) {
+        try {
+          $content = if ($ErrorRecord.ErrorDetails) { $ErrorRecord.ErrorDetails.Message }
+          if (-not $content) {
+            # Windows PowerShell 5.1 can leave the error body on the response stream.
+            $reader = [IO.StreamReader]::new($response.GetResponseStream())
+            try {
+              $buffer = New-Object char[] 32769
+              $count = $reader.ReadBlock($buffer, 0, $buffer.Length)
+              if ($count -lt $buffer.Length) { $content = [string]::new($buffer, 0, $count) }
+            } finally { $reader.Dispose() }
+          }
+          if ($content -and $content.Length -le 32768) {
+            $postgrest = Get-Key ((New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject($content)) 'code'
+          }
+        } catch { $postgrest = $null }
+      }
+      $response.Close()
+      $code += "_HTTP_$status"
+      if ($postgrest -isnot [string] -or $postgrest -cnotmatch $codePattern) { $postgrest = $null }
+      if ($postgrest) { $code += "_POSTGREST_$postgrest" }
+      $retryable = $status -in @(408,429) -or ($status -ge 500 -and $status -lt 600) -or $postgrest -ceq '57014'
+    } else {
+      $retryable = $failure.Status -in @('Timeout','ConnectFailure','ConnectionClosed','ReceiveFailure','SendFailure',
+        'KeepAliveFailure','PipelineFailure','NameResolutionFailure','ProxyNameResolutionFailure')
+    }
+  }
+  @{ code = $code; retryable = $retryable; throttled = ($status -eq 429) }
+}
+
+function Wait-FleetNodeRpcRetry([int]$Milliseconds) { Start-Sleep -Milliseconds $Milliseconds }
+
 function Invoke-FleetNodeRpc($Connection, [ValidateSet('clued_ci_connection_self_v1','clued_work_verify_v1')][string]$Rpc, $InputData) {
   if ($Connection['supabaseUrl'] -cnotmatch '^https://[a-z0-9]+\.supabase\.co$' -or
       $Connection['publishableKey'] -cnotmatch '^sb_publishable_[A-Za-z0-9_-]+$' -or
       $Connection['authHash'] -cnotmatch '^[0-9a-f]{64}$') { throw 'FLEET_MAINTENANCE_CONNECTION_REFUSED' }
-  try {
-    $public = $Connection['publishableKey']
-    $body = @{ p_token_hash = $Connection['authHash']; p_input = $InputData } | ConvertTo-Json -Depth 4 -Compress
-    $reply = Invoke-WebRequest -UseBasicParsing -Method Post -Uri ($Connection['supabaseUrl'] + '/rest/v1/rpc/' + $Rpc) -ContentType 'application/json' -Body $body -TimeoutSec 20 -MaximumRedirection 0 -ErrorAction Stop -Headers @{apikey=$public; Authorization=('Bearer ' + $public)}
-    if ($reply.Content.Length -gt 32768) { throw 'FLEET_MAINTENANCE_REPLY_REFUSED' }
-    (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject($reply.Content)
-  } catch { throw 'FLEET_MAINTENANCE_REQUEST_FAILED' }
+  # The maintenance status can reconcile a pause whose receipt guards replays under the server lock.
+  # verify_started uses operation_id to replay its receipt. delist can start a new drain with that same ID.
+  $operationId = [Guid]::Empty
+  $mayRetry = $Rpc -ceq 'clued_ci_connection_self_v1' -or ($InputData['action'] -ceq 'fleet_maintenance' -and
+    ($InputData['command'] -ceq 'status' -or ($InputData['command'] -ceq 'verify_started' -and
+      [Guid]::TryParseExact($InputData['operation_id'], 'D', [ref]$operationId) -and $operationId -ne [Guid]::Empty)))
+  $public = $Connection['publishableKey']
+  $body = @{ p_token_hash = $Connection['authHash']; p_input = $InputData } | ConvertTo-Json -Depth 4 -Compress
+  $attemptLimit = 3
+  for ($attempt = 1; $attempt -le $attemptLimit; $attempt++) {
+    try {
+      $reply = Invoke-WebRequest -UseBasicParsing -Method Post -Uri ($Connection['supabaseUrl'] + '/rest/v1/rpc/' + $Rpc) -ContentType 'application/json' -Body $body -TimeoutSec 20 -MaximumRedirection 0 -ErrorAction Stop -Headers @{apikey=$public; Authorization=('Bearer ' + $public)}
+      break
+    } catch {
+      $failure = Get-FleetNodeRpcFailure $_
+      if (-not $mayRetry -or -not $failure.retryable -or $attempt -eq $attemptLimit) { throw $failure.code }
+      $baseMs = if ($failure.throttled) { 1000 } else { 50 }
+      $backoffMs = [int]($baseMs * [Math]::Pow(2, $attempt - 1))
+      Wait-FleetNodeRpcRetry (Get-Random -Minimum 0 -Maximum ($backoffMs + 1))
+    }
+  }
+  if ($reply.Content.Length -gt 32768) { throw 'FLEET_MAINTENANCE_REPLY_REFUSED' }
+  try { (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject($reply.Content) }
+  catch { throw 'FLEET_MAINTENANCE_REPLY_REFUSED' }
 }
 
 function Invoke-FleetMaintenance([ValidateSet('preview','before-remove','before-return')][string]$Phase, $Context,
@@ -354,6 +420,7 @@ function Invoke-FleetMaintenance([ValidateSet('preview','before-remove','before-
         ($Context['bindingGeneration'] -and $Context['bindingGeneration'] -ne $node['generation'])) { throw 'FLEET_MAINTENANCE_BINDING_REFUSED' }
     if ($null -eq $Send) { $Send = { param($inputData) Invoke-FleetNodeRpc $node 'clued_work_verify_v1' $inputData } }
     $read = @{ action='fleet_maintenance'; command='status'; scope=$node['scope']; node_id=$node['nodeId']; binding_generation=$node['generation'] }
+    $requested = & $Now
     $status = & $Send $read
     Assert-FleetMaintenanceStatus $status $read $Context.grantId
     if ($Phase -ceq 'preview') {
@@ -370,20 +437,58 @@ function Invoke-FleetMaintenance([ValidateSet('preview','before-remove','before-
     $write = $read.Clone()
     $write.grant_id = $Context.grantId
     $write.operation_id = $operation
+    $reuseDrain = $false
     if ($Phase -ceq 'before-remove') {
       if (-not $status['has_other_healthy'] -and -not $Context['zeroNodeConsent']) { throw 'FLEET_MAINTENANCE_NEEDS_SOLE_NODE_CONSENT' }
       $write.command = 'delist'
       $write.method = 'reinstall'
       if (-not $status['has_other_healthy'] -and $Context['zeroNodeConsent'] -eq $true) { $write.sole_node_agreed = $true }
+      $progress = $Context['drainProgress']
+      $freshIntent = Get-Key $progress 'freshDrainIntent'
+      $lastDrain = Get-Key $progress 'drainReceiptId'
+      $same = $status['operation_id'] -ceq $operation
+      if (($freshIntent -or $lastDrain) -and -not $same) { throw 'FLEET_MAINTENANCE_SUBJECT_REFUSED' }
+      if ($same) {
+        $receipt = $status['receipt_id']
+        if ($receipt -cnotmatch $uuid) { throw 'FLEET_MAINTENANCE_SUBJECT_REFUSED' }
+        $state = $status['state']
+        $activeDrain = $state -cin @('delisted','draining')
+        $reuseDrain = $activeDrain
+        if ($freshIntent) {
+          $prior = Get-Key $freshIntent 'afterReceiptId'
+          $since = [DateTimeOffset]::MinValue
+          if (-not $Context['requireFreshDrain'] -or $prior -cnotmatch $uuid -or
+              -not [DateTimeOffset]::TryParse([string](Get-Key $freshIntent 'requestedAt'), [ref]$since) -or $since -gt $requested) {
+            throw 'FLEET_MAINTENANCE_STALE_DRAIN'
+          }
+          if ($receipt -cne $prior -or ($activeDrain -and $status['install_ready'])) {
+            if (-not $activeDrain) { throw 'FLEET_MAINTENANCE_NOT_SAFE_TO_REMOVE' }
+            $requested = $since
+          } else { $reuseDrain = $false }
+        } elseif ($Context['requireFreshDrain']) {
+          # The server can report delisted with a verification receipt and install_ready=false.
+          # An unchanged drain receipt means the existing round can still become ready.
+          if ($state -ceq 'delisted' -and -not $status['install_ready'] -and $receipt -cne $lastDrain) { $reuseDrain = $false }
+        }
+        if (-not $reuseDrain) {
+          if (-not $Context['requireFreshDrain'] -or $Context['mode'] -cne 'Reinstall' -or -not $progress -or
+              $state -cnotin @('delisted','verifying','returned')) { throw 'FLEET_MAINTENANCE_NOT_SAFE_TO_REMOVE' }
+          $requested = & $Now
+          $progress['requireFreshDrain'] = $true
+          $progress['freshDrainIntent'] = @{ afterReceiptId=$receipt; requestedAt=$requested.ToString('o') }
+          Write-FleetProgress $Context['drainJournal'] $progress
+        }
+      }
     } else {
       if (-not $Context['installed']) { throw 'FLEET_INSTALL_POSTCONDITION_UNAVAILABLE' }
       $write.command = 'verify_started'
     }
-    $requested = & $Now
-    $deadline = $requested.AddMinutes(45)
-    $response = & $Send $write
-    Assert-FleetMaintenanceStatus $response $read $Context.grantId
-    if ($response['operation_id'] -cne $operation -or $response['receipt_id'] -cnotmatch $uuid) { throw 'FLEET_MAINTENANCE_SUBJECT_REFUSED' }
+    $deadline = (& $Now).AddMinutes(45)
+    if (-not $reuseDrain) {
+      $response = & $Send $write
+      Assert-FleetMaintenanceStatus $response $read $Context.grantId
+      if ($response['operation_id'] -cne $operation -or $response['receipt_id'] -cnotmatch $uuid) { throw 'FLEET_MAINTENANCE_SUBJECT_REFUSED' }
+    }
     do {
       # The write receipt alone can be an idempotent replay. Only the current
       # status for this very operation can authorize cleanup or return.
@@ -400,7 +505,12 @@ function Invoke-FleetMaintenance([ValidateSet('preview','before-remove','before-
               throw 'FLEET_MAINTENANCE_STALE_DRAIN'
             }
           }
-      return @{
+          if ($progress) {
+            $progress['drainReceiptId'] = $status['receipt_id']
+            [void]$progress.Remove('freshDrainIntent')
+            Write-FleetProgress $Context['drainJournal'] $progress
+          }
+          return @{
             ok=$true; sealed=$true; archiveSha256=$Context.archiveSha256; acceptanceSha256=$Context.acceptanceSha256
             operationId=$Context.operationId; bindingId=$node['bindingId']; bindingGeneration=$node['generation']
             ownerUac=$true; drained=$true; hasDuty=$false; freshDrain=($Context['requireFreshDrain'] -eq $true)
@@ -464,11 +574,20 @@ function Get-FleetPathItem([string]$path) {
   catch [Management.Automation.ItemNotFoundException] { $null }
 }
 
-function Assert-FleetLocalPath([string]$path) {
+function Get-FleetLongPathAttributes([string]$longPath) {
+  try { [IO.File]::GetAttributes($longPath) }
+  catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] { $null }
+}
+
+function Assert-FleetLocalPath([string]$path, [switch]$ExtendedPath) {
   $original = $path
+  if ($ExtendedPath) { $path = '\\?\' + $path }
   for (; $path; $path = [IO.Path]::GetDirectoryName($path)) {
-    $item = Get-FleetPathItem $path
-    if ($null -ne $item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    $attributes = if ($ExtendedPath) { Get-FleetLongPathAttributes $path } else {
+      $item = Get-FleetPathItem $path
+      if ($null -ne $item) { $item.Attributes }
+    }
+    if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
       throw ('FLEET_RESOURCE_REPARSE_POINT:' + $original)
     }
     if ($path -eq [IO.Path]::GetPathRoot($path)) { break }
@@ -785,30 +904,47 @@ function Test-FleetOldConnectionSidecar {
   $null -ne (Get-FleetPathItem (Join-Path $FleetResources.ciRoot $FleetResources.admissionAssets[1]))
 }
 
+function Get-FleetProductEntryAttributes([string]$longPath) {
+  $attributes = [IO.File]::GetAttributes($longPath)
+  if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
+    throw ('FLEET_RESOURCE_REPARSE_POINT:' + $longPath.Substring(4))
+  }
+  $attributes
+}
+
+# Walk every entry to refuse links, collecting only entries that need -Force
+# behavior before the native delete.
+function Get-FleetReadOnlyProductEntries([string]$longPath) {
+  $stack = [Collections.Generic.Stack[string]]::new()
+  $stack.Push($longPath)
+  while ($stack.Count) {
+    $entry = $stack.Pop()
+    $attributes = Get-FleetProductEntryAttributes $entry
+    if ($attributes -band [IO.FileAttributes]::Directory) {
+      foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($entry)) { $stack.Push($child) }
+    }
+    if ($attributes -band [IO.FileAttributes]::ReadOnly) { $entry }
+  }
+}
+
 # Collect only paths with reserved product names. Refuse nested links before
 # deleting anything, including a link in a historical kept root.
 function Get-FleetProductPaths {
   $root = $FleetResources.ciRoot
-  Assert-FleetLocalPath $root
-  $kept = if ($null -ne (Get-FleetPathItem $root)) {
-    @(Get-ChildItem -LiteralPath $root -Force -ErrorAction Stop | Where-Object { $_.Name -cmatch $FleetResources.keptRootPattern } | ForEach-Object FullName)
-  } else { @() }
-  $paths = @($FleetResources.ciDirectories + $FleetResources.distributionDirectories | ForEach-Object { Join-Path $root $_ }) +
-    @($FleetResources.controlEntries | ForEach-Object { Join-Path $FleetResources.controlRoot $_ }) + @($kept)
-  foreach ($path in $paths) {
-    Assert-FleetLocalPath $path
-    $item = Get-FleetPathItem $path
-    if ($null -eq $item) { continue }
-    if ($item.PSIsContainer) {
-      $stack = [Collections.Generic.Stack[string]]::new()
-      $stack.Push($path)
-      while ($stack.Count) {
-        foreach ($child in @(Get-ChildItem -LiteralPath $stack.Pop() -Force -ErrorAction Stop)) {
-          if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw ('FLEET_RESOURCE_REPARSE_POINT:' + $child.FullName) }
-          if ($child.PSIsContainer) { $stack.Push($child.FullName) }
-        }
-      }
+  Assert-FleetLocalPath $root -ExtendedPath
+  $longRoot = '\\?\' + $root
+  $kept = if ($null -ne (Get-FleetLongPathAttributes $longRoot)) {
+    foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($longRoot)) {
+      if ([IO.Path]::GetFileName($child) -cmatch $FleetResources.keptRootPattern) { $child.Substring(4) }
     }
+  }
+  $paths = @($FleetResources.ciDirectories + $FleetResources.distributionDirectories | ForEach-Object { [IO.Path]::Combine($root, $_) }) +
+    @($FleetResources.controlEntries | ForEach-Object { [IO.Path]::Combine($FleetResources.controlRoot, $_) }) + @($kept)
+  foreach ($path in $paths) {
+    Assert-FleetLocalPath $path -ExtendedPath
+    $longPath = '\\?\' + $path
+    if ($null -eq (Get-FleetLongPathAttributes $longPath)) { continue }
+    $null = Get-FleetReadOnlyProductEntries $longPath
     $path
   }
 }
@@ -816,9 +952,16 @@ function Get-FleetProductPaths {
 function Remove-FleetProductPaths {
   $paths = @(Get-FleetProductPaths)
   foreach ($path in $paths) {
-    Assert-FleetLocalPath $path
-    Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
-    if ($null -ne (Get-FleetPathItem $path)) { throw ('FLEET_PRODUCT_PATH_STILL_PRESENT:' + $path) }
+    Assert-FleetLocalPath $path -ExtendedPath
+    $longPath = '\\?\' + $path
+    foreach ($entry in @(Get-FleetReadOnlyProductEntries $longPath)) {
+      Assert-FleetLocalPath ($entry.Substring(4)) -ExtendedPath
+      $attributes = Get-FleetProductEntryAttributes $entry
+      [IO.File]::SetAttributes($entry, ($attributes -band (-bnot [IO.FileAttributes]::ReadOnly)))
+    }
+    if ((Get-FleetProductEntryAttributes $longPath) -band [IO.FileAttributes]::Directory) { [IO.Directory]::Delete($longPath, $true) }
+    else { [IO.File]::Delete($longPath) }
+    if ($null -ne (Get-FleetLongPathAttributes $longPath)) { throw ('FLEET_PRODUCT_PATH_STILL_PRESENT:' + $path) }
   }
 }
 
@@ -1037,6 +1180,8 @@ function Invoke-FleetLifecycle($context, [string]$mode, [string]$file, [scriptbl
   $mode = $progress.mode
   $context.mode = $mode
   $context.operationId = $progress.operationId
+  $context.drainProgress = $progress
+  $context.drainJournal = $file
   foreach ($key in @('bindingId','bindingGeneration','previewReceipt','maintenanceOperationId','requireFreshDrain')) {
     if ($progress.step -ceq 'intent' -and $context['previewReceipt'] -and $key -ceq 'previewReceipt') {
       $progress[$key] = $context[$key]
