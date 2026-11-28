@@ -1395,10 +1395,9 @@ test('the guest entry shadows no package function and hands over the companion t
   assert.match(text, /@\('companion-github\.token', 'companion-github\.token'\)/);
 });
 
-// Codex review of ced480363, high 1: with the stand-in gone the entry calls the package's real Expand-Cached, whose fourth parameter (the
-// pinned manifest's maxEntryPathLength) it refuses to go without. Every call in the entry passes every parameter the package's function
-// declares, read from the package's bootstrap itself, the last one from the manifest item.
-test('the guest entry calls the package\'s Expand-Cached with every parameter it declares, the path limit from the pinned manifest', opts, () => {
+// The guest passes the ZIP and its manifest pins to the package's Expand-Cached. It uses the default operator cache and leaves
+// the protected input directory for the elevated installer to supply.
+test('the guest entry calls the package\'s Expand-Cached with the pinned path limit and the default cache', opts, () => {
   const bootstrap = fileURLToPath(new URL('../rollout/fleet/bootstrap.ps1', import.meta.url));
   const r = ps(`
     $isFn = { param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -ceq 'Expand-Cached' }
@@ -1406,14 +1405,20 @@ test('the guest entry calls the package\'s Expand-Cached with every parameter it
     $package = [Management.Automation.Language.Parser]::ParseFile(${q(bootstrap)}, [ref]$null, [ref]$null)
     $fn = @($package.FindAll($isFn, $true))[0]
     $entry = [Management.Automation.Language.Parser]::ParseFile(${q(entryScript)}, [ref]$null, [ref]$null)
-    @{ declared = @($fn.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+    @{ declared = @($fn.Parameters | ForEach-Object {
+        @{ name = $_.Name.VariablePath.UserPath
+           defaultText = $(if ($null -ne $_.DefaultValue) { $_.DefaultValue.Extent.Text } else { '' }) }
+      })
       shadowed = @($entry.FindAll($isFn, $true)).Count
       calls = @($entry.FindAll($isCall, $true) | ForEach-Object { , [string[]]@($_.CommandElements | Select-Object -Skip 1 | ForEach-Object { $_.Extent.Text }) }) }`);
-  assert.deepEqual(r.declared, ['zip', 'name', 'sha256', 'maxEntryPathLength']);
+  const guestParameters = ['zip', 'name', 'sha256', 'maxEntryPathLength'];
+  assert.deepEqual(r.declared.map(param => param.name), [...guestParameters, 'cacheRoot', 'protectedInputDirectory']);
+  assert.equal(r.declared[4].defaultText, "(Join-Path $WorkParent 'tools')");
+  assert.equal(r.declared[5].defaultText, '');
   assert.equal(r.shadowed, 0);
   const calls = Array.isArray(r.calls[0]) ? r.calls : [r.calls];
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].length, r.declared.length, calls[0].join(' '));
+  assert.equal(calls[0].length, guestParameters.length, calls[0].join(' '));
   assert.match(calls[0][3], /Get-Key \$item 'maxEntryPathLength'/);
 });
 
