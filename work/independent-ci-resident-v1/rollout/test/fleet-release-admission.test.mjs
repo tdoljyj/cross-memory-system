@@ -41,7 +41,7 @@ async function fixture(t, options = {}) {
   const checks = required.map((name, id) => ({ name, id: id + 1, app: { id: appOf(name) }, head_sha: head, status: 'completed', conclusion: 'success' }));
   const publisherStateDirectory = join(w.d, 'publisher-state');
   const snapshot = () => ({ base: true, applied: plan.flatMap((row, i) => ledger.has(row.file) ? [{ name: row.name,
-    version: `2026112716000${i + 1}`, digest: settings.badDigest && i === 0 ? 'f'.repeat(64) : row.digest }] : []),
+    version: `20261127160${String(i + 1).padStart(3, "0")}`, digest: settings.badDigest && i === 0 ? 'f'.repeat(64) : row.digest }] : []),
     interfaces: Object.fromEntries(plan.map(row => [row.probe, ledger.has(row.file) && settings.brokenInterface !== row.probe])) });
   let operations = 0;
   const runGh = args => {
