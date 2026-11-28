@@ -101,8 +101,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { install as installDeps, npmCommand, runNpm } from './ci-deps.mjs';
+import { CPU_SAMPLE_MS, HOST_KEEPS, RESIDENT_STALE_MS, RESIDENT_STATUS_WINDOWS, RUN_NEEDS, cpuTimeDeltas } from './local-suite-capacity.mjs';
 import { localVerifyEnv, TEST_ENV_VERSION, testEnv } from './test-env.mjs';
 
+export { HOST_KEEPS, RUN_NEEDS };
 export const REPOSITORY = 'tdoljyj/cross-memory-system';
 export const DISTRIBUTION = 'CluedDev-Linux';
 // The Node version clued-required-tests.yml sets up.
@@ -494,8 +496,6 @@ function processAlive(pid) {
 // memory, idle CPU and free disk, the system drive counted against the level at
 // which the CI host's watchdog clears its C: alert. The first run always starts.
 // A run that has to wait says its position.
-export const RUN_NEEDS = { memGb: 6, cores: 4, dataGb: 3, systemGb: 3 }; // one more run: Windows and Linux side, embedded PostgreSQL, builds
-export const HOST_KEEPS = { memGb: 10, cores: 4, dataGb: 10 }; // what the CI runners and the user keep (the watchdog resumes at 10 GB of memory)
 // In the Linux distribution (one VM with the CI runners' distribution, its memory the host's capacity profile in node-profiles.json) the watchdog stops the runners at 6 GB free memory.
 export const VM_KEEPS = { memGb: 6, cores: 4, dataGb: 5 };
 const RAMP_MS = 120_000; // a run just started has not yet taken what it will take
@@ -581,10 +581,18 @@ export function beginRun(home, { pid = process.pid, now = Date.now, label = '' }
       Object.assign(run, patch);
       write();
     },
-    touch() {
+    touch({ verifyOwner = false } = {}) {
+      if (!verifyOwner) {
+        try { fs.utimesSync(file, new Date(), new Date()); } catch { write(); }
+        return;
+      }
+      // The run's ID (which includes a nonce) is also its file name. Never
+      // update a record that no longer identifies this run.
       try {
-        fs.utimesSync(file, new Date(), new Date());
-      } catch {
+        const owner = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (owner.id === id && owner.pid === pid) fs.utimesSync(file, new Date(now()), new Date(now()));
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
         write(); // the file was dropped as stale meanwhile
       }
     },
@@ -600,13 +608,11 @@ export function beginRun(home, { pid = process.pid, now = Date.now, label = '' }
 // Idle CPU cores (two looks at the CPU times, a moment apart), free memory and
 // free disk (the cache's drive, and the system drive where the watchdog guards it).
 export function sampleResources(home, { cpus = os.cpus, freemem = os.freemem, free = freeGb, platform = process.platform, env = process.env, wait = sleep } = {}) {
-  const total = (list) => list.reduce((sum, cpu) => sum + Object.values(cpu.times).reduce((a, b) => a + b, 0), 0);
-  const idle = (list) => list.reduce((sum, cpu) => sum + cpu.times.idle, 0);
   const before = cpus();
-  wait(500);
+  wait(CPU_SAMPLE_MS);
   const after = cpus();
-  const span = total(after) - total(before);
-  const idleCores = span > 0 ? (after.length * (idle(after) - idle(before))) / span : after.length;
+  const { span, idleSpan } = cpuTimeDeltas(before, after);
+  const idleCores = span > 0 ? (after.length * idleSpan) / span : after.length;
   let systemFreeGb = null;
   if (platform === 'win32') {
     try {
@@ -803,12 +809,10 @@ export function refreshUmbrella(home, handle, { alive = processAlive, now = Date
 }
 
 // The resident independent CI's status page (defect e0a5630d), as either side of a run sees it.
-const RESIDENT_STATUS_WINDOWS = 'C:\\ProgramData\\CluedIndependentCI\\resident\\state\\status.json';
 export const RESIDENT_STATUS = process.platform === 'win32' ? RESIDENT_STATUS_WINDOWS : toWslPath(RESIDENT_STATUS_WINDOWS);
 export const YIELD_TIMEOUT_MS = 90 * 60_000; // all the waits of one side of a run together; longer than a resident batch normally runs
 const YIELD_POLL_MS = 30_000;
 const YIELD_REPORT_MS = 5 * 60_000;
-const RESIDENT_STALE_MS = 5 * 60_000; // the service rewrites its status page every 15 s; a stopped one leaves its last page
 
 // What the resident runs now, or null. Busy: its status page names a batch
 // (`current`) that is not resting at parking point A (phase 'relay-wait': it
@@ -1347,16 +1351,26 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
   return results;
 }
 
-class LocalSuiteTimeout extends Error {
-  constructor(suite, exitCode) {
-    super(`${suite}: local suite slot timed out; see the slot diagnostic above`);
-    this.exitCode = exitCode;
-  }
+const LOCAL_INTERRUPTED_EXIT = 130;
+
+export async function withVerificationHeartbeat(home, run, locks, action, { intervalMs = YIELD_POLL_MS } = {}) {
+  const renew = () => {
+    for (const lock of locks) lock.refresh();
+    if (run) {
+      run.touch({ verifyOwner: true });
+      refreshUmbrella(home, run);
+    }
+  };
+  renew();
+  const heartbeat = setInterval(() => {
+    try { renew(); } catch (error) { console.error(`local-verify: could not renew the suite lease: ${error.message}`); }
+  }, intervalMs);
+  try { return await action(); } finally { clearInterval(heartbeat); }
 }
 
 // The comparison runner needs every command result, so its worker uses
 // runCommands directly inside the same process-tree guard as the selector.
-async function runVerificationSuite(selector, id, root, main, logFile, env, { additions = true } = {}) {
+async function runVerificationSuite(selector, id, root, main, logFile, env, { additions = true, home, run, locks = [] } = {}) {
   if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS === 'true') {
     return runCommands(selector, id, root, main, logFile, { env, additions });
   }
@@ -1364,11 +1378,11 @@ async function runVerificationSuite(selector, id, root, main, logFile, env, { ad
   const { LOCAL_TIMEOUT_EXIT } = await import('./ci-required-selection.mjs');
   const resultFile = `${logFile}.results.json`;
   try {
-    const status = await withLocalSuiteSlot(id, {
+    const status = await withVerificationHeartbeat(home, run, locks, () => withLocalSuiteSlot(id, {
       root, env, timeoutExit: LOCAL_TIMEOUT_EXIT,
       work: { selectorUrl: selector.selectorUrl, reporterUrl: selector.reporterUrl, verify: { main, logFile, resultFile, additions } },
-    });
-    if (status === LOCAL_TIMEOUT_EXIT) throw new LocalSuiteTimeout(id, status);
+    }));
+    if (status === LOCAL_INTERRUPTED_EXIT) throw Object.assign(new Error(`${id}: local suite interrupted`), { exitCode: status });
     if (status !== 0) throw new Error(`${id}: local suite guard exited ${status}; see its output`);
     return JSON.parse(fs.readFileSync(resultFile, 'utf8'));
   } finally {
@@ -1489,13 +1503,14 @@ function mainResults(selector, id, { root, main, home, logFile, env, freshBase, 
     dependencies: NEEDS_APP_DEPENDENCIES.has(id) ? dependencyKeyAt(root, main) : null });
   const cached = freshBase ? null : readCached(cache);
   if (cached) return cached;
-  return withLock(home, `main-${path.basename(cache, '.json')}`, () => {
+  return withLock(home, `main-${path.basename(cache, '.json')}`, (resultLock) => {
     const meanwhile = freshBase ? null : readCached(cache); // another run computed it while this one waited
     if (meanwhile) return meanwhile;
-    return withLock(home, worktreeLock(worktreePath(root, main, home)), async () => {
+    return withLock(home, worktreeLock(worktreePath(root, main, home)), async (treeLock) => {
       const dir = worktree(root, main, home);
       if (NEEDS_APP_DEPENDENCIES.has(id)) ensureAppDependencies(dir, home, { rebuild: id === 'production-schema', run });
-      const results = await runVerificationSuite(selector, id, dir, main, logFile, env, { additions: false });
+      const results = await runVerificationSuite(selector, id, dir, main, logFile, env,
+        { additions: false, home, run, locks: [resultLock, treeLock] });
       writeCached(cache, results);
       return results;
     }, { what: `the worktree of main ${main.slice(0, 12)}`, log });
@@ -1540,13 +1555,14 @@ export async function verifySuites({ root, home, selector, main, dir, suites, lo
     const log = path.join(logs, `${platform}-${id}.log`);
     console.log(`local-verify: ${platform}: ${id} ...`);
     let outcome;
+    let stop = false;
     try {
       if (yieldTo) yieldLeft -= yieldTo(`${platform}: ${id}`, { timeoutMs: Math.max(0, yieldLeft), keepAlive: () => { run.touch(); refreshUmbrella(home, run); } });
       run.touch();
       refreshUmbrella(home, run);
       cleanWorktree(dir);
       if (NEEDS_APP_DEPENDENCIES.has(id)) ensureAppDependencies(dir, home, { rebuild: id === 'production-schema', run });
-      const head = await runVerificationSuite(selector, id, dir, main, log, env);
+      const head = await runVerificationSuite(selector, id, dir, main, log, env, { home, run });
       // Only main's own commands are run on main to compare; a failing addition is new without that.
       const baselineCount = selector.SUITE_COMMANDS[id].length;
       let theirs = null;
@@ -1556,12 +1572,16 @@ export async function verifySuites({ root, home, selector, main, dir, suites, lo
       }
       outcome = compareSuite(head, theirs, { selector, knownLists, baselineCount });
     } catch (error) {
-      outcome = error instanceof LocalSuiteTimeout
-        ? { verdict: 'timeout', detail: error.message, exitCode: error.exitCode }
+      // A Windows guard failure can leave a reservation that is reclaimed
+      // only after this owner exits and the next request verifies the Job.
+      stop = error.unconfirmedSuiteTree || error.exitCode === LOCAL_INTERRUPTED_EXIT;
+      outcome = error.exitCode === LOCAL_INTERRUPTED_EXIT
+        ? { verdict: 'interrupted', detail: error.message }
         : { verdict: 'unknown', detail: error.message };
     }
     results.push({ platform, suite: id, ...outcome, log });
     console.log(`local-verify: ${platform}: ${id}: ${outcome.verdict}${outcome.detail ? ` (${outcome.detail})` : ''}`);
+    if (stop) break;
   }
   return results;
 }
@@ -1613,7 +1633,7 @@ export function linuxScript({ bundle, refs, tool, run, candidate, main, suites, 
 }
 
 // The tool the Linux side runs: this file and the modules it imports (local-verify.test.mjs checks the list is whole).
-export const TOOL_MODULES = ['local-verify.mjs', 'ci-deps.mjs', 'test-env.mjs'];
+export const TOOL_MODULES = ['local-verify.mjs', 'ci-deps.mjs', 'local-suite-capacity.mjs', 'test-env.mjs'];
 export function copyTool(dir) {
   fs.mkdirSync(dir, { recursive: true });
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1770,14 +1790,13 @@ function startLinuxRun({ root, home, candidate, main, suites, logs, freshBase, n
   });
 }
 
-const VERDICT_LABEL = { pass: 'PASS', base: 'ALREADY FAILING ON MAIN', new: 'NEW FAILURE', unknown: 'COULD NOT COMPARE', timeout: 'SUITE SLOT TIMEOUT' };
+const VERDICT_LABEL = { pass: 'PASS', base: 'ALREADY FAILING ON MAIN', new: 'NEW FAILURE', unknown: 'COULD NOT COMPARE', interrupted: 'INTERRUPTED' };
 
 async function main(argv) {
   if (argv.includes('--help') || argv.includes('-h')) {
-    const { LOCAL_TIMEOUT_EXIT } = await import('./ci-required-selection.mjs');
     console.log('usage: node scripts/ci/local-verify.mjs [--affected | --suite <id> ...] [--base <commit>] [--committed]');
     console.log('       [--linux | --linux-only] [--no-fetch] [--fresh-base] [--no-yield]');
-    console.log(`Exit codes: 0 for no new failure; 1 for a verification failure; 2 for a setup error; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
+    console.log(`Exit codes: 0 for no new failure; 1 for a verification failure or incomplete comparison; 2 for a setup error${process.platform === 'win32' ? `; ${LOCAL_INTERRUPTED_EXIT} if interrupted (Ctrl+C)` : ''}.`);
     return 0;
   }
   const options = parseArgs(argv);
@@ -1860,8 +1879,9 @@ async function verifyChange({ options, root, home, change, run }) {
     if (result.verdict !== 'pass') console.log(`  ${''.padEnd(31)} log: ${result.log}`);
   }
   console.log(`${RESULT_MARK}${JSON.stringify(results)}`);
+  if (results.some((result) => result.verdict === 'interrupted')) return LOCAL_INTERRUPTED_EXIT;
   if (results.some((result) => result.verdict === 'new' || result.verdict === 'unknown')) return 1;
-  return results.find((result) => result.verdict === 'timeout')?.exitCode ?? 0;
+  return 0;
 }
 
 // import.meta.main exists from Node 22.18; on an older Node it is undefined, and a

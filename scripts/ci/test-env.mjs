@@ -77,6 +77,13 @@ const PREFIX = 'clued-test-identity-';
 const STALE_MS = 2 * 24 * 60 * 60 * 1000;
 const GITCONFIG = `[user]\n\tname = ${TEST_GIT_IDENTITY.name}\n\temail = ${TEST_GIT_IDENTITY.email}\n`;
 let own = null;
+let deferredSignalExits = 0;
+
+// A guarded Windows entry handles termination itself until its Job drains.
+export function deferTestSignalExit() {
+  deferredSignalExits += 1;
+  return () => { deferredSignalExits -= 1; };
+}
 function removeStale(base) {
   const failed = [];
   for (const name of readdirSync(base).filter((entry) => entry.startsWith(PREFIX))) {
@@ -108,7 +115,9 @@ export function ownIdentityDir(env = process.env) {
   own = dir;
   process.once('exit', removeOwn);
   for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129], ['SIGBREAK', 149]]) {
-    process.once(signal, () => process.exit(code));
+    process.on(signal, () => {
+      if (deferredSignalExits === 0) process.exit(code);
+    });
   }
   mkdirSync(path.join(dir, 'gh'));
   writeFileSync(path.join(dir, 'gitconfig'), GITCONFIG);

@@ -558,6 +558,14 @@ function checkInputs(root, initial, cache) {
   }
 }
 
+// An explicit --only-named run needs byte and base checks without a dependency graph.
+export function namedTargetInputs(root, named) {
+  const state = targetInputs(root);
+  const work = worktreeReader(realpathSync.native(root));
+  for (const file of named) work.read(file);
+  return { base: state.base, verify: () => checkInputs(root, state, work.cache) };
+}
+
 // One local plan. The worker receives the individual file list and still uses
 // planFiles for each original command, including separate known-failure policies.
 export function planTargetedFiles(root, suite, named, { env = process.env, platform = hostPlatform() } = {}) {
