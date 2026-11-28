@@ -10,6 +10,8 @@ import assert from 'node:assert/strict';
 import { RoleProbe, ROLE_PROBE_CODES as C, ROLE_PROBE_INTERVAL_MS } from '../src/role-probe.mjs';
 import { CompanionHeartbeat, FAILOVER_SILENCE_MINUTES, NODE_HEARTBEAT_EVERY_MS } from '../src/companion-heartbeat.mjs';
 import { DUTY_REFRESH_MS, NodeDuty, freshMemory, nodeContext } from '../src/node-duty.mjs';
+import { StatusBoard } from '../src/status.mjs';
+import { executorFixture, fakeEngine, triggerBytes, WINDOWS_CLEAN } from './helpers.mjs';
 
 const MIN = 60_000;
 const ACTIVATION_MS = 5 * MIN;
@@ -19,6 +21,61 @@ const QUIET_MS = 210_000;
 const LANDING_MS = 150_000;
 const T0 = Date.parse('2026-11-12T09:00:00Z');
 const HELD = { result: 'held', code: C.held }, NOT_HELD = { result: 'not-held', code: C['not-held'] };
+
+test('到期探针和接班重排优先于普通 PR 读，迟到的旧班次 held 不得开批', async t => {
+  const engine = fakeEngine();
+  let fact = NOT_HELD;
+  const calls = [];
+  const answer = () => ({ ok: true, proof: WINDOWS_CLEAN, roleProbe: fact,
+    outcome: { status: 'BLOCKED', reason: fact.code, sideEffects: 0, mayHavePublished: false } });
+  engine.runRoleProbe = async () => { calls.push(fact.result); return answer(); };
+  let f;
+  const board = new StatusBoard({ clock: () => f?.clock() ?? T0 });
+  f = await executorFixture(t, { engine, now: T0, status: board });
+  await f.exec.tick();
+  for (const pr of [884, 885, 886]) await f.drop(triggerBytes({ pr, headSha: String(pr).padEnd(40, 'a') }));
+
+  const reconcile = f.exec.reconcileQueuedPr.bind(f.exec);
+  f.exec.reconcileQueuedPr = async (...args) => { calls.push('后台读'); return reconcile(...args); };
+  const pull = f.companion.prHead.bind(f.companion);
+  const readViews = [];
+  f.companion.prHead = async (pr, batch) => {
+    if (!batch) {
+      calls.push(pr);
+      f.advance(45_000);
+      readViews.push(board.snapshot());
+      if (pr < 886) return null;
+    }
+    return pull(pr, batch);
+  };
+
+  calls.length = 0;
+  f.advance(MIN);
+  fact = HELD;
+  assert.deepEqual(await f.exec.tick(), { state: 'IDLE', immediate: true });
+  assert.deepEqual(calls, ['held'], '到期探针先取得接班结果');
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.deepEqual(calls, ['held', 884, 885, 886], '首次重排只读预留必需的 PR');
+  for (const view of readViews) {
+    assert.equal(view.node.mode, 'ACTIVE');
+    assert.ok(!['NODE_STANDBY', 'NODE_ROLE_UNCERTAIN'].includes(view.executor.reason));
+  }
+
+  calls.length = 0;
+  await f.drop(triggerBytes({ pr: 887, headSha: '7'.repeat(40) }));
+  f.advance(5 * MIN);
+  engine.runRoleProbe = async () => {
+    calls.push('旧班次 held');
+    f.advance(45_000);
+    f.exec.requestHandoverProbe();
+    return answer();
+  };
+  assert.deepEqual(await f.exec.tick(), { state: 'DEFERRED', reason: 'NODE_ROLE_UNCERTAIN', immediate: true });
+  assert.deepEqual(calls, ['旧班次 held']);
+  assert.equal(f.exec.renewalMode(), 'UNCERTAIN');
+  assert.equal(f.queue.row(887).state, 'QUEUED');
+  assert.equal(engine.calls.filter(([kind]) => kind === 'derive').length, 1);
+});
 
 class Server {
   constructor(holder) { this.rows = [{ node: holder, effectiveAt: 0, endedAt: Infinity, createdAt: 0 }]; this.beats = new Map(); this.handovers = []; this.answers = new Map(); }

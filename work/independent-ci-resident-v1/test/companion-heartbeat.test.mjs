@@ -5,9 +5,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { CompanionHeartbeat, FAILOVER_SILENCE_MINUTES, HANDOVER_MARKER, HEARTBEAT_RPC, NODE_HEARTBEAT_EVERY_MS, WATCHDOG_STALE_MS, handoverComment, heartbeatPayload, parseHeartbeatReply,
   readHeartbeatToken, serviceRunningFrom, supabaseHeartbeatTransport } from '../src/companion-heartbeat.mjs';
-import { advisoryLanes, companionHeartbeat, HEARTBEAT_LANE_EVERY_MS, lane } from '../src/companion-main.mjs';
+import { advisoryLanes, companionHeartbeat, HEARTBEAT_LANE_EVERY_MS, lane, startCloudHeartbeat } from '../src/companion-main.mjs';
+import { JOB_HOST_REPORT_CONTRACT, Runner } from '../src/runner.mjs';
 import { NotifyQueue, queueNotify } from '../src/notify-queue.mjs';
 import { LocalStore } from '../src/pr-status.mjs';
 import { tempRoot } from './helpers.mjs';
@@ -16,9 +19,337 @@ const MIN = 60_000;
 const NOW = Date.parse('2026-11-01T10:00:00Z');
 const SRC = 'c'.repeat(64), H = '4'.repeat(40), RECEIPT = '0a1b2c3d-0000-4000-8000-0000000000bb';
 const TOKEN = 'clued_hbt_FixtureHeartbeatToken0123456789abcdefghijkl';
+const ROTATED_TOKEN = TOKEN.slice(0, -1) + 'z';
 const nextTurn = () => new Promise(resolve => setImmediate(resolve));
 const status = (o = {}) => ({ writtenAt: NOW - 10_000, executor: { state: 'IDLE' }, halt: null, paused: false, intakePause: null, current: null,
   node: { name: 'node-b', mode: 'ACTIVE', probe: { at: NOW - 5 * MIN, result: 'held' } }, versions: { windows: { ciSourceManifestSha256: SRC } }, ...o });
+
+const NEVER = new Promise(() => {});
+const HEARTBEAT_INSTALLATION = { supabaseUrl: 'https://abc123.supabase.co', publishableKey: 'sb_publishable_fixture', scope: 'global' };
+
+function heartbeatTime() {
+  let now = 0, wallOffset = 0, timerId = 0;
+  const timers = new Map();
+  return {
+    monotonic: () => now,
+    clock: () => NOW + now + wallOffset,
+    shiftWall: ms => { wallOffset += ms; },
+    schedule: (fn, delay) => { timers.set(++timerId, { fn, at: now + delay }); return timerId; },
+    cancel: id => timers.delete(id),
+    async advance(ms, advanceHost = () => {}) {
+      const end = now + ms;
+      await nextTurn();
+      await nextTurn();
+      while (true) {
+        const next = [...timers].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+        const at = next?.[1].at ?? end;
+        advanceHost(at - now);
+        now = at;
+        if (!next) break;
+        timers.delete(next[0]);
+        next[1].fn();
+        await nextTurn();
+      }
+      await nextTurn();
+    },
+  };
+}
+
+async function productionHeartbeat(t, options = {}) {
+  const root = await tempRoot(t), time = heartbeatTime();
+  await fs.mkdir(path.join(root, 'secrets', 'heartbeat'), { recursive: true });
+  await fs.writeFile(path.join(root, 'secrets', 'heartbeat', 'ci-node-heartbeat.token'), TOKEN);
+  const reads = { token: 0, status: 0, scm: 0, delivery: 0 };
+  const stopReading = new Set();
+  const sample = (key, read) => async (...args) => {
+    reads[key]++;
+    return stopReading.has(key) ? NEVER : read(...args);
+  };
+  let installationGeneration = 1, statusFields = {}, refuseToken = false, tokenValue = TOKEN;
+  const currentStatus = () => status({ writtenAt: time.clock(), versions: {
+    windows: { ciSourceManifestSha256: SRC }, localInstallGeneration: installationGeneration,
+  }, ...statusFields });
+  const requests = [], confirmations = [], deliveryConfirmations = [];
+  const store = { data: { notified: {} }, save: options.save ?? (async () => {}) };
+  const runner = options.runner ?? { busy: false, run: async () => ({ code: 0, stdout: 'STATE : 4 RUNNING' }) };
+  const fetchImpl = async (_url, init) => {
+    const { p_input: payload, p_token_hash: tokenHash } = JSON.parse(init.body);
+    const request = { at: time.monotonic(), payload, tokenHash, signal: init.signal };
+    requests.push(request);
+    const response = () => {
+      if (refuseToken) return { status: 403, text: async () => '{}' };
+      const { fleet_delivery: evidence, fleet_runtime, ...report } = payload;
+      assert.ok(serverAccepts(report), JSON.stringify(report));
+      const confirmation = { ...request, sequence: confirmations.length + 1 };
+      confirmations.push(confirmation);
+      if (evidence?.installGeneration === installationGeneration && evidence.packageGeneration === 27 &&
+          evidence.nodeId === RECEIPT && evidence.bindingGeneration === 6 &&
+          evidence.windowsSourceSha256 === payload.ci_source_manifest_sha256 && evidence.linuxSourceSha256 === SRC &&
+          evidence.linuxReady && evidence.acl && evidence.connectionCarry && evidence.linuxConsistent &&
+          evidence.operations && evidence.processClearance && payload.service_running)
+        deliveryConfirmations.push(confirmation);
+      const reply = { status: 'ok', received_at: new Date(time.clock()).toISOString(), auto_handovers: options.handovers };
+      return { status: 200, text: async () => JSON.stringify(reply) };
+    };
+    return options.fetch ? options.fetch(request, response) : response();
+  };
+  const hb = companionHeartbeat({
+    root, nodeName: 'node-b', ghExe: 'gh', repo: 'r/r', runner, fetchImpl,
+    store: options.openStore ? undefined : store, openStore: options.openStore, clock: time.clock,
+    readJson: options.readJson ?? (async () => HEARTBEAT_INSTALLATION), notify: options.notify,
+  });
+  hb.readToken = sample('token', () => options.readToken ? options.readToken(tokenValue) : tokenValue);
+  hb.readStatus = sample('status', currentStatus);
+  const probe = hb.serviceRunning;
+  hb.serviceRunning = sample('scm', probe);
+  hb.readDeliveryEvidence = sample('delivery', options.delivery ?? (() => null));
+  return { hb, time, reads, requests, confirmations, deliveryConfirmations, stopReading,
+    setGeneration: n => { installationGeneration = n; }, setStatus: fields => { statusFields = fields; },
+    setToken: value => { tokenValue = value; }, refuse: value => { refuseToken = value; },
+    start() { const stop = startCloudHeartbeat(hb, time); t.after(stop); return stop; },
+  };
+}
+
+for (const kind of ['token', 'status', 'scm', 'delivery']) {
+  test(`生产心跳在 ${kind} 采样永久待决时连续发送六分钟`, async t => {
+    const f = await productionHeartbeat(t);
+    f.start();
+    await f.time.advance(MIN / 2);
+    const first = f.confirmations.at(-1);
+    assert.ok(first, '先取得服务端确认');
+    f.stopReading.add(kind);
+    const before = f.reads[kind];
+    await f.time.advance(6 * MIN);
+    const subsequent = f.confirmations.slice(first.sequence);
+    assert.ok(subsequent.length >= 6, `六分钟内应持续确认，实际 ${subsequent.length} 次`);
+    assert.ok(f.reads[kind] <= before + 1, '待决采样合并，底层只留一个');
+    for (const [i, beat] of subsequent.entries()) {
+      assert.equal(beat.sequence, first.sequence + i + 1);
+      assert.ok(beat.at - (subsequent[i - 1] ?? first).at <= MIN);
+    }
+    if (kind === 'status') {
+      const { payload } = subsequent.at(-1);
+      assert.deepEqual([payload.state, payload.service_running, payload.ci_source_manifest_sha256, payload.fleet_delivery],
+        ['UNKNOWN', true, null, undefined]);
+    }
+    if (kind === 'token') {
+      await f.time.advance(5 * MIN);
+      const count = f.requests.length;
+      assert.equal(f.hb.diagnostics.lastErrorKind, 'TOKEN_EXPIRED');
+      await f.time.advance(MIN);
+      assert.equal(f.requests.length, count, '最近验证的凭据已过期，停止复用');
+    }
+  });
+}
+
+test('真实 Runner 的宿主兜底已结算但没有 close 时，探测不增开且心跳照常推进', async t => {
+  let starts = 0, kills = 0;
+  const runner = new Runner({ jobHost: 'C:\\fixture\\CluedCompanionJobHost.exe', spawnImpl: (_file, [nonce]) => {
+    const child = new EventEmitter();
+    child.pid = ++starts;
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = () => { kills++; };
+    if (starts === 1) setImmediate(() => {
+      child.stdout.write('STATE : 4 RUNNING');
+      child.stderr.write(`clued-job-host ${nonce} ${JSON.stringify({ contract: JOB_HOST_REPORT_CONTRACT, started: true, failure: null,
+        childPid: 2, timedOut: false, exitCode: 0, leftover: 0, activeProcesses: 0, totalProcesses: 1, treeZero: true })}\n`);
+      child.emit('close', 0);
+    });
+    return child;
+  } });
+  const f = await productionHeartbeat(t, { runner });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  f.start();
+  await f.time.advance(6 * MIN, ms => t.mock.timers.tick(ms));
+  assert.deepEqual([starts, kills, runner.busy], [2, 1, true]);
+  assert.equal(f.reads.scm, 2);
+  assert.ok(f.confirmations.length >= 6, '宿主仍占用 Runner 时，服务端确认序列继续前进');
+  assert.ok(f.hb.diagnostics.samples.scm.busyAgeMs >= 5 * MIN);
+});
+
+for (const stage of ['fetch', 'body']) {
+  test(`生产 ${stage} 读取到达二十秒截止后取消，三十秒到点重试，丢弃迟到回复`, async t => {
+    let active = 0, peak = 0, release, cancelledAt;
+    const f = await productionHeartbeat(t, { fetch(request, respond) {
+      const first = f.requests.length === 1;
+      const stall = () => new Promise(resolve => {
+        request.signal.addEventListener('abort', () => { active--; cancelledAt = f.time.monotonic(); }, { once: true });
+        release = () => resolve(stage === 'fetch' ? { status: 403, text: async () => '{}' } : JSON.stringify({ status: 'rejected', error_code: 'binding_not_authorized' }));
+      });
+      active++;
+      peak = Math.max(peak, active);
+      if (first) return stage === 'fetch' ? stall() : { status: 200, text: stall };
+      active--;
+      return respond();
+    } });
+    f.start();
+    await f.time.advance(0);
+    if (!f.requests.length) await f.time.advance(MIN / 2);
+    const first = f.requests[0];
+    assert.ok(first);
+    await f.time.advance(first.at + 20_000 - f.time.monotonic());
+    assert.equal(cancelledAt, first.at + 20_000);
+    assert.equal(f.hb.diagnostics.lastErrorKind, 'TRANSPORT_TIMEOUT');
+    await f.time.advance(first.at + 30_000 - f.time.monotonic());
+    assert.deepEqual(f.requests.map(r => r.at), [first.at, first.at + 30_000]);
+    assert.equal(peak, 1);
+    const ack = f.hb.diagnostics.lastServerAckAt;
+    assert.ok(ack);
+    release();
+    await nextTurn();
+    assert.deepEqual([f.hb.diagnostics.lastServerAckAt, f.hb.diagnostics.lastErrorKind, f.hb.failures], [ack, null, 0]);
+    await f.time.advance(MIN);
+    assert.equal(f.confirmations.length, 2, '迟到的拒绝不清除凭据');
+  });
+}
+
+test('墙钟回拨后单次传输超时，下一跳在预算内确认，相邻确认最多相隔 120 秒', async t => {
+  const confirmationsAt = [];
+  const f = await productionHeartbeat(t, { fetch(request, respond) {
+    const respondNow = () => { confirmationsAt.push(f.time.monotonic()); return respond(); };
+    if (f.requests.length === 2) return new Promise((_resolve, reject) => {
+      request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
+    });
+    if (f.requests.length === 3) return new Promise(resolve => f.time.schedule(() => resolve(respondNow()), 19_000));
+    return respondNow();
+  } });
+  f.start();
+  await f.time.advance(MIN / 2);
+  assert.equal(confirmationsAt.length, 1);
+  f.time.shiftWall(-15 * MIN);
+  await f.time.advance(120_000);
+  const first = f.requests[0].at;
+  assert.deepEqual(f.requests.map(request => request.at), [first, first + 60_000, first + 90_000]);
+  assert.equal(f.requests[1].signal.aborted, true);
+  assert.deepEqual(confirmationsAt, [first, first + 109_000]);
+  assert.deepEqual(f.confirmations.map(beat => beat.sequence), [1, 2]);
+});
+
+test('安装读取与凭据分别重试，诊断存储初始化待决时仍可完成首跳', async t => {
+  let installReads = 0, storeOpens = 0;
+  const f = await productionHeartbeat(t, {
+    readJson: async () => {
+      if (++installReads === 1) throw new Error('fixture installation unavailable');
+      return HEARTBEAT_INSTALLATION;
+    },
+    openStore: () => { storeOpens++; return NEVER; },
+  });
+  f.setToken(null);
+  f.start();
+  await f.time.advance(2 * MIN);
+  assert.deepEqual([installReads, storeOpens, f.requests.length], [2, 1, 0]);
+  assert.equal(f.hb.diagnostics.lastErrorKind, 'NO_TOKEN');
+  f.setToken(ROTATED_TOKEN);
+  await f.time.advance(MIN);
+  assert.equal(f.confirmations.length, 1);
+  assert.equal(f.confirmations[0].tokenHash, createHash('sha256').update(ROTATED_TOKEN).digest('hex'));
+  assert.equal(storeOpens, 1);
+});
+
+test('迟到的无效凭据立即停止缓存复用，停止时取消在途传输', async t => {
+  let release, block = false;
+  const f = await productionHeartbeat(t, {
+    readToken: value => block ? new Promise(resolve => { release = resolve; }) : value,
+    fetch: (_request, respond) => f.requests.length === 1 ? respond() : NEVER,
+  });
+  const stop = f.start();
+  await f.time.advance(MIN / 2);
+  assert.equal(f.confirmations.length, 1);
+  block = true;
+  await f.time.advance(40_000);
+  assert.equal(f.hb.diagnostics.samples.token.code, 'TIMEOUT');
+  f.setToken(null);
+  block = false;
+  release(null);
+  await f.time.advance(2 * MIN);
+  assert.equal(f.requests.length, 1);
+  f.setToken(ROTATED_TOKEN);
+  await f.time.advance(MIN);
+  assert.equal(f.requests.length, 2);
+  const last = f.requests.at(-1);
+  assert.equal(last.signal.aborted, false);
+  stop();
+  assert.equal(last.signal.aborted, true);
+  await f.time.advance(MIN);
+  assert.equal(f.requests.length, 2);
+});
+
+test('迟到、跨安装代次和过期的交付证据不会确认到位，完整证据恢复后才确认', async t => {
+  let release, recovered = false;
+  const evidence = (generation, at) => ({ schemaVersion: 1, nodeId: RECEIPT, bindingGeneration: 6,
+    installGeneration: generation, packageGeneration: 27, brokerObservedAt: at, linuxObservedAt: at,
+    installReceiptSha256: SRC, windowsSourceSha256: SRC, linuxSourceSha256: SRC,
+    brokerEvidenceSha256: SRC, linuxFactsSha256: SRC, linuxReady: true, linuxConsistent: true, acl: true, connectionCarry: true,
+    operations: true, processClearance: true,
+    runtime: { selfcheckAt: at, idle: true, failures: [] } });
+  const f = await productionHeartbeat(t, { delivery({ status: sample, now }) {
+    const value = evidence(sample.versions.localInstallGeneration, new Date(now).toISOString());
+    if (!release) return new Promise(resolve => { release = () => resolve(value); });
+    return recovered ? value : evidence(sample.versions.localInstallGeneration, new Date(NOW - 16 * MIN).toISOString());
+  } });
+  f.start();
+  await f.time.advance(MIN / 2);
+  assert.ok(f.confirmations.length, '交付读待决时，先收到降级心跳');
+  assert.equal(f.confirmations[0].payload.fleet_delivery, undefined);
+  f.setGeneration(2);
+  await f.time.advance(MIN);
+  release();
+  await f.time.advance(2 * MIN);
+  assert.ok(f.confirmations.every(({ payload }) => !Object.hasOwn(payload, 'fleet_delivery') && !Object.hasOwn(payload, 'fleet_runtime')));
+  assert.equal(f.deliveryConfirmations.length, 0);
+  recovered = true;
+  await f.time.advance(2 * MIN);
+  assert.ok(f.deliveryConfirmations.length);
+  assert.equal(f.deliveryConfirmations[0].payload.fleet_delivery.installGeneration, 2);
+  assert.ok(f.deliveryConfirmations[0].payload.fleet_runtime);
+  const beforeChange = f.confirmations.length;
+  f.setGeneration(3);
+  f.stopReading.add('delivery');
+  await f.time.advance(2 * MIN);
+  const newGeneration = f.confirmations.slice(beforeChange);
+  assert.ok(newGeneration.length);
+  assert.ok(newGeneration.every(({ payload }) => !Object.hasOwn(payload, 'fleet_delivery') && !Object.hasOwn(payload, 'fleet_runtime')));
+});
+
+test('诊断保存和换手通知待决时仍发送 HALTED、停机，并立即停止复用拒绝或无效的凭据', async t => {
+  let writes = 0, notices = 0, comments = 0;
+  const runner = { busy: false, run: async () => ({ code: 0, stdout: stopped ? 'STATE : 1 STOPPED' : 'STATE : 4 RUNNING' }) };
+  let stopped = false;
+  const f = await productionHeartbeat(t, { runner, save: () => { writes++; return NEVER; },
+    notify: () => { notices++; return NEVER; },
+    handovers: [{ receipt_id: RECEIPT, created_at: new Date(NOW).toISOString() }] });
+  f.hb.handover = { ownerLogin: async () => 'fixture', panelIssue: async () => 77, commentExists: async () => false,
+    comment: () => { comments++; return NEVER; } };
+  f.start();
+  await f.time.advance(MIN / 2);
+  void f.hb.handoverStep();
+  f.setStatus({ halt: { code: 'RESIDENT_SOURCE_DRIFT', at: NOW }, current: { pr: 951, headSha: H } });
+  await f.time.advance(MIN);
+  assert.equal(f.confirmations.at(-1).payload.state, 'HALTED');
+  stopped = true;
+  await f.time.advance(MIN);
+  assert.deepEqual([f.confirmations.at(-1).payload.state, f.confirmations.at(-1).payload.service_running], ['UNKNOWN', false]);
+  f.setToken('invalid');
+  await f.time.advance(MIN / 2);
+  const afterInvalid = f.requests.length;
+  await f.time.advance(MIN);
+  assert.equal(f.requests.length, afterInvalid);
+  f.setToken(TOKEN);
+  f.refuse(true);
+  await f.time.advance(MIN);
+  const afterRefused = f.requests.length;
+  assert.ok(afterRefused > afterInvalid);
+  await f.time.advance(2 * MIN);
+  assert.equal(f.requests.length, afterRefused);
+  assert.equal(f.hb.diagnostics.lastErrorKind, 'TOKEN_REFUSED');
+  assert.deepEqual([writes, notices, comments], [1, 1, 1]);
+  assert.ok(!JSON.stringify(f.hb.diagnostics).includes(TOKEN));
+  f.setToken(ROTATED_TOKEN);
+  f.refuse(false);
+  await f.time.advance(MIN);
+  assert.equal(f.confirmations.at(-1).tokenHash, createHash('sha256').update(ROTATED_TOKEN).digest('hex'));
+});
 
 test('心跳只转发本代和双端 Source 证据的许可字段', () => {
   const at = new Date(NOW - MIN).toISOString();
@@ -475,13 +806,16 @@ test('the reply is read tolerantly; the wire call posts the CI command door with
   // the token file, and the companion without one
   const root = await tempRoot(t);
   assert.equal(await readHeartbeatToken(root), null);
-  assert.equal(await companionHeartbeat({ root, nodeName: 'node-b', ghExe: 'gh', repo: 'r/r', powershellExe: 'C:\\ps.exe', run: async () => ({ code: 0 }), store: { data: { notified: {} } } }), null);
+  const withoutToken = companionHeartbeat({ root, nodeName: 'node-b', ghExe: 'gh', repo: 'r/r', run: async () => ({ code: 0 }), store: { data: { notified: {} } } });
+  assert.deepEqual(await withoutToken.step(), { skipped: 'NO_TOKEN' });
   await fs.mkdir(path.join(root, 'secrets', 'heartbeat'), { recursive: true });
   await fs.writeFile(path.join(root, 'secrets', 'heartbeat', 'ci-node-heartbeat.token'), `${TOKEN}\r\n`);
   assert.equal(await readHeartbeatToken(root), TOKEN);
-  const hb = await companionHeartbeat({ root, nodeName: 'node-b', ghExe: 'gh', repo: 'r/r', powershellExe: 'C:\\ps.exe', run: async () => ({ code: 0 }), store: { data: { notified: {} }, save: async () => {} },
+  const hb = companionHeartbeat({ root, nodeName: 'node-b', ghExe: 'gh', repo: 'r/r', powershellExe: 'C:\\ps.exe', run: async () => ({ code: 0 }), store: { data: { notified: {} }, save: async () => {} },
+    fetchImpl: async () => ({ status: 200, text: async () => '{"status":"ok"}' }),
     readJson: async () => ({ supabaseUrl: 'https://abc123.supabase.co', publishableKey: 'sb_publishable_x1', scope: 'project:0a1b2c3d-0000-4000-8000-0000000000bb' }) });
   assert.ok(hb instanceof CompanionHeartbeat);
+  await hb.step();
   assert.equal(hb.scope, 'project:0a1b2c3d-0000-4000-8000-0000000000bb', 'the installed record\'s scope');
 });
 
@@ -502,16 +836,19 @@ test('伴随诊断保留尝试时间、服务端确认和脱敏错误分类', as
   };
   setReply({ status: 'ok', received_at: ack });
   await hb.step();
+  await nextTurn();
   assert.deepEqual(saved, { pid: process.pid, lastAttemptAt: new Date(now).toISOString(), lastServerAckAt: ack, lastErrorKind: null });
 
   now += MIN;
   setReply({ status: 'rejected', error_code: TOKEN });
   await hb.step();
+  await nextTurn();
   assert.deepEqual(saved, { pid: process.pid, lastAttemptAt: new Date(now).toISOString(), lastServerAckAt: ack, lastErrorKind: 'SERVER_REJECTED' });
 
   now += MIN / 2;
   hb.transport = supabaseHeartbeatTransport({ ...options, fetchImpl: async () => { throw new Error(TOKEN); } });
   await hb.step();
+  await nextTurn();
   assert.deepEqual(saved, { pid: process.pid, lastAttemptAt: new Date(now).toISOString(), lastServerAckAt: ack, lastErrorKind: 'TRANSPORT_ERROR' });
 });
 
@@ -528,7 +865,8 @@ test('a server without the heartbeat action is its own notice, never "token refu
   assert.deepEqual([invalid.ok, invalid.serverNotReady, invalid.tokenRefused], [false, false, false], 'a failed beat');
   assert.equal((await tr(reply(403, { code: '42501', message: 'binding_not_authorized' }))({ payload: {} }, { token: TOKEN })).tokenRefused, true);
   assert.equal((await tr(reply(401, { code: '42501', message: 'authorization_revoked_or_expired' }))({ payload: {} }, { token: TOKEN })).tokenRefused, true);
-  assert.equal(parseHeartbeatReply({ status: 'rejected', error_code: 'authorization_revoked_or_expired' }).serverNotReady, false);
+  const revoked = parseHeartbeatReply({ status: 'rejected', error_code: 'authorization_revoked_or_expired' });
+  assert.deepEqual([revoked.serverNotReady, revoked.tokenRefused], [false, true]);
   // 2b-shaped 400s count: the third one warns "发不出去"
   const bad = beat({ replies: [{ ok: false, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, autoHandovers: [], watchdogTickAt: null, watchdogStale: null }] });
   for (let i = 0; i < 3; i += 1) { await bad.hb.step(); bad.advance(NODE_HEARTBEAT_EVERY_MS); }

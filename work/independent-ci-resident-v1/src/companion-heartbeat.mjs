@@ -3,7 +3,7 @@
 // NODE_HEARTBEAT_EVERY_MS, whatever the train mode, PAUSE, HALT or a batch in flight, and at once when what it reports changed, it
 // sends this node's self-report with the node's own heartbeat-only token (installed by -HeartbeatTokenFile into
 // resident\secrets\heartbeat\, the Owner may read it). The server writes the time and binds the report to the token's node; the
-// name in the payload is informational. No token installed: nothing here runs (CompanionHeartbeat.step answers NO_TOKEN).
+// name in the payload is informational. Without a usable token the companion samples locally without authenticating a beat.
 //
 // The wire (step 2b, migration 20261031090000_merge_train_failover_v1.sql, clued_private.ci_node_heartbeat_v1): the CI command
 // door action ci_node_heartbeat, POST <supabase>/rest/v1/rpc/clued_work_verify_v1 { p_token_hash: sha256 hex of the token,
@@ -42,7 +42,7 @@ export const HEARTBEAT_ACTION = 'ci_node_heartbeat';
 export const HEARTBEAT_INPUT_KEYS = Object.freeze(['action', 'scope', 'state', 'mode', 'probe', 'intake_paused_until', 'halt', 'ci_source_manifest_sha256',
   'service_running', 'snapshot_age_seconds', 'node_name', 'fleet_delivery', 'fleet_runtime']);
 // Every minute (ADR 0026; was 10 minutes): the failover watchdog judges a holder lost after FAILOVER_SILENCE_MINUTES without a beat,
-// so a node that is alive must be heard well inside that. A failed beat is tried again at the next lane pass (30 s), not after a
+// so a node that is alive must be heard well inside that. A failed beat is tried again after 30 s, not after a
 // whole interval, so one lost request never looks like silence.
 export const NODE_HEARTBEAT_EVERY_MS = 60_000;
 // The watchdog's own rule (migration 20261112130500_ci_failover_fast_v1.sql, ci_failover_rules_v1 silence_minutes); only for the texts.
@@ -54,6 +54,10 @@ export const SNAPSHOT_FRESH_MS = 5 * 60_000;
 export const HEARTBEAT_TOKEN_DIR = path.join('secrets', 'heartbeat');
 export const HEARTBEAT_TOKEN_FILE = 'ci-node-heartbeat.token';
 export const HEARTBEAT_TIMEOUT_MS = 20_000;
+export const HEARTBEAT_RETRY_MS = 30_000;
+const LOCAL_SAMPLE_MS = 5_000;
+const SCM_SAMPLE_MS = 15_000;
+const TOKEN_CACHE_MS = 10 * 60_000;
 export const HANDOVER_MARKER = id => `<!-- clued-auto-handover:${id} -->`;
 const HANDOVER_MAX_ATTEMPTS = 3;
 const HANDOVER_RETRY_MS = 30_000;
@@ -79,11 +83,13 @@ const SCOPE = /^(?:global|project:[a-f0-9-]{36})$/;
 const iso = ms => (Number.isFinite(ms) ? new Date(ms).toISOString() : null);
 const isoOf = v => (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? new Date(Date.parse(v)).toISOString() : null);
 const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+const tokenHash = token => createHash('sha256').update(token, 'utf8').digest('hex');
 
 // The server's p_input from what the companion sees (exactly the keys ci_node_heartbeat_v1 accepts). status: status.mjs#parseStatus
 // or null; serviceRunning: true | false | null (SCM unreadable: the snapshot's freshness stands in, the server needs a boolean).
-export function heartbeatPayload({ nodeName, scope, status, statusError = false, serviceRunning = null, now, protocolVersion = 1, delivery = null }) {
-  const age = status && Number.isFinite(status.writtenAt) ? Math.max(0, now - status.writtenAt) : null;
+export function heartbeatPayload({ nodeName, scope, status, statusError = false, serviceRunning = null, now, minimumAge = 0,
+  protocolVersion = 1, delivery = null, deliveryNow = now }) {
+  const age = status && Number.isFinite(status.writtenAt) ? Math.max(minimumAge, now - status.writtenAt) : null;
   const fresh = !!status && !statusError && age !== null && age <= SNAPSHOT_FRESH_MS;
   const running = [true, false].includes(serviceRunning) ? serviceRunning : fresh;
   const readable = fresh && running;
@@ -110,12 +116,12 @@ export function heartbeatPayload({ nodeName, scope, status, statusError = false,
   const p = { action: HEARTBEAT_ACTION, scope: SCOPE.test(scope ?? '') ? scope : 'global', state, mode, probe,
     ...(state === 'INTAKE_PAUSED' ? { intake_paused_until: intakeUntil } : {}),
     halt: state === 'HALTED' && Buffer.byteLength(JSON.stringify(halt)) <= HALT_MAX_BYTES ? halt : null,
-    ci_source_manifest_sha256: HEX64.test(source ?? '') ? source : null, service_running: running,
+    ci_source_manifest_sha256: fresh && HEX64.test(source ?? '') ? source : null, service_running: running,
     snapshot_age_seconds: age === null ? null : Math.min(999_999_999, Math.floor(age / 1000)) };
   if (NODE_NAME.test(nodeName ?? '')) p.node_name = nodeName;
   const evidence = readable ? fleetEvidencePayload(delivery) : null;
   if (evidence && evidence.windowsSourceSha256 === p.ci_source_manifest_sha256 &&
-      freshDeliveryTime(evidence.brokerObservedAt, now) && freshDeliveryTime(evidence.linuxObservedAt, now)) p.fleet_delivery = evidence;
+      freshDeliveryTime(evidence.brokerObservedAt, deliveryNow) && freshDeliveryTime(evidence.linuxObservedAt, deliveryNow)) p.fleet_delivery = evidence;
   if (p.fleet_delivery && delivery.runtime) p.fleet_runtime = delivery.runtime;
   return Object.freeze(p);
 }
@@ -123,7 +129,17 @@ export function heartbeatPayload({ nodeName, scope, status, statusError = false,
 // What a change means: anything but the snapshot's age (which moves every pass).
 const fingerprint = p => JSON.stringify({ ...p, snapshot_age_seconds: null, fleet_delivery: null, fleet_runtime: null });
 
+// 用安装身份和交付证据读取的状态字段识别代次。状态只刷新写入时间时，保留同代在途读取。
+function deliveryIdentity(status) {
+  const v = status?.versions;
+  return JSON.stringify([v?.localInstallGeneration, v?.windows?.ciSourceManifestSha256,
+    v?.linux?.localInstallGeneration, v?.linux?.ciSourceManifestSha256, v?.linux?.observedAt, v?.installedPackage,
+    v?.consistent, v?.selfcheck, status?.executor?.state, status?.current, status?.pending?.length, status?.halt,
+    status?.paused, status?.recent, status?.train?.last]);
+}
+
 const FAILED = Object.freeze({ ok: false, tokenRefused: false, notRegistered: false, serverNotReady: false, connectionOnly: false, autoHandovers: Object.freeze([]), watchdogTickAt: null, watchdogStale: null });
+const TIMED_OUT = Object.freeze({ ...FAILED, errorKind: 'TRANSPORT_TIMEOUT' });
 const WIRE_ERRORS = new Set(['TRANSPORT_ERROR', 'TRANSPORT_TIMEOUT', 'TRANSPORT_CONFIG', 'HTTP_ERROR', 'INVALID_REPLY', 'SERVER_REJECTED']);
 function heartbeatError(reply) {
   if (reply?.ok) return null;
@@ -147,7 +163,8 @@ export function parseHeartbeatReply(v) {
   if (!plain(v)) return { ...FAILED, errorKind: 'INVALID_REPLY' };
   if (v.status === 'rejected' && v.error_code === 'admission_binding_required') return NOT_READY;
   if (v.status === 'rejected' && v.error_code === 'heartbeat_connection_only') return { ...FAILED, connectionOnly: true };
-  if (v.status === 'rejected') return { ...FAILED, notRegistered: v.error_code === NOT_REGISTERED, tokenRefused: v.error_code === 'binding_not_authorized', errorKind: 'SERVER_REJECTED' };
+  if (v.status === 'rejected') return { ...FAILED, notRegistered: v.error_code === NOT_REGISTERED,
+    tokenRefused: ['binding_not_authorized', 'authorization_revoked_or_expired'].includes(v.error_code), errorKind: 'SERVER_REJECTED' };
   if (v.status !== 'ok') return { ...FAILED, errorKind: 'INVALID_REPLY' };
   const w = plain(v.watchdog) ? v.watchdog : null;
   const tick = Date.parse(w?.last_tick_at ?? '');
@@ -172,14 +189,19 @@ export function parseHeartbeatReply(v) {
 // before the migration, a timeout) is a failed beat. The token itself never leaves the process; no body is ever logged.
 export function supabaseHeartbeatTransport({ supabaseUrl, publishableKey, fetchImpl = globalThis.fetch, timeoutMs = HEARTBEAT_TIMEOUT_MS }) {
   if (!/^https:\/\/[a-z0-9]+\.supabase\.co$/.test(supabaseUrl ?? '') || !/^sb_publishable_[A-Za-z0-9_-]+$/.test(publishableKey ?? '')) throw new Error('HEARTBEAT_TRANSPORT_CONFIG_INVALID');
-  return async ({ payload }, { token }) => {
-    const signal = AbortSignal.timeout(timeoutMs);
+  return async ({ payload }, { token, signal = AbortSignal.timeout(timeoutMs) }) => {
     try {
+      signal.throwIfAborted();
       const r = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/${HEARTBEAT_RPC}`, { method: 'POST', signal,
         headers: { apikey: publishableKey, authorization: `Bearer ${publishableKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ p_token_hash: createHash('sha256').update(token, 'utf8').digest('hex'), p_input: payload }) });
+        body: JSON.stringify({ p_token_hash: tokenHash(token), p_input: payload }) });
+      signal.throwIfAborted();
+      if (r.status === 401 || r.status === 403) {
+        void r.body?.cancel().catch(() => {});
+        return { ...FAILED, tokenRefused: true };
+      }
       const text = await r.text();
-      if (r.status === 401 || r.status === 403) return { ...FAILED, tokenRefused: true };
+      signal.throwIfAborted();
       if (r.status !== 200) return { ...FAILED, errorKind: r.status >= 400 && r.status < 500 ? 'SERVER_REJECTED' : 'HTTP_ERROR' };
       if (Buffer.byteLength(text) > REPLY_MAX_BYTES) return { ...FAILED, errorKind: 'INVALID_REPLY' };
       try { return parseHeartbeatReply(JSON.parse(text)); } catch { return { ...FAILED, errorKind: 'INVALID_REPLY' }; }
@@ -188,9 +210,13 @@ export function supabaseHeartbeatTransport({ supabaseUrl, publishableKey, fetchI
 }
 
 // The installed token (resident\secrets\heartbeat\ci-node-heartbeat.token), or null when none is installed or it does not fit.
-export async function readHeartbeatToken(root, fsImpl = fs) {
+export async function readHeartbeatToken(root, fsImpl = fs, { throwOnReadError = false } = {}) {
   let bytes;
-  try { bytes = await fsImpl.readFile(path.join(root, HEARTBEAT_TOKEN_DIR, HEARTBEAT_TOKEN_FILE)); } catch { return null; }
+  try { bytes = await fsImpl.readFile(path.join(root, HEARTBEAT_TOKEN_DIR, HEARTBEAT_TOKEN_FILE)); }
+  catch (error) {
+    if (throwOnReadError && !['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error.code)) throw error;
+    return null;
+  }
   if (bytes.length > 1024) return null;
   const t = bytes.toString('utf8').trim();
   return TOKEN.test(t) ? t : null;
@@ -216,7 +242,7 @@ const validIssue = issue => Number.isSafeInteger(issue) && issue > 0;
 export class CompanionHeartbeat {
   // ports: { nodeName, scope (the installed record's), transport (supabaseHeartbeatTransport or a test double), readToken() -> token
   //   | null, readStatus() -> status (throws when unreadable), serviceRunning() -> true | false | null, clock, notify(key, title, body)
-  //   (one Windows toast per key), memory: { get(key), set(key, value) } (the companion's own store), handover: { ownerLogin(),
+//   (one Windows toast per key), memory: { get(key), set(key, value) } (the companion's own store), handover: { ownerLogin(),
   //   panelIssue() -> number | null, commentExists(issue, marker) -> bool | null, comment(issue, body) -> true (created), false
   //   (rejected), or null (unknown) } (the Owner's gh), handoverOutbox: { load(), save(records) } (production),
   //   handoverClock (monotonic in production), recordDiagnostics(snapshot) (optional, schedules a local save) }
@@ -234,10 +260,173 @@ export class CompanionHeartbeat {
     this.autoHandoverSince = null;
   }
 
+  // 生产用单调时钟发送，组包只使用已完成且仍有效的采样。
+  start({ monotonic = () => performance.now(), schedule = setTimeout, cancel = clearTimeout } = {}) {
+    const pending = new Map(), rejected = new Set();
+    let stopped = false, timer, flight = null, lastAttempt = null, lastSucceeded = false;
+    let token = null, credentialError = 'NO_TOKEN';
+    let statusSample = null, scmSample = null, deliverySample = null, deliveryGeneration = 0, scmStartedAt = null;
+    let installed = !this.readInstallation;
+
+    const stage = (key, code, fields) => this.updateDiagnostics({
+      samples: { ...this.diagnostics.samples, [key]: { at: iso(this.clock()), code, ...fields } },
+    });
+    const sample = (key, budget, read, accept) => {
+      if (pending.has(key)) return;
+      const started = monotonic(), wallTime = this.clock();
+      const deadline = started + budget;
+      const startedAt = iso(wallTime);
+      const report = code => stage(key, code, { startedAt });
+      const timeout = schedule(() => report('TIMEOUT'), budget);
+      pending.set(key, timeout);
+      report('STARTED');
+      const finish = (value, ok) => {
+        cancel(timeout);
+        pending.delete(key);
+        if (stopped) return;
+        const timely = monotonic() < deadline;
+        report(timely ? (ok ? 'COMPLETED' : 'FAILED') : 'LATE');
+        // 迟到的缺失或无效凭据仍会使缓存失效。迟到的正向样本不能成为证据。
+        if (timely || (key === 'token' && ok && !TOKEN.test(value ?? ''))) accept(value, { started, wallTime, ok });
+      };
+      // 超时只更新诊断，底层操作退出前仍占用唯一的采样槽。
+      void Promise.resolve().then(read).then(value => finish(value, true), () => finish(null, false));
+    };
+    const acceptStatus = (value, capture) => {
+      const identity = deliveryIdentity(value);
+      if (identity !== statusSample?.identity) {
+        deliveryGeneration++;
+        deliverySample = null;
+      }
+      statusSample = { ...capture, value, identity };
+      if (!this.readDeliveryEvidence || !value || capture.wallTime - value.writtenAt > SNAPSHOT_FRESH_MS) return;
+      const generation = deliveryGeneration;
+      sample('delivery', LOCAL_SAMPLE_MS, () => this.readDeliveryEvidence({ status: value, now: capture.wallTime }), (delivery, observed) => {
+        if (generation === deliveryGeneration) deliverySample = { ...observed, value: delivery };
+        else stage('delivery', 'SUPERSEDED');
+      });
+    };
+    const collect = () => {
+      if (!installed) sample('installation', LOCAL_SAMPLE_MS, () => this.readInstallation(), (config, { ok }) => {
+        if (!ok) return;
+        this.scope = config.scope;
+        this.transport ??= config.transport;
+        installed = true;
+      });
+      sample('token', LOCAL_SAMPLE_MS, () => this.readToken(), (value, { started, wallTime, ok }) => {
+        if (!ok) return; // 瞬时读错误允许在有效期内沿用服务端已确认的凭据。
+        if (!TOKEN.test(value ?? '')) {
+          token = null;
+          credentialError = 'NO_TOKEN';
+          stage('token', 'MISSING_OR_INVALID', { startedAt: iso(wallTime) });
+        } else if (rejected.has(tokenHash(value))) {
+          token = null;
+          credentialError = 'TOKEN_REFUSED';
+          stage('token', 'REFUSED', { startedAt: iso(wallTime) });
+        } else {
+          token = { value, at: started, verified: token?.value === value && token.verified, attempted: false };
+        }
+      });
+      sample('status', LOCAL_SAMPLE_MS, () => this.readStatus(), acceptStatus);
+      if (this.isScmBusy?.()) stage('scm', 'RUNNER_BUSY', { startedAt: this.diagnostics.samples?.scm?.startedAt ?? null,
+        busyAgeMs: Math.round(monotonic() - (scmStartedAt ?? monotonic())) });
+      else if (!pending.has('scm')) {
+        scmStartedAt = monotonic();
+        sample('scm', SCM_SAMPLE_MS, () => this.serviceRunning(), (value, capture) => { scmSample = { ...capture, value }; });
+      }
+    };
+    const attempt = at => {
+      const now = this.clock();
+      if (flight) return;
+      if (token && at - token.at >= TOKEN_CACHE_MS) {
+        token = null;
+        credentialError = 'TOKEN_EXPIRED';
+      }
+      if (!token || (token.attempted && !token.verified) || !installed) {
+        this.updateDiagnostics({ lastErrorKind: !token ? credentialError : !installed ? 'TRANSPORT_CONFIG' : 'TOKEN_UNVERIFIED' });
+        return;
+      }
+      const status = statusSample?.value;
+      const minimumAge = status ? Math.max(0, statusSample.wallTime - status.writtenAt) + at - statusSample.started : 0;
+      const serviceRunning = scmSample && at - scmSample.started <= SNAPSHOT_FRESH_MS ? scmSample.value : null;
+      // 同时核对本机读取时间和两端观察时间。
+      const delivery = deliverySample && at - deliverySample.started <= NODE_HEARTBEAT_EVERY_MS &&
+        deliverySample.value?.installGeneration === status?.versions?.localInstallGeneration ? deliverySample.value : null;
+      const payload = heartbeatPayload({ nodeName: this.nodeName, scope: this.scope, status, minimumAge,
+        now, protocolVersion: this.protocolVersion, serviceRunning, delivery,
+        deliveryNow: delivery ? Math.max(now, deliverySample.wallTime + at - deliverySample.started) : now });
+      if (lastSucceeded && at - lastAttempt < NODE_HEARTBEAT_EVERY_MS && fingerprint(payload) === this.lastFingerprint) return;
+      const value = token.value;
+      token.attempted = true;
+      lastAttempt = at;
+      const controller = new AbortController();
+      const current = { controller, timeout: null };
+      flight = current;
+      const finish = reply => {
+        if (flight !== current || stopped) return;
+        if (monotonic() - at >= HEARTBEAT_TIMEOUT_MS || reply === TIMED_OUT) {
+          controller.abort();
+          reply = TIMED_OUT;
+        }
+        cancel(current.timeout);
+        flight = null;
+        if (reply?.tokenRefused) {
+          rejected.add(tokenHash(value));
+          if (token?.value === value) {
+            token = null;
+            credentialError = 'TOKEN_REFUSED';
+          }
+        } else if (reply?.ok && token?.value === value) {
+          token.verified = true;
+        }
+        lastSucceeded = reply?.ok === true;
+        const endedAt = iso(this.clock());
+        this.updateDiagnostics({ lastTransportEndAt: endedAt, ...(lastSucceeded ? { lastAckObservedAt: endedAt } : {}) });
+        this.recordReply(payload, reply, now);
+      };
+      current.timeout = schedule(() => finish(TIMED_OUT), Math.max(0, Math.ceil(at + HEARTBEAT_TIMEOUT_MS - monotonic())));
+      this.updateDiagnostics({ lastAttemptAt: iso(now) });
+      void Promise.resolve().then(() => monotonic() - at >= HEARTBEAT_TIMEOUT_MS
+        ? TIMED_OUT : this.transport({ payload }, { token: value, signal: controller.signal }))
+        .then(finish, () => finish(null));
+    };
+    let due = monotonic();
+    const tick = () => {
+      if (stopped) return;
+      const now = monotonic();
+      if (now < due) {
+        timer = schedule(tick, Math.ceil(due - now));
+        return;
+      }
+      this.updateDiagnostics({ scheduledAt: iso(this.clock()), schedulerDelayMs: Math.round(Math.max(0, now - due)) });
+      // 以本次唤醒为基准，调度延迟之后也保持完整的重试间隔。
+      due = now + HEARTBEAT_RETRY_MS;
+      timer = schedule(tick, Math.max(0, Math.ceil(due - monotonic())));
+      collect();
+      attempt(now);
+    };
+    tick();
+    return () => {
+      stopped = true;
+      cancel(timer);
+      for (const timeout of pending.values()) cancel(timeout);
+      if (flight) {
+        cancel(flight.timeout);
+        flight.controller.abort();
+        flight = null;
+      }
+    };
+  }
+
+  // 保留单次调用接口。生产时钟与它共用回包处理。
   async step() {
     let token = null;
     try { token = await this.readToken(); } catch { token = null; }
     if (!token) return { skipped: 'NO_TOKEN' };
+    if (this.readInstallation && !this.transport) {
+      try { Object.assign(this, await this.readInstallation()); }
+      catch { return { skipped: 'TRANSPORT_CONFIG' }; }
+    }
     const now = this.clock();
     let status = null, statusError = false, running = null;
     try { status = await this.readStatus(); } catch { statusError = true; }
@@ -256,6 +445,10 @@ export class CompanionHeartbeat {
     this.updateDiagnostics({ lastAttemptAt: iso(this.clock()) });
     let r;
     try { r = await this.transport({ payload }, { token }); } catch { r = null; }
+    return this.recordReply(payload, r, now);
+  }
+
+  recordReply(payload, r, now) {
     this.updateDiagnostics({ lastErrorKind: heartbeatError(r), lastServerAckAt: (r?.ok ? isoOf(r.receivedAt) : null) ?? this.diagnostics.lastServerAckAt });
     this.lastSentAt = now;
     if (r?.notRegistered === true) {
@@ -403,14 +596,14 @@ export class CompanionHeartbeat {
   }
 
   async say(key, title, body) {
-    if (this.alertsInFlight.has(key)) return;
-    this.alertsInFlight.add(key);
+    if (this.alertsInFlight.has(title)) return;
+    this.alertsInFlight.add(title);
     try {
       if (await this.memory.get(key)) return;
       await this.memory.set(key, this.clock());
       await this.notify(key, title, body);
     } catch { /* advisory */ }
-    finally { this.alertsInFlight.delete(key); }
+    finally { this.alertsInFlight.delete(title); }
   }
 
   async relayHandover(h, deadline, item) {

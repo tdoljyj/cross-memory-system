@@ -32,7 +32,7 @@ import {MERGE_RECONCILE_REPO,MERGE_RECONCILE_WORKFLOW_SHA256,validateMergeReconc
 import { AdmissionRerunState, AdmissionRerunner, RERUN_LANE_EVERY_MS, ghPort } from './admission-rerun.mjs';
 import { createTrainRecoveryPort } from './train-recovery.mjs';
 import { FRONT_MERGE_LANE_EVERY_MS, FRONT_MERGE_REPO, FrontMergeDispatchState, FrontMergeDispatcher } from './front-merge-dispatch.mjs';
-import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
+import { CompanionHeartbeat, HEARTBEAT_RETRY_MS, ghHandoverPort, readHeartbeatToken, scQueryArgv, serviceRunningFrom, supabaseHeartbeatTransport } from './companion-heartbeat.mjs';
 import { readFleetDeliveryEvidence } from './fleet-delivery-evidence.mjs';
 import { NotifyQueue, notifyQueueDir, queueNotify } from './notify-queue.mjs';
 import { ReceiptChain } from './receipts.mjs';
@@ -58,9 +58,7 @@ export const POLL_STATUS_READ_MS = 5_000;
 export const BACKSTOP_EVERY_MS = 5 * 60_000;
 // The upgrade mailbox lane looks for requests this often (the upgrader polls its answers once a second; the shortest deadline is 60 s).
 export const UPGRADE_LANE_EVERY_MS = 5_000;
-// The node heartbeat's own lane (DESIGN §41.6a, companion-heartbeat.mjs) looks this often whether what it reports changed; it
-// sends every minute (ADR 0026) and at once on a change. Its own Runner: a slow GitHub or a long mailbox request never delays it.
-export const HEARTBEAT_LANE_EVERY_MS = 30_000;
+export const HEARTBEAT_LANE_EVERY_MS = HEARTBEAT_RETRY_MS;
 // The companion's instance lock is refreshed this often (instance-lock.mjs: a holder older than ten minutes is not fresh).
 export const COMPANION_LOCK_TOUCH_MS = 60_000;
 // The compute panel's five-minute trigger (DESIGN §43, panel-dispatch.mjs) looks this often whether it is due; it dispatches at most every
@@ -95,41 +93,54 @@ function handoverOutbox(file, repo) {
   };
 }
 
-// The node heartbeat, or null when no heartbeat token is installed (then nothing about the companion changes). The server's
-// address, publishable key and scope are the installed record's (record\installation.json), never a configuration of their own.
-// notify(key, title, body): the notification queue (M5, ADR 0022 §4.3); without it (tests) a toast through powershellExe as before.
-export async function companionHeartbeat({ root, nodeName, ghExe, repo, powershellExe, run, runHandover = run, store, clock = Date.now,
+// 地址、密钥和范围来自安装记录。心跳启动无需等待诊断和通知存储。
+export function companionHeartbeat({ root, nodeName, ghExe, repo, powershellExe, runner, run = (a, o) => runner.run(a, o), runHandover = run,
+  store, storeFile = store?.file, openStore = () => LocalStore.open(storeFile), clock = Date.now, fetchImpl,
   readJson = async p => JSON.parse(await fs.readFile(p, 'utf8')), notify = null, protocolVersion = 1 }) {
-  if (!(await readHeartbeatToken(root))) return null;
-  let transport, scope = null;
-  try {
+  const readInstallation = async () => {
     const record = await readJson(path.join(root, 'record', 'installation.json'));
-    scope = record.scope;
-    transport = supabaseHeartbeatTransport({ supabaseUrl: record.supabaseUrl, publishableKey: record.publishableKey });
-  } catch { transport = async () => ({ ok: false, errorKind: 'TRANSPORT_CONFIG' }); }
-  // Both lanes update the same store. Serialize its atomic writes and coalesce changes while a write is running.
-  let saving = false, dirty = false;
+    return { scope: record.scope, transport: supabaseHeartbeatTransport({ supabaseUrl: record.supabaseUrl, publishableKey: record.publishableKey, fetchImpl }) };
+  };
+  let opening, saving = false, dirty = false, diagnostics = null;
+  const localStore = async () => store ?? (opening ??= Promise.resolve().then(openStore).catch(error => {
+    opening = null;
+    throw error;
+  }));
+  // 诊断和通知共用一个在途写入，写入期间只保留最新快照。
   const save = async () => {
     dirty = true;
     if (saving) return;
     saving = true;
     try {
+      const target = await localStore();
       while (dirty) {
         dirty = false;
-        await store.save();
+        if (diagnostics) target.data.diagnostics = diagnostics;
+        await target.save();
       }
     } catch { /* the next update tries again */ }
     finally { saving = false; }
   };
-  return new CompanionHeartbeat({ nodeName, scope, transport, clock, protocolVersion, handoverClock: () => performance.now(),
-    readToken: () => readHeartbeatToken(root), readStatus: () => readStatus(root),
+  return new CompanionHeartbeat({ nodeName, readInstallation, clock, protocolVersion, handoverClock: () => performance.now(),
+    readToken: () => readHeartbeatToken(root, fs, { throwOnReadError: true }), readStatus: () => readStatus(root),
     readDeliveryEvidence: ({ status, now }) => readFleetDeliveryEvidence({ root, status, now }),
-    serviceRunning: async () => serviceRunningFrom(await run(scQueryArgv(SC_EXE), { timeoutMs: 15_000 })),
+    isScmBusy: () => runner?.busy === true,
+    serviceRunning: async () => {
+      const result = await run(scQueryArgv(SC_EXE), { timeoutMs: 15_000 });
+      return result?.code === 0 && !result.refused && !result.timedOut ? serviceRunningFrom(result) : null;
+    },
     notify: notify ?? (async (key, title, body) => { await run(toastArgv(powershellExe, title, body), { timeoutMs: 15_000 }); }),
-    memory: { get: key => Date.parse(store.data.notified[key]?.at) || 0, set: (key, at) => { store.data.notified[key] = { at: new Date(at).toISOString() }; void save(); } },
-    recordDiagnostics: snapshot => { store.data.diagnostics = snapshot; void save(); },
-    handoverOutbox: store.file ? handoverOutbox(path.join(path.dirname(store.file), 'companion-heartbeat-handovers.json'), repo) : null,
+    memory: {
+      get: async key => Date.parse((await localStore()).data.notified[key]?.at) || 0,
+      set: async (key, at) => { (await localStore()).data.notified[key] = { at: new Date(at).toISOString() }; void save(); },
+    },
+    recordDiagnostics: snapshot => { diagnostics = snapshot; void save(); },
+    handoverOutbox: storeFile ? handoverOutbox(path.join(path.dirname(storeFile), 'companion-heartbeat-handovers.json'), repo) : null,
     handover: ghHandoverPort({ ghExe, repo, run: runHandover }) });
+}
+
+export function startCloudHeartbeat(heartbeat, timers) {
+  return heartbeat.start(timers);
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -384,6 +395,19 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
   // same mailboxes. Refreshed every minute while the lanes run.
   const instanceLock = await acquireCompanionLock(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-lock'),
     values.root);
+  const relayLog = createRelayLog({ dir: path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-log') });
+  // Windows 子进程会继承 supervisor 的 BelowNormal。在创建 Runner 前将当前进程设为 Normal。
+  if (process.platform === 'win32') {
+    const normal = os.constants.priority.PRIORITY_NORMAL;
+    let verified = false;
+    try {
+      os.setPriority(0, normal);
+      verified = os.getPriority(0) === normal;
+    } catch { /* 记录一次诊断，按现有时限继续。 */ }
+    if (!verified) {
+      await relayLog({ at: new Date().toISOString(), kind: 'companion-priority', code: 'COMPANION_PRIORITY_NOT_NORMAL' }).catch(() => {});
+    }
+  }
   // Every child of both lanes runs under the installed job host (DESIGN §24): a child that outlives its limit is ended with
   // exactly the job it was started in, and the lane goes on. Without the host the companion does not start.
   const jobHost = path.join(values.root, 'bin', JOB_HOST_EXE);
@@ -408,7 +432,6 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
   const notify = queueNotify(new NotifyQueue({ dir: notifyQueueDir(cfg.node.ownerProfileDirectory) }));
   const mailbox = await Mailbox.open(path.join(values.root, 'mailbox'), Date.now);
   // pr-head (phase 2): the run queue's live PR read runs in the mailbox lane, like every other service request.
-  const relayLog = createRelayLog({ dir: path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-log') });
   const companion = new Companion({ cfg, mailbox, run: (a, o) => runner.run(a, o), fileExists: exists, sleep, clock: Date.now, readPull: pr => readPullArgv(raw.ghExe, raw.repo, pr),
     readText, log: relayLog, bundleDir: path.join(values.root, 'bundles') });
   const inboxDir = path.join(values.root, 'inbox');
@@ -440,12 +463,11 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
       check(await exists(path.join(dir, 'requests')) && await exists(path.join(dir, 'responses')), 'UPGRADE_MAILBOX_ABSENT');
       return UpgradeMailbox.open(dir, Date.now);
     } });
-  // The node heartbeat (DESIGN §41.6a): only with a heartbeat token installed; its own lane and Runner.
-  // The advisory lane relays handovers on its own Runner. The store serializes both lanes' updates.
+  // 此 Runner 只用于 SCM 采样。换手评论沿用 advisory 的 Runner。
   const heartbeatRunner = new Runner({ env: { ...process.env }, jobHost });
-  const heartbeatStore = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-heartbeat.json'));
-  const heartbeat = await companionHeartbeat({ root: values.root, nodeName: cfg.node.nodeName, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe,
-    run: (a, o) => heartbeatRunner.run(a, o), runHandover: (a, o) => advisory.run(a, o), store: heartbeatStore, notify, protocolVersion });
+  const heartbeat = companionHeartbeat({ root: values.root, nodeName: cfg.node.nodeName, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe,
+    runner: heartbeatRunner, runHandover: (a, o) => advisory.run(a, o),
+    storeFile: path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-heartbeat.json'), notify, protocolVersion });
   const fleetRunner = new Runner({ env: { ...process.env }, jobHost });
   let fleetLag = null;
   const openFleetLag = async () => {
@@ -530,6 +552,7 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
   const loopDelay = startLoopDelay();
   companion.loopDelay = loopDelay.between;
   const beating = startHeartbeat(mailbox);
+  const stopCloudHeartbeat = startCloudHeartbeat(heartbeat);
   const lockAlive = setInterval(() => { instanceLock.touch().catch(() => {}); }, COMPANION_LOCK_TOUCH_MS);
   // Review MINOR 6: the companion's own gh login is checked again every few minutes, not only at start: a hosts.yml that lost its token
   // would make gh fall back to the Owner's shared credential-store entry. A failed check ends the companion (the supervisor restarts it,
@@ -543,7 +566,6 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
       // the service times out and classifies a request the companion did not answer; never retried here
       lane({ runner, work: () => companion.step() }),
       lane({ runner: upgradeRunner, work: async () => { const r = await upgradeLane.step(); await upgradeLane.selfcheckStep(); return r; }, everyMs: UPGRADE_LANE_EVERY_MS }),
-      ...(heartbeat ? [lane({ runner: heartbeatRunner, work: () => heartbeat.step(), everyMs: HEARTBEAT_LANE_EVERY_MS })] : []),
       lane({ runner: fleetRunner, work: async () => { fleetLag ??= await openFleetLag(); await fleetLag?.step(); }, everyMs: 60000 }),
       lane({ runner: selfPullRunner, work: selfPull, everyMs: 15_000 }),
       ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),
@@ -555,6 +577,7 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
     ]);
   } finally {
     clearInterval(beating);
+    stopCloudHeartbeat();
     companion.stopProbeLane();
     loopDelay.stop();
     clearInterval(lockAlive);
