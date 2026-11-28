@@ -981,6 +981,17 @@ internal static class FleetPull {
         internal string Operation, Nonce, Directory, Delivery, PointerHash;
         internal Dictionary<string,object> Pending;
     }
+    static bool CanIssueReinstallPermit(LaunchRequest request,DateTime now) {
+        if (File.Exists(ClaimPath(request.Delivery,request.Operation,".spent.json")) ||
+            File.Exists(ClaimPath(request.Delivery,request.Operation,".launched.json"))) return false;
+        var prior=OptionalJson(Path.Combine(request.Directory,"launch-permit.json"),4096);
+        if (prior==null) return true;
+        var expires=Date(prior,"expiresAt");
+        string nonce=Renewal.Str(prior,"nonce");
+        return Renewal.Str(prior,"contract")==LaunchContract && Renewal.Str(prior,"operationId")==request.Operation &&
+            Renewal.Str(prior,"requestSha256")==Renewal.Str(request.Pending,"requestSha256") && Renewal.Id(nonce) && nonce!=request.Nonce &&
+            expires!=DateTime.MinValue && expires<=now;
+    }
     internal static LaunchRequest ReadReinstallLaunch(string fixtureDelivery=null,DateTime? fixtureNow=null) {
         var delivery=fixtureDelivery ?? DeliveryRoot;
         if (!Directory.Exists(delivery)) return null;
@@ -992,7 +1003,6 @@ internal static class FleetPull {
         string dir=OperationDirectory(delivery,pending), operation=Renewal.Str(pending,"operationId");
         VerifyDirectory(delivery,dir);
         if (fixtureDelivery==null) CheckDeliveryAcl(dir);
-        if (File.Exists(Path.Combine(dir,"launch-permit.json"))) return null;
         var request=OptionalJson(ClaimPath(delivery,operation,".launch.json"),4096);
         var nonce=Renewal.Str(request,"nonce");
         var now=fixtureNow ?? DateTime.UtcNow;
@@ -1000,8 +1010,9 @@ internal static class FleetPull {
         if (!Renewal.Id(nonce) || Renewal.Str(request,"operationId")!=operation || at>now || at<=now.AddMinutes(-2)) return null;
         var previous=OptionalJson(Path.Combine(dir,"launch-response.json"),4096);
         if (Renewal.Str(previous,"nonce")==nonce) return null;
-        return new LaunchRequest { Operation=operation,Nonce=nonce,Directory=dir,Delivery=delivery,
+        var launch=new LaunchRequest { Operation=operation,Nonce=nonce,Directory=dir,Delivery=delivery,
             Pending=pending,PointerHash=Renewal.Digest(raw) };
+        return CanIssueReinstallPermit(launch,now) ? launch : null;
     }
     static string ReadReinstallPointer(string delivery) {
         var path=Path.Combine(delivery,"pending.json");
@@ -1043,13 +1054,14 @@ internal static class FleetPull {
                 Renewal.Require(now<deadline && (stopped==null || !stopped.WaitOne(0)),"FLEET_WAITING_FOR_IDLE");
                 var expires=now.AddSeconds(5);
                 if (deadline<expires) expires=deadline;
+                Renewal.Require(CanIssueReinstallPermit(request,now),"FLEET_REINSTALL_ALREADY_CLAIMED");
                 var pending=request.Pending;
                 string permit=Path.Combine(request.Directory,"launch-permit.json");
-                // Create-once for this operation, only under the live idle hold.
+                // An expired permit that never reached RunAs can be replaced under a new live idle hold.
                 WriteReinstallRecord(permit,Renewal.Json(new { contract=LaunchContract,operationId=request.Operation,nonce=request.Nonce,
                     requestSha256=Renewal.Str(pending,"requestSha256"),bindingId=Renewal.Str(pending,"bindingId"),
                     bindingGeneration=Renewal.Number(pending,"bindingGeneration"),installReceiptSha256=Renewal.Str(pending,"installReceiptSha256"),
-                    hasPeer=pending["hasPeer"],expiresAt=Renewal.Stamp(expires) }),false);
+                    hasPeer=pending["hasPeer"],expiresAt=Renewal.Stamp(expires) }),true);
                 string launched=ClaimPath(request.Delivery,request.Operation,".launched.json");
                 var elapsed=Stopwatch.StartNew();
                 while (clock()<deadline && elapsed.ElapsedMilliseconds<IdleWindowMs) {

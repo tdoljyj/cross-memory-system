@@ -978,7 +978,8 @@ test('重装维护资格和中断投递均按同一封存目标恢复', async t 
 test('Broker 重装夹具复核启动、重建终态并回收失效交付', { skip: process.platform !== 'win32' }, async t => {
   const broker = await brokerFixture(t);
   const { residentSelfPull } = await lanes();
-  for (const scenario of ['withdrawn', 'replacement', 'binding', 'busy', 'reserve', 'consent', 'launch', 'recover', 'sweep']) {
+  for (const scenario of ['withdrawn', 'replacement', 'binding', 'busy', 'reserve', 'consent', 'launch',
+    'renew-expired', 'renew-binding', 'spent-without-ack', 'recover', 'sweep']) {
     await t.test(scenario, async t => {
       const root = await tempDir(t, 'broker-reinstall');
       const operationId = randomUUID(), requestSha256 = 'a'.repeat(64);
@@ -1008,6 +1009,18 @@ test('Broker 重装夹具复核启动、重建终态并回收失效交付', { sk
       await put('upgrade/current.json', { generation: 1, installReceiptSha256 });
       await put(`${opDir}/assets/fixture.json`, {});
       await put(`${claims}/${operationId}.launch.json`, { operationId, nonce: launchNonce, at: observe.at });
+      const oldNonce = randomUUID();
+      if (scenario.startsWith('renew-') || scenario === 'spent-without-ack') {
+        await put(`${opDir}/launch-permit.json`, { contract: 'clued.independent-ci.fleet-reinstall-launch/1', operationId,
+          nonce: oldNonce, requestSha256, bindingId, bindingGeneration: 1, installReceiptSha256, hasPeer: true,
+          expiresAt: new Date(now - 1000).toISOString() });
+      }
+      if (scenario === 'spent-without-ack') {
+        await put(`${claims}/${operationId}.spent.json`, { operationId, nonce: oldNonce });
+        assert.equal((await run('launch')).stdout.trim(), 'NO_REQUEST');
+        assert.equal((await read(permit)).nonce, oldNonce);
+        return;
+      }
       if (scenario === 'recover') {
         const receiptSha256 = 'f'.repeat(64), returnReceiptId = randomUUID();
         const progress = { contract: 'clued.fleet.lifecycle-progress/1', step: 'complete', mode: 'Reinstall', bindingId,
@@ -1045,10 +1058,11 @@ test('Broker 重装夹具复核启动、重建终态并回收失效交付', { sk
       const expected = {
         withdrawn: 'FLEET_TARGET_CHANGED', replacement: 'FLEET_TARGET_CHANGED', binding: 'FLEET_REINSTALL_BINDING_CHANGED',
         busy: 'FLEET_WAITING_FOR_IDLE', reserve: 'FLEET_MAINTENANCE_BLOCKED', consent: 'FLEET_REINSTALL_PREVIEW_CHANGED', launch: 'OK',
+        'renew-expired': 'OK', 'renew-binding': 'FLEET_REINSTALL_BINDING_CHANGED',
       };
       if (scenario === 'withdrawn') later.fleetTarget = null;
       if (scenario === 'replacement') later.fleetTarget.grant_id = randomUUID();
-      if (scenario === 'binding') later.bindingGeneration++;
+      if (scenario === 'binding' || scenario === 'renew-binding') later.bindingGeneration++;
       if (scenario === 'busy') later.fleetTarget.reinstall_busy = true;
       if (scenario === 'reserve') later.fleetTarget.reinstall_eligible = false;
       if (scenario === 'consent') later.fleetTarget.has_other_healthy = false;
@@ -1066,14 +1080,15 @@ test('Broker 重装夹具复核启动、重建终态并回收失效交付', { sk
         return stopped || await resident.holdingIdle();
       }, '启动前常驻保留空闲');
       assert.equal(stopped, false, 'Broker 应在收到空闲确认后复核');
-      if (scenario === 'launch') {
-        await until(() => fs.access(permit).then(() => true, () => false), 'Broker 许可已发布');
+      if (scenario === 'launch' || scenario === 'renew-expired') {
+        await until(() => read(permit).then(value => value.nonce === launchNonce, () => false), 'Broker 许可已发布');
         assert.equal(await resident.holdingIdle(), true, '发布许可仍保持空闲');
         assert.equal((await read(permit)).nonce, launchNonce);
         await put(`${claims}/${operationId}.launched.json`, { operationId, nonce: launchNonce });
       }
       assert.equal((await running).stdout.trim(), expected[scenario]);
-      if (scenario === 'launch') assert.equal((await run('launch')).stdout.trim(), 'NO_REQUEST');
+      if (scenario === 'launch' || scenario === 'renew-expired') assert.equal((await run('launch')).stdout.trim(), 'NO_REQUEST');
+      else if (scenario === 'renew-binding') assert.equal((await read(permit)).nonce, oldNonce);
       else await assert.rejects(fs.stat(permit), { code: 'ENOENT' });
     });
   }

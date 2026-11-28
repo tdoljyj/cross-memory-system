@@ -34,7 +34,8 @@ try {
   $deliveryContext = $base.Clone()
   $deliveryContext.reinstallOperation = 'a1000000-0000-4000-8000-000000000001'
   Yes ((New-FleetProgress $deliveryContext 'Reinstall').operationId -ceq ([Guid]$deliveryContext.reinstallOperation).ToString('N')) 'self-pull:maintenance-operation-matches-delivery'
-  $wire = @{clock=[DateTimeOffset]::Parse('2026-11-27T00:00:00Z'); state='available'; operation=$null; grant=$null; stale=$false; writes=@()}
+  $wire = @{clock=[DateTimeOffset]::Parse('2026-11-27T00:00:00Z'); state='available'; operation=$null; grant=$null
+    stale=$false; writes=@(); loseDelist=$false; readyRead=$false; verifying=$false; receipt=$null}
   $maintenanceAdapter = ${function:Invoke-FleetMaintenance}
   function Invoke-FleetMaintenance([string]$Phase, $Context) {
     $fixtureMachine.order.Add($Phase)
@@ -45,14 +46,22 @@ try {
         $wire.operation = $request.operation_id
         $wire.grant = $request.grant_id
       }
-      if ($request.command -ceq 'delist') { $wire.state = 'delisted' }
+      if ($request.command -ceq 'delist') {
+        $wire.state = 'delisted'; $wire.verifying = $false
+        $wire.receipt = '63f65562-5419-4ca8-bff0-{0:d12}' -f $wire.writes.Count
+        if ($wire.loseDelist) { $wire.loseDelist = $false; throw 'FLEET_FIXTURE_DELIST_RESPONSE_LOST' }
+      }
       if ($request.command -ceq 'verify_started') {
-        $wire.state = if ($fixtureMachine.refuseReturn) { 'verifying' } else { 'returned' }
+        $wire.verifying = $true
+        $wire.receipt = '63f65562-5419-4ca8-bff0-{0:d12}' -f $wire.writes.Count
+        if (-not $fixtureMachine.refuseReturn) { $wire.state = 'returned' }
       }
       $at = if ($wire.stale) { $wire.clock.AddHours(-1) } else { $wire.clock }
+      $ready = $wire.state -ceq 'delisted' -and -not $wire.verifying -and -not $fixtureMachine.refuseDrain
+      if ($request.command -ceq 'status' -and $ready) { $wire.readyRead = $true }
       @{status='ok'; node_id=$Context.nodeConnection.nodeId; binding_generation=3; grant_id=$Context.grantId
-        has_other_healthy=$false; state=$wire.state; operation_id=$wire.operation; receipt_id='63f65562-5419-4ca8-bff0-8783ebb1b0d2'
-        install_ready=($wire.state -ceq 'delisted' -and -not $fixtureMachine.refuseDrain); drain_confirmed_at=$at.ToString('o')}
+        has_other_healthy=$false; state=$wire.state; operation_id=$wire.operation; receipt_id=$wire.receipt
+        install_ready=$ready; drain_confirmed_at=$at.ToString('o')}
     }
     & $maintenanceAdapter $Phase $Context -Send $send -Now { $wire.clock } -Wait { $wire.clock = $wire.clock.AddMinutes(15) }
   }
@@ -152,6 +161,27 @@ try {
   Assert-FleetPreview $preview $base
   $base.previewReceipt = $preview.previewReceipt
   Yes ($preview.healthyPeers -eq 0 -and $wire.writes.Count -eq 0) 'clean-reinstall:zero-node-read-before-delisting'
+  $lost = Join-Path $fixtureRoot 'lost-operation.json'
+  $lostEffects = @{ cleanup=0; afterRead=$false }
+  $runLost = {
+    Invoke-FleetLifecycle ($base.Clone()) 'Reinstall' $lost { 'pending' } {
+      param($step, $context)
+      if ($step -cne 'cleanup') { throw 'FIXTURE_UNEXPECTED_EFFECT' }
+      $lostEffects.cleanup++; $lostEffects.afterRead = $wire.readyRead
+      throw 'FIXTURE_STOP_AFTER_CLEANUP'
+    }
+  }
+  $wire.loseDelist = $true
+  Throws $runLost 'FLEET_FIXTURE_DELIST_RESPONSE_LOST' 'clean-reinstall:lost-response-stops-before-cleanup'
+  $lostIntent = Read-FleetProgress $lost $base
+  Yes ($lostIntent.step -ceq 'intent' -and $lostEffects.cleanup -eq 0) 'clean-reinstall:lost-response-keeps-intent'
+  $fixtureMachine.refuseDrain = $false
+  Throws $runLost 'FIXTURE_STOP_AFTER_CLEANUP' 'clean-reinstall:readback-allows-cleanup-after-lost-response'
+  Yes ($wire.writes.Count -eq 1 -and $wire.operation -ceq (Get-FleetProgressMaintenanceId $lostIntent) -and
+    $lostEffects.cleanup -eq 1 -and $lostEffects.afterRead) (
+    "clean-reinstall:lost-response sends=$($wire.writes.Count) cleanup=$($lostEffects.cleanup) readyRead=$($lostEffects.afterRead)")
+  $fixtureMachine.refuseDrain = $true
+  $wire.state = 'available'; $wire.operation = $null; $wire.writes = @(); $wire.readyRead = $false
   $fixtureMachine.order.Clear()
   Throws $run 'FLEET_MAINTENANCE_DRAIN_TIMEOUT' 'clean-reinstall:drain-before-removal'
   Yes (($fixtureMachine.order -join ',') -ceq 'before-remove') 'clean-reinstall:no-mutation-before-drain'
@@ -183,11 +213,24 @@ try {
   Throws $run 'FLEET_MAINTENANCE_VERIFY_TIMEOUT' 'clean-reinstall:forwards-across-unconfirmed-Windows'
   $fixtureMachine.finished = $false
   Put-Fixture (Join-Path $FleetResources.ciRoot 'resident\upgrade\current.json')
-  $wire.stale = $true
   $effects = $fixtureMachine.order.Count
+  $oldDelists = @($wire.writes | Where-Object command -eq 'delist').Count
+  $wire.loseDelist = $true
+  Throws $run 'FLEET_FIXTURE_DELIST_RESPONSE_LOST' 'clean-reinstall:lost-fresh-drain-response-stops'
+  $lastDelist = $wire.writes[-1]
+  Yes (@($wire.writes | Where-Object command -eq 'delist').Count -eq ($oldDelists + 1) -and
+    $lastDelist.operation_id -ceq (Get-FleetProgressMaintenanceId $packageB) -and $lastDelist.node_id -ceq $base.nodeConnection.nodeId -and
+    $lastDelist.binding_generation -eq $base.nodeConnection.generation -and $lastDelist.sole_node_agreed) 'clean-reinstall:explicit-fresh-drain-keeps-current-subject-and-consent'
+  $wire.stale = $true
   Throws $run 'FLEET_MAINTENANCE_STALE_DRAIN' 'clean-reinstall:old-drain-after-verify-refuses'
-  Yes ($fixtureMachine.order.Count -eq ($effects + 1) -and [IO.File]::Exists((Join-Path $FleetResources.ciRoot 'resident\upgrade\current.json'))) 'clean-reinstall:old-drain-means-zero-deletions'
+  Yes ($fixtureMachine.order.Count -eq ($effects + 2) -and [IO.File]::Exists((Join-Path $FleetResources.ciRoot 'resident\upgrade\current.json'))) 'clean-reinstall:old-drain-means-zero-deletions'
   $wire.stale = $false
+  $install = $base.install
+  $base.install = { throw 'FIXTURE_FRESH_DRAIN_RECOVERED' }
+  Throws $run 'FIXTURE_FRESH_DRAIN_RECOVERED' 'clean-reinstall:current-readback-recovers-fresh-drain'
+  Yes (@($wire.writes | Where-Object command -eq 'delist').Count -eq ($oldDelists + 1) -and
+    -not [IO.File]::Exists((Join-Path $FleetResources.ciRoot 'resident\upgrade\current.json'))) 'clean-reinstall:fresh-drain-readback-never-resends'
+  $base.install = $install
   $fixtureMachine.finished = $true
   $fixtureMachine.refuseReturn = $false
   $done = & $run
