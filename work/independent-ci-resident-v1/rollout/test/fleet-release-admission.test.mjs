@@ -32,6 +32,7 @@ async function fixture(t, options = {}) {
   const commit = w.source.commit;
   const plan = planOf(commit);
   const effects = [], runs = [];
+  const runReads = [], pauses = [];
   const settings = { ...options };
   const ledger = new Set(settings.applied ?? []);
   const index = await fs.readFile(w.index);
@@ -77,7 +78,12 @@ async function fixture(t, options = {}) {
       return reply({ total_count: rows.length, check_runs: rows });
     }
     if (args[1]?.includes('/runs?')) return reply({ workflow_runs: settings.hideRun ? [] : runs });
-    if (args[1]?.match(/\/runs\/\d+$/)) return reply(runs.find(run => run.id === Number(args[1].split('/').at(-1))));
+    if (args[1]?.match(/\/runs\/\d+$/)) {
+      const id = Number(args[1].split('/').at(-1));
+      runReads.push(id);
+      const run = runs.find(run => run.id === id);
+      return settings.readRun?.(run, runReads.length, reply) ?? reply(run);
+    }
     if (args[0] === 'run' && args[1] === 'view') {
       const run = runs.find(run => run.id === Number(args[2]));
       assert.ok(args.includes('--log'));
@@ -122,6 +128,7 @@ async function fixture(t, options = {}) {
   let advanceMain = false;
   const prepare = (dir = w.build) => {
     const release = fleetReleaseWorkflow({ repository: DEFAULT_REPO, commit, directory: dir, publisherStateDirectory, runGh,
+      pause: async ms => { pauses.push(ms); },
       requirements: planOf, keyOf: () => `00000000-0000-4000-8000-${String(++operations).padStart(12, '0')}` });
     const ghCommand = args => {
       if (args[1]?.includes('/compare/main...')) return reply({ status: advanceMain ? 'behind' : 'identical' });
@@ -151,7 +158,7 @@ async function fixture(t, options = {}) {
     assert.deepEqual(await fs.readFile(w.index), index);
     assert.ok(!effects.some(([effect]) => effect === 'tag'));
   };
-  return { w, commit, plan, effects, settings, prepare, noRelease };
+  return { w, commit, plan, effects, settings, prepare, noRelease, runReads, pauses };
 }
 
 test('发布准入 CLI 钉住返回 merge_commit_sha 的 GitHub API 版本', () => {
@@ -219,6 +226,36 @@ test('正式 prepare 一次派发全部迁移缺项，凭同提交回读出包�
   const complete = await fixture(t, { applied: files });
   assert.equal((await complete.prepare()).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
   assert.deepEqual(complete.effects, [['read'], ['tag']]);
+});
+
+test('派发后运行先返回 404、再返回工作流名，完成绑定后 prepare 成功', async t => {
+  const w = await fixture(t, { applied: files, readRun: (run, read, reply) => {
+    if (read === 1) return { status: 1, stderr: 'gh: Not Found (HTTP 404)' };
+    if (read === 2) return reply({ ...run, display_title: 'Clued Cloud production release' });
+    return reply(run);
+  } });
+  assert.equal((await w.prepare()).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  assert.deepEqual(w.runReads, [1, 1, 1]);
+  assert.deepEqual(w.pauses, [5000, 5000]);
+  assert.deepEqual(w.effects, [['read'], ['tag']]);
+});
+
+test('运行一旦绑定，下一次发现主体变更就立即拒绝', async t => {
+  const w = await fixture(t, { applied: files, readRun: (run, read, reply) => read === 1
+    ? reply({ ...run, status: 'in_progress', conclusion: null })
+    : reply({ ...run, head_sha: '0'.repeat(40) }) });
+  await assert.rejects(w.prepare(), { code: 'FLEET_MIGRATION_RUN_SUBJECT_CHANGED', detail: { id: 1 } });
+  assert.deepEqual(w.runReads, [1, 1]);
+  assert.deepEqual(w.pauses, [5000]);
+  await w.noRelease();
+});
+
+test('派发后的就绪窗口用尽且主体仍不符时拒绝', async t => {
+  const w = await fixture(t, { applied: files, readRun: (run, _read, reply) => reply({ ...run, path: null }) });
+  await assert.rejects(w.prepare(), { code: 'FLEET_MIGRATION_RUN_SUBJECT_CHANGED', detail: { id: 1 } });
+  assert.deepEqual(w.runReads, Array(13).fill(1));
+  assert.deepEqual(w.pauses, Array(12).fill(5000));
+  await w.noRelease();
 });
 
 test('红灯、跳过、错误 PR、错误身份、换头、备份失败与账本冲突均不出包', async t => {

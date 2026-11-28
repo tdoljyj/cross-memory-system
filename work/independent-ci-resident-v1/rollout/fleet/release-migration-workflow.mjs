@@ -12,6 +12,8 @@ const workflowPath = `.github/workflows/${workflow}`;
 const runKey = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const runTitle = (mode, key) => `fleet-release-${mode}-${key}`;
 const validId = id => Number.isSafeInteger(id) && id > 0;
+const pollMs = 5_000;
+const readinessMs = 60_000;
 
 export async function reconcileFleetRelease(release) {
   await release.admit();
@@ -58,18 +60,32 @@ export function fleetReleaseWorkflow({ repository, commit, runGh, pause = sleep,
     run.event === 'workflow_dispatch' && run.run_attempt === 1 && run.head_branch === 'main' && run.head_sha === commit &&
     run.repository?.full_name === repository && run.head_repository?.full_name === repository &&
     run.actor?.login === RELEASE_OWNER && run.triggering_actor?.login === RELEASE_OWNER, 'FLEET_MIGRATION_RUN_SUBJECT_CHANGED', { id });
-  const wait = async (id, mode, key) => {
+  const wait = async (id, mode, key, { newlyDispatched = false } = {}) => {
     const deadline = AbortSignal.timeout(50 * 60_000);
+    let readyBy = newlyDispatched ? performance.now() + readinessMs : null;
     for (let i = 0; i < 600 && !deadline.aborted; i++) {
-      const run = api(`${base}/runs/${id}`);
-      bound(run, id, mode, key);
-      if (run.status === 'completed') return run;
-      await pause(5000);
+      let delay = pollMs;
+      try {
+        const run = api(`${base}/runs/${id}`);
+        bound(run, id, mode, key);
+        readyBy = null;
+        if (run.status === 'completed') return run;
+      } catch (error) {
+        const unreadable = error.code === 'FLEET_RELEASE_GITHUB_UNREADABLE';
+        if (readyBy === null || (!unreadable && error.code !== 'FLEET_MIGRATION_RUN_SUBJECT_CHANGED')) throw error;
+        const remaining = readyBy - performance.now();
+        if (remaining <= 0 || i >= readinessMs / pollMs) {
+          if (!unreadable) throw error;
+          insist(false, 'FLEET_MIGRATION_RUN_UNRESOLVED', { id, key });
+        }
+        delay = Math.min(pollMs, remaining);
+      }
+      await pause(delay);
     }
     insist(false, 'FLEET_MIGRATION_RUN_UNRESOLVED', { id, key });
   };
   const readResult = async (mode, id, key, plan) => {
-    const run = await wait(id, mode, key);
+    const run = await wait(id, mode, key, { newlyDispatched: true });
     insist(run.conclusion === 'success', 'FLEET_MIGRATION_RUN_FAILED', { id, mode, conclusion: run.conclusion });
     const log = call(['run', 'view', String(id), '--repo', `github.com/${repository}`, '--attempt', '1', '--log']);
     const lines = log.split(/\r?\n/).filter(line => line.includes(`${SNAPSHOT_LABEL} `));
