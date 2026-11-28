@@ -746,11 +746,16 @@ test('封存前同源兜底，封存后正常交班只给当前包，旧包能�
       assert.equal((await writer.fleetLanding({ ...intent, command: 'begin', main_sha: main })).authorized, true);
       const reserve = () => maintenance(db.anon, primary, { action: 'status' }, sha('fixture-primary'));
       assert.equal((await reserve()).state, 'reserve', '发送授权和检查通过都不能清理后备');
+      assert.equal((await reserve()).reinstall_eligible, false);
       const result = await landMain({ baseSha: base, testSha: next, readMain: async () => main,
         port: { fastForwardMain: async tip => { assert.equal(main, base); main = tip; return { status: 200, sha: tip }; } } });
       assert.deepEqual(result, { state: 'landed', mainSha: next, sent: true });
       assert.equal((await writer.fleetLanding({ ...intent, command: 'settle', main_sha: result.mainSha })).settled, true);
       assert.equal((await reserve()).state, 'delisted');
+      assert.equal((await reserve()).reinstall_eligible, true, '接班确认释放的摘牌可进入清洁重装');
+      const reinstall = await maintenance(db.anon, primary, request(89), sha('fixture-primary'));
+      assert.equal(reinstall.operation_id, id(89));
+      assert.equal((await reserve()).reinstall_eligible, false, '已被重装操作占用的摘牌不再分发新许可');
     } finally { await db.anon.query('rollback'); }
     await admin.query(`update clued_private.ci_node_liveness_v1 set reported_state='HALTED',readable_state='HALTED',readable_at=last_heartbeat_at,
       halted_since=now()-interval '6 minutes' where node_id=$1`, [standby]);

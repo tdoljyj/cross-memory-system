@@ -31,6 +31,9 @@ try {
     acceptanceSha256 = 'b' * 64; sourceSha256 = 'c' * 64; action = 'Install'; ownerUac = $true; zeroNodeConsent = $true
     grantId = '73f65562-5419-4ca8-bff0-8783ebb1b0d2'; preservedConnection = @{heartbeatToken=@{}}
     nodeConnection = @{scope='global'; nodeId='03f65562-5419-4ca8-bff0-8783ebb1b0d2';bindingId='83f65562-5419-4ca8-bff0-8783ebb1b0d2';generation=3} }
+  $deliveryContext = $base.Clone()
+  $deliveryContext.reinstallOperation = 'a1000000-0000-4000-8000-000000000001'
+  Yes ((New-FleetProgress $deliveryContext 'Reinstall').operationId -ceq ([Guid]$deliveryContext.reinstallOperation).ToString('N')) 'self-pull:maintenance-operation-matches-delivery'
   $wire = @{clock=[DateTimeOffset]::Parse('2026-11-27T00:00:00Z'); state='available'; operation=$null; grant=$null; stale=$false; writes=@()}
   $maintenanceAdapter = ${function:Invoke-FleetMaintenance}
   function Invoke-FleetMaintenance([string]$Phase, $Context) {
@@ -175,6 +178,7 @@ try {
   Throws $run 'FIXTURE_CUT_AFTER_WSL' 'clean-reinstall:cut-after-WSL'
   $packageB = Read-FleetProgress $file $base
   Yes ((Get-FleetCarryDirectory $packageB) -ceq $carryA -and $wire.operation -cne $delistA -and $wire.grant -ceq $base.grantId) 'clean-reinstall:new-grant-reuses-one-carry'
+  Yes ((Get-FleetProgressMaintenanceId $packageB) -ceq $wire.operation) 'clean-reinstall:retarget-reads-server-operation'
   Throws $run 'FIXTURE_CUT_AFTER_WINDOWS' 'clean-reinstall:forwards-across-half-WSL'
   Throws $run 'FLEET_MAINTENANCE_VERIFY_TIMEOUT' 'clean-reinstall:forwards-across-unconfirmed-Windows'
   $fixtureMachine.finished = $false
