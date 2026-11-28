@@ -99,14 +99,17 @@ function nativeBindingHttp(gh, status, seen) {
   const policyText = readFileSync(new URL('../../../config/merge-admission-policy.json', import.meta.url), 'utf8');
   const evaluatorSha256 = digest(readFileSync(new URL('../../../scripts/ci/clued-work-admission.mjs', import.meta.url), 'utf8'));
   const qualification = { ciPrincipalBindingId: randomUUID(), ciPrincipalQualificationRef: 'fixture' };
+  const now = Date.parse('2026-11-15T10:33:30Z');
+  const observedAt = iso(now);
   return (job, packet, options) => createFullAdmissionPortV2({
     protectedConfig: { ...qualification, domain: 'fixture', repository: REPO, scope: 'global', workspace: process.cwd(),
       sourceManifestSha256: job.sourceManifestSha256, evaluatorSha256, policyText, policySha256: digest(policyText),
       publishableKey: 'sb_publishable_fixture', supabaseUrl: 'https://fixture.supabase.co' },
     tokenProvider: async () => ({ ...qualification, githubToken: 'fixture', ciAdmissionToken: ['clued', 'bnd', 'fixture123'].join('_') }),
+    clock: () => now,
     modeProvider: async () => ({ complete: true, repository: REPO, variable: 'CLUED_MERGE_ADMISSION_STATE', source: 'github-repository-variables',
-      exists: false, observedAt: iso(Date.now()), proofRef: 'fixture' }),
-    recorderProvider: async () => ({ kind: 'independent-controller', domain: 'fixture', observedAt: iso(Date.now()), observationRef: 'fixture',
+      exists: false, observedAt, proofRef: 'fixture' }),
+    recorderProvider: async () => ({ kind: 'independent-controller', domain: 'fixture', observedAt, observationRef: 'fixture',
       recorder: { newId: randomUUID, record() {} } }),
     fetchImpl: async (url, opts) => {
       const { hostname, pathname } = new URL(url);
