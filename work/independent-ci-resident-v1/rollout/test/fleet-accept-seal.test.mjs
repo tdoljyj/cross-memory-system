@@ -14,6 +14,149 @@ import { transportAssetNames } from '../fleet/fetch.mjs';
 import { requirementsDigest } from '../fleet/release-migrations.mjs';
 import { GRANT, GRANT_RECEIPT, REPO, TAG, fakeTime, prepWorld, resourceOf, sealedNothing, sha, timed, uploadsOf, world } from '../fleet/test/publish-fixtures.mjs';
 
+test('prepare retries a kit upload after EOF, checking the Release before uploading again', async t => {
+  const w = await prepWorld(t, { spawnGh: false });
+  const name = `${TAG}.first-install-kit.json`;
+  const attempts = [];
+  const ghCommand = args => {
+    if (args[0] === 'release' && args[1] === 'view') attempts.push('view');
+    if (args[0] === 'release' && args[1] === 'upload' && path.basename(args[3]) === name) {
+      assert.ok(!args.includes('--clobber'));
+      attempts.push('upload');
+      if (attempts.filter(action => action === 'upload').length === 1) {
+        return { status: 1, stderr: `Get "https://api.github.com/repos/${REPO}/releases/tags/${TAG}": EOF` };
+      }
+    }
+    return w.gh(args);
+  };
+  const result = await w.prep({ ghCommand });
+  assert.equal(result.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  const first = attempts.indexOf('upload');
+  assert.deepEqual(attempts.slice(first, attempts.lastIndexOf('upload') + 1), ['upload', 'view', 'upload']);
+  assert.equal((await w.kitAssets()).length, 1);
+});
+
+test('prepare immediately rejects HTTP 422 already_exists on kit upload', async t => {
+  const w = await prepWorld(t, { spawnGh: false });
+  const name = `${TAG}.first-install-kit.json`;
+  const callsAfterFailure = [];
+  const stderr = 'HTTP 422: Validation Failed (code: already_exists)';
+  let failed = false;
+  const ghCommand = args => {
+    if (failed) callsAfterFailure.push(args);
+    if (args[0] === 'release' && args[1] === 'upload' && path.basename(args[3]) === name) {
+      failed = true;
+      return { status: 1, stderr };
+    }
+    return w.gh(args);
+  };
+  await assert.rejects(w.prep({ ghCommand }), { code: 'PUBLISH_GH_RELEASE_UPLOAD_FAILED', detail: { asset: name, stderr } });
+  assert.deepEqual(callsAfterFailure, []);
+  await assert.rejects(fs.access(w.requestFile));
+});
+
+test('上传响应丢失后按名称、大小和摘要确认，冲突时拒绝补传', async t => {
+  const name = `${TAG}.first-install-kit.json`;
+  for (const fault of ['相同字节', '大小不同', '同大小但摘要不同']) {
+    await t.test(fault, async ts => {
+      const w = await prepWorld(ts, { spawnGh: false });
+      const attempts = [];
+      const ghCommand = args => {
+        if (args[0] === 'release' && args[1] === 'upload' && path.basename(args[3]) === name) {
+          attempts.push('upload');
+          assert.ok(!args.includes('--clobber'));
+          assert.equal(w.gh(args).status, 0);
+          if (fault !== '相同字节') {
+            const state = JSON.parse(readFileSync(w.state, 'utf8'));
+            const asset = state.assets.find(x => x.name === name);
+            const bytes = Buffer.from(asset.b64, 'base64');
+            const other = fault === '大小不同' ? bytes.subarray(1) : bytes;
+            other[0] ^= 1;
+            Object.assign(asset, { size: other.length, b64: other.toString('base64') });
+            writeFileSync(w.state, JSON.stringify(state));
+          }
+          return { status: 1, stderr: 'write: connection reset by peer' };
+        }
+        if (attempts.length && args[0] === 'release' && (args[1] === 'view' || (args[1] === 'download' && args.includes(name)))) attempts.push(args[1]);
+        return w.gh(args);
+      };
+      if (fault === '相同字节') {
+        assert.equal((await w.prep({ ghCommand })).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+        assert.deepEqual(attempts.slice(0, 3), ['upload', 'view', 'download']);
+      } else {
+        await assert.rejects(w.prep({ ghCommand }), { code: 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT' });
+        assert.deepEqual(attempts, fault === '大小不同' ? ['upload', 'view'] : ['upload', 'view', 'download']);
+        await assert.rejects(fs.access(w.requestFile));
+      }
+      assert.equal(attempts.filter(x => x === 'upload').length, 1);
+    });
+  }
+});
+
+test('发布读回重试 HTTP 503 和 TLS 握手超时，下载使用新的空目录', async t => {
+  const w = await prepWorld(t, { spawnGh: false });
+  let failedView = false;
+  const dirs = [];
+  const ghCommand = args => {
+    if (args[0] === 'release' && args[1] === 'view' && !failedView) {
+      failedView = true;
+      return { status: 1, stderr: 'HTTP 503: Service Unavailable' };
+    }
+    if (args[0] === 'release' && args[1] === 'download' && args.includes('SHA256SUMS')) {
+      const dir = args[args.indexOf('--dir') + 1];
+      dirs.push(dir);
+      assert.ok(!args.includes('--clobber'));
+      if (dirs.length === 1) {
+        writeFileSync(path.join(dir, 'SHA256SUMS'), 'partial');
+        return { status: 1, stderr: 'net/http: TLS handshake timeout' };
+      }
+    }
+    return w.gh(args);
+  };
+  assert.equal((await w.prep({ ghCommand })).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  assert.ok(failedView);
+  assert.ok(dirs.length > 1);
+  assert.notEqual(dirs[0], dirs[1]);
+});
+
+test('发布查询遇持续 502 时最多四次，HTTP 404 即使含超时字样也立即失败', async t => {
+  for (const { stderr, attempts } of [
+    { stderr: '502 Bad Gateway', attempts: 4 },
+    { stderr: 'HTTP 404: Not Found (request timeout)', attempts: 1 },
+  ]) {
+    await t.test(stderr, async ts => {
+      const w = await prepWorld(ts, { spawnGh: false });
+      let views = 0;
+      const ghCommand = args => {
+        assert.deepEqual(args.slice(0, 2), ['release', 'view']);
+        views++;
+        return { status: 1, stderr };
+      };
+      await assert.rejects(w.prep({ ghCommand }), { code: 'PUBLISH_GH_RELEASE_VIEW_FAILED', detail: stderr });
+      assert.equal(views, attempts);
+    });
+  }
+});
+
+test('封存读取遇到二级限流时退避，下一次等待超出截止时间即停止', async t => {
+  const w = await prepWorld(t, { spawnGh: false });
+  await w.prep();
+  const time = fakeTime('2026-11-27T00:00:00Z');
+  const stderr = 'HTTP 403: You have exceeded a secondary rate limit.';
+  let views = 0;
+  const ghCommand = args => {
+    if (args[0] === 'release' && args[1] === 'view') {
+      views++;
+      return { status: 1, stderr };
+    }
+    return w.gh(args);
+  };
+  await assert.rejects(timed(w, time, { ghCommand, deadline: time.now + 90_000 }), { code: 'PUBLISH_GH_RELEASE_VIEW_FAILED', detail: stderr });
+  assert.equal(views, 2);
+  assert.deepEqual(time.slept, [60_000]);
+  assert.deepEqual(await w.opens(), []);
+});
+
 const legacyNode = (id, name, mode, observedAt) => ({ id, name, state: 'active', mode,
   registrationVersion: 4, bindingGeneration: 2, identityFingerprint: 'c'.repeat(64), bindingLive: true, rebindPending: false,
   reportedSourceSha256: 'd'.repeat(64), heartbeatAt: observedAt, heartbeatSequence: 81,
