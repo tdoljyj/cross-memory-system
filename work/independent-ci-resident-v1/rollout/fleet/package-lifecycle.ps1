@@ -574,11 +574,20 @@ function Get-FleetPathItem([string]$path) {
   catch [Management.Automation.ItemNotFoundException] { $null }
 }
 
-function Assert-FleetLocalPath([string]$path) {
+function Get-FleetLongPathAttributes([string]$longPath) {
+  try { [IO.File]::GetAttributes($longPath) }
+  catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] { $null }
+}
+
+function Assert-FleetLocalPath([string]$path, [switch]$ExtendedPath) {
   $original = $path
+  if ($ExtendedPath) { $path = '\\?\' + $path }
   for (; $path; $path = [IO.Path]::GetDirectoryName($path)) {
-    $item = Get-FleetPathItem $path
-    if ($null -ne $item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    $attributes = if ($ExtendedPath) { Get-FleetLongPathAttributes $path } else {
+      $item = Get-FleetPathItem $path
+      if ($null -ne $item) { $item.Attributes }
+    }
+    if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
       throw ('FLEET_RESOURCE_REPARSE_POINT:' + $original)
     }
     if ($path -eq [IO.Path]::GetPathRoot($path)) { break }
@@ -895,30 +904,47 @@ function Test-FleetOldConnectionSidecar {
   $null -ne (Get-FleetPathItem (Join-Path $FleetResources.ciRoot $FleetResources.admissionAssets[1]))
 }
 
+function Get-FleetProductEntryAttributes([string]$longPath) {
+  $attributes = [IO.File]::GetAttributes($longPath)
+  if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
+    throw ('FLEET_RESOURCE_REPARSE_POINT:' + $longPath.Substring(4))
+  }
+  $attributes
+}
+
+# Walk every entry to refuse links, collecting only entries that need -Force
+# behavior before the native delete.
+function Get-FleetReadOnlyProductEntries([string]$longPath) {
+  $stack = [Collections.Generic.Stack[string]]::new()
+  $stack.Push($longPath)
+  while ($stack.Count) {
+    $entry = $stack.Pop()
+    $attributes = Get-FleetProductEntryAttributes $entry
+    if ($attributes -band [IO.FileAttributes]::Directory) {
+      foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($entry)) { $stack.Push($child) }
+    }
+    if ($attributes -band [IO.FileAttributes]::ReadOnly) { $entry }
+  }
+}
+
 # Collect only paths with reserved product names. Refuse nested links before
 # deleting anything, including a link in a historical kept root.
 function Get-FleetProductPaths {
   $root = $FleetResources.ciRoot
-  Assert-FleetLocalPath $root
-  $kept = if ($null -ne (Get-FleetPathItem $root)) {
-    @(Get-ChildItem -LiteralPath $root -Force -ErrorAction Stop | Where-Object { $_.Name -cmatch $FleetResources.keptRootPattern } | ForEach-Object FullName)
-  } else { @() }
-  $paths = @($FleetResources.ciDirectories + $FleetResources.distributionDirectories | ForEach-Object { Join-Path $root $_ }) +
-    @($FleetResources.controlEntries | ForEach-Object { Join-Path $FleetResources.controlRoot $_ }) + @($kept)
-  foreach ($path in $paths) {
-    Assert-FleetLocalPath $path
-    $item = Get-FleetPathItem $path
-    if ($null -eq $item) { continue }
-    if ($item.PSIsContainer) {
-      $stack = [Collections.Generic.Stack[string]]::new()
-      $stack.Push($path)
-      while ($stack.Count) {
-        foreach ($child in @(Get-ChildItem -LiteralPath $stack.Pop() -Force -ErrorAction Stop)) {
-          if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw ('FLEET_RESOURCE_REPARSE_POINT:' + $child.FullName) }
-          if ($child.PSIsContainer) { $stack.Push($child.FullName) }
-        }
-      }
+  Assert-FleetLocalPath $root -ExtendedPath
+  $longRoot = '\\?\' + $root
+  $kept = if ($null -ne (Get-FleetLongPathAttributes $longRoot)) {
+    foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($longRoot)) {
+      if ([IO.Path]::GetFileName($child) -cmatch $FleetResources.keptRootPattern) { $child.Substring(4) }
     }
+  }
+  $paths = @($FleetResources.ciDirectories + $FleetResources.distributionDirectories | ForEach-Object { [IO.Path]::Combine($root, $_) }) +
+    @($FleetResources.controlEntries | ForEach-Object { [IO.Path]::Combine($FleetResources.controlRoot, $_) }) + @($kept)
+  foreach ($path in $paths) {
+    Assert-FleetLocalPath $path -ExtendedPath
+    $longPath = '\\?\' + $path
+    if ($null -eq (Get-FleetLongPathAttributes $longPath)) { continue }
+    $null = Get-FleetReadOnlyProductEntries $longPath
     $path
   }
 }
@@ -926,9 +952,16 @@ function Get-FleetProductPaths {
 function Remove-FleetProductPaths {
   $paths = @(Get-FleetProductPaths)
   foreach ($path in $paths) {
-    Assert-FleetLocalPath $path
-    Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
-    if ($null -ne (Get-FleetPathItem $path)) { throw ('FLEET_PRODUCT_PATH_STILL_PRESENT:' + $path) }
+    Assert-FleetLocalPath $path -ExtendedPath
+    $longPath = '\\?\' + $path
+    foreach ($entry in @(Get-FleetReadOnlyProductEntries $longPath)) {
+      Assert-FleetLocalPath ($entry.Substring(4)) -ExtendedPath
+      $attributes = Get-FleetProductEntryAttributes $entry
+      [IO.File]::SetAttributes($entry, ($attributes -band (-bnot [IO.FileAttributes]::ReadOnly)))
+    }
+    if ((Get-FleetProductEntryAttributes $longPath) -band [IO.FileAttributes]::Directory) { [IO.Directory]::Delete($longPath, $true) }
+    else { [IO.File]::Delete($longPath) }
+    if ($null -ne (Get-FleetLongPathAttributes $longPath)) { throw ('FLEET_PRODUCT_PATH_STILL_PRESENT:' + $path) }
   }
 }
 

@@ -1524,8 +1524,14 @@ function Invoke-Reset($old, $observed, [string]$operator) {
       'remove-app-key' { [IO.File]::Delete($SecretTargets['appKey']) }
       'remove-ci-token' { [IO.File]::Delete($SecretTargets['ciToken']) }
       'unregister-distribution' { $u = Invoke-Wsl @('--unregister', $Distribution) 600; if ($u.exit -ne 0) { Stop-Host 'RESET_UNREGISTER_FAILED' ([ordered]@{ done = $done; stderr = $u.stderr }) } }
-      'remove-import-directory' { if ([IO.Directory]::Exists($ImportDirectory)) { [IO.Directory]::Delete($ImportDirectory, $true) } }
-      'remove-first-install-directory' { if ([IO.Directory]::Exists($FirstDir)) { [IO.Directory]::Delete($FirstDir, $true) } }
+      'remove-import-directory' {
+        $longPath = '\\?\' + $ImportDirectory
+        if ([IO.Directory]::Exists($longPath)) { [IO.Directory]::Delete($longPath, $true) }
+      }
+      'remove-first-install-directory' {
+        $longPath = '\\?\' + $FirstDir
+        if ([IO.Directory]::Exists($longPath)) { [IO.Directory]::Delete($longPath, $true) }
+      }
     }
     $done += $a
   }

@@ -207,9 +207,10 @@ function Test-FleetPreflightDue([string]$operationId) {
 }
 
 function Remove-FleetPreflightWork([string]$parent, [string]$keepOperation, [string]$finishedOperation) {
-  if (-not [IO.Directory]::Exists($parent) -or
-      (([IO.File]::GetAttributes($parent) -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { return }
-  foreach ($work in [IO.Directory]::EnumerateDirectories($parent, 'reinstall-*')) {
+  $longParent = '\\?\' + $parent
+  if (-not [IO.Directory]::Exists($longParent) -or
+      (([IO.File]::GetAttributes($longParent) -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { return }
+  foreach ($work in [IO.Directory]::EnumerateDirectories($longParent, 'reinstall-*')) {
     if ([IO.Path]::GetFileName($work) -cnotmatch '^reinstall-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$') { continue }
     $id = $Matches[1]
     $lock = $null

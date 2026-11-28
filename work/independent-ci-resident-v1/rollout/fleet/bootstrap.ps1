@@ -231,9 +231,10 @@ function Assert-FleetDeliveryTrust([string]$path) {
 }
 # H2: the token directory removed: what was there and whether it is gone.
 function Clear-CredentialDirectory([string]$dir) {
-  $existed = [IO.Directory]::Exists($dir); $cleared = $true
-  if ($existed) { try { [IO.Directory]::Delete($dir, $true) } catch { $cleared = $false } }
-  [ordered]@{ existed = $existed; cleared = ($cleared -and -not [IO.Directory]::Exists($dir)) }
+  $longPath = '\\?\' + $dir
+  $existed = [IO.Directory]::Exists($longPath); $cleared = $true
+  if ($existed) { try { [IO.Directory]::Delete($longPath, $true) } catch { $cleared = $false } }
+  [ordered]@{ existed = $existed; cleared = ($cleared -and -not [IO.Directory]::Exists($longPath)) }
 }
 # M2: install.mjs first-install-check's answer held to what this run checked itself, before the first UAC: its status, the archive, the
 # kit the first-install sums list, the shape of every pin it hands on, and the toolchain's node.exe = the fleet's controller runtime

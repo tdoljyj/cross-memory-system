@@ -142,6 +142,62 @@ Case 'lifecycle:paths and native credential carriers' {
     if ([IO.Directory]::Exists($directory)) { [IO.Directory]::Delete($directory, $true) }
   }
 }
+Case 'lifecycle:long paths in a kept resident root' {
+  . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
+  $directory = Join-Path $env:TEMP ('clued-long-paths-' + [Guid]::NewGuid().ToString('N'))
+  $FleetResources.ciRoot = Join-Path $directory 'product'
+  $FleetResources.controlRoot = Join-Path $directory 'control'
+  $kept = Join-Path $FleetResources.ciRoot 'resident-uninstalled-fixture'
+  $leaf = $kept + '\upgrade\staged\' + ('a' * 100) + '\' + ('b' * 100) + '\' + ('c' * 100)
+  $file = '\\?\' + $leaf + '\[retained].json'
+  $unrelated = Join-Path $FleetResources.ciRoot 'another-product.txt'
+  $junction = Join-Path $kept 'junction'
+  # The real fixture is long even on hosts that opt in to long paths. Model
+  # the legacy provider's MAX_PATH failure here without changing host settings.
+  function Get-ChildItem {
+    [CmdletBinding()] param([string]$LiteralPath, [switch]$Force)
+    if ($LiteralPath.Length -ge 260 -and -not $LiteralPath.StartsWith('\\?\')) {
+      throw [Management.Automation.ItemNotFoundException]::new('MAX_PATH fixture: ' + $LiteralPath)
+    }
+    Microsoft.PowerShell.Management\Get-ChildItem @PSBoundParameters
+  }
+  function Remove-Item {
+    [CmdletBinding()] param([string]$LiteralPath, [switch]$Recurse, [switch]$Force)
+    if ($Recurse -and $LiteralPath -ceq $kept) {
+      throw [Management.Automation.ItemNotFoundException]::new('MAX_PATH fixture: ' + $leaf)
+    }
+    Microsoft.PowerShell.Management\Remove-Item @PSBoundParameters
+  }
+  try {
+    Yes ($leaf.Length -gt 260) 'lifecycle:kept-fixture-exceeds-max-path'
+    [void][IO.Directory]::CreateDirectory(('\\?\' + $leaf))
+    [IO.File]::WriteAllText($file, 'retained fixture')
+    [IO.File]::SetAttributes($file, ([IO.FileAttributes]::Hidden -bor [IO.FileAttributes]::ReadOnly))
+    [IO.File]::WriteAllText($unrelated, 'keep this')
+
+    Case 'lifecycle:inventory walks the full kept tree' {
+      $paths = @(Get-FleetProductPaths)
+      Yes ($paths.Count -eq 1 -and $paths[0] -ceq $kept) 'lifecycle:inventory-returns-unprefixed-kept-root'
+    }
+    Case 'lifecycle:cleanup refuses a linked directory before deleting' {
+      $target = Join-Path $directory 'junction-target'
+      [void][IO.Directory]::CreateDirectory($target)
+      $null = New-Item -Path $junction -ItemType Junction -Target $target
+      try {
+        Throws { Remove-FleetProductPaths } 'FLEET_RESOURCE_REPARSE_POINT:*' 'lifecycle:kept-junction-refused'
+        Yes ([IO.File]::Exists($file) -and [IO.Directory]::Exists($target)) 'lifecycle:kept-junction-stops-cleanup'
+      } finally { [IO.Directory]::Delete(('\\?\' + $junction)) }
+    }
+    Case 'lifecycle:cleanup removes the full kept tree' {
+      Remove-FleetProductPaths
+      Yes (-not [IO.Directory]::Exists(('\\?\' + $kept))) 'lifecycle:kept-root-gone'
+      Yes ([IO.File]::ReadAllText($unrelated) -ceq 'keep this') 'lifecycle:unrelated-file-preserved'
+    }
+  } finally {
+    if ([IO.File]::Exists($file)) { [IO.File]::SetAttributes($file, [IO.FileAttributes]::Normal) }
+    if ([IO.Directory]::Exists($directory)) { [IO.Directory]::Delete(('\\?\' + $directory), $true) }
+  }
+}
 Case 'lifecycle:preserved connection reads a large install receipt' {
   . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
   $directory = Join-Path $env:TEMP ('clued-lifecycle-receipt-' + [Guid]::NewGuid().ToString('N'))
@@ -775,18 +831,20 @@ Case 'self-pull: stop on deterministic failure and resume transient preflight' {
     Yes ($retry.phase -ceq 'RETRY_PREFLIGHT' -and ([DateTimeOffset]$retry.retryAt) -gt $fixtureNow) 'self-pull:preflight-transient-backs-off'
     Yes ($stop.phase -ceq 'FAILED') 'self-pull:preflight-definitive-failure-stops'
     $folder = Get-FleetPreflightDirectory $work $operation
-    [void][IO.Directory]::CreateDirectory($folder)
+    $longSubtree = '\\?\' + $folder + '\' + ('a' * 100) + '\' + ('b' * 100)
+    [void][IO.Directory]::CreateDirectory($longSubtree)
+    [IO.File]::WriteAllText(($longSubtree + '\fixture'), 'kept during backoff')
     $stateFile = Join-Path $FleetDeliveryRoot ('claims\' + $operation + '.json')
     Write-FleetOperatorRecord $stateFile $retry
     Remove-FleetPreflightWork $work $operation
-    Yes (([IO.Directory]::Exists($folder)) -and -not (Test-FleetPreflightDue $operation)) 'self-pull:preflight-retains-workspace-during-backoff'
+    Yes (([IO.File]::Exists($longSubtree + '\fixture')) -and -not (Test-FleetPreflightDue $operation)) 'self-pull:preflight-retains-workspace-during-backoff'
     $retry.retryAt = $fixtureNow.AddMinutes(-1).ToString('o')
     Write-FleetOperatorRecord $stateFile $retry
     Yes ((Test-FleetPreflightDue $operation) -and (Get-FleetPreflightDirectory $work $operation) -ceq $folder) 'self-pull:retry-reuses-workspace'
     Write-FleetOperatorRecord $stateFile $stop
     Remove-FleetPreflightWork $work $operation
     Yes (-not (Test-FleetPreflightDue $operation) -and -not [IO.Directory]::Exists($folder)) 'self-pull:durably-stopped-preflight-reclaims-workspace'
-  } finally { [IO.Directory]::Delete($work, $true) }
+  } finally { [IO.Directory]::Delete(('\\?\' + $work), $true) }
 }
 
 Case 'first-install: manual manifest must match the accepted archive' {
@@ -1197,7 +1255,10 @@ try {
   $evidence['oldPatternLauncherStop'] = $old
 
   Case 'h2:a-left-directory-is-swept' {
-    $cd = Join-Path $tmp 'credentials'; [void][IO.Directory]::CreateDirectory($cd); [IO.File]::WriteAllText((Join-Path $cd 'resident-upgrade.token'), 'x')
+    $cd = Join-Path $tmp 'credentials'
+    $longSubtree = '\\?\' + $cd + '\' + ('a' * 100) + '\' + ('b' * 100)
+    [void][IO.Directory]::CreateDirectory($longSubtree)
+    [IO.File]::WriteAllText(($longSubtree + '\resident-upgrade.token'), 'x')
     $c = Clear-CredentialDirectory $cd
     Yes ($c.existed -eq $true -and $c.cleared -eq $true -and -not [IO.Directory]::Exists($cd)) 'h2:swept'
     $c = Clear-CredentialDirectory $cd
