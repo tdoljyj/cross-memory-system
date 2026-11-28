@@ -32,6 +32,7 @@ import { TRANSIENT_CODES } from '../../../work/independent-ci-resident-v1/src/cl
 const repo = DEFAULT_REPO;
 const sealMigration = '20261127120000_fleet_delivery_seal_v1.sql';
 const sourceRuleMigration = '20261127210000_fleet_sealed_source_rule_v1.sql';
+const receiptLookupMigration = '20261128170000_audit_receipt_object_lookup_idx.sql';
 const migrations = new URL('../supabase/migrations/', import.meta.url);
 const owner = id(1), project = id(2), primary = id(3), standby = id(4), retired = id(5);
 const otherProject = id(7), revoked = id(8);
@@ -254,9 +255,9 @@ async function seedPreviousSchema(t) {
     await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
       [owner, JSON.stringify({ sub: owner, role: 'authenticated', session_id: id(6), aal: 'aal1',
         amr: [{ method: 'password', timestamp: 1795000000 }] })]);
-    return { admin, anon, human, heartbeat, registerNode, connect, upgrade: async () => {
+    return { admin, anon, human, heartbeat, registerNode, connect, migrate, upgrade: async ({ before } = {}) => {
       assert.ok(names.includes(sealMigration), `缺迁移 ${sealMigration}`);
-      for (const name of names.filter(name => name >= sealMigration)) await migrate(name);
+      for (const name of names.filter(name => name >= sealMigration && (!before || name < before))) await migrate(name);
     }, close };
   } catch (error) {
     await close();
@@ -808,6 +809,121 @@ test('封存前同源兜底，封存后正常交班只给当前包，旧包能�
     assert.equal((await classification(primary)).revoked,true);
     assert.equal(await dbValue(admin,'select clued_private.fleet_node_target_v1($1,$2) v',[owner,primary]),null);
 
+  } finally { await db.close(); }
+});
+
+test('摘牌回执查询在大租户历史中使用三键索引，并保留摘牌和撤销重放语义', async t => {
+  const db = await seedPreviousSchema(t);
+  const { admin, anon, human } = db;
+  try {
+    await db.upgrade({ before: receiptLookupMigration });
+    const pkg = await seedSealedPackage(db, 25, installedSource);
+    const historicalOp = id(611), newOp = id(612), returnedOp = id(613), otherOwner = id(614);
+    const latestRevoke = id(615), earlierRevoke = id(616), returnedReceipt = id(617);
+    await admin.query('insert into auth.users(id,email) values($1,$2)', [otherOwner, 'other-fleet@example.invalid']);
+    await admin.query(`insert into public.clued_audit_receipts
+      (user_id, context_key, operation, object_type, object_id, metadata, created_at)
+      select $1, case n%3 when 0 then 'global' when 1 then $2 else $3 end,
+        'fixture_background', 'fixture', md5(n::text)::uuid::text,
+        jsonb_build_object('batch', n, 'detail', repeat(md5(n::text), 8)),
+        timestamptz '2026-11-27 00:00:00+00' - n * interval '1 second'
+      from generate_series(1, 78000) as g(n)`, [owner, scope, `project:${otherProject}`]);
+    await admin.query(`insert into public.clued_audit_receipts
+      (id, user_id, context_key, operation, object_type, object_id, metadata, created_at) values
+      (gen_random_uuid(), $1, $2, 'fleet_delist', 'ci_node', $3, jsonb_build_object('operation_id', $4::text), '2026-11-27 01:00+00'),
+      ($5, $1, $2, 'fleet_delist', 'ci_node', $3, jsonb_build_object('operation_id', $6::text), '2026-11-27 02:00+00'),
+      (gen_random_uuid(), $1, $2, 'fleet_delist', 'ci_node', $7, jsonb_build_object('operation_id', $8::text), '2026-11-27 03:00+00'),
+      (gen_random_uuid(), $1, $2, 'fleet_verify_started', 'ci_node', $3, jsonb_build_object('operation_id', $8::text), '2026-11-27 03:00+00'),
+      (gen_random_uuid(), $9, $2, 'fleet_delist', 'ci_node', $3, jsonb_build_object('operation_id', $8::text), '2026-11-27 03:00+00'),
+      ($10, $1, 'global', 'owner_grant_revoke', 'owner_grant', $12, '{}', '2026-11-27 05:00+00'),
+      ($11, $1, 'global', 'owner_grant_revoke', 'owner_grant', $12, '{}', '2026-11-27 04:00+00'),
+      (gen_random_uuid(), $9, 'global', 'owner_grant_revoke', 'owner_grant', $12, '{}', '2026-11-27 06:00+00')`,
+    [owner, scope, standby, historicalOp, returnedReceipt, returnedOp, primary, newOp, otherOwner,
+      latestRevoke, earlierRevoke, pkg.grantId]);
+    await admin.query(`insert into clued_private.fleet_maintenance_v1
+      (node_id, user_id, binding_generation, operation_id, grant_id, state, method, receipt_id, delist_receipt_id)
+      values($1,$2,1,$3,$4,'returned','reinstall',$5,$5)`, [standby, owner, returnedOp, pkg.grantId, returnedReceipt]);
+    await admin.query('analyze public.clued_audit_receipts');
+
+    const delist = `select exists(select 1 from public.clued_audit_receipts a
+      where a.user_id=$1::uuid and a.object_id=$2::text and a.operation='fleet_delist'
+        and a.metadata->>'operation_id'=$3::text) v`;
+    const revoke = `select r.id v from public.clued_audit_receipts r
+      where r.user_id=$1::uuid and r.operation='owner_grant_revoke' and r.object_id=$2::text
+      order by created_at desc limit 1`;
+    const queries = [
+      ['摘牌无历史命中', delist, [owner, standby, newOp], false],
+      ['摘牌命中历史', delist, [owner, standby, historicalOp], true],
+      ['封存授权撤销重放', revoke, [owner, pkg.grantId], latestRevoke],
+    ];
+    const explain = async phase => {
+      const plans = [];
+      for (const [label, sql, params] of queries) {
+        const { rows } = await admin.query(`explain (analyze, buffers, format json) ${sql}`, params);
+        const [explanation] = rows[0]['QUERY PLAN'];
+        t.diagnostic(`${phase} ${label} ${JSON.stringify(explanation)}`);
+        plans.push(explanation.Plan);
+      }
+      return plans;
+    };
+    await explain('迁移前');
+    await db.migrate(receiptLookupMigration);
+    const plans = await explain('迁移后');
+    for (const [i, [label, sql, params, expected]] of queries.entries()) {
+      const nodes = [plans[i]];
+      for (const node of nodes) nodes.push(...(node.Plans ?? []));
+      const lookup = nodes.find(node => ['Index Scan', 'Bitmap Index Scan'].includes(node['Node Type'])
+        && node['Index Name'] === 'clued_audit_receipts_object_lookup_idx');
+      assert.ok(lookup, `${label}应走回执对象索引`);
+      for (const key of ['user_id', 'object_id', 'operation']) {
+        assert.match(lookup['Index Cond'] ?? '', new RegExp(`\\b${key} = `), `${label}的索引条件应包含 ${key}`);
+      }
+      const receiptScans = nodes.filter(node => node['Relation Name'] === 'clued_audit_receipts'
+        || node['Index Name']?.startsWith('clued_audit_receipts_'));
+      const discarded = receiptScans.reduce((count, node) => count + node['Actual Loops']
+        * ((node['Rows Removed by Filter'] ?? 0) + (node['Rows Removed by Index Recheck'] ?? 0)), 0);
+      assert.ok(discarded <= 8, `${label}过滤或重检了 ${discarded} 条回执`);
+      assert.equal(await dbValue(admin, sql, params), expected, label);
+    }
+
+    for (const client of [anon, human]) await client.query("set statement_timeout = '3s'");
+    const request = { scope: 'global', node_id: standby, binding_generation: 1, grant_id: pkg.grantId, method: 'reinstall' };
+    const nodeDelist = operation_id => dbValue(anon, 'select public.clued_work_verify_v1($1,$2) v', [sha('fixture-standby'),
+      { ...request, action: 'fleet_maintenance', command: 'delist', operation_id }]);
+    const ownerDelist = operation_id => dbValue(human, 'select public.clued_fleet_maintenance_v1($1) v',
+      [{ ...request, action: 'delist', operation_id }]);
+    const receipts = async () => (await admin.query(`select id from public.clued_audit_receipts
+      where user_id=$1 and object_id=$2 and operation='fleet_delist' order by id`, [owner, standby])).rows.map(row => row.id);
+    // 用数据库时钟记录诊断，预算由每个连接的 statement_timeout 执行。
+    const measure = async (client, label, call) => {
+      const started = await dbValue(client, 'select clock_timestamp()::text v');
+      const result = await call();
+      const elapsed = await dbValue(client, `select round(extract(epoch from
+        (clock_timestamp() - $1::timestamptz)) * 1000, 2) v`, [started]);
+      t.diagnostic(`${label}：${elapsed} ms`);
+      return result;
+    };
+    const callers = [['anon', anon, nodeDelist], ['authenticated', human, ownerDelist]];
+    const before = await receipts();
+    for (const [role, client, call] of callers) {
+      await measure(client, `${role} 历史摘牌冲突 40001`, () =>
+        assert.rejects(call(historicalOp), { code: '40001', message: 'fleet_maintenance_operation_conflict' }));
+    }
+    assert.deepEqual(await receipts(), before);
+    const reply = await measure(anon, 'anon 新摘牌', () => nodeDelist(newOp));
+    assert.equal(reply.state, 'delisted');
+    assert.equal(reply.operation_id, newOp);
+    assert.ok(reply.receipt_id);
+    const { rows: [maintenance] } = await admin.query(`select state, operation_id, receipt_id, delist_receipt_id
+      from clued_private.fleet_maintenance_v1 where user_id=$1 and node_id=$2`, [owner, standby]);
+    assert.deepEqual(maintenance, { state: 'delisted', operation_id: newOp, receipt_id: reply.receipt_id,
+      delist_receipt_id: reply.receipt_id });
+    for (const [role, client, call] of callers) {
+      const replay = await measure(client, `${role} 摘牌重试`, () => call(newOp));
+      assert.equal(replay.state, 'delisted');
+      assert.equal(replay.receipt_id, reply.receipt_id);
+    }
+    assert.deepEqual(await receipts(), [...before, reply.receipt_id].sort());
   } finally { await db.close(); }
 });
 
