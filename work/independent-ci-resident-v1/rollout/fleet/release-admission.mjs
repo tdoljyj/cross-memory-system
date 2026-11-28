@@ -1,6 +1,7 @@
 // The eight required checks are pinned to their producing GitHub Apps.
 export const RELEASE_REPOSITORY = 'tdoljyj/cross-memory-system';
 export const RELEASE_OWNER = 'tdoljyj';
+export const RELEASE_API_VERSION = '2022-11-28';
 const sha = /^[0-9a-f]{40}$/;
 const required = new Map([
   ...['ci-suites', 'ci-suites-windows', 'clued-cloud-tests', 'migration-verify', 'gitleaks', 'trivy', 'contract-placement']
@@ -76,7 +77,7 @@ if (import.meta.main) {
       'FLEET_RELEASE_WORKFLOW_SUBJECT_REFUSED');
     const api = async endpoint => {
       const answer = await fetch(`https://api.github.com/${endpoint}`, {
-        headers: { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2026-03-10' },
+        headers: { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': RELEASE_API_VERSION },
         redirect: 'error', signal: AbortSignal.timeout(15_000),
       });
       insist(answer.ok, 'FLEET_RELEASE_GITHUB_UNREADABLE', answer.status);
