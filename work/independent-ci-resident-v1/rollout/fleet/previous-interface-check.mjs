@@ -52,8 +52,12 @@ export async function previousInterfaceCheck({ commit, previous, timeoutMs, root
     const stagedOptions = { ...options, cwd: tree };
     await exec('git', ['update-ref', '--no-deref', 'HEAD', previous.commit], stagedOptions);
     await exec('git', ['update-ref', 'refs/remotes/origin/main', commit], stagedOptions);
-    await extract(previous.commit, [`${app}/tests`, `${app}/scripts`, `${app}/package.json`, `${app}/package-lock.json`, `${app}/.npmrc`, 'scripts',
-      'work/independent-ci-resident-v1', 'work/actions-hosted-migration', 'config']);
+    // 上一代的封存包演练通过 git ls-files 取源文件清单及模式。
+    await exec('git', ['read-tree', previous.commit], stagedOptions);
+    // 列车演练把 Worker 及其 app 依赖一起打包，封存包演练还会读取源闭包里的工作流和扫描配置。
+    await extract(previous.commit, [`${app}/tests`, `${app}/scripts`, `${app}/worker`, `${app}/app`,
+      `${app}/package.json`, `${app}/package-lock.json`, `${app}/.npmrc`, 'scripts',
+      'work/independent-ci-resident-v1', 'work/actions-hosted-migration', 'config', '.github/workflows', '.gitleaks.toml']);
     await extract(commit, [migrations]);
     const files = [];
     for (const file of tests) {
