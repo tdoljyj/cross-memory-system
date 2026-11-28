@@ -27,6 +27,30 @@ function fixture(t, files, { commands = { unit: [{ cwd: '.', argv: ['node', '--t
 }
 const entry = (file, extra = {}) => ({ path: file, kind: 'unsorted', task: TASK, reason: '从没在必需检查里跑过，红绿未知，等下一批分拣', ...extra });
 
+const PRINT_TEST_NAME = "spawnSync(process.execPath, ['-e', 'console.log(process.argv[1])', './child.test.mjs']);";
+const GENERATE_TEMP_TEST = [
+  "const child = path.join(mkdtempSync(path.join(os.tmpdir(), 'case-')), 'child.test.mjs');",
+  "writeFileSync(child, '');",
+  "spawnSync(process.execPath, ['--test', child]);",
+].join('\n');
+
+for (const [name, source] of [['node -e 打印同名文件', PRINT_TEST_NAME], ['执行 TEMP 下的同名生成文件', GENERATE_TEMP_TEST]]) {
+  test('覆盖检查不误报：' + name, (t) => {
+    assert.deepEqual(fixture(t, { 't/child.test.mjs': '', 't/parent.test.mjs': source }).problems, []);
+  });
+}
+
+test('仅改文档不受基线已有的路径误报影响', (t) => {
+  const { put, commit, run } = cliCheckout(t);
+  put('scripts/ci/child.test.mjs');
+  put('scripts/ci/parent.test.mjs', PRINT_TEST_NAME);
+  put('docs/README.md', 'base');
+  commit();
+  put('docs/README.md', 'candidate');
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test('test files are named *.test.{mjs,js,cjs,ts}, test_*.py or *_test.py', () => {
   for (const file of ['a.test.mjs', 'x/a.test.js', 'x/a.test.cjs', 'x/a.test.ts', 'tests/test_a.py', 'x/a_test.py']) assert.ok(isTestFile(file), file);
   for (const file of ['a.mjs', 'x/a.case.mjs', 'x/test-a.mjs', 'x/test_a.cjs', 'x/a.test.py', 'x/latest_a.py.txt']) assert.ok(!isTestFile(file), file);
@@ -44,38 +68,6 @@ test('a test file no suite runs fails wherever it is and whatever it is written 
   assert.deepEqual(fixture(t, files).problems.map((problem) => problem.split(':')[0]), ['test-x.ps1', 'tools/x.Tests.ps1', 'tests/sub/y-db.test.mjs']);
   const table = { tests: [entry('test-x.ps1'), entry('tools/x.Tests.ps1'), entry('tests/sub/y-db.test.mjs')] };
   assert.deepEqual(fixture(t, files, { table }).problems, []);
-});
-
-test('运行时引用别的测试即使两者均在套件里也须登记依赖', (t) => {
-  const files = {
-    't/replay.test.mjs': [
-      "import './static.test.mjs';",
-      "// spawnSync('node', ['--test', './comment.test.mjs']);",
-      "const expected = './fake.test.mjs'; assert.equal(actual, expected);",
-      "writeFileSync(path.join(scratch, 'fake.test.mjs'), fixture);",
-      "spawnSync(process.execPath, ['--test', './literal.test.mjs']);",
-      "const script = path.join(import.meta.dirname, '../other', 'split.test.mjs');",
-      "spawnSync(process.execPath, ['--test', script]);",
-      "const replay = './assembled' + '.test.mjs';",
-      "execFileSync(process.execPath, ['--test', replay]);",
-      "execSync('node runner.mjs --run-files production-schema t/shell.test.mjs --only-named');",
-    ].join('\n'),
-    't/static.test.mjs': '', 't/comment.test.mjs': '', 't/fake.test.mjs': '',
-    't/literal.test.mjs': '', 't/assembled.test.mjs': '', 't/shell.test.mjs': '', 'other/split.test.mjs': '',
-    't/test_wrapper.py': "load('fixtures', Path(__file__).with_name('test_input.py'))",
-    't/test_input.py': '',
-    't/test-run.ps1': "& (Join-Path $PSScriptRoot 'test-inner.ps1')",
-    't/test-inner.ps1': '',
-  };
-  const table = { tests: Object.keys(files).filter((file) => !file.startsWith('t/') || /\.(?:py|ps1)$/.test(file)).map((file) => entry(file)) };
-  assert.deepEqual(fixture(t, files, { table }).problems, [
-    'RUNTIME_READERS 缺边：other/split.test.mjs -> t/replay.test.mjs',
-    'RUNTIME_READERS 缺边：t/assembled.test.mjs -> t/replay.test.mjs',
-    'RUNTIME_READERS 缺边：t/literal.test.mjs -> t/replay.test.mjs',
-    'RUNTIME_READERS 缺边：t/shell.test.mjs -> t/replay.test.mjs',
-    'RUNTIME_READERS 缺边：t/test-inner.ps1 -> t/test-run.ps1',
-    'RUNTIME_READERS 缺边：t/test_input.py -> t/test_wrapper.py',
-  ]);
 });
 
 test('a new test-x.ps1 in the repository fails the check: no suite command takes a PowerShell file', () => {

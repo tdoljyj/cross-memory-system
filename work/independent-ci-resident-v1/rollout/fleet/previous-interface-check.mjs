@@ -30,7 +30,7 @@ export function migrationTreeDigest(commit, root = checkout) {
 
 // Run the prior commit's assertions and helpers unchanged, against an isolated
 // PostgreSQL initialized with the candidate commit's committed migrations.
-export async function previousInterfaceCheck({ commit, previous, timeoutMs, root = checkout }) {
+export async function previousInterfaceCheck({ commit, previous, timeoutMs, root = checkout, testReader }) {
   if (!sha.test(commit) || !sha.test(previous.commit) || commit === previous.commit) throw new Error('FLEET_PREVIOUS_TEST_SUBJECT_REFUSED');
   const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-previous-interfaces-'));
   const tree = path.join(stage, 'tree');
@@ -66,7 +66,8 @@ export async function previousInterfaceCheck({ commit, previous, timeoutMs, root
     }
     if (!files.length) throw new Error('FLEET_PREVIOUS_TESTS_MISSING');
     const { stdout } = await exec(process.execPath, [path.join(root, 'scripts/ci/ci-required-selection.mjs'),
-      '--root', tree, '--run-files', 'production-schema', ...files, '--only-named'], options);
+      '--root', tree, '--run-files', 'production-schema', ...files, '--only-named',
+      ...(testReader === undefined ? [] : ['--runtime-reader', testReader])], options);
     // A command that selected nothing (or skipped its test) is never a pass.
     if (!/^ℹ pass [1-9][0-9]*$/m.test(stdout) || !/^ℹ skipped 0$/m.test(stdout) || /^ℹ (?:skipped|cancelled) [1-9]/m.test(stdout)) {
       throw new Error('FLEET_PREVIOUS_TESTS_NOT_EXECUTED');

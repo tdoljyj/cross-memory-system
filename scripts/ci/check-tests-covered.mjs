@@ -18,13 +18,13 @@
 //     name the test;
 //   - a file that imports a test runner (node:test, or a Python unittest TestCase) under a name that is no test
 //     file name, when no test file imports it and no suite runs it: rename it, or list it;
-//   - a runtime reference from one tracked test to another without a RUNTIME_READERS edge;
 //   - growth against the base (--base, else CI_BASE_SHA, else the newest origin/main commit HEAD contains), read from
 //     git: an entry of ci-uncovered-tests.json the base does not list, once the base's table has SHRINKING_SCHEMA; an
 //     entry of ci-known-failures.json (suite, file, test path and fingerprint) the base does not list; a file an archive
 //     pattern matches that the base does not have (an archive is sealed: no new test hides under it, whatever the
 //     base's schema); a base it cannot read. Both lists only shrink: a file leaves the table when a suite runs it, a
 //     failure leaves when it is fixed.
+// 子进程助手用 --runtime-reader 上报调用者。实际测试操作数由选择器在派发时核对。
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
@@ -438,125 +438,33 @@ const registeredRuntimeReaders = (file) => [
   ...(RUNTIME_READERS.get(file) ?? []), ...(FLEET_CHILDREN.test(file) ? FLEET_WRAPPERS : []),
 ];
 
-// The literals in path builders and execution/read arguments are repository inputs.
-// Ordinary imports already add graph edges, and expected filenames in assertions
-// and generated fixture bodies do not read or execute the corresponding checkout files.
-function runtimeTestLiterals(file, source) {
-  const python = file.endsWith('.py');
-  const powershell = file.toLowerCase().endsWith('.ps1');
-  const lexemes = python
-    ? /'''[\s\S]*?'''|"""[\s\S]*?"""|#[^\r\n]*|'(?:\\.|[^'\\\r\n])*'|"(?:\\.|[^"\\\r\n])*"/g
-    : powershell
-      ? /<#[\s\S]*?#>|@['"]\r?\n[\s\S]*?^['"]@|#[^\r\n]*|'(?:''|[^'\r\n])*'|"(?:\x60.|[^"\r\n])*"/gm
-      : /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*|'(?:\\[\s\S]|[^'\\\r\n])*'|"(?:\\[\s\S]|[^"\\\r\n])*"|\x60(?:\\[\s\S]|[^\x60\\])*\x60/g;
-  const literals = [];
-  const code = source.replace(lexemes, (token, offset) => {
-    if (/^['"\x60]/.test(token) && !(python && /^(?:'''|""")/.test(token))) {
-      const value = token.slice(1, -1);
-      literals.push({ offset, end: offset + token.length, value });
-    }
-    return token.replace(/[^\r\n]/g, ' ');
-  });
-  const operands = new Set();
-  const calls = python
-    ? /\b(?:Path|spec_from_file_location|with_name|join|private_source|load|run|Popen|check_call|check_output)\s*\(/g
-    : /\b(?:path\.(?:join|resolve)|join|resolve|new\s+URL|readFile(?:Sync)?|createReadStream|parseFixtureSource|spawn(?:Sync)?|exec(?:File)?(?:Sync)?|powershellFile|previousInterfaceCheck|replayTests?|runFiles|run(?:Node)?Test(?:s|File)?|main)\s*\(/g;
-  const closing = new Map();
-  const stack = [];
-  for (const match of code.matchAll(/[()]/g)) {
-    if (match[0] === '(') stack.push(match.index);
-    else if (stack.length) closing.set(stack.pop(), match.index);
+// 核对选择器已解析的执行路径。回放在历史检出中执行，读取者仍来自选择器所在的检出。
+export function assertRuntimeTestEdges({ root, reader, files }) {
+  const relativeTest = (directory, absolute) => {
+    const file = slash(path.relative(directory, absolute));
+    return inside(file) && isTestFile(file) ? file : null;
+  };
+  if (!path.isAbsolute(reader)) throw new Error('--runtime-reader 须为读取者测试的绝对路径');
+  const readerPath = realpathSync.native(reader);
+  const tracked = fileLookup(trackedFiles(root));
+  const rootPath = realpathSync.native(root);
+  let from = tracked(relativeTest(rootPath, readerPath) ?? '');
+  if (!from) {
+    const sourcePath = realpathSync.native(DEFAULT_ROOT);
+    const candidate = relativeTest(sourcePath, readerPath);
+    if (candidate && sourcePath !== rootPath) from = fileLookup(trackedFiles(DEFAULT_ROOT))(candidate);
   }
-  const written = [...code.matchAll(/\b(?:writeFile(?:Sync)?|appendFile(?:Sync)?)\s*\(\s*(?:path\.)?(?:join|resolve)\s*\(/g)]
-    .map(({ index, 0: call }) => [index, closing.get(index + call.length - 1)]);
-  const callsWithArguments = [];
-  if (!powershell) {
-    for (const call of code.matchAll(calls)) {
-      const start = call.index + call[0].length;
-      const end = closing.get(start - 1);
-      if (end === undefined || written.some(([first, last]) => first < start && end <= last)) continue;
-      if (call[0].startsWith('main') && !/['"]--(?:files|run-files|test)['"]/.test(source.slice(start, end))) continue;
-      // String.join() concatenates its receiver rather than resolving its argument.
-      if (!python && call[0].startsWith('join') && code[call.index - 1] === '.') continue;
-      callsWithArguments.push({ start, end, words: new Set(code.slice(start, end).split(/[^\w$]+/)) });
-    }
-  }
-  const byEnd = new Map(literals.map((literal) => [literal.end, literal]));
-  function precedingLiteral(offset, separator) {
-    let cursor = offset;
-    while (cursor > 0 && /\s/.test(source[cursor - 1])) cursor--;
-    if (source[cursor - 1] !== separator) return null;
-    cursor--;
-    while (cursor > 0 && /\s/.test(source[cursor - 1])) cursor--;
-    return byEnd.get(cursor) ?? null;
-  }
-  const isPath = (value) => isTestFile(value.replace(/\\+/g, '/'));
-  for (const literal of literals) {
-    const { offset, end } = literal;
-    const concat = precedingLiteral(offset, '+');
-    const value = (concat?.value ?? '') + literal.value;
-    const command = /(?:^|\s)--(?:test|run-files|files)(?:\s|$)/.exec(value);
-    const commandPaths = command ? value.slice(command.index + command[0].length).split(/[\s;&|]+/).filter(isPath) : [];
-    if (!isPath(value) && commandPaths.length === 0) continue;
-    if (written.some(([start, stop]) => start < offset && end <= stop)) continue;
-    const beforeLine = code.slice(code.lastIndexOf('\n', offset - 1) + 1, offset);
-    const args = callsWithArguments.filter(({ start, end: stop }) => offset >= start && end <= stop);
-    const add = () => {
-      let joined = value;
-      if (args.some(({ start }) => /\b(?:join|resolve)\s*\($/.test(code.slice(Math.max(0, start - 32), start)))) {
-        for (let component = precedingLiteral(concat?.offset ?? offset, ',');
-          component && /^[.\w/-]+$/.test(component.value); component = precedingLiteral(component.offset, ',')) {
-          joined = component.value + '/' + joined;
-        }
-      }
-      for (const operand of commandPaths.length ? commandPaths : [joined]) operands.add(operand);
-    };
-    if (powershell) {
-      if (/(?:\bJoin-Path\b|\s-File\b|^\s*[.&]\s)/i.test(beforeLine)) add();
-    } else if (python && /\/\s*$/.test(beforeLine)) {
-      add();
-    } else if (args.length > 0) {
-      add();
-    } else {
-      const bindingLine = concat ? code.slice(code.lastIndexOf('\n', concat.offset - 1) + 1, concat.offset) : beforeLine;
-      const binding = /\b([a-z_$][\w$]*)\s*=\s*(?:\[\s*)?$/i.exec(bindingLine)?.[1];
-      if (!binding) continue;
-      const after = code.slice(end);
-      const nextTest = /^\s*(?:test|it|describe)\s*\(/m.exec(after);
-      // Module-scope paths can be used inside later test callbacks.
-      const limit = nextTest && /^\s/.test(bindingLine) ? end + nextTest.index : code.length;
-      if (callsWithArguments.some(({ start, words }) => end <= start && start < limit && words.has(binding))) add();
-    }
-  }
-  return operands;
-}
+  if (!from || !statSync(readerPath).isFile()) throw new Error('--runtime-reader 须指向源检出或执行检出中已跟踪的测试文件');
 
-function runtimeTestProblems(tests, source) {
-  const byName = new Map();
-  const files = new Set(tests);
-  for (const file of tests) {
-    const name = path.posix.basename(file);
-    if (!byName.has(name)) byName.set(name, []);
-    byName.get(name).push(file);
-  }
-  const problems = new Set();
-  for (const reader of tests) {
-    for (const literal of runtimeTestLiterals(reader, source(reader))) {
-      const spec = literal.replace(/\\+/g, '/').replace(/\$\{[^}]+\}/g, '.');
-      if (!isTestFile(spec) || /[\r\n"'?:]/.test(spec)) continue;
-      const normalized = path.posix.normalize(spec);
-      const relative = resolve(reader, normalized);
-      const near = [relative, normalized].find((file) => files.has(file));
-      const candidates = near ? [near] : (byName.get(path.posix.basename(normalized)) ?? [])
-        .filter((file) => file.endsWith('/' + normalized));
-      for (const input of candidates) {
-        if (input !== reader && !registeredRuntimeReaders(input).includes(reader)) {
-          problems.add(`RUNTIME_READERS 缺边：${input} -> ${reader}`);
-        }
-      }
+  const missing = new Set();
+  for (const file of files) {
+    const absolute = realpathSync.native(path.join(root, file));
+    const target = tracked(relativeTest(rootPath, absolute) ?? '');
+    if (target && target !== from && statSync(absolute).isFile() && !registeredRuntimeReaders(target).includes(from)) {
+      missing.add(`RUNTIME_READERS 缺边：${target} -> ${from}`);
     }
   }
-  return [...problems].sort();
+  if (missing.size > 0) throw new Error([...missing].sort().join('\n'));
 }
 
 // The reregistration command reads these fields when it hashes source blobs.
@@ -963,7 +871,7 @@ export function coverage({ root = DEFAULT_ROOT, tracked = trackedFiles(root), re
   const misnamed = tracked.filter((file) => !isTestFile(file) && (NODE_SOURCE.test(file) || file.endsWith('.py')) &&
     !bySuite.has(file) && !reached.has(file) && importsRunner(file, source(file)));
 
-  const problems = runtimeTestProblems(tests, source);
+  const problems = [];
   if (baseline === undefined) {
     const at = resolveBase(root, base);
     try {
