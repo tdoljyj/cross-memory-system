@@ -35,12 +35,14 @@ export async function admitFleetRelease({ api, repository, commit }) {
   const number = matches[0]?.number;
   insist(matches.length === 1 && Number.isSafeInteger(number) && number > 0, 'FLEET_RELEASE_MERGED_PR_REFUSED', { commit });
   const pull = await api(`${base}/pulls/${number}`);
-  insist(bound(pull) && pull.number === number && pull.merged === true, 'FLEET_RELEASE_MERGED_PR_REFUSED', { commit, number });
+  const mergedAt = typeof pull?.merged_at === 'string' ? Date.parse(pull.merged_at) : NaN;
+  insist(bound(pull) && pull.number === number && pull.merged === true && Number.isFinite(mergedAt),
+    'FLEET_RELEASE_MERGED_PR_REFUSED', { commit, number });
   const checked = await api(`${base}/commits/${head}`);
   insist(checked?.sha === head && checked.commit?.tree?.sha === tree, 'FLEET_RELEASE_MERGED_TREE_CHANGED', { commit, head });
   const checks = new Map([...required].map(([name, app]) => [`${app}/${name}`, null]));
 
-  // Read every page. A newer queued, skipped or failed check supersedes an older green.
+  // Read every page. Among checks started by merge time, a newer queued, skipped or failed check supersedes an older green.
   const seen = new Set();
   for (let page = 1; ; page++) {
     insist(page <= 10, 'FLEET_RELEASE_CHECKS_UNREADABLE');
@@ -52,7 +54,10 @@ export async function admitFleetRelease({ api, repository, commit }) {
       insist(Number.isSafeInteger(row?.id) && !seen.has(row.id) && row.head_sha === head, 'FLEET_RELEASE_CHECKS_UNREADABLE');
       seen.add(row.id);
       const key = `${row.app?.id}/${row.name}`;
-      if (checks.has(key) && row.id > (checks.get(key)?.id ?? 0)) checks.set(key, row);
+      if (!checks.has(key)) continue;
+      const startedAt = typeof row.started_at === 'string' ? Date.parse(row.started_at) : NaN;
+      insist(Number.isFinite(startedAt), 'FLEET_RELEASE_CHECKS_UNREADABLE');
+      if (startedAt <= mergedAt && row.id > (checks.get(key)?.id ?? 0)) checks.set(key, row);
     }
     if (seen.size === result.total_count) break;
     insist(rows.length === 100 && seen.size < result.total_count, 'FLEET_RELEASE_CHECKS_UNREADABLE');
