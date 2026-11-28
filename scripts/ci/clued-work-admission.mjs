@@ -4033,7 +4033,8 @@ export async function resolvePullRequestBinding(fetchImpl, env, pr,
     headSha: pr?.head?.sha, baseSha: pr?.base?.sha, targetBranch: pr?.base?.ref, readOnly,
     command: async input => {
       const response = await cluedRpc(fetchImpl, env, workspace, VERIFY_RPC, input);
-      if (response.status !== 200) throw new PRTaskBindingError('pr_binding_transport_refused');
+      if (response.status !== 200)
+        throw Object.assign(new PRTaskBindingError('pr_binding_transport_refused'), { httpStatus: response.status });
       if (response.body?.status === 'rejected') {
         const code = response.body.error_code;
         throw new PRTaskBindingError(typeof code === 'string' && /^[a-z][a-z0-9_]{0,100}$/i.test(code)
