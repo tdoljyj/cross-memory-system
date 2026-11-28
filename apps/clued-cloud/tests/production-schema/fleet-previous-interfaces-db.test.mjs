@@ -20,3 +20,15 @@ test('第 26 代接口在候选提交的迁移上真跑且零跳过', async () =
   assert.equal(result.previousCommit, previous.commit);
   assert.ok(result.files.includes('apps/clued-cloud/tests/owner-grants-fleet-accept-door-db.test.mjs'));
 });
+
+test('第 29 代回放上一代接口时能打包 Worker 及其应用依赖', async () => {
+  const commit = '5d6e535b8faf2fc0320e219d455c45d4ef1fb866';
+  const previous = { commit: 'b49c7ae69e30d8e397cfcb8392cee0d85fca3103' };
+  const result = await previousInterfaceCheck({ root, commit, previous, timeoutMs: PREVIOUS_INTERFACE_TIMEOUT_MS });
+
+  assert.equal(result.status, 'PASS');
+  assert.deepEqual(result.files, [
+    'apps/clued-cloud/tests/owner-grants-fleet-accept-door-db.test.mjs',
+    'apps/clued-cloud/tests/fleet-delivery-release-db.test.mjs',
+  ]);
+});

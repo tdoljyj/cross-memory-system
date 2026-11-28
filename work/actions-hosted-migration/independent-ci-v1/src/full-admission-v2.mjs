@@ -13,13 +13,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { digest } from './proof.mjs';
-import { networkFault } from './read-retry.mjs';
+import { networkFault, RETRYABLE_STATUSES } from './read-retry.mjs';
 import { verificationUnavailable } from './withdrawal-text.mjs';
 import { freshStamp, serverAnswerCurrent, retainServerAnswerForFacts } from './clock-skew.mjs';
 import { validateJobV2, claimGeneration, sameClaimGeneration, prBaseAcceptedV2, isTrainFrontJobV2 } from './job-v2.mjs';
 import { isCurrentMergeQueueHeadV2 } from './independent-control-checks-v2/queue-facts.mjs';
 import { evaluate, githubJson, mergeSlotState, VERIFY_RPC } from '../../../../scripts/ci/clued-work-admission.mjs';
-import { normalizePRTaskBinding } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
+import { normalizePRTaskBinding, PRTaskBindingError } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
 import { TRAIN_FAILURE } from './merge-train-v2-contract.mjs';
 
 import { FULL_ADMISSION_CONTRACT_V2, FULL_ADMISSION_CONTRACT_V3, effectiveGuard, supportedNativeExecution, ownerKind, reasonCodes, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2, verdict } from './admission-facts-v2.mjs';
@@ -55,9 +55,11 @@ export function fullAdmissionFailureV2(facts) {
 //   - a bare network failure (read-retry.mjs#networkFault) or a timeout;
 //   - scripts/ci/clued-work-admission.mjs: githubJson's "GitHub API <route> returned 502" and the Native RPC's
 //     "Clued <rpc> returned 503" or "... returned 503: <detail>" (describe(): the status, then ": " and the details).
+//   - the Native PR binding resolver reports the HTTP status on its typed refusal and keeps its stable error code.
 // Anything else (a credential refused, 401, 403, 404, 429, an evaluator fault) is not.
 const RETURNED_5XX = / returned (?:500|502|503|504)(?::|$)/;
 export const transportFault = error => networkFault(error) || error?.name === 'TimeoutError' || verificationUnavailable(error?.code)
+  || (error instanceof PRTaskBindingError && error.code === 'pr_binding_transport_refused' && RETRYABLE_STATUSES.includes(error.httpStatus))
   || (error instanceof Error && RETURNED_5XX.test(error.message ?? ''));
 const blocked = (reason, diagnostic) => Object.freeze({ contract: FULL_ADMISSION_CONTRACT_V2, status: 'BLOCKED', admitted: false, reason, ...(diagnostic ? { diagnostic } : {}) });
 
