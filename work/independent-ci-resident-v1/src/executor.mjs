@@ -2157,7 +2157,9 @@ export class ResidentExecutor {
     const flows = await this.requeueFlowEnds();
     // 到期探针和换班后的首次重排先于普通行的后台读。批次预留前仍读回精确 PR。
     const role = this.nodeMode();
-    const probeDue = this.probing() && this.roleProbe.due({ now: this.clock(), mode: role, idle: true });
+    // ACTIVE 的班前复核以已有角色观测为起点；没有观测时，首次探测仍等调度空闲。
+    const probeDue = this.probing() && (role !== 'ACTIVE' || this.roleProbe.last !== null)
+      && this.roleProbe.due({ now: this.clock(), mode: role, idle: true });
     let probedEarly = false;
     if (!this.betweenBatchesRunning && probeDue && role === 'ACTIVE') {
       const held = await this.intakeGate();
