@@ -124,6 +124,10 @@ if (Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier' -E
   try { Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier' -ErrorAction Stop } catch { }
   Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentNotifier' -Confirm:$false
 }
+if (Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIFleetReinstall' -ErrorAction SilentlyContinue) {
+  Disable-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIFleetReinstall' | Out-Null
+  Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIFleetReinstall' -Confirm:$false
+}
 # The uninstall has removed the task definitions. Retire any remaining supervisors of this installation.
 # The marker inherits config's DACL and is archived with the old root.
 $retireAcl = [Security.AccessControl.FileSecurity]::new()

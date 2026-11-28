@@ -460,6 +460,10 @@ function fleetPullView(v) {
     const { repository, archiveSha256, requestSha256, acceptanceSha256 } = r;
     view.reinstall = { repository, bootstrapAsset: `fleet-node-${v.targetVersion}.bootstrap.ps1`,
       archiveSha256, requestSha256, acceptanceSha256 };
+    if (['DOWNLOADING', 'PREPARING', 'WAITING_FOR_HANDOVER', 'REPAIR', 'WAITING_FOR_OWNER_SESSION',
+      'PENDING_UAC', 'INSTALLING', 'VERIFYING', 'FAILED'].includes(r.phase)) {
+      Object.assign(view.reinstall, { phase: r.phase, code: codeOrNull(r.code), at: isoMs(Date.parse(r.at)) });
+    }
   }
   return view;
 }
@@ -638,8 +642,10 @@ export function versionNotices(view, upgradeStatus = null) {
   if (!view) return out;
   const failed = selfcheckNotice(view.selfcheck);
   if (failed) out.push(failed);
-  if (['REFUSED', 'NEEDS_REINSTALL'].includes(view.fleetPull?.phase)) out.push({ key: `fleet-pull:${view.fleetPull.grantId}`,
-    kind: 'fleet-pull-refused', code: view.fleetPull.code, pr: null, headSha: null, at: null, until: null });
+  const pull = view.fleetPull;
+  if (pull?.phase === 'REFUSED' || (pull?.phase === 'NEEDS_REINSTALL' && (!pull.reinstall?.phase || pull.reinstall.phase === 'FAILED')))
+    out.push({ key: `fleet-pull:${pull.grantId}`, kind: 'fleet-pull-refused', code: pull.reinstall?.code ?? pull.code,
+      pr: null, headSha: null, at: null, until: null });
   if (view.consistent === false) out.push({ key: `version-skew:w${view.localInstallGeneration ?? 'x'}:l${view.linux?.localInstallGeneration ?? 'x'}`, kind: 'version-skew', pr: null, headSha: null, code: 'UPGRADE_VERSION_SKEW', at: view.linux?.observedAt ?? null, until: null });
   const u = view.upgrade;
   if (u?.state === 'WAITING_GRANT') out.push({ key: `upgrade-grant-pending:${u.opId}`, kind: 'upgrade-grant-pending', pr: null, headSha: null, code: null, at: u.since, until: null });

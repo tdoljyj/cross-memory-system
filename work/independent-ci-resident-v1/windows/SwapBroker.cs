@@ -26,6 +26,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.ServiceProcess;
 using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -252,11 +253,15 @@ public sealed class SwapBroker : ServiceBase
                 }
             }
         } catch(BrokerRefusal refusal) {code=refusal.Code;}catch {code="RENEW_UNAVAILABLE";}
-        try {WritePublicRecord(Path.Combine(root,"broker","renew-"+kind+".json"),Renewal.Json(new {
-            at=Renewal.Stamp(DateTime.UtcNow),code=code,bindingId=result==null?null:result.Binding,expiresAt=result==null?null:Renewal.Stamp(result.Expires),
+        try {var json=Renewal.Json(new {
+            at=Renewal.Stamp(DateTime.UtcNow),code=code,nodeId=result==null?null:result.Node,
+            bindingId=result==null?null:result.Binding,bindingGeneration=result==null?0:result.Generation,expiresAt=result==null?null:Renewal.Stamp(result.Expires),
             renewalWindowOpensAt=result==null?null:result.WindowStamp,onDuty=kind=="ci" && result!=null && result.OnDuty,
             fleetTarget=kind=="ci" && result!=null ? result.FleetTarget : null, delivery=delivery
-        }));} catch {}
+        });
+            WritePublicRecord(Path.Combine(root,"broker","renew-"+kind+".json"),json);
+            if(kind=="ci") FleetPull.ProjectReinstallProbe(json);
+        } catch {}
     }
 
     // Only bounded booleans and hashes leave the Broker. The protected CI
@@ -375,9 +380,13 @@ public sealed class SwapBroker : ServiceBase
                 Dictionary<string,object> answer;
                 try {
                     var config = LoadConfig();
-                    answer = FleetPull.Submit(root,id,config.Node.NodeName,() => ProbeFleet(config),request,
-                        () => DateTime.UtcNow,(run,script) => FleetPull.Assemble(root,run,script,
-                            Path.Combine(root,"runtime","node.exe"),stopped),stopped,
+                    Func<string,string,Dictionary<string,object>> assemble=(run,script)=>FleetPull.Assemble(root,run,script,
+                        Path.Combine(root,"runtime","node.exe"),stopped);
+                    answer = FleetPull.IsReinstall(request)
+                        ? FleetPull.PublishReinstall(root,id,request,() => ProbeFleet(config),() => DateTime.UtcNow,assemble,
+                            stopped,config.Node.OwnerSid)
+                        : FleetPull.Submit(root,id,config.Node.NodeName,() => ProbeFleet(config),request,
+                        () => DateTime.UtcNow,assemble,stopped,
                         (operation,targetGrant) => ProbeFleet(config,operation,targetGrant));
                 } catch (BrokerRefusal error) { answer = FleetPull.Answer(root,id,grant,error.Code,null); }
                 catch (Exception) { answer = FleetPull.Answer(root,id,grant,"FLEET_BROKER_UNCONFIRMED",null); }
@@ -593,6 +602,8 @@ public sealed class SwapBroker : ServiceBase
 // The resident names a grant. The signed CI probe authorizes assembly inside the Broker's ACL.
 internal static class FleetPull {
     const string Kind = "fleet-pull";
+    const string ReinstallKind = "fleet-reinstall";
+    const string DeliveryRoot = @"C:\ProgramData\CluedFleetDelivery";
     const string RequestContract = "clued.independent-ci.resident-upgrade-request/1";
     const string Prepared = "FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED";
     const string NeedsReinstall = "FLEET_NODE_UPGRADE_NEEDS_REINSTALL";
@@ -606,10 +617,12 @@ internal static class FleetPull {
         Dictionary<string,object> request;
         try { request = Renewal.Object(new UTF8Encoding(false,true).GetString(bytes)); }
         catch (Exception) { return null; } // The existing routes still own their invalid requests.
-        if (Renewal.Str(request,"kind") != Kind) return null;
-        Renewal.Require(request.Count==2 && Renewal.Id(Renewal.Str(request,"grantId")),"FLEET_BROKER_REQUEST_REFUSED");
+        if (Renewal.Str(request,"kind") != Kind && !IsReinstall(request)) return null;
+        Renewal.Require(request.Count==(IsReinstall(request)?3:2) && Renewal.Id(Renewal.Str(request,"grantId")) &&
+            (!IsReinstall(request) || Renewal.Id(Renewal.Str(request,"refusalId"))),"FLEET_BROKER_REQUEST_REFUSED");
         return request;
     }
+    internal static bool IsReinstall(Dictionary<string,object> request) { return Renewal.Str(request,"kind")==ReinstallKind; }
     static string Taken(string root, string grant) { return Path.Combine(root,"broker","responses","fleet-"+grant+".taken"); }
     internal static Dictionary<string,object> Answer(string root, string id, string grant, string code, string status,
         Dictionary<string,object> target = null, bool? delivered = null) {
@@ -820,7 +833,14 @@ internal static class FleetPull {
             current = ReadJson(currentFile,65536,null);
             Renewal.Require(Renewal.Number(current,"generation")==generation && Renewal.Str(current,"residentManifestSha256")==residentSha,
                 "FLEET_GENERATION_CHANGED");
-            if (status!=Prepared) return Answer(root,id,decision,code,status,fingerprint,sealedFleet ? (bool?)false : null);
+            if (status!=Prepared) {
+                var result=Answer(root,id,decision,code,status,fingerprint,sealedFleet ? (bool?)false : null);
+                if (status==NeedsReinstall && sealedFleet) {
+                    result["nodeId"]=latest.Node; result["bindingId"]=latest.Binding; result["bindingGeneration"]=latest.Generation;
+                    result["installGeneration"]=generation; result["installReceiptSha256"]=Renewal.Str(current,"installReceiptSha256");
+                }
+                return result;
+            }
             if (sealedFleet) {
                 Renewal.Require(delist!=null,"FLEET_MAINTENANCE_UNAVAILABLE");
                 var isolated=delist(id,decision);
@@ -853,6 +873,155 @@ internal static class FleetPull {
             }
         }
         return Answer(root,id,decision,code,status,fingerprint);
+    }
+
+    static void CheckReinstallTarget(Renewal.Connection live, Dictionary<string,object> fingerprint) {
+        CheckSealedTarget(live);
+        var target=live.FleetTarget;
+        var holder=target["holder_package"] as Dictionary<string,object>;
+        Renewal.Require(Renewal.Str(holder,"maintenance")=="available","FLEET_MAINTENANCE_BLOCKED");
+        Renewal.Require(!live.OnDuty || Equals(target["has_other_healthy"],false),"FLEET_WAITING_FOR_HANDOVER");
+        foreach (var field in TargetFields)
+            Renewal.Require(Renewal.Str(target,field)==Renewal.Str(fingerprint,field),"FLEET_TARGET_CHANGED");
+    }
+
+    static void CheckDeliveryAcl(string dir) {
+        Renewal.Require((File.GetAttributes(dir)&(FileAttributes.Directory|FileAttributes.ReparsePoint))==FileAttributes.Directory,
+            "FLEET_REINSTALL_ROOT_REFUSED");
+        var acl=Directory.GetAccessControl(dir);
+        NodeProfilePublicFileV2.ValidateBootstrapAcl(acl.GetSecurityDescriptorBinaryForm(),dir);
+        var raw=new RawSecurityDescriptor(acl.GetSecurityDescriptorBinaryForm(),0);
+        foreach (GenericAce entry in raw.DiscretionaryAcl) {
+            var ace=entry as CommonAce;
+            Renewal.Require(ace!=null && !ace.IsCallback,"FLEET_REINSTALL_ROOT_REFUSED");
+            if (ace.AceQualifier!=AceQualifier.AccessAllowed) continue;
+            string sid=ace.SecurityIdentifier.Value;
+            Renewal.Require(sid=="S-1-5-18" || sid=="S-1-5-32-544" ||
+                ((uint)ace.AccessMask&~0x001200a9u)==0,"FLEET_REINSTALL_ROOT_REFUSED");
+        }
+    }
+
+    internal static void ProjectReinstallProbe(string json) {
+        if (!Directory.Exists(DeliveryRoot)) return;
+        CheckDeliveryAcl(DeliveryRoot);
+        SwapBroker.WritePublicRecord(Path.Combine(DeliveryRoot,"probe.json"),json);
+    }
+
+    static void AllowDeliveryRead(string dir, string operatorSid) {
+        var security=Directory.GetAccessControl(dir);
+        security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(operatorSid),FileSystemRights.ReadAndExecute,
+            InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
+        // Protected and inherited ACLs from the Broker tree never included the Owner.
+        // Applying the inherited ACE at the moved directory propagates it to its files.
+        Directory.SetAccessControl(dir,security);
+    }
+
+    static void RetireDeliveredAssets(string delivery, Dictionary<string,object> previous) {
+        string hash=Renewal.Str(previous,"requestSha256"), operation=Renewal.Str(previous,"operationId");
+        if (!NodeProfileV2.Hash(hash) || !Renewal.Id(operation)) return;
+        string dir=Path.Combine(delivery,hash,operation);
+        VerifyDirectory(delivery,dir);
+        CheckDeliveryAcl(dir);
+        var result=ReadJson(Path.Combine(dir,"result.json"),16384,null);
+        if (Renewal.Str(result,"contract")!="clued.independent-ci.fleet-reinstall-result/1" ||
+            Renewal.Str(result,"phase")!="COMPLETE" || Renewal.Str(result,"requestSha256")!=hash ||
+            Renewal.Str(result,"operationId")!=operation || Renewal.Str(result,"grantId")!=Renewal.Str(previous,"grantId")) return;
+        string assets=Path.Combine(dir,"assets");
+        VerifyDirectory(delivery,assets);
+        CheckDeliveryAcl(assets);
+        foreach (string item in Directory.EnumerateFileSystemEntries(assets))
+            Renewal.Require((File.GetAttributes(item)&(FileAttributes.Directory|FileAttributes.ReparsePoint))==0,"FLEET_BROKER_PATH_REFUSED");
+        Directory.Delete(assets,true);
+    }
+
+    internal static Dictionary<string,object> PublishReinstall(string root,string id,Dictionary<string,object> request,
+        Func<Renewal.Connection> probe,Func<DateTime> clock,Func<string,string,Dictionary<string,object>> assemble,
+        WaitHandle stopped,string ownerSid,string fixtureDelivery=null) {
+        string grant=Renewal.Str(request,"grantId"), refusalId=Renewal.Str(request,"refusalId");
+        Renewal.Require(Renewal.Id(id) && Renewal.Id(grant) && Renewal.Id(refusalId),"FLEET_BROKER_REQUEST_REFUSED");
+        var prior=ReadJson(Path.Combine(root,"broker","responses",refusalId+".json"),16384,null);
+        Renewal.Require(Renewal.Str(prior,"requestId")==refusalId && Renewal.Str(prior,"grantId")==grant &&
+            Renewal.Str(prior,"status")==NeedsReinstall && Equals(prior["delivered"],false),"FLEET_REINSTALL_REFUSAL_REQUIRED");
+        var fingerprint=prior["targetFingerprint"] as Dictionary<string,object>;
+        string hash=Renewal.Str(fingerprint,"request_sha256");
+        Renewal.Require(NodeProfileV2.Hash(hash) && NodeProfileV2.Hash(Renewal.Str(fingerprint,"acceptance_sha256")),
+            "FLEET_REINSTALL_MANIFEST_REQUIRED");
+        var live=probe();
+        CheckReinstallTarget(live,fingerprint);
+        Renewal.Require(Renewal.Id(live.Node) && Renewal.Id(live.Binding) && live.Generation>0 && live.Node==Renewal.Str(prior,"nodeId") &&
+            live.Binding==Renewal.Str(prior,"bindingId") && live.Generation==Renewal.Number(prior,"bindingGeneration") &&
+            live.Expires>clock(),"FLEET_REINSTALL_BINDING_CHANGED");
+        var currentFile=Path.Combine(root,"upgrade","current.json");
+        var current=ReadJson(currentFile,65536,null);
+        string receipt=Renewal.Str(current,"installReceiptSha256"), resident=Renewal.Str(current,"residentManifestSha256");
+        long generation=Renewal.Number(current,"generation");
+        Renewal.Require(NodeProfileV2.Hash(resident) && NodeProfileV2.Hash(receipt) &&
+            receipt==Renewal.Str(prior,"installReceiptSha256") && generation==Renewal.Number(prior,"installGeneration"),
+            "FLEET_GENERATION_CHANGED");
+        string delivery=fixtureDelivery ?? DeliveryRoot;
+        Renewal.Require(Directory.Exists(delivery) && File.Exists(Path.Combine(delivery,"interactive.ps1")),"FLEET_REINSTALL_ENTRY_NOT_INSTALLED");
+        if (fixtureDelivery==null) CheckDeliveryAcl(delivery);
+        var operatorRecord=Path.Combine(root,"install","companion-account.json");
+        string operatorSid=File.Exists(operatorRecord) ? Renewal.Str(ReadJson(operatorRecord,4096,null),"operatorSid") : ownerSid;
+        Renewal.Require(new Regex(@"\AS-1-5-21-(?:[0-9]+-){3}[0-9]+\z").IsMatch(operatorSid ?? ""),"FLEET_REINSTALL_OPERATOR_REFUSED");
+        string pointer=Path.Combine(delivery,"pending.json");
+        var previous=File.Exists(pointer) ? ReadJson(pointer,16384,null) : null;
+        string operation=Renewal.Str(previous,"operationId");
+        bool reuse=Renewal.Id(operation) && Renewal.Str(previous,"requestSha256")==hash &&
+            Renewal.Str(previous,"installReceiptSha256")==receipt && Renewal.Str(previous,"grantId")==grant &&
+            Renewal.Str(previous,"bindingId")==live.Binding && Renewal.Number(previous,"bindingGeneration")==live.Generation &&
+            Renewal.Str(previous,"operatorSid")==operatorSid;
+        if (!reuse) operation=Guid.NewGuid().ToString("D");
+        var subject=Path.Combine(delivery,hash);
+        Directory.CreateDirectory(subject);
+        if (fixtureDelivery==null) CheckDeliveryAcl(subject);
+        string published=Path.Combine(subject,operation);
+        string parent=Path.Combine(root,"broker","fleet-pull");
+        Directory.CreateDirectory(parent);
+        VerifyDirectory(root,parent);
+        string run=Path.Combine(parent,Guid.NewGuid().ToString("N").Substring(0,16));
+        Dictionary<string,object> staged=previous;
+        if (!reuse) {
+            Directory.CreateDirectory(run);
+            File.WriteAllText(Path.Combine(run,"target.json"),Renewal.Json(new { at=Renewal.Stamp(clock()),code=(string)null,
+                onDuty=live.OnDuty,fleetTarget=live.FleetTarget,reinstall=true }));
+            staged=assemble(run,Path.Combine(root,"resident",resident,"src","fleet-assemble-main.mjs"));
+            if (Renewal.Str(staged,"status")!="FLEET_REINSTALL_VERIFIED") {
+                Directory.Delete(run,true);
+                return Answer(root,id,grant,Renewal.Str(staged,"code") ?? "FLEET_REINSTALL_VERIFY_FAILED",null,fingerprint,false);
+            }
+        }
+        try {
+            var latest=probe();
+            CheckReinstallTarget(latest,fingerprint);
+            Renewal.Require(latest.Binding==live.Binding && latest.Generation==live.Generation && latest.Node==live.Node &&
+                latest.OnDuty==live.OnDuty && Equals(latest.FleetTarget["has_other_healthy"],live.FleetTarget["has_other_healthy"]),
+                "FLEET_REINSTALL_SUBJECT_CHANGED");
+            DateTime idleDeadline;
+            using (var idle=latest.OnDuty ? ConfirmIdle(root,id,fingerprint,clock,stopped,out idleDeadline) : null) {
+                current=ReadJson(currentFile,65536,null);
+                Renewal.Require(Renewal.Str(current,"installReceiptSha256")==receipt && Renewal.Number(current,"generation")==generation,
+                    "FLEET_GENERATION_CHANGED");
+                string bootstrap=Renewal.Str(staged,"bootstrapSha256"), source=Renewal.Str(staged,"sourceSha256");
+                Renewal.Require(NodeProfileV2.Hash(bootstrap) && NodeProfileV2.Hash(source),"FLEET_REINSTALL_VERIFY_FAILED");
+                if (!reuse) {
+                    Directory.Move(run,published);
+                    if (fixtureDelivery==null) AllowDeliveryRead(published,operatorSid);
+                }
+                if (fixtureDelivery==null) CheckDeliveryAcl(published);
+                var expiry=clock().AddMinutes(15);
+                if (latest.Expires<expiry) expiry=latest.Expires;
+                SwapBroker.WritePublicRecord(pointer,Renewal.Json(new { contract="clued.independent-ci.fleet-reinstall/1",operationId=operation,
+                    operatorSid=operatorSid,nodeId=latest.Node,bindingId=latest.Binding,bindingGeneration=latest.Generation,installGeneration=generation,
+                    installReceiptSha256=receipt,grantId=grant,requestSha256=hash,targetFingerprint=fingerprint,
+                    bootstrapSha256=bootstrap,sourceSha256=source,onDuty=latest.OnDuty,hasPeer=latest.FleetTarget["has_other_healthy"],
+                    expiresAt=Renewal.Stamp(expiry) }));
+                if (!reuse && previous!=null && fixtureDelivery==null) {
+                    try { RetireDeliveredAssets(delivery,previous); } catch { /* Keep unconfirmed or occupied assets. */ }
+                }
+                return Answer(root,id,grant,null,"FLEET_REINSTALL_PUBLISHED",fingerprint,false);
+            }
+        } finally { if (!reuse && Directory.Exists(run)) Directory.Delete(run,true); }
     }
 }
 

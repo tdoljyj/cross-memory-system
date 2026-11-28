@@ -116,11 +116,17 @@ public static class BrokerPureTests
                 int reads=0;
                 Func<Renewal.Connection> probe=()=> {
                     var v=Renewal.Object(File.ReadAllText(reads++>0 && File.Exists(latest) ? latest : initial));
-                    return new Renewal.Connection { OnDuty=(bool)v["onDuty"], FleetTarget=v["fleetTarget"] as Dictionary<string,object> };
+                    return new Renewal.Connection { OnDuty=(bool)v["onDuty"], FleetTarget=v["fleetTarget"] as Dictionary<string,object>,
+                        Node="11111111-0000-4000-8000-000000000001",Binding="11111111-0000-4000-8000-000000000002",
+                        Generation=1,Expires=DateTime.Parse(args[5]).ToUniversalTime().AddDays(1) };
                 };
                 var now=DateTime.Parse(args[5]).ToUniversalTime().AddMilliseconds(1);
-                answer=FleetPull.Submit(root,args[2],args[3],probe,payload,()=>now,(run,script)=>
-                    FleetPull.Assemble(root,run,args.Length==7?args[6]:script,args[4],null,scratch), null, (operation,targetGrant) => {
+                Func<string,string,Dictionary<string,object>> assemble=(run,script)=>
+                    FleetPull.Assemble(root,run,args.Length==7?args[6]:script,args[4],null,scratch);
+                answer=FleetPull.IsReinstall(payload)
+                    ? FleetPull.PublishReinstall(root,args[2],payload,probe,()=>now,assemble,null,
+                        "S-1-5-21-1-2-3-2001",Path.Combine(root,"fleet-delivery"))
+                    : FleetPull.Submit(root,args[2],args[3],probe,payload,()=>now,assemble, null, (operation,targetGrant) => {
                         var receipt=Renewal.Object(File.ReadAllText(Path.Combine(root,"broker","delist.fixture.json")));
                         Yes(Renewal.Str(receipt,"grant_id")==targetGrant,"摘牌回执绑定目标包");
                         return new Renewal.Connection { OnDuty=false, FleetTarget=receipt };

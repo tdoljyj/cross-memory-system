@@ -1123,6 +1123,22 @@ $bitlocker = if ($verifyCanFix) { try { [string](Get-BitLockerVolume -MountPoint
 Record 'companion-facts' $true ('passwordExpires=' + $(if ($ownerUser -and $ownerUser.PasswordExpires) { ([DateTime]$ownerUser.PasswordExpires).ToString('yyyy-MM-dd') } elseif ($ownerUser) { 'never' } else { 'unreadable' }) + ';bitlocker=' + $bitlocker)
 # M5-b (ADR 0023): on a node whose companion runs as its own account (install\companion-account.json; absent elsewhere).
 $companionAccountRecord = try { Read-CompanionAccountRecord $Root $Node } catch { 'COMPANION_ACCOUNT_RECORD_REFUSED' }
+$reinstallVerify = Join-Path $PSScriptRoot 'fleet-reinstall-interactive.ps1'
+if ([IO.Directory]::Exists('C:\ProgramData\CluedFleetDelivery') -or $receipt.PSObject.Properties['fleetReinstallEntrySha256']) {
+  $reinstallProblem = try {
+    . $reinstallVerify
+    $operator = if ($companionAccountRecord -and $companionAccountRecord -isnot [string]) { [string]$companionAccountRecord.operatorSid } else { $companionOwnerSid }
+    Assert-FleetDeliveryAcl $FleetDeliveryRoot $operator $false
+    Assert-FleetDeliveryAcl (Join-Path $FleetDeliveryRoot 'claims') $operator $true
+    $scheduler = New-Object -ComObject 'Schedule.Service'; $scheduler.Connect()
+    if (-not (Test-FleetReinstallTaskDefinition ($scheduler.GetFolder('\Clued').GetTask($FleetReinstallTask)) $operator)) { throw 'FLEET_REINSTALL_TASK_READBACK_MISMATCH' }
+    $entry = Join-Path $FleetDeliveryRoot 'interactive.ps1'
+    if ((Get-Item -LiteralPath $entry -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'FLEET_REINSTALL_ENTRY_CHANGED' }
+    if ($receipt.PSObject.Properties['fleetReinstallEntrySha256'] -and (Sha256File $entry) -cne $receipt.fleetReinstallEntrySha256) { throw 'FLEET_REINSTALL_ENTRY_CHANGED' }
+    $null
+  } catch { [string]$_.Exception.Message }
+  Record 'fleet-reinstall-task' ($null -eq $reinstallProblem) $reinstallProblem
+}
 if ($companionAccountRecord -is [string]) { Record 'companion-account' $false $companionAccountRecord }
 elseif ($null -ne $companionAccountRecord) {
   $accountProblem = Get-CompanionAccountVerify $Root $Node $companionAccountRecord ([bool]$verifyCanFix); Record 'companion-account' ($null -eq $accountProblem) $accountProblem

@@ -151,6 +151,36 @@ async function release(t, fleet, repo, commit, version) {
   return { target, request, assets, tag, tar: built.tar, url: `http://127.0.0.1:${server.address().port}` };
 }
 
+function sealReinstallAssets(release) {
+  const { tag, assets, target, request } = release;
+  const archive = readTar(assets.get(`${tag}.tar`));
+  const entries = ['bootstrap.ps1', 'prereq-manifest.json'].map(suffix => [
+    `${tag}.${suffix}`,
+    archive.find(e => e.path === `tree/work/independent-ci-resident-v1/rollout/fleet/${suffix}`).data,
+  ]);
+  const image = '11'.repeat(32);
+  const imageName = `role-image-${image}.tar.gz`;
+  const kitName = `${tag}.first-install-kit.json`;
+  const fixtureKit = json({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1',
+    images: { local: [{ id: image, asset: imageName }] } });
+  const sums = pairs => Buffer.from(pairs.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
+    .map(([name, bytes]) => `${sha(bytes)}  ${name}\n`).join(''));
+  const kitFiles = [[kitName, fixtureKit], [imageName, Buffer.from('role image fixture')]];
+  const delivery = [[`${tag}.tar`, assets.get(`${tag}.tar`)], ...entries,
+    [`${tag}.release.json`, json({ version: target.version })], ...kitFiles,
+    ['SHA256SUMS', sums([[`${tag}.tar`, assets.get(`${tag}.tar`)], ...entries])],
+    [`${tag}.first-install.SHA256SUMS`, sums(kitFiles)]];
+  const manifest = sums(delivery);
+  for (const [name, bytes] of delivery) assets.set(name, bytes);
+  assets.set(`${tag}.candidate.SHA256SUMS`, manifest);
+  request.deliveryAssetsSha256 = sha(manifest);
+  request.firstInstallKitSha256 = sha(fixtureKit);
+  const requestBytes = json(request);
+  assets.set(`${tag}.acceptance-request.json`, requestBytes);
+  target.request_sha256 = sha(requestBytes);
+  return uploadAcceptance(release);
+}
+
 // Import the lanes when present so the same test on the original resident verifies the observed generation.
 const lanes = () => import('../../src/fleet-self-pull.mjs').catch(error => {
   if (error.code === 'ERR_MODULE_NOT_FOUND' && error.url?.endsWith('/src/fleet-self-pull.mjs')) return {};
@@ -193,7 +223,7 @@ test('组装入口接受带 UTF-8 BOM 的 Broker 握手，拒绝其他内容', a
 });
 
 async function fixtureLanes({ node, release, broker, onDuty = false, peers = [], failVerify = false,
-  runBroker = args => exec(broker, args, { windowsHide: true }), upload, clockNow = () => now }) {
+  runBroker = args => exec(broker, args, { windowsHide: true }), upload, clockNow = () => now, deliveryRoot = null }) {
   const { companionSelfPull, residentSelfPull } = await lanes();
   if (!residentSelfPull) return null;
   const root = node.root;
@@ -215,7 +245,7 @@ async function fixtureLanes({ node, release, broker, onDuty = false, peers = [],
   const companion = companionSelfPull({ root, repository, clock: clockNow, download,
     upload: upload ?? (async ({ file }) => { const bytes = await fs.readFile(file); uploaded.push(bytes); release.assets.set(path.basename(file), bytes); }) });
   const answers = [];
-  const residentLane = residentSelfPull({ root, repository, clock: clockNow });
+  const residentLane = residentSelfPull({ root, repository, clock: clockNow, deliveryRoot });
   const posted = [];
   const submitted = [];
   let step, canStart;
@@ -230,7 +260,8 @@ async function fixtureLanes({ node, release, broker, onDuty = false, peers = [],
         const id = path.basename(file, '.json');
         if (await fs.access(path.join(root, 'broker', 'responses', file)).then(() => true, () => false)) continue;
         submitted.push(id);
-        assert.deepEqual(Object.keys(await read(path.join(root, 'broker', 'requests', file))).sort(), ['grantId', 'kind']);
+        const payload = await read(path.join(root, 'broker', 'requests', file));
+        assert.deepEqual(Object.keys(payload).sort(), payload.kind === 'fleet-reinstall' ? ['grantId', 'kind', 'refusalId'] : ['grantId', 'kind']);
         let complete = false;
         const running = runBroker(['--fleet-pull-fixture', root, id, node.profile.nodeName, process.execPath,
           new Date(clockNow()).toISOString()]);
@@ -801,4 +832,81 @@ test('封存轮换时旧当班等待、后备不投递，Broker 得到服务端�
   await drive(lane,8);
   assert.equal(lane.posted.length,1,JSON.stringify(lane.answers));
   assert.equal((await current(node)).generation,2);
+});
+
+test('冻结通道不变，supervisor 必须换代时自动补齐封存重装资产', { skip: process.platform !== 'win32' }, async t => {
+  const fleet = fleetFacts();
+  const { repo, commit } = await fixtureRepo(t);
+  const broker = await brokerFixture(t);
+  const candidate = await release(t, fleet, repo, commit, 'g000028');
+  const target = sealReinstallAssets(candidate);
+  async function start(letter) {
+    const node = await nodeSite(t, letter, fleet, { now });
+    const file = path.join(node.root, 'install', 'install-receipt.json');
+    const receipt = await read(file);
+    receipt.companionSupervisorSourceSha256 = '1'.repeat(64);
+    const bytes = json(receipt);
+    await fs.writeFile(file, bytes);
+    const currentFile = path.join(node.root, 'upgrade', 'current.json');
+    await fs.writeFile(currentFile, json({ ...await read(currentFile), installReceiptSha256: sha(bytes) }));
+    const deliveryRoot = path.join(node.root, 'fleet-delivery');
+    await fs.mkdir(deliveryRoot);
+    await fs.writeFile(path.join(deliveryRoot, 'interactive.ps1'), '# fixture');
+    await fs.writeFile(path.join(node.root, 'install', 'companion-account.json'), json({
+      companionSid: 'S-1-5-21-1-2-3-2001', operatorSid: 'S-1-5-21-1-2-3-3001',
+    }));
+    const lane = await fixtureLanes({ node, release: candidate, broker, deliveryRoot });
+    await lane.probe({ ...target, holder_package: { classification: 'previous', maintenance: 'available' },
+      has_other_healthy: true });
+    await drive(lane, 8);
+    return { node, deliveryRoot, lane, currentFile };
+  }
+  const { node, deliveryRoot, lane, currentFile } = await start('s');
+  assert.equal(lane.answers[0]?.code, 'COMPANION_SUPERVISOR_NEEDS_REINSTALL');
+  assert.deepEqual(await fs.readdir(path.join(node.root, 'upgrade', 'inbox')), []);
+  const { byTarget } = await lanes();
+  const bundle = byTarget(node.root, target);
+  assert.ok(await fs.stat(path.join(bundle, 'reinstall', `${candidate.tag}.bootstrap.ps1`)).catch(() => null),
+    '同一封存目标判定需重装后应自动补拉 bootstrap');
+  assert.equal(lane.answers[1]?.status, 'FLEET_REINSTALL_PUBLISHED', JSON.stringify(lane.answers));
+  const pending = await read(path.join(deliveryRoot, 'pending.json'));
+  const installedAssets = path.join(deliveryRoot, pending.requestSha256, pending.operationId, 'assets');
+  assert.equal(pending.operatorSid, 'S-1-5-21-1-2-3-3001');
+  assert.deepEqual(await fs.readFile(path.join(installedAssets, `${candidate.tag}.bootstrap.ps1`)), candidate.assets.get(`${candidate.tag}.bootstrap.ps1`));
+  assert.deepEqual((await fs.readdir(installedAssets)).sort(), [...candidate.assets.keys()]
+    .filter(name => !/\.(?:acceptance-request\.json|candidate\.SHA256SUMS)$/.test(name)).sort());
+  assert.equal((await lane.state()).reinstall.phase, 'WAITING_FOR_OWNER_SESSION');
+  await drive(lane, 3);
+  assert.equal(lane.answers.length, 2);
+
+  // A protected lifecycle terminal still needs this generation's two-sided facts.
+  const { operationId, grantId, requestSha256, sourceSha256, nodeId, bindingGeneration } = pending;
+  const observedAt = new Date(now).toISOString();
+  const receiptSha256 = '9'.repeat(64);
+  const next = { ...await read(currentFile), ciSourceManifestSha256: sourceSha256, installReceiptSha256: receiptSha256 };
+  await fs.writeFile(currentFile, json(next));
+  await fs.writeFile(path.join(path.dirname(installedAssets), 'result.json'), json({
+    contract: 'clued.independent-ci.fleet-reinstall-result/1', operationId, grantId, requestSha256, sourceSha256,
+    nodeId, bindingGeneration, phase: 'COMPLETE', receiptSha256, at: observedAt,
+  }));
+  const probeFile = path.join(node.root, 'broker', 'renew-ci.json');
+  await fs.writeFile(probeFile, json({ ...await read(probeFile), delivery: {
+    nodeId, bindingGeneration, installReceiptSha256: receiptSha256, installGeneration: next.generation,
+    windowsSourceSha256: sourceSha256, observedAt,
+  } }));
+  await drive(lane, 1);
+  assert.equal((await lane.state()).reinstall.phase, 'VERIFYING');
+  await fs.writeFile(path.join(node.root, 'upgrade', 'mailbox', 'responses', 'version-facts.json'), json({
+    contract: 'clued.independent-ci.linux-version-facts/1', ciSourceManifestSha256: sourceSha256, generation: next.linux.generation,
+    staged: null, pinsOk: true, liveMatchesCurrent: true, observedAt,
+  }));
+  await drive(lane, 1);
+  assert.equal((await lane.state()).phase, 'CURRENT');
+
+  const image = [...candidate.assets.keys()].find(name => name.startsWith('role-image-'));
+  candidate.assets.set(image, Buffer.from('tampered'));
+  const changed = await start('t');
+  assert.equal((await changed.lane.state()).reinstall.code, 'FLEET_DELIVERY_RELEASE_ASSET_CHANGED');
+  assert.equal(changed.lane.answers.length, 1);
+  assert.deepEqual(await fs.readdir(changed.deliveryRoot), ['interactive.ps1']);
 });

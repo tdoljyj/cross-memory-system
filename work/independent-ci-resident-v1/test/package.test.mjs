@@ -272,6 +272,7 @@ test('常驻包按顺序追加外部条目，变更来源即选中节点套件�
   const external = [
     { path: 'windows/ci-connection-renew.contract.json', source: SERVER_CONTRACT },
     { path: 'windows/fleet-file-locks.ps1', source: 'work/independent-ci-resident-v1/reinstall/tools/file-locks.ps1' },
+    { path: 'rollout/fleet/delivery-assets.mjs', source: 'work/independent-ci-resident-v1/rollout/fleet/delivery-assets.mjs' },
     { path: 'rollout/fleet/fetch.mjs', source: 'work/independent-ci-resident-v1/rollout/fleet/fetch.mjs' },
     { path: 'rollout/fleet/tar.mjs', source: 'work/independent-ci-resident-v1/rollout/fleet/tar.mjs' },
   ];

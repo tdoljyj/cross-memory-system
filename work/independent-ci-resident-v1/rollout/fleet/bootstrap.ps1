@@ -49,7 +49,8 @@ param([string]$From, [ValidateSet('', 'install')][string]$Stage = '', [string]$R
   [ValidateSet('Install','Retire','Rollback')][string]$Action = 'Install',
   [ValidateSet('Fresh','Probe','Reinstall','Retire','Rollback')][string]$LifecycleMode = 'Probe',
   [string]$PreviewReceipt, [switch]$ZeroNodeConsent,
-  [string]$AcceptanceFile, [string]$AcceptanceSha256, [string]$FirstInstallSums, [string]$FirstInstallSumsSha256, [switch]$Reset)
+  [string]$AcceptanceFile, [string]$AcceptanceSha256, [string]$FirstInstallSums, [string]$FirstInstallSumsSha256, [switch]$Reset,
+  [ValidatePattern('^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$')][string]$ReinstallOperation)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions   # JavaScriptSerializer (Windows PowerShell 5.1 does not load it by itself)
@@ -209,6 +210,21 @@ function Test-StageOperator([string]$actualSid, [string]$expectedSid) {
   if ($expectedSid -cnotmatch '^S-1-5-21-\d+-\d+-\d+-\d+$') { return 'EXPECTED_OPERATOR_SID_REQUIRED' }
   if ($actualSid -cne $expectedSid) { return 'ELEVATED_ACCOUNT_IS_NOT_THE_OPERATOR' }
   $null
+}
+
+function Assert-FleetDeliveryTrust([string]$path) {
+  $item = Get-Item -LiteralPath $path -Force
+  $acl = Get-Acl -LiteralPath $path
+  $manager = @('S-1-5-18','S-1-5-32-544')
+  $sid = [Security.Principal.SecurityIdentifier]
+  # Include generic rights in addition to the concrete write and delete rights.
+  $mutation = 0x500d0156
+  $unsafe = @($acl.GetAccessRules($true, $true, $sid) | Where-Object {
+    $_.AccessControlType -eq 'Allow' -and $_.IdentityReference.Value -cnotin $manager -and
+      ([int]$_.FileSystemRights -band $mutation)
+  })
+  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+      $acl.GetOwner($sid).Value -cnotin $manager -or $unsafe.Count) { throw 'FLEET_REINSTALL_ROOT_REFUSED' }
 }
 # H2: the token directory removed: what was there and whether it is gone.
 function Clear-CredentialDirectory([string]$dir) {
@@ -438,7 +454,12 @@ function Out-InstallStageResult($stage, $verdict) {
     exit = $stage.exit; output = $stage.output; evidenceDirectory = (Get-Key $verdict 'evidenceDirectory'); evidenceError = (Get-Key $verdict 'evidenceError');
     stagingDirectory = (Get-Key $verdict 'stagingDirectory') })
 }
-function Stop-Bootstrap([string]$step, [string]$code, $detail) { Out-Step $step 'failed' $code $null; Out-Result 'BOOTSTRAP_REFUSED' $step ([ordered]@{ code = $code; detail = $detail }); exit 1 }
+function Stop-Bootstrap([string]$step, [string]$code, $detail) {
+  if ($script:ReinstallClaimed) { try { Write-FleetReinstallClaim $ReinstallOperation 'FAILED' $code } catch {} }
+  Out-Step $step 'failed' $code $null
+  Out-Result 'BOOTSTRAP_REFUSED' $step ([ordered]@{ code = $code; detail = $detail })
+  exit 1
+}
 # One elevated stage of this same file (-File, arguments one by one). Returns its exit, its last JSON object and the output file;
 # declined: { declined = $true } (the caller decides what follows).
 function Invoke-Elevated([string]$step, [string[]]$named, [int]$limitSeconds, [string[]]$switches = @()) {
@@ -447,6 +468,7 @@ function Invoke-Elevated([string]$step, [string[]]$named, [int]$limitSeconds, [s
   $p = $null
   try { $p = Start-Process -FilePath $PowerShellExe -ArgumentList $arguments -Verb RunAs -PassThru -WindowStyle Normal }
   catch { if (Test-UacDeclined $_.Exception) { return [ordered]@{ declined = $true; exit = $null; last = $null; output = $null } }; throw }
+  if ($script:ReinstallClaimed) { try { Write-FleetReinstallClaim $ReinstallOperation 'INSTALLING' $null } catch {} }
   if (-not $p.WaitForExit($limitSeconds * 1000)) {
     foreach ($l in @((Read-StageResult $result).lines)) { [Console]::Out.WriteLine($l) }   # what the stage printed so far, as it is (never this function's value)
     Stop-Bootstrap $step 'ELEVATED_RUN_STILL_RUNNING' ([ordered]@{ pid = $p.Id; output = $result; note = 'nothing was killed' })
@@ -728,9 +750,19 @@ function Get-FleetNewInstall($context, [string]$resultFile) {
   }
 }
 
+function Write-FleetDeliveryResult([string]$path, $delivery, [string]$phase, [string]$code, [string]$receiptSha) {
+  Write-FleetJournalJson $path @{
+    contract = 'clued.independent-ci.fleet-reinstall-result/1'; operationId = $delivery.operationId
+    grantId = $delivery.grantId; requestSha256 = $delivery.requestSha256; sourceSha256 = $delivery.sourceSha256
+    nodeId = $delivery.nodeId; bindingGeneration = $delivery.bindingGeneration
+    phase = $phase; receiptSha256 = $receiptSha; code = $code; pid = $PID; at = [DateTimeOffset]::UtcNow.ToString('o')
+  }
+}
+
 function Invoke-Stage {
   $stageDir = $null; $status = $null; $verdict = $null
   $lock = $null; $locked = $false; $clearCredentials = $false
+  $delivery = $null; $resultDelivery = $null; $deliveryResult = $null; $installProof = $null
   $out = if ($Result -and (Test-SafePath $Result)) { $Result } else { $null }   # every line below is appended to it when it is made
   try {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -746,6 +778,20 @@ function Invoke-Stage {
     $lock = [Threading.Mutex]::new($false, 'Global\CluedIndependentCI.PackageLifecycle', [ref]$created, $mutexAcl)
     try { $locked = $lock.WaitOne(0) } catch [Threading.AbandonedMutexException] { $locked = $true }
     if (-not $locked) { throw 'FLEET_INSTALL_ALREADY_RUNNING' }
+    if ($ReinstallOperation) {
+      if ($Reset -or $Action -cne 'Install' -or $LifecycleMode -cne 'Reinstall' -or $env:CLUED_UNDER_TEST -or $env:NODE_TEST_CONTEXT) {
+        throw 'FLEET_REINSTALL_ARGUMENT_REFUSED'
+      }
+      Assert-FleetDeliveryTrust 'C:\ProgramData\CluedFleetDelivery'
+      Assert-FleetDeliveryTrust 'C:\ProgramData\CluedFleetDelivery\interactive.ps1'
+      . 'C:\ProgramData\CluedFleetDelivery\interactive.ps1'
+      $delivery = Get-FleetReinstallDelivery $me.User.Value $ReinstallOperation
+      if ($ArchiveSha256 -cne $delivery.targetFingerprint.archive_sha256 -or $AcceptanceSha256 -cne $delivery.targetFingerprint.acceptance_sha256 -or
+          $PSCommandPath -cne (Join-Path (Get-FleetReinstallAssetDirectory $delivery) ('fleet-node-' + $delivery.targetFingerprint.version + '.bootstrap.ps1')) -or
+          (Sha256File $PSCommandPath) -cne $delivery.bootstrapSha256) { throw 'FLEET_REINSTALL_SUBJECT_CHANGED' }
+      $deliveryResult = Join-Path (Split-Path -Parent (Get-FleetReinstallAssetDirectory $delivery)) 'result.json'
+      $resultDelivery = $delivery
+    }
     $stageDir = Join-Path 'C:\Windows\Temp' ('cb-' + [Guid]::NewGuid().ToString('N'))
     $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($AdminOnlySddl)
     [void][IO.Directory]::CreateDirectory($stageDir, $ds)
@@ -767,6 +813,11 @@ function Invoke-Stage {
       . (Join-Path $residentTree 'rollout\fleet\package-lifecycle.ps1')
       $context = New-FleetContext $protected.acceptance $ArchiveSha256 $ExpectedOperatorSid $Action
       $context.ownerUac = $true
+      if ($delivery) {
+        if ($context.sourceSha256 -cne $delivery.sourceSha256 -or $context.grantId -cne $delivery.grantId -or
+            $context.version -cne $delivery.targetFingerprint.version) { throw 'FLEET_REINSTALL_SUBJECT_CHANGED' }
+        $context.reinstallOperation = $ReinstallOperation
+      }
       $p1 = Join-Path $residentTree 'windows\first-install-host.ps1'
       $p1Args = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $p1, '-Tree', (Join-Path $stageDir 'tree'), '-PrereqDirectory', $PrereqDirectory,
         '-PrereqManifest', $PrereqManifest, '-PrereqManifestSha256', $PrereqManifestSha256, '-KitSha256', $KitSha256, '-ToolchainNodeSha256', $ToolchainNodeSha256,
@@ -783,7 +834,7 @@ function Invoke-Stage {
           if ([IO.Directory]::Exists($journalRoot) -and @(Get-ChildItem -LiteralPath $journalRoot -Force -ErrorAction Stop).Count -eq 0) {
             [IO.Directory]::Delete($journalRoot)
           }
-          if ($null -eq (Get-FleetPathItem $journalRoot)) {
+          if ($null -eq (Get-FleetPathItem $journalRoot) -and -not $delivery) {
             $verdict = @{ status = 'FLEET_LIFECYCLE_RESELECT' }
             return
           }
@@ -820,6 +871,9 @@ function Invoke-Stage {
       }
       $mode = Get-FleetLifecycleMode $Action $facts $progress
       if ($mode -ceq 'InspectUpgrade') { $mode = 'Reinstall' }
+      if ($delivery -and ($mode -cne 'Reinstall' -or ($progress -and (Get-FleetProgressMaintenanceId $progress) -cne $ReinstallOperation))) {
+        throw 'FLEET_REINSTALL_MODE_CHANGED'
+      }
       if ($null -eq $progress -and $mode -ceq 'Reinstall' -and $LifecycleMode -cne 'Reinstall' -and -not $PreviewReceipt) {
         throw 'FLEET_REINSTALL_REQUIRES_PREVIEW'
       }
@@ -846,9 +900,40 @@ function Invoke-Stage {
         $context.nodeConnection = Connect-FleetMaintenance $kitRecord $carriedSite $protected.node $fingerprintTool
         $context.bindingId = $context.nodeConnection.bindingId
         $context.bindingGeneration = $context.nodeConnection.generation
+        if ($delivery -and ($context.bindingId -cne $delivery.bindingId -or $context.bindingGeneration -ne $delivery.bindingGeneration -or
+            $context.nodeConnection.nodeId -cne $delivery.nodeId)) { throw 'FLEET_REINSTALL_BINDING_CHANGED' }
+        if (-not $delivery -and -not $env:CLUED_UNDER_TEST -and -not $env:NODE_TEST_CONTEXT) {
+          # An explicitly restarted bootstrap can finish the very same operation
+          # after the old resident and its probe have already been removed.
+          $resultRoot = 'C:\ProgramData\CluedFleetDelivery'
+          $pending = try {
+            Assert-FleetDeliveryTrust $resultRoot
+            $pendingFile = Join-Path $resultRoot 'pending.json'
+            Assert-FleetDeliveryTrust $pendingFile
+            Read-FleetConnectionJson $pendingFile
+          } catch { $null }
+          if ($pending -and (Get-Key $pending 'contract') -ceq 'clued.independent-ci.fleet-reinstall/1' -and
+              (Get-Key $pending 'operationId') -cmatch '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$' -and
+              (-not $progress -or (Get-Key $pending 'operationId') -ceq (Get-FleetProgressMaintenanceId $progress)) -and
+              (Get-Key $pending 'requestSha256') -cmatch '^[0-9a-f]{64}$' -and
+              (Get-Key $pending 'operatorSid') -ceq $context.operatorSid -and (Get-Key $pending 'grantId') -ceq $context.grantId -and
+              (Get-Key $pending 'sourceSha256') -ceq $context.sourceSha256 -and (Get-Key $pending 'nodeId') -ceq $context.nodeConnection.nodeId -and
+              (Get-Key $pending 'bindingGeneration') -eq $context.bindingGeneration -and (Get-Key $pending 'bindingId') -ceq $context.bindingId -and
+              (Get-Key (Get-Key $pending 'targetFingerprint') 'archive_sha256') -ceq $context.archiveSha256 -and
+              (Get-Key (Get-Key $pending 'targetFingerprint') 'acceptance_sha256') -ceq $context.acceptanceSha256) {
+            $resultDelivery = $pending
+            $deliveryResult = Join-Path $resultRoot ($pending.requestSha256 + '\' + $pending.operationId + '\result.json')
+            Assert-FleetLocalPath $deliveryResult
+            Assert-FleetDeliveryTrust (Split-Path -Parent $deliveryResult)
+            if (-not $progress) { $context.reinstallOperation = $pending.operationId }
+          }
+        }
         $preview = Invoke-FleetMaintenance -Phase 'preview' -Context $context
         if (-not $preview.ok) { throw $preview.code }
         if ($PreviewReceipt -and $PreviewReceipt -cne $preview.previewReceipt) { throw 'FLEET_MAINTENANCE_PREVIEW_REFUSED' }
+        if ($delivery -and ($context.nodeConnection.nodeId -cne $delivery.nodeId -or ($preview.healthyPeers -gt 0) -ne $delivery.hasPeer)) {
+          throw 'FLEET_REINSTALL_PREVIEW_CHANGED'
+        }
         if ($preview.healthyPeers -eq 0 -and (-not $PreviewReceipt -or -not $ZeroNodeConsent)) {
           # After a partial cleanup the low-privilege Broker projection can
           # be absent. Return this read-only result for a new, informed UAC.
@@ -857,6 +942,7 @@ function Invoke-Stage {
         }
         $context.previewReceipt = $preview.previewReceipt
         $context.zeroNodeConsent = $ZeroNodeConsent.IsPresent -and $PreviewReceipt -ceq $preview.previewReceipt
+        if ($deliveryResult) { Write-FleetDeliveryResult $deliveryResult $resultDelivery 'INSTALLING' '' '' }
         $connectionFile = Join-Path $stageDir 'preserved-connection.json'
         $context.preflightCleanup = {
           param($ctx)
@@ -921,6 +1007,10 @@ function Invoke-Stage {
         }
         $verdict = Invoke-FleetLifecycle $context $mode $progressFile ${function:Get-FleetStepState} ${function:Invoke-FleetStep}
         $status = $verdict.status
+        if ($resultDelivery -and $status -ceq 'FLEET_LIFECYCLE_COMPLETE') {
+          $installProof = & $context.observeInstall $context
+          if (-not $installProof) { throw 'FLEET_INSTALL_POSTCONDITION_UNAVAILABLE' }
+        }
         if ($context.mode -ceq 'Reinstall') {
           $carry = Get-FleetCarryDirectory $context
           Assert-FleetLocalPath $carry
@@ -998,6 +1088,16 @@ function Invoke-Stage {
       if (-not $c.cleared) { $verdict = [ordered]@{ status = 'BOOTSTRAP_STAGE_FAILED'; code = 'CREDENTIAL_STAGING_CLEANUP_FAILED' } }
     }
     $verdict = Complete-InstallStageVerdict $verdict $stageDir
+    if ($deliveryResult -and (Get-Command Write-FleetJournalJson -ErrorAction SilentlyContinue)) {
+      $complete = (Get-Key $verdict 'status') -ceq 'FLEET_LIFECYCLE_COMPLETE' -and $null -ne $installProof
+      try {
+        $phase = if ($complete) { 'COMPLETE' } else { 'FAILED' }
+        $receiptSha = if ($complete) { $installProof.receiptSha256 } else { '' }
+        Write-FleetDeliveryResult $deliveryResult $resultDelivery $phase (Get-Key $verdict 'code') $receiptSha
+      } catch {
+        $verdict = @{ status = 'BOOTSTRAP_STAGE_FAILED'; code = 'FLEET_REINSTALL_RESULT_WRITE_FAILED' }
+      }
+    }
     if ($stageDir -and -not (Get-Key $verdict 'stagingDirectory')) { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }
     if ($locked) { $lock.ReleaseMutex() }
     if ($lock) { $lock.Dispose() }
@@ -1015,6 +1115,17 @@ function Invoke-Bootstrap {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   if ((New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Stop-Bootstrap 'arguments' 'RUN_NOT_ELEVATED' 'run this in a normal window: it asks for UAC itself where it must' }
   $operator = $id.User.Value
+  $delivery = $null
+  if ($ReinstallOperation) {
+    if ($Reset -or $Action -cne 'Install' -or $env:CLUED_UNDER_TEST -or $env:NODE_TEST_CONTEXT) { Stop-Bootstrap 'arguments' 'FLEET_REINSTALL_ARGUMENT_REFUSED' $null }
+    Assert-FleetDeliveryTrust 'C:\ProgramData\CluedFleetDelivery'
+    Assert-FleetDeliveryTrust 'C:\ProgramData\CluedFleetDelivery\interactive.ps1'
+    . 'C:\ProgramData\CluedFleetDelivery\interactive.ps1'
+    $delivery = Get-FleetReinstallDelivery $operator $ReinstallOperation
+    if ($script:From -cne (Get-FleetReinstallAssetDirectory $delivery) -or
+        $script:Self -cne (Join-Path $script:From ('fleet-node-' + $delivery.targetFingerprint.version + '.bootstrap.ps1')) -or
+        (Sha256File $script:Self) -cne $delivery.bootstrapSha256) { Stop-Bootstrap 'arguments' 'FLEET_REINSTALL_SUBJECT_CHANGED' $null }
+  }
   # 1. the asset set and every hash
   $present = @(Get-ChildItem -LiteralPath $script:From -File -Force | ForEach-Object { $_.Name })
   $version = try { Get-ReleaseVersion $present } catch { Stop-Bootstrap 'assets' ([string]$_.Exception.Message) $null }
@@ -1076,6 +1187,7 @@ function Invoke-Bootstrap {
     $facts = Get-FleetInventory
     $mode = Get-FleetLifecycleMode $Action $facts $null
     if ($Action -ceq 'Install' -and (Test-FleetProgressHint)) { $mode = 'Probe' }
+    if ($delivery) { $mode = 'Reinstall' }
     if ($Reset -and $mode -ceq 'InspectUpgrade') { Stop-Bootstrap 'arguments' 'RESET_ONLY_WITHOUT_A_RESIDENT' $null }
     if ($mode -ceq 'InspectUpgrade') {
       $upgrade = Join-Path (Split-Path -Parent $install) 'upgrade.mjs'
@@ -1139,7 +1251,14 @@ function Invoke-Bootstrap {
     if ($Reset) { $switches += '-Reset' }
     if ($mode -cin @('Probe','Reinstall','Retire','Rollback') -and -not $Reset) {
       $context = New-FleetContext $acceptLocal $archiveSha $operator $Action
-      $preview = if ($protectedPreview) { $protectedPreview } else { Invoke-FleetMaintenance -Phase 'preview' -Context $context }
+      $preview = if ($delivery) {
+        $latest = Get-FleetReinstallDelivery $operator $ReinstallOperation
+        if ($latest.hasPeer -ne $delivery.hasPeer -or $context.archiveSha256 -cne $latest.targetFingerprint.archive_sha256 -or
+            $context.acceptanceSha256 -cne $latest.targetFingerprint.acceptance_sha256 -or $context.grantId -cne $latest.grantId) {
+          Stop-Bootstrap 'host' 'FLEET_REINSTALL_PREVIEW_CHANGED' $null
+        }
+        New-FleetMaintenancePreview $context $latest.hasPeer
+      } elseif ($protectedPreview) { $protectedPreview } else { Invoke-FleetMaintenance -Phase 'preview' -Context $context }
       if ($preview.ok -eq $true) {
         Assert-FleetPreview $preview $context
         $hostArgs += @('-PreviewReceipt', $preview.previewReceipt)
@@ -1151,9 +1270,22 @@ function Invoke-Bootstrap {
         Stop-Bootstrap 'host' $preview.code $null
       }
     }
+    if ($delivery) {
+      if (-not (Test-FleetInteractiveDesktop)) { Stop-Bootstrap 'host' 'FLEET_WAITING_FOR_OWNER_SESSION' $null }
+      $hostArgs += @('-ReinstallOperation', $ReinstallOperation)
+      Write-Host ('Preparing clean reinstall of ' + $context.version + ' on ' + $context.machine + '.')
+      try { Write-FleetReinstallClaim $ReinstallOperation 'PENDING_UAC' $null -Create }
+      catch { Stop-Bootstrap 'host' 'FLEET_REINSTALL_ALREADY_CLAIMED' $null }
+      $script:ReinstallClaimed = $true
+    }
     $h = Invoke-Elevated 'install' $hostArgs ($HostLimitSeconds + $LauncherLimitSeconds + 5400) $switches
     if ($h.declined) { Stop-Bootstrap 'host' 'UAC_DECLINED' 'nothing elevated ran; run the same command again to continue' }
     $st = [string](Get-Key $h.last 'status')
+    if ($delivery -and $st -cne 'FLEET_LIFECYCLE_COMPLETE') {
+      $code = [string](Get-Key $h.last 'code')
+      if ($code -cnotmatch '^[A-Z][A-Z0-9_]{1,79}$') { $code = 'FLEET_REINSTALL_STAGE_UNCONFIRMED' }
+      Stop-Bootstrap 'host' $code $h.last
+    }
     if ($st -ceq 'FLEET_LIFECYCLE_PREVIEW_REQUIRED') {
       if ($protectedPreview) { Stop-Bootstrap 'host' 'FLEET_MAINTENANCE_PREVIEW_REFUSED' $null }
       $protectedPreview = Get-Key $h.last 'preview'
@@ -1179,5 +1311,5 @@ function Invoke-Bootstrap {
   }
 }
 
-$script:Work = $null; $script:Self = $null
+$script:Work = $null; $script:Self = $null; $script:ReinstallClaimed = $false
 if ($MyInvocation.InvocationName -ne '.') { if ($Stage) { Invoke-Stage } else { Invoke-Bootstrap } }

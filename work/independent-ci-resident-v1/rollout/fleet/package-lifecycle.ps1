@@ -7,7 +7,7 @@ $FleetResources = [ordered]@{
   services = @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader')
   runnerPrefix = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-'
   taskPath = '\Clued\'
-  tasks = @('CluedCIResidentCompanion', 'CluedCIResidentCompanionStart', 'CluedCIResidentCompanionFallback', 'CluedCIResidentCompanionWslImport', 'CluedCIResidentNotifier')
+  tasks = @('CluedCIResidentCompanion', 'CluedCIResidentCompanionStart', 'CluedCIResidentCompanionFallback', 'CluedCIResidentCompanionWslImport', 'CluedCIResidentNotifier', 'CluedCIFleetReinstall')
   firewallRules = @('CluedCIResident-BlockOutbound')
   account = 'clued-companion'
   controller = 'clued-control'
@@ -171,9 +171,16 @@ function Get-FleetLifecycleMode([string]$action, $facts, $progress) {
 }
 
 function New-FleetProgress($context, [string]$mode) {
-  $value = [ordered]@{ contract = 'clued.fleet.lifecycle-progress/1'; operationId = [guid]::NewGuid().ToString('N'); mode = $mode; step = 'intent' }
+  $operation = if ($context['reinstallOperation']) { ([Guid]$context['reinstallOperation']).ToString('N') } else { [guid]::NewGuid().ToString('N') }
+  $value = [ordered]@{ contract = 'clued.fleet.lifecycle-progress/1'; operationId = $operation; mode = $mode; step = 'intent' }
   foreach ($key in @('machine','operatorSid','archiveSha256','acceptanceSha256','action')) { $value[$key] = $context[$key] }
   $value
+}
+
+function Get-FleetProgressMaintenanceId($progress) {
+  if (-not $progress) { return }
+  $id = if ($progress['maintenanceOperationId']) { $progress['maintenanceOperationId'] } else { $progress.operationId }
+  ([Guid]$id).ToString('D')
 }
 
 # Directory visibility is a routing hint. Only the elevated, locked reader
@@ -349,7 +356,10 @@ function Invoke-FleetMaintenance([ValidateSet('preview','before-remove','before-
     $read = @{ action='fleet_maintenance'; command='status'; scope=$node['scope']; node_id=$node['nodeId']; binding_generation=$node['generation'] }
     $status = & $Send $read
     Assert-FleetMaintenanceStatus $status $read $Context.grantId
-    if ($Phase -ceq 'preview') { return New-FleetMaintenancePreview $Context $status['has_other_healthy'] }
+    if ($Phase -ceq 'preview') {
+      if ($Context['reinstallOperation'] -and $status['state'] -cnotin @('available','returned')) { throw 'FLEET_MAINTENANCE_BLOCKED' }
+      return New-FleetMaintenancePreview $Context $status['has_other_healthy']
+    }
     if ($Context['ownerUac'] -ne $true) { throw 'FLEET_MAINTENANCE_UAC_REQUIRED' }
     $operation = ([Guid]$(if ($Context['maintenanceOperationId']) { $Context['maintenanceOperationId'] } else { $Context.operationId })).ToString('D')
     $write = $read.Clone()

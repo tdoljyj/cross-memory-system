@@ -101,6 +101,7 @@ import { parseArgs } from 'node:util';
 import { setTimeout as sleepFor } from 'node:timers/promises';
 import os from 'node:os';
 import { acceptResourceOf, OPEN_RUN_ID, openRequest, openRunFailed, readAnswer, statusReader } from './accept-door.mjs';
+import { checkDeliveryAssets, deliveryAssetManifestName, KIT_CONTRACT, localImagesOf, NODE_ENTRY, sumsText } from './delivery-assets.mjs';
 import { deliveryBound, deliverySubject, fleetDeliveryPreflight } from './delivery-preflight.mjs';
 import { deliveryProjectionReaders, verifyDeliveryTree } from './delivery-reader.mjs';
 import { deliveryWorkflowClient } from './delivery-workflow.mjs';
@@ -117,15 +118,12 @@ import { ACCEPTANCE_CONTRACT, REQUEST_CONTRACT, REQUEST_FLEET_REFS, acceptanceOf
 import { freshDeliveryTime } from '../../src/fleet-delivery-evidence.mjs';
 
 export { ACCEPTANCE_CONTRACT, REQUEST_CONTRACT, REQUEST_FLEET_REFS, acceptanceOf };
+export { checkDeliveryAssets, deliveryAssetManifestName, KIT_CONTRACT, NODE_ENTRY };
 export const DEFAULT_REPO = 'tdoljyj/cross-memory-system';
 export const DEFAULT_INDEX = 'G:\\我的云端硬盘\\Clued_资料中心\\10_E_工程与平台\\CI基础设施\\通用节点包_归档索引.md';
 // the drill column (seal): the candidate drill's conclusion and receipt sha256, or 首装未演练; an older table is completed with an empty cell
 export const INDEX_HEADER = ['版本', 'Release', 'tar sha256', 'commit', '接受时间', 'Decision', '首装演练'];
-export const KIT_CONTRACT = 'clued.independent-ci.fleet-node-first-install-kit/1';
-// the node entry of a first install, in the archive's tree: published asset name suffix -> archive path
-export const NODE_ENTRY = Object.freeze({ 'bootstrap.ps1': `tree/${RESIDENT}/rollout/fleet/bootstrap.ps1`, 'prereq-manifest.json': `tree/${RESIDENT}/rollout/fleet/prereq-manifest.json` });
 const ROLE_IMAGE = /^role-image-([0-9a-f]{64})\.tar\.gz$/;
-const sumsText = pairs => [...pairs].sort((a, b) => Buffer.compare(Buffer.from(a[0]), Buffer.from(b[0]))).map(([n, h]) => `${h}  ${n}\n`).join('');
 const sha = b => createHash('sha256').update(b).digest('hex');
 const fileSha = async file => {
   const hash = createHash('sha256');
@@ -622,32 +620,6 @@ async function downloadAsset(ghCommand, repo, tag, name, stage, budget = release
   return file;
 }
 const sumsOf = text => new Map(text.split('\n').filter(Boolean).map(l => { const i = l.indexOf('  '); return [l.slice(i + 2), l.slice(0, i)]; }));
-const localImagesOf = k => {
-  const local = Array.isArray(k?.images?.local) ? k.images.local : null;
-  check(k?.contract === KIT_CONTRACT && local && local.every(i => HEX64.test(i?.id ?? '') && i.asset === `role-image-${i.id}.tar.gz`), 'FIRST_INSTALL_KIT_IMAGES_REFUSED');
-  return [...new Set(local.map(i => i.id))].sort();
-};
-
-export const deliveryAssetManifestName = version => tagOf(version) + '.candidate.SHA256SUMS';
-
-export async function checkDeliveryAssets({ request, manifest, kit, assetSha256 }) {
-  check(sha(manifest) === request.deliveryAssetsSha256, 'FLEET_DELIVERY_ASSET_MANIFEST_REFUSED');
-  const tag = tagOf(request.version);
-  const kitName = tag + '.first-install-kit.json';
-  check(sha(kit) === request.firstInstallKitSha256, 'FLEET_DELIVERY_ASSET_MANIFEST_REFUSED');
-  const images = localImagesOf(JSON.parse(kit)).map(id => 'role-image-' + id + '.tar.gz');
-  const names = [tag + '.tar', tag + '.release.json', 'SHA256SUMS', kitName, tag + '.first-install.SHA256SUMS',
-    ...Object.keys(NODE_ENTRY).map(suffix => tag + '.' + suffix), ...images];
-  const digests = sumsOf(manifest.toString('utf8'));
-  check(digests.size === names.length && names.every(name => HEX64.test(digests.get(name) ?? '')) &&
-    manifest.equals(Buffer.from(sumsText(digests))) && digests.get(tag + '.tar') === request.archive_sha256 &&
-    digests.get(kitName) === request.firstInstallKitSha256, 'FLEET_DELIVERY_ASSET_MANIFEST_REFUSED');
-  for (const name of names) {
-    const current = name === kitName ? sha(kit) : await assetSha256(name);
-    check(current === digests.get(name), 'FLEET_DELIVERY_RELEASE_ASSET_CHANGED', name);
-  }
-}
-
 // What an acceptance of this version needs on the Release: the kit asset and first-install.SHA256SUMS naming the accepted hash for it, every
 // local role image the kit lists, both as an asset and in that sums file, and (archiveSha256) the release's SHA256SUMS naming the tar with
 // that hash. Read-only; the read-back of prepare and the gate of attachAcceptance. The Release's asset names.
