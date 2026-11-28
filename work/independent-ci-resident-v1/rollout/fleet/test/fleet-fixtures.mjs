@@ -200,7 +200,11 @@ export function runFakeGh(args, env, { fs, path, createHash }) {
   };
   if (env.FAKE_GH_FAIL === '1') return refuse('HTTP 422: fake failure');
   const nth = Number(env.FAKE_GH_FAIL_UPLOAD_NTH || 0);
-  if (nth && args[0] === 'release' && args[1] === 'upload' && log.calls.filter(c => c.args[1] === 'upload').length === nth) return refuse('HTTP 502: fake upload failure');
+  const from = Number(env.FAKE_GH_FAIL_UPLOAD_FROM || 0);
+  if ((nth || from) && args[0] === 'release' && args[1] === 'upload') {
+    const count = log.calls.filter(c => c.args[1] === 'upload').length;
+    if (count === nth || (from > 0 && count >= from)) return refuse('HTTP 502: fake upload failure');
+  }
   if (args[0] === 'release' && args[1] === 'delete-asset') log.assets = log.assets.filter(a => a.name !== args[3]);
   // "gh workflow run ...": recorded only (the release workflow's fleet-accept mode, PLAN-accept-binding-20261125); the state's workflowFail: gh refuses it
   if (args[0] === 'workflow' && log.workflowFail) return refuse('HTTP 403: Resource not accessible by integration');

@@ -424,11 +424,11 @@ test('3bc571a6 end to end: a second prepare after a stop, the node\'s version fa
   { timeout: 600_000 }, async t => {
     const w = await getWorld();
     const r0 = await releaseWorld(t, w);
-    process.env.FAKE_GH_FAIL_UPLOAD_NTH = '2';   // the kit goes up, the role image does not (acceptance-draft.log: the network stopped it)
-    t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_NTH; });
+    process.env.FAKE_GH_FAIL_UPLOAD_FROM = '2';   // the kit goes up, the role image does not (acceptance-draft.log: the network stopped it)
+    t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_FROM; });
     await factsObservedAgain(w, isoNow(-60_000));
     await assert.rejects(r0.prepare(), { code: 'PUBLISH_GH_RELEASE_UPLOAD_FAILED' });
-    delete process.env.FAKE_GH_FAIL_UPLOAD_NTH;
+    delete process.env.FAKE_GH_FAIL_UPLOAD_FROM;
     const attached = r0.assets().find(a => a.name === r0.kitName).sha256;
     await factsObservedAgain(w, isoNow());
     assert.notEqual(sha(Buffer.from(JSON.stringify(await firstInstallKitOf({ root: w.template.root })) + '\n')), attached, 'the node now gives other kit bytes');

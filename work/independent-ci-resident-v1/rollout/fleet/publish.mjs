@@ -93,11 +93,12 @@
 // gh's environment, and nothing here reads, writes or prints a token.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, mkdirSync, mkdtempSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { setTimeout as sleepFor } from 'node:timers/promises';
 import os from 'node:os';
 import { acceptResourceOf, OPEN_RUN_ID, openRequest, openRunFailed, readAnswer, statusReader } from './accept-door.mjs';
 import { deliveryBound, deliverySubject, fleetDeliveryPreflight } from './delivery-preflight.mjs';
@@ -265,14 +266,60 @@ export async function stageNodeEntry({ release, tarBytes, sums }, stage) {
   return { sums: { name: 'SHA256SUMS', file: path.join(stage, 'SHA256SUMS') }, entry: out };
 }
 
-function gh(ghCommand, args, timeout) {
-  if (typeof ghCommand === 'function') return ghCommand(args);
+function gh(ghCommand, args, timeout, release = false) {
+  if (typeof ghCommand === 'function') return release ? ghCommand(args, timeout, release) : ghCommand(args);
   const env = { ...process.env };
   for (const k of TOKEN_ENV) delete env[k];
   const [cmd, ...pre] = ghCommand;
   const r = spawnSync(cmd, [...pre, ...args], { env, maxBuffer: 1 << 24, windowsHide: true, timeout, killSignal: 'SIGKILL' });
-  if (r.error?.code === 'ETIMEDOUT') fail('FLEET_ACCEPTANCE_DEADLINE', 'GitHub command timed out');
-  return { status: r.status, stdout: String(r.stdout ?? ''), stdoutBytes: r.stdout ?? Buffer.alloc(0), stderr: String(r.stderr ?? r.error ?? '').trim().slice(-300) };
+  const timedOut = r.error?.code === 'ETIMEDOUT';
+  if (timedOut && !release) fail('FLEET_ACCEPTANCE_DEADLINE', 'GitHub command timed out');
+  const stderr = String(timedOut ? 'GitHub command timed out' : r.stderr ?? r.error ?? '').trim();
+  const retryDelay = release && (timedOut || !r.error) ? releaseRetryDelay(stderr) : 0;
+  return { status: r.status, stdout: String(r.stdout ?? ''), stdoutBytes: r.stdout ?? Buffer.alloc(0),
+    stderr: stderr.slice(-300), ...(release ? { retryDelay } : {}) };
+}
+
+const RELEASE_MAX_ATTEMPTS = 4;
+
+function releaseRetryDelay(stderr) {
+  const status = Number(stderr?.match(/\b(?:HTTP(?:\/[\d.]+)?\s+|status(?: code)?[ :=]+)([1-5]\d{2})\b/i)?.[1]
+    ?? stderr?.match(/\b(5\d{2}) (?:Internal Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out)\b/i)?.[1]);
+  const throttled = /\bsecondary rate limits?\b/i.test(stderr);
+  if (/\balready_exists\b|\brelease not found\b/i.test(stderr)) return 0;
+  if (status >= 500) return 250;
+  if (throttled && (Number.isNaN(status) || status === 403 || status === 429)) return 60_000;
+  if (status >= 400) return 0;
+  return /\b(?:EOF|ECONNRESET|ETIMEDOUT|connection reset|connection was forcibly closed|timed out|time[ -]?out|TLS:?\s+handshake)\b/i.test(stderr) ? 250 : 0;
+}
+
+function releaseBudget(ghCommand) {
+  const limits = ghCommand.releaseLimits;
+  return {
+    remaining: () => Math.floor(limits?.remaining() ?? Infinity),
+    sleep: limits?.sleep ?? sleepFor,
+  };
+}
+
+async function retryReleaseGh(ghCommand, call, budget, reconcile) {
+  const exhausted = { status: null, stderr: 'GitHub command timed out', retryDelay: 0 };
+  const run = args => {
+    const remaining = budget.remaining();
+    return remaining > 0 ? gh(ghCommand, args, remaining === Infinity ? undefined : remaining, true) : exhausted;
+  };
+  let result = exhausted;
+  for (let attempt = 0; attempt < RELEASE_MAX_ATTEMPTS; attempt++) {
+    if (budget.remaining() < 1) break;
+    result = await call(run);
+    if (result.status === 0) return result;
+    const delay = (result.retryDelay ?? releaseRetryDelay(result.stderr)) * 2 ** attempt;
+    if (!delay) return result;
+    const last = attempt + 1 === RELEASE_MAX_ATTEMPTS;
+    if ((last && !reconcile) || delay >= budget.remaining()) return result;
+    await budget.sleep(delay);
+    if (reconcile && budget.remaining() > 0 && await reconcile()) return { status: 0 };
+  }
+  return result;
 }
 
 // ---- the index: a markdown table of seven columns; its own line ending is kept; an older (five- or six-column) table is completed ----
@@ -302,18 +349,40 @@ async function writeIndex(index, lines, eol) {
 
 // The Release of a tag, or null when GitHub has none (gh says "release not found"); any other failure stays a failure (a dropped connection
 // is not a missing Release).
-function viewReleaseOrNull(ghCommand, repo, tag) {
-  const viewed = gh(ghCommand, ['release', 'view', tag, '--repo', repo, '--json', 'url,tagName,assets']);
+async function viewReleaseOrNull(ghCommand, repo, tag, budget = releaseBudget(ghCommand)) {
+  const viewed = await retryReleaseGh(ghCommand, run => run(['release', 'view', tag, '--repo', repo, '--json', 'url,tagName,assets']), budget);
   if (viewed.status !== 0 && /release not found/i.test(viewed.stderr)) return null;
   check(viewed.status === 0, 'PUBLISH_GH_RELEASE_VIEW_FAILED', viewed.stderr);
   const v = JSON.parse(viewed.stdout);
   check(v.tagName === tag && typeof v.url === 'string' && /^https:\/\//.test(v.url), 'PUBLISH_RELEASE_NOT_AS_CREATED', { tagName: v.tagName });
   return { url: v.url, assets: Array.isArray(v.assets) ? v.assets : [] };
 }
-function viewRelease(ghCommand, repo, tag) {
-  const v = viewReleaseOrNull(ghCommand, repo, tag);
+async function viewRelease(ghCommand, repo, tag, budget) {
+  const v = await viewReleaseOrNull(ghCommand, repo, tag, budget);
   check(v !== null, 'PUBLISH_GH_RELEASE_VIEW_FAILED', 'release not found');
   return v;
+}
+
+async function uploadReleaseAsset({ ghCommand, repo, tag, file, bytes, differentCode }) {
+  const name = path.basename(file);
+  const budget = releaseBudget(ghCommand);
+  const reconcile = async () => {
+    const { assets } = await viewRelease(ghCommand, repo, tag, budget);
+    const asset = assets.find(x => x.name === name);
+    if (!asset) return false;
+    check(asset.size === bytes.length, differentCode, { asset: name, release: asset.size, this: bytes.length });
+    const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-upload-check-'));
+    try {
+      const there = await fileSha(await downloadAsset(ghCommand, repo, tag, name, stage, budget));
+      const expected = sha(bytes);
+      check(there === expected, differentCode, { asset: name, release: there, this: expected });
+      return true;
+    } finally {
+      await fs.rm(stage, { recursive: true, force: true });
+    }
+  };
+  // An upload can reach GitHub before the connection fails. Reconcile the exact asset before sending it again.
+  return retryReleaseGh(ghCommand, run => run(['release', 'upload', tag, file, '--repo', repo]), budget, reconcile);
 }
 
 // The candidate's commit on GitHub (the Release's --target), asked before anything is written: a commit never pushed is refused here.
@@ -333,7 +402,7 @@ async function ensureRelease({ ghCommand, repo, index, s, assets, stage, verifyM
   const tag = s.release_tag, tarName = `${tag}.tar`, relName = `${tag}.release.json`;
   const idx = await readIndex(index);
   const at = findRow(idx.lines, s.version);
-  const v = viewReleaseOrNull(ghCommand, repo, tag);
+  const v = await viewReleaseOrNull(ghCommand, repo, tag);
   if (v === null) {
     check(at < 0, 'PREPARE_INDEX_ROW_WITHOUT_RELEASE', { version: s.version, note: 'the index names this version, GitHub has no Release of it: not this command\'s to guess' });
     checkCommitOnRemote(ghCommand, repo, s.commit);
@@ -347,7 +416,7 @@ async function ensureRelease({ ghCommand, repo, index, s, assets, stage, verifyM
   for (const a of assets) local.set(a.name, await fs.readFile(a.file));
   const dl = path.join(stage, 'ensure');
   if (sizes.has('SHA256SUMS')) {
-    const there = await fs.readFile(downloadAsset(ghCommand, repo, tag, 'SHA256SUMS', dl));
+    const there = await fs.readFile(await downloadAsset(ghCommand, repo, tag, 'SHA256SUMS', dl));
     if (!there.equals(local.get('SHA256SUMS'))) {
       const named = sumsOf(there.toString('utf8')).get(tarName) ?? null;
       check(named === s.archive_sha256, 'ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES', { build: s.archive_sha256, release: named });
@@ -365,24 +434,25 @@ async function ensureRelease({ ghCommand, repo, index, s, assets, stage, verifyM
     if (a.name === tarName) {
       const tarFile = path.join(stage, tarName);
       await fs.rm(tarFile, { force: true });
-      await fs.rename(downloadAsset(ghCommand, repo, tag, tarName, dl), tarFile);
+      await fs.rename(await downloadAsset(ghCommand, repo, tag, tarName, dl), tarFile);
       const got = sha(await fs.readFile(tarFile));
       if (got !== s.archive_sha256) {
         await fs.rm(tarFile, { force: true });
         fail('ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES', { asset: tarName, release: got, build: s.archive_sha256 });
       }
     } else {
-      const there = await fs.readFile(downloadAsset(ghCommand, repo, tag, a.name, dl));
+      const there = await fs.readFile(await downloadAsset(ghCommand, repo, tag, a.name, dl));
       check(there.equals(local.get(a.name)), 'ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS', { asset: a.name, release: sha(there), build: sha(local.get(a.name)) });
     }
   }
   const missing = assets.filter(a => !sizes.has(a.name));
   verifyMain?.();
   for (const a of missing) {
-    const up = gh(ghCommand, ['release', 'upload', tag, a.file, '--repo', repo]);
+    const up = await uploadReleaseAsset({ ghCommand, repo, tag, file: a.file, bytes: local.get(a.name),
+      differentCode: a.name === tarName ? 'ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES' : 'ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS' });
     check(up.status === 0, 'PUBLISH_GH_RELEASE_UPLOAD_FAILED', { asset: a.name, stderr: up.stderr });
   }
-  const back = missing.length ? viewRelease(ghCommand, repo, tag) : v;
+  const back = missing.length ? await viewRelease(ghCommand, repo, tag) : v;
   for (const a of assets) check(back.assets.some(x => x.name === a.name && x.size === local.get(a.name).length), 'PUBLISH_RELEASE_ASSET_MISSING', a.name);
   const line = at < 0 ? row([s.version, back.url, s.archive_sha256, s.commit, '', '', '']) : idx.lines[at];
   if (at < 0) await writeIndex(index, [...idx.lines, line], idx.eol);
@@ -401,7 +471,7 @@ async function publishAssets({ ghCommand, repo, index, idx, s, assets, verifyMai
   verifyMain?.();
   const created = gh(ghCommand, ['release', 'create', s.release_tag, ...assets.map(a => a.file), '--repo', repo, ...target, '--title', label, '--notes', notes]);
   check(created.status === 0, 'PUBLISH_GH_RELEASE_CREATE_FAILED', created.stderr);
-  const v = viewRelease(ghCommand, repo, s.release_tag);
+  const v = await viewRelease(ghCommand, repo, s.release_tag);
   for (const a of assets) {
     const size = (await fs.stat(a.file)).size;
     check(v.assets.some(x => x.name === a.name && x.size === size), 'PUBLISH_RELEASE_ASSET_MISSING', a.name);
@@ -501,7 +571,7 @@ export async function attachAcceptance({ version, acceptance, repo = DEFAULT_REP
   const readBack = async () => {
     const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-acceptance-'));
     try {
-      const there = await fs.readFile(downloadAsset(ghCommand, repo, tag, name, stage));
+      const there = await fs.readFile(await downloadAsset(ghCommand, repo, tag, name, stage));
       check(there.equals(bytes), 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED_DIFFERENT', { release: sha(there), this: sha(bytes) });
     } finally {
       await fs.rm(stage, { recursive: true, force: true });
@@ -510,11 +580,12 @@ export async function attachAcceptance({ version, acceptance, repo = DEFAULT_REP
   if (names.has(name)) await readBack();
   else {
     check(!again, 'PUBLISH_ACCEPTANCE_INDEX_WITHOUT_ASSET', { version });   // a row filled by hand, the asset never uploaded: not this command's to guess
-    const up = gh(ghCommand, ['release', 'upload', tag, acceptance, '--repo', repo]);
+    const up = await uploadReleaseAsset({ ghCommand, repo, tag, file: acceptance, bytes,
+      differentCode: 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED_DIFFERENT' });
     check(up.status === 0, 'PUBLISH_GH_RELEASE_UPLOAD_FAILED', up.stderr);
     if (confirmUploaded) await readBack();
   }
-  const v = viewRelease(ghCommand, repo, tag);
+  const v = await viewRelease(ghCommand, repo, tag);
   check(v.assets.some(x => x.name === name && x.size === bytes.length), 'PUBLISH_RELEASE_ASSET_MISSING', name);
   if (confirmUploaded) {
     await confirmUploaded();
@@ -534,12 +605,21 @@ export async function attachAcceptance({ version, acceptance, repo = DEFAULT_REP
 // One release asset, downloaded (read-only) into a new directory of its own under `stage`; its path. gh refuses a file of that name already
 // in --dir (2.97.0, without --clobber): every download gets an empty directory, so reading the same asset again (prepare before and after it
 // attaches the kit, two images reused from one earlier Release) never lands on an earlier copy (review r2).
-function downloadAsset(ghCommand, repo, tag, name, stage) {
-  mkdirSync(stage, { recursive: true });
-  const dir = mkdtempSync(path.join(stage, 'dl-'));
-  const r = gh(ghCommand, ['release', 'download', tag, '--repo', repo, '--pattern', name, '--dir', dir]);
+async function downloadAsset(ghCommand, repo, tag, name, stage, budget = releaseBudget(ghCommand)) {
+  await fs.mkdir(stage, { recursive: true });
+  let file;
+  const r = await retryReleaseGh(ghCommand, async run => {
+    const dir = await fs.mkdtemp(path.join(stage, 'dl-'));
+    try {
+      const result = run(['release', 'download', tag, '--repo', repo, '--pattern', name, '--dir', dir]);
+      if (result.status === 0) file = path.join(dir, name);
+      return result;
+    } finally {
+      if (!file) await fs.rm(dir, { recursive: true, force: true });
+    }
+  }, budget);
   check(r.status === 0, 'PUBLISH_GH_RELEASE_DOWNLOAD_FAILED', { asset: name, stderr: r.stderr });
-  return path.join(dir, name);
+  return file;
 }
 const sumsOf = text => new Map(text.split('\n').filter(Boolean).map(l => { const i = l.indexOf('  '); return [l.slice(i + 2), l.slice(0, i)]; }));
 const localImagesOf = k => {
@@ -573,17 +653,17 @@ export async function checkDeliveryAssets({ request, manifest, kit, assetSha256 
 // that hash. Read-only; the read-back of prepare and the gate of attachAcceptance. The Release's asset names.
 async function checkKitOnRelease({ ghCommand, repo, tag, kitSha256, archiveSha256 = null }) {
   const kitName = `${tag}.first-install-kit.json`, sumsName = `${tag}.first-install.SHA256SUMS`;
-  const names = new Set(viewRelease(ghCommand, repo, tag).assets.map(x => x.name));
+  const names = new Set((await viewRelease(ghCommand, repo, tag)).assets.map(x => x.name));
   check(names.has(kitName) && names.has(sumsName), 'ACCEPTANCE_KIT_NOT_ON_RELEASE', { missing: [kitName, sumsName].filter(n => !names.has(n)) });
   const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-kitcheck-'));
   try {
     if (archiveSha256 !== null) {
       const tarName = `${tag}.tar`;
-      const release = names.has('SHA256SUMS') ? sumsOf((await fs.readFile(downloadAsset(ghCommand, repo, tag, 'SHA256SUMS', stage))).toString('utf8')).get(tarName) : null;
+      const release = names.has('SHA256SUMS') ? sumsOf((await fs.readFile(await downloadAsset(ghCommand, repo, tag, 'SHA256SUMS', stage))).toString('utf8')).get(tarName) : null;
       check(names.has(tarName) && release === archiveSha256, 'ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES', { accepted: archiveSha256, release: release ?? null });
     }
-    const sums = sumsOf((await fs.readFile(downloadAsset(ghCommand, repo, tag, sumsName, stage))).toString('utf8'));
-    const kitBytes = await fs.readFile(downloadAsset(ghCommand, repo, tag, kitName, stage));
+    const sums = sumsOf((await fs.readFile(await downloadAsset(ghCommand, repo, tag, sumsName, stage))).toString('utf8'));
+    const kitBytes = await fs.readFile(await downloadAsset(ghCommand, repo, tag, kitName, stage));
     check(sums.get(kitName) === kitSha256 && sha(kitBytes) === kitSha256, 'ACCEPTANCE_KIT_NOT_THE_ATTACHED', { accepted: kitSha256, sums: sums.get(kitName) ?? null, kit: sha(kitBytes) });
     let k;
     try { k = JSON.parse(kitBytes.toString('utf8')); } catch { fail('FIRST_INSTALL_KIT_NOT_JSON'); }
@@ -618,7 +698,7 @@ export async function attachFirstInstallKit({ version, kit, images = [], repo = 
   const want = [...new Set(local.map(i => i.id))].sort(), have = given.map(g => g.id).sort();
   check(want.length === have.length && want.every((x, i) => x === have[i]), 'FIRST_INSTALL_KIT_IMAGES_NOT_THE_KITS', { kit: want, given: have });
   const sumsName = `${tag}.first-install.SHA256SUMS`;
-  const before = viewRelease(ghCommand, repo, tag);
+  const before = await viewRelease(ghCommand, repo, tag);
   const present = new Set(before.assets.map(a => a.name));
   check(resume || !(present.has(sumsName) || present.has(path.basename(kit))), 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED', tag);
   const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-kit-'));
@@ -632,21 +712,22 @@ export async function attachFirstInstallKit({ version, kit, images = [], repo = 
       const name = path.basename(u.file);
       if (resume && present.has(name)) {
         // what is there is kept only when it is these bytes (review: never by its size); a kit that is not this one is never replaced or completed
-        const there = await fs.readFile(downloadAsset(ghCommand, repo, tag, name, path.join(stage, 'there')));
+        const there = await fs.readFile(await downloadAsset(ghCommand, repo, tag, name, path.join(stage, 'there')));
         if (there.equals(u.bytes)) continue;
         // A resume can fill missing assets and keep identical ones. Published
         // bytes remain available for the current release and its predecessors.
         fail('PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT', name);
       }
-      const up = gh(ghCommand, ['release', 'upload', tag, u.file, '--repo', repo]);
+      const up = await uploadReleaseAsset({ ghCommand, repo, tag, file: u.file, bytes: u.bytes,
+        differentCode: 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT' });
       check(up.status === 0, 'PUBLISH_GH_RELEASE_UPLOAD_FAILED', { asset: path.basename(u.file), stderr: up.stderr });
     }
-    const v = viewRelease(ghCommand, repo, tag);
+    const v = await viewRelease(ghCommand, repo, tag);
     for (const u of uploads) check(v.assets.some(x => x.name === path.basename(u.file) && x.size === u.bytes.length), 'PUBLISH_RELEASE_ASSET_MISSING', path.basename(u.file));
     // A guarded release reads back the actual kit and images as well as their sums.
     for (const u of stagedSums ? uploads : uploads.slice(-1)) {
       const name = path.basename(u.file);
-      const back = await fileSha(downloadAsset(ghCommand, repo, tag, name, path.join(stage, 'back')));
+      const back = await fileSha(await downloadAsset(ghCommand, repo, tag, name, path.join(stage, 'back')));
       check(back === sha(u.bytes), name === sumsName ? 'PUBLISH_FIRST_INSTALL_SUMS_NOT_AS_UPLOADED' : 'PUBLISH_RELEASE_ASSET_CHANGED', name);
     }
     return { status: 'FLEET_FIRST_INSTALL_KIT_ATTACHED', tag, url: v.url, version, kitSha256: sha(kitBytes), images: have, sums: sumsName };
@@ -665,10 +746,10 @@ async function previousImage({ ghCommand, repo, index, version, id, stage }) {
   const before = idx.lines.slice(0, at < 0 ? idx.lines.length : at).filter(l => isRow(l) && VERSION.test(cells(l)[0] ?? ''));
   if (before.length === 0) return null;
   const prev = tagOf(cells(before[before.length - 1])[0]), asset = `role-image-${id}.tar.gz`, sumsName = `${prev}.first-install.SHA256SUMS`;
-  const names = new Set(viewRelease(ghCommand, repo, prev).assets.map(x => x.name));
+  const names = new Set((await viewRelease(ghCommand, repo, prev)).assets.map(x => x.name));
   if (!names.has(asset) || !names.has(sumsName)) return null;
-  const want = sumsOf((await fs.readFile(downloadAsset(ghCommand, repo, prev, sumsName, stage))).toString('utf8')).get(asset);
-  const file = downloadAsset(ghCommand, repo, prev, asset, stage);
+  const want = sumsOf((await fs.readFile(await downloadAsset(ghCommand, repo, prev, sumsName, stage))).toString('utf8')).get(asset);
+  const file = await downloadAsset(ghCommand, repo, prev, asset, stage);
   check(want !== undefined && sha(await fs.readFile(file)) === want, 'PREPARE_PREVIOUS_IMAGE_NOT_ITS_SUMS', { asset, from: prev });
   return file;
 }
@@ -693,7 +774,7 @@ async function previousSeal({ ghCommand, repo, index, version, stage, deps, time
   check(answer.kind === 'accepted' && answer.grantId === prior[5] && answer.acceptedAt === prior[4],
     'PREPARE_SEALED_TEMPLATE_REFUSED');
   const acceptance = acceptanceBytes(acceptanceOf(request, { decision: answer.grantId, receipt: answer.receiptId, acceptedAt: answer.acceptedAt }));
-  const published = await readFile(downloadAsset(ghCommand, repo, tag, `${tag}.acceptance.json`, stage));
+  const published = await readFile(await downloadAsset(ghCommand, repo, tag, `${tag}.acceptance.json`, stage));
   check(published.equals(acceptance) && (packageGenerationOf(request.version) < 25 || sha(acceptance) === answer.sealedAcceptanceSha256),
     'PREPARE_SEALED_TEMPLATE_REFUSED');
   return { tag, request, requestSha256, acceptanceSha256: sha(acceptance), commit: request.commit, version: request.version };
@@ -703,11 +784,11 @@ async function sealedTemplate(options) {
   const { ghCommand, repo, stage, deps } = options;
   const { tag, request, requestSha256 } = await previousSeal(options);
   const candidate = deliverySubject(request, requestSha256);
-  const kitBytes = await fs.readFile(downloadAsset(ghCommand, repo, tag, `${tag}.first-install-kit.json`, stage));
+  const kitBytes = await fs.readFile(await downloadAsset(ghCommand, repo, tag, `${tag}.first-install-kit.json`, stage));
   checkDeliveryKit(kitBytes, candidate, deps.readKit);
   let imageDigests = new Map();
   if (request.deliveryAssetsSha256) {
-    const manifest = await fs.readFile(downloadAsset(ghCommand, repo, tag, deliveryAssetManifestName(request.version), stage));
+    const manifest = await fs.readFile(await downloadAsset(ghCommand, repo, tag, deliveryAssetManifestName(request.version), stage));
     check(sha(manifest) === request.deliveryAssetsSha256, 'PREPARE_SEALED_TEMPLATE_REFUSED');
     imageDigests = sumsOf(manifest.toString('utf8'));
   }
@@ -720,13 +801,13 @@ async function sealedTemplate(options) {
 // `kit`, the kit as checkKitOnRelease holds it. `stage` keeps the downloaded tar for a second call. The Source it computed.
 async function checkRequestOnRelease({ ghCommand, repo, request, stage, kit = true, deps = {}, now = Date.now() }) {
   const tag = tagOf(request.version), tarName = `${tag}.tar`, relName = `${tag}.release.json`;
-  const names = new Set(viewRelease(ghCommand, repo, tag).assets.map(x => x.name));
+  const names = new Set((await viewRelease(ghCommand, repo, tag)).assets.map(x => x.name));
   check(names.has('SHA256SUMS') && names.has(tarName) && names.has(relName), 'ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES', { missing: ['SHA256SUMS', tarName, relName].filter(n => !names.has(n)) });
   const dl = path.join(stage, 'release');
   await fs.mkdir(dl, { recursive: true });
-  const sums = sumsOf((await fs.readFile(downloadAsset(ghCommand, repo, tag, 'SHA256SUMS', dl))).toString('utf8'));
+  const sums = sumsOf((await fs.readFile(await downloadAsset(ghCommand, repo, tag, 'SHA256SUMS', dl))).toString('utf8'));
   check(sums.get(tarName) === request.archive_sha256, 'ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES', { request: request.archive_sha256, release: sums.get(tarName) ?? null });
-  const relBytes = await fs.readFile(downloadAsset(ghCommand, repo, tag, relName, dl));
+  const relBytes = await fs.readFile(await downloadAsset(ghCommand, repo, tag, relName, dl));
   let rel = null;
   try { rel = JSON.parse(relBytes.toString('utf8')); } catch { rel = null; }
   const s = rel?.source;
@@ -739,7 +820,7 @@ async function checkRequestOnRelease({ ghCommand, repo, request, stage, kit = tr
   try { have = sha(await fs.readFile(tarFile)); } catch (e) { if (e?.code !== 'ENOENT') throw e; }
   if (have !== request.archive_sha256) {
     await fs.rm(tarFile, { force: true });
-    await fs.rename(downloadAsset(ghCommand, repo, tag, tarName, dl), tarFile);
+    await fs.rename(await downloadAsset(ghCommand, repo, tag, tarName, dl), tarFile);
     check(sha(await fs.readFile(tarFile)) === request.archive_sha256, 'ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES', { downloaded: 'another tar' });
   }
   const source = await sourceOf({ tarFile, request, deps, now });
@@ -778,7 +859,7 @@ async function checkStagedFiles(assets, expected) {
 
 async function checkPublishedFiles({ names, digests, ghCommand, repo, tag, stage }) {
   for (const name of names) {
-    const file = downloadAsset(ghCommand, repo, tag, name, stage);
+    const file = await downloadAsset(ghCommand, repo, tag, name, stage);
     check(await fileSha(file) === digests.get(name), 'PUBLISH_RELEASE_ASSET_CHANGED', name);
   }
 }
@@ -862,7 +943,7 @@ async function readTransportBase({ file, version, tags, ghCommand, repo, stage }
   const pin = await tags.read(tag);
   check(pin?.contract === CLAIM_CONTRACT && pin.release_tag === tag && pin.version === previous
     && HEX64.test(pin.archive_sha256 ?? '') && HEX40.test(pin.commit ?? ''), 'PUBLISH_TRANSPORT_BASE_TAG_REFUSED', tag);
-  const accepted = JSON.parse(await fs.readFile(downloadAsset(ghCommand, repo, tag, `${tag}.acceptance.json`, stage), 'utf8'));
+  const accepted = JSON.parse(await fs.readFile(await downloadAsset(ghCommand, repo, tag, `${tag}.acceptance.json`, stage), 'utf8'));
   check(accepted?.contract === ACCEPTANCE_CONTRACT && accepted.repository === repo && accepted.version === previous
     && accepted.commit === pin.commit && accepted.archive_sha256 === pin.archive_sha256, 'PUBLISH_TRANSPORT_BASE_ACCEPTANCE_REFUSED', tag);
   const stat = await fs.stat(file);
@@ -907,7 +988,7 @@ export async function prepare({ version, dir, out, images = [], transportBase = 
     const c = at >= 0 ? cells(idx.lines[at]) : null;
     check(c === null || (c[2] === s.archive_sha256 && c[3] === s.commit), 'ACCEPTANCE_NOT_THIS_RELEASE');
     // accepted is what the Release holds (blocking 5): an accepted version is never given a kit or a request afterwards; no Release yet is fine
-    const viewed = viewReleaseOrNull(ghCommand, repo, tag);
+    const viewed = await viewReleaseOrNull(ghCommand, repo, tag);
     check(viewed !== null || c === null, 'PREPARE_INDEX_ROW_WITHOUT_RELEASE', { version, note: 'the index names this version, GitHub has no Release of it: not this command\'s to guess' });
     const onRelease = new Set((viewed?.assets ?? []).map(x => x.name));
     check(!onRelease.has(`${tag}.acceptance.json`), 'PREPARE_VERSION_ALREADY_ACCEPTED',
@@ -946,7 +1027,7 @@ export async function prepare({ version, dir, out, images = [], transportBase = 
     const template = !savedRequest && !(deps.kitOf && deps.fleetMaterial)
       ? await sealedTemplate({ ghCommand, repo, index, version, stage, deps }) : null;
     const kitBytes = held ? await fs.readFile(path.join(durable, kitName))
-      : kitFromRelease ? await fs.readFile(downloadAsset(ghCommand, repo, tag, kitName, stage))
+      : kitFromRelease ? await fs.readFile(await downloadAsset(ghCommand, repo, tag, kitName, stage))
       : template?.kitBytes ?? Buffer.from(JSON.stringify(await deps.kitOf({ root })) + '\n');
     check(!template || template.kitBytes.equals(kitBytes), 'PREPARE_SEALED_TEMPLATE_REFUSED');
     if (!guarded) (deps.readKit ?? readKit)(kitBytes);
@@ -989,7 +1070,7 @@ export async function prepare({ version, dir, out, images = [], transportBase = 
       const pin = template?.imageDigests.get(name);
       let f = held ? path.join(durable, name) : given.get(id);
       if (!f && template && HEX64.test(pin ?? '')) {
-        f = downloadAsset(ghCommand, repo, template.tag, name, prevStage);
+        f = await downloadAsset(ghCommand, repo, template.tag, name, prevStage);
         check(await fileSha(f) === pin, 'PREPARE_PREVIOUS_IMAGE_NOT_ITS_SUMS', { asset: name, from: template.tag });
       }
       if (!f && !template) f = await previousImage({ ghCommand, repo, index, version, id, stage: prevStage });
@@ -1137,8 +1218,8 @@ function checkCommitOnMain(ghCommand, repo, commit, { exact = false } = {}) {
 // The acceptance request on the Release (prepare's step 6, seal's last check before the door): its bytes there, or null when it has none.
 async function requestOnRelease({ ghCommand, repo, tag, stage }) {
   const name = `${tag}.acceptance-request.json`;
-  if (!viewRelease(ghCommand, repo, tag).assets.some(x => x.name === name)) return null;
-  return fs.readFile(downloadAsset(ghCommand, repo, tag, name, stage));
+  if (!(await viewRelease(ghCommand, repo, tag)).assets.some(x => x.name === name)) return null;
+  return fs.readFile(await downloadAsset(ghCommand, repo, tag, name, stage));
 }
 // prepare's step 6: the request goes up as a Release asset (never --clobber). The same bytes there are kept; other bytes are refused and never
 // replaced (the door may already have opened a request on them); read back whole.
@@ -1153,7 +1234,7 @@ async function putRequestOnRelease({ ghCommand, repo, tag, bytes, stage }) {
   const dir = await fs.mkdtemp(path.join(stage, 'request-'));
   const file = path.join(dir, name);
   await fs.writeFile(file, bytes, { flag: 'wx' });
-  const up = gh(ghCommand, ['release', 'upload', tag, file, '--repo', repo]);
+  const up = await uploadReleaseAsset({ ghCommand, repo, tag, file, bytes, differentCode: 'PREPARE_REQUEST_ON_RELEASE_DIFFERENT' });
   check(up.status === 0, 'PUBLISH_GH_RELEASE_UPLOAD_FAILED', { asset: name, stderr: up.stderr });
   const back = await requestOnRelease({ ghCommand, repo, tag, stage });
   check(back !== null && back.equals(bytes), 'PUBLISH_RELEASE_ASSET_MISSING', name);
@@ -1210,7 +1291,11 @@ export async function seal(options) {
     check(left > 0, 'FLEET_ACCEPTANCE_DEADLINE', 'the acceptance command ran out of time');
     return left;
   };
-  const boundedGh = limit => args => gh(ghCommand, args, remaining(limit));
+  const boundedGh = limit => Object.assign((args, timeout, release) => {
+    const result = gh(ghCommand, args, Math.min(timeout ?? Infinity, remaining(limit)), release);
+    if (release) remaining(limit);
+    return result;
+  }, { releaseLimits: { remaining: () => remaining(limit), sleep } });
   const boundedRead = limit => async file => {
     const signal = AbortSignal.timeout(remaining(limit));
     try {
@@ -1284,11 +1369,11 @@ export async function seal(options) {
       check(localDelivery && localRequest?.equals(requestBytes) && sha(localDelivery) === r.deliveryAssetsSha256,
         'FLEET_DELIVERY_ASSET_MANIFEST_REFUSED');
       const assetFile = name => downloadAsset(boundedGh(limit), repo, tag, name, path.join(stage, 'verify-assets'));
-      const manifest = await read(assetFile(deliveryAssetManifestName(r.version)));
-      const kit = await read(assetFile(tag + '.first-install-kit.json'));
+      const manifest = await read(await assetFile(deliveryAssetManifestName(r.version)));
+      const kit = await read(await assetFile(tag + '.first-install-kit.json'));
       await checkDeliveryAssets({ request: r, manifest, kit, assetSha256: async name => {
         if (archiveFile && name === tag + '.tar') return fileSha(archiveFile);
-        const file = assetFile(name);
+        const file = await assetFile(name);
         try { return await fileSha(file); }
         finally { await fs.rm(file, { force: true }); }
       } });
