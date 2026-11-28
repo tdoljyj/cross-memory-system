@@ -38,7 +38,8 @@ async function fixture(t, options = {}) {
   const head = 'd'.repeat(40), tree = 'e'.repeat(40);
   const pr = { number: 1387, state: 'closed', merged_at: '2026-11-27T01:00:00Z', merge_commit_sha: commit,
     head: { sha: head, repo: { full_name: DEFAULT_REPO } }, base: { ref: 'main', repo: { full_name: DEFAULT_REPO } } };
-  const checks = required.map((name, id) => ({ name, id: id + 1, app: { id: appOf(name) }, head_sha: head, status: 'completed', conclusion: 'success' }));
+  const checks = required.map((name, id) => ({ name, id: id + 1, app: { id: appOf(name) }, head_sha: head,
+    started_at: '2026-11-27T00:30:00Z', status: 'completed', conclusion: 'success' }));
   const publisherStateDirectory = join(w.d, 'publisher-state');
   const snapshot = () => ({ base: true, applied: plan.flatMap((row, i) => ledger.has(row.file) ? [{ name: row.name,
     version: `20261127160${String(i + 1).padStart(3, "0")}`, digest: settings.badDigest && i === 0 ? 'f'.repeat(64) : row.digest }] : []),
@@ -65,7 +66,10 @@ async function fixture(t, options = {}) {
     }
     if (args[1]?.includes('/check-runs?')) {
       if (!args[1].includes(`/commits/${head}/`)) return reply({ total_count: 0, check_runs: [] });
-      const rows = settings.red ? [...checks, { ...checks[0], id: 80, ...(settings.red === 'queued' ? { status: 'queued', conclusion: null } : { conclusion: settings.red }) }]
+      const rows = settings.skippedAfterMerge ? [...checks, ...checks.filter(row => row.app.id === 15368)
+        .map(row => ({ ...row, id: row.id + 80, started_at: '2026-11-27T01:00:01Z', conclusion: 'skipped' }))]
+        : settings.red ? [...checks, { ...checks[0], id: 80, started_at: '2026-11-27T00:59:59Z',
+          ...(settings.red === 'queued' ? { status: 'queued', conclusion: null } : { conclusion: settings.red }) }]
         : settings.badCheckApp ? [{ ...checks[0], app: { id: 123 } }, ...checks.slice(1)]
         : settings.otherCheckSha ? [{ ...checks[0], head_sha: '0'.repeat(40) }, ...checks.slice(1)]
         : settings.noMergeChecks ? [] : checks;
@@ -154,6 +158,18 @@ test('落地合并提交无需自身有检查，须读取其已合并 PR 的 hea
   assert.equal((await w.prepare()).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
 });
 
+test('略过合入之后在同一 head 启动的七项 skipped 检查', async t => {
+  const w = await fixture(t, { applied: files, skippedAfterMerge: true });
+  assert.equal((await w.prepare()).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+});
+
+test('合入前启动且编号更新的 skipped 检查仍拒绝发布', async t => {
+  const w = await fixture(t, { applied: files, red: 'skipped' });
+  await assert.rejects(w.prepare(), { code: 'FLEET_RELEASE_CHECKS_NOT_GREEN' });
+  assert.deepEqual(w.effects, []);
+  await w.noRelease();
+});
+
 test('没有规则集专用读取授权时，固定检查仍可完成发布准入', async t => {
   const w = await fixture(t, { applied: files, noRules: true });
   assert.equal((await w.prepare()).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
@@ -201,7 +217,6 @@ test('红灯、跳过、错误 PR、错误身份、换头、备份失败与账�
   for (const [options, code, effectNames] of [
     [{ red: 'failure' }, 'FLEET_RELEASE_CHECKS_NOT_GREEN', []],
     [{ red: 'queued' }, 'FLEET_RELEASE_CHECKS_NOT_GREEN', []],
-    [{ red: 'skipped' }, 'FLEET_RELEASE_CHECKS_NOT_GREEN', []],
     [{ wrongParent: true }, 'FLEET_RELEASE_MERGED_PR_REFUSED', []],
     [{ notMerged: true }, 'FLEET_RELEASE_MERGED_PR_REFUSED', []],
     [{ otherTree: true }, 'FLEET_RELEASE_MERGED_TREE_CHANGED', []],
