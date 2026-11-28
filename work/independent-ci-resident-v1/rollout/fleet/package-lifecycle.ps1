@@ -7,7 +7,7 @@ $FleetResources = [ordered]@{
   services = @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader')
   runnerPrefix = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-'
   taskPath = '\Clued\'
-  tasks = @('CluedCIResidentCompanion', 'CluedCIResidentCompanionStart', 'CluedCIResidentCompanionFallback', 'CluedCIResidentCompanionWslImport', 'CluedCIResidentNotifier')
+  tasks = @('CluedCIResidentCompanion', 'CluedCIResidentCompanionStart', 'CluedCIResidentCompanionFallback', 'CluedCIResidentCompanionWslImport', 'CluedCIResidentNotifier', 'CluedCIFleetReinstall')
   firewallRules = @('CluedCIResident-BlockOutbound')
   account = 'clued-companion'
   controller = 'clued-control'
@@ -171,9 +171,16 @@ function Get-FleetLifecycleMode([string]$action, $facts, $progress) {
 }
 
 function New-FleetProgress($context, [string]$mode) {
-  $value = [ordered]@{ contract = 'clued.fleet.lifecycle-progress/1'; operationId = [guid]::NewGuid().ToString('N'); mode = $mode; step = 'intent' }
+  $operation = if ($context['reinstallOperation']) { ([Guid]$context['reinstallOperation']).ToString('N') } else { [guid]::NewGuid().ToString('N') }
+  $value = [ordered]@{ contract = 'clued.fleet.lifecycle-progress/1'; operationId = $operation; mode = $mode; step = 'intent' }
   foreach ($key in @('machine','operatorSid','archiveSha256','acceptanceSha256','action')) { $value[$key] = $context[$key] }
   $value
+}
+
+function Get-FleetProgressMaintenanceId($progress) {
+  if (-not $progress) { return }
+  $id = if ($progress['maintenanceOperationId']) { $progress['maintenanceOperationId'] } else { $progress.operationId }
+  ([Guid]$id).ToString('D')
 }
 
 # Directory visibility is a routing hint. Only the elevated, locked reader
@@ -415,7 +422,15 @@ function Invoke-FleetMaintenance([ValidateSet('preview','before-remove','before-
     $read = @{ action='fleet_maintenance'; command='status'; scope=$node['scope']; node_id=$node['nodeId']; binding_generation=$node['generation'] }
     $status = & $Send $read
     Assert-FleetMaintenanceStatus $status $read $Context.grantId
-    if ($Phase -ceq 'preview') { return New-FleetMaintenancePreview $Context $status['has_other_healthy'] }
+    if ($Phase -ceq 'preview') {
+      $resume = $Context['reinstallResume'] -eq $true -and $status['operation_id'] -ceq $Context['reinstallOperation'] -and
+        $status['state'] -cin @('delisted','verifying')
+      if ($Context['reinstallOperation'] -and -not $resume -and
+          ($status['reinstall_eligible'] -isnot [bool] -or -not $status['reinstall_eligible'])) {
+        throw 'FLEET_MAINTENANCE_BLOCKED'
+      }
+      return New-FleetMaintenancePreview $Context $status['has_other_healthy']
+    }
     if ($Context['ownerUac'] -ne $true) { throw 'FLEET_MAINTENANCE_UAC_REQUIRED' }
     $operation = ([Guid]$(if ($Context['maintenanceOperationId']) { $Context['maintenanceOperationId'] } else { $Context.operationId })).ToString('D')
     $write = $read.Clone()
@@ -460,7 +475,8 @@ function Invoke-FleetMaintenance([ValidateSet('preview','before-remove','before-
         }
       } else {
         if ($status['state'] -ceq 'returned' -and -not $status['install_ready']) {
-          return @{ok=$true; sealed=$true; restored=$true; archiveSha256=$Context.archiveSha256; acceptanceSha256=$Context.acceptanceSha256; operationId=$Context.operationId}
+          return @{ok=$true; sealed=$true; restored=$true; archiveSha256=$Context.archiveSha256; acceptanceSha256=$Context.acceptanceSha256
+            operationId=$Context.operationId; returnReceiptId=$status['receipt_id']}
         }
         if ($status['state'] -cnotin @('delisted','verifying')) { throw 'FLEET_MAINTENANCE_NOT_RESTORED' }
         $started = [DateTimeOffset]::MinValue
@@ -1132,6 +1148,14 @@ function Invoke-FleetLifecycle($context, [string]$mode, [string]$file, [scriptbl
       $state = & $Observe $step $context
     }
     if ($state -cne 'complete') { throw ('FLEET_STEP_NOT_CONFIRMED:' + $step) }
+  }
+  if ($mode -ceq 'Reinstall' -and $context['reinstallOperation']) {
+    $receipt = Get-Key $context.installed 'receiptSha256'
+    if ($receipt -cnotmatch '^[0-9a-f]{64}$' -or $context.maintenance.returnReceiptId -cnotmatch '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$') {
+      throw 'FLEET_REINSTALL_RESULT_REFUSED'
+    }
+    $progress.completion = @{ grantId = $context.grantId; nodeId = $context.nodeConnection.nodeId
+      sourceSha256 = $context.sourceSha256; receiptSha256 = $receipt; returnReceiptId = $context.maintenance.returnReceiptId }
   }
   $progress.step = 'complete'
   Write-FleetProgress $file $progress

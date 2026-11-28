@@ -116,11 +116,17 @@ public static class BrokerPureTests
                 int reads=0;
                 Func<Renewal.Connection> probe=()=> {
                     var v=Renewal.Object(File.ReadAllText(reads++>0 && File.Exists(latest) ? latest : initial));
-                    return new Renewal.Connection { OnDuty=(bool)v["onDuty"], FleetTarget=v["fleetTarget"] as Dictionary<string,object> };
+                    return new Renewal.Connection { OnDuty=(bool)v["onDuty"], FleetTarget=v["fleetTarget"] as Dictionary<string,object>,
+                        Node="11111111-0000-4000-8000-000000000001",Binding="11111111-0000-4000-8000-000000000002",
+                        Generation=1,Expires=DateTime.Parse(args[5]).ToUniversalTime().AddDays(1) };
                 };
                 var now=DateTime.Parse(args[5]).ToUniversalTime().AddMilliseconds(1);
-                answer=FleetPull.Submit(root,args[2],args[3],probe,payload,()=>now,(run,script)=>
-                    FleetPull.Assemble(root,run,args.Length==7?args[6]:script,args[4],null,scratch), null, (operation,targetGrant) => {
+                Func<string,string,Dictionary<string,object>> assemble=(run,script)=>
+                    FleetPull.Assemble(root,run,args.Length==7?args[6]:script,args[4],null,scratch);
+                answer=FleetPull.IsReinstall(payload)
+                    ? FleetPull.PublishReinstall(root,args[2],payload,probe,()=>now,assemble,null,
+                        "S-1-5-21-1-2-3-2001",Path.Combine(root,"fleet-delivery"))
+                    : FleetPull.Submit(root,args[2],args[3],probe,payload,()=>now,assemble, null, (operation,targetGrant) => {
                         var receipt=Renewal.Object(File.ReadAllText(Path.Combine(root,"broker","delist.fixture.json")));
                         Yes(Renewal.Str(receipt,"grant_id")==targetGrant,"摘牌回执绑定目标包");
                         return new Renewal.Connection { OnDuty=false, FleetTarget=receipt };
@@ -128,6 +134,42 @@ public static class BrokerPureTests
             } catch (BrokerRefusal e) { answer=FleetPull.Answer(root,args[2],grant,e.Code,null); }
             catch (Exception e) { Console.Error.WriteLine(e); answer=FleetPull.Answer(root,args[2],grant,"FLEET_BROKER_UNCONFIRMED",null); }
             Console.WriteLine(Renewal.Json(answer));
+            return 0;
+        }
+        if (args.Length==4 && args[0]=="--fleet-reinstall-fixture") {
+            var scratch=Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\')+"\\";
+            var root=Path.GetFullPath(args[1]);
+            if (!root.StartsWith(scratch,StringComparison.OrdinalIgnoreCase)) return 2;
+            var now=DateTime.Parse(args[2]).ToUniversalTime();
+            var delivery=Path.Combine(root,"fleet-delivery");
+            var pending=Renewal.Object(File.ReadAllText(Path.Combine(delivery,"pending.json")));
+            var operation=Path.Combine(delivery,Renewal.Str(pending,"requestSha256"),Renewal.Str(pending,"operationId"));
+            try {
+                switch (args[3]) {
+                    case "launch":
+                        var launch=FleetPull.ReadReinstallLaunch(delivery,now);
+                        if (launch==null) { Console.WriteLine("NO_REQUEST"); return 0; }
+                        var reads=0;
+                        FleetPull.AuthorizeReinstallLaunch(root,launch,()=> {
+                            var v=Renewal.Object(File.ReadAllText(Path.Combine(root,"broker",
+                                reads++==0?"renew-ci.json":"renew-ci-recheck.fixture.json")));
+                            return new Renewal.Connection { Node=Renewal.Str(v,"nodeId"),Binding=Renewal.Str(v,"bindingId"),
+                                Generation=Renewal.Number(v,"bindingGeneration"), Expires=now.AddMinutes(5),
+                                OnDuty=(bool)v["onDuty"],FleetTarget=v["fleetTarget"] as Dictionary<string,object> };
+                        },()=>true,()=>now,null);
+                        break;
+                    case "recover":
+                        FleetPull.RestoreReinstallResult(Path.Combine(operation,"result.json"),pending,
+                            Renewal.Object(File.ReadAllText(Path.Combine(root,"journal.fixture.json"))),
+                            Renewal.Object(File.ReadAllText(Path.Combine(root,"upgrade","current.json"))),now);
+                        break;
+                    case "sweep":
+                        FleetPull.SweepDeliveredAssets(now,delivery,Path.Combine(root,"journal.fixture.json"),true);
+                        break;
+                    default: return 2;
+                }
+                Console.WriteLine("OK");
+            } catch (BrokerRefusal e) { Console.WriteLine(e.Code); }
             return 0;
         }
         string dir = Path.Combine(Path.GetTempPath(), "clued-broker-pure-" + Guid.NewGuid().ToString("N"));

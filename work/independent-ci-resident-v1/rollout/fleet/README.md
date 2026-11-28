@@ -259,13 +259,17 @@ node R/rollout/fleet/publish.mjs seal --request <目录>\fleet-node-<version>.ac
 
 ## 5. 每台节点：唯一入口 bootstrap.ps1（重装与首装）
 
+已注册交互入口的节点若确认无法原地升级，会从同一封存 Release 补齐重装资产。Broker 按接受请求钉住的候选校验单逐个校验，再发布到受保护的 `C:\ProgramData\CluedFleetDelivery`。节点在待命可维护或服务端交班释放后，使用安装确认的 Owner SID 和低权限交互任务启动下方同一入口。锁屏、断开连接或无人登录时等待。Owner 在活动桌面确认一次 bootstrap 的 UAC。若此次维护会中断 CI，提示在同一次 UAC 前显示。
+
+进度见 `status.json` 的 `versions.fleetPull.reinstall`。例如 `DOWNLOADING`、`WAITING_FOR_HANDOVER`、`WAITING_FOR_OWNER_SESSION`、`PENDING_UAC`、`INSTALLING`、`VERIFYING` 和 `FAILED`。只有同一操作的安装回执、Linux 实况与服务端回归全都确认，才显示 `CURRENT`。摘要或封存不符时停止。取消 UAC 或中断的尝试需要 Owner 主动重新运行下方命令。已装旧节点若报 `FLEET_REINSTALL_ENTRY_NOT_INSTALLED`，首次通过下方同一命令安装交互入口。
+
 在节点上、Owner 会话、**普通（非提权）窗口**，用系统自带的 Windows PowerShell 5.1。重装与首装是同一条命令，**没有任何节点参数**：
 
 ```
 powershell -NoProfile -ExecutionPolicy Bypass -File <目录>\fleet-node-<v>.bootstrap.ps1 -From <目录>
 ```
 
-`<目录>` 放该版的 Release 资产（U 盘、共享盘、同步文件夹都可以，只认哈希；路径只许字母、数字、`.`、`_`、`-` 与 `\`）：`fleet-node-<v>.tar`、`fleet-node-<v>.release.json`、`SHA256SUMS`、`fleet-node-<v>.bootstrap.ps1`、`fleet-node-<v>.prereq-manifest.json`、`fleet-node-<v>.acceptance.json`；首装另要 `fleet-node-<v>.first-install-kit.json`、它列出的每个 `role-image-<64hex>.tar.gz` 与 `fleet-node-<v>.first-install.SHA256SUMS`。取资产用第 4.3 节“交付目录”那一条 `gh release download`（`fetch.mjs` 只取 tar、接受文件与 `SHA256SUMS`，够原地升级，组不齐首装目录）。
+`<目录>` 放该版的 Release 资产（U 盘、共享盘、同步文件夹都可以，只认哈希；路径只许字母、数字、`.`、`_`、`-` 与 `\`）：`fleet-node-<v>.tar`、`fleet-node-<v>.release.json`、`SHA256SUMS`、`fleet-node-<v>.bootstrap.ps1`、`fleet-node-<v>.prereq-manifest.json`、`fleet-node-<v>.acceptance.json`；首装和清洁重装还需要 `fleet-node-<v>.first-install-kit.json`、它列出的每个 `role-image-<64hex>.tar.gz` 与 `fleet-node-<v>.first-install.SHA256SUMS`。手工取资产用第 4.3 节“交付目录”中的 `gh release download`。
 
 bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象）：
 
@@ -314,7 +318,7 @@ bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象�
 4. 服务端根据新启动后的当前包回执、自检和备班状态自动恢复节点。节点故障导致自动推进暂停时，按[运维手册 §5.1](../../docs/runbook.md#51-当班包不合格或无法核实)处理。
 5. 重试需要再次清理时，读回的 `drain_confirmed_at` 必须覆盖本次摘牌请求。换包后以新 Grant、预检回执和维护 UUID 重新摘牌，沿用同一份受保护的凭据暂存。
 6. 升级器在长操作期间独立更新锁心跳。服务仍在运行而心跳无法核实时，安装入口暂停。服务已停止才可将该升级视为已弃。
-7. 两台同时重装时，先摘牌的备班仍有健康同伴。后摘牌的当班需要在本次 UAC 会话同意单机停机。现有落地先读回收口，服务端记录暂停、两小时截止和恢复动作。两台都用同一封存包以备班健康回归后，服务端走正常授职或租约机制恢复一台当班。到期仅提醒 Owner，继续等待验证。
+7. 两台同时重装时，先摘牌的备班仍有健康同伴。后摘牌的当班需要在本次 UAC 会话同意停机。服务端记录暂停、两小时截止和恢复动作。窗口内等待两台以同一封存包健康回归。到期后，服务端可从已通过回归验证的节点中恢复一台当班。没有合格节点时列车继续暂停。节点根据服务端读回展示进度。
 
 ## 7. 凭据在哪里
 

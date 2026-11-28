@@ -399,7 +399,7 @@ Case 'lifecycle:protected journal routing' {
     $out = $null; $verdict = $null; $copy = 'fixture.tar'; $ArchiveSha256 = $context.archiveSha256; $stageDir = $directory; $p1Args = @()
     $ProtectedToolCache = Join-Path $directory 'tools'
     $fixture.upgrades = $fixture.confirmations = 0
-    $progress = $null
+    $progress = $null; $delivery = $null; $deliveryResult = $null; $resultDelivery = $null
     try { . $route } catch { $fixture.error = $_.Exception.Message }
     finally { $fixture.verdict = $verdict; $fixture.progress = $progress }
   }
@@ -482,14 +482,21 @@ Case 'lifecycle:one RunAs after protected reselect or preview' {
   $body = $functions['Invoke-Bootstrap']
   $start = $body.IndexOf('  $hostArgs = ')
   $route = [scriptblock]::Create($body.Substring($start, $body.LastIndexOf('}') - $start))
-  function Invoke-ReselectFixture([string]$status, [bool]$declined = $false, [scriptblock]$ProtectedStage) {
-    $fixture = @{ elevated = 0 }
+  function Invoke-ReselectFixture([string]$status, [bool]$declined = $false, [scriptblock]$ProtectedStage, [switch]$SelfPull) {
+    $fixture = @{ elevated = 0; upgrades = 0 }
     $Action = 'Install'; $Reset = $false; $hostInputs = @('-Tar', 'fixture.tar')
     $mode = 'Probe'; $acceptLocal = 'fixture.json'; $archiveSha = 'a' * 64; $operator = 'fixture-operator'
     $HostLimitSeconds = $LauncherLimitSeconds = 1
-    function New-FleetContext { @{} }
+    $ReinstallOperation = '70000000-0000-4000-8000-000000000005'
+    $target = @{ archive_sha256 = $archiveSha; acceptance_sha256 = 'b' * 64; version = 'g000028' }
+    $grant = '70000000-0000-4000-8000-000000000006'
+    $delivery = if ($SelfPull) { @{ targetFingerprint = $target; hasPeer = $true; grantId = $grant } } else { $null }
+    if ($delivery) { $mode = 'Reinstall' }
+    function New-FleetContext { @{ archiveSha256 = $archiveSha; acceptanceSha256 = 'b' * 64; grantId = $grant; action='Install'; version='g000028'; machine='FIXTURE' } }
+    function Get-FleetReinstallDelivery { $delivery }
+    function Test-FleetInteractiveDesktop { $true }
     function Invoke-FleetMaintenance { @{ ok = $false; code = 'FIXTURE_PREVIEW_UNAVAILABLE' } }
-    function Assert-FleetPreview { }
+    function Invoke-NonElevated { $fixture.upgrades++; throw 'UNEXPECTED_SECOND_ROUTE' }
     function Invoke-Elevated {
       $fixture.elevated++
       if ($ProtectedStage) {
@@ -505,7 +512,7 @@ Case 'lifecycle:one RunAs after protected reselect or preview' {
     $saved = Get-Variable -Name Work -Scope Script -ValueOnly -ErrorAction SilentlyContinue
     try { $script:Work = $env:TEMP; & $route }
     catch { $fixture['error'] = $_.Exception.Message }
-    finally { $script:Work = $saved }
+    finally { $script:Work = $saved; $script:ReinstallClaimed = $false }
     $fixture
   }
   $routed = Invoke-ReselectFixture 'FLEET_LIFECYCLE_RESELECT'
@@ -516,6 +523,12 @@ Case 'lifecycle:one RunAs after protected reselect or preview' {
   Yes ($refused.elevated -eq 1 -and $refused.error -ceq 'UAC_DECLINED') 'lifecycle:uac-declined-stops-once'
   $completed = Invoke-ReselectFixture 'FLEET_NODE_UPGRADE_REQUESTED'
   Yes ($completed.elevated -eq 1 -and $completed.result -ceq 'FLEET_NODE_UPGRADE_REQUESTED') 'lifecycle:protected-upgrade-verdict-reaches-caller'
+
+  foreach ($status in @('FLEET_LIFECYCLE_RESELECT','FLEET_LIFECYCLE_PREVIEW_REQUIRED')) {
+    $single = Invoke-ReselectFixture $status -SelfPull
+    Yes ($single.elevated -eq 1 -and $single.upgrades -eq 0 -and $single['error'] -ceq 'FLEET_REINSTALL_STAGE_UNCONFIRMED') (
+      'lifecycle:self-pull-refuses-second-uac:' + $status + ' (got: ' + (ConvertTo-Json -InputObject $single -Compress) + ')')
+  }
 
   $node = @{supabaseUrl='https://fixtureproject.supabase.co';publishableKey='sb_publishable_fixture';authHash='a'*64
     scope='global';nodeId='03f65562-5419-4ca8-bff0-8783ebb1b0d2';bindingId='83f65562-5419-4ca8-bff0-8783ebb1b0d2';generation=3}
@@ -568,6 +581,133 @@ Case 'lifecycle:one RunAs after protected reselect or preview' {
   $wire.scenario = 'persistent'; $wire.attempts = 0
   Throws { Invoke-FleetNodeRpc $node 'clued_work_verify_v1' $write } 'FLEET_MAINTENANCE_REQUEST_FAILED_HTTP_500_POSTGREST_57014' 'lifecycle:delist-rpc-error-reports-codes'
   Yes ($wire.attempts -eq 1) 'lifecycle:delist-sends-once'
+}
+
+# Use the loaded function body with the clock supplied by the calling fixture.
+function New-FleetClockFixture([string]$name) {
+  $body = (Get-Command -Name $name -CommandType Function).ScriptBlock
+  $reads = @($body.Ast.FindAll({ param($a)
+    $a -is [Management.Automation.Language.MemberExpressionAst] -and $a.Static -and
+      $a.Expression -is [Management.Automation.Language.TypeExpressionAst] -and
+      $a.Expression.TypeName.FullName -ceq 'DateTimeOffset' -and
+      $a.Member -is [Management.Automation.Language.StringConstantExpressionAst] -and $a.Member.Value -ceq 'UtcNow'
+  }, $true))
+  if ($reads.Count -ne 1) { throw "Expected one UTC clock read in $name" }
+  [scriptblock]::Create($body.ToString().Replace($reads[0].Extent.Text, '$fixtureNow'))
+}
+Case 'self-pull: the Owner entry binds the pending decision and claims the operation once' {
+  . (Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $here))) 'windows\fleet-reinstall-interactive.ps1')
+  $fixtureNow = [DateTimeOffset]::Parse('2026-11-27T12:00:00Z')
+  Set-Item -LiteralPath Function:Get-FleetReinstallDelivery -Value (New-FleetClockFixture 'Get-FleetReinstallDelivery')
+  Set-Item -LiteralPath Function:Write-FleetReinstallClaim -Value (New-FleetClockFixture 'Write-FleetReinstallClaim')
+  $FleetDeliveryRoot = Join-Path $env:TEMP ('clued-self-pull-' + [Guid]::NewGuid().ToString('N'))
+  $FleetResidentRoot = Join-Path $FleetDeliveryRoot 'resident'
+  $operator = 'S-1-5-21-1-2-3-1001'
+  $operation = 'a1000000-0000-4000-8000-000000000001'
+  function Put-DeliveryFixture([string]$file, $record) {
+    [IO.File]::WriteAllText($file, ($record | ConvertTo-Json -Depth 8 -Compress))
+  }
+  try {
+    [void][IO.Directory]::CreateDirectory((Join-Path $FleetResidentRoot 'upgrade'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $FleetDeliveryRoot 'claims'))
+    $fp = @{ repository='fixture/repo'; version='g000028'; grant_id='g'; receipt_id='r'; accepted_at=$fixtureNow.ToString('o')
+      request_sha256='a'*64; archive_sha256='b'*64; acceptance_sha256='c'*64 }
+    $pending = @{ contract='clued.independent-ci.fleet-reinstall/1'; nodeId='n'; bindingId='b'; bindingGeneration=3
+      installGeneration=5; installReceiptSha256='d'*64; operationId=$operation; operatorSid=$operator; targetFingerprint=$fp
+      requestSha256=$fp.request_sha256; expiresAt=$fixtureNow.AddMinutes(5).ToString('o'); onDuty=$false; hasPeer=$true }
+    $probe = @{ nodeId='n'; bindingId='b'; bindingGeneration=3; code=$null; at=$fixtureNow.ToString('o'); onDuty=$false; fleetTarget=$fp.Clone() }
+    $probe.fleetTarget.holder_package = @{ maintenance='available' }; $probe.fleetTarget.has_other_healthy = $true
+    $probe.fleetTarget.reinstall_eligible = $true
+    Put-DeliveryFixture (Join-Path $FleetDeliveryRoot 'pending.json') $pending
+    Put-DeliveryFixture (Join-Path $FleetDeliveryRoot 'probe.json') $probe
+    Put-DeliveryFixture (Join-Path $FleetResidentRoot 'upgrade\current.json') @{ generation=5; installReceiptSha256='d'*64 }
+    Put-DeliveryFixture (Join-Path $FleetResidentRoot 'upgrade\status.json') @{ op=$null }
+    Yes ((Get-FleetReinstallDelivery $operator $operation).operationId -ceq $operation) 'self-pull:one-bound-owner'
+    Throws { Get-FleetReinstallDelivery 'S-1-5-21-1-2-3-1002' $operation } 'FLEET_REINSTALL_SUBJECT_CHANGED' 'self-pull:companion-cannot-consume-owner-handoff'
+    Write-FleetReinstallClaim $operation 'PENDING_UAC' '' -Create
+    $again = try { Write-FleetReinstallClaim $operation 'PENDING_UAC' '' -Create; $true } catch { $false }
+    Yes (-not $again) 'self-pull:duplicate-interactive-claim-refused'
+    $probe.fleetTarget.archive_sha256 = 'e'*64
+    Put-DeliveryFixture (Join-Path $FleetDeliveryRoot 'probe.json') $probe
+    Throws { Get-FleetReinstallDelivery $operator $operation } 'FLEET_TARGET_CHANGED' 'self-pull:changed-seal-before-uac-refused'
+    $probe.fleetTarget.archive_sha256 = $fp.archive_sha256
+    $probe.fleetTarget.holder_package.maintenance = 'delisted'
+    $probe.fleetTarget.reinstall_eligible = $true
+    Put-DeliveryFixture (Join-Path $FleetDeliveryRoot 'probe.json') $probe
+    Case 'self-pull: released handover reaches the interactive launcher' {
+      Yes ((Get-FleetReinstallDelivery $operator $operation).operationId -ceq $operation) 'self-pull:released-handover-allowed'
+    }
+  } finally {
+    [IO.Directory]::Delete($FleetDeliveryRoot, $true)
+  }
+}
+Case 'self-pull: live one-shot launch gate' {
+  $launch = $functions['Invoke-Elevated']
+  $gate = $launch.IndexOf('Assert-FleetReinstallLaunchPermit')
+  $start = $launch.IndexOf('-Verb RunAs')
+  Yes ($gate -ge 0 -and $gate -lt $start) 'self-pull:runas-requires-live-broker-permit'
+}
+Case 'self-pull: pin the elevated toolchain before starting it' {
+  $stage = $functions['Invoke-Stage']
+  $pins = $stage.IndexOf('Get-FleetSealedInstallPins')
+  $tools = $stage.IndexOf('Get-ProtectedInstallInputs')
+  $first = $stage.IndexOf('Invoke-StageChild $protected.node')
+  Yes ($pins -ge 0 -and $pins -lt $tools -and $tools -lt $first) 'self-pull:sealed-pins-before-tool-start'
+  if ($pins -lt 0) { return }
+  . ([scriptblock]::Create($functions['Get-ProtectedInstallInputs']))
+  $tmp = Join-Path $env:TEMP ('sealed-inputs-' + [guid]::NewGuid().ToString('N'))
+  [void][IO.Directory]::CreateDirectory($tmp)
+  try {
+    $AcceptanceFile = Join-Path $tmp 'accepted.json'
+    $FirstInstallSums = Join-Path $tmp 'first.SHA256SUMS'
+    $PrereqManifest = Join-Path $tmp 'prereqs.json'
+    $Kit = Join-Path $tmp 'kit.json'
+    [IO.File]::WriteAllText($AcceptanceFile, '{}')
+    [IO.File]::WriteAllText($Kit, '{}')
+    $KitSha256 = Sha256File $Kit
+    [IO.File]::WriteAllText($FirstInstallSums, "$KitSha256  kit.json")
+    [IO.File]::WriteAllText($PrereqManifest, '{"items":[]}')
+    $AcceptanceSha256 = Sha256File $AcceptanceFile
+    $FirstInstallSumsSha256 = Sha256File $FirstInstallSums
+    $PrereqManifestSha256 = Sha256File $PrereqManifest
+    $sealed = @{ firstSumsSha = ('0' * 64); kitSha = $KitSha256; manifestSha = ('1' * 64) }
+    Throws { Get-ProtectedInstallInputs (Join-Path $tmp 'bad-sums') $sealed } 'LOCAL_COPY_NOT_THE_PINNED:first.SHA256SUMS' 'self-pull:caller-cannot-pin-a-different-checklist'
+    $sealed.firstSumsSha = $FirstInstallSumsSha256
+    Throws { Get-ProtectedInstallInputs (Join-Path $tmp 'bad-manifest') $sealed } 'LOCAL_COPY_NOT_THE_PINNED:prereqs.json' 'self-pull:caller-cannot-pin-a-different-manifest'
+  } finally { [IO.Directory]::Delete($tmp, $true) }
+}
+Case 'self-pull: persist and read back the result before cleanup' {
+  $stage = $functions['Invoke-Stage']
+  $commit = $stage.IndexOf('Confirm-FleetDeliveryComplete')
+  $cleanup = $stage.IndexOf('[IO.File]::Delete($progressFile)')
+  Yes ($commit -ge 0 -and $commit -lt $cleanup) 'self-pull:durable-result-before-log-cleanup'
+}
+Case 'self-pull: stop on deterministic failure and resume transient preflight' {
+  . (Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $here))) 'windows\fleet-reinstall-interactive.ps1')
+  $fixtureNow = [DateTimeOffset]::Parse('2026-11-27T12:00:00Z')
+  Set-Item -LiteralPath Function:Test-FleetPreflightDue -Value (New-FleetClockFixture 'Test-FleetPreflightDue')
+  $work = Join-Path $env:TEMP ('clued-preflight-' + [guid]::NewGuid().ToString('N'))
+  $FleetDeliveryRoot = Join-Path $work 'delivery'
+  $operation = 'a1000000-0000-4000-8000-000000000007'
+  try {
+    [void][IO.Directory]::CreateDirectory((Join-Path $FleetDeliveryRoot 'claims'))
+    $retry = Get-FleetPreflightState $operation 'PREREQ_DOWNLOAD_RETRY_EXHAUSTED' $fixtureNow
+    $stop = Get-FleetPreflightState $operation 'FIRST_INSTALL_INPUTS_NOT_ACCEPTED' $fixtureNow
+    Yes ($retry.phase -ceq 'RETRY_PREFLIGHT' -and ([DateTimeOffset]$retry.retryAt) -gt $fixtureNow) 'self-pull:preflight-transient-backs-off'
+    Yes ($stop.phase -ceq 'FAILED') 'self-pull:preflight-definitive-failure-stops'
+    $folder = Get-FleetPreflightDirectory $work $operation
+    [void][IO.Directory]::CreateDirectory($folder)
+    $stateFile = Join-Path $FleetDeliveryRoot ('claims\' + $operation + '.json')
+    Write-FleetOperatorRecord $stateFile $retry
+    Remove-FleetPreflightWork $work $operation
+    Yes (([IO.Directory]::Exists($folder)) -and -not (Test-FleetPreflightDue $operation)) 'self-pull:preflight-retains-workspace-during-backoff'
+    $retry.retryAt = $fixtureNow.AddMinutes(-1).ToString('o')
+    Write-FleetOperatorRecord $stateFile $retry
+    Yes ((Test-FleetPreflightDue $operation) -and (Get-FleetPreflightDirectory $work $operation) -ceq $folder) 'self-pull:retry-reuses-workspace'
+    Write-FleetOperatorRecord $stateFile $stop
+    Remove-FleetPreflightWork $work $operation
+    Yes (-not (Test-FleetPreflightDue $operation) -and -not [IO.Directory]::Exists($folder)) 'self-pull:durably-stopped-preflight-reclaims-workspace'
+  } finally { [IO.Directory]::Delete($work, $true) }
 }
 
 Case 'cache:protected-prereq-same-digest-expands-once' {

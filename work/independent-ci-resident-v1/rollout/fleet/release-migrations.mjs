@@ -100,6 +100,10 @@ const probes = {
     and ${bodyContains('if cardinality(ready_nodes) <> jsonb_array_length(peers)')}
     and ${bodyContains('and (t >= w.reinstall_pause_until) is not true')}`),
   sealedRuleOnArrival: "to_regprocedure('clued_private.fleet_sealed_rule_active_v1(uuid,uuid)') is not null",
+  reinstallEligibility: `${procedure('fleet_probe_targets_v1(uuid,uuid)', 'jsonb',
+    bodyContains("'reinstall_busy',clued_private.fleet_node_busy_v1(node)"))}
+    and ${procedure('fleet_maintenance_request_v1(uuid,uuid,jsonb)', 'jsonb',
+    bodyContains("'reinstall_eligible',clued_private.fleet_reinstall_eligible_v1(m,target)"))}`,
 };
 
 export function releaseRequirements(commit, read = file => execFileSync('git', ['show', `${commit}:${file}`], {
