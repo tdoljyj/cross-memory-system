@@ -482,8 +482,23 @@ Case 'lifecycle:reselect routes back through the non-elevated entry' {
       'lifecycle:self-pull-refuses-second-uac:' + $status + ' (got: ' + (ConvertTo-Json -InputObject $single -Compress) + ')')
   }
 }
+# Use the loaded function body with the clock supplied by the calling fixture.
+function New-FleetClockFixture([string]$name) {
+  $body = (Get-Command -Name $name -CommandType Function).ScriptBlock
+  $reads = @($body.Ast.FindAll({ param($a)
+    $a -is [Management.Automation.Language.MemberExpressionAst] -and $a.Static -and
+      $a.Expression -is [Management.Automation.Language.TypeExpressionAst] -and
+      $a.Expression.TypeName.FullName -ceq 'DateTimeOffset' -and
+      $a.Member -is [Management.Automation.Language.StringConstantExpressionAst] -and $a.Member.Value -ceq 'UtcNow'
+  }, $true))
+  if ($reads.Count -ne 1) { throw "Expected one UTC clock read in $name" }
+  [scriptblock]::Create($body.ToString().Replace($reads[0].Extent.Text, '$fixtureNow'))
+}
 Case 'self-pull: the Owner entry binds the pending decision and claims the operation once' {
   . (Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $here))) 'windows\fleet-reinstall-interactive.ps1')
+  $fixtureNow = [DateTimeOffset]::Parse('2026-11-27T12:00:00Z')
+  Set-Item -LiteralPath Function:Get-FleetReinstallDelivery -Value (New-FleetClockFixture 'Get-FleetReinstallDelivery')
+  Set-Item -LiteralPath Function:Write-FleetReinstallClaim -Value (New-FleetClockFixture 'Write-FleetReinstallClaim')
   $FleetDeliveryRoot = Join-Path $env:TEMP ('clued-self-pull-' + [Guid]::NewGuid().ToString('N'))
   $FleetResidentRoot = Join-Path $FleetDeliveryRoot 'resident'
   $operator = 'S-1-5-21-1-2-3-1001'
@@ -494,13 +509,12 @@ Case 'self-pull: the Owner entry binds the pending decision and claims the opera
   try {
     [void][IO.Directory]::CreateDirectory((Join-Path $FleetResidentRoot 'upgrade'))
     [void][IO.Directory]::CreateDirectory((Join-Path $FleetDeliveryRoot 'claims'))
-    $now = [DateTimeOffset]::UtcNow
-    $fp = @{ repository='fixture/repo'; version='g000028'; grant_id='g'; receipt_id='r'; accepted_at=$now.ToString('o')
+    $fp = @{ repository='fixture/repo'; version='g000028'; grant_id='g'; receipt_id='r'; accepted_at=$fixtureNow.ToString('o')
       request_sha256='a'*64; archive_sha256='b'*64; acceptance_sha256='c'*64 }
     $pending = @{ contract='clued.independent-ci.fleet-reinstall/1'; nodeId='n'; bindingId='b'; bindingGeneration=3
       installGeneration=5; installReceiptSha256='d'*64; operationId=$operation; operatorSid=$operator; targetFingerprint=$fp
-      requestSha256=$fp.request_sha256; expiresAt=$now.AddMinutes(5).ToString('o'); onDuty=$false; hasPeer=$true }
-    $probe = @{ nodeId='n'; bindingId='b'; bindingGeneration=3; code=$null; at=$now.ToString('o'); onDuty=$false; fleetTarget=$fp.Clone() }
+      requestSha256=$fp.request_sha256; expiresAt=$fixtureNow.AddMinutes(5).ToString('o'); onDuty=$false; hasPeer=$true }
+    $probe = @{ nodeId='n'; bindingId='b'; bindingGeneration=3; code=$null; at=$fixtureNow.ToString('o'); onDuty=$false; fleetTarget=$fp.Clone() }
     $probe.fleetTarget.holder_package = @{ maintenance='available' }; $probe.fleetTarget.has_other_healthy = $true
     $probe.fleetTarget.reinstall_eligible = $true
     Put-DeliveryFixture (Join-Path $FleetDeliveryRoot 'pending.json') $pending
@@ -569,15 +583,16 @@ Case 'self-pull: persist and read back the result before cleanup' {
 }
 Case 'self-pull: stop on deterministic failure and resume transient preflight' {
   . (Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $here))) 'windows\fleet-reinstall-interactive.ps1')
+  $fixtureNow = [DateTimeOffset]::Parse('2026-11-27T12:00:00Z')
+  Set-Item -LiteralPath Function:Test-FleetPreflightDue -Value (New-FleetClockFixture 'Test-FleetPreflightDue')
   $work = Join-Path $env:TEMP ('clued-preflight-' + [guid]::NewGuid().ToString('N'))
   $FleetDeliveryRoot = Join-Path $work 'delivery'
   $operation = 'a1000000-0000-4000-8000-000000000007'
   try {
     [void][IO.Directory]::CreateDirectory((Join-Path $FleetDeliveryRoot 'claims'))
-    $now = [DateTimeOffset]::UtcNow
-    $retry = Get-FleetPreflightState $operation 'PREREQ_DOWNLOAD_RETRY_EXHAUSTED' $now
-    $stop = Get-FleetPreflightState $operation 'FIRST_INSTALL_INPUTS_NOT_ACCEPTED' $now
-    Yes ($retry.phase -ceq 'RETRY_PREFLIGHT' -and ([DateTimeOffset]$retry.retryAt) -gt $now) 'self-pull:preflight-transient-backs-off'
+    $retry = Get-FleetPreflightState $operation 'PREREQ_DOWNLOAD_RETRY_EXHAUSTED' $fixtureNow
+    $stop = Get-FleetPreflightState $operation 'FIRST_INSTALL_INPUTS_NOT_ACCEPTED' $fixtureNow
+    Yes ($retry.phase -ceq 'RETRY_PREFLIGHT' -and ([DateTimeOffset]$retry.retryAt) -gt $fixtureNow) 'self-pull:preflight-transient-backs-off'
     Yes ($stop.phase -ceq 'FAILED') 'self-pull:preflight-definitive-failure-stops'
     $folder = Get-FleetPreflightDirectory $work $operation
     [void][IO.Directory]::CreateDirectory($folder)
@@ -585,7 +600,7 @@ Case 'self-pull: stop on deterministic failure and resume transient preflight' {
     Write-FleetOperatorRecord $stateFile $retry
     Remove-FleetPreflightWork $work $operation
     Yes (([IO.Directory]::Exists($folder)) -and -not (Test-FleetPreflightDue $operation)) 'self-pull:preflight-retains-workspace-during-backoff'
-    $retry.retryAt = $now.AddMinutes(-1).ToString('o')
+    $retry.retryAt = $fixtureNow.AddMinutes(-1).ToString('o')
     Write-FleetOperatorRecord $stateFile $retry
     Yes ((Test-FleetPreflightDue $operation) -and (Get-FleetPreflightDirectory $work $operation) -ceq $folder) 'self-pull:retry-reuses-workspace'
     Write-FleetOperatorRecord $stateFile $stop
