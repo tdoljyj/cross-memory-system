@@ -7,6 +7,7 @@ import { parseStageFact } from '../src/engine-windows.mjs';
 import { NATIVE_RECEIPT_CONTRACT_V2, buildStageFact } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
 import { batchKey, headKey } from '../src/ledger.mjs';
 import { ReceiptChain } from '../src/receipts.mjs';
+import { ResidentError } from '../src/canonical.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { rearmRequest, resumeRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
 import { BASE, CLEAN_PROOF, HEAD, RESIDENT, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, notAdmitted, rawPolicy, triggerBytes } from './helpers.mjs';
@@ -99,11 +100,95 @@ test('普通行等待可验证的 PR 状态，缺答或无效答复不占用批�
     assert.equal((await f.exec.tick()).reason, 'QUEUE_PR_STATUS_UNCONFIRMED');
     assert.equal((await f.ledger.state(keyFor())).state, 'ABSENT');
     assert.deepEqual(f.companion.calls, [['pr-head', 884]]);
-    assert.equal(f.queue.row(884).deferUntil, f.clock() + 10 * 60_000);
+    assert.equal(f.queue.row(884).deferUntil, f.clock() + 2 * 60_000);
     pull = { number: 884, state: 'open', headSha: HEAD };
-    f.advance(10 * 60_000);
+    f.advance(2 * 60_000);
     assert.equal((await f.exec.tick()).state, 'COMPLETED');
   }
+});
+
+test('普通行读不到 PR 状态：2 分钟后重读', async t => {
+  const companion = fakeCompanion({ pull: () => null });
+  const f = await executorFixture(t, { companion });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).reason, 'QUEUE_PR_STATUS_UNCONFIRMED');
+  assert.deepEqual(companion.calls, [['pr-head', 884]]);
+  f.advance(2 * 60_000);
+  assert.equal((await f.exec.tick()).state, 'DEFERRED');
+  assert.deepEqual(companion.calls, [['pr-head', 884], ['pr-head', 884]]);
+});
+
+test('普通行连续 30 分钟读不到：HALT 并写明原因', async t => {
+  const companion = fakeCompanion({ pull: () => { throw new ResidentError('PR_HEAD_TIMED_OUT'); } });
+  const f = await executorFixture(t, { companion });
+  const since = f.clock();
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).reason, 'QUEUE_PR_STATUS_UNCONFIRMED');
+  for (let minute = 2; minute < 30; minute += 2) {
+    f.advance(2 * 60_000);
+    assert.notEqual((await f.exec.tick()).state, 'HALTED', `第 ${minute} 分钟不得判停`);
+  }
+  f.advance(2 * 60_000);
+  const { state, key, failureCode } = await f.exec.tick();
+  assert.deepEqual({ state, key, failureCode }, { state: 'HALTED', key: keyFor(), failureCode: 'QUEUE_PR_HEAD_UNREADABLE' });
+  const names = await ls(path.join(f.root, 'state', 'receipts'));
+  const receipt = JSON.parse(await fs.readFile(path.join(f.root, 'state', 'receipts', names.find(name => name.endsWith('-halt.json'))), 'utf8'));
+  const { failedReads, ...facts } = receipt.body.facts;
+  assert.equal(receipt.body.failureCode, failureCode);
+  assert.ok(failedReads >= 10);
+  assert.equal(failedReads, 16, '对账答复复用时每次实际读取只计一次');
+  assert.deepEqual(facts, { since, failureCode: 'PR_HEAD_TIMED_OUT', pr: 884 });
+  assert.equal((await f.ledger.state(keyFor())).state, 'ABSENT');
+  assert.equal(await f.ledger.headBurned(headKey(subject())), false);
+});
+
+test('段内读到一次即清零，不 HALT', async t => {
+  let readable = false;
+  const companion = fakeCompanion({ pull: pr => readable ? { number: pr, state: 'open', headSha: HEAD } : null });
+  const f = await executorFixture(t, { companion });
+  await f.drop(triggerBytes());
+  for (let minute = 0; minute < 28; minute += 2) {
+    assert.equal((await f.exec.tick()).reason, 'QUEUE_PR_STATUS_UNCONFIRMED');
+    f.advance(2 * 60_000);
+  }
+  readable = true;
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.equal((await f.ledger.state(keyFor())).outcome, 'COMPLETED');
+
+  readable = false;
+  await f.drop(triggerBytes({ pr: 885, headSha: 'c'.repeat(40) }));
+  for (let minute = 0; minute <= 28; minute += 2) {
+    assert.equal((await f.exec.tick()).reason, 'QUEUE_PR_STATUS_UNCONFIRMED');
+    f.advance(2 * 60_000);
+  }
+  assert.equal(await f.ledger.halted(), null);
+});
+
+test('普通行连续读不到但不足 10 次，不 HALT', async t => {
+  const companion = fakeCompanion({ pull: () => null });
+  const f = await executorFixture(t, { companion });
+  await f.drop(triggerBytes());
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    assert.equal((await f.exec.tick()).reason, 'QUEUE_PR_STATUS_UNCONFIRMED');
+    assert.equal(companion.calls.length, attempt);
+    if (attempt < 3) f.advance(15 * 60_000);
+  }
+  assert.equal(await f.ledger.halted(), null);
+});
+
+test('普通行读失败段遇到时钟回拨，从下次失败重新计段', async t => {
+  const companion = fakeCompanion({ pull: () => null });
+  const f = await executorFixture(t, { companion });
+  await f.drop(triggerBytes());
+  for (let minute = 0; minute <= 28; minute += 2) {
+    assert.equal((await f.exec.tick()).reason, 'QUEUE_PR_STATUS_UNCONFIRMED');
+    if (minute < 28) f.advance(2 * 60_000);
+  }
+  f.advance(-5 * 60_000);
+  assert.equal((await f.exec.tick()).state, 'IDLE');
+  f.advance(7 * 60_000);
+  assert.equal((await f.exec.tick()).reason, 'QUEUE_PR_STATUS_UNCONFIRMED');
+  assert.equal(await f.ledger.halted(), null);
 });
 
 test('stage-1 "not admitted" releases the key; the queue retries on its own back-off without spending the release cap', async t => {

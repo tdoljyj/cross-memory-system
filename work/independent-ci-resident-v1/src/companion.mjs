@@ -744,8 +744,18 @@ export class Companion {
         }
         const r = await this.run(this.readPull(request.pr), { timeoutMs });
         const ended = this.clock();
-        const pull = ended >= began && ended <= Date.parse(request.deadline) && r.code === 0 &&
-          !r.timedOut && !r.refused && r.tree !== 'unconfirmed' ? parsePull(r.stdout, request.pr) : null;
+        const exitFailed = Number.isInteger(r.code) && r.code !== 0;
+        if (exitFailed) {
+          const stderr = String(r.stderr ?? '').replace(/gh[pousr]_[A-Za-z0-9]{20,}/g, '<token>');
+          try {
+            await this.log?.({ at: new Date(ended).toISOString(), kind: 'pr-head', pr: request.pr,
+              exitCode: r.code, stderrTail: stderrTail(stderr).slice(-300) });
+          } catch { /* the log never decides */ }
+        }
+        if (r.timedOut) return { ok: false, code: 'PR_HEAD_TIMED_OUT' };
+        if (r.refused || r.tree === 'unconfirmed') return { ok: false, code: 'PR_HEAD_TREE_UNCONFIRMED' };
+        if (exitFailed) return { ok: false, code: 'PR_HEAD_GH_FAILED' };
+        const pull = ended >= began && ended <= Date.parse(request.deadline) && r.code === 0 ? parsePull(r.stdout, request.pr) : null;
         return pull ? { ok: true, pull } : { ok: false, code: 'PR_HEAD_UNAVAILABLE' };
       }
       default: return { ok: false, code: 'COMPANION_REQUEST_KIND_REFUSED' };
