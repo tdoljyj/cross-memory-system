@@ -93,7 +93,7 @@ function rolePolicy(role, letter, fleet, installedCi, { toolchainSha = hex(32), 
 // policyContract: the installed policy's contract (default policy.example.json's /7, whose train it keeps; /8 and later carry the fleet's
 // train, policy.mjs FLEET_TRAIN, on: as the nodes in the field do).
 export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAccount = false, heartbeat = false, policyContract = null,
-  recordOverrides = {}, roleImages = {} } = {}) {
+  recordOverrides = {}, roleImages = {}, recordSourceFiles = sourceFiles() } = {}) {
   const d = await tempDir(t, `fleetnode${letter}`);
   const profile = profileOf(letter);
   const signer = signerKeys();
@@ -107,7 +107,7 @@ export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAc
     publishableKey: 'sb_publishable_0000000000' }, references, signer);   // the upgrader configuration's shape (a fresh install writes one)
   Object.assign(inputs, recordOverrides);
   const record = path.join(d, 'record');
-  writeRecord(record, assembleRecord(inputs, sourceFiles()));
+  writeRecord(record, assembleRecord(inputs, recordSourceFiles));
   const policy = JSON.parse(await fs.readFile(path.join(RES, 'config', 'policy.example.json'), 'utf8'));
   Object.assign(policy, { node: profile, nodeProfileSha256: nodeProfileSha256(profile) });
   if (policyContract !== null) policy.contract = policyContract;
