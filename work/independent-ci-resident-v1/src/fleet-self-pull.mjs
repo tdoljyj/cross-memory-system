@@ -248,7 +248,12 @@ const DELIVERY_ROOT = 'C:\\ProgramData\\CluedFleetDelivery';
 const REINSTALL_CONTRACT = 'clued.independent-ci.fleet-reinstall/1';
 const RESULT_CONTRACT = 'clued.independent-ci.fleet-reinstall-result/1';
 const RETRY_BROKER = new Set(['RENEW_BUSY', 'FLEET_BROKER_BUSY', 'BROKER_REQUEST_INTERRUPTED_NOT_REPEATED',
-  'BROKER_REQUEST_PREDATES_START', 'FLEET_WAITING_FOR_IDLE', 'FLEET_WAITING_FOR_HANDOVER', 'FLEET_MAINTENANCE_BLOCKED']);
+  'BROKER_REQUEST_PREDATES_START', 'FLEET_WAITING_FOR_IDLE', 'FLEET_WAITING_FOR_HANDOVER', 'FLEET_MAINTENANCE_BLOCKED',
+  'FLEET_REINSTALL_DISK_FULL']);
+const exists = file => fs.lstat(file).then(() => true, error => {
+  if (error.code === 'ENOENT') return false;
+  throw error;
+});
 
 function attemptInterrupted(at, pid, clock) {
   if (Date.parse(at) < clock() - os.uptime() * 1000) return true;
@@ -272,7 +277,8 @@ async function reinstallProjection(root, deliveryRoot, target, clock) {
   const current = await read(path.join(root, 'upgrade', 'current.json'));
   const installed = current?.ciSourceManifestSha256 === pointer.sourceSha256 &&
     current.installReceiptSha256 !== pointer.installReceiptSha256;
-  if (reply?.phase === 'COMPLETE' && installed && current.installReceiptSha256 === reply.receiptSha256) {
+  if (reply?.phase === 'COMPLETE' && UUID.test(reply.returnReceiptId ?? '') && installed &&
+      current.installReceiptSha256 === reply.receiptSha256) {
     const broker = (await read(path.join(root, 'broker', 'renew-ci.json')))?.delivery;
     const linux = await read(path.join(root, 'upgrade', 'mailbox', 'responses', 'version-facts.json'));
     if (broker?.nodeId === reply.nodeId && broker.bindingGeneration === reply.bindingGeneration &&
@@ -280,19 +286,23 @@ async function reinstallProjection(root, deliveryRoot, target, clock) {
         broker.windowsSourceSha256 === pointer.sourceSha256 && freshDeliveryTime(broker.observedAt, clock()) &&
         linux?.contract === 'clued.independent-ci.linux-version-facts/1' &&
         linux.ciSourceManifestSha256 === pointer.sourceSha256 && linux.generation === current.linux?.generation &&
-        linux.staged === null && linux.pinsOk === true && linux.liveMatchesCurrent !== false && freshDeliveryTime(linux.observedAt, clock()))
+        linux.staged === null && linux.pinsOk === true && linux.liveMatchesCurrent === true && freshDeliveryTime(linux.observedAt, clock()))
       return { phase: 'COMPLETE', at: reply.at };
   }
   if (installed) return { phase: 'VERIFYING' };
   if (reply?.phase === 'INSTALLING' && !attemptInterrupted(reply.at, reply.pid, clock))
     return { phase: 'INSTALLING', at: reply.at };
   const claim = await read(path.join(deliveryRoot, 'claims', `${operation}.json`), 4096);
-  if (claim?.operationId === operation && ['PENDING_UAC', 'INSTALLING', 'FAILED'].includes(claim.phase)) {
-    if (claim.phase !== 'FAILED' && attemptInterrupted(claim.at, claim.pid, clock))
+  const freshHandoff = Date.parse(pointer.expiresAt) > clock();
+  if (claim?.operationId === operation && ['PENDING_UAC', 'INSTALLING', 'FAILED', 'PREFLIGHT', 'RETRY_PREFLIGHT'].includes(claim.phase)) {
+    // An ongoing preflight can outlast the delivery lease. Refresh that same
+    // protected handoff before asking the Broker to launch.
+    if (!freshHandoff && ['PREFLIGHT', 'RETRY_PREFLIGHT'].includes(claim.phase)) return null;
+    if (['PENDING_UAC', 'INSTALLING'].includes(claim.phase) && attemptInterrupted(claim.at, claim.pid, clock))
       return { phase: 'FAILED', code: 'FLEET_REINSTALL_ATTEMPT_INTERRUPTED', at: claim.at };
     return { phase: claim.phase, code: codeOf(claim, null), at: claim.at };
   }
-  return Date.parse(pointer.expiresAt) > clock() ? { phase: 'WAITING_FOR_OWNER_SESSION' } : null;
+  return freshHandoff ? { phase: 'WAITING_FOR_OWNER_SESSION' } : null;
 }
 
 export function residentSelfPull({ root, repository, clock = Date.now,
@@ -305,6 +315,9 @@ export function residentSelfPull({ root, repository, clock = Date.now,
   const response = id => at('broker', 'responses', `${id}.json`);
   const challenge = id => at('broker', 'responses', `${id}.idle`);
   const confirmation = id => at('broker', 'requests', `${id}.idle`);
+  const requestFile = id => at('broker', 'requests', `${id}.json`);
+  const taken = id => at('broker', 'responses', `${id}.taken`);
+  const launchChallenge = at('broker', 'responses', 'reinstall-idle.json');
   const paused = () => fs.access(at('state', 'PAUSED.json')).then(() => true, error => error.code !== 'ENOENT');
   let next = 0;
   let relayed;
@@ -353,19 +366,45 @@ export function residentSelfPull({ root, repository, clock = Date.now,
         await update(projected.phase, projected);
         return;
       }
-      if (maintenance === 'reserve' || maintenance === 'repair' || (onDuty && target.has_other_healthy)) {
-        await update(maintenance === 'repair' ? 'REPAIR' : 'WAITING_FOR_HANDOVER');
+      const ineligible = maintenance === 'reserve' || maintenance === 'repair' || (onDuty && target.has_other_healthy) ||
+        target.reinstall_eligible !== true;
+      if (ineligible && !info.brokerId) {
+        const phase = maintenance === 'repair' ? 'REPAIR' :
+          maintenance === 'reserve' || onDuty && target.has_other_healthy ? 'WAITING_FOR_HANDOVER' : 'WAITING_FOR_MAINTENANCE';
+        await update(phase);
         return;
       }
       if (projected) {
         await update(projected.phase, projected);
         return;
       }
-      if (info.brokerId) {
-        const answer = await read(response(info.brokerId));
-        if (answer?.requestId !== info.brokerId) return;
+      const canSubmit = async () => !ineligible && idle && (!onDuty || idle.queueEmpty) && !stopped &&
+        !MOVING.has((await read(at('upgrade', 'status.json')))?.op?.state) && !(await paused());
+      const deliver = async id => {
+        try { await submit(id, { kind: 'fleet-reinstall', grantId: target.grant_id, refusalId: info.refusalId }); }
+        catch { next = clock() + RETRY; /* Reconcile the same ID before attempting another write. */ }
+      };
+      if (UUID.test(info.brokerId ?? '')) {
+        const id = info.brokerId;
+        const answer = await read(response(id));
+        if (answer?.requestId !== id) {
+          if (info.phase === 'FAILED') return;
+          const requestedAt = Number.isSafeInteger(info.requestedAt) ? info.requestedAt : clock();
+          if (clock() - requestedAt >= LIMIT) {
+            await update('FAILED', { brokerId: id, requestedAt, code: 'FLEET_REINSTALL_BROKER_UNCONFIRMED' });
+            return;
+          }
+          if (requestedAt !== info.requestedAt) await update('PREPARING', { brokerId: id, requestedAt });
+          // Absence of the Broker's write-through claim and of the inbox/answer
+          // leaves exactly one safe action: create that same request ID.
+          if (await canSubmit() && !(await exists(taken(id))) && !(await exists(requestFile(id))) &&
+              !(await exists(response(id)))) await deliver(id);
+          return;
+        }
         if (answer.status === 'FLEET_REINSTALL_PUBLISHED') {
-          await update('WAITING_FOR_OWNER_SESSION');
+          if (answer.grantId === target.grant_id && matchesFleetTarget(answer.targetFingerprint, target))
+            await update('WAITING_FOR_OWNER_SESSION');
+          else await update('FAILED', { code: 'FLEET_REINSTALL_SUBJECT_CHANGED' });
           return;
         }
         const code = codeOf(answer, 'FLEET_REINSTALL_BROKER_UNCONFIRMED');
@@ -383,13 +422,10 @@ export function residentSelfPull({ root, repository, clock = Date.now,
         await update(ready?.terminal ? 'FAILED' : 'DOWNLOADING', { code: codeOf(ready, null) });
         return;
       }
-      const activeUpgrade = (await read(at('upgrade', 'status.json')))?.op;
-      if (maintenance !== 'available' || !idle || (onDuty && !idle.queueEmpty) || stopped ||
-          MOVING.has(activeUpgrade?.state) || await paused()) return;
+      if (!(await canSubmit())) return;
       const id = randomUUID();
-      await update('PREPARING', { brokerId: id });
-      try { await submit(id, { kind: 'fleet-reinstall', grantId: target.grant_id, refusalId: info.refusalId }); }
-      catch (error) { await update('FAILED', { code: codeOf(error, 'FLEET_REINSTALL_BROKER_UNCONFIRMED') }); }
+      await update('PREPARING', { brokerId: id, requestedAt: clock() });
+      await deliver(id);
       return;
     }
     if (maintenance === 'reserve' || maintenance === 'repair') {
@@ -486,16 +522,22 @@ export function residentSelfPull({ root, repository, clock = Date.now,
       if (lease || stopped) return;
       refuseUnderTest(root);
       const last = await read(ledger);
-      const id = last?.phase === 'REQUESTED' ? last.requestId : last?.reinstall?.brokerId;
+      const notice = await read(launchChallenge, 4096);
+      const launch = Number.isSafeInteger(notice?.expiresAt) && notice.expiresAt > clock() &&
+        UUID.test(notice.operationId ?? '') ? notice : null;
+      const id = launch?.requestId ?? (last?.phase === 'REQUESTED' ? last.requestId : last?.reinstall?.brokerId);
       if (!UUID.test(id ?? '')) return;
       const ping = await read(challenge(id));
       if (ping?.requestId !== id || !UUID.test(ping.nonce ?? '') || !Number.isSafeInteger(ping.expiresAt)
         || ping.expiresAt <= clock() || await fs.access(confirmation(id)).then(() => true, () => false)) return;
       const latest = await observe();
       const op = (await read(at('upgrade', 'status.json')))?.op;
-      const confirmed = canStart?.queueEmpty === true && latest?.onDuty === true && !MOVING.has(op?.state)
-        && matchesFleetTarget(last.targetFingerprint, latest.fleetTarget)
-        && matchesFleetTarget(ping.targetFingerprint, latest.fleetTarget) && !(await paused()) && !stopped;
+      const target = latest?.fleetTarget;
+      // For launch the Broker binds the current target/duty with a live probe
+      // after this reservation. The resident attests only to its local queue.
+      const confirmed = canStart?.queueEmpty === true && !MOVING.has(op?.state) && !(await paused()) && !stopped &&
+        (launch !== null || latest?.onDuty === true &&
+          matchesFleetTarget(last?.targetFingerprint, target) && matchesFleetTarget(ping.targetFingerprint, target));
       const ack = { requestId: id, nonce: ping.nonce, expiresAt: ping.expiresAt, idle: confirmed };
       // 先保留空闲再发送。确认写入结果未知时仍保留空闲。
       if (confirmed) {
@@ -513,7 +555,7 @@ export function residentSelfPull({ root, repository, clock = Date.now,
         next = clock() + RETRY;
         const view = await observe();
         const last = await read(ledger);
-        if (view && !(last?.grantId === view.fleetTarget.grant_id && last.requestId))
+        if (view && !(last?.grantId === view.fleetTarget.grant_id && (last.requestId || last.reinstall?.brokerId)))
           await show(view.fleetTarget, 'PREPARE_FAILED', codeOf(error, 'FLEET_PREPARE_FAILED')).catch(() => {});
       }).finally(() => { active = null; });
       return active;

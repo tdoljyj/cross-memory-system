@@ -460,7 +460,8 @@ function fleetPullView(v) {
     const { repository, archiveSha256, requestSha256, acceptanceSha256 } = r;
     view.reinstall = { repository, bootstrapAsset: `fleet-node-${v.targetVersion}.bootstrap.ps1`,
       archiveSha256, requestSha256, acceptanceSha256 };
-    if (['DOWNLOADING', 'PREPARING', 'WAITING_FOR_HANDOVER', 'REPAIR', 'WAITING_FOR_OWNER_SESSION',
+    if (['DOWNLOADING', 'PREPARING', 'WAITING_FOR_HANDOVER', 'WAITING_FOR_MAINTENANCE', 'REPAIR', 'WAITING_FOR_OWNER_SESSION',
+      'PREFLIGHT', 'RETRY_PREFLIGHT',
       'PENDING_UAC', 'INSTALLING', 'VERIFYING', 'FAILED'].includes(r.phase)) {
       Object.assign(view.reinstall, { phase: r.phase, code: codeOrNull(r.code), at: isoMs(Date.parse(r.at)) });
     }

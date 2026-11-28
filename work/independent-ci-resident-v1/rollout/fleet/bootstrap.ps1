@@ -456,6 +456,7 @@ function Out-InstallStageResult($stage, $verdict) {
 }
 function Stop-Bootstrap([string]$step, [string]$code, $detail) {
   if ($script:ReinstallClaimed) { try { Write-FleetReinstallClaim $ReinstallOperation 'FAILED' $code } catch {} }
+  elseif ($script:ReinstallPreflight) { try { Write-FleetReinstallClaim $ReinstallOperation 'PREFLIGHT' $code } catch {} }
   Out-Step $step 'failed' $code $null
   Out-Result 'BOOTSTRAP_REFUSED' $step ([ordered]@{ code = $code; detail = $detail })
   exit 1
@@ -466,13 +467,39 @@ function Invoke-Elevated([string]$step, [string[]]$named, [int]$limitSeconds, [s
   $result = Join-Path $script:Work ('elevated-' + $step + '-' + [Guid]::NewGuid().ToString('N') + '.txt')
   $arguments = try { Get-ElevatedArguments $script:Self (@('-Stage', $step, '-Result', $result) + @($named)) $switches } catch { Stop-Bootstrap $step 'ELEVATED_ARGUMENT_REFUSED' ([string]$_.Exception.Message) }
   $p = $null
+  $launch = $null
+  if ($script:ReinstallPreflight) {
+    try {
+      $launch = Request-FleetReinstallLaunchPermit $script:ReinstallPreflight
+      if (-not (Test-FleetInteractiveDesktop)) { throw 'FLEET_WAITING_FOR_OWNER_SESSION' }
+      $null = Get-FleetReinstallDelivery $script:ReinstallPreflight.operatorSid $ReinstallOperation
+      Assert-FleetReinstallLaunchPermit $script:ReinstallPreflight $launch
+      $spent = Join-Path $FleetDeliveryRoot ('claims\' + $ReinstallOperation + '.spent.json')
+      Write-FleetOperatorRecord $spent @{ operationId = $ReinstallOperation; nonce = $launch.nonce } -Create
+      $script:ReinstallClaimed = $true
+      Write-FleetReinstallClaim $ReinstallOperation 'PENDING_UAC' ''
+      Assert-FleetReinstallLaunchPermit $script:ReinstallPreflight $launch
+    } catch {
+      $code = [string]$_.Exception.Message
+      if ($code -cnotmatch '^[A-Z][A-Z0-9_]{1,79}$') { $code = 'FLEET_REINSTALL_PERMIT_REFUSED' }
+      Stop-Bootstrap $step $code $null
+    }
+  }
   try { $p = Start-Process -FilePath $PowerShellExe -ArgumentList $arguments -Verb RunAs -PassThru -WindowStyle Normal }
   catch { if (Test-UacDeclined $_.Exception) { return [ordered]@{ declined = $true; exit = $null; last = $null; output = $null } }; throw }
+  finally {
+    if ($launch) {
+      try { Write-FleetOperatorRecord (Join-Path $FleetDeliveryRoot ('claims\' + $ReinstallOperation + '.launched.json')) @{
+        operationId = $ReinstallOperation; nonce = $launch.nonce
+      } } catch { }
+    }
+  }
   if ($script:ReinstallClaimed) { try { Write-FleetReinstallClaim $ReinstallOperation 'INSTALLING' $null } catch {} }
   if (-not $p.WaitForExit($limitSeconds * 1000)) {
     foreach ($l in @((Read-StageResult $result).lines)) { [Console]::Out.WriteLine($l) }   # what the stage printed so far, as it is (never this function's value)
     Stop-Bootstrap $step 'ELEVATED_RUN_STILL_RUNNING' ([ordered]@{ pid = $p.Id; output = $result; note = 'nothing was killed' })
   }
+  if ($launch) { $script:ReinstallFinished = $true }
   $read = Read-StageResult $result
   foreach ($l in @($read.lines)) { [Console]::Out.WriteLine($l) }   # the stage's lines, as they are (the child's step lines, the stage's notes, its verdict)
   if ($null -eq $read.last) { Stop-Bootstrap $step 'STAGE_GAVE_NO_VERDICT' ([ordered]@{ exit = $p.ExitCode; output = $result; lines = @($read.lines).Count }) }
@@ -622,6 +649,10 @@ function Get-Prereq($item, [string]$dest, [scriptblock]$waitBeforeRetry = { para
   $target = Join-Path $dest $item['fileName']
   $local = Join-Path $script:From $item['fileName']
   $partial = $target + '.part'
+  if ($script:ReinstallPreflight -and [IO.File]::Exists($target)) {
+    if ((Get-Item -LiteralPath $target).Length -eq [long]$item['bytes'] -and (Sha256File $target) -ceq $item['sha256']) { return $target }
+    [IO.File]::Delete($target)
+  }
   try {
     [IO.File]::Delete($partial)
     if ([IO.File]::Exists($local) -and (Sha256File $local) -ceq $item['sha256']) {
@@ -680,22 +711,48 @@ function Expand-Cached([string]$zip, [string]$name, [string]$sha256, $maxEntryPa
 }
 
 # ------------------------------------------------------------------ the elevated stages (this file, -Stage)
-function Get-ProtectedInstallInputs([string]$stageDir) {
+function Get-FleetSealedInstallPins($delivery, [string]$residentTree) {
+  $tag = 'fleet-node-' + $delivery.targetFingerprint.version
+  $assets = Get-FleetReinstallAssetDirectory $delivery
+  $sums = Join-Path $assets "$tag.first-install.SHA256SUMS"
+  $kit = Join-Path $assets "$tag.first-install-kit.json"
+  $accept = Join-Path $assets "$tag.acceptance.json"
+  $operation = Split-Path -Parent $assets
+  foreach ($file in @((Split-Path -Parent $operation), $operation, $assets, $sums, $kit, $accept)) { Assert-FleetDeliveryTrust $file }
+  if ((Sha256File $accept) -cne $delivery.targetFingerprint.acceptance_sha256) { throw 'FLEET_REINSTALL_SUBJECT_CHANGED' }
+  $js = New-Object Web.Script.Serialization.JavaScriptSerializer; $js.MaxJsonLength = 16777216
+  $a = $js.DeserializeObject([IO.File]::ReadAllText($accept))
+  $kitSha = [string](Get-Key $a 'firstInstallKitSha256')
+  $first = Read-Sha256Sums ([IO.File]::ReadAllText($sums))
+  if ($kitSha -cnotmatch '^[0-9a-f]{64}$' -or (Sha256File $kit) -cne $kitSha -or $first["$tag.first-install-kit.json"] -cne $kitSha) {
+    throw 'FIRST_INSTALL_KIT_CHANGED'
+  }
+  $manifest = Join-Path $residentTree 'rollout\fleet\prereq-manifest.json'
+  $pins = $js.DeserializeObject([IO.File]::ReadAllText($kit))
+  $out = @{ manifestSha = (Sha256File $manifest); firstSumsSha = (Sha256File $sums); kitSha = $kitSha
+    controllerSha = (Get-Key (Get-Key $pins 'record') 'controllerNodeSha256') }
+  foreach ($hash in $out.Values) { if ($hash -cnotmatch '^[0-9a-f]{64}$') { throw 'PROTECTED_INSTALL_INPUTS_REFUSED' } }
+  $out
+}
+
+function Get-ProtectedInstallInputs([string]$stageDir, $sealed = $null) {
   $assets = Join-Path $stageDir 'assets'
   $accept = Copy-ToWork $AcceptanceFile $assets $AcceptanceSha256
-  $sumsCopy = Copy-ToWork $FirstInstallSums $assets $FirstInstallSumsSha256
+  $sumsCopy = Copy-ToWork $FirstInstallSums $assets $(if ($sealed) { $sealed.firstSumsSha } else { $FirstInstallSumsSha256 })
   $first = Read-Sha256Sums ([IO.File]::ReadAllText($sumsCopy))
   $assetDir = Split-Path -Parent $FirstInstallSums
   foreach ($name in $first.Keys) {
     if ($name -cne [IO.Path]::GetFileName($Kit) -and $name -cnotmatch '^role-image-[0-9a-f]{64}\.tar\.gz$') { throw 'FIRST_INSTALL_ASSET_NAME_REFUSED' }
     $null = Copy-ToWork (Join-Path $assetDir $name) $assets $first[$name]
   }
-  if ($first[[IO.Path]::GetFileName($Kit)] -cne $KitSha256) { throw 'FIRST_INSTALL_KIT_CHANGED' }
+  if ($first[[IO.Path]::GetFileName($Kit)] -cne $(if ($sealed) { $sealed.kitSha } else { $KitSha256 })) { throw 'FIRST_INSTALL_KIT_CHANGED' }
 
   $js = New-Object Web.Script.Serialization.JavaScriptSerializer
-  $pm = Copy-ToWork $PrereqManifest $stageDir $PrereqManifestSha256
+  $pm = Copy-ToWork $PrereqManifest $stageDir $(if ($sealed) { $sealed.manifestSha } else { $PrereqManifestSha256 })
   $tools = @{}
-  foreach ($item in @($js.DeserializeObject([IO.File]::ReadAllText($pm))['items'])) {
+  $manifest = $js.DeserializeObject([IO.File]::ReadAllText($pm))
+  if ($sealed -and (Test-PrereqManifest $manifest (Get-NeededPrereqs $true) $true).Count) { throw 'PREREQ_MANIFEST_REFUSED' }
+  foreach ($item in @($manifest['items'])) {
     $name = [string]$item['name']
     if (@('node','git','python') -cnotcontains $name) { continue }
     if ($item['fileName'] -cnotmatch '^[A-Za-z0-9_-][A-Za-z0-9._-]*\.zip$') { throw 'FIRST_INSTALL_TOOL_NAME_REFUSED' }
@@ -707,8 +764,9 @@ function Get-ProtectedInstallInputs([string]$stageDir) {
     $tools[$name] = $exe[0].FullName
   }
   if ($tools.Count -ne 3) { throw 'FIRST_INSTALL_TOOLS_MISSING' }
+  if ($sealed -and (Sha256File $tools['node']) -cne $sealed.controllerSha) { throw 'CONTROLLER_NODE_NOT_THE_FLEETS' }
   $path = (@('node','git','python') | ForEach-Object { Split-Path -Parent $tools[$_] }) -join ';'
-  [ordered]@{ assets = $assets; acceptance = $accept; node = $tools['node'];
+  [ordered]@{ assets = $assets; acceptance = $accept; node = $tools['node']; prereqManifest = $pm
     environment = @{ PATH = ($path + ';C:\Windows\System32;C:\Windows'); PSModulePath = $env:PSModulePath; NODE_OPTIONS = ''; NODE_PATH = '' } }
 }
 
@@ -750,19 +808,37 @@ function Get-FleetNewInstall($context, [string]$resultFile) {
   }
 }
 
-function Write-FleetDeliveryResult([string]$path, $delivery, [string]$phase, [string]$code, [string]$receiptSha) {
+function Write-FleetDeliveryResult([string]$path, $delivery, [string]$phase, [string]$code, [string]$receiptSha, [string]$returnReceiptId = '') {
   Write-FleetJournalJson $path @{
     contract = 'clued.independent-ci.fleet-reinstall-result/1'; operationId = $delivery.operationId
     grantId = $delivery.grantId; requestSha256 = $delivery.requestSha256; sourceSha256 = $delivery.sourceSha256
     nodeId = $delivery.nodeId; bindingGeneration = $delivery.bindingGeneration
-    phase = $phase; receiptSha256 = $receiptSha; code = $code; pid = $PID; at = [DateTimeOffset]::UtcNow.ToString('o')
+    phase = $phase; receiptSha256 = $receiptSha; returnReceiptId = $returnReceiptId; code = $code; pid = $PID; at = [DateTimeOffset]::UtcNow.ToString('o')
+  }
+}
+
+function Confirm-FleetDeliveryComplete([string]$path, $delivery, $progress, $installProof) {
+  $evidence = Get-Key $progress 'completion'
+  if ($progress.step -cne 'complete' -or (Get-FleetProgressMaintenanceId $progress) -cne $delivery.operationId -or
+      (Get-Key $evidence 'grantId') -cne $delivery.grantId -or (Get-Key $evidence 'nodeId') -cne $delivery.nodeId -or
+      (Get-Key $evidence 'sourceSha256') -cne $delivery.sourceSha256 -or $progress.bindingId -cne $delivery.bindingId -or
+      $progress.bindingGeneration -ne $delivery.bindingGeneration -or
+      (Get-Key $evidence 'receiptSha256') -cne $installProof.receiptSha256 -or
+      $evidence.returnReceiptId -cnotmatch '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$') { throw 'FLEET_REINSTALL_RESULT_REFUSED' }
+  Write-FleetDeliveryResult $path $delivery 'COMPLETE' '' $installProof.receiptSha256 $evidence.returnReceiptId
+  $back = Read-FleetConnectionJson $path
+  if ($back.phase -cne 'COMPLETE' -or $back.operationId -cne $delivery.operationId -or $back.grantId -cne $delivery.grantId -or
+      $back.requestSha256 -cne $delivery.requestSha256 -or $back.sourceSha256 -cne $delivery.sourceSha256 -or
+      $back.nodeId -cne $delivery.nodeId -or $back.bindingGeneration -ne $delivery.bindingGeneration -or
+      $back.receiptSha256 -cne $installProof.receiptSha256 -or $back.returnReceiptId -cne $evidence.returnReceiptId) {
+    throw 'FLEET_REINSTALL_RESULT_WRITE_FAILED'
   }
 }
 
 function Invoke-Stage {
   $stageDir = $null; $status = $null; $verdict = $null
   $lock = $null; $locked = $false; $clearCredentials = $false
-  $delivery = $null; $resultDelivery = $null; $deliveryResult = $null; $installProof = $null
+  $delivery = $null; $resultDelivery = $null; $deliveryResult = $null; $completionDue = $false
   $out = if ($Result -and (Test-SafePath $Result)) { $Result } else { $null }   # every line below is appended to it when it is made
   try {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -805,11 +881,19 @@ function Invoke-Stage {
       if ($LASTEXITCODE -ne 0) { throw ('ARCHIVE_EXTRACT_FAILED:' + $LASTEXITCODE) }
       $residentTree = Join-Path $stageDir $Resident.Replace('/', '\')
       $entry = Join-Path $residentTree 'rollout\fleet\install.mjs'
-      $protected = Get-ProtectedInstallInputs $stageDir
+      $sealed = if ($delivery) { Get-FleetSealedInstallPins $delivery $residentTree } else { $null }
+      if ($sealed) {
+        $PrereqManifestSha256 = $sealed.manifestSha; $KitSha256 = $sealed.kitSha
+      }
+      $protected = Get-ProtectedInstallInputs $stageDir $sealed
       $check = Invoke-StageChild $protected.node @($entry, 'first-install-check', '--artifact', $copy, '--artifact-sha', $ArchiveSha256,
         '--acceptance', $protected.acceptance, '--from', $protected.assets) 0 $out $protected.environment
       $codes = Test-FirstInstallCheck $check.last $ArchiveSha256 $KitSha256 (Sha256File $protected.node)
       if ($check.exit -ne 0 -or $codes.Count) { throw 'PROTECTED_INSTALL_INPUTS_REFUSED' }
+      if ($sealed) {
+        $ToolchainNodeSha256 = Get-Key $check.last 'toolchainNodeSha256'
+        $RegistrarSha256 = Get-Key $check.last 'registrarSha256'
+      }
       . (Join-Path $residentTree 'rollout\fleet\package-lifecycle.ps1')
       $context = New-FleetContext $protected.acceptance $ArchiveSha256 $ExpectedOperatorSid $Action
       $context.ownerUac = $true
@@ -818,6 +902,7 @@ function Invoke-Stage {
             $context.version -cne $delivery.targetFingerprint.version) { throw 'FLEET_REINSTALL_SUBJECT_CHANGED' }
         $context.reinstallOperation = $ReinstallOperation
       }
+      if ($sealed) { $PrereqManifest = $protected.prereqManifest; $Kit = Join-Path $protected.assets ([IO.Path]::GetFileName($Kit)) }
       $p1 = Join-Path $residentTree 'windows\first-install-host.ps1'
       $p1Args = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $p1, '-Tree', (Join-Path $stageDir 'tree'), '-PrereqDirectory', $PrereqDirectory,
         '-PrereqManifest', $PrereqManifest, '-PrereqManifestSha256', $PrereqManifestSha256, '-KitSha256', $KitSha256, '-ToolchainNodeSha256', $ToolchainNodeSha256,
@@ -925,7 +1010,8 @@ function Invoke-Stage {
             $deliveryResult = Join-Path $resultRoot ($pending.requestSha256 + '\' + $pending.operationId + '\result.json')
             Assert-FleetLocalPath $deliveryResult
             Assert-FleetDeliveryTrust (Split-Path -Parent $deliveryResult)
-            if (-not $progress) { $context.reinstallOperation = $pending.operationId }
+            $context.reinstallOperation = $pending.operationId
+            $context.reinstallResume = $null -ne $progress
           }
         }
         $preview = Invoke-FleetMaintenance -Phase 'preview' -Context $context
@@ -1008,8 +1094,10 @@ function Invoke-Stage {
         $verdict = Invoke-FleetLifecycle $context $mode $progressFile ${function:Get-FleetStepState} ${function:Invoke-FleetStep}
         $status = $verdict.status
         if ($resultDelivery -and $status -ceq 'FLEET_LIFECYCLE_COMPLETE') {
+          $completionDue = $true
           $installProof = & $context.observeInstall $context
           if (-not $installProof) { throw 'FLEET_INSTALL_POSTCONDITION_UNAVAILABLE' }
+          Confirm-FleetDeliveryComplete $deliveryResult $resultDelivery (Read-FleetProgress $progressFile $context) $installProof
         }
         if ($context.mode -ceq 'Reinstall') {
           $carry = Get-FleetCarryDirectory $context
@@ -1088,12 +1176,9 @@ function Invoke-Stage {
       if (-not $c.cleared) { $verdict = [ordered]@{ status = 'BOOTSTRAP_STAGE_FAILED'; code = 'CREDENTIAL_STAGING_CLEANUP_FAILED' } }
     }
     $verdict = Complete-InstallStageVerdict $verdict $stageDir
-    if ($deliveryResult -and (Get-Command Write-FleetJournalJson -ErrorAction SilentlyContinue)) {
-      $complete = (Get-Key $verdict 'status') -ceq 'FLEET_LIFECYCLE_COMPLETE' -and $null -ne $installProof
+    if ($deliveryResult -and -not $completionDue -and (Get-Command Write-FleetJournalJson -ErrorAction SilentlyContinue)) {
       try {
-        $phase = if ($complete) { 'COMPLETE' } else { 'FAILED' }
-        $receiptSha = if ($complete) { $installProof.receiptSha256 } else { '' }
-        Write-FleetDeliveryResult $deliveryResult $resultDelivery $phase (Get-Key $verdict 'code') $receiptSha
+        Write-FleetDeliveryResult $deliveryResult $resultDelivery 'FAILED' (Get-Key $verdict 'code') ''
       } catch {
         $verdict = @{ status = 'BOOTSTRAP_STAGE_FAILED'; code = 'FLEET_REINSTALL_RESULT_WRITE_FAILED' }
       }
@@ -1125,6 +1210,11 @@ function Invoke-Bootstrap {
     if ($script:From -cne (Get-FleetReinstallAssetDirectory $delivery) -or
         $script:Self -cne (Join-Path $script:From ('fleet-node-' + $delivery.targetFingerprint.version + '.bootstrap.ps1')) -or
         (Sha256File $script:Self) -cne $delivery.bootstrapSha256) { Stop-Bootstrap 'arguments' 'FLEET_REINSTALL_SUBJECT_CHANGED' $null }
+    $lockFile = Join-Path $FleetDeliveryRoot ('claims\' + $ReinstallOperation + '.preflight.lock')
+    $script:ReinstallPreflightLock = [IO.File]::Open($lockFile, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    if (-not (Test-FleetPreflightDue $ReinstallOperation)) { Stop-Bootstrap 'arguments' 'FLEET_REINSTALL_ALREADY_CLAIMED' $null }
+    $script:ReinstallPreflight = $delivery
+    Write-FleetReinstallClaim $ReinstallOperation 'PREFLIGHT' ''
   }
   # 1. the asset set and every hash
   $present = @(Get-ChildItem -LiteralPath $script:From -File -Force | ForEach-Object { $_.Name })
@@ -1153,7 +1243,7 @@ function Invoke-Bootstrap {
   $pc = Test-PrereqManifest $m $needed $false
   if ($pc.Count) { Stop-Bootstrap 'prereq' $(if (@($pc | Where-Object { $_ -like 'PREREQ_NOT_PINNED:*' }).Count) { 'PREREQ_NOT_PINNED' } else { 'PREREQ_MANIFEST_REFUSED' }) $pc }
   if (-not [IO.Directory]::Exists($WorkParent)) { [void][IO.Directory]::CreateDirectory($WorkParent) }
-  $script:Work = Join-Path $WorkParent ([Guid]::NewGuid().ToString('N'))
+  $script:Work = if ($delivery) { Get-FleetPreflightDirectory $WorkParent $ReinstallOperation } else { Join-Path $WorkParent ([Guid]::NewGuid().ToString('N')) }
   [void][IO.Directory]::CreateDirectory($script:Work)
   $pre = Join-Path $script:Work 'prereq'; [void][IO.Directory]::CreateDirectory($pre)
   $tools = [ordered]@{}
@@ -1231,17 +1321,23 @@ function Invoke-Bootstrap {
       # M3: the elevated stage reads local copies only (the archive and the manifest copied into the work directory, held to their hashes;
       # the prerequisites are there already): an elevated token does not see a drive letter the Owner mapped
       $hostIn = Join-Path $script:Work 'host-inputs'
-      $tarLocal = try { Copy-ToWork $tar $hostIn $archiveSha } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
-      $prereqLocal = try { Copy-ToWork $prereqFile $hostIn $sums["$t.prereq-manifest.json"] } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
-      $kitLocal = try { Copy-ToWork (Join-Path $script:From "$t.first-install-kit.json") $hostIn ([string]$chk['kitSha256']) } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
       $acceptHash = Sha256File $acceptance
       $sumsHash = Sha256File $firstSumsFile
-      $acceptLocal = Copy-ToWork $acceptance $hostIn $acceptHash
-      $sumsLocal = Copy-ToWork $firstSumsFile $hostIn $sumsHash
-      foreach ($name in $firstSums.Keys) {
-        if ($name -cne "$t.first-install-kit.json") { $null = Copy-ToWork (Join-Path $script:From $name) $hostIn $firstSums[$name] }
+      $kitFile = Join-Path $script:From "$t.first-install-kit.json"
+      if ($delivery) {
+        $tarLocal = $tar; $prereqLocal = $prereqFile; $kitLocal = $kitFile
+        $acceptLocal = $acceptance; $sumsLocal = $firstSumsFile
+      } else {
+        $tarLocal = try { Copy-ToWork $tar $hostIn $archiveSha } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
+        $prereqLocal = try { Copy-ToWork $prereqFile $hostIn $sums["$t.prereq-manifest.json"] } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
+        $kitLocal = try { Copy-ToWork $kitFile $hostIn ([string]$chk['kitSha256']) } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
+        $acceptLocal = Copy-ToWork $acceptance $hostIn $acceptHash
+        $sumsLocal = Copy-ToWork $firstSumsFile $hostIn $sumsHash
+        foreach ($name in $firstSums.Keys) {
+          if ($name -cne "$t.first-install-kit.json") { $null = Copy-ToWork (Join-Path $script:From $name) $hostIn $firstSums[$name] }
+        }
+        foreach ($p in @($tarLocal, $pre, $prereqLocal, $kitLocal)) { if (-not (Test-UnderDirectory $p $script:Work)) { Stop-Bootstrap 'host' 'ELEVATED_INPUT_NOT_LOCAL' $p } }
       }
-      foreach ($p in @($tarLocal, $pre, $prereqLocal, $kitLocal)) { if (-not (Test-UnderDirectory $p $script:Work)) { Stop-Bootstrap 'host' 'ELEVATED_INPUT_NOT_LOCAL' $p } }
       $hostInputs = @('-Tar', $tarLocal, '-ArchiveSha256', $archiveSha, '-PrereqDirectory', $pre, '-PrereqManifest', $prereqLocal, '-PrereqManifestSha256', $sums["$t.prereq-manifest.json"],
         '-KitSha256', [string]$chk['kitSha256'], '-ToolchainNodeSha256', [string]$chk['toolchainNodeSha256'], '-RegistrarSha256', [string]$chk['registrarSha256'], '-ExpectedOperatorSid', $operator, '-Kit', $kitLocal,
         '-AcceptanceFile', $acceptLocal, '-AcceptanceSha256', $acceptHash, '-FirstInstallSums', $sumsLocal, '-FirstInstallSumsSha256', $sumsHash)
@@ -1274,9 +1370,6 @@ function Invoke-Bootstrap {
       if (-not (Test-FleetInteractiveDesktop)) { Stop-Bootstrap 'host' 'FLEET_WAITING_FOR_OWNER_SESSION' $null }
       $hostArgs += @('-ReinstallOperation', $ReinstallOperation)
       Write-Host ('Preparing clean reinstall of ' + $context.version + ' on ' + $context.machine + '.')
-      try { Write-FleetReinstallClaim $ReinstallOperation 'PENDING_UAC' $null -Create }
-      catch { Stop-Bootstrap 'host' 'FLEET_REINSTALL_ALREADY_CLAIMED' $null }
-      $script:ReinstallClaimed = $true
     }
     $h = Invoke-Elevated 'install' $hostArgs ($HostLimitSeconds + $LauncherLimitSeconds + 5400) $switches
     if ($h.declined) { Stop-Bootstrap 'host' 'UAC_DECLINED' 'nothing elevated ran; run the same command again to continue' }
@@ -1312,4 +1405,19 @@ function Invoke-Bootstrap {
 }
 
 $script:Work = $null; $script:Self = $null; $script:ReinstallClaimed = $false
-if ($MyInvocation.InvocationName -ne '.') { if ($Stage) { Invoke-Stage } else { Invoke-Bootstrap } }
+$script:ReinstallPreflight = $null; $script:ReinstallPreflightLock = $null; $script:ReinstallFinished = $false
+if ($MyInvocation.InvocationName -ne '.') {
+  if ($Stage) { Invoke-Stage }
+  else {
+    try { Invoke-Bootstrap }
+    catch {
+      if (-not $script:ReinstallPreflight) { throw }
+      $code = [string]$_.Exception.Message
+      if ($code -cnotmatch '^[A-Z][A-Z0-9_]{1,79}$') { $code = 'FLEET_REINSTALL_PREFLIGHT_FAILED' }
+      Stop-Bootstrap 'host' $code $null
+    } finally {
+      if ($script:ReinstallPreflightLock) { $script:ReinstallPreflightLock.Dispose() }
+      if ($script:ReinstallFinished) { Remove-FleetPreflightWork $WorkParent $ReinstallOperation $ReinstallOperation }
+    }
+  }
+}

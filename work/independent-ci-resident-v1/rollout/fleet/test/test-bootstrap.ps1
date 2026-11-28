@@ -502,6 +502,7 @@ Case 'self-pull: the Owner entry binds the pending decision and claims the opera
       requestSha256=$fp.request_sha256; expiresAt=$now.AddMinutes(5).ToString('o'); onDuty=$false; hasPeer=$true }
     $probe = @{ nodeId='n'; bindingId='b'; bindingGeneration=3; code=$null; at=$now.ToString('o'); onDuty=$false; fleetTarget=$fp.Clone() }
     $probe.fleetTarget.holder_package = @{ maintenance='available' }; $probe.fleetTarget.has_other_healthy = $true
+    $probe.fleetTarget.reinstall_eligible = $true
     Put-DeliveryFixture (Join-Path $FleetDeliveryRoot 'pending.json') $pending
     Put-DeliveryFixture (Join-Path $FleetDeliveryRoot 'probe.json') $probe
     Put-DeliveryFixture (Join-Path $FleetResidentRoot 'upgrade\current.json') @{ generation=5; installReceiptSha256='d'*64 }
@@ -514,9 +515,83 @@ Case 'self-pull: the Owner entry binds the pending decision and claims the opera
     $probe.fleetTarget.archive_sha256 = 'e'*64
     Put-DeliveryFixture (Join-Path $FleetDeliveryRoot 'probe.json') $probe
     Throws { Get-FleetReinstallDelivery $operator $operation } 'FLEET_TARGET_CHANGED' 'self-pull:changed-seal-before-uac-refused'
+    $probe.fleetTarget.archive_sha256 = $fp.archive_sha256
+    $probe.fleetTarget.holder_package.maintenance = 'delisted'
+    $probe.fleetTarget.reinstall_eligible = $true
+    Put-DeliveryFixture (Join-Path $FleetDeliveryRoot 'probe.json') $probe
+    Case 'self-pull: released handover reaches the interactive launcher' {
+      Yes ((Get-FleetReinstallDelivery $operator $operation).operationId -ceq $operation) 'self-pull:released-handover-allowed'
+    }
   } finally {
     [IO.Directory]::Delete($FleetDeliveryRoot, $true)
   }
+}
+Case 'self-pull: live one-shot launch gate' {
+  $launch = $functions['Invoke-Elevated']
+  $gate = $launch.IndexOf('Assert-FleetReinstallLaunchPermit')
+  $start = $launch.IndexOf('-Verb RunAs')
+  Yes ($gate -ge 0 -and $gate -lt $start) 'self-pull:runas-requires-live-broker-permit'
+}
+Case 'self-pull: pin the elevated toolchain before starting it' {
+  $stage = $functions['Invoke-Stage']
+  $pins = $stage.IndexOf('Get-FleetSealedInstallPins')
+  $tools = $stage.IndexOf('Get-ProtectedInstallInputs')
+  $first = $stage.IndexOf('Invoke-StageChild $protected.node')
+  Yes ($pins -ge 0 -and $pins -lt $tools -and $tools -lt $first) 'self-pull:sealed-pins-before-tool-start'
+  if ($pins -lt 0) { return }
+  . ([scriptblock]::Create($functions['Get-ProtectedInstallInputs']))
+  $tmp = Join-Path $env:TEMP ('sealed-inputs-' + [guid]::NewGuid().ToString('N'))
+  [void][IO.Directory]::CreateDirectory($tmp)
+  try {
+    $AcceptanceFile = Join-Path $tmp 'accepted.json'
+    $FirstInstallSums = Join-Path $tmp 'first.SHA256SUMS'
+    $PrereqManifest = Join-Path $tmp 'prereqs.json'
+    $Kit = Join-Path $tmp 'kit.json'
+    [IO.File]::WriteAllText($AcceptanceFile, '{}')
+    [IO.File]::WriteAllText($Kit, '{}')
+    $KitSha256 = Sha256File $Kit
+    [IO.File]::WriteAllText($FirstInstallSums, "$KitSha256  kit.json")
+    [IO.File]::WriteAllText($PrereqManifest, '{"items":[]}')
+    $AcceptanceSha256 = Sha256File $AcceptanceFile
+    $FirstInstallSumsSha256 = Sha256File $FirstInstallSums
+    $PrereqManifestSha256 = Sha256File $PrereqManifest
+    $sealed = @{ firstSumsSha = ('0' * 64); kitSha = $KitSha256; manifestSha = ('1' * 64) }
+    Throws { Get-ProtectedInstallInputs (Join-Path $tmp 'bad-sums') $sealed } 'LOCAL_COPY_NOT_THE_PINNED:first.SHA256SUMS' 'self-pull:caller-cannot-pin-a-different-checklist'
+    $sealed.firstSumsSha = $FirstInstallSumsSha256
+    Throws { Get-ProtectedInstallInputs (Join-Path $tmp 'bad-manifest') $sealed } 'LOCAL_COPY_NOT_THE_PINNED:prereqs.json' 'self-pull:caller-cannot-pin-a-different-manifest'
+  } finally { [IO.Directory]::Delete($tmp, $true) }
+}
+Case 'self-pull: persist and read back the result before cleanup' {
+  $stage = $functions['Invoke-Stage']
+  $commit = $stage.IndexOf('Confirm-FleetDeliveryComplete')
+  $cleanup = $stage.IndexOf('[IO.File]::Delete($progressFile)')
+  Yes ($commit -ge 0 -and $commit -lt $cleanup) 'self-pull:durable-result-before-log-cleanup'
+}
+Case 'self-pull: stop on deterministic failure and resume transient preflight' {
+  . (Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $here))) 'windows\fleet-reinstall-interactive.ps1')
+  $work = Join-Path $env:TEMP ('clued-preflight-' + [guid]::NewGuid().ToString('N'))
+  $FleetDeliveryRoot = Join-Path $work 'delivery'
+  $operation = 'a1000000-0000-4000-8000-000000000007'
+  try {
+    [void][IO.Directory]::CreateDirectory((Join-Path $FleetDeliveryRoot 'claims'))
+    $now = [DateTimeOffset]::UtcNow
+    $retry = Get-FleetPreflightState $operation 'PREREQ_DOWNLOAD_RETRY_EXHAUSTED' $now
+    $stop = Get-FleetPreflightState $operation 'FIRST_INSTALL_INPUTS_NOT_ACCEPTED' $now
+    Yes ($retry.phase -ceq 'RETRY_PREFLIGHT' -and ([DateTimeOffset]$retry.retryAt) -gt $now) 'self-pull:preflight-transient-backs-off'
+    Yes ($stop.phase -ceq 'FAILED') 'self-pull:preflight-definitive-failure-stops'
+    $folder = Get-FleetPreflightDirectory $work $operation
+    [void][IO.Directory]::CreateDirectory($folder)
+    $stateFile = Join-Path $FleetDeliveryRoot ('claims\' + $operation + '.json')
+    Write-FleetOperatorRecord $stateFile $retry
+    Remove-FleetPreflightWork $work $operation
+    Yes (([IO.Directory]::Exists($folder)) -and -not (Test-FleetPreflightDue $operation)) 'self-pull:preflight-retains-workspace-during-backoff'
+    $retry.retryAt = $now.AddMinutes(-1).ToString('o')
+    Write-FleetOperatorRecord $stateFile $retry
+    Yes ((Test-FleetPreflightDue $operation) -and (Get-FleetPreflightDirectory $work $operation) -ceq $folder) 'self-pull:retry-reuses-workspace'
+    Write-FleetOperatorRecord $stateFile $stop
+    Remove-FleetPreflightWork $work $operation
+    Yes (-not (Test-FleetPreflightDue $operation) -and -not [IO.Directory]::Exists($folder)) 'self-pull:durably-stopped-preflight-reclaims-workspace'
+  } finally { [IO.Directory]::Delete($work, $true) }
 }
 Case 'first-install:launcher failure keeps evidence after staging cleanup' {
   $fixture = Join-Path $env:TEMP ('clued-bootstrap-evidence-' + [guid]::NewGuid().ToString('N'))

@@ -857,7 +857,7 @@ test('冻结通道不变，supervisor 必须换代时自动补齐封存重装资
     }));
     const lane = await fixtureLanes({ node, release: candidate, broker, deliveryRoot });
     await lane.probe({ ...target, holder_package: { classification: 'previous', maintenance: 'available' },
-      has_other_healthy: true });
+      has_other_healthy: true, reinstall_eligible: true, reinstall_busy: false });
     await drive(lane, 8);
     return { node, deliveryRoot, lane, currentFile };
   }
@@ -887,7 +887,7 @@ test('冻结通道不变，supervisor 必须换代时自动补齐封存重装资
   await fs.writeFile(currentFile, json(next));
   await fs.writeFile(path.join(path.dirname(installedAssets), 'result.json'), json({
     contract: 'clued.independent-ci.fleet-reinstall-result/1', operationId, grantId, requestSha256, sourceSha256,
-    nodeId, bindingGeneration, phase: 'COMPLETE', receiptSha256, at: observedAt,
+    nodeId, bindingGeneration, phase: 'COMPLETE', receiptSha256, returnReceiptId: randomUUID(), at: observedAt,
   }));
   const probeFile = path.join(node.root, 'broker', 'renew-ci.json');
   await fs.writeFile(probeFile, json({ ...await read(probeFile), delivery: {
@@ -896,10 +896,19 @@ test('冻结通道不变，supervisor 必须换代时自动补齐封存重装资
   } }));
   await drive(lane, 1);
   assert.equal((await lane.state()).reinstall.phase, 'VERIFYING');
-  await fs.writeFile(path.join(node.root, 'upgrade', 'mailbox', 'responses', 'version-facts.json'), json({
+  const linuxFile = path.join(node.root, 'upgrade', 'mailbox', 'responses', 'version-facts.json');
+  const linuxFacts = {
     contract: 'clued.independent-ci.linux-version-facts/1', ciSourceManifestSha256: sourceSha256, generation: next.linux.generation,
-    staged: null, pinsOk: true, liveMatchesCurrent: true, observedAt,
-  }));
+    staged: null, pinsOk: true, observedAt,
+  };
+  for (const live of [{ liveMatchesCurrent: null }, {}]) {
+    await t.test('项 6：Linux 实况' + (Object.keys(live).length ? '为 null' : '缺字段'), async () => {
+      await fs.writeFile(linuxFile, json({ ...linuxFacts, ...live }));
+      await drive(lane, 1);
+      assert.equal((await lane.state()).reinstall?.phase, 'VERIFYING');
+    });
+  }
+  await fs.writeFile(linuxFile, json({ ...linuxFacts, liveMatchesCurrent: true }));
   await drive(lane, 1);
   assert.equal((await lane.state()).phase, 'CURRENT');
 
@@ -909,4 +918,163 @@ test('冻结通道不变，supervisor 必须换代时自动补齐封存重装资
   assert.equal((await changed.lane.state()).reinstall.code, 'FLEET_DELIVERY_RELEASE_ASSET_CHANGED');
   assert.equal(changed.lane.answers.length, 1);
   assert.deepEqual(await fs.readdir(changed.deliveryRoot), ['interactive.ps1']);
+});
+
+test('重装维护资格和中断投递均按同一封存目标恢复', async t => {
+  const { residentSelfPull, targetFingerprint, byTarget } = await lanes();
+  for (const scenario of ['handover', 'restart', 'unknown']) await t.test(scenario, async t => {
+    const root = await tempDir(t, 'reinstall-resume');
+    const put = async (file, value) => {
+      const full = path.join(root, file);
+      await fs.mkdir(path.dirname(full), { recursive: true });
+      await fs.writeFile(full, json(value));
+    };
+    const target = { repository, version: 'g000028', grant_id: randomUUID(), receipt_id: randomUUID(),
+      accepted_at: new Date(now - 1000).toISOString(), request_sha256: 'a'.repeat(64),
+      archive_sha256: 'b'.repeat(64), acceptance_sha256: 'c'.repeat(64), other_sources: [], has_other_healthy: true };
+    const fp = targetFingerprint(target);
+    const refusalId = randomUUID(), brokerId = randomUUID();
+    const state = path.join(root, 'state', 'fleet-pull.json');
+    const submissions = [];
+    let time = now;
+    const resident = residentSelfPull({ root, repository, clock: () => time, deliveryRoot: null,
+      submit: async (id, payload) => { submissions.push({ id, payload }); } });
+    const observe = (maintenance, eligible, onDuty = false) => put('broker/renew-ci.json', {
+      at: new Date(time).toISOString(), code: null, onDuty,
+      fleetTarget: { ...target, holder_package: { maintenance }, reinstall_eligible: eligible },
+    });
+    await put(path.relative(root, path.join(byTarget(root, target), 'reinstall.json')), { targetFingerprint: fp, ready: true });
+    const idle = { queueEmpty: true };
+    await put('state/fleet-pull.json', { phase: 'NEEDS_REINSTALL', code: 'COMPANION_SUPERVISOR_NEEDS_REINSTALL',
+      targetFingerprint: fp, reinstall: { refusalId, ...(scenario === 'handover' ? { phase: 'DOWNLOADING' } : {
+        phase: 'PREPARING', brokerId, requestedAt: now,
+      }) } });
+    if (scenario === 'handover') {
+      for (const [state, eligible, duty] of [['available', true, true], ['reserve', false, false],
+        ['repair', false, false], ['delisted', false, false]]) {
+        await observe(state, eligible, duty);
+        await resident.tick(idle);
+        assert.equal(submissions.length, 0, state);
+      }
+      await observe('delisted', true);
+      await resident.tick(idle);
+      assert.equal(submissions[0]?.payload.kind, 'fleet-reinstall', '释放交班后应投递重装');
+      return;
+    }
+    if (scenario === 'unknown') {
+      await put(`broker/responses/${brokerId}.taken`, {});
+      time += 31 * 60_000;
+    }
+    await observe('available', true);
+    await resident.tick(idle);
+    if (scenario === 'restart') assert.equal(submissions[0]?.id, brokerId, '重启补投原 ID');
+    else {
+      assert.equal(submissions.length, 0, '已有受保护认领，不重复投递');
+      assert.equal((await read(state)).reinstall?.code, 'FLEET_REINSTALL_BROKER_UNCONFIRMED');
+    }
+  });
+});
+
+test('Broker 重装夹具复核启动、重建终态并回收失效交付', { skip: process.platform !== 'win32' }, async t => {
+  const broker = await brokerFixture(t);
+  const { residentSelfPull } = await lanes();
+  for (const scenario of ['withdrawn', 'replacement', 'binding', 'busy', 'reserve', 'consent', 'launch', 'recover', 'sweep']) {
+    await t.test(scenario, async t => {
+      const root = await tempDir(t, 'broker-reinstall');
+      const operationId = randomUUID(), requestSha256 = 'a'.repeat(64);
+      const grantId = randomUUID(), nodeId = randomUUID(), bindingId = randomUUID();
+      const sourceSha256 = 'b'.repeat(64), installReceiptSha256 = 'c'.repeat(64);
+      const targetFingerprint = { repository, version: 'g000028', grant_id: grantId, receipt_id: randomUUID(),
+        accepted_at: new Date(now - 1000).toISOString(), request_sha256: requestSha256,
+        archive_sha256: 'd'.repeat(64), acceptance_sha256: 'e'.repeat(64) };
+      const pending = { contract: 'clued.independent-ci.fleet-reinstall/1', requestSha256, operationId, grantId, nodeId,
+        bindingId, bindingGeneration: 1, installGeneration: 1, installReceiptSha256, sourceSha256, targetFingerprint,
+        operatorSid: 'S-1-5-21-1-2-3-3001', onDuty: false, hasPeer: true, expiresAt: new Date(now + 60_000).toISOString() };
+      const observe = { nodeId, bindingId, bindingGeneration: 1, onDuty: false, code: null, at: new Date(now).toISOString(),
+        fleetTarget: { ...targetFingerprint, holder_package: { maintenance: 'delisted' }, other_sources: [],
+          has_other_healthy: true, reinstall_eligible: true, reinstall_busy: false } };
+      const put = async (file, value) => {
+        const full = path.join(root, file);
+        await fs.mkdir(path.dirname(full), { recursive: true });
+        await fs.writeFile(full, json(value));
+        return full;
+      };
+      const launchNonce = randomUUID();
+      const claims = 'fleet-delivery/claims';
+      const opDir = `fleet-delivery/${requestSha256}/${operationId}`;
+      const permit = path.join(root, opDir, 'launch-permit.json');
+      const run = mode => exec(broker, ['--fleet-reinstall-fixture', root, new Date(now).toISOString(), mode], { windowsHide: true });
+      await put('fleet-delivery/pending.json', pending);
+      await put('upgrade/current.json', { generation: 1, installReceiptSha256 });
+      await put(`${opDir}/assets/fixture.json`, {});
+      await put(`${claims}/${operationId}.launch.json`, { operationId, nonce: launchNonce, at: observe.at });
+      if (scenario === 'recover') {
+        const receiptSha256 = 'f'.repeat(64), returnReceiptId = randomUUID();
+        const progress = { contract: 'clued.fleet.lifecycle-progress/1', step: 'complete', mode: 'Reinstall', bindingId,
+          bindingGeneration: 1, operationId: operationId.replaceAll('-', ''), archiveSha256: targetFingerprint.archive_sha256,
+          acceptanceSha256: targetFingerprint.acceptance_sha256, operatorSid: pending.operatorSid,
+          completion: { grantId: randomUUID(), nodeId, sourceSha256, receiptSha256, returnReceiptId } };
+        const result = path.join(root, opDir, 'result.json');
+        await put('upgrade/current.json', { ciSourceManifestSha256: sourceSha256, installReceiptSha256: receiptSha256 });
+        await put('journal.fixture.json', progress);
+        await run('recover');
+        await assert.rejects(fs.stat(result), { code: 'ENOENT' });
+        progress.completion.grantId = grantId;
+        await put('journal.fixture.json', progress);
+        await run('recover');
+        assert.equal((await read(result)).returnReceiptId, returnReceiptId);
+        assert.equal((await read(result)).receiptSha256, receiptSha256);
+        return;
+      }
+      if (scenario === 'sweep') {
+        const idle = randomUUID(), active = randomUUID(), journal = randomUUID();
+        for (const id of [idle, active, journal]) await put(`fleet-delivery/${requestSha256}/${id}/assets/fixture.json`, {});
+        await put(`fleet-delivery/${requestSha256}/${active}/result.json`, { phase: 'INSTALLING', pid: process.pid,
+          at: '2099-01-01T00:00:00.000Z' });
+        await put('journal.fixture.json', { operationId: journal.replaceAll('-', '') });
+        await run('sweep');
+        await assert.rejects(fs.stat(path.join(root, `fleet-delivery/${requestSha256}/${idle}/assets`)), { code: 'ENOENT' });
+        for (const id of [active, journal, operationId]) await fs.access(path.join(root, `fleet-delivery/${requestSha256}/${id}/assets`));
+        await put('fleet-delivery/pending.json', { ...pending, expiresAt: new Date(now - 1000).toISOString() });
+        await put(`${claims}/${operationId}.json`, { operationId, phase: 'FAILED' });
+        await run('sweep');
+        await assert.rejects(fs.stat(path.join(root, opDir, 'assets')), { code: 'ENOENT' });
+        return;
+      }
+      const later = structuredClone(observe);
+      const expected = {
+        withdrawn: 'FLEET_TARGET_CHANGED', replacement: 'FLEET_TARGET_CHANGED', binding: 'FLEET_REINSTALL_BINDING_CHANGED',
+        busy: 'FLEET_WAITING_FOR_IDLE', reserve: 'FLEET_MAINTENANCE_BLOCKED', consent: 'FLEET_REINSTALL_PREVIEW_CHANGED', launch: 'OK',
+      };
+      if (scenario === 'withdrawn') later.fleetTarget = null;
+      if (scenario === 'replacement') later.fleetTarget.grant_id = randomUUID();
+      if (scenario === 'binding') later.bindingGeneration++;
+      if (scenario === 'busy') later.fleetTarget.reinstall_busy = true;
+      if (scenario === 'reserve') later.fleetTarget.reinstall_eligible = false;
+      if (scenario === 'consent') later.fleetTarget.has_other_healthy = false;
+      await put('broker/renew-ci.json', observe);
+      await put('broker/renew-ci-recheck.fixture.json', later);
+      await fs.mkdir(path.join(root, 'broker', 'responses'));
+      await fs.mkdir(path.join(root, 'broker', 'requests'));
+      await fs.mkdir(path.join(root, 'state'));
+      const resident = residentSelfPull({ root, repository, clock: () => now, deliveryRoot: path.join(root, 'fleet-delivery') });
+      const running = run('launch');
+      let stopped = false;
+      running.then(() => { stopped = true; }, () => { stopped = true; });
+      await until(async () => {
+        await resident.confirmIdle({ queueEmpty: true });
+        return stopped || await resident.holdingIdle();
+      }, '启动前常驻保留空闲');
+      assert.equal(stopped, false, 'Broker 应在收到空闲确认后复核');
+      if (scenario === 'launch') {
+        await until(() => fs.access(permit).then(() => true, () => false), 'Broker 许可已发布');
+        assert.equal(await resident.holdingIdle(), true, '发布许可仍保持空闲');
+        assert.equal((await read(permit)).nonce, launchNonce);
+        await put(`${claims}/${operationId}.launched.json`, { operationId, nonce: launchNonce });
+      }
+      assert.equal((await running).stdout.trim(), expected[scenario]);
+      if (scenario === 'launch') assert.equal((await run('launch')).stdout.trim(), 'NO_REQUEST');
+      else await assert.rejects(fs.stat(permit), { code: 'ENOENT' });
+    });
+  }
 });

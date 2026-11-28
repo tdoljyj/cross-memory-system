@@ -154,20 +154,12 @@ function Get-FleetReinstallDelivery([string]$operatorSid, [string]$operationId) 
     if ($probe.fleetTarget.$key -cne $pending.targetFingerprint.$key) { throw 'FLEET_TARGET_CHANGED' }
   }
   $target = $probe.fleetTarget
-  if ($target.holder_package.maintenance -cne 'available' -or $probe.onDuty -ne $pending.onDuty -or
+  if (-not $target.PSObject.Properties['reinstall_eligible'] -or $target.reinstall_eligible -isnot [bool] -or -not $target.reinstall_eligible -or
+      $probe.onDuty -ne $pending.onDuty -or
       $target.has_other_healthy -ne $pending.hasPeer -or ($probe.onDuty -and $target.has_other_healthy)) {
     throw 'FLEET_WAITING_FOR_HANDOVER'
   }
   if ([IO.File]::Exists((Join-Path $FleetResidentRoot 'state\PAUSED.json'))) { throw 'FLEET_REINSTALL_PAUSED' }
-  if ($probe.onDuty) {
-    $status = Read-FleetDeliveryJson (Join-Path $FleetResidentRoot 'state\status.json') 1MB
-    $statusAt = [DateTimeOffset]$status.writtenAt
-    if ($status.current -or @($status.pending).Count -or $status.halt -or $status.paused -or
-        $statusAt -gt $now -or $statusAt.AddMinutes(1) -lt $now -or
-        $status.executor.state -cnotin @('IDLE','COMPLETED','NOT_ADMITTED','DEFERRED')) {
-      throw 'FLEET_WAITING_FOR_IDLE'
-    }
-  }
   $upgrade = Read-FleetDeliveryJson (Join-Path $FleetResidentRoot 'upgrade\status.json')
   if ($upgrade.op -and $upgrade.op.state -cnotin @('SUCCEEDED','SUCCEEDED_STILL_PAUSED','REFUSED','GRANT_REJECTED',
       'GRANT_EXPIRED','CANCELLED','STALE','ROLLED_BACK_PAUSED')) { throw 'FLEET_REINSTALL_UPGRADE_IN_PROGRESS' }
@@ -178,14 +170,104 @@ function Get-FleetReinstallAssetDirectory($delivery) {
   Join-Path $FleetDeliveryRoot ($delivery.requestSha256 + '\' + $delivery.operationId + '\assets')
 }
 
-function Write-FleetReinstallClaim([string]$operationId, [string]$phase, [string]$code, [switch]$Create) {
-  $folder = Join-Path $FleetDeliveryRoot 'claims'
-  $file = Join-Path $folder ($operationId + '.json')
-  $value = @{ operationId = $operationId; phase = $phase; code = $code; pid = $PID; at = [DateTimeOffset]::UtcNow.ToString('o') }
+function Write-FleetOperatorRecord([string]$file, $value, [switch]$Create) {
   $bytes = [Text.Encoding]::UTF8.GetBytes(($value | ConvertTo-Json -Compress))
-  $mode = if ($Create) { [IO.FileMode]::CreateNew } else { [IO.FileMode]::Truncate }
-  $stream = [IO.FileStream]::new($file, $mode, [IO.FileAccess]::Write, [IO.FileShare]::Read, 4096, [IO.FileOptions]::WriteThrough)
-  try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+  $temp = $file + '.' + [Guid]::NewGuid().ToString('N')
+  try {
+    $stream = [IO.FileStream]::new($temp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough)
+    try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+    if (-not $Create -and [IO.File]::Exists($file)) { [IO.File]::Replace($temp, $file, [NullString]::Value) }
+    else { [IO.File]::Move($temp, $file) }
+  } finally { [IO.File]::Delete($temp) }
+}
+
+function Get-FleetPreflightState([string]$operationId, [string]$code, [DateTimeOffset]$now) {
+  $retry = $code -cin @('PREREQ_DOWNLOAD_RETRY_EXHAUSTED','FLEET_WAITING_FOR_IDLE','FLEET_WAITING_FOR_OWNER_SESSION','RENEW_BUSY',
+    'FLEET_REINSTALL_PERMIT_TIMEOUT','FLEET_REINSTALL_DELIVERY_EXPIRED','FLEET_REINSTALL_DISK_FULL','FLEET_REINSTALL_BROKER_UNAVAILABLE')
+  @{
+    operationId = $operationId; phase = $(if ($retry) { 'RETRY_PREFLIGHT' } elseif ($code) { 'FAILED' } else { 'PREFLIGHT' })
+    code = $code; pid = $PID; at = $now.ToString('o'); retryAt = $(if ($retry) { $now.AddMinutes(1).ToString('o') } else { $null })
+  }
+}
+
+function Get-FleetPreflightDirectory([string]$parent, [string]$operationId) {
+  if ($operationId -cnotmatch '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$') { throw 'FLEET_REINSTALL_SUBJECT_CHANGED' }
+  Join-Path $parent ('reinstall-' + $operationId)
+}
+
+function Test-FleetPreflightDue([string]$operationId) {
+  if ([IO.File]::Exists((Join-Path $FleetDeliveryRoot ('claims\' + $operationId + '.spent.json')))) { return $false }
+  $file = Join-Path $FleetDeliveryRoot ('claims\' + $operationId + '.json')
+  if (-not [IO.File]::Exists($file)) { return $true }
+  $state = Read-FleetDeliveryJson $file 4096
+  $state.operationId -ceq $operationId -and ($state.phase -ceq 'PREFLIGHT' -or
+    ($state.phase -ceq 'RETRY_PREFLIGHT' -and [DateTimeOffset]$state.retryAt -le [DateTimeOffset]::UtcNow))
+}
+
+function Remove-FleetPreflightWork([string]$parent, [string]$keepOperation, [string]$finishedOperation) {
+  if (-not [IO.Directory]::Exists($parent) -or
+      (([IO.File]::GetAttributes($parent) -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { return }
+  foreach ($work in [IO.Directory]::EnumerateDirectories($parent, 'reinstall-*')) {
+    if ([IO.Path]::GetFileName($work) -cnotmatch '^reinstall-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$') { continue }
+    $id = $Matches[1]
+    $lock = $null
+    try {
+      if ($id -cne $finishedOperation -and [IO.File]::Exists((Join-Path $FleetDeliveryRoot ('claims\' + $id + '.spent.json')))) { continue }
+      if ($id -ceq $keepOperation -and $id -cne $finishedOperation) {
+        $stateFile = Join-Path $FleetDeliveryRoot ('claims\' + $id + '.json')
+        if (-not [IO.File]::Exists($stateFile) -or (Read-FleetDeliveryJson $stateFile 4096).phase -cne 'FAILED') { continue }
+      }
+      $file = Join-Path $FleetDeliveryRoot ('claims\' + $id + '.preflight.lock')
+      $lock = [IO.File]::Open($file, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+      $dirs = [Collections.Generic.Queue[string]]::new()
+      $dirs.Enqueue($work)
+      $safe = $true
+      while ($dirs.Count -and $safe) {
+        $dir = $dirs.Dequeue()
+        if ([IO.File]::GetAttributes($dir) -band [IO.FileAttributes]::ReparsePoint) { $safe = $false; break }
+        foreach ($child in [IO.Directory]::EnumerateDirectories($dir)) { $dirs.Enqueue($child) }
+      }
+      if ($safe) { [IO.Directory]::Delete($work, $true) }
+    } catch { } finally { if ($lock) { $lock.Dispose() } }
+  }
+}
+
+function Write-FleetReinstallClaim([string]$operationId, [string]$phase, [string]$code, [switch]$Create) {
+  $file = Join-Path $FleetDeliveryRoot ('claims\' + $operationId + '.json')
+  $value = Get-FleetPreflightState $operationId $code ([DateTimeOffset]::UtcNow)
+  if ($phase -cne 'PREFLIGHT') { $value.phase = $phase }
+  Write-FleetOperatorRecord $file $value -Create:$Create
+}
+
+function Request-FleetReinstallLaunchPermit($delivery) {
+  $id = $delivery.operationId
+  $nonce = [Guid]::NewGuid().ToString('D')
+  $assets = Split-Path -Parent (Get-FleetReinstallAssetDirectory $delivery)
+  $response = Join-Path $assets 'launch-response.json'
+  $permit = Join-Path $assets 'launch-permit.json'
+  if ([IO.File]::Exists($permit)) { throw 'FLEET_REINSTALL_ALREADY_CLAIMED' }
+  Write-FleetOperatorRecord (Join-Path $FleetDeliveryRoot ('claims\' + $id + '.launch.json')) @{
+    operationId = $id; nonce = $nonce; at = [DateTimeOffset]::UtcNow.ToString('o')
+  }
+  $watch = [Diagnostics.Stopwatch]::StartNew()
+  while ($watch.Elapsed.TotalMinutes -lt 2) {
+    if ([IO.File]::Exists($permit)) { return @{ path = $permit; nonce = $nonce } }
+    if ([IO.File]::Exists($response)) {
+      $answer = Read-FleetDeliveryJson $response 4096
+      if ($answer.operationId -ceq $id -and $answer.nonce -ceq $nonce) { throw $answer.code }
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  throw 'FLEET_REINSTALL_PERMIT_TIMEOUT'
+}
+
+function Assert-FleetReinstallLaunchPermit($delivery, $request, [DateTimeOffset]$now = [DateTimeOffset]::UtcNow) {
+  $permit = Read-FleetDeliveryJson $request.path 4096
+  if ($permit.contract -cne 'clued.independent-ci.fleet-reinstall-launch/1' -or $permit.nonce -cne $request.nonce -or
+      $permit.operationId -cne $delivery.operationId -or $permit.requestSha256 -cne $delivery.requestSha256 -or
+      $permit.bindingId -cne $delivery.bindingId -or $permit.bindingGeneration -ne $delivery.bindingGeneration -or
+      $permit.installReceiptSha256 -cne $delivery.installReceiptSha256 -or $permit.hasPeer -ne $delivery.hasPeer -or
+      [DateTimeOffset]$permit.expiresAt -le $now) { throw 'FLEET_REINSTALL_PERMIT_EXPIRED' }
 }
 
 function Invoke-FleetInteractiveReinstall {
@@ -193,8 +275,11 @@ function Invoke-FleetInteractiveReinstall {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
   if ((New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { return }
   if (-not [IO.File]::Exists((Join-Path $FleetDeliveryRoot 'pending.json'))) { return }
+  $pending = Read-FleetDeliveryJson (Join-Path $FleetDeliveryRoot 'pending.json') 16384
+  if ($pending.operatorSid -cne $identity.User.Value) { return }
+  Remove-FleetPreflightWork 'C:\ProgramData\CluedBootstrap' $pending.operationId
   $delivery = Get-FleetReinstallDelivery $identity.User.Value ''
-  if ([IO.File]::Exists((Join-Path $FleetDeliveryRoot ('claims\' + $delivery.operationId + '.json'))) -or
+  if (-not (Test-FleetPreflightDue $delivery.operationId) -or
       -not (Test-FleetInteractiveDesktop)) { return }
   $assets = Get-FleetReinstallAssetDirectory $delivery
   $bootstrap = Join-Path $assets ('fleet-node-' + $delivery.targetFingerprint.version + '.bootstrap.ps1')
