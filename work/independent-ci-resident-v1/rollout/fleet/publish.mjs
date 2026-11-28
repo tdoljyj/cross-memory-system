@@ -281,8 +281,6 @@ function gh(ghCommand, args, timeout, release = false) {
 }
 
 const RELEASE_MAX_ATTEMPTS = 4;
-const RELEASE_ATTEMPT_MS = 5 * 60_000;
-const RELEASE_BUDGET_MS = 10 * 60_000;
 
 function releaseRetryDelay(stderr) {
   const status = Number(stderr?.match(/\b(?:HTTP(?:\/[\d.]+)?\s+|status(?: code)?[ :=]+)([1-5]\d{2})\b/i)?.[1]
@@ -296,10 +294,9 @@ function releaseRetryDelay(stderr) {
 }
 
 function releaseBudget(ghCommand) {
-  const end = performance.now() + RELEASE_BUDGET_MS;
   const limits = ghCommand.releaseLimits;
   return {
-    remaining: () => Math.floor(Math.min(end - performance.now(), limits?.remaining() ?? Infinity)),
+    remaining: () => Math.floor(limits?.remaining() ?? Infinity),
     sleep: limits?.sleep ?? sleepFor,
   };
 }
@@ -307,8 +304,8 @@ function releaseBudget(ghCommand) {
 async function retryReleaseGh(ghCommand, call, budget, reconcile) {
   const exhausted = { status: null, stderr: 'GitHub command timed out', retryDelay: 0 };
   const run = args => {
-    const timeout = Math.min(RELEASE_ATTEMPT_MS, budget.remaining());
-    return timeout > 0 ? gh(ghCommand, args, timeout, true) : exhausted;
+    const remaining = budget.remaining();
+    return remaining > 0 ? gh(ghCommand, args, remaining === Infinity ? undefined : remaining, true) : exhausted;
   };
   let result = exhausted;
   for (let attempt = 0; attempt < RELEASE_MAX_ATTEMPTS; attempt++) {

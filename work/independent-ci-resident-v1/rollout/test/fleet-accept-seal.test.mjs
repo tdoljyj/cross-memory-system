@@ -1,7 +1,7 @@
 // Real seal and accept commands through the existing resident-node suite. GitHub and the acceptance door are controlled fixtures.
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
@@ -13,6 +13,28 @@ import * as publishModule from '../fleet/publish.mjs';
 import { transportAssetNames } from '../fleet/fetch.mjs';
 import { requirementsDigest } from '../fleet/release-migrations.mjs';
 import { GRANT, GRANT_RECEIPT, REPO, TAG, fakeTime, prepWorld, resourceOf, sealedNothing, sha, timed, uploadsOf, world } from '../fleet/test/publish-fixtures.mjs';
+
+test('prepare 的角色镜像上传耗时 11 分钟，单次完成', async t => {
+  const w = await prepWorld(t, { spawnGh: false });
+  const transferMs = 11 * 60_000;
+  const timeouts = [];
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const ghCommand = (args, timeout) => {
+    if (args[0] === 'release' && args[1] === 'upload' && path.basename(args[3]) === path.basename(w.image)) {
+      timeouts.push(timeout);
+      if (timeout > 0 && timeout < transferMs) {
+        elapsed += timeout;
+        return { status: null, stderr: 'GitHub command timed out' };
+      }
+      elapsed += transferMs;
+    }
+    return w.gh(args);
+  };
+  assert.equal((await w.prep({ ghCommand })).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  assert.deepEqual(timeouts, [undefined]);
+  assert.equal((await w.assets()).filter(asset => asset.name === path.basename(w.image)).length, 1);
+});
 
 test('prepare retries a kit upload after EOF, checking the Release before uploading again', async t => {
   const w = await prepWorld(t, { spawnGh: false });
@@ -110,6 +132,7 @@ test('发布读回重试 HTTP 503 和 TLS 握手超时，下载使用新的空�
         writeFileSync(path.join(dir, 'SHA256SUMS'), 'partial');
         return { status: 1, stderr: 'net/http: TLS handshake timeout' };
       }
+      assert.equal(existsSync(dirs[0]), false, '失败的下载目录应在重试前删除');
     }
     return w.gh(args);
   };
@@ -143,16 +166,16 @@ test('封存读取遇到二级限流时退避，下一次等待超出截止时�
   await w.prep();
   const time = fakeTime('2026-11-27T00:00:00Z');
   const stderr = 'HTTP 403: You have exceeded a secondary rate limit.';
-  let views = 0;
-  const ghCommand = args => {
+  const timeouts = [];
+  const ghCommand = (args, timeout) => {
     if (args[0] === 'release' && args[1] === 'view') {
-      views++;
+      timeouts.push(timeout);
       return { status: 1, stderr };
     }
     return w.gh(args);
   };
   await assert.rejects(timed(w, time, { ghCommand, deadline: time.now + 90_000 }), { code: 'PUBLISH_GH_RELEASE_VIEW_FAILED', detail: stderr });
-  assert.equal(views, 2);
+  assert.deepEqual(timeouts, [90_000, 30_000]);
   assert.deepEqual(time.slept, [60_000]);
   assert.deepEqual(await w.opens(), []);
 });
