@@ -3,12 +3,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import { check, HEX64, sha256, UUID } from './canonical.mjs';
 import { acceptanceBytes } from './fleet-acceptance.mjs';
-import { acceptanceFromTarget, byTarget, names, observationOf } from './fleet-self-pull.mjs';
+import { acceptanceFromTarget, byTarget, names, observationOf, verifyReinstallAssets } from './fleet-self-pull.mjs';
 import { refuseUnderTest } from './production-root-guard.mjs';
 import { readBounded } from './store.mjs';
 import { extractTar, readTar } from '../rollout/fleet/tar.mjs';
+import { sha256File } from '../rollout/fleet/fetch.mjs';
 
 const SMALL = 256 * 1024;
 const ARCHIVE_MAX = 512 * 1024 * 1024;
@@ -51,6 +54,7 @@ async function assemble(root, run, deadline) {
   const bundle = byTarget(root, target);
   const files = names(target);
   check(await fs.realpath(bundle) === bundle, 'FLEET_BROKER_PATH_REFUSED');
+  if (input.reinstall === true) return stageReinstall(run, bundle, target, files);
   const requestBytes = await readBounded(path.join(bundle, files.request), SMALL, 'FLEET_REQUEST_REFUSED');
   const acceptance = acceptanceFromTarget(target, requestBytes);
   check(Object.hasOwn(target, 'holder_package') || !onDuty || target.other_sources.every(peer => peer === acceptance.ciSourceManifestSha256), 'FLEET_WAITING_FOR_PEERS');
@@ -88,6 +92,37 @@ async function assemble(root, run, deadline) {
     await fs.rm(tar, { force: true });
     await fs.rm(acceptanceFile, { force: true });
   }
+}
+
+async function stageReinstall(run, bundle, target, files) {
+  const assets = path.join(run, 'assets');
+  const downloads = path.join(bundle, 'reinstall');
+  check(await fs.realpath(downloads) === downloads, 'FLEET_BROKER_PATH_REFUSED');
+  await fs.mkdir(assets);
+  const requestBytes = await readBounded(path.join(bundle, files.request), SMALL, 'FLEET_REQUEST_REFUSED');
+  const proofNames = new Set([files.request, `${files.tag}.candidate.SHA256SUMS`]);
+  await fs.writeFile(path.join(run, files.request), requestBytes, { flag: 'wx' });
+  const { request, digests } = await verifyReinstallAssets({ target, requestBytes, dir: assets, async supply(name, hash, limit) {
+    const from = path.join([files.tar, files.acceptance, 'SHA256SUMS'].includes(name) ? bundle : downloads, name);
+    const to = path.join(proofNames.has(name) ? run : assets, name);
+    const expected = await fs.lstat(from);
+    check(expected.isFile() && expected.nlink === 1 && expected.size > 0 && expected.size <= limit &&
+      await fs.realpath(from) === from, 'FLEET_BROKER_PATH_REFUSED');
+    const handle = await fs.open(from, 'r');
+    try {
+      const opened = await handle.stat();
+      check(opened.isFile() && opened.nlink === 1 && opened.size === expected.size &&
+        opened.dev === expected.dev && opened.ino === expected.ino, 'FLEET_BROKER_PATH_REFUSED');
+      const disk = await fs.statfs(assets);
+      check(disk.bavail * disk.bsize >= opened.size, 'FLEET_REINSTALL_DISK_FULL');
+      await pipeline(handle.createReadStream({ end: opened.size - 1, autoClose: false }), createWriteStream(to, { flags: 'wx' }));
+    } finally { await handle.close(); }
+    check(await sha256File(to) === hash, 'FLEET_DELIVERY_RELEASE_ASSET_CHANGED');
+    if (proofNames.has(name) || name.endsWith('.first-install-kit.json'))
+      return readBounded(to, limit, 'FLEET_DELIVERY_ASSET_MANIFEST_REFUSED');
+  } });
+  return { status: 'FLEET_REINSTALL_VERIFIED', bootstrapSha256: digests.get(`${files.tag}.bootstrap.ps1`),
+    sourceSha256: request.ciSourceManifestSha256 };
 }
 
 if (import.meta.main) {

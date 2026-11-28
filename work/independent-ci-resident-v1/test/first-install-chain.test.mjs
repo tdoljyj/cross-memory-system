@@ -79,6 +79,7 @@ const SEAMS = {
   'resident-firewall': 'a firewall rule',
   'companion-launch': 'the launch file reads installed package files',
   'notifier-task': 'a scheduled task',
+  'fleet-reinstall-task': 'registers a Windows scheduled task',
   'companion-task': 'a scheduled task',
   'upgrader-files': 'package files of the upgrader',
   'upgrader-host': 'csc.exe compiles the upgrader host',

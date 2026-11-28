@@ -1683,6 +1683,12 @@ Step 'companion-launch' {
 Step 'notifier-task' {
   $script:receipt.notifierTaskXmlSha256 = Register-NotifierTask $Root $OwnerSid $plan.residentManifestSha256
 }
+Step 'fleet-reinstall-task' {
+  $entry = Join-Path $Root ('resident\' + $plan.residentManifestSha256 + '\windows\fleet-reinstall-interactive.ps1')
+  . $entry
+  $operator = if ($OperatorSid) { $OperatorSid } else { $OwnerSid }
+  $script:receipt.fleetReinstallEntrySha256 = Install-FleetReinstallEntry $operator $entry
+}
 Step 'companion-task' {
   # 6 = TASK_CREATE_OR_UPDATE, read back (Register-CompanionTaskInteractive). The upgrade channel never registers this task again.
   if ($plan.companionTask.sddl -cne (Get-CompanionTaskSddl $OwnerSid)) { throw 'COMPANION_TASK_SDDL_REFUSED' }

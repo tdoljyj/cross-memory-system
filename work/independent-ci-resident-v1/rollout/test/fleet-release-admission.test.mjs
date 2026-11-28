@@ -21,6 +21,7 @@ const files = [
   '20261127210000_fleet_sealed_source_rule_v1.sql',
   '20261127223938_fleet_reinstall_window_partial_ready_v1.sql',
   '20261128080000_fleet_sealed_rule_takes_effect_on_arrival_v1.sql',
+  '20261128120000_fleet_reinstall_eligibility_v1.sql',
 ];
 const workflowPath = '.github/workflows/clued-cloud-production-release.yml';
 const root = new URL('../../../../', import.meta.url);
