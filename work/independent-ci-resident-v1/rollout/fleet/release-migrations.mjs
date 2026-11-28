@@ -93,6 +93,9 @@ const probes = {
       and ${bodyContains("source_commit=candidate->>'commit'")}`)}
     and ${procedure('fleet_maintenance_request_v1(uuid,uuid,jsonb)', 'jsonb', "p.provolatile = 'v'")}
     and ${procedure('fleet_reinstall_window_tick_v1(uuid,uuid,timestamptz)', 'void', "p.provolatile = 'v'")}`,
+  reinstallWindowPartialReady: procedure('fleet_reinstall_window_tick_v1(uuid,uuid,timestamptz)', 'void', `p.provolatile = 'v'
+    and ${bodyContains('if cardinality(ready_nodes) <> jsonb_array_length(peers)')}
+    and ${bodyContains('and (t >= w.reinstall_pause_until) is not true')}`),
   sealedRuleOnArrival: "to_regprocedure('clued_private.fleet_sealed_rule_active_v1(uuid,uuid)') is not null",
 };
 
