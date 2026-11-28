@@ -197,8 +197,10 @@ function Test-UacDeclined($err) {
 # L1: an expansion is complete only when its marker holds the sha256 of what was expanded.
 function Get-ExtractState([string]$dir, [string]$sourceSha256) {
   if (-not [IO.Directory]::Exists($dir)) { return 'absent' }
+  if ([IO.File]::GetAttributes($dir) -band [IO.FileAttributes]::ReparsePoint) { return 'incomplete' }
   $marker = Join-Path $dir '.bootstrap-complete'
-  if ([IO.File]::Exists($marker) -and ([IO.File]::ReadAllText($marker)).Trim() -ceq $sourceSha256) { 'complete' } else { 'incomplete' }
+  if ([IO.File]::Exists($marker) -and -not ([IO.File]::GetAttributes($marker) -band [IO.FileAttributes]::ReparsePoint) -and
+      ([IO.File]::ReadAllText($marker)).Trim() -ceq $sourceSha256) { 'complete' } else { 'incomplete' }
 }
 # L4: a stage's terminating exception, kept with its message and type.
 function Get-StageFailure([string]$stage, $exception) {
@@ -473,13 +475,25 @@ function Invoke-Elevated([string]$step, [string[]]$named, [int]$limitSeconds, [s
     try {
       $launch = Request-FleetReinstallLaunchPermit $script:ReinstallPreflight
       if (-not (Test-FleetInteractiveDesktop)) { throw 'FLEET_WAITING_FOR_OWNER_SESSION' }
-      $null = Get-FleetReinstallDelivery $script:ReinstallPreflight.operatorSid $ReinstallOperation
+      $latest = Get-FleetReinstallDelivery $script:ReinstallPreflight.operatorSid $ReinstallOperation
       Assert-FleetReinstallLaunchPermit $script:ReinstallPreflight $launch
       $spent = Join-Path $FleetDeliveryRoot ('claims\' + $ReinstallOperation + '.spent.json')
       Write-FleetOperatorRecord $spent @{ operationId = $ReinstallOperation; nonce = $launch.nonce } -Create
       $script:ReinstallClaimed = $true
-      Write-FleetReinstallClaim $ReinstallOperation 'PENDING_UAC' ''
-      Assert-FleetReinstallLaunchPermit $script:ReinstallPreflight $launch
+      try {
+        Write-FleetReinstallClaim $ReinstallOperation 'PENDING_UAC' ''
+        if (-not (Test-FleetInteractiveDesktop)) { throw 'FLEET_WAITING_FOR_OWNER_SESSION' }
+        Assert-FleetReinstallLaunchPermit $latest $launch
+      } catch {
+        $failure = [string]$_.Exception.Message
+        if ($failure -cin @('FLEET_WAITING_FOR_OWNER_SESSION','FLEET_REINSTALL_PERMIT_EXPIRED')) {
+          # The preflight lock is still held, and this branch has never invoked RunAs.
+          Write-FleetReinstallClaim $ReinstallOperation 'PREFLIGHT' $failure
+          [IO.File]::Delete($spent)
+          $script:ReinstallClaimed = $false
+        }
+        throw
+      }
     } catch {
       $code = [string]$_.Exception.Message
       if ($code -cnotmatch '^[A-Z][A-Z0-9_]{1,79}$') { $code = 'FLEET_REINSTALL_PERMIT_REFUSED' }
@@ -695,6 +709,46 @@ function Get-Prereq($item, [string]$dest, [scriptblock]$waitBeforeRetry = { para
 }
 # L1: a zip expanded once per sha256 into the tools cache: into a new directory, marked complete, then renamed into place; a directory
 # found incomplete (a cut-off run) is renamed aside, kept, and the expansion done again.
+function Test-ProtectedToolTree([string]$zip, [string]$dir) {
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $root = [IO.Path]::GetFullPath($dir).TrimEnd('\') + '\'
+  $entries = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase)
+  $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+  try {
+    foreach ($entry in $archive.Entries) {
+      if ($entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('\')) { continue }
+      $file = [IO.Path]::GetFullPath((Join-Path $root ($entry.FullName.Replace('/', '\'))))
+      if (-not $file.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -or $entries.ContainsKey($file) -or
+          $file -ieq ($root + '.bootstrap-complete')) { return $false }
+      $entries.Add($file, $entry)
+    }
+    if (-not $entries.Count) { return $false }
+    $pending = [Collections.Generic.Stack[string]]::new()
+    $pending.Push($dir)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+      while ($pending.Count) {
+        foreach ($file in [IO.Directory]::EnumerateFileSystemEntries($pending.Pop())) {
+          $attributes = [IO.File]::GetAttributes($file)
+          if ($attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+          if ($attributes -band [IO.FileAttributes]::Directory) { $pending.Push($file); continue }
+          if ($file -ieq ($root + '.bootstrap-complete')) { continue }
+          if (-not $entries.ContainsKey($file)) { return $false }
+          $entry = $entries[$file]
+          if ([IO.FileInfo]::new($file).Length -ne $entry.Length) { return $false }
+          $source = $entry.Open()
+          try { $expected = [BitConverter]::ToString($sha.ComputeHash($source)) } finally { $source.Dispose() }
+          $source = [IO.File]::OpenRead($file)
+          try { $actual = [BitConverter]::ToString($sha.ComputeHash($source)) } finally { $source.Dispose() }
+          if ($expected -cne $actual) { return $false }
+          [void]$entries.Remove($file)
+        }
+      }
+      $entries.Count -eq 0
+    } finally { $sha.Dispose() }
+  } finally { $archive.Dispose() }
+}
+
 function Expand-Cached([string]$zip, [string]$name, [string]$sha256, $maxEntryPathLength,
     [string]$cacheRoot = (Join-Path $WorkParent 'tools'), [string]$protectedInputDirectory) {
   if ($sha256 -cnotmatch '^[0-9a-f]{64}$') { throw ('PREREQ_ZIP_SHA256:' + $name) }
@@ -712,11 +766,12 @@ function Expand-Cached([string]$zip, [string]$name, [string]$sha256, $maxEntryPa
       try { $locked = $lock.WaitOne() } catch [Threading.AbandonedMutexException] { $locked = $true }
     }
     $state = Get-ExtractState $dir $sha256
-    if ($state -ceq 'complete') { return $dir }
-    if ($state -ceq 'incomplete') { [IO.Directory]::Move($dir, $dir + '.i-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)) }
     if ($protectedInputDirectory) { $zip = Copy-ToWork $zip $protectedInputDirectory $sha256 }
+    if ($state -ceq 'complete' -and (-not $protectedInputDirectory -or (Test-ProtectedToolTree $zip $dir))) { return $dir }
+    if ($state -cne 'absent') { [IO.Directory]::Move($dir, $dir + '.i-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)) }
     [void][IO.Directory]::CreateDirectory($partial)
     Invoke-PrereqTar $zip $partial
+    if ($protectedInputDirectory -and -not (Test-ProtectedToolTree $zip $partial)) { throw ('PROTECTED_TOOL_CACHE_INVALID:' + $name) }
     [IO.File]::WriteAllText((Join-Path $partial '.bootstrap-complete'), $sha256)
     [IO.Directory]::Move($partial, $dir)
     $dir
@@ -932,9 +987,11 @@ function Invoke-Stage {
       $residentTree = Join-Path $stageDir $Resident.Replace('/', '\')
       $entry = Join-Path $residentTree 'rollout\fleet\install.mjs'
       $sealed = if ($delivery) { Get-FleetSealedInstallPins $delivery $residentTree } else { $null }
-      if ($sealed) {
-        $PrereqManifestSha256 = $sealed.manifestSha; $KitSha256 = $sealed.kitSha
+      # Both manual lanes and Broker delivery pin the manifest to the archive copy that first-install-check validates below.
+      $PrereqManifestSha256 = if ($sealed) { $sealed.manifestSha } else {
+        Sha256File (Join-Path $residentTree 'rollout\fleet\prereq-manifest.json')
       }
+      if ($sealed) { $KitSha256 = $sealed.kitSha }
       $protected = Get-ProtectedInstallInputs $stageDir $sealed
       $check = Invoke-StageChild $protected.node @($entry, 'first-install-check', '--artifact', $copy, '--artifact-sha', $ArchiveSha256,
         '--acceptance', $protected.acceptance, '--from', $protected.assets) 0 $out $protected.environment

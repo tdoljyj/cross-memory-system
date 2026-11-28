@@ -420,6 +420,7 @@ function Invoke-FleetMaintenance([ValidateSet('preview','before-remove','before-
         ($Context['bindingGeneration'] -and $Context['bindingGeneration'] -ne $node['generation'])) { throw 'FLEET_MAINTENANCE_BINDING_REFUSED' }
     if ($null -eq $Send) { $Send = { param($inputData) Invoke-FleetNodeRpc $node 'clued_work_verify_v1' $inputData } }
     $read = @{ action='fleet_maintenance'; command='status'; scope=$node['scope']; node_id=$node['nodeId']; binding_generation=$node['generation'] }
+    $requested = & $Now
     $status = & $Send $read
     Assert-FleetMaintenanceStatus $status $read $Context.grantId
     if ($Phase -ceq 'preview') {
@@ -436,20 +437,58 @@ function Invoke-FleetMaintenance([ValidateSet('preview','before-remove','before-
     $write = $read.Clone()
     $write.grant_id = $Context.grantId
     $write.operation_id = $operation
+    $reuseDrain = $false
     if ($Phase -ceq 'before-remove') {
       if (-not $status['has_other_healthy'] -and -not $Context['zeroNodeConsent']) { throw 'FLEET_MAINTENANCE_NEEDS_SOLE_NODE_CONSENT' }
       $write.command = 'delist'
       $write.method = 'reinstall'
       if (-not $status['has_other_healthy'] -and $Context['zeroNodeConsent'] -eq $true) { $write.sole_node_agreed = $true }
+      $progress = $Context['drainProgress']
+      $freshIntent = Get-Key $progress 'freshDrainIntent'
+      $lastDrain = Get-Key $progress 'drainReceiptId'
+      $same = $status['operation_id'] -ceq $operation
+      if (($freshIntent -or $lastDrain) -and -not $same) { throw 'FLEET_MAINTENANCE_SUBJECT_REFUSED' }
+      if ($same) {
+        $receipt = $status['receipt_id']
+        if ($receipt -cnotmatch $uuid) { throw 'FLEET_MAINTENANCE_SUBJECT_REFUSED' }
+        $state = $status['state']
+        $activeDrain = $state -cin @('delisted','draining')
+        $reuseDrain = $activeDrain
+        if ($freshIntent) {
+          $prior = Get-Key $freshIntent 'afterReceiptId'
+          $since = [DateTimeOffset]::MinValue
+          if (-not $Context['requireFreshDrain'] -or $prior -cnotmatch $uuid -or
+              -not [DateTimeOffset]::TryParse([string](Get-Key $freshIntent 'requestedAt'), [ref]$since) -or $since -gt $requested) {
+            throw 'FLEET_MAINTENANCE_STALE_DRAIN'
+          }
+          if ($receipt -cne $prior -or ($activeDrain -and $status['install_ready'])) {
+            if (-not $activeDrain) { throw 'FLEET_MAINTENANCE_NOT_SAFE_TO_REMOVE' }
+            $requested = $since
+          } else { $reuseDrain = $false }
+        } elseif ($Context['requireFreshDrain']) {
+          # The server can report delisted with a verification receipt and install_ready=false.
+          # An unchanged drain receipt means the existing round can still become ready.
+          if ($state -ceq 'delisted' -and -not $status['install_ready'] -and $receipt -cne $lastDrain) { $reuseDrain = $false }
+        }
+        if (-not $reuseDrain) {
+          if (-not $Context['requireFreshDrain'] -or $Context['mode'] -cne 'Reinstall' -or -not $progress -or
+              $state -cnotin @('delisted','verifying','returned')) { throw 'FLEET_MAINTENANCE_NOT_SAFE_TO_REMOVE' }
+          $requested = & $Now
+          $progress['requireFreshDrain'] = $true
+          $progress['freshDrainIntent'] = @{ afterReceiptId=$receipt; requestedAt=$requested.ToString('o') }
+          Write-FleetProgress $Context['drainJournal'] $progress
+        }
+      }
     } else {
       if (-not $Context['installed']) { throw 'FLEET_INSTALL_POSTCONDITION_UNAVAILABLE' }
       $write.command = 'verify_started'
     }
-    $requested = & $Now
-    $deadline = $requested.AddMinutes(45)
-    $response = & $Send $write
-    Assert-FleetMaintenanceStatus $response $read $Context.grantId
-    if ($response['operation_id'] -cne $operation -or $response['receipt_id'] -cnotmatch $uuid) { throw 'FLEET_MAINTENANCE_SUBJECT_REFUSED' }
+    $deadline = (& $Now).AddMinutes(45)
+    if (-not $reuseDrain) {
+      $response = & $Send $write
+      Assert-FleetMaintenanceStatus $response $read $Context.grantId
+      if ($response['operation_id'] -cne $operation -or $response['receipt_id'] -cnotmatch $uuid) { throw 'FLEET_MAINTENANCE_SUBJECT_REFUSED' }
+    }
     do {
       # The write receipt alone can be an idempotent replay. Only the current
       # status for this very operation can authorize cleanup or return.
@@ -466,7 +505,12 @@ function Invoke-FleetMaintenance([ValidateSet('preview','before-remove','before-
               throw 'FLEET_MAINTENANCE_STALE_DRAIN'
             }
           }
-      return @{
+          if ($progress) {
+            $progress['drainReceiptId'] = $status['receipt_id']
+            [void]$progress.Remove('freshDrainIntent')
+            Write-FleetProgress $Context['drainJournal'] $progress
+          }
+          return @{
             ok=$true; sealed=$true; archiveSha256=$Context.archiveSha256; acceptanceSha256=$Context.acceptanceSha256
             operationId=$Context.operationId; bindingId=$node['bindingId']; bindingGeneration=$node['generation']
             ownerUac=$true; drained=$true; hasDuty=$false; freshDrain=($Context['requireFreshDrain'] -eq $true)
@@ -1103,6 +1147,8 @@ function Invoke-FleetLifecycle($context, [string]$mode, [string]$file, [scriptbl
   $mode = $progress.mode
   $context.mode = $mode
   $context.operationId = $progress.operationId
+  $context.drainProgress = $progress
+  $context.drainJournal = $file
   foreach ($key in @('bindingId','bindingGeneration','previewReceipt','maintenanceOperationId','requireFreshDrain')) {
     if ($progress.step -ceq 'intent' -and $context['previewReceipt'] -and $key -ceq 'previewReceipt') {
       $progress[$key] = $context[$key]

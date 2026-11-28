@@ -304,6 +304,9 @@ Case 'lifecycle:maintenance RPC status, consent and replay' {
       'returned' { $r.install_ready = $false; $r.state = 'returned' }
       'wrong-node' { $r.node_id = $r.receipt_id }
     }
+    if ($wire.mode -ceq 'ready' -and $wire.writes -eq 0) {
+      $r.state = 'available'; $r.install_ready = $false; $r.operation_id = $null; $r.receipt_id = $null
+    }
     $r
   }
   $answer = Invoke-FleetMaintenance 'preview' $ctx -Send $send -Wait $wait -Now $clock
@@ -647,6 +650,82 @@ Case 'self-pull: live one-shot launch gate' {
   $start = $launch.IndexOf('-Verb RunAs')
   Yes ($gate -ge 0 -and $gate -lt $start) 'self-pull:runas-requires-live-broker-permit'
 }
+Case 'self-pull: only attempts that reached RunAs consume the launch' {
+  . (Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $here))) 'windows\fleet-reinstall-interactive.ps1')
+  . ([scriptblock]::Create($functions['Invoke-Elevated']))
+  Set-Item -LiteralPath Function:Assert-FleetReinstallLaunchPermit -Value (New-FleetClockFixture 'Assert-FleetReinstallLaunchPermit')
+  Set-Item -LiteralPath Function:Test-FleetPreflightDue -Value (New-FleetClockFixture 'Test-FleetPreflightDue')
+  $write = ${function:Write-FleetOperatorRecord}
+  $savedWork = Get-Variable -Name Work -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+  $savedSelf = Get-Variable -Name Self -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+  $FleetDeliveryRoot = Join-Path $env:TEMP ('launch-retry-' + [Guid]::NewGuid().ToString('N'))
+  $script:Work = $FleetDeliveryRoot; $script:Self = Join-Path $FleetDeliveryRoot 'bootstrap.ps1'
+  $PowerShellExe = 'fixture-powershell.exe'
+  function Write-FleetOperatorRecord([string]$file, $value, [switch]$Create) {
+    & $write $file $value -Create:$Create
+    if ($file.EndsWith('.launch.json')) {
+      $fixture.issued++
+      & $write $permit @{ contract='clued.independent-ci.fleet-reinstall-launch/1'; operationId=$ReinstallOperation; nonce=$value.nonce
+        requestSha256=$delivery.requestSha256; bindingId=$delivery.bindingId; bindingGeneration=$delivery.bindingGeneration
+        installReceiptSha256=$delivery.installReceiptSha256; hasPeer=$delivery.hasPeer; expiresAt=$fixture.now.AddSeconds(5).ToString('o') }
+    }
+    if ($file -ceq $spent -and $fixture.fault -ceq 'expired') { $fixture.now = $fixture.now.AddSeconds(6) }
+  }
+  function Test-FleetInteractiveDesktop { $fixture.fault -cne 'locked' }
+  function Get-FleetReinstallDelivery { $fixture.rechecks++; $delivery }
+  function Start-Process {
+    $fixture.runAs++
+    if ($fixture.fault -ceq 'cancelled') { throw [ComponentModel.Win32Exception]::new(1223) }
+    if ($fixture.fault -ceq 'unknown') { throw 'FIXTURE_RUNAS_RESULT_UNKNOWN' }
+    $fixture.delist++
+    $fake = [pscustomobject]@{ ExitCode=0 }
+    $fake | Add-Member ScriptMethod WaitForExit { $true }
+    $fake
+  }
+  function Read-StageResult { @{ lines=@(); last=@{ status='FLEET_LIFECYCLE_COMPLETE' } } }
+  function Stop-Bootstrap($step, $code) { throw $code }
+  try {
+    [void][IO.Directory]::CreateDirectory((Join-Path $FleetDeliveryRoot 'claims'))
+    foreach ($fault in @('locked','expired','cancelled','unknown')) {
+      $ReinstallOperation = [Guid]::NewGuid().ToString('D')
+      $delivery = @{ operationId=$ReinstallOperation; operatorSid='fixture'; requestSha256=('a'*64); bindingId='fixture-binding'
+        bindingGeneration=3; installReceiptSha256=('b'*64); hasPeer=$true }
+      $assets = Get-FleetReinstallAssetDirectory $delivery
+      [void][IO.Directory]::CreateDirectory($assets)
+      $permit = Join-Path (Split-Path -Parent $assets) 'launch-permit.json'
+      $claim = Join-Path $FleetDeliveryRoot ('claims\' + $ReinstallOperation + '.json')
+      $spent = Join-Path $FleetDeliveryRoot ('claims\' + $ReinstallOperation + '.spent.json')
+      $script:ReinstallPreflight = $delivery; $script:ReinstallClaimed = $false; $script:ReinstallFinished = $false
+      $fixture = @{ fault=$fault; now=[DateTimeOffset]::Parse('2026-11-27T12:00:00Z'); runAs=0; delist=0; issued=0; rechecks=0 }
+      # Pass the frozen clock at the real gate, including after the spent write.
+      $assert = ${function:Assert-FleetReinstallLaunchPermit}
+      function Assert-FleetReinstallLaunchPermit($d, $r) { & $assert $d $r $fixture.now }
+      $first = ''; $answer = $null
+      try { $answer = Invoke-Elevated 'install' @() 1 } catch { $first = $_.Exception.Message }
+      if ($fault -cin @('locked','expired')) {
+        Yes ($fixture.runAs -eq 0 -and $fixture.delist -eq 0) ("self-pull:${fault}: first attempt RunAs=$($fixture.runAs) delist=$($fixture.delist) error=$first")
+        & $write $claim (Get-FleetPreflightState $ReinstallOperation $first $fixture.now)
+        $fixture.now = $fixture.now.AddMinutes(1)
+        $fixtureNow = $fixture.now
+        $fixture.fault = ''; $retry = ''; $retryAnswer = $null
+        if (Test-FleetPreflightDue $ReinstallOperation) {
+          try { $retryAnswer = Invoke-Elevated 'install' @() 1 } catch { $retry = $_.Exception.Message }
+        } else { $retry = 'PREFLIGHT_NOT_DUE' }
+        Yes ($retryAnswer -and $fixture.issued -eq 2 -and $fixture.runAs -eq 1 -and $fixture.delist -eq 1 -and $fixture.rechecks -ge 1) (
+          "self-pull:${fault}: retry permits=$($fixture.issued) RunAs=$($fixture.runAs) delist=$($fixture.delist) error=$retry")
+      } else {
+        $fixtureNow = $fixture.now.AddMinutes(1)
+        Yes ($fixture.runAs -eq 1 -and $fixture.delist -eq 0 -and -not (Test-FleetPreflightDue $ReinstallOperation) -and
+          $(if ($fault -ceq 'cancelled') { $answer.declined } else { $first -ceq 'FIXTURE_RUNAS_RESULT_UNKNOWN' })) ("self-pull:${fault}: launch remains consumed")
+      }
+      Set-Item -LiteralPath Function:Assert-FleetReinstallLaunchPermit -Value $assert
+    }
+  } finally {
+    $script:Work = $savedWork; $script:Self = $savedSelf
+    $script:ReinstallPreflight = $null; $script:ReinstallClaimed = $false; $script:ReinstallFinished = $false
+    [IO.Directory]::Delete($FleetDeliveryRoot, $true)
+  }
+}
 Case 'self-pull: pin the elevated toolchain before starting it' {
   $stage = $functions['Invoke-Stage']
   $pins = $stage.IndexOf('Get-FleetSealedInstallPins')
@@ -710,9 +789,79 @@ Case 'self-pull: stop on deterministic failure and resume transient preflight' {
   } finally { [IO.Directory]::Delete($work, $true) }
 }
 
+Case 'first-install: manual manifest must match the accepted archive' {
+  . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
+  . ([scriptblock]::Create($functions['Get-ProtectedInstallInputs']))
+  $body = $functions['Invoke-Stage']
+  $start = $body.IndexOf('$sealed = if ($delivery)')
+  $end = $body.IndexOf('. (Join-Path $residentTree', $start)
+  $checkInputs = [scriptblock]::Create($body.Substring($start, $end - $start))
+  $root = Join-Path $env:TEMP ('manual-inputs-' + [Guid]::NewGuid().ToString('N'))
+  $archiveSource = Join-Path $root 'source'
+  $relativeManifest = 'rollout\fleet\prereq-manifest.json'
+  $sourceManifest = Join-Path $archiveSource ('tree\' + $relativeManifest)
+  [void][IO.Directory]::CreateDirectory((Split-Path -Parent $sourceManifest))
+  try {
+    [IO.File]::WriteAllText($sourceManifest, '{"items":[{"name":"git","fixture":"accepted"}]}')
+    $copy = Join-Path $root 'archive.tar'
+    $tarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
+    & $tarExe -c -f $copy -C $archiveSource tree
+    if ($LASTEXITCODE -ne 0) { throw 'FIXTURE_ARCHIVE_CREATE_FAILED' }
+    & $tarExe -x -f $copy -C $root tree
+    if ($LASTEXITCODE -ne 0) { throw 'FIXTURE_ARCHIVE_EXTRACT_FAILED' }
+    $residentTree = Join-Path $root 'tree'
+    $archiveManifest = Join-Path $residentTree $relativeManifest
+    $ArchiveSha256 = Sha256File $copy
+    $AcceptanceFile = Join-Path $root 'acceptance.json'
+    [IO.File]::WriteAllText($AcceptanceFile, ('{"archive_sha256":"' + $ArchiveSha256 + '"}'))
+    $AcceptanceSha256 = Sha256File $AcceptanceFile
+    $ControllerNode = Join-Path $root 'node.exe'; [IO.File]::WriteAllText($ControllerNode, 'fixture-node')
+    $pin = Sha256File $ControllerNode
+    $Kit = Join-Path $root 'kit.json'
+    [IO.File]::WriteAllText($Kit, ('{"record":{"controllerNodeSha256":"' + $pin + '"}}')); $KitSha256 = Sha256File $Kit
+    $FirstInstallSums = Join-Path $root 'first.SHA256SUMS'
+    [IO.File]::WriteAllText($FirstInstallSums, "$KitSha256  kit.json`n"); $FirstInstallSumsSha256 = Sha256File $FirstInstallSums
+    $PrereqManifest = Join-Path $root 'prereqs.json'
+    $sums = Join-Path $root 'SHA256SUMS'
+    $context = @{ machine='FIXTURE'; operatorSid='S-1-5-21-1-2-3-1001'; action='Install'
+      archiveSha256=$ArchiveSha256; acceptanceSha256=$AcceptanceSha256 }
+    $log = Join-Path $root 'operation.json'
+    $entry = Join-Path $residentTree 'rollout\fleet\install.mjs'; $out = $null; $delivery = $null
+    function Invoke-StageChild {
+      @{ exit=0; last=@{ status='FIRST_INSTALL_INPUTS_ACCEPTED'; archiveSha256=$ArchiveSha256; kitSha256=$KitSha256
+        controllerNodeSha256=$pin; toolchainNodeSha256=$pin; registrarSha256=('a'*64) } }
+    }
+    function Add-ProtectedInstallTools { $calls.tools++; $calls.cache++ }
+    function Invoke-FleetMaintenance { $calls.maintenance++ }
+    foreach ($mode in @('Fresh','Reinstall')) {
+      if ($mode -ceq 'Reinstall') { Write-FleetProgress $log (New-FleetProgress $context $mode) }
+      foreach ($same in @($true,$false)) {
+        $stageDir = Join-Path $root ($mode + '-' + $same)
+        $content = if ($same) { [IO.File]::ReadAllText($archiveManifest) } else { '{"items":[{"name":"git","fixture":"external"}]}' }
+        [IO.File]::WriteAllText($PrereqManifest, $content)
+        [IO.File]::WriteAllText($sums, ((Sha256File $PrereqManifest) + '  prereqs.json'))
+        $PrereqManifestSha256 = (Read-Sha256Sums ([IO.File]::ReadAllText($sums)))['prereqs.json']
+        $calls = @{ tools=0; cache=0; maintenance=0 }; $failure = ''
+        try {
+          . $checkInputs
+          Add-ProtectedInstallTools $protected $stageDir
+          $progress = Read-FleetProgress $log $context
+          if ($mode -ceq 'Reinstall' -and $progress.step -cne 'intent') { throw 'FIXTURE_JOURNAL_MISSING' }
+          Invoke-FleetMaintenance
+        } catch { $failure = $_.Exception.Message }
+        $expected = if ($same) { 1 } else { 0 }
+        $correctVerdict = if ($same) { -not $failure } else { $failure -ceq 'LOCAL_COPY_NOT_THE_PINNED:prereqs.json' }
+        Yes ($correctVerdict -and $calls.tools -eq $expected -and $calls.cache -eq $expected -and $calls.maintenance -eq $expected) (
+          "manual-manifest:${mode}:match=$same tools=$($calls.tools) cache=$($calls.cache) maintenance=$($calls.maintenance) error=$failure")
+      }
+    }
+  } finally { [IO.Directory]::Delete($root, $true) }
+}
+
 Case 'cache:protected-prereq-same-digest-expands-once' {
   . ([scriptblock]::Create($functions['Get-ProtectedInstallInputs']))
   . ([scriptblock]::Create($functions['Add-ProtectedInstallTools']))
+  . ([scriptblock]::Create($functions['Test-ProtectedToolTree']))
   $root = Join-Path $env:TEMP ('pc-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
   $PrereqDirectory = Join-Path $root 'prereq'; [void][IO.Directory]::CreateDirectory($PrereqDirectory)
   try {
@@ -722,18 +871,22 @@ Case 'cache:protected-prereq-same-digest-expands-once' {
     $Kit = Join-Path $root 'kit.json'
     [IO.File]::WriteAllText($Kit, ('{"record":{"controllerNodeSha256":"' + $pin + '"}}')); $KitSha256 = Sha256File $Kit
     $FirstInstallSums = Join-Path $root 'sums.txt'; [IO.File]::WriteAllText($FirstInstallSums, "$KitSha256  kit.json`n"); $FirstInstallSumsSha256 = Sha256File $FirstInstallSums
-    $fixture = @{ expansions = 0 }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $fixture = @{ expansions = 0; maintenance = 0; tools = 0 }
     $ProtectedToolCache = Join-Path $root 'cache'
     function Assert-FleetJournalRoot { }
     function Invoke-PrereqTar([string]$LiteralPath, [string]$DestinationPath) {
       $fixture.expansions++
-      $name = [IO.Path]::GetFileNameWithoutExtension($LiteralPath)
-      $bin = if ($name -ceq 'git') { Join-Path $DestinationPath 'cmd' } else { $DestinationPath }
-      [void][IO.Directory]::CreateDirectory($bin)
-      [IO.File]::WriteAllText((Join-Path $bin ($name + '.exe')), $name)
+      [IO.Compression.ZipFile]::ExtractToDirectory($LiteralPath, $DestinationPath)
     }
     $items = @(foreach ($name in @('node','git','python','actions-runner')) {
-      $zip = Join-Path $PrereqDirectory ($name + '.zip'); [IO.File]::WriteAllText($zip, $name)
+      $zip = Join-Path $PrereqDirectory ($name + '.zip')
+      $source = Join-Path $root ('source-' + $name)
+      $bin = if ($name -ceq 'git') { Join-Path $source 'cmd' } else { $source }
+      [void][IO.Directory]::CreateDirectory($bin)
+      [IO.File]::WriteAllText((Join-Path $bin ($name + '.exe')), $name)
+      [IO.File]::WriteAllText((Join-Path $source 'dependency.dat'), 'pinned data')
+      [IO.Compression.ZipFile]::CreateFromDirectory($source, $zip)
       @{ name = $name; fileName = ($name + '.zip'); sha256 = (Sha256File $zip); maxEntryPathLength = 20 }
     })
     $PrereqManifest = Join-Path $root 'manifest.json'; [IO.File]::WriteAllText($PrereqManifest, (ConvertTo-Json @{ items = $items } -Depth 4)); $PrereqManifestSha256 = Sha256File $PrereqManifest
@@ -745,6 +898,26 @@ Case 'cache:protected-prereq-same-digest-expands-once' {
     $second = Get-ProtectedInstallInputs $stage
     Add-ProtectedInstallTools $second $stage
     Yes ((Sha256File $second.node) -ceq $pin -and $second.runner -ceq $first.runner -and $cold -eq 3 -and $fixture.expansions -eq $cold) ('cache:protected-prereq-same-digest-expands-once (got: ' + $cold + ' then ' + $fixture.expansions + ')')
+    function Invoke-ToolFixture { $fixture.tools++ }
+    function Invoke-MaintenanceFixture { $fixture.maintenance++ }
+    foreach ($item in ($items | Where-Object name -ne 'node')) {
+      $name = $item.name
+      $dir = Join-Path $ProtectedToolCache ($name + '-' + $item.sha256)
+      $data = Join-Path $dir 'dependency.dat'
+      [IO.File]::Delete($data)
+      $stage = Join-Path $root ('damaged-' + $name)
+      $before = $fixture.expansions; $fixture.maintenance = $fixture.tools = 0; $failure = ''
+      try {
+        $input = Get-ProtectedInstallInputs $stage
+        Add-ProtectedInstallTools $input $stage
+        Invoke-ToolFixture
+        Invoke-MaintenanceFixture
+      } catch { $failure = $_.Exception.Message }
+      $repaired = [IO.File]::Exists($data) -and [IO.File]::ReadAllText($data) -ceq 'pinned data' -and $fixture.expansions -eq ($before + 1)
+      $blocked = $failure -like ('PROTECTED_TOOL_CACHE_INVALID:' + $name + '*') -and $fixture.maintenance -eq 0 -and $fixture.tools -eq 0
+      Yes ($repaired -or $blocked) ("cache:damaged-${name}: expansions=$($fixture.expansions - $before) tools=$($fixture.tools) maintenance=$($fixture.maintenance) error=$failure")
+      if (-not [IO.File]::Exists($data)) { [IO.File]::WriteAllText($data, 'pinned data') }
+    }
     [IO.File]::WriteAllText($ControllerNode, 'changed-node')
     Throws { Get-ProtectedInstallInputs (Join-Path $root 'stage-3') } 'LOCAL_COPY_NOT_THE_PINNED:node.exe' 'cache:controller-node-is-rechecked-before-elevated-execution'
   } finally { [IO.Directory]::Delete($root, $true) }
