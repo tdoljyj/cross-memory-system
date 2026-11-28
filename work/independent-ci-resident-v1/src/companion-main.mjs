@@ -384,6 +384,19 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
   // same mailboxes. Refreshed every minute while the lanes run.
   const instanceLock = await acquireCompanionLock(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-lock'),
     values.root);
+  const relayLog = createRelayLog({ dir: path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-log') });
+  // Windows 子进程会继承 supervisor 的 BelowNormal。在创建 Runner 前将当前进程设为 Normal。
+  if (process.platform === 'win32') {
+    const normal = os.constants.priority.PRIORITY_NORMAL;
+    let verified = false;
+    try {
+      os.setPriority(0, normal);
+      verified = os.getPriority(0) === normal;
+    } catch { /* 记录一次诊断，按现有时限继续。 */ }
+    if (!verified) {
+      await relayLog({ at: new Date().toISOString(), kind: 'companion-priority', code: 'COMPANION_PRIORITY_NOT_NORMAL' }).catch(() => {});
+    }
+  }
   // Every child of both lanes runs under the installed job host (DESIGN §24): a child that outlives its limit is ended with
   // exactly the job it was started in, and the lane goes on. Without the host the companion does not start.
   const jobHost = path.join(values.root, 'bin', JOB_HOST_EXE);
@@ -408,7 +421,6 @@ export async function main(args = process.argv.slice(2), { dispatchTrainEffect, 
   const notify = queueNotify(new NotifyQueue({ dir: notifyQueueDir(cfg.node.ownerProfileDirectory) }));
   const mailbox = await Mailbox.open(path.join(values.root, 'mailbox'), Date.now);
   // pr-head (phase 2): the run queue's live PR read runs in the mailbox lane, like every other service request.
-  const relayLog = createRelayLog({ dir: path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-log') });
   const companion = new Companion({ cfg, mailbox, run: (a, o) => runner.run(a, o), fileExists: exists, sleep, clock: Date.now, readPull: pr => readPullArgv(raw.ghExe, raw.repo, pr),
     readText, log: relayLog, bundleDir: path.join(values.root, 'bundles') });
   const inboxDir = path.join(values.root, 'inbox');
