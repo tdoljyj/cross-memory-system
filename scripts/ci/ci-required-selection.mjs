@@ -1374,8 +1374,11 @@ async function runTargetedFiles(id, { root, env, files, onlyNamed, log = console
   log('run-files 基准：HEAD ' + plan.head + '，origin/main ' + plan.main + '，共同祖先 ' + plan.base + '；以工作树字节为准');
   log('run-files 建图 ' + plan.graphMs + ' ms，规划及校验 ' + Math.round(performance.now() - started) +
     ' ms，显式 ' + named.size + '，新增文件 ' + additions + '，新增套件/文件组合 ' + plan.matches.length);
-  for (const { suite, local, chain } of plan.matches) {
-    log('  ' + suite + (local ? '：' : '（待该平台 CI）：') + chain.join(' -> '));
+  for (const { suite, file, local, platforms, chain } of plan.matches) {
+    const reason = chain.length > 1 ? '因依赖带上' : '因改动带上';
+    const pending = local ? '' : '（待 ' + platforms.map((platform) => platform === 'linux' ? 'Linux' : 'Windows').join('/') + ' 验证）';
+    const dependency = chain.length > 1 ? '，依赖链 ' + chain.join(' -> ') : '';
+    log('  ' + reason + ' ' + suite + pending + '：' + file + dependency);
   }
   for (const group of plan.deferred) {
     for (const reason of group.reasons) log('  ' + group.suite + '（待该平台 CI 整套）：' + reason);

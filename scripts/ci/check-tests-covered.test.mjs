@@ -46,6 +46,38 @@ test('a test file no suite runs fails wherever it is and whatever it is written 
   assert.deepEqual(fixture(t, files, { table }).problems, []);
 });
 
+test('运行时引用别的测试即使两者均在套件里也须登记依赖', (t) => {
+  const files = {
+    't/replay.test.mjs': [
+      "import './static.test.mjs';",
+      "// spawnSync('node', ['--test', './comment.test.mjs']);",
+      "const expected = './fake.test.mjs'; assert.equal(actual, expected);",
+      "writeFileSync(path.join(scratch, 'fake.test.mjs'), fixture);",
+      "spawnSync(process.execPath, ['--test', './literal.test.mjs']);",
+      "const script = path.join(import.meta.dirname, '../other', 'split.test.mjs');",
+      "spawnSync(process.execPath, ['--test', script]);",
+      "const replay = './assembled' + '.test.mjs';",
+      "execFileSync(process.execPath, ['--test', replay]);",
+      "execSync('node runner.mjs --run-files production-schema t/shell.test.mjs --only-named');",
+    ].join('\n'),
+    't/static.test.mjs': '', 't/comment.test.mjs': '', 't/fake.test.mjs': '',
+    't/literal.test.mjs': '', 't/assembled.test.mjs': '', 't/shell.test.mjs': '', 'other/split.test.mjs': '',
+    't/test_wrapper.py': "load('fixtures', Path(__file__).with_name('test_input.py'))",
+    't/test_input.py': '',
+    't/test-run.ps1': "& (Join-Path $PSScriptRoot 'test-inner.ps1')",
+    't/test-inner.ps1': '',
+  };
+  const table = { tests: Object.keys(files).filter((file) => !file.startsWith('t/') || /\.(?:py|ps1)$/.test(file)).map((file) => entry(file)) };
+  assert.deepEqual(fixture(t, files, { table }).problems, [
+    'RUNTIME_READERS 缺边：other/split.test.mjs -> t/replay.test.mjs',
+    'RUNTIME_READERS 缺边：t/assembled.test.mjs -> t/replay.test.mjs',
+    'RUNTIME_READERS 缺边：t/literal.test.mjs -> t/replay.test.mjs',
+    'RUNTIME_READERS 缺边：t/shell.test.mjs -> t/replay.test.mjs',
+    'RUNTIME_READERS 缺边：t/test-inner.ps1 -> t/test-run.ps1',
+    'RUNTIME_READERS 缺边：t/test_input.py -> t/test_wrapper.py',
+  ]);
+});
+
 test('a new test-x.ps1 in the repository fails the check: no suite command takes a PowerShell file', () => {
   const { problems } = coverage({ root: ROOT, tracked: [...trackedFiles(ROOT), 'scripts/ci/test-x.ps1'] });
   assert.equal(problems.length, 1, problems.join('\n'));
