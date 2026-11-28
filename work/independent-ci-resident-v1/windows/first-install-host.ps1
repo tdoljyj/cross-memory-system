@@ -100,7 +100,8 @@
 #>
 param([string]$Tree, [string]$PrereqDirectory, [string]$PrereqManifest, [string]$PrereqManifestSha256, [string]$KitSha256, [string]$ToolchainNodeSha256,
   [string]$RegistrarSha256, [string]$ExpectedOperatorSid, [string]$CredentialDirectory, [string]$Kit, [switch]$Reset, [string]$StepProgress,
-  [string]$PreservedConnectionFile, [string]$PreservedCarrierDirectory, [string]$PreservedNodeExe, [switch]$CheckPreservedConnection)
+  [string]$PreservedConnectionFile, [string]$PreservedCarrierDirectory, [string]$PreservedNodeExe, [switch]$CheckPreservedConnection,
+  [string]$BootstrapNodeExe, [string]$BootstrapRunnerDirectory)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions   # JavaScriptSerializer (Windows PowerShell 5.1 does not load it by itself)
@@ -571,17 +572,30 @@ function Get-ExpandState([string]$dir, [string]$marker, [string]$sha256) {
   if (-not [IO.Directory]::Exists($dir)) { return 'absent' }
   if ([IO.File]::Exists($marker) -and ([IO.File]::ReadAllText($marker)).Trim() -ceq $sha256) { 'complete' } else { 'incomplete' }
 }
-# M5: every file of the zip is in $dir with the zip's bytes (sha256 of each entry against the file; nothing outside $dir; files the zip
-# does not name are not looked at).
-function Test-ZipExpanded([string]$zip, [string]$dir) {
+# M5: check every file against the ZIP's bytes. When materializing a cached tree, copy and check only entries named by the ZIP.
+function Test-ZipExpanded([string]$zip, [string]$dir, [string]$copyTo) {
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   $root = [IO.Path]::GetFullPath($dir).TrimEnd('\') + '\'
   $z = [IO.Compression.ZipFile]::OpenRead($zip)
   try {
     foreach ($e in $z.Entries) {
-      if ($e.FullName.EndsWith('/') -or $e.FullName.EndsWith('\')) { continue }
       $f = [IO.Path]::GetFullPath((Join-Path $root ($e.FullName.Replace('/', '\'))))
-      if (-not $f.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -or -not [IO.File]::Exists($f) -or (New-Object IO.FileInfo($f)).Length -ne $e.Length) { return $false }
+      if (-not $f.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+      $target = if ($copyTo) { Join-Path $copyTo $f.Substring($root.Length) } else { $null }
+      if ($e.FullName.EndsWith('/') -or $e.FullName.EndsWith('\')) {
+        if ($target) { [void][IO.Directory]::CreateDirectory($target) }
+        continue
+      }
+      if (-not [IO.File]::Exists($f) -or (New-Object IO.FileInfo($f)).Length -ne $e.Length) { return $false }
+      if ($target) {
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+        $source = [IO.File]::OpenRead($f)
+        try {
+          $output = [IO.File]::Open($target, [IO.FileMode]::CreateNew)
+          try { $source.CopyTo($output) } finally { $output.Dispose() }
+        } finally { $source.Dispose() }
+        $f = $target
+      }
       $s = [Security.Cryptography.SHA256]::Create()
       try {
         $es = $e.Open(); try { $want = [BitConverter]::ToString($s.ComputeHash($es)) } finally { $es.Dispose() }
@@ -595,7 +609,7 @@ function Test-ZipExpanded([string]$zip, [string]$dir) {
 # M5: the archive expanded resumably (bootstrap.ps1 Expand-Cached's way): into a new directory, checked against the zip, renamed into place,
 # then marked; a directory found without its mark (a cut-off run) is set aside whole (kept, never deleted) and the expansion done again;
 # a marked one is only checked, and refused when its files are not the zip's.
-function Expand-Verified([string]$zip, [string]$dir, [string]$marker, [string]$sha256) {
+function Expand-Verified([string]$zip, [string]$dir, [string]$marker, [string]$sha256, [string]$cachedDirectory) {
   $state = Get-ExpandState $dir $marker $sha256
   if ($state -ceq 'complete') {
     if (-not (Test-ZipExpanded $zip $dir)) { Stop-Host 'EXPANDED_FILES_NOT_THE_PINNED' $dir }
@@ -604,11 +618,24 @@ function Expand-Verified([string]$zip, [string]$dir, [string]$marker, [string]$s
   if ($state -ceq 'incomplete') { [IO.Directory]::Move($dir, $dir + '.incomplete-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)) }
   if ([IO.File]::Exists($marker)) { [IO.File]::Delete($marker) }
   $partial = $dir + '.partial-' + [Guid]::NewGuid().ToString('N')
-  Expand-Archive -LiteralPath $zip -DestinationPath $partial
-  if (-not (Test-ZipExpanded $zip $partial)) { Stop-Host 'EXPANDED_FILES_NOT_THE_PINNED' $partial }
+  if ($cachedDirectory) {
+    if ([IO.File]::ReadAllText((Join-Path $cachedDirectory '.bootstrap-complete')) -cne $sha256) { Stop-Host 'EXPANDED_FILES_NOT_THE_PINNED' $cachedDirectory }
+    [void][IO.Directory]::CreateDirectory($partial)
+    $valid = Test-ZipExpanded $zip $cachedDirectory $partial
+  } else {
+    Expand-HostZip $zip $partial
+    $valid = Test-ZipExpanded $zip $partial
+  }
+  if (-not $valid) { Stop-Host 'EXPANDED_FILES_NOT_THE_PINNED' $partial }
   [IO.Directory]::Move($partial, $dir)
   [IO.File]::WriteAllText($marker, $sha256)
   'expanded'
+}
+
+function Expand-HostZip([string]$zip, [string]$dir) {
+  [void][IO.Directory]::CreateDirectory($dir)
+  & 'C:\Windows\System32\tar.exe' -x -f $zip -C $dir
+  if ($LASTEXITCODE -ne 0) { Stop-Host 'PREREQ_ZIP_EXTRACT_FAILED' $zip }
 }
 # L3: what a run must have been given before anything is written: a first run (collect-all) the App key, the ci-admission token and the
 # upgrade token (the heartbeat token is optional: facts then record none); a re-run (ask-missing) everything it asked for, which
@@ -1075,6 +1102,15 @@ function Assert-CiInstallBaseline([string]$ciRoot) {
   throw 'CI_CONNECTION_REINSTALL_BASELINE_REQUIRED'
 }
 
+function Get-KitControllerNodeSha256([string]$kitFile, [string]$kitSha) {
+  $bytes = [IO.File]::ReadAllBytes($kitFile)
+  if ((Sha256Bytes $bytes) -cne $kitSha) { throw 'FIRST_INSTALL_KIT_CHANGED' }
+  $reader = New-Object Web.Script.Serialization.JavaScriptSerializer -Property @{ MaxJsonLength = [int]::MaxValue }
+  $pin = Get-Key (Get-Key ($reader.DeserializeObject($Strict8.GetString($bytes))) 'record') 'controllerNodeSha256'
+  if ($pin -cnotmatch '^[0-9a-f]{64}$') { throw 'FIRST_INSTALL_CONTROLLER_NODE_REFUSED' }
+  $pin
+}
+
 function Read-PreservedConnection([string]$controllerSid) {
   $resident = Join-Path $Tree 'work\independent-ci-resident-v1'
   . (Join-Path $resident 'rollout\fleet\package-lifecycle.ps1')
@@ -1087,7 +1123,7 @@ function Read-PreservedConnection([string]$controllerSid) {
   Assert-FleetLocalPath $PreservedConnectionFile
   Assert-FleetLocalPath $PreservedNodeExe
   if ((Get-Item -LiteralPath $PreservedConnectionFile -Force).Length -gt 8192 -or
-      (Get-FileHash -LiteralPath $PreservedNodeExe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ToolchainNodeSha256) { throw 'FLEET_PRESERVED_INPUT_REFUSED' }
+      (Sha256File $PreservedNodeExe) -cne (Get-KitControllerNodeSha256 $Kit $KitSha256)) { throw 'FLEET_PRESERVED_INPUT_REFUSED' }
   $data = (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject([IO.File]::ReadAllText($PreservedConnectionFile))
   $record = Get-Key $data 'nodeRecord'
   $upgrade = Get-Key $data 'upgradeToken'
@@ -1202,6 +1238,7 @@ function Invoke-HostPreparation {
     $items = @{}; foreach ($i in @(Get-Key $man 'items')) { $items[[string](Get-Key $i 'name')] = $i }
     $staged = @{}
     foreach ($n in @('node', 'ubuntu-rootfs', 'actions-runner', 'linux-node', 'wsl', 'gh', 'git-for-windows')) {
+      if ($n -ceq 'node' -and $BootstrapNodeExe) { continue }   # bootstrap supplied the verified Windows executable
       $i = $items[$n]; if ($null -eq $i -or [string](Get-Key $i 'sha256') -cnotmatch '^[0-9a-f]{64}$') { Stop-Host 'PREREQ_NOT_PINNED' $n }
       $staged[$n] = Copy-Verified (Join-Path $PrereqDirectory $i['fileName']) (Join-Path $stage $i['fileName']) $i['sha256'] $i['bytes']
     }
@@ -1209,14 +1246,20 @@ function Invoke-HostPreparation {
     foreach ($d in @(Get-Key $man 'debs')) { $null = Copy-Verified (Join-Path (Join-Path $PrereqDirectory 'debs') $d['fileName']) (Join-Path $debDir $d['fileName']) $d['sha256'] $d['bytes'] }
     $debList = Join-Path $stage 'debs.sha256'
     [IO.File]::WriteAllText($debList, (Get-DebListText @(Get-Key $man 'debs')), $Utf8)
-    Expand-Archive -LiteralPath $staged['node'] -DestinationPath (Join-Path $stage 'node')
-    $ne = @(Get-ChildItem -LiteralPath (Join-Path $stage 'node') -Recurse -Filter node.exe | ForEach-Object { $_.FullName })
-    if ($ne.Count -ne 1) { Stop-Host 'NODE_NOT_ONE' $ne.Count }
-    $script:NodeExe = $ne[0]
     $R = Join-Path $Tree 'work\independent-ci-resident-v1'
     $script:FingerprintTool = Join-Path $R 'tools\secret-fingerprint.mjs'
     $script:InstallMjs = Join-Path $R 'rollout\fleet\install.mjs'
     $kitCopy = Copy-Verified $Kit (Join-Path $stage 'first-install-kit.json') $KitSha256 $null
+    if ($BootstrapNodeExe) {
+      $controllerSha = Get-KitControllerNodeSha256 $kitCopy $KitSha256
+      $script:NodeExe = Copy-Verified $BootstrapNodeExe (Join-Path $stage 'node.exe') $controllerSha $null
+    } else {
+      $nodeDir = Join-Path $stage 'node'
+      Expand-HostZip $staged['node'] $nodeDir
+      $ne = @(Get-ChildItem -LiteralPath $nodeDir -Recurse -Filter node.exe | ForEach-Object { $_.FullName })
+      if ($ne.Count -ne 1) { Stop-Host 'NODE_NOT_ONE' $ne.Count }
+      $script:NodeExe = $ne[0]
+    }
     $GhExe = try { Get-KitGhExe ($Strict8.GetString([IO.File]::ReadAllBytes($kitCopy))) } catch { Stop-Host 'KIT_GH_EXE_REFUSED' $null }
     Step 'stage' $stage
     if ($Reset) { Enter-Step 'reset'; Invoke-Reset $old $observed $operator; return }
@@ -1323,7 +1366,7 @@ function Invoke-HostPreparation {
     $null = New-Dir (Split-Path -Parent $SecretTargets['appKey']) (Get-SecretDirectorySddl $controllerSid)
     # M5: resumable and checked: a cut-off expansion is set aside and done again, a completed one is held to the pinned archive
     $runnerMark = Join-Path $ControlRoot 'runner.first-install-complete'
-    $null = Expand-Verified $staged['actions-runner'] $runnerDir $runnerMark ([string]$items['actions-runner']['sha256'])
+    $null = Expand-Verified $staged['actions-runner'] $runnerDir $runnerMark ([string]$items['actions-runner']['sha256']) $BootstrapRunnerDirectory
     $svc = Get-Service -Name $nodeProfile.runnerService -ErrorAction SilentlyContinue
     if ($null -eq $svc) {
       # one new random password for the account and the service at once (CreateService keeps the binary path verbatim, quotes included)
