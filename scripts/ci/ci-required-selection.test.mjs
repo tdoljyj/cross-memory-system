@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import childProcess, { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, watch, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { promisify } from 'node:util';
 import {
   FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SELECTOR_IMPORTS, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
   knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, resolveCommand, executeSuite, selectSuites,
@@ -798,6 +800,179 @@ test('Windows suite capacity checks production again before granting and leaves 
     await waitForSlotFixture(waiting, waiting.ready);
     waiting.release();
     assert.deepEqual(await waiting.done, [0, null]);
+  });
+
+function pregrantFixture(t, { jobStatus } = {}) {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'clued-suite-pregrant-'));
+  const started = path.join(directory, 'started');
+  const worker = path.join(directory, 'worker.mjs');
+  writeFileSync(worker, `import { writeFileSync } from 'node:fs';
+    export function executeSuite() { writeFileSync(${JSON.stringify(started)}, ''); return 0; }
+  `);
+  t.after(() => rm(directory, { recursive: true, force: true, maxRetries: 5 }));
+  const probe = childProcess.execFileSync;
+  t.mock.method(childProcess, 'execFileSync', (file, args, options) => {
+    if (file === 'powershell.exe' && args.includes('-Command') && args.at(-1).includes(`foreach ($id in ${process.pid})`)) {
+      return `${process.pid} 123456789`;
+    }
+    if (jobStatus && file === 'powershell.exe' && args.includes('-Probe')) {
+      return JSON.parse(options.env.CLUED_LOCAL_SUITE_JOB_PROBE).map((name) => `${name} ${jobStatus}`).join('\n');
+    }
+    return probe(file, args, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const command = { root: directory, env: { ...process.env, NODE_OPTIONS: '' }, timeoutExit: 75,
+    work: { selectorUrl: pathToFileURL(worker).href } };
+  const tickets = () => readdirSync(directory).filter((name) => name.startsWith('clued-local-suite-v1-'));
+  return { directory, command, started, tickets };
+}
+
+test('Windows pregrant rejects a Windows worker that starts during the second WSL probe',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const { directory, command, started } = pregrantFixture(t);
+    const stop = new AbortController();
+    let windowsBusy = false;
+    let wslReads = 0;
+    t.mock.method(os, 'hostname', () => 'DESK-W-591');
+    const defaultRead = readFileSync;
+    const { default: fs } = await import('node:fs');
+    t.mock.method(fs, 'readFileSync', (file, ...args) => typeof file === 'string' && file.startsWith('C:\\ProgramData\\CluedIndependentCI')
+      ? JSON.stringify({ writtenAt: new Date().toISOString(), current: null }) : defaultRead(file, ...args));
+    const exec = () => assert.fail('expected a promisified capacity probe');
+    exec[promisify.custom] = async (file, args) => {
+      if (file === 'powershell.exe') return { stdout: String(Number(windowsBusy)) };
+      assert.equal(file, 'wsl.exe');
+      if (args[0] === '--list') return { stdout: Buffer.from('CluedCI-Linux\r\n') };
+      assert.equal(args.at(-1), 'Runner.Worker');
+      if (++wslReads === 2) {
+        await Promise.resolve();
+        windowsBusy = true;
+      }
+      if (wslReads === 3) stop.abort();
+      throw Object.assign(new Error('no matching process'), { code: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) });
+    };
+    const originalExec = childProcess.execFile;
+    childProcess.execFile = exec;
+    syncBuiltinESMExports();
+    t.after(() => { childProcess.execFile = originalExec; t.mock.restoreAll(); syncBuiltinESMExports(); });
+    const { windowsSuiteCapacity } = await import('./local-suite-capacity.mjs?pregrant-worker');
+    const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+    const capacity = { ...windowsSuiteCapacity({ timeout: 5_000 }), sample: () => ({ physical: 64 * 1024 ** 3, commit: 64 * 1024 ** 3, cpu: 32 }) };
+    const result = await withLocalSuiteSlot('pregrant-worker', command, {
+      directory, capacity, probeMs: 50, signal: AbortSignal.any([stop.signal, AbortSignal.timeout(20_000)]),
+    });
+    assert.ok(windowsBusy, 'production switched to busy during the second probe');
+    assert.equal(existsSync(started), false, 'the native Job started a suite after production became busy');
+    assert.equal(wslReads, 3, 'the queue must re-enter polling after the second probe blocks permission');
+    assert.equal(result, 130);
+  });
+
+test('Windows pregrant checks fresh resource headroom after the guard is ready',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const { directory, command, started } = pregrantFixture(t);
+    const stop = new AbortController();
+    let samples = 0;
+    const capacity = {
+      needs: { physical: 1, commit: 1, cpu: 1 },
+      production: () => null,
+      sample: () => {
+        if (++samples === 3) stop.abort();
+        return { physical: samples === 1 ? 1 : 0, commit: 1, cpu: 1 };
+      },
+    };
+    const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+    const result = await withLocalSuiteSlot('pregrant-resources', command, {
+      directory, capacity, probeMs: 50, signal: AbortSignal.any([stop.signal, AbortSignal.timeout(20_000)]),
+    });
+    assert.equal(existsSync(started), false, 'the native Job started despite the drop in physical memory');
+    assert.equal(samples, 3);
+    assert.equal(result, 130);
+  });
+
+for (const phase of ['ready', 'drain']) {
+  test(`Windows suite reports incomplete and reclaims a ticket when its guard stalls at ${phase}`,
+    { skip: process.platform !== 'win32' }, async (t) => {
+      const { directory, command, tickets } = pregrantFixture(t, { jobStatus: 'gone' });
+      const permitted = path.join(directory, 'permitted');
+      const eof = path.join(directory, 'eof');
+      const originalSpawn = spawn;
+      let guard;
+      t.mock.method(childProcess, 'spawn', (file, args, options) => {
+        assert.equal(file, 'powershell.exe');
+        assert.ok(args.some((arg) => arg.endsWith('local-suite-slot-job.ps1')));
+        const mock = `const fs = require('node:fs'), path = require('node:path');
+          const ticket = JSON.parse(process.env.CLUED_LOCAL_SUITE_GUARD).requestPath;
+          if (${phase === 'drain'}) fs.writeFileSync(path.join(ticket, 'ready'), '');
+          process.stdin.on('data', () => fs.writeFileSync(${JSON.stringify(permitted)}, ''));
+          process.stdin.on('end', () => fs.writeFileSync(${JSON.stringify(eof)}, ''));
+          process.stdin.resume();
+          setInterval(() => {}, 60_000);`;
+        guard = originalSpawn(process.execPath, ['-e', mock], options);
+        return guard;
+      });
+      syncBuiltinESMExports();
+      t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+      const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+      const stop = new AbortController();
+      const expired = Symbol('watchdog expired');
+      const watchdog = new AbortController();
+      const result = withLocalSuiteSlot(`stalled-${phase}`, command, {
+        directory, signal: stop.signal, guardTimeoutMs: 1_000,
+        capacity: { needs: { physical: 1, commit: 1, cpu: 1 }, production: () => null, sample: () => ({ physical: 1, commit: 1, cpu: 1 }) },
+      }).then((code) => ({ code }), (error) => ({ error }));
+      try {
+        if (phase === 'drain') {
+          const waitSignal = AbortSignal.timeout(10_000);
+          while (!existsSync(permitted)) await delay(20, undefined, { signal: waitSignal });
+          stop.abort();
+          while (!existsSync(eof)) await delay(20, undefined, { signal: waitSignal });
+        }
+        const outcome = await Promise.race([result, delay(10_000, expired, { signal: watchdog.signal })]);
+        assert.notEqual(outcome, expired, `guard stalled at ${phase} and the request never returned`);
+        assert.match(outcome.error?.message ?? '', new RegExp(`guard.*${phase}.*timed out`, 'i'));
+        assert.deepEqual(tickets(), []);
+        assert.equal(pidAlive(guard.pid), false);
+      } finally {
+        watchdog.abort();
+        stop.abort();
+        guard?.kill();
+        await result;
+      }
+    });
+}
+
+test('Windows compact hosts with at most eight logical CPUs can start the first suite under light load',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    t.mock.method(os, 'hostname', () => 'Turing');
+    let logical = 1;
+    let ticks = 0;
+    t.mock.method(os, 'availableParallelism', () => logical);
+    t.mock.method(os, 'cpus', () => {
+      ticks++;
+      return Array.from({ length: logical }, () => ({ times: { idle: ticks * 900, user: ticks * 100 } }));
+    });
+    const exec = () => assert.fail('expected a promisified capacity probe');
+    exec[promisify.custom] = async () => ({ stdout: [12, 4, 20].map((gib) => gib * 1024 ** 3).join(' ') });
+    const originalExec = childProcess.execFile;
+    childProcess.execFile = exec;
+    syncBuiltinESMExports();
+    t.after(() => { childProcess.execFile = originalExec; t.mock.restoreAll(); syncBuiltinESMExports(); });
+    const { windowsSuiteCapacity, suiteCapacityShortfalls } = await import('./local-suite-capacity.mjs?compact-cpu');
+    for (logical of [8, 1, 2, 3, 4, 5, 6, 7]) {
+      const capacity = windowsSuiteCapacity({ timeout: 5_000 });
+      const sample = await capacity.sample(new AbortController().signal);
+      assert.deepEqual(suiteCapacityShortfalls(capacity.needs, sample, 0), [], `${logical} logical CPUs at 90% idle`);
+    }
+    logical = 8;
+    const { directory, command, started } = pregrantFixture(t);
+    const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+    const result = await withLocalSuiteSlot('compact-cpu', command, {
+      directory, capacity: { ...windowsSuiteCapacity({ timeout: 5_000 }), production: () => null },
+      signal: AbortSignal.timeout(20_000),
+    });
+    assert.equal(result, 0);
+    assert.ok(existsSync(started));
   });
 
 test('Windows suite capacity reserves each resource and cancellation drains the owned Job',

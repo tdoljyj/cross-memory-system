@@ -26,6 +26,7 @@ public static class LocalSuiteJob {
     private const uint UseStandardHandles = 0x100;
     private const uint WaitTimeout = 258;
     private const uint BelowNormalPriorityClass = 0x00004000;
+    private const int DrainTimeoutMs = 10000;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct StartupInfo {
@@ -225,7 +226,7 @@ public static class LocalSuiteJob {
                     if (Active(job) != 0 && !TerminateJobObject(job, 1)) throw new Win32Exception();
                     Stopwatch drain = Stopwatch.StartNew();
                     while (Active(job) != 0) {
-                        if (drain.ElapsedMilliseconds >= 10000) throw new IOException("file job did not drain");
+                        if (drain.ElapsedMilliseconds >= DrainTimeoutMs) throw new IOException("file job did not drain");
                         Thread.Sleep(20);
                     }
                 } catch (Exception error) {
@@ -308,7 +309,11 @@ public static class LocalSuiteJob {
             } finally {
                 if (child != IntPtr.Zero) CloseHandle(child);
                 if (Active(job) != 0 && !TerminateJobObject(job, unchecked((uint)status))) throw new Win32Exception();
-                while (Active(job) != 0) Thread.Sleep(20);
+                Stopwatch drain = Stopwatch.StartNew();
+                while (Active(job) != 0) {
+                    if (drain.ElapsedMilliseconds >= DrainTimeoutMs) throw new IOException("suite job drain timed out");
+                    Thread.Sleep(20);
+                }
                 File.WriteAllText(Path.Combine(requestPath, "drained"), "");
             }
             return status;
