@@ -13,6 +13,9 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { SOURCE_PATHS, sourceFiles } from '../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
+import { firstInstallKitOf } from '../rollout/fleet/install.mjs';
+import { fleetFacts, nodeSite } from '../rollout/fleet/test/fleet-fixtures.mjs';
 import { FLEET_TESTS, POWERSHELL, RES, childEnv, skip, tail } from './fleet-node-fixtures.mjs';
 
 const psLiteral = value => `'${String(value).replaceAll("'", "''")}'`;
@@ -34,10 +37,18 @@ exit $testExit`;
   return { status: r.status, verdict, out: `${tail(r.stdout)}\n${tail(r.stderr, 3000)}` };
 }
 
-test('rollout/fleet/test/test-bootstrap.ps1: the bootstrap\'s offline checks pass', { skip, timeout: 900_000 }, () => {
-  const r = powershellFile(path.join(FLEET_TESTS, 'test-bootstrap.ps1'));
+test('rollout/fleet/test/test-bootstrap.ps1: the bootstrap\'s offline checks pass', { skip, timeout: 900_000 }, async t => {
+  // The same producer as the release kit, with a Source closure sized like the field kit.
+  const paths = Array.from({ length: 215 }, (_, i) => `scripts/ci/fixture-source-${i}.mjs`);
+  const template = await nodeSite(t, 'a', fleetFacts(), { recordSourceFiles: sourceFiles([...SOURCE_PATHS, ...paths]) });
+  const kitFile = path.join(template.dir, 'fleet-node-g000028.first-install-kit.json');
+  const kitBytes = Buffer.from(JSON.stringify(await firstInstallKitOf({ root: template.root })));
+  assert.ok(kitBytes.length >= 200_000 && kitBytes.length <= 300_000, `kit size: ${kitBytes.length} bytes`);
+  fs.writeFileSync(kitFile, kitBytes);
+  const r = powershellFile(path.join(FLEET_TESTS, 'test-bootstrap.ps1'), ['-ReinstallKit', kitFile]);
   assert.equal(r.status, 0, r.out);
   assert.equal(r.verdict?.status, 'BOOTSTRAP_PURE_TESTS_PASSED', r.out);
+  t.diagnostic(`BOOTSTRAP_PURE_TESTS_PASSED (${r.verdict.checks} checks), reinstall kit ${kitBytes.length} bytes`);
 });
 
 // Model both kinds of runner without inspecting or changing the actual host. An installed service's SID and root ACE exist

@@ -211,6 +211,16 @@ function Read-FleetConnectionJson([string]$file) {
   }
 }
 
+# Install receipts can include the runner's full ACL and other install evidence.
+# Use the fleet reinstall launcher's 1 MiB receipt limit.
+function Read-FleetInstallReceipt([string]$file) {
+  Assert-FleetLocalPath $file
+  $item = Get-FleetPathItem $file
+  if ($null -eq $item) { return }
+  if ($item.PSIsContainer -or $item.LinkType -or $item.Length -lt 1 -or $item.Length -gt 1MB) { throw 'FLEET_INSTALL_RECEIPT_REFUSED' }
+  (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject([IO.File]::ReadAllText($item.FullName))
+}
+
 function Get-FleetCarrierFingerprint([string]$node, [string]$tool, [string]$kind, [string]$file) {
   if ($null -eq (Get-FleetConnectionCarrier $file)) { throw 'FLEET_REQUIRED_CONNECTION_CARRIER_MISSING' }
   $psi = [Diagnostics.ProcessStartInfo]::new()
@@ -296,7 +306,7 @@ function Get-FleetPreservedConnection($Context, [string]$carry, [string]$nodeExe
   $next.ciTokenPinSha256 = $ciPin
   $upgrade = Get-FleetCarrierFingerprint $nodeExe $tool 'ci-token' (Join-Path $carry 'resident-upgrade.token')
   $hbFile = Join-Path $carry 'ci-node-heartbeat.token'
-  $receipt = Read-FleetConnectionJson (Join-Path $root 'resident\install\install-receipt.json')
+  $receipt = Read-FleetInstallReceipt (Join-Path $root 'resident\install\install-receipt.json')
   $heartbeat = Get-Key $receipt 'heartbeatToken'
   if (-not $heartbeat) { $heartbeat = Get-Key (Get-Key $facts 'credentials') 'heartbeatToken' }
   if (-not $heartbeat) { $heartbeat = Get-Key $saved 'heartbeatToken' }

@@ -1,8 +1,9 @@
 <#
   Offline check of rollout/fleet/bootstrap.ps1's pure functions (the asset set and its sums files, the prerequisite manifest, the
   elevated command and the UAC refusal). Nothing on the host is read or changed; the functions are taken from the real script by AST.
-    powershell -NoProfile -ExecutionPolicy Bypass -File test-bootstrap.ps1
+  The fleet-node-powershell.test.mjs wrapper builds the first-install kit fixture and passes its path here.
 #>
+param([Parameter(Mandatory = $true)][string]$ReinstallKit)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions   # JavaScriptSerializer (Windows PowerShell 5.1 does not load it by itself)
@@ -21,6 +22,8 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [
 Yes ($errors.Count -eq 0) 'parse:bootstrap.ps1'
 $functions = @{}
 foreach ($f in $ast.FindAll({ param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { $functions[$f.Name] = $f.Extent.Text }
+Yes ($functions.ContainsKey('Get-Key')) 'present:Get-Key'
+if ($functions.ContainsKey('Get-Key')) { . ([scriptblock]::Create($functions['Get-Key'])) }
 Case 'first-install:one-UAC' {
   $bootstrap = $functions['Invoke-Bootstrap']
   Yes ($bootstrap -match "Invoke-Elevated 'install'" -and $bootstrap -notmatch "Invoke-Elevated 'host'") 'first-install:host-and-launcher-use-one-elevation'
@@ -121,6 +124,8 @@ Case 'lifecycle:paths and native credential carriers' {
     # Only the exact per-resident token filenames are carried across removal.
     $null = Save-FleetConnectionCarriers $ctx
     $renewed = Join-Path $FleetResources.ciRoot 'resident\secrets\resident-upgrade.token'
+    [IO.File]::WriteAllText($renewed, ('x' * 65537))
+    Throws { Save-FleetConnectionCarriers $ctx } 'FLEET_CONNECTION_CARRIER_REFUSED' 'lifecycle:oversized-upgrade-token-refused'
     [IO.File]::WriteAllText($renewed, 'rotated-offline-fixture')
     $null = Save-FleetConnectionCarriers $ctx
     Yes ([IO.File]::ReadAllText((Join-Path $carry 'resident-upgrade.token')) -ceq 'rotated-offline-fixture') 'lifecycle:current-token-replaces-old-carry'
@@ -132,6 +137,29 @@ Case 'lifecycle:paths and native credential carriers' {
     foreach ($name in @($FleetResources.admissionAssets + @('another-product\fixture'))) {
       Yes ([IO.File]::Exists((Join-Path $FleetResources.ciRoot $name))) ('lifecycle:unrelated-or-connection-left-in-place:' + $name)
     }
+  } finally {
+    if ([IO.Directory]::Exists($directory)) { [IO.Directory]::Delete($directory, $true) }
+  }
+}
+Case 'lifecycle:preserved connection reads a large install receipt' {
+  . (Join-Path (Split-Path -Parent $here) 'package-lifecycle.ps1')
+  $directory = Join-Path $env:TEMP ('clued-lifecycle-receipt-' + [Guid]::NewGuid().ToString('N'))
+  $FleetResources.ciRoot = $directory
+  $carry = Join-Path $directory 'carry'
+  $ctx = @{ bindingId = 'fixture-binding' }
+  function Get-FleetCarrierFingerprint { 'a' * 64 }
+  try {
+    foreach ($folder in @('resident\record', 'resident\install', 'carry')) {
+      [void][IO.Directory]::CreateDirectory((Join-Path $directory $folder))
+    }
+    [IO.File]::WriteAllText((Join-Path $directory 'resident\record\installation.json'),
+      (@{ ciPrincipalBindingId = $ctx.bindingId; ciTokenPinSha256 = 'a' * 64 } | ConvertTo-Json -Compress))
+    [IO.File]::WriteAllText((Join-Path $directory 'resident\install\install-receipt.json'),
+      (@{ contract = 'clued.independent-ci.resident-install-receipt/6'; heartbeatToken = @{ bindingId = 'fixture-heartbeat' };
+          runnerSddlUnchanged = 'D:' + ('(A;;CC;;;S-1-5-21-1-2-3-1001)' * 2500) } | ConvertTo-Json -Compress))
+    [IO.File]::WriteAllText((Join-Path $carry 'ci-node-heartbeat.token'), 'fixture-only')
+    $connection = Get-FleetPreservedConnection $ctx $carry 'fixture-node' 'fixture-fingerprint-tool'
+    Yes ($connection.heartbeatToken.bindingId -ceq 'fixture-heartbeat') 'lifecycle:heartbeat-read-from-large-install-receipt'
   } finally {
     if ([IO.Directory]::Exists($directory)) { [IO.Directory]::Delete($directory, $true) }
   }
@@ -306,7 +334,7 @@ Case 'lifecycle:maintenance RPC status, consent and replay' {
   Yes ($answer.code -ceq 'FLEET_MAINTENANCE_SUBJECT_REFUSED') 'lifecycle:other-node-reply-refused'
 }
 
-foreach ($name in @('Get-Key', 'Read-Sha256Sums', 'Get-ReleaseVersion', 'Get-RequiredAssets', 'Test-AssetSet', 'Test-PrereqManifest', 'Get-LastJsonLine', 'Get-ElevatedArguments', 'Test-UacDeclined',
+foreach ($name in @('Read-Sha256Sums', 'Get-ReleaseVersion', 'Get-RequiredAssets', 'Test-AssetSet', 'Test-PrereqManifest', 'Get-LastJsonLine', 'Get-ElevatedArguments', 'Test-UacDeclined',
     'Test-SafePath', 'Test-SafeArgument', 'Get-ExtractState', 'Get-StageFailure', 'Test-StageOperator',
     'Sha256File', 'Invoke-StageChild', 'Clear-CredentialDirectory', 'Test-FirstInstallCheck', 'Copy-ToWork', 'Test-UnderDirectory', 'Get-LauncherVerdict',
     'Get-NeededPrereqs', 'Expand-Cached', 'ConvertTo-PlainData', 'ConvertTo-JsonLine', 'Out-Result', 'Out-Step', 'Add-ResultLine', 'Get-StageVerdict', 'Read-StageResult',
@@ -324,6 +352,14 @@ Case 'lifecycle:protected journal routing' {
   function Get-FleetInventory { @{ complete = $true; residue = @('directory:resident') } }
   function Get-FleetNewInstall { $null }
   function Invoke-FleetLifecycle { throw 'UNEXPECTED_REINSTALL' }
+  function Connect-FleetMaintenance($record) {
+    $fixture.connected = $record
+    @{ bindingId = 'fixture-binding'; generation = 1 }
+  }
+  function Invoke-FleetMaintenance($Phase, $Context) {
+    if ($Phase -cne 'preview' -or $Context.bindingId -cne 'fixture-binding') { throw 'UNEXPECTED_MAINTENANCE' }
+    @{ ok = $true; healthyPeers = 0 }
+  }
   function Get-Acl([string]$LiteralPath) {
     if ($LiteralPath -cne $root) { throw 'UNEXPECTED_ACL_PATH' }
     $acl = [Security.AccessControl.DirectorySecurity]::new()
@@ -335,8 +371,8 @@ Case 'lifecycle:protected journal routing' {
   $start = $body.IndexOf('$facts = Get-FleetInventory')
   $end = $body.IndexOf('$clearCredentials = $true', $start)
   $route = [scriptblock]::Create($body.Substring($start, $end - $start))
-  function Invoke-FixtureRouting([bool]$Reset) {
-    $Action = 'Install'; $LifecycleMode = 'Probe'; $PreviewReceipt = $null; $out = $null; $verdict = $null
+  function Invoke-FixtureRouting([bool]$Reset, [string]$LifecycleMode = 'Probe') {
+    $Action = 'Install'; $PreviewReceipt = $null; $out = $null; $verdict = $null
     $progress = $null
     try { . $route } catch { $fixture.error = $_.Exception.Message }
     finally { $fixture.verdict = $verdict; $fixture.progress = $progress }
@@ -357,6 +393,20 @@ Case 'lifecycle:protected journal routing' {
     [IO.File]::SetAttributes($hidden, [IO.FileAttributes]::Hidden)
     Invoke-FixtureRouting $false
     Yes ($fixture['error'] -ceq 'FLEET_REINSTALL_REQUIRES_PREVIEW' -and [IO.File]::Exists($hidden)) ('lifecycle:nonempty-journal-is-not-removed (got: ' + $fixture['error'] + ')')
+
+    # Run the real non-Fresh install routing with a hash-checked staged kit.
+    # The maintenance stub stops at the zero-peer preview, before any host effect.
+    $Kit = $ReinstallKit
+    $residentTree = $directory
+    $protected = @{ assets = (Join-Path $directory 'assets'); node = 'fixture-node' }
+    $null = Copy-ToWork $Kit $protected.assets (Sha256File $Kit)
+    $fixture.Clear()
+    Invoke-FixtureRouting $false 'Reinstall'
+    $kitBytes = [IO.FileInfo]::new($Kit).Length
+    Yes ($null -eq $fixture['error'] -and (Get-Key $fixture['verdict'] 'status') -ceq 'FLEET_LIFECYCLE_PREVIEW_REQUIRED' -and
+      (Get-Key $fixture['connected'] 'supabaseUrl') -ceq 'https://fixtureproject.supabase.co' -and
+      (Get-Key $fixture['connected'] 'publishableKey') -ceq 'sb_publishable_0000000000') (
+      'lifecycle:reinstall-reads-protected-kit (' + $kitBytes + ' bytes; got: ' + $fixture['error'] + ')')
     [IO.File]::Delete($hidden)
 
     $fixture.Clear()
