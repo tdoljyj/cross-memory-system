@@ -66,6 +66,9 @@ def fixture_path(file):
     if not isinstance(name, str):
         return file
     name = os.path.normpath(name)
+    work_name = os.path.normpath(work).lower()
+    if name.lower() == work_name or name.lower().startswith(work_name + '\\'):
+        return file
     if name.lower() in host_locations:
         return host_locations[name.lower()]
     for prefix, target in ((live_resident, Path(root)), (live, host_files),

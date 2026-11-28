@@ -18,6 +18,7 @@ const files = [
   '20261127123000_fleet_previous_interface_gate_v1.sql',
   '20261127210000_fleet_sealed_source_rule_v1.sql',
   '20261127223938_fleet_reinstall_window_partial_ready_v1.sql',
+  '20261128080000_fleet_sealed_rule_takes_effect_on_arrival_v1.sql',
 ];
 const workflowPath = '.github/workflows/clued-cloud-production-release.yml';
 const root = new URL('../../../../', import.meta.url);
@@ -40,7 +41,7 @@ async function fixture(t, options = {}) {
   const checks = required.map((name, id) => ({ name, id: id + 1, app: { id: appOf(name) }, head_sha: head, status: 'completed', conclusion: 'success' }));
   const publisherStateDirectory = join(w.d, 'publisher-state');
   const snapshot = () => ({ base: true, applied: plan.flatMap((row, i) => ledger.has(row.file) ? [{ name: row.name,
-    version: `2026112716000${i + 1}`, digest: settings.badDigest && i === 0 ? 'f'.repeat(64) : row.digest }] : []),
+    version: `20261127160${String(i + 1).padStart(3, "0")}`, digest: settings.badDigest && i === 0 ? 'f'.repeat(64) : row.digest }] : []),
     interfaces: Object.fromEntries(plan.map(row => [row.probe, ledger.has(row.file) && settings.brokenInterface !== row.probe])) });
   let operations = 0;
   const runGh = args => {

@@ -110,14 +110,12 @@ export default function OwnerGrantsPage() {
     const generation = epoch.current;
     setWorking(true); setError(""); setNotice("");
     try {
-      const result = await rpc("clued_owner_grant_revoke_v1", { grant_id: grantId, ...(acceptance ? { acceptance_sha256: acceptance } : {}) }, current.current.access_token);
+      await rpc("clued_owner_grant_revoke_v1", { grant_id: grantId, ...(acceptance ? { acceptance_sha256: acceptance } : {}) }, current.current.access_token);
       if (epoch.current !== generation) return;
       if (acceptance) await load();
       if (epoch.current !== generation) return;
       setGrants(previous => (previous ?? []).filter(grant => grant.grant_id !== grantId));
-      setNotice(acceptance
-        ? (object(result.current_package) ? "已撤销。当前封存包为 " + String(result.current_package.version) + "。" : "已撤销。当前没有可用封存包。")
-        : "已撤销，之后的使用都会被拒绝。");
+      setNotice(acceptance ? "已撤销。" : "已撤销，之后的使用都会被拒绝。");
     } catch (failure) {
       if (epoch.current === generation) setError(failure instanceof RequestFailure ? failure.message : "暂时无法撤销，请刷新后重试。");
     } finally { if (epoch.current === generation) setWorking(false); }
@@ -154,7 +152,7 @@ export default function OwnerGrantsPage() {
         onToggle={(enabled, baseVersion) => void setAutoEnabled(enabled, baseVersion)} />
       {packages.filter(pkg => pkg.classification === "current").map(pkg => <section key={String(pkg.grant_id)}>
         <h2>当前封存包 {String(pkg.version)}</h2>
-        <p>{pkg.after_revoke_version ? "撤销后将使用 " + String(pkg.after_revoke_version) + "。" : "撤销后将没有可用封存包。"}</p>
+        <p>{String(pkg.after_revoke_version ?? "撤销结果暂时无法预演。")}</p>
         <button type="button" disabled={working} onClick={() => void revoke(String(pkg.grant_id), String(pkg.acceptance_sha256))}>撤销此封存包</button>
       </section>)}
       {requests.length > 0 && <section aria-label="等待确认"><h2>等待你确认</h2>
