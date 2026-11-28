@@ -314,15 +314,26 @@ test('prepare: no Decision, receipt or time goes in; the request the Owner revie
   assert.equal((await uploadsOf(w)).length, n0);
 });
 
+test('prepare retries a single 502 and publishes the role image once', async t => {
+  const w = await prepWorld(t);
+  const name = path.basename(w.image);
+  process.env.FAKE_GH_FAIL_UPLOAD_NTH = '2';
+  t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_NTH; });
+  assert.equal((await w.prep()).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  const attempts = (await uploadsOf(w)).filter(c => path.basename(c.args[3]) === name);
+  assert.equal(attempts.length, 2);
+  assert.deepEqual((await w.assets()).filter(a => a.name === name).map(a => a.sha256), [sha(await fs.readFile(w.image))]);
+});
+
 // ruling test 2 (red before: acceptance-draft refused PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT)
 test('prepare again after a stop: the node would give other kit bytes, the Release\'s kit is used, the kit is uploaded once; a third run asks no node', async t => {
   const w = await prepWorld(t);
-  process.env.FAKE_GH_FAIL_UPLOAD_NTH = '2';   // the kit goes up, the role image does not (acceptance-draft.log: the network stopped it)
-  t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_NTH; });
+  process.env.FAKE_GH_FAIL_UPLOAD_FROM = '2';   // the kit goes up, the role image does not (acceptance-draft.log: the network stopped it)
+  t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_FROM; });
   await assert.rejects(w.prep(), { code: 'PUBLISH_GH_RELEASE_UPLOAD_FAILED' });
   await noRequest(w);
   assert.deepEqual((await w.assets()).filter(a => a.name.includes('first-install') || a.name.startsWith('role-image-')).map(a => a.name), [`${TAG}.first-install-kit.json`]);
-  delete process.env.FAKE_GH_FAIL_UPLOAD_NTH;
+  delete process.env.FAKE_GH_FAIL_UPLOAD_FROM;
   const reads = w.s.kitReads;
   const r = await w.prep();   // the same arguments, the same --out
   assert.equal(r.kitFrom, 'release');
@@ -343,10 +354,10 @@ test('prepare again after a stop: the node would give other kit bytes, the Relea
 // review suggestion 1: what a resumed upload keeps is compared by content, not by size
 test('prepare after a stop refuses same-size changed image or sums without replacing published files', async t => {
   const w = await prepWorld(t);
-  process.env.FAKE_GH_FAIL_UPLOAD_NTH = '3';   // the kit and the image go up, the sums file does not
-  t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_NTH; });
+  process.env.FAKE_GH_FAIL_UPLOAD_FROM = '3';   // the kit and the image go up, the sums file does not
+  t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_FROM; });
   await assert.rejects(w.prep(), { code: 'PUBLISH_GH_RELEASE_UPLOAD_FAILED' });
-  delete process.env.FAKE_GH_FAIL_UPLOAD_NTH;
+  delete process.env.FAKE_GH_FAIL_UPLOAD_FROM;
   const local = await fs.readFile(w.image);
   const other = Buffer.from(local); other[0] ^= 1;
   await w.setState(st => { const a = st.assets.find(x => x.name === `role-image-${IMAGE}.tar.gz`); a.b64 = other.toString('base64'); a.sha256 = sha(other); });
