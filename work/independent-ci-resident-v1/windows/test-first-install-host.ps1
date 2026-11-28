@@ -28,7 +28,7 @@ foreach ($f in $ast.FindAll({ param($a) $a -is [Management.Automation.Language.F
 foreach ($name in @('Get-Key', 'Get-Rid', 'Get-NodeProfile', 'Get-Signer', 'Get-CiRootSddl', 'Get-FirstInstallSddl', 'Get-AdminOnlySddl', 'Test-SddlIs', 'Get-ResidueCodes',
     'Get-TokenFingerprint', 'New-FirstInstallFacts', 'Test-SameFacts', 'Test-LinuxFirstInstallFacts', 'Test-ExpectedOperator', 'Get-ServiceSid', 'Test-CiRootHasResidentAce',
     'Get-WslVersion', 'Get-CredentialPlan', 'Get-ResetPlan', 'Test-DenyServiceLogon', 'Get-V1BaseCodes', 'Get-DebListText',
-    'Sha256File', 'Write-NewFile', 'Get-ExpandState', 'Test-ZipExpanded', 'Expand-Verified', 'Get-MissingCredentials', 'Get-HeartbeatPrompt', 'Test-CredentialFileName', 'Read-CredentialFiles',
+    'Sha256File', 'Write-NewFile', 'Get-ExpandState', 'Test-ZipExpanded', 'Expand-Verified', 'Expand-HostZip', 'Get-MissingCredentials', 'Get-HeartbeatPrompt', 'Test-CredentialFileName', 'Read-CredentialFiles',
     'ConvertTo-PlainData', 'ConvertTo-JsonLine', 'Get-StepLine', 'Write-StepProgress', 'Step', 'Get-CredentialDialogCode')) {
   Yes ($functions.ContainsKey($name)) ('present:' + $name); if ($functions.ContainsKey($name)) { . ([scriptblock]::Create($functions[$name])) }
 }
@@ -307,6 +307,13 @@ try {
   }
   Case 'm5:the-runner-step-uses-it' {
     Yes ($main -match "Expand-Verified \`$staged\['actions-runner'\] \`$runnerDir" -and $main -notmatch "Expand-Archive -LiteralPath \`$staged\['actions-runner'\]") 'm5:runner-step'
+  }
+  Case 'm5:runner-materializes-from-the-digest-cache' {
+    function Expand-HostZip { throw 'RUNNER_ZIP_EXPANDED_AGAIN' }
+    [IO.File]::WriteAllText((Join-Path $src '.bootstrap-complete'), $zipSha)
+    $target = Join-Path $tmp 'runner-from-cache'; $targetMark = $target + '.complete'
+    $null = Expand-Verified $zip $target $targetMark $zipSha $src
+    Yes ((Test-ZipExpanded $zip $target) -and -not [IO.File]::Exists((Join-Path $target '.bootstrap-complete'))) 'm5:runner-copied-and-verified-without-expansion'
   }
 
   # L3: a re-run asks for exactly what facts.json records: a recorded heartbeat token is required, never "leave empty for none"
