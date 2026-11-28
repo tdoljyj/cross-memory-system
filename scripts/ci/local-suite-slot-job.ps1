@@ -25,6 +25,8 @@ public static class LocalSuiteJob {
     private const uint NoWindow = 0x08000000;
     private const uint UseStandardHandles = 0x100;
     private const uint WaitTimeout = 258;
+    private const uint BelowNormalPriorityClass = 0x00004000;
+    private const int DrainTimeoutMs = 10000;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct StartupInfo {
@@ -131,7 +133,7 @@ public static class LocalSuiteJob {
         return info.ActiveProcesses;
     }
 
-    private static IntPtr StartInJob(IntPtr job, string node, string arguments, IntPtr output, IntPtr error) {
+    private static IntPtr StartInJob(IntPtr job, string node, string arguments, IntPtr output, IntPtr error, uint priority = 0) {
         IntPtr size = IntPtr.Zero;
         InitializeProcThreadAttributeList(IntPtr.Zero, 2, 0, ref size);
         if (size == IntPtr.Zero) throw new Win32Exception();
@@ -163,7 +165,7 @@ public static class LocalSuiteJob {
             };
             var argv = new StringBuilder("\"" + node + "\" " + arguments);
             ProcessInfo child;
-            if (!CreateProcess(node, argv, IntPtr.Zero, IntPtr.Zero, true, ExtendedStartup | NoWindow,
+            if (!CreateProcess(node, argv, IntPtr.Zero, IntPtr.Zero, true, ExtendedStartup | NoWindow | priority,
                 IntPtr.Zero, null, ref start, out child)) throw new Win32Exception();
             CloseHandle(child.Thread);
             return child.Process;
@@ -177,7 +179,8 @@ public static class LocalSuiteJob {
     }
 
     private static IntPtr StartWorker(IntPtr job, string node, string worker) {
-        return StartInJob(job, node, "\"" + worker + "\" worker", GetStdHandle(-11), GetStdHandle(-12));
+        // Windows inherits below-normal priority in descendants created with default flags.
+        return StartInJob(job, node, "\"" + worker + "\" worker", GetStdHandle(-11), GetStdHandle(-12), BelowNormalPriorityClass);
     }
 
     private sealed class ResidentRequest {
@@ -223,7 +226,7 @@ public static class LocalSuiteJob {
                     if (Active(job) != 0 && !TerminateJobObject(job, 1)) throw new Win32Exception();
                     Stopwatch drain = Stopwatch.StartNew();
                     while (Active(job) != 0) {
-                        if (drain.ElapsedMilliseconds >= 10000) throw new IOException("file job did not drain");
+                        if (drain.ElapsedMilliseconds >= DrainTimeoutMs) throw new IOException("file job did not drain");
                         Thread.Sleep(20);
                     }
                 } catch (Exception error) {
@@ -275,9 +278,7 @@ public static class LocalSuiteJob {
         }
     }
 
-    public static int Run(string requestPath, string node, string worker, string suite, int owner, int holdMs, int timeoutExit, long deadlineAt) {
-        Stopwatch age = Stopwatch.StartNew();
-        long budget = Math.Max(0, Math.Min(holdMs, deadlineAt - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+    public static int Run(string requestPath, string node, string worker) {
         IntPtr job = CreateJobObject(IntPtr.Zero, JobName(Path.GetFileName(requestPath)));
         int createError = Marshal.GetLastWin32Error();
         if (job == IntPtr.Zero) throw new Win32Exception(createError);
@@ -296,26 +297,23 @@ public static class LocalSuiteJob {
             int status = 1;
             IntPtr child = IntPtr.Zero;
             try {
-                while (!disconnect.IsCompleted) {
-                    long remaining = budget - age.ElapsedMilliseconds;
-                    if (child == IntPtr.Zero && remaining > 0) child = StartWorker(job, node, worker);
-                    uint wait = child == IntPtr.Zero ? WaitTimeout :
-                        WaitForSingleObject(child, (uint)Math.Max(0, Math.Min(200, remaining)));
+                if (!disconnect.IsCompleted) child = StartWorker(job, node, worker);
+                while (child != IntPtr.Zero && !disconnect.IsCompleted) {
+                    uint wait = WaitForSingleObject(child, 200);
                     if (wait == 0) {
                         if (!GetExitCodeProcess(child, out status)) throw new Win32Exception();
                         break;
                     }
                     if (wait != WaitTimeout) throw new Win32Exception();
-                    if (remaining > 0) continue;
-                    Console.Error.WriteLine("LOCAL_SUITE_HOLD_TIMEOUT: {0} (PID {1}) held a slot for {2:F2} minutes; stopping its process tree",
-                        suite, owner, holdMs / 60000.0);
-                    status = timeoutExit;
-                    break;
                 }
             } finally {
                 if (child != IntPtr.Zero) CloseHandle(child);
                 if (Active(job) != 0 && !TerminateJobObject(job, unchecked((uint)status))) throw new Win32Exception();
-                while (Active(job) != 0) Thread.Sleep(20);
+                Stopwatch drain = Stopwatch.StartNew();
+                while (Active(job) != 0) {
+                    if (drain.ElapsedMilliseconds >= DrainTimeoutMs) throw new IOException("suite job drain timed out");
+                    Thread.Sleep(20);
+                }
                 File.WriteAllText(Path.Combine(requestPath, "drained"), "");
             }
             return status;
@@ -339,4 +337,4 @@ if ($ResidentFiles) {
 }
 
 $guard = ConvertFrom-Json $env:CLUED_LOCAL_SUITE_GUARD
-exit [LocalSuiteJob]::Run($guard.requestPath, $guard.node, $guard.worker, $guard.suite, $guard.owner, $guard.holdMs, $guard.timeoutExit, $guard.deadlineAt)
+exit [LocalSuiteJob]::Run($guard.requestPath, $guard.node, $guard.worker)

@@ -84,6 +84,6 @@ if (process.env.CLUED_LOCAL_SUITE_GUARD && process.argv[1] === import.meta.filen
     }
   } catch (error) {
     console.error(`local suite guard: ${error.message}`);
-    process.exitCode = 1;
+    process.exitCode = process.platform === 'win32' ? 2 : 1;
   }
 }

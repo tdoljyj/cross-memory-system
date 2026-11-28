@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import childProcess, { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, watch, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { promisify } from 'node:util';
 import {
   FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SELECTOR_IMPORTS, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
   knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, resolveCommand, executeSuite, selectSuites,
@@ -93,12 +96,16 @@ function slotFixture(t) {
   const slotModule = pathToFileURL(path.join(ROOT, 'scripts/ci/local-suite-slots.mjs')).href;
   const loader = path.join(dir, 'loader.mjs');
   writeFileSync(loader, `import { registerHooks } from 'node:module';
+    import { existsSync } from 'node:fs';
     import childProcess from 'node:child_process';
     import { syncBuiltinESMExports } from 'node:module';
-    if (process.env.SLOT_FIXTURE_PROBE_ERROR) {
+    if (process.env.SLOT_FIXTURE_PROBE_ERROR || process.env.SLOT_FIXTURE_JOB_DENIED) {
       const original = childProcess.execFileSync;
       let calls = 0;
       childProcess.execFileSync = (file, args, options) => {
+        if (args.includes('-Probe') && process.env.SLOT_FIXTURE_JOB_DENIED && existsSync(process.env.SLOT_FIXTURE_JOB_DENIED)) {
+          return JSON.parse(options.env.CLUED_LOCAL_SUITE_JOB_PROBE).map((name) => name + ' unknown-5').join('\\n');
+        }
         if (file === 'powershell.exe' && args.includes('-Command') && ++calls > Number(process.env.SLOT_FIXTURE_PROBE_AFTER)
           && calls <= Number(process.env.SLOT_FIXTURE_PROBE_AFTER) + Number(process.env.SLOT_FIXTURE_PROBE_ERROR)) {
           throw Object.assign(new Error('synthetic identity probe timeout'), { code: 'ETIMEDOUT' });
@@ -114,28 +121,49 @@ function slotFixture(t) {
     }
     registerHooks({ resolve(specifier, context, next) {
       if (specifier !== './local-suite-slots.mjs') return next(specifier, context);
-      const source = \`import { withLocalSuiteSlot as acquire } from \${JSON.stringify(${JSON.stringify(slotModule)})};
+      const source = \`import { existsSync, watch, writeFileSync } from 'node:fs';
+        import { withLocalSuiteSlot as acquire } from \${JSON.stringify(${JSON.stringify(slotModule)})};
+        const busyFile = \${JSON.stringify(process.env.SLOT_FIXTURE_QUEUE + '/production-busy')};
+        const stop = new AbortController();
+        const watchCancel = watch(process.env.SLOT_FIXTURE_QUEUE, { persistent: false }, () => {
+          if (!existsSync(process.env.SLOT_FIXTURE_CANCEL)) return;
+          if (process.env.SLOT_FIXTURE_CONSOLE_CANCEL === '1') process.emit('SIGINT');
+          else stop.abort();
+        });
+        let productionCalls = 0;
         export const withLocalSuiteSlot = (id, run) => acquire(id, run, {
           directory: \${JSON.stringify(process.env.SLOT_FIXTURE_QUEUE)}, waitMs: Number(process.env.SLOT_FIXTURE_WAIT),
-          holdMs: Number(process.env.SLOT_FIXTURE_HOLD), probeMs: 200,
-        });\`;
+          holdMs: Number(process.env.SLOT_FIXTURE_HOLD), probeMs: 200, signal: stop.signal,
+          capacity: {
+            needs: { physical: 1, commit: 1, cpu: 1 },
+            sample: () => JSON.parse(process.env.SLOT_FIXTURE_ROOM),
+            production: () => {
+              if (++productionCalls === 2 && process.env.SLOT_FIXTURE_PRODUCTION_ON_READY === '1') writeFileSync(busyFile, '');
+              return existsSync(busyFile) ? 'Windows Runner.Worker is running' : null;
+            },
+          },
+        }).finally(() => watchCancel.close());\`;
       return { url: 'data:text/javascript,' + encodeURIComponent(source), shortCircuit: true };
     }});
   `);
   const queue = path.join(dir, 'shared-queue');
   mkdirSync(queue);
   t.after(async () => {
-    for (const child of children) child.release();
+    rmSync(path.join(queue, 'production-busy'), { force: true });
+    for (const child of children) {
+      child.release();
+      if (!child.closed) child.cancel();
+    }
     await Promise.all(children.map(({ done }) => done));
     for (const { descendant } of children) {
       const deadline = performance.now() + 5_000;
       while (pidAlive(descendant()) && performance.now() < deadline) await delay(20);
     }
-    rmSync(dir, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true, maxRetries: 5 });
   });
-  return function start(name, {
+  function start(name, {
     waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter', mode = '--run', body = null, named = null, extraFiles = {},
-    extraEnv = {}, startupDelayMs = 0, prepare,
+    extraEnv = {}, startupDelayMs = 0, prepare, room = 2, resources = {}, productionOnReady = false, denyJobProbe = false, consoleCancel = false,
   } = {}) {
     const root = path.join(dir, name);
     const scripts = path.join(root, 'scripts', 'ci');
@@ -190,7 +218,11 @@ function slotFixture(t) {
     }
     writeFileSync(path.join(scripts, 'check-pinned-registries.mjs'), 'process.exitCode = 75;\n');
     const env = { ...process.env, SLOT_FIXTURE_QUEUE: queue, SLOT_FIXTURE_WAIT: String(waitMs),
-      SLOT_FIXTURE_HOLD: String(holdMs), SLOT_FIXTURE_PROBE_ERROR: String(probeErrors || ''), SLOT_FIXTURE_PROBE_AFTER: String(probeAfter) };
+      SLOT_FIXTURE_HOLD: String(holdMs), SLOT_FIXTURE_ROOM: JSON.stringify({ physical: room, commit: 10, cpu: 10, ...resources }),
+      SLOT_FIXTURE_CANCEL: path.join(queue, name + '-cancel'), SLOT_FIXTURE_PRODUCTION_ON_READY: productionOnReady ? '1' : '',
+      SLOT_FIXTURE_CONSOLE_CANCEL: consoleCancel ? '1' : '',
+      SLOT_FIXTURE_PROBE_ERROR: String(probeErrors || ''), SLOT_FIXTURE_PROBE_AFTER: String(probeAfter) };
+    if (denyJobProbe) env.SLOT_FIXTURE_JOB_DENIED = path.join(queue, 'job-probe-denied');
     // A CI job always has a base commit (ciBaseRefusal); none of these commands compares with it.
     env.CI_BASE_SHA ||= 'f'.repeat(40);
     delete env.CI;
@@ -231,7 +263,7 @@ function slotFixture(t) {
     const run = { child, done, root, changes, closed: false, watchError: null,
       output: () => output, ready: () => existsSync(path.join(root, 'ready')),
       descendant: () => existsSync(path.join(root, 'descendant.pid')) ? Number(readFileSync(path.join(root, 'descendant.pid'))) : 0,
-      release: () => writeFileSync(path.join(root, 'release'), '') };
+      release: () => writeFileSync(path.join(root, 'release'), ''), cancel: () => writeFileSync(env.SLOT_FIXTURE_CANCEL, '') };
     watcher.on('error', (error) => {
       run.watchError = error;
       notify();
@@ -243,7 +275,23 @@ function slotFixture(t) {
     });
     children.push(run);
     return run;
+  }
+  start.production = (busy) => {
+    const file = path.join(queue, 'production-busy');
+    if (busy) writeFileSync(file, '');
+    else rmSync(file, { force: true });
   };
+  start.tickets = () => readdirSync(queue).filter((name) => name.startsWith('clued-local-suite-v1-'));
+  start.legacyTicket = () => {
+    const name = `clued-local-suite-v1-${process.pid}-1-00000000-0000-0000-0000-000000000001`;
+    const dir = path.join(queue, name);
+    mkdirSync(dir);
+    for (const marker of ['ticket-1-legacy', 'holding', 'granted']) writeFileSync(path.join(dir, marker), '');
+    const deny = path.join(queue, 'job-probe-denied');
+    writeFileSync(deny, '');
+    return { name, allowProbe: () => rmSync(deny) };
+  };
+  return start;
 }
 
 function fixtureGit(root, ...args) {
@@ -702,6 +750,295 @@ test('third local --run queues and prints the position and holders until normal 
   assert.deepEqual(await waiting.done, [0, null]);
 });
 
+test('Windows suite capacity admits a third live suite when all resources suffice',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const start = slotFixture(t);
+    const holders = await fillSuiteSlots(start);
+    const third = start('third', { room: 3 });
+    await waitForSlotFixture(third, () => third.ready() || /queue position/.test(third.output()));
+    assert.ok(third.ready(), third.output());
+    assert.ok(holders.every((run) => !run.closed));
+    third.release();
+    assert.deepEqual(await third.done, [0, null]);
+  });
+
+test('Windows suite capacity holds beyond the old deadline, including descendants',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const run = slotFixture(t)('long-hold', { tree: true, holdMs: 6_000, startupDelayMs: 7_000 });
+    await waitForSlotFixture(run, run.descendant);
+    assert.ok(pidAlive(run.descendant()));
+    run.release();
+    assert.deepEqual(await run.done, [0, null]);
+  });
+
+test('Windows suite capacity waits beyond the old queue deadline for Runner.Worker',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const start = slotFixture(t);
+    start.production(true);
+    const run = start('busy', { waitMs: 5_000 });
+    await waitForSlotFixture(run, () => run.ready() || /Windows Runner\.Worker is running/.test(run.output()));
+    assert.equal(run.ready(), false, 'production is active');
+    await delay(5_100);
+    assert.equal(run.closed, false, run.output());
+    assert.equal(run.ready(), false);
+    start.production(false);
+    await waitForSlotFixture(run, run.ready);
+    run.release();
+    assert.deepEqual(await run.done, [0, null]);
+  });
+
+test('Windows suite capacity checks production again before granting and leaves existing holders running',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const start = slotFixture(t);
+    const holder = start('holder', { tree: true });
+    await waitForSlotFixture(holder, holder.descendant);
+    const waiting = start('guard-recheck', { productionOnReady: true });
+    await waitForSlotFixture(waiting, () => /Windows Runner\.Worker is running/.test(waiting.output()));
+    assert.ok(!waiting.ready());
+    assert.ok(pidAlive(holder.descendant()));
+    start.production(false);
+    await waitForSlotFixture(waiting, waiting.ready);
+    waiting.release();
+    assert.deepEqual(await waiting.done, [0, null]);
+  });
+
+function pregrantFixture(t, { jobStatus } = {}) {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'clued-suite-pregrant-'));
+  const started = path.join(directory, 'started');
+  const worker = path.join(directory, 'worker.mjs');
+  writeFileSync(worker, `import { writeFileSync } from 'node:fs';
+    export function executeSuite() { writeFileSync(${JSON.stringify(started)}, ''); return 0; }
+  `);
+  t.after(() => rm(directory, { recursive: true, force: true, maxRetries: 5 }));
+  const probe = childProcess.execFileSync;
+  t.mock.method(childProcess, 'execFileSync', (file, args, options) => {
+    if (file === 'powershell.exe' && args.includes('-Command') && args.at(-1).includes(`foreach ($id in ${process.pid})`)) {
+      return `${process.pid} 123456789`;
+    }
+    if (jobStatus && file === 'powershell.exe' && args.includes('-Probe')) {
+      return JSON.parse(options.env.CLUED_LOCAL_SUITE_JOB_PROBE).map((name) => `${name} ${jobStatus}`).join('\n');
+    }
+    return probe(file, args, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const command = { root: directory, env: { ...process.env, NODE_OPTIONS: '' }, timeoutExit: 75,
+    work: { selectorUrl: pathToFileURL(worker).href } };
+  const tickets = () => readdirSync(directory).filter((name) => name.startsWith('clued-local-suite-v1-'));
+  return { directory, command, started, tickets };
+}
+
+test('Windows pregrant rejects a Windows worker that starts during the second WSL probe',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const { directory, command, started } = pregrantFixture(t);
+    const stop = new AbortController();
+    let windowsBusy = false;
+    let wslReads = 0;
+    t.mock.method(os, 'hostname', () => 'DESK-W-591');
+    const defaultRead = readFileSync;
+    const { default: fs } = await import('node:fs');
+    t.mock.method(fs, 'readFileSync', (file, ...args) => typeof file === 'string' && file.startsWith('C:\\ProgramData\\CluedIndependentCI')
+      ? JSON.stringify({ writtenAt: new Date().toISOString(), current: null }) : defaultRead(file, ...args));
+    const exec = () => assert.fail('expected a promisified capacity probe');
+    exec[promisify.custom] = async (file, args) => {
+      if (file === 'powershell.exe') return { stdout: String(Number(windowsBusy)) };
+      assert.equal(file, 'wsl.exe');
+      if (args[0] === '--list') return { stdout: Buffer.from('CluedCI-Linux\r\n') };
+      assert.equal(args.at(-1), 'Runner.Worker');
+      if (++wslReads === 2) {
+        await Promise.resolve();
+        windowsBusy = true;
+      }
+      if (wslReads === 3) stop.abort();
+      throw Object.assign(new Error('no matching process'), { code: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) });
+    };
+    const originalExec = childProcess.execFile;
+    childProcess.execFile = exec;
+    syncBuiltinESMExports();
+    t.after(() => { childProcess.execFile = originalExec; t.mock.restoreAll(); syncBuiltinESMExports(); });
+    const { windowsSuiteCapacity } = await import('./local-suite-capacity.mjs?pregrant-worker');
+    const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+    const capacity = { ...windowsSuiteCapacity({ timeout: 5_000 }), sample: () => ({ physical: 64 * 1024 ** 3, commit: 64 * 1024 ** 3, cpu: 32 }) };
+    const result = await withLocalSuiteSlot('pregrant-worker', command, {
+      directory, capacity, probeMs: 50, signal: AbortSignal.any([stop.signal, AbortSignal.timeout(20_000)]),
+    });
+    assert.ok(windowsBusy, 'production switched to busy during the second probe');
+    assert.equal(existsSync(started), false, 'the native Job started a suite after production became busy');
+    assert.equal(wslReads, 3, 'the queue must re-enter polling after the second probe blocks permission');
+    assert.equal(result, 130);
+  });
+
+test('Windows pregrant checks fresh resource headroom after the guard is ready',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const { directory, command, started } = pregrantFixture(t);
+    const stop = new AbortController();
+    let samples = 0;
+    const capacity = {
+      needs: { physical: 1, commit: 1, cpu: 1 },
+      production: () => null,
+      sample: () => {
+        if (++samples === 3) stop.abort();
+        return { physical: samples === 1 ? 1 : 0, commit: 1, cpu: 1 };
+      },
+    };
+    const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+    const result = await withLocalSuiteSlot('pregrant-resources', command, {
+      directory, capacity, probeMs: 50, signal: AbortSignal.any([stop.signal, AbortSignal.timeout(20_000)]),
+    });
+    assert.equal(existsSync(started), false, 'the native Job started despite the drop in physical memory');
+    assert.equal(samples, 3);
+    assert.equal(result, 130);
+  });
+
+for (const phase of ['ready', 'drain']) {
+  test(`Windows suite reports incomplete and reclaims a ticket when its guard stalls at ${phase}`,
+    { skip: process.platform !== 'win32' }, async (t) => {
+      const { directory, command, tickets } = pregrantFixture(t, { jobStatus: 'gone' });
+      const permitted = path.join(directory, 'permitted');
+      const eof = path.join(directory, 'eof');
+      const originalSpawn = spawn;
+      let guard;
+      t.mock.method(childProcess, 'spawn', (file, args, options) => {
+        assert.equal(file, 'powershell.exe');
+        assert.ok(args.some((arg) => arg.endsWith('local-suite-slot-job.ps1')));
+        const mock = `const fs = require('node:fs'), path = require('node:path');
+          const ticket = JSON.parse(process.env.CLUED_LOCAL_SUITE_GUARD).requestPath;
+          if (${phase === 'drain'}) fs.writeFileSync(path.join(ticket, 'ready'), '');
+          process.stdin.on('data', () => fs.writeFileSync(${JSON.stringify(permitted)}, ''));
+          process.stdin.on('end', () => fs.writeFileSync(${JSON.stringify(eof)}, ''));
+          process.stdin.resume();
+          setInterval(() => {}, 60_000);`;
+        guard = originalSpawn(process.execPath, ['-e', mock], options);
+        return guard;
+      });
+      syncBuiltinESMExports();
+      t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+      const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+      const stop = new AbortController();
+      const expired = Symbol('watchdog expired');
+      const watchdog = new AbortController();
+      const result = withLocalSuiteSlot(`stalled-${phase}`, command, {
+        directory, signal: stop.signal, guardTimeoutMs: 1_000,
+        capacity: { needs: { physical: 1, commit: 1, cpu: 1 }, production: () => null, sample: () => ({ physical: 1, commit: 1, cpu: 1 }) },
+      }).then((code) => ({ code }), (error) => ({ error }));
+      try {
+        if (phase === 'drain') {
+          const waitSignal = AbortSignal.timeout(10_000);
+          while (!existsSync(permitted)) await delay(20, undefined, { signal: waitSignal });
+          stop.abort();
+          while (!existsSync(eof)) await delay(20, undefined, { signal: waitSignal });
+        }
+        const outcome = await Promise.race([result, delay(10_000, expired, { signal: watchdog.signal })]);
+        assert.notEqual(outcome, expired, `guard stalled at ${phase} and the request never returned`);
+        assert.match(outcome.error?.message ?? '', new RegExp(`guard.*${phase}.*timed out`, 'i'));
+        assert.deepEqual(tickets(), []);
+        assert.equal(pidAlive(guard.pid), false);
+      } finally {
+        watchdog.abort();
+        stop.abort();
+        guard?.kill();
+        await result;
+      }
+    });
+}
+
+test('Windows compact hosts with at most eight logical CPUs can start the first suite under light load',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    t.mock.method(os, 'hostname', () => 'Turing');
+    let logical = 1;
+    let ticks = 0;
+    t.mock.method(os, 'availableParallelism', () => logical);
+    t.mock.method(os, 'cpus', () => {
+      ticks++;
+      return Array.from({ length: logical }, () => ({ times: { idle: ticks * 900, user: ticks * 100 } }));
+    });
+    const exec = () => assert.fail('expected a promisified capacity probe');
+    exec[promisify.custom] = async () => ({ stdout: [12, 4, 20].map((gib) => gib * 1024 ** 3).join(' ') });
+    const originalExec = childProcess.execFile;
+    childProcess.execFile = exec;
+    syncBuiltinESMExports();
+    t.after(() => { childProcess.execFile = originalExec; t.mock.restoreAll(); syncBuiltinESMExports(); });
+    const { windowsSuiteCapacity, suiteCapacityShortfalls } = await import('./local-suite-capacity.mjs?compact-cpu');
+    for (logical of [8, 1, 2, 3, 4, 5, 6, 7]) {
+      const capacity = windowsSuiteCapacity({ timeout: 5_000 });
+      const sample = await capacity.sample(new AbortController().signal);
+      assert.deepEqual(suiteCapacityShortfalls(capacity.needs, sample, 0), [], `${logical} logical CPUs at 90% idle`);
+    }
+    logical = 8;
+    const { directory, command, started } = pregrantFixture(t);
+    const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+    const result = await withLocalSuiteSlot('compact-cpu', command, {
+      directory, capacity: { ...windowsSuiteCapacity({ timeout: 5_000 }), production: () => null },
+      signal: AbortSignal.timeout(20_000),
+    });
+    assert.equal(result, 0);
+    assert.ok(existsSync(started));
+  });
+
+test('Windows suite capacity reserves each resource and cancellation drains the owned Job',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const start = slotFixture(t);
+    const holder = start('owner', { tree: true, consoleCancel: true });
+    await waitForSlotFixture(holder, holder.descendant);
+    const waiter = start('waiter', { resources: { commit: 1, cpu: 1 }, consoleCancel: true });
+    await waitForSlotFixture(waiter, () => /commit headroom, CPU/.test(waiter.output()));
+    assert.ok(!waiter.ready());
+    waiter.cancel();
+    assert.deepEqual(await waiter.done, [130, null]);
+    assert.equal(start.tickets().length, 1, 'cancelled waiting ticket was removed');
+    const priority = spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-Process -Id ${holder.descendant()}).PriorityClass`],
+      { encoding: 'utf8', windowsHide: true });
+    assert.equal(priority.stdout.trim(), 'BelowNormal', priority.stderr);
+    holder.cancel();
+    assert.deepEqual(await holder.done, [130, null]);
+    assert.equal(pidAlive(holder.descendant()), false);
+    assert.equal(start.tickets().length, 0, 'the held ticket was removed after drain');
+  });
+
+test('Windows suite capacity grants the last reservation to only one concurrent contender',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const start = slotFixture(t);
+    const contenders = ['one', 'two'].map((name) => start(name, { room: 1 }));
+    await waitForSlotFixture(contenders, () => contenders.some((run) => run.ready()) &&
+      contenders.some((run) => /resources: physical memory/.test(run.output())));
+    const leader = contenders.find((run) => run.ready());
+    const follower = contenders.find((run) => run !== leader);
+    assert.ok(!follower.ready());
+    leader.release();
+    assert.deepEqual(await leader.done, [0, null]);
+    await waitForSlotFixture(follower, follower.ready);
+    follower.release();
+    assert.deepEqual(await follower.done, [0, null]);
+  });
+
+test('Windows --run-files refuses changed bytes before starting a suite that was waiting',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const start = slotFixture(t);
+    start.production(true);
+    const run = start('input-changed', { mode: '--run-files' });
+    await waitForSlotFixture(run, () => /Windows Runner\.Worker is running/.test(run.output()));
+    fixtureWrite(run.root, 'scripts/ci/retrigger-counter.test.mjs', 'throw new Error("changed file executed");\n');
+    start.production(false);
+    assert.deepEqual(await run.done, [2, null]);
+    assert.match(run.output(), /输入已变，请重算/);
+    assert.doesNotMatch(run.output(), /changed file executed/);
+  });
+
+test('Windows suite capacity keeps a legacy reservation for a reused PID until its Job disappearance is proved',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const start = slotFixture(t);
+    const legacy = start.legacyTicket();
+    const waiting = start('waiting-for-proof', { room: 1, denyJobProbe: true });
+    await waitForSlotFixture(waiting, () => /Windows job status unknown \(error 5\)/.test(waiting.output()));
+    assert.ok(!waiting.ready());
+    assert.ok(start.tickets().includes(legacy.name));
+    legacy.allowProbe();
+    await waitForSlotFixture(waiting, waiting.ready);
+    assert.ok(!start.tickets().includes(legacy.name));
+    waiting.release();
+    assert.deepEqual(await waiting.done, [0, null]);
+  });
+
 for (const mode of ['--run-selected', '--write-known']) {
   test(`M3: local ${mode} queues until a slot is available`, async (t) => {
     const start = slotFixture(t);
@@ -777,18 +1114,20 @@ test('M2: a Windows identity-probe timeout keeps a waiting suite queued until a 
     assert.deepEqual(await waiting.done, [0, null]);
   });
 
-test('M2: persistent identity-probe failure waits for the queue deadline and reports the cause',
+test('M2: persistent Windows identity-probe failure keeps waiting until cancelled',
   { skip: process.platform !== 'win32' }, async (t) => {
     const start = slotFixture(t);
     const waiting = start('waiting', { probeErrors: 1000, waitMs: 1_500 });
     await waitForSlotFixture(waiting, () => /synthetic identity probe timeout/.test(waiting.output()));
-    assert.equal(waiting.child.exitCode, null, 'the probe error must not exit before the queue deadline');
-    assert.deepEqual(await waiting.done, [75, null]);
+    await delay(1_600);
+    assert.equal(waiting.child.exitCode, null, 'the old deadline did not cancel the request');
+    waiting.cancel();
+    assert.deepEqual(await waiting.done, [130, null]);
     assert.ok(!waiting.ready());
-    assert.match(waiting.output(), /LOCAL_SUITE_SLOT_TIMEOUT.*synthetic identity probe timeout/);
   });
 
-test('L2: a held slot expires, reports the owner, and drains its descendants before admission', async (t) => {
+test('L2: a Unix held slot expires, reports the owner, and drains its descendants before admission',
+  { skip: process.platform === 'win32' }, async (t) => {
   const start = slotFixture(t);
   const holder = start('hung', { holdMs: 6_000, tree: true });
   const other = start('other');
@@ -815,7 +1154,8 @@ test('only GitHub Actions --run bypasses an occupied local queue', async (t) => 
   assert.doesNotMatch(run.output(), /queue position/);
 });
 
-test('L1: local --run times out without starting its suite and returns a dedicated exit code', async (t) => {
+test('L1: Unix local --run times out without starting its suite and returns a dedicated exit code',
+  { skip: process.platform === 'win32' }, async (t) => {
   const start = slotFixture(t);
   await fillSuiteSlots(start);
   const waiting = start('waiting', { waitMs: 5_000 });
@@ -825,11 +1165,14 @@ test('L1: local --run times out without starting its suite and returns a dedicat
   assert.match(waiting.output(), /LOCAL_SUITE_SLOT_TIMEOUT.*queue position 1/);
 });
 
-test('L1: selector help distinguishes suite failure from a local slot timeout', () => {
+test('L1: selector help distinguishes suite failure from a platform-specific interruption or timeout', () => {
   const help = spawnSync(process.execPath, ['scripts/ci/ci-required-selection.mjs', '--help'], { cwd: ROOT, encoding: 'utf8' });
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /1 .*suite fail/i);
-  assert.match(help.stdout, /75 .*local suite.*timeout/i);
+  if (process.platform === 'win32') {
+    assert.match(help.stdout, /130 .*interrupted/i);
+    assert.doesNotMatch(help.stdout, /75 .*local suite.*timeout/i);
+  } else assert.match(help.stdout, /75 .*local suite.*timeout/i);
 });
 
 test('a command that exits 75 is still a suite failure rather than a slot timeout', async (t) => {

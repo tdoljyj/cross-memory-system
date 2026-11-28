@@ -232,7 +232,7 @@ export const SUITES = {
       'scripts/ci/test-clock-imports.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
       'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/ci-required-selection-lanes.test.mjs', 'scripts/ci/ci-required-selection-timeout.test.mjs',
       'scripts/ci/ci-required-selection-budget.test.mjs', 'scripts/ci/ci-required-selection-toolchain.test.mjs', 'config/ci-toolchain.json',
-      'scripts/ci/local-suite-slots.mjs',
+      'scripts/ci/local-suite-slots.mjs', 'scripts/ci/local-suite-capacity.mjs', 'scripts/ci/self-hosted/node-profiles.json',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
       'scripts/ci/check-tests-covered.mjs', 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-shard-seconds.json',
@@ -1299,7 +1299,7 @@ export function runPrepush(root, { env = process.env, spawn = spawnSync, log = c
 }
 
 export async function runSuite(id, { root, env = process.env, log = console.log, captureKnown = false, keep = false, files = null, shard = null,
-  targetedTiming = false } = {}) {
+  targetedTiming = false, beforeStart } = {}) {
   // A suite this file does not have may be one the candidate adds (requiredCommands reads it); not in this file's own checkout.
   if (!Object.hasOwn(SUITE_COMMANDS, id) && (files || captureKnown || !candidateSelectorOf(root, fileURLToPath(import.meta.url), id))) {
     throw new Error(`unknown suite: ${id}`);
@@ -1341,10 +1341,22 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
   const workerEnv = targetedTiming ? { ...env, get CLUED_CI_TARGETED_WAIT_MS() {
     return String(Math.round(performance.now() - queuedAt));
   } } : env;
-  return withLocalSuiteSlot(id, {
-    root, env: workerEnv, timeoutExit: LOCAL_TIMEOUT_EXIT,
-    work: { selectorUrl: import.meta.url, captureKnown, keep, files },
-  });
+  try {
+    return await withLocalSuiteSlot(id, {
+      root, env: workerEnv, timeoutExit: LOCAL_TIMEOUT_EXIT, beforeStart,
+      work: { selectorUrl: import.meta.url, captureKnown, keep, files },
+    });
+  } catch (error) {
+    if (process.platform !== 'win32') throw error;
+    log(`${id}: suite did not complete: ${error.message}`);
+    return 2;
+  }
+}
+
+function verifyTargetedInputs(plan) {
+  try { plan.verify(); } catch (error) {
+    throw new Error('run-files：输入已变，请重算（' + (String(error.stderr ?? '').trim() || error.message) + '）');
+  }
 }
 
 async function runTargetedFiles(id, { root, env, files, onlyNamed, log = console.log }) {
@@ -1357,10 +1369,24 @@ async function runTargetedFiles(id, { root, env, files, onlyNamed, log = console
     return 2;
   }
   if (onlyNamed) {
-    const { execFileSync } = await import('node:child_process');
-    const base = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { cwd: root, encoding: 'utf8' }).trim();
     log('run-files ' + id + '：仅执行 ' + named.size + ' 个点名文件，定向结果，不是套件结论');
-    return runSuite(id, { root, env: { ...env, CI_BASE_SHA: base }, log, files: [...named], targetedTiming: true });
+    const options = { root, log, files: [...named], targetedTiming: true };
+    if (process.platform !== 'win32') {
+      const { execFileSync } = await import('node:child_process');
+      const base = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { cwd: root, encoding: 'utf8' }).trim();
+      return runSuite(id, { ...options, env: { ...env, CI_BASE_SHA: base } });
+    }
+    try {
+      const { namedTargetInputs } = await import('./check-tests-covered.mjs');
+      const inputs = namedTargetInputs(root, named);
+      const verify = () => verifyTargetedInputs(inputs);
+      const status = await runSuite(id, { ...options, env: { ...env, CI_BASE_SHA: inputs.base }, beforeStart: verify });
+      if (status !== LOCAL_INTERRUPTED_EXIT) verify();
+      return status;
+    } catch (error) {
+      log('run-files ' + id + ' 未执行完：' + error.message);
+      return 2;
+    }
   }
   const started = performance.now();
   try {
@@ -1381,10 +1407,17 @@ async function runTargetedFiles(id, { root, env, files, onlyNamed, log = console
     for (const reason of group.reasons) log('  ' + group.suite + '（待该平台 CI 整套）：' + reason);
   }
   const failures = [];
+  let changed = false;
+  const beforeStart = () => {
+    try { verifyTargetedInputs(plan); } catch (error) {
+      changed = true;
+      throw error;
+    }
+  };
   for (const group of plan.groups) {
     const whole = group.reasons.length > 0;
     for (const reason of group.reasons) log('  ' + group.suite + ' 整套兜底：' + reason);
-    const options = { root, env: { ...env, CI_BASE_SHA: plan.base }, log, files: whole ? null : group.files, targetedTiming: true };
+    const options = { root, env: { ...env, CI_BASE_SHA: plan.base }, log, files: whole ? null : group.files, targetedTiming: true, beforeStart };
     let status;
     try {
       status = Object.hasOwn(SUITE_COMMANDS, group.suite)
@@ -1395,14 +1428,18 @@ async function runTargetedFiles(id, { root, env, files, onlyNamed, log = console
     }
     log('run-files 组 ' + group.suite + '：' + (whole ? '整套' : group.files.length + ' 个文件') + '，退出 ' + status);
     if (status !== 0) failures.push({ suite: group.suite, status });
+    if (process.platform === 'win32' && status === LOCAL_INTERRUPTED_EXIT) return status;
+    // A setup failure may have left a Job without proof of drain. Let this
+    // entry exit so the next owner can verify and reclaim its reservation.
+    if (process.platform === 'win32' && status === 2) break;
   }
   if (failures.length) log('run-files 失败或未完成：' + failures.map(({ suite, status }) => suite + '=' + status).join('，'));
   let status = failures.some((failure) => failure.status === LOCAL_TIMEOUT_EXIT) ? LOCAL_TIMEOUT_EXIT
     : failures.some((failure) => failure.status === 2) ? 2 : failures[0]?.status ?? 0;
   try {
-    plan.verify();
+    verifyTargetedInputs(plan);
   } catch (error) {
-    log('run-files：输入已变，请重算（' + (String(error.stderr ?? '').trim() || error.message) + '）');
+    if (!changed) log(error.message);
     if (status !== LOCAL_TIMEOUT_EXIT) status = 2;
   }
   log('run-files ' + id + ': ' + named.size + ' 个点名文件，新增 ' + additions + '，待其他平台套件 ' + plan.deferred.length +
@@ -1436,13 +1473,18 @@ function runCandidateSuite(id, { root, env = process.env, log = console.log, sha
     } finally {
       closeSync(fd);
     }
-    if (run.status !== 0) {
+    const localWindows = process.platform === 'win32' && env.GITHUB_ACTIONS !== 'true';
+    // An older candidate entry can still report its own slot timeout.
+    const status = localWindows && (run.status === LOCAL_TIMEOUT_EXIT || run.status === null) ? 2 : run.status;
+    if (localWindows && status === 2) {
+      log(`::error title=${id}::候选入口未执行完（${run.error?.message ?? run.status ?? run.signal}）`);
+    } else if (status !== 0 && !(localWindows && status === LOCAL_INTERRUPTED_EXIT)) {
       const reason = run.error?.message ?? (run.signal ? `信号 ${run.signal}` : `退出 ${run.status}`);
       log(`::error title=${id}::候选入口自己跑这一套是红的：合入后 main 上就是这个结果（${reason}）`);
     }
     const output = readFileSync(logFile, 'utf8').trimEnd();
     if (output) log(stagingOutput(output, env));
-    return run.status === TRAIN_TERMINAL_EXIT ? 1 : (run.status ?? 1);
+    return status === TRAIN_TERMINAL_EXIT ? 1 : (status ?? 1);
   } finally {
     try {
       rmSync(logFile, { force: true });
@@ -2472,6 +2514,7 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
     return terminal ? TRAIN_TERMINAL_EXIT : failed.length > 0 ? 1 : 0;
   }
   let timedOut = false;
+  const localWindows = process.platform === 'win32' && env.GITHUB_ACTIONS !== 'true';
   if (shard) summary(`- shard ${shard.index}/${shard.total}\n`);
   for (const id of suites) {
     let status = 1;
@@ -2483,7 +2526,14 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
       log(`::error title=${id}::${error.message}`);
     }
     if (status === TRAIN_TERMINAL_EXIT) terminal = true;
-    if (env.GITHUB_ACTIONS !== 'true' && status === LOCAL_TIMEOUT_EXIT) timedOut = true;
+    if (env.GITHUB_ACTIONS !== 'true') {
+      if (localWindows && status === LOCAL_INTERRUPTED_EXIT) return status;
+      if (!localWindows && status === LOCAL_TIMEOUT_EXIT) timedOut = true;
+      if (localWindows && status === 2) {
+        summary(`- \`${id}\`: **did not complete**\n`);
+        return status;
+      }
+    }
     if (shard) {
       // A suite this shard ran no unit of did not pass here: it did not run here (review M2).
       const part = `${tally.ran} of ${tally.units} unit${tally.units === 1 ? '' : 's'}`;
@@ -2599,6 +2649,7 @@ export function writeShardSeconds(logs, { file = SHARD_SECONDS_PATH, log = conso
 
 const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>] | --run-selected <check> [--root <checkout>] [--shard <i>/<n>] | --run <suite> [--root <checkout>] | --run-files <suite> <file> [<file>...] [--root <checkout>] | --run-prepush --root <tree> | --write-shard-seconds <log> [<log>...]';
 export const LOCAL_TIMEOUT_EXIT = 75;
+const LOCAL_INTERRUPTED_EXIT = 130;
 
 function gitToolchainRefusal(env) {
   // Match the policy to this selector's checkout. A candidate passed through --root cannot change the trusted baseline.
@@ -2637,7 +2688,9 @@ async function main(argv, env = process.env) {
   }
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(USAGE);
-    console.log(`Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
+    console.log(process.platform === 'win32'
+      ? `Exit codes: 1 for a suite failure; 2 if the suite did not complete; ${LOCAL_INTERRUPTED_EXIT} if interrupted (Ctrl+C).`
+      : `Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
     console.log('--run-files 执行点名测试，并按与本地 origin/main 的共同祖先计算影响范围，涵盖分支提交、暂存、未暂存和未忽略的新文件。');
     console.log('--run-files <套件> <文件...> --only-named 仅执行点名文件，不扩展影响范围。');
     console.log('各组轮流使用本机套件槽。基准或覆盖范围无法确定时退出 2，GitHub Actions 也拒绝此入口。输出为定向结果。');

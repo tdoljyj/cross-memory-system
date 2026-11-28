@@ -10,7 +10,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { HOST_KEEPS, VM_KEEPS, acquireNamedLock, admitRun, beginRun, dataRoot, ensureAppDependencies, missingDependencies, killCommand, leaveUmbrella, linuxScript, listRuns, pruneDependencyStores, pruneWorktrees,
-  refreshUmbrella, roomForOneMore, sampleResources, sweepRunRefs, withLock, worktree, worktreeLock } from './local-verify.mjs';
+  refreshUmbrella, roomForOneMore, sampleResources, sweepRunRefs, withLock, withVerificationHeartbeat, worktree, worktreeLock } from './local-verify.mjs';
 import { importSpecifiers } from '../../apps/clued-cloud/scripts/select-tests.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -192,7 +192,7 @@ test('a dependency store a live run uses is not removed, the others past the new
   keys.forEach((key, index) => {
     fs.mkdirSync(path.join(store, key), { recursive: true });
     fs.writeFileSync(path.join(store, key, 'complete'), '');
-    const when = new Date(Date.now() - (keys.length - index) * 60_000);
+    const when = new Date(index * 60_000);
     fs.utimesSync(path.join(store, key), when, when);
   });
   const user = beginRun(home);
@@ -288,7 +288,7 @@ test('embedded PostgreSQL tests take their cluster from the fixture and make a f
 // ---- three changes at the same time ----
 
 // A repository whose main has a stand-in selection (one suite, "probe") and three changes on top of it.
-function probeRepository(t, { seconds, waitMs = 45_000 }) {
+function probeRepository(t, { seconds, cancel = false }) {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lv-conc-probe-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const repo = path.join(base, 'repo');
@@ -349,9 +349,13 @@ function probeRepository(t, { seconds, waitMs = 45_000 }) {
     registerHooks({ resolve(specifier, context, next) {
       if (specifier !== './local-suite-slots.mjs') return next(specifier, context);
       const source = 'import { withLocalSuiteSlot as acquire } from ' + JSON.stringify(${JSON.stringify(slotModule)}) + ';'
-        + 'export const withLocalSuiteSlot = (id, command) => acquire(id, command, ' + JSON.stringify({
-          directory: ${JSON.stringify(queue)}, waitMs: ${waitMs},
-        }) + ');';
+        + 'export const withLocalSuiteSlot = (id, command) => {'
+        + ' const stop = new AbortController();'
+        + ' return acquire(id, command, { directory: ' + JSON.stringify(${JSON.stringify(queue)})
+        + ', signal: stop.signal, probeMs: 200, capacity: {'
+        + ' needs: { physical: 1, commit: 1, cpu: 1 }, sample: () => ({ physical: 2, commit: 2, cpu: 2 }),'
+        + ' production: () => { if (!${cancel}) return null; setImmediate(() => stop.abort()); return "fixture CI is active"; }'
+        + ' } }); };';
       return { url: 'data:text/javascript,' + encodeURIComponent(source), shortCircuit: true };
     }});`);
   return { base, repo, main, changes, stamps, env: { ...env, CLUED_LOCAL_VERIFY_RESOURCES: 'off',
@@ -372,23 +376,24 @@ function runTool({ dir, main, env, home }) {
 
 const stampsOf = (dir) => fs.readdirSync(dir).map((name) => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')));
 
-test('local verification returns 75 when the Windows suite slot wait expires', { skip: process.platform !== 'win32' }, async (t) => {
-  const { base, main, changes, env, stamps } = probeRepository(t, { seconds: 0, waitMs: 0 });
+test('Windows local verification yields even with --no-yield and propagates cancellation', { skip: process.platform !== 'win32' }, async (t) => {
+  const { base, main, changes, env, stamps } = probeRepository(t, { seconds: 0, cancel: true });
   const home = path.join(base, 'verify');
   const result = await runTool({ dir: changes[0].dir, main, env, home });
-  assert.match(result.output, /LOCAL_SUITE_SLOT_TIMEOUT: probe .*suite did not start/);
+  assert.match(result.output, /fixture CI is active/);
   assert.deepEqual(stampsOf(stamps), [], 'the candidate and baseline did not run');
-  assert.equal(result.code, 75, result.output);
+  assert.equal(result.code, 130, result.output);
 });
 
-test('local verification help documents distinct failure and slot timeout exit codes', () => {
+test('local verification help documents failure and Windows interruption', () => {
   const help = spawnSync(process.execPath, [TOOL, '--help'], { encoding: 'utf8', windowsHide: true });
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /\b1\b[^\r\n]*failure/i);
-  assert.match(help.stdout, /\b75\b[^\r\n]*slot timeout/i);
+  assert.doesNotMatch(help.stdout, /\b75\b[^\r\n]*slot timeout/i);
+  if (process.platform === 'win32') assert.match(help.stdout, /\b130\b[^\r\n]*interrupted/i);
 });
 
-test('three concurrent local verifications preserve verdicts and hold at most two suite slots', { timeout: 240_000 }, async (t) => {
+test('three concurrent local verifications preserve verdicts within the sampled capacity', { timeout: 240_000 }, async (t) => {
   const seconds = 7;
   // alone, one after the other, each with a cache of its own
   const solo = probeRepository(t, { seconds: 0 }); // the duration does not change a verdict
@@ -425,6 +430,38 @@ test('three concurrent local verifications preserve verdicts and hold at most tw
   assert.deepEqual(fs.readdirSync(path.join(home, 'locks')).filter((name) => name.includes('.lock')), []);
   assert.equal(fs.existsSync(path.join(home, 'run.lock')), false);
   assert.deepEqual(fs.readdirSync(path.join(home, 'worktrees')).filter((name) => /-r\d+-[0-9a-f]{6}$/.test(name)), []);
+});
+
+test('suite heartbeat keeps the verification directories and both baseline locks alive', async (t) => {
+  const home = tempHome(t);
+  const locks = path.join(home, 'locks');
+  const start = 1_800_000_000_000;
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: start });
+  let time = start;
+  const now = () => time;
+  const run = beginRun(home, { now });
+  t.after(run.end);
+  const dir = path.join(home, 'worktrees', `candidate-r${run.run.id}`);
+  const temp = path.join(home, 't', run.run.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(temp, { recursive: true });
+  run.update({ state: 'running', worktrees: [dir] });
+  const names = ['main-result', 'tree-baseline'];
+  const held = names.map((name) => acquireNamedLock(locks, name, { ...quiet, now }));
+  t.after(() => held.forEach((lock) => lock()));
+  await withVerificationHeartbeat(home, run, held, () => {
+    time += 7 * 60 * 60_000; // beyond the run and lock's original lifetimes
+    t.mock.timers.tick(20);
+    for (const name of names) assert.equal(JSON.parse(fs.readFileSync(path.join(locks, `${name}.lock`), 'utf8')).started, time);
+    const sweep = spawnSync(process.execPath, ['--input-type=module', '-e',
+      `import { pruneWorktrees } from ${JSON.stringify(pathToFileURL(TOOL).href)};
+       pruneWorktrees(process.cwd(), ${JSON.stringify(home)}, { now: () => ${time} });`],
+      { cwd: home, encoding: 'utf8', windowsHide: true });
+    assert.equal(sweep.status, 0, sweep.stderr);
+    assert.ok(fs.existsSync(dir));
+    assert.ok(fs.existsSync(temp));
+    for (const name of names) assert.equal(acquireNamedLock(locks, name, { ...quiet, now, nowait: true }), null);
+  }, { intervalMs: 20 });
 });
 
 // ---- what the independent review asked to be proven ----

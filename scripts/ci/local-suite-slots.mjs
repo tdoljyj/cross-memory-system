@@ -2,10 +2,12 @@ import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { groupExists } from './local-suite-slot-guard.mjs';
+import { deferTestSignalExit } from './test-env.mjs';
 
 const SLOT_LIMIT = 2;
 const WAIT_MS = 20 * 60_000;
@@ -13,6 +15,7 @@ const HOLD_MS = 20 * 60_000;
 const POLL_MS = 1_000;
 const PROBE_MS = 5_000;
 const PROBE_TIMEOUT_MS = 5_000;
+const WINDOWS_GUARD_TIMEOUT_MS = 30_000; // Windows service startup default.
 const REQUEST = /^clued-local-suite-v1-(\d+)-([a-f\d]+)-[a-f\d-]{36}$/;
 const TICKET = /^ticket-(\d+)-([a-z][a-z\d-]*)$/;
 const GROUP = /^group-([1-9]\d{0,9})$/;
@@ -21,6 +24,7 @@ const WORKER = fileURLToPath(new URL('./local-suite-slot-guard.mjs', import.meta
 const JOB_SCRIPT = fileURLToPath(new URL('./local-suite-slot-job.ps1', import.meta.url));
 const HOST_PS = ['-NoProfile', '-NonInteractive'];
 const JOB_ARGS = [...HOST_PS, '-ExecutionPolicy', 'Bypass', '-File', JOB_SCRIPT];
+export const LOCAL_INTERRUPTED_EXIT = 130;
 
 function sharedDirectory() {
   // Independent of the checkout, suite name and user-specific temp settings.
@@ -146,7 +150,9 @@ function requestTickets(directory, requests, stale, jobsGone) {
       }
     }
     const ticket = names.map((name) => TICKET.exec(name)).find(Boolean);
-    live.push({ ...request, ticket: ticket ? Number(ticket[1]) : null, suite: ticket?.[2], holding: names.includes('holding') });
+    const granted = names.includes('granted');
+    live.push({ ...request, ticket: ticket ? Number(ticket[1]) : null, suite: ticket?.[2],
+      holding: names.includes('holding'), granted, drained: names.includes('drained') });
   }
   return live;
 }
@@ -155,8 +161,8 @@ async function runGuard(suite, { root, env, timeoutExit, work }, requestPath, ho
   const context = { suite, root, work, requestPath, holdMs, timeoutExit, deadlineAt: Date.now() + holdMs,
     owner: process.pid, worker: WORKER, node: process.execPath };
   const deadline = performance.now() + holdMs;
-  const child = spawn(WINDOWS ? 'powershell.exe' : process.execPath, WINDOWS ? JOB_ARGS : [WORKER, 'guard'], {
-    detached: !WINDOWS, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+  const child = spawn(process.execPath, [WORKER, 'guard'], {
+    detached: true, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...env, CLUED_LOCAL_SUITE_GUARD: JSON.stringify(context) },
   });
   child.stdin.on('error', () => {}); // A guard that failed to start can close its pipe first.
@@ -165,7 +171,7 @@ async function runGuard(suite, { root, env, timeoutExit, work }, requestPath, ho
   await once(child, 'spawn');
   const exited = once(child, 'close');
   for (;;) {
-    const ready = WINDOWS ? existsSync(path.join(requestPath, 'ready')) : readdirSync(requestPath).some((name) => GROUP.test(name));
+    const ready = readdirSync(requestPath).some((name) => GROUP.test(name));
     if (performance.now() >= deadline) {
       child.kill('SIGKILL');
       console.error(`LOCAL_SUITE_HOLD_TIMEOUT: ${suite} (PID ${process.pid}) held a slot before the process guard became ready`);
@@ -187,15 +193,115 @@ async function runGuard(suite, { root, env, timeoutExit, work }, requestPath, ho
   return code ?? 1;
 }
 
+async function runWindowsGuard(suite, { root, env, timeoutExit, work, beforeStart }, requestPath, recheck, signal, guardTimeoutMs) {
+  const context = { suite, root, work, requestPath, timeoutExit, worker: WORKER, node: process.execPath };
+  const readyDeadline = performance.now() + guardTimeoutMs;
+  const child = spawn('powershell.exe', JOB_ARGS, {
+    windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...env, CLUED_LOCAL_SUITE_GUARD: JSON.stringify(context) },
+  });
+  child.stdin.on('error', () => {});
+  child.stdout.pipe(process.stdout, { end: false });
+  child.stderr.pipe(process.stderr, { end: false });
+  await once(child, 'spawn');
+  const exited = once(child, 'close').catch((error) => [null, probeFailure(error)]);
+  const { promise: cancelled, resolve: notifyCancelled } = Promise.withResolvers();
+  const cancel = () => {
+    child.stdin.end();
+    notifyCancelled();
+  };
+  signal.addEventListener('abort', cancel, { once: true });
+  if (signal.aborted) cancel();
+
+  let granted = false;
+  let forced = false;
+  const waitForExit = async (timeoutMs) => {
+    const timer = new AbortController();
+    try { return await Promise.race([exited, delay(timeoutMs, null, { signal: timer.signal })]); }
+    finally { timer.abort(); }
+  };
+  const terminateGuard = async () => {
+    forced = true;
+    // This is the PowerShell child we started. Its Job owns the suite tree.
+    child.kill();
+    for (const stream of child.stdio) stream.destroy();
+    child.unref();
+    await waitForExit(PROBE_TIMEOUT_MS);
+  };
+  const finishGuard = async () => {
+    child.stdin.end();
+    const result = await waitForExit(guardTimeoutMs);
+    if (result) return result;
+    await terminateGuard();
+    throw new Error(`process guard for ${suite} drain timed out after ${guardTimeoutMs} ms`);
+  };
+  try {
+    while (!signal.aborted) {
+      const remaining = readyDeadline - performance.now();
+      if (remaining <= 0) {
+        await terminateGuard();
+        throw new Error(`process guard for ${suite} ready timed out after ${guardTimeoutMs} ms`);
+      }
+      if (existsSync(path.join(requestPath, 'ready'))) break;
+      const exit = await Promise.race([exited, cancelled, delay(Math.min(50, remaining))]);
+      if (exit && !signal.aborted) throw new Error(`process guard for ${suite} exited (${exit[0] ?? exit[1]}) before it was ready`);
+    }
+    if (signal.aborted) return LOCAL_INTERRUPTED_EXIT;
+    await beforeStart?.();
+    const blocked = await recheck();
+    if (signal.aborted) return LOCAL_INTERRUPTED_EXIT;
+    if (blocked) return blocked; // Keep the ticket, release only the pending reservation.
+    writeFileSync(path.join(requestPath, 'granted'), '');
+    granted = true;
+    child.stdin.write(Buffer.of(1));
+    const [code, termination] = await Promise.race([exited, cancelled]) ?? await finishGuard();
+    if (!existsSync(path.join(requestPath, 'drained'))) {
+      throw new Error(`process guard for ${suite} exited (${code ?? termination}) without confirming its process tree stopped`);
+    }
+    return signal.aborted ? LOCAL_INTERRUPTED_EXIT : code ?? 2;
+  } finally {
+    signal.removeEventListener('abort', cancel);
+    if (granted) child.stdin.end();
+    else if (!forced) {
+      if (signal.aborted) await terminateGuard();
+      else await finishGuard();
+    }
+  }
+}
+
 function waitTimeout(suite, waitMs, reason, timeoutExit) {
   console.error(`LOCAL_SUITE_SLOT_TIMEOUT: ${suite} waited ${(waitMs / 60_000).toFixed(2)} minutes; ${reason}; suite did not start, retry later`);
   return timeoutExit;
 }
 
-export async function withLocalSuiteSlot(suite, command, {
-  directory = sharedDirectory(), waitMs = WAIT_MS, holdMs = HOLD_MS, probeMs = PROBE_MS,
-} = {}) {
-  const deadline = performance.now() + waitMs;
+export async function withLocalSuiteSlot(suite, command, options = {}) {
+  if (!WINDOWS) return queueSuite(suite, command, options);
+  const stop = new AbortController();
+  const cancel = () => stop.abort();
+  const signals = ['SIGINT', 'SIGBREAK', 'SIGTERM', 'SIGHUP'];
+  for (const name of signals) process.on(name, cancel);
+  const restoreSignalExit = deferTestSignalExit();
+  const signal = options.signal ? AbortSignal.any([options.signal, stop.signal]) : stop.signal;
+  try {
+    return await queueSuite(suite, command, { ...options, signal });
+  } finally {
+    restoreSignalExit();
+    for (const name of signals) process.off(name, cancel);
+  }
+}
+
+async function queueSuite(suite, command, { directory = sharedDirectory(), waitMs = WAIT_MS, holdMs = HOLD_MS,
+  probeMs = PROBE_MS, guardTimeoutMs = WINDOWS_GUARD_TIMEOUT_MS, capacity, signal } = {}) {
+  const deadline = WINDOWS ? Infinity : performance.now() + waitMs;
+  const wait = async (ms) => {
+    try { await delay(ms, undefined, { signal }); } catch (error) { if (!signal?.aborted) throw error; }
+  };
+  let shortfalls;
+  if (WINDOWS) {
+    const { windowsSuiteCapacity, suiteCapacityShortfalls } = await import('./local-suite-capacity.mjs');
+    capacity ??= windowsSuiteCapacity({ timeout: PROBE_TIMEOUT_MS });
+    shortfalls = suiteCapacityShortfalls;
+  }
   let start;
   let lastMessage;
   const announce = (message) => {
@@ -203,6 +309,7 @@ export async function withLocalSuiteSlot(suite, command, {
     lastMessage = message;
   };
   while (!start) {
+    if (signal?.aborted) return LOCAL_INTERRUPTED_EXIT;
     let reason = `cannot determine start time for local suite PID ${process.pid}`;
     try {
       start = processStarts([process.pid], probeBudget(deadline)).get(process.pid);
@@ -214,14 +321,15 @@ export async function withLocalSuiteSlot(suite, command, {
     const remaining = deadline - performance.now();
     if (remaining <= 0) return waitTimeout(suite, waitMs, reason, command.timeoutExit);
     announce(reason);
-    await delay(Math.min(probeMs, remaining));
+    await wait(Math.min(probeMs, remaining));
   }
   const name = `clued-local-suite-v1-${process.pid}-${start}-${randomUUID()}`;
   const requestPath = path.join(directory, name);
+  let jobGone = false;
   // Open the bakery algorithm's choosing phase with an atomic mkdir. A
   // contender checks all published tickets before choosing its own, and
-  // cannot enter while another contender is still choosing. The first
-  // SLOT_LIMIT live tickets may run, with the unique request name breaking ties.
+  // cannot enter while another contender is still choosing. The unique
+  // request name breaks ties between tickets chosen concurrently.
   mkdirSync(requestPath, { mode: 0o755 });
   try {
     if (!WINDOWS) chmodSync(requestPath, 0o755);
@@ -233,6 +341,7 @@ export async function withLocalSuiteSlot(suite, command, {
     let nextProbe = 0;
     let probeReason;
     for (;;) {
+      if (signal?.aborted) return LOCAL_INTERRUPTED_EXIT;
       requests = requestEntries(directory, name);
       if (requests.length > 0 && performance.now() >= nextProbe && performance.now() < deadline) {
         try {
@@ -260,21 +369,84 @@ export async function withLocalSuiteSlot(suite, command, {
         nextProbe = performance.now() + probeMs;
       }
       const live = requestTickets(directory, requests, stale, jobsGone);
-      const ahead = live.filter((request) => request.ticket !== null
-        && (request.ticket < ticket || (request.ticket === ticket && request.name < name))).length;
+      const earlier = (request) => request.ticket !== null
+        && (request.ticket < ticket || (request.ticket === ticket && request.name < name));
+      const ahead = live.filter((request) => earlier(request) && (!WINDOWS || !request.granted)).length;
+      const choosing = live.some((request) => request.ticket === null);
       const remaining = deadline - performance.now();
-      if (ahead < SLOT_LIMIT && !live.some((request) => request.ticket === null) && remaining > 0) {
-        writeFileSync(path.join(requestPath, 'holding'), '');
+      const holding = path.join(requestPath, 'holding');
+      if (!WINDOWS && ahead < SLOT_LIMIT && !choosing && remaining > 0) {
+        writeFileSync(holding, '');
         return await runGuard(suite, command, requestPath, holdMs);
       }
       const holders = live.filter(({ holding }) => holding).map(({ suite, pid }) => `${suite} (PID ${pid})`);
-      const message = `queue position ${Math.max(1, ahead - SLOT_LIMIT + 1)}; holders: ${holders.join(', ') || 'none'}`
+      const position = WINDOWS ? ahead + 1 : Math.max(1, ahead - SLOT_LIMIT + 1);
+      const message = `queue position ${position}; holders: ${holders.join(', ') || 'none'}`
         + (probeReason ? `; process probe: ${probeReason}` : '');
+      if (WINDOWS && ahead === 0 && !choosing) {
+        // A later ticket cannot become a holder before this one is granted.
+        const reservations = live.filter((request) => request.holding && !request.drained).length;
+        const checkResources = async () => {
+          try {
+            const sample = await capacity.sample(signal);
+            const lacks = shortfalls(capacity.needs, sample, reservations);
+            return lacks.length ? `resources: ${lacks.join(', ')}; production: idle` : null;
+          } catch (error) {
+            return `resource sample unavailable (${probeFailure(error)}); production: idle`;
+          }
+        };
+        const checkProduction = async () => {
+          const production = await capacity.production(signal);
+          return production ? `production: ${production}` : null;
+        };
+        const productionBlock = await checkProduction();
+        if (signal.aborted) return LOCAL_INTERRUPTED_EXIT;
+        let blocked = productionBlock ?? await checkResources();
+        if (signal.aborted) return LOCAL_INTERRUPTED_EXIT;
+        if (!blocked) {
+          // Only the first unreserved ticket can decide. Publish the reservation
+          // before a later ticket can sample and use the same headroom.
+          writeFileSync(holding, '');
+          const recheck = async () => {
+            // Complete a fresh serial round after readiness, sampling the
+            // production paths last so they are closest to permission.
+            const resourceBlock = await checkResources();
+            if (signal.aborted) return null;
+            return await checkProduction() ?? resourceBlock;
+          };
+          const result = await runWindowsGuard(suite, command, requestPath, recheck, signal, guardTimeoutMs);
+          if (typeof result === 'number') return result;
+          rmSync(path.join(requestPath, 'ready'), { force: true });
+          rmSync(holding);
+          blocked = result;
+        }
+        announce(`${message}; ${blocked}`);
+        await wait(probeMs);
+        continue;
+      }
       if (remaining <= 0) return waitTimeout(suite, waitMs, message, command.timeoutExit);
       announce(message);
-      await delay(Math.min(POLL_MS, remaining));
+      await wait(Math.min(POLL_MS, remaining));
     }
+  } catch (error) {
+    if (WINDOWS && existsSync(path.join(requestPath, 'granted')) && !existsSync(path.join(requestPath, 'drained'))) {
+      try {
+        jobGone = probeWindowsJobs([name], performance.now() + PROBE_TIMEOUT_MS).get(name) === 'gone';
+      } catch {
+        // Keep the reservation for stale-owner recovery if the Job is unknown.
+      }
+      error.unconfirmedSuiteTree = !jobGone;
+    }
+    if (WINDOWS && signal.aborted) error.exitCode = LOCAL_INTERRUPTED_EXIT;
+    throw error;
   } finally {
-    if (!existsSync(path.join(requestPath, 'granted')) || existsSync(path.join(requestPath, 'drained'))) reap(requestPath);
+    if (jobGone || !existsSync(path.join(requestPath, 'granted')) || existsSync(path.join(requestPath, 'drained'))) {
+      if (WINDOWS) {
+        try { await rm(requestPath, { recursive: true, force: true, maxRetries: 5 }); } catch (error) {
+          if (error.code !== 'EACCES' && error.code !== 'EPERM') throw error;
+          console.error(`local suite ${suite}: could not remove its finished ticket (${probeFailure(error)})`);
+        }
+      } else reap(requestPath);
+    }
   }
 }
