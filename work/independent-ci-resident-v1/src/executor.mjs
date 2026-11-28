@@ -366,7 +366,11 @@ export const CLAIM_OBSERVATION_SKEW_MS = 30_000;
 // What one batch usually takes (design v0.5 §1: 17.5 to 24 minutes): only the status board's estimate.
 export const ETA_BATCH_MS = 22 * 60_000;
 const QUEUE_PR_CHECK_INTERVAL_MS = 10 * 60_000;
+const QUEUE_PR_UNREAD_RETRY_MS = 2 * 60_000;
+const QUEUE_PR_UNREAD_HALT_MS = 30 * 60_000;
+const QUEUE_PR_UNREAD_HALT_READS = 10;
 const QUEUE_PR_STATUS_UNCONFIRMED = 'QUEUE_PR_STATUS_UNCONFIRMED';
+const QUEUE_PR_HEAD_UNREADABLE = 'QUEUE_PR_HEAD_UNREADABLE';
 // Queue rows looked at in one tick (an ignored or deferred row does not end the tick; this bounds the work).
 export const ROWS_PER_TICK = 16;
 // Endings after which the batch head may no longer be the PR's head (falsification, queue.mjs#restore): stage 1 saw the
@@ -510,6 +514,8 @@ export class ResidentExecutor {
     this.ownerReadFailures = new Map();
     this.intakeRequestFailures = new Map();
     this.queuePrCheckedAt = new WeakMap();
+    this.queuePrUnread = null;
+    this.queuePrClockAt = -Infinity;
     this.deferralReceipts = new Set(); // `${reason}:${day}` of the global deferrals already receipted (deferral())
     this.roleProbe = new RoleProbe();
     this.roleProbeNotices = [];
@@ -845,6 +851,7 @@ export class ResidentExecutor {
     const from = this.nodeMode();
     if (!this.probing() || this.handoverProbePending || from === to) return false;
     this.roleProbeMode = to;
+    this.queuePrUnread = null;
     this.reportNode();
     this.trainEligibility();
     await this.trainDutySave();
@@ -1280,6 +1287,7 @@ export class ResidentExecutor {
       archived.push(entry.key);
     }
     const kept = await this.ledger.clearHalt(haltSha256, { by, reason, archived });
+    this.queuePrUnread = null;
     // C3: a HALT may have been the end of anything; the role is asked again before this node takes a trigger.
     await this.nodeRestart('rearm');
     return { haltSha256, archived, haltKeptAs: path.basename(kept) };
@@ -2038,6 +2046,7 @@ export class ResidentExecutor {
   }
 
   async tickInner() {
+    this.queuedPrClock();
     let recovered = true;
     try {
       await this.recover();
@@ -3526,7 +3535,7 @@ export class ResidentExecutor {
     if (!row) return null;
     const current = row.current;
     const subject = this.rowSubject(row.pr, current);
-    const live = await this.readQueuedPr(row.pr);
+    const live = await this.readQueuedPr(subject);
     const observation = { pr: row.pr, current, live, at: this.queuePrCheckedAt.get(row), closed: null };
     const verdict = prCandidate(live, subject);
     if (verdict?.basis === PR_CLOSED) {
@@ -3831,7 +3840,7 @@ export class ResidentExecutor {
     const current = this.queue.row(c.pr)?.current;
     // A read of this exact row earlier in the tick is sufficient. Earlier ticks never supply the pre-reservation read.
     const checkedThisTick = prCheck?.pr === c.pr && prCheck.current === current && this.clock() - prCheck.at < QUEUE_PR_CHECK_INTERVAL_MS;
-    const live = checkedThisTick ? prCheck.live : await this.readQueuedPr(c.pr);
+    const live = checkedThisTick ? prCheck.live : await this.readQueuedPr(subject);
     const verdict = prCandidate(live, subject);
     if (verdict?.basis === PR_CLOSED) {
       return (await this.closeQueuedPr(subject, key, verdict.live, flows, current)) ?? { state: 'IDLE', next: true };
@@ -3842,8 +3851,15 @@ export class ResidentExecutor {
       return this.deferral({ defer: 'FLOW_HEAD_UNCONFIRMED', perRow: true }, key, c.pr);
     }
     if (!verdict && !Object.hasOwn(subject, 'testSha')) {
+      const now = this.queuedPrClock();
+      const unread = this.queuePrUnread;
+      if (unread && now - unread.since >= QUEUE_PR_UNREAD_HALT_MS &&
+          unread.failedReads >= QUEUE_PR_UNREAD_HALT_READS && !this.nodeGate()) {
+        await this.haltWith(QUEUE_PR_HEAD_UNREADABLE, unread);
+        return { state: 'HALTED', key, failureCode: QUEUE_PR_HEAD_UNREADABLE };
+      }
       return this.deferral({ defer: QUEUE_PR_STATUS_UNCONFIRMED, perRow: true,
-        until: this.clock() + QUEUE_PR_CHECK_INTERVAL_MS }, key, c.pr);
+        until: now + QUEUE_PR_UNREAD_RETRY_MS }, key, c.pr);
     }
 
     // DESIGN §62.4: a take-over binding run is recorded before it is reserved (a restart ends it after stage 1 too).
@@ -3879,12 +3895,25 @@ export class ResidentExecutor {
     return this.driveReserved(key, subject, this.clock(), c.origin, { liveRead: verdict !== null });
   }
 
-  async readQueuedPr(pr) {
+  // A wall-clock rollback invalidates the observed duration, including on ticks between reads.
+  queuedPrClock() {
+    const now = this.clock();
+    if (now < this.queuePrClockAt) this.queuePrUnread = null;
+    this.queuePrClockAt = now;
+    return now;
+  }
+
+  async readQueuedPr(subject) {
+    const { pr } = subject;
     const row = this.queue.row(pr);
-    const pull = await this.livePull(pr);
-    if (row) this.queuePrCheckedAt.set(row, this.clock());
-    if (pull?.number !== pr || !PULL_STATES.includes(pull.state) ||
-        typeof pull.headSha !== 'string' || !HEX40.test(pull.headSha)) return null;
+    const { pull, code } = await this.livePullResult(pr);
+    const now = this.queuedPrClock();
+    if (row) this.queuePrCheckedAt.set(row, now);
+    // Reconciliation may also read on standby and for train fronts. Only an on-duty ordinary queue read spends this budget.
+    if (!pull && !Object.hasOwn(subject, 'testSha') && !this.nodeGate()) {
+      const previous = this.queuePrUnread;
+      this.queuePrUnread = { since: previous?.since ?? now, failedReads: (previous?.failedReads ?? 0) + 1, failureCode: code, pr };
+    }
     return pull;
   }
 
@@ -3947,12 +3976,16 @@ export class ResidentExecutor {
   }
 
   // The same read with the reason there was no answer: { pull, code }. code: null with a pull; PR_HEAD_NO_ANSWER when nothing came back
-  // (also a port without pr-head); the port's code when it threw one (service-ports.mjs#prHead: PR_HEAD_UNAVAILABLE, PR_HEAD_NO_ANSWER,
-  // a MAILBOX_* refusal); PR_HEAD_READ_FAILED for anything else. Only standing() reads the code, for its receipt.
+  // (also a port without pr-head); the port's code when it threw one, or PR_HEAD_READ_FAILED for an unclassified exception.
+  // Every validated answer, including one read by standing(), ends the node's ordinary queue read failure spell.
   async livePullResult(pr, batch = null) {
     try {
-      const pull = (await this.companion.prHead?.(pr, batch)) ?? null;
-      return { pull, code: pull ? null : 'PR_HEAD_NO_ANSWER' };
+      const pull = await this.companion.prHead?.(pr, batch);
+      if (pull == null) return { pull: null, code: 'PR_HEAD_NO_ANSWER' };
+      if (pull.number !== pr || !PULL_STATES.includes(pull.state) ||
+          typeof pull.headSha !== 'string' || !HEX40.test(pull.headSha)) return { pull: null, code: 'PR_HEAD_UNAVAILABLE' };
+      this.queuePrUnread = null;
+      return { pull, code: null };
     } catch (error) {
       return { pull: null, code: error instanceof ResidentError && CODE.test(error.code ?? '') ? error.code : 'PR_HEAD_READ_FAILED' };
     }

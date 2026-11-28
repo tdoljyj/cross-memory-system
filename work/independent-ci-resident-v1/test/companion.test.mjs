@@ -181,6 +181,45 @@ test('pr-head (phase 2): an exact request and answer shape; the companion reads 
   assert.deepEqual([(await box.poll(req2)).ok, (await box.poll(req2)).code], [false, 'PR_HEAD_UNAVAILABLE']);
 });
 
+test('pr-head 失败码分开', async t => {
+  const root = await tempRoot(t);
+  const clock = () => Date.parse('2026-10-22T12:00:00Z');
+  const box = await Mailbox.open(root, clock);
+  const token = 'ghp_' + 'abcd'.repeat(7);
+  const logs = [];
+  const results = [
+    { timedOut: true, tree: 'zero' },
+    { code: 1, stderr: 'noise '.repeat(80) + token + '\r\ndial tcp ...' },
+    { refused: 'JOB_HOST_UNCONFIRMED', tree: 'unconfirmed' },
+    { code: 0, stdout: '{}' },
+  ];
+  const c = new Companion({ cfg, mailbox: box, run: async () => results.shift(),
+    fileExists: async () => false, sleep: async () => {}, clock, log: async entry => {
+      logs.push(entry);
+      throw new Error('relay log write failed');
+    },
+    readPull: pr => readPullArgv('C:\\gh.exe', 'tdoljyj/cross-memory-system', pr) });
+  const replies = [];
+  for (const pr of [884, 885, 886, 887]) {
+    const req = await box.send('pr-head', { batchId: BATCH, pr }, 60_000);
+    await c.step();
+    const { ok, code } = await box.poll(req);
+    replies.push([ok, code]);
+  }
+  assert.deepEqual(replies, [
+    [false, 'PR_HEAD_TIMED_OUT'],
+    [false, 'PR_HEAD_GH_FAILED'],
+    [false, 'PR_HEAD_TREE_UNCONFIRMED'],
+    [false, 'PR_HEAD_UNAVAILABLE'],
+  ]);
+  assert.equal(logs.length, 1);
+  const { kind, pr, exitCode, stderrTail } = logs[0];
+  assert.deepEqual({ kind, pr, exitCode }, { kind: 'pr-head', pr: 885, exitCode: 1 });
+  assert.equal(stderrTail.length, 300);
+  assert.doesNotMatch(stderrTail, /ghp_|[\r\n]/);
+  assert.match(stderrTail, /<token> dial tcp \.\.\.$/);
+});
+
 test('poller (phase 2): trigger /2 with the PR\'s update time; a run queue that started over gets every head proposed again', async t => {
   const written = [];
   const pulls = [{ number: 884, headRefOid: 'a'.repeat(40), baseRefOid: 'd'.repeat(40), isDraft: false, body: 'Clued-Work-Claim: 842cf499-1519-4ba9-b3be-b9ac3f6e8ee4', updatedAt: '2026-10-22T11:59:00Z' }];
