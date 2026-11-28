@@ -389,7 +389,10 @@ test('owner grants: fleet.accept is asked by the release login, given only on th
     // Expired (a version never rejected): it reads expired; asking again opens a new request, which the Owner can accept.
     const lapsed = await ask(V20);
     assert.equal(lapsed.status, 'pending');
-    await admin.query(`update clued_private.owner_requests_v1 set expires_at=greatest(created_at+interval '1 millisecond',clock_timestamp())
+    // 同时回置创建和到期时间，保持 expires_at > created_at。
+    await admin.query(`update clued_private.owner_requests_v1 set
+      created_at=statement_timestamp()-interval '2 seconds',
+      expires_at=statement_timestamp()-interval '1 second'
       where id=$1`, [lapsed.request_id]);
     result = await read(V20);
     assert.deepEqual([result.status, result.request_id, result.request_sha256], ['expired', lapsed.request_id, hex('2')]);

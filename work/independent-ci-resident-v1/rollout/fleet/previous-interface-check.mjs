@@ -10,7 +10,8 @@ const exec = promisify(execFile);
 const checkout = fileURLToPath(new URL('../../../../', import.meta.url));
 const app = 'apps/clued-cloud';
 const migrations = `${app}/supabase/migrations`;
-const tests = ['owner-grants-fleet-accept-door-db', 'fleet-delivery-release-db'].map(name => `${app}/tests/${name}.test.mjs`);
+const acceptDoorTest = `${app}/tests/owner-grants-fleet-accept-door-db.test.mjs`;
+const tests = [acceptDoorTest, `${app}/tests/fleet-delivery-release-db.test.mjs`];
 const sha = /^[0-9a-f]{40}$/;
 export const PREVIOUS_INTERFACE_TIMEOUT_MS = 12 * 60_000;
 
@@ -65,6 +66,18 @@ export async function previousInterfaceCheck({ commit, previous, timeoutMs, root
       catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
     if (!files.length) throw new Error('FLEET_PREVIOUS_TESTS_MISSING');
+    if (files.includes(acceptDoorTest)) {
+      // 历史夹具在创建后不足 1 毫秒读回时仍可能处于待确认。只修正临时回放树中这条已知的夹具 SQL。
+      const fixture = path.join(tree, acceptDoorTest);
+      const source = await fs.readFile(fixture, 'utf8');
+      const fixtureEnd = '\n      where id=$1`, [lapsed.request_id]);';
+      const legacy = "update clued_private.owner_requests_v1 set expires_at=greatest(created_at+interval '1 millisecond',clock_timestamp())";
+      const stable = `update clued_private.owner_requests_v1 set
+      created_at=statement_timestamp()-interval '2 seconds',
+      expires_at=statement_timestamp()-interval '1 second'`;
+      const fixed = source.replace(legacy + fixtureEnd, stable + fixtureEnd);
+      if (fixed !== source) await fs.writeFile(fixture, fixed);
+    }
     const { stdout } = await exec(process.execPath, [path.join(root, 'scripts/ci/ci-required-selection.mjs'),
       '--root', tree, '--run-files', 'production-schema', ...files, '--only-named',
       ...(testReader === undefined ? [] : ['--runtime-reader', testReader])], options);
