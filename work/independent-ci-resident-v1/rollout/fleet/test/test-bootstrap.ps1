@@ -3,7 +3,8 @@
   elevated command and the UAC refusal). Nothing on the host is read or changed; the functions are taken from the real script by AST.
   The fleet-node-powershell.test.mjs wrapper builds the first-install kit fixture and passes its path here.
 #>
-param([Parameter(Mandatory = $true)][string]$ReinstallKit)
+param([Parameter(Mandatory = $true)][string]$ReinstallKit,
+  [Parameter(Mandatory = $true)][ValidatePattern('^http://127\.0\.0\.1:[0-9]+$')][string]$RpcFixtureUrl)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions   # JavaScriptSerializer (Windows PowerShell 5.1 does not load it by itself)
@@ -481,7 +482,7 @@ Case 'lifecycle:one RunAs after protected reselect or preview' {
   $body = $functions['Invoke-Bootstrap']
   $start = $body.IndexOf('  $hostArgs = ')
   $route = [scriptblock]::Create($body.Substring($start, $body.LastIndexOf('}') - $start))
-  function Invoke-ReselectFixture([string]$status, [bool]$declined = $false) {
+  function Invoke-ReselectFixture([string]$status, [bool]$declined = $false, [scriptblock]$ProtectedStage) {
     $fixture = @{ elevated = 0 }
     $Action = 'Install'; $Reset = $false; $hostInputs = @('-Tar', 'fixture.tar')
     $mode = 'Probe'; $acceptLocal = 'fixture.json'; $archiveSha = 'a' * 64; $operator = 'fixture-operator'
@@ -491,6 +492,10 @@ Case 'lifecycle:one RunAs after protected reselect or preview' {
     function Assert-FleetPreview { }
     function Invoke-Elevated {
       $fixture.elevated++
+      if ($ProtectedStage) {
+        try { $status = & $ProtectedStage }
+        catch { return @{ declined = $false; exit = 1; last = (Get-StageFailure 'install' $_.Exception); output = 'fixture.out' } }
+      }
       @{ declined = $declined; exit = 0; last = @{ status = $status }; output = 'fixture.out' }
     }
     function Out-InstallStageResult($stage, $verdict) { throw $verdict.code }
@@ -511,6 +516,58 @@ Case 'lifecycle:one RunAs after protected reselect or preview' {
   Yes ($refused.elevated -eq 1 -and $refused.error -ceq 'UAC_DECLINED') 'lifecycle:uac-declined-stops-once'
   $completed = Invoke-ReselectFixture 'FLEET_NODE_UPGRADE_REQUESTED'
   Yes ($completed.elevated -eq 1 -and $completed.result -ceq 'FLEET_NODE_UPGRADE_REQUESTED') 'lifecycle:protected-upgrade-verdict-reaches-caller'
+
+  $node = @{supabaseUrl='https://fixtureproject.supabase.co';publishableKey='sb_publishable_fixture';authHash='a'*64
+    scope='global';nodeId='03f65562-5419-4ca8-bff0-8783ebb1b0d2';bindingId='83f65562-5419-4ca8-bff0-8783ebb1b0d2';generation=3}
+  $protectedContext = @{action='Install';nodeConnection=$node;grantId='73f65562-5419-4ca8-bff0-8783ebb1b0d2'
+    archiveSha256='a'*64;acceptanceSha256='b'*64}
+  $wire = @{scenario='';attempts=0;delays=@();bodies=@()}
+  function Invoke-WebRequest {
+    [CmdletBinding()] param([switch]$UseBasicParsing, $Method, $Uri, $ContentType, $Body, $TimeoutSec, $MaximumRedirection, $Headers)
+    $wire.attempts++
+    $wire.bodies += $Body
+    if ($wire.scenario -ceq 'timeout' -and $wire.attempts -eq 1) {
+      throw [Net.WebException]::new('fixture timeout', [Net.WebExceptionStatus]::Timeout)
+    }
+    $PSBoundParameters['Uri'] = "${RpcFixtureUrl}/?scenario=$($wire.scenario)&attempt=$($wire.attempts)"
+    Microsoft.PowerShell.Utility\Invoke-WebRequest @PSBoundParameters
+  }
+  function Wait-FleetNodeRpcRetry([int]$Milliseconds) { $wire.delays += $Milliseconds }
+  $maintenance = ${function:Invoke-FleetMaintenance}
+  $previewStage = {
+    $preview = & $maintenance -Phase 'preview' -Context $protectedContext
+    if (-not $preview.ok) { throw $preview.code }
+    Assert-FleetPreview $preview $protectedContext
+    'FLEET_LIFECYCLE_COMPLETE'
+  }
+  $wire.scenario = 'recover'
+  $recovered = Invoke-ReselectFixture '' -ProtectedStage $previewStage
+  Yes ($recovered.elevated -eq 1 -and $wire.attempts -eq 2 -and $recovered['result'] -ceq 'FLEET_LIFECYCLE_COMPLETE') (
+    'lifecycle:500-57014-recovers-with-one-runas (attempts: ' + $wire.attempts + '; got: ' + $recovered['error'] + ')')
+  $wire.scenario = 'persistent'; $wire.attempts = 0; $wire.delays = @()
+  $failed = Invoke-ReselectFixture '' -ProtectedStage $previewStage
+  Yes ($failed.elevated -eq 1 -and $wire.attempts -eq 3 -and $failed['error'] -ceq 'FLEET_MAINTENANCE_REQUEST_FAILED_HTTP_500_POSTGREST_57014') (
+    'lifecycle:persistent-57014-reports-http-and-sqlstate (attempts: ' + $wire.attempts + '; got: ' + $failed['error'] + ')')
+  Yes ($wire.delays.Count -eq 2 -and $wire.delays[0] -in (0..50) -and $wire.delays[1] -in (0..100)) 'lifecycle:rpc-full-jitter-bounds'
+
+  foreach ($scenario in @('408','429','503','body-code','timeout')) {
+    $wire.scenario = $scenario; $wire.attempts = 0
+    $self = Invoke-FleetNodeRpc $node 'clued_ci_connection_self_v1' @{scope=$node.scope}
+    Yes ($wire.attempts -eq 2 -and (Get-Key $self 'status') -ceq 'ok') ('lifecycle:connection-self-retries-' + $scenario)
+  }
+  $wire.scenario = 'denied'; $wire.attempts = 0
+  Throws { Invoke-FleetNodeRpc $node 'clued_ci_connection_self_v1' @{scope=$node.scope} } 'FLEET_MAINTENANCE_REQUEST_FAILED_HTTP_401_POSTGREST_PGRST301' 'lifecycle:permanent-rpc-error-reports-codes'
+  Yes ($wire.attempts -eq 1) 'lifecycle:permanent-rpc-error-sends-once'
+
+  $write = @{action='fleet_maintenance';command='verify_started';operation_id='63f65562-5419-4ca8-bff0-8783ebb1b0d2'
+    node_id=$node.nodeId;binding_generation=$node.generation;grant_id=$protectedContext.grantId;scope=$node.scope}
+  $wire.scenario = 'recover'; $wire.attempts = 0; $wire.bodies = @()
+  $verified = Invoke-FleetNodeRpc $node 'clued_work_verify_v1' $write
+  Yes ($wire.attempts -eq 2 -and (Get-Key $verified 'status') -ceq 'ok' -and $wire.bodies[0] -ceq $wire.bodies[1]) 'lifecycle:verify-started-retries-same-operation'
+  $write.command = 'delist'; $write.method = 'reinstall'
+  $wire.scenario = 'persistent'; $wire.attempts = 0
+  Throws { Invoke-FleetNodeRpc $node 'clued_work_verify_v1' $write } 'FLEET_MAINTENANCE_REQUEST_FAILED_HTTP_500_POSTGREST_57014' 'lifecycle:delist-rpc-error-reports-codes'
+  Yes ($wire.attempts -eq 1) 'lifecycle:delist-sends-once'
 }
 
 Case 'cache:protected-prereq-same-digest-expands-once' {

@@ -28,13 +28,15 @@ exit $testExit`;
   const invocation = prelude
     ? ['-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')]
     : ['-File', script, ...extra];
-  const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...invocation],
-    { cwd: RES, env: childEnv(), encoding: 'utf8', maxBuffer: 1 << 26, windowsHide: true, timeout: 900_000 });
-  assert.ifError(r.error);
-  const last = String(r.stdout ?? '').trim().split(/\r?\n/).at(-1) ?? '';
-  let verdict = null;
-  try { verdict = JSON.parse(last); } catch { verdict = null; }
-  return { status: r.status, verdict, out: `${tail(r.stdout)}\n${tail(r.stderr, 3000)}` };
+  return new Promise((resolve, reject) => {
+    execFile(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...invocation],
+      { cwd: RES, env: childEnv(), encoding: 'utf8', maxBuffer: 1 << 26, windowsHide: true, timeout: 900_000 }, (error, stdout, stderr) => {
+        if (error && typeof error.code !== 'number') { reject(error); return; }
+        let verdict = null;
+        try { verdict = JSON.parse(stdout.trim().split(/\r?\n/).at(-1)); } catch { /* reported below */ }
+        resolve({ status: error?.code ?? 0, verdict, out: `${tail(stdout)}\n${tail(stderr, 3000)}` });
+      });
+  });
 }
 
 test('rollout/fleet/test/test-bootstrap.ps1: the bootstrap\'s offline checks pass', { skip, timeout: 900_000 }, async t => {
@@ -45,17 +47,46 @@ test('rollout/fleet/test/test-bootstrap.ps1: the bootstrap\'s offline checks pas
   const kitBytes = Buffer.from(JSON.stringify(await firstInstallKitOf({ root: template.root })));
   assert.ok(kitBytes.length >= 200_000 && kitBytes.length <= 300_000, `kit size: ${kitBytes.length} bytes`);
   fs.writeFileSync(kitFile, kitBytes);
-  const r = powershellFile(path.join(FLEET_TESTS, 'test-bootstrap.ps1'), ['-ReinstallKit', kitFile]);
-  assert.equal(r.status, 0, r.out);
-  assert.equal(r.verdict?.status, 'BOOTSTRAP_PURE_TESTS_PASSED', r.out);
-  t.diagnostic(`BOOTSTRAP_PURE_TESTS_PASSED (${r.verdict.checks} checks), reinstall kit ${kitBytes.length} bytes`);
+  const rpc = http.createServer(async (req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    const scenario = url.searchParams.get('scenario');
+    const first = url.searchParams.get('attempt') === '1';
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const input = JSON.parse(body).p_input;
+    res.setHeader('Content-Type', 'application/json');
+    if (scenario === 'persistent' || (scenario === 'recover' && first)) {
+      res.writeHead(500, { 'Proxy-Status': 'PostgREST; error=57014' });
+      res.end('{}');
+    } else if (scenario === 'body-code' && first) {
+      res.writeHead(400);
+      res.end('{"code":"57014"}');
+    } else if (scenario === 'denied') {
+      res.writeHead(401);
+      res.end('{"code":"PGRST301"}');
+    } else if (first && ['408', '429', '503'].includes(scenario)) {
+      res.writeHead(Number(scenario));
+      res.end('{}');
+    } else {
+      res.end(JSON.stringify({ status: 'ok', node_id: input.node_id, binding_generation: input.binding_generation,
+        grant_id: '73f65562-5419-4ca8-bff0-8783ebb1b0d2', has_other_healthy: true, install_ready: false }));
+    }
+  }).listen(0, '127.0.0.1');
+  t.after(() => rpc.close());
+  await once(rpc, 'listening');
+  const rpcUrl = `http://127.0.0.1:${rpc.address().port}`;
+  const r = powershellFile(path.join(FLEET_TESTS, 'test-bootstrap.ps1'), ['-ReinstallKit', kitFile, '-RpcFixtureUrl', rpcUrl]);
+  const { status, verdict, out } = await r;
+  assert.equal(status, 0, out);
+  assert.equal(verdict?.status, 'BOOTSTRAP_PURE_TESTS_PASSED', out);
+  t.diagnostic(`BOOTSTRAP_PURE_TESTS_PASSED (${verdict.checks} checks), reinstall kit ${kitBytes.length} bytes`);
 });
 
 // Model both kinds of runner without inspecting or changing the actual host. An installed service's SID and root ACE exist
 // even if sc returns no usable SID (the failure seen on company-win-01). Every attempted probe is recorded and fails the test.
 const residentSid = 'S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629';
 for (const host of ['clean', 'resident-installed', 'resident-installed-sc-unavailable']) {
-  test(`windows/test-first-install-host.ps1: offline checks ignore ${host}, none skipped`, { skip, timeout: 900_000 }, t => {
+  test(`windows/test-first-install-host.ps1: offline checks ignore ${host}, none skipped`, { skip, timeout: 900_000 }, async t => {
     const installed = host !== 'clean';
     const sddl = 'O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)' + (installed ? `(A;;0x120080;;;${residentSid})` : '');
     const scOutput = host.endsWith('sc-unavailable') ? '[SC] OpenSCManager FAILED 5: Access is denied.'
@@ -77,7 +108,7 @@ function global:Get-Service {
   $global:HostProbeCalls.Add('Get-Service')
   ${installed ? `[pscustomobject]@{ Name = 'CluedCIResident'; Status = 'Running'; Sid = '${residentSid}' }` : ''}
 }`;
-    const r = powershellFile(path.join(RES, 'windows', 'test-first-install-host.ps1'), ['-Node', process.execPath], prelude);
+    const r = await powershellFile(path.join(RES, 'windows', 'test-first-install-host.ps1'), ['-Node', process.execPath], prelude);
     assert.equal(r.status, 0, r.out);
     assert.equal(r.verdict?.status, 'FIRST_INSTALL_HOST_PURE_TESTS_PASSED', r.out);
     assert.equal(r.verdict?.skipped, null, r.out);

@@ -318,17 +318,83 @@ function Get-FleetPreservedConnection($Context, [string]$carry, [string]$nodeExe
   @{nodeRecord=$next; upgradeToken=@{fingerprint=$upgrade}; heartbeatToken=$heartbeat}
 }
 
+function Get-FleetNodeRpcFailure($ErrorRecord) {
+  $failure = $ErrorRecord.Exception
+  while ($failure.InnerException -and $failure -isnot [Net.WebException] -and $failure -isnot [TimeoutException]) {
+    $failure = $failure.InnerException
+  }
+  $status = 0
+  $postgrest = $null
+  $retryable = $failure -is [TimeoutException] -or $failure -is [IO.IOException] -or $failure -is [Net.Sockets.SocketException]
+  $code = 'FLEET_MAINTENANCE_REQUEST_FAILED'
+  if ($failure -is [Net.WebException]) {
+    $response = $failure.Response
+    if ($response -is [Net.HttpWebResponse]) {
+      $status = [int]$response.StatusCode
+      if ($response.Headers['Proxy-Status'] -match '(?:^|,)\s*PostgREST\s*;\s*error\s*=\s*(?<code>"[A-Z0-9]+"|[A-Z0-9]+)(?=\s*(?:[,;]|$))') {
+        $postgrest = $Matches['code'].Trim('"')
+      }
+      $codePattern = '\A(?:[A-Z0-9]{5}|PGRST[0-9]{3})\z'
+      if ($postgrest -cnotmatch $codePattern) {
+        try {
+          $content = if ($ErrorRecord.ErrorDetails) { $ErrorRecord.ErrorDetails.Message }
+          if (-not $content) {
+            # Windows PowerShell 5.1 can leave the error body on the response stream.
+            $reader = [IO.StreamReader]::new($response.GetResponseStream())
+            try {
+              $buffer = New-Object char[] 32769
+              $count = $reader.ReadBlock($buffer, 0, $buffer.Length)
+              if ($count -lt $buffer.Length) { $content = [string]::new($buffer, 0, $count) }
+            } finally { $reader.Dispose() }
+          }
+          if ($content -and $content.Length -le 32768) {
+            $postgrest = Get-Key ((New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject($content)) 'code'
+          }
+        } catch { $postgrest = $null }
+      }
+      $response.Close()
+      $code += "_HTTP_$status"
+      if ($postgrest -isnot [string] -or $postgrest -cnotmatch $codePattern) { $postgrest = $null }
+      if ($postgrest) { $code += "_POSTGREST_$postgrest" }
+      $retryable = $status -in @(408,429) -or ($status -ge 500 -and $status -lt 600) -or $postgrest -ceq '57014'
+    } else {
+      $retryable = $failure.Status -in @('Timeout','ConnectFailure','ConnectionClosed','ReceiveFailure','SendFailure',
+        'KeepAliveFailure','PipelineFailure','NameResolutionFailure','ProxyNameResolutionFailure')
+    }
+  }
+  @{ code = $code; retryable = $retryable; throttled = ($status -eq 429) }
+}
+
+function Wait-FleetNodeRpcRetry([int]$Milliseconds) { Start-Sleep -Milliseconds $Milliseconds }
+
 function Invoke-FleetNodeRpc($Connection, [ValidateSet('clued_ci_connection_self_v1','clued_work_verify_v1')][string]$Rpc, $InputData) {
   if ($Connection['supabaseUrl'] -cnotmatch '^https://[a-z0-9]+\.supabase\.co$' -or
       $Connection['publishableKey'] -cnotmatch '^sb_publishable_[A-Za-z0-9_-]+$' -or
       $Connection['authHash'] -cnotmatch '^[0-9a-f]{64}$') { throw 'FLEET_MAINTENANCE_CONNECTION_REFUSED' }
-  try {
-    $public = $Connection['publishableKey']
-    $body = @{ p_token_hash = $Connection['authHash']; p_input = $InputData } | ConvertTo-Json -Depth 4 -Compress
-    $reply = Invoke-WebRequest -UseBasicParsing -Method Post -Uri ($Connection['supabaseUrl'] + '/rest/v1/rpc/' + $Rpc) -ContentType 'application/json' -Body $body -TimeoutSec 20 -MaximumRedirection 0 -ErrorAction Stop -Headers @{apikey=$public; Authorization=('Bearer ' + $public)}
-    if ($reply.Content.Length -gt 32768) { throw 'FLEET_MAINTENANCE_REPLY_REFUSED' }
-    (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject($reply.Content)
-  } catch { throw 'FLEET_MAINTENANCE_REQUEST_FAILED' }
+  # The maintenance status can reconcile a pause whose receipt guards replays under the server lock.
+  # verify_started uses operation_id to replay its receipt. delist can start a new drain with that same ID.
+  $operationId = [Guid]::Empty
+  $mayRetry = $Rpc -ceq 'clued_ci_connection_self_v1' -or ($InputData['action'] -ceq 'fleet_maintenance' -and
+    ($InputData['command'] -ceq 'status' -or ($InputData['command'] -ceq 'verify_started' -and
+      [Guid]::TryParseExact($InputData['operation_id'], 'D', [ref]$operationId) -and $operationId -ne [Guid]::Empty)))
+  $public = $Connection['publishableKey']
+  $body = @{ p_token_hash = $Connection['authHash']; p_input = $InputData } | ConvertTo-Json -Depth 4 -Compress
+  $attemptLimit = 3
+  for ($attempt = 1; $attempt -le $attemptLimit; $attempt++) {
+    try {
+      $reply = Invoke-WebRequest -UseBasicParsing -Method Post -Uri ($Connection['supabaseUrl'] + '/rest/v1/rpc/' + $Rpc) -ContentType 'application/json' -Body $body -TimeoutSec 20 -MaximumRedirection 0 -ErrorAction Stop -Headers @{apikey=$public; Authorization=('Bearer ' + $public)}
+      break
+    } catch {
+      $failure = Get-FleetNodeRpcFailure $_
+      if (-not $mayRetry -or -not $failure.retryable -or $attempt -eq $attemptLimit) { throw $failure.code }
+      $baseMs = if ($failure.throttled) { 1000 } else { 50 }
+      $backoffMs = [int]($baseMs * [Math]::Pow(2, $attempt - 1))
+      Wait-FleetNodeRpcRetry (Get-Random -Minimum 0 -Maximum ($backoffMs + 1))
+    }
+  }
+  if ($reply.Content.Length -gt 32768) { throw 'FLEET_MAINTENANCE_REPLY_REFUSED' }
+  try { (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject($reply.Content) }
+  catch { throw 'FLEET_MAINTENANCE_REPLY_REFUSED' }
 }
 
 function Invoke-FleetMaintenance([ValidateSet('preview','before-remove','before-return')][string]$Phase, $Context,
