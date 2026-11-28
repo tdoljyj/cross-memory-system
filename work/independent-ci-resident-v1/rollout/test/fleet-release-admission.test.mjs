@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 import { DEFAULT_REPO, prepareCommit } from '../fleet/publish.mjs';
+import * as releaseAdmission from '../fleet/release-admission.mjs';
 import { fleetReleaseWorkflow } from '../fleet/release-migration-workflow.mjs';
 import { missingMigrations, releaseRequirements, requirementsDigest, SNAPSHOT_LABEL } from '../fleet/release-migrations.mjs';
 import { prepWorld } from '../fleet/test/publish-fixtures.mjs';
@@ -152,6 +153,13 @@ async function fixture(t, options = {}) {
   };
   return { w, commit, plan, effects, settings, prepare, noRelease };
 }
+
+test('发布准入 CLI 钉住返回 merge_commit_sha 的 GitHub API 版本', () => {
+  const source = readFileSync(new URL('../fleet/release-admission.mjs', import.meta.url), 'utf8');
+  assert.ok(!source.includes('2026-03-10'), '发布准入源码仍包含不返回 merge_commit_sha 的版本 2026-03-10');
+  assert.equal(releaseAdmission.RELEASE_API_VERSION, '2022-11-28');
+  assert.match(source, /'X-GitHub-Api-Version':\s*RELEASE_API_VERSION\b/);
+});
 
 test('落地合并提交无需自身有检查，须读取其已合并 PR 的 head', async t => {
   const w = await fixture(t, { applied: files });
