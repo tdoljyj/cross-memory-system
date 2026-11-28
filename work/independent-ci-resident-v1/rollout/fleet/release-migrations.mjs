@@ -3,9 +3,12 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { insist } from './release-admission.mjs';
 
-const root = fileURLToPath(new URL('../../../../', import.meta.url));
+const rootUrl = new URL('../../../../', import.meta.url);
+const root = fileURLToPath(rootUrl);
 const manifest = 'work/independent-ci-resident-v1/rollout/fleet/release-migrations.json';
 const sqlDir = 'apps/clued-cloud/supabase/migrations';
+const supabaseCa = fileURLToPath(new URL('scripts/ci/resources/supabase-official-prod-ca-2021.crt', rootUrl));
+const containerCa = '/ca/supabase.crt';
 const version = /^[0-9]{14}$/;
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const procedure = (name, result, conditions = 'true', returnsSet = false) => `exists (select 1 from pg_proc p
@@ -164,7 +167,25 @@ select jsonb_build_object('base', ${procedure('release_door_v1(jsonb)', 'jsonb',
 commit;\n`;
 }
 
-function readProduction(requirements, rawUrl) {
+function redactStderr(stderr, url) {
+  const lineBreak = /[\r\n]/;
+  // A URI or keyword/value DSN can contain spaces. Keep only the diagnostic prefix.
+  let line = (stderr?.toString('utf8').split(lineBreak, 1)[0] ?? '').replace(
+    /\b(?:[a-z][a-z\d+.-]*:\/\/|(?:host(?:addr)?|dbname|user|password|passfile|pwd|service|sslmode|sslrootcert)\s*[:=])[\s\S]*$/i,
+    '[redacted]',
+  );
+  for (const password of [url.password, ...url.searchParams.getAll('password')]) {
+    let decoded = password;
+    try { decoded = decodeURIComponent(password); } catch { /* Keep the raw value for redaction. */ }
+    const forms = new Set([password, decoded, encodeURIComponent(decoded)].flatMap(value => value.split(lineBreak)));
+    for (const form of forms) {
+      if (form) line = line.replaceAll(form, '[redacted]');
+    }
+  }
+  return line.trim().slice(0, 512);
+}
+
+export function readProduction(requirements, rawUrl, { run = execFileSync, uid = process.getuid(), gid = process.getgid() } = {}) {
   const ref = 'ccxsikzwxlolxqlosril';
   let url;
   try { url = new URL(rawUrl); } catch { insist(false, 'FLEET_MIGRATION_DATABASE_REFUSED'); }
@@ -174,18 +195,34 @@ function readProduction(requirements, rawUrl) {
   insist(['postgres:', 'postgresql:'].includes(url.protocol) && url.pathname === '/postgres' && (direct || pool) &&
     ![...url.searchParams.keys()].some(k => ['host', 'hostaddr', 'port', 'dbname', 'database', 'user', 'service', 'servicefile'].includes(k.toLowerCase())),
   'FLEET_MIGRATION_DATABASE_REFUSED');
-  url.searchParams.delete('uselibpqcompat');
+  for (const key of [...url.searchParams.keys()]) {
+    if (['uselibpqcompat', 'sslmode', 'sslrootcert'].includes(key.toLowerCase())) url.searchParams.delete(key);
+  }
   url.searchParams.set('sslmode', 'verify-full');
-  if (!url.searchParams.has('sslrootcert')) url.searchParams.set('sslrootcert', 'system');
+  url.searchParams.set('sslrootcert', containerCa);
+  let reply;
   try {
-    const reply = execFileSync('docker', ['run', '--rm', '-i', '--user', `${process.getuid()}:${process.getgid()}`, '-e', 'DATABASE_URL',
+    reply = run('docker', ['run', '--rm', '-i', '--user', `${uid}:${gid}`, '-e', 'DATABASE_URL', '-v', `${supabaseCa}:${containerCa}:ro`,
       'postgres@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929',
-      'sh', '-c', 'exec psql "$DATABASE_URL" -X -q -tA -v ON_ERROR_STOP=1'], {
-      env: { ...process.env, DATABASE_URL: url.href }, input: readbackSql(requirements), stdio: ['pipe', 'pipe', 'ignore'],
+      'sh', '-c', `test -f ${containerCa} && test -r ${containerCa} || { echo 'Supabase root CA is unreadable' >&2; exit 1; }
+exec psql "$DATABASE_URL" -X -q -tA -v ON_ERROR_STOP=1`], {
+      env: { ...process.env, DATABASE_URL: url.href }, input: readbackSql(requirements), stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 90_000, maxBuffer: 64 << 10,
     });
-    return JSON.parse(reply.toString('utf8'));
-  } catch { insist(false, 'FLEET_MIGRATION_SNAPSHOT_UNREADABLE'); }
+  } catch (error) {
+    const detail = { kind: 'docker_psql_spawn_failed' };
+    if (error.code === 'ETIMEDOUT') detail.kind = 'docker_psql_timeout';
+    else if (error.code === 'ENOBUFS') detail.kind = 'docker_psql_output_limit';
+    else if (Number.isInteger(error.status)) {
+      detail.kind = 'docker_psql_exit';
+      detail.exitCode = error.status;
+    }
+    const stderr = redactStderr(error.stderr, url);
+    if (stderr) detail.stderr = stderr;
+    insist(false, 'FLEET_MIGRATION_SNAPSHOT_UNREADABLE', detail);
+  }
+  try { return JSON.parse(reply.toString('utf8')); }
+  catch { insist(false, 'FLEET_MIGRATION_SNAPSHOT_UNREADABLE', { kind: 'invalid_json' }); }
 }
 
 if (import.meta.main) {

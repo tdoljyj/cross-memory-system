@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { DEFAULT_REPO, prepareCommit } from '../fleet/publish.mjs';
 import * as releaseAdmission from '../fleet/release-admission.mjs';
 import { fleetReleaseWorkflow } from '../fleet/release-migration-workflow.mjs';
-import { missingMigrations, releaseRequirements, requirementsDigest, SNAPSHOT_LABEL } from '../fleet/release-migrations.mjs';
+import { missingMigrations, readProduction, releaseRequirements, requirementsDigest, SNAPSHOT_LABEL } from '../fleet/release-migrations.mjs';
 import { prepWorld } from '../fleet/test/publish-fixtures.mjs';
 
 const files = [
@@ -160,6 +161,58 @@ async function fixture(t, options = {}) {
   };
   return { w, commit, plan, effects, settings, prepare, noRelease, runReads, pauses };
 }
+
+const fixturePassword = 'fixture!@ secret';
+const fixtureDbUrl = `postgresql://postgres.ccxsikzwxlolxqlosril:${encodeURIComponent(fixturePassword)}@aws-0-test.pooler.supabase.com:5432/postgres`;
+const snapshotOptions = run => ({ run, uid: 1001, gid: 1002 });
+
+for (const [name, query] of [
+  ['默认连接', ''],
+  ['密钥指定系统证书', '?sslrootcert=system&sslrootcert=%2Fother.crt&SSLROOTCERT=system&sslmode=require'],
+]) {
+  test(`迁移回读为${name}挂载官方根证书并保持 verify-full`, t => {
+    const ca = fileURLToPath(new URL('scripts/ci/resources/supabase-official-prod-ca-2021.crt', root));
+    assert.equal(statSync(ca).mode & 0o444, 0o444);
+    const run = t.mock.fn(() => Buffer.from('{"base":true}'));
+    assert.deepEqual(readProduction(planOf('a'.repeat(40)), fixtureDbUrl + query, snapshotOptions(run)), { base: true });
+    assert.equal(run.mock.callCount(), 1);
+    const [command, args, options] = run.mock.calls[0].arguments;
+    assert.equal(command, 'docker');
+    assert.equal(args[args.indexOf('--user') + 1], '1001:1002');
+    const url = new URL(options.env.DATABASE_URL);
+    assert.deepEqual(url.searchParams.getAll('sslrootcert'), ['/ca/supabase.crt']);
+    assert.equal(url.searchParams.has('SSLROOTCERT'), false);
+    assert.equal(url.searchParams.get('sslmode'), 'verify-full');
+    assert.equal(args[args.indexOf('-v') + 1], `${ca}:/ca/supabase.crt:ro`);
+    assert.match(args.at(-1), /test -r \/ca\/supabase\.crt/);
+  });
+}
+
+test('迁移回读报告 Docker/psql 退出码和脱敏首行', t => {
+  const run = t.mock.fn((_command, _args, options) => {
+    throw Object.assign(new Error('执行失败'), { status: 2, stderr: Buffer.from(
+      `psql: certificate verify failed (${fixturePassword}) for ${options.env.DATABASE_URL} password='other secret'\n后续行`,
+    ) });
+  });
+  assert.throws(() => readProduction(planOf('a'.repeat(40)), fixtureDbUrl, snapshotOptions(run)), error => {
+    assert.equal(error.code, 'FLEET_MIGRATION_SNAPSHOT_UNREADABLE');
+    assert.ok(error.detail, '迁移回读失败缺少诊断');
+    assert.equal(error.detail.kind, 'docker_psql_exit');
+    assert.equal(error.detail.exitCode, 2);
+    assert.match(error.detail.stderr, /^psql: certificate verify failed/);
+    assert.doesNotMatch(JSON.stringify(error.detail), /:\/\/|fixture|other secret|后续行/);
+    assert.equal(run.mock.calls[0].arguments[2].stdio[2], 'pipe');
+    return true;
+  });
+});
+
+test('迁移回读区分超时和无效 JSON', () => {
+  const read = run => readProduction(planOf('a'.repeat(40)), fixtureDbUrl, snapshotOptions(run));
+  assert.throws(() => read(() => { throw Object.assign(new Error(fixtureDbUrl), { code: 'ETIMEDOUT' }); }),
+    { code: 'FLEET_MIGRATION_SNAPSHOT_UNREADABLE', detail: { kind: 'docker_psql_timeout' } });
+  assert.throws(() => read(() => Buffer.from(fixtureDbUrl)),
+    { code: 'FLEET_MIGRATION_SNAPSHOT_UNREADABLE', detail: { kind: 'invalid_json' } });
+});
 
 test('发布准入 CLI 钉住返回 merge_commit_sha 的 GitHub API 版本', () => {
   const source = readFileSync(new URL('../fleet/release-admission.mjs', import.meta.url), 'utf8');
